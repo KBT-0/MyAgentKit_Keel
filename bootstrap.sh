@@ -64,6 +64,8 @@ copy_tree() {
   fi
   ( cd "$src" && find . -type f -print ) | sed 's|^\./||' | while IFS= read -r rel; do
     [ -n "$rel" ] || continue
+    # Running Python tooling must not change the installed skeleton with local bytecode.
+    case "$rel" in __pycache__/*|*/__pycache__/*|*.pyc|*.pyo) continue ;; esac
     dest="${prefix:+$prefix/}$rel"
     if [ -e "$target/$dest" ] && [ "$force" -eq 0 ]; then
       echo "$dest" >> "$skiplist"

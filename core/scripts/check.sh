@@ -194,6 +194,15 @@ self_test() {
   # --- project boundary self-tests ------------------------------------------
   # One case per check in the boundary checks file. Sourced, so it can set st_fail.
   # Its ABSENCE is a failure: a boundary check with no negative test has not been tested.
+  review_test_log=$(mktemp) || return 1
+  if ! sh scripts/review.sh --self-test > "$review_test_log" 2>&1 ||
+     ! grep -qx 'REVIEW SELF-TEST: PASS' "$review_test_log"; then
+    echo "  FAIL — review adapter negative tests failed or did not run"
+    st_fail=1
+  fi
+  cat "$review_test_log"
+  rm -f "$review_test_log"
+
   if [ -f "$BOUNDARY_SELFTESTS_FILE" ]; then
     . "./$BOUNDARY_SELFTESTS_FILE"
   else

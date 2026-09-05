@@ -55,8 +55,19 @@ command -v codex          # already there?
 
 If not, install it and log in. An agent can run the installer for you. Point the script
 somewhere else with `REVIEW_CLI_BIN`, but note that only swaps the BINARY — a CLI with a
-different flag interface also needs the invocation block in `scripts/review.sh` edited. The
-script is deliberately honest about this rather than pretending to be vendor-neutral.
+different flag interface needs a matching adapter. For Claude Code, the kit ships one:
+use `./scripts/review.sh --uncommitted --reviewer claude`. This requires Python 3.10+
+and an installed, authenticated Claude CLI. `CLAUDE_CLI_BIN` selects that binary; the
+adapter pins read tools and structured output. The Codex-host plugin also supports
+`$myagentkit-review` and `$myagentkit-delegate` after installation from the kit marketplace.
+Python 3.10+ is also required by `scripts/review.sh --self-test` and the review tests included
+in `scripts/check.sh --self-test`, even when Codex is the only reviewing CLI.
+Both live adapters now require Python as well, to bound the child process and preserve usage
+on failure. Existing projects must copy all companion files: `claude_bridge.py`,
+`codex_bridge.py`, `agent_process.py`, `agent_usage.py`, `test_claude_bridge.py`, and
+`test_agent_usage.py`, plus `codex_quota.py` and `test_codex_quota.py`. Merge `.myagentkit/`
+into the root ignore rules. Also merge the raw review/handoff archive exclusions and final
+summary re-include from the kit's `core/.gitignore`. See `docs/USAGE.md`.
 
 Verify it end to end before trusting it — one real invocation, on a small diff:
 

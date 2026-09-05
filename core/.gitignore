@@ -13,6 +13,8 @@
 .DS_Store
 Thumbs.db
 desktop.ini
+__pycache__/
+*.py[cod]
 *.swp
 .idea/
 .vs/
@@ -23,6 +25,13 @@ desktop.ini
 # Working copies created by agent tools: full checkouts, never repository content.
 # Add your tools' own scratch directories here; an overlay may bring more.
 .claude/worktrees/
+/.myagentkit/
+# Raw review evidence holds the whole diff and the reviewing CLI's own output. It stays
+# local; publish a deliberately scrubbed `-summary.md` instead (re-included at the bottom).
+/docs/reviews/????????T??????Z-*.md
+/docs/handoffs/*-claude-propose.json
+# Legacy name from before every reviewer shared one Markdown format.
+/docs/reviews/*-claude-review.json
 
 # Local-only tool settings. Shared configuration is committed; per-machine overrides
 # and anything holding a credential are not.
@@ -40,3 +49,4 @@ desktop.ini
 ########################################
 # Hand-written project files that a broad pattern above would otherwise swallow go here,
 # and nowhere else.
+!/docs/reviews/*-summary.md

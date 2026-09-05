@@ -10,6 +10,27 @@ of a second opinion is that it is decorrelated. A passing compile is not a revie
 `scripts/check.sh` PASS is necessary but not sufficient; implementer self-reports ("0
 errors", "all tests green") are never validation.
 
+## AUTHOR and REVIEWER are roles, not vendors
+
+This document names two roles and never a product:
+
+- **AUTHOR** — the session that writes the patch. It owns the change and the verdict it
+  eventually acts on. It never approves its own work.
+- **REVIEWER** — a fresh session running a DIFFERENT model. It produces findings and one
+  verdict, which are input the AUTHOR verifies, not an approval the AUTHOR relays.
+
+Which model holds which role is a project configuration, set during setup and recorded in
+`scripts/review.sh`. It is expected to change: the roles follow the budget, and the budget
+moves. A project that runs out of the AUTHOR's quota mid-phase swaps the two and keeps
+working — the invariant is that the author and the reviewer are different models, never
+that a particular vendor sits on a particular side.
+
+Because the roles swap, **both directions publish the same evidence format** (same header
+table, same one-line verdict contract, same `docs/reviews/<stamp>-<reviewer>-review.md`
+naming). Records made before and after a swap line up against each other. Two formats would
+mean each reader — and the self-test — had to learn both, which is how one of them stops
+being checked.
+
 ## What counts as a risky diff
 
 A diff is risky when a silent bug in it is expensive, hard to attribute, or slow to
@@ -78,20 +99,75 @@ acceptance record instead of asserting the guarantee.
 
 ## Running it
 
-`./scripts/review.sh [--uncommitted | --base <ref> | --commit <sha>]` collects the change
-set with git, hands it to a read-only reviewing model carrying THIS document's priority
-order, archives the report as evidence under `docs/reviews/<UTC-timestamp>-<branch>.md`
-(model, reasoning effort, sandbox, scope, HEAD) and prints it. The script accepts no other
-flags: read-only is enforced there rather than trusted to a CLI or to the caller's good
-intentions.
+```
+./scripts/review.sh [--uncommitted | --base <ref> | --commit <sha>] [--reviewer codex|claude]
+```
+
+It collects the change set with git, hands it to a read-only REVIEWER carrying THIS
+document's priority order, archives the report as evidence under
+`docs/reviews/<UTC-timestamp>-<random>-<reviewer>-review.md` and prints it. Omitting
+`--reviewer` uses the one configured during setup at the top of `scripts/review.sh`.
+
+**The two directions are interchangeable, not merely both present.** Each archives the same
+header table — reviewer, model, whether the model is attested, effort, sandbox, limits,
+scope, reference, HEAD, checkout fingerprint, diff hash, status, failure kind — followed by
+exactly one `VERDICT:` line, or none at all when the run failed. The renderer refuses a
+header that has drifted, and refuses to print a verdict for a run that did not complete, so
+"same format" is enforced rather than agreed.
+
+**Both models are pinned by name, in both directions.** An unpinned run archives whatever
+default the CLI happened to have that week, which no later record can be compared against;
+the wrapper stops rather than record it. Claude's model is additionally ATTESTED — the
+adapter matches the pin against the CLI's own `modelUsage` — while Codex publishes no model
+identity in its output, so its record says the pin is requested but unattested. The
+evidence says which of the two it is instead of implying a check that did not happen.
+
+The script accepts no flags beyond those above: the reviewer is matched against a closed
+list and nothing is passed through to the underlying CLI. Both adapters require Python
+3.10+, restrict source tools to Read/Glob/Grep, disable customizations and MCP, and never
+resume an author session. This is a tool-level restriction, not an OS read-only mount.
+Reference reviews require matching clean checkout context. Both share scope collection and
+checkout fingerprint validation, so a change while the reviewer runs invalidates its
+result, and evidence is published exclusively before usage can say completed.
+
+`./scripts/review.sh --self-test` exercises both adapters' offline failure cases and is
+included in `./scripts/check.sh --self-test`; these self-tests require Python 3.10+ for
+both providers. Missing tests or missing completion evidence fail. Exit 0 from a reviewer means collection
+completed, not that the verdict is Accept. Missing final evidence fails closed.
 
 **The output is unverified INPUT.** The requesting agent verifies every finding against the
 code, drops what it disproves, keeps what it confirms, and owns the verdict. Relaying a
 reviewer's verdict verbatim — in either direction — is a failed review. A confirmed
 critical finding is a stop signal.
 
-Reviews cost budget: {{OWNER_NAME}} must have asked for one in this session. Agents do not
-spend it on their own.
+Reviews cost budget: {{OWNER_NAME}} must have asked in this session or explicitly authorized
+a bounded automatic-review policy in the project's canonical instructions. Installing a
+plugin or having the skill selected automatically does not grant spending permission.
+The host must stop review-and-fix automation at its round limit and on unresolved owner
+decisions. This is an agent instruction, not an adapter-enforced session counter or
+authorization check. The adapter enforces per-invocation limits only. Automation never
+authorizes a commit, push, deployment, or an author-only approval. The host is responsible
+for choosing a different reviewing model; `--requester` is reported metadata, not attestation.
+
+## Unavailable reviewer
+
+Reviews have no default monetary budget cap. Pass a supported monetary-cap option only
+when the owner explicitly specifies one. This does not remove timeout, turn, output,
+authorization, or provider-account limits; it does not authorize automatic retries.
+
+If a reviewing CLI cannot finish because of quota, context exhaustion, timeout,
+authentication, or missing final evidence, do not treat that failure as Accept. Both
+adapters return a failure with a local usage record. Codex uses `REVIEW_TIMEOUT_SECONDS`
+(600 by default); Claude uses `--timeout` (600 by default). Timeout stops the child process
+group and preserves captured partial output. There is no automatic retry, model fallback,
+or purchase of extra credits.
+
+Record the affected task, evidence path, and pending review in current project state. Then
+continue independent authorized implementation, tests, or documentation. When Claude was
+providing an optional implementation proposal, the host can implement the task itself;
+this is not independent review. Do not commit or push a protected diff before its required
+review is satisfied. If no independent work remains, hand off the blocker instead of
+waiting indefinitely. Accounting details live in `docs/USAGE.md`.
 
 ## Template to paste (tools without a wrapper)
 

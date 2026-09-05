@@ -126,7 +126,8 @@ loop. **The audit is itself a task; skip it and decay advances invisibly.**
   hooks are early feedback, never the rule itself; `.githooks/pre-commit` is the gate that
   actually holds, for every tool.
 - **Cross-tool review is preferred:** author and reviewer being different tools reduces
-  correlated blind spots.
+  correlated blind spots. Which tool takes which role is configuration, not doctrine — when
+  the author's budget runs short, swap them rather than dropping the review.
 - **A second agent's output is untrusted INPUT to a decision the calling agent owns**, never
   a verdict to relay verbatim. Verify each finding against the code: drop what is disproved,
   keep what is confirmed, and treat a confirmed critical finding as a stop signal.
@@ -194,6 +195,12 @@ The principle behind whatever the table says: **spend the scarce budget on judge
 generous one on volume.** Cross-model review stays mandatory for risky diffs — the value of
 a second model is decorrelated judgement, which two agents of the same model cannot give you
 no matter how many you run.
+
+The table decides the AUTHOR and REVIEWER roles, and it is allowed to change its mind. If
+the generous budget is the stronger model this month, it authors and the scarcer one
+reviews; if that reverses, so do the roles. Record the swap in `scripts/review.sh` and in
+`docs/STATE.md` — the review records themselves stay comparable across the change because
+both directions publish one format.
 
 Caveat worth stating once: a more autonomous model fills ambiguity by itself instead of
 asking. The mitigations are sharper briefs (`docs/HANDOFF.md`) and the gates, not trust.

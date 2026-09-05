@@ -132,15 +132,34 @@ One topic per turn. Suggested order, because each answer informs the next:
    note honestly as unenforced.
 5. **Gates.** What exists today and what should: build, tests, lint, type check, engine
    tests, anything slow enough to be opt-in.
-6. **People and tools.** Solo or a team? Which CLI agents and models, on what budget? Which
-   is the scarce budget and which is the generous one? This fills the model-routing table.
+6. **People and tools.** Solo or a team? Which CLI agents and models, on what budget?
+
+   Ask these three separately, because the kit needs all three and they are not the same
+   question. Do not infer any of them from which tool you happen to be running in — that
+   assumption is exactly what this section exists to stop:
+
+   - **Which model is the AUTHOR?** The one that writes most of the code.
+   - **Which model is the REVIEWER?** It must be a DIFFERENT model. Either direction is
+     supported and neither is the "normal" one.
+   - **Which budget is scarce, and which is generous?** This fills the model-routing table,
+     and it is often what decides the two answers above. A capable model on a nearly
+     exhausted plan makes a better reviewer than an author.
+
+   Record the answers where the tooling reads them: the `DEFAULT_REVIEWER`, `CODEX_MODEL`
+   and `CLAUDE_MODEL` values at the top of `scripts/review.sh`. **Both models must be pinned
+   by name** — an unpinned reviewer archives whatever default its CLI had that day, and the
+   wrapper refuses to run rather than record something no later review can be compared
+   against. Say plainly that the roles can be swapped later by editing those three values,
+   and that swapping them does not change the evidence format.
 
    Then ask specifically about **cross-model review**, because it is the one part of this
    kit that needs software the owner may not have. `scripts/review.sh` shells out to a
-   SECOND CLI, and out of the box it targets the Codex CLI's interface. So:
+   SECOND CLI, and it ships with adapters for two: `--reviewer codex` and
+   `--reviewer claude`. So:
 
-   - Check whether it is installed: `command -v codex`. Do not assume either way — report
-     what you found.
+   - Check which are installed: `command -v codex`, `command -v claude`. Do not assume
+     either way — report what you found. If only one is present, the OTHER one is the
+     reviewer only if the owner installs it; the review gate needs two.
    - If it is missing, explain the trade: without a second model, the review protocol
      becomes the paste-the-template-by-hand version in `docs/REVIEW_GATE.md`. That is a
      genuine fallback, and the kit works without it. With it, `/myagentkit:cross-review`
@@ -155,9 +174,15 @@ One topic per turn. Suggested order, because each answer informs the next:
      must type — you cannot invoke slash commands. Give them the exact lines and say so
      plainly rather than implying you handled it. `docs/DEV_SETUP.md` has both, including
      the two cautions about model-invocable commands and automatic review gates.
-   - If they use a different reviewing CLI, record that `REVIEW_CLI_BIN` swaps the binary
-     but the invocation block in `scripts/review.sh` also needs editing for a different flag
-     interface. Do not leave them believing the env var alone is enough.
+   - For a Codex host, offer the kit's Codex plugin and its Claude review/delegation skills
+     (`docs/CODEX.md` in the kit). `--reviewer claude` selects the Claude adapter from any
+     host; `REVIEW_CLI_BIN` and `CLAUDE_CLI_BIN` change only which binary is launched. Any
+     THIRD CLI still needs a separately implemented and live-validated adapter, not merely a
+     binary substitution — `--reviewer` deliberately accepts only the two names it has
+     adapters for.
+   - In-session delegation is NOT symmetric between the two hosts. Read
+     `docs/delegation-is-not-symmetric.md` before promising it in either direction; the
+     script-based review gate works from both, which is the part the kit guarantees.
 7. **What is the FIRST phase, and what is deliberately not in it?** Not the whole plan —
    the one question the project should answer first, and the things that are tempting but
    must wait. Order by risk: the assumption that would hurt most if it turned out wrong goes

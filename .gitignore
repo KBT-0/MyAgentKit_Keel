@@ -5,6 +5,8 @@
 .DS_Store
 Thumbs.db
 desktop.ini
+__pycache__/
+*.py[cod]
 *.swp
 .idea/
 .vs/
@@ -14,3 +16,13 @@ desktop.ini
 
 # Agent tooling working copies, never repository content.
 .claude/worktrees/
+
+# Private invocation diagnostics and subscription usage never belong in a public push.
+/.myagentkit/
+# Raw review evidence holds the whole diff and the reviewing CLI's own output. It stays
+# local; publish a deliberately scrubbed `-summary.md` instead (re-included at the bottom).
+/docs/reviews/????????T??????Z-*.md
+/docs/handoffs/*-claude-propose.json
+# Legacy name from before every reviewer shared one Markdown format.
+/docs/reviews/*-claude-review.json
+!/docs/reviews/*-summary.md

@@ -1,4 +1,203 @@
-# What was verified in v0.1, and how
+# Acceptance evidence
+
+## v0.7 development — 2026-09-05
+
+### Role-neutral review gate — Claude Opus 5 session
+
+Ran by Claude Opus 5 on 2026-09-05, on the owner's checkout, on top of the uncommitted
+Codex/GPT-6 Astra work described in the sections below. NOT independently reviewed — see
+"What this session did NOT establish" at the end of this subsection.
+
+**Both directions ran live**, against the same commit in a synthetic repository built for
+the purpose (a two-function money module with a real integer-division defect):
+
+| | reviewer | model | outcome |
+|---|---|---|---|
+| `--reviewer claude` | Claude Code 2.1.261 | `claude-opus-5` (attested via `modelUsage`) | completed, `VERDICT: Reject`, 7 findings |
+| `--reviewer codex` | Codex CLI | `gpt-6-astra` (requested pin, unattested) | completed, `VERDICT: Accept with Manual Checks` |
+
+Both reports were compared field by field: the header field list is byte-identical, each
+carries exactly one `VERDICT:` line, and both record the same `fingerprint` and
+`diff_sha256` for the shared scope. That the two models reached different verdicts on the
+same diff is the decorrelation the gate exists for; it is not a defect in either adapter.
+
+**Eight gates were broken on purpose and observed RED**, each caught by a named negative
+test, then restored:
+
+| Deliberate break | Test that went red |
+|---|---|
+| Codex grows an extra header column | `test_both_reviewers_publish_one_identical_evidence_format` |
+| Claude renames a header field on its side only | `test_both_reviewers_publish_one_identical_evidence_format` |
+| Wrapper stops refusing an empty Codex pin | `test_an_unpinned_model_is_refused_in_both_directions` |
+| Codex adapter stops refusing an empty pin | `test_an_unpinned_model_is_refused_in_both_directions` |
+| A failed run is allowed to publish a verdict | `test_the_shared_renderer_refuses_a_drifted_header_or_a_verdict_without_a_run` |
+| The renderer stops enforcing the field list | `test_the_shared_renderer_refuses_a_drifted_header_or_a_verdict_without_a_run` |
+| The model's own verdict line is left in the body | `test_codex_wrapper_rejects_absent_and_conflicting_final_evidence` |
+| The `--reviewer` closed list is opened up | `test_the_wrapper_accepts_no_reviewer_it_cannot_name` |
+
+The verdict-stripping gate was not written speculatively: the first run of the new
+cross-format test found that Codex's own prose repeated its `VERDICT:` line into the report
+body, so a completed Codex review published two verdict lines and a FAILED one published a
+verdict it had not earned. The fix promotes the verdict out of the prose in the shared
+renderer, where no adapter can reintroduce it.
+
+`./scripts/check.sh --self-test` passes: 33 adapter/process/accounting/quota tests (up from
+29), two packaging/bootstrap tests, the bootstrap and core negative cases, and the packaged
+Codex plugin runtime re-checked against canonical core.
+
+**A test-harness defect was found and fixed while proving the above.** An early version of
+the unpinned-model test cleared the pin through an environment variable, which POSIX `:-`
+expansion then filled from the script default — so the test launched the REAL Claude CLI
+instead of a fixture. It was killed. The suite's `review_env` now points both
+`CLAUDE_CLI_BIN` and `REVIEW_CLI_BIN` at a nonexistent path by default, so a test that
+forgets its fixture fails to launch rather than spending money.
+
+**What this session did NOT establish:**
+
+- No independent review of any of it. This session wrote the changes; the kit's own rule
+  forbids it reviewing them. Astra reviews in the morning.
+- The live runs used one small synthetic diff on one machine. They prove the two paths
+  execute and agree on format, not that either handles a large or unusual repository.
+- Codex's hook event names and schema were not verified, which is why no `overlays/codex/`
+  was written. `openai/codex-plugin-cc` availability was not checked either.
+- The `model_attested` distinction is a statement about what each CLI reports, not an
+  independent verification that a specific model served the request.
+
+### Resumed Claude review and remediation
+
+Latest follow-up: the owner requested no default monetary cap for reviews and chose to
+start Claude manually. The no-default/explicit-budget regression was observed RED then
+GREEN. After implementation, the owner-checkout `./scripts/check.sh --self-test` passed
+with 29 adapter tests, two packaging/bootstrap tests, and core negative cases. Plugin and
+changed-skill validation and `git diff --check` passed. No live model call, reinstall,
+commit, or push was performed for this follow-up. Independent review remains pending.
+
+The owner resumed the paused work and explicitly requested Claude review instead of another
+Codex review. The first resumed Claude Opus 5/high invocation reached its 600-second limit
+without stdout, stderr, final evidence, or reported token usage. It was stopped and recorded
+as failed/timeout, with unknown cost rather than zero cost. Its raw local evidence is
+`docs/reviews/20260905T080440Z-94d55e741d99-claude-review.json`; accounting is in
+`.myagentkit/usage/20260905T081440Z-25bbae76d0f1.json`. These artifacts remain ignored.
+No accepting review, commit, or push resulted from this invocation.
+
+While the owner checkout remained frozen for review, Codex / GPT-6 Astra verified the five
+previously reported Sol findings in an isolated working copy. New regressions were observed
+failing for missing kit architecture guidance, raw review archives not ignored by the
+bootstrap template, archive failure leaving completed usage, stale Codex results after a
+checkout mutation, and temporary output files exceeding a supposed hard capture limit.
+The fixes share snapshot validation across both providers, publish immutable evidence
+before completed accounting, include the omitted guidance/ignore rules, and bound captured
+stdout/stderr with pipes. The separate Codex CLI-owned final-message file is checked after
+execution; its on-disk size is not promised to be bounded by this capture mechanism.
+
+The corrected isolated-copy gate subsequently passed with 28 adapter/process/accounting/
+quota methods, two packaging/bootstrap tests, and bootstrap/core negative tests under
+Python 3.14. The exclusive-write/path-containment regression passed. The new bootstrap
+test first reproduced the accidental installation of local bytecode, then passed after
+the installer excluded it. The official plugin validator and git whitespace check passed.
+These are offline checks, not Claude acceptance of the corrected source. The next live
+review requires the owner's renewed authorization after the timeout.
+
+After transfer to the owner checkout, `./scripts/check.sh --self-test` passed with the
+same 28 plus two tests and core negative cases. The official plugin validator and
+`git diff --check` passed there too. The updated plugin source has not been reinstalled;
+no accepting review, commit, or push is claimed. This final note is documentation-only.
+
+### Usage/recovery follow-up
+
+The owner requested usage attribution in both directions, useful continuation on exhausted
+or unresponsive children, and a push after verification. Before implementation, regressions
+demonstrated that quota failures had no normalized classification/usage record and timeout
+discarded already-emitted usage. Both tests failed for those exact missing behaviors.
+
+The updated offline suite passed: nineteen adapter/process/accounting test methods and one
+packaging method, plus the bootstrap and core negative tests. Cases include Claude and Codex
+quota/timeout, partial-cost retention, process-group termination, missing usage as unknown,
+cache/reasoning non-double-counting, task filtering, and ignored local accounting records.
+Fresh independent review and the push are pending in the current work note; green tests are
+not substituted for that review. The original invocation history below is retained as dated
+history, not a claim that later code was reviewed by the earlier Claude session.
+
+A first Codex Sol review attempt was stopped at its 600-second deadline with no final
+message or usage. The attempt was recorded as failed/unknown, not as a zero-cost review.
+Diagnosis reproduced a large-input stdin deadlock in the polling runner. The 200 KB
+slow-reader regression was observed failing before stdin changed to a complete temporary
+file. A live read of Codex's official account-quota endpoint succeeded without a model turn;
+three offline tests cover its allowed methods, privacy filtering, and bounded failure.
+These corrections and quota observations require the next fresh review, not retroactive
+approval from the timed-out attempt.
+
+### Initial bridge validation
+
+Implemented by Codex / GPT-6 Astra in a temporary clone of clean kit HEAD
+`c358c917c212e002ae220926e1fc161ef240cec0`, on macOS with Python 3.14, Codex CLI 0.153.4,
+and Claude Code 2.1.261. No commit, push, or public release was performed.
+
+- Offline adapter regressions, packaged-runtime drift tests, syntax checks, and the
+  bootstrap's absent-configuration RED/configured-fixture PASS were executed successfully.
+  The pre-review `./scripts/check.sh --self-test` passed. These use synthetic repositories
+  and fake CLIs; they do not spend model budget or prove real provider behavior.
+- Official plugin and both skill validators passed. PyYAML was installed only into a
+  temporary validator dependency directory; it is not a kit runtime dependency.
+- Legacy transcript-only and conflicting-verdict regression tests were observed failing
+  before the wrapper was fixed. Both then passed.
+- A real fresh Claude Opus 5 / high review completed with structured evidence, verified
+  `modelUsage`, and a stable checkout fingerprint. The bridge exited 0 for successful
+  evidence collection; the actual verdict was **Reject**, not approval. The invocation
+  used 24 turns, a 600-second timeout, and a $3 CLI API-cost limit. Evidence:
+  local raw file `docs/reviews/20260905T011858Z-215555c43676-claude-review.json`.
+  This proves the installed CLI accepted the adapter flags and returned its real result.
+- Confirmed review findings led to fixture environment isolation, missing-test/completion
+  evidence checks, negative cases for the new gate branch, preserved legacy model defaults,
+  explicit custom-guidance configuration, caller metadata, and documentation corrections.
+  Three fake-CLI reports accidentally created in the temporary kit checkout were removed;
+  they were not genuine reviews and were never committed or copied to the owner checkout.
+
+- The post-fix `./scripts/check.sh --self-test` passed: eleven adapter test methods, one
+  packaging test method, all existing core negative cases, and explicit rejection of a
+  missing review test file, a failing runner, and a zero-exit runner with no evidence.
+  The official plugin and both skill validators passed again after the corrections.
+
+- The same full self-test passed in the owner checkout after transfer.
+  `./scripts/review.sh --self-test` also passed with fixture reports confined to temporary
+  repositories. The documented shell entry points are executable.
+- `myagentkit@personal` version 0.1.0 was installed and reported both installed and enabled
+  by `codex plugin list --marketplace personal --json`. Its source is the owner checkout;
+  the cached plugin at `~/.codex/plugins/cache/personal/myagentkit/0.1.0` passed the official
+  plugin validator. Packaging comparison and `git diff --check` passed in the owner checkout.
+- A second fresh review of the corrections failed with Claude session-limit HTTP 429,
+  CLI exit 1 and bridge exit 5. No verdict was returned. The CLI reported quota reset at
+  08:50 Europe/Istanbul on 2026-09-05. Evidence:
+  local raw file `docs/reviews/20260905T013255Z-f2da3898036f-claude-review.json`.
+- A real `propose` call through the installed cached plugin, targeting a disposable counter
+  fixture, failed with the same HTTP 429 before model work. It used 180 seconds, eight turns,
+  and a $1 API-cost limit; it returned no patch. Evidence:
+  local raw file `docs/handoffs/20260905T013656Z-7597120cc2e8-claude-propose.json`.
+
+The first Reject must not be cited as acceptance of subsequent fixes. No source was edited
+while either review was running. Fresh acceptance of the corrected code and a successful
+live proposal remain outstanding; no third review or automatic quota-limit retry was made.
+The quota blocker is not a skill failure and was not converted into successful evidence.
+
+### Disposition of first-review concerns
+
+Confirmed defects were fixed and checked as described above. Implicit skill discovery stays
+enabled because it is a requested feature; host authorization and round limits are explicitly
+documented as instructions rather than programmatic guarantees. Multiple final verdict lines
+remain a deliberate fail-closed rejection, including quoted examples: choosing the last one
+could silently replace a conflicting verdict. The different-model rule remains in README's
+recommended-setup section; the adapter records reported caller identity but does not claim
+to attest it. The usage follow-up keeps raw Claude JSON/account diagnostics local and ignored;
+scrubbed review summaries remain versionable. Tests are isolated from the real repository. Documentation-only evidence
+updates after the failed re-review are not presented as independently approved source.
+
+Not verified: an OS-level read-only mount, adversarial CLI tool-denial testing, a successful
+live patch-proposal invocation, Python 3.10 execution, Linux/Windows execution, or skill discovery
+in a newly opened Codex conversation. Python 3.10 is the intended minimum, not a tested
+version. Task-level authorization and round counts are host instructions; the adapter
+does not enforce a cross-call session budget. Subscription quota accounting is not promised.
+
+## Historical v0.1 record
 
 A kit whose central rule is "a gate you have only seen pass has not been tested" cannot ship
 on the strength of its author's assurance. This page records what was actually executed, and

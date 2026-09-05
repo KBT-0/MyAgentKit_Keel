@@ -30,7 +30,64 @@ scratch.
 
 ## Ecosystem findings
 
-_(none yet — the first entries arrive with the first research pass)_
+### 2026-09-05 — Owner-selected review budget policy
+
+The owner explicitly requested no default monetary cap for reviews and chose to start the
+pending Claude review manually. Review invocations now omit the CLI budget flag unless a
+cap is explicitly supplied. Existing timeout, turn, output, accounting, and authorization
+controls remain; proposal defaults are unchanged. A fake-CLI regression first rejected
+the previously injected default flag and then verified omitted and explicit-cap calls.
+
+### 2026-09-05 — Codex-host Claude delegation — ACCEPTED for owner-requested implementation
+
+This targeted implementation check is not a full ecosystem research pass. Current Codex
+skills/plugins and Claude headless structured output allow the inverse of the kit's
+original Claude-host/Codex-reviewer workflow without an MCP service or runtime SDK.
+Sources checked: https://learn.chatgpt.com/docs/build-skills,
+https://learn.chatgpt.com/docs/build-plugins, https://code.claude.com/docs/en/headless,
+and https://code.claude.com/docs/en/cli-reference. Installed interfaces: Codex 0.153.4 and
+Claude Code 2.1.261. The live review and execution limits are recorded in docs/ACCEPTANCE.md.
+
+The implementation keeps Claude read-only and returns patch proposals to the Codex writer.
+Unrestricted concurrent writers, a background daemon, and an unlimited fix loop were not
+implemented: they need additional ownership, isolation, and spending controls. No new MCP
+server or runtime third-party package is needed. Skill discovery does not authorize spend.
+
+The old wrapper accepted transcript-only or conflicting verdict evidence. Regression tests
+were first observed failing on both conditions, then passed after strict final-message
+validation. A quoted second verdict is intentionally rejected as ambiguous, not resolved
+by trusting the last line. Fresh review also exposed self-test environment leakage and
+absent-test evidence; their fixes are regression-tested in temporary repositories.
+
+The owner subsequently requested per-task usage history and useful continuation when a
+child exhausts quota. The real failed Claude call had already consumed tokens and reported
+API-equivalent cost, so success-only accounting would hide spend. Both directions now share
+a bounded process runner and a local usage recorder. Timeout preserves partial output;
+subscription percentages are not synthesized from token counts or public price tables.
+The follow-up review found that usage could say completed before an archive write failed,
+and the shell-owned Codex diff was not validated against later checkout state. Both adapters
+now archive evidence before recording completion, and use the same snapshot implementation
+for scope and staleness. Negative tests reproduce archive failure and checkout mutation.
+Separate tests reject omitted kit architecture guidance and raw archives entering review
+scope. Captured stdout/stderr now use bounded pipes: polling the size of temporary files
+was not a hard disk bound, even when returned output was truncated correctly.
+Running the new Python helpers also exposed an installer assumption: bootstrap copied local
+bytecode alongside source, and the acceptance fixture then tried to decode it as text.
+Bootstrap now skips Python bytecode; a synthetic binary-cache test was observed failing
+before the correction and passes afterward. Bytecode is also ignored in both checkouts.
+Official usage semantics were checked at https://learn.chatgpt.com/docs/pricing and
+https://code.claude.com/docs/en/costs. Those values are not a per-call subscription debit.
+Publishing raw account diagnostics was rejected; local ignored JSON retains the evidence,
+while public acceptance notes carry only deliberately scrubbed conclusions.
+The official Codex app-server `account/rateLimits/read` method provides supported account
+window percentages and plan labels without starting a model turn. A live read succeeded;
+the adapter uses bounded optional observations rather than scraping credentials or calling
+undocumented endpoints. Before/after account observations are not per-invocation debits.
+
+A live Codex run exposed a large-stdin deadlock in the new polling runner: after a short
+`communicate()` timeout, retrying with no input could strand the unread remainder. A slow
+child and a 200 KB input reproduced the failure before the fix. The shared runner now gives
+the child a complete temporary stdin file and monitors its process, not partial pipe writes.
 
 ---
 

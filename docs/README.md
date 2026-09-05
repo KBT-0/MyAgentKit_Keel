@@ -16,6 +16,7 @@ you should be deleted, and a rule you cannot find a failure mode for was never l
 | [knowledge-has-three-horizons](knowledge-has-three-horizons.md) | Permanent, episodic and momentary knowledge need three different files |
 | [decorrelated-review](decorrelated-review.md) | The author of a change never reviews it |
 | [context-is-a-budget](context-is-a-budget.md) | Every always-loaded file is a bill paid per session |
+| [delegation-is-not-symmetric](delegation-is-not-symmetric.md) | The review roles swap; the plumbing under them does not |
 
 Operational pages: [UPDATING](UPDATING.md) (how a project takes kit changes, and how it
 sends lessons back), [RETROFIT](RETROFIT.md) (installing into a project already under way),

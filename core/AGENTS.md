@@ -136,6 +136,11 @@ FAILING for the right reason.
   must pass the review gate before commit. Canonical protocol: `docs/REVIEW_GATE.md`.
   Review happens in a FRESH session, preferably a different tool and the strongest
   available model. The session that wrote a patch never reviews or approves its own patch.
+- **AUTHOR and REVIEWER are roles, not vendors.** Which model writes and which reviews is a
+  project setting recorded in `scripts/review.sh`, and it is expected to swap when the
+  budgets do. The rule is that they are DIFFERENT models, never that a given tool holds a
+  given side. `./scripts/review.sh --reviewer <name>` runs either direction and both archive
+  the same evidence format.
 - Verdicts: `Accept` / `Accept with Manual Checks` / `Reject`. Manual checks are written to
   `docs/STATE.md` before commit.
 - A passing compile is not a review; green tests are necessary but not sufficient;
@@ -177,7 +182,9 @@ on, it is closed for this session.
 - The work reaches an OPEN design item → you do not decide design. Ask.
 - A new third-party dependency or MCP server would be needed → ask first, always.
 - A required verification cannot be run → say "not run" and stop. NEVER report a check you
-  did not execute.
+  did not execute. If a delegated reviewer is unavailable, stop only the affected approval,
+  commit, or release: record the pending review and continue independent in-scope work.
+  Do not retry indefinitely, silently change the reviewing model, or self-approve its patch.
 - Parallel work is starting while contracts are unfrozen or the worktree policy would be
   violated (`docs/WORKFLOW.md`) → flag before proceeding.
 {{PROJECT_STOP_RULES}}

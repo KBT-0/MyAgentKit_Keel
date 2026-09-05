@@ -24,9 +24,11 @@ reading of that signal is architectural decay, not a missing tool.
 Two documentation subdirectories exist for process output rather than design:
 
 - `docs/reviews/` — raw review-gate output, one file per review
-  (`<UTC-timestamp>-<branch>.md`), recording model, reasoning effort, sandbox mode and base
-  ref. Written by the review wrapper and never edited afterwards: it is evidence, not a
-  document.
+  (`<UTC-timestamp>-<random>-<reviewer>-review.md`), recording the reviewing model and
+  whether it is attested, reasoning effort, sandbox mode, limits, scope and base ref.
+  Every reviewer writes the same header table and one verdict line, so the records stay
+  comparable when the author and reviewer roles swap. Written by the review wrapper and
+  never edited afterwards: it is evidence, not a document.
 - `docs/worktree-notes/` — progress notes from sessions working on a branch or in a
   worktree, one file per branch, so `docs/STATE.md` never becomes a merge conflict. The
   integrating session folds a note into STATE.md at merge time and deletes it.

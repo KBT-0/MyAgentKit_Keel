@@ -11,6 +11,90 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ---
 
+## v0.7 — 2026-09-05 (unreleased)
+
+**The kit no longer has an opinion about which model writes and which reviews.** The rule
+was always "the author never reviews its own patch, and the reviewer is a different model".
+The tooling did not say that: `review.sh` was pinned to Codex, and the documents described
+Claude as the author. A real project ran out of the author's budget and swapped the roles;
+the kit did not support the arrangement it had been claiming to require.
+
+- `./scripts/review.sh [scope] --reviewer codex|claude` runs either direction. The default
+  is the one configured at the top of the script, and the script accepts nothing else — the
+  reviewer name is matched against a closed list and no flag is passed through to a CLI.
+- **Both directions publish ONE evidence format**: the same header table, exactly one
+  `VERDICT:` line (or none when the run failed), and the same
+  `docs/reviews/<stamp>-<reviewer>-review.md` naming. The renderer refuses a header that has
+  drifted and refuses a verdict for a run that did not complete, so this is enforced rather
+  than agreed. Records made before and after a role swap can be compared.
+- **Both models are pinned by name and the wrapper refuses to run unpinned.** A record that
+  said "CLI default" named nothing a later review could be compared against. Claude's pin is
+  additionally ATTESTED against the CLI's own `modelUsage`; Codex publishes no model identity
+  in its output, so its record says the pin is requested and unattested. The evidence states
+  which of the two it is.
+- `AGENTS.md`, `WORKFLOW.md` and `REVIEW_GATE.md` now name AUTHOR and REVIEWER as roles and
+  say the roles are expected to swap with the budget.
+- The setup interview asks three separate questions — which model authors, which reviews,
+  and which budget is scarce — instead of asking about budget and assuming the rest.
+- New `docs/delegation-is-not-symmetric.md` records what in-session delegation actually
+  exists in each direction, and why there is no `overlays/codex/`. Nothing was written from
+  an inferred schema.
+
+**ACTION — existing projects.** `scripts/review.sh` and the adapter Python files beside it
+are PROJECT-OWNED: `sync-kit.sh` will not touch them, by design. To take this change:
+
+1. Copy `core/scripts/review.sh` over your own, then re-apply any local edits.
+2. Copy `core/scripts/{claude_bridge,codex_bridge,agent_process,agent_usage,codex_quota}.py`
+   and `core/scripts/test_claude_bridge.py`.
+3. **Fill in `DEFAULT_REVIEWER`, `CODEX_MODEL` and `CLAUDE_MODEL` at the top of
+   `scripts/review.sh`.** Both model pins ship EMPTY and the wrapper stops until they are
+   set. This is deliberate: an unpinned reviewer archives whatever its CLI defaulted to.
+4. Run `./scripts/check.sh --self-test` and `./scripts/review.sh --self-test`.
+
+Older reports named `<stamp>-<branch>.md` or `<stamp>-codex.md` are left alone; they stay
+readable, they are simply not in the new shape.
+
+Codex can host the cross-model workflow through the MyAgentKit Codex plugin.
+
+- Two skills request fresh Claude review-and-fix and implementation proposals. Codex remains
+  the writer. Both support explicit and implicit discovery; spending still needs authorization.
+- The Claude adapter restricts tools, disables customizations/MCP, pins the model, bounds
+  execution, and archives structured results with source hashes. Stale or absent evidence fails.
+- The wrapper gained a Claude adapter beside the Codex one; the kit-root wrapper now
+  delegates to the core implementation rather than carrying a second copy. Codex collection
+  rejects absent and conflicting final verdicts. (Reviewer selection and model pinning were
+  reworked later in this same release — see the role-neutrality entry above for the shape
+  that actually ships.)
+- The new kit-source `scripts/check.sh` runs packaging drift, adapter regressions, and
+  bootstrapped-project acceptance. Its self-test proves existing and new rejection paths.
+- Both CLI directions now have bounded process execution and local per-invocation usage
+  records, including partial/failing calls. Caller/task labels make review rounds comparable.
+  Missing subscription percentages remain unknown, not inferred from tokens or API dollars.
+- Quota, context exhaustion, timeout, and invalid replies stop the delegation loop while
+  the host continues independent authorized work. Required review still blocks its protected
+  commit/push. No automatic retry, credit purchase, or silent model fallback was added.
+- Codex calls also capture bounded official account-quota observations before/after work,
+  including the reported plan and window percentages. These are not per-call consumption
+  claims. `MYAGENTKIT_CAPTURE_QUOTA=0` disables the optional reads.
+- Both reviewers now capture and validate the same checkout snapshot, reject stale or
+  mismatched reference context, and persist immutable evidence before reporting completed
+  usage. Output capture uses bounded pipes rather than unbounded temporary output files.
+- Bootstrapped projects ignore raw review archives; deliberately scrubbed summaries remain
+  versionable. Claude's kit-layout guidance includes the architecture document.
+- Bootstrap excludes locally generated Python bytecode from installed project files.
+- Reviews no longer impose a default monetary cap. Claude's `--max-budget-usd` is sent
+  only when explicitly supplied; timeout/turn/output protections remain unchanged.
+
+**ACTION:** existing projects must hand-merge the project-owned review/check scripts and
+review policy, and copy the Python runtime/test companions listed in
+`core/docs/DEV_SETUP.md`. Merge the private usage and raw archive ignore rules from
+`core/.gitignore`, and add `core/docs/USAGE.md`. Do not
+overwrite customized project gates. Codex plugin installation is separate; see
+`docs/CODEX.md`. Live validation and review debt are recorded in `docs/ACCEPTANCE.md`.
+Python 3.10+ is now required for both live providers and their self-tests. Missing test
+files and missing completion evidence fail closed. Runtime updates require rebuilding and
+reinstalling the Codex plugin; Claude's cross-review command also carries recovery guidance.
+
 ## v0.6 — 2026-07-27
 
 Renamed: **MyAgentKit → MyAgentKit_Keel**. A keel is a ship's backbone and the first part

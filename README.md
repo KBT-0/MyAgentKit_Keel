@@ -6,7 +6,7 @@ than requested**, memory that survives across tools and sessions, and a setup th
 template you copy and outgrow — installation is a conversation with an agent, and every
 project that uses it can push what it learned back into the kit.
 
-> **Status: v0.6 — extracted from a codebase in active use.** `bootstrap.sh` produces a
+> **Status: v0.7 development — extracted from a codebase in active use.** `bootstrap.sh` produces a
 > working skeleton in an empty directory, and each gate has a negative test that was
 > observed making it fail. v0.1 was reviewed by two other models and **both returned
 > Reject** — seventeen findings, then eleven more against the first round's fixes, because
@@ -80,7 +80,7 @@ at roughly 150 tokens of always-on cost. Then open your agent in the project and
 > Read `setup/INTERVIEW.md` and start the setup.
 
 For the review gate you also want a SECOND model on the machine — see
-[Recommended setup](#recommended-setup-claude-code-as-the-host-codex-as-the-second-opinion).
+[Recommended setup](#recommended-setup-either-host-an-independent-second-opinion).
 The setup interview will ask, and can install it for you.
 
 `bootstrap.sh` copies files and configures git hooks. It does not ask you anything and it
@@ -98,13 +98,15 @@ answered by a script. Pass `--note "..."` to leave an agenda the interview must 
 | `core/` | The universal layer: constitution, the three knowledge files (PROJECT / PHASES / STATE), architecture map, workflow, review gate, handoff template, gates, hooks |
 | `overlays/` | Optional layers, added and never assumed: `unity` for the engine (assembly layout, the batchmode test gate, and a default MCP server — CoplayDev's tool-agnostic `MCP for Unity` — with the scoping traps that cost real time to find), `claude-code` for that tool's project-local hooks and review subagent |
 | `plugin/` | The Claude Code plugin: the three `/myagentkit:*` commands. Installed once per machine, not copied per project |
+| `plugins/myagentkit/` | The Codex plugin: Claude review-and-fix and implementation-proposal skills, with a bundled read-only adapter |
+| `.agents/plugins/marketplace.json` | The local Codex marketplace catalog; install from the kit repository root |
 | `patterns/` | Optional reading — the reasoning behind specific hard-won designs. Not copied by default |
 | `docs/` | Long-form rationale: why each rule exists, and the failure mode it prevents |
 | `sync-kit.sh` | Propagate kit updates into a project that already installed it |
 | `RESEARCH_LOG.md` | Dated findings with verdicts — including rejections, so they are not re-litigated |
 | `CONTRIBUTING.md` | How a project using the kit sends what it learned back |
 
-## Recommended setup: Claude Code as the host, Codex as the second opinion
+## Recommended setup: either host, an independent second opinion
 
 The kit's central review rule is that **the author of a change never reviews it**, and that
 the value of a second opinion is that it is *decorrelated* — a different model, not the same
@@ -114,13 +116,10 @@ one asked twice. That needs two CLIs.
 below is the one this was built and used on, and it is a recommendation rather than a
 requirement; swap either side and every rule and gate still works.
 
-**Run Claude Code as your main agent.** Two reasons, and they are worth separating. The
-durable one is structural: the integrations are asymmetric, and only this direction lets one
-model reach the other without leaving the session — see [below](#why-this-direction). The
-softer one is a preference: in my use the Anthropic models sit more comfortably in the
-driver's seat — planning, splitting work, keeping a long task on the rails, and often the
-coding itself. That is a judgement about *today's* models and it will age like every other
-such judgement in this file, so weigh it as a starting point rather than a finding.
+**Keep the host that suits the work.** Claude Code was the original main agent and remains
+supported. Codex can now call Claude without leaving its session too. The previous claim
+that only one direction could do this is no longer accurate. This integration does not
+establish which model is better at managing or implementing a particular project.
 
 With Claude Code you get:
 
@@ -164,9 +163,12 @@ Four things it does that a review command does not:
    your risky areas, your design authority, your worst failure mode reviewed first. A
    generic reviewer does not know that money paths in your codebase are more dangerous than
    everything else in it.
-3. **It archives evidence.** Every run writes `docs/reviews/<UTC-timestamp>-<branch>.md`
-   recording model, reasoning effort, sandbox mode, scope, branch and HEAD — and that file
-   is never edited afterwards. Six weeks later "was this reviewed, by what, at what
+3. **It archives evidence.** Every run writes
+   `docs/reviews/<UTC-timestamp>-<random>-<reviewer>-review.md` recording which model
+   reviewed and whether that model is attested, reasoning effort, sandbox mode, limits,
+   scope, HEAD, the checkout fingerprint and the diff hash — and that file is never edited
+   afterwards. Both reviewers write the SAME format, so a project that swaps the author and
+   reviewer roles can still line its records up. Six weeks later "was this reviewed, by what, at what
    setting?" is answerable instead of remembered.
 4. **It ends in a verdict that goes somewhere.** `Accept` / `Accept with Manual Checks` /
    `Reject`, with any manual checks written into `docs/STATE.md` as full sentences *before*
@@ -182,19 +184,21 @@ Practically: reach for `/codex:review` or `/codex:adversarial-review` whenever y
 another pair of eyes. Use `/myagentkit:cross-review` when the gate applies — risky diffs, and every
 change to a gate.
 
-### Why this direction
+### Codex as the host
 
-The integrations are asymmetric: OpenAI ships a Codex plugin that runs inside Claude Code,
-and there is no equivalent Anthropic-published plugin for Codex — its curated marketplace
-carries no Claude entry. So the host that can reach the other model in-session is Claude
-Code. That is the structural half of the recommendation, and unlike a claim about which
-model is smarter this month, it stays true until somebody ships the missing plugin.
+Install the kit's Codex plugin from the local checkout, then start a new thread:
 
-Running it the other way works. It costs you the in-session ergonomics, not the method:
-Codex reads `AGENTS.md` natively, and `docs/REVIEW_GATE.md` carries a paste-by-hand template
-for exactly that case. What you must not do is run both seats with the same model — that is
-the one substitution that breaks the gate rather than inconveniencing it, because two
-correlated opinions are one opinion.
+```sh
+codex plugin marketplace add /absolute/path/to/MyAgentKit_Keel
+codex plugin add myagentkit@personal
+```
+
+Use `$myagentkit-review`, `$myagentkit-delegate`, `/skills`, or a direct request such as
+"Ask Claude to review this and fix confirmed findings." These are native Codex skills,
+not Claude-style custom slash commands. Review manages a bounded verification, repair,
+and fresh re-review loop. Delegation returns a patch for Codex to inspect and integrate,
+not a second unrestricted writer. Automatic invocation requires explicit spending
+authorization. See [Codex setup and limits](docs/CODEX.md) before installation.
 
 ## What is a recommendation, and what is a requirement
 
@@ -211,17 +215,18 @@ or whether you run one at all.
   `overlays/claude-code/` — an overlay you take deliberately, not part of the core. The
   three `/myagentkit:*` commands are not there; they are a plugin, installed once per
   machine and upgraded in place.
-- `scripts/review.sh` targets the Codex CLI's flags. `REVIEW_CLI_BIN` swaps the binary, not
-  the contract; another reviewer needs its invocation block edited. The script says so.
+- `scripts/review.sh --reviewer codex|claude` runs either direction; the default is a
+  project setting, not a kit opinion. Both pin their model by name and refuse to run
+  unpinned. Neither a successful subprocess nor a confident transcript is treated as
+  approval.
 
-Using neither costs you the editor-side hooks and one command. Every rule and every gate
-still runs.
+Using neither costs you the editor-side hooks and live CLI review automation. The rules
+remain usable with manual review; the offline acceptance and review self-tests require
+Python 3.10+, Git, and a POSIX shell, but no authenticated AI CLI.
 
-**That second bullet is the most useful thing you could send back.** If you wire the review
-gate to a different CLI — Gemini, a local model, whatever exists by the time you read this —
-that invocation block is a PR-shaped hole, and so is a port of the commands to another host
-agent. The gate's contract is small and written down in `docs/REVIEW_GATE.md`: read-only,
-scope-limited, verdict-terminated. Anything that satisfies it belongs here.
+Additional CLI adapters remain welcome. Preserve scoped read access, independent sessions,
+durable final evidence, fail-closed behavior, negative tests, and a real invocation proving
+the CLI contract. Supporting another binary does not mean accepting another CLI's flags.
 
 ## How updates work
 

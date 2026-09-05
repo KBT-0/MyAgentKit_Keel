@@ -1,0 +1,6 @@
+interface:
+  display_name: "MyAgentKit: Delegate to Claude"
+  short_description: "Get a scoped Claude patch for Codex to integrate"
+  default_prompt: "Use $myagentkit-delegate to ask Claude for a scoped implementation proposal and integrate it."
+policy:
+  allow_implicit_invocation: true

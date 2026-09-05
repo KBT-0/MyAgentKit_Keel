@@ -1,0 +1,21 @@
+{
+  "name": "myagentkit",
+  "version": "0.1.0+codex.20260905090559",
+  "description": "Let Codex request fresh Claude reviews and implementation proposals, verify findings, and iterate safely.",
+  "author": {
+    "name": "Kemal Berhan TAN"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "MyAgentKit",
+    "shortDescription": "Claude review and delegation from Codex.",
+    "longDescription": "Run fresh read-only Claude sessions, archive structured evidence, and let Codex verify findings and implement scoped fixes.",
+    "developerName": "Kemal Berhan TAN",
+    "category": "Productivity",
+    "capabilities": [],
+    "defaultPrompt": [
+      "Ask Claude to review this change, then fix confirmed findings.",
+      "Delegate a scoped implementation proposal to Claude."
+    ]
+  }
+}

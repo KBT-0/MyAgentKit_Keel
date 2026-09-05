@@ -50,12 +50,20 @@ the core and readable by anything.
 
 ## What `/myagentkit:cross-review` needs
 
-A SECOND CLI on the machine. `scripts/review.sh` shells out to it, and out of the box it
-targets the Codex CLI's interface. Install it and log in, or the command reports that it is
-missing and falls back to the paste-by-hand template in `docs/REVIEW_GATE.md`.
+A SECOND CLI on the machine — a DIFFERENT model from the one authoring the change, in
+whichever direction the project configured. `scripts/review.sh` ships adapters for two,
+selected with `--reviewer codex` or `--reviewer claude`, and both archive the same evidence.
+Install the other one and log in, or the command reports that it is missing and falls back to
+the paste-by-hand template in `docs/REVIEW_GATE.md`.
+
+This overlay is for Claude Code as the HOST, not for Claude Code as the author. A project
+where Codex writes and Claude reviews still installs it if anyone opens Claude Code in the
+repository. There is no `overlays/codex/`, and
+[docs/delegation-is-not-symmetric.md](../../docs/delegation-is-not-symmetric.md) says why.
 
 The vendor plugin (`openai/codex-plugin-cc`) is OPTIONAL and is not used by
-`scripts/review.sh`; it adds in-session delegation commands. `docs/DEV_SETUP.md` §3 covers
+`scripts/review.sh`; it adds in-session delegation commands, which the kit does not ship for
+this direction. `docs/DEV_SETUP.md` §3 covers
 both, including the two cautions worth reading before installing it.
 
 Install it ALONGSIDE `/myagentkit:cross-review`, not instead of it. Its `/codex:review` is a
