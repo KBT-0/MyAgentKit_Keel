@@ -369,6 +369,29 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(header_of(failed['evidence'])['fingerprint'],
                          header_of(completed['evidence'])['fingerprint'])
 
+    def test_removing_legacy_archives_excludes_transcripts_but_keeps_summaries(self):
+        archive = self.repo / 'docs/reviews/20260101T000000Z-master.md'
+        archive.parent.mkdir(parents=True, exist_ok=True)
+        archive.write_text('PRIVATE_LEGACY_TRANSCRIPT\n')
+        self.git('add', '-f', str(archive))
+        commit = ('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
+                  '-c', 'core.hooksPath=/dev/null', '-c', 'commit.gpgsign=false', 'commit', '-qm')
+        self.git(*commit, 'Synthetic legacy archive')
+        base = self.git('rev-parse', 'HEAD').stdout.decode().strip()
+        self.git('rm', '--cached', str(archive))
+        summary = archive.with_name('20260101T000000Z-review-summary.md')
+        summary.write_text('PUBLIC_REVIEW_SUMMARY\n')
+        self.git('add', str(summary), 'file.py')
+        diff = bridge.snapshot(self.repo, 'uncommitted', None)[2]
+        self.assertNotIn('PRIVATE_LEGACY_TRANSCRIPT', diff)
+        self.assertIn('PUBLIC_REVIEW_SUMMARY', diff)
+        self.git(*commit, 'Untrack legacy evidence and publish summary')
+        for scope, ref in (('base', base), ('commit', 'HEAD')):
+            diff = bridge.snapshot(self.repo, scope, ref)[2]
+            self.assertNotIn('PRIVATE_LEGACY_TRANSCRIPT', diff)
+            self.assertIn('PUBLIC_REVIEW_SUMMARY', diff)
+        self.assertEqual(archive.read_text(), 'PRIVATE_LEGACY_TRANSCRIPT\n')
+
     def test_proposal_needs_a_handoff(self):
         code, result = self.run_bridge(mode="propose")
         self.assertEqual(code, 2)
@@ -749,8 +772,8 @@ if __name__ == "__main__":
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(BridgeTests)
     suite.addTests(unittest.defaultTestLoader.loadTestsFromTestCase(UsageTests))
     suite.addTests(unittest.defaultTestLoader.loadTestsFromTestCase(QuotaTests))
-    if suite.countTestCases() < 52:
-        raise SystemExit("FAIL: expected at least fifty-two review and usage regression tests")
+    if suite.countTestCases() < 53:
+        raise SystemExit("FAIL: expected at least fifty-three review and usage regression tests")
     result = unittest.TextTestRunner(verbosity=2).run(suite)
     if not result.wasSuccessful() or result.skipped:
         raise SystemExit(1)

@@ -13,6 +13,11 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## v0.7 — 2026-09-05 (unreleased)
 
+- The kit's own four legacy raw review archives are now untracked and preserved locally.
+  Reference and commit reviews exclude removed legacy transcripts while keeping scrubbed
+  summaries in scope. **ACTION:** use the same preserve-and-untrack migration for old
+  project archives; historical Git commits are not rewritten by this change.
+
 - The kit-source CI runs the full offline acceptance suite on Linux/macOS with Python
   3.10 and 3.14. Action revisions are pinned and jobs have read-only repository access.
   This does not run paid model calls or change installed projects' CI templates.

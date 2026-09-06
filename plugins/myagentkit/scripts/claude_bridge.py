@@ -20,6 +20,7 @@ VERDICTS = {"Accept", "Accept with Manual Checks", "Reject"}
 # embed its predecessors. The pattern covers EVERY reviewer's evidence, not just this
 # adapter's: when the roles swap, the other direction's reports sit in the same folder.
 ARCHIVES = (":(exclude)docs/reviews/*-review.md",
+            ":(exclude)docs/reviews/*-claude-review.json",
             ":(exclude)docs/handoffs/*-claude-propose.json", ":(exclude).myagentkit/usage/**")
 
 
@@ -37,13 +38,33 @@ def git(repo: Path, *args: str, allowed=(0,)) -> bytes:
 def snapshot(repo: Path, scope: str, reference: str | None) -> tuple[str, str, str]:
     """Capture review scope plus a fingerprint of the actual readable checkout."""
     head = git(repo, "rev-parse", "HEAD").decode().strip()
-    working = git(repo, "diff", "--binary", "HEAD", "--", ".", *ARCHIVES)
+    resolved = None
+    if scope != 'uncommitted':
+        if not reference or reference.startswith('-'):
+            raise BridgeError('a valid git reference is required')
+        resolved = git(repo, 'rev-parse', '--verify', reference + '^{commit}').decode().strip()
+    # Old reports used <timestamp>-<branch>.md. Also inspect the reference tree so
+    # removing an old tracked archive cannot send its entire transcript to a reviewer.
+    archives = set(ARCHIVES)
+    trees = {head, resolved} - {None}
+    if scope == 'base':
+        trees.add(git(repo, 'merge-base', resolved, head).decode().strip())
+    elif scope == 'commit':
+        trees.update(git(repo, 'rev-list', '--parents', '-n', '1', resolved).decode().split()[1:])
+    for ref in trees:
+        for raw in git(repo, 'ls-tree', '-r', '-z', '--name-only', ref, '--', 'docs/reviews').split(b'\0'):
+            if raw:
+                name = os.fsdecode(raw)
+                if re.fullmatch(r'docs/reviews/\d{8}T\d{6}Z-.+\.md', name) and not name.endswith('-summary.md'):
+                    archives.add(':(exclude,literal)' + name)
+    exclusions = sorted(archives)
+    working = git(repo, "diff", "--binary", "HEAD", "--", ".", *exclusions)
     for raw in git(repo, "ls-files", "--others", "--exclude-standard", "-z").split(b"\0"):
         if raw:
             name = os.fsdecode(raw)
             if name.startswith(".myagentkit/usage/"):
                 continue
-            if re.fullmatch(r"docs/reviews/\d{8}T\d{6}Z-[a-f0-9]{12}-(claude|codex)-review\.md", name) \
+            if (re.fullmatch(r"docs/reviews/\d{8}T\d{6}Z-.+\.md", name) and not name.endswith('-summary.md')) \
                     or re.fullmatch(r"docs/handoffs/\d{8}T\d{6}Z-[a-f0-9]{12}-claude-propose\.json", name):
                 continue
             if Path(name).name.startswith((".env", ".dev.vars")):
@@ -55,15 +76,12 @@ def snapshot(repo: Path, scope: str, reference: str | None) -> tuple[str, str, s
     else:
         if working.strip():
             raise BridgeError("reference reviews require a clean checkout; use --uncommitted")
-        if not reference or reference.startswith("-"):
-            raise BridgeError("a valid git reference is required")
-        resolved = git(repo, "rev-parse", "--verify", reference + "^{commit}").decode().strip()
         if scope == "commit" and resolved != head:
             raise BridgeError("--commit must be the checked-out HEAD so readable files match")
         if scope == "base":
-            diff = git(repo, "diff", "--binary", resolved + "...HEAD", "--", ".", *ARCHIVES)
+            diff = git(repo, "diff", "--binary", resolved + "...HEAD", "--", ".", *exclusions)
         else:
-            diff = git(repo, "show", "--format=fuller", "--binary", resolved, "--", ".", *ARCHIVES)
+            diff = git(repo, "show", "--format=fuller", "--binary", resolved, "--", ".", *exclusions)
             if not git(repo, "diff-tree", "--root", "--no-commit-id", "-r", resolved):
                 diff = b""
     fingerprint = hashlib.sha256(head.encode() + b"\0" + working).hexdigest()
