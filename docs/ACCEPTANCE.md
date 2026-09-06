@@ -1,5 +1,17 @@
 # Acceptance evidence
 
+## Interruption-safe scaffold follow-up (#7) — 2026-09-06
+
+Issue #7 arrived during the closure task. The new executable existing-file example
+passed normal-exit and process-group SIGINT/SIGTERM probes. Each retained the exact
+uncommitted bytes and original mode, deleted backups only after restoration, and
+terminated without continuing the self-test after signals. The regression initially
+failed because this example was absent; it does not claim the old upstream example
+truncated a tracked file. The original new-file example also rejects an occupied
+injection path and preserves its owner content. The final `./scripts/check.sh` passed with 59 runtime tests, eight kit tests,
+packaging parity and bootstrap acceptance. Its hosted matrix is pending. This scaffold
+change remains part of the pending review in #6.
+
 ## Final issue repairs and live plugin checks — 2026-09-06
 
 The final `./scripts/check.sh --self-test` passes on macOS/Python 3.14 with 59 runtime
@@ -7,7 +19,8 @@ tests, seven kit tests, installed core negative gates and packaged runtime parit
 The final two review findings and scanner error cases were reproduced before repair.
 The initial hosted matrix passed both macOS jobs but failed both Linux jobs; the scanner
 portability and negative-fixture repairs are included in this final local result.
-The replacement hosted matrix is pending.
+The [replacement hosted matrix](https://github.com/KBT-0/MyAgentKit_Keel/actions/runs/34035967123)
+passed all four Linux/macOS and Python 3.10/3.14 combinations at `842e78d`.
 
 The Codex plugin was reinstalled as `0.1.0+codex.20260906131755`; all 11 installed files
 match the source package. A fresh ephemeral Codex thread discovered both skills at that

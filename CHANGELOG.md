@@ -13,6 +13,12 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## v0.7 — 2026-09-05 (unreleased)
 
+- **Issue #7:** existing-file negative tests must restore current bytes and mode before
+  deleting backups, including on EXIT/INT/TERM. A separate scaffold example isolates
+  traps and terminates after signals; its regression preserves uncommitted content.
+  **ACTION:** prefer disposable snapshots, or update project-owned destructive probes
+  with restoration registered before mutation and interruption tests.
+
 - The final review exposed initially hidden index changes and a verdict-only manual-check
   section. Review now rejects assume-unchanged/skip-worktree entries before model launch
   and excludes verdict declarations from manual-check validation. **ACTION:** upgrade the

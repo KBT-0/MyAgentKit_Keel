@@ -16,6 +16,9 @@
 #   if ! sh "$0" >/dev/null 2>&1; then
 #     echo "  FAIL — domain/web baseline is already red; the injection would prove nothing."
 #     st_fail=1
+#   elif [ -e src/domain/.selftest.py ] || [ -L src/domain/.selftest.py ]; then
+#     echo "  FAIL — the injection path already exists; refusing to overwrite owner content."
+#     st_fail=1
 #   else
 #     mkdir -p src/domain && printf 'from myapp.web import router\n' > src/domain/.selftest.py
 #     boundary_status=0
@@ -31,3 +34,53 @@
 #   fi
 #
 # {{BOUNDARY_SELF_TESTS}}
+
+# Existing-file probes need a different cleanup contract. Prefer a disposable project
+# snapshot. If a test must modify an existing file, preserve its CURRENT bytes and mode
+# (including uncommitted edits), not merely HEAD. Register restoration before mutation,
+# restore before deleting backups, and exit after signal cleanup. Never replace the
+# caller's cleanup trap with one that only deletes the backup directory.
+#
+# This separate worked example runs in a subshell so its traps do not replace the
+# surrounding self-test traps. Its own backup directory is independent of the caller's.
+# Adapt the target and diagnostic to your gate. A failed restore retains the backup and
+# reports its location. SIGKILL/power loss cannot run shell traps: use a disposable
+# snapshot for destructive probes that need protection from those failures too.
+#
+# | if (
+# |   restore_target=src/domain/existing.py
+# |   [ -f "$restore_target" ] && [ ! -L "$restore_target" ] || exit 1
+# |   sh "$0" >/dev/null 2>&1 || exit 1
+# |   restore_backup=$(mktemp -d) || exit 1
+# |   if ! cp -p "$restore_target" "$restore_backup/original"; then
+# |     rm -rf "$restore_backup"
+# |     exit 1
+# |   fi
+# |   restore_and_exit() {
+# |     restore_exit=$1
+# |     trap '' INT TERM
+# |     trap - EXIT
+# |     if ! cp -p "$restore_backup/original" "$restore_target"; then
+# |       echo "FAIL: restore failed; original remains at $restore_backup/original" >&2
+# |       exit 1
+# |     fi
+# |     rm -rf "$restore_backup"
+# |     exit "$restore_exit"
+# |   }
+# |   trap 'restore_and_exit "$?"' EXIT
+# |   trap 'restore_and_exit 130' INT
+# |   trap 'restore_and_exit 143' TERM
+# |   printf 'from myapp.web import router\n' > "$restore_target" || exit 1
+# |   restore_gate_status=0
+# |   restore_gate_output=$(sh "$0" 2>&1) || restore_gate_status=$?
+# |   [ "$restore_gate_status" -ne 0 ] && printf '%s\n' "$restore_gate_output" |
+# |     grep -Fq 'FAIL [boundary]: the domain layer imports the web layer:'
+# | ); then
+# |   :
+# | else
+# |   restore_case_status=$?
+# |   case "$restore_case_status" in
+# |     130|143) exit "$restore_case_status" ;;
+# |     *) st_fail=1 ;;
+# |   esac
+# | fi

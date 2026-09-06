@@ -13,9 +13,13 @@ class BoundaryExampleTests(unittest.TestCase):
         template = (ROOT / 'core/scripts/boundary_selftests.sh').read_text()
         example = '\n'.join(line[4:] for line in template.splitlines() if line.startswith('#   '))
         self.assertTrue(example.strip())
-        for case in ('intended', 'baseline_red', 'wrong_reason', 'missing_gate', 'misleading_success'):
+        for case in ('intended', 'baseline_red', 'wrong_reason', 'missing_gate', 'misleading_success', 'collision'):
             with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
+                injection = root / 'src/domain/.selftest.py'
+                if case == 'collision':
+                    injection.parent.mkdir(parents=True)
+                    injection.write_text('Uncommitted owner content.\n')
                 gate = root / 'check.sh'
                 gate.write_text('''#!/bin/sh
 if [ "${1:-}" = --self-test ]; then
@@ -23,6 +27,7 @@ if [ "${1:-}" = --self-test ]; then
 ''' + example + '''
   exit "$st_fail"
 fi
+[ "$CASE" != collision ] || exit 0
 [ "$CASE" != baseline_red ] || { echo 'FAIL: unrelated baseline'; exit 1; }
 [ -f src/domain/.selftest.py ] || exit 0
 case "$CASE" in
@@ -36,4 +41,7 @@ esac
                                         env=dict(os.environ, CASE=case), capture_output=True, text=True)
                 self.assertEqual(result.returncode, 0 if case == 'intended' else 1,
                                  result.stdout + result.stderr)
-                self.assertFalse((root / 'src/domain/.selftest.py').exists())
+                if case == 'collision':
+                    self.assertEqual(injection.read_text(), 'Uncommitted owner content.\n')
+                else:
+                    self.assertFalse(injection.exists())

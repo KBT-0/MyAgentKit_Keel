@@ -21,6 +21,16 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-09-06 — A passing destructive self-test can still lose owner content (#7)
+
+A newly reported downstream failure saved a tracked file, injected a violation, and
+deleted its backup through an inherited signal trap without restoring the source. This
+is a scaffold/guidance gap, not a claim that the upstream example truncates tracked files.
+The workflow now requires restoration of current uncommitted bytes before cleanup and
+termination after signals. A separate subshell example isolates traps and backups;
+normal exit, SIGINT and SIGTERM are checked for exact bytes, mode and cleanup. Disposable
+snapshots remain the preferred option for destructive probes and uncatchable failures.
+
 ### 2026-09-06 — Final review and hosted CI exercised remaining edge cases
 
 The second and final Astra review found two confirmed gaps in the preceding repairs.

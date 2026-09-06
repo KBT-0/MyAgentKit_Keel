@@ -57,6 +57,16 @@ breaks, everything keeps looking green.
   every commit.
 - **Ship a negative test with it** — `./scripts/check.sh --self-test`. A manual proof rots
   the moment someone edits the script; the automated one does not.
+- **Make destructive probes interruption-safe.** Prefer a disposable project snapshot.
+  If a test modifies an existing file, save its current bytes and mode, including
+  uncommitted edits, and register EXIT/INT/TERM restoration before the first mutation.
+  Restore before deleting the backup. Signal cleanup must terminate the test, and a
+  restoration failure must retain the backup and report its path. Do not replace an
+  inherited trap with cleanup that deletes the only surviving copy. The separate
+  existing-file example in `scripts/boundary_selftests.sh` isolates its traps in a
+  subshell. Prove byte-for-byte restoration by interrupting the injected test; an
+  uninterrupted passing run is insufficient. Traps cannot handle SIGKILL or power loss,
+  so use a disposable snapshot when those failures could damage owner content.
 - **Test both directions** where a gate can produce false positives. A gate that always
   fails is as useless as one that never does, and it gets deleted by the first person it
   blocks unfairly.
