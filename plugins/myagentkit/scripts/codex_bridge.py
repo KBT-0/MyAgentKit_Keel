@@ -92,6 +92,13 @@ def main(argv=None, result_sink=None):
         if not reason and (len(verdicts) != 1 or len(declarations) != 1
                            or not any(v.get("type") == "turn.completed" for v in values)):
             reason = "invalid_evidence"
+        if not reason and verdicts[0] == 'Accept with Manual Checks':
+            section = re.search(r'^## Manual checks[ \t]*\n(.*?)(?=^## |\Z)', final, re.M | re.S)
+            checks = [line.strip(' \t-*').rstrip('.').lower() for line in
+                      (section.group(1).splitlines() if section else [])]
+            if not any(check and check not in {'none', 'n/a', 'not applicable', 'not run'}
+                       and not check.startswith('#') for check in checks):
+                reason = 'invalid_evidence'
     status = "failed" if reason else "completed"
     # Codex publishes no model identity in its JSON output, so the pin is recorded as
     # requested-not-attested. Saying which it is beats a record that implies verification

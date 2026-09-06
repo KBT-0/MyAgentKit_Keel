@@ -170,6 +170,102 @@ class BridgeTests(unittest.TestCase):
     def git(self, *args):
         return subprocess.run(["git", "-C", str(self.repo), *args], check=True, capture_output=True)
 
+    def commit_fixture(self, message):
+        self.git('add', '.')
+        self.git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
+                 '-c', 'core.hooksPath=/dev/null', '-c', 'commit.gpgsign=false', 'commit', '-qm', message)
+
+    def test_diff_drivers_cannot_hide_source_and_fingerprints_read_raw_bytes(self):
+        source = self.repo / 'file.py'
+        source.write_text('stable\nold\n')
+        (self.repo / '.gitattributes').write_text('file.py diff=hide\n')
+        self.commit_fixture('Diff driver fixture')
+        self.git('config', 'diff.hide.textconv', 'head -n 1')
+        source.write_text('stable\nNEW_SOURCE_CONTENT\n')
+        (self.repo / 'visible.txt').write_text('visible change\n')
+        self.assertIn('NEW_SOURCE_CONTENT', bridge.snapshot(self.repo, 'uncommitted', None)[2])
+        self.git('config', '--unset', 'diff.hide.textconv')
+        converter = self.root / 'external-diff'
+        marker = self.root / 'external-called'
+        converter.write_text('#!/bin/sh\ntouch "' + str(marker) + '"\nprintf "HIDDEN\\n"\n')
+        converter.chmod(0o755)
+        self.git('config', 'diff.hide.command', str(converter))
+        self.assertIn('NEW_SOURCE_CONTENT', bridge.snapshot(self.repo, 'uncommitted', None)[2])
+        self.assertFalse(marker.exists())
+        self.git('update-index', '--assume-unchanged', 'file.py')
+        before = bridge.snapshot(self.repo, 'uncommitted', None)[1]
+        source.write_text('stable\nCHANGED_WITHOUT_A_GIT_DIFF\n')
+        self.assertNotEqual(bridge.snapshot(self.repo, 'uncommitted', None)[1], before)
+
+    def test_direct_adapters_reject_a_base_ref_that_moves_during_review(self):
+        from contextlib import redirect_stdout
+        from io import StringIO
+        from unittest.mock import patch
+        import codex_bridge
+        original = self.git('rev-parse', 'HEAD').stdout.decode().strip()
+        self.commit_fixture('Intermediate revision')
+        intermediate = self.git('rev-parse', 'HEAD').stdout.decode().strip()
+        (self.repo / 'file.py').write_text('final\n')
+        self.commit_fixture('Reviewed revision')
+        for main, args in ((bridge.main, ['review']),
+                           (codex_bridge.main, ['--model', 'fixture-codex-model'])):
+            self.git('update-ref', 'refs/heads/review-base', original)
+
+            def execution(command, prompt, repo, timeout):
+                self.git('update-ref', 'refs/heads/review-base', intermediate)
+                if '-o' in command:
+                    Path(command[command.index('-o') + 1]).write_text('VERDICT: Accept\n')
+                    value = {'type': 'turn.completed', 'usage': {}}
+                else:
+                    value = {'type': 'result', 'subtype': 'success', 'is_error': False,
+                             'modelUsage': {'claude-opus-5': {}}, 'structured_output':
+                             {'verdict': 'Accept', 'findings': [], 'manual_checks': []}}
+                return {'exit_code': 0, 'stdout': json.dumps(value), 'stderr': '',
+                        'termination': None, 'duration_ms': 1}
+
+            received = []
+            with patch.dict(os.environ, self.review_env()), \
+                    patch('agent_process.run', side_effect=execution), redirect_stdout(StringIO()):
+                code = main([*args, '--repo', str(self.repo), '--base', 'review-base'], received.append)
+            self.assertEqual(code, 5)
+            self.assertEqual(received[0]['failure_kind'], 'stale_checkout')
+            self.assertEqual(verdicts_of(received[0]['evidence']), [])
+
+    def test_merge_commit_review_includes_the_resolution_against_first_parent(self):
+        self.commit_fixture('Common base')
+        main = self.git('symbolic-ref', '--short', 'HEAD').stdout.decode().strip()
+        self.git('checkout', '-qb', 'feature')
+        (self.repo / 'file.py').write_text('feature\n')
+        self.commit_fixture('Feature side')
+        self.git('checkout', '-q', main)
+        (self.repo / 'file.py').write_text('main\n')
+        self.commit_fixture('Main side')
+        result = subprocess.run(['git', '-C', str(self.repo), '-c', 'user.name=Fixture',
+                                 '-c', 'user.email=fixture@example.invalid', 'merge', '--no-commit', 'feature'],
+                                capture_output=True)
+        self.assertEqual(result.returncode, 1)
+        (self.repo / 'file.py').write_text('RESOLVED_MERGE_CONTENT\n')
+        self.commit_fixture('Resolve merge')
+        diff = bridge.snapshot(self.repo, 'commit', 'HEAD')[2]
+        self.assertIn('RESOLVED_MERGE_CONTENT', diff)
+        self.assertIn('-main', diff)
+
+    def test_codex_manual_verdict_requires_actual_manual_checks(self):
+        fake = self.root / 'codex-manual'
+        fake.write_text('#!/usr/bin/env python3\nimport json,os,pathlib,sys\n'
+                        'sys.stdin.read()\n'
+                        'pathlib.Path(sys.argv[sys.argv.index("-o")+1]).write_text(os.environ["FINAL_RESPONSE"])\n'
+                        'print(json.dumps({"type":"turn.completed","usage":{}}))\n')
+        fake.chmod(0o755)
+        for checks in ('', '## Manual checks\n', '## Manual checks\nNone.\n',
+                       '## Manual checks\n- Verify the live deployment.\n'):
+            with self.subTest(checks=checks):
+                result = self.run_wrapper('--reviewer', 'codex', REVIEW_CLI_BIN=str(fake),
+                                          REVIEW_CODEX_MODEL='fixture-codex-model',
+                                          FINAL_RESPONSE='VERDICT: Accept with Manual Checks\n' + checks)
+                self.assertEqual(result.returncode, 0 if 'Verify' in checks else 5,
+                                 result.stdout + result.stderr)
+
     def run_bridge(self, case="accept", mode="review", extra=(), env_extra=None):
         env = dict(os.environ, CLAUDE_CLI_BIN=str(self.fixture), FIXTURE_CASE=case,
                    MYAGENTKIT_DELEGATION_DEPTH="0")
@@ -772,8 +868,8 @@ if __name__ == "__main__":
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(BridgeTests)
     suite.addTests(unittest.defaultTestLoader.loadTestsFromTestCase(UsageTests))
     suite.addTests(unittest.defaultTestLoader.loadTestsFromTestCase(QuotaTests))
-    if suite.countTestCases() < 53:
-        raise SystemExit("FAIL: expected at least fifty-three review and usage regression tests")
+    if suite.countTestCases() < 57:
+        raise SystemExit("FAIL: expected at least fifty-seven review and usage regression tests")
     result = unittest.TextTestRunner(verbosity=2).run(suite)
     if not result.wasSuccessful() or result.skipped:
         raise SystemExit(1)

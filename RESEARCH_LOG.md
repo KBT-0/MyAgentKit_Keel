@@ -21,6 +21,18 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-09-06 — Git's rendered diff is not a complete checkout fingerprint
+
+The requested Claude follow-up was blocked by an organization-level HTTP 403. The configured
+Astra fallback completed a review and exposed four confirmed failures: text conversion
+could hide changed source, direct adapters could accept a review after its base reference
+moved, merge commits could appear empty, and Codex could return a manual-check verdict with
+no checks. Each regression failed before its fix and passed afterward. Source snapshots
+now disable diff drivers, hash readable bytes as well as the resolved reference and diff,
+and use the first-parent delta for merges. Final-response validation requires actual manual
+checks. Fallback findings are useful evidence, but do not satisfy the owner's pending
+Claude review or establish independence for code co-authored by those models.
+
 ### 2026-09-06 — Transcript approval cannot replace the final-response contract (#5)
 
 The regression now emits an actual Codex agent-message event saying Accept and a completed

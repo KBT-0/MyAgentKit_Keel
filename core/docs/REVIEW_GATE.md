@@ -113,6 +113,14 @@ document's priority order, archives the report as evidence under
 `docs/reviews/<UTC-timestamp>-<random>-<reviewer>-review.md` and prints it. Omitting
 `--reviewer` uses the one configured during setup at the top of `scripts/review.sh`.
 
+Diff collection disables Git text conversion and external diff commands so repository
+configuration cannot replace source with a filtered rendering. The checkout fingerprint
+also hashes readable source bytes independently of Git's change detection and binds the
+resolved reference and collected diff. A moving base reference invalidates an in-flight
+review. Commit scope uses the delta against the first parent, including merge commits.
+Codex manual-check verdicts require a nonempty `## Manual checks` section describing the
+remaining checks; an absent section or a placeholder such as `None` is invalid evidence.
+
 **The two directions are interchangeable, not merely both present.** Each archives the same
 header table — reviewer, model, whether the model is attested, effort, sandbox, limits,
 scope, reference, HEAD, checkout fingerprint, diff hash, status, failure kind — followed by

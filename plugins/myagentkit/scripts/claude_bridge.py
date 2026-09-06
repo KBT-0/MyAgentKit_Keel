@@ -50,7 +50,8 @@ def snapshot(repo: Path, scope: str, reference: str | None) -> tuple[str, str, s
     if scope == 'base':
         trees.add(git(repo, 'merge-base', resolved, head).decode().strip())
     elif scope == 'commit':
-        trees.update(git(repo, 'rev-list', '--parents', '-n', '1', resolved).decode().split()[1:])
+        parents = git(repo, 'rev-list', '--parents', '-n', '1', resolved).decode().split()[1:]
+        trees.update(parents)
     for ref in trees:
         for raw in git(repo, 'ls-tree', '-r', '-z', '--name-only', ref, '--', 'docs/reviews').split(b'\0'):
             if raw:
@@ -58,7 +59,8 @@ def snapshot(repo: Path, scope: str, reference: str | None) -> tuple[str, str, s
                 if re.fullmatch(r'docs/reviews/\d{8}T\d{6}Z-.+\.md', name) and not name.endswith('-summary.md'):
                     archives.add(':(exclude,literal)' + name)
     exclusions = sorted(archives)
-    working = git(repo, "diff", "--binary", "HEAD", "--", ".", *exclusions)
+    raw_diff = ('--no-ext-diff', '--no-textconv', '--binary')
+    working = git(repo, 'diff', *raw_diff, 'HEAD', '--', '.', *exclusions)
     for raw in git(repo, "ls-files", "--others", "--exclude-standard", "-z").split(b"\0"):
         if raw:
             name = os.fsdecode(raw)
@@ -69,7 +71,7 @@ def snapshot(repo: Path, scope: str, reference: str | None) -> tuple[str, str, s
                 continue
             if Path(name).name.startswith((".env", ".dev.vars")):
                 raise BridgeError("untracked environment secret file is in scope; ignore it first")
-            working += git(repo, "diff", "--no-index", "--binary", "--", "/dev/null", name,
+            working += git(repo, "diff", "--no-index", *raw_diff, "--", "/dev/null", name,
                            allowed=(0, 1))
     if scope == "uncommitted":
         diff = working
@@ -79,12 +81,37 @@ def snapshot(repo: Path, scope: str, reference: str | None) -> tuple[str, str, s
         if scope == "commit" and resolved != head:
             raise BridgeError("--commit must be the checked-out HEAD so readable files match")
         if scope == "base":
-            diff = git(repo, "diff", "--binary", resolved + "...HEAD", "--", ".", *exclusions)
+            diff = git(repo, "diff", *raw_diff, resolved + "...HEAD", "--", ".", *exclusions)
         else:
-            diff = git(repo, "show", "--format=fuller", "--binary", resolved, "--", ".", *exclusions)
-            if not git(repo, "diff-tree", "--root", "--no-commit-id", "-r", resolved):
-                diff = b""
-    fingerprint = hashlib.sha256(head.encode() + b"\0" + working).hexdigest()
+            # Commit review is the delta against its first parent, including merges.
+            diff = (git(repo, 'diff', *raw_diff, parents[0], resolved, '--', '.', *exclusions)
+                    if parents else git(repo, 'show', '--format=', *raw_diff, resolved, '--', '.', *exclusions))
+    checksum = hashlib.sha256(head.encode() + b'\0' + (resolved or '').encode() + b'\0' + diff + b'\0' + working)
+    # Git can suppress working changes via index flags. Hash actual readable source too,
+    # independently of diff rendering; read symlink targets as links, never outside files.
+    for raw in sorted(set(git(repo, 'ls-files', '-z', '--cached', '--others', '--exclude-standard',
+                              '--', '.', *exclusions).split(b'\0')) - {b''}):
+        name = os.fsdecode(raw)
+        if re.fullmatch(r'docs/reviews/\d{8}T\d{6}Z-.+\.md', name) and not name.endswith('-summary.md'):
+            continue
+        path = repo / name
+        checksum.update(raw + b'\0')
+        try:
+            mode = path.lstat().st_mode
+            if path.is_symlink():
+                contents = hashlib.sha256(os.fsencode(os.readlink(path))).digest()
+            elif path.is_file():
+                content_hash = hashlib.sha256()
+                with path.open('rb') as stream:
+                    for chunk in iter(lambda: stream.read(65536), b''):
+                        content_hash.update(chunk)
+                contents = content_hash.digest()
+            else:
+                contents = b'directory'
+            checksum.update(str(mode).encode() + b'\0' + contents)
+        except FileNotFoundError:
+            checksum.update(b'missing')
+    fingerprint = checksum.hexdigest()
     if len(diff) > 400_000:
         raise BridgeError("diff exceeds 400000 bytes; split the task")
     return head, fingerprint, diff.decode("utf-8", errors="strict")

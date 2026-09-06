@@ -13,6 +13,12 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## v0.7 — 2026-09-05 (unreleased)
 
+- A follow-up review exposed four additional scope/evidence failures. Git diff drivers
+  are disabled, raw checkout bytes and resolved references enter the fingerprint, merge
+  commits are reviewed against their first parent, and Codex manual-check verdicts require
+  actual checks. All four fixes have failing-before/passing-after regressions.
+  **ACTION:** copy the complete review runtime/test companion list and repackage the plugin.
+
 - The kit's own four legacy raw review archives are now untracked and preserved locally.
   Reference and commit reviews exclude removed legacy transcripts while keeping scrubbed
   summaries in scope. **ACTION:** use the same preserve-and-untrack migration for old

@@ -1,5 +1,21 @@
 # Acceptance evidence
 
+## Issue follow-up and second repair — 2026-09-06
+
+The issue-specific commits address #1–#5. After the configured Astra fallback exposed
+four more failures, each new regression failed before its fix and passed afterward.
+The full `./scripts/check.sh --self-test` then passed with 57 runtime tests, six kit
+tests, installed core negative gates and packaged runtime parity on macOS/Python 3.14.
+The runtime tests also passed in an isolated project bootstrapped from `c358c917` and
+manually upgraded using the documented companion list. This is a synthetic upgrade,
+not an unrelated production project. Local logs are `/tmp/keel-round2-full-check.log`
+and `/tmp/keel-upgraded-project-test.log`.
+
+Claude was attempted but returned organization-level HTTP 403. The failure and the
+completed Astra Reject are described in the dated scrubbed follow-up review summary.
+The final review, hosted CI matrix and plugin discovery are still to be recorded.
+Claude-specific live checks remain tracked by issue #6.
+
 ## Review repairs — 2026-09-06
 
 Codex repaired all five findings in the dated Astra review summary. The final
