@@ -31,6 +31,7 @@ prompt = sys.stdin.read()
 case = os.environ.get('FIXTURE_CASE', 'accept')
 model = args[args.index('--model') + 1]
 if case == 'no_budget': assert '--max-budget-usd' not in args
+if case == 'malformed_envelope': print('{}'); sys.exit(0)
 if case == 'explicit_budget': assert args[args.index('--max-budget-usd') + 1] == '7.5'
 value = {'verdict': 'Accept', 'findings': [], 'manual_checks': []}
 result = {'type': 'result', 'subtype': 'success', 'is_error': False,
@@ -56,6 +57,19 @@ if case == 'timeout': time.sleep(20)
 if case == 'partial_timeout': print(json.dumps(result), flush=True); time.sleep(20)
 if case == 'quota':
     result.update(is_error=True, api_error_status=429, result='Session limit reached; resets later')
+    print(json.dumps(result)); sys.exit(1)
+if case in ('auth', 'context'):
+    result.update(is_error=True, result='authentication failed' if case == 'auth' else 'context exhausted')
+    print(json.dumps(result)); sys.exit(1)
+if case == 'quota_mutation':
+    pathlib.Path('file.py').write_text('changed while failing')
+    result.update(is_error=True, api_error_status=429)
+    print(json.dumps(result)); sys.exit(1)
+if case == 'chain_failure':
+    import shutil
+    shutil.rmtree('.myagentkit/usage/chains')
+    pathlib.Path('.myagentkit/usage/chains').write_text('blocked chain')
+    result.update(is_error=True, api_error_status=429)
     print(json.dumps(result)); sys.exit(1)
 if case == 'proposal':
     result['structured_output'] = {'summary': 'Proposed fix', 'patch': 'diff --git a/file.py b/file.py',
@@ -84,6 +98,43 @@ def verdicts_of(path):
 
 
 class BridgeTests(unittest.TestCase):
+    def test_review_timeout_defaults_and_explicit_overrides(self):
+        from contextlib import redirect_stdout
+        from io import StringIO
+        from unittest.mock import patch
+        import agent_process
+        import codex_bridge
+        import review_dispatch
+
+        class CapturedLaunch(RuntimeError):
+            pass
+
+        observed = []
+
+        def capture(command, prompt, repo, timeout):
+            observed.append(timeout)
+            raise CapturedLaunch()  # No CLI or wall-clock wait is needed.
+
+        cases = [(bridge.main, ['review'], None, 1800),
+                 (bridge.main, ['review', '--timeout', '77'], None, 77),
+                 (codex_bridge.main, ['--model', 'fixture-codex-model'], None, 1800),
+                 (codex_bridge.main, ['--model', 'fixture-codex-model'], '88', 88),
+                 (review_dispatch.main, ['--reviewer', 'claude'], None, 1800),
+                 (review_dispatch.main, ['--reviewer', 'codex'], None, 1800),
+                 (review_dispatch.main, ['--reviewer', 'claude'], '99', 99),
+                 (review_dispatch.main, ['--reviewer', 'codex'], '99', 99)]
+        for main, argv, override, expected in cases:
+            with self.subTest(entry=main.__module__, args=argv, override=override):
+                with patch.dict(os.environ, self.review_env(REVIEW_CLAUDE_MODEL='claude-opus-5',
+                                                           REVIEW_CODEX_MODEL='fixture-codex-model')):
+                    os.environ.pop('REVIEW_TIMEOUT_SECONDS', None)
+                    if override is not None:
+                        os.environ['REVIEW_TIMEOUT_SECONDS'] = override
+                    with patch.object(agent_process, 'run', side_effect=capture), redirect_stdout(StringIO()):
+                        with self.assertRaises(CapturedLaunch):
+                            main([*argv, '--repo', str(self.repo)])
+                    self.assertEqual(observed[-1], expected)
+
     def test_review_has_no_default_budget_but_honors_an_explicit_limit(self):
         for case, extra, expected in [('no_budget', [], None),
                                       ('explicit_budget', ['--max-budget-usd', '7.5'], 7.5)]:
@@ -105,6 +156,7 @@ class BridgeTests(unittest.TestCase):
         self.fixture.write_text(FIXTURE)
         self.fixture.chmod(0o755)
         self.git("init", "-q")
+        (self.repo / '.gitignore').write_bytes((ROOT.parent / '.gitignore').read_bytes())
         for name in ["AGENTS.md", "docs/PHASES.md", "docs/ARCHITECTURE.md", "docs/REVIEW_GATE.md"]:
             path = self.repo / name
             path.parent.mkdir(exist_ok=True)
@@ -138,6 +190,81 @@ class BridgeTests(unittest.TestCase):
                 self.assertIn("Read,Glob,Grep", record["sandbox"])
                 self.assertEqual(len(record["diff_sha256"]), 64)
                 self.assertEqual(verdicts_of(result["evidence"]), ["VERDICT: " + verdict])
+
+    def test_private_storage_is_required_before_any_provider_launch(self):
+        from unittest.mock import patch
+        import codex_bridge
+        import review_dispatch
+        from contextlib import redirect_stdout
+        from io import StringIO
+
+        for case in ('missing_ignore', 'tracked_usage', 'tracked_review', 'unignored_review'):
+            with self.subTest(case=case):
+                (self.repo / '.gitignore').write_bytes((ROOT.parent / '.gitignore').read_bytes())
+                if case == 'missing_ignore':
+                    (self.repo / '.gitignore').write_text('')
+                elif case == 'unignored_review':
+                    with (self.repo / '.gitignore').open('a') as stream:
+                        stream.write('\n!/docs/reviews/*-review.md\n')
+                else:
+                    name = ('.myagentkit/usage/old.json' if case == 'tracked_usage' else
+                            'docs/reviews/20260101T000000Z-000000000000-codex-review.md')
+                    path = self.repo / name
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text('Synthetic private diagnostic.\n')
+                    self.git('add', '-f', name)
+                for main, args in ((bridge.main, ['review']),
+                                   (codex_bridge.main, ['--model', 'fixture-codex-model']),
+                                   (review_dispatch.main, ['--claude-model', 'claude-opus-5'])):
+                    with patch.dict(os.environ, self.review_env()), \
+                            patch('agent_process.run', side_effect=AssertionError('provider launched before privacy check')) as launch, \
+                            patch('codex_quota.snapshot') as quota, redirect_stdout(StringIO()):
+                        try:
+                            code = main([*args, '--repo', str(self.repo)])
+                        except (ValueError, bridge.BridgeError):
+                            code = 2
+                        self.assertNotEqual(code, 0)
+                        launch.assert_not_called()
+                        quota.assert_not_called()
+                if case.startswith('tracked_'):
+                    self.git('rm', '-f', '--', name)
+
+    def test_private_evidence_stays_out_of_git_add(self):
+        code, result = self.run_bridge()
+        self.assertEqual(code, 0, result)
+        self.git('add', '.')
+        staged = self.git('diff', '--cached', '--name-only').stdout.decode()
+        self.assertNotIn('.myagentkit/', staged)
+        self.assertNotIn('docs/reviews/', staged)
+
+    def test_malformed_claude_envelope_never_triggers_failover(self):
+        result, chain = self.dispatch_result(FIXTURE_CASE='malformed_envelope')
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(len(chain['attempts']), 1)
+        self.assertEqual(chain['failure_kind'], 'invalid_evidence')
+        self.assertEqual(verdicts_of(chain['attempts'][0]['evidence']), [])
+
+    def test_malformed_codex_verdict_never_becomes_accept(self):
+        fake = self.root / 'codex-conflict'
+        fake.write_text('#!/usr/bin/env python3\n'
+                        'import json, os, pathlib, sys\n'
+                        'sys.stdin.read()\n'
+                        'pathlib.Path(sys.argv[sys.argv.index("-o") + 1]).write_text(os.environ["FINAL_RESPONSE"])\n'
+                        'print(json.dumps({"type": "turn.completed", "usage": {}}))\n')
+        fake.chmod(0o755)
+        for final in ('VERDICT: Accept\nVERDICT: Reject — unresolved defect\n',
+                      'VERDICT: Accept\n  VERDICT: Reject\n',
+                      'VERDICT: Accept\nVERDICT: Unknown\n',
+                      'VERDICT: Accept\nVERDICT:Reject\n'):
+            with self.subTest(final=final):
+                result = self.run_wrapper('--reviewer', 'codex', REVIEW_CLI_BIN=str(fake),
+                                          REVIEW_CODEX_MODEL='fixture-codex-model', FINAL_RESPONSE=final)
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                chain = json.loads(next(s.removeprefix('review dispatch: ') for s in
+                                        result.stdout.splitlines() if s.startswith('review dispatch: ')))
+                self.assertEqual(chain['failure_kind'], 'invalid_evidence')
+                self.assertEqual(len(chain['attempts']), 1)
+                self.assertEqual(verdicts_of(chain['attempts'][0]['evidence']), [])
 
     def test_bad_cli_evidence_fails_with_its_reason(self):
         cases = {"missing": "structured final", "transcript": "Expecting value",
@@ -269,7 +396,7 @@ class BridgeTests(unittest.TestCase):
             scripts.mkdir()
             (scripts / "review.sh").write_bytes((ROOT / "review.sh").read_bytes())
             for name in ["codex_bridge.py", "claude_bridge.py", "agent_process.py",
-                         "agent_usage.py", "codex_quota.py"]:
+                         "agent_usage.py", "codex_quota.py", "review_dispatch.py"]:
                 (scripts / name).write_bytes((ROOT / name).read_bytes())
         return scripts
 
@@ -281,6 +408,7 @@ class BridgeTests(unittest.TestCase):
         env = dict(os.environ, REVIEW_REPO_ROOT=str(self.repo), MYAGENTKIT_CAPTURE_QUOTA="0",
                    MYAGENTKIT_DELEGATION_DEPTH="0", REVIEW_TIMEOUT_SECONDS="30",
                    FIXTURE_CASE="accept", CLAUDE_CLI_BIN=absent, REVIEW_CLI_BIN=absent,
+                   REVIEW_CLAUDE_MODEL="", REVIEW_CODEX_MODEL="", REVIEW_REVIEWER="",
                    REVIEW_DOCS="AGENTS.md, docs/ARCHITECTURE.md and docs/REVIEW_GATE.md")
         env.update(extra)
         return env
@@ -329,7 +457,7 @@ if case == 'archive_failure':
                                ("accept", 0), ("reject", 0), ("quota", 5), ("timeout", 5),
                                ("mutation", 5), ("archive_failure", 5)]:
             with self.subTest(case=case):
-                env = dict(os.environ, REVIEW_CLI_BIN=str(fake), FIXTURE_CASE=case,
+                env = self.review_env(REVIEW_CLI_BIN=str(fake), FIXTURE_CASE=case,
                            REVIEW_CODEX_MODEL="fixture-codex-model", REVIEW_REPO_ROOT=str(self.repo),
                            MYAGENTKIT_CAPTURE_QUOTA="0", MYAGENTKIT_DELEGATION_DEPTH="0",
                            REVIEW_TIMEOUT_SECONDS="1" if case == "timeout" else "30",
@@ -368,10 +496,15 @@ if case == 'archive_failure':
         """A Codex stand-in that returns one valid Accept; no paid CLI is ever called."""
         fake = self.root / "codex-accept"
         fake.write_text("#!/usr/bin/env python3\n"
-                        "import json, pathlib, sys\n"
+                        "import json, os, pathlib, sys\n"
                         "sys.stdin.read()\n"
+                        "case = os.environ.get('CODEX_FIXTURE_CASE', 'accept')\n"
+                        "assert os.environ['MYAGENTKIT_DELEGATION_DEPTH'] == '1'\n"
+                        "if case == 'quota':\n"
+                        "    print(json.dumps({'type': 'turn.failed', 'error': {'message': 'usage limit reached'}})); sys.exit(1)\n"
+                        "verdict = 'Reject' if case == 'reject' else 'Accept'\n"
                         "pathlib.Path(sys.argv[sys.argv.index('-o') + 1]).write_text("
-                        "'## Findings\\n\\nNone.\\n\\nVERDICT: Accept\\n')\n"
+                        "'## Findings\\n\\nFixture finding.\\n\\nVERDICT: ' + verdict + '\\n')\n"
                         "print(json.dumps({'type': 'turn.completed', 'usage': {}}))\n")
         fake.chmod(0o755)
         return fake
@@ -412,6 +545,121 @@ if case == 'archive_failure':
                          {"claude-opus-5", "fixture-codex-model"})
         for header in (first, second):
             self.assertNotIn("default", header["model"].lower())
+
+    def test_default_reviewer_is_claude_and_codex_remains_explicit(self):
+        result = self.run_wrapper('--uncommitted', CLAUDE_CLI_BIN=str(self.fixture),
+                                  REVIEW_CLAUDE_MODEL='claude-opus-5', REVIEW_REVIEWER='')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        reports = list((self.repo / 'docs/reviews').glob('*-review.md'))
+        self.assertEqual(len(reports), 1)
+        self.assertEqual(header_of(reports[0])['reviewer'], 'claude')
+        explicit = self.run_wrapper('--reviewer', 'codex', '--uncommitted',
+                                    REVIEW_CLI_BIN=str(self.build_fake_codex()),
+                                    REVIEW_CODEX_MODEL='fixture-codex-model')
+        self.assertEqual(explicit.returncode, 0, explicit.stdout + explicit.stderr)
+        self.assertEqual(len(list((self.repo / 'docs/reviews').glob('*-codex-review.md'))), 1)
+
+    def test_unavailable_claude_automatically_uses_selected_codex(self):
+        result = self.run_wrapper('--uncommitted', FIXTURE_CASE='quota',
+                                  CLAUDE_CLI_BIN=str(self.fixture),
+                                  REVIEW_CLAUDE_MODEL='claude-opus-5',
+                                  REVIEW_CODEX_MODEL='fixture-codex-model',
+                                  REVIEW_CLI_BIN=str(self.build_fake_codex()))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        reports = list((self.repo / 'docs/reviews').glob('*-review.md'))
+        self.assertEqual(len(reports), 2)
+        self.assertEqual({header_of(p)['status'] for p in reports}, {'failed', 'completed'})
+
+    def dispatch_result(self, primary='claude', **extra):
+        env = dict(CLAUDE_CLI_BIN=str(self.fixture), REVIEW_CLAUDE_MODEL='claude-opus-5',
+                   REVIEW_CODEX_MODEL='fixture-codex-model', REVIEW_CLI_BIN=str(self.build_fake_codex()),
+                   MYAGENTKIT_REQUESTER='codex/fixture-codex-model', MYAGENTKIT_TASK_ID='fallback-task')
+        env.update(extra)
+        result = self.run_wrapper('--reviewer', primary, **env)
+        line = next((s.removeprefix('review dispatch: ') for s in result.stdout.splitlines()
+                     if s.startswith('review dispatch: ')), None)
+        return result, json.loads(line) if line else None
+
+    def test_failover_preserves_pins_scope_usage_and_advisory_status(self):
+        for primary in ('claude', 'codex'):
+            result, chain = self.dispatch_result(primary, **(
+                {'FIXTURE_CASE': 'quota'} if primary == 'claude' else {'CODEX_FIXTURE_CASE': 'quota'}))
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(len(chain['attempts']), 2)
+            self.assertEqual(chain['attempts'][0]['failure_kind'], 'quota')
+            self.assertNotEqual(chain['selected_reviewer'], primary)
+            self.assertFalse(chain['review_approved'])
+            self.assertEqual(chain['independence'], 'host_must_check_all_patch_authors')
+            self.assertEqual(json.loads(Path(chain['chain_record']).read_text()), chain)
+            headers = [header_of(a['evidence']) for a in chain['attempts']]
+            self.assertEqual(headers[0]['fingerprint'], headers[1]['fingerprint'])
+            self.assertEqual(headers[0]['diff_sha256'], headers[1]['diff_sha256'])
+            for i, attempt in enumerate(chain['attempts'], 1):
+                usage = json.loads(Path(attempt['usage_record']).read_text())
+                self.assertEqual(usage['review_chain_id'], chain['chain_id'])
+                self.assertEqual(usage['review_attempt'], str(i))
+                self.assertEqual(usage['task']['id'], 'fallback-task')
+                self.assertEqual(usage['model_requested'], chain['configured_models'][attempt['reviewer']])
+                self.assertEqual(usage['requester_reported'], 'codex/fixture-codex-model')
+
+    def test_operational_failures_try_other_model_once(self):
+        cases = {'auth': 'authentication', 'context': 'context_limit', 'turns': 'budget_or_turn_limit',
+                 'timeout': 'timeout', 'exit': 'cli_error'}
+        for case, kind in cases.items():
+            with self.subTest(case=case):
+                result, chain = self.dispatch_result(FIXTURE_CASE=case, REVIEW_TIMEOUT_SECONDS='1')
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(chain['attempts'][0]['failure_kind'], kind)
+                self.assertEqual(len(chain['attempts']), 2)
+        for provider, variable in [('claude', 'CLAUDE_CLI_BIN'), ('codex', 'REVIEW_CLI_BIN')]:
+            result, chain = self.dispatch_result(provider, **{variable: str(self.root / 'missing-cli')})
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(chain['attempts'][0]['failure_kind'], 'unavailable')
+
+    def test_both_unavailable_stop_after_two_and_keep_review_pending(self):
+        result, chain = self.dispatch_result(FIXTURE_CASE='quota', CODEX_FIXTURE_CASE='quota')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(len(chain['attempts']), 2)
+        self.assertEqual(chain['status'], 'failed')
+        self.assertFalse(chain['review_approved'])
+        self.assertEqual(chain['recovery']['action'], 'continue_independent_work')
+        for attempt in chain['attempts']:
+            self.assertEqual(verdicts_of(attempt['evidence']), [])
+
+    def test_completed_reject_or_manual_checks_never_trigger_failover(self):
+        for case in ('reject', 'manual', 'no_budget'):
+            result, chain = self.dispatch_result(FIXTURE_CASE=case)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(len(chain['attempts']), 1)
+        result, chain = self.dispatch_result('codex', CODEX_FIXTURE_CASE='reject')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(len(chain['attempts']), 1)
+
+    def test_invalid_evidence_or_changed_checkout_cannot_failover(self):
+        for case in ('missing', 'model', 'mutation', 'quota_mutation'):
+            result, chain = self.dispatch_result(FIXTURE_CASE=case)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(len(chain['attempts']), 1)
+            self.assertIn(chain['failure_kind'], ('invalid_evidence', 'stale_checkout'))
+
+    def test_unconfigured_alternate_does_not_choose_a_default_model(self):
+        result, chain = self.dispatch_result(FIXTURE_CASE='quota', REVIEW_CODEX_MODEL='')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(len(chain['attempts']), 1)
+        self.assertIn('configured model pin', chain['fallback_blocked'])
+
+    def test_chain_persistence_failure_prevents_second_model_call(self):
+        result, chain = self.dispatch_result(FIXTURE_CASE='chain_failure')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIsNone(chain)
+        self.assertFalse(list((self.repo / 'docs/reviews').glob('*-codex-review.md')))
+        self.assertEqual(len(list((self.repo / '.myagentkit/usage').glob('*.json'))), 1)
+
+    def test_evidence_persistence_failure_prevents_second_model_call(self):
+        result, chain = self.dispatch_result(FIXTURE_CASE='archive_failure')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(len(chain['attempts']), 1)
+        self.assertEqual(chain['failure_kind'], 'evidence_write_failed')
 
     def test_an_unpinned_model_is_refused_in_both_directions(self):
         # The shipped template pins NEITHER model: setup must answer both. This runs the
@@ -466,8 +714,8 @@ if __name__ == "__main__":
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(BridgeTests)
     suite.addTests(unittest.defaultTestLoader.loadTestsFromTestCase(UsageTests))
     suite.addTests(unittest.defaultTestLoader.loadTestsFromTestCase(QuotaTests))
-    if suite.countTestCases() < 33:
-        raise SystemExit("FAIL: expected at least thirty-three review and usage regression tests")
+    if suite.countTestCases() < 50:
+        raise SystemExit("FAIL: expected at least fifty review and usage regression tests")
     result = unittest.TextTestRunner(verbosity=2).run(suite)
     if not result.wasSuccessful() or result.skipped:
         raise SystemExit(1)

@@ -1,64 +1,62 @@
-# Role-neutral review gate — state for the morning
+# Role-neutral review — current work
 
-Written by Claude Opus 5 on 2026-09-05. Baseline commit c358c917. Committed, NOT pushed,
-as the owner asked.
+Updated by Codex on 2026-09-06 for the owner-authorized repair and push task.
+The combined change starts at base `c358c917c212e002ae220926e1fc161ef240cec0`, includes
+commit `7882a5a60e14bcce98c37275bcfbdc988cca96bf`, the subsequent failover/timeout work,
+and the five review repairs in this task.
 
-## THIS WORK HAS NOT BEEN INDEPENDENTLY REVIEWED
+## Claude review is required and remains pending
 
-I wrote it, so I cannot review it. `docs/REVIEW_GATE.md` calls almost all of it a risky
-diff: it is gate code, review tooling and the check script. **Astra reviews it in the
-morning, before any push.**
+The owner explicitly instructed Codex to fix the five confirmed findings, record that
+Claude must still review the change, and commit and push on the owner's behalf before
+that review. This is a task-specific exception to review-before-commit/push, not a change
+to the kit's general policy and not an Accept verdict. No new paid review is being run
+in this task. Claude must review the complete combined delta, including these repairs,
+in a fresh read-only session. Reviewing only the last repair commit would miss the
+previously unreviewed implementation. On a clean checkout, use base `c358c917`.
 
-Run it from this checkout as:
+Astra and Claude both authored earlier parts of the combined implementation. The pending
+owner-selected Claude review must retain that authorship context; this note does not
+claim different-model independence for co-authored code. Neither the previous Astra
+Reject nor this session's successful tests are independent acceptance of the final tree.
 
-```sh
-./scripts/review.sh --commit HEAD --reviewer codex
-```
+The requested Git identity is the owner's configured identity, with no AI co-author or
+session trailers. The existing review/model pins, thirty-minute review deadline,
+no-default-monetary-cap policy, bounded failover, and usage accounting remain in effect.
 
-## A complication worth reading before that review
+## Repair status
 
-The tree I started from already carried uncommitted work by Codex / GPT-6 Astra — the
-Claude adapter, the Codex plugin, usage accounting — and `docs/worktree-notes/codex-claude-
-bridge.md` records that this work was **awaiting a Claude review that never completed**
-(the first attempt hit its 600-second limit with no output).
+All five findings from `docs/reviews/20260905T193132Z-astra-combined-summary.md` have
+implementation fixes and regression coverage:
 
-I was, in principle, the independent reviewer that note was waiting for. I am no longer:
-I have edited that same code — the shared evidence renderer, both adapters, the wrapper and
-the test file — so I am now a co-author of it, not an independent party.
+- Private output requires ignored, untracked storage before model launch and during
+  publication; symlinked storage is rejected, and temporary raw archives are ignored too.
+- Malformed successful Claude envelopes are invalid evidence and cannot start failover.
+- All Codex verdict declarations are counted. Malformed or conflicting declarations are
+  rejected and retained only as unvalidated diagnostic prose in failed reports.
+- Kit acceptance requires the named regression suites and rejects missing, empty, or
+  skipped tests, including the packaging suite.
+- `core/docs/DEV_SETUP.md` owns the complete runtime/test companion list. The upgrade
+  regression imports that list and runs the upgraded wrapper with a fake CLI.
 
-**The practical consequence:** the pending Claude review of Codex's work is not merely still
-pending, it is no longer obtainable from this session. Codex's work and mine are now one
-diff, and one reviewer covers both — which has to be Astra, and which means Astra is partly
-reviewing its own earlier work. That is a real weakening of the invariant. If it matters
-enough, the honest fix is a third model on the combined diff; a fresh Claude session with no
-memory of writing this would also be more independent than I am, though less so than a
-different model. Owner's call.
+The new malformed-output and privacy regressions were observed failing on the old code.
+The documented-upgrade regression reproduced the missing dispatcher import before the
+list was fixed. Missing and skipped suite cases are exercised by the acceptance tests.
+The full validation result for this repair is recorded in `docs/ACCEPTANCE.md`.
+The final `./scripts/check.sh --self-test` passed with 50 runtime tests, five kit tests,
+and the installed core negative gates. Packaged runtime parity also passed.
 
-## What changed
+## Remaining work
 
-1. **`--reviewer codex|claude`** on `scripts/review.sh`. The default and both model pins are
-   project-owned settings at the top of the script, filled during setup.
-2. **One evidence format in both directions** — same header table, one `VERDICT:` line,
-   `docs/reviews/<stamp>-<reviewer>-review.md`. Enforced by `agent_usage.report()`, which
-   refuses a drifted header and refuses a verdict for a run that did not complete.
-3. **Both models pinned by name**, wrapper refuses to run unpinned. Claude's pin is attested
-   against `modelUsage`; Codex publishes no model identity, and the record says so.
-4. **AUTHOR/REVIEWER as roles** in AGENTS.md, WORKFLOW.md, REVIEW_GATE.md; the interview now
-   asks author, reviewer and scarce budget as three separate questions.
-5. **`docs/delegation-is-not-symmetric.md`** — what in-session delegation exists in each
-   direction, and why there is no `overlays/codex/`.
+- [ ] Obtain the owner's requested fresh Claude review of the full combined change.
+- [ ] Verify any new findings, correct them, and review the resulting source again.
+- [ ] Perform the outstanding live/manual checks listed below.
+- [ ] Reinstall the Codex plugin after its source has been reviewed. The packaged source
+      contains these repairs; the installed cache has not been replaced in this task.
 
-## Assumptions left standing
-
-- `CODEX_MODEL` and `CLAUDE_MODEL` ship EMPTY in the template. Existing installs will stop
-  with a clear message until setup fills them. That is deliberate and marked **ACTION** in
-  the changelog, but it IS a breaking change for anyone who syncs — worth a second opinion
-  on whether failing closed is right here.
-- The kit's own `scripts/review.sh` pins `gpt-6-astra` and `claude-opus-5`. Both were live
-  today. Neither is checked for continued existence.
-- Reports written before today keep their old names. Nothing migrates them.
-- Issues #4 and #5 look addressed by the evidence-ordering and one-verdict work now in this
-  diff, but I did not verify them line by line against the issue text and did not close
-  them. Issue #3 (marketplace name) is untouched.
-- The pre-commit gate validates the working tree rather than the committed tree. Known,
-  out of scope, untouched, still in RESEARCH_LOG.
+Live Claude compatibility, adversarial permission tests, a successful live proposal,
+fresh-thread plugin discovery, a real-project upgrade, and a supported Python/OS matrix
+remain unverified. The offline upgrade regression uses fake CLIs. The known working-tree
+versus index pre-commit limitation remains out of scope. Historical evidence and prior
+failed reviews remain in `docs/ACCEPTANCE.md` and the dated review summary; they do not
+approve this source state. Related upstream issues have not been closed by this task.

@@ -3,13 +3,50 @@
 import argparse
 import ast
 import json
+import io
 from pathlib import Path
 import re
 import subprocess
 import sys
 import tempfile
+import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
+REQUIRED_SUITES = {
+    'core/scripts': {'test_claude_bridge': 35, 'test_agent_usage': 12, 'test_codex_quota': 3},
+    'tests': {'test_packaging': 1, 'test_bootstrap': 1, 'test_acceptance': 2,
+              'test_review_upgrade': 1},
+}
+
+
+def run_tests(root, directory, required):
+    """Require named regression suites to execute; absence and skips are failures."""
+    folder = root / directory
+    for name in required:
+        if not (folder / (name + '.py')).is_file():
+            raise RuntimeError('missing required test suite: ' + name)
+    suite = unittest.TestLoader().discover(str(folder), pattern='test_*.py')
+
+    def cases(node):
+        for item in node:
+            if isinstance(item, unittest.TestSuite):
+                yield from cases(item)
+            else:
+                yield item
+
+    counts = dict.fromkeys(required, 0)
+    for test in cases(suite):
+        module = test.id().split('.')[0]
+        if module in counts:
+            counts[module] += 1
+    for name, minimum in required.items():
+        if counts[name] < minimum:
+            raise RuntimeError('required test suite is incomplete: ' + name)
+    output = io.StringIO()
+    result = unittest.TextTestRunner(stream=output, verbosity=2).run(suite)
+    if not result.wasSuccessful() or result.skipped:
+        raise RuntimeError('required tests failed or were skipped:\n' + output.getvalue())
+    print(output.getvalue().strip())
 
 
 def run(args, cwd=ROOT, expected=0, reason=None):
@@ -34,9 +71,8 @@ def main():
     if manifest["name"] != "myagentkit" or manifest["skills"] != "./skills/":
         raise RuntimeError("plugin manifest does not expose the expected package")
     print(run([sys.executable, "scripts/package_codex_plugin.py", "--check"]).strip())
-    print(run([sys.executable, "-B", "-m", "unittest", "discover", "-s", "core/scripts",
-               "-p", "test_*.py", "-v"]).strip())
-    print(run([sys.executable, "-B", "-m", "unittest", "discover", "-s", "tests", "-v"]).strip())
+    for directory, required in REQUIRED_SUITES.items():
+        run_tests(ROOT, directory, required)
     with tempfile.TemporaryDirectory(prefix="myagentkit-acceptance-") as tmp:
         project = Path(tmp)
         run(["sh", str(ROOT / "bootstrap.sh"), str(project)])

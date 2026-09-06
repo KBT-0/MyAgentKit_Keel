@@ -48,7 +48,7 @@ cd "${REVIEW_REPO_ROOT:-$script_dir/..}" || exit 2
 # The pins are per-reviewer rather than one shared REVIEW_MODEL: a single override would
 # hand a Codex model id to Claude the moment the roles swapped, which is the exact failure
 # this role-neutral wrapper exists to prevent.
-DEFAULT_REVIEWER="codex"
+DEFAULT_REVIEWER="claude"
 CODEX_MODEL=""
 CLAUDE_MODEL=""
 # ---------------------------------------------------------------------------------------
@@ -106,22 +106,11 @@ esac
 set -- "$scope_flag"
 [ -n "$scope_arg" ] && set -- "$scope_flag" "$scope_arg"
 
-if [ "$reviewer" = "claude" ]; then
-  model="${REVIEW_CLAUDE_MODEL:-$CLAUDE_MODEL}"
-  [ -n "$model" ] || die "no model pinned for reviewer 'claude'. Set CLAUDE_MODEL in this script or REVIEW_CLAUDE_MODEL for one run."
-  exec python3 -B "$script_dir/claude_bridge.py" review --repo "$PWD" \
-    --model "$model" --effort "${REVIEW_EFFORT:-high}" "$@"
-fi
-
-model="${REVIEW_CODEX_MODEL:-$CODEX_MODEL}"
-[ -n "$model" ] || die "no model pinned for reviewer 'codex'. Set CODEX_MODEL in this script or REVIEW_CODEX_MODEL for one run. An unpinned run would archive the CLI's own default, which no later record can compare against."
-
 # Reviewing CLIs are commonly per-user installs missing from a non-login shell's PATH.
 [ -x "$HOME/.local/bin/codex" ] && { PATH="$HOME/.local/bin:$PATH"; export PATH; }
-cli="${REVIEW_CLI_BIN:-codex}"
-command -v "$cli" >/dev/null 2>&1 || die "reviewing CLI '$cli' not found. Install it or set REVIEW_CLI_BIN."
 
-# The Python adapter owns scope capture, stale-state validation, evidence persistence,
-# and usage recording as one operation. Never collect a second, unsynchronized shell diff.
-exec python3 -B "$script_dir/codex_bridge.py" --repo "$PWD" \
-  --model "$model" --effort "${REVIEW_EFFORT:-high}" "$@"
+# The dispatcher makes at most one failover to the other configured pin. Each adapter
+# retains its own evidence and usage; a completed Reject never triggers another call.
+exec python3 -B "$script_dir/review_dispatch.py" --repo "$PWD" --reviewer "$reviewer" \
+  --claude-model "${REVIEW_CLAUDE_MODEL:-$CLAUDE_MODEL}" \
+  --codex-model "${REVIEW_CODEX_MODEL:-$CODEX_MODEL}" --effort "${REVIEW_EFFORT:-high}" "$@"

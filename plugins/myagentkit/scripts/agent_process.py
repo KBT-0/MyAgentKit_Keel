@@ -7,6 +7,8 @@ import subprocess
 import tempfile
 import time
 
+DEFAULT_REVIEW_TIMEOUT = 1800
+
 
 def run(command: list[str], prompt: str, repo: Path, timeout: int) -> dict:
     """Return exit status, partial output, and termination reason without retrying."""

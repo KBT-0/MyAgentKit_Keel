@@ -1,10 +1,20 @@
 # Codex as manager, Claude as second model
 
+The owner-selected default reviewer is Claude. Once model pins are configured,
+`./scripts/review.sh --uncommitted` selects Claude; `--reviewer codex` explicitly selects
+Codex. Setup may change the default for another project. A co-authored diff still needs
+a non-authoring reviewer rather than blindly using the configured default.
+
 This page documents ONE of the two directions. It is not the kit's default arrangement —
 the kit has none. For the reverse, and for what in-session delegation does and does not
 exist on each side, see [delegation-is-not-symmetric.md](delegation-is-not-symmetric.md).
 
-The Codex plugin packages two skills and the standard-library-only Claude adapter.
+The Codex plugin packages two skills, both standard-library-only review adapters, and
+their shared failover dispatcher.
+Existing repositories must merge the kit's `core/.gitignore` private-record exclusions
+before launching the plugin adapters. Ignored, untracked storage is now checked before
+model work and during publication; tracked diagnostics and symlinked storage are refused.
+The complete runtime/test upgrade list is maintained in `core/docs/DEV_SETUP.md`.
 It requires Python 3.10+, Git, and an installed, authenticated Claude Code CLI with
 the documented safe-mode/restricted/structured-output options. It installs no MCP server
 and makes no change to the existing Claude Code plugin.
@@ -41,7 +51,8 @@ the current [official skill interface](https://learn.chatgpt.com/docs/build-skil
 
 Within an authorized review-and-fix task, Codex starts a fresh Claude process, waits for
 structured evidence, checks every finding, fixes confirmed defects, runs the project gate,
-and requests a fresh review of the fixes. Default is at most two review invocations; a
+and requests a fresh review of the fixes. Default is at most two review rounds, each with
+at most two provider attempts (four calls maximum); a
 remaining Reject or unmet manual check is reported, never promoted into approval.
 
 For automatic reviews without repeating the request, the owner may explicitly authorize
@@ -74,8 +85,9 @@ Tool restriction is an application-level control, not a claim of an OS read-only
 
 ## Adapter and evidence contract
 
-The canonical source is `core/scripts/claude_bridge.py`. Bootstrap installs it into project
-scripts. `scripts/package_codex_plugin.py` copies it and the shared process/accounting
+Canonical sources live in `core/scripts/`: `review_dispatch.py`, `claude_bridge.py`, and
+`codex_bridge.py`. Bootstrap installs them into project scripts.
+`scripts/package_codex_plugin.py` copies them and the shared process/accounting/quota
 helpers into the plugin artifact; `--check`
 rejects stale or missing generated content. Never hand-edit the packaged runtime.
 
@@ -106,11 +118,19 @@ The adapter's timestamped JSON archives are excluded from subsequent review diff
 recursively embedding prior transcripts; source and ordinary documentation are not excluded.
 Reference reviews require a clean checkout, and commit mode requires the checked-out HEAD.
 
-Default limits are 600 seconds and 12 turns. Reviews have no default monetary cap; the
+Default review limits are 1800 seconds per attempt and 12 Claude turns. Reviews have no default monetary cap; the
 adapter passes `--max-budget-usd` only when explicitly specified. Patch proposals retain
 their separate $3 default. Omitting a cap does not remove provider/account limits.
 The wall-clock timeout kills the child process group. These limits are not a promise of
-precise subscription quota accounting. No silent model fallback is configured.
+precise subscription quota accounting. The wrapper and packaged dispatcher visibly fail
+over once to the other configured model on operational failure. Direct adapters do not.
+Both wrapper attempts use `REVIEW_TIMEOUT_SECONDS` (1800 by default) independently. This
+measures total elapsed time, not inactivity or connection setup. Output does not reset it;
+two full-length attempts may take about an hour plus local overhead. Claude's final-JSON
+mode does not reliably expose whether silent work has started. Proposal mode retains its
+separate 600-second default. No
+new monetary cap is imposed. An explicit direct-adapter cap must not be dropped to obtain
+failover.
 
 ## Validation and release
 
@@ -135,7 +155,12 @@ separate; missing subscription percentages are unknown. The full contract is
 Quota, context exhaustion, or timeout stops the affected child, not independent work.
 The host records the pending result and continues authorized work that does not need it.
 Failed review never authorizes committing or pushing its protected diff. Neither adapter
-retries indefinitely or silently changes the selected model. Raw account diagnostics and
+retries indefinitely. The dispatcher preserves the configured pins, announces failover,
+and stops after one attempt per provider. A completed Reject does not trigger a switch.
+Invalid evidence, stale scope, and persistence failures stop without trying the alternate.
+An author-model fallback is advisory and leaves independent approval pending. Immutable
+chain checkpoints in `.myagentkit/usage/chains/` link individual evidence and usage records;
+the final `review dispatch:` JSON identifies the outcome. Raw account diagnostics and
 usage are ignored by Git; publish only deliberately scrubbed review summaries.
 
 Offline tests construct missing, contradictory, stale, timed-out, and wrong-model evidence

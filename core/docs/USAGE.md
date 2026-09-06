@@ -6,6 +6,13 @@ diagnostics are local operational evidence, not material for a public push. Back
 privately if you need retention across machines. Preflight refusals launch no child and
 are not counted as billed invocations.
 
+Both direct adapters and the dispatcher verify private storage before model work. The
+usage directory and each review/proposal archive must be Git-ignored; existing raw records
+must not be tracked. Symlinked storage is rejected. Publication checks the rules again,
+and temporary archive content is staged inside the ignored usage directory. Existing
+projects must merge the ignore rules and complete companion list in `docs/DEV_SETUP.md`
+before using either the wrapper or the standalone plugin adapters.
+
 ## Attribution and reports
 
 For Claude-host Codex reviews, set `MYAGENTKIT_REQUESTER=claude/ACTUAL_MODEL` and
@@ -61,7 +68,12 @@ unavailable observation is recorded as unknown and does not prevent the model ta
 
 ## Bounded failure, useful continuation
 
-Each invocation has a wall-clock limit (600 seconds by default, maximum 3600) and an 8 MB
+Each review attempt has a total wall-clock limit (1800 seconds by default, maximum 3600);
+Claude proposals retain their separate 600-second default. This is not an inactivity or
+connection timer: the current Claude final-JSON adapter cannot reliably distinguish silent
+active work from a stalled request. Output does not reset the deadline. A fallback attempt
+gets its own deadline, so two default review attempts can take roughly 60 minutes plus
+local processing and quota-observation overhead. Each invocation also has an 8 MB
 captured-output limit per stream. The parent stops its child process group and preserves
 partial diagnostics in memory through bounded pipes, not temporary output files. Codex's
 separate CLI-owned final-message file is size-checked after execution; the adapter does not
@@ -75,8 +87,17 @@ Claude reviews omit the monetary-budget flag unless explicitly requested; their 
 not unknown spend. Reported cost/token accounting remains unchanged. Patch proposals retain
 their separate three-dollar default; timeout, turn and output protections still apply.
 
-The adapters never automatically retry, buy credits, switch models, or promote a failed
-review to approval. Structured recovery instructs the host to record the blocker and continue
+Individual adapters never automatically retry, buy credits, switch models, or promote a
+failed review to approval. The wrapper's dispatcher may try the other configured model
+once after operational unavailability. Each attempt keeps its own `.myagentkit/usage/*.json`
+record, with `review_chain_id` and `review_attempt` linking it to the invocation. Immutable
+checkpoints under `.myagentkit/usage/chains/` contain references to these records, not
+additional token/cost charges. The usage reporter reads only top-level provider records;
+it does not count chain checkpoints as calls. Unknown or partial usage remains unknown or
+partial even when the second provider succeeds. Requested/actual reviewer, failure reason,
+configured pins, and final outcome remain visible in the chain.
+
+If both providers fail, structured recovery instructs the host to record the blocker and continue
 independent authorized work. Optional coding assistance can fall back to host implementation.
 Required independent review cannot fall back to self-approval: its protected commit/push
 remains blocked until the review gate is satisfied. If all remaining work depends on the

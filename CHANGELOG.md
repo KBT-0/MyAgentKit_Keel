@@ -13,6 +13,31 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## v0.7 — 2026-09-05 (unreleased)
 
+- **2026-09-06 review fixes:** model calls now require ignored, untracked private storage;
+  malformed successful Claude envelopes stop without failover; malformed or conflicting
+  Codex verdict declarations fail evidence validation. Kit acceptance requires the named
+  regression suites and rejects skips. The existing-project companion list is canonical
+  in `core/docs/DEV_SETUP.md` and has an upgrade regression. **ACTION:** copy that complete
+  list, merge the ignore rules, and preserve/untrack any previously tracked raw diagnostics.
+  The owner authorized committing and pushing these repairs with Claude review explicitly
+  pending. This is not a review approval; see `docs/worktree-notes/role-neutral-review.md`.
+
+- Review attempts now default to 30 minutes rather than 10, in both directions and in
+  direct adapters. Explicit timeouts are preserved. This remains a total wall-clock limit,
+  not an inactivity detector; two fallback attempts can take about an hour. Claude proposal
+  defaults are unchanged. **ACTION:** upgrade the companion Python runtime files and
+  repackage the Codex plugin after source review; existing explicit overrides still win.
+
+- Owner-selected reviewer default is Claude. Reviews automatically fail over once to the
+  other configured model on operational unavailability, in both directions. Each attempt
+  retains its own evidence and usage, linked by immutable chain checkpoints. Completed
+  Reject results, invalid evidence, stale scope, and storage failures never trigger failover.
+  Author-model fallback findings remain advisory, not independent review approval.
+  No default review monetary cap is added. **ACTION:** manually upgrade project-owned
+  `review.sh` and its companion Python files, including `review_dispatch.py`; keep existing
+  model pins. Sync does not overwrite those files. Repackage and reinstall the Codex plugin
+  after source review to use the updated skill and bundled dispatcher.
+
 **The kit no longer has an opinion about which model writes and which reviews.** The rule
 was always "the author never reviews its own patch, and the reviewer is a different model".
 The tooling did not say that: `review.sh` was pinned to Codex, and the documents described
@@ -43,9 +68,12 @@ the kit did not support the arrangement it had been claiming to require.
 **ACTION — existing projects.** `scripts/review.sh` and the adapter Python files beside it
 are PROJECT-OWNED: `sync-kit.sh` will not touch them, by design. To take this change:
 
+Sync alone does not replace an existing wrapper or empty its model pins. The new pin
+requirement applies to new installations and to projects that manually adopt this wrapper.
+
 1. Copy `core/scripts/review.sh` over your own, then re-apply any local edits.
-2. Copy `core/scripts/{claude_bridge,codex_bridge,agent_process,agent_usage,codex_quota}.py`
-   and `core/scripts/test_claude_bridge.py`.
+2. Copy every runtime and test companion in the canonical upgrade list in
+   [core/docs/DEV_SETUP.md](core/docs/DEV_SETUP.md#3-the-second-model--only-if-you-want-cross-model-review).
 3. **Fill in `DEFAULT_REVIEWER`, `CODEX_MODEL` and `CLAUDE_MODEL` at the top of
    `scripts/review.sh`.** Both model pins ship EMPTY and the wrapper stops until they are
    set. This is deliberate: an unpinned reviewer archives whatever its CLI defaulted to.
@@ -53,6 +81,15 @@ are PROJECT-OWNED: `sync-kit.sh` will not touch them, by design. To take this ch
 
 Older reports named `<stamp>-<branch>.md` or `<stamp>-codex.md` are left alone; they stay
 readable, they are simply not in the new shape.
+
+Clarifications: both hosts can delegate reviews through the shipped command/skill entry
+points; only structured implementation-proposal support is asymmetric. Synthetic live
+checks are integration evidence, not independent acceptance of the implementation. For a
+co-authored change, use a reviewer that did not author any part of the combined diff.
+
+The owner selected Claude as the default reviewer for the Astra-author workflow. The
+shipped wrapper now defaults to Claude; explicit `--reviewer codex` and per-project setup
+remain available. Existing project-owned wrappers still require a manual settings update.
 
 Codex can host the cross-model workflow through the MyAgentKit Codex plugin.
 

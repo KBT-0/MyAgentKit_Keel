@@ -18,7 +18,8 @@ class PackagingTests(unittest.TestCase):
             shutil.copyfile(ROOT / "scripts/package_codex_plugin.py", root / "scripts/package_codex_plugin.py")
             source = root / "core/scripts/claude_bridge.py"
             source.write_text("canonical runtime\n")
-            for name in ["agent_process.py", "agent_usage.py"]:
+            for name in ["agent_process.py", "agent_usage.py", "codex_bridge.py",
+                         "review_dispatch.py", "codex_quota.py"]:
                 (source.parent / name).write_text("canonical companion\n")
             command = [sys.executable, str(root / "scripts/package_codex_plugin.py"), "--check"]
             target = root / "plugins/myagentkit/scripts/claude_bridge.py"
@@ -33,7 +34,8 @@ class PackagingTests(unittest.TestCase):
             result = subprocess.run(command, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0)
             self.assertIn("matches canonical", result.stdout)
-            for name in ["agent_process.py", "agent_usage.py"]:
+            for name in ["agent_process.py", "agent_usage.py", "codex_bridge.py",
+                         "review_dispatch.py", "codex_quota.py"]:
                 companion = target.parent / name
                 original = companion.read_bytes()
                 companion.unlink()

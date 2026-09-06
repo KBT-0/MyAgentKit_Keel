@@ -46,14 +46,14 @@ consolation prize.
 
 **Required: the reviewing CLI itself.**
 
-`scripts/review.sh` shells out to it directly. Out of the box the script targets the Codex
-CLI's interface (`codex exec -s read-only …`), so:
+`scripts/review.sh` uses the project's configured default reviewer and pinned models.
+For the Codex direction (`codex exec -s read-only …`), check:
 
 ```sh
 command -v codex          # already there?
 ```
 
-If not, install it and log in. An agent can run the installer for you. Point the script
+If not, install it and log in. Point the script
 somewhere else with `REVIEW_CLI_BIN`, but note that only swaps the BINARY — a CLI with a
 different flag interface needs a matching adapter. For Claude Code, the kit ships one:
 use `./scripts/review.sh --uncommitted --reviewer claude`. This requires Python 3.10+
@@ -63,11 +63,24 @@ adapter pins read tools and structured output. The Codex-host plugin also suppor
 Python 3.10+ is also required by `scripts/review.sh --self-test` and the review tests included
 in `scripts/check.sh --self-test`, even when Codex is the only reviewing CLI.
 Both live adapters now require Python as well, to bound the child process and preserve usage
-on failure. Existing projects must copy all companion files: `claude_bridge.py`,
+on failure. The following is the canonical companion list for an existing-project upgrade.
+Copy every listed file from the kit's `core/scripts/` into your project's `scripts/`
+alongside the updated `review.sh`; reapply the project's default reviewer and model pins.
+
+<!-- REVIEW_COMPANIONS_START -->
+
+`review_dispatch.py`, `claude_bridge.py`,
 `codex_bridge.py`, `agent_process.py`, `agent_usage.py`, `test_claude_bridge.py`, and
-`test_agent_usage.py`, plus `codex_quota.py` and `test_codex_quota.py`. Merge `.myagentkit/`
+`test_agent_usage.py`, plus `codex_quota.py` and `test_codex_quota.py`.
+
+<!-- REVIEW_COMPANIONS_END -->
+
+Merge `.myagentkit/`
 into the root ignore rules. Also merge the raw review/handoff archive exclusions and final
-summary re-include from the kit's `core/.gitignore`. See `docs/USAGE.md`.
+summary re-include from the kit's `core/.gitignore`. The adapters refuse to launch if
+private storage is not ignored or raw records are already tracked. Preserve any existing
+records locally before removing them from Git's index; never delete them as part of an
+upgrade. Private storage cannot use symlinked directories. See `docs/USAGE.md`.
 
 Verify it end to end before trusting it — one real invocation, on a small diff:
 

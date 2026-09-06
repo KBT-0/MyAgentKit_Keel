@@ -19,6 +19,57 @@ which is the part that gets lost.
 
 ---
 
+## Implementation observations
+
+### 2026-09-06 — Green review tooling still hid five reproduced failures
+
+A fresh owner-requested Astra review of the combined local change returned Reject despite
+the existing acceptance suite passing. The host reproduced all five findings. Diagnostics
+could be staged in projects missing the ignore rules while the review snapshot excluded
+them. Successful `{}` output was misclassified as operational failure and launched a second
+model. A valid Accept line followed by a malformed Reject line became an Accept report
+after rendering removed the rejection. Deleting the packaging regression still left the
+acceptance gate green, and the documented upgrade list omitted an imported runtime file.
+
+The corrections check private storage before launch and again during publication, place
+temporary raw archives under the ignored usage directory, classify malformed successful
+envelopes as invalid evidence, count all verdict declarations before accepting one, and
+require named test suites without skips. The upgrade test reads the canonical documentation
+list so a missing companion cannot hide behind a separately maintained test fixture.
+These are corrections to reproduced failures, not a new independent approval. The owner
+explicitly authorized push with a fresh Claude review still pending; that task-specific
+exception does not change the kit's general review policy.
+
+### 2026-09-05 — Review deadline is not an activity detector
+
+The owner objected to cancelling productive review at ten minutes and explicitly approved
+a thirty-minute total deadline as the alternative to reliable startup detection. The
+current Claude adapter requests final JSON, which may remain silent while the model is
+working; silence alone cannot prove that a request has not started. The shared review
+default is therefore 1800 seconds, still measured from process startup, with explicit
+overrides preserved. This does not claim inactivity detection. Each failover attempt gets
+its own deadline; proposals retain their separate default. A mocked-launch regression was
+observed rejecting the old 600-second default on both direct adapters and both dispatcher
+routes before the change, without waiting thirty minutes or calling a paid model.
+
+### 2026-09-05 — Bounded operational reviewer failover
+
+The owner requested automatic use of the other configured reviewer when the preferred
+provider cannot complete, including subscription quota exhaustion. A single-provider
+failure previously stopped evidence collection despite the other selected model being
+available. Blindly trying another model for every nonzero exit would instead hide stale
+scope, broken evidence, or persistence errors; switching after Reject would hunt for a
+favorable verdict. The dispatcher therefore uses structured adapter outcomes, not prose
+matching or exit status alone. It tries each provider at most once, preserves one original
+scope, and stores separate per-attempt usage plus immutable chain checkpoints. A completed
+Reject is terminal. An author-model fallback supplies advisory findings, not independent
+approval. This is orchestration of existing CLIs, not a new provider API or quota estimate.
+
+The offline quota regression was observed failing on the old wrapper (exit 5; no Codex
+call) and passing after dispatch was introduced. No paid model invocation was needed to
+prove the transition. Live subscription exhaustion and plugin rediscovery remain manual
+checks, not claims established by fixtures.
+
 ## Last ecosystem research pass
 
 **Never run.** The kit was extracted from a working project on 2026-07-26 without a
@@ -29,6 +80,22 @@ scratch.
 ---
 
 ## Ecosystem findings
+
+### 2026-09-05 — Correcting role-neutral workflow claims
+
+The owner approved correcting three overstatements in the role-neutral handoff. A skill
+calling a CLI and a command calling a CLI both delegate work; the missing capability is a
+Codex proposal adapter, not Claude-host review delegation. A live synthetic smoke test
+demonstrates integration, not acceptance of the actual implementation. Finally, neither
+co-author can provide the independent review of their combined change, and creating a
+local commit does not move the review requirement from before commit to before push.
+The update instructions also distinguish automatic sync from manually adopting a new
+project-owned wrapper. These are documentation corrections, not new delegation features.
+
+The owner then selected Claude as the default reviewer because Astra now authors the work.
+The default changes, not the available roles or the independent-review invariant. A fake-
+CLI test was observed rejecting the old default before the change, then confirms the
+Claude default and explicit Codex override. No monetary review cap is reintroduced.
 
 ### 2026-09-05 — Owner-selected review budget policy
 

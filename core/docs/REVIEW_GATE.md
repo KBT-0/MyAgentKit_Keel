@@ -33,6 +33,11 @@ being checked.
 
 ## What counts as a risky diff
 
+When multiple models have authored the combined change, select a fresh reviewer that did
+not author any of it. Keep the reviewer read-only; an author verifies and implements its
+findings, then requests fresh review of the corrections. An existing local commit without
+review is still unreviewed work, not an exception that moves this gate to push time.
+
 A diff is risky when a silent bug in it is expensive, hard to attribute, or slow to
 surface. For this project:
 
@@ -123,9 +128,11 @@ identity in its output, so its record says the pin is requested but unattested. 
 evidence says which of the two it is instead of implying a check that did not happen.
 
 The script accepts no flags beyond those above: the reviewer is matched against a closed
-list and nothing is passed through to the underlying CLI. Both adapters require Python
-3.10+, restrict source tools to Read/Glob/Grep, disable customizations and MCP, and never
-resume an author session. This is a tool-level restriction, not an OS read-only mount.
+list and arbitrary user flags are not passed through to the underlying CLI. Both adapters
+require Python 3.10+ and do not resume an author session. Claude restricts source tools to
+Read/Glob/Grep and disables customizations and MCP. Codex requests its read-only sandbox
+and never-approve policy; it does not implement Claude's tool allowlist or customization
+isolation. A shared evidence format does not imply identical permission mechanisms.
 Reference reviews require matching clean checkout context. Both share scope collection and
 checkout fingerprint validation, so a change while the reviewer runs invalidates its
 result, and evidence is published exclusively before usage can say completed.
@@ -158,9 +165,36 @@ authorization, or provider-account limits; it does not authorize automatic retri
 If a reviewing CLI cannot finish because of quota, context exhaustion, timeout,
 authentication, or missing final evidence, do not treat that failure as Accept. Both
 adapters return a failure with a local usage record. Codex uses `REVIEW_TIMEOUT_SECONDS`
-(600 by default); Claude uses `--timeout` (600 by default). Timeout stops the child process
-group and preserves captured partial output. There is no automatic retry, model fallback,
-or purchase of extra credits.
+(1800 by default); Claude reviews use `--timeout` (1800 by default). Timeout stops the child process
+group and preserves captured partial output. Through the wrapper, `REVIEW_TIMEOUT_SECONDS`
+sets the timeout for each provider, with the same 1800-second default. This is a total
+wall-clock deadline, not an idle timer: active work can continue beyond ten minutes, but
+is still stopped at thirty minutes by default. Claude's final-JSON output does not provide
+reliable startup/activity detection. Two timed-out default attempts can take about one hour
+plus local processing and quota-observation overhead. There is no purchase
+of extra credits and no retry of the same provider.
+
+The wrapper and bundled `review_dispatch.py` automatically try the other configured model
+once after an operational failure: quota, authentication, timeout, missing CLI, CLI error,
+context exhaustion, turn/budget exhaustion, or output limit. Both model pins remain owned
+by project setup (`REVIEW_CLAUDE_MODEL` / `REVIEW_CODEX_MODEL` override them). An absent or
+invalid alternate pin stops failover rather than choosing a model. Direct adapter calls
+remain single-provider. A completed Reject or manual-check verdict is a result, not an
+availability failure; it never triggers another provider. Invalid evidence, wrong model
+attestation, invalid scope, missing guidance, changed checkout, and evidence/usage storage
+failures stop the chain. The original scope is checked between attempts and at completion.
+
+Each attempt retains separate evidence and usage. Immutable checkpoints under
+`.myagentkit/usage/chains/<chain-id>-<attempt-count>.json` link the attempts; these are not
+additional token records. The final `review dispatch:` JSON names the selected reviewer or
+failure. At most two provider attempts occur per invocation. If both fail, leave review
+pending and continue independent authorized work; never restart an exhausted chain
+automatically. A review-and-fix round is separate from a provider attempt and may consume
+two calls; hosts must account for that when applying task-level authorization.
+
+If the fallback model authored any part of the patch, its findings are advisory only.
+The host must check all patch authors before treating any completed result as independent
+review; neither a new process nor automatic failover grants author-independent approval.
 
 Record the affected task, evidence path, and pending review in current project state. Then
 continue independent authorized implementation, tests, or documentation. When Claude was

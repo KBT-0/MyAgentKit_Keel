@@ -13,11 +13,11 @@ budget. Agents do not spend it on their own.
 change. `scripts/review.sh` ships adapters for two, `--reviewer codex` and
 `--reviewer claude`, and the project's configured default is at the top of that script.
 **You may be the author here.** If this session wrote the diff, the reviewer must not be
-your own model, whatever the default says. If the script reports the CLI is missing, do not work around it and do
-NOT review the diff yourself instead — that defeats the entire point, since you may be the
-author. Tell the owner it is not installed, offer to install it, and point at
-`docs/DEV_SETUP.md` §3. The fallback meanwhile is the paste-by-hand template in
-`docs/REVIEW_GATE.md`, run in a genuinely fresh session.
+your own model, whatever the default says. The wrapper may fail over once to the other
+configured model if the first provider is unavailable. If that fallback authored the patch,
+its findings are advisory, not independent gate approval. Do not install a missing CLI or
+choose an unconfigured model without authorization. The paste-by-hand template in
+`docs/REVIEW_GATE.md` remains available for a genuinely fresh non-author review.
 
 1. Run `./scripts/review.sh` with the scope asked for: `--uncommitted` (default),
    `--base <ref>` or `--commit <sha>`, optionally with `--reviewer <name>`. Those are the
@@ -47,9 +47,15 @@ Raw arguments: `$ARGUMENTS`
 
 ## Unavailable reviewer
 
-If the reviewer times out, hits quota/context limits, fails authentication, or returns no
-valid final response, record its usage/evidence path and leave the review pending. Continue
-other independent authorized work. Do not wait indefinitely, retry automatically, switch
-models without authorization, or approve the patch yourself. The blocked review still
+The wrapper tries each configured provider at most once on operational failures, including
+quota, context/turn limits, timeout, authentication, missing CLI, or CLI errors. Read its
+final `review dispatch:` JSON and both attempts' evidence and usage paths. Reject and
+manual-check results never trigger failover. Invalid evidence, changed scope, or storage
+failure stops the chain. An unconfigured alternate is not permission to invent a model.
+
+If neither provider completes, record both attempts and leave the review pending. Continue
+other independent authorized work. Do not wait indefinitely, restart the exhausted chain,
+or approve the patch yourself. Each review invocation can consume two provider calls;
+count them when enforcing the owner's task-level limits. The blocked review still
 prevents committing or pushing its protected diff. If nothing independent remains, return
 the blocker to the owner. `docs/USAGE.md` describes the local per-call accounting records.

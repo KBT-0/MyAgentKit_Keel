@@ -11,6 +11,41 @@ import agent_usage
 
 
 class UsageTests(unittest.TestCase):
+    def test_private_staging_and_publication_require_ignore_rules(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            subprocess.run(['git', 'init', '-q', str(repo)], check=True)
+            ignore = repo / '.gitignore'
+            ignore.write_text('/.myagentkit/\n/docs/reviews/*-review.md\n')
+            report = repo / 'docs/reviews/fixture-review.md'
+            original = tempfile.NamedTemporaryFile
+
+            def capture(*args, **kwargs):
+                stream = original(*args, **kwargs)
+                result = subprocess.run(['git', '-C', str(repo), 'check-ignore', '--quiet',
+                                         stream.name])
+                self.assertEqual(result.returncode, 0, 'temporary raw evidence must also be ignored')
+                return stream
+
+            with patch.object(agent_usage.tempfile, 'NamedTemporaryFile', side_effect=capture):
+                agent_usage.write_evidence(repo, report, 'private output', private=True)
+            ignore.write_text('')
+            with self.assertRaisesRegex(ValueError, 'Git-ignored'):
+                agent_usage.write_evidence(repo, report.with_name('new-review.md'), 'private', private=True)
+            self.assertFalse(report.with_name('new-review.md').exists())
+
+    def test_private_storage_cannot_follow_an_in_repo_symlink(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            subprocess.run(['git', 'init', '-q', str(repo)], check=True)
+            (repo / '.gitignore').write_text('/.myagentkit/\n')
+            (repo / 'public').mkdir()
+            (repo / '.myagentkit').mkdir()
+            (repo / '.myagentkit/usage').symlink_to(repo / 'public', target_is_directory=True)
+            with self.assertRaisesRegex(ValueError, 'symlinked storage'):
+                agent_usage.require_private_storage(repo)
+
     def test_evidence_cannot_overwrite_or_escape_repository(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp) / 'repo'
@@ -75,6 +110,8 @@ class UsageTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)
             execution = {"exit_code": 1, "stdout": "private transcript", "stderr": "", "duration_ms": 2}
+            subprocess.run(['git', 'init', '-q', str(repo)], check=True)
+            (repo / '.gitignore').write_text('/.myagentkit/\n')
             one, _ = agent_usage.record(repo, "codex", "fixture", "claude/fixture", {"id": "one"},
                                        execution, "failed", "quota", None)
             two, _ = agent_usage.record(repo, "codex", "fixture", "claude/fixture", {"id": "two"},

@@ -1,6 +1,101 @@
 # Acceptance evidence
 
+## Review repairs — 2026-09-06
+
+Codex repaired all five findings in the dated Astra review summary. The final
+`./scripts/check.sh --self-test` passed with 50 adapter/process/accounting/quota tests,
+five kit acceptance/packaging/bootstrap/upgrade tests, and the installed core negative
+gates. It also ran the installed review self-test suite successfully. Packaged runtime
+parity passed. The full gate ran on the owner checkout without invoking a paid model.
+Local logs are under `.myagentkit/review-verification/20260906-repairs/` and remain ignored.
+
+The new malformed-envelope and conflicting-verdict regressions were observed failing
+before the fixes. The privacy regression demonstrated a provider launch before storage
+validation on the old code, then passed with the new preflight. The upgrade regression
+reproduced the missing `review_dispatch` import from the old companion list before
+passing with the complete list; it also runs the updated wrapper with a fake Codex CLI.
+Missing, empty, decorator-skipped, and runtime-skipped required suites are exercised by
+the acceptance regression. Private staging, tracked diagnostics, and in-repository
+symlink redirection are covered. An intermediate full test caught an indented-verdict
+rendering failure, which was corrected before the final successful run.
+
+The owner explicitly authorized commit and push after these repairs with a fresh Claude
+review still pending. No fresh Claude review, live proposal, plugin reinstall/discovery,
+adversarial permission audit, real-project upgrade, or Python/OS compatibility matrix was
+run in this repair task. The passing tests do not establish independent acceptance. The
+current follow-up scope and the task-specific push exception are recorded in
+`docs/worktree-notes/role-neutral-review.md`.
+
 ## v0.7 development — 2026-09-05
+
+### Thirty-minute review deadline — Codex / GPT-6 Astra
+
+The owner approved a thirty-minute total deadline as the alternative to reliable startup
+detection. The current final-JSON Claude adapter cannot prove inactivity from silence.
+The mocked-launch regression was run before implementation and rejected the old
+600-second default on both direct adapters and both dispatcher routes. It then passed
+with 1800 seconds, also checking that explicit overrides still reach the process runner.
+No model was called and no thirty-minute wait was needed for this test.
+
+The isolated-source `./scripts/check.sh --self-test` passed with 44
+adapter/process/accounting/quota tests, two packaging/bootstrap tests, and core negative
+cases. Plugin runtime equality, plugin validation, skill validation, and whitespace checks
+passed. These checks do not establish live provider compatibility or independent review
+approval. The plugin source was repackaged; installation and protected commits remain
+pending the existing independent-review gate.
+
+### Automatic operational reviewer failover — Codex / GPT-6 Astra
+
+The owner requested one automatic attempt with the other configured model when the
+requested reviewer is unavailable. The quota regression was run on the old wrapper and
+failed for the intended reason: Claude returned exit 5 and Codex was not called. It passed
+after the dispatcher was implemented. Offline cases now exercise both directions,
+selected pins, identical scope, separate usage linked to one chain, authentication,
+missing CLIs, timeout, context/turn limits, and both providers failing. Negative cases
+verify that completed Reject/manual-check results do not switch models, absent alternate
+pins do not choose defaults, and invalid/stale evidence or storage failure prevents failover.
+
+The isolated-checkout `./scripts/check.sh --self-test` passed with 43
+adapter/process/accounting/quota tests, two packaging/bootstrap tests, and the core
+negative cases. Packaged runtime equality, the official plugin validator, skill validator,
+and whitespace checks passed. The validators used an existing isolated PyYAML installation;
+no runtime dependency was added. This is offline behavioral validation, not an independent
+review verdict or a real subscription-exhaustion test. No paid model call was made.
+
+After transfer, byte-for-byte source parity was verified and the owner-checkout
+`./scripts/check.sh --self-test` passed with the same 43 plus two tests and core negative
+cases. The final runtime packaging and whitespace checks also passed. This paragraph
+records those executed checks and does not change the validated runtime. Plugin
+reinstallation, independent acceptance of the final combined source, and commit/push
+remain pending. The requested default remains Claude; no review monetary cap was added.
+
+### Corrected delegation claims and default reviewer
+
+The owner approved correcting delegation, sync, and independent-review statements, then
+selected Claude as the default reviewer for Astra-authored work. Codex / GPT-6 Astra
+implemented these changes in an isolated clone. Both hosts' review paths are documented
+as delegation; the missing capability is a structured Codex proposal adapter. Synthetic
+integration checks are not presented as independent acceptance of the implementation.
+Project-owned wrappers do not change on sync alone. The review gate remains before commit,
+not merely before push; neither co-author can independently approve the combined change.
+
+The new Claude-default regression was observed failing with the old Codex default and
+passing after correction; it also verifies explicit Codex selection. The isolated-clone
+`./scripts/check.sh --self-test` passed with 34 adapter/process/accounting/quota tests,
+two packaging/bootstrap tests, and all core negative cases. No monetary cap was introduced.
+
+A non-authoring gpt-5.6-sol/high reviewer was invoked against the entire existing combined
+commit 7882a5a, while that owner checkout stayed unchanged. At the 600-second timeout it
+had emitted partial diagnostics but no final verdict or reported usage. The run stopped
+with failed/timeout, not Accept. Its ignored local report is
+`docs/reviews/20260905T142746Z-ab3b26b92d33-codex-review.md`; the local accounting record is
+`.myagentkit/usage/20260905T143749Z-8cb30fdf716a.json`. Unknown usage is not zero cost.
+No automatic retry followed, and no new commit or push is authorized by this result.
+The later documentation/default-reviewer corrections still need independent review.
+After transfer, the owner-checkout `./scripts/check.sh --self-test` passed with the same
+34 plus two tests and core negative cases, and `git diff --check` passed. No new commit,
+push, plugin reinstall, or additional model invocation followed. This final entry only
+records validation; it is not an independent review verdict.
 
 ### Role-neutral review gate — Claude Opus 5 session
 
@@ -19,7 +114,8 @@ the purpose (a two-function money module with a real integer-division defect):
 Both reports were compared field by field: the header field list is byte-identical, each
 carries exactly one `VERDICT:` line, and both record the same `fingerprint` and
 `diff_sha256` for the shared scope. That the two models reached different verdicts on the
-same diff is the decorrelation the gate exists for; it is not a defect in either adapter.
+same diff does not by itself establish review quality or defect-detection coverage. These
+were integration smoke tests, not independent review of the combined kit implementation.
 
 **Eight gates were broken on purpose and observed RED**, each caught by a named negative
 test, then restored:
@@ -55,7 +151,8 @@ forgets its fixture fails to launch rather than spending money.
 **What this session did NOT establish:**
 
 - No independent review of any of it. This session wrote the changes; the kit's own rule
-  forbids it reviewing them. Astra reviews in the morning.
+  forbids it reviewing them. Both Astra and Opus contributed code; a non-authoring model
+  must independently review the combined change. An author session cannot close this debt.
 - The live runs used one small synthetic diff on one machine. They prove the two paths
   execute and agree on format, not that either handles a large or unusual repository.
 - Codex's hook event names and schema were not verified, which is why no `overlays/codex/`

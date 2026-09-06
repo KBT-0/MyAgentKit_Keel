@@ -1,85 +1,58 @@
-# The roles swap; the plumbing under them does not
+# Review delegation is symmetric; proposal support is not
 
-The kit's review rule names two roles, AUTHOR and REVIEWER, and refuses to name a vendor for
-either. `./scripts/review.sh --reviewer codex|claude` makes that real: both directions run,
-both archive one evidence format, both pin their model by name.
+The kit names AUTHOR and REVIEWER as roles, not vendors. Both hosts can start an external
+reviewer from their own session, read its result, and verify the findings. A command that
+calls a script and a skill that calls a script are both host-managed delegation; neither
+becomes a persistent background coordinator merely because its entry point has a different
+name.
 
-That symmetry stops at the review gate. **In-session delegation — one agent asking another
-for work without leaving its own session — is not equally available in both directions**, and
-it is not something the kit can fix. This page records what is actually there, so nobody
-plans around a capability that does not exist.
+## What the kit ships
 
-## What each direction can do
-
-| | Claude Code as host | Codex as host |
+| Capability | Claude Code as host | Codex as host |
 |---|---|---|
-| Run the review gate on the other model | yes — `./scripts/review.sh --reviewer codex` | yes — `./scripts/review.sh --reviewer claude` |
-| Same evidence format, same verdict contract | yes | yes |
-| In-session delegation, shipped by the kit | **no** | yes — the Codex plugin's `myagentkit-review` and `myagentkit-delegate` skills |
-| In-session delegation, from the vendor | via the OPTIONAL `openai/codex-plugin-cc` plugin | not applicable |
-| Ask the other model to PROPOSE a patch | only by running `claude_bridge.py propose` as a command | yes — `myagentkit-delegate` |
+| Delegate a review to the other tool | `/myagentkit:cross-review --reviewer codex` | `myagentkit-review`, or `./scripts/review.sh --reviewer claude` |
+| Read the result in the requesting session | The command runs the wrapper and instructs the host to verify findings | The skill runs the adapter and instructs the host to verify findings |
+| Guided implementation and fresh re-review | The command requires fresh review of fixes; implementation needs separate authorization | The review skill includes an authorized, bounded repair loop |
+| Request a structured implementation proposal from the other tool | No Codex proposal adapter is currently shipped | `myagentkit-delegate` calls Claude's `propose` mode |
 
-Read the middle rows together. Both hosts can *review* through the same script; that is the
-part the kit guarantees and the part the gate depends on. What differs is how conversational
-the request is allowed to be.
+The actual gap is a shipped Codex proposal interface and equivalent host guidance, not an
+inability of Claude Code to launch Codex. `claude_bridge.py propose` always calls Claude;
+running it from Claude Code does not turn it into a Claude-to-Codex proposal path.
+`codex_bridge.py` currently collects reviews, not structured implementation proposals.
 
-**From Codex, the kit ships the delegation itself.** `plugins/myagentkit` installs two Codex
-skills that call the Claude adapter directly, so "ask Claude to review this and fix what it
-confirms" is a sentence in the session rather than a command line. `docs/CODEX.md` covers
-installation and the authorization rules.
+The Codex plugin's skills and the Claude plugin's command are different discovery surfaces.
+Their underlying work is an external CLI invocation with bounded execution and local
+evidence/accounting. The author remains responsible for scope, authorization, verifying
+findings, and any permitted edits. Review-only authorization does not authorize repairs.
 
-**From Claude Code, the kit ships no equivalent.** `/myagentkit:cross-review` is a command
-that runs the review script; it is not Claude delegating a task to Codex in conversation.
-The nearest thing is a vendor plugin the kit neither ships nor requires, and it is optional
-precisely because the gate does not depend on it.
+An optional vendor integration is not required to delegate a review through this kit.
+Additional proposal support could be implemented using a deliberately scoped adapter and
+tests; it is not a platform impossibility. No such implementation is claimed by this change.
 
-## Why the kit does not close the gap
+## Why there is no Codex overlay
 
-Because closing it would mean writing an adapter for an interface the other vendor owns and
-changes. The kit already carries two, and each one cost a live validation run to trust. A
-third path — a conversational Claude-to-Codex delegation with its own failure modes, its own
-budget accounting and its own evidence — would be a third thing to keep honest, in exchange
-for convenience the script already provides less prettily.
+The absence of `overlays/codex/` is separate from review delegation:
 
-The asymmetry is also smaller than it looks. Delegation is a convenience; the REVIEW is the
-rule, and the review runs identically from both sides.
+- Codex reads the canonical `AGENTS.md`; adding a same-name pointer is unnecessary.
+  The Claude overlay's `CLAUDE.md` points to that canonical file.
+- The existing Claude overlay contains tool-specific hooks and agent configuration.
+  Equivalent Codex hook events and configuration were not validated by this work, so no
+  hook overlay was implemented or claimed to work.
 
-## The overlay asymmetry, and why there is no `codex` overlay
+The shared checks and Git hooks remain independent of either overlay. A Git hook is active
+only when it is actually installed and configured in that checkout. Optional tool hooks are
+early feedback, not a substitute for the review gate or proof that a commit was reviewed.
 
-`overlays/claude-code/` exists. There is deliberately no `overlays/codex/`, and the reason is
-worth stating rather than leaving as an apparent gap:
+## Evidence and limits
 
-- **The canonical-file pointer is not needed.** The overlay's `CLAUDE.md` is a one-line
-  pointer to `AGENTS.md` because Claude Code does not read `AGENTS.md` natively. Codex does.
-  Codex is a large part of *why* `AGENTS.md` is the canonical file
-  ([one-canonical-instruction-file](one-canonical-instruction-file.md)). An `overlays/codex/`
-  holding a pointer would be a copy of the canonical file's name pointing at itself — the
-  exact duplication that page forbids. **Already consistent; nothing added.**
-- **The hooks are not portable, and were not invented.** The rest of the Claude Code overlay
-  is hook scripts and a subagent definition in Claude Code's own config format. Codex has a
-  hook mechanism — the CLI carries a trust flag for it — but this kit has not verified its
-  event names or its configuration schema, and an overlay written from an inferred schema
-  would ship a gate that silently never fires. That is the fail-open shape the kit exists to
-  prevent, so nothing was written. **Genuine gap, deliberately left open and labelled.**
+The dated live integration runs in `docs/ACCEPTANCE.md` used one small synthetic diff.
+They demonstrate that both call paths completed and produced comparable report headers.
+They do not establish that the combined kit change was independently reviewed, that either
+model reliably detects every seeded defect, or that differing verdicts imply review quality.
 
-Nothing in the overlay is load-bearing in either case: `.githooks/pre-commit` and
-`scripts/check.sh` are the enforcement, they are tool-agnostic, and they run under both hosts.
-A Codex-hosted project is missing early feedback, not a gate.
+The Codex adapter records a requested model pin without claiming model identity attestation.
+The Claude adapter additionally checks the CLI's `modelUsage`. This distinction describes
+adapter evidence, not an independent verification of the serving infrastructure.
 
-## What was verified, and when
-
-Checked on 2026-09-05 on one machine, with Codex CLI and Claude Code 2.1.261 installed:
-
-- Both review directions completed live against the same commit and produced reports with an
-  identical header field list and exactly one verdict line each.
-- `codex exec --json` emits no model identity in its output. That is why a Codex review
-  records its model as a requested pin and says so, while Claude's is matched against the
-  CLI's own `modelUsage` and recorded as attested. Both are pinned; only one is attestable.
-- NOT verified: Codex's hook event names and schema, and the availability of
-  `openai/codex-plugin-cc`. Neither claim is relied on above.
-
-## The failure mode it prevents
-
-Planning a workflow around a delegation path that does not exist — and discovering it at the
-moment the budget forced the roles to swap, which is the worst possible time to find out that
-"the other direction works too" was only ever true of the review script.
+Hook schemas and optional vendor-plugin availability remain outside this implementation's
+verified surface. Do not infer a working integration from their mention in historical notes.

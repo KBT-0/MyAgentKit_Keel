@@ -158,7 +158,7 @@ def section(title: str, items: list) -> str:
             + "\n")
 
 
-def main(argv=None) -> int:
+def main(argv=None, result_sink=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("mode", choices=["review", "propose"])
     parser.add_argument("--repo", type=Path, default=Path.cwd())
@@ -173,11 +173,14 @@ def main(argv=None) -> int:
                         help="Stable task label for usage accounting across review rounds")
     parser.add_argument("--model", default="claude-opus-5")
     parser.add_argument("--effort", choices=["low", "medium", "high", "xhigh", "max"], default="high")
-    parser.add_argument("--timeout", type=int, default=600)
+    parser.add_argument("--timeout", type=int,
+                        help="Total wall-clock seconds; defaults to 1800 for review, 600 for propose")
     parser.add_argument("--max-turns", type=int, default=12)
     parser.add_argument("--max-budget-usd", type=float,
                         help="Optional API-cost cap; review has no default, propose defaults to 3 USD")
     args = parser.parse_args(argv)
+    if args.timeout is None:
+        args.timeout = agent_process.DEFAULT_REVIEW_TIMEOUT if args.mode == "review" else 600
     try:
         if os.environ.get("MYAGENTKIT_DELEGATION_DEPTH", "0") != "0":
             raise BridgeError("nested delegation is disabled")
@@ -237,10 +240,11 @@ def main(argv=None) -> int:
             command += ["--max-budget-usd", str(args.max_budget_usd)]
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:12]
         evidence_dir = repo / "docs" / ("reviews" if args.mode == "review" else "handoffs")
-        # Creating directories does not alter the tracked/untracked file fingerprint.
-        evidence_dir.mkdir(parents=True, exist_ok=True)
         evidence_path = evidence_dir / (stamp + "-claude-review.md" if args.mode == "review"
                                         else stamp + "-claude-propose.json")
+        agent_usage.require_private_storage(repo, evidence_path)
+        # Creating directories does not alter the tracked/untracked file fingerprint.
+        evidence_dir.mkdir(parents=True, exist_ok=True)
         evidence = {"mode": args.mode, "model": args.model, "effort": args.effort,
                     "requester_reported": args.requester,
                     "head": head, "scope": scope, "reference": ref, "fingerprint": fingerprint,
@@ -270,7 +274,7 @@ def main(argv=None) -> int:
         try:
             agent_usage.write_evidence(repo, evidence_path, render(stamp, evidence, args)
                                        if args.mode == "review"
-                                       else json.dumps(evidence, indent=2) + "\n")
+                                       else json.dumps(evidence, indent=2) + "\n", private=True)
             archived_path = str(evidence_path)
         except (OSError, ValueError) as error:
             evidence.update(status="failed", error="Review evidence could not be persisted: " + str(error))
@@ -289,6 +293,8 @@ def main(argv=None) -> int:
                   "fingerprint": fingerprint, "result": evidence.get("result"),
                   "error": evidence.get("error"), "failure_kind": reason,
                   "usage_record": evidence["usage_record"], "recovery": recovery}
+        if result_sink is not None:
+            result_sink(result)
         print(json.dumps(result))
         return 0 if evidence["status"] == "completed" else 5
     except (BridgeError, OSError, ValueError) as error:

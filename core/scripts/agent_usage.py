@@ -7,16 +7,51 @@ import json
 import math
 import os
 from pathlib import Path
+import re
+import subprocess
 import uuid
 import tempfile
 
 
-def write_evidence(repo: Path, path: Path, text: str) -> None:
+def require_private_storage(repo: Path, archive: Path | None = None) -> None:
+    """Refuse model work when private output could be staged or is already tracked."""
+    paths = [repo / '.myagentkit/usage']
+    if archive is not None:
+        paths.append(archive)
+    for path in paths:
+        if not path.resolve().is_relative_to(repo.resolve()):
+            raise ValueError('private evidence must remain inside the repository')
+        if path.resolve() != repo.resolve() / path.relative_to(repo):
+            raise ValueError('private evidence must not follow symlinked storage')
+        relative = path.relative_to(repo).as_posix()
+        if path == paths[0]:
+            relative += '/'
+        ignored = subprocess.run(['git', '-C', str(repo), 'check-ignore', '--quiet', '--no-index',
+                                  '--', relative], capture_output=True)
+        if ignored.returncode != 0:
+            raise ValueError('private evidence must be Git-ignored before review: ' + relative
+                             + '; merge the ignore rules documented in docs/DEV_SETUP.md')
+    tracked = subprocess.run(['git', '-C', str(repo), 'ls-files', '-z', '--',
+                              '.myagentkit/usage', 'docs/reviews/*-review.md',
+                              'docs/reviews/????????T??????Z-*.md',
+                              'docs/reviews/*-claude-review.json',
+                              'docs/handoffs/*-claude-propose.json',
+                              ':(exclude)docs/reviews/*-summary.md'], capture_output=True)
+    if tracked.returncode != 0 or tracked.stdout:
+        raise ValueError('private evidence is tracked or Git could not verify storage; '
+                         'untrack private records before review')
+
+
+def write_evidence(repo: Path, path: Path, text: str, *, private: bool = False) -> None:
     """Publish a complete, flushed archive exclusively; never replace prior evidence."""
     if not path.resolve().is_relative_to(repo.resolve()):
         raise ValueError("evidence path must remain inside the repository")
+    if private:
+        require_private_storage(repo, path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent) as stream:
+    staging = repo / '.myagentkit/usage' if private else path.parent
+    staging.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=staging) as stream:
         stream.write(text)
         stream.flush()
         os.fsync(stream.fileno())
@@ -53,10 +88,18 @@ def report(stamp: str, header: dict, verdict: str | None, body: str) -> str:
         raise ValueError("a verdict may only be published by a completed review")
     # The verdict is promoted OUT of the model's prose into the one contract line above the
     # body, so a reader (and the self-test) can find it without parsing free text. Any copy
-    # left in the body is therefore stripped here rather than in each adapter: a reviewer
+    # left in the body is therefore normalized here rather than in each adapter: a reviewer
     # whose prose still said "VERDICT: Accept" under a failed run would publish an approval
     # the run never earned, and one that repeated its verdict would break "exactly one".
-    body = "\n".join(line for line in body.splitlines() if not line.startswith(VERDICT_LINE))
+    # Failed declarations are retained as explicitly unvalidated prose, never contract lines.
+    lines = []
+    for line in body.splitlines():
+        if re.match(r'^[ \t]*VERDICT[ \t]*:', line):
+            if verdict is None:
+                lines.append('Unvalidated reviewer text: ' + line.strip())
+        else:
+            lines.append(line)
+    body = '\n'.join(lines)
     rows = "".join("| %s | %s |\n" % (key, "-" if header[key] in (None, "") else header[key])
                    for key in REVIEW_FIELDS)
     text = ("# Review — " + stamp + "\n\nThis is immutable evidence, not approval. The verdict is\n"
@@ -94,6 +137,12 @@ def failure(provider: str, execution: dict, values: list[dict]) -> str | None:
     """Classify provider errors without searching review findings for error-like words."""
     if execution.get("termination"):
         return execution["termination"]
+    if provider == 'claude' and execution.get('exit_code') == 0 and (
+            len(values) != 1 or values[0].get('type') != 'result'
+            or type(values[0].get('is_error')) is not bool
+            or not isinstance(values[0].get('subtype'), str)
+            or not values[0]['subtype']):
+        return 'invalid_evidence'
     errors = []
     for value in values:
         if value.get("api_error_status") == 429:
@@ -148,6 +197,8 @@ def record(repo: Path, provider: str, model: str, requester: str, task: dict,
                 "review_approved": False, "automatic_retry": False,
                 "instruction": "Keep required review pending; do not approve, commit, or push its protected diff."}
     value = {"schema_version": 1, "invocation_id": stamp,
+             "review_chain_id": os.environ.get("MYAGENTKIT_REVIEW_CHAIN_ID"),
+             "review_attempt": os.environ.get("MYAGENTKIT_REVIEW_ATTEMPT"),
              "recorded_at": datetime.now(timezone.utc).isoformat(),
              "requester_reported": requester, "callee": provider, "model_requested": model,
              "task": task, "status": status, "failure_kind": reason,
@@ -161,7 +212,7 @@ def record(repo: Path, provider: str, model: str, requester: str, task: dict,
         raise ValueError("usage directory must remain inside the repository")
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / (stamp + ".json")
-    write_evidence(repo, path, json.dumps(value, indent=2, allow_nan=False) + "\n")
+    write_evidence(repo, path, json.dumps(value, indent=2, allow_nan=False) + "\n", private=True)
     return path, value
 
 
