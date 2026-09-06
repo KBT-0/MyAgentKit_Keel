@@ -334,6 +334,19 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(a["diff_sha256"], b["diff_sha256"])
         self.assertEqual(a["fingerprint"], b["fingerprint"])
 
+    def test_interrupted_review_evidence_is_preserved_without_expanding_next_scope(self):
+        code, failed = self.run_bridge('partial_timeout', extra=['--timeout', '1'])
+        self.assertEqual(code, 5, failed)
+        original = Path(failed['evidence']).read_bytes()
+        self.assertEqual(verdicts_of(failed['evidence']), [])
+        code, completed = self.run_bridge()
+        self.assertEqual(code, 0, completed)
+        self.assertEqual(Path(failed['evidence']).read_bytes(), original)
+        self.assertEqual(header_of(failed['evidence'])['diff_sha256'],
+                         header_of(completed['evidence'])['diff_sha256'])
+        self.assertEqual(header_of(failed['evidence'])['fingerprint'],
+                         header_of(completed['evidence'])['fingerprint'])
+
     def test_proposal_needs_a_handoff(self):
         code, result = self.run_bridge(mode="propose")
         self.assertEqual(code, 2)
@@ -714,8 +727,8 @@ if __name__ == "__main__":
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(BridgeTests)
     suite.addTests(unittest.defaultTestLoader.loadTestsFromTestCase(UsageTests))
     suite.addTests(unittest.defaultTestLoader.loadTestsFromTestCase(QuotaTests))
-    if suite.countTestCases() < 50:
-        raise SystemExit("FAIL: expected at least fifty review and usage regression tests")
+    if suite.countTestCases() < 51:
+        raise SystemExit("FAIL: expected at least fifty-one review and usage regression tests")
     result = unittest.TextTestRunner(verbosity=2).run(suite)
     if not result.wasSuccessful() or result.skipped:
         raise SystemExit(1)

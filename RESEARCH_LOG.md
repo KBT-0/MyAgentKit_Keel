@@ -21,6 +21,14 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-09-06 — Failed evidence is useful without being the next review's input (#4)
+
+A review interrupted after partial output must retain diagnostic/accounting evidence,
+but that archive must not become a new source change or an accepting verdict. A consecutive
+timeout/success regression now checks the failed file's bytes remain unchanged, its verdict
+is absent, and both attempts see identical diff and checkout hashes. This exercises the
+existing archive/exclusion contract directly instead of inferring it from separate tests.
+
 ### 2026-09-06 — Repository names do not identify plugin marketplaces (#3)
 
 The official `openai/codex-plugin-cc` marketplace manifest declares `openai-codex`, verified

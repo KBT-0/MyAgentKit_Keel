@@ -13,6 +13,11 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## v0.7 — 2026-09-05 (unreleased)
 
+- **Issue #4:** a timeout-then-success regression proves failed evidence stays immutable,
+  carries no verdict, and does not change the next review's diff or checkout fingerprint.
+  **ACTION:** keep failed diagnostics locally; upgrade the adapters and ignore rules rather
+  than deleting immutable reports to repair review scope.
+
 - **Issue #3:** the interview now gives both vendor-plugin install commands explicitly
   and explains repository versus marketplace names. **ACTION:** use `codex@openai-codex`,
   matching the official marketplace manifest, rather than deriving the name from the repo.
