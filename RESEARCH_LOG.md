@@ -21,6 +21,16 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-09-06 — Review tests must survive project-owned model configuration
+
+Adopting 0.7 into an existing project preserved its configured reviewer and named model pins.
+Four shared tests then failed because they treated that configured wrapper as an untouched
+empty-pin template. Fixture construction now resets only the three configuration values
+in its temporary copy and requires each assignment to exist. Runtime and assertions remain
+unchanged. The downstream project separately exercises its actual installed defaults and legacy override
+precedence through an offline CLI. This separates template-contract tests from project
+configuration tests without weakening either or invoking a real reviewer.
+
 ### 2026-09-06 — A passing destructive self-test can still lose owner content (#7)
 
 A newly reported downstream failure saved a tracked file, injected a violation, and

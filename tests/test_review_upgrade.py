@@ -12,6 +12,32 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ReviewUpgradeTests(unittest.TestCase):
+    def test_contract_suite_survives_project_owned_defaults(self):
+        # Reproduce an installed project's Codex default and named pins. The shared
+        # fixture must isolate empty-pin/template cases without rewriting this wrapper.
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            scripts = project / 'scripts'
+            scripts.mkdir()
+            for source in (ROOT / 'core/scripts').glob('*.py'):
+                shutil.copyfile(source, scripts / source.name)
+            wrapper = (ROOT / 'core/scripts/review.sh').read_text()
+            wrapper = wrapper.replace('DEFAULT_REVIEWER="claude"', 'DEFAULT_REVIEWER="codex"')
+            wrapper = wrapper.replace('CODEX_MODEL=""', 'CODEX_MODEL="project-codex-model"')
+            wrapper = wrapper.replace('CLAUDE_MODEL=""', 'CLAUDE_MODEL="project-claude-model"')
+            (scripts / 'review.sh').write_text(wrapper)
+            shutil.copyfile(ROOT / 'core/.gitignore', project / '.gitignore')
+            cases = ('test_an_unpinned_model_is_refused_in_both_directions',
+                     'test_default_reviewer_is_claude_and_codex_remains_explicit',
+                     'test_unavailable_claude_automatically_uses_selected_codex',
+                     'test_unconfigured_alternate_does_not_choose_a_default_model')
+            result = subprocess.run([sys.executable, '-B', '-m', 'unittest',
+                                     *('test_claude_bridge.BridgeTests.' + name for name in cases)],
+                                    cwd=scripts, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('Ran 4 tests', result.stderr)
+            self.assertEqual((scripts / 'review.sh').read_text(), wrapper)
+
     def test_documented_upgrade_supplies_runtime_and_test_imports(self):
         # Extract the actual docs, so an incomplete upgrade list cannot pass this test.
         docs = (ROOT / 'core/docs/DEV_SETUP.md').read_text()

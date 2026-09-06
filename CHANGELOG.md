@@ -13,6 +13,11 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## v0.7 — 2026-09-05 (unreleased)
 
+- Downstream adoption exposed four review self-tests that assumed installed projects still
+  used the template's empty model pins and Claude default. The fixture now explicitly sets
+  those defaults in its temporary copy; project settings are preserved. **ACTION:** copy
+  the updated `test_claude_bridge.py` with the complete companion set when upgrading.
+
 - **Issue #7:** existing-file negative tests must restore current bytes and mode before
   deleting backups, including on EXIT/INT/TERM. A separate scaffold example isolates
   traps and terminates after signals; its regression preserves uncommitted content.

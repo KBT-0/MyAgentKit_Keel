@@ -2,6 +2,7 @@
 import importlib.util
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -612,7 +613,15 @@ class BridgeTests(unittest.TestCase):
         scripts = self.repo / "scripts"
         if not scripts.exists():
             scripts.mkdir()
-            (scripts / "review.sh").write_bytes((ROOT / "review.sh").read_bytes())
+            # Installed projects own these three defaults. Exercise the template's
+            # empty-pin cases in an explicit fixture without overwriting project config.
+            wrapper = (ROOT / "review.sh").read_text()
+            for name, value in (("DEFAULT_REVIEWER", "claude"),
+                                ("CODEX_MODEL", ""), ("CLAUDE_MODEL", "")):
+                wrapper, count = re.subn(r"^" + name + r"=.*$",
+                                         name + '="' + value + '"', wrapper, flags=re.M)
+                self.assertEqual(count, 1, "missing project configuration: " + name)
+            (scripts / "review.sh").write_text(wrapper)
             for name in ["codex_bridge.py", "claude_bridge.py", "agent_process.py",
                          "agent_usage.py", "codex_quota.py", "review_dispatch.py"]:
                 (scripts / name).write_bytes((ROOT / name).read_bytes())
