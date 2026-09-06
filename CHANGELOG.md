@@ -13,6 +13,11 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## v0.7 — 2026-09-05 (unreleased)
 
+- **Issue #2:** the boundary self-test example requires a green baseline and both a
+  nonzero exit and the boundary's own diagnostic. An executable regression rejects
+  unrelated failures and misleading success output. **ACTION:** adapt the example when
+  maintaining project-owned boundary tests; generic exit-only gate cases remain explicit.
+
 - **Issue #1:** setup now stages the foundation and hands it to fresh review before the
   first commit. The closing report identifies pending review explicitly. **ACTION:**
   use the updated setup interview; initial gate code has no implicit review exemption.

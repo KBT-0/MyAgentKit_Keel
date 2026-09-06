@@ -21,6 +21,15 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-09-06 — A negative test must identify the intended failing gate (#2)
+
+The worked boundary example accepted any nonzero exit, including an already-red baseline
+and unrelated build failures. An executable test of the shipped example reproduced both
+false positives before the correction. The example now verifies a clean baseline, the
+nonzero exit, and the boundary's own diagnostic together. A matching message with exit zero
+also fails the test. The dotfile injection is an aid for common build globs, not a promise
+that every tool ignores dotfiles; project include rules must still be checked.
+
 ### 2026-09-06 — The first setup commit must obey its own review rule (#1)
 
 Phase 4 previously ordered a commit immediately after writing gates, contradicting the

@@ -214,8 +214,8 @@ self_test() {
   echo
   if [ "$st_fail" -eq 0 ]; then
     echo "SELF-TEST: PASS — each case above was observed making the gate exit nonzero."
-    echo "  NOT proven by this: that a nonzero exit came from the INTENDED check rather than"
-    echo "  from another one firing on the same injection; and the scanner case breaks the"
+    echo "  Exit-only generic cases do not prove which check caused failure. The worked"
+    echo "  boundary example also requires its own diagnostic. The scanner case breaks the"
     echo "  scanner through a test switch, not by making grep itself crash."
     return 0
   fi
