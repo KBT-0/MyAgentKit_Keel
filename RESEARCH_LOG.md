@@ -21,6 +21,14 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-09-06 — Transcript approval cannot replace the final-response contract (#5)
+
+The regression now emits an actual Codex agent-message event saying Accept and a completed
+turn, while deliberately producing no final-response file. The wrapper must fail with
+invalid evidence, publish no verdict, and retain the transcript only in failed diagnostics.
+This directly covers the issue's false-approval trigger alongside the existing empty,
+malformed and conflicting final-response cases and valid verdict controls.
+
 ### 2026-09-06 — Failed evidence is useful without being the next review's input (#4)
 
 A review interrupted after partial output must retain diagnostic/accounting evidence,

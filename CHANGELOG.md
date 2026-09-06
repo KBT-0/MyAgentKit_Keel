@@ -13,6 +13,10 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## v0.7 — 2026-09-05 (unreleased)
 
+- **Issue #5:** an explicit transcript-Accept/no-final-response regression verifies that
+  transcript text remains diagnostic only. Missing, empty, malformed and conflicting final
+  responses are rejected by the wrapper. **ACTION:** take the complete review runtime/tests.
+
 - **Issue #4:** a timeout-then-success regression proves failed evidence stays immutable,
   carries no verdict, and does not change the next review's diff or checkout fingerprint.
   **ACTION:** keep failed diagnostics locally; upgrade the adapters and ignore rules rather

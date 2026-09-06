@@ -266,6 +266,28 @@ class BridgeTests(unittest.TestCase):
                 self.assertEqual(len(chain['attempts']), 1)
                 self.assertEqual(verdicts_of(chain['attempts'][0]['evidence']), [])
 
+    def test_transcript_accept_cannot_replace_a_missing_final_response(self):
+        fake = self.root / 'codex-transcript'
+        fake.write_text('#!/usr/bin/env python3\n'
+                        'import json, sys\n'
+                        'sys.stdin.read()\n'
+                        'print(json.dumps({"type": "item.completed", "item": '
+                        '{"type": "agent_message", "text": "VERDICT: Accept"}}))\n'
+                        'print(json.dumps({"type": "turn.completed", "usage": {}}))\n')
+        fake.chmod(0o755)
+        result = self.run_wrapper('--reviewer', 'codex', REVIEW_CLI_BIN=str(fake),
+                                  REVIEW_CODEX_MODEL='fixture-codex-model')
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        chain = json.loads(next(s.removeprefix('review dispatch: ') for s in
+                                result.stdout.splitlines() if s.startswith('review dispatch: ')))
+        self.assertEqual(chain['failure_kind'], 'invalid_evidence')
+        self.assertEqual(len(chain['attempts']), 1)
+        attempt = chain['attempts'][0]
+        self.assertEqual(verdicts_of(attempt['evidence']), [])
+        usage = json.loads(Path(attempt['usage_record']).read_text())
+        self.assertIn('VERDICT: Accept', usage['raw_stdout'])
+        self.assertEqual(usage['status'], 'failed')
+
     def test_bad_cli_evidence_fails_with_its_reason(self):
         cases = {"missing": "structured final", "transcript": "Expecting value",
                  "conflict": "contradicts", "turns": "incomplete", "model": "modelUsage",
@@ -727,8 +749,8 @@ if __name__ == "__main__":
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(BridgeTests)
     suite.addTests(unittest.defaultTestLoader.loadTestsFromTestCase(UsageTests))
     suite.addTests(unittest.defaultTestLoader.loadTestsFromTestCase(QuotaTests))
-    if suite.countTestCases() < 51:
-        raise SystemExit("FAIL: expected at least fifty-one review and usage regression tests")
+    if suite.countTestCases() < 52:
+        raise SystemExit("FAIL: expected at least fifty-two review and usage regression tests")
     result = unittest.TextTestRunner(verbosity=2).run(suite)
     if not result.wasSuccessful() or result.skipped:
         raise SystemExit(1)

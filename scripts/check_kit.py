@@ -13,7 +13,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 REQUIRED_SUITES = {
-    'core/scripts': {'test_claude_bridge': 36, 'test_agent_usage': 12, 'test_codex_quota': 3},
+    'core/scripts': {'test_claude_bridge': 37, 'test_agent_usage': 12, 'test_codex_quota': 3},
     'tests': {'test_packaging': 1, 'test_bootstrap': 1, 'test_acceptance': 2,
               'test_review_upgrade': 1, 'test_boundary_example': 1},
 }
