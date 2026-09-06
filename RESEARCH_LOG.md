@@ -21,6 +21,14 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-09-06 — Repository names do not identify plugin marketplaces (#3)
+
+The official `openai/codex-plugin-cc` marketplace manifest declares `openai-codex`, verified
+from its current repository contents. The setup interview previously asked the agent to
+provide install commands without stating this mismatch. Both setup and the developer
+guide now show the exact pair and explain what the name after `@` refers to, preventing
+repeated registration attempts when installation fails on an invented marketplace name.
+
 ### 2026-09-06 — A negative test must identify the intended failing gate (#2)
 
 The worked boundary example accepted any nonzero exit, including an already-red baseline

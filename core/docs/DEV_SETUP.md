@@ -113,6 +113,12 @@ commands):
 /plugin install codex@openai-codex
 ```
 
+The repository is `openai/codex-plugin-cc`, but its marketplace declares the name
+`openai-codex`; `/plugin install` uses that declared name after `@`, not the repository
+name. The [official marketplace manifest](https://github.com/openai/codex-plugin-cc/blob/main/.claude-plugin/marketplace.json)
+was checked on 2026-09-06. A successful marketplace-add message names the registered
+marketplace; do not retry registration under an inferred repository name.
+
 An agent can prepare the configuration for you and tell you what to type; the typing and the
 restart are yours.
 

@@ -172,8 +172,15 @@ One topic per turn. Suggested order, because each answer informs the next:
      `openai/codex-plugin-cc`). It is NOT needed by `scripts/review.sh`; it adds in-session
      delegation and review commands. Installing it takes two slash commands that a HUMAN
      must type — you cannot invoke slash commands. Give them the exact lines and say so
-     plainly rather than implying you handled it. `docs/DEV_SETUP.md` has both, including
-     the two cautions about model-invocable commands and automatic review gates.
+     plainly rather than implying you handled it:
+     ```text
+     /plugin marketplace add openai/codex-plugin-cc
+     /plugin install codex@openai-codex
+     ```
+     The repository is `openai/codex-plugin-cc`, but its declared marketplace name is
+     `openai-codex`; installation uses the marketplace name after `@`. Do not derive it
+     from the repository name. `docs/DEV_SETUP.md` has the same pair and the cautions about
+     model-invocable commands and automatic review gates.
    - For a Codex host, offer the kit's Codex plugin and its Claude review/delegation skills
      (`docs/CODEX.md` in the kit). `--reviewer claude` selects the Claude adapter from any
      host; `REVIEW_CLI_BIN` and `CLAUDE_CLI_BIN` change only which binary is launched. Any

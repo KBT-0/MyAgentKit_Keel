@@ -13,6 +13,10 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## v0.7 — 2026-09-05 (unreleased)
 
+- **Issue #3:** the interview now gives both vendor-plugin install commands explicitly
+  and explains repository versus marketplace names. **ACTION:** use `codex@openai-codex`,
+  matching the official marketplace manifest, rather than deriving the name from the repo.
+
 - **Issue #2:** the boundary self-test example requires a green baseline and both a
   nonzero exit and the boundary's own diagnostic. An executable regression rejects
   unrelated failures and misleading success output. **ACTION:** adapt the example when
