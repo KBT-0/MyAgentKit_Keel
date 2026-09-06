@@ -13,9 +13,9 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 REQUIRED_SUITES = {
-    'core/scripts': {'test_claude_bridge': 42, 'test_agent_usage': 12, 'test_codex_quota': 3},
+    'core/scripts': {'test_claude_bridge': 44, 'test_agent_usage': 12, 'test_codex_quota': 3},
     'tests': {'test_packaging': 1, 'test_bootstrap': 1, 'test_acceptance': 2,
-              'test_review_upgrade': 1, 'test_boundary_example': 1},
+              'test_review_upgrade': 1, 'test_boundary_example': 1, 'test_scan_gate': 1},
 }
 
 
@@ -100,9 +100,13 @@ def main():
             tests = project / "scripts/test_claude_bridge.py"
             original_tests = tests.read_bytes()
             tests.unlink()
+            # Remove the missing file from the synthetic index too, so this case
+            # reaches review-test absence instead of the earlier unreadable-file gate.
+            run(["git", "add", "-u", "--", "scripts/test_claude_bridge.py"], project)
             run(["sh", "scripts/check.sh", "--self-test"], project, expected=1,
                 reason="review self-test file is missing or empty")
             tests.write_bytes(original_tests)
+            run(["git", "add", "scripts/test_claude_bridge.py"], project)
             wrapper = project / "scripts/review.sh"
             original_wrapper = wrapper.read_bytes()
             for stub in ["exit 1\n", "exit 0\n"]:

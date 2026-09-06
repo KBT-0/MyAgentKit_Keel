@@ -18,16 +18,20 @@ confirmed and repaired with failing-before/passing-after regressions. See
 
 Astra and Claude both authored parts of the combined implementation. The requested
 Claude review must retain that context; a fresh process does not establish independence
-for a co-author. The second and final review round will use the available configured
-Astra reviewer to assess the fixes, with Claude acceptance still pending.
+for a co-author. The second and final Astra round returned Reject with two additional confirmed
+findings. Both have been repaired with regression coverage. The two-round limit is
+exhausted; review of these last fixes remains pending in issue #6. See the
+[final round summary](../reviews/20260906T130824Z-astra-final-summary.md).
 
 ## Active work
 
-- Run the full acceptance gate after the four latest repairs and archive the final review.
+- Run the full acceptance gate after the final repairs. The first hosted matrix passed
+  macOS but failed Linux; scanner portability and the negative fixture were corrected.
 - Push the issue-specific commits and verify the Linux/macOS, Python 3.10/3.14 CI matrix.
-- Reinstall the prepared Codex plugin and verify discovery in a fresh host thread.
+- Verify the reinstalled plugin (version `0.1.0+codex.20260906131755`) in a fresh host
+  thread. Installed cache/source parity passed for all 11 package files.
 - Validate the documented upgrade in an isolated project created from the previous kit.
-- Close the five repaired issues individually with their commits and executed evidence.
+- Finish closing the five repaired issues individually with commits and executed evidence.
 - Keep the blocked Claude review, live proposal and Claude permission probes explicitly
   open as follow-up work until the organization permits Claude Code access.
 

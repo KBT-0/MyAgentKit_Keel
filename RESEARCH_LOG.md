@@ -21,6 +21,23 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-09-06 — Final review and hosted CI exercised remaining edge cases
+
+The second and final Astra review found two confirmed gaps in the preceding repairs.
+Hashing a checkout does not prove it corresponds to a requested reference if index flags
+hide changes that already exist. All review scopes now reject assume-unchanged and
+skip-worktree entries before provider launch. A verdict inside an otherwise empty manual
+section also passed; declarations are now excluded from the remaining-check content.
+Both cases have failing-before/passing-after regressions. The review-round limit leaves
+review of these final repairs pending alongside blocked Claude acceptance in issue #6.
+
+The first hosted Linux run also exposed a negative test that hit an unreadable tracked
+file before the intended missing-review-test gate. Its synthetic index now reflects the
+deletion. Further direct reproduction showed BSD xargs concealed grep errors as exit 1,
+while GNU xargs maps grep no-match to 123. The scanner preserves grep status inside each
+batch and publishes explicit match/error markers; a regression executes the actual shipped
+function with matches, no matches, missing files and mixed readable/missing input.
+
 ### 2026-09-06 — Git's rendered diff is not a complete checkout fingerprint
 
 The requested Claude follow-up was blocked by an organization-level HTTP 403. The configured

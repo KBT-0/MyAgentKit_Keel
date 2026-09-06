@@ -1,5 +1,36 @@
 # Acceptance evidence
 
+## Final issue repairs and live plugin checks — 2026-09-06
+
+The final `./scripts/check.sh --self-test` passes on macOS/Python 3.14 with 59 runtime
+tests, seven kit tests, installed core negative gates and packaged runtime parity.
+The final two review findings and scanner error cases were reproduced before repair.
+The initial hosted matrix passed both macOS jobs but failed both Linux jobs; the scanner
+portability and negative-fixture repairs are included in this final local result.
+The replacement hosted matrix is pending.
+
+The Codex plugin was reinstalled as `0.1.0+codex.20260906131755`; all 11 installed files
+match the source package. A fresh ephemeral Codex thread discovered both skills at that
+version, read the review skill and read the preserved arithmetic fixture correctly.
+Its reported write denial was not present as a command event in JSONL, so it is not
+used as proof. A separate host-observed `codex sandbox -P :read-only` shell write probe
+exited 1 with `Operation not permitted`, and no canary file existed afterward. The
+profile identifier was verified against the official Codex source. This is a bounded
+local sandbox check, not a full adversarial audit or proof of Claude permissions.
+
+The existing-project upgrade used a disposable project bootstrapped from `c358c917` and
+the documented companion list. Its earlier runtime self-test passed, and the fresh
+host read the retained project context after the final companion update. No unrelated
+production checkout was changed. The live probe produced a separate local usage record;
+subscription consumption remains unknown, not inferred from account-window percentages.
+
+Both review rounds returned Reject. All verified findings have fixes, but these last
+repairs have not received another review because the two-round limit was reached. Claude
+returned organization-level HTTP 403. The owner authorized commit/push with review
+pending; final-source review and Claude live proposal/permission checks remain in #6.
+Raw local evidence and logs are ignored under
+`.myagentkit/review-verification/20260906-issues/`.
+
 ## Issue follow-up and second repair — 2026-09-06
 
 The issue-specific commits address #1–#5. After the configured Astra fallback exposed

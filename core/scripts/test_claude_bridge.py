@@ -193,9 +193,8 @@ class BridgeTests(unittest.TestCase):
         self.assertIn('NEW_SOURCE_CONTENT', bridge.snapshot(self.repo, 'uncommitted', None)[2])
         self.assertFalse(marker.exists())
         self.git('update-index', '--assume-unchanged', 'file.py')
-        before = bridge.snapshot(self.repo, 'uncommitted', None)[1]
-        source.write_text('stable\nCHANGED_WITHOUT_A_GIT_DIFF\n')
-        self.assertNotEqual(bridge.snapshot(self.repo, 'uncommitted', None)[1], before)
+        with self.assertRaisesRegex(bridge.BridgeError, 'index flags'):
+            bridge.snapshot(self.repo, 'uncommitted', None)
 
     def test_direct_adapters_reject_a_base_ref_that_moves_during_review(self):
         from contextlib import redirect_stdout
@@ -231,6 +230,48 @@ class BridgeTests(unittest.TestCase):
             self.assertEqual(received[0]['failure_kind'], 'stale_checkout')
             self.assertEqual(verdicts_of(received[0]['evidence']), [])
 
+    def test_hidden_checkout_changes_reject_before_either_adapter_launches(self):
+        from contextlib import redirect_stdout
+        from io import StringIO
+        from unittest.mock import patch
+        import codex_bridge
+        import claude_bridge
+        import review_dispatch
+        self.commit_fixture('Reference review fixture')
+        def execution(command, prompt, repo, timeout):
+            if '-o' in command:
+                Path(command[command.index('-o') + 1]).write_text('VERDICT: Accept\n')
+                value = {'type': 'turn.completed', 'usage': {}}
+            else:
+                value = {'type': 'result', 'subtype': 'success', 'is_error': False,
+                         'modelUsage': {'claude-opus-5': {}}, 'structured_output':
+                         {'verdict': 'Accept', 'findings': [], 'manual_checks': []}}
+            return {'exit_code': 0, 'stdout': json.dumps(value), 'stderr': '',
+                    'termination': None, 'duration_ms': 1}
+        for flag in ('assume-unchanged', 'skip-worktree'):
+            self.git('update-index', '--' + flag, 'file.py')
+            (self.repo / 'file.py').write_text('HIDDEN_CHECKOUT_CONTENT\n')
+            self.assertEqual(self.git('diff', 'HEAD').stdout, b'')
+            for scope in ('--commit', '--base', '--uncommitted'):
+                args = [scope, 'HEAD^' if scope == '--base' else 'HEAD'] if scope != '--uncommitted' else [scope]
+                for main, prefix in ((bridge.main, ['review']),
+                                     (codex_bridge.main, ['--model', 'fixture-codex-model']),
+                                     (review_dispatch.main, ['--claude-model', 'claude-opus-5'])):
+                    with self.subTest(flag=flag, scope=scope, adapter=main.__module__), \
+                            patch.dict(os.environ, self.review_env()), \
+                            patch('agent_process.run', side_effect=execution) as launch, \
+                            redirect_stdout(StringIO()) as output:
+                        try:
+                            code = main([*prefix, '--repo', str(self.repo), *args])
+                        except (bridge.BridgeError, claude_bridge.BridgeError, ValueError) as error:
+                            self.assertIn('index flags', str(error))
+                        else:
+                            self.assertNotEqual(code, 0, output.getvalue())
+                            self.assertIn('index flags', output.getvalue())
+                        launch.assert_not_called()
+            self.git('update-index', '--no-' + flag, 'file.py')
+            (self.repo / 'file.py').write_text('changed\n')
+
     def test_merge_commit_review_includes_the_resolution_against_first_parent(self):
         self.commit_fixture('Common base')
         main = self.git('symbolic-ref', '--short', 'HEAD').stdout.decode().strip()
@@ -265,6 +306,29 @@ class BridgeTests(unittest.TestCase):
                                           FINAL_RESPONSE='VERDICT: Accept with Manual Checks\n' + checks)
                 self.assertEqual(result.returncode, 0 if 'Verify' in checks else 5,
                                  result.stdout + result.stderr)
+
+    def test_a_verdict_inside_manual_checks_is_not_itself_a_check(self):
+        fake = self.root / 'codex-manual-placement'
+        fake.write_text('#!/usr/bin/env python3\nimport json,os,pathlib,sys\n'
+                        'sys.stdin.read()\n'
+                        'pathlib.Path(sys.argv[sys.argv.index("-o")+1]).write_text(os.environ["FINAL_RESPONSE"])\n'
+                        'print(json.dumps({"type":"turn.completed","usage":{}}))\n')
+        fake.chmod(0o755)
+        for checks in ('', 'None.\n', '- Verify the live deployment.\n'):
+            with self.subTest(checks=checks):
+                result = self.run_wrapper('--reviewer', 'codex', REVIEW_CLI_BIN=str(fake),
+                                          REVIEW_CODEX_MODEL='fixture-codex-model',
+                                          FINAL_RESPONSE='## Manual checks\n' + checks +
+                                          'VERDICT: Accept with Manual Checks\n')
+                chain = json.loads(next(s.removeprefix('review dispatch: ') for s in
+                                        result.stdout.splitlines() if s.startswith('review dispatch: ')))
+                self.assertEqual(len(chain['attempts']), 1)
+                if 'Verify' in checks:
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                else:
+                    self.assertEqual(result.returncode, 5, result.stdout + result.stderr)
+                    self.assertEqual(chain['failure_kind'], 'invalid_evidence')
+                    self.assertEqual(verdicts_of(chain['attempts'][0]['evidence']), [])
 
     def run_bridge(self, case="accept", mode="review", extra=(), env_extra=None):
         env = dict(os.environ, CLAUDE_CLI_BIN=str(self.fixture), FIXTURE_CASE=case,
@@ -868,8 +932,8 @@ if __name__ == "__main__":
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(BridgeTests)
     suite.addTests(unittest.defaultTestLoader.loadTestsFromTestCase(UsageTests))
     suite.addTests(unittest.defaultTestLoader.loadTestsFromTestCase(QuotaTests))
-    if suite.countTestCases() < 57:
-        raise SystemExit("FAIL: expected at least fifty-seven review and usage regression tests")
+    if suite.countTestCases() < 59:
+        raise SystemExit("FAIL: expected at least fifty-nine review and usage regression tests")
     result = unittest.TextTestRunner(verbosity=2).run(suite)
     if not result.wasSuccessful() or result.skipped:
         raise SystemExit(1)

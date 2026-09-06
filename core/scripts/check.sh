@@ -269,11 +269,25 @@ scan_grep() {
   # -e keeps a pattern starting with "-" from being read as an option; -- ends the option
   # list so a file literally named "-v" is scanned instead of parsed. /dev/null guarantees
   # at least one file argument, so grep never falls back to stdin and always prints names.
-  xargs -0 grep -InE -e "$1" -- /dev/null < "$filelist" 2>/dev/null
+  # GNU xargs maps grep's no-match exit to 123; BSD xargs maps several command
+  # failures to 1. Preserve grep's meaning inside each batch before xargs maps it.
+  rm -f "$work/scan_matched"
+  xargs -0 sh -c '
+    pattern=$1
+    scan_work=$2
+    shift 2
+    grep -InE -e "$pattern" -- /dev/null "$@"
+    case "$?" in
+      0) : > "$scan_work/scan_matched" ;;
+      1) ;;
+      *) : > "$scan_work/scan_failed" ;;
+    esac
+    exit 0
+  ' sh "$1" "$work" < "$filelist" 2>/dev/null
   st=$?
-  [ "$st" -le 1 ] && return "$st"
-  : > "$work/scan_failed"
-  return 2
+  [ "$st" -eq 0 ] || : > "$work/scan_failed"
+  [ ! -e "$work/scan_failed" ] || return 2
+  [ -e "$work/scan_matched" ]
 }
 
 # ---------------------------------------------------------------------------

@@ -118,8 +118,11 @@ configuration cannot replace source with a filtered rendering. The checkout fing
 also hashes readable source bytes independently of Git's change detection and binds the
 resolved reference and collected diff. A moving base reference invalidates an in-flight
 review. Commit scope uses the delta against the first parent, including merge commits.
+Scopes containing assume-unchanged or skip-worktree index entries are rejected before
+launch; clear those flags and use a complete checkout so Git can expose every source change.
 Codex manual-check verdicts require a nonempty `## Manual checks` section describing the
 remaining checks; an absent section or a placeholder such as `None` is invalid evidence.
+The verdict declaration itself never counts as a manual check.
 
 **The two directions are interchangeable, not merely both present.** Each archives the same
 header table — reviewer, model, whether the model is attested, effort, sandbox, limits,

@@ -97,7 +97,7 @@ def main(argv=None, result_sink=None):
             checks = [line.strip(' \t-*').rstrip('.').lower() for line in
                       (section.group(1).splitlines() if section else [])]
             if not any(check and check not in {'none', 'n/a', 'not applicable', 'not run'}
-                       and not check.startswith('#') for check in checks):
+                       and not check.startswith(('#', 'verdict:')) for check in checks):
                 reason = 'invalid_evidence'
     status = "failed" if reason else "completed"
     # Codex publishes no model identity in its JSON output, so the pin is recorded as

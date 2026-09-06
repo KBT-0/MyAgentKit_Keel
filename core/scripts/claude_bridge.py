@@ -59,6 +59,12 @@ def snapshot(repo: Path, scope: str, reference: str | None) -> tuple[str, str, s
                 if re.fullmatch(r'docs/reviews/\d{8}T\d{6}Z-.+\.md', name) and not name.endswith('-summary.md'):
                     archives.add(':(exclude,literal)' + name)
     exclusions = sorted(archives)
+    # These index flags suppress real working-tree changes from Git's diff. Refuse
+    # the scope before launch rather than attest to files that the diff cannot see.
+    entries = git(repo, 'ls-files', '-v', '-z', '--', '.', *exclusions).split(b'\0')
+    if any(entry and (entry[:1].islower() or entry[:1] == b'S') for entry in entries):
+        raise BridgeError('review scope has assume-unchanged or skip-worktree index flags; '
+                          'clear those flags and use a complete checkout before review')
     raw_diff = ('--no-ext-diff', '--no-textconv', '--binary')
     working = git(repo, 'diff', *raw_diff, 'HEAD', '--', '.', *exclusions)
     for raw in git(repo, "ls-files", "--others", "--exclude-standard", "-z").split(b"\0"):

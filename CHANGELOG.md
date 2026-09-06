@@ -13,6 +13,16 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## v0.7 — 2026-09-05 (unreleased)
 
+- The final review exposed initially hidden index changes and a verdict-only manual-check
+  section. Review now rejects assume-unchanged/skip-worktree entries before model launch
+  and excludes verdict declarations from manual-check validation. **ACTION:** upgrade the
+  complete review runtime; clear such index flags before reviewing a complete checkout.
+
+- The platform matrix exposed scanner exit-code differences between GNU and BSD xargs.
+  The scanner now preserves each grep batch's match/no-match/error outcome explicitly.
+  Real missing-file errors fail on both platforms. **ACTION:** take the updated project-owned
+  `scripts/check.sh` scanner carefully, retaining your configured gates and build command.
+
 - A follow-up review exposed four additional scope/evidence failures. Git diff drivers
   are disabled, raw checkout bytes and resolved references enter the fingerprint, merge
   commits are reviewed against their first parent, and Codex manual-check verdicts require
