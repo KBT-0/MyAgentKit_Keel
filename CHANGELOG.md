@@ -13,6 +13,10 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## v0.7 — 2026-09-05 (unreleased)
 
+- The kit-source CI runs the full offline acceptance suite on Linux/macOS with Python
+  3.10 and 3.14. Action revisions are pinned and jobs have read-only repository access.
+  This does not run paid model calls or change installed projects' CI templates.
+
 - **Issue #5:** an explicit transcript-Accept/no-final-response regression verifies that
   transcript text remains diagnostic only. Missing, empty, malformed and conflicting final
   responses are rejected by the wrapper. **ACTION:** take the complete review runtime/tests.
