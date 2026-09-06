@@ -1,5 +1,24 @@
 # Acceptance evidence
 
+## Issue closure record — 2026-09-06
+
+The owner-authorized repairs were committed and pushed using the owner identity,
+without AI attribution trailers. Issues were closed individually with evidence.
+
+| Issue | Dedicated commit | Status |
+| --- | --- | --- |
+| #1 | `597e8eb` | Closed |
+| #2 | `0413278` | Closed |
+| #3 | `f49be36` | Closed |
+| #4 | `54a77f8` | Closed; archive migration and scope repairs also applied |
+| #5 | `6ce6a55` | Closed; final-response validation repairs also applied |
+| #7 | `cc4af40` | Closed |
+
+[Issue #6](https://github.com/KBT-0/MyAgentKit_Keel/issues/6) remains open for final-source
+review and live Claude acceptance. Claude access returned HTTP 403, and both bounded
+Astra reviews returned Reject. Confirmed findings were fixed; neither tests nor issue
+closures turn those verdicts into independent approval.
+
 ## Interruption-safe scaffold follow-up (#7) — 2026-09-06
 
 Issue #7 arrived during the closure task. The new executable existing-file example
@@ -9,8 +28,10 @@ terminated without continuing the self-test after signals. The regression initia
 failed because this example was absent; it does not claim the old upstream example
 truncated a tracked file. The original new-file example also rejects an occupied
 injection path and preserves its owner content. The final `./scripts/check.sh` passed with 59 runtime tests, eight kit tests,
-packaging parity and bootstrap acceptance. Its hosted matrix is pending. This scaffold
-change remains part of the pending review in #6.
+packaging parity and bootstrap acceptance. The [final hosted matrix](https://github.com/KBT-0/MyAgentKit_Keel/actions/runs/34036537999)
+also passed the complete `--self-test` gate on Linux/macOS with Python 3.10/3.14 at
+`cc4af40acc530a5373b8f84ce6d9199a05e50504`. This scaffold change remains part of the
+pending review in #6.
 
 ## Final issue repairs and live plugin checks — 2026-09-06
 

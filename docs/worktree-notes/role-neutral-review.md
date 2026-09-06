@@ -24,13 +24,11 @@ Evidence and executed checks are in [acceptance](../ACCEPTANCE.md); dated scrubb
 summaries preserve both rejected reviews. Raw reports remain private and ignored.
 The working-tree versus index pre-commit limitation remains outside this task.
 
-## Closure task
+## Completed closure task
 
-Issues #1–#5 are closed with individual commits and evidence. The platform matrix at
-`842e78d` passes on Linux/macOS with Python 3.10/3.14. The Codex plugin is installed at
-`0.1.0+codex.20260906131755`; all 11 files match, and a fresh thread discovered both
-skills. A direct Codex read-only sandbox probe rejected a harmless write. A prior-kit
-project was upgraded in isolation; no production checkout was changed.
-
-Newly reported issue #7 has a restoration example and normal/signal/collision tests.
-Finish its full validation, push its separate commit and close it with the results.
+Issues #1–#5 and #7 are closed with dedicated commits and evidence. The final source
+commit is `cc4af40`; its full CI matrix passed Linux/macOS with Python 3.10/3.14 and
+59 runtime plus eight kit tests. Only documentation of these results follows that
+validated source. See [acceptance](../ACCEPTANCE.md) for the commit mapping, installed
+plugin/discovery checks and the isolated upgrade. The installed plugin version remains
+`0.1.0+codex.20260906131755`. No production project was modified.
