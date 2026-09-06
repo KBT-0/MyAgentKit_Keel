@@ -21,6 +21,14 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-09-06 — The first setup commit must obey its own review rule (#1)
+
+Phase 4 previously ordered a commit immediately after writing gates, contradicting the
+constitution installed by the same interview. Setup now stages the intended files and
+hands them to a fresh reviewer, recording any unavailable review or manual checks in
+STATE.md. This prevents a new project from starting with an unreviewed gate merely because
+it was created during setup. The general rule is unchanged; no setup exemption is added.
+
 ### 2026-09-06 — Green review tooling still hid five reproduced failures
 
 A fresh owner-requested Astra review of the combined local change returned Reject despite

@@ -13,6 +13,10 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## v0.7 — 2026-09-05 (unreleased)
 
+- **Issue #1:** setup now stages the foundation and hands it to fresh review before the
+  first commit. The closing report identifies pending review explicitly. **ACTION:**
+  use the updated setup interview; initial gate code has no implicit review exemption.
+
 - **2026-09-06 review fixes:** model calls now require ignored, untracked private storage;
   malformed successful Claude envelopes stop without failover; malformed or conflicting
   Codex verdict declarations fail evidence validation. Kit acceptance requires the named

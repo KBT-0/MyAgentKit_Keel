@@ -319,8 +319,13 @@ placeholder is either a quoted value or a whole file.
    do, with a tool+model trace. Full sentences.
 5. **Delete what does not apply.** An overlay or a section for something this project does
    not have is not harmless — it is a lie the next agent will believe.
-6. **Commit.** If the repository has no commit gate yet, wire it:
-   `git config core.hooksPath .githooks`.
+6. **Stage and hand off for fresh review before commit.** If the repository has no commit
+   gate yet, wire it with `git config core.hooksPath .githooks`. Stage the intended setup
+   files and follow `docs/REVIEW_GATE.md` in a fresh reviewer session. This setup writes
+   gate code, so the setup author cannot approve it. Record the pending review and any
+   manual checks in `docs/STATE.md`; do not commit until the review requirement is met.
+   If review cannot run, leave the staged work and an explicit handoff rather than treating
+   setup as an exemption. Commit only after verified acceptance and required manual checks.
 
 ## Phase 5 — backflow
 
@@ -348,5 +353,6 @@ Report, briefly and honestly:
 
 - What was decided, and what stayed OPEN.
 - The real output of `./scripts/check.sh` and of `./scripts/check.sh --self-test`.
+- Whether fresh review accepted the setup diff, or remains pending with a handoff.
 - Anything you could not verify, named as "not run".
 - What the owner still has to do by hand.
