@@ -53,15 +53,18 @@ cmd="claude -n '$name'"
 
 tmux new-session -d -s "$name" -c "$PWD" -x 200 -y 50 "$cmd"
 
-# Wait for the input line. The TUI prints a shortcuts hint under its prompt once ready;
-# the trust dialog prints a question instead. Bounded: 60 seconds, then report.
+# Wait for the input line: the TUI shows its prompt arrow at the start of a line once ready
+# (v2.1.285 follows the arrow with a NO-BREAK space, so the match is on the arrow alone)
+# or its mode hint in the status bar; the trust dialog prints a question instead.
+# Bounded: 60 seconds, then report.
 i=0
 while :; do
   pane=$(tmux capture-pane -p -t "$name" 2>/dev/null || true)
   case "$pane" in
     *"trust"*"folder"*|*"Do you trust"*)
       die "session '$name' is waiting in the trust dialog; open the folder once by hand (tmux attach -t $name)" ;;
-    *"? for shortcuts"*|*"for shortcuts"*) break ;;
+    *"
+❯"*|*"shift+tab to cycle"*|*"for shortcuts"*) break ;;
   esac
   i=$((i + 1))
   [ "$i" -lt 60 ] || die "session '$name' did not show its input line within 60 s (tmux attach -t $name)"
@@ -70,6 +73,20 @@ done
 
 tmux load-buffer -b "spawn-$name" "$brief"
 tmux paste-buffer -d -b "spawn-$name" -t "$name"
+
+# Submit only once the paste has landed: an Enter sent while the TUI is still receiving a
+# bracketed paste is swallowed and the brief sits unsent at the prompt (seen on the first
+# run of this script). Then confirm the prompt line emptied; if not, press Enter once more.
+head=$(head -c 40 "$brief" | tr -d '\n')
+i=0
+until tmux capture-pane -p -t "$name" -J | grep -qF -- "$head"; do
+  i=$((i + 1)); [ "$i" -lt 30 ] || die "the brief did not appear in session '$name' (tmux attach -t $name)"
+  sleep 1
+done
 sleep 1
 tmux send-keys -t "$name" Enter
+sleep 3
+if tmux capture-pane -p -t "$name" -J | grep -q "^❯.*$(printf '%s' "$head" | head -c 20 | sed 's/[][\\.*^$/]/\\&/g')"; then
+  tmux send-keys -t "$name" Enter
+fi
 echo "spawn_worker: '$name' started with $brief (tmux attach -t $name to watch)"
