@@ -33,7 +33,10 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   copy both files from `overlays/claude-code/files/` by hand, fill the two placeholders, and
   restart any running session before spawning the worker.
 - `setup/INTERVIEW.md` asks question 8, "Will workers run jobs longer than five minutes?",
-  and fills or deletes the worker files from the answer.
+  and fills or deletes the worker files from the answer. It also asks what a worker must know
+  before running those jobs, and the overlay README says to settle the permission mode of
+  spawned sessions with the owner first (both were found missing when the founding project
+  took this version).
 - `docs/GOTCHAS.md` template: `pgrep -f` and shell wait loops match their own command line.
   **ACTION:** add the entry to your project-owned `docs/GOTCHAS.md` if your agents wait on
   processes.

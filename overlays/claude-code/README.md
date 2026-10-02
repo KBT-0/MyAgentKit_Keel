@@ -63,6 +63,15 @@ If the project has no such jobs, delete both files instead of filling them.
 - **`pgrep -f` matches its own command line** (`docs/GOTCHAS.md`).
 - **An untrusted folder blocks a spawned session in the trust dialog.** Open the folder once
   by hand before the first spawn; the script reports the dialog instead of waiting.
+- **Decide the permission mode of spawned sessions with the owner before the first one.** A
+  permission prompt stalls an unattended session, and an agent never widens permissions on
+  its own. In the founding project the owner chose the same auto mode the lead sessions use,
+  with the project hooks active and no allow-list; a narrow `--allowed-tools` list is the
+  alternative where the owner wants it, at the price of a stall on any command outside it.
+- **The worker definition's body carries the project's job rules**, not only the kit's: the
+  lock that serialises heavy jobs, the memory ceiling, the environment variable a worktree
+  needs. The interview's question 8 asks for them; without them the first worker learns them
+  from a crash.
 - **Every message to an idle session is a full-context turn.** Ask the brief for a result
   FILE, subscribe once with `notify_when_idle`, and read the file.
 

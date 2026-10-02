@@ -197,7 +197,9 @@ One topic per turn. Suggested order, because each answer informs the next:
 
 8. **Will workers run jobs longer than five minutes?** A build, a bake, a test suite, a
    render, a data import — anything an agent starts and then has to wait for. Ask for the
-   job names and their typical lengths. The reason: a sub-agent's prompt cache lives five
+   job names and their typical lengths, and what a worker must know BEFORE running them (a
+   lock that serialises them, a memory ceiling, an environment variable, a copy step), which
+   goes into the worker definition's body under its project rules. The reason: a sub-agent's prompt cache lives five
    minutes, so a worker that waits longer re-writes its whole context after every wait; in
    the kit's founding project that was 87 percent of all cache-write tokens
    (`docs/WORKFLOW.md`, "Worker cost"). If the answer is yes and the Claude Code overlay is
