@@ -13,7 +13,7 @@ before that line is deleted.
 
 ---
 
-The four entries below ship with the kit. They are not hypothetical: each cost a real day
+The entries below ship with the kit. They are not hypothetical: each cost a real day
 somewhere, and none of them depends on a particular language or stack.
 
 ## Uncommitted work is NOT in the reflog
@@ -77,3 +77,16 @@ Pass absolute paths to any tool you will read output back from, and make the gat
 when the evidence is absent** — no results file is a FAIL, not a pass. An exit code is not
 evidence that work was done. (`scripts/check.sh` carries this rule and a negative test for
 it.)
+
+## Waiting on your own process: `pgrep -f` and shell wait loops match themselves
+
+A wait loop such as `while pgrep -f "<pattern>"; do sleep 20; done` never ends when the
+pattern also appears in the loop's own command line, because `pgrep -f` matches the shell
+that runs the loop. It happened three times in one day in the founding project before the
+rule was written. Match on the process name (`pgrep -x`), on a pid, or on a file the job
+writes; never on text that is also in your command. The same holds for "wait until the
+screen shows DONE" when the task text itself contains DONE.
+
+Better still, do not wait at all: an agent that starts the job in the background is told
+when it exits, and every waiting turn costs a full read of its context
+(`docs/WORKFLOW.md`, "Worker cost").

@@ -11,6 +11,33 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ---
 
+## v0.8 — 2026-10-03
+
+- **Worker cost (issue #22).** A measured rule set for routing workers lands in the
+  `docs/WORKFLOW.md` template as the section "Worker cost — waits and long lives are what
+  you pay for": a worker's cache must outlive its waits and it never polls, a review-fix
+  round goes to a fresh worker, about 150 requests per worker, the lead does not poll,
+  mechanical work to the cheaper model, short reports, cost read at the end of the day. The
+  reasoning and the numbers are in `RESEARCH_LOG.md`. **ACTION:** copy the section into your
+  project-owned `docs/WORKFLOW.md` (before "Token economics").
+- `scripts/agent_cost.py` (kit-owned, synced): per-agent requests, cache read, cache write,
+  cache write after gaps over five minutes, poll-only turns and the cache lifetime used,
+  from a Claude Code session transcript and its sub-agents. `docs/HANDOFF.md` and the
+  handoff command now ask for its table plus the tool's cost screen in an end-of-day
+  handoff. **ACTION:** add the end-of-day paragraph to your project-owned `docs/HANDOFF.md`.
+- Claude Code overlay: `.claude/agents/worker.md`, a worker definition with
+  `experimental.cacheTtl: 1h`, `maxTurns: 150` and the worker rules in its body (placeholders
+  `{{WORKER_MODEL}}`, `{{LONG_JOBS}}`), and `scripts/spawn_worker.sh`, which opens a separate
+  worker session in tmux and pastes a brief file into it after the TUI is up. The overlay
+  README documents the placeholders and the pitfalls. **ACTION:** overlays are not synced;
+  copy both files from `overlays/claude-code/files/` by hand, fill the two placeholders, and
+  restart any running session before spawning the worker.
+- `setup/INTERVIEW.md` asks question 8, "Will workers run jobs longer than five minutes?",
+  and fills or deletes the worker files from the answer.
+- `docs/GOTCHAS.md` template: `pgrep -f` and shell wait loops match their own command line.
+  **ACTION:** add the entry to your project-owned `docs/GOTCHAS.md` if your agents wait on
+  processes.
+
 ## v0.7 — 2026-09-05 (unreleased)
 
 - Downstream adoption exposed four review self-tests that assumed installed projects still

@@ -195,6 +195,18 @@ One topic per turn. Suggested order, because each answer informs the next:
    must wait. Order by risk: the assumption that would hurt most if it turned out wrong goes
    first, even when it is not the foundation.
 
+8. **Will workers run jobs longer than five minutes?** A build, a bake, a test suite, a
+   render, a data import — anything an agent starts and then has to wait for. Ask for the
+   job names and their typical lengths. The reason: a sub-agent's prompt cache lives five
+   minutes, so a worker that waits longer re-writes its whole context after every wait; in
+   the kit's founding project that was 87 percent of all cache-write tokens
+   (`docs/WORKFLOW.md`, "Worker cost"). If the answer is yes and the Claude Code overlay is
+   installed, fill `{{WORKER_MODEL}}` and `{{LONG_JOBS}}` in `.claude/agents/worker.md` with
+   the author model and those job names, and tell the owner that workers for such tasks are
+   spawned with that definition instead of the general-purpose one. If the answer is no,
+   delete `.claude/agents/worker.md` and `scripts/spawn_worker.sh` (Phase 4, "Delete what
+   does not apply"). Either way the rules in that section bind the lead from day one.
+
 ## Phase 3 — PROJECT.md and PHASES.md
 
 Both files ship as skeletons and both are LIVING documents. Do not fill them in from a

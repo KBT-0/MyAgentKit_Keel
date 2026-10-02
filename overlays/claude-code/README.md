@@ -33,6 +33,38 @@ repository.
 | `.claude/hooks/guard_boundaries.py` | Flags a forbidden import the moment it is written, seconds instead of a commit |
 | `.claude/hooks/guard_destructive_git.py` | Refuses `reset --hard`, `checkout --`, `clean -f`, `stash drop` and force pushes while the tree is dirty, and prints what would be lost |
 | `.claude/agents/diff-reviewer.md` | Read-only review subagent carrying THIS project's risky areas and `docs/REVIEW_GATE.md` |
+| `.claude/agents/worker.md` | Implementation worker with a one-hour prompt cache and a 150-turn cap, for tasks that run jobs longer than five minutes (`docs/WORKFLOW.md`, "Worker cost") |
+| `scripts/spawn_worker.sh` | Opens a SEPARATE worker session in tmux and hands it a brief file; the lead then subscribes for its idle notice instead of polling |
+
+## Placeholders this overlay brings
+
+| Placeholder | What goes in |
+|---|---|
+| `{{WORKER_MODEL}}` | The author model from the interview (`sonnet`, `opus`, or a full model id) |
+| `{{LONG_JOBS}}` | The project's jobs that run longer than a few minutes, by name, as the interview's question 8 recorded them |
+
+If the project has no such jobs, delete both files instead of filling them.
+
+## Worker sessions — what cost a session each before it was written down
+
+- **Separate sessions and one-hour sub-agents cost the same.** Both were measured against a
+  sub-agent with the default five-minute cache on the same task; both avoid the re-writes.
+  Choose by visibility: a tmux session can be watched and survives the lead ending.
+- **A new `.claude/agents/*.md` file is not loaded by a running session.** Restart the
+  session (or spawn the worker from a session started after the file existed) and verify in
+  the worker's transcript that its cache writes are `ephemeral_1h`, which
+  `scripts/agent_cost.py` prints in its `1h/5m` column. The one-hour cache is ignored while
+  the account runs on usage credits.
+- **The prompt must never follow a variadic flag.** `claude --allowedTools A,B "prompt"`
+  reads the prompt as one more tool name and opens idle at an empty input line.
+  `spawn_worker.sh` pastes the brief after the TUI is up for that reason.
+- **A standalone `sleep` in a Bash tool call is refused by the tool**, so a worker cannot
+  even wait badly; it starts the job in the background and is re-invoked when it exits.
+- **`pgrep -f` matches its own command line** (`docs/GOTCHAS.md`).
+- **An untrusted folder blocks a spawned session in the trust dialog.** Open the folder once
+  by hand before the first spawn; the script reports the dialog instead of waiting.
+- **Every message to an idle session is a full-context turn.** Ask the brief for a result
+  FILE, subscribe once with `notify_when_idle`, and read the file.
 
 ## Why this is an overlay and not part of the core
 

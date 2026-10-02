@@ -220,6 +220,59 @@ or to the cheaper model; architecture, contract design and risky-diff review go 
 effort. Effort is chosen per task, not per session — running everything high spends the
 scarce budget on work that did not need it.
 
+## Worker cost — waits and long lives are what you pay for
+
+Measured in the kit's founding project (one lead session with background workers: 336 USD in
+eleven hours, 87 percent of it the workers; the transcripts were then counted request by
+request, and a controlled experiment ran the same task in six setups). What the numbers say:
+
+- **A sub-agent's prompt cache lives five minutes; a main conversation's lives an hour.** A
+  worker that waits longer than its cache re-writes its whole context on the next request, at
+  more than ten times the price of reading it. 87 percent of all cache-write tokens followed
+  such a gap: poll loops, a ten-minute job, a wait on a lock, a resume after a handback.
+- **Every request re-reads the whole context**, and context grows by about 2k tokens per
+  request whatever the tool output size. One worker resumed for three review rounds (377
+  requests, context 36k to 711k) was 38 percent of all cache read and 48 percent of all
+  cache write.
+- **Polling is paid twice**: each poll turn re-reads the context, and the wait then expires
+  the cache. Fifteen percent of all cache read went to turns that only waited.
+- **A background job alone saves nothing** (+12 percent in the experiment): the wait still
+  outlives the five-minute cache. A one-hour cache with background jobs and no polling saved
+  36 to 38 percent; splitting every wait under five minutes saved more on a small context but
+  pays a full context read per poll, so it loses at real worker sizes.
+- **Tool output was not the problem**: all tool results of all agents together were about one
+  million tokens. Trimming output is hygiene, a small lever.
+
+Rules, binding for whoever routes workers, in order of measured weight:
+
+1. **A worker's cache must outlive its waits, and the worker must not poll.** A worker that
+   runs jobs longer than a few minutes runs with a one-hour cache (a separate session, or a
+   sub-agent whose definition sets `experimental.cacheTtl: 1h` — the Claude Code overlay
+   ships one as `.claude/agents/worker.md`), starts long jobs in the background and is
+   re-invoked when they exit, and never runs `sleep`, `until`, `pgrep` or tail-the-log
+   loops. Where a one-hour cache is unavailable, split every wait into pieces shorter than
+   five minutes instead.
+2. **A review-fix round goes to a fresh worker**, briefed with the findings, the branch and
+   the files to read. Resume a finished worker only within a few minutes and for a few tool
+   calls.
+3. **One small task per worker**, sized to end under roughly 150 requests (`maxTurns` in the
+   worker definition enforces it). Split before starting: a mechanism first, then its uses.
+4. **The lead does not poll either.** It waits for task notifications or an idle notice from
+   a separate session; it does not check on workers or CI in a loop.
+5. **Mechanical work goes to the cheaper model**: doc fixes, running a documented proof,
+   folding notes. The stronger model is for design-bearing code and for reviews.
+6. **Parallel workers only for independent modules**; each one multiplies the bill.
+7. **Worker reports are short** (about 400 words), and long output goes to a file with a
+   summary line: the lead pays for a report again on every later turn.
+8. **The lead session is handed over before it grows**, and at the end of a working day it
+   reads the tool's cost screen and runs `scripts/agent_cost.py --latest` and writes both
+   into the handoff, so the next routing decision is made from a number.
+
+Separate sessions and one-hour sub-agents cost the same. A separate session adds visibility
+and survives a lead handoff; the Claude Code overlay's `scripts/spawn_worker.sh` opens one
+in tmux and hands it a brief file, and the lead subscribes once for its idle notice instead
+of messaging it (every message to an idle session is a full-context turn).
+
 ## Token economics — the always-loaded prefix is money
 
 Cached input tokens are discounted heavily, so a STABLE prompt prefix — the documents loaded

@@ -31,6 +31,10 @@ or to anything produced from it.
 
 End the prompt with: updating `docs/STATE.md` at session end is the implementer's job.
 
+A handoff written at the end of a working day also carries the cost: the tool's cost screen
+(`/cost` in Claude Code) and the table from `scripts/agent_cost.py --latest`, next to the number
+of tasks done, so the next lead routes from a number (`docs/WORKFLOW.md`, "Worker cost").
+
 ## Sizing the task before you write the brief
 
 - **Too big** ("build the payments system") — the implementer invents scope and returns one

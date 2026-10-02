@@ -250,6 +250,37 @@ the child a complete temporary stdin file and monitors its process, not partial 
 
 ## Backflow findings
 
+### 2026-10-03 — Worker cost is waits times context, not output size (#22)
+
+A project using the kit ran one lead session with background sub-agent workers for eleven
+hours at 336 USD, 87 percent of it the workers. Counting the transcripts request by request
+(1,824 requests, deduplicated by request id) gave the shape: 87 percent of all cache-write
+tokens followed a gap of more than five minutes, which is a sub-agent's prompt-cache
+lifetime (a main conversation gets an hour); one worker resumed for three review rounds grew
+from 36k to 711k tokens of context over 377 requests and was 38 percent of all cache read;
+15 percent of all cache read went to turns that only waited; all tool output together was
+about one million tokens. The earlier guess that output size was the lever was wrong.
+
+A controlled experiment then ran the same task in six setups. A sub-agent blocking on a
+400-second job re-wrote its whole context after every wait (the baseline). A background job
+with automatic re-invocation changed nothing (+12 percent), because the wait still outlived
+the five-minute cache. A separate session and a sub-agent with the one-hour cache both
+avoided the re-writes at the same cost (−36 to −38 percent on a 100k context, limited by the
+one-hour cache's doubled write rate on the first load). Splitting waits under five minutes
+also avoided them (−52 percent at that small context) but pays a full context read per poll,
+so it loses at real worker sizes.
+
+Hence the rule set in the WORKFLOW template, the worker definition and the spawn script in
+the Claude Code overlay, the analyser, the interview question and the handoff line. Projected
+on the measured session, the cache lifetime alone removes about a third of the worker cost;
+with fresh workers capped at about 150 requests, 45 to 50 percent. The first real-task
+measurement is recorded in the founding project; this log takes its number once it exists.
+Not explained: about a third of the cost screen's cache-read volume appeared in no
+transcript (the permission classifier is the candidate).
+
+Rejected on the way, with no measured benefit for this cost shape: output compressors,
+memory plugins, keep-alive plugins, terse-output packs, spec kits and knowledge-graph tools.
+
 ### 2026-07-26 — from the founding project (the codebase this kit was extracted from)
 
 A Unity + .NET multiplayer game written almost entirely by CLI agents (Claude Code and

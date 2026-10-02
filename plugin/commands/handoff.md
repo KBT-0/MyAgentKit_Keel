@@ -31,4 +31,7 @@ memory sends the implementer to the wrong place and the diff comes back there.
 End with the reminder that updating `docs/STATE.md` at session end is the implementer's job.
 Full sentences only — the target has no chat memory and no idea what you were doing.
 
+If this handoff closes a working day, add the cost: `/cost` and the output of
+`scripts/agent_cost.py --latest` next to the task count, so the next lead routes from a number.
+
 Raw arguments: `$ARGUMENTS`
