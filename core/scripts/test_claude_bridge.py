@@ -551,6 +551,41 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(json.loads(Path(received[0]['usage_record']).read_text())['status'], 'completed')
         self.assertTrue(Path(received[0]['evidence']).is_file())
 
+    def test_a_cancel_while_codex_restores_its_handlers_is_persisted_for_a_failed_attempt(self):
+        # The records were relabelled before the adapter put the caller's handlers back: a
+        # SIGTERM noted during that restore reached only the returned result, and the usage
+        # record and archive of a quota-failed attempt still said quota.
+        from contextlib import redirect_stdout
+        from io import StringIO
+        import signal
+        from unittest.mock import patch
+        import agent_process
+        import codex_bridge
+        real_signal, fired = signal.signal, []
+
+        def quota(command, prompt, repo, timeout, into=None):
+            return {'exit_code': 1, 'stdout': json.dumps({'type': 'turn.failed',
+                    'error': {'message': 'usage limit reached'}}), 'stderr': '',
+                    'termination': None, 'duration_ms': 1}
+
+        def install(sig, handler):
+            # run() is replaced, so the only handler put back that is not the adapter's own
+            # is its restore; SIGINT goes back first, SIGTERM still meets the noting guard.
+            if sig == signal.SIGINT and not isinstance(handler, agent_process.OneShot) and not fired:
+                fired.append(sig)
+                os.kill(os.getpid(), signal.SIGTERM)
+            return real_signal(sig, handler)
+
+        received = []
+        with patch.dict(os.environ, self.review_env()), patch('agent_process.run', side_effect=quota), \
+                patch.object(agent_process.signal, 'signal', side_effect=install), redirect_stdout(StringIO()):
+            code = codex_bridge.main(['--model', 'fixture-codex-model', '--repo', str(self.repo),
+                                      '--uncommitted'], received.append)
+        self.assertTrue(fired)
+        self.assertEqual(code, 5)
+        self.assertEqual((received[0]['failure_kind'], received[0]['cancelled']), ('cancelled', True))
+        self.persisted_cancel(received[0])
+
     def test_a_cancel_while_codex_switches_to_noting_keeps_the_completed_review(self):
         # After run() returned, the adapter installed its noting handler one signal at a time:
         # a SIGTERM before the swap reached SIGTERM still met the raising handler, unwound the
@@ -630,6 +665,17 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(chain['failure_kind'], 'cancelled')
         self.assertTrue(chain['attempts'][0]['cancelled'])
         self.persisted_cancel(chain['attempts'][0])
+        # Run directly there is no dispatcher dict: what the adapter printed must say it, and
+        # its last JSON line is the one that counts.
+        launched, fired, out, received = [], [], Blocked(), []
+        with patch.dict(os.environ, self.review_env()), patch('agent_process.run', side_effect=quota), \
+                redirect_stdout(out):
+            code = bridge.main(['review', '--repo', str(self.repo), '--uncommitted'], received.append)
+        self.assertTrue(fired)
+        self.assertEqual(code, 5)
+        last = json.loads(out.getvalue().strip().splitlines()[-1])
+        self.assertEqual((last['cancelled'], last['failure_kind']), (True, 'cancelled'), out.getvalue())
+        self.persisted_cancel(received[0])
 
     def test_a_cancel_whose_archive_replacement_fails_is_still_recorded_and_returned(self):
         # The relabel replaced the archive before the usage record, so a failure between the

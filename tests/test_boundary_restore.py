@@ -227,5 +227,26 @@ exit 1
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn('  ok   — ', result.stdout)
 
+    def test_a_linked_worktree_copy_keeps_head_history_and_index(self):
+        # The copy's own repository was a fresh `git init`: a gate that needs HEAD, a tag or
+        # the staged state passed in the linked worktree and failed the copy's baseline.
+        with tempfile.TemporaryDirectory() as tmp:
+            root, git = self.fixture(tmp, '[ "$(git rev-parse --verify HEAD)" = "$EXPECT_HEAD" ] || exit 1\n'
+                                          'git describe --tags --exact-match >/dev/null 2>&1 || exit 1\n'
+                                          '[ "$(git diff --cached --name-only)" = staged.txt ] || exit 1\n')
+            git('tag', 'v1')
+            linked = Path(tmp) / 'linked'
+            git('worktree', 'add', '-q', str(linked))
+            (linked / 'staged.txt').write_text('staged only\n')
+            subprocess.run(['git', 'add', 'staged.txt'], cwd=linked, check=True)
+            head = git('rev-parse', 'HEAD').strip()
+            scratch = Path(tmp) / 'scratch'
+            scratch.mkdir()
+            result = subprocess.run(['sh', 'scripts/check.sh', '--self-test'], cwd=linked,
+                                    capture_output=True, text=True, timeout=30,
+                                    env=dict(os.environ, TMPDIR=str(scratch), EXPECT_HEAD=head))
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('  ok   — ', result.stdout)
+
 if __name__ == '__main__':
     unittest.main()

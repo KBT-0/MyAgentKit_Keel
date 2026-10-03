@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Collect a fresh, read-only Claude review or implementation proposal. Python 3.10+."""
+"""Collect a fresh, read-only Claude review or implementation proposal. Python 3.10+.
+
+The result is one JSON line on stdout. A cancel that lands while that line is printed is
+reported by one more JSON line, the same result with "correction": true and "cancelled": true;
+the last JSON line printed is the authoritative result, and a direct consumer must read it.
+"""
 from __future__ import annotations
 
 import argparse
@@ -560,13 +565,15 @@ def main(argv=None, result_sink=None) -> int:
         # result printed (a blocked stdout) came after the first sample, the quota-failed
         # attempt went back as cancelled: false, and --fallback started the other reviewer.
         # The dispatcher holds this same dict, so the update reaches it; the record is
-        # relabelled before main returns.
+        # relabelled before main returns. A direct consumer has only what was printed, and
+        # that line said cancelled: false: the correction line supersedes it.
         if result is not None and cancelled and not result["cancelled"]:
             result["cancelled"] = True
             if result["failure_kind"]:
                 result["failure_kind"] = "cancelled"
                 relabel()
                 result.update(status=evidence["status"], error=evidence.get("error"))
+            print(json.dumps(dict(result, correction=True)))
 
 
 if __name__ == "__main__":

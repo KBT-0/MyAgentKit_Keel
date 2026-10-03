@@ -53,8 +53,10 @@
 # `git rev-parse --show-toplevel` build in the checkout. A linked worktree's `.git` is a
 # pointer file, and the copied pointer kept the original's git directory: a gate that stages
 # its inputs staged the injection into the original's index. Such a copy gets its own
-# repository (git init, then git add -A), and both the git directory and the common directory
-# must resolve inside the copy, else the case fails by name. Copying a
+# repository with the original's refs, HEAD and index, reading the original's objects
+# read-only through alternates (a bare `git init` lost HEAD, tags and the staged state, and a
+# gate that needs them failed the copy's baseline), and both the git directory and the common
+# directory must resolve inside the copy, else the case fails by name. Copying a
 # large tree (dependencies, build output) costs time: copy only what the gate reads if that
 # is known, but never let the probe write into the checkout.
 #
@@ -80,8 +82,21 @@
 # |   [ -f "$probe_target" ] && [ ! -L "$probe_target" ] || exit 1
 # |   probe_root=$(pwd -P) || exit 1
 # |   if [ -L .git ] || [ -f .git ]; then
-# |     rm -f .git && git init -q && git add -A || {
-# |       echo "  FAIL — existing-file probe: could not give the disposable copy its own git repository; refusing to run."
+# |     probe_head=$(git -C "$probe_checkout" rev-parse -q --verify HEAD) || probe_head=
+# |     { probe_from=$(cd "$probe_checkout" && cd -P "$(git rev-parse --git-common-dir)" && pwd -P) &&
+# |       probe_index=$(cd "$probe_checkout" && cd -P "$(git rev-parse --git-dir)" && pwd -P)/index &&
+# |       rm -f .git && git init -q &&
+# |       printf '%s/objects\n' "$probe_from" > .git/objects/info/alternates &&
+# |       git -C "$probe_checkout" for-each-ref --format='create %(refname) %(objectname)' | git update-ref --stdin &&
+# |       if probe_branch=$(git -C "$probe_checkout" symbolic-ref -q HEAD); then
+# |         git symbolic-ref HEAD "$probe_branch"
+# |       elif [ -n "$probe_head" ]; then
+# |         git update-ref --no-deref HEAD "$probe_head"
+# |       fi &&
+# |       { [ ! -f "$probe_index" ] || cp "$probe_index" .git/index; } &&
+# |       { git update-index -q --refresh >/dev/null 2>&1 || :; } &&
+# |       [ "$(git rev-parse -q --verify HEAD)" = "$probe_head" ]; } || {
+# |       echo "  FAIL — existing-file probe: could not give the disposable copy its own git repository with the original's HEAD, history and index; refusing to run."
 # |       exit 1
 # |     }
 # |   fi
