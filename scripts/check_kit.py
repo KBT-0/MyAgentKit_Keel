@@ -181,6 +181,28 @@ def main():
             finally:
                 marker.unlink()
             print("PASS: an untracked file with an unfilled marker turns the gate red")
+            # A tracked file deleted without `git rm` fails the gate under its own name,
+            # not as a scanner that failed to run.
+            gone = project / "deleted-unstaged.md"
+            gone.write_text("tracked, then deleted without git rm\n")
+            run(["git", "add", gone.name], project)
+            gone.unlink()
+            try:
+                out = run(["sh", "scripts/check.sh"], project, expected=1,
+                          reason="deleted-unstaged.md is tracked but missing")
+                if "a scanner failed to run" in out:
+                    raise RuntimeError("a deleted tracked file was reported as a scanner failure:\n" + out)
+            finally:
+                run(["git", "rm", "-q", "--cached", gone.name], project)
+            # A directory symlink (a dependency directory linked into a fresh worktree) holds
+            # nothing git tracks: the scan skips it with a line instead of failing on it.
+            link = project / "node_modules"
+            os.symlink("docs", link)
+            try:
+                run(["sh", "scripts/check.sh"], project, reason="NOTE [scan]: skipped node_modules")
+            finally:
+                link.unlink()
+            print("PASS: a deleted tracked file is named, a directory symlink is skipped with a note")
             tests = project / "scripts/test_claude_bridge.py"
             original_tests = tests.read_bytes()
             tests.unlink()
