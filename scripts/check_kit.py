@@ -340,15 +340,18 @@ def main():
                 link.unlink()
             # Git tracks a symlink's link text: a dangling link whose text holds an unfilled
             # marker was skipped whole and passed the setup gate. Assembled, never literal.
-            link = project / "config-link"
-            os.symlink("{{" + "CONFIG_DIR}}/config.json", link)
-            run(["git", "add", link.name], project)
-            try:
-                run(["sh", "scripts/check.sh"], project, expected=1,
-                    reason="symlink config-link -> {{" + "CONFIG_DIR}}/config.json")
-            finally:
-                run(["git", "rm", "-q", "--cached", link.name], project)
-                link.unlink()
+            # A link named like an option was read as one: "readlink --version" printed the
+            # version and the marker in the link text passed.
+            for name in ("config-link", "--version"):
+                link = project / name
+                os.symlink("{{" + "CONFIG_DIR}}/config.json", link)
+                run(["git", "add", "--", name], project)
+                try:
+                    run(["sh", "scripts/check.sh"], project, expected=1,
+                        reason="symlink " + name + " -> {{" + "CONFIG_DIR}}/config.json")
+                finally:
+                    run(["git", "rm", "-q", "--cached", "--", name], project)
+                    link.unlink()
             print("PASS: a deleted tracked file is named, a directory symlink is skipped with a note,"
                   " a symlink's link text is scanned")
             tests = project / "scripts/test_claude_bridge.py"

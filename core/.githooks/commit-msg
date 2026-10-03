@@ -45,10 +45,21 @@ domains='anthropic\.com|openai\.com|ampcode\.com|cursor\.(com|sh)|aider\.chat|de
 # core.commentChar is skipped too, which matters when it is a letter ("x Co-Authored-By:"),
 # and core.commentString (git 2.45) before it, as git gives it precedence.
 # "auto" is git choosing a punctuation character, not the letters a, u, t and o.
-comment=$(git config --get core.commentString 2>/dev/null ||
-          git config --get core.commentChar 2>/dev/null)
-# A failed transformation fails closed: an unchecked one dropped "=" from the separators and
-# let "Co-Authored-By=Claude <...>" through.
+# Only an absent key (git config exit 1) means git's default; any other failure, git missing
+# included, fails closed: an unchecked read left only ":" as a separator and let
+# "Co-Authored-By=Claude <...>" through.
+config_get() {
+  value=$(git config --get "$1" 2>/dev/null)
+  found=$?
+  [ "$found" -le 1 ] || {
+    echo "commit-msg: cannot read $1 from git config; refusing to pass the message unchecked." >&2
+    exit 1
+  }
+}
+config_get core.commentString
+[ "$found" = 0 ] || config_get core.commentChar
+comment=$value
+# A failed transformation fails closed too: an unchecked one dropped "=" from the separators.
 fail_parse() {
   echo "commit-msg: cannot parse $1 from git config; refusing to pass the message unchecked." >&2
   exit 1
@@ -57,18 +68,22 @@ comment=$(printf '%s' "$comment" | tr -cd '[:alnum:]') || fail_parse core.commen
 prefix='^[^[:alnum:]]*'
 [ -z "$comment" ] || [ "$comment" = auto ] || prefix="^([^[:alnum:]]|[$comment])*"
 # Git takes whitespace before a trailer's colon and folds a value onto indented lines, so
-# "Co-Authored-By : Claude" and an identity on the next line are trailers too. Each folded
-# line is checked as it stands and again joined to the lines it continues.
+# "Co-Authored-By : Claude" and an identity on the next line are trailers too. Each line is
+# checked joined to every folded line after it, never to only some of them: a partial join
+# read "Co-authored-by: Claude" out of a name folded as "Claude" and "Monet <...>".
 # trailer.separators makes other characters separators ("Co-Authored-By=Claude" with "="),
 # so each configured one counts, and the colon always does. In the bracket expression "]"
 # goes first and "-" last, where both are literal.
-seps=$(git config --get trailer.separators 2>/dev/null)
+config_get trailer.separators
+seps=$value
 bracket=:$(printf '%s' "$seps" | tr -d ':]-') || fail_parse trailer.separators
 case $seps in *']'*) bracket="]$bracket" ;; esac
 case $seps in *-*) bracket="$bracket-" ;; esac
 trailer="$prefix[a-z]+(-[a-z]+)*-by[[:space:]]*[$bracket]"
-text=$(awk '{ print } NR > 1 && /^[[:space:]]/ { line = line " " $0; print line; next }
-            { line = $0 }' "$msg") || {
+text=$(awk '{ line[NR] = $0 }
+            END { for (i = NR - 1; i > 0; i--)
+                    if (line[i + 1] ~ /^[[:space:]]/) line[i] = line[i] " " line[i + 1]
+                  for (i = 1; i <= NR; i++) print line[i] }' "$msg") || {
   echo "commit-msg: cannot unfold the commit message; refusing to pass it unchecked." >&2
   exit 1
 }

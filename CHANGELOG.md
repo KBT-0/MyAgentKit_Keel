@@ -30,7 +30,8 @@ hand merge; `sync-kit.sh` now keeps listing them until you confirm (see "Sync st
   the working tree: its injections come from outside it (`GATE_SELFTEST_EXTRA_FILE`), and the
   rule "a self-test case never changes a tracked file" is in check.sh and `docs/WORKFLOW.md`.
   A commit made during a long self-test now waits for it. **ACTION:** port into your
-  project-owned `scripts/check.sh` the EXIT CODES and SELF-TEST CASE comments, the lock block,
+  project-owned `scripts/check.sh` the EXIT CODES and SELF-TEST CASE comments, the `gate=`
+  line before `cd` (see "Third cross-model round" below), the lock block,
   `cleanup` with its traps and the `GATE_SELFTEST_EXTRA_FILE` line; move any self-test case
   (your `boundary_selftests.sh` included) that writes into the tree to a place outside it.
   Re-sync `docs/WORKFLOW.md` if you own a modified copy. **ACTION:** Claude Code overlay: copy
@@ -79,7 +80,11 @@ hand merge; `sync-kit.sh` now keeps listing them until you confirm (see "Sync st
   it skips the lock or honours a seam; otherwise `FAIL [env]` by name, so variables copied
   from a gate killed with SIGKILL no longer let a build override through. `toolchain_path`
   is applied before the lock resolves `python3`. **ACTION:** copy the toolchain block (now at
-  the top), the seam block and the lock block from `core/scripts/check.sh`. `.githooks/
+  the top, keep your `toolchain_path` value), the seam block and the lock block from
+  `core/scripts/check.sh`, and its `gate=$(cd "$(dirname "$0")" && pwd -P)/${0##*/}` line
+  above your `cd "$(dirname "$0")/.."` line: the lock block re-executes the gate by that
+  absolute path, and without the line every gate run, and so every commit, stops at once on
+  an unset `gate`. `.githooks/
   commit-msg` cuts nothing below a scissors line (a `-m` message can reproduce git's whole
   header): a credit quoted in a `commit -v` diff is rejected and the message says to commit
   without `-v`; an alphanumeric `core.commentChar` counts as a comment prefix. A malformed
@@ -134,7 +139,9 @@ hand merge; `sync-kit.sh` now keeps listing them until you confirm (see "Sync st
 - **Eighth cross-model round.** The cancel relabel stages its replacement archive inside
   the verified-ignored usage directory (a crash can no longer leave stageable reviewer
   output), writes the usage record first as the authoritative one, and reports an archive
-  that could not be replaced as a hash mismatch that later rounds refuse. **ACTION:** copy
+  that could not be replaced as a hash mismatch that later rounds refuse (exit 2, naming the
+  archive and its record): a failed round is never carried, but its archive is checked as
+  one would be. **ACTION:** copy
   the synced `agent_usage.py` and `codex_bridge.py` again.
 - **Tenth cross-model round.** The cancel relabel error reports only what was observed:
   whether the archive on disk matches the usage record (with its sha256), does not match

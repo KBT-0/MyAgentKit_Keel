@@ -82,7 +82,10 @@ class GitHookTests(unittest.TestCase):
                             # A quoted display name is still the tool's name.
                             'Co-Authored-By: "GitHub Copilot" <copilot@github.com>',
                             "Co-Authored-By: 'Claude' <noreply@example.invalid>",
-                            'Co-authored-by: "Claude Opus 5.5" <noreply@example.invalid>'):
+                            'Co-authored-by: "Claude Opus 5.5" <noreply@example.invalid>',
+                            # A tool name folded over several lines is the tool's name once joined.
+                            'Co-authored-by:\n  Claude\n  Opus 5.5 <noreply@example.invalid>',
+                            'Co-authored-by:\n  GitHub\n  Copilot <copilot@example.invalid>'):
                 with self.subTest(trailer=trailer):
                     result = self.commit(root, git, trailer + '\n')
                     self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -97,6 +100,10 @@ class GitHookTests(unittest.TestCase):
                             'Co-authored-by: Jo Park <jo@precursor.example.invalid>',
                             'Signed-off-by: Paola Geminiani <paola@example.invalid>',
                             'Co-authored-by:\n  Claude Monet <claude.monet@example.invalid>',
+                            # Only the completed value is matched: a partial fold read
+                            # "Co-authored-by: Claude" and rejected the painter.
+                            'Co-authored-by:\n  Claude\n  Monet <claude.monet@example.invalid>',
+                            'Co-authored-by: Claude\n  Monet <claude.monet@example.invalid>',
                             'Co-authored-by: "Claude Monet" <claude.monet@example.invalid>',
                             "Co-authored-by: 'A Person' <person@example.invalid>",
                             'Bump openai SDK to the next minor version'):
@@ -199,6 +206,29 @@ class GitHookTests(unittest.TestCase):
                     self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
                     self.assertIn('cannot parse %s' % key, result.stderr)
                     git('config', '--unset', key)
+
+    def test_a_failed_config_read_fails_closed(self):
+        # Only an absent key (git config exit 1) means the default: a failed read of
+        # trailer.separators left only ":" as a separator and "Co-Authored-By=Claude" passed.
+        real_git = shutil.which('git')
+        with tempfile.TemporaryDirectory() as tmp:
+            root, git = self.repo(tmp)
+            shim = Path(tmp) / 'shim'
+            shim.mkdir()
+            for key, line in (('trailer.separators', 'Co-Authored-By=Claude'),
+                              ('core.commentChar', 'x Co-Authored-By: Claude'),
+                              ('core.commentString', 'x Co-Authored-By: Claude')):
+                with self.subTest(key=key):
+                    (shim / 'git').write_text('#!/bin/sh\n[ "$1 $3" != "config %s" ] || exit 3\nexec %s "$@"\n'
+                                              % (key, real_git))
+                    (shim / 'git').chmod(0o755)
+                    (root / 'msg').write_text('change c\n\n%s <noreply@anthropic.com>\n' % line)
+                    result = subprocess.run(['sh', '.githooks/commit-msg', 'msg'], cwd=root, text=True,
+                                            capture_output=True,
+                                            env=dict(os.environ, PATH='%s%s%s' % (shim, os.pathsep,
+                                                                                   os.environ['PATH'])))
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    self.assertIn('cannot read %s' % key, result.stderr)
 
     def test_the_owner_may_allow_ai_attribution(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -208,8 +208,20 @@ def prior_rounds(repo: Path, task_id: str | None, scope: str, reference: str | N
                 or not isinstance(task.get("reference", 0), (str, type(None)))
                 or not isinstance(task.get("resolved"), (str, type(None)))):
             raise damaged(path, "has a task without its id, kind, scope, reference or head")
-        if (task.get("kind") != "review" or task.get("id") != task_id
-                or value["status"] != "completed"):
+        if task.get("kind") != "review" or task.get("id") != task_id:
+            continue
+        if value["status"] != "completed":
+            # Never carried, but its archive is checked: a cancel relabel that could not replace
+            # the archive left one its record does not match, and later rounds passed it
+            # silently. An archive that was never written (evidence_unavailable) has nothing to
+            # check; one outside docs/reviews is not read.
+            evidence = Path(value["evidence"]).resolve() if isinstance(value.get("evidence"), str) else None
+            if (evidence and evidence.is_relative_to((repo / "docs/reviews").resolve())
+                    and evidence.is_file()):
+                if hashlib.sha256(evidence.read_bytes()).hexdigest() != value.get("evidence_sha256"):
+                    raise BridgeError("failed review evidence %s of task %s does not match its usage "
+                                      "record %s (sha256 differs): restore it or move the record out "
+                                      "of .myagentkit/usage" % (evidence, task_id, path))
             continue
         if not isinstance(value.get("evidence"), str) or not value["evidence"]:
             raise damaged(path, "is a completed review that names no evidence")
