@@ -9,8 +9,9 @@
 # a trailer is rejected only when its whole name is a tool or model name, its address is
 # a tool vendor's or a [bot], or a "Generated with" line names a tool.
 set -u
-# The owner decides (setup interview): without the rule line in AGENTS.md, AI tools may be credited.
-grep -q 'No AI attribution in git' AGENTS.md 2>/dev/null || exit 0
+# The owner decides (setup interview): without the rule line in AGENTS.md, AI tools may be
+# credited. A missing AGENTS.md is a broken setup, not a choice: the hook stays on.
+if [ -f AGENTS.md ] && ! grep -q 'No AI attribution in git' AGENTS.md; then exit 0; fi
 msg=${1:-}
 # Git strips "#" lines and, under `commit -v`, the diff below the scissors line only AFTER
 # this hook; a trailer quoted in that diff is not part of the message.
@@ -22,12 +23,12 @@ fi
 tools='claude|anthropic|openai|chatgpt|gpt|codex|copilot|gemini|cursor|aider|devin|windsurf|codeium|tabnine|amp|qwen|cline|kiro'
 words="$tools|opus|sonnet|haiku|code|coder|agent|ai|assist|assistant|cli|chat|pro|flash|mini|turbo|[a-z]*[0-9][a-z0-9.]*"
 domains='anthropic\.com|openai\.com|ampcode\.com|cursor\.(com|sh)|aider\.chat|devin\.ai|cognition\.ai|windsurf\.com|codeium\.com|tabnine\.com'
-trailer='^[[:space:]]*(co-authored-by|signed-off-by|assisted-by):'
+trailer='^[[:space:]]*[a-z]+(-[a-z]+)*-by:'
 sep='[[:space:]:_/().,-]'
 printf '%s\n' "$body" | grep -inE \
-  -e "$trailer[[:space:]]*((github|google|openai)[[:space:]]+)?($tools)($sep+($words))*$sep*(<|\$)" \
+  -e "$trailer[[:space:]]*((github|google|openai)[[:space:]]+)?($tools)([0-9][a-z0-9.]*)?($sep+($words))*$sep*(<|\$)" \
   -e "$trailer.*(\\[bot\\]|@([a-z0-9-]+\\.)*($domains)>)" \
-  -e "^[^[:alnum:]]*generated (with|by).*[^[:alnum:]]($tools)([^[:alnum:]]|\$)" >&2
+  -e "^[^[:alnum:]]*generated (with|by)[[:space:]]*\\[?($tools)([^[:alnum:]]|\$)" >&2
 case $? in
   0) echo "commit-msg: crediting an AI tool (above) is not allowed in this repository (AGENTS.md)." >&2
      echo "            Remove the line and commit again; the tool's default does not override the rule." >&2

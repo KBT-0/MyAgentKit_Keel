@@ -259,7 +259,7 @@ self_test() {
   # AGENTS.md (setup interview); the hook then gives way, and this case says so out loud.
   printf 'change\n\nCo-Authored-By: Claude <noreply@anthropic.com>\n' > "$work/msg_ai"
   printf 'change\n\nCo-authored-by: Claude Monet <person@example.invalid>\n' > "$work/msg_human"
-  if ! grep -q 'No AI attribution in git' AGENTS.md 2>/dev/null; then
+  if [ -f AGENTS.md ] && ! grep -q 'No AI attribution in git' AGENTS.md; then
     echo "  skip — commit-msg hook: skipped by owner choice (AGENTS.md has no 'No AI attribution in git' rule)"
   elif [ ! -f .githooks/commit-msg ]; then
     echo "  FAIL — .githooks/commit-msg is missing: nothing rejects an AI co-author trailer."
