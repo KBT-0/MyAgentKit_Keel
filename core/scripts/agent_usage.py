@@ -283,9 +283,19 @@ def relabel_cancelled(repo: Path, usage_path: Path, evidence: str | None, text: 
         try:
             write_evidence(repo, Path(evidence), text, private=True, replace=True)
         except (OSError, ValueError) as error:
-            raise OSError("the usage record says cancelled, but the archive could not be "
-                          "replaced, so its sha256 no longer matches the record: %s (%s)"
-                          % (evidence, error)) from error
+            # Say what the bytes on disk show, not what the failure suggests: a directory
+            # fsync can fail after the replacement itself landed, and the hashes then match.
+            try:
+                current = hashlib.sha256(Path(evidence).read_bytes()).hexdigest()
+            except OSError:
+                current = None
+            if current == value["evidence_sha256"]:
+                state = "the archive was replaced but the write was not fully persisted"
+            else:
+                state = ("the archive could not be replaced, so its sha256 no longer "
+                         "matches the record")
+            raise OSError("the usage record says cancelled, but %s: %s (%s)"
+                          % (state, evidence, error)) from error
     return value
 
 
