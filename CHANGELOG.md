@@ -126,6 +126,11 @@ hand merge; `sync-kit.sh` now keeps listing them until you confirm (see "Sync st
   the grep probe's whole process group after it returns. **ACTION:** copy the adapters and
   `doctor.sh` again; if doctor reports the `toolchain_path` form, rewrite that line in your
   `scripts/check.sh` as `toolchain_path="<path>"` with no trailing comment.
+- **Seventh cross-model round.** A cancel that arrives while the evidence or the usage
+  record is being written is now persisted, not only returned: the usage record and the
+  archived header say failed/cancelled, so the usage reporter and direct adapter calls see
+  it. The doctor test asserts descendant cleanup only where `setsid` exists and the NOTE
+  elsewhere (stock macOS). **ACTION:** copy the synced adapters and `agent_usage.py` again.
 - **Scan failures that were not scanner failures (issues #13, #14).** A tracked file deleted
   without `git rm` now fails `[scan]` under its own name with the command that fixes it, and
   every other scan still runs. A symlink to a directory (for example `node_modules` linked

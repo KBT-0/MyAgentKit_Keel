@@ -509,6 +509,16 @@ an id that every later labelled review then rejected as damaged; the doctor read
 unrecognised `toolchain_path` line as empty and probed the wrong PATH; a probe's background
 descendant outlived `timeout`. Each fix was watched red first.
 
+#### Seventh cross-model round: assert the copy the reader uses
+
+Two Medium findings, both real: the publication-time cancel of the previous round was
+normalised only in the returned result while the persisted records, which the usage
+reporter reads, still said `quota` (the test had checked only the chain); and the
+descendant-death assertion encoded Linux behaviour as universal while doctor's own macOS
+fallback contradicts it. Lesson: a test asserts the artefact the next reader consumes, and
+a platform-dependent guarantee branches on the same capability probe the code uses, with
+the other branch run on Linux by hiding the tool.
+
 #### The review gate held on the kit's own hardening
 
 Five of the nine work packages (the gate lock, both review-tooling packages, the commit gates
