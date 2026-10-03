@@ -211,6 +211,14 @@ One topic per turn. Suggested order, because each answer informs the next:
    delete `.claude/agents/worker.md` and `scripts/spawn_worker.sh` (Phase 4, "Delete what
    does not apply"). Either way the rules in that section bind the lead from day one.
 
+9. **May AI tools be credited in commit messages?** Coding tools add a co-author trailer by
+   default, and in the kit's founding project that put one into most commits against the
+   owner's wish; removing it later meant rewriting every commit and a force-push. The answer
+   is a hard rule in `AGENTS.md` either way. No (the default): keep the "No AI attribution
+   in git" rule; `.githooks/commit-msg` enforces it. Yes: replace that rule with one saying
+   AI tools may be credited; the hook keys on the rule line, so without it the hook gives
+   way and `check.sh --self-test` reports its case as skipped by owner choice.
+
 ## Phase 3 — PROJECT.md and PHASES.md
 
 Both files ship as skeletons and both are LIVING documents. Do not fill them in from a

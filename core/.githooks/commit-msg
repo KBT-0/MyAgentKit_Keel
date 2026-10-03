@@ -1,19 +1,38 @@
 #!/usr/bin/env sh
 # KIT-OWNED: do not edit locally; change it in the kit and re-sync.
-# Rejects a Co-Authored-By trailer naming an AI tool (AGENTS.md: no AI attribution in git).
+# Rejects a trailer crediting an AI tool (AGENTS.md: no AI attribution in git).
 # Coding tools add that trailer by default at commit time, so a rule in a document did not
 # hold: sessions carried it into most commits of a project whose owner had forbidden it,
 # and removing it later meant rewriting every commit and a force-push. The trailer is
 # written into the message file git passes here, so this is the only place to catch it.
-# A human co-author passes.
+# A human passes, even one whose name contains a tool's ("Claude Monet", "Ana Raider"):
+# a trailer is rejected only when its whole name is a tool or model name, its address is
+# a tool vendor's or a [bot], or a "Generated with" line names a tool.
 set -u
-# ponytail: a fixed list of tool and vendor names; extend it when a new tool's trailer gets through.
-grep -inE '^[[:space:]]*co-authored-by:.*(claude|anthropic|openai|chatgpt|codex|copilot|gemini|cursor|aider|devin|windsurf|codeium|tabnine)' "${1:-}" >&2
+# The owner decides (setup interview): without the rule line in AGENTS.md, AI tools may be credited.
+grep -q 'No AI attribution in git' AGENTS.md 2>/dev/null || exit 0
+msg=${1:-}
+# Git strips "#" lines and, under `commit -v`, the diff below the scissors line only AFTER
+# this hook; a trailer quoted in that diff is not part of the message.
+if [ ! -f "$msg" ] || [ ! -r "$msg" ] || ! body=$(sed '/^# -* >8 -*$/,$d; /^#/d' "$msg"); then
+  echo "commit-msg: cannot read the commit message file '$msg'; refusing to pass it unchecked." >&2
+  exit 1
+fi
+# ponytail: fixed lists of tool, model and vendor names; extend them when a new tool's trailer gets through.
+tools='claude|anthropic|openai|chatgpt|gpt|codex|copilot|gemini|cursor|aider|devin|windsurf|codeium|tabnine|amp|qwen|cline|kiro'
+words="$tools|opus|sonnet|haiku|code|coder|agent|ai|assist|assistant|cli|chat|pro|flash|mini|turbo|[a-z]*[0-9][a-z0-9.]*"
+domains='anthropic\.com|openai\.com|ampcode\.com|cursor\.(com|sh)|aider\.chat|devin\.ai|cognition\.ai|windsurf\.com|codeium\.com|tabnine\.com'
+trailer='^[[:space:]]*(co-authored-by|signed-off-by|assisted-by):'
+sep='[[:space:]:_/().,-]'
+printf '%s\n' "$body" | grep -inE \
+  -e "$trailer[[:space:]]*((github|google|openai)[[:space:]]+)?($tools)($sep+($words))*$sep*(<|\$)" \
+  -e "$trailer.*(\\[bot\\]|@([a-z0-9-]+\\.)*($domains)>)" \
+  -e "^[^[:alnum:]]*generated (with|by).*[^[:alnum:]]($tools)([^[:alnum:]]|\$)" >&2
 case $? in
-  0) echo "commit-msg: an AI co-author trailer (above) is not allowed in this repository (AGENTS.md)." >&2
+  0) echo "commit-msg: crediting an AI tool (above) is not allowed in this repository (AGENTS.md)." >&2
      echo "            Remove the line and commit again; the tool's default does not override the rule." >&2
      exit 1 ;;
   1) exit 0 ;;
-  *) echo "commit-msg: cannot read the commit message file '${1:-}'; refusing to pass it unchecked." >&2
+  *) echo "commit-msg: the trailer check itself failed; refusing to pass the message unchecked." >&2
      exit 1 ;;
 esac
