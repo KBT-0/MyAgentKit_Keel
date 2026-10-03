@@ -528,10 +528,12 @@ class BridgeTests(unittest.TestCase):
 
         def install(sig, handler):
             previous = real_signal(sig, handler)
-            # The second time the raising handler goes onto SIGTERM is run() restoring it.
-            if sig == signal.SIGTERM and handler is agent_process._cancel:
-                raising.append(sig)
-                if len(raising) == 2:
+            # The adapter's raising handler is the first on SIGTERM; the second time it goes
+            # there is run() restoring it.
+            if sig == signal.SIGTERM and isinstance(handler, agent_process.OneShot):
+                if not raising or handler is raising[0]:
+                    raising.append(handler)
+                if len(raising) == 2 and handler is raising[0]:
                     os.kill(os.getpid(), signal.SIGTERM)
             return previous
 
@@ -548,6 +550,86 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual((received[0]['status'], received[0]['cancelled']), ('completed', True))
         self.assertEqual(json.loads(Path(received[0]['usage_record']).read_text())['status'], 'completed')
         self.assertTrue(Path(received[0]['evidence']).is_file())
+
+    def test_a_cancel_while_codex_switches_to_noting_keeps_the_completed_review(self):
+        # After run() returned, the adapter installed its noting handler one signal at a time:
+        # a SIGTERM before the swap reached SIGTERM still met the raising handler, unwound the
+        # adapter and deleted the final report before evidence or usage were written.
+        from contextlib import redirect_stdout
+        from io import StringIO
+        import signal
+        from unittest.mock import patch
+        import agent_process
+        import codex_bridge
+        real_signal, real_run, returned, fired = signal.signal, agent_process.run, [], []
+
+        def run(*args, **kwargs):
+            try:
+                return real_run(*args, **kwargs)
+            finally:
+                returned.append(True)
+
+        def install(sig, handler):
+            # The first handler change after run() has returned.
+            if returned and not fired:
+                fired.append(sig)
+                os.kill(os.getpid(), signal.SIGTERM)
+            return real_signal(sig, handler)
+
+        received = []
+        with patch.dict(os.environ, self.review_env(REVIEW_CLI_BIN=str(self.build_fake_codex()))), \
+                patch.object(agent_process, 'run', side_effect=run), \
+                patch.object(agent_process.signal, 'signal', side_effect=install), redirect_stdout(StringIO()):
+            try:
+                code = codex_bridge.main(['--model', 'fixture-codex-model', '--repo', str(self.repo),
+                                          '--uncommitted'], received.append)
+            except KeyboardInterrupt:
+                self.fail('a cancel while the adapter switched to noting lost the completed review')
+        self.assertTrue(fired)
+        self.assertEqual(code, 0)
+        self.assertEqual((received[0]['status'], received[0]['cancelled']), ('completed', True))
+        self.assertEqual(json.loads(Path(received[0]['usage_record']).read_text())['status'], 'completed')
+        self.assertTrue(Path(received[0]['evidence']).is_file())
+
+    def test_a_cancel_during_the_claude_final_output_never_starts_the_fallback(self):
+        # Cancellation was sampled before the result was printed, with the noting handler
+        # still installed: a SIGTERM while the final output was blocked was noted too late,
+        # the quota-failed attempt returned cancelled: false, and --fallback launched Codex.
+        from contextlib import redirect_stdout
+        from io import StringIO
+        import signal
+        from unittest.mock import patch
+        import review_dispatch
+
+        def quota(command, prompt, repo, timeout, into=None):
+            launched.append(command[0])
+            value = {'type': 'result', 'subtype': 'success', 'is_error': True,
+                     'api_error_status': 429, 'modelUsage': {'claude-opus-5': {}}}
+            return {'exit_code': 1, 'stdout': json.dumps(value), 'stderr': '',
+                    'termination': None, 'duration_ms': 1}
+
+        class Blocked(StringIO):
+            def write(self, text):
+                # The adapter's own result line: the dispatcher prints none starting so.
+                if text.startswith('{"status": "failed"') and not fired:
+                    fired.append(text)
+                    os.kill(os.getpid(), signal.SIGTERM)
+                return super().write(text)
+
+        launched, fired, out = [], [], Blocked()
+        with patch.dict(os.environ, self.review_env()), patch('agent_process.run', side_effect=quota), \
+                redirect_stdout(out):
+            code = review_dispatch.main(['--repo', str(self.repo), '--uncommitted', '--reviewer', 'claude',
+                                         '--allow-fallback', '--claude-model', 'claude-opus-5',
+                                         '--codex-model', 'fixture-codex-model'])
+        self.assertTrue(fired)
+        self.assertEqual(len(launched), 1, 'a cancelled review launched the other reviewer:\n' + out.getvalue())
+        self.assertNotEqual(code, 0)
+        chain = json.loads(next(line.removeprefix('review dispatch: ') for line in
+                                out.getvalue().splitlines() if line.startswith('review dispatch: ')))
+        self.assertEqual(chain['failure_kind'], 'cancelled')
+        self.assertTrue(chain['attempts'][0]['cancelled'])
+        self.persisted_cancel(chain['attempts'][0])
 
     def test_a_cancel_whose_archive_replacement_fails_is_still_recorded_and_returned(self):
         # The relabel replaced the archive before the usage record, so a failure between the

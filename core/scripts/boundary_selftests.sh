@@ -50,7 +50,11 @@
 # by name. The copy itself must lie outside the checkout (a TMPDIR set to the checkout put
 # it, and a SIGKILL's leftovers, in the working tree), and git inside it must work on the
 # copy: an exported GIT_DIR and GIT_WORK_TREE made a gate that finds its root with
-# `git rev-parse --show-toplevel` build in the checkout. Copying a
+# `git rev-parse --show-toplevel` build in the checkout. A linked worktree's `.git` is a
+# pointer file, and the copied pointer kept the original's git directory: a gate that stages
+# its inputs staged the injection into the original's index. Such a copy gets its own
+# repository (git init, then git add -A), and both the git directory and the common directory
+# must resolve inside the copy, else the case fails by name. Copying a
 # large tree (dependencies, build output) costs time: copy only what the gate reads if that
 # is known, but never let the probe write into the checkout.
 #
@@ -75,10 +79,25 @@
 # |   probe_target=src/domain/existing.py
 # |   [ -f "$probe_target" ] && [ ! -L "$probe_target" ] || exit 1
 # |   probe_root=$(pwd -P) || exit 1
-# |   if probe_top=$(git rev-parse --show-toplevel 2>/dev/null) &&
-# |       [ "$(cd -P "$probe_top" && pwd -P)" != "$probe_root" ]; then
-# |     echo "  FAIL — existing-file probe: git inside the disposable copy works on $probe_top; refusing to run."
-# |     exit 1
+# |   if [ -L .git ] || [ -f .git ]; then
+# |     rm -f .git && git init -q && git add -A || {
+# |       echo "  FAIL — existing-file probe: could not give the disposable copy its own git repository; refusing to run."
+# |       exit 1
+# |     }
+# |   fi
+# |   if probe_top=$(git rev-parse --show-toplevel 2>/dev/null); then
+# |     if [ "$(cd -P "$probe_top" && pwd -P)" != "$probe_root" ]; then
+# |       echo "  FAIL — existing-file probe: git inside the disposable copy works on $probe_top; refusing to run."
+# |       exit 1
+# |     fi
+# |     for probe_git in "$(git rev-parse --absolute-git-dir)" "$(git rev-parse --git-common-dir)"; do
+# |       probe_git=$(cd -P "$probe_git" && pwd -P) || exit 1
+# |       case "$probe_git/" in
+# |         "$probe_root"/*) ;;
+# |         *) echo "  FAIL — existing-file probe: the copy shares the original's git directory ($probe_git); refusing to run."
+# |            exit 1 ;;
+# |       esac
+# |     done
 # |   fi
 # |   for probe_path in "$probe_target" "$probe_gate"; do
 # |     if [ -L "$probe_path" ]; then

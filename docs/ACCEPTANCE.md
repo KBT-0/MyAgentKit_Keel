@@ -67,15 +67,31 @@ round 8 (one High, in the previous round's own temporary file) were each fixed i
 round 9 returned Accept with Manual Checks with one Low, fixed in 81678a3. From round 7 the
 full diff exceeded the 400000-byte budget, so each later round reviewed the increment since
 the previous round's head under a fresh label. Those increments were remediation reviews, not
-the final acceptance: the fresh full review under a new label that `core/docs/REVIEW_GATE.md`
-requires is still PENDING. It reviews the integrated tree, never path groups (a group's
-reviewer saw a tree missing the other groups' files): the whole diff from the base under a
-new label, with the generated plugin runtime copies reverted so it fits the budget, their
-parity with `core/` vouched by `scripts/package_codex_plugin.py --check`, and recorded in
-`docs/reviews/`. Its first round returned Reject (one High, four Medium, one Low); each finding
-was fixed with its negative test, and a further round on the integrated tree is pending. The round-1 record was written by the pre-fix kit (no
-resolved reference, no archive hash), so round 2 ran under a new task label and did not
-carry round 1: the carried-round path is proven by the regression tests only.
+the final acceptance that `core/docs/REVIEW_GATE.md` requires: a fresh full review under a new
+label, of the integrated tree, never path groups (a group's reviewer saw a tree missing the
+other groups' files). A first attempt reviewed the whole diff from the base with the
+generated plugin runtime copies reverted (their parity with `core/` vouched by
+`scripts/package_codex_plugin.py --check`); its first round returned Reject (one High, four
+Medium, one Low) and each finding was fixed with its negative test. That attempt is
+historical: even with the copies reverted the whole diff no longer fits the 400000-byte
+budget, so the full review was split into two consistent commit ranges, each its own
+`--base` review recorded in `docs/reviews/`:
+
+- Range A, `5c80c36..abd0133` (the intermediate tree), reviewed once
+  (`20261003T165009Z-787aaa92b2bd-codex-review.md`, Reject, fourteen findings). Twelve
+  were already fixed by later commits in range B; the other two (a dangling symlink's link
+  text left unscanned, a WORKFLOW sentence still allowing in-place edits) were fixed after it.
+- Range B, `abd0133..master` (the current tree), reviewed in rounds, each under a fresh
+  label against the head of its time: round 1 `20261003T165641Z-a544f6bf7129`, round 2
+  `20261003T172613Z-9f6797d5a28c`, round 3 `20261003T175947Z-7f10f94f8a81`, round 4
+  `20261003T184823Z-9b1d42b2cc4f` (each `-codex-review.md`, each Reject). Every finding of
+  rounds 1 to 4 was fixed with its negative test.
+
+PENDING: range B round 5, a fresh label on the head that carries the round-4 fixes; the
+range-B acceptance closes on the first round that is not a Reject. The round-1 record of the
+first attempt was written by the pre-fix kit (no resolved reference, no archive hash), so
+later rounds ran under new task labels and did not carry earlier ones: the carried-round
+path is proven by the regression tests only.
 
 
 ## Issue #6 — what is still live-only, 2026-10-03

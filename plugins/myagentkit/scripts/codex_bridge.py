@@ -68,9 +68,10 @@ def main(argv=None, result_sink=None):
     report.parent.mkdir(parents=True, exist_ok=True)
     # Held from here to the usage record: with the default handlers back after the review,
     # a cancel during the closing quota read ended the adapter before a paid, completed
-    # review was recorded. A cancel now ends that read, and only that read.
-    held = agent_process.hold()
-    try:
+    # review was recorded. A cancel now ends that read, and only that read: the first one
+    # raises, every later one is noted.
+    guard = agent_process.OneShot()
+    with guard:
         with tempfile.TemporaryDirectory(prefix="myagentkit-codex-") as tmp:
             last = Path(tmp) / "final.txt"
             command = [os.environ.get("REVIEW_CLI_BIN", "codex"), "exec", "--json", "--ephemeral",
@@ -91,16 +92,19 @@ def main(argv=None, result_sink=None):
                 after = ({"status": "disabled"} if not capture_quota else
                          {"status": "skipped: review cancelled"} if cancelled
                          else codex_quota.snapshot(command[0], repo))
+                # From here to the record a cancel is noted, not acted on: the record is what
+                # it would lose. A flag set inside the try, not a second hold(): a cancel while
+                # that one installed its handlers met the raising one, and the review was lost
+                # unrecorded. A cancel before the flag is caught below.
+                guard.armed = False
             except KeyboardInterrupt:
+                guard.armed = False
                 execution = execution or handed or None
                 if execution is None:
                     raise
                 execution.pop("cancelled", None)
                 after = {"status": "cancelled"}
                 cancelled.append(True)
-            # From here to the record a cancel is noted, not acted on: the record is what it
-            # would lose.
-            agent_process.hold(lambda signum, frame: cancelled.append(signum))
             execution["account_quota_snapshots"] = {"before": before, "after": after,
                                                    "per_call_attribution": "unproven"}
             values = agent_usage.decode("codex", execution["stdout"])
@@ -131,7 +135,7 @@ def main(argv=None, result_sink=None):
                     reason = 'invalid_evidence'
             # A failed attempt that was cancelled is cancelled: its eligible failure once let
             # --fallback launch the other paid reviewer after the owner had stopped the review.
-            if cancelled and reason:
+            if (cancelled or guard.noted) and reason:
                 reason = "cancelled"
         status = "failed" if reason else "completed"
         # Codex publishes no model identity in its JSON output, so the pin is recorded as
@@ -164,7 +168,7 @@ def main(argv=None, result_sink=None):
             execution, status, reason, archived, report_text.encode())
         # A cancel noted during either write is persisted too, not only returned: the usage
         # reporter reads the records, and a direct call has no chain to keep it.
-        if (cancelled or execution["termination"] == "cancelled") and usage["failure_kind"]:
+        if (cancelled or guard.noted or execution["termination"] == "cancelled") and usage["failure_kind"]:
             header.update(status="failed", failure_kind="cancelled")
             report_text = agent_usage.report(stamp, header, None,
                 final or "No final message. Inspect the local usage record for diagnostics.")
@@ -174,12 +178,10 @@ def main(argv=None, result_sink=None):
                 # Still a cancel, delivered as one: raising here lost the structured result.
                 print("FAIL [review]: cancellation could not be persisted: " + str(error))
                 usage = dict(usage, status="failed", failure_kind="cancelled")
-    finally:
-        agent_process.restore(held)
     status, reason = usage["status"], usage["failure_kind"]
     # The handler kept noting signals through both writes above: a cancel there is a cancel
     # too, or a quota-failed attempt stayed eligible and --fallback started another reviewer.
-    cancelled = bool(cancelled) or execution["termination"] == "cancelled"
+    cancelled = bool(cancelled or guard.noted) or execution["termination"] == "cancelled"
     if cancelled and reason:
         reason = "cancelled"
     result = {"status": status, "failure_kind": reason, "evidence": archived,

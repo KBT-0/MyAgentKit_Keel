@@ -480,13 +480,22 @@ fi
 # path goes to readlink behind "./": a link named "--version" was read as the option.
 # Each line carries the link's own path in grep's "path:line:" form, and scan_grep prints it
 # as is: reported under the temporary file's name, a link in the exempt setup/ failed the gate.
+# One line per link, every newline in it written as \n: link text that went on over a newline
+# to "setup/" and a marker put that marker on a line of its own, which the setup/ exemption
+# removed. A failed append is fatal: ignored, the link's text went unscanned and the gate
+# could pass.
+escape_lines='NR > 1 { printf "\\n" } { printf "%s", $0 } END { print "" }'
 if ! xargs -0 sh -c '
   scan_work=$1
-  shift
+  escape_lines=$2
+  shift 2
   for p do
     if [ -L "$p" ]; then
       if t=$(readlink "./$p"); then
-        printf "%s:1:symlink %s -> %s\n" "$p" "$p" "$t" >> "$scan_work/symlink-text"
+        printf "%s:1:symlink %s -> %s\n" "$p" "$p" "$t" | awk "$escape_lines" >> "$scan_work/symlink-text" || {
+          printf "%s\n" "FAIL [scan]: could not record the link text of the symlink $p." >&3
+          exit 1
+        }
       else
         printf "%s\n" "FAIL [scan]: cannot read the link text of the symlink $p." >&3
         : > "$scan_work/scan_missing"
@@ -505,7 +514,7 @@ if ! xargs -0 sh -c '
       printf "%s\0" "$p"
     fi
   done
-' sh "$work" < "$filelist" 3>&1 > "$filelist.kept"; then
+' sh "$work" "$escape_lines" < "$filelist" 3>&1 > "$filelist.kept"; then
   echo "FAIL [scan]: could not sort the file list; refusing to scan blind."
   exit 1
 fi
