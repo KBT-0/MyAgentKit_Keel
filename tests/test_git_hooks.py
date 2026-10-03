@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -156,9 +157,14 @@ class GitHookTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root, git = self.repo(tmp)
             shutil.copyfile(ROOT / 'core/scripts/check.sh', root / 'scripts/check.sh')
-            holder = subprocess.Popen(['sh', '-c', 'sleep 60; :', 'scripts/check.sh'])
+            # The lock is a kernel lock: hold it the way the gate does, through fcntl.flock.
+            holder = subprocess.Popen(
+                [sys.executable, '-c',
+                 'import fcntl, sys, time; f = open(sys.argv[1], "a+"); '
+                 'fcntl.flock(f, fcntl.LOCK_EX); print("held", flush=True); time.sleep(60)',
+                 str(root / '.git/check.lock')], stdout=subprocess.PIPE, text=True)
             try:
-                os.symlink(str(holder.pid), root / '.git/check.lock')
+                self.assertEqual(holder.stdout.readline().strip(), 'held')
                 (root / 'c').write_text('locked\n')
                 git('add', 'c')
                 result = subprocess.run(
