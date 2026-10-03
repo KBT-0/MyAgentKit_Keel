@@ -425,12 +425,15 @@ class BridgeTests(unittest.TestCase):
         # two left the archive saying cancelled and the record quota, and the Codex adapter
         # raised before delivering its result. The record is written first now: the archive
         # left behind fails its sha256, and a failed record is never carried to a later round.
+        # The error reports what the archive bytes show, never which step failed: a directory
+        # fsync can fail after the replacement landed, and an archive can be unreadable.
         from contextlib import redirect_stdout
         from io import StringIO
         import signal
+        import stat
         from unittest.mock import patch
         import codex_bridge
-        publish, account = agent_usage.write_evidence, agent_usage.record
+        publish, account, sync = agent_usage.write_evidence, agent_usage.record, os.fsync
 
         def quota(command, prompt, repo, timeout):
             value = ({'type': 'turn.failed', 'error': {'message': 'usage limit reached'}}
@@ -444,32 +447,68 @@ class BridgeTests(unittest.TestCase):
             os.kill(os.getpid(), signal.SIGTERM)
             return account(*args, **kwargs)
 
-        def archive_replacement_fails(repo, path, text, **kwargs):
-            if kwargs.get('replace') and path.parent.name == 'reviews':
-                raise OSError('injected archive replacement failure')
-            return publish(repo, path, text, **kwargs)
+        def replacement_fails(repo, path, text, **kwargs):
+            raise OSError('injected archive replacement failure')
 
-        for main, args in ((bridge.main, ['review']),
-                           (codex_bridge.main, ['--model', 'fixture-codex-model'])):
-            received, out = [], StringIO()
-            with self.subTest(adapter='claude' if main is bridge.main else 'codex'), \
-                    patch.dict(os.environ, self.review_env()), \
-                    patch('agent_process.run', side_effect=quota), \
-                    patch('agent_usage.record', side_effect=cancel_during_record), \
-                    patch('agent_usage.write_evidence', side_effect=archive_replacement_fails), \
-                    redirect_stdout(out):
-                self.assertEqual(main([*args, '--repo', str(self.repo), '--uncommitted'],
-                                      received.append), 5)
-                self.assertTrue(received[0]['cancelled'])
-                self.assertEqual(received[0]['failure_kind'], 'cancelled')
-                self.assertIn('sha256 no longer matches', out.getvalue())
-                usage = json.loads(Path(received[0]['usage_record']).read_text())
-                self.assertEqual((usage['status'], usage['failure_kind']), ('failed', 'cancelled'))
-                archive = Path(received[0]['evidence']).read_bytes()
-                self.assertIn(b'| failure_kind | quota |', archive)
-                self.assertNotEqual(usage['evidence_sha256'], hashlib.sha256(archive).hexdigest())
-                self.assertEqual(bridge.prior_rounds(self.repo, usage['task']['id'], 'uncommitted',
-                                                     None, usage['task']['head'], ''), '')
+        def directory_fsync_fails(repo, path, text, **kwargs):
+            def fsync(fd):
+                if stat.S_ISDIR(os.fstat(fd).st_mode):
+                    raise OSError('injected directory fsync failure')
+                return sync(fd)
+            with patch('os.fsync', side_effect=fsync):
+                return publish(repo, path, text, **kwargs)
+
+        def archive_vanishes(repo, path, text, **kwargs):
+            path.unlink()
+            raise OSError('injected archive removal')
+
+        def hooked(fault):
+            def hook(repo, path, text, **kwargs):
+                if kwargs.get('replace') and path.parent.name == 'reviews':
+                    return fault(repo, path, text, **kwargs)
+                return publish(repo, path, text, **kwargs)
+            return hook
+
+        for fault in (replacement_fails, directory_fsync_fails, archive_vanishes):
+            for main, args in ((bridge.main, ['review']),
+                               (codex_bridge.main, ['--model', 'fixture-codex-model'])):
+                received, out = [], StringIO()
+                with self.subTest(fault=fault.__name__,
+                                  adapter='claude' if main is bridge.main else 'codex'), \
+                        patch.dict(os.environ, self.review_env()), \
+                        patch('agent_process.run', side_effect=quota), \
+                        patch('agent_usage.record', side_effect=cancel_during_record), \
+                        patch('agent_usage.write_evidence', side_effect=hooked(fault)), \
+                        redirect_stdout(out):
+                    self.assertEqual(main([*args, '--repo', str(self.repo), '--uncommitted'],
+                                          received.append), 5)
+                    self.assertTrue(received[0]['cancelled'])
+                    self.assertEqual(received[0]['failure_kind'], 'cancelled')
+                    usage = json.loads(Path(received[0]['usage_record']).read_text())
+                    self.assertEqual((usage['status'], usage['failure_kind']), ('failed', 'cancelled'))
+                    evidence = Path(received[0]['evidence'])
+                    if fault is archive_vanishes:
+                        self.assertFalse(evidence.exists())
+                        self.assertIn('the archive %s on disk could not be read (' % evidence,
+                                      out.getvalue())
+                        self.assertIn('; the write reported: injected archive removal', out.getvalue())
+                    else:
+                        archive = evidence.read_bytes()
+                        replaced = fault is directory_fsync_fails
+                        self.assertIn(b'| failure_kind | cancelled |' if replaced
+                                      else b'| failure_kind | quota |', archive)
+                        self.assertEqual(usage['evidence_sha256'] == hashlib.sha256(archive).hexdigest(),
+                                         replaced)
+                        self.assertIn('the usage record says cancelled; the archive %s on disk %s; '
+                                      'the write reported: %s'
+                                      % (evidence, 'matches the record (sha256 %s)'
+                                         % usage['evidence_sha256'] if replaced
+                                         else 'does not match the record',
+                                         'injected directory fsync failure' if replaced
+                                         else 'injected archive replacement failure'),
+                                      out.getvalue())
+                    self.assertEqual(bridge.prior_rounds(self.repo, usage['task']['id'], 'uncommitted',
+                                                         None, usage['task']['head'], ''), '')
 
     def persisted_cancel(self, result):
         # The usage reporter reads the records, not the dispatcher's result: a cancel during
