@@ -22,10 +22,10 @@ class GitHookTests(unittest.TestCase):
         # C locale: the hook recognises the English text git writes under the scissors line.
         env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1', GIT_EDITOR='true',
                    LC_ALL='C', LANGUAGE='C')
-        git = lambda *args, check=True: subprocess.run(
+        git = lambda *args, check=True, **extra: subprocess.run(
             ['git', '-c', 'user.name=t', '-c', 'user.email=t@example.invalid',
              '-c', 'core.hooksPath=.githooks', *args],
-            cwd=root, env=env, capture_output=True, text=True, check=check)
+            cwd=root, env=dict(env, **extra), capture_output=True, text=True, check=check)
         # init then checkout: `git init -b` needs git 2.28, older than some CI images carry.
         git('init', '-q')
         git('checkout', '-q', '-b', 'main')
@@ -51,10 +51,10 @@ class GitHookTests(unittest.TestCase):
             self.assertGreater((root / '.git/gate-runs').read_text().count('ran'), runs)
             self.assertEqual(git('rev-list', '--count', 'HEAD').stdout.strip(), '2')
 
-    def commit(self, root, git, message, *opts):
+    def commit(self, root, git, message, *opts, **extra):
         (root / 'c').write_text(message)
         git('add', 'c')
-        return git('commit', '-q', *opts, '-m', 'change c', '-m', message, check=False)
+        return git('commit', '-q', *opts, '-m', 'change c', '-m', message, check=False, **extra)
 
     def test_an_ai_co_author_trailer_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -153,20 +153,34 @@ class GitHookTests(unittest.TestCase):
                     self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
                     self.assertIn('crediting an AI tool', result.stderr)
 
-    def test_core_comment_string_takes_precedence_over_comment_char(self):
-        # Git 2.45 added core.commentString, which wins over core.commentChar: a hook that read
-        # only commentChar skipped the wrong prefix and passed "x Co-Authored-By: ...".
+    def test_the_comment_setting_git_reads_last_is_the_one_skipped(self):
+        # Git 2.45 added core.commentString as an alias of core.commentChar, and the one set
+        # last wins: a hook that read only commentChar, or preferred commentString wherever it
+        # was set, skipped the wrong prefix and passed "x Co-Authored-By: ...".
         with tempfile.TemporaryDirectory() as tmp:
             root, git = self.repo(tmp)
             version = git('--version').stdout.split()[2]
             if tuple(int(part) for part in version.split('.')[:2]) < (2, 45):
                 sys.stderr.write('NOT RUN: core.commentString needs git 2.45, this is %s\n' % version)
                 return
-            git('config', 'core.commentChar', ';')
-            git('config', 'core.commentString', 'x')
-            result = self.commit(root, git, 'y\nx Co-Authored-By: Claude <noreply@anthropic.com>\n')
-            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertIn('crediting an AI tool', result.stderr)
+            glob = Path(tmp) / 'global.gitconfig'
+            # (global settings, local settings), each in the order written; x is set last.
+            for case, scopes in enumerate((((), (('commentChar', ';'), ('commentString', 'x'))),
+                           ((), (('commentString', 'y'), ('commentChar', 'x'))),
+                           ((('commentString', 'y'),), (('commentChar', 'x'),)),
+                           ((('commentChar', 'y'),), (('commentString', 'x'),)))):
+                with self.subTest(scopes=scopes):
+                    glob.write_text('')
+                    git('config', '--local', '--remove-section', 'core', check=False)
+                    for key, value in scopes[0]:
+                        git('config', '--file', str(glob), 'core.' + key, value)
+                    for key, value in scopes[1]:
+                        git('config', '--local', 'core.' + key, value)
+                    # A distinct message per case: one that passed leaves nothing for the next.
+                    result = self.commit(root, git, 'y%d\nx Co-Authored-By: Claude <noreply@anthropic.com>\n'
+                                         % case, GIT_CONFIG_GLOBAL=str(glob))
+                    self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertIn('crediting an AI tool', result.stderr)
 
     def test_a_configured_trailer_separator_is_a_separator(self):
         # With trailer.separators set, git takes "Co-Authored-By=Claude" as a trailer; the
@@ -219,12 +233,13 @@ class GitHookTests(unittest.TestCase):
             root, git = self.repo(tmp)
             shim = Path(tmp) / 'shim'
             shim.mkdir()
-            for key, line in (('trailer.separators', 'Co-Authored-By=Claude'),
-                              ('core.commentChar', 'x Co-Authored-By: Claude'),
-                              ('core.commentString', 'x Co-Authored-By: Claude')):
+            # The comment settings are read together, in configuration order.
+            for key, read, line in (('trailer.separators', 'trailer.separators', 'Co-Authored-By=Claude'),
+                                    ('core.commentChar or core.commentString', '^core\\.comment',
+                                     'x Co-Authored-By: Claude')):
                 with self.subTest(key=key):
-                    (shim / 'git').write_text('#!/bin/sh\n[ "$1 $3" != "config %s" ] || exit 3\nexec %s "$@"\n'
-                                              % (key, real_git))
+                    (shim / 'git').write_text('#!/bin/sh\ncase " $* " in " config "*\'%s\'*) exit 3 ;; esac\n'
+                                              'exec %s "$@"\n' % (read, real_git))
                     (shim / 'git').chmod(0o755)
                     (root / 'msg').write_text('change c\n\n%s <noreply@anthropic.com>\n' % line)
                     result = subprocess.run(['sh', '.githooks/commit-msg', 'msg'], cwd=root, text=True,

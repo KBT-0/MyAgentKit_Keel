@@ -84,11 +84,15 @@ budget, so the full review was split into two consistent commit ranges, each its
 - Range B, `abd0133..master` (the current tree), reviewed in rounds, each under a fresh
   label against the head of its time: round 1 `20261003T165641Z-a544f6bf7129`, round 2
   `20261003T172613Z-9f6797d5a28c`, round 3 `20261003T175947Z-7f10f94f8a81`, round 4
-  `20261003T184823Z-9b1d42b2cc4f` (each `-codex-review.md`, each Reject). Every finding of
-  rounds 1 to 4 was fixed with its negative test.
+  `20261003T184823Z-9b1d42b2cc4f`, round 5 `20261003T193937Z-3384a82cc750` (head 16baa3f),
+  round 6 `20261003T195627Z-67016b7c4a7b` (head 3e0d50d), round 7
+  `20261003T202321Z-d36f584a7812` (head 7c2c8a6) (each `-codex-review.md`, each Reject).
+  Round 5 is void: it reviewed a tree missing the merge of the round-4 fixes, and round 6
+  reviewed the tree that carried them. Every finding of rounds 1 to 4, 6 and 7 was fixed with
+  its negative test, round 6 in dd5acbb and round 7 (four Medium, one Low) by this change.
 
-PENDING: range B round 5, a fresh label on the head that carries the round-4 fixes; the
-range-B acceptance closes on the first round that is not a Reject. The round-1 record of the
+PENDING: range B round 8, a fresh label on the head after this change, the one that carries
+the round-7 fixes; the range-B acceptance closes on the first round that is not a Reject. The round-1 record of the
 first attempt was written by the pre-fix kit (no resolved reference, no archive hash), so
 later rounds ran under new task labels and did not carry earlier ones: the carried-round
 path is proven by the regression tests only.

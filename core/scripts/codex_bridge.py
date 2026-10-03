@@ -183,8 +183,14 @@ def main(argv=None, result_sink=None):
             usage, report_text = persist_cancel(usage)
     # Noted while the guard put the caller's handlers back, after the check above: once only
     # the returned result said cancelled, and the records of a failed attempt said quota.
+    # Persisted under a noting handler: with the caller's back, a second cancel during the
+    # relabel ended the adapter before the records said cancelled.
     if guard.noted and usage["failure_kind"] not in (None, "cancelled"):
-        usage, report_text = persist_cancel(usage)
+        held = agent_process.hold(lambda signum, frame: guard.noted.append(signum))
+        try:
+            usage, report_text = persist_cancel(usage)
+        finally:
+            agent_process.restore(held)
     status, reason = usage["status"], usage["failure_kind"]
     # The handler kept noting signals through both writes above: a cancel there is a cancel
     # too, or a quota-failed attempt stayed eligible and --fallback started another reviewer.

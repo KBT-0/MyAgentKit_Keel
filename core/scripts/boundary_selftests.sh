@@ -56,7 +56,10 @@
 # repository with the original's refs, HEAD and index, reading the original's objects
 # read-only through alternates (a bare `git init` lost HEAD, tags and the staged state, and a
 # gate that needs them failed the copy's baseline), and both the git directory and the common
-# directory must resolve inside the copy, else the case fails by name. Copying a
+# directory must resolve inside the copy, else the case fails by name. The repository takes
+# the original's object format (a SHA-256 original's IDs did not fit a SHA-1 copy) and an
+# index rebuilt from the original's entries: a copied index file left a split index's shared
+# part behind, and the copy's index was unreadable. Copying a
 # large tree (dependencies, build output) costs time: copy only what the gate reads if that
 # is known, but never let the probe write into the checkout.
 #
@@ -84,8 +87,8 @@
 # |   if [ -L .git ] || [ -f .git ]; then
 # |     probe_head=$(git -C "$probe_checkout" rev-parse -q --verify HEAD) || probe_head=
 # |     { probe_from=$(cd "$probe_checkout" && cd -P "$(git rev-parse --git-common-dir)" && pwd -P) &&
-# |       probe_index=$(cd "$probe_checkout" && cd -P "$(git rev-parse --git-dir)" && pwd -P)/index &&
-# |       rm -f .git && git init -q &&
+# |       probe_format=$(git -C "$probe_checkout" rev-parse --show-object-format) &&
+# |       rm -f .git && git init -q --object-format="$probe_format" &&
 # |       printf '%s/objects\n' "$probe_from" > .git/objects/info/alternates &&
 # |       git -C "$probe_checkout" for-each-ref --format='create %(refname) %(objectname)' | git update-ref --stdin &&
 # |       if probe_branch=$(git -C "$probe_checkout" symbolic-ref -q HEAD); then
@@ -93,8 +96,9 @@
 # |       elif [ -n "$probe_head" ]; then
 # |         git update-ref --no-deref HEAD "$probe_head"
 # |       fi &&
-# |       { [ ! -f "$probe_index" ] || cp "$probe_index" .git/index; } &&
+# |       git -C "$probe_checkout" ls-files -s -z --full-name | git update-index -z --index-info &&
 # |       { git update-index -q --refresh >/dev/null 2>&1 || :; } &&
+# |       git ls-files -s >/dev/null &&
 # |       [ "$(git rev-parse -q --verify HEAD)" = "$probe_head" ]; } || {
 # |       echo "  FAIL — existing-file probe: could not give the disposable copy its own git repository with the original's HEAD, history and index; refusing to run."
 # |       exit 1

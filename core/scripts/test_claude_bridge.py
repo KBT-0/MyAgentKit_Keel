@@ -677,6 +677,84 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual((last['cancelled'], last['failure_kind']), (True, 'cancelled'), out.getvalue())
         self.persisted_cancel(received[0])
 
+    def test_a_second_cancel_during_the_late_relabel_is_noted_by_either_adapter(self):
+        # Both adapters put the caller's handlers back before persisting a late cancel: a
+        # second one during the relabel met those handlers and ended the adapter before its
+        # records, and the last line printed said cancelled: false over a quota failure.
+        from contextlib import redirect_stdout
+        from io import StringIO
+        import signal
+        from unittest.mock import patch
+        import agent_process
+        import codex_bridge
+        real_signal, relabel = signal.signal, agent_usage.relabel_cancelled
+
+        class CallerCancel(Exception):
+            pass
+
+        def caller(signum, frame):
+            raise CallerCancel
+
+        def quota(command, prompt, repo, timeout, into=None):
+            value = ({'type': 'turn.failed', 'error': {'message': 'usage limit reached'}}
+                     if '-o' in command else
+                     {'type': 'result', 'subtype': 'success', 'is_error': True,
+                      'api_error_status': 429, 'modelUsage': {'claude-opus-5': {}}})
+            return {'exit_code': 1, 'stdout': json.dumps(value), 'stderr': '',
+                    'termination': None, 'duration_ms': 1}
+
+        def second_cancel(*args, **kwargs):
+            fired.append('relabel')
+            os.kill(os.getpid(), signal.SIGTERM)
+            return relabel(*args, **kwargs)
+
+        def install(sig, handler):
+            # Codex: the first cancel while its guard puts the caller's SIGINT back.
+            if sig == signal.SIGINT and handler is signal.default_int_handler and not fired:
+                fired.append('restore')
+                os.kill(os.getpid(), signal.SIGTERM)
+            return real_signal(sig, handler)
+
+        class Blocked(StringIO):
+            def write(self, text):
+                # Claude: the first cancel while its result line is written.
+                if text.startswith('{"status": "failed"') and not fired:
+                    fired.append('print')
+                    os.kill(os.getpid(), signal.SIGTERM)
+                return super().write(text)
+
+        for name, main, args, hooks in (
+                ('claude', bridge.main, ['review', '--repo', str(self.repo), '--uncommitted'], ()),
+                ('codex', codex_bridge.main, ['--model', 'fixture-codex-model', '--repo', str(self.repo),
+                                              '--uncommitted'],
+                 (patch.object(agent_process.signal, 'signal', side_effect=install),))):
+            with self.subTest(adapter=name):
+                fired, out, received = [], Blocked(), []
+                previous = real_signal(signal.SIGTERM, caller)
+                try:
+                    with patch.dict(os.environ, self.review_env()), \
+                            patch('agent_process.run', side_effect=quota), \
+                            patch.object(agent_usage, 'relabel_cancelled', side_effect=second_cancel), \
+                            redirect_stdout(out):
+                        for hook in hooks:
+                            hook.start()
+                        try:
+                            code = main(args, received.append)
+                        except CallerCancel:
+                            self.fail('a second cancel during the relabel ended the adapter')
+                        finally:
+                            for hook in hooks:
+                                hook.stop()
+                finally:
+                    real_signal(signal.SIGTERM, previous)
+                self.assertEqual(fired[1:], ['relabel'], fired)
+                self.assertEqual(code, 5)
+                self.persisted_cancel(received[0])
+                last = out.getvalue().strip().splitlines()
+                last = json.loads(next(line.removeprefix('review invocation: ') for line in reversed(last)
+                                       if line.startswith(('{', 'review invocation: '))))
+                self.assertEqual((last['cancelled'], last['failure_kind']), (True, 'cancelled'), out.getvalue())
+
     def test_a_cancel_whose_archive_replacement_fails_is_still_recorded_and_returned(self):
         # The relabel replaced the archive before the usage record, so a failure between the
         # two left the archive saying cancelled and the record quota, and the Codex adapter
