@@ -208,6 +208,15 @@ hand merge; `sync-kit.sh` now keeps listing them until you confirm (see "Sync st
   escaped, so the `setup/` exemption stays tied to the link's own path, and a failed append
   is fatal. **ACTION:** port the `.git` block and the git-directory check into an adapted
   existing-file example; copy the adapters and `scripts/check.sh` again.
+- **Full cross-model review, range B round 6.** A cancel noted while the Codex adapter
+  puts the caller's signal handlers back is persisted to the usage record and archive of a
+  failed attempt, not only returned. The closing Codex quota read blocks cancel signals
+  across its app-server launch and cleanup. The Claude adapter prints a final
+  `"correction": true` JSON line when a cancel lands while its result is printed; the last
+  JSON line is authoritative. The existing-file boundary example gives a linked worktree's
+  disposable copy the original's refs, HEAD and index (objects through alternates) instead of
+  a bare `git init`. **ACTION:** copy the adapters, `codex_quota.py` and the test modules
+  again; replace the `.git` block of an adapted existing-file example with core's.
 - **Scan failures that were not scanner failures (issues #13, #14).** A tracked file deleted
   without `git rm` now fails `[scan]` under its own name with the command that fixes it, and
   every other scan still runs. A symlink to a directory (for example `node_modules` linked

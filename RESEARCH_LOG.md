@@ -617,6 +617,16 @@ its path, which the `setup/` exemption then dropped. A failed append was ignored
 value read to decide (a git dir, a cancel flag, a path prefix) is the last thing read before
 the decision is handed over, and every write it depends on is checked.
 
+#### Range B, round 6: a fix lands in one consumer, its peers keep the window
+
+Three cancel windows were each closed at one site but not at its siblings: the Codex
+adapter re-checked a late cancel for its returned result but not its records; the quota
+reader lacked the signal block around `Popen` the reviewer supervisor had; the Claude
+adapter corrected its result dict after printing a stale line. The linked-worktree copy had
+traded one defect (staging into the original's index) for another (no HEAD, tags or index);
+objects through alternates keep history without writing to the original. Rule: when a
+protocol fix lands in one launcher or consumer, grep every peer for the same window.
+
 #### The review gate held on the kit's own hardening
 
 Five of the nine work packages (the gate lock, both review-tooling packages, the commit gates
