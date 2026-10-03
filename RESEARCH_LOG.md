@@ -530,6 +530,15 @@ a failed archive replacement is reported as the hash mismatch that later rounds 
 Lesson: every file a fix creates, however briefly, is subject to the same privacy gate as the
 file it replaces.
 
+#### Nine cross-model rounds to an Accept
+
+The count: round 1 five High, round 2 one High, round 3 one High, round 4 none, round 5 two
+High (new ground), rounds 6 and 7 Medium only, round 8 one High in the previous round's own
+temporary file, round 9 Accept with Manual Checks and one Low. Every High after round 1 sat
+inside a fix made for an earlier round. Rule kept from it: a fix round is reviewed again by
+the other model before it ships, and the review budget (400000 bytes of diff plus carried
+rounds) is met by reviewing the increment, never by skipping the round.
+
 #### The review gate held on the kit's own hardening
 
 Five of the nine work packages (the gate lock, both review-tooling packages, the commit gates
