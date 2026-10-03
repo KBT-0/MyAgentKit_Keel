@@ -169,6 +169,67 @@ class UsageTests(unittest.TestCase):
                 self.assertIsNone(result['termination'], result)
                 self.assertEqual(result['stdout'].strip(), 'done')
 
+    def test_a_cancel_inside_popen_still_stops_the_reviewer(self):
+        # A SIGTERM after Popen created the child but before it returned left no handle:
+        # cleanup skipped the group kill while the result said cancelled.
+        import os
+        import signal
+        from unittest.mock import patch
+        real = subprocess.Popen
+        for when in ('before', 'after'):
+            with self.subTest(when=when):
+                created = []
+
+                def popen(*args, **kwargs):
+                    if when == 'before':
+                        os.kill(os.getpid(), signal.SIGTERM)
+                    created.append(real(*args, **kwargs))
+                    if when == 'after':
+                        os.kill(os.getpid(), signal.SIGTERM)
+                    return created[-1]
+
+                try:
+                    with patch.object(agent_process.subprocess, 'Popen', side_effect=popen):
+                        result = agent_process.run([sys.executable, '-c', 'import time; time.sleep(10)'],
+                                                   '', Path.cwd(), 5)
+                finally:
+                    for child in created:
+                        if child.poll() is None:
+                            child.kill()
+                            child.wait()
+                            self.fail('the reviewer outlived its cancelled run')
+                self.assertEqual(result['termination'], 'cancelled', result)
+                self.assertEqual(len(created), 1)
+        # The cancel signals are blocked only around Popen in this process: the reviewer
+        # starts with none of them blocked.
+        child = 'import signal; print(sorted(int(s) for s in signal.pthread_sigmask(signal.SIG_BLOCK, [])))'
+        result = agent_process.run([sys.executable, '-c', child], '', Path.cwd(), 5)
+        blocked = json.loads(result['stdout'])
+        self.assertFalse({int(s) for s in agent_process.CANCEL_SIGNALS} & set(blocked), blocked)
+
+    def test_a_cancel_during_cleanup_is_noted_not_raised(self):
+        # Raised there, it interrupted the group kill or the reap, and run() returned nothing
+        # for the adapter to record.
+        import os
+        import signal
+        from unittest.mock import patch
+        real = os.killpg
+        stop_self = 'import os,signal,time; os.kill(os.getppid(), signal.SIGTERM); time.sleep(10)'
+        for name, child, expected in (('second cancel', stop_self, 'cancelled'),
+                                      ('failed review', 'raise SystemExit(3)', 'cancelled'),
+                                      ('completed review', 'print("done")', None)):
+            with self.subTest(case=name):
+                def killpg(pid, sig):
+                    os.kill(os.getpid(), signal.SIGTERM)
+                    real(pid, sig)
+                try:
+                    with patch.object(agent_process.os, 'killpg', side_effect=killpg):
+                        result = agent_process.run([sys.executable, '-c', child], '', Path.cwd(), 5)
+                except KeyboardInterrupt:
+                    self.fail('a cancel during cleanup escaped run()')
+                self.assertEqual(result['termination'], expected, result)
+                self.assertIsNotNone(result['exit_code'], result)
+
     def test_unavailable_child_is_a_returned_failure_not_an_exception(self):
         result = agent_process.run(["/nonexistent-myagentkit-cli"], "", Path.cwd(), 1)
         self.assertEqual(result["termination"], "unavailable")

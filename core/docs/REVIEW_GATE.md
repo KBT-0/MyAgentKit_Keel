@@ -252,7 +252,11 @@ failures stop the chain. The original scope is checked between attempts and at c
 
 **Cancelling a review stops the reviewer.** Ctrl-C, SIGTERM and SIGHUP (a closed terminal
 or a restarted host session) stop the reviewer's whole process group, record the attempt
-as `cancelled` with its partial output in a usage record, and never fail over. A SIGKILL to
+as `cancelled` with its partial output in a usage record, and never fail over. That is
+cancelling an active reviewer, or an attempt that failed anyway. A signal that lands while
+an already completed review is being finalised (the closing quota read, the final snapshot,
+the records) keeps it `completed` with its verdict: the paid result exists, and discarding
+it would only buy the same review again. A SIGKILL to
 the review process itself cannot be handled, and the wall-clock timeout lives in that process
 (the supervisor), so it is lost with it: the reviewer then runs to its own end, bounded only
 by its own CLI.

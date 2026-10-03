@@ -14,6 +14,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import agent_usage
 
 ROOT = Path(__file__).resolve().parent
+INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'MYAGENTKIT_TASK_ID', 'MYAGENTKIT_REVIEW_CHAIN_ID',
+                      'MYAGENTKIT_REVIEW_ATTEMPT', 'MYAGENTKIT_REVIEW_FALLBACK_FROM',
+                      'MYAGENTKIT_REQUESTER', 'CLAUDE_REVIEW_DOCS')
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. The kit gate reads this too.
 SUITE_MINIMUMS = {'test_claude_bridge': 60, 'test_agent_usage': 12, 'test_codex_quota': 3}
@@ -163,6 +166,15 @@ class BridgeTests(unittest.TestCase):
             self.assertEqual(code, 2, result)
 
     def setUp(self):
+        # run_bridge() and review_env() copy os.environ: history and chain controls exported
+        # by the invoking shell (a review loop's dispositions and label) must not reach a
+        # synthetic repository. A test that needs one passes it explicitly.
+        from unittest.mock import patch
+        environment = patch.dict(os.environ)
+        environment.start()
+        self.addCleanup(environment.stop)
+        for name in INHERITED_CONTROLS:
+            os.environ.pop(name, None)
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
@@ -1257,6 +1269,40 @@ if case == 'archive_failure':
                 self.assertIn(str(record), refused['error'])
                 # Every labelled round reads every record, so a new label meets it again.
                 self.assertIn('move it out of .myagentkit/usage', refused['error'])
+        self.assertEqual(self.run_bridge(env_extra=task)[0], 0)
+
+    def test_history_controls_exported_by_the_invoking_shell_do_not_reach_the_fixtures(self):
+        # Self-tests run from a review loop that exported its dispositions and task label:
+        # inherited, they made every fresh synthetic repository fail "no earlier completed
+        # review" before its own assertions.
+        notes = self.root / 'dispositions.md'
+        notes.write_text('Finding 1: disproved.\n')
+        result = subprocess.run(
+            [sys.executable, '-B', '-m', 'unittest',
+             'test_claude_bridge.BridgeTests.test_completed_reviews_keep_verdict_separate_from_process_success',
+             'test_claude_bridge.BridgeTests.test_direct_adapters_reject_a_base_ref_that_moves_during_review'],
+            cwd=ROOT, capture_output=True, text=True, timeout=120,
+            env=dict(os.environ, REVIEW_DISPOSITIONS=str(notes), MYAGENTKIT_TASK_ID='inherited-task'))
+        self.assertEqual(result.returncode, 0, result.stderr[-3000:])
+
+    def test_an_unlistable_usage_directory_stops_a_labelled_round(self):
+        # Path.glob() swallows a listing error: a usage directory the owner can write but not
+        # list (mode 0300) read as "no earlier rounds" and the next round looked fresh.
+        if os.geteuid() == 0:
+            sys.stderr.write('NOT RUN: unlistable usage directory (mode 0300) under root\n')
+            return
+        task = {'MYAGENTKIT_TASK_ID': 'unlistable-task'}
+        code, first = self.run_bridge('reject', env_extra=task)
+        self.assertEqual(code, 0, first)
+        usage = Path(first['usage_record']).parent
+        usage.chmod(0o300)
+        try:
+            code, refused = self.run_bridge(env_extra=task)
+        finally:
+            usage.chmod(0o700)
+        self.assertEqual(code, 2, refused)
+        self.assertIn(str(usage), refused['error'])
+        self.assertIn('cannot be listed', refused['error'])
         self.assertEqual(self.run_bridge(env_extra=task)[0], 0)
 
     def test_earlier_rounds_bind_the_change_not_the_reference_text(self):
