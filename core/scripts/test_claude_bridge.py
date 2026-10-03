@@ -15,7 +15,7 @@ import agent_usage
 ROOT = Path(__file__).resolve().parent
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. The kit gate reads this too.
-SUITE_MINIMUMS = {'test_claude_bridge': 58, 'test_agent_usage': 12, 'test_codex_quota': 3}
+SUITE_MINIMUMS = {'test_claude_bridge': 60, 'test_agent_usage': 12, 'test_codex_quota': 3}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -339,19 +339,102 @@ class BridgeTests(unittest.TestCase):
                 return {'exit_code': 0, 'stdout': json.dumps(value), 'stderr': '',
                         'termination': None, 'duration_ms': 1}
 
-            received = []
+            received, out = [], StringIO()
             with self.subTest(adapter='claude' if main is bridge.main else 'codex'), \
                     patch.dict(os.environ, self.review_env()), \
                     patch('agent_process.run', side_effect=execution), \
                     patch('agent_usage.write_evidence', side_effect=publish_then_lose), \
-                    redirect_stdout(StringIO()):
+                    redirect_stdout(out):
                 code = main([*args, '--repo', str(self.repo), '--uncommitted'], received.append)
                 self.assertEqual(code, 5)
+                # The Codex adapter printed the completed report, Accept and all, after its
+                # accounting had already failed the attempt: contradictory evidence.
+                self.assertNotRegex(out.getvalue(), '(?m)^VERDICT:')
                 self.assertEqual(received[0]['failure_kind'], 'evidence_unavailable')
                 usage = json.loads(Path(received[0]['usage_record']).read_text())
                 self.assertEqual((usage['status'], usage['failure_kind']),
                                  ('failed', 'evidence_unavailable'))
                 self.assertRegex(usage['evidence_sha256'], '^[0-9a-f]{64}$')
+
+    def test_a_cancel_during_persistence_never_starts_the_fallback_reviewer(self):
+        # Cancellation was checked before the evidence and usage writes, though the handler
+        # kept noting signals through them: a quota-failed attempt cancelled during either
+        # write kept its eligible failure, and --fallback launched the other paid reviewer.
+        from contextlib import redirect_stdout
+        from io import StringIO
+        import signal
+        from unittest.mock import patch
+        import review_dispatch
+        publish, account = agent_usage.write_evidence, agent_usage.record
+
+        def quota(command, prompt, repo, timeout):
+            launched.append(command[0])
+            value = ({'type': 'turn.failed', 'error': {'message': 'usage limit reached'}}
+                     if '-o' in command else
+                     {'type': 'result', 'subtype': 'success', 'is_error': True,
+                      'api_error_status': 429, 'modelUsage': {'claude-opus-5': {}}})
+            return {'exit_code': 1, 'stdout': json.dumps(value), 'stderr': '',
+                    'termination': None, 'duration_ms': 1}
+
+        def cancel_during_evidence(repo, path, text, **kwargs):
+            if path.parent.name == 'reviews':
+                os.kill(os.getpid(), signal.SIGTERM)
+            return publish(repo, path, text, **kwargs)
+
+        def cancel_during_record(*args, **kwargs):
+            os.kill(os.getpid(), signal.SIGTERM)
+            return account(*args, **kwargs)
+
+        for primary in ('claude', 'codex'):
+            for target, hook in (('agent_usage.write_evidence', cancel_during_evidence),
+                                 ('agent_usage.record', cancel_during_record)):
+                launched, out = [], StringIO()
+                with self.subTest(primary=primary, during=target), \
+                        patch.dict(os.environ, self.review_env()), \
+                        patch('agent_process.run', side_effect=quota), patch(target, side_effect=hook), \
+                        redirect_stdout(out):
+                    code = review_dispatch.main(['--repo', str(self.repo), '--uncommitted',
+                                                 '--reviewer', primary, '--allow-fallback',
+                                                 '--claude-model', 'claude-opus-5',
+                                                 '--codex-model', 'fixture-codex-model'])
+                    self.assertEqual(len(launched), 1, 'a cancelled review launched the other '
+                                     'reviewer:\n' + out.getvalue())
+                    self.assertNotEqual(code, 0)
+                    chain = json.loads(next(line.removeprefix('review dispatch: ') for line in
+                                            out.getvalue().splitlines() if line.startswith('review dispatch: ')))
+                    self.assertEqual(chain['failure_kind'], 'cancelled')
+                    self.assertTrue(chain['attempts'][0]['cancelled'])
+
+    def test_an_empty_task_label_is_unset_not_a_record_that_blocks_later_rounds(self):
+        # The dispatcher kept an empty MYAGENTKIT_TASK_ID and the Codex adapter recorded it as
+        # the id; every later labelled review then refused that record as damaged.
+        for primary in ('codex', 'claude'):
+            with self.subTest(primary=primary):
+                case = {'CODEX_FIXTURE_CASE' if primary == 'codex' else 'FIXTURE_CASE': 'reject'}
+                result, chain = self.dispatch_result(primary, fallback=False, MYAGENTKIT_TASK_ID='', **case)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                usage = json.loads(Path(chain['attempts'][0]['usage_record']).read_text())
+                self.assertEqual(usage['task']['id'], 'review-' + chain['chain_id'])
+                self.assertEqual(chain['task_id'], usage['task']['id'])
+                later, _ = self.dispatch_result(primary, fallback=False, MYAGENTKIT_TASK_ID='later-' + primary)
+                self.assertEqual(later.returncode, 0, later.stdout + later.stderr)
+        # Run directly, the adapters use their own default label for an empty one.
+        scripts = self.install_wrapper()
+        direct = subprocess.run([sys.executable, '-B', str(scripts / 'codex_bridge.py'), '--repo',
+                                 str(self.repo), '--model', 'fixture-codex-model', '--uncommitted'],
+                                env=self.review_env(MYAGENTKIT_TASK_ID='', REVIEW_CLI_BIN=str(self.build_fake_codex())),
+                                capture_output=True, text=True)
+        self.assertEqual(direct.returncode, 0, direct.stdout)
+        line = next(s for s in direct.stdout.splitlines() if s.startswith('review invocation: '))
+        usage = json.loads(Path(json.loads(line.removeprefix('review invocation: '))['usage_record']).read_text())
+        self.assertEqual(usage['task']['id'], 'review-uncommitted')
+        code, result = self.run_bridge(env_extra={'MYAGENTKIT_TASK_ID': ''})
+        self.assertEqual(code, 0, result)
+        self.assertEqual(json.loads(Path(result['usage_record']).read_text())['task']['id'], 'review-uncommitted')
+        # And no writer can produce one: record() refuses a task without a label.
+        with self.assertRaises(ValueError):
+            agent_usage.record(self.repo, 'codex', 'm', 'r', {'id': '', 'kind': 'review'},
+                               {'stdout': ''}, 'failed', 'quota', None)
 
     def test_hidden_checkout_changes_reject_before_either_adapter_launches(self):
         from contextlib import redirect_stdout

@@ -148,7 +148,8 @@ def main(argv=None, result_sink=None):
             print("FAIL [review]: could not archive evidence: " + str(error))
         path, usage = agent_usage.record(repo, "codex", metadata["model"],
             os.environ.get("MYAGENTKIT_REQUESTER", "claude/unknown" if os.environ.get("CLAUDECODE") == "1" else "unspecified"),
-            {"id": os.environ.get("MYAGENTKIT_TASK_ID", "review-" + scope), "kind": "review",
+            # An empty label is no label: recorded as "", every later labelled round refused it.
+            {"id": os.environ.get("MYAGENTKIT_TASK_ID") or "review-" + scope, "kind": "review",
              "scope": scope, "reference": ref, "resolved": resolved, "head": head,
              "fingerprint": fingerprint,
              "diff_sha256": metadata["diff_sha256"],
@@ -157,12 +158,18 @@ def main(argv=None, result_sink=None):
     finally:
         agent_process.restore(held)
     status, reason = usage["status"], usage["failure_kind"]
+    # The handler kept noting signals through both writes above: a cancel there is a cancel
+    # too, or a quota-failed attempt stayed eligible and --fallback started another reviewer.
+    cancelled = bool(cancelled) or execution["termination"] == "cancelled"
+    if cancelled and reason:
+        reason = "cancelled"
     result = {"status": status, "failure_kind": reason, "evidence": archived,
-              "usage_record": str(path), "recovery": usage["recovery"]}
+              "usage_record": str(path), "recovery": usage["recovery"], "cancelled": cancelled}
     if result_sink is not None:
         result_sink(result)
     print("review invocation: " + json.dumps(result))
-    if archived:
+    # Not a report the accounting contradicted: a lost archive once printed its Accept.
+    if archived and status == header["status"]:
         print(report_text)
     if reason:
         print("FAIL [review]: " + reason)
