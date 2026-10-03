@@ -8,6 +8,7 @@ import selectors
 import signal
 import subprocess
 import time
+from agent_process import CANCEL_SIGNALS
 
 
 def sanitize(result):
@@ -43,9 +44,17 @@ def snapshot(cli: str, repo: Path, timeout: float = 5) -> dict:
     proc = None
     try:
         deadline = time.monotonic() + timeout
-        proc = subprocess.Popen([cli, "app-server", "--stdio"], cwd=repo,
-                                stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                stderr=subprocess.DEVNULL, start_new_session=True)
+        # Blocked across Popen, as the reviewer's launch is: the closing read runs under a
+        # raising cancel handler, and a cancel after the app-server existed but before Popen
+        # returned left no handle to kill. A pending cancel is raised on unblock, handle kept.
+        mask = signal.pthread_sigmask(signal.SIG_BLOCK, CANCEL_SIGNALS)
+        try:
+            proc = subprocess.Popen([cli, "app-server", "--stdio"], cwd=repo,
+                                    stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                    stderr=subprocess.DEVNULL, start_new_session=True,
+                                    preexec_fn=lambda: signal.pthread_sigmask(signal.SIG_SETMASK, mask))
+        finally:
+            signal.pthread_sigmask(signal.SIG_SETMASK, mask)
         def send(value):
             proc.stdin.write((json.dumps(value) + "\n").encode())
             proc.stdin.flush()
@@ -87,13 +96,18 @@ def snapshot(cli: str, repo: Path, timeout: float = 5) -> dict:
         return {"status": "unavailable", "observed_at": observed, "error": str(error), "buckets": {}}
     finally:
         if proc is not None:
+            # Blocked here too: a cancel raised before the kill left the group running.
+            mask = signal.pthread_sigmask(signal.SIG_BLOCK, CANCEL_SIGNALS)
             try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            proc.wait()
-            proc.stdin.close()
-            proc.stdout.close()
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                proc.wait()
+                proc.stdin.close()
+                proc.stdout.close()
+            finally:
+                signal.pthread_sigmask(signal.SIG_SETMASK, mask)
 
 
 if __name__ == "__main__":

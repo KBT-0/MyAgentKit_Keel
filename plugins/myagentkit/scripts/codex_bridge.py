@@ -166,18 +166,25 @@ def main(argv=None, result_sink=None):
              "diff_sha256": metadata["diff_sha256"],
              "prompt_sha256": hashlib.sha256(prompt.encode()).hexdigest()},
             execution, status, reason, archived, report_text.encode())
-        # A cancel noted during either write is persisted too, not only returned: the usage
-        # reporter reads the records, and a direct call has no chain to keep it.
-        if (cancelled or guard.noted or execution["termination"] == "cancelled") and usage["failure_kind"]:
+        def persist_cancel(usage):
             header.update(status="failed", failure_kind="cancelled")
-            report_text = agent_usage.report(stamp, header, None,
+            text = agent_usage.report(stamp, header, None,
                 final or "No final message. Inspect the local usage record for diagnostics.")
             try:
-                usage = agent_usage.relabel_cancelled(repo, path, archived, report_text)
+                return agent_usage.relabel_cancelled(repo, path, archived, text), text
             except (OSError, ValueError) as error:
                 # Still a cancel, delivered as one: raising here lost the structured result.
                 print("FAIL [review]: cancellation could not be persisted: " + str(error))
-                usage = dict(usage, status="failed", failure_kind="cancelled")
+                return dict(usage, status="failed", failure_kind="cancelled"), text
+
+        # A cancel noted during either write is persisted too, not only returned: the usage
+        # reporter reads the records, and a direct call has no chain to keep it.
+        if (cancelled or guard.noted or execution["termination"] == "cancelled") and usage["failure_kind"]:
+            usage, report_text = persist_cancel(usage)
+    # Noted while the guard put the caller's handlers back, after the check above: once only
+    # the returned result said cancelled, and the records of a failed attempt said quota.
+    if guard.noted and usage["failure_kind"] not in (None, "cancelled"):
+        usage, report_text = persist_cancel(usage)
     status, reason = usage["status"], usage["failure_kind"]
     # The handler kept noting signals through both writes above: a cancel there is a cancel
     # too, or a quota-failed attempt stayed eligible and --fallback started another reviewer.

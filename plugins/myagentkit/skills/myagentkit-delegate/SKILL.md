@@ -32,6 +32,8 @@ The runner pins Claude Opus 5/high unless the user specifies a model. Defaults a
 under docs/handoffs, has only Read/Glob/Grep tools, disables custom hooks/plugins/MCP,
 and refuses stale or incomplete results. The patch is NEVER automatically applied.
 
+The last JSON line the runner prints is its result: a line with `"correction": true`
+supersedes the one before it (a cancel that landed while the first was printed).
 Read `result.questions` first. An unanswered design choice returns to the user; do not
 silently decide it. For a supplied patch, verify paths, scope, caller compatibility,
 test coverage, and that no secrets, binary payloads, external paths, or unrelated edits

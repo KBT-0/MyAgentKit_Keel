@@ -50,6 +50,45 @@ class QuotaTests(unittest.TestCase):
                 self.assertEqual(result['status'], 'unavailable')
                 self.assertEqual(result['buckets'], {})
 
+    def test_a_cancel_inside_the_launch_leaves_no_quota_reader_running(self):
+        # The closing read runs under a raising cancel handler: a cancel after the app-server
+        # existed but before Popen returned left no handle, and cleanup killed nothing.
+        import os
+        import signal
+        import subprocess
+        from unittest.mock import patch
+        import agent_process
+        real, pids = subprocess.Popen, []
+
+        def launch(*args, **kwargs):
+            proc = real(*args, **kwargs)
+            pids.append(proc.pid)
+            os.kill(os.getpid(), signal.SIGTERM)
+            return proc
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            cli = repo / 'codex'
+            cli.write_text(SERVER)
+            cli.chmod(0o755)
+            (repo / 'case').write_text('timeout')
+            try:
+                with agent_process.OneShot(), patch.object(codex_quota.subprocess, 'Popen', side_effect=launch):
+                    codex_quota.snapshot(str(cli), repo, timeout=2)
+            except KeyboardInterrupt:
+                pass
+            self.assertEqual(len(pids), 1)
+            try:
+                left = os.waitpid(pids[0], os.WNOHANG)[0] == 0
+            except ChildProcessError:
+                left = False  # reaped by the cleanup
+            if left:
+                os.killpg(pids[0], signal.SIGKILL)
+                os.waitpid(pids[0], 0)
+            self.assertFalse(left, 'the quota reader outlived a cancel inside its launch')
+            with self.assertRaises(ProcessLookupError):
+                os.killpg(pids[0], 0)
+
     def test_invalid_percent_is_not_zero(self):
         for percent in (-1, 101, True, float('nan'), '25'):
             buckets = codex_quota.sanitize({'rateLimits': {'primary': {'usedPercent': percent}}})
