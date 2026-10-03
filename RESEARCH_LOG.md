@@ -627,6 +627,17 @@ traded one defect (staging into the original's index) for another (no HEAD, tags
 objects through alternates keep history without writing to the original. Rule: when a
 protocol fix lands in one launcher or consumer, grep every peer for the same window.
 
+#### Range B, round 7: the repository shapes a copy must survive
+
+No High for the second round running. The late-cancel correction ran after the caller's
+handlers came back, so a second cancel ended the adapter before its records were corrected;
+a noting handler is now held through the relabel and the correction line. The disposable
+copy copied a split index without its shared part and was initialised in the ambient object
+format; it now takes the source format and rebuilds its index from the original's entries.
+The hook gave `core.commentString` unconditional precedence where git takes whichever alias
+was set last. Lesson: a helper that reproduces a git repository is tested against the
+repository shapes git supports (linked worktree, split index, SHA-256), not only the default.
+
 #### The review gate held on the kit's own hardening
 
 Five of the nine work packages (the gate lock, both review-tooling packages, the commit gates

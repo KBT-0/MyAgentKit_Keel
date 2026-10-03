@@ -217,6 +217,16 @@ hand merge; `sync-kit.sh` now keeps listing them until you confirm (see "Sync st
   disposable copy the original's refs, HEAD and index (objects through alternates) instead of
   a bare `git init`. **ACTION:** copy the adapters, `codex_quota.py` and the test modules
   again; replace the `.git` block of an adapted existing-file example with core's.
+- **Full cross-model review, range B round 7.** A second cancel while either review adapter
+  persists a late cancellation is noted rather than ending the adapter, so the records and
+  the last printed line say cancelled. The existing-file boundary probe's linked-worktree
+  copy takes the original's object format (SHA-256 originals work) and rebuilds its index
+  from the original's entries, so a split-index checkout no longer leaves the copy with an
+  unreadable index. `.githooks/commit-msg` resolves `core.commentChar` and
+  `core.commentString` as git does: the one set last, across global and local config, wins.
+  **ACTION:** copy `.githooks/commit-msg` and the two adapters again; apply the
+  `--object-format` and `ls-files -s | update-index --index-info` changes to an adapted
+  existing-file example.
 - **Scan failures that were not scanner failures (issues #13, #14).** A tracked file deleted
   without `git rm` now fails `[scan]` under its own name with the command that fixes it, and
   every other scan still runs. A symlink to a directory (for example `node_modules` linked
