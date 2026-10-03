@@ -85,7 +85,7 @@ BOUNDARY_SELFTESTS_FILE="${BOUNDARY_SELFTESTS_FILE:-scripts/boundary_selftests.s
 
 work=$(mktemp -d) || { echo "FAIL [gate]: cannot create a temp dir; refusing to run blind."; exit 1; }
 lock=""
-# Only our own lock: after a stale reclaim race another run may hold this path.
+# Only our own lock: a run whose lock was taken over must not remove the new holder's.
 cleanup() {
   rm -rf "$work"
   [ -z "$lock" ] || [ "$(readlink "$lock" 2>/dev/null)" != "$$" ] || rm -f "$lock"
@@ -120,13 +120,28 @@ if [ "${GATE_LOCK_HELD:-}" != "$lock_path" ]; then
   waited=0
   until ln -s "$$" "$lock_path" 2>/dev/null; do
     holder=$(readlink "$lock_path" 2>/dev/null) || holder=""
-    # A dead holder (killed, power loss) is stale. An empty holder means the lock vanished
-    # between our attempt and the read; the next attempt settles it.
-    # ponytail: two waiters reclaiming the same stale lock in the same second can both
-    # run; a pid-checked rename would close that if it is ever seen.
-    if [ -n "$holder" ] && ! kill -0 "$holder" 2>/dev/null; then
-      echo "NOTE [lock]: removing a stale gate lock left by pid $holder, which no longer runs."
-      rm -f "$lock_path"; continue
+    # A dead holder (killed, power loss) is stale, and so is a live pid that is not a gate
+    # run: after a reboot the lock's pid can belong to anything, and waiting on it blocked
+    # every run with no wait bound. A machine without ps keeps waiting, as it did before. An
+    # empty holder means the lock vanished between our attempt and the read; the next
+    # attempt settles it. Two waiters can read
+    # the same dead pid: removing the lock outright let the second remove the lock the first
+    # had just taken, and both ran. The reclaim is a rename instead, which only one waiter
+    # wins, and the winner checks it took the dead pid's link: a waiter that read the dead
+    # pid before another reclaimed it renames that live lock, and puts it straight back.
+    # The gap left: a third waiter that takes the lock between those two renames.
+    if [ -n "$holder" ] && { ! kill -0 "$holder" 2>/dev/null ||
+         { holder_args=$(ps -o args= -p "$holder" 2>/dev/null) &&
+           case "$holder_args" in *check.sh*) false ;; *) true ;; esac; }; }; then
+      if mv "$lock_path" "$lock_path.stale.$$" 2>/dev/null; then
+        if [ "$(readlink "$lock_path.stale.$$" 2>/dev/null)" = "$holder" ]; then
+          echo "NOTE [lock]: removing a stale gate lock left by pid $holder, which no longer runs."
+          rm -f "$lock_path.stale.$$"
+        else
+          mv -f "$lock_path.stale.$$" "$lock_path"
+        fi
+      fi
+      continue
     fi
     if [ -n "${GATE_LOCK_WAIT:-}" ] && [ "$waited" -ge "$GATE_LOCK_WAIT" ]; then
       echo "NOT RUN [lock]: pid ${holder:-unknown} has held $lock_path for ${waited}s; GATE_LOCK_WAIT=$GATE_LOCK_WAIT ran out."

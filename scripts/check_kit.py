@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -179,10 +180,51 @@ def main():
                 lock = project / ".git/check.lock"
                 os.symlink(str(dead.pid), lock)
                 run(["sh", "scripts/check.sh"], project, reason="CHECK: PASS", timeout=60)
-                print("PASS: a lock left by a killed gate run is reclaimed")
+                # Two waiters on one dead holder: only one may reclaim. Shims make the race
+                # certain: readlink holds each waiter until both have read the dead pid, and the
+                # second waiter to touch the lock path (rm or mv) does so a second later, after
+                # the first has reclaimed it and started.
+                shims = side / "shims"
+                shims.mkdir()
+                for tool in ("readlink", "rm", "mv"):
+                    real = shutil.which(tool)
+                    if tool == "readlink":
+                        body = (f'out=$("{real}" "$@") || exit\nprintf "%s\\n" "$out"\n'
+                                f'[ "$out" = {dead.pid} ] || exit 0\nmkdir "{side}/read.$PPID" 2>/dev/null\n'
+                                f'i=0; while [ "$(ls -d "{side}"/read.* | wc -l)" -lt 2 ] && [ $i -lt 50 ]; do\n'
+                                f'  sleep 0.1; i=$((i + 1)); done\n')
+                    else:
+                        body = (f'for a; do [ "$a" != "{own_lock}" ] || {{ mkdir "{side}/first" 2>/dev/null || sleep 1; }}; done\n'
+                                f'exec "{real}" "$@"\n')
+                    (shims / tool).write_text("#!/bin/sh\n" + body)
+                    (shims / tool).chmod(0o755)
+                build.write_text(f'mkdir "{side}/build" && sleep 2 && rmdir "{side}/build"\n')
+                os.symlink(str(dead.pid), lock)
+                shimmed = dict(os.environ, PATH=str(shims) + os.pathsep + os.environ["PATH"])
+                pair = [subprocess.Popen(["sh", "scripts/check.sh"], cwd=project, env=shimmed,
+                                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                         text=True) for _ in range(2)]
+                outputs = [p.communicate(timeout=60)[0] for p in pair]
+                if any(p.returncode or "CHECK: PASS" not in o for p, o in zip(pair, outputs)):
+                    raise RuntimeError("two waiters reclaiming one stale lock ran together:\n"
+                                       + "\n".join(outputs))
+                build.write_text("true\n")
+                # A pid reused by a process that is not a gate run (after a reboot, say) is stale too.
+                other = subprocess.Popen(["sleep", "60"])
+                try:
+                    os.symlink(str(other.pid), lock)
+                    run(["sh", "scripts/check.sh"], project, reason="CHECK: PASS", timeout=30,
+                        env=dict(os.environ, GATE_LOCK_WAIT="3"))
+                finally:
+                    other.kill()
+                    other.wait()
+                print("PASS: a lock left by a killed gate run is reclaimed, by one waiter only,"
+                      " and a pid now running something else does not hold it")
                 # A live holder: a bounded wait gives up with its own code, and only a run
-                # given this checkout's own lock path skips the lock.
-                os.symlink(str(os.getpid()), lock)
+                # given this checkout's own lock path skips the lock. The holder looks like a
+                # gate run; a live pid that is not one counts as stale.
+                holder = subprocess.Popen(["sh", "-c", "sleep 60; :", "scripts/check.sh"])
+                os.symlink(str(holder.pid), lock)
                 try:
                     run(["sh", "scripts/check.sh"], project, expected=75, reason="NOT RUN [lock]",
                         env=dict(os.environ, GATE_LOCK_WAIT="2"), timeout=30)
@@ -202,6 +244,8 @@ def main():
                         raise RuntimeError("a gate run removed a lock another run held")
                 finally:
                     lock.unlink(missing_ok=True)
+                    holder.kill()
+                    holder.wait()
                 print("PASS: a bounded lock wait stops with NOT RUN; only the own lock path is"
                       " inherited; a run removes only its own lock")
                 gate.write_text(original_gate)

@@ -13,7 +13,7 @@ import uuid
 import agent_process
 import agent_usage
 import codex_quota
-from claude_bridge import REVIEW_ASKS, BridgeError, git, prior_rounds, snapshot
+from claude_bridge import REVIEW_ASKS, BridgeError, git, prior_rounds, resolve, snapshot
 
 
 def main(argv=None, result_sink=None):
@@ -126,7 +126,8 @@ def main(argv=None, result_sink=None):
     path, usage = agent_usage.record(repo, "codex", metadata["model"],
         os.environ.get("MYAGENTKIT_REQUESTER", "claude/unknown" if os.environ.get("CLAUDECODE") == "1" else "unspecified"),
         {"id": os.environ.get("MYAGENTKIT_TASK_ID", "review-" + scope), "kind": "review",
-         "scope": scope, "reference": ref, "head": head, "fingerprint": fingerprint,
+         "scope": scope, "reference": ref, "resolved": resolve(repo, scope, ref), "head": head,
+         "fingerprint": fingerprint,
          "diff_sha256": metadata["diff_sha256"],
          "prompt_sha256": hashlib.sha256(prompt.encode()).hexdigest()},
         execution, status, reason, archived)

@@ -45,14 +45,19 @@ def git(repo: Path, *args: str, allowed=(0,), stdin: bytes | None = None) -> byt
     return result.stdout
 
 
+def resolve(repo: Path, scope: str, reference: str | None) -> str | None:
+    """The commit a --base or --commit reference names now; None for --uncommitted."""
+    if scope == 'uncommitted':
+        return None
+    if not reference or reference.startswith('-'):
+        raise BridgeError('a valid git reference is required')
+    return git(repo, 'rev-parse', '--verify', reference + '^{commit}').decode().strip()
+
+
 def snapshot(repo: Path, scope: str, reference: str | None) -> tuple[str, str, str]:
     """Capture review scope plus a fingerprint of the actual readable checkout."""
     head = git(repo, "rev-parse", "HEAD").decode().strip()
-    resolved = None
-    if scope != 'uncommitted':
-        if not reference or reference.startswith('-'):
-            raise BridgeError('a valid git reference is required')
-        resolved = git(repo, 'rev-parse', '--verify', reference + '^{commit}').decode().strip()
+    resolved = resolve(repo, scope, reference)
     # Old reports used <timestamp>-<branch>.md. Also inspect the reference tree so
     # removing an old tracked archive cannot send its entire transcript to a reviewer.
     archives = set(ARCHIVES)
@@ -160,6 +165,7 @@ def prior_rounds(repo: Path, task_id: str | None, scope: str, reference: str | N
     the author's dispositions (REVIEW_DISPOSITIONS, a file) ride along as claims to verify.
     """
     rounds = []
+    resolved = resolve(repo, scope, reference) if task_id else None
     for path in (repo / ".myagentkit/usage").glob("*.json") if task_id else ():
         try:
             value = json.loads(path.read_text())
@@ -169,12 +175,18 @@ def prior_rounds(repo: Path, task_id: str | None, scope: str, reference: str | N
         if (not isinstance(task, dict) or task.get("kind") != "review" or task.get("id") != task_id
                 or value.get("status") != "completed" or not value.get("evidence")):
             continue
-        # A reused label from another change must not carry that change's rounds.
+        # A reused label from another change must not carry that change's rounds. Compared
+        # as resolved commits, never as the reference text: "--commit HEAD" one commit later
+        # is another change. --commit and --uncommitted rounds share one HEAD: an
+        # uncommitted diff that was committed since is replaced by the next one.
         earlier, mismatch = str(task.get("head")), None
         if task.get("scope") != scope:
             mismatch = "scope %s, not %s" % (task.get("scope"), scope)
-        elif task.get("reference") != reference:
-            mismatch = "reference %s, not %s" % (task.get("reference"), reference)
+        elif task.get("resolved") != resolved:
+            mismatch = "reference %s resolved to %s, not %s" % (
+                task.get("reference"), task.get("resolved"), resolved)
+        elif scope != "base" and earlier != head:
+            mismatch = "head %s, not HEAD %s" % (earlier, head)
         elif not re.fullmatch(r"[0-9a-f]{40,64}", earlier) or subprocess.run(
                 ["git", "-C", str(repo), "merge-base", "--is-ancestor", earlier, head],
                 capture_output=True).returncode != 0:
@@ -187,7 +199,13 @@ def prior_rounds(repo: Path, task_id: str | None, scope: str, reference: str | N
         if not evidence.is_relative_to((repo / "docs/reviews").resolve()) or not evidence.is_file():
             raise BridgeError("earlier review evidence for task %s is missing: %s; restore it or "
                               "use a new task label" % (task_id, evidence))
-        rounds.append((str(value.get("recorded_at")), evidence.read_text()))
+        # The archive is owner-writable: carry it only as the reviewer wrote it.
+        report = evidence.read_bytes()
+        if hashlib.sha256(report).hexdigest() != value.get("evidence_sha256"):
+            raise BridgeError("earlier review evidence for task %s was changed after it was "
+                              "archived (its sha256 differs from the usage record): %s; restore "
+                              "it or use a new task label" % (task_id, evidence))
+        rounds.append((str(value.get("recorded_at")), report.decode()))
     notes = os.environ.get("REVIEW_DISPOSITIONS")
     if notes and not rounds:
         raise BridgeError("REVIEW_DISPOSITIONS is set but no earlier completed review has task "
@@ -426,7 +444,8 @@ def main(argv=None, result_sink=None) -> int:
         try:
             usage_path, usage = agent_usage.record(repo, "claude", args.model, args.requester,
                 {"id": args.task_id or (args.task_file.name if args.task_file else args.mode + "-" + scope),
-                 "kind": args.mode, "scope": scope, "reference": ref, "head": head,
+                 "kind": args.mode, "scope": scope, "reference": ref,
+                 "resolved": resolve(repo, scope, ref), "head": head,
                  "diff_sha256": evidence["diff_sha256"]}, execution, evidence["status"], reason, archived_path)
             recovery = usage["recovery"]
         except (OSError, ValueError) as error:

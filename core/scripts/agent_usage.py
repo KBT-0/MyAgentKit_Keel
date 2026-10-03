@@ -3,6 +3,7 @@
 from __future__ import annotations
 import argparse
 from datetime import datetime, timezone
+import hashlib
 import json
 import math
 import os
@@ -217,7 +218,10 @@ def record(repo: Path, provider: str, model: str, requester: str, task: dict,
              "task": task, "status": status, "failure_kind": reason,
              "duration_ms": execution.get("duration_ms"), "exit_code": execution.get("exit_code"),
              "usage": normalize(provider, values, status == "completed"), "recovery": recovery,
-             "evidence": evidence, "raw_stdout": execution.get("stdout", ""),
+             "evidence": evidence,
+             # A later round carries this archive only while its bytes still match.
+             "evidence_sha256": hashlib.sha256(Path(evidence).read_bytes()).hexdigest() if evidence else None,
+             "raw_stdout": execution.get("stdout", ""),
              "raw_stderr": execution.get("stderr", "")}
     value["usage"]["account_quota_snapshots"] = execution.get("account_quota_snapshots")
     directory = repo / ".myagentkit/usage"

@@ -69,7 +69,9 @@ class GitHookTests(unittest.TestCase):
                             'Co-authored-by: aider (openai/gpt-4o) <aider@example.invalid>',
                             'Signed-off-by: Claude <noreply@example.invalid>',
                             'Assisted-by: Claude:claude-opus',
-                            '\U0001f916 Generated with [Claude Code](https://example.invalid)'):
+                            '\U0001f916 Generated with [Claude Code](https://example.invalid)',
+                            'Generated with GitHub Copilot',
+                            'Generated with Google Gemini'):
                 with self.subTest(trailer=trailer):
                     result = self.commit(root, git, trailer + '\n')
                     self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -99,6 +101,47 @@ class GitHookTests(unittest.TestCase):
             (root / 'AGENTS.md').write_text('AI tools may be credited.\n')
             result = self.commit(root, git, 'Co-Authored-By: Claude <noreply@anthropic.com>\n')
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_comment_lines_are_checked_where_git_keeps_them(self):
+        # Git keeps "#" lines under commit.cleanup=verbatim (and whitespace), and with another
+        # core.commentChar it keeps "#" lines and strips that character's instead.
+        with tempfile.TemporaryDirectory() as tmp:
+            root, git = self.repo(tmp)
+            for config in (('commit.cleanup', 'verbatim'), ('commit.cleanup', 'whitespace'),
+                           ('core.commentChar', ';')):
+                with self.subTest(config=config):
+                    git('config', *config)
+                    try:
+                        # Each case its own content: an unchanged tree would fail as "nothing to commit".
+                        result = self.commit(root, git, '='.join(config) + '\n# Generated with Claude\n')
+                    finally:
+                        git('config', '--unset', config[0])
+                    self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertIn('crediting an AI tool', result.stderr)
+            # A comment line git strips is not part of the message, with either comment char.
+            for char in ('#', ';'):
+                with self.subTest(char=char):
+                    git('config', 'core.commentChar', char)
+                    result = self.commit(root, git, 'body\n' + char + ' Generated with Claude\n',
+                                         '--cleanup=strip')
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    log = git('log', '-1', '--format=%B').stdout
+                    self.assertNotIn('Generated with Claude', log)
+
+    def test_an_unreadable_agents_file_fails_closed(self):
+        # A grep that could not read the rule is not an owner's choice to allow AI credit.
+        if os.geteuid() == 0:
+            return  # root reads a mode-000 file; this case cannot be built here
+        with tempfile.TemporaryDirectory() as tmp:
+            root, git = self.repo(tmp)
+            (root / 'AGENTS.md').chmod(0)
+            try:
+                result = self.commit(root, git, 'Co-Authored-By: Claude <noreply@anthropic.com>\n')
+            finally:
+                (root / 'AGENTS.md').chmod(0o644)
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('cannot read AGENTS.md', result.stderr)
+
 
 if __name__ == '__main__':
     unittest.main()

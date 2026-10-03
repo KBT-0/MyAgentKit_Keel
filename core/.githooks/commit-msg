@@ -10,12 +10,30 @@
 # a tool vendor's or a [bot], or a "Generated with" line names a tool.
 set -u
 # The owner decides (setup interview): without the rule line in AGENTS.md, AI tools may be
-# credited. A missing AGENTS.md is a broken setup, not a choice: the hook stays on.
-if [ -f AGENTS.md ] && ! grep -q 'No AI attribution in git' AGENTS.md; then exit 0; fi
+# credited. A missing AGENTS.md is a broken setup, not a choice: the hook stays on, and so
+# does an AGENTS.md grep cannot read: an error is not the owner's choice either.
+if [ -f AGENTS.md ]; then
+  grep -q 'No AI attribution in git' AGENTS.md
+  case $? in
+    0) ;;
+    1) exit 0 ;;
+    *) echo "commit-msg: cannot read AGENTS.md for the attribution rule; refusing to pass the message unchecked." >&2
+       exit 1 ;;
+  esac
+fi
 msg=${1:-}
-# Git strips "#" lines and, under `commit -v`, the diff below the scissors line only AFTER
-# this hook; a trailer quoted in that diff is not part of the message.
-if [ ! -f "$msg" ] || [ ! -r "$msg" ] || ! body=$(sed '/^# -* >8 -*$/,$d; /^#/d' "$msg"); then
+# Git cuts the diff below the scissors line (`commit -v`) and strips comment lines only AFTER
+# this hook, so a trailer quoted in that diff is not part of the message. Comment lines are
+# stripped here only where git strips them: commit.cleanup verbatim, whitespace and scissors
+# keep them, and core.commentChar names the character ("auto" picks one per message; "#" is
+# assumed). A --cleanup flag on the command line is invisible to a hook.
+cleanup=$(git config --get commit.cleanup 2>/dev/null) || cleanup=default
+comment=$(git config --get core.commentChar 2>/dev/null) || comment='#'
+[ "$comment" != auto ] || comment='#'
+if [ ! -f "$msg" ] || [ ! -r "$msg" ] || ! body=$(CC="$comment" MODE="$cleanup" awk '
+    BEGIN { c = ENVIRON["CC"]; keep = ENVIRON["MODE"] ~ /^(verbatim|whitespace|scissors)$/ }
+    index($0, c) == 1 && substr($0, length(c) + 1) ~ /^ -* >8 -*$/ { exit }
+    keep || index($0, c) != 1' "$msg"); then
   echo "commit-msg: cannot read the commit message file '$msg'; refusing to pass it unchecked." >&2
   exit 1
 fi
@@ -28,7 +46,7 @@ sep='[[:space:]:_/().,-]'
 printf '%s\n' "$body" | grep -inE \
   -e "$trailer[[:space:]]*((github|google|openai)[[:space:]]+)?($tools)([0-9][a-z0-9.]*)?($sep+($words))*$sep*(<|\$)" \
   -e "$trailer.*(\\[bot\\]|@([a-z0-9-]+\\.)*($domains)>)" \
-  -e "^[^[:alnum:]]*generated (with|by)[[:space:]]*\\[?($tools)([^[:alnum:]]|\$)" >&2
+  -e "^[^[:alnum:]]*generated (with|by)[[:space:]]*\\[?((github|google|openai)[[:space:]]+)?($tools)([^[:alnum:]]|\$)" >&2
 case $? in
   0) echo "commit-msg: crediting an AI tool (above) is not allowed in this repository (AGENTS.md)." >&2
      echo "            Remove the line and commit again; the tool's default does not override the rule." >&2

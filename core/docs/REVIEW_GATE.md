@@ -168,11 +168,16 @@ adds the author's answer to each finding (fixed in a commit, disproved with evid
 deferred to the owner) as claims to verify, because the author never approves its own work:
 a disproved finding counts only after the reviewer has checked it against the code, and a
 deferred one stays open under Manual checks, so it rules out a plain Accept. The review
-stops (exit 2) rather than carry a wrong record: when an earlier archive is missing or lies
-outside `docs/reviews`, when an earlier round has another scope or reference, or a head that
-is not an ancestor of the current HEAD (a reused label from another change), or when the
-diff plus the carried rounds and dispositions exceed the 400000-byte guard. A fresh label
-starts at round 1.
+stops (exit 2) rather than carry a wrong record: when an earlier archive is missing, lies
+outside `docs/reviews` or no longer matches the sha256 its usage record stored (an archive
+edited after the reviewer wrote it), when an earlier round has another scope, a reference
+that resolved to another commit (`--commit HEAD` one commit later is another change), another
+HEAD for a `--commit` or `--uncommitted` round (an uncommitted diff committed since is
+replaced by the next one), or for `--base` a head that is not an ancestor of the current HEAD
+(a reused label from another change), or when the diff plus the carried rounds and
+dispositions exceed the 400000-byte guard. A round recorded before these checks existed
+carries neither the resolved reference nor the sha256 and is refused the same way. A fresh
+label starts at round 1.
 
 **The final Accept comes from one fresh full review under a NEW label.** Carried rounds and
 dispositions help the loop converge, but they also steer the reviewer toward what was

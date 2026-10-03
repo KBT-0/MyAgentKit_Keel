@@ -15,7 +15,7 @@ import agent_usage
 ROOT = Path(__file__).resolve().parent
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. The kit gate reads this too.
-SUITE_MINIMUMS = {'test_claude_bridge': 52, 'test_agent_usage': 12, 'test_codex_quota': 3}
+SUITE_MINIMUMS = {'test_claude_bridge': 54, 'test_agent_usage': 12, 'test_codex_quota': 3}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -898,8 +898,8 @@ if case == 'archive_failure':
         self.assertEqual(code, 0, first)
         record = Path(first['usage_record'])
         original = json.loads(record.read_text())
-        for field, value, named in (('scope', 'base', 'scope'), ('reference', 'main', 'reference'),
-                                    ('head', '0' * 40, 'ancestor')):
+        for field, value, named in (('scope', 'base', 'scope'), ('resolved', '1' * 40, 'reference'),
+                                    ('head', '0' * 40, 'not HEAD')):
             with self.subTest(field=field):
                 changed = json.loads(json.dumps(original))
                 changed['task'][field] = value
@@ -910,6 +910,42 @@ if case == 'archive_failure':
                 self.assertIn('new task label', refused['error'])
         record.write_text(json.dumps(original))
         self.assertEqual(self.run_bridge(env_extra=task)[0], 0)
+
+    def test_earlier_rounds_bind_the_change_not_the_reference_text(self):
+        # "--commit HEAD" names a different commit once HEAD moves, and an --uncommitted diff
+        # that was committed since is replaced by the next one: neither is the reviewed change.
+        commit = lambda message: self.git(
+            '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
+            '-c', 'core.hooksPath=/dev/null', '-c', 'commit.gpgsign=false', 'commit', '-qam', message)
+        task = {'MYAGENTKIT_TASK_ID': 'replaced-task'}
+        code, first = self.run_bridge('reject', env_extra=task)
+        self.assertEqual(code, 0, first)
+        commit('the reviewed diff')
+        (self.repo / 'file.py').write_text('another change\n')
+        code, refused = self.run_bridge(env_extra=task)
+        self.assertEqual(code, 2, refused)
+        self.assertIn('new task label', refused['error'])
+        commit('A')
+        task = {'MYAGENTKIT_TASK_ID': 'moving-task'}
+        code, first = self.run_bridge('reject', extra=('--commit', 'HEAD'), env_extra=task)
+        self.assertEqual(code, 0, first)
+        (self.repo / 'file.py').write_text('B\n')
+        commit('B')
+        code, refused = self.run_bridge(extra=('--commit', 'HEAD'), env_extra=task)
+        self.assertEqual(code, 2, refused)
+        self.assertIn('new task label', refused['error'])
+
+    def test_an_edited_earlier_round_is_refused(self):
+        # The archive is owner-writable; a round edited after the reviewer wrote it is not its evidence.
+        log = self.root / 'prompt.txt'
+        task = {'PROMPT_LOG': str(log), 'MYAGENTKIT_TASK_ID': 'edited-task'}
+        code, first = self.run_bridge('reject', env_extra=task)
+        self.assertEqual(code, 0, first)
+        evidence = Path(first['evidence'])
+        evidence.write_text(evidence.read_text().replace('concrete defect', 'nothing to see'))
+        code, refused = self.run_bridge(env_extra=task)
+        self.assertEqual(code, 2, refused)
+        self.assertIn('changed after it was archived', refused['error'])
 
     def test_carried_rounds_share_the_diff_budget(self):
         task = {'MYAGENTKIT_TASK_ID': 'budget-task'}
