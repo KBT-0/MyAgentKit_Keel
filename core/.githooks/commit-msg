@@ -24,6 +24,11 @@ fi
 msg=${1:-}
 # Git cuts the diff below the scissors line (`commit -v`) only AFTER this hook, so a trailer
 # quoted in that diff is not part of the message and the text below the line is dropped.
+# Only the header git writes for an editor is cut: the scissors line followed by its two-line
+# explanation. A bare scissors line in a `-m` or verbatim message is kept by git, and so is
+# what follows it, so the hook keeps and checks it too; cutting at any scissors line let a
+# credit below one into the history. A git whose messages are translated writes another
+# explanation; its quoted diff is then checked, which fails closed.
 # Comment lines are NOT dropped: whether git keeps them depends on commit.cleanup, on a
 # --cleanup flag this hook cannot see, and on `-m` versus the editor (git's default keeps
 # them for -m). Checking them fails closed; a commented-out credit left by a squash is one
@@ -32,8 +37,12 @@ comment=$(git config --get core.commentChar 2>/dev/null) || comment='#'
 [ "$comment" != auto ] || comment='#'
 if [ ! -f "$msg" ] || [ ! -r "$msg" ] || ! body=$(CC="$comment" awk '
     BEGIN { c = ENVIRON["CC"] }
-    index($0, c) == 1 && substr($0, length(c) + 1) ~ /^ -* >8 -*$/ { exit }
-    { print }' "$msg"); then
+    held == 1 && $0 == c " Do not modify or remove the line above." { held = 2; text = text "\n" $0; next }
+    held == 2 && $0 == c " Everything below it will be ignored." { exit }
+    held { print text; held = 0 }
+    $0 == c " ------------------------ >8 ------------------------" { held = 1; text = $0; next }
+    { print }
+    END { if (held) print text }' "$msg"); then
   echo "commit-msg: cannot read the commit message file '$msg'; refusing to pass it unchecked." >&2
   exit 1
 fi
@@ -41,7 +50,9 @@ fi
 tools='claude|anthropic|openai|chatgpt|gpt|codex|copilot|gemini|cursor|aider|devin|windsurf|codeium|tabnine|amp|qwen|cline|kiro'
 words="$tools|opus|sonnet|haiku|code|coder|agent|ai|assist|assistant|cli|chat|pro|flash|mini|turbo|[a-z]*[0-9][a-z0-9.]*"
 domains='anthropic\.com|openai\.com|ampcode\.com|cursor\.(com|sh)|aider\.chat|devin\.ai|cognition\.ai|windsurf\.com|codeium\.com|tabnine\.com'
-trailer='^[[:space:]]*[a-z]+(-[a-z]+)*-by:'
+# Behind a comment character (whatever core.commentChar is) a trailer is still checked:
+# git keeps "# Co-Authored-By: ..." under -m or verbatim cleanup.
+trailer='^[^[:alnum:]]*[a-z]+(-[a-z]+)*-by:'
 sep='[[:space:]:_/().,-]'
 printf '%s\n' "$body" | grep -inE \
   -e "$trailer[[:space:]]*((github|google|openai)[[:space:]]+)?($tools)([0-9][a-z0-9.]*)?($sep+($words))*$sep*(<|\$)" \

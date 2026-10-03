@@ -23,9 +23,30 @@ miss() { echo "MISSING: $1 — fix: $2"; missing=$((missing + 1)); }
 
 # The same PATH preamble as scripts/check.sh, read from it so it is configured once: a check
 # here that saw a different PATH from the hook would prove nothing about the hook. The line
-# is evaluated, as check.sh's sh does, so "$HOME/..." expands here too.
-toolchain_path=""
-eval "$(sed -n '/^toolchain_path=".*"$/{p;q;}' scripts/check.sh 2>/dev/null)"
+# is READ, never run: evaluating it executed whatever a project wrote there, so a read-only
+# check ran `$(...)` from a configuration line. $NAME and ${NAME} are expanded from the
+# environment, as check.sh's sh would; any other shell syntax is reported, not guessed at.
+toolchain_path=$(sed -n '/^toolchain_path=".*"$/{p;q;}' scripts/check.sh 2>/dev/null)
+toolchain_path=${toolchain_path#toolchain_path=\"}; toolchain_path=${toolchain_path%\"}
+unsupported=""
+case "$toolchain_path" in
+  *'$('*|*'`'*|*';'*|*'"'*|*'\'*) unsupported=1 ;;
+  *) expanded=$(printf '%s\n' "$toolchain_path" | awk '{
+       out = ""; s = $0
+       while ((i = index(s, "$")) > 0) {
+         out = out substr(s, 1, i - 1); s = substr(s, i + 1)
+         if (match(s, /^[{][A-Za-z_][A-Za-z0-9_]*[}]/)) name = substr(s, 2, RLENGTH - 2)
+         else if (match(s, /^[A-Za-z_][A-Za-z0-9_]*/)) name = substr(s, 1, RLENGTH)
+         else exit 1
+         out = out ENVIRON[name]; s = substr(s, RLENGTH + 1)
+       }
+       print out s }') || unsupported=1 ;;
+esac
+if [ -n "$unsupported" ]; then
+  expanded=""
+  miss "toolchain_path uses shell syntax doctor does not evaluate; set a plain path" "write it in scripts/check.sh as a path, using only \$HOME or \${HOME}-style variables"
+fi
+toolchain_path=$expanded
 case "$toolchain_path" in
   ""|*"{{"*) toolchain_path="" ;;
   *) PATH="$toolchain_path:$PATH"; export PATH ;;
@@ -82,7 +103,9 @@ fi
 python3 -c 'import sys; sys.exit(sys.version_info < (3, 10))' 2>/dev/null ||
   miss "Python 3.10 or newer as python3 (the review tooling needs it)" "install Python 3.10+"
 reviewer=$(sed -n 's/^DEFAULT_REVIEWER="\(.*\)"$/\1/p' scripts/review.sh 2>/dev/null)
-if [ -n "$reviewer" ] && ! command -v "$reviewer" >/dev/null 2>&1; then
+# Resolved as review.sh resolves it: PATH first, then ~/.local/bin when codex is there.
+if [ -n "$reviewer" ] && ! ( [ -x "$HOME/.local/bin/codex" ] && PATH="$PATH:$HOME/.local/bin"
+                            command -v "$reviewer" ) >/dev/null 2>&1; then
   miss "the second CLI '$reviewer' that scripts/review.sh calls" "install and log in to $reviewer (docs/DEV_SETUP.md §3)"
 fi
 if [ -f scripts/spawn_worker.sh ] && ! command -v tmux >/dev/null 2>&1; then
@@ -121,7 +144,7 @@ fi
 # --- grep shadowed in the owner's interactive shell ----------------------------------
 # A function or alias that swaps grep for another engine, or forces colour into pipes, makes
 # a pipeline behave differently in the shell where it was tried than in the gate's sh. The
-# common `grep --color=auto` alias is harmless and passes. A child process cannot see its
+# common `grep --color=auto` alias is harmless and passes; any other option does not. A child process cannot see its
 # caller's functions, so this probes the login shell's rc files; a host tool may shadow
 # grep in its own shell too, which only `type grep` in that shell shows. An rc file that
 # prompts on /dev/tty (keychain, ssh-add, an updater) would hang the probe, hence the timeout
@@ -138,11 +161,10 @@ elif [ -n "${SHELL:-}" ]; then
     *function*) shadowed=1 ;;
     *alias*)
       expansion=${grep_is#*alias for }; expansion=${expansion#*aliased to }; expansion=${expansion#\`}
-      case "$expansion" in
-        *always*) shadowed=1 ;;
-        grep|"grep "*) ;;
-        *) shadowed=1 ;;
-      esac ;;
+      # grep plus colour options only: `grep -v` inverts every match, and --color=always
+      # puts escape codes into pipes.
+      printf '%s\n' "${expansion%\'}" | awk '$1 != "grep" { exit 1 }
+        { for (i = 2; i <= NF; i++) if ($i !~ /^--colou?r(=(auto|never))?$/) exit 1 }' || shadowed=1 ;;
   esac
   [ -z "$shadowed" ] ||
     miss "grep is shadowed in $SHELL ($grep_is)" "remove it from the rc file, or test gate pipelines with sh -c"

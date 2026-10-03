@@ -40,6 +40,9 @@ def main(argv=None, result_sink=None):
         raise ValueError("--repo must name the repository root")
     scope, ref = ("base", args.base) if args.base else (("commit", args.commit) if args.commit else ("uncommitted", None))
     head, fingerprint, diff = snapshot(repo, scope, ref)
+    # Captured with the snapshot: the usage record names what was reviewed even when the
+    # reference is deleted or moved before the review ends.
+    resolved = resolve(repo, scope, ref)
     if not diff.strip():
         raise ValueError("empty diff: nothing was reviewed")
     docs = os.environ.get("REVIEW_DOCS", "AGENTS.md, docs/ARCHITECTURE.md and docs/REVIEW_GATE.md")
@@ -126,7 +129,7 @@ def main(argv=None, result_sink=None):
     path, usage = agent_usage.record(repo, "codex", metadata["model"],
         os.environ.get("MYAGENTKIT_REQUESTER", "claude/unknown" if os.environ.get("CLAUDECODE") == "1" else "unspecified"),
         {"id": os.environ.get("MYAGENTKIT_TASK_ID", "review-" + scope), "kind": "review",
-         "scope": scope, "reference": ref, "resolved": resolve(repo, scope, ref), "head": head,
+         "scope": scope, "reference": ref, "resolved": resolved, "head": head,
          "fingerprint": fingerprint,
          "diff_sha256": metadata["diff_sha256"],
          "prompt_sha256": hashlib.sha256(prompt.encode()).hexdigest()},

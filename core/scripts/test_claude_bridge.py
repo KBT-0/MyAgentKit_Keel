@@ -15,7 +15,7 @@ import agent_usage
 ROOT = Path(__file__).resolve().parent
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. The kit gate reads this too.
-SUITE_MINIMUMS = {'test_claude_bridge': 54, 'test_agent_usage': 12, 'test_codex_quota': 3}
+SUITE_MINIMUMS = {'test_claude_bridge': 56, 'test_agent_usage': 12, 'test_codex_quota': 3}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -270,6 +270,41 @@ class BridgeTests(unittest.TestCase):
             self.assertEqual(code, 5)
             self.assertEqual(received[0]['failure_kind'], 'stale_checkout')
             self.assertEqual(verdicts_of(received[0]['evidence']), [])
+
+    def test_a_reference_deleted_during_review_keeps_its_usage_record(self):
+        # The reviewer ran and was paid for: its record must survive the deleted reference
+        # and name the commit that reference resolved to when the review started.
+        from contextlib import redirect_stdout
+        from io import StringIO
+        from unittest.mock import patch
+        import codex_bridge
+        original = self.git('rev-parse', 'HEAD').stdout.decode().strip()
+        (self.repo / 'file.py').write_text('final\n')
+        self.commit_fixture('Reviewed revision')
+        for main, args in ((bridge.main, ['review']),
+                           (codex_bridge.main, ['--model', 'fixture-codex-model'])):
+            self.git('update-ref', 'refs/heads/review-base', original)
+
+            def execution(command, prompt, repo, timeout):
+                self.git('update-ref', '-d', 'refs/heads/review-base')
+                if '-o' in command:
+                    Path(command[command.index('-o') + 1]).write_text('VERDICT: Accept\n')
+                    value = {'type': 'turn.completed', 'usage': {}}
+                else:
+                    value = {'type': 'result', 'subtype': 'success', 'is_error': False,
+                             'modelUsage': {'claude-opus-5': {}}, 'structured_output':
+                             {'verdict': 'Accept', 'findings': [], 'manual_checks': []}}
+                return {'exit_code': 0, 'stdout': json.dumps(value), 'stderr': '',
+                        'termination': None, 'duration_ms': 1}
+
+            received = []
+            with self.subTest(adapter='claude' if main is bridge.main else 'codex'), patch.dict(os.environ, self.review_env()), \
+                    patch('agent_process.run', side_effect=execution), redirect_stdout(StringIO()):
+                code = main([*args, '--repo', str(self.repo), '--base', 'review-base'], received.append)
+                self.assertEqual(code, 5)
+                self.assertEqual(received[0]['failure_kind'], 'stale_checkout')
+                usage = json.loads(Path(received[0]['usage_record']).read_text())
+                self.assertEqual(usage['task']['resolved'], original)
 
     def test_hidden_checkout_changes_reject_before_either_adapter_launches(self):
         from contextlib import redirect_stdout
@@ -932,6 +967,31 @@ if case == 'archive_failure':
                 self.assertIn(named, refused['error'])
                 self.assertIn('new task label', refused['error'])
         record.write_text(json.dumps(original))
+        self.assertEqual(self.run_bridge(env_extra=task)[0], 0)
+
+    def test_a_damaged_usage_record_stops_a_labelled_round(self):
+        # Skipping it would drop that round's findings unseen: the archive checks never run
+        # on a record that was never read.
+        task = {'MYAGENTKIT_TASK_ID': 'damaged-task'}
+        code, first = self.run_bridge('reject', env_extra=task)
+        self.assertEqual(code, 0, first)
+        record = Path(first['usage_record'])
+        original = record.read_text()
+        for damage in ('{"task": ', '[]', None):
+            with self.subTest(damage=damage):
+                if damage is None:
+                    if os.geteuid() == 0:
+                        continue  # root reads a mode-000 file; this case cannot be built here
+                    record.chmod(0)
+                else:
+                    record.write_text(damage)
+                try:
+                    code, refused = self.run_bridge(env_extra=task)
+                finally:
+                    record.chmod(0o600)
+                    record.write_text(original)
+                self.assertEqual(code, 2, refused)
+                self.assertIn(str(record), refused['error'])
         self.assertEqual(self.run_bridge(env_extra=task)[0], 0)
 
     def test_earlier_rounds_bind_the_change_not_the_reference_text(self):
