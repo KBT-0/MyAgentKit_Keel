@@ -269,7 +269,7 @@ def relabel_cancelled(repo: Path, usage_path: Path, evidence: str | None, text: 
     `text` is the archive re-rendered with the cancel; it replaces the one just published.
     The usage record is the authority and goes first, with the new archive's sha256: written
     second, a failure in between left the archive cancelled and the record quota. Now an
-    archive left unreplaced fails that sha256, and the error says so.
+    archive left unreplaced fails that sha256, and the error says what the bytes show.
     """
     value = json.loads(usage_path.read_text())
     archived = bool(evidence and os.path.isfile(evidence))
@@ -283,19 +283,17 @@ def relabel_cancelled(repo: Path, usage_path: Path, evidence: str | None, text: 
         try:
             write_evidence(repo, Path(evidence), text, private=True, replace=True)
         except (OSError, ValueError) as error:
-            # Say what the bytes on disk show, not what the failure suggests: a directory
-            # fsync can fail after the replacement itself landed, and the hashes then match.
+            # Say only what the bytes on disk show, never which step failed: the replacement
+            # can land and a later directory fsync or staging cleanup still raise.
             try:
                 current = hashlib.sha256(Path(evidence).read_bytes()).hexdigest()
-            except OSError:
-                current = None
-            if current == value["evidence_sha256"]:
-                state = "the archive was replaced but the write was not fully persisted"
+            except OSError as unread:
+                state = "could not be read (%s)" % unread
             else:
-                state = ("the archive could not be replaced, so its sha256 no longer "
-                         "matches the record")
-            raise OSError("the usage record says cancelled, but %s: %s (%s)"
-                          % (state, evidence, error)) from error
+                state = ("matches the record (sha256 %s)" % current
+                         if current == value["evidence_sha256"] else "does not match the record")
+            raise OSError("the usage record says cancelled; the archive %s on disk %s; "
+                          "the write reported: %s" % (evidence, state, error)) from error
     return value
 
 
