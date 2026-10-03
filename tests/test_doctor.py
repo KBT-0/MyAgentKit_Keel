@@ -87,7 +87,7 @@ class DoctorTests(unittest.TestCase):
             red = doctor()
             self.assertEqual(red.returncode, 1, red.stdout)
             self.assertIn('MISSING: grep is shadowed', red.stdout)
-            shell.write_text("#!/bin/sh\necho \"grep is aliased to \\\`grep --colour=auto'\"\n")
+            shell.write_text("#!/bin/sh\necho \"grep is aliased to \\`grep --colour=auto'\"\n")
             ready = doctor()
             self.assertEqual(ready.returncode, 0, ready.stdout + ready.stderr)
             shell.write_text('#!/bin/sh\necho "grep is an alias for grep --color=auto"\n')
