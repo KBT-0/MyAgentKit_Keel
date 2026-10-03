@@ -12,7 +12,8 @@
 #
 # ADDING A GATE: add the check, AND add a case to self_test(). A gate without a negative
 # test has not been proven to fail — it has only been seen passing, which is not the same
-# thing and never was.
+# thing and never was. A gate that reads an override for its case adds that variable to the
+# SELF-TEST SEAMS list below, or an exported copy of it turns the gate green in a normal run.
 #
 # EXIT CODES: 0 pass, 1 fail, 2 usage, 75 NOT RUN — another gate run held this checkout's
 # lock for longer than GATE_LOCK_WAIT=<seconds> allowed (unset: wait without limit, which is
@@ -22,7 +23,8 @@
 #
 # A SELF-TEST CASE NEVER CHANGES A TRACKED FILE, and writes nothing else inside the working
 # tree when it can avoid it. Point the gate at a synthetic file outside the tree through an
-# overridable variable (STATE_FILE, GATE_SELFTEST_EXTRA_FILE below), or run the case against
+# self-test seam (STATE_FILE, GATE_SELFTEST_EXTRA_FILE below; honoured only in the self-test's
+# own nested runs, so the case passes it to expect_fail or expect_pass), or run the case against
 # a disposable copy of the tree. A file injected into the tree is seen by a concurrent
 # `git add -A` and by another session's edits, and a killed self-test leaves it behind. The
 # gate lock below keeps other gate runs from seeing it; nothing else does. A case that must
@@ -37,8 +39,31 @@ set -u
 cd "$(dirname "$0")/.."
 fail=0
 
+# SELF-TEST SEAMS are honoured ONLY in the self-test's own nested runs. Each one exists so a
+# case can point a gate at a synthetic input, which means each one can also turn a gate green
+# without its work: GATE_BUILD_CMD_OVERRIDE=true skips the build, STATE_FILE reads another
+# file. The commit hook inherits the committer's environment, so a variable left exported in
+# a profile or a CI step, or typed by an agent facing a red build, did exactly that. A run
+# that finds one without the self-test's marker FAILS and names it; it does not unset it and
+# carry on, because then the run that someone believed was overridden reports on something
+# else. The marker is the lock holder's pid, exported only by self_test(), and is believed
+# only while this checkout's lock is held by that pid. A NEW SEAM JOINS THIS LIST.
+# GATE_LOCK_WAIT and GATE_LOCK_HELD are not seams: they change when a run starts, not what
+# it checks.
+lock_path=$(git rev-parse --git-path check.lock 2>/dev/null) || lock_path=.check.lock
+case "$lock_path" in /*) ;; *) lock_path="$(pwd -P)/$lock_path" ;; esac
+if [ -z "${GATE_SELFTEST_NESTED:-}" ] || [ "${GATE_LOCK_HELD:-}" != "$lock_path" ] ||
+   [ "$(readlink "$lock_path" 2>/dev/null)" != "$GATE_SELFTEST_NESTED" ]; then
+  for seam in GATE_BUILD_CMD_OVERRIDE STATE_FILE PROJECT_FILE BOUNDARY_CHECKS_FILE \
+              BOUNDARY_SELFTESTS_FILE GATE_SELFTEST_EXTRA_FILE GATE_SELFTEST_BREAK_SCANNER; do
+    eval "seam_value=\${$seam:-}"
+    [ -z "$seam_value" ] || { echo "FAIL [env]: $seam is set; self-test overrides are not honoured outside --self-test"; fail=1; }
+  done
+  [ "$fail" -eq 0 ] || exit 1
+fi
+
 # Overridable so the self-test can point the rot gate at a synthetic file instead of
-# mutating the real one. Nothing else sets it.
+# mutating the real one. Only the self-test sets it (the seam block above).
 STATE_FILE="${STATE_FILE:-docs/STATE.md}"
 
 # Toolchains are commonly installed per-user and then missing from the PATH of git hooks
@@ -53,7 +78,7 @@ case "$toolchain_path" in
 esac
 
 # Overridable so the self-test can prove these branches without mutating the repository.
-# Nothing else sets them.
+# Only the self-test sets them (the seam block above).
 BOUNDARY_CHECKS_FILE="${BOUNDARY_CHECKS_FILE:-scripts/boundary_checks.sh}"
 BOUNDARY_SELFTESTS_FILE="${BOUNDARY_SELFTESTS_FILE:-scripts/boundary_selftests.sh}"
 
@@ -81,8 +106,7 @@ filelist="$work/files"
 case "${GATE_LOCK_WAIT:-}" in
   *[!0-9]*) echo "FAIL [lock]: GATE_LOCK_WAIT must be a number of seconds, got '$GATE_LOCK_WAIT'."; exit 1 ;;
 esac
-lock_path=$(git rev-parse --git-path check.lock 2>/dev/null) || lock_path=.check.lock
-case "$lock_path" in /*) ;; *) lock_path="$(pwd -P)/$lock_path" ;; esac
+# lock_path is computed in the seam block above.
 if [ "${GATE_LOCK_HELD:-}" != "$lock_path" ]; then
   # A directory here (hand-made, or a mkdir-style lock) would let `ln -s` succeed INSIDE it,
   # so every run would "take" the lock and none would release it.
@@ -124,6 +148,8 @@ self_test() {
   # Outside the tree, added to the scanners' input through a test switch (see the file
   # list below), so a concurrent `git add -A` or a killed self-test cannot leave it behind.
   inj="$work/injected.md"
+  # The marker that lets this run's nested gates honour the seams (see the seam block).
+  GATE_SELFTEST_NESTED=$(readlink "$lock_path"); export GATE_SELFTEST_NESTED
 
   # A red tree cannot prove that a gate turns red: everything would "fail correctly".
   if ! baseline=$(sh "$0" 2>&1); then
@@ -196,6 +222,17 @@ self_test() {
     GATE_BUILD_CMD_OVERRIDE="false"
   expect_fail "an all-whitespace build/test command is unconfigured, not a no-op" \
     GATE_BUILD_CMD_OVERRIDE="  "
+
+  # --- a seam outside the self-test ---------------------------------------------
+  # Without the marker, an exported override fails the run by name instead of turning a red
+  # build green.
+  if (unset GATE_SELFTEST_NESTED; GATE_BUILD_CMD_OVERRIDE=false sh "$0" 2>&1) |
+     grep -q '^FAIL \[env\]: GATE_BUILD_CMD_OVERRIDE is set'; then
+    echo "  ok   — an override exported outside --self-test fails the gate by name"
+  else
+    echo "  FAIL — an override exported outside --self-test was honoured, not refused."
+    st_fail=1
+  fi
 
   # --- PROJECT.md navigability ------------------------------------------------
   proj_ok="$work/project_ok.md"; proj_bad="$work/project_bad.md"; proj_young="$work/project_young.md"

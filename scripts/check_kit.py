@@ -7,6 +7,7 @@ import io
 import os
 from pathlib import Path
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -115,25 +116,54 @@ def main():
         if args.self_test:
             with tempfile.TemporaryDirectory(prefix="myagentkit-side-") as side:
                 side = Path(side)
+                # A normal run refuses the self-test seams, so these cases set the build command
+                # the way a project does, in the copy's check.sh: it runs side/build.sh, which
+                # each case rewrites. Restored below; a failure discards the whole copy.
+                build = side / "build.sh"
+                gate = project / "scripts/check.sh"
+                original_gate = gate.read_text()
+                configured = 'build_test_cmd="test -f scripts/claude_bridge.py"'
+                if configured not in original_gate:
+                    raise RuntimeError("the synthetic project's build command line was not found")
+                gate.write_text(original_gate.replace(
+                    configured, f'build_test_cmd="sh {shlex.quote(str(build))}"'))
                 status = ["git", "status", "--porcelain", "--untracked-files=all"]
                 before = run(status, project)
                 # Every nested gate run records the tree through the build command, so a case
                 # that writes into the tree and cleans up afterwards is still caught.
                 log = side / "status.log"
+                build.write_text(f'{{ git status --porcelain --untracked-files=all; echo ==; }} >> "{log}"\n')
                 # GATE_LOCK_WAIT: a nested run that does not inherit the lock stops in seconds.
-                record = dict(os.environ, GATE_LOCK_WAIT="5", GATE_BUILD_CMD_OVERRIDE=(
-                    f'{{ git status --porcelain --untracked-files=all; echo ==; }} >> "{log}"'))
-                print(run(["sh", "scripts/check.sh", "--self-test"], project, env=record,
-                          reason="SELF-TEST: PASS").strip())
+                print(run(["sh", "scripts/check.sh", "--self-test"], project,
+                          env=dict(os.environ, GATE_LOCK_WAIT="5"), reason="SELF-TEST: PASS").strip())
                 seen = log.read_text().split("==\n")[:-1]
                 if not seen or any(s != before for s in seen) or run(status, project) != before:
                     raise RuntimeError("check.sh --self-test changed the working tree:\n"
                                        + "".join(s for s in seen if s != before))
                 print("PASS: git status of the project is unchanged at every nested gate run and after --self-test")
+                # Every self-test seam exported into a normal run fails it by name, including
+                # an override that would turn a red build green.
+                seams = {"GATE_BUILD_CMD_OVERRIDE": "true", "STATE_FILE": "docs/STATE.md",
+                         "PROJECT_FILE": "docs/PROJECT.md",
+                         "BOUNDARY_CHECKS_FILE": "scripts/boundary_checks.sh",
+                         "BOUNDARY_SELFTESTS_FILE": "scripts/boundary_selftests.sh",
+                         "GATE_SELFTEST_EXTRA_FILE": "docs/STATE.md",
+                         "GATE_SELFTEST_BREAK_SCANNER": "1"}
+                build.write_text("false\n")
+                own_lock = os.path.realpath(project) + "/.git/check.lock"
+                for name, value in seams.items():
+                    refused = f"FAIL [env]: {name} is set; self-test overrides are not honoured"
+                    for cmd in (["sh", "scripts/check.sh"], ["sh", "scripts/check.sh", "--self-test"]):
+                        run(cmd, project, expected=1, reason=refused, timeout=60,
+                            env=dict(os.environ, **{name: value}))
+                    # A copied marker without the lock it names is no marker.
+                    run(["sh", "scripts/check.sh"], project, expected=1, reason=refused, timeout=60,
+                        env=dict(os.environ, GATE_SELFTEST_NESTED=str(os.getpid()),
+                                 GATE_LOCK_HELD=own_lock, **{name: value}))
+                print("PASS: every self-test override exported into a normal run fails it by name")
                 # Two gate runs sharing one build directory: the second must wait, not race.
-                racy = dict(os.environ, GATE_BUILD_CMD_OVERRIDE=(
-                    f'mkdir "{side}/build" && sleep 2 && rmdir "{side}/build"'))
-                pair = [subprocess.Popen(["sh", "scripts/check.sh"], cwd=project, env=racy,
+                build.write_text(f'mkdir "{side}/build" && sleep 2 && rmdir "{side}/build"\n')
+                pair = [subprocess.Popen(["sh", "scripts/check.sh"], cwd=project,
                                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                          text=True) for _ in range(2)]
                 outputs = [p.communicate(timeout=60)[0] for p in pair]
@@ -141,6 +171,7 @@ def main():
                         or not any("NOTE [lock]" in o for o in outputs)):
                     raise RuntimeError("concurrent gate runs raced:\n" + "\n".join(outputs))
                 print("PASS: two concurrent gate runs sharing a build directory both pass")
+                build.write_text("true\n")
                 # A holder killed without cleanup must not block every later run.
                 dead = subprocess.Popen(["true"])
                 dead.wait()
@@ -159,20 +190,20 @@ def main():
                                  GATE_LOCK_HELD=str(side / "other-checkout.lock")), timeout=30)
                     out = run(["sh", "scripts/check.sh"], project, reason="CHECK: PASS", timeout=30,
                               env=dict(os.environ, GATE_LOCK_WAIT="2",
-                                       GATE_LOCK_HELD=os.path.realpath(project) + "/.git/check.lock"))
+                                       GATE_LOCK_HELD=own_lock))
                     if "NOTE [lock]" in out:
                         raise RuntimeError("a run given its own lock path waited:\n" + out)
                     # A run whose lock was taken over (a stale-reclaim race) leaves it alone.
                     lock.unlink()
-                    run(["sh", "scripts/check.sh"], project, reason="CHECK: PASS", timeout=30,
-                        env=dict(os.environ, GATE_BUILD_CMD_OVERRIDE=(
-                            f"rm -f .git/check.lock && ln -s {os.getpid()} .git/check.lock")))
+                    build.write_text(f"rm -f .git/check.lock && ln -s {os.getpid()} .git/check.lock\n")
+                    run(["sh", "scripts/check.sh"], project, reason="CHECK: PASS", timeout=30)
                     if not lock.is_symlink():
                         raise RuntimeError("a gate run removed a lock another run held")
                 finally:
                     lock.unlink(missing_ok=True)
                 print("PASS: a bounded lock wait stops with NOT RUN; only the own lock path is"
                       " inherited; a run removes only its own lock")
+                gate.write_text(original_gate)
             # The scanners read untracked files too (git ls-files --others), not only the index.
             marker = project / "untracked-marker.md"
             marker.write_text("{{SELF_TEST" + "_TOKEN}}\n")
