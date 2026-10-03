@@ -43,8 +43,12 @@ def require_private_storage(repo: Path, archive: Path | None = None) -> None:
                          'untrack private records before review')
 
 
-def write_evidence(repo: Path, path: Path, text: str, *, private: bool = False) -> None:
-    """Publish a complete, flushed archive exclusively; never replace prior evidence."""
+def write_evidence(repo: Path, path: Path, text: str, *, private: bool = False,
+                   replace: bool = False) -> None:
+    """Publish a complete, flushed archive exclusively; never replace prior evidence.
+
+    `replace` is for relabel_cancelled() alone: the records this call has just published.
+    """
     if not path.resolve().is_relative_to(repo.resolve()):
         raise ValueError("evidence path must remain inside the repository")
     if private:
@@ -56,7 +60,11 @@ def write_evidence(repo: Path, path: Path, text: str, *, private: bool = False) 
         stream.write(text)
         stream.flush()
         os.fsync(stream.fileno())
-        os.link(stream.name, path)
+        if replace:
+            os.link(stream.name, path.with_name(path.name + ".cancel"))
+            os.replace(path.with_name(path.name + ".cancel"), path)
+        else:
+            os.link(stream.name, path)
         directory = os.open(path.parent, os.O_RDONLY)
         try:
             os.fsync(directory)
@@ -243,6 +251,24 @@ def record(repo: Path, provider: str, model: str, requester: str, task: dict,
     path = directory / (stamp + ".json")
     write_evidence(repo, path, json.dumps(value, indent=2, allow_nan=False) + "\n", private=True)
     return path, value
+
+
+def relabel_cancelled(repo: Path, usage_path: Path, evidence: str | None, text: str) -> dict:
+    """Persist a cancel noted while the records were written: failed/cancelled in both.
+
+    The usage reporter reads these records, and a direct adapter call has no chain to keep the
+    cancel: once only the returned result said cancelled while both files still said quota.
+    `text` is the archive re-rendered with the cancel; it replaces the one just published.
+    """
+    value = json.loads(usage_path.read_text())
+    if evidence and os.path.isfile(evidence):
+        write_evidence(repo, Path(evidence), text, private=True, replace=True)
+        value["evidence_sha256"] = hashlib.sha256(text.encode()).hexdigest()
+    value.update(status="failed", failure_kind="cancelled")
+    value["recovery"]["action"] = "continue_independent_work"
+    write_evidence(repo, usage_path, json.dumps(value, indent=2, allow_nan=False) + "\n",
+                   private=True, replace=True)
+    return value
 
 
 def main():

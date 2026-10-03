@@ -507,6 +507,14 @@ def main(argv=None, result_sink=None) -> int:
         was_cancelled = bool(cancelled) or execution["termination"] == "cancelled"
         if was_cancelled and reason:
             reason = "cancelled"
+            evidence.update(status="failed", failure_kind=reason)
+            if usage_path:
+                try:
+                    agent_usage.relabel_cancelled(repo, usage_path, archived_path,
+                        render(stamp, evidence, args) if args.mode == "review"
+                        else json.dumps(evidence, indent=2) + "\n")
+                except (OSError, ValueError) as error:
+                    evidence["error"] = "Cancellation could not be persisted: " + str(error)
         evidence.update(failure_kind=reason, usage_record=str(usage_path) if usage_path else None)
         result = {"status": evidence["status"], "evidence": archived_path,
                   "fingerprint": fingerprint, "result": evidence.get("result"),

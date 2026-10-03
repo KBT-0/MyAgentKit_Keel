@@ -155,6 +155,13 @@ def main(argv=None, result_sink=None):
              "diff_sha256": metadata["diff_sha256"],
              "prompt_sha256": hashlib.sha256(prompt.encode()).hexdigest()},
             execution, status, reason, archived, report_text.encode())
+        # A cancel noted during either write is persisted too, not only returned: the usage
+        # reporter reads the records, and a direct call has no chain to keep it.
+        if (cancelled or execution["termination"] == "cancelled") and usage["failure_kind"]:
+            header.update(status="failed", failure_kind="cancelled")
+            report_text = agent_usage.report(stamp, header, None,
+                final or "No final message. Inspect the local usage record for diagnostics.")
+            usage = agent_usage.relabel_cancelled(repo, path, archived, report_text)
     finally:
         agent_process.restore(held)
     status, reason = usage["status"], usage["failure_kind"]
