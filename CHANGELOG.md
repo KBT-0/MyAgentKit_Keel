@@ -103,6 +103,19 @@ hand merge; `sync-kit.sh` now keeps listing them until you confirm (see "Sync st
   copy `claude_bridge.py`, `codex_bridge.py`, `agent_usage.py` and `agent_process.py` from
   `core/scripts/`; replace the existing-file example in your `scripts/boundary_selftests.sh`
   and merge the "disposable copy" bullet into `docs/WORKFLOW.md`.
+- **Fifth cross-model round.** The existing-file boundary example resolves its target and
+  gate physically and fails by name when either lies outside the disposable copy (a
+  symlinked parent directory carried the write into the checkout). The review adapters treat
+  any configured `filter.*.clean` or `process` key as a filter, whatever its value. A cancel
+  during the Codex quota read turns a failed attempt into `cancelled`, so `--fallback` never
+  starts a second reviewer after a cancel; the Claude adapter keeps its usage record when
+  cancelled during its final snapshot. `.githooks/commit-msg` honours `trailer.separators`.
+  `bootstrap.sh` stops a retrofit that kept a `pre-merge-commit` or `commit-msg` of its own.
+  `doctor.sh` checks an explicit list of required scripts and hooks and probes `node` with
+  the PATH the gate really uses (the login-less probe is a separate NOTE). The attribution
+  opt-out in the setup interview also removes the worker definition's bullet. **ACTION:**
+  copy the adapters from `core/scripts/` again; if you allow AI credit, delete the marked
+  block in `.claude/agents/worker.md`.
 - **Scan failures that were not scanner failures (issues #13, #14).** A tracked file deleted
   without `git rm` now fails `[scan]` under its own name with the command that fixes it, and
   every other scan still runs. A symlink to a directory (for example `node_modules` linked

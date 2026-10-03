@@ -488,6 +488,17 @@ return under uid 0 is a silent pass; prefer a failure every uid hits (a director
 file is expected), and verify the tool's exit code rather than assuming it (GNU `grep -q`
 returns 1 on a directory, not 2).
 
+#### Fifth cross-model round: new ground, not residue
+
+The fifth round found two High paths nobody had looked at: a disposable copy of the checkout
+made with `cp -R` keeps an absolute symlink, so a probe that checked only its last path
+component wrote through it into the real checkout; and a clean filter whose command is a
+single space is a valid shell no-op that `strip()` turned into "no filter". Both are the same
+lesson as the lock: resolve the identity (the physical path, the configured key), never the
+text. The round also showed a cancel arriving between a failed attempt and its quota read
+could still trigger `--fallback`, and that the installer's collision guard had not learned
+the two new hooks. Each fix was watched red first.
+
 #### The review gate held on the kit's own hardening
 
 Five of the nine work packages (the gate lock, both review-tooling packages, the commit gates
