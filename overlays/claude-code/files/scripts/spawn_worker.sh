@@ -2,7 +2,7 @@
 # Open a SEPARATE Claude Code worker session in tmux and hand it a brief file.
 #
 # Usage: spawn_worker.sh NAME BRIEF_FILE [--model M] [--settings JSON_OR_FILE]
-#                        [--allowed-tools LIST] [--worktree]
+#                        [--allowed-tools LIST] [--worktree] [--effort LEVEL]
 #
 # Why a separate session and not a sub-agent: a sub-agent's prompt cache lives 5 minutes and
 # a separate session's lives an hour, so a worker that waits on a long job re-writes its
@@ -31,13 +31,14 @@ name=$1; brief=$2; shift 2
 command -v tmux >/dev/null || die "tmux is not installed"
 command -v claude >/dev/null || die "claude is not on PATH"
 
-model=""; settings=""; tools=""; worktree=""
+model=""; settings=""; tools=""; worktree=""; effort=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --model)         model=$2; shift 2 ;;
     --settings)      settings=$2; shift 2 ;;
     --allowed-tools) tools=$2; shift 2 ;;
     --worktree)      worktree=1; shift ;;
+    --effort)        effort=$2; shift 2 ;;
     *) die "unknown option: $1" ;;
   esac
 done
@@ -48,6 +49,7 @@ tmux has-session -t "=$name" 2>/dev/null && die "tmux session '$name' already ex
 cmd="claude -n '$name'"
 [ -n "$model" ]    && cmd="$cmd --model '$model'"
 [ -n "$worktree" ] && cmd="$cmd -w '$name'"
+[ -n "$effort" ]   && cmd="$cmd --effort '$effort'"
 [ -n "$settings" ] && cmd="$cmd --settings '$settings'"
 [ -n "$tools" ]    && cmd="$cmd --allowedTools '$tools'"
 

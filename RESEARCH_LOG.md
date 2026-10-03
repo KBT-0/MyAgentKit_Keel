@@ -276,7 +276,10 @@ saw and did not take. Hence the rule set in the WORKFLOW template, the worker de
 the Claude Code overlay, the analyser, the interview question and the handoff line. Projected
 on the measured session, the cache lifetime alone removes about a third of the worker cost;
 with fresh workers capped at about 150 requests, 45 to 50 percent. The first real-task
-measurement is recorded in the founding project; this log takes its number once it exists.
+measurement (a separate session against a comparable sub-agent, same task, same model) is in
+`docs/worker-cost-setups.md`: gap re-writes fell from 49 to 1 percent of cache write, cost
+came out level because the task had a single wait over five minutes and the session's larger
+starting context ate the gain, so the one-hour sub-agent is the cheaper of the two equals.
 Not explained: about a third of the cost screen's cache-read volume appeared in no
 transcript (the permission classifier is the candidate).
 

@@ -32,7 +32,10 @@ from datetime import datetime
 from pathlib import Path
 
 GAP = 300  # seconds; the sub-agent cache lifetime
-POLL = re.compile(r'\bsleep\b|\bpgrep\b|\buntil\b|\bwait\b|\btail\b|ps aux|ps -ef|\.output\b')
+# Waiting, not working: a sleep, a process probe, a shell wait loop, `tail -f`. A plain `tail`
+# of a finished log or a Python run that happens to contain one of these words is work;
+# the first version matched those too and over-counted a real worker's poll turns by 4x.
+POLL = re.compile(r'(^|[;&|]\s*)(sleep|pgrep|wait)\b|\buntil\b.*;\s*do\b|\bwhile\b.*;\s*do\b|tail\s+-[a-zA-Z]*[fF]')
 POLL_TOOLS = {'TaskOutput', 'BashOutput', 'Monitor'}
 
 

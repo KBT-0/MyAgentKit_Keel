@@ -72,6 +72,14 @@ If the project has no such jobs, delete both files instead of filling them.
   lock that serialises heavy jobs, the memory ceiling, the environment variable a worktree
   needs. The interview's question 8 asks for them; without them the first worker learns them
   from a crash.
+- **The idle notice fires every time the worker parks on a background job**, not only at
+  the end: a session whose turn ended with a job running is "idle" to the harness, and the
+  same notice was delivered three times for one pilot. Subscribe once, and have the brief
+  end with a result FILE (plus, if the lead wants a push, one message from the worker);
+  re-subscribing on every notice is a poll loop in disguise.
+- **A spawned session takes the user's default effort level**, while a sub-agent inherits
+  its lead's. Pass `--effort` to the spawn script when the task does not need the high one;
+  `scripts/agent_cost.py` does not show effort, so grep the transcript for `"effort"`.
 - **Every message to an idle session is a full-context turn.** Ask the brief for a result
   FILE, subscribe once with `notify_when_idle`, and read the file.
 

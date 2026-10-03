@@ -36,6 +36,9 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   when" table for projects that cannot use the first choice (the one-hour cache ignored, no
   tmux, CI, a different host), and the alternatives the research pass rejected with their
   evidence. The WORKFLOW template's rule 1 points at it for the fallback.
+- The first real-task measurement is in `docs/worker-cost-setups.md`; `agent_cost.py`'s poll
+  detector no longer counts a Python run or a plain `tail` as waiting; `spawn_worker.sh` takes
+  `--effort`; the overlay README records that the idle notice fires on every background park.
 - `setup/INTERVIEW.md` asks question 8, "Will workers run jobs longer than five minutes?",
   and fills or deletes the worker files from the answer. It also asks what a worker must know
   before running those jobs, and the overlay README says to settle the permission mode of

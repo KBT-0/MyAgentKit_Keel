@@ -48,8 +48,18 @@ carry above row 3's figure and why they do not reach −52 percent on a small co
 
 Projected on the measured day (1,824 requests, 336 USD, 87 percent workers): the cache
 lifetime alone removes about a third of the worker cost; with fresh workers capped at about
-150 requests, 45 to 50 percent. The first measurement on a real task is recorded in the
-founding project and in `RESEARCH_LOG.md`.
+150 requests, 45 to 50 percent. The first real task (2026-10-03, founding project): the same pipeline task as a separate tmux
+session (setup 5, Opus, 107 requests, one 496-second background job) against a comparable
+sub-agent (setup 1, Opus, 110 requests). Cache write after gaps over five minutes fell from
+218k of 442k (49 percent) to 2k of 249k (1 percent): the mechanism works on a real worker.
+Cost equivalent, however, came out level (2.44M against 2.40M), because the task had only
+ONE wait over five minutes, the one-hour write costs twice the five-minute one on the first
+load, and the session started with a larger context (49k against 36k: its own system prompt
+and worktree banner) that every one of its 107 requests then re-read. So: the saving is
+proportional to the number of waits that outlive the five-minute cache (87 percent of all
+writes on the measured day, one wait here), and a sub-agent with the one-hour cache (setup
+6) keeps the smaller starting context, so it is the cheaper of the two equals; the session
+is for visibility. Both runs were at effort high.
 
 ## Which setup, when
 
