@@ -24,7 +24,7 @@ miss() { echo "MISSING: $1 — fix: $2"; missing=$((missing + 1)); }
 # here that saw a different PATH from the hook would prove nothing about the hook. The line
 # is evaluated, as check.sh's sh does, so "$HOME/..." expands here too.
 toolchain_path=""
-eval "$(sed -n '/^toolchain_path="\(.*\)"$/p' scripts/check.sh 2>/dev/null)"
+eval "$(sed -n '/^toolchain_path=".*"$/{p;q;}' scripts/check.sh 2>/dev/null)"
 case "$toolchain_path" in
   ""|*"{{"*) toolchain_path="" ;;
   *) PATH="$toolchain_path:$PATH"; export PATH ;;
@@ -94,11 +94,13 @@ fi
 # common `grep --color=auto` alias is harmless and passes. A child process cannot see its
 # caller's functions, so this probes the login shell's rc files; a host tool may shadow
 # grep in its own shell too, which only `type grep` in that shell shows. An rc file that
-# prompts on /dev/tty (keychain, ssh-add, an updater) would hang the probe, hence the timeout;
+# prompts on /dev/tty (keychain, ssh-add, an updater) would hang the probe, hence the timeout
+# (--foreground: a process group of its own stops an interactive shell on SIGTTIN; -k: an
+# interactive shell ignores SIGTERM);
 # macOS has no `timeout` and runs it without one. bash prints a function's whole body: the
 # first line is enough.
 if [ -n "${SHELL:-}" ]; then
-  limit=""; command -v timeout >/dev/null 2>&1 && limit="timeout 5"
+  limit=""; command -v timeout >/dev/null 2>&1 && limit="timeout --foreground -k 1 5"
   grep_is=$($limit "$SHELL" -ic 'command -V grep' </dev/null 2>/dev/null | head -1)
   shadowed=""
   case "$grep_is" in
