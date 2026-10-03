@@ -181,7 +181,8 @@ def prior_rounds(repo: Path, task_id: str | None, scope: str, reference: str | N
             mismatch = "head %s, not an ancestor of HEAD %s" % (earlier, head)
         if mismatch:
             raise BridgeError("an earlier review with task label %s has %s; that is another "
-                              "change, so use a new task label" % (task_id, mismatch))
+                              "change, a rebase, an amend or a --commit round, so use a new "
+                              "task label" % (task_id, mismatch))
         evidence = Path(value["evidence"]).resolve()
         if not evidence.is_relative_to((repo / "docs/reviews").resolve()) or not evidence.is_file():
             raise BridgeError("earlier review evidence for task %s is missing: %s; restore it or "
