@@ -35,6 +35,37 @@ class UsageTests(unittest.TestCase):
                 agent_usage.write_evidence(repo, report.with_name('new-review.md'), 'private', private=True)
             self.assertFalse(report.with_name('new-review.md').exists())
 
+    def test_a_failed_replacement_leaves_no_stageable_private_file(self):
+        # The cancel relabel staged its replacement as <archive>.cancel, a name no ignore rule
+        # matches: a failure before os.replace left raw reviewer output for `git add -A`.
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            subprocess.run(['git', 'init', '-q', str(repo)], check=True)
+            (repo / '.gitignore').write_text('/.myagentkit/\n/docs/reviews/*-review.md\n')
+            report = repo / 'docs/reviews/fixture-review.md'
+            agent_usage.write_evidence(repo, report, 'private output', private=True)
+            staged, link = [], agent_usage.os.link
+
+            def capture(source, target):
+                staged.append(target)
+                return link(source, target)
+
+            with patch.object(agent_usage.os, 'link', side_effect=capture), \
+                    patch.object(agent_usage.os, 'replace', side_effect=OSError('injected')), \
+                    self.assertRaisesRegex(OSError, 'injected'):
+                agent_usage.write_evidence(repo, report, 'cancelled output', private=True,
+                                           replace=True)
+            ignored = subprocess.run(['git', '-C', str(repo), 'check-ignore', '--quiet', '--no-index',
+                                      str(staged[0])], capture_output=True)
+            self.assertEqual(ignored.returncode, 0, 'replacement staging must be Git-ignored')
+            visible = subprocess.run(['git', '-C', str(repo), 'ls-files', '--others',
+                                      '--exclude-standard'], capture_output=True, text=True)
+            self.assertEqual(visible.stdout.split(), ['.gitignore'])
+            self.assertEqual([p.name for p in (repo / '.myagentkit/usage').iterdir()], [],
+                             'a failed replacement must remove its staging file')
+            self.assertEqual(report.read_text(), 'private output')
+
     def test_private_storage_cannot_follow_an_in_repo_symlink(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)

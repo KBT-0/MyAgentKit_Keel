@@ -161,7 +161,12 @@ def main(argv=None, result_sink=None):
             header.update(status="failed", failure_kind="cancelled")
             report_text = agent_usage.report(stamp, header, None,
                 final or "No final message. Inspect the local usage record for diagnostics.")
-            usage = agent_usage.relabel_cancelled(repo, path, archived, report_text)
+            try:
+                usage = agent_usage.relabel_cancelled(repo, path, archived, report_text)
+            except (OSError, ValueError) as error:
+                # Still a cancel, delivered as one: raising here lost the structured result.
+                print("FAIL [review]: cancellation could not be persisted: " + str(error))
+                usage = dict(usage, status="failed", failure_kind="cancelled")
     finally:
         agent_process.restore(held)
     status, reason = usage["status"], usage["failure_kind"]
