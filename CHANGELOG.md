@@ -178,6 +178,16 @@ hand merge; `sync-kit.sh` now keeps listing them until you confirm (see "Sync st
   `GIT_COMMON_DIR`. **ACTION:** port the symlink link-text scan into your `scripts/check.sh`;
   copy `agent_process.py`; if you adapted the existing-file example, add its TMPDIR check,
   the `unset` line and the `git rev-parse --show-toplevel` check.
+- **Full cross-model review, range B round 2.** `scripts/check.sh` hands a symlink to
+  `readlink` as `./name`, so a link named `--version` can no longer hide a marker in its
+  link text. `.githooks/commit-msg` rejects the message when `git config` fails to read
+  `trailer.separators`, `core.commentChar` or `core.commentString` (only an absent key means
+  the default), and matches a folded trailer only once all its lines are joined, so a human
+  name folded over several lines passes. A failed review round whose archive no longer
+  matches its usage record stops the next labelled round. The lock upgrade ACTION was
+  validated by assembling it literally onto the base version and running the result.
+  **ACTION:** copy the symlink scan line into your `scripts/check.sh`; copy
+  `.githooks/commit-msg`, `claude_bridge.py` and `test_claude_bridge.py` again.
 - **Scan failures that were not scanner failures (issues #13, #14).** A tracked file deleted
   without `git rm` now fails `[scan]` under its own name with the command that fixes it, and
   every other scan still runs. A symlink to a directory (for example `node_modules` linked

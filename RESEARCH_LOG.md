@@ -583,6 +583,19 @@ inherited `GIT_DIR`; a parsed separator list was trusted without checking that `
 guard names its inputs, list what else feeds the same step (cleanup, environment, a helper's
 exit status, empty versus unset) and test one of each.
 
+#### Range B, round 2: an ACTION is validated by assembling it
+
+Four fail-open paths and one false claim. `readlink "$p"` took a link named `--version` as
+an option, so its link text was never scanned (`./` is the POSIX-safe terminator); `git
+config` read errors fell back to the default exactly like an absent key, and the default let
+`Co-Authored-By=Claude` through (exit 1 is the only absent status); cumulative unfolding
+matched an intermediate value of a folded human name (a whole-name rule may see only a
+completed value); the changelog said later rounds refuse an archive a failed relabel could
+not replace, but failed records were skipped before hashing. And the lock upgrade ACTION,
+applied literally to the base version, left `$gate` unset so every commit stopped under
+`set -u`: found only by assembling the upgrade from the text and running it. Rule: an
+ACTION that moves code is validated that way before it ships.
+
 #### The review gate held on the kit's own hardening
 
 Five of the nine work packages (the gate lock, both review-tooling packages, the commit gates
