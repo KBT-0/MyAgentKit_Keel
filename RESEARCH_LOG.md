@@ -519,6 +519,17 @@ fallback contradicts it. Lesson: a test asserts the artefact the next reader con
 a platform-dependent guarantee branches on the same capability probe the code uses, with
 the other branch run on Linux by hiding the tool.
 
+#### Eighth cross-model round: a fix's own temporary file
+
+The previous round's relabel staged its replacement archive under a name the shipped ignore
+rules did not match, so a crash between link and replace would have left private reviewer
+output where `git add -A` picks it up; and its two writes had no order, so a failure between
+them left the archive and the record disagreeing. Staging now lives in the ignored usage
+directory that is already verified with `git check-ignore`, the record is written first, and
+a failed archive replacement is reported as the hash mismatch that later rounds refuse.
+Lesson: every file a fix creates, however briefly, is subject to the same privacy gate as the
+file it replaces.
+
 #### The review gate held on the kit's own hardening
 
 Five of the nine work packages (the gate lock, both review-tooling packages, the commit gates

@@ -131,6 +131,11 @@ hand merge; `sync-kit.sh` now keeps listing them until you confirm (see "Sync st
   archived header say failed/cancelled, so the usage reporter and direct adapter calls see
   it. The doctor test asserts descendant cleanup only where `setsid` exists and the NOTE
   elsewhere (stock macOS). **ACTION:** copy the synced adapters and `agent_usage.py` again.
+- **Eighth cross-model round.** The cancel relabel stages its replacement archive inside
+  the verified-ignored usage directory (a crash can no longer leave stageable reviewer
+  output), writes the usage record first as the authoritative one, and reports an archive
+  that could not be replaced as a hash mismatch that later rounds refuse. **ACTION:** copy
+  the synced `agent_usage.py` and `codex_bridge.py` again.
 - **Scan failures that were not scanner failures (issues #13, #14).** A tracked file deleted
   without `git rm` now fails `[scan]` under its own name with the command that fixes it, and
   every other scan still runs. A symlink to a directory (for example `node_modules` linked
