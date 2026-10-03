@@ -150,6 +150,16 @@ hand merge; `sync-kit.sh` now keeps listing them until you confirm (see "Sync st
   `docs/REVIEW_GATE.md` says a signal while a completed review is being finalised keeps it
   completed. **ACTION:** copy `agent_process.py`, `claude_bridge.py`, `test_agent_usage.py`,
   `test_claude_bridge.py` and the REVIEW_GATE paragraph from core.
+- **Full cross-model review of the integrated tree, round 1.** The gate lock is inherited
+  only through the descriptor that holds it: an independently opened descriptor to the lock
+  file, with the holder's pid copied, passed the check and bypassed both the lock and the
+  seam guard. A cancel during a reviewer's cleanup is returned as its own fact, so a zero-exit
+  error result (429) that was cancelled no longer starts the fallback reviewer. The
+  existing-file probe refuses a symlinked gate or target. `doctor.sh` reads the grep probe
+  only between delimiters, so an rc-file banner is no longer taken for the answer.
+  `.githooks/commit-msg` rejects a quoted tool display name. **ACTION:** copy the
+  lock-inheritance Python block from `core/scripts/check.sh` into your `scripts/check.sh`;
+  copy the adapters again; add the `[ -L ... ]` refusal to a copy-based probe of your own.
 - **Scan failures that were not scanner failures (issues #13, #14).** A tracked file deleted
   without `git rm` now fails `[scan]` under its own name with the command that fixes it, and
   every other scan still runs. A symlink to a directory (for example `node_modules` linked

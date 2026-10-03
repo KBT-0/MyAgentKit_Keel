@@ -556,6 +556,18 @@ missing"). Rule: a split review splits a CONSISTENT tree by commits, never by pa
 mechanically generated copies (the plugin runtime) push a diff over the budget, review the
 tree with those copies reverted and let the parity check vouch for them.
 
+#### The full review of the integrated tree, round 1
+
+Reviewed as one consistent tree with the generated plugin copies reverted (parity by
+`package_codex_plugin.py --check`), it returned Reject: one High, four Medium, one Low, all
+fixed with negative tests watched red. Each finding had the same shape: a check that proved
+a weaker fact than it claimed. The lock check proved someone held the lock, not this
+descriptor; cleanup equated zero exit with completion before the response was read; the
+probe guard resolved parents but not the gate itself; doctor trusted the shell's first
+output line; the attribution check matched only an unquoted name. Rule: state exactly what a
+check must prove about the object it was handed, and add the case where a neighbouring
+object satisfies the weaker version.
+
 #### The review gate held on the kit's own hardening
 
 Five of the nine work packages (the gate lock, both review-tooling packages, the commit gates
