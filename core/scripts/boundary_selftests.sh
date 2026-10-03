@@ -47,7 +47,10 @@
 # took the write back into the checkout: the target and the gate are resolved physically
 # and must lie inside the copy, and neither may itself be a symlink (an absolute one at the
 # gate ran a gate that resolves its own location against the checkout), else the case fails
-# by name. Copying a
+# by name. The copy itself must lie outside the checkout (a TMPDIR set to the checkout put
+# it, and a SIGKILL's leftovers, in the working tree), and git inside it must work on the
+# copy: an exported GIT_DIR and GIT_WORK_TREE made a gate that finds its root with
+# `git rev-parse --show-toplevel` build in the checkout. Copying a
 # large tree (dependencies, build output) costs time: copy only what the gate reads if that
 # is known, but never let the probe write into the checkout.
 #
@@ -56,15 +59,27 @@
 # path, is the one it runs. Adapt the target and diagnostic to your gate.
 #
 # | if (
+# |   probe_checkout=$(pwd -P) || exit 1
 # |   probe_copy=$(mktemp -d) || exit 1
 # |   trap 'rm -rf "$probe_copy"' EXIT
 # |   trap 'exit 130' INT
 # |   trap 'exit 143' TERM
+# |   probe_copy=$(cd -P "$probe_copy" && pwd -P) || exit 1
+# |   case "$probe_copy/" in
+# |     "$probe_checkout"/*) echo "  FAIL — existing-file probe: the disposable copy ($probe_copy) is inside the checkout; set TMPDIR outside it."
+# |        exit 1 ;;
+# |   esac
 # |   cp -R . "$probe_copy/checkout" && cd "$probe_copy/checkout" || exit 1
+# |   unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR
 # |   probe_gate=$PWD/$(basename "$(dirname "$0")")/${0##*/}
 # |   probe_target=src/domain/existing.py
 # |   [ -f "$probe_target" ] && [ ! -L "$probe_target" ] || exit 1
 # |   probe_root=$(pwd -P) || exit 1
+# |   if probe_top=$(git rev-parse --show-toplevel 2>/dev/null) &&
+# |       [ "$(cd -P "$probe_top" && pwd -P)" != "$probe_root" ]; then
+# |     echo "  FAIL — existing-file probe: git inside the disposable copy works on $probe_top; refusing to run."
+# |     exit 1
+# |   fi
 # |   for probe_path in "$probe_target" "$probe_gate"; do
 # |     if [ -L "$probe_path" ]; then
 # |       echo "  FAIL — existing-file probe: $probe_path is a symlink, which can lead out of the disposable copy; refusing to run."

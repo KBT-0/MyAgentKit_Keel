@@ -338,7 +338,19 @@ def main():
                 run(["sh", "scripts/check.sh"], project, reason="NOTE [scan]: skipped node_modules")
             finally:
                 link.unlink()
-            print("PASS: a deleted tracked file is named, a directory symlink is skipped with a note")
+            # Git tracks a symlink's link text: a dangling link whose text holds an unfilled
+            # marker was skipped whole and passed the setup gate. Assembled, never literal.
+            link = project / "config-link"
+            os.symlink("{{" + "CONFIG_DIR}}/config.json", link)
+            run(["git", "add", link.name], project)
+            try:
+                run(["sh", "scripts/check.sh"], project, expected=1,
+                    reason="symlink config-link -> {{" + "CONFIG_DIR}}/config.json")
+            finally:
+                run(["git", "rm", "-q", "--cached", link.name], project)
+                link.unlink()
+            print("PASS: a deleted tracked file is named, a directory symlink is skipped with a note,"
+                  " a symlink's link text is scanned")
             tests = project / "scripts/test_claude_bridge.py"
             original_tests = tests.read_bytes()
             tests.unlink()

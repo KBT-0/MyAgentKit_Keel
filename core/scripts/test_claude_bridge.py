@@ -474,6 +474,46 @@ class BridgeTests(unittest.TestCase):
                 self.assertTrue(chain['attempts'][0]['cancelled'])
                 self.persisted_cancel(chain['attempts'][0])
 
+    def test_a_cancel_during_cleanup_after_a_launch_failure_never_starts_the_fallback(self):
+        # A CLI that cannot be launched returned 'unavailable' before cleanup: a cancel noted
+        # while the prompt file and the selector closed was dropped, and --fallback launched
+        # the other paid reviewer after the cancel.
+        from contextlib import redirect_stdout
+        from io import StringIO
+        import selectors
+        import signal
+        from unittest.mock import patch
+        import agent_process
+        import review_dispatch
+        real_run = agent_process.run
+
+        def absent(command, prompt, repo, timeout):
+            launched.append(command[0])
+            return real_run([str(self.root / 'absent-cli')], prompt, repo, timeout)
+
+        class CancelOnClose(selectors.DefaultSelector):
+            def close(self):
+                os.kill(os.getpid(), signal.SIGTERM)
+                super().close()
+
+        for primary in ('claude', 'codex'):
+            launched, out = [], StringIO()
+            with self.subTest(primary=primary), patch.dict(os.environ, self.review_env()), \
+                    patch('agent_process.run', side_effect=absent), \
+                    patch.object(agent_process.selectors, 'DefaultSelector', CancelOnClose), \
+                    redirect_stdout(out):
+                code = review_dispatch.main(['--repo', str(self.repo), '--uncommitted',
+                                             '--reviewer', primary, '--allow-fallback',
+                                             '--claude-model', 'claude-opus-5',
+                                             '--codex-model', 'fixture-codex-model'])
+                self.assertEqual(len(launched), 1, 'a cancelled review launched the other '
+                                 'reviewer:\n' + out.getvalue())
+                self.assertNotEqual(code, 0)
+                chain = json.loads(next(line.removeprefix('review dispatch: ') for line in
+                                        out.getvalue().splitlines() if line.startswith('review dispatch: ')))
+                self.assertEqual(chain['failure_kind'], 'cancelled')
+                self.assertTrue(chain['attempts'][0]['cancelled'])
+
     def test_a_cancel_whose_archive_replacement_fails_is_still_recorded_and_returned(self):
         # The relabel replaced the archive before the usage record, so a failure between the
         # two left the archive saying cancelled and the record quota, and the Codex adapter

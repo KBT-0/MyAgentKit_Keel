@@ -156,5 +156,56 @@ exit 1
             self.assertIn('is a symlink', result.stdout)
             self.assertNotIn('  ok   — ', result.stdout)
 
+    def fixture(self, tmp, gate_body):
+        example = '\n'.join(line[4:] for line in (Path(__file__).resolve().parents[1] /
+                            'core/scripts/boundary_selftests.sh').read_text().splitlines()
+                            if line.startswith('# | '))
+        root = Path(tmp) / 'project'
+        (root / 'src/domain').mkdir(parents=True)
+        (root / 'src/domain/existing.py').write_bytes(b'committed original\n')
+        (root / 'scripts').mkdir()
+        (root / 'scripts/check.sh').write_text(
+            '#!/bin/sh\ncd "$(dirname "$0")/.."\n'
+            'if [ "${1:-}" = --self-test ]; then\n  st_fail=0\n' + example +
+            '\n  exit "$st_fail"\nfi\n' + gate_body +
+            "grep -q 'myapp.web' src/domain/existing.py || exit 0\n"
+            "echo 'FAIL [boundary]: the domain layer imports the web layer:'\nexit 1\n")
+        git = lambda *args: subprocess.run(['git', *args], cwd=root, check=True,
+                                           capture_output=True, text=True).stdout
+        git('init', '-q')
+        git('add', '.')
+        git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
+            '-c', 'core.hooksPath=/dev/null', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'fixture')
+        return root, git
+
+    def test_a_tmpdir_inside_the_checkout_is_refused(self):
+        # mktemp -d honours TMPDIR: set to the checkout, the copy went into the working tree,
+        # and a SIGKILL left it there.
+        with tempfile.TemporaryDirectory() as tmp:
+            root, git = self.fixture(tmp, '')
+            status = git('status', '--porcelain', '--ignored')
+            result = subprocess.run(['sh', 'scripts/check.sh', '--self-test'], cwd=root, capture_output=True,
+                                    text=True, timeout=30, env=dict(os.environ, TMPDIR=str(root)))
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn('the disposable copy', result.stdout)
+            self.assertIn('is inside the checkout', result.stdout)
+            self.assertNotIn('  ok   — ', result.stdout)
+            self.assertEqual(git('status', '--porcelain', '--ignored'), status)
+
+    def test_an_inherited_git_dir_cannot_point_the_copy_at_the_checkout(self):
+        # cd into the copy kept an exported GIT_DIR and GIT_WORK_TREE: a gate that finds its
+        # root through git built in the checkout while both path guards passed.
+        with tempfile.TemporaryDirectory() as tmp:
+            root, git = self.fixture(tmp, ': > "$(git rev-parse --show-toplevel)/built-here"\n')
+            scratch = Path(tmp) / 'scratch'
+            scratch.mkdir()
+            result = subprocess.run(['sh', 'scripts/check.sh', '--self-test'], cwd=root, capture_output=True,
+                                    text=True, timeout=30,
+                                    env=dict(os.environ, TMPDIR=str(scratch), GIT_DIR=str(root / '.git'),
+                                             GIT_WORK_TREE=str(root)))
+            self.assertFalse((root / 'built-here').exists(), 'the copy\'s gate built in the checkout')
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('  ok   — ', result.stdout)
+
 if __name__ == '__main__':
     unittest.main()

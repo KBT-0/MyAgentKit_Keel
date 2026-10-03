@@ -137,13 +137,17 @@ configured=$(sed -n 's/^DEFAULT_REVIEWER="\(.*\)"$/\1/p' scripts/review.sh 2>/de
 if [ -f scripts/review.sh ] && [ -z "$configured" ]; then
   miss "scripts/review.sh names no reviewer doctor can read (a DEFAULT_REVIEWER=\"claude\" or \"codex\" line)" "set DEFAULT_REVIEWER=\"claude\" or DEFAULT_REVIEWER=\"codex\" on a line of its own in scripts/review.sh"
 fi
+# An override set to empty is not unset: the adapters read it with os.environ.get and run
+# an empty command, so it is MISSING here, never read as the default.
 reviewer=${REVIEW_REVIEWER:-$configured}
 case "$reviewer" in
-  codex) reviewer_cli=${REVIEW_CLI_BIN:-codex} ;;
-  claude) reviewer_cli=${CLAUDE_CLI_BIN:-claude} ;;
+  codex) reviewer_cli=${REVIEW_CLI_BIN-codex}; override=REVIEW_CLI_BIN ;;
+  claude) reviewer_cli=${CLAUDE_CLI_BIN-claude}; override=CLAUDE_CLI_BIN ;;
   *) reviewer_cli=$reviewer ;;
 esac
-if [ -n "$reviewer" ] && ! ( [ -x "$HOME/.local/bin/codex" ] && PATH="$PATH:$HOME/.local/bin"
+if [ -n "$reviewer" ] && [ -z "$reviewer_cli" ]; then
+  miss "$override is set to empty, so scripts/review.sh would run an empty command for $reviewer" "unset $override, or set it to the $reviewer executable"
+elif [ -n "$reviewer" ] && ! ( [ -x "$HOME/.local/bin/codex" ] && PATH="$PATH:$HOME/.local/bin"
                             command -v "$reviewer_cli" ) >/dev/null 2>&1; then
   miss "the second CLI '$reviewer_cli' that scripts/review.sh calls" "install and log in to $reviewer (docs/DEV_SETUP.md §3)"
 fi
