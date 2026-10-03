@@ -8,7 +8,7 @@
 # Each trap it finds prints one line, "MISSING: <what> — fix: <command>", and the run exits
 # 1. It changes nothing: the fixes are printed for the owner to run, never run here. The one
 # exception to "read-only" is the grep probe below, which runs the owner's interactive shell
-# rc files ($SHELL -ic) under a 5 s timeout where `timeout` exists.
+# rc files ($SHELL -ic) under a 5 s timeout, and only where `timeout` exists.
 #
 # Why it exists: every trap below made a gate fail on a machine for a reason unrelated to
 # the change being tested, and each one looked like a code failure and cost a session to
@@ -45,7 +45,8 @@ esac
 
 # --- the executable bit, on disk AND in the index -------------------------------------
 # On disk for this machine; in the index for CI and the next clone, where a 100644 script
-# dies with exit 126 although it ran fine here (docs/GOTCHAS.md). Only files with a #! line:
+# dies with exit 126 although it ran fine here (docs/GOTCHAS.md), and a script missing from
+# the index is not in the next clone at all: the index must say 100755. Only files with a #! line:
 # the boundary files are sourced, not executed, and need no bit. The same files must have
 # LF line endings: "#!/bin/sh<CR>" is a bad interpreter and "set -eu<CR>" an invalid option.
 for f in scripts/*.sh .githooks/* .claude/hooks/*.sh; do
@@ -56,7 +57,9 @@ for f in scripts/*.sh .githooks/* .claude/hooks/*.sh; do
     miss "$f has CRLF line endings" "tr -d '\\r' < $f > $f.lf && cat $f.lf > $f && rm $f.lf; git config core.autocrlf input"
   fi
   mode=$(git ls-files -s -- "$f" 2>/dev/null | cut -d' ' -f1)
-  if [ ! -x "$f" ] || [ "$mode" = 100644 ]; then
+  if [ -z "$mode" ]; then
+    miss "$f is not in the git index (the next clone will not have it)" "chmod +x $f && git add --chmod=+x $f"
+  elif [ ! -x "$f" ] || [ "$mode" != 100755 ]; then
     miss "$f is not executable (disk or git index)" "chmod +x $f && git update-index --chmod=+x $f"
   fi
 done
@@ -105,11 +108,13 @@ fi
 
 # --- an npm cache this user cannot write ---------------------------------------------
 # One `sudo npm` leaves root-owned files in the cache, and every later install as the user
-# fails with EACCES. Two levels deep is where they land; the full cache can be huge. npm
+# fails with EACCES. Three levels deep is where they land, the third level included (it was
+# once pruned before its owner was read); the full cache can be huge. npm
 # itself is not asked (`npm config get` writes a log and the cache dir), so a cache moved
 # only in an .npmrc is not seen.
 cache=${npm_config_cache:-$HOME/.npm}
-if [ -d "$cache" ] && [ -n "$(find "$cache" -path "$cache/*/*/*" -prune -o ! -user "$(id -u)" -print 2>/dev/null | head -1)" ]; then
+uid=$(id -u)
+if [ -d "$cache" ] && [ -n "$(find "$cache" -path "$cache/*/*/*" -prune ! -user "$uid" -print -o ! -user "$uid" -print 2>/dev/null | head -1)" ]; then
   miss "files in the npm cache $cache are owned by another user" "sudo chown -R $(id -u):$(id -g) $cache"
 fi
 
@@ -121,12 +126,13 @@ fi
 # grep in its own shell too, which only `type grep` in that shell shows. An rc file that
 # prompts on /dev/tty (keychain, ssh-add, an updater) would hang the probe, hence the timeout
 # (--foreground: a process group of its own stops an interactive shell on SIGTTIN; -k: an
-# interactive shell ignores SIGTERM);
-# macOS has no `timeout` and runs it without one. bash prints a function's whole body: the
-# first line is enough.
-if [ -n "${SHELL:-}" ]; then
-  limit=""; command -v timeout >/dev/null 2>&1 && limit="timeout --foreground -k 1 5"
-  grep_is=$($limit "$SHELL" -ic 'command -V grep' </dev/null 2>/dev/null | head -1)
+# interactive shell ignores SIGTERM). Stock macOS has no `timeout`, and an unbounded probe
+# there could block every session start, so it is skipped with a note. bash prints a
+# function's whole body: the first line is enough.
+if [ -n "${SHELL:-}" ] && ! command -v timeout >/dev/null 2>&1; then
+  echo "NOTE: grep probe skipped, no timeout on this machine"
+elif [ -n "${SHELL:-}" ]; then
+  grep_is=$(timeout --foreground -k 1 5 "$SHELL" -ic 'command -V grep' </dev/null 2>/dev/null | head -1)
   shadowed=""
   case "$grep_is" in
     *function*) shadowed=1 ;;

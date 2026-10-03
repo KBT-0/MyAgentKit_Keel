@@ -47,6 +47,32 @@ class DoctorTests(unittest.TestCase):
             self.assertIn('MISSING: .claude/hooks/gate_on_stop.sh is not executable', red.stdout)
             hook.chmod(0o755)
 
+            # Executable on disk but not in the index: the next clone does not have it at all.
+            git('rm', '-q', '--cached', '.claude/hooks/gate_on_stop.sh')
+            red = doctor()
+            self.assertEqual(red.returncode, 1, red.stdout)
+            self.assertIn('MISSING: .claude/hooks/gate_on_stop.sh is not in the git index', red.stdout)
+            self.assertEqual(red.stdout.count('MISSING:'), 1, red.stdout)
+            git('add', '.claude/hooks/gate_on_stop.sh')
+
+            # Without `timeout` (stock macOS) an rc file that waits on the terminal would hang
+            # the probe, and with it every session start: the probe is skipped and says so.
+            no_timeout = tmp / 'no-timeout-bin'
+            no_timeout.mkdir()
+            for directory in env['PATH'].split(os.pathsep):
+                if os.path.isdir(directory):
+                    for name in os.listdir(directory):
+                        if name != 'timeout' and not (no_timeout / name).exists():
+                            (no_timeout / name).symlink_to(Path(directory) / name)
+            shell.write_text('#!/bin/sh\nsleep 60\n')
+            try:
+                skipped = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=project, capture_output=True,
+                                         text=True, env=dict(env, PATH=str(no_timeout)), timeout=20)
+            except subprocess.TimeoutExpired:
+                self.fail('doctor.sh ran the shell probe without a time limit')
+            self.assertEqual(skipped.returncode, 0, skipped.stdout + skipped.stderr)
+            self.assertIn('NOTE: grep probe skipped, no timeout on this machine', skipped.stdout)
+
             shell.write_text('#!/bin/sh\necho "grep is an alias for ugrep"\n')
             red = doctor()
             self.assertEqual(red.returncode, 1, red.stdout)
