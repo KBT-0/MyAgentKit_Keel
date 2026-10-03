@@ -57,6 +57,20 @@ class SyncKitTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn('cannot scan the changelog for ACTION items', result.stderr)
 
+    def test_a_signal_while_printing_the_checklist_keeps_the_stamp(self):
+        # A handler that only cleaned up let the run resume with the pending list deleted,
+        # which reads as "no ACTION items", and stamp the version.
+        with tempfile.TemporaryDirectory() as tmp:
+            shims = Path(tmp) / 'shims'
+            shims.mkdir()
+            (shims / 'cat').write_text('#!/bin/sh\nkill -TERM "$PPID"\nexec "%s" "$@"\n'
+                                       % shutil.which('cat'))
+            (shims / 'cat').chmod(0o755)
+            env = dict(os.environ, PATH=str(shims) + os.pathsep + os.environ['PATH'])
+            result, stamp = self.sync(tmp, ACTION, env=env)
+            self.assertEqual(stamp, '0.1', 'stamped after SIGTERM during the checklist')
+            self.assertEqual(result.returncode, 143, result.stdout + result.stderr)
+
 
 if __name__ == '__main__':
     unittest.main()

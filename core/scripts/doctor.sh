@@ -26,6 +26,8 @@ miss() { echo "MISSING: $1 — fix: $2"; missing=$((missing + 1)); }
 # is READ, never run: evaluating it executed whatever a project wrote there, so a read-only
 # check ran `$(...)` from a configuration line. $NAME and ${NAME} are expanded from the
 # environment, as check.sh's sh would; any other shell syntax is reported, not guessed at.
+# An UNSET variable is reported too: check.sh's `set -u` stops on it, so expanding it to
+# nothing reported a ready machine whose gate could not start.
 toolchain_path=$(sed -n '/^toolchain_path=".*"$/{p;q;}' scripts/check.sh 2>/dev/null)
 toolchain_path=${toolchain_path#toolchain_path=\"}; toolchain_path=${toolchain_path%\"}
 unsupported=""
@@ -38,9 +40,16 @@ case "$toolchain_path" in
          if (match(s, /^[{][A-Za-z_][A-Za-z0-9_]*[}]/)) name = substr(s, 2, RLENGTH - 2)
          else if (match(s, /^[A-Za-z_][A-Za-z0-9_]*/)) name = substr(s, 1, RLENGTH)
          else exit 1
+         if (!(name in ENVIRON)) { print name; exit 2 }
          out = out ENVIRON[name]; s = substr(s, RLENGTH + 1)
        }
-       print out s }') || unsupported=1 ;;
+       print out s }')
+     case $? in
+       0) ;;
+       2) miss "toolchain_path refers to \$$expanded, which is not set" "export $expanded in the environment the gate runs in, or write the path in scripts/check.sh"
+          expanded="" ;;
+       *) unsupported=1 ;;
+     esac ;;
 esac
 if [ -n "$unsupported" ]; then
   expanded=""

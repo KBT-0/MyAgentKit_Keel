@@ -1,9 +1,11 @@
 """doctor.sh must go red on a machine trap and stay green on a ready synthetic machine."""
 import os
 from pathlib import Path
+import select
 import signal
 import subprocess
 import tempfile
+import time
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -21,11 +23,22 @@ class DoctorTests(unittest.TestCase):
             for tool in ('claude', 'codex', 'tmux'):
                 (bin_dir / tool).write_text('#!/bin/sh\nexit 0\n')
                 (bin_dir / tool).chmod(0o755)
-            # A controlled timeout, so the grep probe runs whether or not this host has one;
-            # it drops timeout's options and duration and runs the command.
+            # A controlled timeout, so the grep probe runs whether or not this host has one.
+            # It enforces its seconds and kills the command's whole process group, as the real
+            # one does: a stand-in that only ran the command proved no bound at all.
             (bin_dir / 'timeout').write_text(
-                '#!/bin/sh\nwhile case "$1" in -*|[0-9]*) true ;; *) false ;; esac; do shift; done\n'
-                'exec "$@"\n')
+                '#!/usr/bin/env python3\n'
+                'import os, signal, subprocess, sys\n'
+                'args = sys.argv[1:]\n'
+                'while args[0].startswith("-"):\n'
+                '    args = args[2:] if args[0] == "-k" else args[1:]\n'
+                'child = subprocess.Popen(args[1:], start_new_session=True)\n'
+                'try:\n'
+                '    sys.exit(child.wait(timeout=float(args[0])))\n'
+                'except subprocess.TimeoutExpired:\n'
+                '    os.killpg(child.pid, signal.SIGKILL)\n'
+                '    child.wait()\n'
+                '    sys.exit(124)\n')
             (bin_dir / 'timeout').chmod(0o755)
             shell = bin_dir / 'fake-shell'
             # The common colour alias is harmless and must stay green.
@@ -103,6 +116,26 @@ class DoctorTests(unittest.TestCase):
                         pid_file.unlink()
                 self.assertEqual(probed.returncode, 0, probed.stdout + probed.stderr)
                 self.assertIn('NOTE: grep probe did not complete', probed.stdout)
+
+            # An rc file blocked in the foreground: doctor returns within the probe's bound,
+            # and the blocked command is gone by then, not left for this test to kill. It
+            # holds a FIFO open, so end-of-file there means no process still runs it.
+            fifo = tmp / 'rc-alive'
+            os.mkfifo(fifo)
+            reader = os.open(fifo, os.O_RDONLY | os.O_NONBLOCK)
+            self.addCleanup(os.close, reader)
+            shell.write_text('#!/bin/sh\nexec 3>%s\necho started >&3\nsleep 60\n' % fifo)
+            started = time.monotonic()
+            try:
+                probed = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=project, env=env,
+                                        capture_output=True, text=True, timeout=30)
+            except subprocess.TimeoutExpired:
+                self.fail('a foreground-blocked rc file held doctor.sh past its bound')
+            self.assertLess(time.monotonic() - started, 15, 'the probe bound is 5 s plus 1 s to kill')
+            self.assertIn('NOTE: grep probe did not complete', probed.stdout)
+            self.assertEqual(os.read(reader, 64), b'started\n')
+            gone = select.select([reader], [], [], 5)[0] and os.read(reader, 64) == b''
+            self.assertTrue(gone, 'the blocked rc command outlived the probe')
 
             shell.write_text('#!/bin/sh\necho "grep is an alias for ugrep"\n')
             red = doctor()
@@ -251,3 +284,18 @@ class DoctorTests(unittest.TestCase):
             self.assertEqual(red.returncode, 1, red.stdout)
             self.assertIn('MISSING: toolchain_path uses shell syntax doctor does not evaluate; set a plain path',
                           red.stdout)
+
+            # An unset variable is a missing configuration, as check.sh's `set -u` stops on it;
+            # an explicitly empty one is the owner's choice of no toolchain directory.
+            check.write_text(check.read_text().replace(
+                'toolchain_path="$(touch %s; printf /usr/bin)"' % canary,
+                'toolchain_path="${DOCTOR_TEST_TOOLCHAIN}/bin"'))
+            env.pop('DOCTOR_TEST_TOOLCHAIN', None)
+            red = doctor()
+            self.assertEqual(red.returncode, 1, red.stdout)
+            self.assertIn('MISSING: toolchain_path refers to $DOCTOR_TEST_TOOLCHAIN, which is not set',
+                          red.stdout)
+            self.assertEqual(red.stdout.count('MISSING:'), 1, red.stdout)
+            ready = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=project, capture_output=True,
+                                   text=True, env=dict(env, DOCTOR_TEST_TOOLCHAIN=''))
+            self.assertEqual(ready.returncode, 0, ready.stdout + ready.stderr)

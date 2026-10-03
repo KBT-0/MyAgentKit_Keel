@@ -66,74 +66,90 @@ def main(argv=None, result_sink=None):
     report = repo / "docs/reviews" / (stamp + "-codex-review.md")
     agent_usage.require_private_storage(repo, report)
     report.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="myagentkit-codex-") as tmp:
-        last = Path(tmp) / "final.txt"
-        command = [os.environ.get("REVIEW_CLI_BIN", "codex"), "exec", "--json", "--ephemeral",
-                   "-s", "read-only", "-c", "model_reasoning_effort=" + args.effort,
-                   "-c", "approval_policy=never", "-o", str(last), "-m", args.model, "-"]
-        capture_quota = os.environ.get("MYAGENTKIT_CAPTURE_QUOTA", "1") == "1"
-        before = codex_quota.snapshot(command[0], repo) if capture_quota else {"status": "disabled"}
-        execution = agent_process.run(command, prompt, repo, timeout)
-        # A cancelled review must stop now, not start another CLI process to read quota.
-        after = ({"status": "disabled"} if not capture_quota else
-                 {"status": "skipped: review cancelled"} if execution["termination"] == "cancelled"
-                 else codex_quota.snapshot(command[0], repo))
-        execution["account_quota_snapshots"] = {"before": before, "after": after,
-                                               "per_call_attribution": "unproven"}
-        values = agent_usage.decode("codex", execution["stdout"])
-        reason = agent_usage.failure("codex", execution, values)
-        final = ""
-        try:
-            if last.is_file():
-                with last.open("rb") as stream:
-                    raw = stream.read(8_000_001)
-                if len(raw) > 8_000_000:
-                    reason = reason or "output_limit"
-                final = raw[:8_000_000].decode(errors="replace")
-            if snapshot(repo, scope, ref)[1] != fingerprint:
-                reason = reason or "stale_checkout"
-        except (OSError, ValueError, BridgeError):
-            reason = reason or "stale_checkout"
-        verdicts = re.findall(r"^VERDICT: (Accept|Accept with Manual Checks|Reject)[ \t]*$", final, re.M)
-        declarations = re.findall(r"^[ \t]*VERDICT[ \t]*:.*$", final, re.M)
-        if not reason and (len(verdicts) != 1 or len(declarations) != 1
-                           or not any(v.get("type") == "turn.completed" for v in values)):
-            reason = "invalid_evidence"
-        if not reason and verdicts[0] == 'Accept with Manual Checks':
-            section = re.search(r'^## Manual checks[ \t]*\n(.*?)(?=^## |\Z)', final, re.M | re.S)
-            checks = [line.strip(' \t-*').rstrip('.').lower() for line in
-                      (section.group(1).splitlines() if section else [])]
-            if not any(check and check not in {'none', 'n/a', 'not applicable', 'not run'}
-                       and not check.startswith(('#', 'verdict:')) for check in checks):
-                reason = 'invalid_evidence'
-    status = "failed" if reason else "completed"
-    # Codex publishes no model identity in its JSON output, so the pin is recorded as
-    # requested-not-attested. Saying which it is beats a record that implies verification
-    # the CLI never performed. Claude's adapter attests the same field from modelUsage.
-    header = {"reviewer": "codex", "model": args.model, "model_attested": "no (Codex reports "
-              "no model identity; this is the requested pin)", "effort": args.effort,
-              "sandbox": "read-only", "limits": str(timeout) + "s wall clock", "scope": scope, "reference": ref, "head": head,
-              "fingerprint": fingerprint,
-              "diff_sha256": hashlib.sha256(diff.encode()).hexdigest(),
-              "status": status, "failure_kind": reason}
-    metadata = dict(header)
-    report_text = agent_usage.report(stamp, header, verdicts[0] if status == "completed" else None,
-        final or "No final message. Inspect the local usage record for diagnostics.")
-    archived = None
+    # Held from here to the usage record: with the default handlers back after the review,
+    # a cancel during the closing quota read ended the adapter before a paid, completed
+    # review was recorded. A cancel now ends that read, and only that read.
+    held = agent_process.hold()
     try:
-        agent_usage.write_evidence(repo, report, report_text, private=True)
-        archived = str(report)
-    except (OSError, ValueError) as error:
-        status, reason = "failed", "evidence_write_failed"
-        print("FAIL [review]: could not archive evidence: " + str(error))
-    path, usage = agent_usage.record(repo, "codex", metadata["model"],
-        os.environ.get("MYAGENTKIT_REQUESTER", "claude/unknown" if os.environ.get("CLAUDECODE") == "1" else "unspecified"),
-        {"id": os.environ.get("MYAGENTKIT_TASK_ID", "review-" + scope), "kind": "review",
-         "scope": scope, "reference": ref, "resolved": resolved, "head": head,
-         "fingerprint": fingerprint,
-         "diff_sha256": metadata["diff_sha256"],
-         "prompt_sha256": hashlib.sha256(prompt.encode()).hexdigest()},
-        execution, status, reason, archived)
+        with tempfile.TemporaryDirectory(prefix="myagentkit-codex-") as tmp:
+            last = Path(tmp) / "final.txt"
+            command = [os.environ.get("REVIEW_CLI_BIN", "codex"), "exec", "--json", "--ephemeral",
+                       "-s", "read-only", "-c", "model_reasoning_effort=" + args.effort,
+                       "-c", "approval_policy=never", "-o", str(last), "-m", args.model, "-"]
+            capture_quota = os.environ.get("MYAGENTKIT_CAPTURE_QUOTA", "1") == "1"
+            before = codex_quota.snapshot(command[0], repo) if capture_quota else {"status": "disabled"}
+            execution = None
+            try:
+                execution = agent_process.run(command, prompt, repo, timeout)
+                # A cancelled review must stop now, not start another CLI process to read quota.
+                after = ({"status": "disabled"} if not capture_quota else
+                         {"status": "skipped: review cancelled"} if execution["termination"] == "cancelled"
+                         else codex_quota.snapshot(command[0], repo))
+            except KeyboardInterrupt:
+                if execution is None:
+                    raise
+                after = {"status": "cancelled"}
+            # From here to the record a cancel is dropped: the record is what it would lose.
+            agent_process.hold(lambda signum, frame: None)
+            execution["account_quota_snapshots"] = {"before": before, "after": after,
+                                                   "per_call_attribution": "unproven"}
+            values = agent_usage.decode("codex", execution["stdout"])
+            reason = agent_usage.failure("codex", execution, values)
+            final = ""
+            try:
+                if last.is_file():
+                    with last.open("rb") as stream:
+                        raw = stream.read(8_000_001)
+                    if len(raw) > 8_000_000:
+                        reason = reason or "output_limit"
+                    final = raw[:8_000_000].decode(errors="replace")
+                if snapshot(repo, scope, ref)[1] != fingerprint:
+                    reason = reason or "stale_checkout"
+            except (OSError, ValueError, BridgeError):
+                reason = reason or "stale_checkout"
+            verdicts = re.findall(r"^VERDICT: (Accept|Accept with Manual Checks|Reject)[ \t]*$", final, re.M)
+            declarations = re.findall(r"^[ \t]*VERDICT[ \t]*:.*$", final, re.M)
+            if not reason and (len(verdicts) != 1 or len(declarations) != 1
+                               or not any(v.get("type") == "turn.completed" for v in values)):
+                reason = "invalid_evidence"
+            if not reason and verdicts[0] == 'Accept with Manual Checks':
+                section = re.search(r'^## Manual checks[ \t]*\n(.*?)(?=^## |\Z)', final, re.M | re.S)
+                checks = [line.strip(' \t-*').rstrip('.').lower() for line in
+                          (section.group(1).splitlines() if section else [])]
+                if not any(check and check not in {'none', 'n/a', 'not applicable', 'not run'}
+                           and not check.startswith(('#', 'verdict:')) for check in checks):
+                    reason = 'invalid_evidence'
+        status = "failed" if reason else "completed"
+        # Codex publishes no model identity in its JSON output, so the pin is recorded as
+        # requested-not-attested. Saying which it is beats a record that implies verification
+        # the CLI never performed. Claude's adapter attests the same field from modelUsage.
+        header = {"reviewer": "codex", "model": args.model, "model_attested": "no (Codex reports "
+                  "no model identity; this is the requested pin)", "effort": args.effort,
+                  "sandbox": "read-only", "limits": str(timeout) + "s wall clock", "scope": scope, "reference": ref, "head": head,
+                  "fingerprint": fingerprint,
+                  "diff_sha256": hashlib.sha256(diff.encode()).hexdigest(),
+                  "status": status, "failure_kind": reason}
+        metadata = dict(header)
+        report_text = agent_usage.report(stamp, header, verdicts[0] if status == "completed" else None,
+            final or "No final message. Inspect the local usage record for diagnostics.")
+        archived = None
+        try:
+            agent_usage.write_evidence(repo, report, report_text, private=True)
+            archived = str(report)
+        except (OSError, ValueError) as error:
+            status, reason = "failed", "evidence_write_failed"
+            print("FAIL [review]: could not archive evidence: " + str(error))
+        path, usage = agent_usage.record(repo, "codex", metadata["model"],
+            os.environ.get("MYAGENTKIT_REQUESTER", "claude/unknown" if os.environ.get("CLAUDECODE") == "1" else "unspecified"),
+            {"id": os.environ.get("MYAGENTKIT_TASK_ID", "review-" + scope), "kind": "review",
+             "scope": scope, "reference": ref, "resolved": resolved, "head": head,
+             "fingerprint": fingerprint,
+             "diff_sha256": metadata["diff_sha256"],
+             "prompt_sha256": hashlib.sha256(prompt.encode()).hexdigest()},
+            execution, status, reason, archived, report_text.encode())
+    finally:
+        agent_process.restore(held)
+    status, reason = usage["status"], usage["failure_kind"]
     result = {"status": status, "failure_kind": reason, "evidence": archived,
               "usage_record": str(path), "recovery": usage["recovery"]}
     if result_sink is not None:

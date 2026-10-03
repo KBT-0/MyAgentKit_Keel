@@ -19,21 +19,30 @@ def _cancel(signum, frame):
     raise KeyboardInterrupt
 
 
+def hold(handler=_cancel) -> dict:
+    """Route the cancel signals to `handler`; return the handlers to restore()."""
+    if threading.current_thread() is not threading.main_thread():
+        return {}
+    # nohup ignores SIGHUP and a background job SIGINT; the caller chose that, keep it.
+    return {sig: signal.signal(sig, handler) for sig in CANCEL_SIGNALS
+            if signal.getsignal(sig) is not signal.SIG_IGN}
+
+
+def restore(previous: dict) -> None:
+    for sig, handler in previous.items():
+        signal.signal(sig, handler)
+
+
 def run(command: list[str], prompt: str, repo: Path, timeout: int) -> dict:
     """Return exit status, partial output, and termination reason without retrying."""
     if not 1 <= timeout <= 3600:
         raise ValueError("timeout must be 1..3600 seconds")
     started = time.monotonic()
-    previous = {}
-    if threading.current_thread() is threading.main_thread():
-        # nohup ignores SIGHUP and a background job SIGINT; the caller chose that, keep it.
-        previous = {sig: signal.signal(sig, _cancel) for sig in CANCEL_SIGNALS
-                    if signal.getsignal(sig) is not signal.SIG_IGN}
+    previous = hold()
     try:
         return _supervise(command, prompt, repo, timeout, started)
     finally:
-        for sig, handler in previous.items():
-            signal.signal(sig, handler)
+        restore(previous)
 
 
 def _supervise(command, prompt, repo, timeout, started):

@@ -183,8 +183,18 @@ def prior_rounds(repo: Path, task_id: str | None, scope: str, reference: str | N
         except (OSError, ValueError) as error:
             raise damaged(path, "cannot be read (%s)" % error) from error
         task = value.get("task") if isinstance(value, dict) else None
-        if not isinstance(task, dict) or not isinstance(value.get("status"), str):
+        if not isinstance(task, dict) or value.get("status") not in ("completed", "failed"):
             raise damaged(path, "is not a usage record")
+        # Checked before the filter below: a record whose label, kind or head was emptied or
+        # dropped read as "another task" and took an earlier Reject with it. "resolved" is
+        # absent from records written before v0.9 and is compared after the filter.
+        strings = ("id", "kind", "scope", "head")
+        if (any(not isinstance(task.get(key), str) or not task[key] for key in strings)
+                or task["kind"] not in ("review", "propose")
+                or task["scope"] not in ("base", "commit", "uncommitted")
+                or not isinstance(task.get("reference", 0), (str, type(None)))
+                or not isinstance(task.get("resolved"), (str, type(None)))):
+            raise damaged(path, "has a task without its id, kind, scope, reference or head")
         if (task.get("kind") != "review" or task.get("id") != task_id
                 or value["status"] != "completed"):
             continue
@@ -456,11 +466,11 @@ def main(argv=None, result_sink=None) -> int:
         usage_path = None
         recovery = {"action": "continue_independent_work", "review_approved": False}
         evidence.update(failure_kind=reason)
-        archived_path = None
+        archived_path = published = None
         try:
-            agent_usage.write_evidence(repo, evidence_path, render(stamp, evidence, args)
-                                       if args.mode == "review"
-                                       else json.dumps(evidence, indent=2) + "\n", private=True)
+            published = (render(stamp, evidence, args) if args.mode == "review"
+                         else json.dumps(evidence, indent=2) + "\n")
+            agent_usage.write_evidence(repo, evidence_path, published, private=True)
             archived_path = str(evidence_path)
         except (OSError, ValueError) as error:
             evidence.update(status="failed", error="Review evidence could not be persisted: " + str(error))
@@ -470,8 +480,12 @@ def main(argv=None, result_sink=None) -> int:
                 {"id": args.task_id or (args.task_file.name if args.task_file else args.mode + "-" + scope),
                  "kind": args.mode, "scope": scope, "reference": ref,
                  "resolved": resolved, "head": head,
-                 "diff_sha256": evidence["diff_sha256"]}, execution, evidence["status"], reason, archived_path)
+                 "diff_sha256": evidence["diff_sha256"]}, execution, evidence["status"], reason,
+                archived_path, published.encode() if archived_path else None)
             recovery = usage["recovery"]
+            if usage["failure_kind"] == "evidence_unavailable":
+                evidence.update(status="failed", error="Review evidence was lost before it was recorded")
+                reason = usage["failure_kind"]
         except (OSError, ValueError) as error:
             evidence.update(status="failed", error="Usage record could not be persisted: " + str(error))
             reason = "usage_write_failed"

@@ -38,52 +38,39 @@
 #
 # {{BOUNDARY_SELF_TESTS}}
 
-# Existing-file probes need a different cleanup contract. Prefer a disposable project
-# snapshot. If a test must modify an existing file, preserve its CURRENT bytes and mode
-# (including uncommitted edits), not merely HEAD. Register restoration before mutation,
-# restore before deleting backups, and exit after signal cleanup. Never replace the
-# caller's cleanup trap with one that only deletes the backup directory.
+# Existing-file probes run in a disposable copy of the checkout, never in the checkout:
+# a self-test never changes a tracked file. An edit made in place and restored by traps was
+# seen by a concurrent `git add -A`, and SIGKILL or a power loss, which run no trap, left it
+# in the tree. The copy holds the current bytes, uncommitted edits included, and is deleted
+# on exit and on INT/TERM; a SIGKILL leaves it in $TMPDIR, outside the checkout. Copying a
+# large tree (dependencies, build output) costs time: copy only what the gate reads if that
+# is known, but never let the probe write into the checkout.
 #
-# This separate worked example runs in a subshell so its traps do not replace the
-# surrounding self-test traps. Its own backup directory is independent of the caller's.
-# Adapt the target and diagnostic to your gate. A failed restore retains the backup and
-# reports its location. SIGKILL/power loss cannot run shell traps: use a disposable
-# snapshot for destructive probes that need protection from those failures too.
+# This worked example runs in a subshell so its traps do not replace the surrounding
+# self-test traps. `$0` is the checkout's gate; the copy's own gate, at the same relative
+# path, is the one it runs. Adapt the target and diagnostic to your gate.
 #
 # | if (
-# |   restore_target=src/domain/existing.py
-# |   [ -f "$restore_target" ] && [ ! -L "$restore_target" ] || exit 1
-# |   sh "$0" >/dev/null 2>&1 || exit 1
-# |   restore_backup=$(mktemp -d) || exit 1
-# |   if ! cp -p "$restore_target" "$restore_backup/original"; then
-# |     rm -rf "$restore_backup"
-# |     exit 1
-# |   fi
-# |   restore_and_exit() {
-# |     restore_exit=$1
-# |     trap '' INT TERM
-# |     trap - EXIT
-# |     if ! cp -p "$restore_backup/original" "$restore_target"; then
-# |       echo "FAIL: restore failed; original remains at $restore_backup/original" >&2
-# |       exit 1
-# |     fi
-# |     rm -rf "$restore_backup"
-# |     exit "$restore_exit"
-# |   }
-# |   trap 'restore_and_exit "$?"' EXIT
-# |   trap 'restore_and_exit 130' INT
-# |   trap 'restore_and_exit 143' TERM
-# |   printf 'from myapp.web import router\n' > "$restore_target" || exit 1
-# |   restore_gate_status=0
-# |   restore_gate_output=$(sh "$0" 2>&1) || restore_gate_status=$?
-# |   [ "$restore_gate_status" -ne 0 ] && printf '%s\n' "$restore_gate_output" |
+# |   probe_copy=$(mktemp -d) || exit 1
+# |   trap 'rm -rf "$probe_copy"' EXIT
+# |   trap 'exit 130' INT
+# |   trap 'exit 143' TERM
+# |   cp -R . "$probe_copy/checkout" && cd "$probe_copy/checkout" || exit 1
+# |   probe_gate=$PWD/$(basename "$(dirname "$0")")/${0##*/}
+# |   probe_target=src/domain/existing.py
+# |   [ -f "$probe_target" ] && [ ! -L "$probe_target" ] || exit 1
+# |   sh "$probe_gate" >/dev/null 2>&1 || exit 1
+# |   printf 'from myapp.web import router\n' > "$probe_target" || exit 1
+# |   probe_status=0
+# |   probe_output=$(sh "$probe_gate" 2>&1) || probe_status=$?
+# |   [ "$probe_status" -ne 0 ] && printf '%s\n' "$probe_output" |
 # |     grep -Fq 'FAIL [boundary]: the domain layer imports the web layer:'
 # | ); then
 # |   echo "  ok   — domain/web boundary gate rejects a forbidden import in an existing file"
 # | else
-# |   restore_case_status=$?
-# |   case "$restore_case_status" in
-# |     130|143) exit "$restore_case_status" ;;
+# |   probe_case_status=$?
+# |   case "$probe_case_status" in
+# |     130|143) exit "$probe_case_status" ;;
 # |     *) st_fail=1 ;;
 # |   esac
 # | fi

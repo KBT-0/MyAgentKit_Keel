@@ -365,6 +365,8 @@ def main():
                 raise RuntimeError("the synthetic project already has src/")
             (src / "domain").mkdir(parents=True)
             (src / "domain/existing.py").write_text("original\n")
+            # Tracked, so the case can show the example leaves the checkout's status unchanged.
+            run(["git", "add", "src"], project)
             checks.write_text("! grep -q myapp.web src/domain/existing.py ||\n"
                               "  { echo 'FAIL [boundary]: the domain layer imports the web layer:'; fail=1; }\n")
             example = (ROOT / "core/scripts/boundary_selftests.sh").read_text().splitlines()
@@ -373,13 +375,17 @@ def main():
             agents = project / "AGENTS.md"
             original_agents = agents.read_bytes()
             agents.write_text(original_agents.decode().replace("No AI attribution in git", "AI credit allowed"))
+            status = run(["git", "status", "--porcelain"], project)
             out = run(["sh", "scripts/check.sh", "--self-test"], project, reason="SELF-TEST: PASS")
             if "skipped by owner choice" not in out:
                 raise RuntimeError("the commit-msg case did not say it was skipped by owner choice:\n" + out)
             if "  ok   — domain/web boundary gate rejects a forbidden import in an existing file" not in out:
                 raise RuntimeError("the existing-file boundary example did not run as a case:\n" + out)
             if (src / "domain/existing.py").read_text() != "original\n":
-                raise RuntimeError("the existing-file boundary example did not restore its target")
+                raise RuntimeError("the existing-file boundary example changed its target in the checkout")
+            if run(["git", "status", "--porcelain"], project) != status:
+                raise RuntimeError("the existing-file boundary example changed the checkout's git status")
+            run(["git", "rm", "-r", "-q", "--cached", "src"], project)
             shutil.rmtree(src)
             agents.write_bytes(original_agents)
             checks.write_bytes(original_checks)

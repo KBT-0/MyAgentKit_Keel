@@ -64,16 +64,15 @@ breaks, everything keeps looking green.
   commits. `check.sh` holds a per-checkout lock for a whole run (the self-test included), so
   a second gate run waits instead of racing; tests that write scratch files still use a
   unique temporary directory, never a fixed name in the build or working directory.
-- **Make destructive probes interruption-safe.** Prefer a disposable project snapshot.
-  If a test modifies an existing file, save its current bytes and mode, including
-  uncommitted edits, and register EXIT/INT/TERM restoration before the first mutation.
-  Restore before deleting the backup. Signal cleanup must terminate the test, and a
-  restoration failure must retain the backup and report its path. Do not replace an
-  inherited trap with cleanup that deletes the only surviving copy. The separate
-  existing-file example in `scripts/boundary_selftests.sh` isolates its traps in a
-  subshell. Prove byte-for-byte restoration by interrupting the injected test; an
-  uninterrupted passing run is insufficient. Traps cannot handle SIGKILL or power loss,
-  so use a disposable snapshot when those failures could damage owner content.
+- **Run a probe that edits an existing file in a disposable copy of the checkout**, never
+  in the checkout. Restoring the file from EXIT/INT/TERM traps was not enough: until the
+  restore, a concurrent `git add -A` staged the injection, and SIGKILL or a power loss,
+  which run no trap, left it in the tree. The existing-file example in
+  `scripts/boundary_selftests.sh` copies the tree (uncommitted edits included), runs the
+  copy's gate, deletes the copy on exit and on INT/TERM, and ends the test on a signal; its
+  traps live in a subshell so they do not replace the surrounding self-test's. Prove it by
+  interrupting the injected test, SIGKILL included: the checkout's bytes and `git status`
+  stay as they were.
 - **Test both directions** where a gate can produce false positives. A gate that always
   fails is as useless as one that never does, and it gets deleted by the first person it
   blocks unfairly.
