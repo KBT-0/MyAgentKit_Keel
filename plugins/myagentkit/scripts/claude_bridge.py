@@ -28,8 +28,8 @@ class BridgeError(Exception):
     """A missing prerequisite or untrustworthy result, never a successful review."""
 
 
-def git(repo: Path, *args: str, allowed=(0,)) -> bytes:
-    result = subprocess.run(["git", "-C", str(repo), *args], capture_output=True)
+def git(repo: Path, *args: str, allowed=(0,), stdin: bytes | None = None) -> bytes:
+    result = subprocess.run(["git", "-C", str(repo), *args], input=stdin, capture_output=True)
     if result.returncode not in allowed:
         raise BridgeError(f"git {args[0]} failed: {result.stderr.decode(errors='replace')}")
     return result.stdout
@@ -65,6 +65,24 @@ def snapshot(repo: Path, scope: str, reference: str | None) -> tuple[str, str, s
     if any(entry and (entry[:1].islower() or entry[:1] == b'S') for entry in entries):
         raise BridgeError('review scope has assume-unchanged or skip-worktree index flags; '
                           'clear those flags and use a complete checkout before review')
+    # Git runs clean filters and ident collapsing on working-tree bytes BEFORE it diffs
+    # them, so a filter can drop a whole file or single lines from the reviewer's payload
+    # while the raw bytes still hash into the fingerprint. Refuse such paths: no flag turns
+    # the conversion off for diff, and the payload must be what the working tree contains.
+    in_scope = git(repo, 'ls-files', '-z', '--cached', '--others', '--exclude-standard',
+                   '--', '.', *exclusions)
+    drivers = set()
+    for entry in git(repo, 'config', '-z', '--get-regexp', r'^filter\..*\.(clean|process)$',
+                     allowed=(0, 1)).split(b'\0'):
+        key, _, command = entry.partition(b'\n')
+        if command.strip():
+            drivers.add(key[len(b'filter.'):key.rindex(b'.')])
+    fields = git(repo, 'check-attr', '-z', '--stdin', 'filter', 'ident', stdin=in_scope).split(b'\0')
+    for name, attribute, value in zip(fields[0::3], fields[1::3], fields[2::3]):
+        if (attribute == b'filter' and value in drivers) or (attribute == b'ident' and value == b'set'):
+            raise BridgeError('review scope has a Git clean filter or ident attribute on %s; the diff '
+                              'would show the converted text, not the working tree. Remove the '
+                              'attribute (or the filter config) before review' % os.fsdecode(name))
     raw_diff = ('--no-ext-diff', '--no-textconv', '--binary')
     working = git(repo, 'diff', *raw_diff, 'HEAD', '--', '.', *exclusions)
     for raw in git(repo, "ls-files", "--others", "--exclude-standard", "-z").split(b"\0"):
@@ -95,8 +113,7 @@ def snapshot(repo: Path, scope: str, reference: str | None) -> tuple[str, str, s
     checksum = hashlib.sha256(head.encode() + b'\0' + (resolved or '').encode() + b'\0' + diff + b'\0' + working)
     # Git can suppress working changes via index flags. Hash actual readable source too,
     # independently of diff rendering; read symlink targets as links, never outside files.
-    for raw in sorted(set(git(repo, 'ls-files', '-z', '--cached', '--others', '--exclude-standard',
-                              '--', '.', *exclusions).split(b'\0')) - {b''}):
+    for raw in sorted(set(in_scope.split(b'\0')) - {b''}):
         name = os.fsdecode(raw)
         if re.fullmatch(r'docs/reviews/\d{8}T\d{6}Z-.+\.md', name) and not name.endswith('-summary.md'):
             continue

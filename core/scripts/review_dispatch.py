@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Collect a review with at most one failover, preserving each attempt's evidence."""
+"""Collect a review from the requested reviewer; fail over once only when explicitly allowed."""
 import argparse
 import json
 import os
@@ -16,6 +16,8 @@ import codex_bridge
 # failures must not be laundered into success by trying another reviewer.
 UNAVAILABLE = frozenset({"quota", "authentication", "timeout", "unavailable", "cli_error",
                          "context_limit", "budget_or_turn_limit", "output_limit"})
+# Set only while a substitute reviewer runs, so its archived evidence says so in its body.
+FALLBACK_ENV = "MYAGENTKIT_REVIEW_FALLBACK_FROM"
 
 
 def pin_valid(provider, model):
@@ -30,6 +32,9 @@ def main(argv=None):
     parser.add_argument("--claude-model", default=os.environ.get("REVIEW_CLAUDE_MODEL", ""))
     parser.add_argument("--codex-model", default=os.environ.get("REVIEW_CODEX_MODEL", ""))
     parser.add_argument("--effort", choices=("low", "medium", "high", "xhigh", "max"), default="high")
+    # Off by default: the requested reviewer is usually chosen because the other model
+    # authored the patch, so a silent substitute could be the author reviewing itself.
+    parser.add_argument("--allow-fallback", action="store_true")
     scope_args = parser.add_mutually_exclusive_group()
     scope_args.add_argument("--uncommitted", action="store_true")
     scope_args.add_argument("--base")
@@ -59,6 +64,7 @@ def main(argv=None):
     chain = {"schema_version": 1, "chain_id": chain_id, "requested_reviewer": args.reviewer,
              "configured_models": pins, "task_id": os.environ["MYAGENTKIT_TASK_ID"],
              "head": original[0], "fingerprint": original[1], "scope": scope, "reference": ref,
+             "fallback_allowed": args.allow_fallback,
              "attempts": [], "status": "pending", "failure_kind": None,
              "review_approved": False, "independence": "host_must_check_all_patch_authors"}
 
@@ -73,6 +79,7 @@ def main(argv=None):
     checkpoint()  # No model is called if the chain cannot be recorded.
     other = "codex" if args.reviewer == "claude" else "claude"
     exit_code = 5
+    os.environ.pop(FALLBACK_ENV, None)
     for provider in (args.reviewer, other):
         os.environ["MYAGENTKIT_REVIEW_ATTEMPT"] = str(len(chain["attempts"]) + 1)
         received = []
@@ -105,17 +112,31 @@ def main(argv=None):
         chain["status"] = "failed"
         eligible = (provider == args.reviewer and chain["failure_kind"] in UNAVAILABLE
                     and bool(result.get("evidence")) and bool(result.get("usage_record")))
+        if eligible and not args.allow_fallback:
+            chain["fallback_blocked"] = "not requested; --fallback allows one other configured reviewer"
+            eligible = False
         if eligible and not pin_valid(other, pins[other]):
             chain["fallback_blocked"] = "other reviewer has no valid configured model pin"
             eligible = False
         checkpoint()  # Never spend on the alternate if primary evidence cannot be saved.
         if not eligible:
             break
-        print("Reviewer unavailable (%s: %s); trying configured %s model %s once."
+        print("FALLBACK [review]: requested reviewer %s did not complete (%s); --fallback was "
+              "passed, so configured %s model %s runs once instead."
               % (provider, chain["failure_kind"], other, pins[other]), flush=True)
+        os.environ[FALLBACK_ENV] = "%s (%s)" % (provider, chain["failure_kind"])
+    os.environ.pop(FALLBACK_ENV, None)
     print("review dispatch: " + json.dumps(chain))
     if chain["status"] != "completed":
-        print("FAIL [review]: " + str(chain["failure_kind"]))
+        print("FAIL [review]: requested reviewer %s did not produce a review (%s)%s"
+              % (args.reviewer, chain["failure_kind"], "; " + chain["fallback_blocked"]
+                 if chain.get("fallback_blocked") else ""))
+        if chain["failure_kind"] == "cli_unsupported":
+            print("FAIL [review]: the installed CLI rejected a flag the read-only review requires; "
+                  "upgrade the CLI. The review never drops a sandbox flag to make a run start.")
+    elif chain.get("selected_reviewer") != args.reviewer:
+        print("FALLBACK [review]: this review is by %s, not the requested %s; check it did not "
+              "author the patch." % (chain["selected_reviewer"], args.reviewer))
     return 0 if chain["status"] == "completed" else (exit_code or 5)
 
 

@@ -4,6 +4,9 @@
 # require both a nonzero exit and this check's specific diagnostic, and clean up.
 # Set `st_fail=1` when a gate did not reject what it claims to reject. An unrelated
 # failure or a diagnostic printed by a command that succeeded is not a passing test.
+# Print exactly `  ok   — <label>` for each case that passed: while boundary_checks.sh holds
+# any check, check.sh --self-test FAILS a file here that printed no such line, because a
+# self-test that ran nothing would otherwise count as a pass.
 #
 # `sh "$0"` re-runs the gate without the self-test flag, so it exits nonzero on a violation.
 #

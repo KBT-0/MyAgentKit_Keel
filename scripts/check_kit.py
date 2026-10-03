@@ -12,9 +12,16 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
+# The review self-test ships to projects with its own minimums; read them, never copy them.
+BRIDGE_MINIMUMS = next(
+    (ast.literal_eval(node.value)
+     for node in ast.parse((ROOT / 'core/scripts/test_claude_bridge.py').read_text()).body
+     if isinstance(node, ast.Assign) and getattr(node.targets[0], 'id', None) == 'SUITE_MINIMUMS'),
+    None)
+if BRIDGE_MINIMUMS is None:
+    sys.exit('KIT CHECK: FAIL — SUITE_MINIMUMS not found in core/scripts/test_claude_bridge.py')
 REQUIRED_SUITES = {
-    'core/scripts': {'test_claude_bridge': 44, 'test_agent_usage': 12, 'test_codex_quota': 3,
-                     'test_agent_cost': 2},
+    'core/scripts': dict(BRIDGE_MINIMUMS, test_agent_cost=2),
     'tests': {'test_packaging': 1, 'test_bootstrap': 1, 'test_acceptance': 2,
               'test_review_upgrade': 1, 'test_boundary_example': 1, 'test_scan_gate': 1,
               'test_boundary_restore': 1, 'test_sync_kit': 2, 'test_doctor': 1},
@@ -122,7 +129,28 @@ def main():
                 run(["sh", "scripts/check.sh", "--self-test"], project, expected=1,
                     reason="review adapter negative tests failed or did not run")
             wrapper.write_bytes(original_wrapper)
-            print("PASS: missing review tests, failed runner, and absent completion evidence reject")
+            # One emptied suite must fail on its own, not hide inside a combined test total.
+            quota_tests = project / "scripts/test_codex_quota.py"
+            original_quota = quota_tests.read_bytes()
+            quota_tests.write_text("import unittest\nclass QuotaTests(unittest.TestCase):\n    pass\n")
+            run(["sh", "scripts/review.sh", "--self-test"], project, expected=2,
+                reason="QuotaTests has 0 of at least 3 tests")
+            quota_tests.write_bytes(original_quota)
+            # Boundary checks whose self-test file runs no case are skipped, not passed. The
+            # stubbed review run keeps this case to the boundary branch alone.
+            wrapper.write_text("echo 'REVIEW SELF-TEST: PASS'\n")
+            checks = project / "scripts/boundary_checks.sh"
+            selftests = project / "scripts/boundary_selftests.sh"
+            original_checks, original_selftests = checks.read_bytes(), selftests.read_bytes()
+            checks.write_text(": synthetic boundary check\n")
+            run(["sh", "scripts/check.sh", "--self-test"], project, expected=1, reason="ran no case")
+            selftests.write_text("echo '  ok   — synthetic boundary case'\n")
+            run(["sh", "scripts/check.sh", "--self-test"], project, reason="SELF-TEST: PASS")
+            checks.write_bytes(original_checks)
+            selftests.write_bytes(original_selftests)
+            wrapper.write_bytes(original_wrapper)
+            print("PASS: missing review tests, failed runner, absent completion evidence, an emptied "
+                  "suite and boundary checks whose self-tests ran no case reject")
     print("KIT CHECK: PASS")
 
 
