@@ -234,7 +234,9 @@ Files are one of two kinds. **Kit-owned** files carry a header saying so; `sync-
 overwrites them wholesale. **Project-owned** files — the constitution, the workflow, the
 check script, the reviewer definition — are customised per project and are never
 overwritten. After overwriting, `sync-kit.sh` prints the `CHANGELOG.md` entries added since
-your recorded version, so you can hand-apply the rest deliberately.
+your recorded version and lists their **ACTION** items as a checklist, so you can hand-apply
+the rest deliberately. It records the new version only after those items are confirmed
+(`--actions-applied`); until then every run reprints them and exits 2.
 
 Updates also flow the other way. Every project using the kit asks one question in its
 periodic audit: *did we learn anything this cycle that belongs in the kit rather than

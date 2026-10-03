@@ -11,6 +11,140 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ---
 
+## v0.9 — 2026-10-03
+
+Hardening from the unreported findings of two projects using the kit. `scripts/check.sh`,
+`scripts/review.sh` and the review scripts are project-owned, so most items below need a
+hand merge; `sync-kit.sh` now keeps listing them until you confirm (see "Sync stamp").
+
+- **Gate lock (issues #19, #20, #11).** `scripts/check.sh` runs one gate per checkout at a
+  time, through a symlink lock in the git dir. A second run (Stop hook, commit hook, manual)
+  waits with a NOTE every 30 s instead of sharing the build directory and reporting a false
+  FAIL; a lock left by a killed run is reclaimed; INT/TERM stop the run after cleanup.
+  `GATE_LOCK_WAIT=<seconds>` bounds the wait: when it runs out the gate prints `NOT RUN [lock]`
+  and exits 75 ("did not run", neither pass nor fail). `--self-test` no longer writes into
+  the working tree: its injections come from outside it (`GATE_SELFTEST_EXTRA_FILE`), and the
+  rule "a self-test case never changes a tracked file" is in check.sh and `docs/WORKFLOW.md`.
+  A commit made during a long self-test now waits for it. **ACTION:** port into your
+  project-owned `scripts/check.sh` the EXIT CODES and SELF-TEST CASE comments, the lock block,
+  `cleanup` with its traps and the `GATE_SELFTEST_EXTRA_FILE` line; move any self-test case
+  (your `boundary_selftests.sh` included) that writes into the tree to a place outside it.
+  Re-sync `docs/WORKFLOW.md` if you own a modified copy. **ACTION:** Claude Code overlay: copy
+  `.claude/hooks/gate_on_stop.sh` again from `overlays/claude-code/files/` (it sets
+  `GATE_LOCK_WAIT=500` and reports exit 75 as "gate did not run") and re-fill its placeholders.
+  A `.git/check.lock` directory left by a killed run of an unreleased build must be removed
+  by hand.
+- **Scan failures that were not scanner failures (issues #13, #14).** A tracked file deleted
+  without `git rm` now fails `[scan]` under its own name with the command that fixes it, and
+  every other scan still runs. A symlink to a directory (for example `node_modules` linked
+  into a throwaway worktree) is skipped with a `NOTE [scan]` line instead of failing the scan.
+  A real grep failure keeps its old message. `docs/GOTCHAS.md` describes the NOTE.
+  **ACTION:** copy the scan-list block from `core/scripts/check.sh` into your `scripts/check.sh`
+  (keep your filled placeholders); copy `core/docs/GOTCHAS.md` if your project syncs it.
+- **Review tooling fails closed (issues #12, #9, #8).** A named reviewer is never silently
+  replaced: `review.sh` fails when the requested reviewer cannot run, and `--fallback`
+  (dispatcher `--allow-fallback`) allows one substitute whose evidence opens with
+  `FALLBACK REVIEWER:`. A CLI that rejects a required flag (`cli_unsupported`, Claude or Codex)
+  never fails over. Scope with an effective Git clean/process filter or `ident` is refused
+  before launch, since the filtered diff can omit lines the fingerprint hashed. Ctrl-C,
+  SIGTERM and SIGHUP now kill the reviewer's process group and record `cancelled`; a signal
+  the caller set to ignore (`nohup`, a background job) stays ignored. The review self-test has
+  a minimum test count per suite, and `check.sh --self-test` fails when `boundary_checks.sh`
+  has checks but the boundary self-tests printed no case. **ACTION:** none of these scripts is
+  kit-owned, so copy the review tooling as one set into `scripts/`: `agent_process.py`,
+  `agent_usage.py`, `claude_bridge.py`, `codex_bridge.py`, `review_dispatch.py`,
+  `test_agent_usage.py`, `test_claude_bridge.py`; add the `--fallback` case to your
+  `scripts/review.sh` (pass `$fallback` to the dispatcher; core has it) and the boundary
+  self-test hunk to your `scripts/check.sh`. **ACTION:** automation that relied on automatic
+  failover must now pass `--fallback`. **ACTION:** each `boundary_selftests.sh` case must print
+  `  ok   — <label>`. **ACTION:** a repository with Git LFS, a clean filter or `ident` in the
+  review scope cannot use `review.sh`; use the manual template in `docs/REVIEW_GATE.md`.
+- **Review rounds converge (issue #18).** Both reviewers are asked for every finding, a
+  severity (Critical, High, Medium, Low) on each, and a fix sketch. With the same
+  `MYAGENTKIT_TASK_ID` a later round's prompt carries the earlier completed reviews from the
+  reviewer's own archive, plus `REVIEW_DISPOSITIONS=<file>` for the author's answers. A
+  disposition is a claim the reviewer verifies, never a settlement: a deferred finding stays
+  open under Manual checks, and the closing Accept comes from one fresh review under a new
+  label. Carried rounds must share scope and reference with the new review and have an
+  ancestor head (a rebase, an amend or a `--commit` round with another head is refused and
+  the message says to use a new label), count toward the 400000-byte diff budget, and
+  show their verdicts as `Earlier verdict:`. A missing earlier archive exits 2 for both
+  reviewers. `stale_checkout` still fails the review, and now says why and what to do.
+  **ACTION:** copy the review tooling set named in the previous bullet; add the two new
+  "Running it" paragraphs and the template change from `core/docs/REVIEW_GATE.md` to your
+  project-owned `docs/REVIEW_GATE.md`.
+- **Sync stamp (issue #15).** `sync-kit.sh` records a new kit version only after its ACTION
+  items are confirmed. It lists the pending ACTION lines as a checklist after the full
+  entries on every run, leaves `docs/kit/.kit-version` unchanged and exits 2 until you rerun
+  with `--actions-applied`; a line of the form `**ACTION** — none` is not an item. Versions without
+  ACTION items are stamped as before. `docs/UPDATING.md` and the README describe it.
+  **ACTION:** a script of yours that runs `sync-kit.sh` must expect exit 2 while items are
+  pending. If a project was stamped past versions whose ACTIONs it never applied, set
+  `docs/kit/.kit-version` back to the last version really applied and sync again.
+- **Commit gates (issues #16, #24, #23).** `.githooks/pre-merge-commit` (new, kit-owned)
+  runs the gate for the commit a clean `git merge` creates, where git does not run
+  pre-commit; git older than 2.24 has no such hook and leaves merges ungated
+  (`docs/DEV_SETUP.md` says so). The `check.sh` build step is quiet on a pass; on failure it
+  prints `FAIL [build]`, the last 150 lines (the whole log when `CI` is set) and the path of
+  the full log, never a filtered subset. Keep deploy-shaped steps, dry runs included, out of
+  the build command. `.githooks/commit-msg` (new, kit-owned) rejects an AI credit in a
+  `Co-Authored-By`, `Signed-off-by` or `Assisted-by` trailer or a "Generated with" line, only
+  when the whole trailer name is a tool or model, the address is a vendor's or a `[bot]`;
+  human names that contain a tool's pass, and the `commit -v` diff is ignored. The rule
+  "No AI attribution in git" in `AGENTS.md` is the owner's switch: without that line the hook
+  gives way (a missing `AGENTS.md` keeps it on), and the setup interview asks. **ACTION:** copy
+  the rule bullet and the extended hook sentence from `core/AGENTS.md` into your `AGENTS.md`;
+  to allow AI credit, delete the rule line there. **ACTION:** copy the `build_log=` line, the
+  build section and the new self-test cases (hooks loop, commit-msg, build failure output)
+  from `core/scripts/check.sh` into your `scripts/check.sh`, and remove any `grep error`
+  filter from your build command. Optional: the `docs/DEV_SETUP.md` and `setup/INTERVIEW.md`
+  sentences.
+- **Effort, STATE operation files, doctor.sh, closing a worker (issues #17, #21, #10, #30).**
+  Delegated agents run at a stated effort: `worker.md` gets `effort: {{WORKER_EFFORT}}`
+  (filled at interview question 8), `diff-reviewer.md` gets `effort: high`, and WORKFLOW and
+  HANDOFF say the brief names model and effort and the lead verifies both in the transcript.
+  `docs/STATE.md` keeps a status line and a pointer; operation detail and worker results go
+  to `docs/<OPERATION>.md`, and both rot-gate messages name it. `scripts/doctor.sh` (new,
+  kit-owned) is a read-only machine check with one MISSING line per trap: exec bits, hooks
+  path, git identity, Python 3.10+, the default reviewer CLI, tmux, the `node` a git hook
+  resolves against `toolchain_path` and `.nvmrc`, the npm cache owner, a shadowed `grep`, a
+  checkout under `/mnt/<drive>` on WSL, CRLF in a script, and an unignored `node_modules`
+  symlink. A spawned worker session is closed by the lead once it has read the result file;
+  `spawn_worker.sh` prints the command. **ACTION:** add `effort:` to both files in your
+  `.claude/agents/`, fill `WORKER_EFFORT` and restart Claude Code. **ACTION:** copy the changed
+  paragraphs into `docs/STATE.md`, `docs/HANDOFF.md` and the "STATE.md discipline" in
+  `AGENTS.md`, and the two message lines into `scripts/check.sh`. **ACTION:** add reading-order
+  step 0 (`scripts/doctor.sh`) to `AGENTS.md` and `docs/DEV_SETUP.md` §4. **ACTION:** copy
+  `spawn_worker.sh` and the overlay README bullet, and add the closing line to your briefs. In a
+  project whose `.gitignore` says `node_modules/` and that symlinks `node_modules`, write
+  `node_modules` without the slash.
+- **Rules (issues #26, #27, #28, #31).** A web request carries no personal data
+  (`docs/WORKFLOW.md` "Web requests carry no personal data", HANDOFF brief item 3,
+  `docs/GOTCHAS.md`). A sub-agent returns its report as its final message; only a spawned
+  session writes a result file (WORKFLOW rule 7). Worktree-isolated agents run plain commands,
+  one per call, and put compound work in a script file (`worker.md`, overlay README). A red
+  gate that passes on re-run is recorded, not retried away (WORKFLOW, GOTCHAS). **ACTION:** copy
+  the new WORKFLOW section, rule 7's sentences, the HANDOFF sentence and the GOTCHAS entries into
+  your project-owned docs, the `worker.md` bullets into `.claude/agents/worker.md`, and name a
+  generic User-Agent in every brief that sends an agent to the web.
+- **Self-test seams are not a bypass (issue #25).** `check.sh` used to honour its self-test
+  overrides in every run, so one exported variable could skip the build or point a gate at
+  another file and still print `CHECK: PASS`. They are now `GATE_BUILD_CMD_OVERRIDE`,
+  `GATE_SELFTEST_STATE_FILE`, `GATE_SELFTEST_PROJECT_FILE`, `BOUNDARY_CHECKS_FILE`,
+  `BOUNDARY_SELFTESTS_FILE`, `GATE_SELFTEST_EXTRA_FILE` and `GATE_SELFTEST_BREAK_SCANNER`, and
+  only the self-test's nested runs honour them (they carry `GATE_SELFTEST_NESTED`, which must
+  match the live lock holder). Any other run prints `FAIL [env]: <name> is set; ...` and exits
+  1. `STATE_FILE` and `PROJECT_FILE` were renamed. **ACTION:** merge into your `scripts/check.sh`
+  the SELF-TEST SEAMS block after `fail=0`, the `GATE_SELFTEST_NESTED` export at the top of
+  `self_test()` and the "seam outside the self-test" case; add any override variable your own
+  boundary checks read to the list; unset these variables where a shell profile or CI step
+  exports them.
+- **Worker spawning (found while applying the above).** `spawn_worker.sh` now
+  `cd`s into the folder before starting the tool, because tmux hands a new session a stale
+  `PWD`. Still open: `spawn_worker.sh --worktree` starts from a stale base (issue #32); branch
+  the worktree from the commit you mean, not from the default. **ACTION:** copy
+  `spawn_worker.sh` (same copy as above).
+
 ## v0.8 — 2026-10-03
 
 - **Worker cost (issue #22).** A measured rule set for routing workers lands in the
