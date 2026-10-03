@@ -92,6 +92,17 @@ hand merge; `sync-kit.sh` now keeps listing them until you confirm (see "Sync st
   Claude Code Stop hook's exit-75 path has a test. **ACTION:** if your
   `scripts/boundary_selftests.sh` copied the existing-file example, replace its `:` with an
   `echo "  ok   — <label>"` line, or the self-test reports "ran no case".
+- **Fourth cross-model round (issue #33).** `sync-kit.sh` exits on INT/TERM instead of
+  stamping. The review adapters treat a usage record with a bad status or task fields as an
+  integrity failure, hash the evidence bytes they publish (a lost archive is recorded as
+  `evidence_unavailable`, never as no record), and a Codex cancel during the closing quota
+  read keeps the record. `.githooks/commit-msg` checks `Key : value` spacing and folded
+  trailers, honours `core.commentString` over `core.commentChar`, and treats a directory at
+  `AGENTS.md` as unreadable. `doctor.sh` reports an unset variable inside `toolchain_path`.
+  The existing-file boundary example runs in a disposable copy of the checkout. **ACTION:**
+  copy `claude_bridge.py`, `codex_bridge.py`, `agent_usage.py` and `agent_process.py` from
+  `core/scripts/`; replace the existing-file example in your `scripts/boundary_selftests.sh`
+  and merge the "disposable copy" bullet into `docs/WORKFLOW.md`.
 - **Scan failures that were not scanner failures (issues #13, #14).** A tracked file deleted
   without `git rm` now fails `[scan]` under its own name with the command that fixes it, and
   every other scan still runs. A symlink to a directory (for example `node_modules` linked

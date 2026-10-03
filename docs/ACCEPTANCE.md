@@ -62,7 +62,7 @@ Cross-model review (executed): `scripts/review.sh --base 5c80c36 --reviewer code
 on the full diff returned Reject (5 High, 6 Medium, 1 Low); every finding was fixed with its
 negative test and the fixes were merged. Rounds 2, 3 and 4 followed, each carrying the earlier
 rounds' findings; rounds 2 and 3 were fixed in this version, round 4 (no High, eight
-Medium, two Low) is left open as one tracked issue so the version could ship. The round-1 record was written by the pre-fix kit (no
+Medium, two Low) was fixed as issue #33 and a fifth round recorded the result. The round-1 record was written by the pre-fix kit (no
 resolved reference, no archive hash), so round 2 ran under a new task label and did not
 carry round 1: the carried-round path is proven by the regression tests only.
 

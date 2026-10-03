@@ -477,6 +477,17 @@ Stop-hook branch with no test; each has a test seen red on the old code. The rou
 carried the previous round's findings into its prompt and returned a disposition table for
 all fourteen: the carried-round path of issue #18 was proven on the kit's own review.
 
+#### Fourth cross-model round: a guard right for the reported shape misses the next one
+
+The fourth round (no High, eight Medium, two Low) was all residue of earlier fixes: the
+hook handled `commentChar` but not `commentString`, `Key:` but not `Key :` or a folded
+value; the sync's trap cleaned up but did not exit; the adapters hashed the archive by
+reopening it. Two test-quality lessons came with it: a stand-in that does not enforce what
+it replaces proves nothing (a `timeout` fixture that only ran its command), and an early
+return under uid 0 is a silent pass; prefer a failure every uid hits (a directory where a
+file is expected), and verify the tool's exit code rather than assuming it (GNU `grep -q`
+returns 1 on a directory, not 2).
+
 #### The review gate held on the kit's own hardening
 
 Five of the nine work packages (the gate lock, both review-tooling packages, the commit gates
