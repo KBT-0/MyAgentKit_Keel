@@ -20,6 +20,10 @@ class DoctorTests(unittest.TestCase):
             for tool in ('claude', 'codex', 'tmux'):
                 (bin_dir / tool).write_text('#!/bin/sh\nexit 0\n')
                 (bin_dir / tool).chmod(0o755)
+            # A controlled timeout, so the grep probe runs whether or not this host has one;
+            # doctor calls it as `timeout --foreground -k 1 5 <command>`.
+            (bin_dir / 'timeout').write_text('#!/bin/sh\nshift 4\nexec "$@"\n')
+            (bin_dir / 'timeout').chmod(0o755)
             shell = bin_dir / 'fake-shell'
             # The common colour alias is harmless and must stay green.
             shell.write_text('#!/bin/sh\necho "grep is an alias for grep --color=auto"\n')
@@ -78,6 +82,14 @@ class DoctorTests(unittest.TestCase):
             self.assertEqual(red.returncode, 1, red.stdout)
             self.assertIn('MISSING: grep is shadowed', red.stdout)
             self.assertEqual(red.stdout.count('MISSING:'), 1, red.stdout)
+            # Only colour options are harmless; an alias that changes what matches is not.
+            shell.write_text('#!/bin/sh\necho "grep is an alias for grep -v"\n')
+            red = doctor()
+            self.assertEqual(red.returncode, 1, red.stdout)
+            self.assertIn('MISSING: grep is shadowed', red.stdout)
+            shell.write_text("#!/bin/sh\necho \"grep is aliased to \\\`grep --colour=auto'\"\n")
+            ready = doctor()
+            self.assertEqual(ready.returncode, 0, ready.stdout + ready.stderr)
             shell.write_text('#!/bin/sh\necho "grep is an alias for grep --color=auto"\n')
 
             git('config', '--unset', 'core.hooksPath')
@@ -145,6 +157,23 @@ class DoctorTests(unittest.TestCase):
             (bin_dir / 'claude').write_text('#!/bin/sh\nexit 0\n')
             (bin_dir / 'claude').chmod(0o755)
 
+            # Codex installed only in ~/.local/bin, off PATH: review.sh falls back to it, so
+            # doctor must find it the same way.
+            review = project / 'scripts/review.sh'
+            review_before = review.read_text()
+            review.write_text(review_before.replace('DEFAULT_REVIEWER="claude"', 'DEFAULT_REVIEWER="codex"'))
+            (bin_dir / 'codex').rename(tmp / 'codex')
+            env['PATH'] = os.pathsep.join(d for d in full_path.split(os.pathsep)
+                                          if d and not (Path(d) / 'codex').exists())
+            red = doctor()
+            self.assertIn("MISSING: the second CLI 'codex'", red.stdout)
+            (home / '.local/bin').mkdir(parents=True)
+            (tmp / 'codex').rename(home / '.local/bin/codex')
+            ready = doctor()
+            self.assertEqual(ready.returncode, 0, ready.stdout + ready.stderr)
+            env['PATH'] = full_path
+            review.write_text(review_before)
+
             # check.sh's own example form: "$HOME/..." must be expanded, as check.sh's sh does.
             (home / 'tc').mkdir()
             (home / 'tc' / 'node').write_text('#!/bin/sh\necho v97.1.0\n')
@@ -161,3 +190,14 @@ class DoctorTests(unittest.TestCase):
             red = doctor()
             self.assertEqual(red.returncode, 1, red.stdout)
             self.assertIn('MISSING: a git hook resolves node v97.1.0, .nvmrc wants 96', red.stdout)
+            (project / '.nvmrc').unlink()
+
+            # doctor reads the line, it does not run it: shell syntax is reported, not executed.
+            canary = tmp / 'canary'
+            check.write_text(check.read_text().replace(
+                'toolchain_path="$HOME/tc"', 'toolchain_path="$(touch %s; printf /usr/bin)"' % canary))
+            red = doctor()
+            self.assertFalse(canary.exists(), 'doctor.sh executed the toolchain_path line')
+            self.assertEqual(red.returncode, 1, red.stdout)
+            self.assertIn('MISSING: toolchain_path uses shell syntax doctor does not evaluate; set a plain path',
+                          red.stdout)

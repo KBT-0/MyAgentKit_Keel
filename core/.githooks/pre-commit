@@ -32,9 +32,14 @@ cd "$root" || exit 1
 # Do not assume CI covers them either: the CI this kit ships runs `./scripts/check.sh` and
 # nothing else, so an opt-in gate runs in CI only if the project added it there deliberately.
 # Check before believing it.
-if ./scripts/check.sh; then
-  exit 0
+./scripts/check.sh
+status=$?
+[ "$status" -ne 0 ] || exit 0
+# 75: another gate run held the lock past GATE_LOCK_WAIT. Nothing was checked, so the commit
+# stays blocked, but calling that a failure sends someone hunting for a defect that is not there.
+if [ "$status" -eq 75 ]; then
+  echo "pre-commit: check.sh did NOT RUN (another gate run holds the lock); commit blocked. Commit again when it finishes." >&2
+  exit 1
 fi
-
 echo "pre-commit: check.sh FAILED — commit aborted. Fix it, or use --no-verify for a WIP commit." >&2
 exit 1

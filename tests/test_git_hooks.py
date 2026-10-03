@@ -18,7 +18,9 @@ class GitHookTests(unittest.TestCase):
         (root / 'scripts/check.sh').write_text(
             'echo ran >> .git/gate-runs\n[ ! -e a ] || [ ! -e b ] || { echo "CHECK: FAIL"; exit 1; }\n')
         (root / 'scripts/check.sh').chmod(0o755)
-        env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1', GIT_EDITOR='true')
+        # C locale: the hook recognises the English text git writes under the scissors line.
+        env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1', GIT_EDITOR='true',
+                   LC_ALL='C', LANGUAGE='C')
         git = lambda *args, check=True: subprocess.run(
             ['git', '-c', 'user.name=t', '-c', 'user.email=t@example.invalid',
              '-c', 'core.hooksPath=.githooks', *args],
@@ -95,6 +97,31 @@ class GitHookTests(unittest.TestCase):
             result = git('commit', '-q', '-v', '-e', '-m', 'edit notes', check=False)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_a_scissors_line_git_did_not_write_cuts_nothing(self):
+        # With -m git keeps a scissors line and everything below it: only the header git
+        # writes for an editor (the line plus its two-line explanation) is cut.
+        with tempfile.TemporaryDirectory() as tmp:
+            root, git = self.repo(tmp)
+            cut = '# ------------------------ >8 ------------------------\n'
+            for below in ('', '# Do not modify or remove the line above.\n'):
+                with self.subTest(below=below):
+                    result = self.commit(root, git, cut + below
+                                         + 'Co-Authored-By: Claude <noreply@anthropic.com>\n')
+                    self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertIn('crediting an AI tool', result.stderr)
+
+    def test_a_commented_out_trailer_is_checked(self):
+        # Git keeps a "#" line under -m or verbatim cleanup, so a commented trailer is a trailer.
+        with tempfile.TemporaryDirectory() as tmp:
+            root, git = self.repo(tmp)
+            for char in ('#', ';'):
+                with self.subTest(char=char):
+                    git('config', 'core.commentChar', char)
+                    result = self.commit(root, git, 'x\n' + char
+                                         + ' Co-Authored-By: Claude <noreply@anthropic.com>\n')
+                    self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertIn('crediting an AI tool', result.stderr)
+
     def test_the_owner_may_allow_ai_attribution(self):
         with tempfile.TemporaryDirectory() as tmp:
             root, git = self.repo(tmp)
@@ -122,6 +149,31 @@ class GitHookTests(unittest.TestCase):
                         git('config', '--unset', config[0])
                     self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
                     self.assertIn('crediting an AI tool', result.stderr)
+
+    def test_a_gate_that_did_not_run_blocks_the_commit_as_not_run(self):
+        # Exit 75 is "another gate run holds the lock": the commit stays blocked, and the
+        # message says the gate did not run rather than that it failed.
+        with tempfile.TemporaryDirectory() as tmp:
+            root, git = self.repo(tmp)
+            shutil.copyfile(ROOT / 'core/scripts/check.sh', root / 'scripts/check.sh')
+            holder = subprocess.Popen(['sh', '-c', 'sleep 60; :', 'scripts/check.sh'])
+            try:
+                os.symlink(str(holder.pid), root / '.git/check.lock')
+                (root / 'c').write_text('locked\n')
+                git('add', 'c')
+                result = subprocess.run(
+                    ['git', '-c', 'user.name=t', '-c', 'user.email=t@example.invalid',
+                     '-c', 'core.hooksPath=.githooks', 'commit', '-q', '-m', 'locked'],
+                    cwd=root, capture_output=True, text=True, timeout=60,
+                    env=dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1',
+                             GATE_LOCK_WAIT='1'))
+            finally:
+                holder.kill()
+                holder.wait()
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('check.sh did NOT RUN (another gate run holds the lock); commit blocked',
+                          result.stderr)
+            self.assertNotIn('FAILED', result.stderr)
 
     def test_an_unreadable_agents_file_fails_closed(self):
         # A grep that could not read the rule is not an owner's choice to allow AI credit.

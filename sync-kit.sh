@@ -131,12 +131,14 @@ fi
 
 # The ACTION items between the recorded version and the top (all of them if the recorded
 # version is unknown), repeated as a checklist. Stamping past them unconfirmed once made the
-# next run say "already current" while the hand edits had never been made.
+# next run say "already current" while the hand edits had never been made. A scan that
+# failed leaves the list empty, which reads as "no ACTION items": it stops the sync instead.
 awk -v want="v$have" '
   $1 == "##" && $2 == want { exit }
   /^## v/ { v = $2 }
   v && /\*\*ACTION/ && !/\*\*ACTION\*\* — none/ { print "  " v ": " $0 }
-' "$kit/CHANGELOG.md" > "$pending"
+' "$kit/CHANGELOG.md" > "$pending" ||
+  die "cannot scan the changelog for ACTION items; version left at v$have. Rerun once awk can read $kit/CHANGELOG.md."
 
 if [ -s "$pending" ]; then
   echo

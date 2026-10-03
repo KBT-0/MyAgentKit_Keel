@@ -167,11 +167,18 @@ def prior_rounds(repo: Path, task_id: str | None, scope: str, reference: str | N
     rounds = []
     resolved = resolve(repo, scope, reference) if task_id else None
     for path in (repo / ".myagentkit/usage").glob("*.json") if task_id else ():
+        # A record that cannot be read may be an earlier round of this task: skipping it
+        # dropped that round's findings unseen, past every archive check below.
         try:
             value = json.loads(path.read_text())
-        except (OSError, ValueError):
-            continue
-        task = value.get("task") if isinstance(value, dict) else None
+        except (OSError, ValueError) as error:
+            raise BridgeError("usage record %s cannot be read (%s); an earlier round of task %s "
+                              "may be in it: restore it or use a new task label"
+                              % (path, error, task_id)) from error
+        if not isinstance(value, dict):
+            raise BridgeError("usage record %s is not a usage record; an earlier round of task %s "
+                              "may have been in it: restore it or use a new task label" % (path, task_id))
+        task = value.get("task")
         if (not isinstance(task, dict) or task.get("kind") != "review" or task.get("id") != task_id
                 or value.get("status") != "completed" or not value.get("evidence")):
             continue
@@ -359,6 +366,9 @@ def main(argv=None, result_sink=None) -> int:
             raise BridgeError("--repo must name the repository root")
         scope, ref = ("base", args.base) if args.base else (("commit", args.commit) if args.commit else ("uncommitted", None))
         head, fingerprint, diff = snapshot(repo, scope, ref)
+        # Captured with the snapshot: the usage record names what was reviewed even when the
+        # reference is deleted or moved before the review ends.
+        resolved = resolve(repo, scope, ref)
         if args.mode == "review" and not diff.strip():
             raise BridgeError("empty diff: nothing was reviewed")
         task = args.task_file.read_text() if args.task_file else ""
@@ -421,7 +431,13 @@ def main(argv=None, result_sink=None) -> int:
                 raise BridgeError("Claude exceeded the wall-clock limit; process group stopped")
             if reason and (execution["exit_code"] != 0 or execution["termination"]):
                 raise BridgeError(f"Claude exited {execution['exit_code']} ({reason}); inspect archived evidence")
-            if snapshot(repo, scope, ref)[1] != fingerprint:
+            # A snapshot that cannot be taken (the reference was deleted) is a changed checkout
+            # too, as the Codex adapter counts it.
+            try:
+                stale = snapshot(repo, scope, ref)[1] != fingerprint
+            except BridgeError:
+                stale = True
+            if stale:
                 reason = "stale_checkout"
                 raise BridgeError("checkout changed during review; result is stale")
             value = validate(json.loads(execution["stdout"]), args.mode, args.model)
@@ -445,7 +461,7 @@ def main(argv=None, result_sink=None) -> int:
             usage_path, usage = agent_usage.record(repo, "claude", args.model, args.requester,
                 {"id": args.task_id or (args.task_file.name if args.task_file else args.mode + "-" + scope),
                  "kind": args.mode, "scope": scope, "reference": ref,
-                 "resolved": resolve(repo, scope, ref), "head": head,
+                 "resolved": resolved, "head": head,
                  "diff_sha256": evidence["diff_sha256"]}, execution, evidence["status"], reason, archived_path)
             recovery = usage["recovery"]
         except (OSError, ValueError) as error:
