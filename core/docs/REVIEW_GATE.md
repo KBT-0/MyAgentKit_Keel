@@ -154,6 +154,26 @@ Reference reviews require matching clean checkout context. Both share scope coll
 checkout fingerprint validation, so a change while the reviewer runs invalidates its
 result, and evidence is published exclusively before usage can say completed.
 
+**Every round asks for the whole list, and a later round sees the earlier ones.** Asked only
+for "file, line, impact", a reviewer reports a different top few on every fresh pass; one
+medium-size change took more than ten Reject rounds, each finding two or three new Medium
+problems, many in code the previous fix had added. Both adapters therefore ask for every
+finding the pass can establish, each opening with a severity (Critical, High, Medium or Low)
+and ending with a `Fix sketch:` — a direction the author verifies, never a patch to paste.
+When `MYAGENTKIT_TASK_ID` names the same task label as earlier completed reviews, the prompt
+carries those reviews oldest first, exactly as archived, and asks the reviewer to say for each
+earlier finding whether it is fixed or still present, then to review the whole diff again.
+`REVIEW_DISPOSITIONS=<file>` adds the author's answer to each finding (fixed in a commit,
+disproved with evidence, deferred to the owner); the reviewer re-raises a disproved or
+deferred finding only with a new argument. A missing earlier archive stops the review rather
+than silently dropping that round. A fresh label starts at round 1.
+
+**A checkout that changes while the review runs fails it with `stale_checkout`.** That is
+correct, not a flake: the reviewer reads files while it runs, so its findings may describe a
+tree that the archived diff and fingerprint do not. An edit, a new untracked file, a moved HEAD
+or a moved base all count. Leave the checkout alone until `review.sh` exits — keep working in
+another worktree — and run the review again.
+
 `./scripts/review.sh --self-test` exercises both adapters' offline failure cases and is
 included in `./scripts/check.sh --self-test`; these self-tests require Python 3.10+ for
 both providers. Missing tests or missing completion evidence fail, and so does any one of
@@ -246,8 +266,12 @@ no state-changing commands.
 Read AGENTS.md, docs/ARCHITECTURE.md and docs/REVIEW_GATE.md, then review the diff below
 in the REVIEW_GATE.md priority order. Grep the callers of every changed public member.
 
-Report each finding with the file, the line, why it is wrong, and how it fails concretely,
-so the calling agent can verify or disprove it independently. Finish with a line
+Report EVERY finding you can establish, not only the first few, ranked by severity. Start
+each with its severity (Critical, High, Medium or Low), then the file, the line, why it is
+wrong and how it fails concretely, so the calling agent can verify or disprove it
+independently, and end it with "Fix sketch:" and a short fix direction (not a patch). In a
+later round, paste the earlier rounds' findings and verdicts and the author's disposition of
+each, and ask which are fixed before reviewing the whole diff again. Finish with a line
 "VERDICT: Accept" / "VERDICT: Accept with Manual Checks" / "VERDICT: Reject", followed by
 any manual checks written as full sentences ready to paste into docs/STATE.md.
 

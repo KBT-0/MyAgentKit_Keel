@@ -134,6 +134,13 @@ def main(argv=None):
         if chain["failure_kind"] == "cli_unsupported":
             print("FAIL [review]: the installed CLI rejected a flag the read-only review requires; "
                   "upgrade the CLI. The review never drops a sandbox flag to make a run start.")
+        if chain["failure_kind"] == "stale_checkout":
+            # Correct to fail: the reviewer reads files while it runs, so its findings may
+            # describe a tree the archived diff and fingerprint do not. The fix is the caller's.
+            print("FAIL [review]: the checkout changed while the review ran (an edit, a new "
+                  "untracked file, a moved HEAD or base), so the result cannot be tied to the "
+                  "diff it names. Leave this checkout untouched until review.sh exits: keep "
+                  "working in another worktree, or wait for it, then run the review again.")
     elif chain.get("selected_reviewer") != args.reviewer:
         print("FALLBACK [review]: this review is by %s, not the requested %s; check it did not "
               "author the patch." % (chain["selected_reviewer"], args.reviewer))

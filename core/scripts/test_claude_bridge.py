@@ -15,7 +15,7 @@ import agent_usage
 ROOT = Path(__file__).resolve().parent
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. The kit gate reads this too.
-SUITE_MINIMUMS = {'test_claude_bridge': 47, 'test_agent_usage': 12, 'test_codex_quota': 3}
+SUITE_MINIMUMS = {'test_claude_bridge': 48, 'test_agent_usage': 12, 'test_codex_quota': 3}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -32,6 +32,7 @@ assert '--dangerously-skip-permissions' not in args
 assert '--resume' not in args and '--continue' not in args
 assert os.environ['MYAGENTKIT_DELEGATION_DEPTH'] == '1'
 prompt = sys.stdin.read()
+if os.environ.get('PROMPT_LOG'): pathlib.Path(os.environ['PROMPT_LOG']).write_text(prompt)
 case = os.environ.get('FIXTURE_CASE', 'accept')
 model = args[args.index('--model') + 1]
 if case == 'unknown_flag': sys.stderr.write("error: unknown option '--restricted'\\n"); sys.exit(1)
@@ -763,7 +764,8 @@ if case == 'archive_failure':
         fake = self.root / "codex-accept"
         fake.write_text("#!/usr/bin/env python3\n"
                         "import json, os, pathlib, sys\n"
-                        "sys.stdin.read()\n"
+                        "prompt = sys.stdin.read()\n"
+                        "if os.environ.get('PROMPT_LOG'): pathlib.Path(os.environ['PROMPT_LOG']).write_text(prompt)\n"
                         "case = os.environ.get('CODEX_FIXTURE_CASE', 'accept')\n"
                         "assert os.environ['MYAGENTKIT_DELEGATION_DEPTH'] == '1'\n"
                         "if case == 'unknown_flag':\n"
@@ -813,6 +815,49 @@ if case == 'archive_failure':
                          {"claude-opus-5", "fixture-codex-model"})
         for header in (first, second):
             self.assertNotIn("default", header["model"].lower())
+
+    def test_review_prompt_asks_for_every_finding_and_carries_earlier_rounds(self):
+        # Without these asks each fresh pass reported a different top few, and a later round,
+        # blind to the earlier ones, re-raised findings the author had disproved or deferred.
+        log = self.root / 'prompt.txt'
+        asks = ('EVERY finding', 'Critical, High, Medium or Low', 'Fix sketch:')
+        task = {'PROMPT_LOG': str(log), 'MYAGENTKIT_TASK_ID': 'rounds-task'}
+        code, first = self.run_bridge('reject', env_extra=task)
+        self.assertEqual(code, 0, first)
+        for ask in asks:
+            self.assertIn(ask, log.read_text())
+        self.assertNotIn('### Round 1', log.read_text())
+        code, second = self.run_bridge('accept', env_extra=task)
+        self.assertEqual(code, 0, second)
+        self.assertIn('### Round 1', log.read_text())
+        self.assertIn('file.py:1: concrete defect', log.read_text())
+        self.assertIn('VERDICT: Reject', log.read_text())
+        # Round 3 through the wrapper, by the other reviewer: both rounds, oldest first.
+        notes = self.root / 'dispositions.md'
+        notes.write_text('file.py:1 DISPROVED_BY_AUTHOR: the defect needs input the caller rejects.\n')
+        result = self.run_wrapper('--reviewer', 'codex', REVIEW_CLI_BIN=str(self.build_fake_codex()),
+                                  REVIEW_CODEX_MODEL='fixture-codex-model',
+                                  REVIEW_DISPOSITIONS=str(notes), **task)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        prompt = log.read_text()
+        for ask in asks:
+            self.assertIn(ask, prompt)
+        self.assertLess(prompt.index('### Round 1'), prompt.index('### Round 2'))
+        self.assertLess(prompt.index('VERDICT: Reject'), prompt.index('VERDICT: Accept\n'))
+        self.assertIn('DISPROVED_BY_AUTHOR', prompt)
+        # Another task label carries nothing; dispositions with no earlier round are refused.
+        code, other = self.run_bridge(env_extra=dict(task, MYAGENTKIT_TASK_ID='other-task'))
+        self.assertEqual(code, 0, other)
+        self.assertNotIn('### Round 1', log.read_text())
+        code, refused = self.run_bridge(env_extra=dict(task, MYAGENTKIT_TASK_ID='new-task',
+                                                       REVIEW_DISPOSITIONS=str(notes)))
+        self.assertEqual(code, 2, refused)
+        self.assertIn('no earlier completed review', refused['error'])
+        # A lost round record stops the review instead of silently dropping that round.
+        Path(first['evidence']).unlink()
+        code, missing = self.run_bridge(env_extra=task)
+        self.assertEqual(code, 2, missing)
+        self.assertIn('earlier review evidence', missing['error'])
 
     def test_default_reviewer_is_claude_and_codex_remains_explicit(self):
         result = self.run_wrapper('--uncommitted', CLAUDE_CLI_BIN=str(self.fixture),
@@ -1001,6 +1046,10 @@ if case == 'archive_failure':
             self.assertNotEqual(result.returncode, 0)
             self.assertEqual(len(chain['attempts']), 1)
             self.assertIn(chain['failure_kind'], ('invalid_evidence', 'stale_checkout'))
+            if 'mutation' in case:
+                # Failing is right; a bare "stale_checkout" left the caller guessing what to change.
+                self.assertEqual(chain['failure_kind'], 'stale_checkout')
+                self.assertIn('the checkout changed while the review ran', result.stdout)
 
     def test_unconfigured_alternate_does_not_choose_a_default_model(self):
         result, chain = self.dispatch_result(FIXTURE_CASE='quota', REVIEW_CODEX_MODEL='')
