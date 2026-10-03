@@ -14,9 +14,12 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 # The review self-test ships to projects with its own minimums; read them, never copy them.
 BRIDGE_MINIMUMS = next(
-    ast.literal_eval(node.value)
-    for node in ast.parse((ROOT / 'core/scripts/test_claude_bridge.py').read_text()).body
-    if isinstance(node, ast.Assign) and getattr(node.targets[0], 'id', None) == 'SUITE_MINIMUMS')
+    (ast.literal_eval(node.value)
+     for node in ast.parse((ROOT / 'core/scripts/test_claude_bridge.py').read_text()).body
+     if isinstance(node, ast.Assign) and getattr(node.targets[0], 'id', None) == 'SUITE_MINIMUMS'),
+    None)
+if BRIDGE_MINIMUMS is None:
+    sys.exit('KIT CHECK: FAIL — SUITE_MINIMUMS not found in core/scripts/test_claude_bridge.py')
 REQUIRED_SUITES = {
     'core/scripts': dict(BRIDGE_MINIMUMS, test_agent_cost=2),
     'tests': {'test_packaging': 1, 'test_bootstrap': 1, 'test_acceptance': 2,
