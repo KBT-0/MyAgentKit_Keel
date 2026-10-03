@@ -596,6 +596,17 @@ applied literally to the base version, left `$gate` unset so every commit stoppe
 `set -u`: found only by assembling the upgrade from the text and running it. Rule: an
 ACTION that moves code is validated that way before it ships.
 
+#### Range B, round 3: the transition into cleanup
+
+A raising cancel handler had one more window: between `finally` beginning and the
+non-raising handlers being installed one signal at a time, a second SIGTERM escaped before
+the group kill. The handler now raises once and notes thereafter, and cleanup disarms it
+with a flag as its first statement, so nothing is swapped under a live signal. The same
+round found the supervisor's hand-back to the adapter could drop a completed result, a
+folded-trailer join crossing a blank line, `CDPATH=.` printing into the gate's own path, and
+the symlink-text scan reporting under a temporary name that lost the `setup/` exemption.
+Lesson: every handler switch is itself a window; switch state, not handlers.
+
 #### The review gate held on the kit's own hardening
 
 Five of the nine work packages (the gate lock, both review-tooling packages, the commit gates

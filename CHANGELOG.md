@@ -188,6 +188,16 @@ hand merge; `sync-kit.sh` now keeps listing them until you confirm (see "Sync st
   validated by assembling it literally onto the base version and running the result.
   **ACTION:** copy the symlink scan line into your `scripts/check.sh`; copy
   `.githooks/commit-msg`, `claude_bridge.py` and `test_claude_bridge.py` again.
+- **Full cross-model review, range B round 3.** A cancel as the reviewer's cleanup begins is
+  only noted: the cancel handler raises once, then notes, and cleanup disarms it with a flag
+  instead of swapping handlers (a window in which a second SIGTERM escaped past the group
+  kill). The Codex adapter keeps a completed review whose cancel arrived while the supervisor
+  restored its handlers. `.githooks/commit-msg` stops unfolding at a blank or
+  whitespace-only line. `scripts/check.sh` resolves its own path with `CDPATH` cleared and
+  reports a symlink's link text under the link's own path, so a link in `setup/` stays
+  exempt. **ACTION:** copy `agent_process.py`, `codex_bridge.py` and both test modules
+  again; in your `scripts/check.sh` change the `gate=` and `cd` lines to `CDPATH= cd --` and
+  port the symlink-text block at the end of `scan_grep`.
 - **Scan failures that were not scanner failures (issues #13, #14).** A tracked file deleted
   without `git rm` now fails `[scan]` under its own name with the command that fixes it, and
   every other scan still runs. A symlink to a directory (for example `node_modules` linked
