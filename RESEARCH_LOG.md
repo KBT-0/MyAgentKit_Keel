@@ -250,6 +250,217 @@ the child a complete temporary stdin file and monitors its process, not partial 
 
 ## Backflow findings
 
+### 2026-10-03 — kit hardening from two projects' unreported findings
+
+Two projects using the kit were mined for failures nobody had filed (their session
+transcripts, gotcha files and review records). Their findings, filed as issues, and older open
+issues were fixed by nine work packages in this version. Each fix below was written
+as a test first and watched going red against the old code; where a test pins behaviour the
+old code already had, it says so. The entries record why; `CHANGELOG.md` v0.9 records what.
+
+#### Concurrent gate runs and in-tree self-test injection (#19, #20, #11)
+
+Several sessions share one checkout, and the Stop hook, the commit hook and manual runs
+overlap. Two runs shared a project's fixed build directory and one reported FAIL for a tree
+that passes alone; a self-test's marker file written into the tree failed a concurrent gate
+and a concurrent commit. The fix is a per-checkout lock (a lock rather than a per-run build
+directory, because the build directory lives in the project's build command, out of the kit's
+sight) and injection from outside the tree. Proof: the kit self-test records `git status`
+from every nested gate run (red on the old injected file) and runs two gates over one build
+directory (red: "File exists"). The first lock design passed its own tests and a fresh review
+found five holes: an unbounded wait gets killed by the Stop hook's timeout with no result
+(now bounded, exit 75); inheriting the lock had no red test (dropping the export hung the
+kit check, so every gate call has a timeout and the self-test runs under a 5 s bound); a
+1 s grace for an empty pid file reclaimed a live holder (the lock is now a symlink whose
+target is the pid, which has no empty window); unconditional cleanup removed a lock a reclaim
+race had handed on; a bare inheritance flag leaked into gates in other checkouts. A lock is
+not tested until its release, its inheritance and a bounded wait each have a case that goes
+red. Cost: a commit during a long self-test waits for it.
+
+#### Scanner failures that were not scanner failures (#13, #14)
+
+The scan list is tracked plus untracked non-ignored paths. Two ordinary states put a path
+into it that grep cannot read as a file: a tracked file deleted with plain `rm`, and a
+directory symlink (`node_modules` linked into a clean-checkout worktree, which
+`node_modules/` does not ignore). Both ended in "a scanner failed to run", so the person
+debugged the tooling instead of the tree. The gate now sorts the list first. A missing tracked
+path still fails, because the commit may still carry it, but names itself and the fix; a
+directory symlink holds nothing git tracks and is skipped with a line. A real grep failure
+keeps its old message. Proof: both cases red on the old `check.sh` ("a scanner failed to
+run"), and the second red again with only the #13 half applied.
+
+#### Review tooling that failed open (#12, #9, #8)
+
+(1) Automatic failover replaced the requested reviewer, often with the patch's author, while
+the record still looked valid; an outdated CLI rejecting a sandbox flag triggered it on every
+run. (2) Git applies clean filters before diffing, so the payload could omit lines the
+fingerprint still hashed. (3) SIGTERM and SIGHUP skipped cleanup, so paid reviewer processes
+kept running; a test-count guard and empty boundary self-tests also let a check that never ran
+count as a pass. Failover is now opt-in and marked in the evidence, filtered scope is refused,
+a cancel kills the reviewer's process group and records `cancelled`, and a suite with fewer
+tests than its minimum fails. Proof, each red on the old code: the old failover exited 0; a
+filtered scope raised nothing; the process group outlived SIGTERM and SIGHUP (orphans in `ps`)
+and SIGINT left no usage record; an emptied suite and a boundary self-test that ran nothing
+both printed PASS. The review round found that an unconditional handler overrode a signal the
+caller had set to ignore, so a `nohup` review was cancelled when its terminal closed; the
+handler is skipped for an ignored signal. Blocking signals around `Popen` was rejected: the
+mask survives `exec`, so the reviewer CLI would start with them blocked. A signal inside
+`Popen` itself, and SIGKILL, can still orphan the reviewer. The lesson: a substitute, a
+rendering or a skipped run must never be evidence for the real thing.
+
+#### A review loop that never converged (#18)
+
+In a project using the kit one medium-size change went through more than ten cross-model
+rounds, each a Reject with two or three new, mostly Medium findings, increasingly in code the
+previous fix had written. The prompt asked for no exhaustive pass, no severity and no fix
+direction, and each round was blind to the earlier ones, so disproved or deferred findings
+came back. The prompt now asks for all three and carries earlier rounds from the reviewer's
+own archive, not from the author. `stale_checkout` was examined and kept: a reviewer that
+read a changing tree cannot be tied to its diff; only its message changed. The first cut
+broke the review gate's invariant, which the fix review found: the author's disposition
+"answered" a finding, so every finding could be marked deferred and the reviewer could
+Accept. Dispositions are now claims to verify, a deferred finding blocks a plain Accept, and
+the closing Accept comes from a fresh label with no carried context. Matching on the label
+alone also let a reused label carry another change's rounds, so scope, reference and head
+ancestry must match; the carried text counts toward the diff budget; carried verdict lines are
+renamed so the exactly-one-verdict check cannot trip on an echo. Proof: each point red on the
+old prompt or code, and the two pinned behaviours by mutation. The owner's idea that only High
+and Critical findings should block from round three, with the reviewer's completeness claim
+recorded, is a gate-policy and schema change and is not made here. Four live Claude checks
+for #6 still await the owner (`docs/ACCEPTANCE.md`).
+
+#### The sync stamp (#15)
+
+`sync-kit.sh` stamped the new version right after printing the changelog, so the stamp meant
+"files copied", not "hand edits applied". A project using the kit sat at v0.5 with the v0.6
+and v0.7 ACTIONs never applied; a later sync to v0.8 stamped it current, and from then on the
+sync said "already current" and the pending work was invisible. Now the stamp advances past a
+version only when it has no ACTION items or the owner passes `--actions-applied`; until then
+every sync reprints the items and exits 2. Chosen over a per-version applied marker checked
+by the gate: one flag and the existing stamp need no new state file. Proof:
+`tests/test_sync_kit.py` (red on the old script: stamp moved to 0.2 unconfirmed). A "none"
+line must not count as pending, or every sync would block on it; that was a review nit.
+
+#### Gates that did not gate, or hid their failure (#16, #24, #23)
+
+(1) A clean `git merge` runs `pre-merge-commit`, not `pre-commit`, so two green branches
+merged into a red tree that nothing gated; proved by a real merge in a synthetic repository.
+(2) A project filtered its build output to lines matching "error"; that cut away the "In
+function / required from / note:" lines, and a failure seen only in CI had to be fixed
+without them. The kit's own script had never filtered; the filter was a local edit made for
+quiet output. The kit now gives the quiet output itself (nothing on a pass; on a failure the
+tail and the path of the full log, the whole log on CI where the file dies with the runner),
+so nobody has a reason to filter. A deploy-shaped build command, a dry run included, was
+refused by an agent permission layer and made the gate unrunnable for the agent; the kit now
+says to keep it out. (3) The coding tool's default co-author trailer reached most of a
+project's commits despite the owner's rule, and removing it meant rewriting history; a
+document did not hold, so a hook does. The first hook matched tool names as substrings and
+rejected humans ("Claude Monet", "Ana Raider", a domain containing "cursor"), missed newer
+tools, `[bot]` and non-co-author forms, and read the `commit -v` diff that git strips only
+after the hook. It now strips comments and the scissors section, rejects a name only when it
+is wholly tool or model words, a vendor's address or a `[bot]`, and is the owner's choice,
+keyed on the `AGENTS.md` rule line; a missing `AGENTS.md` is a broken setup, so the hook
+stays on. Proof: sixteen hook cases red on the first cut, the merge, build-output and
+owner-choice cases red on the old code. Open: the vendor-domain rule also rejects a human at
+a vendor, and a custom `core.commentChar` is not handled.
+
+#### Effort, STATE operation files, doctor.sh, closing a worker (#17, #21, #10, #30)
+
+(1) Sub-agents silently inherit the lead's effort. A side-by-side comparison was skewed and
+only grepping transcripts showed it, so agent definitions pin `effort:`. (2) `STATE.md`
+reached 38 KB because a non-empty "Active work" kept the rot gate quiet, and a 10 KB cap then
+fired three times in a day on one bullet; the answer is operation files with pointer lines,
+not a byte cap (the kit gates on lines). (3) Gates failed for machine reasons: hooks path
+unset, an older node on the hook PATH (nvm lives in rc files), missing exec bits. Each looked
+like a code bug, so a read-only `doctor.sh` runs at session start. (4) A pilot worker sat idle
+for 40 minutes after writing its result, because the idle notice also fires on background
+parks; the result file is the end signal and the lead closes the session. Proof: each doctor
+trap has an injected-trap test, red against a missing or sabotaged check, and the rot message
+test red on the old text. The review found that `doctor.sh` read `toolchain_path` as text, so
+the documented `"$HOME/..."` form gave a false MISSING (the line is now evaluated, and the
+test uses the documented form); that a "read-only" check must not call `npm config get`,
+which writes logs and directories; and that the interactive-shell probe needs a bounded wait.
+Not tested: its node, npm and real-CLI branches.
+
+#### Rules from the transcripts (#26, #27, #28, #31)
+
+(1) Research sub-agents put the owner's e-mail into User-Agent headers, up to thirteen
+requests each; personal data in a third party's logs cannot be recalled. (2) Worktree-isolated
+workers lost about 177 turns in 40 transcripts to refused compound shell commands. (3) Eight
+sub-agent writes of a report file were refused because rule 7 told them to write one, so the
+report ended up in the final message anyway. (4) A gate failure that passed on re-run left no
+trace in four recorded occurrences. The rules went into `WORKFLOW`, `HANDOFF`, `GOTCHAS` and
+the worker definition, not `AGENTS.md`, which is always loaded. The doctor additions came
+from the same projects: a checkout under `/mnt/<drive>` on WSL (CRLF scripts, Windows-native
+binaries, a much slower gate) and `node_modules/` with a trailing slash not ignoring a
+symlinked `node_modules`. Proof: the doctor traps red against the old script, each check
+disabled in turn. The rules are text and have no test.
+
+#### Self-test seams were a bypass (#25)
+
+`check.sh` read override variables so its self-test could point gates at synthetic inputs,
+and its comments said "nothing else sets it". Nothing enforced that:
+`GATE_BUILD_CMD_OVERRIDE=true git commit` skipped the build and passed, and a state or
+boundary file variable redirected or emptied a gate. A project using the kit found the same
+in its own gate independently and recorded "Environment overrides must not disable mandatory
+gates". The fix fails closed with the variable named, not a silent unset: a silent unset
+leaves the person who exported it believing a run checked something it did not. Seams are
+honoured only under a marker bound to the live lock holder, so a copied variable alone does
+nothing; the review renamed the generic names with a `GATE_SELFTEST_` prefix. Rule: every
+test seam is an input to the gate, so it either fails closed outside the test or it is a
+bypass, and a new seam joins the list in the same change. Proof: each seam exported into a
+normal run, a top-level `--self-test` and a run with a copied marker exits 1 with its name;
+the old gate printed `CHECK: PASS` with the build set to `false`. Not shown going red: the
+in-gate case on its own (the old code fails with `[build]`, not `[env]`). A deliberate forgery
+of lock and marker still works.
+
+#### Two lead fixes, and what is still open
+
+`spawn_worker.sh` now `cd`s before starting the tool, because tmux hands a new session a stale
+`PWD`, so the tool could start in a stale directory. `spawn_worker.sh --worktree` starting from a
+stale base is still open (#32), as is the test that times out at 5 s under load (#29).
+
+#### A fallback that became an override
+
+The kit's own cross-model review failed twice with "the model requires a newer version of
+Codex" on a machine whose CLI was current. The wrapper prepended `~/.local/bin` to PATH to
+reach per-user installs from a non-login shell, and an old standalone build left there won
+over the current binary. The failure text pointed at the model and the CLI version, not at
+the path, so the first reading was "the pin is stale". Rule: a directory added for a tool
+that MAY be missing goes to the end of PATH, never the front, and the message that names
+a version is checked against `which -a`. Proof: a regression with a current fake on PATH
+and a stale fake under `$HOME/.local/bin` fails on the old wrapper and passes on the new.
+
+#### A second model on the hardened diff
+
+A cross-model review of the whole v0.9 diff, run through the kit's own `review.sh`, came
+back Reject with five High findings in code that eight fresh same-vendor reviews had already
+passed: two waiters could both reclaim one stale gate lock and the late one deleted the lock
+the early one had just taken; a pid reused after a reboot held the lock forever; the
+commit-msg hook took an unreadable `AGENTS.md` for the owner allowing credit, stripped `#`
+lines that git keeps under `-m` or `verbatim`, and missed vendor-prefixed "Generated with"
+lines; review rounds matched on the literal reference text, so `--commit HEAD` carried one
+commit's review into the next, and archives were trusted by location alone; `doctor.sh`
+passed a script missing from the index and ran its shell probe unbounded without `timeout`.
+Fixes: the lock is reclaimed by an atomic rename and verified; a live pid whose command
+line is not a gate run is stale; the hook checks comment lines whatever git would do with
+them (fail closed; the false positive, a commented-out credit left by a squash, is one line
+to delete); rounds are bound to the resolved reference, the head and the archive's sha256.
+Each was watched red first. Lesson: every check that compares by name (a reference string,
+a path, a pid) needs the identity the name stood for when it was recorded; and a second
+vendor's reading is not a formality, it found what five same-vendor rounds did not.
+
+#### The review gate held on the kit's own hardening
+
+Five of the nine work packages (the gate lock, both review-tooling packages, the commit gates
+and doctor.sh) needed a second review round (doctor.sh a short third one, for a `timeout`
+that stopped an interactive shell), and each first review found a real hole in the first cut: the five lock holes above, the dispositions that let a reviewer Accept with
+everything deferred, the substring match that rejected humans, the false node MISSING and the
+ignored-signal override. The four others (the scan, the sync stamp, the rules, the seams)
+were accepted in one round, with nits applied by the lead afterwards. None of the five was
+found by its author's tests. This is the invariant the review gate exists for, observed on
+the kit's own changes: the author's green self-test did not stand in for a fresh reviewer.
+
 ### 2026-10-03 — Worker cost is waits times context, not output size (#22)
 
 A project using the kit ran one lead session with background sub-agent workers for eleven

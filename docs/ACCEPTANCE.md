@@ -1,5 +1,70 @@
 # Acceptance evidence
 
+## v0.9 — 2026-10-03
+
+Nine work packages (G1 gate lock and self-test, G2 scan, G3a review tooling, G3b review
+rounds, G4 sync stamp, G5 commit gates, G6 effort/STATE/doctor/session end, G7 rules and
+doctor traps, G8 self-test seams) were each written as a test first, run red against the
+old code, fixed, then merged to master.
+
+**Executed**
+
+- `./scripts/check.sh --self-test` on each package branch before its merge, and on master
+  after every merge (about 60 s, exit 0 each time). It includes the packaging/docs
+  consistency check.
+- The negative tests per group, each watched going red on the old code and green on the new:
+  - G1: a nested gate run or the self-test changing `git status`; two concurrent gates over
+    one build directory ("File exists"); a killed run's lock reclaimed; a bounded wait ending
+    in `NOT RUN [lock]` (exit 75); a run removing only its own lock; an untracked marker file
+    failing the gate.
+  - G2: a deleted tracked file named with its fix; a directory symlink skipped with a NOTE.
+  - G3a: failover without `--fallback`; a clean-filtered scope; the reviewer process group
+    outliving SIGTERM and SIGHUP, and SIGINT leaving no usage record; an ignored signal
+    staying ignored; an emptied suite; boundary self-tests that ran no case; Codex
+    `cli_unsupported`.
+  - G3b: the all-findings/severity/fix-sketch prompt; carried rounds (scope, reference,
+    ancestry, diff budget, evidence under `docs/reviews` only, failed record not carried,
+    `Earlier verdict:`); the missing-archive exit 2 for both reviewers; the `stale_checkout`
+    explanation; dispositions as claims. Run offline with a stub CLI in a bootstrapped
+    project: a two-round review, the stale message, and a proposal.
+  - G4: two unconfirmed syncs keep the stamp and reprint the items; `--actions-applied`
+    records it; a version without ACTION items is stamped at once; a `none` line is not an item.
+  - G5: a clean merge into a red tree refused by a real merge; the commit-msg hook (AI
+    trailers, human co-authors with a tool's name, `[bot]`, vendor domains, `Generated with`,
+    the `commit -v` diff, the owner's opt-out); a build failure named with its chain, full
+    log and CI output.
+  - G6, G7: each doctor trap injected (exec bit, hooks path, reviewer CLI, `.nvmrc` mismatch,
+    `$HOME` in `toolchain_path`, grep shadowing, WSL `/mnt` checkout, CRLF script, unignored
+    `node_modules` symlink); the rot-gate message naming `docs/<OPERATION>.md`.
+  - G8: every self-test seam exported into a normal run, a top-level `--self-test` and a run
+    with a copied marker fails by name.
+- Fresh-reviewer rounds: two each for G1, G3a, G3b, G5 and G6; one each for G2, G4, G7 and
+  G8. Each second round reviewed the fixes of the first.
+- On a real machine, a fresh bootstrap passed `doctor.sh` except for the unset hooks path.
+
+**NOT run**
+
+- macOS, and Python 3.10 (the CI matrix covers them; locally only the host Python ran).
+- `dash` or busybox `sh` (the host's `/bin/sh` is bash): only `sh -n` and POSIX-only syntax.
+- The four live paid Claude checks for issue #6, listed in the next section. They await the
+  owner. Every other live reviewer call was replaced by a stub CLI.
+- The sync of the two projects using the kit: pending.
+- git older than 2.24 (no `pre-merge-commit`: merges are ungated there) and older than 2.28:
+  neither path was run.
+- `doctor.sh` branches for node, npm and a real reviewer CLI; the macOS no-`timeout` path;
+  the Stop hook's exit-75 branch (`sh -n` only); the 30 s lock NOTE repeating; the `mktemp`
+  build-log fallback outside git.
+- A signal arriving inside `Popen`, and SIGKILL of the dispatcher, still orphan the reviewer.
+- Open issues: #32 (`spawn_worker.sh --worktree` starts from a stale base) and #29.
+
+Cross-model review (executed): `scripts/review.sh --base 5c80c36 --reviewer codex`, round 1
+on the full diff returned Reject (5 High, 6 Medium, 1 Low); every finding was fixed with its
+negative test and the fixes were merged. A second Codex round on the final diff is recorded
+in `docs/reviews/` with its verdict. The round-1 record was written by the pre-fix kit (no
+resolved reference, no archive hash), so round 2 ran under a new task label and did not
+carry round 1: the carried-round path is proven by the regression tests only.
+
+
 ## Issue #6 — what is still live-only, 2026-10-03
 
 Run offline, with a stub Claude CLI in a disposable project made by `bootstrap.sh`: a
