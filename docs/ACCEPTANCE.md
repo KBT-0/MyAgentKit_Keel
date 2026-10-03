@@ -32,6 +32,8 @@ live checks below. Each costs a real Claude call; the first and the last two are
    ```
 
    The 26 commits after `cc4af40` (192584 bytes to the v0.8 merge) are in neither scope.
+   After both live reviews, go back to the main checkout and remove the two worktrees:
+   `git worktree remove ../keel-cc4af40 && git worktree remove ../keel-842e78d`.
 
 3. **A live proposal through the shipped adapter.** Pass: `status` is `completed`, the
    result has a patch or questions, `file.py` is unchanged, the evidence JSON names the

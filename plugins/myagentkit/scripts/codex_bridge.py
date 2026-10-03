@@ -56,7 +56,7 @@ def main(argv=None, result_sink=None):
         "line: VERDICT: Accept / VERDICT: Accept with Manual Checks / VERDICT: Reject "
         "(choose one). Put the findings under a '## Findings' heading and the explicit manual "
         "checks under a '## Manual checks' heading, as full sentences.\n"
-        + prior_rounds(repo, os.environ.get("MYAGENTKIT_TASK_ID"))
+        + prior_rounds(repo, os.environ.get("MYAGENTKIT_TASK_ID"), scope, ref, head, diff)
         + f"Scope: {scope} {ref or ''}; HEAD: {head}\nDiff:\n{diff}"
     )
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:12]

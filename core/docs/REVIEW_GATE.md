@@ -161,12 +161,24 @@ problems, many in code the previous fix had added. Both adapters therefore ask f
 finding the pass can establish, each opening with a severity (Critical, High, Medium or Low)
 and ending with a `Fix sketch:` — a direction the author verifies, never a patch to paste.
 When `MYAGENTKIT_TASK_ID` names the same task label as earlier completed reviews, the prompt
-carries those reviews oldest first, exactly as archived, and asks the reviewer to say for each
-earlier finding whether it is fixed or still present, then to review the whole diff again.
-`REVIEW_DISPOSITIONS=<file>` adds the author's answer to each finding (fixed in a commit,
-disproved with evidence, deferred to the owner); the reviewer re-raises a disproved or
-deferred finding only with a new argument. A missing earlier archive stops the review rather
-than silently dropping that round. A fresh label starts at round 1.
+carries those reviews oldest first, exactly as archived (their verdict lines rewritten as
+`Earlier verdict:`), and asks the reviewer to say for each earlier finding whether it is
+fixed or still present, then to review the whole diff again. `REVIEW_DISPOSITIONS=<file>`
+adds the author's answer to each finding (fixed in a commit, disproved with evidence,
+deferred to the owner) as claims to verify, because the author never approves its own work:
+a disproved finding counts only after the reviewer has checked it against the code, and a
+deferred one stays open under Manual checks, so it rules out a plain Accept. The review
+stops (exit 2) rather than carry a wrong record: when an earlier archive is missing or lies
+outside `docs/reviews`, when an earlier round has another scope or reference, or a head that
+is not an ancestor of the current HEAD (a reused label from another change), or when the
+diff plus the carried rounds and dispositions exceed the 400000-byte guard. A fresh label
+starts at round 1.
+
+**The final Accept comes from one fresh full review under a NEW label.** Carried rounds and
+dispositions help the loop converge, but they also steer the reviewer toward what was
+already said. When the rounds under one label stop finding anything, run one more review
+under a label never used before: it sees no earlier round and no disposition, and its
+verdict is the one that closes the change.
 
 **A checkout that changes while the review runs fails it with `stale_checkout`.** That is
 correct, not a flake: the reviewer reads files while it runs, so its findings may describe a
@@ -271,7 +283,9 @@ each with its severity (Critical, High, Medium or Low), then the file, the line,
 wrong and how it fails concretely, so the calling agent can verify or disprove it
 independently, and end it with "Fix sketch:" and a short fix direction (not a patch). In a
 later round, paste the earlier rounds' findings and verdicts and the author's disposition of
-each, and ask which are fixed before reviewing the whole diff again. Finish with a line
+each as claims to verify (a disproved finding counts only once checked against the code; a
+deferred one stays open under Manual checks), and ask which are fixed before reviewing the
+whole diff again; the final Accept comes from one fresh review with no earlier rounds. Finish with a line
 "VERDICT: Accept" / "VERDICT: Accept with Manual Checks" / "VERDICT: Reject", followed by
 any manual checks written as full sentences ready to paste into docs/STATE.md.
 
