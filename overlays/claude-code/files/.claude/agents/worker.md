@@ -35,6 +35,8 @@ the rules below exist).
   a small script file and run `sh that-file`; merging is the lead's job, in the main tree.
 - No personal data in any web request: a generic project User-Agent with no contact details,
   or stop and ask. A third party's logs cannot be recalled.
+<!-- BEGIN attribution rule: setup interview question 9 deletes this block when the owner allows AI credit -->
 - No AI attribution in git: no `Co-Authored-By` line, no tool or model name in any commit
   message, whatever your default is.
+<!-- END attribution rule -->
 - `./scripts/check.sh` before you finish; report "not run" for any check you did not run.

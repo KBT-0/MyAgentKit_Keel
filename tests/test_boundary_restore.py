@@ -92,6 +92,36 @@ exit 1
                         os.killpg(child.pid, signal.SIGKILL)
                     child.communicate()
 
+    def test_a_symlinked_parent_cannot_carry_the_probe_into_the_checkout(self):
+        # cp -R keeps an absolute symlink as a symlink, so a `src` linked to the checkout's
+        # own `lib` put the copy's mutation target back in the checkout, and the probe
+        # overwrote it there. Checking only the target's last component missed it.
+        template = (Path(__file__).resolve().parents[1] /
+                    'core/scripts/boundary_selftests.sh').read_text()
+        example = '\n'.join(line[4:] for line in template.splitlines() if line.startswith('# | '))
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / 'project'
+            real = root / 'lib/domain/existing.py'
+            real.parent.mkdir(parents=True)
+            original = b'Uncommitted owner content.\n'
+            real.write_bytes(original)
+            (root / 'src').symlink_to(root / 'lib')
+            (root / 'scripts').mkdir()
+            gate = root / 'scripts/check.sh'
+            gate.write_text('#!/bin/sh\ncd "$(dirname "$0")/.."\n'
+                            'if [ "${1:-}" = --self-test ]; then\n  st_fail=0\n' + example +
+                            '\n  exit "$st_fail"\nfi\n'
+                            "grep -q 'myapp.web' src/domain/existing.py || exit 0\n"
+                            "echo 'FAIL [boundary]: the domain layer imports the web layer:'\nexit 1\n")
+            scratch = Path(tmp) / 'scratch'
+            scratch.mkdir()
+            result = subprocess.run(['sh', str(gate), '--self-test'], cwd=root, capture_output=True,
+                                    text=True, timeout=30, env=dict(os.environ, TMPDIR=str(scratch)))
+            self.assertEqual(real.read_bytes(), original, 'the probe wrote into the checkout')
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn('resolves outside the disposable copy', result.stdout)
+            self.assertNotIn('  ok   — ', result.stdout)
+
 
 if __name__ == '__main__':
     unittest.main()

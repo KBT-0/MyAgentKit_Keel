@@ -73,6 +73,13 @@ case "$here" in
     fi ;;
 esac
 
+# --- the gate's own files -------------------------------------------------------------
+# The loop below inspects the files it finds, and the wiring check reads core.hooksPath
+# only: a deleted .githooks/pre-commit left every ordinary commit ungated and doctor ready.
+for f in scripts/check.sh .githooks/pre-commit .githooks/pre-merge-commit .githooks/commit-msg scripts/doctor.sh; do
+  [ -f "$f" ] || miss "$f does not exist (the gate needs it)" "git checkout -- $f, or sync the kit again"
+done
+
 # --- the executable bit, on disk AND in the index -------------------------------------
 # On disk for this machine; in the index for CI and the next clone, where a 100644 script
 # dies with exit 126 although it ran fine here (docs/GOTCHAS.md), and a script missing from
@@ -129,20 +136,26 @@ if [ -f scripts/spawn_worker.sh ] && ! command -v tmux >/dev/null 2>&1; then
 fi
 
 # --- Node as a hook sees it ----------------------------------------------------------
-# nvm sets PATH in the interactive shell's rc file only, so its default alias never reaches
-# a non-interactive sh such as a git hook: the hook resolves no node, or an older system one.
-# Probed with an empty environment and the system PATH plus the gate's own preamble.
+# A git hook inherits the PATH of whatever started git, and check.sh puts toolchain_path in
+# front of it; PATH here is built the same way (above), so this is the node the gate runs.
+# It was once probed with an empty environment and the system PATH instead, which read a
+# system Node the gate never ran: ready with an older Node first on PATH, MISSING with the
+# right one. nvm sets PATH in the interactive shell's rc file only, so a hook started from
+# a login-less shell (a GUI client, a service) sees less: that probe is a NOTE, not a fault.
 if [ -f .nvmrc ] || [ -f package.json ]; then
-  base="$(getconf PATH 2>/dev/null || echo /usr/bin:/bin):/usr/local/bin:/opt/homebrew/bin"
-  [ -n "$toolchain_path" ] && base="$toolchain_path:$base"
-  hook_node=$(env -i HOME="$HOME" PATH="$base" sh -c 'node --version' 2>/dev/null)
   want=$(sed -n '1s/^v\{0,1\}\([0-9][0-9]*\).*/\1/p' .nvmrc 2>/dev/null)
+  hook_node=$(node --version 2>/dev/null)
   have=$(printf '%s' "$hook_node" | sed -n 's/^v\([0-9][0-9]*\).*/\1/p')
   if [ -z "$hook_node" ]; then
-    miss "node is not resolvable from a non-interactive sh (a git hook)" "set toolchain_path in scripts/check.sh to the directory of the right node (docs/DEV_SETUP.md §2)"
+    miss "node is not resolvable on the PATH a git hook inherits from this shell" "set toolchain_path in scripts/check.sh to the directory of the right node (docs/DEV_SETUP.md §2)"
   elif [ -n "$want" ] && [ "$have" != "$want" ]; then
     miss "a git hook resolves node $hook_node, .nvmrc wants $want" "set toolchain_path in scripts/check.sh to the directory of node $want (docs/DEV_SETUP.md §2)"
   fi
+  base="$(getconf PATH 2>/dev/null || echo /usr/bin:/bin):/usr/local/bin:/opt/homebrew/bin"
+  [ -n "$toolchain_path" ] && base="$toolchain_path:$base"
+  bare_node=$(env -i HOME="$HOME" PATH="$base" sh -c 'node --version' 2>/dev/null)
+  [ "$bare_node" = "$hook_node" ] ||
+    echo "NOTE: a hook started from a login-less shell would see node ${bare_node:-none} (set toolchain_path in scripts/check.sh if hooks start that way)"
 fi
 
 # --- an npm cache this user cannot write ---------------------------------------------

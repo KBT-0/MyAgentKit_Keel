@@ -23,3 +23,20 @@ class BootstrapTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertTrue((project / 'scripts/helper.py').is_file())
             self.assertFalse(list(project.rglob('*.pyc')), 'Local bytecode entered the installed project')
+
+    def test_a_kept_enforcement_file_stops_the_retrofit(self):
+        # A retrofit that kept the repository's own (possibly no-op) gate or hook installed no
+        # enforcement; the guard named check.sh and pre-commit only, so a kept pre-merge-commit
+        # or commit-msg left clean merges or attribution unenforced while the version was stamped.
+        root = Path(__file__).resolve().parents[1]
+        for kept in ('scripts/check.sh', '.githooks/pre-commit', '.githooks/pre-merge-commit',
+                     '.githooks/commit-msg'):
+            with self.subTest(kept=kept), tempfile.TemporaryDirectory() as tmp:
+                project = Path(tmp) / 'project'
+                (project / kept).parent.mkdir(parents=True)
+                (project / kept).write_text('#!/bin/sh\nexit 0\n')
+                result = subprocess.run(['sh', str(root / 'bootstrap.sh'), str(project)],
+                                        capture_output=True, text=True)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn('STOPPING: the gate files already existed', result.stdout)
+                self.assertFalse((project / 'docs/kit/.kit-version').exists())

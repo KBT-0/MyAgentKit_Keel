@@ -253,7 +253,9 @@ failures stop the chain. The original scope is checked between attempts and at c
 **Cancelling a review stops the reviewer.** Ctrl-C, SIGTERM and SIGHUP (a closed terminal
 or a restarted host session) stop the reviewer's whole process group, record the attempt
 as `cancelled` with its partial output in a usage record, and never fail over. A SIGKILL to
-the review process itself cannot be handled; the reviewer then runs on to its own timeout.
+the review process itself cannot be handled, and the wall-clock timeout lives in that process
+(the supervisor), so it is lost with it: the reviewer then runs to its own end, bounded only
+by its own CLI.
 
 Each attempt retains separate evidence and usage. Immutable checkpoints under
 `.myagentkit/usage/chains/<chain-id>-<attempt-count>.json` link the attempts; these are not

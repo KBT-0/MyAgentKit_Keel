@@ -42,7 +42,10 @@
 # a self-test never changes a tracked file. An edit made in place and restored by traps was
 # seen by a concurrent `git add -A`, and SIGKILL or a power loss, which run no trap, left it
 # in the tree. The copy holds the current bytes, uncommitted edits included, and is deleted
-# on exit and on INT/TERM; a SIGKILL leaves it in $TMPDIR, outside the checkout. Copying a
+# on exit and on INT/TERM; a SIGKILL leaves it in $TMPDIR, outside the checkout. cp -R keeps
+# a symlink as a symlink, so a symlinked parent directory (src -> the checkout's lib) once
+# took the write back into the checkout: the target and the gate are resolved physically
+# and must lie inside the copy, else the case fails by name. Copying a
 # large tree (dependencies, build output) costs time: copy only what the gate reads if that
 # is known, but never let the probe write into the checkout.
 #
@@ -59,6 +62,15 @@
 # |   probe_gate=$PWD/$(basename "$(dirname "$0")")/${0##*/}
 # |   probe_target=src/domain/existing.py
 # |   [ -f "$probe_target" ] && [ ! -L "$probe_target" ] || exit 1
+# |   probe_root=$(pwd -P) || exit 1
+# |   for probe_path in "$probe_target" "$probe_gate"; do
+# |     probe_dir=$(cd -P "$(dirname "$probe_path")" && pwd -P) || exit 1
+# |     case "$probe_dir/" in
+# |       "$probe_root"/*) ;;
+# |       *) echo "  FAIL — existing-file probe: $probe_path resolves outside the disposable copy ($probe_dir); refusing to write."
+# |          exit 1 ;;
+# |     esac
+# |   done
 # |   sh "$probe_gate" >/dev/null 2>&1 || exit 1
 # |   printf 'from myapp.web import router\n' > "$probe_target" || exit 1
 # |   probe_status=0

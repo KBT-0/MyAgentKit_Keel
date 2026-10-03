@@ -84,13 +84,15 @@ def snapshot(repo: Path, scope: str, reference: str | None) -> tuple[str, str, s
     # them, so a filter can drop a whole file or single lines from the reviewer's payload
     # while the raw bytes still hash into the fingerprint. Refuse such paths: no flag turns
     # the conversion off for diff, and the payload must be what the working tree contains.
+    # Any configured clean or process key is a filter, whatever its value: a whitespace-only
+    # command is a valid shell no-op that empties the file for the diff.
     in_scope = git(repo, 'ls-files', '-z', '--cached', '--others', '--exclude-standard',
                    '--', '.', *exclusions)
     drivers = set()
     for entry in git(repo, 'config', '-z', '--get-regexp', r'^filter\..*\.(clean|process)$',
                      allowed=(0, 1)).split(b'\0'):
-        key, _, command = entry.partition(b'\n')
-        if command.strip():
+        if entry:
+            key = entry.partition(b'\n')[0]
             drivers.add(key[len(b'filter.'):key.rindex(b'.')])
     fields = git(repo, 'check-attr', '-z', '--stdin', 'filter', 'ident', stdin=in_scope).split(b'\0')
     for name, attribute, value in zip(fields[0::3], fields[1::3], fields[2::3]):
@@ -367,6 +369,7 @@ def main(argv=None, result_sink=None) -> int:
     args = parser.parse_args(argv)
     if args.timeout is None:
         args.timeout = agent_process.DEFAULT_REVIEW_TIMEOUT if args.mode == "review" else 600
+    held = {}
     try:
         if os.environ.get("MYAGENTKIT_DELEGATION_DEPTH", "0") != "0":
             raise BridgeError("nested delegation is disabled")
@@ -441,6 +444,12 @@ def main(argv=None, result_sink=None) -> int:
                     "diff_sha256": hashlib.sha256(diff.encode()).hexdigest(),
                     "limits": {"seconds": args.timeout, "turns": args.max_turns, "api_usd": args.max_budget_usd},
                     "tools": ["Read", "Glob", "Grep"], "status": "failed"}
+        # From the review to the usage record a cancel is noted, not acted on: with the default
+        # handlers back after the review, a SIGTERM during the final snapshot ended the adapter
+        # before the paid review's evidence and usage were written. run() stops the reviewer
+        # on a cancel while it runs.
+        cancelled = []
+        held = agent_process.hold(lambda signum, frame: cancelled.append(signum))
         execution = agent_process.run(command, prompt, repo, args.timeout)
         evidence.update(execution)
         reason = agent_usage.failure("claude", execution, agent_usage.decode("claude", execution["stdout"]))
@@ -463,6 +472,10 @@ def main(argv=None, result_sink=None) -> int:
         except (BridgeError, ValueError, OSError) as error:
             evidence["error"] = str(error)
             reason = reason or "invalid_evidence"
+        # A failed attempt that was cancelled is cancelled, never an eligible failure to fall
+        # back from.
+        if cancelled and reason:
+            reason = "cancelled"
         usage_path = None
         recovery = {"action": "continue_independent_work", "review_approved": False}
         evidence.update(failure_kind=reason)
@@ -501,6 +514,8 @@ def main(argv=None, result_sink=None) -> int:
     except (BridgeError, OSError, ValueError) as error:
         print(json.dumps({"status": "failed", "error": str(error)}))
         return 2
+    finally:
+        agent_process.restore(held)
 
 
 if __name__ == "__main__":
