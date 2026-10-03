@@ -31,8 +31,19 @@ exactly the habit the review gate exists to prevent.
 1. Reads `docs/kit/.kit-version`. Missing or empty is a hard stop — it will not guess.
 2. Overwrites the kit-owned files, reporting each as new, updated or unchanged.
 3. **Prints every `CHANGELOG.md` entry added since your version.** This is the real product.
-   Entries marked **ACTION** need a hand edit in a project-owned file.
-4. Records the new version.
+   Entries marked **ACTION** need a hand edit in a project-owned file; they are listed again
+   at the end as a checklist.
+4. Records the new version — but only when there are no ACTION items, or you confirmed
+   them. With ACTION items pending, the version stays where it was and the script exits 2,
+   so the next sync prints the same entries and checklist again. Apply the items, then:
+
+   ```sh
+   /path/to/kit/sync-kit.sh . --actions-applied
+   ```
+
+   The recorded version therefore means "everything up to here was applied", not "the
+   files were copied". Stamping first once let a project skip two versions of hand edits
+   and then read "already current".
 
 Then run `./scripts/check.sh` and `./scripts/check.sh --self-test`. A sync that leaves the
 gate red, or leaves a gate that can no longer fail, is not finished.

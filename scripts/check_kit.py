@@ -17,7 +17,7 @@ REQUIRED_SUITES = {
                      'test_agent_cost': 2},
     'tests': {'test_packaging': 1, 'test_bootstrap': 1, 'test_acceptance': 2,
               'test_review_upgrade': 1, 'test_boundary_example': 1, 'test_scan_gate': 1,
-              'test_boundary_restore': 1},
+              'test_boundary_restore': 1, 'test_sync_kit': 2},
 }
 
 
