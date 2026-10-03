@@ -32,6 +32,10 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   README documents the placeholders and the pitfalls. **ACTION:** overlays are not synced;
   copy both files from `overlays/claude-code/files/` by hand, fill the two placeholders, and
   restart any running session before spawning the worker.
+- `docs/worker-cost-setups.md`: the six measured setups with their figures, a "which setup,
+  when" table for projects that cannot use the first choice (the one-hour cache ignored, no
+  tmux, CI, a different host), and the alternatives the research pass rejected with their
+  evidence. The WORKFLOW template's rule 1 points at it for the fallback.
 - `setup/INTERVIEW.md` asks question 8, "Will workers run jobs longer than five minutes?",
   and fills or deletes the worker files from the answer. It also asks what a worker must know
   before running those jobs, and the overlay README says to settle the permission mode of

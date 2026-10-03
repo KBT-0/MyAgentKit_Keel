@@ -270,7 +270,9 @@ one-hour cache's doubled write rate on the first load). Splitting waits under fi
 also avoided them (−52 percent at that small context) but pays a full context read per poll,
 so it loses at real worker sizes.
 
-Hence the rule set in the WORKFLOW template, the worker definition and the spawn script in
+The six setups, their figures, and which one to take when the first choice is unavailable
+are kept in `docs/worker-cost-setups.md`, together with the alternatives the research pass
+saw and did not take. Hence the rule set in the WORKFLOW template, the worker definition and the spawn script in
 the Claude Code overlay, the analyser, the interview question and the handoff line. Projected
 on the measured session, the cache lifetime alone removes about a third of the worker cost;
 with fresh workers capped at about 150 requests, 45 to 50 percent. The first real-task

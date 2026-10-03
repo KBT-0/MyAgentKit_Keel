@@ -250,8 +250,10 @@ Rules, binding for whoever routes workers, in order of measured weight:
    sub-agent whose definition sets `experimental.cacheTtl: 1h` — the Claude Code overlay
    ships one as `.claude/agents/worker.md`), starts long jobs in the background and is
    re-invoked when they exit, and never runs `sleep`, `until`, `pgrep` or tail-the-log
-   loops. Where a one-hour cache is unavailable, split every wait into pieces shorter than
-   five minutes instead.
+   loops. Where a one-hour cache is unavailable (it is ignored on usage credits; another host
+   may have no such setting), choose the fallback from the measured table in the kit's
+   `docs/worker-cost-setups.md`: usually waits split into pieces under five minutes, at the
+   price of a context read per piece.
 2. **A review-fix round goes to a fresh worker**, briefed with the findings, the branch and
    the files to read. Resume a finished worker only within a few minutes and for a few tool
    calls.
