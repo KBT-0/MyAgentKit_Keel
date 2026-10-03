@@ -135,7 +135,7 @@ fi
 awk -v want="v$have" '
   $1 == "##" && $2 == want { exit }
   /^## v/ { v = $2 }
-  v && /\*\*ACTION/ { print "  " v ": " $0 }
+  v && /\*\*ACTION/ && !/\*\*ACTION\*\* — none/ { print "  " v ": " $0 }
 ' "$kit/CHANGELOG.md" > "$pending"
 
 if [ -s "$pending" ]; then
