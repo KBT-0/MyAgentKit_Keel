@@ -116,6 +116,16 @@ hand merge; `sync-kit.sh` now keeps listing them until you confirm (see "Sync st
   opt-out in the setup interview also removes the worker definition's bullet. **ACTION:**
   copy the adapters from `core/scripts/` again; if you allow AI credit, delete the marked
   block in `.claude/agents/worker.md`.
+- **Sixth cross-model round.** A cancel during a review's evidence or usage write ends the
+  review: the result says cancelled and `--fallback` never starts the other reviewer. The
+  Codex adapter no longer prints a completed report whose accounting failed. An empty
+  `MYAGENTKIT_TASK_ID` is treated as unset instead of being recorded as an id that blocked
+  every later labelled review. `doctor.sh` reports a `toolchain_path` line that is not
+  exactly `toolchain_path="..."` (it used to read it as empty), notes a `check.sh` without
+  one, requires `scripts/review.sh` with a readable `DEFAULT_REVIEWER="..."` line, and kills
+  the grep probe's whole process group after it returns. **ACTION:** copy the adapters and
+  `doctor.sh` again; if doctor reports the `toolchain_path` form, rewrite that line in your
+  `scripts/check.sh` as `toolchain_path="<path>"` with no trailing comment.
 - **Scan failures that were not scanner failures (issues #13, #14).** A tracked file deleted
   without `git rm` now fails `[scan]` under its own name with the command that fixes it, and
   every other scan still runs. A symlink to a directory (for example `node_modules` linked

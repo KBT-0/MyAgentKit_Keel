@@ -499,6 +499,16 @@ text. The round also showed a cancel arriving between a failed attempt and its q
 could still trigger `--fallback`, and that the installer's collision guard had not learned
 the two new hooks. Each fix was watched red first.
 
+#### Sixth cross-model round: the first with no High
+
+Six Medium findings, all at the seams of earlier fixes: a cancel that arrived during the
+evidence or usage write kept the attempt's earlier failure kind, so `--fallback` could still
+start a second paid reviewer; a lost archive turned the result into a failure but the
+completed report, verdict included, was still printed; an empty task label was recorded as
+an id that every later labelled review then rejected as damaged; the doctor read any
+unrecognised `toolchain_path` line as empty and probed the wrong PATH; a probe's background
+descendant outlived `timeout`. Each fix was watched red first.
+
 #### The review gate held on the kit's own hardening
 
 Five of the nine work packages (the gate lock, both review-tooling packages, the commit gates
