@@ -6,7 +6,9 @@
 #
 # It checks the MACHINE, not the code, so it is not part of the gate and CI does not run it.
 # Each trap it finds prints one line, "MISSING: <what> — fix: <command>", and the run exits
-# 1. It changes nothing: the fixes are printed for the owner to run, never run here.
+# 1. It changes nothing: the fixes are printed for the owner to run, never run here. The one
+# exception to "read-only" is the grep probe below, which runs the owner's interactive shell
+# rc files ($SHELL -ic) under a 5 s timeout where `timeout` exists.
 #
 # Why it exists: every trap below made a gate fail on a machine for a reason unrelated to
 # the change being tested, and each one looked like a code failure and cost a session to
@@ -19,8 +21,10 @@ missing=0
 miss() { echo "MISSING: $1 — fix: $2"; missing=$((missing + 1)); }
 
 # The same PATH preamble as scripts/check.sh, read from it so it is configured once: a check
-# here that saw a different PATH from the hook would prove nothing about the hook.
-toolchain_path=$(sed -n 's/^toolchain_path="\(.*\)"$/\1/p' scripts/check.sh 2>/dev/null)
+# here that saw a different PATH from the hook would prove nothing about the hook. The line
+# is evaluated, as check.sh's sh does, so "$HOME/..." expands here too.
+toolchain_path=""
+eval "$(sed -n '/^toolchain_path="\(.*\)"$/p' scripts/check.sh 2>/dev/null)"
 case "$toolchain_path" in
   ""|*"{{"*) toolchain_path="" ;;
   *) PATH="$toolchain_path:$PATH"; export PATH ;;
@@ -76,12 +80,12 @@ fi
 
 # --- an npm cache this user cannot write ---------------------------------------------
 # One `sudo npm` leaves root-owned files in the cache, and every later install as the user
-# fails with EACCES. Two levels deep is where they land; the full cache can be huge.
-if command -v npm >/dev/null 2>&1; then
-  cache=$(npm config get cache 2>/dev/null)
-  if [ -d "$cache" ] && [ -n "$(find "$cache" -path "$cache/*/*/*" -prune -o ! -user "$(id -u)" -print 2>/dev/null | head -1)" ]; then
-    miss "files in the npm cache $cache are owned by another user" "sudo chown -R $(id -u):$(id -g) $cache"
-  fi
+# fails with EACCES. Two levels deep is where they land; the full cache can be huge. npm
+# itself is not asked (`npm config get` writes a log and the cache dir), so a cache moved
+# only in an .npmrc is not seen.
+cache=${npm_config_cache:-$HOME/.npm}
+if [ -d "$cache" ] && [ -n "$(find "$cache" -path "$cache/*/*/*" -prune -o ! -user "$(id -u)" -print 2>/dev/null | head -1)" ]; then
+  miss "files in the npm cache $cache are owned by another user" "sudo chown -R $(id -u):$(id -g) $cache"
 fi
 
 # --- grep shadowed in the owner's interactive shell ----------------------------------
@@ -89,9 +93,13 @@ fi
 # a pipeline behave differently in the shell where it was tried than in the gate's sh. The
 # common `grep --color=auto` alias is harmless and passes. A child process cannot see its
 # caller's functions, so this probes the login shell's rc files; a host tool may shadow
-# grep in its own shell too, which only `type grep` in that shell shows.
+# grep in its own shell too, which only `type grep` in that shell shows. An rc file that
+# prompts on /dev/tty (keychain, ssh-add, an updater) would hang the probe, hence the timeout;
+# macOS has no `timeout` and runs it without one. bash prints a function's whole body: the
+# first line is enough.
 if [ -n "${SHELL:-}" ]; then
-  grep_is=$("$SHELL" -ic 'command -V grep' </dev/null 2>/dev/null)
+  limit=""; command -v timeout >/dev/null 2>&1 && limit="timeout 5"
+  grep_is=$($limit "$SHELL" -ic 'command -V grep' </dev/null 2>/dev/null | head -1)
   shadowed=""
   case "$grep_is" in
     *function*) shadowed=1 ;;

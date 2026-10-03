@@ -52,3 +52,39 @@ class DoctorTests(unittest.TestCase):
             self.assertEqual(red.returncode, 1, red.stdout)
             self.assertIn('MISSING: grep is shadowed', red.stdout)
             self.assertEqual(red.stdout.count('MISSING:'), 1, red.stdout)
+            shell.write_text('#!/bin/sh\necho "grep is an alias for grep --color=auto"\n')
+
+            git('config', '--unset', 'core.hooksPath')
+            red = doctor()
+            self.assertEqual(red.returncode, 1, red.stdout)
+            self.assertIn('MISSING: the commit gate is not wired (core.hooksPath)', red.stdout)
+            git('config', 'core.hooksPath', '.githooks')
+
+            # Drop the stub and every PATH entry holding a real reviewer CLI on this machine.
+            full_path = env['PATH']
+            (bin_dir / 'claude').unlink()
+            env['PATH'] = os.pathsep.join(d for d in full_path.split(os.pathsep)
+                                          if d and not (Path(d) / 'claude').exists())
+            red = doctor()
+            self.assertEqual(red.returncode, 1, red.stdout)
+            self.assertIn("MISSING: the second CLI 'claude'", red.stdout)
+            env['PATH'] = full_path
+            (bin_dir / 'claude').write_text('#!/bin/sh\nexit 0\n')
+            (bin_dir / 'claude').chmod(0o755)
+
+            # check.sh's own example form: "$HOME/..." must be expanded, as check.sh's sh does.
+            (home / 'tc').mkdir()
+            (home / 'tc' / 'node').write_text('#!/bin/sh\necho v97.1.0\n')
+            (home / 'tc' / 'node').chmod(0o755)
+            check = project / 'scripts/check.sh'
+            check.write_text(check.read_text().replace(
+                'toolchain_path="{{TOOLCHAIN_PATH_SETUP}}"', 'toolchain_path="$HOME/tc"'))
+            (project / '.nvmrc').write_text('97\n')
+            ready = doctor()
+            self.assertEqual(ready.returncode, 0, ready.stdout + ready.stderr)
+            self.assertIn('DOCTOR: ready', ready.stdout)
+
+            (project / '.nvmrc').write_text('v96.0.0\n')
+            red = doctor()
+            self.assertEqual(red.returncode, 1, red.stdout)
+            self.assertIn('MISSING: a git hook resolves node v97.1.0, .nvmrc wants 96', red.stdout)
