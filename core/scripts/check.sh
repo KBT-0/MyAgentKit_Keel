@@ -72,8 +72,11 @@ esac
 lock_path=$(git rev-parse --git-path check.lock 2>/dev/null) || lock_path=.check.lock
 case "$lock_path" in /*) ;; *) lock_path="$(pwd -P)/$lock_path" ;; esac
 # A run that claims the lock (GATE_LOCK_HELD names this checkout's) proves it: the descriptor
-# GATE_LOCK_FD it inherited is open on this lock file, and the lock is held, so a fresh open
-# of the file cannot take it. Otherwise it FAILS by name; it never skips the lock on a claim.
+# GATE_LOCK_FD it inherited is open on this lock file, the lock is held, so a fresh open of
+# the file cannot take it, and that descriptor itself holds it: flock on it succeeds at once
+# only on the open file description already holding the lock. A descriptor opened on the same
+# file independently, while another gate holds it, would block. Otherwise it FAILS by name;
+# it never skips the lock on a claim.
 inherited=""
 if [ "${GATE_LOCK_HELD:-}" = "$lock_path" ]; then
   if python3 -c '
@@ -84,8 +87,10 @@ if (held.st_dev, held.st_ino) != (lock.st_dev, lock.st_ino):
 try:
     fcntl.flock(os.open(sys.argv[2], os.O_RDONLY), fcntl.LOCK_EX | fcntl.LOCK_NB)
 except BlockingIOError:
-    sys.exit(0)
-sys.exit(1)
+    pass
+else:
+    sys.exit(1)
+fcntl.flock(int(sys.argv[1]), fcntl.LOCK_EX | fcntl.LOCK_NB)
 ' "${GATE_LOCK_FD:-}" "$lock_path" 2>/dev/null; then
     inherited=1
   else

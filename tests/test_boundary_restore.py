@@ -123,5 +123,38 @@ exit 1
             self.assertNotIn('  ok   — ', result.stdout)
 
 
+    def test_a_symlinked_gate_cannot_run_the_probe_against_the_checkout(self):
+        # Only the gate's parent directories were resolved: an absolute symlink at
+        # scripts/check.sh survived the copy, and a gate that resolves its own physical
+        # location ran its build in the checkout instead of the copy.
+        template = (Path(__file__).resolve().parents[1] /
+                    'core/scripts/boundary_selftests.sh').read_text()
+        example = '\n'.join(line[4:] for line in template.splitlines() if line.startswith('# | '))
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / 'project'
+            source = root / 'src/domain/existing.py'
+            source.parent.mkdir(parents=True)
+            source.write_bytes(b'committed original\n')
+            (root / 'tools').mkdir()
+            real = root / 'tools/check.sh'
+            real.write_text('#!/bin/sh\n'
+                            'cd "$(dirname "$(python3 -c \'import os,sys; print(os.path.realpath(sys.argv[1]))\' "$0")")/.."\n'
+                            'if [ "${1:-}" = --self-test ]; then\n  st_fail=0\n' + example +
+                            '\n  exit "$st_fail"\nfi\n'
+                            ': > built-here\n'
+                            "grep -q 'myapp.web' src/domain/existing.py || exit 0\n"
+                            "echo 'FAIL [boundary]: the domain layer imports the web layer:'\nexit 1\n")
+            (root / 'scripts').mkdir()
+            (root / 'scripts/check.sh').symlink_to(real)
+            scratch = Path(tmp) / 'scratch'
+            scratch.mkdir()
+            result = subprocess.run(['sh', str(root / 'scripts/check.sh'), '--self-test'], cwd=root,
+                                    capture_output=True, text=True, timeout=30,
+                                    env=dict(os.environ, TMPDIR=str(scratch)))
+            self.assertFalse((root / 'built-here').exists(), 'the probe ran its gate in the checkout')
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn('is a symlink', result.stdout)
+            self.assertNotIn('  ok   — ', result.stdout)
+
 if __name__ == '__main__':
     unittest.main()

@@ -462,6 +462,8 @@ def main(argv=None, result_sink=None) -> int:
         cancelled = []
         held = agent_process.hold(lambda signum, frame: cancelled.append(signum))
         execution = agent_process.run(command, prompt, repo, args.timeout)
+        if execution.pop("cancelled", False):
+            cancelled.append(True)
         evidence.update(execution)
         reason = agent_usage.failure("claude", execution, agent_usage.decode("claude", execution["stdout"]))
         try:

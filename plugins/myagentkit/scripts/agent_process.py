@@ -68,7 +68,7 @@ def _supervise(command, prompt, repo, timeout, started):
                     signal.pthread_sigmask(signal.SIG_SETMASK, mask)
             except OSError as error:
                 return {"exit_code": 127, "stdout": "", "stderr": str(error),
-                        "termination": "unavailable", "duration_ms": 0}
+                        "termination": "unavailable", "cancelled": False, "duration_ms": 0}
             for name, stream in (("stdout", child.stdout), ("stderr", child.stderr)):
                 os.set_blocking(stream.fileno(), False)
                 selector.register(stream, selectors.EVENT_READ, name)
@@ -113,10 +113,13 @@ def _supervise(command, prompt, repo, timeout, started):
                 child.wait()
                 child.stdout.close()
                 child.stderr.close()
-            # As in the adapters: a failed attempt that was cancelled is cancelled, so the
-            # dispatcher never fails over; a completed one keeps its paid result.
             if noted and (termination or (child and child.returncode)):
                 termination = "cancelled"
+        # Cancellation is returned as its own fact, whatever the exit code: a zero exit is not
+        # a completed review until the adapter has read the response (a Claude result with
+        # is_error exits zero). The adapter keeps a completed review completed and turns a
+        # failed one into a cancel, so the dispatcher never fails over.
         return {"exit_code": child.returncode if child else None, "stdout": buffers['stdout'].decode(errors="replace"),
                 "stderr": buffers['stderr'].decode(errors="replace"), "termination": termination,
+                "cancelled": termination == "cancelled" or bool(noted),
                 "duration_ms": round((time.monotonic() - started) * 1000)}

@@ -66,9 +66,11 @@ text=$(awk '{ print } NR > 1 && /^[[:space:]]/ { line = line " " $0; print line;
   echo "commit-msg: cannot unfold the commit message; refusing to pass it unchecked." >&2
   exit 1
 }
-sep='[[:space:]:_/().,-]'
+# A display name may be quoted ("GitHub Copilot" or 'Claude'): the opening quote is skipped
+# and the closing one is a separator, so the whole-name check sees the bare name.
+sep="[[:space:]:_/().,\"'-]"
 printf '%s\n' "$text" | grep -iE \
-  -e "$trailer[[:space:]]*((github|google|openai)[[:space:]]+)?($tools)([0-9][a-z0-9.]*)?($sep+($words))*$sep*(<|\$)" \
+  -e "$trailer[[:space:]]*[\"']?((github|google|openai)[[:space:]]+)?($tools)([0-9][a-z0-9.]*)?($sep+($words))*$sep*(<|\$)" \
   -e "$trailer.*(\\[bot\\]|@([a-z0-9-]+\\.)*($domains)>)" \
   -e "${prefix}generated (with|by)[[:space:]]*\\[?((github|google|openai)[[:space:]]+)?($tools)([^[:alnum:]]|\$)" \
   >&2
