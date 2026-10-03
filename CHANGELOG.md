@@ -136,6 +136,12 @@ hand merge; `sync-kit.sh` now keeps listing them until you confirm (see "Sync st
   output), writes the usage record first as the authoritative one, and reports an archive
   that could not be replaced as a hash mismatch that later rounds refuse. **ACTION:** copy
   the synced `agent_usage.py` and `codex_bridge.py` again.
+- **Tenth cross-model round.** The cancel relabel error reports only what was observed:
+  whether the archive on disk matches the usage record (with its sha256), does not match
+  it, or could not be read, plus the write's own error; fault-injection tests cover a
+  directory fsync failing after the replacement and an unreadable archive. The acceptance
+  notes count the incremental rounds as remediation reviews; the final full review under a
+  new label is recorded separately. **ACTION:** copy the synced `agent_usage.py` again.
 - **Scan failures that were not scanner failures (issues #13, #14).** A tracked file deleted
   without `git rm` now fails `[scan]` under its own name with the command that fixes it, and
   every other scan still runs. A symlink to a directory (for example `node_modules` linked
