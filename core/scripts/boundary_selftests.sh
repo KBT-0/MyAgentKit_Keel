@@ -79,7 +79,7 @@
 # |   [ "$restore_gate_status" -ne 0 ] && printf '%s\n' "$restore_gate_output" |
 # |     grep -Fq 'FAIL [boundary]: the domain layer imports the web layer:'
 # | ); then
-# |   :
+# |   echo "  ok   — domain/web boundary gate rejects a forbidden import in an existing file"
 # | else
 # |   restore_case_status=$?
 # |   case "$restore_case_status" in

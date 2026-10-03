@@ -1,6 +1,7 @@
 """doctor.sh must go red on a machine trap and stay green on a ready synthetic machine."""
 import os
 from pathlib import Path
+import signal
 import subprocess
 import tempfile
 import unittest
@@ -21,8 +22,10 @@ class DoctorTests(unittest.TestCase):
                 (bin_dir / tool).write_text('#!/bin/sh\nexit 0\n')
                 (bin_dir / tool).chmod(0o755)
             # A controlled timeout, so the grep probe runs whether or not this host has one;
-            # doctor calls it as `timeout --foreground -k 1 5 <command>`.
-            (bin_dir / 'timeout').write_text('#!/bin/sh\nshift 4\nexec "$@"\n')
+            # it drops timeout's options and duration and runs the command.
+            (bin_dir / 'timeout').write_text(
+                '#!/bin/sh\nwhile case "$1" in -*|[0-9]*) true ;; *) false ;; esac; do shift; done\n'
+                'exec "$@"\n')
             (bin_dir / 'timeout').chmod(0o755)
             shell = bin_dir / 'fake-shell'
             # The common colour alias is harmless and must stay green.
@@ -61,13 +64,17 @@ class DoctorTests(unittest.TestCase):
 
             # Without `timeout` (stock macOS) an rc file that waits on the terminal would hang
             # the probe, and with it every session start: the probe is skipped and says so.
-            no_timeout = tmp / 'no-timeout-bin'
-            no_timeout.mkdir()
-            for directory in env['PATH'].split(os.pathsep):
+            # A fresh directory of links to the resolved executables: a dangling link or a
+            # repeated PATH entry on the host must not break the fixture.
+            no_timeout, dangling = tmp / 'no-timeout-bin', tmp / 'dangling-bin'
+            no_timeout.mkdir(); dangling.mkdir()
+            (dangling / 'tmux').symlink_to(tmp / 'absent')
+            for directory in [str(dangling), *env['PATH'].split(os.pathsep) * 2]:
                 if os.path.isdir(directory):
                     for name in os.listdir(directory):
-                        if name != 'timeout' and not (no_timeout / name).exists():
-                            (no_timeout / name).symlink_to(Path(directory) / name)
+                        source = Path(directory) / name
+                        if name != 'timeout' and source.exists() and not os.path.lexists(no_timeout / name):
+                            (no_timeout / name).symlink_to(source.resolve())
             shell.write_text('#!/bin/sh\nsleep 60\n')
             try:
                 skipped = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=project, capture_output=True,
@@ -76,6 +83,26 @@ class DoctorTests(unittest.TestCase):
                 self.fail('doctor.sh ran the shell probe without a time limit')
             self.assertEqual(skipped.returncode, 0, skipped.stdout + skipped.stderr)
             self.assertIn('NOTE: grep probe skipped, no timeout on this machine', skipped.stdout)
+
+            # An rc file that leaves a child holding the probe's output, and a probe that
+            # fails: doctor returns within its bound and says the probe did not complete.
+            pid_file = tmp / 'sleep.pid'
+            for rc_file in ('sleep 60 &\necho $! > %s\n' % pid_file, 'exit 3\n'):
+                shell.write_text('#!/bin/sh\n' + rc_file)
+                try:
+                    probed = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=project, env=env,
+                                            capture_output=True, text=True, timeout=20)
+                except subprocess.TimeoutExpired:
+                    self.fail('a child of the shell probe held doctor.sh past its bound')
+                finally:
+                    if pid_file.exists():
+                        try:
+                            os.kill(int(pid_file.read_text()), signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+                        pid_file.unlink()
+                self.assertEqual(probed.returncode, 0, probed.stdout + probed.stderr)
+                self.assertIn('NOTE: grep probe did not complete', probed.stdout)
 
             shell.write_text('#!/bin/sh\necho "grep is an alias for ugrep"\n')
             red = doctor()
@@ -173,6 +200,29 @@ class DoctorTests(unittest.TestCase):
             self.assertEqual(ready.returncode, 0, ready.stdout + ready.stderr)
             env['PATH'] = full_path
             review.write_text(review_before)
+
+            # An explicit executable, as the wrapper and adapters take it: REVIEW_REVIEWER
+            # picks the reviewer, REVIEW_CLI_BIN or CLAUDE_CLI_BIN names its binary off PATH.
+            (bin_dir / 'claude').unlink()
+            stub = tmp / 'stub-cli'
+            (home / '.local/bin/codex').rename(stub)
+            env['PATH'] = os.pathsep.join(d for d in full_path.split(os.pathsep) if d and not
+                                          ((Path(d) / 'claude').exists() or (Path(d) / 'codex').exists()))
+            for extra, missing in (({'REVIEW_REVIEWER': 'codex', 'REVIEW_CLI_BIN': str(stub)}, None),
+                                   ({'CLAUDE_CLI_BIN': str(stub)}, None),
+                                   ({'REVIEW_REVIEWER': 'codex', 'REVIEW_CLI_BIN': str(tmp / 'absent')},
+                                    "MISSING: the second CLI '%s'" % (tmp / 'absent'))):
+                with self.subTest(extra=extra):
+                    result = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=project, text=True,
+                                            capture_output=True, env=dict(env, **extra))
+                    if missing:
+                        self.assertEqual(result.returncode, 1, result.stdout)
+                        self.assertIn(missing, result.stdout)
+                    else:
+                        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            env['PATH'] = full_path
+            (bin_dir / 'claude').write_text('#!/bin/sh\nexit 0\n')
+            (bin_dir / 'claude').chmod(0o755)
 
             # check.sh's own example form: "$HOME/..." must be expanded, as check.sh's sh does.
             (home / 'tc').mkdir()

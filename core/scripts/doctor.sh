@@ -102,11 +102,18 @@ fi
 # --- tools the kit's own scripts need ------------------------------------------------
 python3 -c 'import sys; sys.exit(sys.version_info < (3, 10))' 2>/dev/null ||
   miss "Python 3.10 or newer as python3 (the review tooling needs it)" "install Python 3.10+"
-reviewer=$(sed -n 's/^DEFAULT_REVIEWER="\(.*\)"$/\1/p' scripts/review.sh 2>/dev/null)
-# Resolved as review.sh resolves it: PATH first, then ~/.local/bin when codex is there.
+# Resolved as review.sh and its adapters resolve it: REVIEW_REVIEWER over the configured
+# reviewer, REVIEW_CLI_BIN (codex) or CLAUDE_CLI_BIN (claude) over the command name, and
+# PATH first, then ~/.local/bin when codex is there.
+reviewer=${REVIEW_REVIEWER:-$(sed -n 's/^DEFAULT_REVIEWER="\(.*\)"$/\1/p' scripts/review.sh 2>/dev/null)}
+case "$reviewer" in
+  codex) reviewer_cli=${REVIEW_CLI_BIN:-codex} ;;
+  claude) reviewer_cli=${CLAUDE_CLI_BIN:-claude} ;;
+  *) reviewer_cli=$reviewer ;;
+esac
 if [ -n "$reviewer" ] && ! ( [ -x "$HOME/.local/bin/codex" ] && PATH="$PATH:$HOME/.local/bin"
-                            command -v "$reviewer" ) >/dev/null 2>&1; then
-  miss "the second CLI '$reviewer' that scripts/review.sh calls" "install and log in to $reviewer (docs/DEV_SETUP.md §3)"
+                            command -v "$reviewer_cli" ) >/dev/null 2>&1; then
+  miss "the second CLI '$reviewer_cli' that scripts/review.sh calls" "install and log in to $reviewer (docs/DEV_SETUP.md §3)"
 fi
 if [ -f scripts/spawn_worker.sh ] && ! command -v tmux >/dev/null 2>&1; then
   miss "tmux, which scripts/spawn_worker.sh needs for worker sessions" "install tmux"
@@ -148,14 +155,28 @@ fi
 # caller's functions, so this probes the login shell's rc files; a host tool may shadow
 # grep in its own shell too, which only `type grep` in that shell shows. An rc file that
 # prompts on /dev/tty (keychain, ssh-add, an updater) would hang the probe, hence the timeout
-# (--foreground: a process group of its own stops an interactive shell on SIGTTIN; -k: an
-# interactive shell ignores SIGTERM). Stock macOS has no `timeout`, and an unbounded probe
-# there could block every session start, so it is skipped with a note. bash prints a
-# function's whole body: the first line is enough.
+# (-k: an interactive shell ignores SIGTERM). Where setsid exists the probe runs in a session
+# of its own, with no terminal to stop on, and timeout signals its whole process group, so a
+# child the rc file started dies with it; without setsid, --foreground keeps the shell from
+# stopping on SIGTTIN, and only the shell is signalled. The output goes to a file, never a
+# pipe: a child left running held the pipe open, and reading it waited for that child, far
+# past the bound. Stock macOS has no `timeout`, and an unbounded probe there could block
+# every session start, so it is skipped with a note. A probe that failed or printed nothing
+# is not a clean result: it says so. bash prints a function's whole body: the first line is
+# enough.
 if [ -n "${SHELL:-}" ] && ! command -v timeout >/dev/null 2>&1; then
   echo "NOTE: grep probe skipped, no timeout on this machine"
+elif [ -n "${SHELL:-}" ] && ! probe_out=$(mktemp); then
+  echo "NOTE: grep probe skipped, cannot create a temp file"
 elif [ -n "${SHELL:-}" ]; then
-  grep_is=$(timeout --foreground -k 1 5 "$SHELL" -ic 'command -V grep' </dev/null 2>/dev/null | head -1)
+  if command -v setsid >/dev/null 2>&1; then
+    setsid timeout -k 1 5 "$SHELL" -ic 'command -V grep' </dev/null >"$probe_out" 2>/dev/null
+  else
+    timeout --foreground -k 1 5 "$SHELL" -ic 'command -V grep' </dev/null >"$probe_out" 2>/dev/null
+  fi
+  probe_status=$?
+  grep_is=$(head -1 "$probe_out")
+  rm -f "$probe_out"
   shadowed=""
   case "$grep_is" in
     *function*) shadowed=1 ;;
@@ -166,8 +187,11 @@ elif [ -n "${SHELL:-}" ]; then
       printf '%s\n' "${expansion%\'}" | awk '$1 != "grep" { exit 1 }
         { for (i = 2; i <= NF; i++) if ($i !~ /^--colou?r(=(auto|never))?$/) exit 1 }' || shadowed=1 ;;
   esac
-  [ -z "$shadowed" ] ||
+  if [ -n "$shadowed" ]; then
     miss "grep is shadowed in $SHELL ($grep_is)" "remove it from the rc file, or test gate pipelines with sh -c"
+  elif [ "$probe_status" -ne 0 ] || [ -z "$grep_is" ]; then
+    echo "NOTE: grep probe did not complete (exit $probe_status, printed: ${grep_is:-nothing}); grep shadowing was not checked"
+  fi
 fi
 
 if [ "$missing" -gt 0 ]; then

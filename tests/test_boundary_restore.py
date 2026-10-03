@@ -69,6 +69,9 @@ exit 1
                     self.assertEqual(source.stat().st_mode & 0o777, 0o640)
                     self.assertEqual(list(scratch.iterdir()), [])
                     self.assertEqual((root / 'continued').exists(), interruption is None)
+                    # check.sh --self-test counts a boundary self-test as run only by this line.
+                    if interruption is None:
+                        self.assertIn('\n  ok   — ', '\n' + stdout.decode())
                 finally:
                     if child.poll() is None:
                         os.killpg(child.pid, signal.SIGKILL)
