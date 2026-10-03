@@ -34,6 +34,13 @@ hand merge; `sync-kit.sh` now keeps listing them until you confirm (see "Sync st
   `GATE_LOCK_WAIT=500` and reports exit 75 as "gate did not run") and re-fill its placeholders.
   A `.git/check.lock` directory left by a killed run of an unreleased build must be removed
   by hand.
+- **The reviewer CLI on PATH wins over `~/.local/bin`.** `review.sh` used to put
+  `~/.local/bin` FIRST when a `codex` lived there, so an old standalone build left behind
+  shadowed the current binary and every review failed with "requires a newer version" while
+  the same command worked at the prompt. It is now a fallback at the end of PATH; the
+  regression builds both binaries. **ACTION:** in your project-owned `scripts/review.sh`,
+  change the `PATH="$HOME/.local/bin:$PATH"` line to `PATH="$PATH:$HOME/.local/bin"`, and
+  copy the synced `test_claude_bridge.py`.
 - **Scan failures that were not scanner failures (issues #13, #14).** A tracked file deleted
   without `git rm` now fails `[scan]` under its own name with the command that fixes it, and
   every other scan still runs. A symlink to a directory (for example `node_modules` linked

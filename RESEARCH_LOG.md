@@ -420,6 +420,17 @@ of lock and marker still works.
 `PWD`, so the tool could start in a stale directory. `spawn_worker.sh --worktree` starting from a
 stale base is still open (#32), as is the test that times out at 5 s under load (#29).
 
+#### A fallback that became an override
+
+The kit's own cross-model review failed twice with "the model requires a newer version of
+Codex" on a machine whose CLI was current. The wrapper prepended `~/.local/bin` to PATH to
+reach per-user installs from a non-login shell, and an old standalone build left there won
+over the current binary. The failure text pointed at the model and the CLI version, not at
+the path, so the first reading was "the pin is stale". Rule: a directory added for a tool
+that MAY be missing goes to the end of PATH, never the front, and the message that names
+a version is checked against `which -a`. Proof: a regression with a current fake on PATH
+and a stale fake under `$HOME/.local/bin` fails on the old wrapper and passes on the new.
+
 #### The review gate held on the kit's own hardening
 
 Five of the nine work packages (the gate lock, both review-tooling packages, the commit gates
