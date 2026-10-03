@@ -14,7 +14,8 @@ old code, fixed, then merged to master.
   consistency check.
 - The negative tests per group, each watched going red on the old code and green on the new:
   - G1: a nested gate run or the self-test changing `git status`; two concurrent gates over
-    one build directory ("File exists"); a killed run's lock reclaimed; a bounded wait ending
+    one build directory ("File exists"); a gate killed with SIGKILL holding the lock until
+    its build child exits, three waiters then running one at a time; a bounded wait ending
     in `NOT RUN [lock]` (exit 75); a run removing only its own lock; an untracked marker file
     failing the gate.
   - G2: a deleted tracked file named with its fix; a directory symlink skipped with a NOTE.

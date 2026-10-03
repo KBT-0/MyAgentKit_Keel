@@ -18,9 +18,13 @@ Hardening from the unreported findings of two projects using the kit. `scripts/c
 hand merge; `sync-kit.sh` now keeps listing them until you confirm (see "Sync stamp").
 
 - **Gate lock (issues #19, #20, #11).** `scripts/check.sh` runs one gate per checkout at a
-  time, through a symlink lock in the git dir. A second run (Stop hook, commit hook, manual)
-  waits with a NOTE every 30 s instead of sharing the build directory and reporting a false
-  FAIL; a lock left by a killed run is reclaimed; INT/TERM stop the run after cleanup.
+  time: it re-executes itself under a few lines of Python holding `fcntl.flock` on
+  `<git dir>/check.lock`, and the gate and everything it starts keep the lock until the last
+  of them exits. Nothing is reclaimed and no pid is trusted. A second run (Stop hook, commit
+  hook, manual) waits with a NOTE every 30 s instead of sharing the build directory and
+  reporting a false FAIL; INT/TERM stop the run after cleanup. The gate now needs `python3`.
+  A build that leaves a compiler server or build daemon running holds the lock until it
+  exits: turn that off in the build command.
   `GATE_LOCK_WAIT=<seconds>` bounds the wait: when it runs out the gate prints `NOT RUN [lock]`
   and exits 75 ("did not run", neither pass nor fail). `--self-test` no longer writes into
   the working tree: its injections come from outside it (`GATE_SELFTEST_EXTRA_FILE`), and the
@@ -42,10 +46,20 @@ hand merge; `sync-kit.sh` now keeps listing them until you confirm (see "Sync st
   change the `PATH="$HOME/.local/bin:$PATH"` line to `PATH="$PATH:$HOME/.local/bin"`, and
   copy the synced `test_claude_bridge.py`.
 - **Cross-model review round.** A second model's review of this version's diff found holes
-  the first pass had left, fixed before release: the gate lock reclaims a stale lock by
-  renaming it, so of two waiters that saw the same dead holder only one runs, and a live
-  pid that is not a gate run (pid reuse after a reboot) counts as stale (**ACTION:** copy the
-  lock block and `cleanup()` from `core/scripts/check.sh` into your `scripts/check.sh`);
+  the first pass had left, fixed before release: two rounds on the gate lock ended in the
+  kernel lock above, after a reclaim-by-rename still let three waiters race and a gate killed
+  with SIGKILL leave its build running under a reclaimed lock (**ACTION:** copy the lock
+  block and `cleanup()` from `core/scripts/check.sh` into your `scripts/check.sh`; delete a
+  `.git/check.lock` symlink left by the older gate, the new one refuses it by name);
+  `.githooks/commit-msg` cuts below a scissors line only when it is git's own editor header
+  (a scissors line in a `-m` message is kept and checked) and rejects a commented-out
+  trailer; `pre-commit` and `pre-merge-commit` report exit 75 as "did NOT RUN, commit
+  blocked", never as FAILED; the review adapters keep the usage record of a review whose
+  reference was deleted mid-run, and an unreadable or malformed usage record stops a
+  labelled round instead of being skipped; `sync-kit.sh` refuses to stamp when its ACTION
+  scan fails; `doctor.sh` no longer evaluates the `toolchain_path` line (`$NAME` and
+  `${NAME}` only; other shell syntax is MISSING), finds the reviewer CLI with `review.sh`'s
+  `~/.local/bin` fallback, and accepts a `grep` alias only with `--color`/`--colour`;
   `.githooks/commit-msg` fails closed on an `AGENTS.md` it cannot read, checks comment
   lines too (whether git keeps a `#` line depends on `commit.cleanup`, a `--cleanup` flag the
   hook cannot see, and `-m` versus the editor; a commented-out credit left by a squash is one

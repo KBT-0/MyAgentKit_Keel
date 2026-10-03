@@ -442,8 +442,22 @@ lines that git keeps under `-m` or `verbatim`, and missed vendor-prefixed "Gener
 lines; review rounds matched on the literal reference text, so `--commit HEAD` carried one
 commit's review into the next, and archives were trusted by location alone; `doctor.sh`
 passed a script missing from the index and ran its shell probe unbounded without `timeout`.
-Fixes: the lock is reclaimed by an atomic rename and verified; a live pid whose command
-line is not a gate run is stale; the hook checks comment lines whatever git would do with
+A third round on the fixes found the reclaim-by-rename still let three waiters interleave,
+a gate killed with SIGKILL left its build running under a reclaimed lock, a failed rename
+spun past the wait bound, and pid identity rested on a command-line substring: every one
+lived in reclaim code that existed only because a pid lock outlives its owner. The owner
+chose to remove the cause: `flock(2)` through Python's `fcntl`, held by the gate and
+inherited by every process it starts, released by the kernel when the last of them exits.
+Proven red on the symlink lock (three waiters each failing on the shared build directory
+behind a SIGKILLed gate) and green on flock. Known cost: a long-lived build server inherits
+the lock. The same round found more fail-open paths that the earlier tests could not reach
+because every test built only the passing shape: the hook cut at any scissors line though
+git keeps one under `-m`, and matched trailers only at the start of a line though git keeps
+`# Co-Authored-By:` under `-m`; both adapters re-resolved the reference after the paid run,
+so a deleted branch lost the usage record; `prior_rounds()` skipped unreadable records;
+`sync-kit.sh` read an awk failure as "no ACTION items"; `doctor.sh`, the read-only check, ran
+`$(...)` from a configuration line through `eval`; `pre-commit` reported "did not run" as
+"failed". Other fixes: the hook checks comment lines whatever git would do with
 them (fail closed; the false positive, a commented-out credit left by a squash, is one line
 to delete); rounds are bound to the resolved reference, the head and the archive's sha256.
 Each was watched red first. Lesson: every check that compares by name (a reference string,
