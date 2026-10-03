@@ -26,7 +26,8 @@ REQUIRED_SUITES = {
     'core/scripts': dict(BRIDGE_MINIMUMS, test_agent_cost=2),
     'tests': {'test_packaging': 1, 'test_bootstrap': 1, 'test_acceptance': 2,
               'test_review_upgrade': 1, 'test_boundary_example': 1, 'test_scan_gate': 1,
-              'test_boundary_restore': 1, 'test_sync_kit': 2, 'test_doctor': 1},
+              'test_boundary_restore': 1, 'test_sync_kit': 2, 'test_doctor': 1,
+              'test_git_hooks': 4},
 }
 
 
@@ -267,12 +268,19 @@ def main():
             checks.write_text(": synthetic boundary check\n")
             run(["sh", "scripts/check.sh", "--self-test"], project, expected=1, reason="ran no case")
             selftests.write_text("echo '  ok   — synthetic boundary case'\n")
-            run(["sh", "scripts/check.sh", "--self-test"], project, reason="SELF-TEST: PASS")
+            # An owner who allows AI credit has no rule line; the hook's case says it skipped.
+            agents = project / "AGENTS.md"
+            original_agents = agents.read_bytes()
+            agents.write_text(original_agents.decode().replace("No AI attribution in git", "AI credit allowed"))
+            out = run(["sh", "scripts/check.sh", "--self-test"], project, reason="SELF-TEST: PASS")
+            if "skipped by owner choice" not in out:
+                raise RuntimeError("the commit-msg case did not say it was skipped by owner choice:\n" + out)
+            agents.write_bytes(original_agents)
             checks.write_bytes(original_checks)
             selftests.write_bytes(original_selftests)
             wrapper.write_bytes(original_wrapper)
             print("PASS: missing review tests, failed runner, absent completion evidence, an emptied "
-                  "suite and boundary checks whose self-tests ran no case reject")
+                  "suite and boundary checks whose self-tests ran no case reject; an owner's AI-credit choice is a visible skip")
     print("KIT CHECK: PASS")
 
 

@@ -211,6 +211,14 @@ One topic per turn. Suggested order, because each answer informs the next:
    delete `.claude/agents/worker.md` and `scripts/spawn_worker.sh` (Phase 4, "Delete what
    does not apply"). Either way the rules in that section bind the lead from day one.
 
+9. **May AI tools be credited in commit messages?** Coding tools add a co-author trailer by
+   default, and in the kit's founding project that put one into most commits against the
+   owner's wish; removing it later meant rewriting every commit and a force-push. The answer
+   is a hard rule in `AGENTS.md` either way. No (the default): keep the "No AI attribution
+   in git" rule; `.githooks/commit-msg` enforces it. Yes: replace that rule with one saying
+   AI tools may be credited; the hook keys on the rule line, so without it the hook gives
+   way and `check.sh --self-test` reports its case as skipped by owner choice.
+
 ## Phase 3 — PROJECT.md and PHASES.md
 
 Both files ship as skeletons and both are LIVING documents. Do not fill them in from a
@@ -297,7 +305,7 @@ when they become current, never now.
 
 | Placeholder | What goes in |
 |---|---|
-| `{{BUILD_TEST_COMMAND}}` | One shell command that builds and tests. It runs on every commit — keep it fast |
+| `{{BUILD_TEST_COMMAND}}` | One shell command that builds and tests. It runs on every commit — keep it fast. No deploy step, dry runs included: an agent's permission layer may refuse to run the whole gate |
 | `{{BOUNDARY_CHECKS}}` | **Replace the whole of `scripts/boundary_checks.sh`**: one grep per enforceable boundary, each setting `fail=1` |
 | `{{BOUNDARY_SELF_TESTS}}` | **Replace the whole of `scripts/boundary_selftests.sh`**: one negative test per check above. Not optional — see below |
 | `{{TOOLCHAIN}}` / `{{TOOLCHAIN_PATH_SETUP}}` / `{{TOOLCHAIN_SETUP_NOTES}}` / `{{TOOLCHAIN_SETUP_STEP}}` | What the gate needs on PATH, how to find it in a non-login shell, how CI installs it. `{{TOOLCHAIN_PATH_SETUP}}` is a directory to prepend, not a line of code |

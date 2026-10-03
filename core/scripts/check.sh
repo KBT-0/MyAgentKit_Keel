@@ -107,7 +107,12 @@ filelist="$work/files"
 case "${GATE_LOCK_WAIT:-}" in
   *[!0-9]*) echo "FAIL [lock]: GATE_LOCK_WAIT must be a number of seconds, got '$GATE_LOCK_WAIT'."; exit 1 ;;
 esac
-# lock_path is computed in the seam block above.
+# lock_path is computed in the seam block above. The build/test command's full output goes
+# beside the lock: outside the tree, one per checkout. Without git it goes to a temp file.
+case "$lock_path" in
+  */.check.lock) build_log=$(mktemp) || { echo "FAIL [gate]: cannot create a temp file; refusing to run blind."; exit 1; } ;;
+  *) build_log="${lock_path%.lock}-build.log" ;;
+esac
 if [ "${GATE_LOCK_HELD:-}" != "$lock_path" ]; then
   # A directory here (hand-made, or a mkdir-style lock) would let `ln -s` succeed INSIDE it,
   # so every run would "take" the lock and none would release it.
@@ -265,23 +270,65 @@ self_test() {
   # --- the commit hook --------------------------------------------------------
   # The hook is the gate that actually holds, for every tool, and until now nothing proved
   # it carries a red gate out to a nonzero exit. It is four lines, which is exactly the kind
-  # of code nobody tests and everybody assumes.
-  hook=".githooks/pre-commit"
-  if [ -f "$hook" ]; then
-    if sh "$hook" >/dev/null 2>&1; then
-      echo "  ok   — commit hook exits 0 on a green tree"
-    else
-      echo "  FAIL — commit hook rejected a GREEN tree; every commit would be blocked."
+  # of code nobody tests and everybody assumes. A clean `git merge` runs pre-merge-commit,
+  # not pre-commit, for the merge commit it creates: two green branches can merge into a red
+  # tree, so that hook is held to the same two cases.
+  for hook in .githooks/pre-commit .githooks/pre-merge-commit; do
+    if [ ! -f "$hook" ]; then
+      echo "  FAIL — $hook is missing: nothing enforces the gate on those commits."
       st_fail=1
-    fi
-    if env GATE_SELFTEST_EXTRA_FILE="$inj" sh "$hook" >/dev/null 2>&1; then
-      echo "  FAIL — commit hook exited 0 while the gate was RED. It is blocking nothing."
+    elif ! sh "$hook" >/dev/null 2>&1; then
+      echo "  FAIL — $hook rejected a GREEN tree; every such commit would be blocked."
+      st_fail=1
+    elif env GATE_SELFTEST_EXTRA_FILE="$inj" sh "$hook" >/dev/null 2>&1; then
+      echo "  FAIL — $hook exited 0 while the gate was RED. It is blocking nothing."
       st_fail=1
     else
-      echo "  ok   — commit hook aborts the commit when the gate is red"
+      echo "  ok   — $hook passes a green tree and aborts on a red one"
     fi
+  done
+
+  # --- the commit message hook --------------------------------------------------
+  # A coding tool's default instruction adds an AI co-author trailer to every commit; a rule
+  # in AGENTS.md alone did not stop it. A human co-author must still get through, even one
+  # whose name contains a tool's. An owner who allows AI credit drops the rule line from
+  # AGENTS.md (setup interview); the hook then gives way, and this case says so out loud.
+  printf 'change\n\nCo-Authored-By: Claude <noreply@anthropic.com>\n' > "$work/msg_ai"
+  printf 'change\n\nCo-authored-by: Claude Monet <person@example.invalid>\n' > "$work/msg_human"
+  if [ -f AGENTS.md ] && ! grep -q 'No AI attribution in git' AGENTS.md; then
+    echo "  skip — commit-msg hook: skipped by owner choice (AGENTS.md has no 'No AI attribution in git' rule)"
+  elif [ ! -f .githooks/commit-msg ]; then
+    echo "  FAIL — .githooks/commit-msg is missing: nothing rejects an AI co-author trailer."
+    st_fail=1
+  elif sh .githooks/commit-msg "$work/msg_ai" >/dev/null 2>&1; then
+    echo "  FAIL — commit-msg hook accepted an AI co-author trailer."
+    st_fail=1
+  elif ! sh .githooks/commit-msg "$work/msg_human" >/dev/null 2>&1; then
+    echo "  FAIL — commit-msg hook rejected a human co-author (false positive)."
+    st_fail=1
   else
-    echo "  FAIL — $hook is missing: nothing enforces the gate at commit time."
+    echo "  ok   — commit-msg hook rejects an AI co-author trailer and keeps a human one"
+  fi
+
+  # --- build failure output -----------------------------------------------------
+  # The lines that locate a compile error ("In function", "required from", "note:") come
+  # before and around the "error:" line. A gate that printed only lines matching "error"
+  # hid them, and a CI-only failure had to be fixed blind. The failure must be named, its
+  # chain must reach the output, and the whole log must be kept. On CI the log in .git
+  # vanishes with the runner, so there the whole log is printed instead of the tail.
+  build_fail='i=0; while [ $i -lt 300 ]; do echo "build line $i"; i=$((i + 1)); done
+    echo "src/x.c: In function f:"; echo "src/x.c:3:5: error: bad"; echo "src/x.c:2:1: note: declared here"; exit 1'
+  out=$(env CI= GATE_BUILD_CMD_OVERRIDE="$build_fail" sh "$0" 2>&1)
+  ci_out=$(env CI=true GATE_BUILD_CMD_OVERRIDE="$build_fail" sh "$0" 2>&1)
+  if printf '%s\n' "$out" | grep -q '^FAIL \[build\]' &&
+     printf '%s\n' "$out" | grep -q 'In function f:' &&
+     printf '%s\n' "$out" | grep -q 'note: declared here' &&
+     ! printf '%s\n' "$out" | grep -q '^build line 0$' &&
+     printf '%s\n' "$ci_out" | grep -q '^build line 0$' &&
+     grep -q '^build line 0$' "$build_log" 2>/dev/null; then
+    echo "  ok   — a build failure is named, shows its diagnostic chain, keeps the full log, and prints it on CI"
+  else
+    echo "  FAIL — a build failure was not named, lost its diagnostic chain, left no full log, or hid it on CI."
     st_fail=1
   fi
 
@@ -566,6 +613,11 @@ fi
 # ---------------------------------------------------------------------------
 # An unconfigured command is a FAIL, not a warning. "No build or test command" is the
 # absent-evidence case: the gate would be reporting that nothing failed, having run nothing.
+#
+# Keep deploy-shaped steps out of this command, dry runs included. An agent's permission
+# layer refused to run a gate whose command ended in a deploy tool's --dry-run, read as a
+# production deploy, so the agent could not run the gate it is required to run. Validate
+# deploy configuration in its own CI step, or document an allow rule for that exact command.
 build_test_cmd="{{BUILD_TEST_COMMAND}}"
 [ -n "${GATE_BUILD_CMD_OVERRIDE:-}" ] && build_test_cmd="$GATE_BUILD_CMD_OVERRIDE"
 # Tested with its whitespace stripped: an all-blank command reaches `sh -c` as a no-op that
@@ -577,7 +629,26 @@ case "$(printf '%s' "$build_test_cmd" | tr -d '[:space:]')" in
     echo "              so that the choice is visible in the diff instead of implied."
     fail=1 ;;
   *)
-    sh -c "$build_test_cmd" || fail=1 ;;
+    # Quiet when it passes; on failure the summary line, then the TAIL, never a filter. The
+    # lines that locate a compile error ("In function", "required from", "note:") do not
+    # match "error", and a gate that printed only matching lines sent a CI-only failure out
+    # with its location cut away. The whole output stays in $build_log for a local run. On CI
+    # that file vanishes with the runner and the first error of a long chain sits above any
+    # tail, so CI prints the whole log.
+    # ponytail: a fixed tail; raise build_tail if your diagnostic chains run longer.
+    build_tail=150
+    sh -c "$build_test_cmd" > "$build_log" 2>&1
+    rc=$?
+    if [ "$rc" -ne 0 ] && [ -n "${CI:-}" ]; then
+      echo "FAIL [build]: the build/test command exited $rc. Its whole output follows (CI)."
+      cat "$build_log"
+      fail=1
+    elif [ "$rc" -ne 0 ]; then
+      echo "FAIL [build]: the build/test command exited $rc. Its last $build_tail lines follow;"
+      echo "              the whole output is in $build_log"
+      tail -n "$build_tail" "$build_log"
+      fail=1
+    fi ;;
 esac
 
 # ---------------------------------------------------------------------------

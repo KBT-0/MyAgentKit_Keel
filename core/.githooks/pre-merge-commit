@@ -1,0 +1,7 @@
+#!/usr/bin/env sh
+# KIT-OWNED: do not edit locally; change it in the kit and re-sync.
+# A clean `git merge` does not run pre-commit for the merge commit it creates; it runs this
+# hook. Without it, two branches that each pass the gate can merge into a tree that fails
+# it, and nothing runs the gate. A conflicted merge is finished with `git commit`, which
+# runs pre-commit; a fast-forward creates no commit and brings in a tree already gated.
+exec sh "$(dirname -- "$0")/pre-commit"
