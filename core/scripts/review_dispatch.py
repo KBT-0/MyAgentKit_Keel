@@ -64,7 +64,10 @@ def main(argv=None):
     agent_usage.require_private_storage(repo)
     chain_id = uuid.uuid4().hex
     os.environ["MYAGENTKIT_REVIEW_CHAIN_ID"] = chain_id
-    os.environ.setdefault("MYAGENTKIT_TASK_ID", "review-" + chain_id)
+    # An empty label is no label: kept as "", it was recorded as an id every later labelled
+    # round refused as damaged.
+    if not os.environ.get("MYAGENTKIT_TASK_ID"):
+        os.environ["MYAGENTKIT_TASK_ID"] = "review-" + chain_id
     chain = {"schema_version": 1, "chain_id": chain_id, "requested_reviewer": args.reviewer,
              "configured_models": pins, "task_id": os.environ["MYAGENTKIT_TASK_ID"],
              "head": original[0], "fingerprint": original[1], "scope": scope, "reference": ref,
@@ -114,7 +117,9 @@ def main(argv=None):
             checkpoint()
             break  # Accept, manual checks AND Reject are terminal review results.
         chain["status"] = "failed"
+        # A cancel at any point after launch ends the chain, whatever the failure says.
         eligible = (provider == args.reviewer and chain["failure_kind"] in UNAVAILABLE
+                    and not result.get("cancelled")
                     and bool(result.get("evidence")) and bool(result.get("usage_record")))
         if eligible and not args.allow_fallback:
             chain["fallback_blocked"] = "not requested; --fallback allows one other configured reviewer"

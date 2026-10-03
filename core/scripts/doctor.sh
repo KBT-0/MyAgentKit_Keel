@@ -28,11 +28,22 @@ miss() { echo "MISSING: $1 — fix: $2"; missing=$((missing + 1)); }
 # environment, as check.sh's sh would; any other shell syntax is reported, not guessed at.
 # An UNSET variable is reported too: check.sh's `set -u` stops on it, so expanding it to
 # nothing reported a ready machine whose gate could not start.
-toolchain_path=$(sed -n '/^toolchain_path=".*"$/{p;q;}' scripts/check.sh 2>/dev/null)
-toolchain_path=${toolchain_path#toolchain_path=\"}; toolchain_path=${toolchain_path%\"}
+# Only the form check.sh ships is read: a line in any other form (a comment after it, single
+# quotes, no quotes) was read as empty, and doctor probed a PATH the gate never uses.
+toolchain_line=$(sed -n '/^[[:space:]]*toolchain_path=/{p;q;}' scripts/check.sh 2>/dev/null)
+toolchain_line=${toolchain_line%"$(printf '\r')"}  # CRLF is reported once, below
+toolchain_path=""
+case "$toolchain_line" in
+  "") [ -f scripts/check.sh ] && echo "NOTE: scripts/check.sh has no toolchain_path line; doctor probes the PATH it was started with" ;;
+  toolchain_path=\"*\"*\") ;;
+  toolchain_path=\"*\") toolchain_path=${toolchain_line#toolchain_path=\"}; toolchain_path=${toolchain_path%\"} ;;
+esac
+if [ -n "$toolchain_line" ] && [ -z "$toolchain_path" ] && [ "$toolchain_line" != 'toolchain_path=""' ]; then
+  miss "toolchain_path line not in the supported form toolchain_path=\"...\"; doctor cannot see the gate's PATH" "write it in scripts/check.sh on a line of its own, exactly toolchain_path=\"<path>\", with no comment after it"
+fi
 unsupported=""
 case "$toolchain_path" in
-  *'$('*|*'`'*|*';'*|*'"'*|*'\'*) unsupported=1 ;;
+  *'$('*|*'`'*|*';'*|*'\'*) unsupported=1 ;;
   *) expanded=$(printf '%s\n' "$toolchain_path" | awk '{
        out = ""; s = $0
        while ((i = index(s, "$")) > 0) {
@@ -76,7 +87,7 @@ esac
 # --- the gate's own files -------------------------------------------------------------
 # The loop below inspects the files it finds, and the wiring check reads core.hooksPath
 # only: a deleted .githooks/pre-commit left every ordinary commit ungated and doctor ready.
-for f in scripts/check.sh .githooks/pre-commit .githooks/pre-merge-commit .githooks/commit-msg scripts/doctor.sh; do
+for f in scripts/check.sh .githooks/pre-commit .githooks/pre-merge-commit .githooks/commit-msg scripts/doctor.sh scripts/review.sh; do
   [ -f "$f" ] || miss "$f does not exist (the gate needs it)" "git checkout -- $f, or sync the kit again"
 done
 
@@ -120,8 +131,13 @@ python3 -c 'import sys; sys.exit(sys.version_info < (3, 10))' 2>/dev/null ||
   miss "Python 3.10 or newer as python3 (the review tooling needs it)" "install Python 3.10+"
 # Resolved as review.sh and its adapters resolve it: REVIEW_REVIEWER over the configured
 # reviewer, REVIEW_CLI_BIN (codex) or CLAUDE_CLI_BIN (claude) over the command name, and
-# PATH first, then ~/.local/bin when codex is there.
-reviewer=${REVIEW_REVIEWER:-$(sed -n 's/^DEFAULT_REVIEWER="\(.*\)"$/\1/p' scripts/review.sh 2>/dev/null)}
+# PATH first, then ~/.local/bin when codex is there. A configured reviewer doctor cannot read
+# skipped this check, and a checkout without its review entry point was reported ready.
+configured=$(sed -n 's/^DEFAULT_REVIEWER="\(.*\)"$/\1/p' scripts/review.sh 2>/dev/null)
+if [ -f scripts/review.sh ] && [ -z "$configured" ]; then
+  miss "scripts/review.sh names no reviewer doctor can read (a DEFAULT_REVIEWER=\"claude\" or \"codex\" line)" "set DEFAULT_REVIEWER=\"claude\" or DEFAULT_REVIEWER=\"codex\" on a line of its own in scripts/review.sh"
+fi
+reviewer=${REVIEW_REVIEWER:-$configured}
 case "$reviewer" in
   codex) reviewer_cli=${REVIEW_CLI_BIN:-codex} ;;
   claude) reviewer_cli=${CLAUDE_CLI_BIN:-claude} ;;
@@ -178,26 +194,38 @@ fi
 # grep in its own shell too, which only `type grep` in that shell shows. An rc file that
 # prompts on /dev/tty (keychain, ssh-add, an updater) would hang the probe, hence the timeout
 # (-k: an interactive shell ignores SIGTERM). Where setsid exists the probe runs in a session
-# of its own, with no terminal to stop on, and timeout signals its whole process group, so a
-# child the rc file started dies with it; without setsid, --foreground keeps the shell from
-# stopping on SIGTTIN, and only the shell is signalled. The output goes to a file, never a
-# pipe: a child left running held the pipe open, and reading it waited for that child, far
-# past the bound. Stock macOS has no `timeout`, and an unbounded probe there could block
-# every session start, so it is skipped with a note. A probe that failed or printed nothing
-# is not a clean result: it says so. bash prints a function's whole body: the first line is
-# enough.
+# of its own, with no terminal to stop on; its first output line is that session's process
+# group, and the whole group is killed once the probe returns, normally or by timeout:
+# `timeout` ends when its own child does, so a child the rc file started in the background
+# outlived the probe. Without setsid, --foreground keeps the shell from stopping on SIGTTIN,
+# only the shell is signalled, and such a child is not stopped: that is a NOTE. The output
+# goes to a file, never a pipe: a child left running held the pipe open, and reading it
+# waited for that child, far past the bound. Stock macOS has no `timeout`, and an unbounded
+# probe there could block every session start, so it is skipped with a note. A probe that
+# failed or printed nothing is not a clean result: it says so. bash prints a function's whole
+# body: the first line is enough.
 if [ -n "${SHELL:-}" ] && ! command -v timeout >/dev/null 2>&1; then
   echo "NOTE: grep probe skipped, no timeout on this machine"
 elif [ -n "${SHELL:-}" ] && ! probe_out=$(mktemp); then
   echo "NOTE: grep probe skipped, cannot create a temp file"
 elif [ -n "${SHELL:-}" ]; then
   if command -v setsid >/dev/null 2>&1; then
-    setsid timeout -k 1 5 "$SHELL" -ic 'command -V grep' </dev/null >"$probe_out" 2>/dev/null
+    # $$ of the sh that setsid started is the new session's process group, forked or not.
+    setsid sh -c 'echo "$$"; exec timeout -k 1 5 "$0" -ic "command -V grep"' "$SHELL" \
+      </dev/null >"$probe_out" 2>/dev/null
+    probe_status=$?
+    probe_group=$(sed -n 1p "$probe_out")
+    case "$probe_group" in
+      ""|*[!0-9]*) ;;
+      *) kill -s KILL -- "-$probe_group" 2>/dev/null ;;
+    esac
+    grep_is=$(sed -n 2p "$probe_out")
   else
     timeout --foreground -k 1 5 "$SHELL" -ic 'command -V grep' </dev/null >"$probe_out" 2>/dev/null
+    probe_status=$?
+    grep_is=$(head -1 "$probe_out")
+    echo "NOTE: no setsid on this machine: a process the grep probe's rc files start in the background is not stopped"
   fi
-  probe_status=$?
-  grep_is=$(head -1 "$probe_out")
   rm -f "$probe_out"
   shadowed=""
   case "$grep_is" in

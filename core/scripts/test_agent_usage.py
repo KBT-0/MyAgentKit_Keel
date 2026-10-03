@@ -150,7 +150,7 @@ class UsageTests(unittest.TestCase):
             outside.mkdir()
             (repo / ".myagentkit").symlink_to(outside, target_is_directory=True)
             with self.assertRaisesRegex(ValueError, "inside the repository"):
-                agent_usage.record(repo, "codex", "fixture", "claude/fixture", {},
+                agent_usage.record(repo, "codex", "fixture", "claude/fixture", {"id": "fixture"},
                                    {"stdout": "", "exit_code": 1}, "failed", "quota", None)
             self.assertFalse((outside / "usage").exists())
 

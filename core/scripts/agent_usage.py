@@ -212,6 +212,8 @@ def record(repo: Path, provider: str, model: str, requester: str, task: dict,
     """
     if evidence and published is None:
         raise ValueError("evidence needs the published bytes it is hashed from")
+    if not isinstance(task.get("id"), str) or not task["id"]:
+        raise ValueError("a usage record needs a task label; the history reader refuses one without")
     if evidence and not (os.path.isfile(evidence) and os.access(evidence, os.R_OK)):
         status, reason = "failed", "evidence_unavailable"
     values = decode(provider, execution.get("stdout", ""))

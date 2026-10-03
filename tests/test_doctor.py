@@ -11,6 +11,12 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def alive(pid):
+    # ps, not kill -0: a killed child not yet reaped is a zombie, and kill -0 still finds it.
+    state = subprocess.run(['ps', '-o', 'stat=', '-p', str(pid)], capture_output=True, text=True)
+    return state.returncode == 0 and not state.stdout.strip().startswith('Z')
+
+
 class DoctorTests(unittest.TestCase):
     def test_each_injected_trap_turns_doctor_red(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -24,19 +30,20 @@ class DoctorTests(unittest.TestCase):
                 (bin_dir / tool).write_text('#!/bin/sh\nexit 0\n')
                 (bin_dir / tool).chmod(0o755)
             # A controlled timeout, so the grep probe runs whether or not this host has one.
-            # It enforces its seconds and kills the command's whole process group, as the real
-            # one does: a stand-in that only ran the command proved no bound at all.
+            # It enforces its seconds and kills only the command it ran: a stand-in that only
+            # ran the command proved no bound at all, and one that cleaned up the command's
+            # process group hid that doctor did not (a child the rc file left running).
             (bin_dir / 'timeout').write_text(
                 '#!/usr/bin/env python3\n'
-                'import os, signal, subprocess, sys\n'
+                'import subprocess, sys\n'
                 'args = sys.argv[1:]\n'
                 'while args[0].startswith("-"):\n'
                 '    args = args[2:] if args[0] == "-k" else args[1:]\n'
-                'child = subprocess.Popen(args[1:], start_new_session=True)\n'
+                'child = subprocess.Popen(args[1:])\n'
                 'try:\n'
                 '    sys.exit(child.wait(timeout=float(args[0])))\n'
                 'except subprocess.TimeoutExpired:\n'
-                '    os.killpg(child.pid, signal.SIGKILL)\n'
+                '    child.kill()\n'
                 '    child.wait()\n'
                 '    sys.exit(124)\n')
             (bin_dir / 'timeout').chmod(0o755)
@@ -79,32 +86,43 @@ class DoctorTests(unittest.TestCase):
             # the probe, and with it every session start: the probe is skipped and says so.
             # A fresh directory of links to the resolved executables: a dangling link or a
             # repeated PATH entry on the host must not break the fixture.
-            no_timeout, dangling = tmp / 'no-timeout-bin', tmp / 'dangling-bin'
-            no_timeout.mkdir(); dangling.mkdir()
+            dangling = tmp / 'dangling-bin'
+            dangling.mkdir()
             (dangling / 'tmux').symlink_to(tmp / 'absent')
-            for directory in [str(dangling), *env['PATH'].split(os.pathsep) * 2]:
-                if os.path.isdir(directory):
-                    for name in os.listdir(directory):
-                        source = Path(directory) / name
-                        if name != 'timeout' and source.exists() and not os.path.lexists(no_timeout / name):
-                            (no_timeout / name).symlink_to(source.resolve())
+
+            def path_without(tool):
+                links = tmp / ('no-%s-bin' % tool)
+                links.mkdir()
+                for directory in [str(dangling), *env['PATH'].split(os.pathsep) * 2]:
+                    if os.path.isdir(directory):
+                        for name in os.listdir(directory):
+                            source = Path(directory) / name
+                            if name != tool and source.exists() and not os.path.lexists(links / name):
+                                (links / name).symlink_to(source.resolve())
+                return str(links)
+            no_timeout = path_without('timeout')
             shell.write_text('#!/bin/sh\nsleep 60\n')
             try:
                 skipped = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=project, capture_output=True,
-                                         text=True, env=dict(env, PATH=str(no_timeout)), timeout=20)
+                                         text=True, env=dict(env, PATH=no_timeout), timeout=20)
             except subprocess.TimeoutExpired:
                 self.fail('doctor.sh ran the shell probe without a time limit')
             self.assertEqual(skipped.returncode, 0, skipped.stdout + skipped.stderr)
             self.assertIn('NOTE: grep probe skipped, no timeout on this machine', skipped.stdout)
 
             # An rc file that leaves a child holding the probe's output, and a probe that
-            # fails: doctor returns within its bound and says the probe did not complete.
+            # fails: doctor returns within its bound and says the probe did not complete. The
+            # child is gone when doctor exits: `timeout` ends when its own child does, so a
+            # child started in the background outlived the probe until doctor killed its group.
             pid_file = tmp / 'sleep.pid'
             for rc_file in ('sleep 60 &\necho $! > %s\n' % pid_file, 'exit 3\n'):
                 shell.write_text('#!/bin/sh\n' + rc_file)
                 try:
                     probed = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=project, env=env,
                                             capture_output=True, text=True, timeout=20)
+                    if pid_file.exists():
+                        self.assertFalse(alive(int(pid_file.read_text())),
+                                         'a child the rc file started outlived doctor.sh')
                 except subprocess.TimeoutExpired:
                     self.fail('a child of the shell probe held doctor.sh past its bound')
                 finally:
@@ -136,6 +154,14 @@ class DoctorTests(unittest.TestCase):
             self.assertEqual(os.read(reader, 64), b'started\n')
             gone = select.select([reader], [], [], 5)[0] and os.read(reader, 64) == b''
             self.assertTrue(gone, 'the blocked rc command outlived the probe')
+
+            # Without setsid (stock macOS) the probe has no process group of its own to clean
+            # up, so a child the rc file left running is not stopped: doctor says so.
+            shell.write_text('#!/bin/sh\necho "grep is an alias for grep --color=auto"\n')
+            no_setsid = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=project, capture_output=True,
+                                       text=True, env=dict(env, PATH=path_without('setsid')), timeout=20)
+            self.assertEqual(no_setsid.returncode, 0, no_setsid.stdout + no_setsid.stderr)
+            self.assertIn('NOTE: no setsid on this machine', no_setsid.stdout)
 
             shell.write_text('#!/bin/sh\necho "grep is an alias for ugrep"\n')
             red = doctor()
@@ -301,6 +327,49 @@ class DoctorTests(unittest.TestCase):
             self.assertEqual(ready.returncode, 0, ready.stdout + ready.stderr)
             check.write_text(check.read_text().replace(
                 'toolchain_path="${DOCTOR_TEST_TOOLCHAIN}/bin"', 'toolchain_path="{{TOOLCHAIN_PATH_SETUP}}"'))
+
+            # A line doctor cannot read is not an empty one: `toolchain_path="..." # note` was
+            # read as no toolchain, and doctor probed a PATH the gate never uses.
+            line = 'toolchain_path="{{TOOLCHAIN_PATH_SETUP}}"'
+            for form in ('toolchain_path="%s/tc" # build tools' % home,
+                         "toolchain_path='%s/tc'" % home, 'toolchain_path=%s/tc' % home,
+                         '  toolchain_path="%s/tc"' % home):
+                with self.subTest(form=form):
+                    check.write_text(check.read_text().replace(line, form))
+                    red = doctor()
+                    self.assertEqual(red.returncode, 1, red.stdout)
+                    self.assertIn('MISSING: toolchain_path line not in the supported form '
+                                  'toolchain_path="..."; doctor cannot see the gate\'s PATH', red.stdout)
+                    self.assertEqual(red.stdout.count('MISSING:'), 1, red.stdout)
+                    check.write_text(check.read_text().replace(form, line))
+            # Explicitly empty is the owner's choice; no line at all is said, not a fault.
+            check.write_text(check.read_text().replace(line, 'toolchain_path=""'))
+            ready = doctor()
+            self.assertEqual(ready.returncode, 0, ready.stdout + ready.stderr)
+            self.assertNotIn('toolchain_path', ready.stdout)
+            check.write_text(check.read_text().replace('toolchain_path=""\n', ''))
+            ready = doctor()
+            self.assertEqual(ready.returncode, 0, ready.stdout + ready.stderr)
+            self.assertIn('NOTE: scripts/check.sh has no toolchain_path line', ready.stdout)
+            check.write_text(check.read_text().replace('case "$toolchain_path" in', line + '\ncase "$toolchain_path" in', 1))
+            self.assertIn(line, check.read_text())
+
+            # The review entry point: a deleted review.sh, or one whose reviewer doctor cannot
+            # read, skipped the reviewer check and reported a machine ready without it.
+            review.unlink()
+            red = doctor()
+            self.assertEqual(red.returncode, 1, red.stdout)
+            self.assertIn('MISSING: scripts/review.sh does not exist', red.stdout)
+            self.assertEqual(red.stdout.count('MISSING:'), 1, red.stdout)
+            for broken in (review_before.replace('DEFAULT_REVIEWER="claude"\n', ''),
+                           review_before.replace('DEFAULT_REVIEWER="claude"', 'DEFAULT_REVIEWER=claude')):
+                review.write_text(broken)
+                review.chmod(0o755)
+                red = doctor()
+                self.assertEqual(red.returncode, 1, red.stdout)
+                self.assertIn('MISSING: scripts/review.sh names no reviewer doctor can read', red.stdout)
+                self.assertEqual(red.stdout.count('MISSING:'), 1, red.stdout)
+            review.write_text(review_before)
 
             # A required hook that does not exist: the loop below skipped what was not there,
             # and the wiring check reads only core.hooksPath, so ordinary commits went ungated.

@@ -502,11 +502,16 @@ def main(argv=None, result_sink=None) -> int:
         except (OSError, ValueError) as error:
             evidence.update(status="failed", error="Usage record could not be persisted: " + str(error))
             reason = "usage_write_failed"
+        # The handler kept noting signals through both writes above: a cancel there is a cancel
+        # too, or a quota-failed attempt stayed eligible and --fallback started another reviewer.
+        was_cancelled = bool(cancelled) or execution["termination"] == "cancelled"
+        if was_cancelled and reason:
+            reason = "cancelled"
         evidence.update(failure_kind=reason, usage_record=str(usage_path) if usage_path else None)
         result = {"status": evidence["status"], "evidence": archived_path,
                   "fingerprint": fingerprint, "result": evidence.get("result"),
                   "error": evidence.get("error"), "failure_kind": reason,
-                  "usage_record": evidence["usage_record"], "recovery": recovery}
+                  "usage_record": evidence["usage_record"], "recovery": recovery, "cancelled": was_cancelled}
         if result_sink is not None:
             result_sink(result)
         print(json.dumps(result))
