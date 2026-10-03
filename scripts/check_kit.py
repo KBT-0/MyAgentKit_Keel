@@ -12,9 +12,13 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
+# The review self-test ships to projects with its own minimums; read them, never copy them.
+BRIDGE_MINIMUMS = next(
+    ast.literal_eval(node.value)
+    for node in ast.parse((ROOT / 'core/scripts/test_claude_bridge.py').read_text()).body
+    if isinstance(node, ast.Assign) and getattr(node.targets[0], 'id', None) == 'SUITE_MINIMUMS')
 REQUIRED_SUITES = {
-    'core/scripts': {'test_claude_bridge': 47, 'test_agent_usage': 12, 'test_codex_quota': 3,
-                     'test_agent_cost': 2},
+    'core/scripts': dict(BRIDGE_MINIMUMS, test_agent_cost=2),
     'tests': {'test_packaging': 1, 'test_bootstrap': 1, 'test_acceptance': 2,
               'test_review_upgrade': 1, 'test_boundary_example': 1, 'test_scan_gate': 1,
               'test_boundary_restore': 1},

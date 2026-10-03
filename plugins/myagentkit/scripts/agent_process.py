@@ -26,7 +26,9 @@ def run(command: list[str], prompt: str, repo: Path, timeout: int) -> dict:
     started = time.monotonic()
     previous = {}
     if threading.current_thread() is threading.main_thread():
-        previous = {sig: signal.signal(sig, _cancel) for sig in CANCEL_SIGNALS}
+        # nohup ignores SIGHUP and a background job SIGINT; the caller chose that, keep it.
+        previous = {sig: signal.signal(sig, _cancel) for sig in CANCEL_SIGNALS
+                    if signal.getsignal(sig) is not signal.SIG_IGN}
     try:
         return _supervise(command, prompt, repo, timeout, started)
     finally:
@@ -40,16 +42,17 @@ def _supervise(command, prompt, repo, timeout, started):
         # communicate(input=None) after a short timeout can strand a partially written pipe.
         inp.write(prompt.encode())
         inp.seek(0)
-        try:
-            child = subprocess.Popen(command, cwd=repo, stdin=inp, stdout=subprocess.PIPE,
-                                     stderr=subprocess.PIPE, start_new_session=True,
-                                     env=dict(os.environ, MYAGENTKIT_DELEGATION_DEPTH="1"))
-        except OSError as error:
-            return {"exit_code": 127, "stdout": "", "stderr": str(error),
-                    "termination": "unavailable", "duration_ms": 0}
-        termination = None
+        child = termination = None
         buffers = {"stdout": bytearray(), "stderr": bytearray()}
+        # Popen sits inside the try, so a cancel that lands right after it still stops the child.
         try:
+            try:
+                child = subprocess.Popen(command, cwd=repo, stdin=inp, stdout=subprocess.PIPE,
+                                         stderr=subprocess.PIPE, start_new_session=True,
+                                         env=dict(os.environ, MYAGENTKIT_DELEGATION_DEPTH="1"))
+            except OSError as error:
+                return {"exit_code": 127, "stdout": "", "stderr": str(error),
+                        "termination": "unavailable", "duration_ms": 0}
             for name, stream in (("stdout", child.stdout), ("stderr", child.stderr)):
                 os.set_blocking(stream.fileno(), False)
                 selector.register(stream, selectors.EVENT_READ, name)
@@ -82,13 +85,14 @@ def _supervise(command, prompt, repo, timeout, started):
             termination = "cancelled"
         finally:
             # Also stop descendants left behind by a parent that already exited.
-            try:
-                os.killpg(child.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            child.wait()
-            child.stdout.close()
-            child.stderr.close()
-        return {"exit_code": child.returncode, "stdout": buffers['stdout'].decode(errors="replace"),
+            if child is not None:
+                try:
+                    os.killpg(child.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                child.wait()
+                child.stdout.close()
+                child.stderr.close()
+        return {"exit_code": child.returncode if child else None, "stdout": buffers['stdout'].decode(errors="replace"),
                 "stderr": buffers['stderr'].decode(errors="replace"), "termination": termination,
                 "duration_ms": round((time.monotonic() - started) * 1000)}

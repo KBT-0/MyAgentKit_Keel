@@ -123,6 +123,21 @@ class UsageTests(unittest.TestCase):
             self.assertEqual(len(rows), 1)
             self.assertNotIn("private transcript", result.stdout)
 
+    def test_a_signal_the_caller_ignores_does_not_cancel_the_review(self):
+        # nohup ignores SIGHUP and a background job ignores SIGINT; turning either back on
+        # cancelled a nohup review the moment its terminal closed.
+        import signal
+        for sig in (signal.SIGHUP, signal.SIGINT):
+            with self.subTest(sig=sig.name):
+                previous = signal.signal(sig, signal.SIG_IGN)
+                try:
+                    child = 'kill -%s $PPID; echo done' % sig.name[3:]
+                    result = agent_process.run(['sh', '-c', child], '', Path.cwd(), 5)
+                finally:
+                    signal.signal(sig, previous)
+                self.assertIsNone(result['termination'], result)
+                self.assertEqual(result['stdout'].strip(), 'done')
+
     def test_unavailable_child_is_a_returned_failure_not_an_exception(self):
         result = agent_process.run(["/nonexistent-myagentkit-cli"], "", Path.cwd(), 1)
         self.assertEqual(result["termination"], "unavailable")

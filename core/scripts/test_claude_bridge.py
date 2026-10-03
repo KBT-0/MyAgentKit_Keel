@@ -13,6 +13,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import agent_usage
 
 ROOT = Path(__file__).resolve().parent
+# Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
+# the sum and the self-test passed without running its checks. The kit gate reads this too.
+SUITE_MINIMUMS = {'test_claude_bridge': 47, 'test_agent_usage': 12, 'test_codex_quota': 3}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -763,6 +766,8 @@ if case == 'archive_failure':
                         "sys.stdin.read()\n"
                         "case = os.environ.get('CODEX_FIXTURE_CASE', 'accept')\n"
                         "assert os.environ['MYAGENTKIT_DELEGATION_DEPTH'] == '1'\n"
+                        "if case == 'unknown_flag':\n"
+                        "    sys.stderr.write(\"error: unexpected argument '--ephemeral' found\\n\"); sys.exit(2)\n"
                         "if case == 'quota':\n"
                         "    print(json.dumps({'type': 'turn.failed', 'error': {'message': 'usage limit reached'}})); sys.exit(1)\n"
                         "verdict = 'Reject' if case == 'reject' else 'Accept'\n"
@@ -903,11 +908,15 @@ if case == 'archive_failure':
                               result.stdout)
         # A CLI that rejects a flag the read-only run needs fails the same way every time:
         # it is a setup fault, so not even --fallback routes around it.
-        result, chain = self.dispatch_result(FIXTURE_CASE='unknown_flag')
-        self.assertNotEqual(result.returncode, 0, result.stdout)
-        self.assertEqual([a['reviewer'] for a in chain['attempts']], ['claude'])
-        self.assertEqual(chain['failure_kind'], 'cli_unsupported')
-        self.assertIn('upgrade the CLI', result.stdout)
+        # Claude says "unknown option", Codex "unexpected argument": both are the setup fault.
+        for primary, case in (('claude', {'FIXTURE_CASE': 'unknown_flag'}),
+                              ('codex', {'CODEX_FIXTURE_CASE': 'unknown_flag'})):
+            with self.subTest(primary=primary, unsupported=True):
+                result, chain = self.dispatch_result(primary, **case)
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertEqual([a['reviewer'] for a in chain['attempts']], [primary])
+                self.assertEqual(chain['failure_kind'], 'cli_unsupported')
+                self.assertIn('upgrade the CLI', result.stdout)
 
     def test_cancelled_review_stops_the_reviewer_records_usage_and_never_fails_over(self):
         # SIGTERM and SIGHUP used to end the dispatcher without its cleanup, leaving the paid
@@ -1062,10 +1071,10 @@ if case == 'archive_failure':
 if __name__ == "__main__":
     from test_agent_usage import UsageTests
     from test_codex_quota import QuotaTests
-    # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide
-    # inside the sum and the self-test passed without running its checks.
     suite = unittest.TestSuite()
-    for case, minimum in ((BridgeTests, 47), (UsageTests, 12), (QuotaTests, 3)):
+    for case, name in ((BridgeTests, 'test_claude_bridge'), (UsageTests, 'test_agent_usage'),
+                       (QuotaTests, 'test_codex_quota')):
+        minimum = SUITE_MINIMUMS[name]
         tests = unittest.defaultTestLoader.loadTestsFromTestCase(case)
         if tests.countTestCases() < minimum:
             raise SystemExit("FAIL: %s has %d of at least %d tests; a suite that did not run is "
