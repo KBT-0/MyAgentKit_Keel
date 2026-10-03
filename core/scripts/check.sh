@@ -84,6 +84,9 @@ esac
 lock_path=$(git rev-parse --git-path check.lock 2>/dev/null) || lock_path=.check.lock
 case "$lock_path" in /*) ;; *) lock_path="$(pwd -P)/$lock_path" ;; esac
 if [ "${GATE_LOCK_HELD:-}" != "$lock_path" ]; then
+  # A directory here (hand-made, or a mkdir-style lock) would let `ln -s` succeed INSIDE it,
+  # so every run would "take" the lock and none would release it.
+  if [ -d "$lock_path" ]; then echo "FAIL [lock]: $lock_path is a directory, not a gate lock; delete it."; exit 1; fi
   waited=0
   until ln -s "$$" "$lock_path" 2>/dev/null; do
     holder=$(readlink "$lock_path" 2>/dev/null) || holder=""
@@ -100,7 +103,7 @@ if [ "${GATE_LOCK_HELD:-}" != "$lock_path" ]; then
       exit 75
     fi
     [ $((waited % 30)) -ne 0 ] ||
-      echo "NOTE [lock]: another gate run (pid ${holder:-unknown}) has held $lock_path for ${waited}s; waiting for it."
+      echo "NOTE [lock]: another gate run (pid ${holder:-unknown}) has held $lock_path for ${waited}s; waiting for it (if pid ${holder:-unknown} is not a gate run, remove $lock_path)."
     sleep 1; waited=$((waited + 1))
   done
   lock=$lock_path

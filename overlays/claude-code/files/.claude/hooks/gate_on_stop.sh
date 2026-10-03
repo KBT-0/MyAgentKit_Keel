@@ -35,6 +35,8 @@ fi
 # The gate waits for another gate run in this checkout. The wait is bounded below the hook's
 # timeout (600 s in settings.json): a killed hook returns nothing, and its gate would still
 # start later. Exit 75 is that bound running out — the gate did not run, it did not fail.
+# The bound covers only the wait: a gate that takes longer than the remaining 100 s still
+# hits the hook timeout, so keep the hook's gate short (the full self-test is not for hooks).
 out=$(GATE_LOCK_WAIT="${GATE_LOCK_WAIT:-500}" ./scripts/check.sh 2>&1)
 rc=$?
 [ "$rc" -eq 0 ] && exit 0
