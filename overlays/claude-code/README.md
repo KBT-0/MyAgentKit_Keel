@@ -42,6 +42,9 @@ repository.
 |---|---|
 | `{{WORKER_MODEL}}` | The author model from the interview (`sonnet`, `opus`, or a full model id) |
 | `{{LONG_JOBS}}` | The project's jobs that run longer than a few minutes, by name, as the interview's question 8 recorded them |
+| `{{WORKER_EFFORT}}` | The worker's reasoning effort (`low`, `medium`, `high`), as the interview's question 8 recorded it: `high` when the worker's tasks bear design, lower when they are mechanical |
+
+`diff-reviewer.md` ships with `effort: high` and no placeholder: reviews run at high effort.
 
 If the project has no such jobs, delete both files instead of filling them.
 
@@ -77,9 +80,17 @@ If the project has no such jobs, delete both files instead of filling them.
   same notice was delivered three times for one pilot. Subscribe once, and have the brief
   end with a result FILE (plus, if the lead wants a push, one message from the worker);
   re-subscribing on every notice is a poll loop in disguise.
-- **A spawned session takes the user's default effort level**, while a sub-agent inherits
-  its lead's. Pass `--effort` to the spawn script when the task does not need the high one;
-  `scripts/agent_cost.py` does not show effort, so grep the transcript for `"effort"`.
+- **A sub-agent inherits its lead session's effort unless its definition sets `effort:`**,
+  and nothing in its output says so: a side-by-side comparison ran two sub-agents at the
+  lead's medium against a high-effort run of another CLI, and the skew surfaced only in the
+  transcripts. Both definitions here set it. A spawned session takes the user's default
+  effort instead; pass `--effort` to the spawn script. `scripts/agent_cost.py` does not show
+  effort, so verify it after the run by grepping the transcript for `"effort"`.
+- **A spawned session does not end when its task does.** A pilot worker wrote its result
+  file and then sat idle in tmux for 40 minutes until it was killed by hand, and the idle
+  notice cannot tell that apart from a park on a background job (above). The LEAD closes
+  it: read the result file, then `tmux kill-session -t NAME`. The brief says so, and
+  `spawn_worker.sh` prints the line when it starts the session.
 - **Every message to an idle session is a full-context turn.** Ask the brief for a result
   FILE, subscribe once with `notify_when_idle`, and read the file.
 

@@ -17,7 +17,7 @@ REQUIRED_SUITES = {
                      'test_agent_cost': 2},
     'tests': {'test_packaging': 1, 'test_bootstrap': 1, 'test_acceptance': 2,
               'test_review_upgrade': 1, 'test_boundary_example': 1, 'test_scan_gate': 1,
-              'test_boundary_restore': 1, 'test_sync_kit': 2},
+              'test_boundary_restore': 1, 'test_sync_kit': 2, 'test_doctor': 1},
 }
 
 
@@ -95,6 +95,12 @@ def main():
         (project / "scripts/boundary_selftests.sh").write_text("# Domain gates are project-specific.\n")
         run(["git", "add", "."], project)
         run(["sh", "scripts/check.sh"], project, reason="CHECK: PASS")
+        # The rot gate's message must name where operation detail goes instead.
+        state = project / "docs/STATE.md"
+        original_state = state.read_bytes()
+        state.write_text("# STATE\n\n## Active work\n\n" + "closed work\n" * 250)
+        run(["sh", "scripts/check.sh"], project, expected=1, reason="docs/<OPERATION>.md")
+        state.write_bytes(original_state)
         print("PASS: bootstrap rejects missing setup and accepts the configured synthetic project")
         if args.self_test:
             print(run(["sh", "scripts/check.sh", "--self-test"], project,

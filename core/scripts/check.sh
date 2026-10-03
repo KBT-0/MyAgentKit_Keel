@@ -342,11 +342,13 @@ else
     echo "FAIL [state]: $STATE_FILE is $lines lines with an EMPTY 'Active work' section —"
     echo "              the operation closed but the file was never pruned. Harvest the"
     echo "              permanent parts (grep for [LESSON] / [GOTCHA]) into their homes,"
-    echo "              then delete the rest: it is in git."
+    echo "              then delete the rest: it is in git. Operation detail belongs in"
+    echo "              docs/<OPERATION>.md, with one pointer line here (docs/STATE.md)."
     fail=1
   elif [ "$lines" -gt 400 ]; then
-    echo "NOTE [state]: $STATE_FILE is $lines lines with work still active. Not a problem"
-    echo "              by itself — but harvest as you go, so the prune is small later."
+    echo "NOTE [state]: $STATE_FILE is $lines lines with work still active. Move operation"
+    echo "              detail into docs/<OPERATION>.md and keep one status line and a"
+    echo "              pointer here; harvest as you go, so the prune is small later."
   fi
 fi
 

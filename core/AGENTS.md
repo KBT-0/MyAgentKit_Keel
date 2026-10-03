@@ -31,6 +31,8 @@ more importantly, what is deliberately out of scope until later.
 
 ## Reading order (new session)
 
+0. Run `./scripts/doctor.sh` (read-only). If it prints `MISSING:`, tell {{OWNER_NAME}} and
+   offer each fix before touching code: a red gate on an unready machine is not a code bug.
 1. This file
 2. `docs/PHASES.md` — what we are building now, and what is deliberately OUT of scope
    (short; read EVERY session). If a task needs something on the not-yet list, STOP and
@@ -125,8 +127,9 @@ FAILING for the right reason.
   (process or architecture insight) or `[GOTCHA]` (environment or tooling trap). Harvesting
   is then a grep, not a re-read — and **a tagged line may not be deleted until it has a
   permanent home.**
-- Multi-item operations track their progress in their OWN file with checkboxes, not as a
-  growing list here.
+- Multi-item operations track their progress in their OWN file, `docs/<OPERATION>.md`, with
+  checkboxes; workers write results straight into it, and STATE.md keeps one status line
+  and a pointer. No note-then-fold step.
 - Length is free while work is active. `./scripts/check.sh` FAILS only when "Active work"
   is empty and the file is still long — the operation closed and nobody pruned.
 

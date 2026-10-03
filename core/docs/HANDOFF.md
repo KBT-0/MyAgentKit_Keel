@@ -19,7 +19,10 @@ or to anything produced from it.
 5. **Routing check:** does this task belong on the model it is being sent to? Judgement work
    — architecture, contracts, risky diffs — goes to the strongest model; bulk, mechanical,
    well-specified work goes to the cheaper one. If the requested route violates that, say so
-   instead of producing the prompt.
+   instead of producing the prompt. The brief names the model AND the effort level, and the
+   lead verifies both after the run from the transcript (Claude Code: the `"effort"` field;
+   Codex: the `reasoning effort:` header of its log). A delegated agent that was never told
+   its effort runs at whatever its parent had (`docs/WORKFLOW.md`, "Worker cost").
 6. **Definition of Done — verifiable:** the exact command or observation that proves the
    task is finished, e.g. "`./scripts/check.sh` prints `CHECK: PASS` with the new test
    visible in the run". Not "it works", not "tests added" — something the implementer can
@@ -29,7 +32,17 @@ or to anything produced from it.
    to make an unclear part fit. An unanswered question comes back as a question, not as a
    guess buried in the diff.
 
-End the prompt with: updating `docs/STATE.md` at session end is the implementer's job.
+End the prompt with: updating `docs/STATE.md` at session end is the implementer's job. When
+the task belongs to an operation with its own file, `docs/<OPERATION>.md`, the detail and
+the result go straight into THAT file and `docs/STATE.md` gets one status line pointing at
+it — no separate note and no fold step. A project that folded every worker's note into
+`docs/STATE.md` hit its 10 KB limit three times in one day on a single growing bullet.
+
+A brief for a separate worker session (`scripts/spawn_worker.sh` in the Claude Code overlay)
+also ends with the path of its result FILE and this line: "The lead closes this session
+after reading the result file (`tmux kill-session -t NAME`); write the file last and stop."
+The session does not end by itself when the task is done, and its idle notice also fires
+whenever it parks on a background job, so the result file is the only end signal.
 
 A handoff written at the end of a working day also carries the cost: the tool's cost screen
 (`/cost` in Claude Code) and the table from `scripts/agent_cost.py --latest`, next to the number
