@@ -11,10 +11,12 @@
 set -u
 # The owner decides (setup interview): without the rule line in AGENTS.md, AI tools may be
 # credited. A missing AGENTS.md is a broken setup, not a choice: the hook stays on, and so
-# does an AGENTS.md grep cannot read: an error is not the owner's choice either.
-if [ -f AGENTS.md ]; then
-  grep -q 'No AI attribution in git' AGENTS.md
-  case $? in
+# does an AGENTS.md that is not a readable file: an error is not the owner's choice either.
+# (A directory is tested here, not left to grep: GNU grep -q skips one with status 1.)
+if [ -e AGENTS.md ]; then
+  rule=2
+  [ ! -f AGENTS.md ] || { grep -q 'No AI attribution in git' AGENTS.md; rule=$?; }
+  case $rule in
     0) ;;
     1) exit 0 ;;
     *) echo "commit-msg: cannot read AGENTS.md for the attribution rule; refusing to pass the message unchecked." >&2
@@ -40,18 +42,29 @@ words="$tools|opus|sonnet|haiku|code|coder|agent|ai|assist|assistant|cli|chat|pr
 domains='anthropic\.com|openai\.com|ampcode\.com|cursor\.(com|sh)|aider\.chat|devin\.ai|cognition\.ai|windsurf\.com|codeium\.com|tabnine\.com'
 # Behind a comment character a trailer is still checked: git keeps "# Co-Authored-By: ..."
 # under -m or verbatim cleanup. Punctuation is skipped whatever it is; a configured
-# core.commentChar is skipped too, which matters when it is a letter ("x Co-Authored-By:").
+# core.commentChar is skipped too, which matters when it is a letter ("x Co-Authored-By:"),
+# and core.commentString (git 2.45) before it, as git gives it precedence.
 # "auto" is git choosing a punctuation character, not the letters a, u, t and o.
-comment=$(git config --get core.commentChar 2>/dev/null | tr -cd '[:alnum:]')
+comment=$(git config --get core.commentString 2>/dev/null ||
+          git config --get core.commentChar 2>/dev/null)
+comment=$(printf '%s' "$comment" | tr -cd '[:alnum:]')
 prefix='^[^[:alnum:]]*'
 [ -z "$comment" ] || [ "$comment" = auto ] || prefix="^([^[:alnum:]]|[$comment])*"
-trailer="$prefix[a-z]+(-[a-z]+)*-by:"
+# Git takes whitespace before a trailer's colon and folds a value onto indented lines, so
+# "Co-Authored-By : Claude" and an identity on the next line are trailers too. Each folded
+# line is checked as it stands and again joined to the lines it continues.
+trailer="$prefix[a-z]+(-[a-z]+)*-by[[:space:]]*:"
+text=$(awk '{ print } NR > 1 && /^[[:space:]]/ { line = line " " $0; print line; next }
+            { line = $0 }' "$msg") || {
+  echo "commit-msg: cannot unfold the commit message; refusing to pass it unchecked." >&2
+  exit 1
+}
 sep='[[:space:]:_/().,-]'
-grep -inE \
+printf '%s\n' "$text" | grep -iE \
   -e "$trailer[[:space:]]*((github|google|openai)[[:space:]]+)?($tools)([0-9][a-z0-9.]*)?($sep+($words))*$sep*(<|\$)" \
   -e "$trailer.*(\\[bot\\]|@([a-z0-9-]+\\.)*($domains)>)" \
   -e "${prefix}generated (with|by)[[:space:]]*\\[?((github|google|openai)[[:space:]]+)?($tools)([^[:alnum:]]|\$)" \
-  -- "$msg" >&2
+  >&2
 case $? in
   0) echo "commit-msg: crediting an AI tool (above) is not allowed in this repository (AGENTS.md)." >&2
      echo "            Remove the line and commit again; the tool's default does not override the rule." >&2

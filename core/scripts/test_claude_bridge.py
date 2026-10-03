@@ -15,7 +15,7 @@ import agent_usage
 ROOT = Path(__file__).resolve().parent
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. The kit gate reads this too.
-SUITE_MINIMUMS = {'test_claude_bridge': 56, 'test_agent_usage': 12, 'test_codex_quota': 3}
+SUITE_MINIMUMS = {'test_claude_bridge': 58, 'test_agent_usage': 12, 'test_codex_quota': 3}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -305,6 +305,48 @@ class BridgeTests(unittest.TestCase):
                 self.assertEqual(received[0]['failure_kind'], 'stale_checkout')
                 usage = json.loads(Path(received[0]['usage_record']).read_text())
                 self.assertEqual(usage['task']['resolved'], original)
+
+    def test_an_archive_gone_before_accounting_still_records_the_attempt(self):
+        # record() reopened the archive to hash it, so an archive deleted in between aborted
+        # the accounting of a paid run. The hash is of the bytes published; the attempt is
+        # recorded as failed, evidence_unavailable.
+        from contextlib import redirect_stdout
+        from io import StringIO
+        from unittest.mock import patch
+        import codex_bridge
+        publish = agent_usage.write_evidence
+
+        def publish_then_lose(repo, path, text, **kwargs):
+            publish(repo, path, text, **kwargs)
+            if path.parent.name == 'reviews':
+                path.unlink()
+
+        for main, args in ((bridge.main, ['review']),
+                           (codex_bridge.main, ['--model', 'fixture-codex-model'])):
+            def execution(command, prompt, repo, timeout):
+                if '-o' in command:
+                    Path(command[command.index('-o') + 1]).write_text('VERDICT: Accept\n')
+                    value = {'type': 'turn.completed', 'usage': {}}
+                else:
+                    value = {'type': 'result', 'subtype': 'success', 'is_error': False,
+                             'modelUsage': {'claude-opus-5': {}}, 'structured_output':
+                             {'verdict': 'Accept', 'findings': [], 'manual_checks': []}}
+                return {'exit_code': 0, 'stdout': json.dumps(value), 'stderr': '',
+                        'termination': None, 'duration_ms': 1}
+
+            received = []
+            with self.subTest(adapter='claude' if main is bridge.main else 'codex'), \
+                    patch.dict(os.environ, self.review_env()), \
+                    patch('agent_process.run', side_effect=execution), \
+                    patch('agent_usage.write_evidence', side_effect=publish_then_lose), \
+                    redirect_stdout(StringIO()):
+                code = main([*args, '--repo', str(self.repo), '--uncommitted'], received.append)
+                self.assertEqual(code, 5)
+                self.assertEqual(received[0]['failure_kind'], 'evidence_unavailable')
+                usage = json.loads(Path(received[0]['usage_record']).read_text())
+                self.assertEqual((usage['status'], usage['failure_kind']),
+                                 ('failed', 'evidence_unavailable'))
+                self.assertRegex(usage['evidence_sha256'], '^[0-9a-f]{64}$')
 
     def test_hidden_checkout_changes_reject_before_either_adapter_launches(self):
         from contextlib import redirect_stdout
@@ -978,19 +1020,35 @@ if case == 'archive_failure':
         record = Path(first['usage_record'])
         original = record.read_text()
         no_evidence = json.dumps(dict(json.loads(original), evidence=''))
+        # Shaped like a record, but its fields cannot be trusted to say which task it was:
+        # filtered as "another task" they dropped an earlier Reject unseen.
+        weird_status = json.dumps(dict(json.loads(original), status='weird'))
+        no_head = json.loads(original)
+        del no_head['task']['head']
         for damage in ('{"task": ', '[]', '{}', '{"task": "review", "status": "completed"}',
-                       no_evidence, None):
+                       '{"task": {}, "status": "completed"}', weird_status,
+                       json.dumps(no_head), no_evidence, 'directory', 'mode 000'):
             with self.subTest(damage=damage):
-                if damage is None:
+                # A directory fails the read for every user, root included; mode 000 does not
+                # stop root, so that variant says it did not run instead of passing silently.
+                if damage == 'directory':
+                    record.unlink()
+                    record.mkdir()
+                elif damage == 'mode 000':
                     if os.geteuid() == 0:
-                        continue  # root reads a mode-000 file; this case cannot be built here
+                        sys.stderr.write('NOT RUN: unreadable usage record (mode 000) under '
+                                         'root; the directory case covers the read failure\n')
+                        continue
                     record.chmod(0)
                 else:
                     record.write_text(damage)
                 try:
                     code, refused = self.run_bridge(env_extra=task)
                 finally:
-                    record.chmod(0o600)
+                    if record.is_dir():
+                        record.rmdir()
+                    else:
+                        record.chmod(0o600)
                     record.write_text(original)
                 self.assertEqual(code, 2, refused)
                 self.assertIn(str(record), refused['error'])
@@ -1224,6 +1282,71 @@ if case == 'archive_failure':
                 usage = json.loads(Path(chain['attempts'][0]['usage_record']).read_text())
                 self.assertEqual((usage['status'], usage['failure_kind']), ('failed', 'cancelled'))
                 self.assertEqual(verdicts_of(chain['attempts'][0]['evidence']), [])
+
+    def test_a_cancel_during_the_closing_quota_read_keeps_the_completed_attempt(self):
+        # The quota read after the review ran with the default handlers back in place, so a
+        # SIGTERM there ended the adapter before the paid, completed review was recorded.
+        import select
+        import signal
+        import time
+        fifo = self.root / 'alive-quota'
+        os.mkfifo(fifo)
+        reader = os.open(fifo, os.O_RDONLY | os.O_NONBLOCK)
+        self.addCleanup(os.close, reader)
+        reviewer = self.root / 'codex-slow-quota'
+        reviewer.write_text(
+            "#!/usr/bin/env python3\n"
+            "import json, os, pathlib, sys, time\n"
+            "if sys.argv[1] == 'app-server':\n"
+            "    seen = pathlib.Path(os.environ['QUOTA_SEEN'])\n"
+            "    if not seen.exists():\n"
+            "        seen.write_text('before')\n"
+            "        sys.exit(0)\n"
+            "    alive = os.open(os.environ['ALIVE_FIFO'], os.O_WRONLY)\n"
+            "    os.write(alive, b'started\\n')\n"
+            "    time.sleep(60)\n"
+            "sys.stdin.read()\n"
+            "pathlib.Path(sys.argv[sys.argv.index('-o') + 1]).write_text("
+            "'## Findings\\n\\nNone.\\n\\nVERDICT: Accept\\n')\n"
+            "print(json.dumps({'type': 'turn.completed', 'usage': {'input_tokens': 3}}))\n")
+        reviewer.chmod(0o755)
+        scripts = self.install_wrapper()
+        env = self.review_env(ALIVE_FIFO=str(fifo), QUOTA_SEEN=str(self.root / 'quota-seen'),
+                              MYAGENTKIT_CAPTURE_QUOTA='1', REVIEW_CLI_BIN=str(reviewer),
+                              REVIEW_CODEX_MODEL='fixture-codex-model')
+        review = subprocess.Popen(['sh', str(scripts / 'review.sh'), '--reviewer', 'codex'],
+                                  env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        self.addCleanup(lambda: review.poll() is None and review.kill())
+
+        def read_until(done):
+            deadline, seen = time.monotonic() + 20, b''
+            while time.monotonic() < deadline:
+                select.select([reader], [], [], 0.2)
+                try:
+                    chunk = os.read(reader, 64)
+                except BlockingIOError:
+                    continue
+                seen += chunk
+                if done(seen, chunk):
+                    return True
+                if not chunk:
+                    if review.poll() is not None:
+                        return False
+                    time.sleep(0.05)
+            return False
+
+        self.assertTrue(read_until(lambda seen, chunk: b'started' in seen), 'quota read never started')
+        review.send_signal(signal.SIGTERM)
+        output = review.communicate(timeout=30)[0]
+        self.assertTrue(read_until(lambda seen, chunk: chunk == b''),
+                        'the quota reader outlived the cancel')
+        line = next((line.removeprefix('review invocation: ') for line in output.splitlines()
+                     if line.startswith('review invocation: ')), None)
+        self.assertIsNotNone(line, output)
+        usage = json.loads(Path(json.loads(line)['usage_record']).read_text())
+        self.assertEqual((usage['status'], usage['failure_kind']), ('completed', None))
+        self.assertEqual(usage['usage']['input_tokens'], 3)
+        self.assertEqual(usage['usage']['account_quota_snapshots']['after']['status'], 'cancelled')
 
     def test_both_unavailable_stop_after_two_and_keep_review_pending(self):
         result, chain = self.dispatch_result(FIXTURE_CASE='quota', CODEX_FIXTURE_CASE='quota')

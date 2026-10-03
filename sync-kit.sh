@@ -53,7 +53,11 @@ latest=$(sed -n 's/^## v\([0-9][0-9.]*\).*/\1/p' "$kit/CHANGELOG.md" | head -1)
 
 work_list=$(mktemp) || { echo "sync-kit: cannot create a temp file" >&2; exit 1; }
 pending=$(mktemp) || { rm -f "$work_list"; echo "sync-kit: cannot create a temp file" >&2; exit 1; }
-trap 'rm -f "$work_list" "$pending"' EXIT INT TERM
+# A signal handler that only cleaned up let the run resume with the pending list deleted,
+# which reads as "no ACTION items" and stamped the version: a signal now ends the run.
+trap 'rm -f "$work_list" "$pending"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 echo "sync-kit: project has v$have, kit is v$latest"
 if [ "$have" = "$latest" ]; then

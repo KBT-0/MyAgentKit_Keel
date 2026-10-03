@@ -202,8 +202,18 @@ def normalize(provider: str, values: list[dict], complete: bool) -> dict:
 
 
 def record(repo: Path, provider: str, model: str, requester: str, task: dict,
-           execution: dict, status: str, reason: str | None, evidence: str | None) -> tuple[Path, dict]:
-    """Write one exclusive local record, including failed and partially billed calls."""
+           execution: dict, status: str, reason: str | None, evidence: str | None,
+           published: bytes | None = None) -> tuple[Path, dict]:
+    """Write one exclusive local record, including failed and partially billed calls.
+
+    `published` is the evidence exactly as archived. Hashing it here, never the archive
+    reopened, keeps an archive lost in between from aborting the accounting of a paid run;
+    that run is recorded as failed, evidence_unavailable, since no later round can carry it.
+    """
+    if evidence and published is None:
+        raise ValueError("evidence needs the published bytes it is hashed from")
+    if evidence and not (os.path.isfile(evidence) and os.access(evidence, os.R_OK)):
+        status, reason = "failed", "evidence_unavailable"
     values = decode(provider, execution.get("stdout", ""))
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:12]
     recovery = {"action": "inspect_result" if status == "completed" else "continue_independent_work",
@@ -220,7 +230,7 @@ def record(repo: Path, provider: str, model: str, requester: str, task: dict,
              "usage": normalize(provider, values, status == "completed"), "recovery": recovery,
              "evidence": evidence,
              # A later round carries this archive only while its bytes still match.
-             "evidence_sha256": hashlib.sha256(Path(evidence).read_bytes()).hexdigest() if evidence else None,
+             "evidence_sha256": hashlib.sha256(published).hexdigest() if evidence else None,
              "raw_stdout": execution.get("stdout", ""),
              "raw_stderr": execution.get("stderr", "")}
     value["usage"]["account_quota_snapshots"] = execution.get("account_quota_snapshots")

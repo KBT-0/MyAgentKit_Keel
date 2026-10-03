@@ -74,7 +74,11 @@ class GitHookTests(unittest.TestCase):
                             'Assisted-by: Claude:claude-opus',
                             '\U0001f916 Generated with [Claude Code](https://example.invalid)',
                             'Generated with GitHub Copilot',
-                            'Generated with Google Gemini'):
+                            'Generated with Google Gemini',
+                            # Git takes whitespace before the separator and a folded value.
+                            'Co-Authored-By : Claude <noreply@anthropic.com>',
+                            'Co-Authored-By:\n  Claude <noreply@anthropic.com>',
+                            'Co-authored-by: Helper\n\t<helper@ampcode.com>'):
                 with self.subTest(trailer=trailer):
                     result = self.commit(root, git, trailer + '\n')
                     self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -88,6 +92,7 @@ class GitHookTests(unittest.TestCase):
                             'Co-authored-by: Ana Raider <ana@example.invalid>',
                             'Co-authored-by: Jo Park <jo@precursor.example.invalid>',
                             'Signed-off-by: Paola Geminiani <paola@example.invalid>',
+                            'Co-authored-by:\n  Claude Monet <claude.monet@example.invalid>',
                             'Bump openai SDK to the next minor version'):
                 with self.subTest(trailer=trailer):
                     result = self.commit(root, git, trailer + '\n')
@@ -130,6 +135,21 @@ class GitHookTests(unittest.TestCase):
                                          + ' Co-Authored-By: Claude <noreply@anthropic.com>\n')
                     self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
                     self.assertIn('crediting an AI tool', result.stderr)
+
+    def test_core_comment_string_takes_precedence_over_comment_char(self):
+        # Git 2.45 added core.commentString, which wins over core.commentChar: a hook that read
+        # only commentChar skipped the wrong prefix and passed "x Co-Authored-By: ...".
+        with tempfile.TemporaryDirectory() as tmp:
+            root, git = self.repo(tmp)
+            version = git('--version').stdout.split()[2]
+            if tuple(int(part) for part in version.split('.')[:2]) < (2, 45):
+                sys.stderr.write('NOT RUN: core.commentString needs git 2.45, this is %s\n' % version)
+                return
+            git('config', 'core.commentChar', ';')
+            git('config', 'core.commentString', 'x')
+            result = self.commit(root, git, 'y\nx Co-Authored-By: Claude <noreply@anthropic.com>\n')
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('crediting an AI tool', result.stderr)
 
     def test_the_owner_may_allow_ai_attribution(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -191,17 +211,27 @@ class GitHookTests(unittest.TestCase):
 
     def test_an_unreadable_agents_file_fails_closed(self):
         # A grep that could not read the rule is not an owner's choice to allow AI credit.
-        if os.geteuid() == 0:
-            return  # root reads a mode-000 file; this case cannot be built here
-        with tempfile.TemporaryDirectory() as tmp:
-            root, git = self.repo(tmp)
-            (root / 'AGENTS.md').chmod(0)
-            try:
-                result = self.commit(root, git, 'Co-Authored-By: Claude <noreply@anthropic.com>\n')
-            finally:
-                (root / 'AGENTS.md').chmod(0o644)
-            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertIn('cannot read AGENTS.md', result.stderr)
+        # A directory cannot be read by any user, root included; mode 000 stops everyone but
+        # root, so under root that variant says it did not run instead of passing silently.
+        for damage in ('directory', 'mode 000'):
+            with self.subTest(damage=damage), tempfile.TemporaryDirectory() as tmp:
+                root, git = self.repo(tmp)
+                agents = root / 'AGENTS.md'
+                if damage == 'directory':
+                    agents.unlink()
+                    agents.mkdir()
+                elif os.geteuid() == 0:
+                    sys.stderr.write('NOT RUN: unreadable AGENTS.md (mode 000) under root; '
+                                     'the directory case covers the read failure\n')
+                    continue
+                else:
+                    agents.chmod(0)
+                try:
+                    result = self.commit(root, git, 'Co-Authored-By: Claude <noreply@anthropic.com>\n')
+                finally:
+                    agents.chmod(0o755 if damage == 'directory' else 0o644)
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn('cannot read AGENTS.md', result.stderr)
 
 
 if __name__ == '__main__':
