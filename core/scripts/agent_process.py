@@ -15,11 +15,7 @@ DEFAULT_REVIEW_TIMEOUT = 1800
 CANCEL_SIGNALS = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
 
 
-def _cancel(signum, frame):
-    raise KeyboardInterrupt
-
-
-def hold(handler=_cancel) -> dict:
+def hold(handler) -> dict:
     """Route the cancel signals to `handler`; return the handlers to restore()."""
     if threading.current_thread() is not threading.main_thread():
         return {}
@@ -33,6 +29,34 @@ def restore(previous: dict) -> None:
         signal.signal(sig, handler)
 
 
+class OneShot:
+    """Cancel handler: the first cancel raises, every later one is only noted.
+
+    Switching to noting is `guard.armed = False`, an attribute store with no signal check
+    before it. Swapping in noting handlers one signal at a time left a window in which a
+    cancel still met the raising handler: once past the group kill and the reap, once
+    before the Codex adapter had written its evidence and usage.
+    """
+
+    def __init__(self):
+        self.armed = True
+        self.noted = []
+        self.previous = {}
+
+    def __call__(self, signum, frame):
+        self.noted.append(signum)
+        if self.armed:
+            self.armed = False
+            raise KeyboardInterrupt
+
+    def __enter__(self):
+        self.previous = hold(self)
+        return self
+
+    def __exit__(self, *exc):
+        restore(self.previous)
+
+
 def run(command: list[str], prompt: str, repo: Path, timeout: int, into: dict | None = None) -> dict:
     """Return exit status, partial output, and termination reason without retrying.
 
@@ -43,29 +67,18 @@ def run(command: list[str], prompt: str, repo: Path, timeout: int, into: dict | 
         raise ValueError("timeout must be 1..3600 seconds")
     started = time.monotonic()
     result = {} if into is None else into
-    # One shot: the first cancel raises, every later one is only noted. Swapping in noting
-    # handlers one signal at a time at the start of cleanup left a window in which a second
-    # cancel still raised, past the group kill and the reap.
-    state = {"armed": True, "noted": []}
-
-    def cancel(signum, frame):
-        state["noted"].append(signum)
-        if state["armed"]:
-            state["armed"] = False
-            raise KeyboardInterrupt
-
-    previous = hold(cancel)
+    guard = OneShot()
     try:
-        result.update(_supervise(command, prompt, repo, timeout, started, state))
-        return result
+        with guard:
+            result.update(_supervise(command, prompt, repo, timeout, started, guard))
+            return result
     finally:
-        restore(previous)
         # Noted while the handlers were restored: still a cancel.
-        if result and state["noted"]:
+        if result and guard.noted:
             result["cancelled"] = True
 
 
-def _supervise(command, prompt, repo, timeout, started, state):
+def _supervise(command, prompt, repo, timeout, started, guard):
     with tempfile.TemporaryFile() as inp, selectors.DefaultSelector() as selector:
         # A file gives even a slow-starting CLI the entire prompt and EOF. Repeated
         # communicate(input=None) after a short timeout can strand a partially written pipe.
@@ -126,8 +139,8 @@ def _supervise(command, prompt, repo, timeout, started, state):
             # From here a cancel is noted, not raised: raised, it broke off the group kill or
             # the reap, and run() returned nothing to record. A flag, not a handler swap: the
             # first statement here, so no signal is checked before it.
-            state["armed"] = False
-            noted = state["noted"]
+            guard.armed = False
+            noted = guard.noted
             # Also stop descendants left behind by a parent that already exited.
             if child is not None:
                 try:

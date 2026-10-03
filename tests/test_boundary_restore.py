@@ -207,5 +207,25 @@ exit 1
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn('  ok   — ', result.stdout)
 
+    def test_a_linked_worktree_copy_cannot_stage_into_the_original_index(self):
+        # cp -R copied a linked worktree's `.git` pointer file unchanged: git inside the copy
+        # reported the copy as its top level but used the original's git directory, so a
+        # gate that stages its inputs staged the injection into the original's index.
+        with tempfile.TemporaryDirectory() as tmp:
+            root, git = self.fixture(tmp, 'git add src/domain/existing.py\n')
+            linked = Path(tmp) / 'linked'
+            git('worktree', 'add', '-q', str(linked))
+            status = lambda: subprocess.run(['git', 'status', '--porcelain'], cwd=linked, check=True,
+                                            capture_output=True, text=True).stdout
+            before = status()
+            scratch = Path(tmp) / 'scratch'
+            scratch.mkdir()
+            result = subprocess.run(['sh', 'scripts/check.sh', '--self-test'], cwd=linked,
+                                    capture_output=True, text=True, timeout=30,
+                                    env=dict(os.environ, TMPDIR=str(scratch)))
+            self.assertEqual(status(), before, 'the copy staged into the original index')
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('  ok   — ', result.stdout)
+
 if __name__ == '__main__':
     unittest.main()

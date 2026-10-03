@@ -371,6 +371,49 @@ def main():
                 run(["git", "rm", "-q", "--cached", "--", *links], project)
                 for name in links:
                     (project / name).unlink()
+            # Link text holding a newline was written as two lines, the second without the
+            # link's path: a non-exempt link whose text went on to "setup/" and a marker had
+            # that line removed by the setup/ exemption and passed, and an exempt setup/ link
+            # with a marker on its second line failed. Every newline is now written as \n.
+            marker = "{{" + "CONFIG_DIR}}"
+            for name, target, expected, reason in (
+                    ("multi-link", "missing\nsetup/" + marker, 1,
+                     "multi-link:1:symlink multi-link -> missing\\nsetup/" + marker),
+                    ("setup/multi-link", "missing\n" + marker, 0, None)):
+                os.symlink(target, project / name)
+                run(["git", "add", "--", name], project)
+                try:
+                    run(["sh", "scripts/check.sh"], project, expected=expected, reason=reason)
+                finally:
+                    run(["git", "rm", "-q", "--cached", "--", name], project)
+                    (project / name).unlink()
+            # A failed append of link text (a full disk, a lost permission) was ignored: the
+            # link's marker went unscanned and the gate could pass. Here a stand-in readlink
+            # puts a directory where the second link's text is appended.
+            with tempfile.TemporaryDirectory(prefix="myagentkit-side-") as side:
+                shim, scratch = Path(side) / "bin", Path(side) / "tmp"
+                shim.mkdir()
+                scratch.mkdir()
+                (shim / "readlink").write_text(
+                    "#!/bin/sh\n"
+                    "for d in \"$TMPDIR\"/*/; do\n"
+                    "  if [ -f \"$d/symlink-text\" ]; then rm -f \"$d/symlink-text\" && mkdir \"$d/symlink-text\"; fi\n"
+                    "done\n"
+                    "exec " + shutil.which("readlink") + " \"$@\"\n")
+                (shim / "readlink").chmod(0o755)
+                links = ("a-link", "b-link")
+                for name in links:
+                    os.symlink(marker + "/" + name, project / name)
+                run(["git", "add", "--", *links], project)
+                try:
+                    run(["sh", "scripts/check.sh"], project, expected=1,
+                        reason="could not sort the file list; refusing to scan blind",
+                        env=dict(os.environ, TMPDIR=str(scratch),
+                                 PATH=str(shim) + os.pathsep + os.environ["PATH"]))
+                finally:
+                    run(["git", "rm", "-q", "--cached", "--", *links], project)
+                    for name in links:
+                        (project / name).unlink()
             print("PASS: a deleted tracked file is named, a directory symlink is skipped with a note,"
                   " a symlink's link text is scanned under its own path")
             tests = project / "scripts/test_claude_bridge.py"

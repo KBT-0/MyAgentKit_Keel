@@ -392,7 +392,7 @@ def main(argv=None, result_sink=None) -> int:
     args = parser.parse_args(argv)
     if args.timeout is None:
         args.timeout = agent_process.DEFAULT_REVIEW_TIMEOUT if args.mode == "review" else 600
-    held = {}
+    held, result, cancelled = {}, None, []
     try:
         if os.environ.get("MYAGENTKIT_DELEGATION_DEPTH", "0") != "0":
             raise BridgeError("nested delegation is disabled")
@@ -471,7 +471,6 @@ def main(argv=None, result_sink=None) -> int:
         # handlers back after the review, a SIGTERM during the final snapshot ended the adapter
         # before the paid review's evidence and usage were written. run() stops the reviewer
         # on a cancel while it runs.
-        cancelled = []
         held = agent_process.hold(lambda signum, frame: cancelled.append(signum))
         execution = agent_process.run(command, prompt, repo, args.timeout)
         if execution.pop("cancelled", False):
@@ -527,12 +526,8 @@ def main(argv=None, result_sink=None) -> int:
         except (OSError, ValueError) as error:
             evidence.update(status="failed", error="Usage record could not be persisted: " + str(error))
             reason = "usage_write_failed"
-        # The handler kept noting signals through both writes above: a cancel there is a cancel
-        # too, or a quota-failed attempt stayed eligible and --fallback started another reviewer.
-        was_cancelled = bool(cancelled) or execution["termination"] == "cancelled"
-        if was_cancelled and reason:
-            reason = "cancelled"
-            evidence.update(status="failed", failure_kind=reason)
+        def relabel():
+            evidence.update(status="failed", failure_kind="cancelled")
             if usage_path:
                 try:
                     agent_usage.relabel_cancelled(repo, usage_path, archived_path,
@@ -540,6 +535,13 @@ def main(argv=None, result_sink=None) -> int:
                         else json.dumps(evidence, indent=2) + "\n")
                 except (OSError, ValueError) as error:
                     evidence["error"] = "Cancellation could not be persisted: " + str(error)
+
+        # The handler kept noting signals through both writes above: a cancel there is a cancel
+        # too, or a quota-failed attempt stayed eligible and --fallback started another reviewer.
+        was_cancelled = bool(cancelled) or execution["termination"] == "cancelled"
+        if was_cancelled and reason:
+            reason = "cancelled"
+            relabel()
         evidence.update(failure_kind=reason, usage_record=str(usage_path) if usage_path else None)
         result = {"status": evidence["status"], "evidence": archived_path,
                   "fingerprint": fingerprint, "result": evidence.get("result"),
@@ -554,6 +556,17 @@ def main(argv=None, result_sink=None) -> int:
         return 2
     finally:
         agent_process.restore(held)
+        # Sampled again last, after the output and the restore: a cancel noted while the
+        # result printed (a blocked stdout) came after the first sample, the quota-failed
+        # attempt went back as cancelled: false, and --fallback started the other reviewer.
+        # The dispatcher holds this same dict, so the update reaches it; the record is
+        # relabelled before main returns.
+        if result is not None and cancelled and not result["cancelled"]:
+            result["cancelled"] = True
+            if result["failure_kind"]:
+                result["failure_kind"] = "cancelled"
+                relabel()
+                result.update(status=evidence["status"], error=evidence.get("error"))
 
 
 if __name__ == "__main__":
