@@ -60,6 +60,53 @@ class DoctorTests(unittest.TestCase):
             self.assertIn('MISSING: the commit gate is not wired (core.hooksPath)', red.stdout)
             git('config', 'core.hooksPath', '.githooks')
 
+            # A checkout on a Windows drive under WSL. The path and /proc/version are injected
+            # (DOCTOR_CHECKOUT, DOCTOR_PROC_VERSION) because this machine may be neither.
+            wsl = tmp / 'proc_version'
+            wsl.write_text('Linux version 5.15.0-microsoft-standard-WSL2 (root@build) #1 SMP\n')
+            native = tmp / 'proc_version_native'
+            native.write_text('Linux version 6.1.0-generic (root@build) #1 SMP\n')
+            env.update(DOCTOR_CHECKOUT='/mnt/c/work/project', DOCTOR_PROC_VERSION=str(wsl))
+            red = doctor()
+            self.assertEqual(red.returncode, 1, red.stdout)
+            self.assertIn('MISSING: the checkout /mnt/c/work/project is on a Windows drive', red.stdout)
+            self.assertEqual(red.stdout.count('MISSING:'), 1, red.stdout)
+            env['DOCTOR_PROC_VERSION'] = str(native)  # same path on a real Linux box is fine
+            ready = doctor()
+            self.assertEqual(ready.returncode, 0, ready.stdout + ready.stderr)
+            env['DOCTOR_PROC_VERSION'] = str(wsl)
+            env['DOCTOR_CHECKOUT'] = '/home/me/work/project'  # WSL, but on the Linux side
+            ready = doctor()
+            self.assertEqual(ready.returncode, 0, ready.stdout + ready.stderr)
+            del env['DOCTOR_CHECKOUT'], env['DOCTOR_PROC_VERSION']
+
+            # A script converted to CRLF (autocrlf on a Windows checkout) dies in sh.
+            check = project / 'scripts/check.sh'
+            lf = check.read_bytes()
+            check.write_bytes(lf.replace(b'\n', b'\r\n'))
+            red = doctor()
+            self.assertEqual(red.returncode, 1, red.stdout)
+            self.assertIn('MISSING: scripts/check.sh has CRLF line endings', red.stdout)
+            self.assertEqual(red.stdout.count('MISSING:'), 1, red.stdout)
+            check.write_bytes(lf)
+
+            # node_modules as a symlink: "node_modules/" matches directories only, so git
+            # lists the symlink as untracked and the gate's scanners fail on it (issue 14).
+            (tmp / 'deps').mkdir()
+            (project / 'node_modules').symlink_to(tmp / 'deps')
+            ignore = project / '.gitignore'
+            ignore_before = ignore.read_text()
+            ignore.write_text(ignore_before + '\nnode_modules/\n')
+            red = doctor()
+            self.assertEqual(red.returncode, 1, red.stdout)
+            self.assertIn('MISSING: node_modules is a symlink that .gitignore does not ignore', red.stdout)
+            self.assertEqual(red.stdout.count('MISSING:'), 1, red.stdout)
+            ignore.write_text(ignore_before + '\nnode_modules\n')
+            ready = doctor()
+            self.assertEqual(ready.returncode, 0, ready.stdout + ready.stderr)
+            ignore.write_text(ignore_before)
+            (project / 'node_modules').unlink()
+
             # Drop the stub and every PATH entry holding a real reviewer CLI on this machine.
             full_path = env['PATH']
             (bin_dir / 'claude').unlink()

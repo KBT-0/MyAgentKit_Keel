@@ -77,6 +77,20 @@ breaks, everything keeps looking green.
   empty, SAY it was not found; never write it out blank, because a blank field looks like a
   field.
 
+## A red gate that passes on re-run
+
+A FAIL that does not reproduce is not a PASS to forget. A timing-dependent test, a gate that
+overlapped another gate or a self-test, or a real race all look the same afterwards: the next
+run is green, and the failing test, its error line and the load it ran under are gone, so a
+real race is never seen again until it bites in CI or production.
+
+- **Record it before you commit on the green run**, in `docs/STATE.md` or the operation's
+  own file (a branch session writes its worktree note instead) as a `[GOTCHA]` line: the
+  failing test and its error line, the retry count, what else was running (another gate, a
+  self-test, a review) and the suspected cause.
+- **Re-run once** to learn whether it reproduces. A second red is a real failure. Never
+  re-run until it turns green: a retry that is not recorded is a failure silently deleted.
+
 ## Spike protocol
 
 Uncertain or risky topics are tried as throwaway code on a `spike/` branch first. Spike code
@@ -272,7 +286,13 @@ Rules, binding for whoever routes workers, in order of measured weight:
    verifies both after the run in the transcript, not in the report.
 6. **Parallel workers only for independent modules**; each one multiplies the bill.
 7. **Worker reports are short** (about 400 words), and long output goes to a file with a
-   summary line: the lead pays for a report again on every later turn.
+   summary line: the lead pays for a report again on every later turn. Which worker may
+   write the report itself to a file depends on its kind. A separate spawned session can,
+   and its brief ends with the result FILE's path. A sub-agent cannot: Claude Code refuses
+   its write of a report file ("Subagents should return findings as text, not write report
+   files"), and a worker briefed for a `REPORT.md` then spends turns working around the
+   refusal and ends up reporting in its final message anyway. A sub-agent keeps its short
+   report in its final message and writes only logs, tables and captures to files.
 8. **The lead session is handed over before it grows**, and at the end of a working day it
    reads the tool's cost screen and runs `scripts/agent_cost.py --latest` and writes both
    into the handoff, so the next routing decision is made from a number.
@@ -298,6 +318,20 @@ one of those files invalidates the cache for every session after it.
   a recurring bill.
 - Volatile state belongs in `docs/STATE.md`, which is read on demand. Reference docs like
   `docs/GOTCHAS.md` stay off the session-start list entirely.
+
+## Web requests carry no personal data
+
+Some APIs ask clients to put contact details in the `User-Agent`, and an agent that has
+{{OWNER_NAME}}'s e-mail address in its session context uses it: in one project five
+research agents did, in up to thirteen requests each. A request reaches a third party and
+its logs, and cannot be recalled.
+
+- **Never put a person's name, e-mail address or other personal data into a web request**
+  (headers, query strings, bodies, scripts an agent writes to fetch pages). When an API asks
+  for contact details, send a generic project User-Agent without personal data, or stop and
+  ask {{OWNER_NAME}}.
+- **A brief for a task with web access repeats the rule** and names that generic
+  User-Agent (`docs/HANDOFF.md`): a sub-agent does not read this file unless told to.
 
 ## MCP hygiene
 
