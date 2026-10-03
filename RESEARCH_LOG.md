@@ -544,6 +544,18 @@ requires is still PENDING. The full diff exceeds the 400000-byte budget, so it i
 into path groups, each reviewed under its own new label and recorded in `docs/reviews/`:
 review tooling; gate scripts and hooks; docs and overlays.
 
+#### The final full review, first attempt: split by paths, and what that taught
+
+The full diff exceeds the review budget, so it was split into three path groups, each on a
+branch built from the base. The review-tooling group gave one High (a raising signal
+handler has two blind windows: inside a constructor that has already forked, and in the
+cleanup it triggers; `Path.glob()` hides permission errors) and two Medium, all fixed; the
+gates and docs groups gave only artefacts, because each group's reviewer saw a tree missing
+the other groups' files ("SUITE_MINIMUMS not found", "--allow-fallback unknown", "hooks
+missing"). Rule: a split review splits a CONSISTENT tree by commits, never by paths; when
+mechanically generated copies (the plugin runtime) push a diff over the budget, review the
+tree with those copies reverted and let the parity check vouch for them.
+
 #### The review gate held on the kit's own hardening
 
 Five of the nine work packages (the gate lock, both review-tooling packages, the commit gates

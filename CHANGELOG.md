@@ -142,6 +142,14 @@ hand merge; `sync-kit.sh` now keeps listing them until you confirm (see "Sync st
   directory fsync failing after the replacement and an unreadable archive. The acceptance
   notes count the incremental rounds as remediation reviews; the final full review under a
   new label is recorded separately. **ACTION:** copy the synced `agent_usage.py` again.
+- **Full cross-model review, review tooling.** A cancel that lands while the reviewer
+  process is being created still stops its process group, and a cancel during cleanup no
+  longer escapes before the attempt is recorded. A usage directory the owner cannot list
+  stops a labelled round (exit 2) instead of reading as "no earlier rounds". The bridge
+  self-test no longer inherits `REVIEW_DISPOSITIONS` or `MYAGENTKIT_TASK_ID` from the shell.
+  `docs/REVIEW_GATE.md` says a signal while a completed review is being finalised keeps it
+  completed. **ACTION:** copy `agent_process.py`, `claude_bridge.py`, `test_agent_usage.py`,
+  `test_claude_bridge.py` and the REVIEW_GATE paragraph from core.
 - **Scan failures that were not scanner failures (issues #13, #14).** A tracked file deleted
   without `git rm` now fails `[scan]` under its own name with the command that fixes it, and
   every other scan still runs. A symlink to a directory (for example `node_modules` linked
