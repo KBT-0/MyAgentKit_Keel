@@ -54,6 +54,10 @@ def main(argv=None):
     original = claude_bridge.snapshot(repo, scope, ref)
     if not original[2].strip():
         raise ValueError("empty diff: nothing was reviewed")
+    # Once for either reviewer: a missing, foreign or oversized earlier round stops the review
+    # here, exit 2 with one message, before a chain is recorded or any model is called.
+    claude_bridge.prior_rounds(repo, os.environ.get("MYAGENTKIT_TASK_ID"), scope, ref,
+                               original[0], original[2])
     timeout = int(os.environ.get("REVIEW_TIMEOUT_SECONDS", str(agent_process.DEFAULT_REVIEW_TIMEOUT)))
     if not 1 <= timeout <= 3600:
         raise ValueError("REVIEW_TIMEOUT_SECONDS must be 1..3600")
@@ -134,6 +138,13 @@ def main(argv=None):
         if chain["failure_kind"] == "cli_unsupported":
             print("FAIL [review]: the installed CLI rejected a flag the read-only review requires; "
                   "upgrade the CLI. The review never drops a sandbox flag to make a run start.")
+        if chain["failure_kind"] == "stale_checkout":
+            # Correct to fail: the reviewer reads files while it runs, so its findings may
+            # describe a tree the archived diff and fingerprint do not. The fix is the caller's.
+            print("FAIL [review]: the checkout changed while the review ran (an edit, a new "
+                  "untracked file, a moved HEAD or base), so the result cannot be tied to the "
+                  "diff it names. Leave this checkout untouched until review.sh exits: keep "
+                  "working in another worktree, or wait for it, then run the review again.")
     elif chain.get("selected_reviewer") != args.reviewer:
         print("FALLBACK [review]: this review is by %s, not the requested %s; check it did not "
               "author the patch." % (chain["selected_reviewer"], args.reviewer))

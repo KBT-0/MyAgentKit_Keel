@@ -45,7 +45,10 @@ python3 -B /absolute/plugin/scripts/review_dispatch.py --repo /absolute/project 
 
 Set `MYAGENTKIT_REQUESTER=codex/ACTUAL_MODEL` when known, otherwise `codex/unknown`.
 This is reported metadata, not independent attestation. Set `MYAGENTKIT_TASK_ID` to the
-same stable task label across rounds. Environment overrides `REVIEW_CLAUDE_MODEL` and
+same stable task label across rounds: earlier completed reviews with that label are carried
+into the next round's prompt, and `REVIEW_DISPOSITIONS=<file>` adds your answer to each
+finding as a claim the reviewer verifies. The final Accept comes from one fresh review under
+a label never used before. Environment overrides `REVIEW_CLAUDE_MODEL` and
 `REVIEW_CODEX_MODEL` are supported by both entry points. Missing primary pins stop before
 launch; an unconfigured alternate is never replaced with an invented default.
 
