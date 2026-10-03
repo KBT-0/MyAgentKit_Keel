@@ -1,4 +1,5 @@
 """Offline end-to-end evidence and permission regressions; never calls a paid CLI."""
+import hashlib
 import importlib.util
 import json
 import os
@@ -364,6 +365,7 @@ class BridgeTests(unittest.TestCase):
         from io import StringIO
         import signal
         from unittest.mock import patch
+        import codex_bridge
         import review_dispatch
         publish, account = agent_usage.write_evidence, agent_usage.record
 
@@ -404,6 +406,29 @@ class BridgeTests(unittest.TestCase):
                                             out.getvalue().splitlines() if line.startswith('review dispatch: ')))
                     self.assertEqual(chain['failure_kind'], 'cancelled')
                     self.assertTrue(chain['attempts'][0]['cancelled'])
+                    self.persisted_cancel(chain['attempts'][0])
+                # Run directly there is no chain to keep the cancel: the records must.
+                adapter = (bridge.main, ['review']) if primary == 'claude' else \
+                    (codex_bridge.main, ['--model', 'fixture-codex-model'])
+                received, launched = [], []
+                with self.subTest(direct=primary, during=target), \
+                        patch.dict(os.environ, self.review_env()), \
+                        patch('agent_process.run', side_effect=quota), patch(target, side_effect=hook), \
+                        redirect_stdout(StringIO()):
+                    self.assertEqual(adapter[0]([*adapter[1], '--repo', str(self.repo), '--uncommitted'],
+                                                received.append), 5)
+                    self.assertTrue(received[0]['cancelled'])
+                    self.persisted_cancel(received[0])
+
+    def persisted_cancel(self, result):
+        # The usage reporter reads the records, not the dispatcher's result: a cancel during
+        # publication once left both saying quota.
+        usage = json.loads(Path(result['usage_record']).read_text())
+        self.assertEqual((usage['status'], usage['failure_kind']), ('failed', 'cancelled'))
+        archive = Path(result['evidence']).read_bytes()
+        self.assertIn(b'| status | failed |', archive)
+        self.assertIn(b'| failure_kind | cancelled |', archive)
+        self.assertEqual(usage['evidence_sha256'], hashlib.sha256(archive).hexdigest())
 
     def test_an_empty_task_label_is_unset_not_a_record_that_blocks_later_rounds(self):
         # The dispatcher kept an empty MYAGENTKIT_TASK_ID and the Codex adapter recorded it as

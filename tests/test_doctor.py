@@ -2,6 +2,7 @@
 import os
 from pathlib import Path
 import select
+import shutil
 import signal
 import subprocess
 import tempfile
@@ -114,52 +115,74 @@ class DoctorTests(unittest.TestCase):
             # fails: doctor returns within its bound and says the probe did not complete. The
             # child is gone when doctor exits: `timeout` ends when its own child does, so a
             # child started in the background outlived the probe until doctor killed its group.
+            # Without setsid (stock macOS) that child is documented to survive, with a NOTE;
+            # either way the fixture kills what is left itself.
             pid_file = tmp / 'sleep.pid'
-            for rc_file in ('sleep 60 &\necho $! > %s\n' % pid_file, 'exit 3\n'):
-                shell.write_text('#!/bin/sh\n' + rc_file)
-                try:
-                    probed = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=project, env=env,
-                                            capture_output=True, text=True, timeout=20)
-                    if pid_file.exists():
-                        self.assertFalse(alive(int(pid_file.read_text())),
-                                         'a child the rc file started outlived doctor.sh')
-                except subprocess.TimeoutExpired:
-                    self.fail('a child of the shell probe held doctor.sh past its bound')
-                finally:
-                    if pid_file.exists():
+
+            def reap():
+                if pid_file.exists():
+                    try:
+                        os.kill(int(pid_file.read_text()), signal.SIGKILL)
+                    except (ProcessLookupError, ValueError):
+                        pass
+                    pid_file.unlink()
+
+            no_setsid_path = path_without('setsid')
+            for fixture_path in (env['PATH'], no_setsid_path):
+                group_kill = shutil.which('setsid', path=fixture_path) is not None
+                for rc_file in ('sleep 60 &\necho $! > %s\n' % pid_file, 'exit 3\n'):
+                    shell.write_text('#!/bin/sh\n' + rc_file)
+                    with self.subTest(setsid=group_kill, rc_file=rc_file):
                         try:
-                            os.kill(int(pid_file.read_text()), signal.SIGKILL)
-                        except ProcessLookupError:
-                            pass
-                        pid_file.unlink()
-                self.assertEqual(probed.returncode, 0, probed.stdout + probed.stderr)
-                self.assertIn('NOTE: grep probe did not complete', probed.stdout)
+                            probed = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=project,
+                                                    env=dict(env, PATH=fixture_path),
+                                                    capture_output=True, text=True, timeout=20)
+                            if pid_file.exists() and group_kill:
+                                self.assertFalse(alive(int(pid_file.read_text())),
+                                                 'a child the rc file started outlived doctor.sh')
+                        except subprocess.TimeoutExpired:
+                            self.fail('a child of the shell probe held doctor.sh past its bound')
+                        finally:
+                            reap()
+                        self.assertEqual(probed.returncode, 0, probed.stdout + probed.stderr)
+                        self.assertIn('NOTE: grep probe did not complete', probed.stdout)
+                        if not group_kill:
+                            self.assertIn('NOTE: no setsid on this machine', probed.stdout)
 
             # An rc file blocked in the foreground: doctor returns within the probe's bound,
-            # and the blocked command is gone by then, not left for this test to kill. It
-            # holds a FIFO open, so end-of-file there means no process still runs it.
+            # and the blocked command is gone by then (where setsid exists), not left for this
+            # test to kill. It holds a FIFO open, so end-of-file there means no process still
+            # runs it. The shell waits on it rather than running it directly, so its pid is
+            # known to reap().
             fifo = tmp / 'rc-alive'
             os.mkfifo(fifo)
             reader = os.open(fifo, os.O_RDONLY | os.O_NONBLOCK)
             self.addCleanup(os.close, reader)
-            shell.write_text('#!/bin/sh\nexec 3>%s\necho started >&3\nsleep 60\n' % fifo)
+            shell.write_text('#!/bin/sh\nexec 3>%s\necho started >&3\nsleep 60 &\necho $! > %s\nwait\n'
+                             % (fifo, pid_file))
             started = time.monotonic()
             try:
-                probed = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=project, env=env,
-                                        capture_output=True, text=True, timeout=30)
-            except subprocess.TimeoutExpired:
-                self.fail('a foreground-blocked rc file held doctor.sh past its bound')
-            self.assertLess(time.monotonic() - started, 15, 'the probe bound is 5 s plus 1 s to kill')
-            self.assertIn('NOTE: grep probe did not complete', probed.stdout)
-            self.assertEqual(os.read(reader, 64), b'started\n')
-            gone = select.select([reader], [], [], 5)[0] and os.read(reader, 64) == b''
-            self.assertTrue(gone, 'the blocked rc command outlived the probe')
+                try:
+                    probed = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=project, env=env,
+                                            capture_output=True, text=True, timeout=30)
+                except subprocess.TimeoutExpired:
+                    self.fail('a foreground-blocked rc file held doctor.sh past its bound')
+                self.assertLess(time.monotonic() - started, 15, 'the probe bound is 5 s plus 1 s to kill')
+                self.assertIn('NOTE: grep probe did not complete', probed.stdout)
+                self.assertEqual(os.read(reader, 64), b'started\n')
+                if shutil.which('setsid', path=env['PATH']):
+                    gone = select.select([reader], [], [], 5)[0] and os.read(reader, 64) == b''
+                    self.assertTrue(gone, 'the blocked rc command outlived the probe')
+                else:
+                    self.assertIn('NOTE: no setsid on this machine', probed.stdout)
+            finally:
+                reap()
 
-            # Without setsid (stock macOS) the probe has no process group of its own to clean
-            # up, so a child the rc file left running is not stopped: doctor says so.
+            # Without setsid the probe has no process group of its own to clean up, so a
+            # child the rc file left running is not stopped: doctor says so.
             shell.write_text('#!/bin/sh\necho "grep is an alias for grep --color=auto"\n')
             no_setsid = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=project, capture_output=True,
-                                       text=True, env=dict(env, PATH=path_without('setsid')), timeout=20)
+                                       text=True, env=dict(env, PATH=no_setsid_path), timeout=20)
             self.assertEqual(no_setsid.returncode, 0, no_setsid.stdout + no_setsid.stderr)
             self.assertIn('NOTE: no setsid on this machine', no_setsid.stdout)
 
