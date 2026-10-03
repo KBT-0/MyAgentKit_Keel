@@ -36,6 +36,7 @@
 # separate paths in an earlier version of this script violated that rule and reported PASS
 # while enforcing nothing; a cross-model review found them.
 set -u
+gate=$(cd "$(dirname "$0")" && pwd -P)/${0##*/}
 cd "$(dirname "$0")/.."
 fail=0
 
@@ -46,21 +47,83 @@ fail=0
 # a profile or a CI step, or typed by an agent facing a red build, did exactly that. A run
 # that finds one without the self-test's marker FAILS and names it; it does not unset it and
 # carry on, because then the run that someone believed was overridden reports on something
-# else. The marker is the lock holder's pid, exported only by self_test(), and is believed
-# only while this checkout's lock is held by that pid: it stops an accidental export, not a
-# deliberate forgery by someone who holds the lock. A NEW SEAM JOINS THIS LIST.
+# else. The marker is the lock holder's pid, which the holder writes into this checkout's lock
+# file and clears when it exits; it is exported only by self_test(), and is believed only
+# while the lock file names it: it stops an accidental export, not a deliberate forgery by
+# someone who holds the lock. A NEW SEAM JOINS THIS LIST.
 # GATE_LOCK_WAIT and GATE_LOCK_HELD are not seams: they change when a run starts, not what
 # it checks.
 lock_path=$(git rev-parse --git-path check.lock 2>/dev/null) || lock_path=.check.lock
 case "$lock_path" in /*) ;; *) lock_path="$(pwd -P)/$lock_path" ;; esac
 if [ -z "${GATE_SELFTEST_NESTED:-}" ] || [ "${GATE_LOCK_HELD:-}" != "$lock_path" ] ||
-   [ "$(readlink "$lock_path" 2>/dev/null)" != "$GATE_SELFTEST_NESTED" ]; then
+   [ "$(cat "$lock_path" 2>/dev/null)" != "$GATE_SELFTEST_NESTED" ]; then
   for seam in GATE_BUILD_CMD_OVERRIDE GATE_SELFTEST_STATE_FILE GATE_SELFTEST_PROJECT_FILE BOUNDARY_CHECKS_FILE \
               BOUNDARY_SELFTESTS_FILE GATE_SELFTEST_EXTRA_FILE GATE_SELFTEST_BREAK_SCANNER; do
     eval "seam_value=\${$seam:-}"
     [ -z "$seam_value" ] || { echo "FAIL [env]: $seam is set; self-test overrides are not honoured outside --self-test"; fail=1; }
   done
   [ "$fail" -eq 0 ] || exit 1
+fi
+
+# ONE GATE RUN PER CHECKOUT AT A TIME. The Stop hook, the commit hook and a manual run can
+# start together, and a project's build command usually writes one fixed build directory:
+# two runs sharing it configured, built and ran tests over each other and one reported FAIL
+# for a tree that passes alone. A second run therefore WAITS here; it never fails for this.
+# The lock is a kernel lock, flock(2) on the file at lock_path, taken by the few lines of
+# Python below because POSIX sh has none; fcntl.flock is in Python's standard library on
+# Linux and macOS alike. The holder then execs this script with the lock's descriptor left
+# open, so the gate and every process it starts hold the lock, and the kernel releases it
+# when the last of them exits. That is the point: a gate killed with SIGKILL keeps the lock
+# for as long as the build it started still runs, so the next gate cannot build over it.
+# Nothing is ever reclaimed and no pid is trusted; the symlink lock this replaces guessed
+# staleness from pids, and let a third waiter, or a build left running, through. The cost:
+# a build tool that leaves a server running after the build (a compiler server, a build
+# daemon) holds the lock until that server exits, so such a build command turns it off.
+# The self-test holds the lock for its whole run, so no other gate sees a case mid-injection.
+# Nested runs (the self-test's own `sh "$0"`, the commit hook it calls) inherit the lock
+# through GATE_LOCK_HELD, which names the lock path, so a gate in another checkout started
+# from the build command still takes its own lock. The holder writes its pid, which after
+# the exec is the gate's, into the lock file for the self-test marker (the seam block).
+case "${GATE_LOCK_WAIT:-}" in
+  *[!0-9]*) echo "FAIL [lock]: GATE_LOCK_WAIT must be a number of seconds, got '$GATE_LOCK_WAIT'."; exit 1 ;;
+esac
+if [ "${GATE_LOCK_HELD:-}" != "$lock_path" ]; then
+  command -v python3 >/dev/null 2>&1 ||
+    { echo "FAIL [lock]: python3 is not on PATH, and the gate lock is taken through it."; exit 1; }
+  # Python ignores SIGPIPE and SIGXFSZ and catches SIGINT; the wait and the gate get back
+  # what sh would have given them.
+  # O_NOFOLLOW: a symlink here (the older lock's, left by a killed run) is refused by name.
+  exec python3 -c '
+import fcntl, os, signal, sys, time
+path, gate, wait, waited = sys.argv[1], sys.argv[2], os.environ.get("GATE_LOCK_WAIT", ""), 0
+if signal.getsignal(signal.SIGINT) is signal.default_int_handler:
+    signal.signal(signal.SIGINT, signal.SIG_DFL)
+signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+signal.signal(signal.SIGXFSZ, signal.SIG_DFL)
+try:
+    fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o644)
+except OSError as error:
+    print("FAIL [lock]: cannot open %s as the gate lock (%s); if it is a symlink or a directory, delete it." % (path, error.strerror), flush=True)
+    sys.exit(1)
+while True:
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        break
+    except BlockingIOError:
+        pass
+    if wait and waited >= int(wait):
+        print("NOT RUN [lock]: another gate run, or a process it started, has held %s for %ds; GATE_LOCK_WAIT=%s ran out." % (path, waited, wait), flush=True)
+        sys.exit(75)
+    if waited % 30 == 0:
+        print("NOTE [lock]: another gate run, or a process it started, has held %s for %ds; waiting for it." % (path, waited), flush=True)
+    time.sleep(1)
+    waited += 1
+os.ftruncate(fd, 0)
+os.write(fd, str(os.getpid()).encode())
+fcntl.fcntl(fd, fcntl.F_DUPFD, 10)  # a copy that survives exec, above the fds sh scripts redirect
+os.environ["GATE_LOCK_HELD"] = path
+os.execvp("sh", ["sh", gate] + sys.argv[3:])
+' "$lock_path" "$gate" "$@"
 fi
 
 # Overridable so the self-test can point the rot gate at a synthetic file instead of
@@ -84,76 +147,24 @@ BOUNDARY_CHECKS_FILE="${BOUNDARY_CHECKS_FILE:-scripts/boundary_checks.sh}"
 BOUNDARY_SELFTESTS_FILE="${BOUNDARY_SELFTESTS_FILE:-scripts/boundary_selftests.sh}"
 
 work=$(mktemp -d) || { echo "FAIL [gate]: cannot create a temp dir; refusing to run blind."; exit 1; }
-lock=""
-# Only our own lock: a run whose lock was taken over must not remove the new holder's.
+# The run that took the lock clears the pid it wrote there, so the self-test marker ends with
+# it (the seam block). The file itself stays: removing a flock file lets a waiter lock the
+# removed file while the next run creates and locks a new one, and both run.
 cleanup() {
   rm -rf "$work"
-  [ -z "$lock" ] || [ "$(readlink "$lock" 2>/dev/null)" != "$$" ] || rm -f "$lock"
+  [ "$(cat "$lock_path" 2>/dev/null)" != "$$" ] || : > "$lock_path"
 }
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 filelist="$work/files"
 
-# ONE GATE RUN PER CHECKOUT AT A TIME. The Stop hook, the commit hook and a manual run can
-# start together, and a project's build command usually writes one fixed build directory:
-# two runs sharing it configured, built and ran tests over each other and one reported FAIL
-# for a tree that passes alone. A second run therefore WAITS here; it never fails for this.
-# The self-test holds the lock for its whole run, so no other gate sees a case mid-injection.
-# Nested runs (the self-test's own `sh "$0"`, the commit hook it calls) inherit the lock
-# through GATE_LOCK_HELD, which names the lock path, so a gate in another checkout started
-# from the build command still takes its own lock. The lock is a symlink whose target is the
-# holder's pid: created in one atomic step, it is never seen without its owner.
-case "${GATE_LOCK_WAIT:-}" in
-  *[!0-9]*) echo "FAIL [lock]: GATE_LOCK_WAIT must be a number of seconds, got '$GATE_LOCK_WAIT'."; exit 1 ;;
-esac
 # lock_path is computed in the seam block above. The build/test command's full output goes
 # beside the lock: outside the tree, one per checkout. Without git it goes to a temp file.
 case "$lock_path" in
   */.check.lock) build_log=$(mktemp) || { echo "FAIL [gate]: cannot create a temp file; refusing to run blind."; exit 1; } ;;
   *) build_log="${lock_path%.lock}-build.log" ;;
 esac
-if [ "${GATE_LOCK_HELD:-}" != "$lock_path" ]; then
-  # A directory here (hand-made, or a mkdir-style lock) would let `ln -s` succeed INSIDE it,
-  # so every run would "take" the lock and none would release it.
-  if [ -d "$lock_path" ]; then echo "FAIL [lock]: $lock_path is a directory, not a gate lock; delete it."; exit 1; fi
-  waited=0
-  until ln -s "$$" "$lock_path" 2>/dev/null; do
-    holder=$(readlink "$lock_path" 2>/dev/null) || holder=""
-    # A dead holder (killed, power loss) is stale, and so is a live pid that is not a gate
-    # run: after a reboot the lock's pid can belong to anything, and waiting on it blocked
-    # every run with no wait bound. A machine without ps keeps waiting, as it did before. An
-    # empty holder means the lock vanished between our attempt and the read; the next
-    # attempt settles it. Two waiters can read
-    # the same dead pid: removing the lock outright let the second remove the lock the first
-    # had just taken, and both ran. The reclaim is a rename instead, which only one waiter
-    # wins, and the winner checks it took the dead pid's link: a waiter that read the dead
-    # pid before another reclaimed it renames that live lock, and puts it straight back.
-    # The gap left: a third waiter that takes the lock between those two renames.
-    if [ -n "$holder" ] && { ! kill -0 "$holder" 2>/dev/null ||
-         { holder_args=$(ps -o args= -p "$holder" 2>/dev/null) &&
-           case "$holder_args" in *check.sh*) false ;; *) true ;; esac; }; }; then
-      if mv "$lock_path" "$lock_path.stale.$$" 2>/dev/null; then
-        if [ "$(readlink "$lock_path.stale.$$" 2>/dev/null)" = "$holder" ]; then
-          echo "NOTE [lock]: removing a stale gate lock left by pid $holder, which no longer runs."
-          rm -f "$lock_path.stale.$$"
-        else
-          mv -f "$lock_path.stale.$$" "$lock_path"
-        fi
-      fi
-      continue
-    fi
-    if [ -n "${GATE_LOCK_WAIT:-}" ] && [ "$waited" -ge "$GATE_LOCK_WAIT" ]; then
-      echo "NOT RUN [lock]: pid ${holder:-unknown} has held $lock_path for ${waited}s; GATE_LOCK_WAIT=$GATE_LOCK_WAIT ran out."
-      exit 75
-    fi
-    [ $((waited % 30)) -ne 0 ] ||
-      echo "NOTE [lock]: another gate run (pid ${holder:-unknown}) has held $lock_path for ${waited}s; waiting for it (if pid ${holder:-unknown} is not a gate run, remove $lock_path)."
-    sleep 1; waited=$((waited + 1))
-  done
-  lock=$lock_path
-  GATE_LOCK_HELD=$lock_path; export GATE_LOCK_HELD
-fi
 
 # ===========================================================================
 # NEGATIVE TESTS — the gates must be proven to REJECT, not merely to accept.
@@ -170,7 +181,7 @@ self_test() {
   # list below), so a concurrent `git add -A` or a killed self-test cannot leave it behind.
   inj="$work/injected.md"
   # The marker that lets this run's nested gates honour the seams (see the seam block).
-  GATE_SELFTEST_NESTED=$(readlink "$lock_path"); export GATE_SELFTEST_NESTED
+  GATE_SELFTEST_NESTED=$(cat "$lock_path"); export GATE_SELFTEST_NESTED
 
   # A red tree cannot prove that a gate turns red: everything would "fail correctly".
   if ! baseline=$(sh "$0" 2>&1); then

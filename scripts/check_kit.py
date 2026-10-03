@@ -2,6 +2,7 @@
 """Offline kit acceptance: syntax, packaged source, regression tests, and bootstrap gates."""
 import argparse
 import ast
+import fcntl
 import json
 import io
 import os
@@ -12,6 +13,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -163,6 +165,18 @@ def main():
                         env=dict(os.environ, GATE_SELFTEST_NESTED=str(os.getpid()),
                                  GATE_LOCK_HELD=own_lock, **{name: value}))
                 print("PASS: every self-test override exported into a normal run fails it by name")
+                # The marker a self-test run exports dies with that run: copied out of a finished
+                # run, it is refused like any other.
+                build.write_text(f'cat .git/check.lock > "{side}/holder"\n')
+                run(["sh", "scripts/check.sh"], project, reason="CHECK: PASS", timeout=60)
+                marker = (side / "holder").read_text()
+                if not marker.isdigit():
+                    raise RuntimeError(f"the lock file did not name its holder: {marker!r}")
+                run(["sh", "scripts/check.sh"], project, expected=1, timeout=60,
+                    reason="FAIL [env]: GATE_BUILD_CMD_OVERRIDE is set",
+                    env=dict(os.environ, GATE_SELFTEST_NESTED=marker,
+                             GATE_LOCK_HELD=own_lock, GATE_BUILD_CMD_OVERRIDE="true"))
+                print("PASS: a self-test marker copied out of a finished run is refused")
                 # Two gate runs sharing one build directory: the second must wait, not race.
                 build.write_text(f'mkdir "{side}/build" && sleep 2 && rmdir "{side}/build"\n')
                 pair = [subprocess.Popen(["sh", "scripts/check.sh"], cwd=project,
@@ -173,81 +187,56 @@ def main():
                         or not any("NOTE [lock]" in o for o in outputs)):
                     raise RuntimeError("concurrent gate runs raced:\n" + "\n".join(outputs))
                 print("PASS: two concurrent gate runs sharing a build directory both pass")
-                build.write_text("true\n")
-                # A holder killed without cleanup must not block every later run.
-                dead = subprocess.Popen(["true"])
-                dead.wait()
+                # A gate killed with SIGKILL while its build runs: the build keeps the lock, and
+                # none of three waiters builds until it exits. The build directory is the proof:
+                # a waiter whose build overlapped the orphaned one fails on "File exists".
+                build.write_text(f'mkdir "{side}/build" || exit 1\nsleep "${{HOLD:-1}}"\n'
+                                 f'rmdir "{side}/build"\n')
+                killed = subprocess.Popen(["sh", "scripts/check.sh"], cwd=project,
+                                          env=dict(os.environ, HOLD="6"),
+                                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                deadline = time.monotonic() + 60
+                while not (side / "build").is_dir():
+                    if killed.poll() is not None or time.monotonic() > deadline:
+                        raise RuntimeError("the gate to be killed never started its build")
+                    time.sleep(0.1)
+                killed.kill()
+                killed.wait()
+                waiters = [subprocess.Popen(["sh", "scripts/check.sh"], cwd=project,
+                                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                            text=True) for _ in range(3)]
+                outputs = [p.communicate(timeout=120)[0] for p in waiters]
+                if any(p.returncode or "CHECK: PASS" not in o for p, o in zip(waiters, outputs)):
+                    raise RuntimeError("a waiter built beside the build of a killed gate, or beside"
+                                       " another waiter:\n" + "\n".join(outputs))
+                print("PASS: a gate killed with SIGKILL holds the lock until its build exits;"
+                      " three waiters then run one at a time")
+                # A file at the lock path that is not a lock (the symlink an older check.sh left
+                # behind when killed) is refused by name, never followed or replaced.
                 lock = project / ".git/check.lock"
-                os.symlink(str(dead.pid), lock)
-                run(["sh", "scripts/check.sh"], project, reason="CHECK: PASS", timeout=60)
-                # Two waiters on one dead holder: only one may reclaim. Shims make the race
-                # certain: readlink holds each waiter until both have read the dead pid, and the
-                # second waiter to touch the lock path (rm or mv) does so a second later, after
-                # the first has reclaimed it and started.
-                shims = side / "shims"
-                shims.mkdir()
-                for tool in ("readlink", "rm", "mv"):
-                    real = shutil.which(tool)
-                    if tool == "readlink":
-                        body = (f'out=$("{real}" "$@") || exit\nprintf "%s\\n" "$out"\n'
-                                f'[ "$out" = {dead.pid} ] || exit 0\nmkdir "{side}/read.$PPID" 2>/dev/null\n'
-                                f'i=0; while [ "$(ls -d "{side}"/read.* | wc -l)" -lt 2 ] && [ $i -lt 50 ]; do\n'
-                                f'  sleep 0.1; i=$((i + 1)); done\n')
-                    else:
-                        body = (f'for a; do [ "$a" != "{own_lock}" ] || {{ mkdir "{side}/first" 2>/dev/null || sleep 1; }}; done\n'
-                                f'exec "{real}" "$@"\n')
-                    (shims / tool).write_text("#!/bin/sh\n" + body)
-                    (shims / tool).chmod(0o755)
-                build.write_text(f'mkdir "{side}/build" && sleep 2 && rmdir "{side}/build"\n')
-                os.symlink(str(dead.pid), lock)
-                shimmed = dict(os.environ, PATH=str(shims) + os.pathsep + os.environ["PATH"])
-                pair = [subprocess.Popen(["sh", "scripts/check.sh"], cwd=project, env=shimmed,
-                                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                         text=True) for _ in range(2)]
-                outputs = [p.communicate(timeout=60)[0] for p in pair]
-                if any(p.returncode or "CHECK: PASS" not in o for p, o in zip(pair, outputs)):
-                    raise RuntimeError("two waiters reclaiming one stale lock ran together:\n"
-                                       + "\n".join(outputs))
-                build.write_text("true\n")
-                # A pid reused by a process that is not a gate run (after a reboot, say) is stale too.
-                other = subprocess.Popen(["sleep", "60"])
+                lock.unlink(missing_ok=True)
+                os.symlink("12345", lock)
                 try:
-                    os.symlink(str(other.pid), lock)
-                    run(["sh", "scripts/check.sh"], project, reason="CHECK: PASS", timeout=30,
-                        env=dict(os.environ, GATE_LOCK_WAIT="3"))
+                    run(["sh", "scripts/check.sh"], project, expected=1, timeout=30,
+                        reason="FAIL [lock]: cannot open")
                 finally:
-                    other.kill()
-                    other.wait()
-                print("PASS: a lock left by a killed gate run is reclaimed, by one waiter only,"
-                      " and a pid now running something else does not hold it")
+                    lock.unlink(missing_ok=True)
                 # A live holder: a bounded wait gives up with its own code, and only a run
-                # given this checkout's own lock path skips the lock. The holder looks like a
-                # gate run; a live pid that is not one counts as stale.
-                holder = subprocess.Popen(["sh", "-c", "sleep 60; :", "scripts/check.sh"])
-                os.symlink(str(holder.pid), lock)
-                try:
+                # given this checkout's own lock path skips the lock.
+                build.write_text("true\n")
+                with open(lock, "a") as held:
+                    fcntl.flock(held, fcntl.LOCK_EX)
                     run(["sh", "scripts/check.sh"], project, expected=75, reason="NOT RUN [lock]",
                         env=dict(os.environ, GATE_LOCK_WAIT="2"), timeout=30)
                     run(["sh", "scripts/check.sh"], project, expected=75, reason="NOT RUN [lock]",
                         env=dict(os.environ, GATE_LOCK_WAIT="2",
                                  GATE_LOCK_HELD=str(side / "other-checkout.lock")), timeout=30)
                     out = run(["sh", "scripts/check.sh"], project, reason="CHECK: PASS", timeout=30,
-                              env=dict(os.environ, GATE_LOCK_WAIT="2",
-                                       GATE_LOCK_HELD=own_lock))
+                              env=dict(os.environ, GATE_LOCK_WAIT="2", GATE_LOCK_HELD=own_lock))
                     if "NOTE [lock]" in out:
                         raise RuntimeError("a run given its own lock path waited:\n" + out)
-                    # A run whose lock was taken over (a stale-reclaim race) leaves it alone.
-                    lock.unlink()
-                    build.write_text(f"rm -f .git/check.lock && ln -s {os.getpid()} .git/check.lock\n")
-                    run(["sh", "scripts/check.sh"], project, reason="CHECK: PASS", timeout=30)
-                    if not lock.is_symlink():
-                        raise RuntimeError("a gate run removed a lock another run held")
-                finally:
-                    lock.unlink(missing_ok=True)
-                    holder.kill()
-                    holder.wait()
-                print("PASS: a bounded lock wait stops with NOT RUN; only the own lock path is"
-                      " inherited; a run removes only its own lock")
+                print("PASS: a symlink at the lock path is refused; a bounded lock wait stops with"
+                      " NOT RUN; only the own lock path is inherited")
                 gate.write_text(original_gate)
             # The scanners read untracked files too (git ls-files --others), not only the index.
             marker = project / "untracked-marker.md"
