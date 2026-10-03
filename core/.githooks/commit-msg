@@ -1,0 +1,19 @@
+#!/usr/bin/env sh
+# KIT-OWNED: do not edit locally; change it in the kit and re-sync.
+# Rejects a Co-Authored-By trailer naming an AI tool (AGENTS.md: no AI attribution in git).
+# Coding tools add that trailer by default at commit time, so a rule in a document did not
+# hold: sessions carried it into most commits of a project whose owner had forbidden it,
+# and removing it later meant rewriting every commit and a force-push. The trailer is
+# written into the message file git passes here, so this is the only place to catch it.
+# A human co-author passes.
+set -u
+# ponytail: a fixed list of tool and vendor names; extend it when a new tool's trailer gets through.
+grep -inE '^[[:space:]]*co-authored-by:.*(claude|anthropic|openai|chatgpt|codex|copilot|gemini|cursor|aider|devin|windsurf|codeium|tabnine)' "${1:-}" >&2
+case $? in
+  0) echo "commit-msg: an AI co-author trailer (above) is not allowed in this repository (AGENTS.md)." >&2
+     echo "            Remove the line and commit again; the tool's default does not override the rule." >&2
+     exit 1 ;;
+  1) exit 0 ;;
+  *) echo "commit-msg: cannot read the commit message file '${1:-}'; refusing to pass it unchecked." >&2
+     exit 1 ;;
+esac

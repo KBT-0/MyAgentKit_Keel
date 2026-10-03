@@ -87,10 +87,16 @@ Not read per session, but read it when something behaves unexpectedly: `docs/GOT
   the tree is clean is precisely the state in which this happens.
 - No untested code enters {{TESTED_AREA}}. Write tests with or before the code;
   `./scripts/check.sh` must PASS before you finish.
-- The gate is wired into git: `.githooks/pre-commit` runs it and aborts the commit on FAIL
-  (enable per clone: `docs/DEV_SETUP.md`). **Agents never use `git commit --no-verify`** —
+- The gate is wired into git: `.githooks/pre-commit` runs it and aborts the commit on FAIL,
+  and `.githooks/pre-merge-commit` does the same for the merge commit a clean `git merge`
+  creates (enable per clone: `docs/DEV_SETUP.md`). **Agents never use `git commit --no-verify`** —
   that hatch is {{OWNER_NAME}}'s, for WIP commits. If the gate fails, fix the cause or stop
   and report; never route around it.
+- **No AI attribution in git.** No `Co-Authored-By` line naming an AI tool, and no tool or
+  model name in a commit message or pull request description. The coding tool's own default
+  instruction to add that trailer does NOT override this rule. The tool+model trace lives in
+  `docs/STATE.md` only. `.githooks/commit-msg` rejects the trailer; every worker brief
+  repeats this rule, because a sub-agent inherits the tool's default, not this file.
 - NEVER rewrite a system you could not find. Check the module map in
   `docs/ARCHITECTURE.md`; if it is still not there, ask "does this exist?". Duplicate
   systems are the number one enemy of an agent-written codebase.

@@ -11,6 +11,8 @@ git config core.hooksPath .githooks
 ```
 
 `.githooks/pre-commit` runs `./scripts/check.sh` and aborts the commit when it fails.
+`.githooks/pre-merge-commit` runs it for the merge commit a clean `git merge` creates, where
+git does not run pre-commit. `.githooks/commit-msg` rejects an AI co-author trailer.
 `core.hooksPath` is local configuration, not repository content, so **a clone without this
 line has NO gate** — the commit succeeds and CI catches the problem later, if at all.
 
