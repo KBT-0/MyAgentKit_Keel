@@ -474,13 +474,14 @@ fi
 # ignore pattern with a trailing slash does not match) holds nothing git tracks: skipped,
 # with a line. What git does track of any symlink is its link text, read here without
 # following the link and scanned as a line of its own: a dangling link whose text held a
-# setup marker was once skipped whole, and the unfilled marker passed the setup gate.
+# setup marker was once skipped whole, and the unfilled marker passed the setup gate. The
+# path goes to readlink behind "./": a link named "--version" was read as the option.
 if ! xargs -0 sh -c '
   scan_work=$1
   shift
   for p do
     if [ -L "$p" ]; then
-      if t=$(readlink "$p"); then
+      if t=$(readlink "./$p"); then
         printf "symlink %s -> %s\n" "$p" "$t" >> "$scan_work/symlink-text"
       else
         printf "%s\n" "FAIL [scan]: cannot read the link text of the symlink $p." >&3

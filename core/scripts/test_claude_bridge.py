@@ -601,8 +601,15 @@ class BridgeTests(unittest.TestCase):
                                          'injected directory fsync failure' if replaced
                                          else 'injected archive replacement failure'),
                                       out.getvalue())
-                    self.assertEqual(bridge.prior_rounds(self.repo, usage['task']['id'], 'uncommitted',
-                                                         None, usage['task']['head'], ''), '')
+                    # Fail closed: an archive the record does not match stops the next round.
+                    rounds = lambda: bridge.prior_rounds(self.repo, usage['task']['id'], 'uncommitted',
+                                                         None, usage['task']['head'], '')
+                    if fault is replacement_fails:
+                        with self.assertRaisesRegex(bridge.BridgeError, re.escape(str(evidence))):
+                            rounds()
+                        evidence.unlink()
+                    else:
+                        self.assertEqual(rounds(), '')
 
     def persisted_cancel(self, result):
         # The usage reporter reads the records, not the dispatcher's result: a cancel during
@@ -1441,6 +1448,15 @@ if case == 'archive_failure':
         self.assertTrue(failed['evidence'])
         self.assertEqual(self.run_bridge(env_extra=task)[0], 0)
         self.assertNotIn('### Round', log.read_text())
+        # A failed round is not carried, but its archive is checked: one changed after the
+        # record was written (a cancel relabel that could not replace it) stops the next round.
+        evidence = Path(failed['evidence'])
+        original = evidence.read_bytes()
+        evidence.write_bytes(original + b'edited\n')
+        code, refused = self.run_bridge(env_extra=task)
+        self.assertEqual(code, 2, refused)
+        self.assertIn(str(evidence), refused['error'])
+        evidence.write_bytes(original)
         # A completed record whose evidence lies outside docs/reviews is not the reviewer's archive.
         outside = self.root / 'outside-review.md'
         outside.write_text('VERDICT: Accept\n')
