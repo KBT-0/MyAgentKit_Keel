@@ -36,8 +36,10 @@
 # separate paths in an earlier version of this script violated that rule and reported PASS
 # while enforcing nothing; a cross-model review found them.
 set -u
-gate=$(cd "$(dirname "$0")" && pwd -P)/${0##*/}
-cd "$(dirname "$0")/.."
+# CDPATH cleared: exported, it made `cd scripts` print the directory into $gate, and the
+# lock below re-ran a two-line file name instead of the gate.
+gate=$(CDPATH= cd -- "$(dirname "$0")" && pwd -P)/${0##*/}
+CDPATH= cd -- "$(dirname "$0")/.."
 fail=0
 
 # Toolchains are commonly installed per-user and then missing from the PATH of git hooks
@@ -476,13 +478,15 @@ fi
 # following the link and scanned as a line of its own: a dangling link whose text held a
 # setup marker was once skipped whole, and the unfilled marker passed the setup gate. The
 # path goes to readlink behind "./": a link named "--version" was read as the option.
+# Each line carries the link's own path in grep's "path:line:" form, and scan_grep prints it
+# as is: reported under the temporary file's name, a link in the exempt setup/ failed the gate.
 if ! xargs -0 sh -c '
   scan_work=$1
   shift
   for p do
     if [ -L "$p" ]; then
       if t=$(readlink "./$p"); then
-        printf "symlink %s -> %s\n" "$p" "$t" >> "$scan_work/symlink-text"
+        printf "%s:1:symlink %s -> %s\n" "$p" "$p" "$t" >> "$scan_work/symlink-text"
       else
         printf "%s\n" "FAIL [scan]: cannot read the link text of the symlink $p." >&3
         : > "$scan_work/scan_missing"
@@ -506,9 +510,8 @@ if ! xargs -0 sh -c '
   exit 1
 fi
 mv "$filelist.kept" "$filelist"
-[ ! -e "$work/symlink-text" ] || printf '%s\0' "$work/symlink-text" >> "$filelist"
 [ ! -e "$work/scan_missing" ] || fail=1
-if [ ! -s "$filelist" ]; then
+if [ ! -s "$filelist" ] && [ ! -s "$work/symlink-text" ]; then
   echo "FAIL [scan]: the file list is EMPTY. A scan over nothing always passes, which is"
   echo "             exactly the failure this gate exists to prevent."
   exit 1
@@ -547,6 +550,14 @@ scan_grep() {
   ' sh "$1" "$work" < "$filelist" 2>/dev/null
   st=$?
   [ "$st" -eq 0 ] || : > "$work/scan_failed"
+  if [ -e "$work/symlink-text" ]; then
+    grep -hE -e "$1" -- "$work/symlink-text"
+    case "$?" in
+      0) : > "$work/scan_matched" ;;
+      1) ;;
+      *) : > "$work/scan_failed" ;;
+    esac
+  fi
   [ ! -e "$work/scan_failed" ] || return 2
   [ -e "$work/scan_matched" ]
 }

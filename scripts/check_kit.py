@@ -110,6 +110,9 @@ def main():
         (project / "scripts/boundary_selftests.sh").write_text("# Domain gates are project-specific.\n")
         run(["git", "add", "."], project)
         run(["sh", "scripts/check.sh"], project, reason="CHECK: PASS")
+        # With CDPATH exported, `cd scripts` printed the directory into the gate's own path,
+        # and the gate re-ran a two-line file name instead of its checks.
+        run(["sh", "scripts/check.sh"], project, reason="CHECK: PASS", env=dict(os.environ, CDPATH="."))
         # The rot gate's message must name where operation detail goes instead.
         state = project / "docs/STATE.md"
         original_state = state.read_bytes()
@@ -352,8 +355,24 @@ def main():
                 finally:
                     run(["git", "rm", "-q", "--cached", "--", name], project)
                     link.unlink()
+            # A link is reported under its own path, so setup/ stays exempt: aggregated under
+            # a temporary file's name, an exempt setup/ link failed the gate beside a real one.
+            (project / "setup").mkdir(exist_ok=True)
+            links = ("setup/example-link", "config-link")
+            for name in links:
+                os.symlink("{{" + "CONFIG_DIR}}/config.json", project / name)
+            run(["git", "add", "--", *links], project)
+            try:
+                out = run(["sh", "scripts/check.sh"], project, expected=1,
+                          reason="config-link:1:symlink config-link -> {{" + "CONFIG_DIR}}")
+                if "symlink setup/example-link ->" in out:
+                    raise RuntimeError("an exempt setup/ symlink failed the setup gate:\n" + out)
+            finally:
+                run(["git", "rm", "-q", "--cached", "--", *links], project)
+                for name in links:
+                    (project / name).unlink()
             print("PASS: a deleted tracked file is named, a directory symlink is skipped with a note,"
-                  " a symlink's link text is scanned")
+                  " a symlink's link text is scanned under its own path")
             tests = project / "scripts/test_claude_bridge.py"
             original_tests = tests.read_bytes()
             tests.unlink()

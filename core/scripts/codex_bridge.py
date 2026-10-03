@@ -80,8 +80,11 @@ def main(argv=None, result_sink=None):
             before = codex_quota.snapshot(command[0], repo) if capture_quota else {"status": "disabled"}
             execution = None
             cancelled = []
+            # run() fills this before it restores the raising handler held above: a cancel
+            # during that restore raised before the return value was assigned.
+            handed = {}
             try:
-                execution = agent_process.run(command, prompt, repo, timeout)
+                execution = agent_process.run(command, prompt, repo, timeout, into=handed)
                 if execution.pop("cancelled", False):
                     cancelled.append(True)
                 # A cancelled review must stop now, not start another CLI process to read quota.
@@ -89,8 +92,10 @@ def main(argv=None, result_sink=None):
                          {"status": "skipped: review cancelled"} if cancelled
                          else codex_quota.snapshot(command[0], repo))
             except KeyboardInterrupt:
+                execution = execution or handed or None
                 if execution is None:
                     raise
+                execution.pop("cancelled", None)
                 after = {"status": "cancelled"}
                 cancelled.append(True)
             # From here to the record a cancel is noted, not acted on: the record is what it

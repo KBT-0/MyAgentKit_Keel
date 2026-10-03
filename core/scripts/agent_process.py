@@ -33,19 +33,39 @@ def restore(previous: dict) -> None:
         signal.signal(sig, handler)
 
 
-def run(command: list[str], prompt: str, repo: Path, timeout: int) -> dict:
-    """Return exit status, partial output, and termination reason without retrying."""
+def run(command: list[str], prompt: str, repo: Path, timeout: int, into: dict | None = None) -> dict:
+    """Return exit status, partial output, and termination reason without retrying.
+
+    `into` receives the result before the caller's handlers are restored: a raising one
+    restored there raised before the returned result was assigned, and the attempt was lost.
+    """
     if not 1 <= timeout <= 3600:
         raise ValueError("timeout must be 1..3600 seconds")
     started = time.monotonic()
-    previous = hold()
+    result = {} if into is None else into
+    # One shot: the first cancel raises, every later one is only noted. Swapping in noting
+    # handlers one signal at a time at the start of cleanup left a window in which a second
+    # cancel still raised, past the group kill and the reap.
+    state = {"armed": True, "noted": []}
+
+    def cancel(signum, frame):
+        state["noted"].append(signum)
+        if state["armed"]:
+            state["armed"] = False
+            raise KeyboardInterrupt
+
+    previous = hold(cancel)
     try:
-        return _supervise(command, prompt, repo, timeout, started)
+        result.update(_supervise(command, prompt, repo, timeout, started, state))
+        return result
     finally:
         restore(previous)
+        # Noted while the handlers were restored: still a cancel.
+        if result and state["noted"]:
+            result["cancelled"] = True
 
 
-def _supervise(command, prompt, repo, timeout, started):
+def _supervise(command, prompt, repo, timeout, started, state):
     with tempfile.TemporaryFile() as inp, selectors.DefaultSelector() as selector:
         # A file gives even a slow-starting CLI the entire prompt and EOF. Repeated
         # communicate(input=None) after a short timeout can strand a partially written pipe.
@@ -104,9 +124,10 @@ def _supervise(command, prompt, repo, timeout, started):
             termination = "cancelled"
         finally:
             # From here a cancel is noted, not raised: raised, it broke off the group kill or
-            # the reap, and run() returned nothing to record. run() restores the handlers.
-            noted = []
-            hold(lambda signum, frame: noted.append(signum))
+            # the reap, and run() returned nothing to record. A flag, not a handler swap: the
+            # first statement here, so no signal is checked before it.
+            state["armed"] = False
+            noted = state["noted"]
             # Also stop descendants left behind by a parent that already exited.
             if child is not None:
                 try:
