@@ -332,11 +332,13 @@ if ! xargs -0 sh -c '
   shift
   for p do
     if [ -L "$p" ] && [ -d "$p" ]; then
-      echo "NOTE [scan]: skipped $p, a symlink to a directory; git tracks nothing inside it." >&3
-      echo "             To ignore it, write it in .gitignore without a trailing slash." >&3
-    elif [ ! -e "$p" ] && [ ! -L "$p" ]; then
-      echo "FAIL [scan]: $p is tracked but missing from the working tree (deleted, not staged)." >&3
-      echo "             Run git rm -- \"$p\" to record the deletion, or git restore -- \"$p\"." >&3
+      printf "%s\n" "NOTE [scan]: skipped $p, a symlink to a directory; git tracks nothing inside it." >&3
+      printf "%s\n" "             To ignore it, write it in .gitignore without a trailing slash." >&3
+    elif [ -L "$p" ] && [ ! -e "$p" ]; then
+      printf "%s\n" "NOTE [scan]: skipped $p, a symlink whose target is missing; git tracks only the link text." >&3
+    elif [ ! -e "$p" ]; then
+      printf "%s\n" "FAIL [scan]: $p is tracked but missing from the working tree (deleted, not staged)." >&3
+      printf "%s\n" "             Run git rm -- \"$p\" to record the deletion, or git restore -- \"$p\"." >&3
       : > "$scan_work/scan_missing"
     else
       printf "%s\0" "$p"
