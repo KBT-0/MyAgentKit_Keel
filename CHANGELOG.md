@@ -198,6 +198,16 @@ hand merge; `sync-kit.sh` now keeps listing them until you confirm (see "Sync st
   exempt. **ACTION:** copy `agent_process.py`, `codex_bridge.py` and both test modules
   again; in your `scripts/check.sh` change the `gate=` and `cd` lines to `CDPATH= cd --` and
   port the symlink-text block at the end of `scan_grep`.
+- **Full cross-model review, range B round 4.** The existing-file boundary probe gives a
+  linked worktree's copy its own git repository and refuses a copy whose git or common
+  directory lies outside it (a gate that staged its inputs used to stage the injection into
+  the original's index). A cancel while the Codex adapter switched to noting, or while the
+  Claude adapter printed its result, can no longer lose a completed review or let
+  `--fallback` start the other reviewer: cancellation is a flag on a shared one-shot guard
+  and Claude samples it last. The scan writes symlink text one line per link with newlines
+  escaped, so the `setup/` exemption stays tied to the link's own path, and a failed append
+  is fatal. **ACTION:** port the `.git` block and the git-directory check into an adapted
+  existing-file example; copy the adapters and `scripts/check.sh` again.
 - **Scan failures that were not scanner failures (issues #13, #14).** A tracked file deleted
   without `git rm` now fails `[scan]` under its own name with the command that fixes it, and
   every other scan still runs. A symlink to a directory (for example `node_modules` linked

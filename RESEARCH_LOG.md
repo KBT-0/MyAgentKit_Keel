@@ -607,6 +607,16 @@ folded-trailer join crossing a blank line, `CDPATH=.` printing into the gate's o
 the symlink-text scan reporting under a temporary name that lost the `setup/` exemption.
 Lesson: every handler switch is itself a window; switch state, not handlers.
 
+#### Range B, round 4: the neighbour of every guard
+
+Six findings of one shape. A copy of a linked worktree carried a `.git` pointer back to the
+original's index. The Codex adapter's second handler switch was a swap under a live signal,
+the very window round 3 had closed in the supervisor. The Claude adapter sampled
+cancellation before its own output. Link text spanning a newline produced a line without
+its path, which the `setup/` exemption then dropped. A failed append was ignored. Rule: a
+value read to decide (a git dir, a cancel flag, a path prefix) is the last thing read before
+the decision is handed over, and every write it depends on is checked.
+
 #### The review gate held on the kit's own hardening
 
 Five of the nine work packages (the gate lock, both review-tooling packages, the commit gates
