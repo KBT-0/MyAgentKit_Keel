@@ -61,8 +61,16 @@ def write_evidence(repo: Path, path: Path, text: str, *, private: bool = False,
         stream.flush()
         os.fsync(stream.fileno())
         if replace:
-            os.link(stream.name, path.with_name(path.name + ".cancel"))
-            os.replace(path.with_name(path.name + ".cancel"), path)
+            # Staged beside the temporary file, in the storage verified ignored above: a
+            # sibling `<archive>.cancel` matched no ignore rule, so a failure before the
+            # replace left raw output for `git add -A`.
+            pending = stream.name + ".replace"
+            os.link(stream.name, pending)
+            try:
+                os.replace(pending, path)
+            finally:
+                if os.path.lexists(pending):
+                    os.unlink(pending)
         else:
             os.link(stream.name, path)
         directory = os.open(path.parent, os.O_RDONLY)
@@ -259,15 +267,25 @@ def relabel_cancelled(repo: Path, usage_path: Path, evidence: str | None, text: 
     The usage reporter reads these records, and a direct adapter call has no chain to keep the
     cancel: once only the returned result said cancelled while both files still said quota.
     `text` is the archive re-rendered with the cancel; it replaces the one just published.
+    The usage record is the authority and goes first, with the new archive's sha256: written
+    second, a failure in between left the archive cancelled and the record quota. Now an
+    archive left unreplaced fails that sha256, and the error says so.
     """
     value = json.loads(usage_path.read_text())
-    if evidence and os.path.isfile(evidence):
-        write_evidence(repo, Path(evidence), text, private=True, replace=True)
+    archived = bool(evidence and os.path.isfile(evidence))
+    if archived:
         value["evidence_sha256"] = hashlib.sha256(text.encode()).hexdigest()
     value.update(status="failed", failure_kind="cancelled")
     value["recovery"]["action"] = "continue_independent_work"
     write_evidence(repo, usage_path, json.dumps(value, indent=2, allow_nan=False) + "\n",
                    private=True, replace=True)
+    if archived:
+        try:
+            write_evidence(repo, Path(evidence), text, private=True, replace=True)
+        except (OSError, ValueError) as error:
+            raise OSError("the usage record says cancelled, but the archive could not be "
+                          "replaced, so its sha256 no longer matches the record: %s (%s)"
+                          % (evidence, error)) from error
     return value
 
 

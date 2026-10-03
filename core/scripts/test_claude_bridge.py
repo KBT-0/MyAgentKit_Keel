@@ -420,6 +420,57 @@ class BridgeTests(unittest.TestCase):
                     self.assertTrue(received[0]['cancelled'])
                     self.persisted_cancel(received[0])
 
+    def test_a_cancel_whose_archive_replacement_fails_is_still_recorded_and_returned(self):
+        # The relabel replaced the archive before the usage record, so a failure between the
+        # two left the archive saying cancelled and the record quota, and the Codex adapter
+        # raised before delivering its result. The record is written first now: the archive
+        # left behind fails its sha256, and a failed record is never carried to a later round.
+        from contextlib import redirect_stdout
+        from io import StringIO
+        import signal
+        from unittest.mock import patch
+        import codex_bridge
+        publish, account = agent_usage.write_evidence, agent_usage.record
+
+        def quota(command, prompt, repo, timeout):
+            value = ({'type': 'turn.failed', 'error': {'message': 'usage limit reached'}}
+                     if '-o' in command else
+                     {'type': 'result', 'subtype': 'success', 'is_error': True,
+                      'api_error_status': 429, 'modelUsage': {'claude-opus-5': {}}})
+            return {'exit_code': 1, 'stdout': json.dumps(value), 'stderr': '',
+                    'termination': None, 'duration_ms': 1}
+
+        def cancel_during_record(*args, **kwargs):
+            os.kill(os.getpid(), signal.SIGTERM)
+            return account(*args, **kwargs)
+
+        def archive_replacement_fails(repo, path, text, **kwargs):
+            if kwargs.get('replace') and path.parent.name == 'reviews':
+                raise OSError('injected archive replacement failure')
+            return publish(repo, path, text, **kwargs)
+
+        for main, args in ((bridge.main, ['review']),
+                           (codex_bridge.main, ['--model', 'fixture-codex-model'])):
+            received, out = [], StringIO()
+            with self.subTest(adapter='claude' if main is bridge.main else 'codex'), \
+                    patch.dict(os.environ, self.review_env()), \
+                    patch('agent_process.run', side_effect=quota), \
+                    patch('agent_usage.record', side_effect=cancel_during_record), \
+                    patch('agent_usage.write_evidence', side_effect=archive_replacement_fails), \
+                    redirect_stdout(out):
+                self.assertEqual(main([*args, '--repo', str(self.repo), '--uncommitted'],
+                                      received.append), 5)
+                self.assertTrue(received[0]['cancelled'])
+                self.assertEqual(received[0]['failure_kind'], 'cancelled')
+                self.assertIn('sha256 no longer matches', out.getvalue())
+                usage = json.loads(Path(received[0]['usage_record']).read_text())
+                self.assertEqual((usage['status'], usage['failure_kind']), ('failed', 'cancelled'))
+                archive = Path(received[0]['evidence']).read_bytes()
+                self.assertIn(b'| failure_kind | quota |', archive)
+                self.assertNotEqual(usage['evidence_sha256'], hashlib.sha256(archive).hexdigest())
+                self.assertEqual(bridge.prior_rounds(self.repo, usage['task']['id'], 'uncommitted',
+                                                     None, usage['task']['head'], ''), '')
+
     def persisted_cancel(self, result):
         # The usage reporter reads the records, not the dispatcher's result: a cancel during
         # publication once left both saying quota.
