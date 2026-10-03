@@ -30,7 +30,7 @@ REQUIRED_SUITES = {
     'tests': {'test_packaging': 1, 'test_bootstrap': 1, 'test_acceptance': 2,
               'test_review_upgrade': 1, 'test_boundary_example': 1, 'test_scan_gate': 1,
               'test_boundary_restore': 1, 'test_sync_kit': 3, 'test_doctor': 1,
-              'test_git_hooks': 7},
+              'test_git_hooks': 8, 'test_stop_hook': 1},
 }
 
 
@@ -65,9 +65,9 @@ def run_tests(root, directory, required):
 
 
 # A gate run that waits forever (a lock never released) must fail here, not hang the kit check.
-def run(args, cwd=ROOT, expected=0, reason=None, env=None, timeout=300):
+def run(args, cwd=ROOT, expected=0, reason=None, env=None, timeout=300, **popen):
     result = subprocess.run(args, cwd=cwd, capture_output=True, text=True, env=env,
-                            timeout=timeout)
+                            timeout=timeout, **popen)
     output = result.stdout + result.stderr
     if result.returncode != expected or (reason and reason not in output):
         raise RuntimeError(f"{args}: expected exit {expected}, reason {reason!r}\n{output}")
@@ -177,6 +177,40 @@ def main():
                     env=dict(os.environ, GATE_SELFTEST_NESTED=marker,
                              GATE_LOCK_HELD=own_lock, GATE_BUILD_CMD_OVERRIDE="true"))
                 print("PASS: a self-test marker copied out of a finished run is refused")
+                # A gate killed with SIGKILL never clears its pid from the lock file. Once its
+                # build has exited too, nobody holds the lock, and variables copied out of the
+                # killed run name it exactly: refused, never honoured as a self-test's seams.
+                build.write_text(f'cat .git/check.lock > "{side}/holder"\n'
+                                 f'echo "$GATE_LOCK_FD" > "{side}/fd.tmp"\nmv "{side}/fd.tmp" "{side}/fd"\n'
+                                 'sleep 1\n')
+                killed = subprocess.Popen(["sh", "scripts/check.sh"], cwd=project,
+                                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                deadline = time.monotonic() + 60
+                while not (side / "fd").exists():
+                    if killed.poll() is not None or time.monotonic() > deadline:
+                        raise RuntimeError("the gate to be killed never started its build")
+                    time.sleep(0.1)
+                killed.kill()
+                killed.wait()
+                with open(project / ".git/check.lock") as probe:
+                    while True:
+                        try:
+                            fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                            break
+                        except BlockingIOError:
+                            if time.monotonic() > deadline:
+                                raise RuntimeError("the killed gate's build never released the lock")
+                            time.sleep(0.1)
+                marker = (side / "holder").read_text()
+                if (project / ".git/check.lock").read_text() != marker:
+                    raise RuntimeError("the killed gate's pid was not left in the lock file")
+                build.write_text("false\n")
+                run(["sh", "scripts/check.sh"], project, expected=1, timeout=60,
+                    reason="FAIL [env]: GATE_BUILD_CMD_OVERRIDE is set",
+                    env=dict(os.environ, GATE_SELFTEST_NESTED=marker, GATE_LOCK_HELD=own_lock,
+                             GATE_LOCK_FD=(side / "fd").read_text().strip(),
+                             GATE_BUILD_CMD_OVERRIDE="true"))
+                print("PASS: variables copied out of a gate killed with SIGKILL are refused")
                 # Two gate runs sharing one build directory: the second must wait, not race.
                 build.write_text(f'mkdir "{side}/build" && sleep 2 && rmdir "{side}/build"\n')
                 pair = [subprocess.Popen(["sh", "scripts/check.sh"], cwd=project,
@@ -231,12 +265,36 @@ def main():
                     run(["sh", "scripts/check.sh"], project, expected=75, reason="NOT RUN [lock]",
                         env=dict(os.environ, GATE_LOCK_WAIT="2",
                                  GATE_LOCK_HELD=str(side / "other-checkout.lock")), timeout=30)
+                    # The own lock path is inherited only with the descriptor that holds it.
+                    run(["sh", "scripts/check.sh"], project, expected=1, timeout=30,
+                        reason="FAIL [env]: GATE_LOCK_HELD",
+                        env=dict(os.environ, GATE_LOCK_WAIT="2", GATE_LOCK_HELD=own_lock))
                     out = run(["sh", "scripts/check.sh"], project, reason="CHECK: PASS", timeout=30,
-                              env=dict(os.environ, GATE_LOCK_WAIT="2", GATE_LOCK_HELD=own_lock))
+                              pass_fds=(held.fileno(),),
+                              env=dict(os.environ, GATE_LOCK_WAIT="2", GATE_LOCK_HELD=own_lock,
+                                       GATE_LOCK_FD=str(held.fileno())))
                     if "NOTE [lock]" in out:
                         raise RuntimeError("a run given its own lock path waited:\n" + out)
                 print("PASS: a symlink at the lock path is refused; a bounded lock wait stops with"
-                      " NOT RUN; only the own lock path is inherited")
+                      " NOT RUN; only the own lock path, with the descriptor holding it, is inherited")
+                # python3 only in the configured toolchain directory, as a hook sees a Python
+                # installed per user: the lock, which is taken through python3, still finds it.
+                tc, no_python = side / "tc", side / "no-python"
+                tc.mkdir(); no_python.mkdir()
+                (tc / "python3").symlink_to(sys.executable)
+                for directory in os.environ["PATH"].split(os.pathsep):
+                    if os.path.isdir(directory):
+                        for name in os.listdir(directory):
+                            source = Path(directory) / name
+                            if (not name.startswith("python") and source.exists()
+                                    and not os.path.lexists(no_python / name)):
+                                (no_python / name).symlink_to(source.resolve())
+                if 'toolchain_path=""' not in gate.read_text():
+                    raise RuntimeError("the synthetic project's toolchain_path line was not found")
+                gate.write_text(gate.read_text().replace('toolchain_path=""', f'toolchain_path="{tc}"'))
+                run(["sh", "scripts/check.sh"], project, reason="CHECK: PASS", timeout=60,
+                    env=dict(os.environ, PATH=str(no_python)))
+                print("PASS: a python3 found only through toolchain_path takes the gate lock")
                 gate.write_text(original_gate)
             # The scanners read untracked files too (git ls-files --others), not only the index.
             marker = project / "untracked-marker.md"
@@ -300,7 +358,17 @@ def main():
             original_checks, original_selftests = checks.read_bytes(), selftests.read_bytes()
             checks.write_text(": synthetic boundary check\n")
             run(["sh", "scripts/check.sh", "--self-test"], project, expected=1, reason="ran no case")
-            selftests.write_text("echo '  ok   — synthetic boundary case'\n")
+            # The shipped existing-file example, run by the enclosing self-test against a check
+            # it can trip: it counts as a case only by printing its ok line.
+            src = project / "src"
+            if src.exists():
+                raise RuntimeError("the synthetic project already has src/")
+            (src / "domain").mkdir(parents=True)
+            (src / "domain/existing.py").write_text("original\n")
+            checks.write_text("! grep -q myapp.web src/domain/existing.py ||\n"
+                              "  { echo 'FAIL [boundary]: the domain layer imports the web layer:'; fail=1; }\n")
+            example = (ROOT / "core/scripts/boundary_selftests.sh").read_text().splitlines()
+            selftests.write_text("\n".join(line[4:] for line in example if line.startswith("# | ")) + "\n")
             # An owner who allows AI credit has no rule line; the hook's case says it skipped.
             agents = project / "AGENTS.md"
             original_agents = agents.read_bytes()
@@ -308,12 +376,18 @@ def main():
             out = run(["sh", "scripts/check.sh", "--self-test"], project, reason="SELF-TEST: PASS")
             if "skipped by owner choice" not in out:
                 raise RuntimeError("the commit-msg case did not say it was skipped by owner choice:\n" + out)
+            if "  ok   — domain/web boundary gate rejects a forbidden import in an existing file" not in out:
+                raise RuntimeError("the existing-file boundary example did not run as a case:\n" + out)
+            if (src / "domain/existing.py").read_text() != "original\n":
+                raise RuntimeError("the existing-file boundary example did not restore its target")
+            shutil.rmtree(src)
             agents.write_bytes(original_agents)
             checks.write_bytes(original_checks)
             selftests.write_bytes(original_selftests)
             wrapper.write_bytes(original_wrapper)
             print("PASS: missing review tests, failed runner, absent completion evidence, an emptied "
-                  "suite and boundary checks whose self-tests ran no case reject; an owner's AI-credit choice is a visible skip")
+                  "suite and boundary checks whose self-tests ran no case reject; the existing-file example "
+                  "runs as a case; an owner's AI-credit choice is a visible skip")
     print("KIT CHECK: PASS")
 
 

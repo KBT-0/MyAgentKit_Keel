@@ -22,27 +22,15 @@ if [ -f AGENTS.md ]; then
   esac
 fi
 msg=${1:-}
-# Git cuts the diff below the scissors line (`commit -v`) only AFTER this hook, so a trailer
-# quoted in that diff is not part of the message and the text below the line is dropped.
-# Only the header git writes for an editor is cut: the scissors line followed by its two-line
-# explanation. A bare scissors line in a `-m` or verbatim message is kept by git, and so is
-# what follows it, so the hook keeps and checks it too; cutting at any scissors line let a
-# credit below one into the history. A git whose messages are translated writes another
-# explanation; its quoted diff is then checked, which fails closed.
+# Nothing is cut, not even below the scissors line `commit -v` writes: the hook cannot tell
+# git's editor header from the same lines given with -m, which git keeps, and cutting at the
+# header let a credit below it into the history. A trailer quoted in a `commit -v` diff is
+# therefore rejected too; the message says how to get past it. Fails closed.
 # Comment lines are NOT dropped: whether git keeps them depends on commit.cleanup, on a
 # --cleanup flag this hook cannot see, and on `-m` versus the editor (git's default keeps
 # them for -m). Checking them fails closed; a commented-out credit left by a squash is one
-# line to delete. core.commentChar names the scissors prefix ("auto" is taken as "#").
-comment=$(git config --get core.commentChar 2>/dev/null) || comment='#'
-[ "$comment" != auto ] || comment='#'
-if [ ! -f "$msg" ] || [ ! -r "$msg" ] || ! body=$(CC="$comment" awk '
-    BEGIN { c = ENVIRON["CC"] }
-    held == 1 && $0 == c " Do not modify or remove the line above." { held = 2; text = text "\n" $0; next }
-    held == 2 && $0 == c " Everything below it will be ignored." { exit }
-    held { print text; held = 0 }
-    $0 == c " ------------------------ >8 ------------------------" { held = 1; text = $0; next }
-    { print }
-    END { if (held) print text }' "$msg"); then
+# line to delete.
+if [ ! -f "$msg" ] || [ ! -r "$msg" ]; then
   echo "commit-msg: cannot read the commit message file '$msg'; refusing to pass it unchecked." >&2
   exit 1
 fi
@@ -50,17 +38,27 @@ fi
 tools='claude|anthropic|openai|chatgpt|gpt|codex|copilot|gemini|cursor|aider|devin|windsurf|codeium|tabnine|amp|qwen|cline|kiro'
 words="$tools|opus|sonnet|haiku|code|coder|agent|ai|assist|assistant|cli|chat|pro|flash|mini|turbo|[a-z]*[0-9][a-z0-9.]*"
 domains='anthropic\.com|openai\.com|ampcode\.com|cursor\.(com|sh)|aider\.chat|devin\.ai|cognition\.ai|windsurf\.com|codeium\.com|tabnine\.com'
-# Behind a comment character (whatever core.commentChar is) a trailer is still checked:
-# git keeps "# Co-Authored-By: ..." under -m or verbatim cleanup.
-trailer='^[^[:alnum:]]*[a-z]+(-[a-z]+)*-by:'
+# Behind a comment character a trailer is still checked: git keeps "# Co-Authored-By: ..."
+# under -m or verbatim cleanup. Punctuation is skipped whatever it is; a configured
+# core.commentChar is skipped too, which matters when it is a letter ("x Co-Authored-By:").
+# "auto" is git choosing a punctuation character, not the letters a, u, t and o.
+comment=$(git config --get core.commentChar 2>/dev/null | tr -cd '[:alnum:]')
+prefix='^[^[:alnum:]]*'
+[ -z "$comment" ] || [ "$comment" = auto ] || prefix="^([^[:alnum:]]|[$comment])*"
+trailer="$prefix[a-z]+(-[a-z]+)*-by:"
 sep='[[:space:]:_/().,-]'
-printf '%s\n' "$body" | grep -inE \
+grep -inE \
   -e "$trailer[[:space:]]*((github|google|openai)[[:space:]]+)?($tools)([0-9][a-z0-9.]*)?($sep+($words))*$sep*(<|\$)" \
   -e "$trailer.*(\\[bot\\]|@([a-z0-9-]+\\.)*($domains)>)" \
-  -e "^[^[:alnum:]]*generated (with|by)[[:space:]]*\\[?((github|google|openai)[[:space:]]+)?($tools)([^[:alnum:]]|\$)" >&2
+  -e "${prefix}generated (with|by)[[:space:]]*\\[?((github|google|openai)[[:space:]]+)?($tools)([^[:alnum:]]|\$)" \
+  -- "$msg" >&2
 case $? in
   0) echo "commit-msg: crediting an AI tool (above) is not allowed in this repository (AGENTS.md)." >&2
      echo "            Remove the line and commit again; the tool's default does not override the rule." >&2
+     if grep -q -e '------------------------ >8 ------------------------' -- "$msg"; then
+       echo "            If the line is in the diff quoted below the scissors line (commit -v)," >&2
+       echo "            commit without -v, or remove the quoted line from the message." >&2
+     fi
      exit 1 ;;
   1) exit 0 ;;
   *) echo "commit-msg: the trailer check itself failed; refusing to pass the message unchecked." >&2

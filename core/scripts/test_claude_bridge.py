@@ -971,13 +971,15 @@ if case == 'archive_failure':
 
     def test_a_damaged_usage_record_stops_a_labelled_round(self):
         # Skipping it would drop that round's findings unseen: the archive checks never run
-        # on a record that was never read.
+        # on a record that was never read, or read as something other than a usage record.
         task = {'MYAGENTKIT_TASK_ID': 'damaged-task'}
         code, first = self.run_bridge('reject', env_extra=task)
         self.assertEqual(code, 0, first)
         record = Path(first['usage_record'])
         original = record.read_text()
-        for damage in ('{"task": ', '[]', None):
+        no_evidence = json.dumps(dict(json.loads(original), evidence=''))
+        for damage in ('{"task": ', '[]', '{}', '{"task": "review", "status": "completed"}',
+                       no_evidence, None):
             with self.subTest(damage=damage):
                 if damage is None:
                     if os.geteuid() == 0:
@@ -992,6 +994,8 @@ if case == 'archive_failure':
                     record.write_text(original)
                 self.assertEqual(code, 2, refused)
                 self.assertIn(str(record), refused['error'])
+                # Every labelled round reads every record, so a new label meets it again.
+                self.assertIn('move it out of .myagentkit/usage', refused['error'])
         self.assertEqual(self.run_bridge(env_extra=task)[0], 0)
 
     def test_earlier_rounds_bind_the_change_not_the_reference_text(self):

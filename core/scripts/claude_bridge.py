@@ -166,22 +166,30 @@ def prior_rounds(repo: Path, task_id: str | None, scope: str, reference: str | N
     """
     rounds = []
     resolved = resolve(repo, scope, reference) if task_id else None
+
+    def damaged(path, what):
+        return BridgeError("usage record %s %s; an earlier round of task %s may be in it. Every "
+                           "labelled round reads every record, so a new task label does not "
+                           "help: restore it, or move it out of .myagentkit/usage"
+                           % (path, what, task_id))
     for path in (repo / ".myagentkit/usage").glob("*.json") if task_id else ():
-        # A record that cannot be read may be an earlier round of this task: skipping it
-        # dropped that round's findings unseen, past every archive check below.
+        # A record that cannot be read, or is not shaped like a usage record, may be an earlier
+        # round of this task: skipping it dropped that round's findings unseen, past every
+        # archive check below. Only a record that parsed is filtered by its task label, so a
+        # damaged one stops every labelled round, whatever its label: that is intended, and
+        # a new label does not get past it.
         try:
             value = json.loads(path.read_text())
         except (OSError, ValueError) as error:
-            raise BridgeError("usage record %s cannot be read (%s); an earlier round of task %s "
-                              "may be in it: restore it or use a new task label"
-                              % (path, error, task_id)) from error
-        if not isinstance(value, dict):
-            raise BridgeError("usage record %s is not a usage record; an earlier round of task %s "
-                              "may have been in it: restore it or use a new task label" % (path, task_id))
-        task = value.get("task")
-        if (not isinstance(task, dict) or task.get("kind") != "review" or task.get("id") != task_id
-                or value.get("status") != "completed" or not value.get("evidence")):
+            raise damaged(path, "cannot be read (%s)" % error) from error
+        task = value.get("task") if isinstance(value, dict) else None
+        if not isinstance(task, dict) or not isinstance(value.get("status"), str):
+            raise damaged(path, "is not a usage record")
+        if (task.get("kind") != "review" or task.get("id") != task_id
+                or value["status"] != "completed"):
             continue
+        if not isinstance(value.get("evidence"), str) or not value["evidence"]:
+            raise damaged(path, "is a completed review that names no evidence")
         # A reused label from another change must not carry that change's rounds. Compared
         # as resolved commits, never as the reference text: "--commit HEAD" one commit later
         # is another change. --commit and --uncommitted rounds share one HEAD: an

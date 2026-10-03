@@ -40,6 +40,19 @@ gate=$(cd "$(dirname "$0")" && pwd -P)/${0##*/}
 cd "$(dirname "$0")/.."
 fail=0
 
+# Toolchains are commonly installed per-user and then missing from the PATH of git hooks
+# and other non-login shells; without this the gate fails for the wrong reason. A VALUE, not
+# a line of code — a placeholder that has to be replaced INSIDE a comment is a trap, because
+# a half-finished edit leaves the code commented out and the gate silently toothless.
+# Applied FIRST, before the lock below resolves python3: a python3 installed only here was
+# not found, and a hook failed on a machine doctor.sh, which prepends it first, called ready.
+# Example: "$HOME/.dotnet". Leave empty if nothing extra is needed.
+toolchain_path="{{TOOLCHAIN_PATH_SETUP}}"
+case "$toolchain_path" in
+  ""|*"{{"*) ;;
+  *) PATH="$toolchain_path:$PATH"; export PATH ;;
+esac
+
 # SELF-TEST SEAMS are honoured ONLY in the self-test's own nested runs. Each one exists so a
 # case can point a gate at a synthetic input, which means each one can also turn a gate green
 # without its work: GATE_BUILD_CMD_OVERRIDE=true skips the build, GATE_SELFTEST_STATE_FILE reads another
@@ -49,21 +62,47 @@ fail=0
 # carry on, because then the run that someone believed was overridden reports on something
 # else. The marker is the lock holder's pid, which the holder writes into this checkout's lock
 # file and clears when it exits; it is exported only by self_test(), and is believed only
-# while the lock file names it: it stops an accidental export, not a deliberate forgery by
-# someone who holds the lock. A NEW SEAM JOINS THIS LIST.
-# GATE_LOCK_WAIT and GATE_LOCK_HELD are not seams: they change when a run starts, not what
-# it checks.
+# while the lock file names it AND this run inherited the lock itself (below). A gate killed
+# with SIGKILL never clears its pid, so variables copied out of it named the lock file's pid
+# exactly and an override passed without its build; a copied variable carries no descriptor.
+# It stops an accidental export, not a deliberate forgery by someone who holds the lock.
+# A NEW SEAM JOINS THIS LIST.
+# GATE_LOCK_WAIT, GATE_LOCK_HELD and GATE_LOCK_FD are not seams: they change when a run
+# starts, not what it checks.
 lock_path=$(git rev-parse --git-path check.lock 2>/dev/null) || lock_path=.check.lock
 case "$lock_path" in /*) ;; *) lock_path="$(pwd -P)/$lock_path" ;; esac
-if [ -z "${GATE_SELFTEST_NESTED:-}" ] || [ "${GATE_LOCK_HELD:-}" != "$lock_path" ] ||
+# A run that claims the lock (GATE_LOCK_HELD names this checkout's) proves it: the descriptor
+# GATE_LOCK_FD it inherited is open on this lock file, and the lock is held, so a fresh open
+# of the file cannot take it. Otherwise it FAILS by name; it never skips the lock on a claim.
+inherited=""
+if [ "${GATE_LOCK_HELD:-}" = "$lock_path" ]; then
+  if python3 -c '
+import fcntl, os, sys
+held, lock = os.fstat(int(sys.argv[1])), os.stat(sys.argv[2])
+if (held.st_dev, held.st_ino) != (lock.st_dev, lock.st_ino):
+    sys.exit(1)
+try:
+    fcntl.flock(os.open(sys.argv[2], os.O_RDONLY), fcntl.LOCK_EX | fcntl.LOCK_NB)
+except BlockingIOError:
+    sys.exit(0)
+sys.exit(1)
+' "${GATE_LOCK_FD:-}" "$lock_path" 2>/dev/null; then
+    inherited=1
+  else
+    echo "FAIL [env]: GATE_LOCK_HELD names this checkout's lock, but this run did not inherit the descriptor"
+    echo "            holding it (GATE_LOCK_FD); a copied variable is not the lock. Unset GATE_LOCK_HELD and GATE_LOCK_FD."
+    fail=1
+  fi
+fi
+if [ -z "$inherited" ] || [ -z "${GATE_SELFTEST_NESTED:-}" ] ||
    [ "$(cat "$lock_path" 2>/dev/null)" != "$GATE_SELFTEST_NESTED" ]; then
   for seam in GATE_BUILD_CMD_OVERRIDE GATE_SELFTEST_STATE_FILE GATE_SELFTEST_PROJECT_FILE BOUNDARY_CHECKS_FILE \
               BOUNDARY_SELFTESTS_FILE GATE_SELFTEST_EXTRA_FILE GATE_SELFTEST_BREAK_SCANNER; do
     eval "seam_value=\${$seam:-}"
     [ -z "$seam_value" ] || { echo "FAIL [env]: $seam is set; self-test overrides are not honoured outside --self-test"; fail=1; }
   done
-  [ "$fail" -eq 0 ] || exit 1
 fi
+[ "$fail" -eq 0 ] || exit 1
 
 # ONE GATE RUN PER CHECKOUT AT A TIME. The Stop hook, the commit hook and a manual run can
 # start together, and a project's build command usually writes one fixed build directory:
@@ -80,14 +119,15 @@ fi
 # a build tool that leaves a server running after the build (a compiler server, a build
 # daemon) holds the lock until that server exits, so such a build command turns it off.
 # The self-test holds the lock for its whole run, so no other gate sees a case mid-injection.
-# Nested runs (the self-test's own `sh "$0"`, the commit hook it calls) inherit the lock
-# through GATE_LOCK_HELD, which names the lock path, so a gate in another checkout started
-# from the build command still takes its own lock. The holder writes its pid, which after
+# Nested runs (the self-test's own `sh "$0"`, the commit hook it calls) inherit the lock:
+# GATE_LOCK_HELD names the lock path, so a gate in another checkout started from the build
+# command still takes its own lock, and GATE_LOCK_FD names the inherited descriptor, which
+# the seam block checks before it believes the claim. The holder writes its pid, which after
 # the exec is the gate's, into the lock file for the self-test marker (the seam block).
 case "${GATE_LOCK_WAIT:-}" in
   *[!0-9]*) echo "FAIL [lock]: GATE_LOCK_WAIT must be a number of seconds, got '$GATE_LOCK_WAIT'."; exit 1 ;;
 esac
-if [ "${GATE_LOCK_HELD:-}" != "$lock_path" ]; then
+if [ -z "$inherited" ]; then
   command -v python3 >/dev/null 2>&1 ||
     { echo "FAIL [lock]: python3 is not on PATH, and the gate lock is taken through it."; exit 1; }
   # Python ignores SIGPIPE and SIGXFSZ and catches SIGINT; the wait and the gate get back
@@ -120,7 +160,8 @@ while True:
     waited += 1
 os.ftruncate(fd, 0)
 os.write(fd, str(os.getpid()).encode())
-fcntl.fcntl(fd, fcntl.F_DUPFD, 10)  # a copy that survives exec, above the fds sh scripts redirect
+# A copy that survives exec, above the fds sh scripts redirect; nested runs prove they hold it.
+os.environ["GATE_LOCK_FD"] = str(fcntl.fcntl(fd, fcntl.F_DUPFD, 10))
 os.environ["GATE_LOCK_HELD"] = path
 os.execvp("sh", ["sh", gate] + sys.argv[3:])
 ' "$lock_path" "$gate" "$@"
@@ -129,17 +170,6 @@ fi
 # Overridable so the self-test can point the rot gate at a synthetic file instead of
 # mutating the real one. Only the self-test sets it (the seam block above).
 GATE_SELFTEST_STATE_FILE="${GATE_SELFTEST_STATE_FILE:-docs/STATE.md}"
-
-# Toolchains are commonly installed per-user and then missing from the PATH of git hooks
-# and other non-login shells; without this the gate fails for the wrong reason. A VALUE, not
-# a line of code — a placeholder that has to be replaced INSIDE a comment is a trap, because
-# a half-finished edit leaves the code commented out and the gate silently toothless.
-# Example: "$HOME/.dotnet". Leave empty if nothing extra is needed.
-toolchain_path="{{TOOLCHAIN_PATH_SETUP}}"
-case "$toolchain_path" in
-  ""|*"{{"*) ;;
-  *) PATH="$toolchain_path:$PATH"; export PATH ;;
-esac
 
 # Overridable so the self-test can prove these branches without mutating the repository.
 # Only the self-test sets them (the seam block above).

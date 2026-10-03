@@ -92,19 +92,26 @@ class GitHookTests(unittest.TestCase):
                 with self.subTest(trailer=trailer):
                     result = self.commit(root, git, trailer + '\n')
                     self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            # git commit -v: the hook sees the diff below the scissors line before git strips it.
+
+    def test_a_trailer_quoted_in_a_commit_v_diff_is_rejected_with_the_way_out(self):
+        # The hook cannot tell git's editor header from the same text given with -m, so it
+        # cuts nothing: a credit quoted in the diff below the scissors line fails closed.
+        with tempfile.TemporaryDirectory() as tmp:
+            root, git = self.repo(tmp)
             (root / 'notes').write_text('changed\nCo-Authored-By: Claude <noreply@anthropic.com>\n')
             git('add', 'notes')
             result = git('commit', '-q', '-v', '-e', '-m', 'edit notes', check=False)
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('commit without -v, or remove the quoted line', result.stderr)
 
-    def test_a_scissors_line_git_did_not_write_cuts_nothing(self):
-        # With -m git keeps a scissors line and everything below it: only the header git
-        # writes for an editor (the line plus its two-line explanation) is cut.
+    def test_a_scissors_line_cuts_nothing(self):
+        # With -m git keeps a scissors line and everything below it, the complete header
+        # git writes for an editor included.
         with tempfile.TemporaryDirectory() as tmp:
             root, git = self.repo(tmp)
             cut = '# ------------------------ >8 ------------------------\n'
-            for below in ('', '# Do not modify or remove the line above.\n'):
+            explain = '# Do not modify or remove the line above.\n'
+            for below in ('', explain, explain + '# Everything below it will be ignored.\n'):
                 with self.subTest(below=below):
                     result = self.commit(root, git, cut + below
                                          + 'Co-Authored-By: Claude <noreply@anthropic.com>\n')
@@ -115,7 +122,8 @@ class GitHookTests(unittest.TestCase):
         # Git keeps a "#" line under -m or verbatim cleanup, so a commented trailer is a trailer.
         with tempfile.TemporaryDirectory() as tmp:
             root, git = self.repo(tmp)
-            for char in ('#', ';'):
+            # An alphanumeric core.commentChar too: "x Co-Authored-By: ..." is kept like "# ...".
+            for char in ('#', ';', 'x'):
                 with self.subTest(char=char):
                     git('config', 'core.commentChar', char)
                     result = self.commit(root, git, 'x\n' + char
