@@ -52,6 +52,7 @@ def _supervise(command, prompt, repo, timeout, started):
         inp.write(prompt.encode())
         inp.seek(0)
         child = termination = None
+        launch_failed = False
         buffers = {"stdout": bytearray(), "stderr": bytearray()}
         try:
             try:
@@ -67,34 +68,36 @@ def _supervise(command, prompt, repo, timeout, started):
                 finally:
                     signal.pthread_sigmask(signal.SIG_SETMASK, mask)
             except OSError as error:
-                return {"exit_code": 127, "stdout": "", "stderr": str(error),
-                        "termination": "unavailable", "cancelled": False, "duration_ms": 0}
-            for name, stream in (("stdout", child.stdout), ("stderr", child.stderr)):
-                os.set_blocking(stream.fileno(), False)
-                selector.register(stream, selectors.EVENT_READ, name)
-            while selector.get_map():
-                remaining = timeout - (time.monotonic() - started)
-                if remaining <= 0:
-                    termination = "timeout"
-                    break
-                for key, _ in selector.select(min(0.2, remaining)):
-                    data = os.read(key.fd, 65536)
-                    if not data:
-                        selector.unregister(key.fileobj)
-                        continue
-                    buffer = buffers[key.data]
-                    space = 8_000_000 - len(buffer)
-                    buffer.extend(data[:space])
-                    if len(data) > space:
-                        termination = "output_limit"
+                # Not returned here: the result is built after cleanup, which can note a cancel.
+                termination, launch_failed = "unavailable", True
+                buffers["stderr"].extend(str(error).encode())
+            else:
+                for name, stream in (("stdout", child.stdout), ("stderr", child.stderr)):
+                    os.set_blocking(stream.fileno(), False)
+                    selector.register(stream, selectors.EVENT_READ, name)
+                while selector.get_map():
+                    remaining = timeout - (time.monotonic() - started)
+                    if remaining <= 0:
+                        termination = "timeout"
                         break
-                if termination:
-                    break
-            if not termination:
-                try:
-                    child.wait(timeout=max(0, timeout - (time.monotonic() - started)))
-                except subprocess.TimeoutExpired:
-                    termination = "timeout"
+                    for key, _ in selector.select(min(0.2, remaining)):
+                        data = os.read(key.fd, 65536)
+                        if not data:
+                            selector.unregister(key.fileobj)
+                            continue
+                        buffer = buffers[key.data]
+                        space = 8_000_000 - len(buffer)
+                        buffer.extend(data[:space])
+                        if len(data) > space:
+                            termination = "output_limit"
+                            break
+                    if termination:
+                        break
+                if not termination:
+                    try:
+                        child.wait(timeout=max(0, timeout - (time.monotonic() - started)))
+                    except subprocess.TimeoutExpired:
+                        termination = "timeout"
         except KeyboardInterrupt:
             # Cancelled: stop the group below and return what was captured, so the adapter
             # records the attempt (it may have been billed) and the dispatcher never fails over.
@@ -113,13 +116,17 @@ def _supervise(command, prompt, repo, timeout, started):
                 child.wait()
                 child.stdout.close()
                 child.stderr.close()
-            if noted and (termination or (child and child.returncode)):
-                termination = "cancelled"
-        # Cancellation is returned as its own fact, whatever the exit code: a zero exit is not
-        # a completed review until the adapter has read the response (a Claude result with
-        # is_error exits zero). The adapter keeps a completed review completed and turns a
-        # failed one into a cancel, so the dispatcher never fails over.
-        return {"exit_code": child.returncode if child else None, "stdout": buffers['stdout'].decode(errors="replace"),
-                "stderr": buffers['stderr'].decode(errors="replace"), "termination": termination,
-                "cancelled": termination == "cancelled" or bool(noted),
-                "duration_ms": round((time.monotonic() - started) * 1000)}
+    # Built after the with block: closing the prompt file and the selector runs with the
+    # noting handler too, and a cancel noted there once left a launch failure 'unavailable',
+    # an eligible failure that started the fallback reviewer.
+    if noted and (termination or (child and child.returncode)):
+        termination = "cancelled"
+    # Cancellation is returned as its own fact, whatever the exit code: a zero exit is not
+    # a completed review until the adapter has read the response (a Claude result with
+    # is_error exits zero). The adapter keeps a completed review completed and turns a
+    # failed one into a cancel, so the dispatcher never fails over.
+    return {"exit_code": child.returncode if child else 127 if launch_failed else None,
+            "stdout": buffers['stdout'].decode(errors="replace"),
+            "stderr": buffers['stderr'].decode(errors="replace"), "termination": termination,
+            "cancelled": termination == "cancelled" or bool(noted),
+            "duration_ms": round((time.monotonic() - started) * 1000)}

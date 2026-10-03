@@ -176,6 +176,30 @@ class GitHookTests(unittest.TestCase):
                                          % separators[0])
                     self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_a_failed_config_transformation_fails_closed(self):
+        # The tr results were unchecked: a failed one left only ":" as a separator, and
+        # "Co-Authored-By=Claude" passed; a failed comment-prefix one passed "x Co-Authored-By".
+        real_tr = shutil.which('tr')
+        with tempfile.TemporaryDirectory() as tmp:
+            root, git = self.repo(tmp)
+            shim = Path(tmp) / 'shim'
+            shim.mkdir()
+            for flag, key, value, line in (('-cd', 'core.commentChar', 'x', 'x Co-Authored-By: Claude'),
+                                           ('-d', 'trailer.separators', '=', 'Co-Authored-By=Claude')):
+                with self.subTest(transformation=key):
+                    git('config', key, value)
+                    (shim / 'tr').write_text('#!/bin/sh\n[ "$1" != %s ] || exit 1\nexec %s "$@"\n'
+                                             % (flag, real_tr))
+                    (shim / 'tr').chmod(0o755)
+                    (root / 'msg').write_text('change c\n\n%s <noreply@anthropic.com>\n' % line)
+                    result = subprocess.run(['sh', '.githooks/commit-msg', 'msg'], cwd=root, text=True,
+                                            capture_output=True,
+                                            env=dict(os.environ, PATH='%s%s%s' % (shim, os.pathsep,
+                                                                                   os.environ['PATH'])))
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    self.assertIn('cannot parse %s' % key, result.stderr)
+                    git('config', '--unset', key)
+
     def test_the_owner_may_allow_ai_attribution(self):
         with tempfile.TemporaryDirectory() as tmp:
             root, git = self.repo(tmp)

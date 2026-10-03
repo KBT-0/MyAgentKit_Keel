@@ -321,6 +321,15 @@ class DoctorTests(unittest.TestCase):
             env['PATH'] = full_path
             (bin_dir / 'claude').write_text('#!/bin/sh\nexit 0\n')
             (bin_dir / 'claude').chmod(0o755)
+            # An override set to empty: the adapters run an empty command, so with claude on
+            # PATH doctor once said ready for a review that cannot start.
+            for extra, variable in (({'CLAUDE_CLI_BIN': ''}, 'CLAUDE_CLI_BIN'),
+                                    ({'REVIEW_REVIEWER': 'codex', 'REVIEW_CLI_BIN': ''}, 'REVIEW_CLI_BIN')):
+                with self.subTest(extra=extra):
+                    result = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=project, text=True,
+                                            capture_output=True, env=dict(env, **extra))
+                    self.assertEqual(result.returncode, 1, result.stdout)
+                    self.assertIn('MISSING: %s is set to empty' % variable, result.stdout)
 
             # check.sh's own example form: "$HOME/..." must be expanded, as check.sh's sh does.
             (home / 'tc').mkdir()

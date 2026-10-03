@@ -47,7 +47,13 @@ domains='anthropic\.com|openai\.com|ampcode\.com|cursor\.(com|sh)|aider\.chat|de
 # "auto" is git choosing a punctuation character, not the letters a, u, t and o.
 comment=$(git config --get core.commentString 2>/dev/null ||
           git config --get core.commentChar 2>/dev/null)
-comment=$(printf '%s' "$comment" | tr -cd '[:alnum:]')
+# A failed transformation fails closed: an unchecked one dropped "=" from the separators and
+# let "Co-Authored-By=Claude <...>" through.
+fail_parse() {
+  echo "commit-msg: cannot parse $1 from git config; refusing to pass the message unchecked." >&2
+  exit 1
+}
+comment=$(printf '%s' "$comment" | tr -cd '[:alnum:]') || fail_parse core.commentChar
 prefix='^[^[:alnum:]]*'
 [ -z "$comment" ] || [ "$comment" = auto ] || prefix="^([^[:alnum:]]|[$comment])*"
 # Git takes whitespace before a trailer's colon and folds a value onto indented lines, so
@@ -57,7 +63,7 @@ prefix='^[^[:alnum:]]*'
 # so each configured one counts, and the colon always does. In the bracket expression "]"
 # goes first and "-" last, where both are literal.
 seps=$(git config --get trailer.separators 2>/dev/null)
-bracket=:$(printf '%s' "$seps" | tr -d ':]-')
+bracket=:$(printf '%s' "$seps" | tr -d ':]-') || fail_parse trailer.separators
 case $seps in *']'*) bracket="]$bracket" ;; esac
 case $seps in *-*) bracket="$bracket-" ;; esac
 trailer="$prefix[a-z]+(-[a-z]+)*-by[[:space:]]*[$bracket]"

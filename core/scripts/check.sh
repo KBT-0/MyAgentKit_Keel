@@ -472,16 +472,26 @@ fi
 # named and FAILS the gate: the scan cannot vouch for a path the commit may still carry. A
 # symlink to a directory (a dependency directory linked into a fresh worktree, which an
 # ignore pattern with a trailing slash does not match) holds nothing git tracks: skipped,
-# with a line.
+# with a line. What git does track of any symlink is its link text, read here without
+# following the link and scanned as a line of its own: a dangling link whose text held a
+# setup marker was once skipped whole, and the unfilled marker passed the setup gate.
 if ! xargs -0 sh -c '
   scan_work=$1
   shift
   for p do
+    if [ -L "$p" ]; then
+      if t=$(readlink "$p"); then
+        printf "symlink %s -> %s\n" "$p" "$t" >> "$scan_work/symlink-text"
+      else
+        printf "%s\n" "FAIL [scan]: cannot read the link text of the symlink $p." >&3
+        : > "$scan_work/scan_missing"
+      fi
+    fi
     if [ -L "$p" ] && [ -d "$p" ]; then
       printf "%s\n" "NOTE [scan]: skipped $p, a symlink to a directory; git tracks nothing inside it." >&3
       printf "%s\n" "             To ignore it, write it in .gitignore without a trailing slash." >&3
     elif [ -L "$p" ] && [ ! -e "$p" ]; then
-      printf "%s\n" "NOTE [scan]: skipped $p, a symlink whose target is missing; git tracks only the link text." >&3
+      printf "%s\n" "NOTE [scan]: skipped $p, a symlink whose target is missing; its link text is scanned instead." >&3
     elif [ ! -e "$p" ]; then
       printf "%s\n" "FAIL [scan]: $p is tracked but missing from the working tree (deleted, not staged)." >&3
       printf "%s\n" "             Run git rm -- \"$p\" to record the deletion, or git restore -- \"$p\"." >&3
@@ -495,6 +505,7 @@ if ! xargs -0 sh -c '
   exit 1
 fi
 mv "$filelist.kept" "$filelist"
+[ ! -e "$work/symlink-text" ] || printf '%s\0' "$work/symlink-text" >> "$filelist"
 [ ! -e "$work/scan_missing" ] || fail=1
 if [ ! -s "$filelist" ]; then
   echo "FAIL [scan]: the file list is EMPTY. A scan over nothing always passes, which is"

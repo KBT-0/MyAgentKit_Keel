@@ -70,7 +70,10 @@ breaks, everything keeps looking green.
   which run no trap, left it in the tree. The existing-file example in
   `scripts/boundary_selftests.sh` copies the tree (uncommitted edits included), runs the
   copy's gate, deletes the copy on exit and on INT/TERM, and ends the test on a signal; its
-  traps live in a subshell so they do not replace the surrounding self-test's. Prove it by
+  traps live in a subshell so they do not replace the surrounding self-test's. The copy
+  must lie outside the checkout (it refuses a TMPDIR inside it), and git inside the copy
+  must work on the copy: it drops an inherited GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE and
+  GIT_COMMON_DIR and checks `git rev-parse --show-toplevel`. Prove it by
   interrupting the injected test, SIGKILL included: the checkout's bytes and `git status`
   stay as they were.
 - **Test both directions** where a gate can produce false positives. A gate that always
