@@ -1,6 +1,6 @@
 ---
 name: myagentkit-review
-description: Request a fresh Claude review from Codex, fail over once to the configured Codex model if Claude is unavailable, and verify findings. Use for requested cross-model reviews or an explicitly authorized automatic review gate.
+description: Request a fresh Claude review from Codex, fail over once to the configured Codex model only when the user asked for a fallback, and verify findings. Use for requested cross-model reviews or an explicitly authorized automatic review gate.
 ---
 
 # Claude review from Codex
@@ -25,8 +25,9 @@ timer; two attempts may take about an hour plus local overhead. Use `REVIEW_TIME
 to honor an explicit wrapper/dispatcher timeout. Reviews have no default monetary budget cap:
 omit `--max-budget-usd` unless the owner explicitly specifies a cap. An explicit dollar
 cap does not promise equivalent subscription quota accounting. Do not automatically raise
-limits or choose an unconfigured model when a run fails. The dispatcher may try the other
-configured provider once on an operational failure. Never delegate from the child.
+limits or choose an unconfigured model when a run fails. With `--allow-fallback` (the wrapper's
+`--fallback`), the dispatcher may try the other configured provider once on an operational
+failure; pass it only when the user asked for a fallback. Never delegate from the child.
 
 ## Run and interpret
 
@@ -81,10 +82,14 @@ You, the host, enforce this task-level bound; the adapter has no cross-call sess
 Stop the delegation loop, not all useful work. If the dispatcher finishes without a valid
 review, record each attempt's `failure_kind`, `usage_record`, and the
 pending review in project state; then continue independent authorized work. Never treat the
-failure as approval or commit/push the protected diff. The dispatcher automatically tries
-the other configured provider once for quota, authentication, missing CLI, CLI failure,
-timeout, context, turn or output limits. A completed Reject or manual-check verdict does
-not trigger failover. Invalid evidence, missing guidance, changed scope, or persistence
+failure as approval or commit/push the protected diff. The dispatcher never replaces the
+requested reviewer on its own: only with `--allow-fallback` (passed when the user asked for
+a fallback) does it try the other configured provider once for quota, authentication,
+missing CLI, CLI failure, timeout, context, turn or output limits, and the substitute's
+evidence then opens with a `FALLBACK REVIEWER:` line. A CLI that rejects a required flag
+(`cli_unsupported`) never fails over; tell the user to upgrade it. A cancelled review
+stops the reviewer and is recorded as `cancelled`. A completed Reject or manual-check
+verdict does not trigger failover. Invalid evidence, missing guidance, changed scope, or persistence
 failure stops the chain. Never retry the exhausted chain in an agent loop.
 
 If the fallback model authored any of the patch, its review is advisory: verify useful

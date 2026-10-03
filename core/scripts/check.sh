@@ -204,7 +204,17 @@ self_test() {
   rm -f "$review_test_log"
 
   if [ -f "$BOUNDARY_SELFTESTS_FILE" ]; then
-    . "./$BOUNDARY_SELFTESTS_FILE"
+    # Sourced with its output captured (still this shell, so st_fail carries over): a
+    # boundary checks file with real checks whose self-test file ran NO case was skipped,
+    # and a skipped self-test is not a pass.
+    . "./$BOUNDARY_SELFTESTS_FILE" > "$work/boundary_selftests.out"
+    cat "$work/boundary_selftests.out"
+    if grep -v '^[[:space:]]*#' "$BOUNDARY_CHECKS_FILE" 2>/dev/null | grep -q '[^[:space:]]' &&
+       ! grep -q '^  ok   — ' "$work/boundary_selftests.out"; then
+      echo "  FAIL — $BOUNDARY_CHECKS_FILE has checks but $BOUNDARY_SELFTESTS_FILE ran no case"
+      echo "         (none printed '  ok   — <label>'). A self-test that did not run is not a pass."
+      st_fail=1
+    fi
   else
     echo "  FAIL — $BOUNDARY_SELFTESTS_FILE is missing: the project's boundary checks have"
     echo "         no negative tests, so they have never been observed rejecting anything."

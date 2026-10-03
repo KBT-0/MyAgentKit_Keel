@@ -5,9 +5,18 @@ import signal
 import selectors
 import subprocess
 import tempfile
+import threading
 import time
 
 DEFAULT_REVIEW_TIMEOUT = 1800
+# Ctrl-C, kill and a closed terminal or restarted host session. The reviewer runs in its own
+# session so none of these reach it; left at their defaults, SIGTERM and SIGHUP end this
+# process without its cleanup and the paid reviewer keeps running, unaccounted.
+CANCEL_SIGNALS = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
+
+
+def _cancel(signum, frame):
+    raise KeyboardInterrupt
 
 
 def run(command: list[str], prompt: str, repo: Path, timeout: int) -> dict:
@@ -15,6 +24,17 @@ def run(command: list[str], prompt: str, repo: Path, timeout: int) -> dict:
     if not 1 <= timeout <= 3600:
         raise ValueError("timeout must be 1..3600 seconds")
     started = time.monotonic()
+    previous = {}
+    if threading.current_thread() is threading.main_thread():
+        previous = {sig: signal.signal(sig, _cancel) for sig in CANCEL_SIGNALS}
+    try:
+        return _supervise(command, prompt, repo, timeout, started)
+    finally:
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
+
+
+def _supervise(command, prompt, repo, timeout, started):
     with tempfile.TemporaryFile() as inp, selectors.DefaultSelector() as selector:
         # A file gives even a slow-starting CLI the entire prompt and EOF. Repeated
         # communicate(input=None) after a short timeout can strand a partially written pipe.
@@ -29,10 +49,10 @@ def run(command: list[str], prompt: str, repo: Path, timeout: int) -> dict:
                     "termination": "unavailable", "duration_ms": 0}
         termination = None
         buffers = {"stdout": bytearray(), "stderr": bytearray()}
-        for name, stream in (("stdout", child.stdout), ("stderr", child.stderr)):
-            os.set_blocking(stream.fileno(), False)
-            selector.register(stream, selectors.EVENT_READ, name)
         try:
+            for name, stream in (("stdout", child.stdout), ("stderr", child.stderr)):
+                os.set_blocking(stream.fileno(), False)
+                selector.register(stream, selectors.EVENT_READ, name)
             while selector.get_map():
                 remaining = timeout - (time.monotonic() - started)
                 if remaining <= 0:
@@ -56,6 +76,10 @@ def run(command: list[str], prompt: str, repo: Path, timeout: int) -> dict:
                     child.wait(timeout=max(0, timeout - (time.monotonic() - started)))
                 except subprocess.TimeoutExpired:
                     termination = "timeout"
+        except KeyboardInterrupt:
+            # Cancelled: stop the group below and return what was captured, so the adapter
+            # records the attempt (it may have been billed) and the dispatcher never fails over.
+            termination = "cancelled"
         finally:
             # Also stop descendants left behind by a parent that already exited.
             try:

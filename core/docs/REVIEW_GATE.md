@@ -105,7 +105,7 @@ acceptance record instead of asserting the guarantee.
 ## Running it
 
 ```
-./scripts/review.sh [--uncommitted | --base <ref> | --commit <sha>] [--reviewer codex|claude]
+./scripts/review.sh [--uncommitted | --base <ref> | --commit <sha>] [--reviewer codex|claude] [--fallback]
 ```
 
 It collects the change set with git, hands it to a read-only REVIEWER carrying THIS
@@ -120,6 +120,12 @@ resolved reference and collected diff. A moving base reference invalidates an in
 review. Commit scope uses the delta against the first parent, including merge commits.
 Scopes containing assume-unchanged or skip-worktree index entries are rejected before
 launch; clear those flags and use a complete checkout so Git can expose every source change.
+Paths with an effective Git clean filter (a `filter` attribute whose driver has a `clean` or
+`process` command) or the `ident` attribute are rejected the same way: Git converts
+working-tree bytes before diffing them, so a filter could drop a file or single lines from
+the reviewer's payload while the fingerprint still hashed the raw bytes. No Git flag turns
+that conversion off for diff. A repository that relies on a filter (Git LFS included) reviews
+by hand with the template below, or removes the attribute for the review.
 Codex manual-check verdicts require a nonempty `## Manual checks` section describing the
 remaining checks; an absent section or a placeholder such as `None` is invalid evidence.
 The verdict declaration itself never counts as a manual check.
@@ -150,7 +156,9 @@ result, and evidence is published exclusively before usage can say completed.
 
 `./scripts/review.sh --self-test` exercises both adapters' offline failure cases and is
 included in `./scripts/check.sh --self-test`; these self-tests require Python 3.10+ for
-both providers. Missing tests or missing completion evidence fail. Exit 0 from a reviewer means collection
+both providers. Missing tests or missing completion evidence fail, and so does any one of
+its suites running fewer than its minimum number of tests: a combined total let an emptied
+suite hide behind a grown one. Exit 0 from a reviewer means collection
 completed, not that the verdict is Accept. Missing final evidence fails closed.
 
 **The output is unverified INPUT.** The requesting agent verifies every finding against the
@@ -181,19 +189,34 @@ group and preserves captured partial output. Through the wrapper, `REVIEW_TIMEOU
 sets the timeout for each provider, with the same 1800-second default. This is a total
 wall-clock deadline, not an idle timer: active work can continue beyond ten minutes, but
 is still stopped at thirty minutes by default. Claude's final-JSON output does not provide
-reliable startup/activity detection. Two timed-out default attempts can take about one hour
-plus local processing and quota-observation overhead. There is no purchase
+reliable startup/activity detection. With `--fallback`, two timed-out default
+attempts can take about one hour plus local processing and quota-observation overhead. There is no purchase
 of extra credits and no retry of the same provider.
 
-The wrapper and bundled `review_dispatch.py` automatically try the other configured model
-once after an operational failure: quota, authentication, timeout, missing CLI, CLI error,
-context exhaustion, turn/budget exhaustion, or output limit. Both model pins remain owned
+**The requested reviewer is never silently replaced.** The reviewer is usually requested
+because the other model wrote the patch, so a substitute can be the author reviewing its own
+work under a record that looks valid. Without `--fallback` (dispatcher: `--allow-fallback`),
+a reviewer that cannot run fails the review: nonzero exit, its `failure_kind`, and a
+`FAIL [review]: requested reviewer ... did not produce a review` line. With `--fallback`,
+the wrapper and bundled `review_dispatch.py` try the other configured model once after an
+operational failure: quota, authentication, timeout, missing CLI, CLI error, context
+exhaustion, turn/budget exhaustion, or output limit. The substitute's archived evidence
+then opens with a `FALLBACK REVIEWER:` line naming the requested reviewer and its failure,
+its usage record carries `review_fallback_from`, and the run prints a `FALLBACK [review]`
+line. A CLI that rejects a flag the read-only run requires (`cli_unsupported`, typically an
+outdated CLI) fails every run the same way; it is a setup fault, never routed to the other
+reviewer even with `--fallback`, and the fix is upgrading the CLI, not dropping the flag. Both model pins remain owned
 by project setup (`REVIEW_CLAUDE_MODEL` / `REVIEW_CODEX_MODEL` override them). An absent or
 invalid alternate pin stops failover rather than choosing a model. Direct adapter calls
 remain single-provider. A completed Reject or manual-check verdict is a result, not an
 availability failure; it never triggers another provider. Invalid evidence, wrong model
 attestation, invalid scope, missing guidance, changed checkout, and evidence/usage storage
 failures stop the chain. The original scope is checked between attempts and at completion.
+
+**Cancelling a review stops the reviewer.** Ctrl-C, SIGTERM and SIGHUP (a closed terminal
+or a restarted host session) stop the reviewer's whole process group, record the attempt
+as `cancelled` with its partial output in a usage record, and never fail over. A SIGKILL to
+the review process itself cannot be handled; the reviewer then runs on to its own timeout.
 
 Each attempt retains separate evidence and usage. Immutable checkpoints under
 `.myagentkit/usage/chains/<chain-id>-<attempt-count>.json` link the attempts; these are not

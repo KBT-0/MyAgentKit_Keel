@@ -100,6 +100,13 @@ def report(stamp: str, header: dict, verdict: str | None, body: str) -> str:
         else:
             lines.append(line)
     body = '\n'.join(lines)
+    # A substitute reviewer says so in its own record, not only in the dispatcher's output:
+    # the evidence file is what a later reader opens, and it must not pass for the requested one.
+    fallback = os.environ.get("MYAGENTKIT_REVIEW_FALLBACK_FROM")
+    if fallback:
+        body = ("FALLBACK REVIEWER: the requested reviewer " + fallback + " did not complete; "
+                "this " + str(header["reviewer"]) + " review ran because --fallback was passed. "
+                "Check that " + str(header["reviewer"]) + " did not author the patch.\n\n" + body)
     rows = "".join("| %s | %s |\n" % (key, "-" if header[key] in (None, "") else header[key])
                    for key in REVIEW_FIELDS)
     text = ("# Review — " + stamp + "\n\nThis is immutable evidence, not approval. The verdict is\n"
@@ -160,6 +167,11 @@ def failure(provider: str, execution: dict, values: list[dict]) -> str | None:
         return "budget_or_turn_limit"
     if any(word in text for word in ("auth", "login", "401", "403")):
         return "authentication"
+    # A CLI that rejects a required flag fails identically on every run. It is a setup fault,
+    # never availability, so it must not be routed around to another reviewer.
+    stderr = str(execution.get("stderr", "")).lower()
+    if execution.get("exit_code") != 0 and ("unknown option" in stderr or "unexpected argument" in stderr):
+        return "cli_unsupported"
     return "cli_error" if errors or execution.get("exit_code") != 0 else None
 
 
@@ -199,6 +211,7 @@ def record(repo: Path, provider: str, model: str, requester: str, task: dict,
     value = {"schema_version": 1, "invocation_id": stamp,
              "review_chain_id": os.environ.get("MYAGENTKIT_REVIEW_CHAIN_ID"),
              "review_attempt": os.environ.get("MYAGENTKIT_REVIEW_ATTEMPT"),
+             "review_fallback_from": os.environ.get("MYAGENTKIT_REVIEW_FALLBACK_FROM"),
              "recorded_at": datetime.now(timezone.utc).isoformat(),
              "requester_reported": requester, "callee": provider, "model_requested": model,
              "task": task, "status": status, "failure_kind": reason,

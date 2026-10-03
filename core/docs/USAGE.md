@@ -88,8 +88,9 @@ not unknown spend. Reported cost/token accounting remains unchanged. Patch propo
 their separate three-dollar default; timeout, turn and output protections still apply.
 
 Individual adapters never automatically retry, buy credits, switch models, or promote a
-failed review to approval. The wrapper's dispatcher may try the other configured model
-once after operational unavailability. Each attempt keeps its own `.myagentkit/usage/*.json`
+failed review to approval. Only when `--fallback` is passed does the wrapper's
+dispatcher try the other configured model once after operational unavailability; that
+record carries `review_fallback_from`. A cancelled attempt is recorded as `cancelled`. Each attempt keeps its own `.myagentkit/usage/*.json`
 record, with `review_chain_id` and `review_attempt` linking it to the invocation. Immutable
 checkpoints under `.myagentkit/usage/chains/` contain references to these records, not
 additional token/cost charges. The usage reporter reads only top-level provider records;

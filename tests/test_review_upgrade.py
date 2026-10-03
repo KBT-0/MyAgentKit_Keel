@@ -29,7 +29,7 @@ class ReviewUpgradeTests(unittest.TestCase):
             shutil.copyfile(ROOT / 'core/.gitignore', project / '.gitignore')
             cases = ('test_an_unpinned_model_is_refused_in_both_directions',
                      'test_default_reviewer_is_claude_and_codex_remains_explicit',
-                     'test_unavailable_claude_automatically_uses_selected_codex',
+                     'test_unavailable_claude_uses_codex_only_with_fallback',
                      'test_unconfigured_alternate_does_not_choose_a_default_model')
             result = subprocess.run([sys.executable, '-B', '-m', 'unittest',
                                      *('test_claude_bridge.BridgeTests.' + name for name in cases)],

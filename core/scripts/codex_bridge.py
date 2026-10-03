@@ -70,7 +70,10 @@ def main(argv=None, result_sink=None):
         capture_quota = os.environ.get("MYAGENTKIT_CAPTURE_QUOTA", "1") == "1"
         before = codex_quota.snapshot(command[0], repo) if capture_quota else {"status": "disabled"}
         execution = agent_process.run(command, prompt, repo, timeout)
-        after = codex_quota.snapshot(command[0], repo) if capture_quota else {"status": "disabled"}
+        # A cancelled review must stop now, not start another CLI process to read quota.
+        after = ({"status": "disabled"} if not capture_quota else
+                 {"status": "skipped: review cancelled"} if execution["termination"] == "cancelled"
+                 else codex_quota.snapshot(command[0], repo))
         execution["account_quota_snapshots"] = {"before": before, "after": after,
                                                "per_call_attribution": "unproven"}
         values = agent_usage.decode("codex", execution["stdout"])

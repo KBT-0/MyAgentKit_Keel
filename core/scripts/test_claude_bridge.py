@@ -31,6 +31,7 @@ assert os.environ['MYAGENTKIT_DELEGATION_DEPTH'] == '1'
 prompt = sys.stdin.read()
 case = os.environ.get('FIXTURE_CASE', 'accept')
 model = args[args.index('--model') + 1]
+if case == 'unknown_flag': sys.stderr.write("error: unknown option '--restricted'\\n"); sys.exit(1)
 if case == 'no_budget': assert '--max-budget-usd' not in args
 if case == 'malformed_envelope': print('{}'); sys.exit(0)
 if case == 'explicit_budget': assert args[args.index('--max-budget-usd') + 1] == '7.5'
@@ -79,6 +80,15 @@ if case == 'questions':
     result['structured_output'] = {'summary': 'Decision needed', 'patch': '', 'checks': [],
                                   'questions': ['Which public contract is intended?']}
 print(json.dumps(result))
+'''
+
+HANGING_CLI = '''#!/usr/bin/env python3
+import os, subprocess, sys, time
+sys.stdin.read()
+alive = os.open(os.environ['ALIVE_FIFO'], os.O_WRONLY)
+subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'], pass_fds=(alive,))
+os.write(alive, b'started\\n')
+time.sleep(60)
 '''
 
 
@@ -195,6 +205,32 @@ class BridgeTests(unittest.TestCase):
         self.assertFalse(marker.exists())
         self.git('update-index', '--assume-unchanged', 'file.py')
         with self.assertRaisesRegex(bridge.BridgeError, 'index flags'):
+            bridge.snapshot(self.repo, 'uncommitted', None)
+
+    def test_clean_filters_and_ident_cannot_hide_working_tree_source(self):
+        # A clean filter rewrites working-tree bytes before Git diffs them, so the payload
+        # lost the unsafe line (or file) while the fingerprint still hashed the raw bytes.
+        (self.repo / 'file.py').write_text('SAFE\n')
+        (self.repo / '.gitattributes').write_text('*.py filter=hide\n')
+        self.commit_fixture('Clean filter fixture')
+        (self.repo / 'file.py').write_text('SAFE\nUNSAFE_PARTIAL_HUNK\n')
+        (self.repo / 'bypass.py').write_text('UNSAFE_WHOLE_FILE\n')
+        (self.repo / 'visible.txt').write_text('visible change\n')
+        diff = bridge.snapshot(self.repo, 'uncommitted', None)[2]
+        self.assertIn('UNSAFE_PARTIAL_HUNK', diff)   # control: an unconfigured driver filters nothing
+        self.assertIn('UNSAFE_WHOLE_FILE', diff)
+        self.git('config', 'filter.hide.clean', "sed '/UNSAFE/d'")
+        with self.assertRaisesRegex(bridge.BridgeError, 'clean filter or ident attribute on bypass.py'):
+            bridge.snapshot(self.repo, 'uncommitted', None)
+        for provider, variable in (('claude', 'CLAUDE_CLI_BIN'), ('codex', 'REVIEW_CLI_BIN')):
+            with self.subTest(provider=provider):
+                result, chain = self.dispatch_result(provider, **{variable: str(self.root / 'NOT-LAUNCHED')})
+                self.assertEqual(result.returncode, 2, result.stdout)
+                self.assertIsNone(chain)
+                self.assertIn('clean filter or ident attribute', result.stdout)
+        self.git('config', '--unset', 'filter.hide.clean')
+        (self.repo / '.gitattributes').write_text('file.py ident\n')
+        with self.assertRaisesRegex(bridge.BridgeError, 'clean filter or ident attribute on file.py'):
             bridge.snapshot(self.repo, 'uncommitted', None)
 
     def test_direct_adapters_reject_a_base_ref_that_moves_during_review(self):
@@ -786,8 +822,8 @@ if case == 'archive_failure':
         self.assertEqual(explicit.returncode, 0, explicit.stdout + explicit.stderr)
         self.assertEqual(len(list((self.repo / 'docs/reviews').glob('*-codex-review.md'))), 1)
 
-    def test_unavailable_claude_automatically_uses_selected_codex(self):
-        result = self.run_wrapper('--uncommitted', FIXTURE_CASE='quota',
+    def test_unavailable_claude_uses_codex_only_with_fallback(self):
+        result = self.run_wrapper('--uncommitted', '--fallback', FIXTURE_CASE='quota',
                                   CLAUDE_CLI_BIN=str(self.fixture),
                                   REVIEW_CLAUDE_MODEL='claude-opus-5',
                                   REVIEW_CODEX_MODEL='fixture-codex-model',
@@ -796,13 +832,18 @@ if case == 'archive_failure':
         reports = list((self.repo / 'docs/reviews').glob('*-review.md'))
         self.assertEqual(len(reports), 2)
         self.assertEqual({header_of(p)['status'] for p in reports}, {'failed', 'completed'})
+        substitute = next(p for p in reports if header_of(p)['reviewer'] == 'codex')
+        self.assertIn('FALLBACK REVIEWER: the requested reviewer claude (quota) did not complete',
+                      substitute.read_text())
+        self.assertIn('FALLBACK [review]: this review is by codex, not the requested claude',
+                      result.stdout)
 
-    def dispatch_result(self, primary='claude', **extra):
+    def dispatch_result(self, primary='claude', fallback=True, **extra):
         env = dict(CLAUDE_CLI_BIN=str(self.fixture), REVIEW_CLAUDE_MODEL='claude-opus-5',
                    REVIEW_CODEX_MODEL='fixture-codex-model', REVIEW_CLI_BIN=str(self.build_fake_codex()),
                    MYAGENTKIT_REQUESTER='codex/fixture-codex-model', MYAGENTKIT_TASK_ID='fallback-task')
         env.update(extra)
-        result = self.run_wrapper('--reviewer', primary, **env)
+        result = self.run_wrapper('--reviewer', primary, *(['--fallback'] if fallback else []), **env)
         line = next((s.removeprefix('review dispatch: ') for s in result.stdout.splitlines()
                      if s.startswith('review dispatch: ')), None)
         return result, json.loads(line) if line else None
@@ -821,8 +862,12 @@ if case == 'archive_failure':
             headers = [header_of(a['evidence']) for a in chain['attempts']]
             self.assertEqual(headers[0]['fingerprint'], headers[1]['fingerprint'])
             self.assertEqual(headers[0]['diff_sha256'], headers[1]['diff_sha256'])
+            evidence = [Path(a['evidence']).read_text() for a in chain['attempts']]
+            self.assertNotIn('FALLBACK REVIEWER', evidence[0])
+            self.assertIn('FALLBACK REVIEWER: the requested reviewer %s (quota)' % primary, evidence[1])
             for i, attempt in enumerate(chain['attempts'], 1):
                 usage = json.loads(Path(attempt['usage_record']).read_text())
+                self.assertEqual(usage['review_fallback_from'], None if i == 1 else primary + ' (quota)')
                 self.assertEqual(usage['review_chain_id'], chain['chain_id'])
                 self.assertEqual(usage['review_attempt'], str(i))
                 self.assertEqual(usage['task']['id'], 'fallback-task')
@@ -842,6 +887,85 @@ if case == 'archive_failure':
             result, chain = self.dispatch_result(provider, **{variable: str(self.root / 'missing-cli')})
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertEqual(chain['attempts'][0]['failure_kind'], 'unavailable')
+
+    def test_a_requested_reviewer_is_never_replaced_without_fallback(self):
+        # The requested reviewer is usually the model that did NOT write the patch. Swapping
+        # it silently for the other one can mean the author reviewing itself under a valid-
+        # looking record, so without --fallback an unavailable reviewer fails the review.
+        for primary, case in (('claude', {'FIXTURE_CASE': 'quota'}),
+                              ('codex', {'CODEX_FIXTURE_CASE': 'quota'})):
+            with self.subTest(primary=primary):
+                result, chain = self.dispatch_result(primary, fallback=False, **case)
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertEqual([a['reviewer'] for a in chain['attempts']], [primary])
+                self.assertIn('not requested', chain['fallback_blocked'])
+                self.assertIn('FAIL [review]: requested reviewer %s did not produce a review' % primary,
+                              result.stdout)
+        # A CLI that rejects a flag the read-only run needs fails the same way every time:
+        # it is a setup fault, so not even --fallback routes around it.
+        result, chain = self.dispatch_result(FIXTURE_CASE='unknown_flag')
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertEqual([a['reviewer'] for a in chain['attempts']], ['claude'])
+        self.assertEqual(chain['failure_kind'], 'cli_unsupported')
+        self.assertIn('upgrade the CLI', result.stdout)
+
+    def test_cancelled_review_stops_the_reviewer_records_usage_and_never_fails_over(self):
+        # SIGTERM and SIGHUP used to end the dispatcher without its cleanup, leaving the paid
+        # reviewer's process group running; Ctrl-C lost the failed attempt's usage record.
+        import select
+        import signal
+        import time
+        hanging = self.root / 'hanging-cli'
+        hanging.write_text(HANGING_CLI)
+        hanging.chmod(0o755)
+        for provider, sig in (('claude', signal.SIGINT), ('claude', signal.SIGTERM),
+                              ('claude', signal.SIGHUP), ('codex', signal.SIGINT),
+                              ('codex', signal.SIGTERM)):
+            with self.subTest(provider=provider, sig=sig.name):
+                fifo = self.root / ('alive-%s-%s' % (provider, sig.name))
+                os.mkfifo(fifo)
+                reader = os.open(fifo, os.O_RDONLY | os.O_NONBLOCK)
+                self.addCleanup(os.close, reader)
+                scripts = self.install_wrapper()
+                clis = dict(CLAUDE_CLI_BIN=str(self.fixture), REVIEW_CLI_BIN=str(self.build_fake_codex()))
+                clis['CLAUDE_CLI_BIN' if provider == 'claude' else 'REVIEW_CLI_BIN'] = str(hanging)
+                env = self.review_env(ALIVE_FIFO=str(fifo), REVIEW_CLAUDE_MODEL='claude-opus-5',
+                                      REVIEW_CODEX_MODEL='fixture-codex-model', **clis)
+                review = subprocess.Popen(['sh', str(scripts / 'review.sh'), '--reviewer', provider, '--fallback'],
+                                          env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                self.addCleanup(lambda p=review: p.poll() is None and p.kill())
+
+                def read_until(done):
+                    deadline, seen = time.monotonic() + 20, b''
+                    while time.monotonic() < deadline:
+                        select.select([reader], [], [], 0.2)
+                        try:
+                            chunk = os.read(reader, 64)
+                        except BlockingIOError:
+                            continue
+                        seen += chunk
+                        if done(seen, chunk):
+                            return True
+                        if not chunk:
+                            if review.poll() is not None:
+                                return False   # the review ended before its reviewer started
+                            time.sleep(0.05)   # no writer has opened the FIFO yet
+                    return False
+
+                self.assertTrue(read_until(lambda seen, chunk: b'started' in seen), 'reviewer never started')
+                review.send_signal(sig)
+                output = review.communicate(timeout=30)[0]
+                # EOF on the FIFO means no process still holds it: the CLI and its child are gone.
+                self.assertTrue(read_until(lambda seen, chunk: chunk == b''),
+                                'the reviewer process group outlived the cancelled review')
+                self.assertNotEqual(review.returncode, 0, output)
+                chain = json.loads(next(line.removeprefix('review dispatch: ') for line in output.splitlines()
+                                        if line.startswith('review dispatch: ')))
+                self.assertEqual([a['reviewer'] for a in chain['attempts']], [provider])
+                self.assertEqual(chain['failure_kind'], 'cancelled')
+                usage = json.loads(Path(chain['attempts'][0]['usage_record']).read_text())
+                self.assertEqual((usage['status'], usage['failure_kind']), ('failed', 'cancelled'))
+                self.assertEqual(verdicts_of(chain['attempts'][0]['evidence']), [])
 
     def test_both_unavailable_stop_after_two_and_keep_review_pending(self):
         result, chain = self.dispatch_result(FIXTURE_CASE='quota', CODEX_FIXTURE_CASE='quota')
@@ -938,11 +1062,15 @@ if case == 'archive_failure':
 if __name__ == "__main__":
     from test_agent_usage import UsageTests
     from test_codex_quota import QuotaTests
-    suite = unittest.defaultTestLoader.loadTestsFromTestCase(BridgeTests)
-    suite.addTests(unittest.defaultTestLoader.loadTestsFromTestCase(UsageTests))
-    suite.addTests(unittest.defaultTestLoader.loadTestsFromTestCase(QuotaTests))
-    if suite.countTestCases() < 59:
-        raise SystemExit("FAIL: expected at least fifty-nine review and usage regression tests")
+    # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide
+    # inside the sum and the self-test passed without running its checks.
+    suite = unittest.TestSuite()
+    for case, minimum in ((BridgeTests, 47), (UsageTests, 12), (QuotaTests, 3)):
+        tests = unittest.defaultTestLoader.loadTestsFromTestCase(case)
+        if tests.countTestCases() < minimum:
+            raise SystemExit("FAIL: %s has %d of at least %d tests; a suite that did not run is "
+                             "not a pass" % (case.__name__, tests.countTestCases(), minimum))
+        suite.addTests(tests)
     result = unittest.TextTestRunner(verbosity=2).run(suite)
     if not result.wasSuccessful() or result.skipped:
         raise SystemExit(1)
