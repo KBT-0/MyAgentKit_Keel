@@ -91,6 +91,19 @@ If the project has no such jobs, delete both files instead of filling them.
   notice cannot tell that apart from a park on a background job (above). The LEAD closes
   it: read the result file, then `tmux kill-session -t NAME`. The brief says so, and
   `spawn_worker.sh` prints the line when it starts the session.
+- **A worktree-isolated agent refuses any shell command it cannot prove keeps git inside
+  its worktree**, and each refusal costs a turn (a project saw about 177 across 40 worker
+  transcripts). Refused: `$(...)` or a variable around a program, loops, `sh -c` or `source`
+  of a string, `flock <lock> <cmd>` when the command runs git (`check.sh` does), `cd` to the
+  main checkout before git. The brief's shape: one plain command per call, anything
+  repeated or compound in a script file run as `sh that-file`, merging left to the lead in
+  the main tree. `worker.md` says so; keep the line when you edit the definition.
+- **A sub-agent is refused when it writes a report file.** Claude Code answers "Subagents
+  should return findings as text, not write report files" (eight refused `REPORT.md`
+  writes in one project; `notes.md` and code files were not refused). The advice to end a
+  brief with a result FILE is for a separate spawned session. A sub-agent's brief asks for a
+  short final message and lets it write only logs, tables and captures to files
+  (`docs/WORKFLOW.md`, "Worker cost", rule 7).
 - **Every message to an idle session is a full-context turn.** Ask the brief for a result
   FILE, subscribe once with `notify_when_idle`, and read the file.
 

@@ -13,7 +13,8 @@
 # Why it exists: every trap below made a gate fail on a machine for a reason unrelated to
 # the change being tested, and each one looked like a code failure and cost a session to
 # diagnose — a hook that could not execute, an older Node resolved from a hook's PATH, a
-# missing second CLI, a commit with no author, a cache npm could not write to.
+# missing second CLI, a commit with no author, a cache npm could not write to, a checkout
+# on a Windows drive under WSL, CRLF in a script, a node_modules symlink git does not ignore.
 set -u
 cd "$(dirname "$0")/.." || exit 1
 missing=0
@@ -30,19 +31,43 @@ case "$toolchain_path" in
   *) PATH="$toolchain_path:$PATH"; export PATH ;;
 esac
 
+# --- a checkout on a Windows drive under WSL -----------------------------------------
+# /mnt/<drive> is the Windows filesystem seen from WSL: git converts line endings to CRLF,
+# the scripts then die in sh, node_modules fills with Windows-native binaries, and the gate
+# runs many times slower. DOCTOR_CHECKOUT and DOCTOR_PROC_VERSION exist for the test only.
+here=${DOCTOR_CHECKOUT:-$(pwd -P)}
+case "$here" in
+  /mnt/[a-zA-Z]|/mnt/[a-zA-Z]/*)
+    if grep -qi microsoft "${DOCTOR_PROC_VERSION:-/proc/version}" 2>/dev/null; then
+      miss "the checkout $here is on a Windows drive under WSL (CRLF scripts, Windows-native binaries, a much slower gate)" "clone the repository into the WSL home (git clone <url> ~/<name>) and work there"
+    fi ;;
+esac
+
 # --- the executable bit, on disk AND in the index -------------------------------------
 # On disk for this machine; in the index for CI and the next clone, where a 100644 script
 # dies with exit 126 although it ran fine here (docs/GOTCHAS.md). Only files with a #! line:
-# the boundary files are sourced, not executed, and need no bit.
+# the boundary files are sourced, not executed, and need no bit. The same files must have
+# LF line endings: "#!/bin/sh<CR>" is a bad interpreter and "set -eu<CR>" an invalid option.
 for f in scripts/*.sh .githooks/* .claude/hooks/*.sh; do
   [ -f "$f" ] || continue
   first=""; IFS= read -r first < "$f" || true
   case "$first" in '#!'*) ;; *) continue ;; esac
+  if grep -q "$(printf '\r')" "$f"; then
+    miss "$f has CRLF line endings" "tr -d '\\r' < $f > $f.lf && cat $f.lf > $f && rm $f.lf; git config core.autocrlf input"
+  fi
   mode=$(git ls-files -s -- "$f" 2>/dev/null | cut -d' ' -f1)
   if [ ! -x "$f" ] || [ "$mode" = 100644 ]; then
     miss "$f is not executable (disk or git index)" "chmod +x $f && git update-index --chmod=+x $f"
   fi
 done
+
+# --- node_modules as a symlink git does not ignore -----------------------------------
+# "node_modules/" (trailing slash) matches directories only, and git does not treat a
+# symlink as one: the link shows as an untracked file and the gate's scanners fail on it.
+# Asked of git itself, so any rule that does ignore it counts.
+if [ -L node_modules ] && ! git check-ignore -q node_modules 2>/dev/null; then
+  miss "node_modules is a symlink that .gitignore does not ignore (a pattern 'node_modules/' matches directories only)" "write node_modules without the trailing slash in .gitignore"
+fi
 
 # --- git wiring and identity ---------------------------------------------------------
 [ "$(git config core.hooksPath 2>/dev/null)" = .githooks ] ||

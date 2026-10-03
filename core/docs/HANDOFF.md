@@ -14,6 +14,8 @@ or to anything produced from it.
 3. **Constraints:** restate the relevant `AGENTS.md` rules verbatim — the one-module rule,
    the boundary that applies here, no untested core code, no drive-by refactors. Do not
    write "follow AGENTS.md"; the target will not weigh a pointer the same as a quoted rule.
+   A task with web access also quotes the web rule: no personal data in any request, and the
+   generic User-Agent to use (`docs/WORKFLOW.md`, "Web requests carry no personal data").
 4. **Acceptance:** what the diff must and must NOT contain, and which gate follows (a risky
    area means `docs/REVIEW_GATE.md`, fresh session).
 5. **Routing check:** does this task belong on the model it is being sent to? Judgement work

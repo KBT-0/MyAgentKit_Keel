@@ -44,6 +44,11 @@ Keep any re-include block at the very END of `.gitignore` and mark it as such. N
 by reading the file and reasoning about it: run `git check-ignore -v <path>`, which names
 the winning rule and its line number.
 
+A trailing slash matters too: `node_modules/` matches directories only, and git does not
+count a symlink as one. A `node_modules` symlinked into a throwaway worktree is then an
+untracked, non-ignored file and the gate's scanners fail on it. Write `node_modules`
+without the slash when the directory may ever be a symlink (`scripts/doctor.sh` flags it).
+
 ## The executable bit has to be put in the git index by hand
 
 On filesystems where `core.filemode` is `false` — Windows mounts, some network shares — git
@@ -90,3 +95,32 @@ screen shows DONE" when the task text itself contains DONE.
 Better still, do not wait at all: an agent that starts the job in the background is told
 when it exits, and every waiting turn costs a full read of its context
 (`docs/WORKFLOW.md`, "Worker cost").
+
+## An agent puts the user's e-mail into a web request
+
+Some APIs ask clients to put contact details in the `User-Agent` header, and an agent that
+has the owner's e-mail address in its session context uses it. In one project five research
+agents did, in up to thirteen requests each, before a rule was added to their briefs. The
+address then sits in a third party's logs and cannot be recalled.
+
+No personal data in any web request: when an API wants contact details, send a generic
+project User-Agent or stop and ask. A brief that sends an agent to the web repeats the rule
+and names that User-Agent (`docs/WORKFLOW.md`, "Web requests carry no personal data").
+
+## A red gate that passes on re-run is a finding, not a pass
+
+A full gate run failed on a deadline assertion in one test; the file passed alone and the
+next full gate passed with no change. Re-running until `CHECK: PASS` deletes the failing
+test, its error line and the load it ran under, so a real race is never seen again until it
+bites in CI. Run it once more, and write down what failed, the retry count, what else was
+running (another gate, a self-test, a review) and the suspected cause in `docs/STATE.md` or
+the operation file before committing (`docs/WORKFLOW.md`, "A red gate that passes on
+re-run").
+
+## A checkout under `/mnt/<drive>` in WSL
+
+A repository on a Windows drive seen from WSL gets CRLF line endings from git's autocrlf
+(scripts then die with `\r: command not found` or a bad interpreter), installs
+Windows-native binaries into `node_modules`, and runs its gate many times slower than on the
+Linux filesystem. Clone into the WSL home instead. `scripts/doctor.sh` names the path and
+flags a CR in a script.
