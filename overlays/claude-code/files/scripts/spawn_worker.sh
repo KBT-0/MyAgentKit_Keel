@@ -54,7 +54,10 @@ cmd="claude -n '$name'"
 [ -n "$settings" ] && cmd="$cmd --settings '$settings'"
 [ -n "$tools" ]    && cmd="$cmd --allowedTools '$tools'"
 
-tmux new-session -d -s "$name" -c "$PWD" -x 200 -y 50 "$cmd"
+# `cd` first: tmux hands new sessions the PWD of whichever client last created one, and
+# the tool exits with "the current working directory was deleted" when that folder (a
+# removed worktree, say) is gone, whatever -c says.
+tmux new-session -d -s "$name" -c "$PWD" -x 200 -y 50 "cd '$PWD' && exec $cmd"
 
 # Wait for the input line: the TUI shows its prompt arrow at the start of a line once ready
 # (v2.1.285 follows the arrow with a NO-BREAK space, so the match is on the arrow alone)
