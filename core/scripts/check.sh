@@ -14,6 +14,21 @@
 # test has not been proven to fail — it has only been seen passing, which is not the same
 # thing and never was.
 #
+# EXIT CODES: 0 pass, 1 fail, 2 usage, 75 NOT RUN — another gate run held this checkout's
+# lock for longer than GATE_LOCK_WAIT=<seconds> allowed (unset: wait without limit, which is
+# what manual, CI and commit-hook runs want; the Stop hook sets about 500 so it answers
+# before its own timeout kills it). A caller reports 75 as "gate did not run", never as a
+# pass and never as a gate failure.
+#
+# A SELF-TEST CASE NEVER CHANGES A TRACKED FILE, and writes nothing else inside the working
+# tree when it can avoid it. Point the gate at a synthetic file outside the tree through an
+# overridable variable (STATE_FILE, GATE_SELFTEST_EXTRA_FILE below), or run the case against
+# a disposable copy of the tree. A file injected into the tree is seen by a concurrent
+# `git add -A` and by another session's edits, and a killed self-test leaves it behind. The
+# gate lock below keeps other gate runs from seeing it; nothing else does. A case that must
+# place a file where the project's own globs find it removes it, interrupted or not
+# (scripts/boundary_selftests.sh shows how).
+#
 # EVERY CHECK BELOW MUST FAIL ON ABSENT EVIDENCE. A missing input file, a scanner that could
 # not run, a command that was never configured: all FAIL. Silence is not success. Five
 # separate paths in an earlier version of this script violated that rule and reported PASS
@@ -43,8 +58,57 @@ BOUNDARY_CHECKS_FILE="${BOUNDARY_CHECKS_FILE:-scripts/boundary_checks.sh}"
 BOUNDARY_SELFTESTS_FILE="${BOUNDARY_SELFTESTS_FILE:-scripts/boundary_selftests.sh}"
 
 work=$(mktemp -d) || { echo "FAIL [gate]: cannot create a temp dir; refusing to run blind."; exit 1; }
-trap 'rm -rf "$work"' EXIT INT TERM
+lock=""
+# Only our own lock: after a stale reclaim race another run may hold this path.
+cleanup() {
+  rm -rf "$work"
+  [ -z "$lock" ] || [ "$(readlink "$lock" 2>/dev/null)" != "$$" ] || rm -f "$lock"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 filelist="$work/files"
+
+# ONE GATE RUN PER CHECKOUT AT A TIME. The Stop hook, the commit hook and a manual run can
+# start together, and a project's build command usually writes one fixed build directory:
+# two runs sharing it configured, built and ran tests over each other and one reported FAIL
+# for a tree that passes alone. A second run therefore WAITS here; it never fails for this.
+# The self-test holds the lock for its whole run, so no other gate sees a case mid-injection.
+# Nested runs (the self-test's own `sh "$0"`, the commit hook it calls) inherit the lock
+# through GATE_LOCK_HELD, which names the lock path, so a gate in another checkout started
+# from the build command still takes its own lock. The lock is a symlink whose target is the
+# holder's pid: created in one atomic step, it is never seen without its owner.
+case "${GATE_LOCK_WAIT:-}" in
+  *[!0-9]*) echo "FAIL [lock]: GATE_LOCK_WAIT must be a number of seconds, got '$GATE_LOCK_WAIT'."; exit 1 ;;
+esac
+lock_path=$(git rev-parse --git-path check.lock 2>/dev/null) || lock_path=.check.lock
+case "$lock_path" in /*) ;; *) lock_path="$(pwd -P)/$lock_path" ;; esac
+if [ "${GATE_LOCK_HELD:-}" != "$lock_path" ]; then
+  # A directory here (hand-made, or a mkdir-style lock) would let `ln -s` succeed INSIDE it,
+  # so every run would "take" the lock and none would release it.
+  if [ -d "$lock_path" ]; then echo "FAIL [lock]: $lock_path is a directory, not a gate lock; delete it."; exit 1; fi
+  waited=0
+  until ln -s "$$" "$lock_path" 2>/dev/null; do
+    holder=$(readlink "$lock_path" 2>/dev/null) || holder=""
+    # A dead holder (killed, power loss) is stale. An empty holder means the lock vanished
+    # between our attempt and the read; the next attempt settles it.
+    # ponytail: two waiters reclaiming the same stale lock in the same second can both
+    # run; a pid-checked rename would close that if it is ever seen.
+    if [ -n "$holder" ] && ! kill -0 "$holder" 2>/dev/null; then
+      echo "NOTE [lock]: removing a stale gate lock left by pid $holder, which no longer runs."
+      rm -f "$lock_path"; continue
+    fi
+    if [ -n "${GATE_LOCK_WAIT:-}" ] && [ "$waited" -ge "$GATE_LOCK_WAIT" ]; then
+      echo "NOT RUN [lock]: pid ${holder:-unknown} has held $lock_path for ${waited}s; GATE_LOCK_WAIT=$GATE_LOCK_WAIT ran out."
+      exit 75
+    fi
+    [ $((waited % 30)) -ne 0 ] ||
+      echo "NOTE [lock]: another gate run (pid ${holder:-unknown}) has held $lock_path for ${waited}s; waiting for it (if pid ${holder:-unknown} is not a gate run, remove $lock_path)."
+    sleep 1; waited=$((waited + 1))
+  done
+  lock=$lock_path
+  GATE_LOCK_HELD=$lock_path; export GATE_LOCK_HELD
+fi
 
 # ===========================================================================
 # NEGATIVE TESTS — the gates must be proven to REJECT, not merely to accept.
@@ -57,8 +121,9 @@ filelist="$work/files"
 # ===========================================================================
 self_test() {
   st_fail=0
-  inj=".check-selftest-injected.md"
-  trap 'rm -rf "$work"; rm -f "$inj"' EXIT INT TERM
+  # Outside the tree, added to the scanners' input through a test switch (see the file
+  # list below), so a concurrent `git add -A` or a killed self-test cannot leave it behind.
+  inj="$work/injected.md"
 
   # A red tree cannot prove that a gate turns red: everything would "fail correctly".
   if ! baseline=$(sh "$0" 2>&1); then
@@ -95,8 +160,7 @@ self_test() {
   # The token is assembled at runtime on purpose: written literally, it would sit in this
   # file and the placeholder gate would flag its own source forever.
   printf 'injected by check.sh --self-test: %s%s\n' '{{SELF_TEST' '_TOKEN}}' > "$inj"
-  expect_fail "placeholder gate rejects an unfilled marker"
-  rm -f "$inj"
+  expect_fail "placeholder gate rejects an unfilled marker" GATE_SELFTEST_EXTRA_FILE="$inj"
 
   # ...and does NOT fire on the two paths that carry markers forever by design.
   expect_pass "placeholder gate ignores setup/ and the module template"
@@ -172,14 +236,12 @@ self_test() {
       echo "  FAIL — commit hook rejected a GREEN tree; every commit would be blocked."
       st_fail=1
     fi
-    printf 'injected by check.sh --self-test: %s%s\n' '{{SELF_TEST' '_TOKEN}}' > "$inj"
-    if sh "$hook" >/dev/null 2>&1; then
+    if env GATE_SELFTEST_EXTRA_FILE="$inj" sh "$hook" >/dev/null 2>&1; then
       echo "  FAIL — commit hook exited 0 while the gate was RED. It is blocking nothing."
       st_fail=1
     else
       echo "  ok   — commit hook aborts the commit when the gate is red"
     fi
-    rm -f "$inj"
   else
     echo "  FAIL — $hook is missing: nothing enforces the gate at commit time."
     st_fail=1
@@ -264,6 +326,8 @@ if [ ! -s "$filelist" ]; then
   echo "             exactly the failure this gate exists to prevent."
   exit 1
 fi
+# Test switch: the self-test's injected file lives outside the tree and joins the scan here.
+[ -z "${GATE_SELFTEST_EXTRA_FILE:-}" ] || printf '%s\0' "$GATE_SELFTEST_EXTRA_FILE" >> "$filelist"
 
 # scan_grep <extended-regex> — prints path:line:text for every match.
 # Returns 0 on match, 1 on no match. When grep itself FAILS, it drops a flag file that the

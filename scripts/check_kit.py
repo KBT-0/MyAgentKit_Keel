@@ -4,6 +4,7 @@ import argparse
 import ast
 import json
 import io
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -58,8 +59,10 @@ def run_tests(root, directory, required):
     print(output.getvalue().strip())
 
 
-def run(args, cwd=ROOT, expected=0, reason=None):
-    result = subprocess.run(args, cwd=cwd, capture_output=True, text=True)
+# A gate run that waits forever (a lock never released) must fail here, not hang the kit check.
+def run(args, cwd=ROOT, expected=0, reason=None, env=None, timeout=300):
+    result = subprocess.run(args, cwd=cwd, capture_output=True, text=True, env=env,
+                            timeout=timeout)
     output = result.stdout + result.stderr
     if result.returncode != expected or (reason and reason not in output):
         raise RuntimeError(f"{args}: expected exit {expected}, reason {reason!r}\n{output}")
@@ -110,8 +113,74 @@ def main():
         state.write_bytes(original_state)
         print("PASS: bootstrap rejects missing setup and accepts the configured synthetic project")
         if args.self_test:
-            print(run(["sh", "scripts/check.sh", "--self-test"], project,
-                      reason="SELF-TEST: PASS").strip())
+            with tempfile.TemporaryDirectory(prefix="myagentkit-side-") as side:
+                side = Path(side)
+                status = ["git", "status", "--porcelain", "--untracked-files=all"]
+                before = run(status, project)
+                # Every nested gate run records the tree through the build command, so a case
+                # that writes into the tree and cleans up afterwards is still caught.
+                log = side / "status.log"
+                # GATE_LOCK_WAIT: a nested run that does not inherit the lock stops in seconds.
+                record = dict(os.environ, GATE_LOCK_WAIT="5", GATE_BUILD_CMD_OVERRIDE=(
+                    f'{{ git status --porcelain --untracked-files=all; echo ==; }} >> "{log}"'))
+                print(run(["sh", "scripts/check.sh", "--self-test"], project, env=record,
+                          reason="SELF-TEST: PASS").strip())
+                seen = log.read_text().split("==\n")[:-1]
+                if not seen or any(s != before for s in seen) or run(status, project) != before:
+                    raise RuntimeError("check.sh --self-test changed the working tree:\n"
+                                       + "".join(s for s in seen if s != before))
+                print("PASS: git status of the project is unchanged at every nested gate run and after --self-test")
+                # Two gate runs sharing one build directory: the second must wait, not race.
+                racy = dict(os.environ, GATE_BUILD_CMD_OVERRIDE=(
+                    f'mkdir "{side}/build" && sleep 2 && rmdir "{side}/build"'))
+                pair = [subprocess.Popen(["sh", "scripts/check.sh"], cwd=project, env=racy,
+                                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                         text=True) for _ in range(2)]
+                outputs = [p.communicate(timeout=60)[0] for p in pair]
+                if (any(p.returncode or "CHECK: PASS" not in o for p, o in zip(pair, outputs))
+                        or not any("NOTE [lock]" in o for o in outputs)):
+                    raise RuntimeError("concurrent gate runs raced:\n" + "\n".join(outputs))
+                print("PASS: two concurrent gate runs sharing a build directory both pass")
+                # A holder killed without cleanup must not block every later run.
+                dead = subprocess.Popen(["true"])
+                dead.wait()
+                lock = project / ".git/check.lock"
+                os.symlink(str(dead.pid), lock)
+                run(["sh", "scripts/check.sh"], project, reason="CHECK: PASS", timeout=60)
+                print("PASS: a lock left by a killed gate run is reclaimed")
+                # A live holder: a bounded wait gives up with its own code, and only a run
+                # given this checkout's own lock path skips the lock.
+                os.symlink(str(os.getpid()), lock)
+                try:
+                    run(["sh", "scripts/check.sh"], project, expected=75, reason="NOT RUN [lock]",
+                        env=dict(os.environ, GATE_LOCK_WAIT="2"), timeout=30)
+                    run(["sh", "scripts/check.sh"], project, expected=75, reason="NOT RUN [lock]",
+                        env=dict(os.environ, GATE_LOCK_WAIT="2",
+                                 GATE_LOCK_HELD=str(side / "other-checkout.lock")), timeout=30)
+                    out = run(["sh", "scripts/check.sh"], project, reason="CHECK: PASS", timeout=30,
+                              env=dict(os.environ, GATE_LOCK_WAIT="2",
+                                       GATE_LOCK_HELD=os.path.realpath(project) + "/.git/check.lock"))
+                    if "NOTE [lock]" in out:
+                        raise RuntimeError("a run given its own lock path waited:\n" + out)
+                    # A run whose lock was taken over (a stale-reclaim race) leaves it alone.
+                    lock.unlink()
+                    run(["sh", "scripts/check.sh"], project, reason="CHECK: PASS", timeout=30,
+                        env=dict(os.environ, GATE_BUILD_CMD_OVERRIDE=(
+                            f"rm -f .git/check.lock && ln -s {os.getpid()} .git/check.lock")))
+                    if not lock.is_symlink():
+                        raise RuntimeError("a gate run removed a lock another run held")
+                finally:
+                    lock.unlink(missing_ok=True)
+                print("PASS: a bounded lock wait stops with NOT RUN; only the own lock path is"
+                      " inherited; a run removes only its own lock")
+            # The scanners read untracked files too (git ls-files --others), not only the index.
+            marker = project / "untracked-marker.md"
+            marker.write_text("{{SELF_TEST" + "_TOKEN}}\n")
+            try:
+                run(["sh", "scripts/check.sh"], project, expected=1, reason="CHECK: FAIL")
+            finally:
+                marker.unlink()
+            print("PASS: an untracked file with an unfilled marker turns the gate red")
             tests = project / "scripts/test_claude_bridge.py"
             original_tests = tests.read_bytes()
             tests.unlink()
@@ -157,6 +226,6 @@ def main():
 if __name__ == "__main__":
     try:
         main()
-    except (OSError, ValueError, RuntimeError, KeyError) as error:
+    except (OSError, ValueError, RuntimeError, KeyError, subprocess.TimeoutExpired) as error:
         print(f"KIT CHECK: FAIL — {error}", file=sys.stderr)
         raise SystemExit(1)
