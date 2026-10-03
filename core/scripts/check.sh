@@ -14,6 +14,12 @@
 # test has not been proven to fail — it has only been seen passing, which is not the same
 # thing and never was.
 #
+# EXIT CODES: 0 pass, 1 fail, 2 usage, 75 NOT RUN — another gate run held this checkout's
+# lock for longer than GATE_LOCK_WAIT=<seconds> allowed (unset: wait without limit, which is
+# what manual, CI and commit-hook runs want; the Stop hook sets about 500 so it answers
+# before its own timeout kills it). A caller reports 75 as "gate did not run", never as a
+# pass and never as a gate failure.
+#
 # A SELF-TEST CASE NEVER CHANGES A TRACKED FILE, and writes nothing else inside the working
 # tree when it can avoid it. Point the gate at a synthetic file outside the tree through an
 # overridable variable (STATE_FILE, GATE_SELFTEST_EXTRA_FILE below), or run the case against
@@ -53,7 +59,11 @@ BOUNDARY_SELFTESTS_FILE="${BOUNDARY_SELFTESTS_FILE:-scripts/boundary_selftests.s
 
 work=$(mktemp -d) || { echo "FAIL [gate]: cannot create a temp dir; refusing to run blind."; exit 1; }
 lock=""
-cleanup() { rm -rf "$work"; [ -z "$lock" ] || rm -rf "$lock"; }
+# Only our own lock: after a stale reclaim race another run may hold this path.
+cleanup() {
+  rm -rf "$work"
+  [ -z "$lock" ] || [ "$(readlink "$lock" 2>/dev/null)" != "$$" ] || rm -f "$lock"
+}
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
@@ -64,31 +74,37 @@ filelist="$work/files"
 # two runs sharing it configured, built and ran tests over each other and one reported FAIL
 # for a tree that passes alone. A second run therefore WAITS here; it never fails for this.
 # The self-test holds the lock for its whole run, so no other gate sees a case mid-injection.
-# Nested runs (the self-test's own `sh "$0"`, the commit hook it calls) inherit the lock.
-if [ -z "${GATE_LOCK_HELD:-}" ]; then
-  lock_path=$(git rev-parse --git-path check.lock 2>/dev/null) || lock_path=.check.lock
-  seen_empty=""; said=""
-  until mkdir "$lock_path" 2>/dev/null; do
-    holder=$(cat "$lock_path/pid" 2>/dev/null) || holder=""
-    # A dead holder (killed, power loss) is stale. An empty pid is a holder between mkdir
-    # and its first write; still empty a second later, it was killed in that window.
+# Nested runs (the self-test's own `sh "$0"`, the commit hook it calls) inherit the lock
+# through GATE_LOCK_HELD, which names the lock path, so a gate in another checkout started
+# from the build command still takes its own lock. The lock is a symlink whose target is the
+# holder's pid: created in one atomic step, it is never seen without its owner.
+case "${GATE_LOCK_WAIT:-}" in
+  *[!0-9]*) echo "FAIL [lock]: GATE_LOCK_WAIT must be a number of seconds, got '$GATE_LOCK_WAIT'."; exit 1 ;;
+esac
+lock_path=$(git rev-parse --git-path check.lock 2>/dev/null) || lock_path=.check.lock
+case "$lock_path" in /*) ;; *) lock_path="$(pwd -P)/$lock_path" ;; esac
+if [ "${GATE_LOCK_HELD:-}" != "$lock_path" ]; then
+  waited=0
+  until ln -s "$$" "$lock_path" 2>/dev/null; do
+    holder=$(readlink "$lock_path" 2>/dev/null) || holder=""
+    # A dead holder (killed, power loss) is stale. An empty holder means the lock vanished
+    # between our attempt and the read; the next attempt settles it.
     # ponytail: two waiters reclaiming the same stale lock in the same second can both
     # run; a pid-checked rename would close that if it is ever seen.
-    if [ -z "$holder" ]; then stale=$seen_empty; seen_empty=1
-    elif kill -0 "$holder" 2>/dev/null; then stale=""; seen_empty=""
-    else stale=1
+    if [ -n "$holder" ] && ! kill -0 "$holder" 2>/dev/null; then
+      echo "NOTE [lock]: removing a stale gate lock left by pid $holder, which no longer runs."
+      rm -f "$lock_path"; continue
     fi
-    if [ -n "$stale" ]; then
-      echo "NOTE [lock]: removing a stale gate lock left by a run that no longer exists."
-      rm -rf "$lock_path"; seen_empty=""; continue
+    if [ -n "${GATE_LOCK_WAIT:-}" ] && [ "$waited" -ge "$GATE_LOCK_WAIT" ]; then
+      echo "NOT RUN [lock]: pid ${holder:-unknown} has held $lock_path for ${waited}s; GATE_LOCK_WAIT=$GATE_LOCK_WAIT ran out."
+      exit 75
     fi
-    [ -n "$said" ] || echo "NOTE [lock]: another gate run (pid ${holder:-starting}) holds $lock_path; waiting for it."
-    said=1
-    sleep 1
+    [ $((waited % 30)) -ne 0 ] ||
+      echo "NOTE [lock]: another gate run (pid ${holder:-unknown}) has held $lock_path for ${waited}s; waiting for it."
+    sleep 1; waited=$((waited + 1))
   done
   lock=$lock_path
-  echo "$$" > "$lock/pid"
-  GATE_LOCK_HELD=$$; export GATE_LOCK_HELD
+  GATE_LOCK_HELD=$lock_path; export GATE_LOCK_HELD
 fi
 
 # ===========================================================================
