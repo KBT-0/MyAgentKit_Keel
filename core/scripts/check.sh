@@ -321,6 +321,35 @@ else
     exit 1
   fi
 fi
+# Paths grep cannot read as files are sorted out here, each under its real cause, instead of
+# surfacing later as "a scanner failed to run". A tracked file deleted without `git rm` is
+# named and FAILS the gate: the scan cannot vouch for a path the commit may still carry. A
+# symlink to a directory (a dependency directory linked into a fresh worktree, which an
+# ignore pattern with a trailing slash does not match) holds nothing git tracks: skipped,
+# with a line.
+if ! xargs -0 sh -c '
+  scan_work=$1
+  shift
+  for p do
+    if [ -L "$p" ] && [ -d "$p" ]; then
+      printf "%s\n" "NOTE [scan]: skipped $p, a symlink to a directory; git tracks nothing inside it." >&3
+      printf "%s\n" "             To ignore it, write it in .gitignore without a trailing slash." >&3
+    elif [ -L "$p" ] && [ ! -e "$p" ]; then
+      printf "%s\n" "NOTE [scan]: skipped $p, a symlink whose target is missing; git tracks only the link text." >&3
+    elif [ ! -e "$p" ]; then
+      printf "%s\n" "FAIL [scan]: $p is tracked but missing from the working tree (deleted, not staged)." >&3
+      printf "%s\n" "             Run git rm -- \"$p\" to record the deletion, or git restore -- \"$p\"." >&3
+      : > "$scan_work/scan_missing"
+    else
+      printf "%s\0" "$p"
+    fi
+  done
+' sh "$work" < "$filelist" 3>&1 > "$filelist.kept"; then
+  echo "FAIL [scan]: could not sort the file list; refusing to scan blind."
+  exit 1
+fi
+mv "$filelist.kept" "$filelist"
+[ ! -e "$work/scan_missing" ] || fail=1
 if [ ! -s "$filelist" ]; then
   echo "FAIL [scan]: the file list is EMPTY. A scan over nothing always passes, which is"
   echo "             exactly the failure this gate exists to prevent."

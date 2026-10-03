@@ -46,8 +46,10 @@ the winning rule and its line number.
 
 A trailing slash matters too: `node_modules/` matches directories only, and git does not
 count a symlink as one. A `node_modules` symlinked into a throwaway worktree is then an
-untracked, non-ignored file and the gate's scanners fail on it. Write `node_modules`
-without the slash when the directory may ever be a symlink (`scripts/doctor.sh` flags it).
+untracked, non-ignored file: `git status` lists it, and the gate's scan skips it with a
+`NOTE [scan]` line (older gates failed on it as "a scanner failed to run"). Write
+`node_modules` without the slash when the directory may ever be a symlink
+(`scripts/doctor.sh` flags it).
 
 ## The executable bit has to be put in the git index by hand
 
