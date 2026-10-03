@@ -568,6 +568,21 @@ output line; the attribution check matched only an unquoted name. Rule: state ex
 check must prove about the object it was handed, and add the case where a neighbouring
 object satisfies the weaker version.
 
+#### The final full review, split by commit ranges
+
+The whole diff no longer fits the review budget even with the generated copies reverted,
+so it was reviewed as two consistent commit ranges: the intermediate tree and the current
+one. The intermediate tree's fourteen findings were all fixed later in the second range
+except two (a dangling symlink's link text, the only thing git tracks of it, was skipped by
+the scanner; a WORKFLOW sentence still allowed in-place edits). The current tree's five
+share a shape: a guard that held for the path its tests exercised while a neighbouring step
+could still undo it: a result built before cleanup ignored a cancel noted during cleanup; a
+disposable copy guarded against symlinks but not against `TMPDIR` inside the checkout nor an
+inherited `GIT_DIR`; a parsed separator list was trusted without checking that `tr` ran;
+`${VAR:-default}` read an empty override as unset while the adapters did not. Lesson: when a
+guard names its inputs, list what else feeds the same step (cleanup, environment, a helper's
+exit status, empty versus unset) and test one of each.
+
 #### The review gate held on the kit's own hardening
 
 Five of the nine work packages (the gate lock, both review-tooling packages, the commit gates

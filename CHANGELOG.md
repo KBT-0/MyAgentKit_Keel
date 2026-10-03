@@ -160,6 +160,17 @@ hand merge; `sync-kit.sh` now keeps listing them until you confirm (see "Sync st
   `.githooks/commit-msg` rejects a quoted tool display name. **ACTION:** copy the
   lock-inheritance Python block from `core/scripts/check.sh` into your `scripts/check.sh`;
   copy the adapters again; add the `[ -L ... ]` refusal to a copy-based probe of your own.
+- **Full cross-model review, split by commit ranges.** A reviewer CLI that cannot be
+  launched and is cancelled during cleanup is `cancelled`, never an eligible `unavailable`
+  that starts the fallback. `.githooks/commit-msg` rejects the message when parsing
+  `core.commentChar` or `trailer.separators` fails. `doctor.sh` reports an explicitly empty
+  `REVIEW_CLI_BIN` or `CLAUDE_CLI_BIN` as MISSING. `scripts/check.sh` scans every tracked
+  symlink's link text (never following it), so an unfilled marker in a dangling link fails
+  the setup gate. The existing-file example refuses a disposable copy inside the checkout and
+  runs the copy's gate without an inherited `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE` or
+  `GIT_COMMON_DIR`. **ACTION:** port the symlink link-text scan into your `scripts/check.sh`;
+  copy `agent_process.py`; if you adapted the existing-file example, add its TMPDIR check,
+  the `unset` line and the `git rev-parse --show-toplevel` check.
 - **Scan failures that were not scanner failures (issues #13, #14).** A tracked file deleted
   without `git rm` now fails `[scan]` under its own name with the command that fixes it, and
   every other scan still runs. A symlink to a directory (for example `node_modules` linked
