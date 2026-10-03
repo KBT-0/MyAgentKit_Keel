@@ -423,8 +423,8 @@ stale base is still open (#32), as is the test that times out at 5 s under load 
 #### The review gate held on the kit's own hardening
 
 Five of the nine work packages (the gate lock, both review-tooling packages, the commit gates
-and doctor.sh) needed a second review round, and each first review found a real hole in the
-first cut: the five lock holes above, the dispositions that let a reviewer Accept with
+and doctor.sh) needed a second review round (doctor.sh a short third one, for a `timeout`
+that stopped an interactive shell), and each first review found a real hole in the first cut: the five lock holes above, the dispositions that let a reviewer Accept with
 everything deferred, the substring match that rejected humans, the false node MISSING and the
 ignored-signal override. The four others (the scan, the sync stamp, the rules, the seams)
 were accepted in one round, with nits applied by the lead afterwards. None of the five was
