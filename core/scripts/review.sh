@@ -114,8 +114,10 @@ esac
 set -- "$scope_flag"
 [ -n "$scope_arg" ] && set -- "$scope_flag" "$scope_arg"
 
-# Reviewing CLIs are commonly per-user installs missing from a non-login shell's PATH.
-[ -x "$HOME/.local/bin/codex" ] && { PATH="$HOME/.local/bin:$PATH"; export PATH; }
+# Reviewing CLIs are commonly per-user installs missing from a non-login shell's PATH: a
+# fallback, never first. An old standalone build left in ~/.local/bin once shadowed the
+# current binary on PATH and every review failed with "requires a newer version".
+[ -x "$HOME/.local/bin/codex" ] && { PATH="$PATH:$HOME/.local/bin"; export PATH; }
 
 # Only with --fallback does the dispatcher make one failover to the other configured pin.
 # Each adapter retains its own evidence and usage; a completed Reject never triggers another call.

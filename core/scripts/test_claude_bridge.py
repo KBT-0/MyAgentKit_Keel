@@ -784,6 +784,29 @@ if case == 'archive_failure':
         return subprocess.run(["sh", str(scripts / "review.sh"), *argv],
                               env=self.review_env(**env_extra), capture_output=True, text=True)
 
+    def test_a_stale_per_user_codex_never_shadows_the_one_on_path(self):
+        """~/.local/bin is a fallback for a non-login shell, not an override.
+
+        A project's owner had an old standalone build left in ~/.local/bin and a current one
+        on PATH; the wrapper put ~/.local/bin FIRST, so every review ran the old binary and
+        failed with "requires a newer version" while `codex` at the prompt worked.
+        """
+        good = self.build_fake_codex()
+        bin_dir = self.root / "good-bin"
+        bin_dir.mkdir()
+        (bin_dir / "codex").symlink_to(good)
+        home = self.root / "home"
+        stale = home / ".local" / "bin"
+        stale.mkdir(parents=True)
+        (stale / "codex").write_text("#!/bin/sh\necho 'stale standalone build' >&2; exit 1\n")
+        (stale / "codex").chmod(0o755)
+        result = self.run_wrapper("--uncommitted", "--reviewer", "codex",
+                                  REVIEW_CLI_BIN="codex", HOME=str(home),
+                                  PATH=str(bin_dir) + os.pathsep + os.environ["PATH"],
+                                  REVIEW_CODEX_MODEL="fixture-codex-model")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("stale standalone build", result.stdout + result.stderr)
+
     def test_both_reviewers_publish_one_identical_evidence_format(self):
         """The hard requirement of a role-neutral kit: swapping roles keeps records comparable.
 
