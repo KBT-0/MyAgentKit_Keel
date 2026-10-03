@@ -68,9 +68,12 @@ round 9 returned Accept with Manual Checks with one Low, fixed in 81678a3. From 
 full diff exceeded the 400000-byte budget, so each later round reviewed the increment since
 the previous round's head under a fresh label. Those increments were remediation reviews, not
 the final acceptance: the fresh full review under a new label that `core/docs/REVIEW_GATE.md`
-requires is still PENDING. Because the full diff exceeds the budget, it is to be split into
-path groups, each reviewed under its own new label and recorded in `docs/reviews/`: review
-tooling; gate scripts and hooks; docs and overlays. The round-1 record was written by the pre-fix kit (no
+requires is still PENDING. It reviews the integrated tree, never path groups (a group's
+reviewer saw a tree missing the other groups' files): the whole diff from the base under a
+new label, with the generated plugin runtime copies reverted so it fits the budget, their
+parity with `core/` vouched by `scripts/package_codex_plugin.py --check`, and recorded in
+`docs/reviews/`. Its first round returned Reject (one High, four Medium, one Low); each finding
+was fixed with its negative test, and a further round on the integrated tree is pending. The round-1 record was written by the pre-fix kit (no
 resolved reference, no archive hash), so round 2 ran under a new task label and did not
 carry round 1: the carried-round path is proven by the regression tests only.
 

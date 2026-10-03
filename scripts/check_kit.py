@@ -275,8 +275,21 @@ def main():
                                        GATE_LOCK_FD=str(held.fileno())))
                     if "NOTE [lock]" in out:
                         raise RuntimeError("a run given its own lock path waited:\n" + out)
+                    # A descriptor opened independently on the same file, with the holder's pid
+                    # copied, is not the lock: the holder's description holds it, this one does not.
+                    held.truncate(0)
+                    held.write(str(os.getpid()))
+                    held.flush()
+                    with open(lock) as other:
+                        run(["sh", "scripts/check.sh"], project, expected=1, timeout=30,
+                            reason="FAIL [env]: GATE_LOCK_HELD", pass_fds=(other.fileno(),),
+                            env=dict(os.environ, GATE_LOCK_WAIT="2", GATE_LOCK_HELD=own_lock,
+                                     GATE_LOCK_FD=str(other.fileno()),
+                                     GATE_SELFTEST_NESTED=str(os.getpid()),
+                                     GATE_BUILD_CMD_OVERRIDE="true"))
                 print("PASS: a symlink at the lock path is refused; a bounded lock wait stops with"
-                      " NOT RUN; only the own lock path, with the descriptor holding it, is inherited")
+                      " NOT RUN; only the own lock path, with the descriptor holding it, is inherited, never"
+                      " an independently opened one")
                 # python3 only in the configured toolchain directory, as a hook sees a Python
                 # installed per user: the lock, which is taken through python3, still finds it.
                 tc, no_python = side / "tc", side / "no-python"

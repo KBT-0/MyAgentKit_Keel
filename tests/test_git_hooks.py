@@ -78,7 +78,11 @@ class GitHookTests(unittest.TestCase):
                             # Git takes whitespace before the separator and a folded value.
                             'Co-Authored-By : Claude <noreply@anthropic.com>',
                             'Co-Authored-By:\n  Claude <noreply@anthropic.com>',
-                            'Co-authored-by: Helper\n\t<helper@ampcode.com>'):
+                            'Co-authored-by: Helper\n\t<helper@ampcode.com>',
+                            # A quoted display name is still the tool's name.
+                            'Co-Authored-By: "GitHub Copilot" <copilot@github.com>',
+                            "Co-Authored-By: 'Claude' <noreply@example.invalid>",
+                            'Co-authored-by: "Claude Opus 5.5" <noreply@example.invalid>'):
                 with self.subTest(trailer=trailer):
                     result = self.commit(root, git, trailer + '\n')
                     self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -93,6 +97,8 @@ class GitHookTests(unittest.TestCase):
                             'Co-authored-by: Jo Park <jo@precursor.example.invalid>',
                             'Signed-off-by: Paola Geminiani <paola@example.invalid>',
                             'Co-authored-by:\n  Claude Monet <claude.monet@example.invalid>',
+                            'Co-authored-by: "Claude Monet" <claude.monet@example.invalid>',
+                            "Co-authored-by: 'A Person' <person@example.invalid>",
                             'Bump openai SDK to the next minor version'):
                 with self.subTest(trailer=trailer):
                     result = self.commit(root, git, trailer + '\n')

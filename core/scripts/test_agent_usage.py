@@ -229,6 +229,8 @@ class UsageTests(unittest.TestCase):
                     self.fail('a cancel during cleanup escaped run()')
                 self.assertEqual(result['termination'], expected, result)
                 self.assertIsNotNone(result['exit_code'], result)
+                # A zero exit is not yet a completed review: the cancel is returned either way.
+                self.assertTrue(result['cancelled'], result)
 
     def test_unavailable_child_is_a_returned_failure_not_an_exception(self):
         result = agent_process.run(["/nonexistent-myagentkit-cli"], "", Path.cwd(), 1)

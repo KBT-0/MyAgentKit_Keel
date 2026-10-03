@@ -201,17 +201,22 @@ fi
 # only the shell is signalled, and such a child is not stopped: that is a NOTE. The output
 # goes to a file, never a pipe: a child left running held the pipe open, and reading it
 # waited for that child, far past the bound. Stock macOS has no `timeout`, and an unbounded
-# probe there could block every session start, so it is skipped with a note. A probe that
-# failed or printed nothing is not a clean result: it says so. bash prints a function's whole
-# body: the first line is enough.
+# probe there could block every session start, so it is skipped with a note. The rc files
+# may print too (a banner, a fortune): the answer is read only between two delimiter lines
+# the probe prints around `command -V grep`, never the shell's first line, which once read
+# a banner and called a shell aliasing grep to `grep -v` ready. A probe that failed, printed
+# no delimited answer, or an answer that is not `grep is ...`, is not a clean result: it says
+# so. bash prints a function's whole body: the first line is enough.
 if [ -n "${SHELL:-}" ] && ! command -v timeout >/dev/null 2>&1; then
   echo "NOTE: grep probe skipped, no timeout on this machine"
 elif [ -n "${SHELL:-}" ] && ! probe_out=$(mktemp); then
   echo "NOTE: grep probe skipped, cannot create a temp file"
 elif [ -n "${SHELL:-}" ]; then
+  probe_mark="<<DOCTOR-PROBE-$$>>"
+  probe_cmd="printf '%s\\n' '$probe_mark'; command -V grep; printf '%s\\n' '$probe_mark'"
   if command -v setsid >/dev/null 2>&1; then
     # $$ of the sh that setsid started is the new session's process group, forked or not.
-    setsid sh -c 'echo "$$"; exec timeout -k 1 5 "$0" -ic "command -V grep"' "$SHELL" \
+    setsid sh -c 'echo "$$"; exec timeout -k 1 5 "$0" -ic "$1"' "$SHELL" "$probe_cmd" \
       </dev/null >"$probe_out" 2>/dev/null
     probe_status=$?
     probe_group=$(sed -n 1p "$probe_out")
@@ -219,18 +224,19 @@ elif [ -n "${SHELL:-}" ]; then
       ""|*[!0-9]*) ;;
       *) kill -s KILL -- "-$probe_group" 2>/dev/null ;;
     esac
-    grep_is=$(sed -n 2p "$probe_out")
   else
-    timeout --foreground -k 1 5 "$SHELL" -ic 'command -V grep' </dev/null >"$probe_out" 2>/dev/null
+    timeout --foreground -k 1 5 "$SHELL" -ic "$probe_cmd" </dev/null >"$probe_out" 2>/dev/null
     probe_status=$?
-    grep_is=$(head -1 "$probe_out")
     echo "NOTE: no setsid on this machine: a process the grep probe's rc files start in the background is not stopped"
   fi
+  # The first line between the two delimiters, and only when both were printed.
+  grep_is=$(awk -v m="$probe_mark" '$0 == m { n++; next } n == 1 && !got { said = $0; got = 1 }
+                                    END { if (n == 2) print said }' "$probe_out")
   rm -f "$probe_out"
   shadowed=""
   case "$grep_is" in
-    *function*) shadowed=1 ;;
-    *alias*)
+    "grep is "*function*) shadowed=1 ;;
+    "grep is "*alias*)
       expansion=${grep_is#*alias for }; expansion=${expansion#*aliased to }; expansion=${expansion#\`}
       # grep plus colour options only: `grep -v` inverts every match, and --color=always
       # puts escape codes into pipes.
@@ -239,8 +245,8 @@ elif [ -n "${SHELL:-}" ]; then
   esac
   if [ -n "$shadowed" ]; then
     miss "grep is shadowed in $SHELL ($grep_is)" "remove it from the rc file, or test gate pipelines with sh -c"
-  elif [ "$probe_status" -ne 0 ] || [ -z "$grep_is" ]; then
-    echo "NOTE: grep probe did not complete (exit $probe_status, printed: ${grep_is:-nothing}); grep shadowing was not checked"
+  elif [ "$probe_status" -ne 0 ] || [ "${grep_is#grep is }" = "$grep_is" ]; then
+    echo "NOTE: grep probe did not complete (exit $probe_status, answered: ${grep_is:-nothing between its delimiters}); grep shadowing was not checked"
   fi
 fi
 

@@ -432,6 +432,48 @@ class BridgeTests(unittest.TestCase):
                     self.assertTrue(received[0]['cancelled'])
                     self.persisted_cancel(received[0])
 
+    def test_a_cancel_during_cleanup_of_a_zero_exit_failure_never_starts_the_fallback(self):
+        # run() dropped a cancel noted during its cleanup when the child exited zero, before
+        # either adapter had read the response: a zero-exit Claude result with is_error and
+        # a 429 stayed a quota failure, and --fallback launched the other paid reviewer.
+        from contextlib import redirect_stdout
+        from io import StringIO
+        import signal
+        from unittest.mock import patch
+        import agent_process
+        import review_dispatch
+        real_run, real_killpg = agent_process.run, os.killpg
+
+        def quota(command, prompt, repo, timeout):
+            launched.append(command[0])
+            value = ({'type': 'turn.failed', 'error': {'message': 'usage limit reached'}}
+                     if '-o' in command else
+                     {'type': 'result', 'subtype': 'success', 'is_error': True,
+                      'api_error_status': 429, 'modelUsage': {'claude-opus-5': {}}})
+            return real_run([sys.executable, '-c', 'print(%r)' % json.dumps(value)], prompt, repo, timeout)
+
+        def killpg(pid, sig):
+            os.kill(os.getpid(), signal.SIGTERM)
+            real_killpg(pid, sig)
+
+        for primary in ('claude', 'codex'):
+            launched, out = [], StringIO()
+            with self.subTest(primary=primary), patch.dict(os.environ, self.review_env()), \
+                    patch('agent_process.run', side_effect=quota), \
+                    patch.object(agent_process.os, 'killpg', side_effect=killpg), redirect_stdout(out):
+                code = review_dispatch.main(['--repo', str(self.repo), '--uncommitted',
+                                             '--reviewer', primary, '--allow-fallback',
+                                             '--claude-model', 'claude-opus-5',
+                                             '--codex-model', 'fixture-codex-model'])
+                self.assertEqual(len(launched), 1, 'a cancelled review launched the other '
+                                 'reviewer:\n' + out.getvalue())
+                self.assertNotEqual(code, 0)
+                chain = json.loads(next(line.removeprefix('review dispatch: ') for line in
+                                        out.getvalue().splitlines() if line.startswith('review dispatch: ')))
+                self.assertEqual(chain['failure_kind'], 'cancelled')
+                self.assertTrue(chain['attempts'][0]['cancelled'])
+                self.persisted_cancel(chain['attempts'][0])
+
     def test_a_cancel_whose_archive_replacement_fails_is_still_recorded_and_returned(self):
         # The relabel replaced the archive before the usage record, so a failure between the
         # two left the archive saying cancelled and the record quota, and the Codex adapter

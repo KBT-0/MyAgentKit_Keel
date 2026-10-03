@@ -45,7 +45,9 @@
 # on exit and on INT/TERM; a SIGKILL leaves it in $TMPDIR, outside the checkout. cp -R keeps
 # a symlink as a symlink, so a symlinked parent directory (src -> the checkout's lib) once
 # took the write back into the checkout: the target and the gate are resolved physically
-# and must lie inside the copy, else the case fails by name. Copying a
+# and must lie inside the copy, and neither may itself be a symlink (an absolute one at the
+# gate ran a gate that resolves its own location against the checkout), else the case fails
+# by name. Copying a
 # large tree (dependencies, build output) costs time: copy only what the gate reads if that
 # is known, but never let the probe write into the checkout.
 #
@@ -64,6 +66,10 @@
 # |   [ -f "$probe_target" ] && [ ! -L "$probe_target" ] || exit 1
 # |   probe_root=$(pwd -P) || exit 1
 # |   for probe_path in "$probe_target" "$probe_gate"; do
+# |     if [ -L "$probe_path" ]; then
+# |       echo "  FAIL — existing-file probe: $probe_path is a symlink, which can lead out of the disposable copy; refusing to run."
+# |       exit 1
+# |     fi
 # |     probe_dir=$(cd -P "$(dirname "$probe_path")" && pwd -P) || exit 1
 # |     case "$probe_dir/" in
 # |       "$probe_root"/*) ;;

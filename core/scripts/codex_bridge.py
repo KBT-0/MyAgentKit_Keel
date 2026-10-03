@@ -82,9 +82,11 @@ def main(argv=None, result_sink=None):
             cancelled = []
             try:
                 execution = agent_process.run(command, prompt, repo, timeout)
+                if execution.pop("cancelled", False):
+                    cancelled.append(True)
                 # A cancelled review must stop now, not start another CLI process to read quota.
                 after = ({"status": "disabled"} if not capture_quota else
-                         {"status": "skipped: review cancelled"} if execution["termination"] == "cancelled"
+                         {"status": "skipped: review cancelled"} if cancelled
                          else codex_quota.snapshot(command[0], repo))
             except KeyboardInterrupt:
                 if execution is None:

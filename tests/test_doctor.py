@@ -50,7 +50,7 @@ class DoctorTests(unittest.TestCase):
             (bin_dir / 'timeout').chmod(0o755)
             shell = bin_dir / 'fake-shell'
             # The common colour alias is harmless and must stay green.
-            shell.write_text('#!/bin/sh\necho "grep is an alias for grep --color=auto"\n')
+            shell.write_text('#!/bin/sh\ncommand() { echo "grep is an alias for grep --color=auto"; }\neval "$2"\n')
             shell.chmod(0o755)
             env = {k: v for k, v in os.environ.items() if not k.lower().startswith('npm_config_')}
             env.update(HOME=str(home), SHELL=str(shell), GIT_CONFIG_NOSYSTEM='1',
@@ -180,26 +180,42 @@ class DoctorTests(unittest.TestCase):
 
             # Without setsid the probe has no process group of its own to clean up, so a
             # child the rc file left running is not stopped: doctor says so.
-            shell.write_text('#!/bin/sh\necho "grep is an alias for grep --color=auto"\n')
+            shell.write_text('#!/bin/sh\ncommand() { echo "grep is an alias for grep --color=auto"; }\neval "$2"\n')
             no_setsid = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=project, capture_output=True,
                                        text=True, env=dict(env, PATH=no_setsid_path), timeout=20)
             self.assertEqual(no_setsid.returncode, 0, no_setsid.stdout + no_setsid.stderr)
             self.assertIn('NOTE: no setsid on this machine', no_setsid.stdout)
 
-            shell.write_text('#!/bin/sh\necho "grep is an alias for ugrep"\n')
+            shell.write_text('#!/bin/sh\ncommand() { echo "grep is an alias for ugrep"; }\neval "$2"\n')
             red = doctor()
             self.assertEqual(red.returncode, 1, red.stdout)
             self.assertIn('MISSING: grep is shadowed', red.stdout)
             self.assertEqual(red.stdout.count('MISSING:'), 1, red.stdout)
             # Only colour options are harmless; an alias that changes what matches is not.
-            shell.write_text('#!/bin/sh\necho "grep is an alias for grep -v"\n')
+            shell.write_text('#!/bin/sh\ncommand() { echo "grep is an alias for grep -v"; }\neval "$2"\n')
             red = doctor()
             self.assertEqual(red.returncode, 1, red.stdout)
             self.assertIn('MISSING: grep is shadowed', red.stdout)
-            shell.write_text("#!/bin/sh\necho \"grep is aliased to \\`grep --colour=auto'\"\n")
+            shell.write_text("#!/bin/sh\ncommand() { echo \"grep is aliased to \\`grep --colour=auto'\"; }\neval \"$2\"\n")
             ready = doctor()
             self.assertEqual(ready.returncode, 0, ready.stdout + ready.stderr)
-            shell.write_text('#!/bin/sh\necho "grep is an alias for grep --color=auto"\n')
+            # An rc file that prints a banner: doctor read the banner as the probe's answer
+            # and called a shell that aliases grep to `grep -v` ready.
+            shell.write_text('#!/bin/sh\necho Welcome\ncommand() { echo "grep is an alias for grep -v"; }\n'
+                             'eval "$2"\n')
+            red = doctor()
+            self.assertEqual(red.returncode, 1, red.stdout)
+            self.assertIn('MISSING: grep is shadowed', red.stdout)
+            # Output without the probe's delimiters, or not an answer to `command -V`, is a
+            # probe that did not complete, never a clean one.
+            for fake in ('echo Welcome\necho "grep is an alias for grep -v"\n',
+                         'command() { echo Welcome; }\neval "$2"\n'):
+                with self.subTest(fake=fake):
+                    shell.write_text('#!/bin/sh\n' + fake)
+                    probed = doctor()
+                    self.assertEqual(probed.returncode, 0, probed.stdout + probed.stderr)
+                    self.assertIn('NOTE: grep probe did not complete', probed.stdout)
+            shell.write_text('#!/bin/sh\ncommand() { echo "grep is an alias for grep --color=auto"; }\neval "$2"\n')
 
             git('config', '--unset', 'core.hooksPath')
             red = doctor()
