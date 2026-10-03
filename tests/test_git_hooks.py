@@ -102,31 +102,26 @@ class GitHookTests(unittest.TestCase):
             result = self.commit(root, git, 'Co-Authored-By: Claude <noreply@anthropic.com>\n')
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
-    def test_comment_lines_are_checked_where_git_keeps_them(self):
-        # Git keeps "#" lines under commit.cleanup=verbatim (and whitespace), and with another
-        # core.commentChar it keeps "#" lines and strips that character's instead.
+    def test_comment_lines_are_checked_whatever_git_would_do_with_them(self):
+        # Whether git keeps a "#" line depends on commit.cleanup, a --cleanup flag the hook
+        # cannot see, and -m versus the editor (git's default keeps them for -m). The hook
+        # fails closed on every one of them, with either comment char.
         with tempfile.TemporaryDirectory() as tmp:
             root, git = self.repo(tmp)
-            for config in (('commit.cleanup', 'verbatim'), ('commit.cleanup', 'whitespace'),
-                           ('core.commentChar', ';')):
-                with self.subTest(config=config):
+            cases = ((('commit.cleanup', 'verbatim'), ()), (('commit.cleanup', 'whitespace'), ()),
+                     (('core.commentChar', ';'), ()), (('core.commentChar', '#'), ('--cleanup=strip',)))
+            for config, flags in cases:
+                with self.subTest(config=config, flags=flags):
                     git('config', *config)
+                    char = ';' if config == ('core.commentChar', ';') else '#'
                     try:
                         # Each case its own content: an unchanged tree would fail as "nothing to commit".
-                        result = self.commit(root, git, '='.join(config) + '\n# Generated with Claude\n')
+                        result = self.commit(root, git, '='.join(config) + '\n' + char
+                                             + ' Generated with Claude\n', *flags)
                     finally:
                         git('config', '--unset', config[0])
                     self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
                     self.assertIn('crediting an AI tool', result.stderr)
-            # A comment line git strips is not part of the message, with either comment char.
-            for char in ('#', ';'):
-                with self.subTest(char=char):
-                    git('config', 'core.commentChar', char)
-                    result = self.commit(root, git, 'body\n' + char + ' Generated with Claude\n',
-                                         '--cleanup=strip')
-                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                    log = git('log', '-1', '--format=%B').stdout
-                    self.assertNotIn('Generated with Claude', log)
 
     def test_an_unreadable_agents_file_fails_closed(self):
         # A grep that could not read the rule is not an owner's choice to allow AI credit.

@@ -22,18 +22,18 @@ if [ -f AGENTS.md ]; then
   esac
 fi
 msg=${1:-}
-# Git cuts the diff below the scissors line (`commit -v`) and strips comment lines only AFTER
-# this hook, so a trailer quoted in that diff is not part of the message. Comment lines are
-# stripped here only where git strips them: commit.cleanup verbatim, whitespace and scissors
-# keep them, and core.commentChar names the character ("auto" picks one per message; "#" is
-# assumed). A --cleanup flag on the command line is invisible to a hook.
-cleanup=$(git config --get commit.cleanup 2>/dev/null) || cleanup=default
+# Git cuts the diff below the scissors line (`commit -v`) only AFTER this hook, so a trailer
+# quoted in that diff is not part of the message and the text below the line is dropped.
+# Comment lines are NOT dropped: whether git keeps them depends on commit.cleanup, on a
+# --cleanup flag this hook cannot see, and on `-m` versus the editor (git's default keeps
+# them for -m). Checking them fails closed; a commented-out credit left by a squash is one
+# line to delete. core.commentChar names the scissors prefix ("auto" is taken as "#").
 comment=$(git config --get core.commentChar 2>/dev/null) || comment='#'
 [ "$comment" != auto ] || comment='#'
-if [ ! -f "$msg" ] || [ ! -r "$msg" ] || ! body=$(CC="$comment" MODE="$cleanup" awk '
-    BEGIN { c = ENVIRON["CC"]; keep = ENVIRON["MODE"] ~ /^(verbatim|whitespace|scissors)$/ }
+if [ ! -f "$msg" ] || [ ! -r "$msg" ] || ! body=$(CC="$comment" awk '
+    BEGIN { c = ENVIRON["CC"] }
     index($0, c) == 1 && substr($0, length(c) + 1) ~ /^ -* >8 -*$/ { exit }
-    keep || index($0, c) != 1' "$msg"); then
+    { print }' "$msg"); then
   echo "commit-msg: cannot read the commit message file '$msg'; refusing to pass it unchecked." >&2
   exit 1
 fi
