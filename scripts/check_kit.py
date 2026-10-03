@@ -143,8 +143,8 @@ def main():
                 print("PASS: git status of the project is unchanged at every nested gate run and after --self-test")
                 # Every self-test seam exported into a normal run fails it by name, including
                 # an override that would turn a red build green.
-                seams = {"GATE_BUILD_CMD_OVERRIDE": "true", "STATE_FILE": "docs/STATE.md",
-                         "PROJECT_FILE": "docs/PROJECT.md",
+                seams = {"GATE_BUILD_CMD_OVERRIDE": "true", "GATE_SELFTEST_STATE_FILE": "docs/STATE.md",
+                         "GATE_SELFTEST_PROJECT_FILE": "docs/PROJECT.md",
                          "BOUNDARY_CHECKS_FILE": "scripts/boundary_checks.sh",
                          "BOUNDARY_SELFTESTS_FILE": "scripts/boundary_selftests.sh",
                          "GATE_SELFTEST_EXTRA_FILE": "docs/STATE.md",

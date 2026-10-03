@@ -23,7 +23,7 @@
 #
 # A SELF-TEST CASE NEVER CHANGES A TRACKED FILE, and writes nothing else inside the working
 # tree when it can avoid it. Point the gate at a synthetic file outside the tree through an
-# self-test seam (STATE_FILE, GATE_SELFTEST_EXTRA_FILE below; honoured only in the self-test's
+# self-test seam (GATE_SELFTEST_STATE_FILE, GATE_SELFTEST_EXTRA_FILE below; honoured only in the self-test's
 # own nested runs, so the case passes it to expect_fail or expect_pass), or run the case against
 # a disposable copy of the tree. A file injected into the tree is seen by a concurrent
 # `git add -A` and by another session's edits, and a killed self-test leaves it behind. The
@@ -41,20 +41,21 @@ fail=0
 
 # SELF-TEST SEAMS are honoured ONLY in the self-test's own nested runs. Each one exists so a
 # case can point a gate at a synthetic input, which means each one can also turn a gate green
-# without its work: GATE_BUILD_CMD_OVERRIDE=true skips the build, STATE_FILE reads another
+# without its work: GATE_BUILD_CMD_OVERRIDE=true skips the build, GATE_SELFTEST_STATE_FILE reads another
 # file. The commit hook inherits the committer's environment, so a variable left exported in
 # a profile or a CI step, or typed by an agent facing a red build, did exactly that. A run
 # that finds one without the self-test's marker FAILS and names it; it does not unset it and
 # carry on, because then the run that someone believed was overridden reports on something
 # else. The marker is the lock holder's pid, exported only by self_test(), and is believed
-# only while this checkout's lock is held by that pid. A NEW SEAM JOINS THIS LIST.
+# only while this checkout's lock is held by that pid: it stops an accidental export, not a
+# deliberate forgery by someone who holds the lock. A NEW SEAM JOINS THIS LIST.
 # GATE_LOCK_WAIT and GATE_LOCK_HELD are not seams: they change when a run starts, not what
 # it checks.
 lock_path=$(git rev-parse --git-path check.lock 2>/dev/null) || lock_path=.check.lock
 case "$lock_path" in /*) ;; *) lock_path="$(pwd -P)/$lock_path" ;; esac
 if [ -z "${GATE_SELFTEST_NESTED:-}" ] || [ "${GATE_LOCK_HELD:-}" != "$lock_path" ] ||
    [ "$(readlink "$lock_path" 2>/dev/null)" != "$GATE_SELFTEST_NESTED" ]; then
-  for seam in GATE_BUILD_CMD_OVERRIDE STATE_FILE PROJECT_FILE BOUNDARY_CHECKS_FILE \
+  for seam in GATE_BUILD_CMD_OVERRIDE GATE_SELFTEST_STATE_FILE GATE_SELFTEST_PROJECT_FILE BOUNDARY_CHECKS_FILE \
               BOUNDARY_SELFTESTS_FILE GATE_SELFTEST_EXTRA_FILE GATE_SELFTEST_BREAK_SCANNER; do
     eval "seam_value=\${$seam:-}"
     [ -z "$seam_value" ] || { echo "FAIL [env]: $seam is set; self-test overrides are not honoured outside --self-test"; fail=1; }
@@ -64,7 +65,7 @@ fi
 
 # Overridable so the self-test can point the rot gate at a synthetic file instead of
 # mutating the real one. Only the self-test sets it (the seam block above).
-STATE_FILE="${STATE_FILE:-docs/STATE.md}"
+GATE_SELFTEST_STATE_FILE="${GATE_SELFTEST_STATE_FILE:-docs/STATE.md}"
 
 # Toolchains are commonly installed per-user and then missing from the PATH of git hooks
 # and other non-login shells; without this the gate fails for the wrong reason. A VALUE, not
@@ -208,10 +209,10 @@ self_test() {
   } > "$live"
   sed 's/^## Active work/## Current things/' "$rot" > "$noheading"
 
-  expect_fail "rot gate rejects a long file nobody pruned after the work closed" STATE_FILE="$rot"
-  expect_pass "rot gate stays quiet while a real bullet is under 'Active work'" STATE_FILE="$live"
-  expect_fail "rot gate rejects a MISSING state file"        STATE_FILE="$work/absent.md"
-  expect_fail "rot gate rejects a renamed 'Active work' heading" STATE_FILE="$noheading"
+  expect_fail "rot gate rejects a long file nobody pruned after the work closed" GATE_SELFTEST_STATE_FILE="$rot"
+  expect_pass "rot gate stays quiet while a real bullet is under 'Active work'" GATE_SELFTEST_STATE_FILE="$live"
+  expect_fail "rot gate rejects a MISSING state file"        GATE_SELFTEST_STATE_FILE="$work/absent.md"
+  expect_fail "rot gate rejects a renamed 'Active work' heading" GATE_SELFTEST_STATE_FILE="$noheading"
 
   # --- the gates that used to be skippable ----------------------------------
   expect_fail "boundary checks missing is a FAILURE, not a skip" \
@@ -254,12 +255,12 @@ self_test() {
     echo "## 1. Money"; echo "unlisted"; echo; echo "## 11. Money"; echo "listed"
   } > "$work/project_prefix.md"
 
-  expect_pass "PROJECT gate accepts a file whose Contents lists every section" PROJECT_FILE="$proj_ok"
-  expect_fail "PROJECT gate rejects a section missing from the Contents"       PROJECT_FILE="$proj_bad"
+  expect_pass "PROJECT gate accepts a file whose Contents lists every section" GATE_SELFTEST_PROJECT_FILE="$proj_ok"
+  expect_fail "PROJECT gate rejects a section missing from the Contents"       GATE_SELFTEST_PROJECT_FILE="$proj_bad"
   expect_fail "PROJECT gate is not fooled by a section number that prefixes another" \
-    PROJECT_FILE="$work/project_prefix.md"
-  expect_fail "PROJECT gate rejects a MISSING project file"                    PROJECT_FILE="$work/absent.md"
-  expect_pass "PROJECT gate stays quiet on a young file with no sections yet"  PROJECT_FILE="$proj_young"
+    GATE_SELFTEST_PROJECT_FILE="$work/project_prefix.md"
+  expect_fail "PROJECT gate rejects a MISSING project file"                    GATE_SELFTEST_PROJECT_FILE="$work/absent.md"
+  expect_pass "PROJECT gate stays quiet on a young file with no sections yet"  GATE_SELFTEST_PROJECT_FILE="$proj_young"
 
   # --- the commit hook --------------------------------------------------------
   # The hook is the gate that actually holds, for every tool, and until now nothing proved
@@ -433,31 +434,31 @@ fi
 #
 # A missing file or a renamed heading is a FAILURE, not a skip. Skipping there meant the
 # whole gate could be disabled by deleting one file or editing one line.
-if [ ! -f "$STATE_FILE" ]; then
-  echo "FAIL [state]: $STATE_FILE does not exist. It is the cross-session memory and the"
+if [ ! -f "$GATE_SELFTEST_STATE_FILE" ]; then
+  echo "FAIL [state]: $GATE_SELFTEST_STATE_FILE does not exist. It is the cross-session memory and the"
   echo "              rot gate's only input; without it this check proves nothing."
   fail=1
-elif ! grep -q "^## Active work" "$STATE_FILE"; then
-  echo "FAIL [state]: $STATE_FILE has no '## Active work' heading, so the rot gate cannot"
+elif ! grep -q "^## Active work" "$GATE_SELFTEST_STATE_FILE"; then
+  echo "FAIL [state]: $GATE_SELFTEST_STATE_FILE has no '## Active work' heading, so the rot gate cannot"
   echo "              run. Restore the heading rather than removing the check."
   fail=1
 else
-  lines=$(wc -l < "$STATE_FILE")
+  lines=$(wc -l < "$GATE_SELFTEST_STATE_FILE")
   # Count BULLETS, never lines. Prose under the heading is the section's own hint text and
   # must not read as work — it wraps, so any "skip the first line" filter silently counts
   # the second one and defeats the gate. That precise bug shipped once; hence the case in
   # self_test().
-  active=$(awk '/^## Active work/{f=1;next} /^## /{f=0} f' "$STATE_FILE" \
+  active=$(awk '/^## Active work/{f=1;next} /^## /{f=0} f' "$GATE_SELFTEST_STATE_FILE" \
     | grep -c "^[[:space:]]*[-*][[:space:]]")
   if [ "$active" -eq 0 ] && [ "$lines" -gt 200 ]; then
-    echo "FAIL [state]: $STATE_FILE is $lines lines with an EMPTY 'Active work' section —"
+    echo "FAIL [state]: $GATE_SELFTEST_STATE_FILE is $lines lines with an EMPTY 'Active work' section —"
     echo "              the operation closed but the file was never pruned. Harvest the"
     echo "              permanent parts (grep for [LESSON] / [GOTCHA]) into their homes,"
     echo "              then delete the rest: it is in git. Operation detail belongs in"
     echo "              docs/<OPERATION>.md, with one pointer line here (docs/STATE.md)."
     fail=1
   elif [ "$lines" -gt 400 ]; then
-    echo "NOTE [state]: $STATE_FILE is $lines lines with work still active. Move operation"
+    echo "NOTE [state]: $GATE_SELFTEST_STATE_FILE is $lines lines with work still active. Move operation"
     echo "              detail into docs/<OPERATION>.md and keep one status line and a"
     echo "              pointer here; harvest as you go, so the prune is small later."
   fi
@@ -475,13 +476,13 @@ fi
 # So this is mechanical rather than a rule in prose: every "## N." heading must appear in
 # the Contents section. A file with no numbered sections yet is fine — that is a young
 # project, not a broken one.
-PROJECT_FILE="${PROJECT_FILE:-docs/PROJECT.md}"
-if [ ! -f "$PROJECT_FILE" ]; then
-  echo "FAIL [project]: $PROJECT_FILE does not exist. It is where permanent decisions live;"
+GATE_SELFTEST_PROJECT_FILE="${GATE_SELFTEST_PROJECT_FILE:-docs/PROJECT.md}"
+if [ ! -f "$GATE_SELFTEST_PROJECT_FILE" ]; then
+  echo "FAIL [project]: $GATE_SELFTEST_PROJECT_FILE does not exist. It is where permanent decisions live;"
   echo "                without it they end up in docs/STATE.md and are pruned away."
   fail=1
-elif ! grep -q "^## Contents" "$PROJECT_FILE"; then
-  echo "FAIL [project]: $PROJECT_FILE has no '## Contents' section, so it cannot be read"
+elif ! grep -q "^## Contents" "$GATE_SELFTEST_PROJECT_FILE"; then
+  echo "FAIL [project]: $GATE_SELFTEST_PROJECT_FILE has no '## Contents' section, so it cannot be read"
   echo "                selectively and every reader will load the whole file."
   fail=1
 else
@@ -490,12 +491,12 @@ else
   # Entries are normalised to bare heading text — list marker, link syntax and trailing
   # space removed — so that a Contents written as "- 1. Money" or "- [1. Money](#money)"
   # both compare equal to the heading "## 1. Money".
-  awk '/^## Contents/{f=1;next} /^## /{f=0} f' "$PROJECT_FILE" \
+  awk '/^## Contents/{f=1;next} /^## /{f=0} f' "$GATE_SELFTEST_PROJECT_FILE" \
     | sed -e 's/^[[:space:]]*[-*][[:space:]]*//' \
           -e 's/^\[//' -e 's/\](#[^)]*)[[:space:]]*$//' \
           -e 's/[[:space:]]*$//' > "$work/toc"
   missing=""
-  sed -n 's/^## \([0-9][0-9.]*\.\{0,1\}[[:space:]].*\)$/\1/p' "$PROJECT_FILE" > "$work/heads"
+  sed -n 's/^## \([0-9][0-9.]*\.\{0,1\}[[:space:]].*\)$/\1/p' "$GATE_SELFTEST_PROJECT_FILE" > "$work/heads"
   while IFS= read -r h; do
     [ -n "$h" ] || continue
     # -x anchors to the WHOLE line and -F takes the pattern literally. Without -x this was a
@@ -505,7 +506,7 @@ else
   - $h"
   done < "$work/heads"
   if [ -n "$missing" ]; then
-    echo "FAIL [project]: $PROJECT_FILE has numbered sections missing from its Contents:$missing"
+    echo "FAIL [project]: $GATE_SELFTEST_PROJECT_FILE has numbered sections missing from its Contents:$missing"
     echo "                Add them, or renumber. Citations elsewhere point at these numbers."
     fail=1
   fi
