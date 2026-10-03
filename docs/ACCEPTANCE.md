@@ -32,7 +32,7 @@ old code, fixed, then merged to master.
     records it; a version without ACTION items is stamped at once; a `none` line is not an item.
   - G5: a clean merge into a red tree refused by a real merge; the commit-msg hook (AI
     trailers, human co-authors with a tool's name, `[bot]`, vendor domains, `Generated with`,
-    the `commit -v` diff, the owner's opt-out); a build failure named with its chain, full
+    a credit quoted in a `commit -v` diff (rejected since the third round: nothing below a scissors line is cut), the owner's opt-out); a build failure named with its chain, full
     log and CI output.
   - G6, G7: each doctor trap injected (exec bit, hooks path, reviewer CLI, `.nvmrc` mismatch,
     `$HOME` in `toolchain_path`, grep shadowing, WSL `/mnt` checkout, CRLF script, unignored

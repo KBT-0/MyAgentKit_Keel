@@ -464,6 +464,19 @@ Each was watched red first. Lesson: every check that compares by name (a referen
 a path, a pid) needs the identity the name stood for when it was recorded; and a second
 vendor's reading is not a formality, it found what five same-vendor rounds did not.
 
+#### Third cross-model round: a pid was still being trusted
+
+A gate killed with SIGKILL leaves its pid in the lock file; variables copied from it matched
+that pid, so a build override reported PASS with no build. A claim to hold the lock now
+needs the inherited descriptor, which a copied variable cannot carry (red: SIGKILL holder,
+then a copied-variable run that passed). The scissors header could be reproduced with `-m`,
+so the hook cuts nothing and takes the `commit -v` false positive, failing closed. The same
+round found an alphanumeric comment character, malformed usage dicts, a `python3` that only
+`toolchain_path` provides, a doctor probe whose grandchild held the pipe for a minute, and a
+Stop-hook branch with no test; each has a test seen red on the old code. The round also
+carried the previous round's findings into its prompt and returned a disposition table for
+all fourteen: the carried-round path of issue #18 was proven on the kit's own review.
+
 #### The review gate held on the kit's own hardening
 
 Five of the nine work packages (the gate lock, both review-tooling packages, the commit gates

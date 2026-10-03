@@ -73,6 +73,25 @@ hand merge; `sync-kit.sh` now keeps listing them until you confirm (see "Sync st
   index for every hook and script (an untracked one is MISSING), skips the grep probe with a
   NOTE where `timeout` is absent, and reads the npm cache's third level; `spawn_worker.sh`
   starts in a checkout path containing an apostrophe (**ACTION:** copy it from the overlay).
+- **Third cross-model round.** `scripts/check.sh`: a nested run must show it INHERITED the
+  lock, not name it: the holder exports `GATE_LOCK_FD`, and a run whose `GATE_LOCK_HELD`
+  names this checkout's lock proves that descriptor is open on the lock file and held before
+  it skips the lock or honours a seam; otherwise `FAIL [env]` by name, so variables copied
+  from a gate killed with SIGKILL no longer let a build override through. `toolchain_path`
+  is applied before the lock resolves `python3`. **ACTION:** copy the toolchain block (now at
+  the top), the seam block and the lock block from `core/scripts/check.sh`. `.githooks/
+  commit-msg` cuts nothing below a scissors line (a `-m` message can reproduce git's whole
+  header): a credit quoted in a `commit -v` diff is rejected and the message says to commit
+  without `-v`; an alphanumeric `core.commentChar` counts as a comment prefix. A malformed
+  usage record, or a completed review with no evidence, stops a labelled round, and the
+  message says to move the record out of `.myagentkit/usage` (a new label does not help: the
+  scan cannot tell whose round a file held until it parses). **ACTION:** copy
+  `claude_bridge.py` and `test_claude_bridge.py`. `doctor.sh` bounds the grep probe's whole
+  process tree (`setsid` where present), reports a probe that did not complete as a NOTE,
+  and honours `REVIEW_REVIEWER`, `REVIEW_CLI_BIN` and `CLAUDE_CLI_BIN` like the wrapper. The
+  Claude Code Stop hook's exit-75 path has a test. **ACTION:** if your
+  `scripts/boundary_selftests.sh` copied the existing-file example, replace its `:` with an
+  `echo "  ok   — <label>"` line, or the self-test reports "ran no case".
 - **Scan failures that were not scanner failures (issues #13, #14).** A tracked file deleted
   without `git rm` now fails `[scan]` under its own name with the command that fixes it, and
   every other scan still runs. A symlink to a directory (for example `node_modules` linked
