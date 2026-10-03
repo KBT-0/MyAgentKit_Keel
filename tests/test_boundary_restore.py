@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -156,7 +157,7 @@ exit 1
             self.assertIn('is a symlink', result.stdout)
             self.assertNotIn('  ok   — ', result.stdout)
 
-    def fixture(self, tmp, gate_body):
+    def fixture(self, tmp, gate_body, *init):
         example = '\n'.join(line[4:] for line in (Path(__file__).resolve().parents[1] /
                             'core/scripts/boundary_selftests.sh').read_text().splitlines()
                             if line.startswith('# | '))
@@ -172,7 +173,7 @@ exit 1
             "echo 'FAIL [boundary]: the domain layer imports the web layer:'\nexit 1\n")
         git = lambda *args: subprocess.run(['git', *args], cwd=root, check=True,
                                            capture_output=True, text=True).stdout
-        git('init', '-q')
+        git('init', '-q', *init)
         git('add', '.')
         git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
             '-c', 'core.hooksPath=/dev/null', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'fixture')
@@ -245,6 +246,47 @@ exit 1
             result = subprocess.run(['sh', 'scripts/check.sh', '--self-test'], cwd=linked,
                                     capture_output=True, text=True, timeout=30,
                                     env=dict(os.environ, TMPDIR=str(scratch), EXPECT_HEAD=head))
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('  ok   — ', result.stdout)
+
+    def linked_self_test(self, tmp, git, **env):
+        linked = Path(tmp) / 'linked'
+        git('worktree', 'add', '-q', str(linked))
+        (linked / 'staged.txt').write_text('staged only\n')
+        subprocess.run(['git', 'add', 'staged.txt'], cwd=linked, check=True)
+        scratch = Path(tmp) / 'scratch'
+        scratch.mkdir()
+        return linked, subprocess.run(['sh', 'scripts/check.sh', '--self-test'], cwd=linked,
+                                      capture_output=True, text=True, timeout=30,
+                                      env=dict(os.environ, TMPDIR=str(scratch), **env))
+
+    def test_a_linked_worktree_copy_has_a_whole_index_under_split_index(self):
+        # The copy took the linked worktree's index file alone: with core.splitIndex that file
+        # names a shared index left in the original's git directory, the copy's index was
+        # unreadable, and a gate that reads the index failed the copy's baseline.
+        with tempfile.TemporaryDirectory() as tmp:
+            root, git = self.fixture(tmp, 'git ls-files -s >/dev/null || exit 1\n'
+                                          '[ "$(git diff --cached --name-only)" = staged.txt ] || exit 1\n')
+            git('config', 'core.splitIndex', 'true')
+            linked, result = self.linked_self_test(tmp, git)
+            gitdir = Path(subprocess.run(['git', 'rev-parse', '--absolute-git-dir'], cwd=linked, check=True,
+                                         capture_output=True, text=True).stdout.strip())
+            self.assertTrue(list(gitdir.glob('sharedindex.*')), 'the fixture wrote no split index')
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('  ok   — ', result.stdout)
+
+    def test_a_linked_worktree_copy_keeps_a_sha256_object_format(self):
+        # The copy was initialised in git's default format: a SHA-256 original's object IDs
+        # could not be imported into a SHA-1 copy, and the probe refused a valid checkout.
+        with tempfile.TemporaryDirectory() as tmp:
+            try:
+                root, git = self.fixture(tmp, '[ "$(git diff --cached --name-only)" = staged.txt ] || exit 1\n',
+                                         '--object-format=sha256')
+            except subprocess.CalledProcessError as error:
+                sys.stderr.write('NOT RUN: this git cannot create a SHA-256 repository: %s\n'
+                                 % (error.stderr or '').strip())
+                self.skipTest('no SHA-256 repositories in this git')
+            linked, result = self.linked_self_test(tmp, git, GIT_DEFAULT_HASH='sha1')
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn('  ok   — ', result.stdout)
 

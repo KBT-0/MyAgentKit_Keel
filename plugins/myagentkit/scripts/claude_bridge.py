@@ -560,20 +560,33 @@ def main(argv=None, result_sink=None) -> int:
         print(json.dumps({"status": "failed", "error": str(error)}))
         return 2
     finally:
+        # Sampled again last, after the output: a cancel noted while the result printed (a
+        # blocked stdout) came after the first sample, the quota-failed attempt went back as
+        # cancelled: false, and --fallback started the other reviewer. The dispatcher holds
+        # this same dict, so the update reaches it; the record is relabelled before main
+        # returns. A direct consumer has only what was printed, and that line said
+        # cancelled: false: the correction line supersedes it.
+        def correct():
+            if result is not None and cancelled and not result["cancelled"]:
+                result["cancelled"] = True
+                if result["failure_kind"]:
+                    result["failure_kind"] = "cancelled"
+                    relabel()
+                    result.update(status=evidence["status"], error=evidence.get("error"))
+                print(json.dumps(dict(result, correction=True)))
+
+        # Corrected before the caller's handlers go back: a second cancel during the relabel
+        # once met them and ended the adapter before the records and the correction line.
+        correct()
         agent_process.restore(held)
-        # Sampled again last, after the output and the restore: a cancel noted while the
-        # result printed (a blocked stdout) came after the first sample, the quota-failed
-        # attempt went back as cancelled: false, and --fallback started the other reviewer.
-        # The dispatcher holds this same dict, so the update reaches it; the record is
-        # relabelled before main returns. A direct consumer has only what was printed, and
-        # that line said cancelled: false: the correction line supersedes it.
+        # Noted while the handlers went back one signal at a time: corrected under a noting
+        # handler again. A cancel during that restore changes nothing; the attempt is cancelled.
         if result is not None and cancelled and not result["cancelled"]:
-            result["cancelled"] = True
-            if result["failure_kind"]:
-                result["failure_kind"] = "cancelled"
-                relabel()
-                result.update(status=evidence["status"], error=evidence.get("error"))
-            print(json.dumps(dict(result, correction=True)))
+            held = agent_process.hold(lambda signum, frame: cancelled.append(signum))
+            try:
+                correct()
+            finally:
+                agent_process.restore(held)
 
 
 if __name__ == "__main__":

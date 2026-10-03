@@ -42,28 +42,30 @@ words="$tools|opus|sonnet|haiku|code|coder|agent|ai|assist|assistant|cli|chat|pr
 domains='anthropic\.com|openai\.com|ampcode\.com|cursor\.(com|sh)|aider\.chat|devin\.ai|cognition\.ai|windsurf\.com|codeium\.com|tabnine\.com'
 # Behind a comment character a trailer is still checked: git keeps "# Co-Authored-By: ..."
 # under -m or verbatim cleanup. Punctuation is skipped whatever it is; a configured
-# core.commentChar is skipped too, which matters when it is a letter ("x Co-Authored-By:"),
-# and core.commentString (git 2.45) before it, as git gives it precedence.
+# core.commentChar is skipped too, which matters when it is a letter ("x Co-Authored-By:").
+# core.commentString (git 2.45) is its alias: whichever of the two is set last, across the
+# global and local files, is the one git uses; preferring commentString skipped "#" from the
+# global file while git took a local commentChar of "x", and "x Co-Authored-By:" passed.
 # "auto" is git choosing a punctuation character, not the letters a, u, t and o.
 # Only an absent key (git config exit 1) means git's default; any other failure, git missing
 # included, fails closed: an unchecked read left only ":" as a separator and let
 # "Co-Authored-By=Claude <...>" through.
 config_get() {
-  value=$(git config --get "$1" 2>/dev/null)
+  value=$(git config "$1" "$2" 2>/dev/null)
   found=$?
   [ "$found" -le 1 ] || {
-    echo "commit-msg: cannot read $1 from git config; refusing to pass the message unchecked." >&2
+    echo "commit-msg: cannot read ${3:-$2} from git config; refusing to pass the message unchecked." >&2
     exit 1
   }
 }
-config_get core.commentString
-[ "$found" = 0 ] || config_get core.commentChar
-comment=$value
 # A failed transformation fails closed too: an unchecked one dropped "=" from the separators.
 fail_parse() {
   echo "commit-msg: cannot parse $1 from git config; refusing to pass the message unchecked." >&2
   exit 1
 }
+config_get --get-regexp '^core\.comment(char|string)$' 'core.commentChar or core.commentString'
+# One "key value" line per setting, in configuration order: the last one is git's.
+comment=$(printf '%s\n' "$value" | sed -n '$s/^[^ ]* //p') || fail_parse core.commentChar
 comment=$(printf '%s' "$comment" | tr -cd '[:alnum:]') || fail_parse core.commentChar
 prefix='^[^[:alnum:]]*'
 [ -z "$comment" ] || [ "$comment" = auto ] || prefix="^([^[:alnum:]]|[$comment])*"
@@ -76,7 +78,7 @@ prefix='^[^[:alnum:]]*'
 # trailer.separators makes other characters separators ("Co-Authored-By=Claude" with "="),
 # so each configured one counts, and the colon always does. In the bracket expression "]"
 # goes first and "-" last, where both are literal.
-config_get trailer.separators
+config_get --get trailer.separators
 seps=$value
 bracket=:$(printf '%s' "$seps" | tr -d ':]-') || fail_parse trailer.separators
 case $seps in *']'*) bracket="]$bracket" ;; esac
