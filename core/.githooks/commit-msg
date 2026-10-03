@@ -71,6 +71,8 @@ prefix='^[^[:alnum:]]*'
 # "Co-Authored-By : Claude" and an identity on the next line are trailers too. Each line is
 # checked joined to every folded line after it, never to only some of them: a partial join
 # read "Co-authored-by: Claude" out of a name folded as "Claude" and "Monet <...>".
+# A blank or whitespace-only line ends the value: it is a paragraph break, and unfolding
+# across it let indented prose below hide a bare tool name ("Co-Authored-By: Claude").
 # trailer.separators makes other characters separators ("Co-Authored-By=Claude" with "="),
 # so each configured one counts, and the colon always does. In the bracket expression "]"
 # goes first and "-" last, where both are literal.
@@ -80,9 +82,9 @@ bracket=:$(printf '%s' "$seps" | tr -d ':]-') || fail_parse trailer.separators
 case $seps in *']'*) bracket="]$bracket" ;; esac
 case $seps in *-*) bracket="$bracket-" ;; esac
 trailer="$prefix[a-z]+(-[a-z]+)*-by[[:space:]]*[$bracket]"
-text=$(awk '{ line[NR] = $0 }
+text=$(awk '{ line[NR] = $0; folded[NR] = /^[[:space:]]+[^[:space:]]/ }
             END { for (i = NR - 1; i > 0; i--)
-                    if (line[i + 1] ~ /^[[:space:]]/) line[i] = line[i] " " line[i + 1]
+                    if (folded[i + 1]) line[i] = line[i] " " line[i + 1]
                   for (i = 1; i <= NR; i++) print line[i] }' "$msg") || {
   echo "commit-msg: cannot unfold the commit message; refusing to pass it unchecked." >&2
   exit 1

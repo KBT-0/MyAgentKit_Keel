@@ -85,7 +85,11 @@ class GitHookTests(unittest.TestCase):
                             'Co-authored-by: "Claude Opus 5.5" <noreply@example.invalid>',
                             # A tool name folded over several lines is the tool's name once joined.
                             'Co-authored-by:\n  Claude\n  Opus 5.5 <noreply@example.invalid>',
-                            'Co-authored-by:\n  GitHub\n  Copilot <copilot@example.invalid>'):
+                            'Co-authored-by:\n  GitHub\n  Copilot <copilot@example.invalid>',
+                            # A whitespace-only line ends the value: unfolded across it, the
+                            # indented prose below hid the bare tool name.
+                            'Co-Authored-By: Claude\n \n  Additional notes',
+                            'Co-Authored-By: Claude\n\t\n\tAdditional notes'):
                 with self.subTest(trailer=trailer):
                     result = self.commit(root, git, trailer + '\n')
                     self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)

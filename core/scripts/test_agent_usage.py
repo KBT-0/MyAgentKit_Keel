@@ -232,6 +232,46 @@ class UsageTests(unittest.TestCase):
                 # A zero exit is not yet a completed review: the cancel is returned either way.
                 self.assertTrue(result['cancelled'], result)
 
+    def test_a_cancel_as_cleanup_begins_is_noted_not_raised(self):
+        # Cleanup swapped the raising handlers for noting ones one signal at a time: a cancel
+        # before its own handler was swapped still raised, past the group kill and the reap.
+        import os
+        import signal
+        from unittest.mock import patch
+        real_popen, real_signal = subprocess.Popen, signal.signal
+        stop_self = 'import os,signal,time; os.kill(os.getppid(), signal.SIGTERM); time.sleep(10)'
+        for name, child, expected in (('second cancel', stop_self, 'cancelled'),
+                                      ('first cancel', 'print("done")', None)):
+            with self.subTest(case=name):
+                created, sent = [], []
+
+                def popen(*args, **kwargs):
+                    created.append(real_popen(*args, **kwargs))
+                    return created[-1]
+
+                def install(sig, handler):
+                    # The first handler change after the launch is where cleanup begins.
+                    if created and not sent:
+                        sent.append(sig)
+                        os.kill(os.getpid(), signal.SIGTERM)
+                    return real_signal(sig, handler)
+
+                try:
+                    with patch.object(agent_process.subprocess, 'Popen', side_effect=popen), \
+                            patch.object(agent_process.signal, 'signal', side_effect=install):
+                        result = agent_process.run([sys.executable, '-c', child], '', Path.cwd(), 5)
+                except KeyboardInterrupt:
+                    self.fail('a cancel as cleanup began escaped run()')
+                finally:
+                    for process in created:
+                        if process.poll() is None:
+                            process.kill()
+                            process.wait()
+                            self.fail('the reviewer outlived its cancelled run')
+                self.assertTrue(sent)
+                self.assertEqual(result['termination'], expected, result)
+                self.assertTrue(result['cancelled'], result)
+
     def test_unavailable_child_is_a_returned_failure_not_an_exception(self):
         result = agent_process.run(["/nonexistent-myagentkit-cli"], "", Path.cwd(), 1)
         self.assertEqual(result["termination"], "unavailable")
