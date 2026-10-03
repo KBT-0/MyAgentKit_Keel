@@ -431,6 +431,25 @@ that MAY be missing goes to the end of PATH, never the front, and the message th
 a version is checked against `which -a`. Proof: a regression with a current fake on PATH
 and a stale fake under `$HOME/.local/bin` fails on the old wrapper and passes on the new.
 
+#### A second model on the hardened diff
+
+A cross-model review of the whole v0.9 diff, run through the kit's own `review.sh`, came
+back Reject with five High findings in code that eight fresh same-vendor reviews had already
+passed: two waiters could both reclaim one stale gate lock and the late one deleted the lock
+the early one had just taken; a pid reused after a reboot held the lock forever; the
+commit-msg hook took an unreadable `AGENTS.md` for the owner allowing credit, stripped `#`
+lines that git keeps under `-m` or `verbatim`, and missed vendor-prefixed "Generated with"
+lines; review rounds matched on the literal reference text, so `--commit HEAD` carried one
+commit's review into the next, and archives were trusted by location alone; `doctor.sh`
+passed a script missing from the index and ran its shell probe unbounded without `timeout`.
+Fixes: the lock is reclaimed by an atomic rename and verified; a live pid whose command
+line is not a gate run is stale; the hook checks comment lines whatever git would do with
+them (fail closed; the false positive, a commented-out credit left by a squash, is one line
+to delete); rounds are bound to the resolved reference, the head and the archive's sha256.
+Each was watched red first. Lesson: every check that compares by name (a reference string,
+a path, a pid) needs the identity the name stood for when it was recorded; and a second
+vendor's reading is not a formality, it found what five same-vendor rounds did not.
+
 #### The review gate held on the kit's own hardening
 
 Five of the nine work packages (the gate lock, both review-tooling packages, the commit gates

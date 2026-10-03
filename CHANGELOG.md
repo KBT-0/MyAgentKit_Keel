@@ -41,6 +41,24 @@ hand merge; `sync-kit.sh` now keeps listing them until you confirm (see "Sync st
   regression builds both binaries. **ACTION:** in your project-owned `scripts/review.sh`,
   change the `PATH="$HOME/.local/bin:$PATH"` line to `PATH="$PATH:$HOME/.local/bin"`, and
   copy the synced `test_claude_bridge.py`.
+- **Cross-model review round.** A second model's review of this version's diff found holes
+  the first pass had left, fixed before release: the gate lock reclaims a stale lock by
+  renaming it, so of two waiters that saw the same dead holder only one runs, and a live
+  pid that is not a gate run (pid reuse after a reboot) counts as stale (**ACTION:** copy the
+  lock block and `cleanup()` from `core/scripts/check.sh` into your `scripts/check.sh`);
+  `.githooks/commit-msg` fails closed on an `AGENTS.md` it cannot read, checks comment
+  lines too (whether git keeps a `#` line depends on `commit.cleanup`, a `--cleanup` flag the
+  hook cannot see, and `-m` versus the editor; a commented-out credit left by a squash is one
+  line to delete), and rejects "Generated with GitHub Copilot" and "Generated with Google
+  Gemini"; review rounds are carried only for the same resolved reference (`--commit HEAD`
+  one commit later is another change), the same HEAD for `--commit` and `--uncommitted`, and
+  only while the archive's sha256 matches its usage record, so rounds recorded by an older
+  kit are refused and need a new task label (**ACTION:** copy `claude_bridge.py`,
+  `codex_bridge.py`, `agent_usage.py` and `test_claude_bridge.py` from `core/scripts/` and the
+  "stops (exit 2)" paragraph of `docs/REVIEW_GATE.md`); `doctor.sh` requires mode 100755 in the
+  index for every hook and script (an untracked one is MISSING), skips the grep probe with a
+  NOTE where `timeout` is absent, and reads the npm cache's third level; `spawn_worker.sh`
+  starts in a checkout path containing an apostrophe (**ACTION:** copy it from the overlay).
 - **Scan failures that were not scanner failures (issues #13, #14).** A tracked file deleted
   without `git rm` now fails `[scan]` under its own name with the command that fixes it, and
   every other scan still runs. A symlink to a directory (for example `node_modules` linked

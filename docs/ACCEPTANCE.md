@@ -57,6 +57,14 @@ old code, fixed, then merged to master.
 - A signal arriving inside `Popen`, and SIGKILL of the dispatcher, still orphan the reviewer.
 - Open issues: #32 (`spawn_worker.sh --worktree` starts from a stale base) and #29.
 
+Cross-model review (executed): `scripts/review.sh --base 5c80c36 --reviewer codex`, round 1
+on the full diff returned Reject (5 High, 6 Medium, 1 Low); every finding was fixed with its
+negative test and the fixes were merged. A second Codex round on the final diff is recorded
+in `docs/reviews/` with its verdict. The round-1 record was written by the pre-fix kit (no
+resolved reference, no archive hash), so round 2 ran under a new task label and did not
+carry round 1: the carried-round path is proven by the regression tests only.
+
+
 ## Issue #6 — what is still live-only, 2026-10-03
 
 Run offline, with a stub Claude CLI in a disposable project made by `bootstrap.sh`: a
