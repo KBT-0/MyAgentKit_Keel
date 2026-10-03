@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 # MyAgentKit_Keel — propagate kit updates into a project that already installed it.
 #
-# Usage: sync-kit.sh [TARGET_DIR] [--dry-run]
+# Usage: sync-kit.sh [TARGET_DIR] [--dry-run] [--actions-applied]
 #
 # Two tiers of ownership, and the line between them is drawn in the files themselves:
 #
@@ -16,18 +16,25 @@
 # your version so you can apply the rest deliberately. That second half is the real product.
 # A tool that silently merged process rules into a working project would be worse than no
 # tool at all.
+#
+# The recorded version (docs/kit/.kit-version) means "the owner has applied everything up to
+# here", not "the files were copied". While the printed entries hold an **ACTION** item, the
+# version stays put, the items are printed again on every run, and the exit status is 2.
+# Rerun with --actions-applied once you have applied them; only then is the version recorded.
 set -u
 
 kit=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 target="."
 dry=0
+applied=0
 
 die() { echo "sync-kit: $1" >&2; exit 1; }
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) dry=1; shift ;;
-    -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
+    --actions-applied) applied=1; shift ;;
+    -h|--help) sed -n '2,23p' "$0"; exit 0 ;;
     -*)        die "unknown option: $1" ;;
     *)         target="$1"; shift ;;
   esac
@@ -45,7 +52,8 @@ latest=$(sed -n 's/^## v\([0-9][0-9.]*\).*/\1/p' "$kit/CHANGELOG.md" | head -1)
 [ -n "$latest" ] || die "cannot read a version from $kit/CHANGELOG.md"
 
 work_list=$(mktemp) || { echo "sync-kit: cannot create a temp file" >&2; exit 1; }
-trap 'rm -f "$work_list"' EXIT INT TERM
+pending=$(mktemp) || { rm -f "$work_list"; echo "sync-kit: cannot create a temp file" >&2; exit 1; }
+trap 'rm -f "$work_list" "$pending"' EXIT INT TERM
 
 echo "sync-kit: project has v$have, kit is v$latest"
 if [ "$have" = "$latest" ]; then
@@ -121,10 +129,33 @@ else
   cat "$kit/CHANGELOG.md"
 fi
 
+# The ACTION items between the recorded version and the top (all of them if the recorded
+# version is unknown), repeated as a checklist. Stamping past them unconfirmed once made the
+# next run say "already current" while the hand edits had never been made.
+awk -v want="v$have" '
+  $1 == "##" && $2 == want { exit }
+  /^## v/ { v = $2 }
+  v && /\*\*ACTION/ { print "  " v ": " $0 }
+' "$kit/CHANGELOG.md" > "$pending"
+
+if [ -s "$pending" ]; then
+  echo
+  echo "ACTION items since v$have (the full entries are above):"
+  cat "$pending"
+fi
+
 if [ "$dry" -eq 1 ]; then
   echo
   echo "sync-kit: dry run — nothing written, version left at v$have."
   exit 0
+fi
+
+if [ -s "$pending" ] && [ "$applied" -eq 0 ]; then
+  echo
+  echo "sync-kit: version left at v$have: the ACTION items above are not confirmed."
+  echo "          Apply them, then rerun with --actions-applied to record v$latest."
+  echo "          Until then every sync prints them again."
+  exit 2
 fi
 
 printf '%s\n' "$latest" > "$stamp"
