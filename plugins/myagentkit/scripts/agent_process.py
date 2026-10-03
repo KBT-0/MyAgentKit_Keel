@@ -53,12 +53,19 @@ def _supervise(command, prompt, repo, timeout, started):
         inp.seek(0)
         child = termination = None
         buffers = {"stdout": bytearray(), "stderr": bytearray()}
-        # Popen sits inside the try, so a cancel that lands right after it still stops the child.
         try:
             try:
-                child = subprocess.Popen(command, cwd=repo, stdin=inp, stdout=subprocess.PIPE,
-                                         stderr=subprocess.PIPE, start_new_session=True,
-                                         env=dict(os.environ, MYAGENTKIT_DELEGATION_DEPTH="1"))
+                # Blocked across Popen: a cancel after the child existed but before Popen
+                # returned left no handle, and the group ran on. The child unblocks before
+                # exec; here a pending cancel is raised on unblock, with the handle kept.
+                mask = signal.pthread_sigmask(signal.SIG_BLOCK, CANCEL_SIGNALS)
+                try:
+                    child = subprocess.Popen(command, cwd=repo, stdin=inp, stdout=subprocess.PIPE,
+                                             stderr=subprocess.PIPE, start_new_session=True,
+                                             env=dict(os.environ, MYAGENTKIT_DELEGATION_DEPTH="1"),
+                                             preexec_fn=lambda: signal.pthread_sigmask(signal.SIG_SETMASK, mask))
+                finally:
+                    signal.pthread_sigmask(signal.SIG_SETMASK, mask)
             except OSError as error:
                 return {"exit_code": 127, "stdout": "", "stderr": str(error),
                         "termination": "unavailable", "duration_ms": 0}
@@ -93,6 +100,10 @@ def _supervise(command, prompt, repo, timeout, started):
             # records the attempt (it may have been billed) and the dispatcher never fails over.
             termination = "cancelled"
         finally:
+            # From here a cancel is noted, not raised: raised, it broke off the group kill or
+            # the reap, and run() returned nothing to record. run() restores the handlers.
+            noted = []
+            hold(lambda signum, frame: noted.append(signum))
             # Also stop descendants left behind by a parent that already exited.
             if child is not None:
                 try:
@@ -102,6 +113,10 @@ def _supervise(command, prompt, repo, timeout, started):
                 child.wait()
                 child.stdout.close()
                 child.stderr.close()
+            # As in the adapters: a failed attempt that was cancelled is cancelled, so the
+            # dispatcher never fails over; a completed one keeps its paid result.
+            if noted and (termination or (child and child.returncode)):
+                termination = "cancelled"
         return {"exit_code": child.returncode if child else None, "stdout": buffers['stdout'].decode(errors="replace"),
                 "stderr": buffers['stderr'].decode(errors="replace"), "termination": termination,
                 "duration_ms": round((time.monotonic() - started) * 1000)}

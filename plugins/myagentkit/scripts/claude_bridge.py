@@ -174,7 +174,18 @@ def prior_rounds(repo: Path, task_id: str | None, scope: str, reference: str | N
                            "labelled round reads every record, so a new task label does not "
                            "help: restore it, or move it out of .myagentkit/usage"
                            % (path, what, task_id))
-    for path in (repo / ".myagentkit/usage").glob("*.json") if task_id else ():
+    # Path.glob() swallows a listing error: a usage directory the owner could write but not
+    # list read as "no earlier rounds". Only an absent directory has none.
+    usage, names = repo / ".myagentkit/usage", []
+    try:
+        names = os.listdir(usage) if task_id else []
+    except FileNotFoundError:
+        pass
+    except OSError as error:
+        raise BridgeError("usage directory %s cannot be listed (%s); an earlier round of task "
+                          "%s may be in it: restore its permissions" % (usage, error, task_id)) from error
+    for path in (usage / name for name in names
+                 if name.endswith(".json") and not name.startswith(".")):
         # A record that cannot be read, or is not shaped like a usage record, may be an earlier
         # round of this task: skipping it dropped that round's findings unseen, past every
         # archive check below. Only a record that parsed is filtered by its task label, so a
