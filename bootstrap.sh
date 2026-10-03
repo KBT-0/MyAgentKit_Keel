@@ -111,14 +111,14 @@ fi
 # The stop comes BEFORE the version stamp, the note and the hooks wiring: an earlier
 # version stamped .kit-version first and then refused — after which sync-kit.sh greeted the
 # gateless project with "already current. Nothing to do."
-if grep -qE '^(scripts/check\.sh|\.githooks/pre-commit)$' "$skiplist" 2>/dev/null; then
+if grep -qE '^(scripts/check\.sh|\.githooks/(pre-commit|pre-merge-commit|commit-msg))$' "$skiplist" 2>/dev/null; then
   cat <<'EOF'
 
 STOPPING: the gate files already existed and were NOT replaced.
 
-  scripts/check.sh and .githooks/pre-commit are the enforcement. Whatever is in this
-  repository now is what will run — and if it is a no-op, this install just gave you the
-  paperwork of a gate with none of the gate.
+  scripts/check.sh and .githooks/pre-commit, pre-merge-commit and commit-msg are the
+  enforcement. Whatever is in this repository now is what will run — and if it is a no-op,
+  this install just gave you the paperwork of a gate with none of the gate.
 
   Decide deliberately, then re-run:
     - keep yours:      merge the kit's checks into your script by hand (docs/RETROFIT.md)

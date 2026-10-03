@@ -151,6 +151,25 @@ class GitHookTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn('crediting an AI tool', result.stderr)
 
+    def test_a_configured_trailer_separator_is_a_separator(self):
+        # With trailer.separators set, git takes "Co-Authored-By=Claude" as a trailer; the
+        # hook's expressions required a colon and passed it.
+        with tempfile.TemporaryDirectory() as tmp:
+            root, git = self.repo(tmp)
+            for separators in ('=', '#=', ']-^'):
+                with self.subTest(separators=separators):
+                    git('config', 'trailer.separators', separators)
+                    for sep in separators:
+                        result = self.commit(root, git, 'Co-Authored-By%s Claude <noreply@anthropic.com>\n' % sep)
+                        self.assertNotEqual(result.returncode, 0, sep + result.stdout + result.stderr)
+                        self.assertIn('crediting an AI tool', result.stderr)
+                    # The default colon stays a separator whatever is configured.
+                    result = self.commit(root, git, 'Co-Authored-By: Claude <noreply@anthropic.com>\n')
+                    self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                    result = self.commit(root, git, 'Co-authored-by%s A Person <person@example.invalid>\n'
+                                         % separators[0])
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_the_owner_may_allow_ai_attribution(self):
         with tempfile.TemporaryDirectory() as tmp:
             root, git = self.repo(tmp)

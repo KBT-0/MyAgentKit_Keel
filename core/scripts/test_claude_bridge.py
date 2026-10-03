@@ -232,6 +232,11 @@ class BridgeTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 2, result.stdout)
                 self.assertIsNone(chain)
                 self.assertIn('clean filter or ident attribute', result.stdout)
+        # A whitespace-only command is a shell no-op that empties the file for the diff: a
+        # configured key is a filter whatever its value.
+        self.git('config', 'filter.hide.clean', ' ')
+        with self.assertRaisesRegex(bridge.BridgeError, 'clean filter or ident attribute on bypass.py'):
+            bridge.snapshot(self.repo, 'uncommitted', None)
         self.git('config', '--unset', 'filter.hide.clean')
         (self.repo / '.gitattributes').write_text('file.py ident\n')
         with self.assertRaisesRegex(bridge.BridgeError, 'clean filter or ident attribute on file.py'):
@@ -1286,13 +1291,11 @@ if case == 'archive_failure':
     def test_a_cancel_during_the_closing_quota_read_keeps_the_completed_attempt(self):
         # The quota read after the review ran with the default handlers back in place, so a
         # SIGTERM there ended the adapter before the paid, completed review was recorded.
+        # After a FAILED attempt the cancel was recorded only in the quota snapshot: the
+        # attempt kept its eligible failure and --fallback launched the other paid reviewer.
         import select
         import signal
         import time
-        fifo = self.root / 'alive-quota'
-        os.mkfifo(fifo)
-        reader = os.open(fifo, os.O_RDONLY | os.O_NONBLOCK)
-        self.addCleanup(os.close, reader)
         reviewer = self.root / 'codex-slow-quota'
         reviewer.write_text(
             "#!/usr/bin/env python3\n"
@@ -1306,47 +1309,117 @@ if case == 'archive_failure':
             "    os.write(alive, b'started\\n')\n"
             "    time.sleep(60)\n"
             "sys.stdin.read()\n"
+            "if os.environ.get('FAIL_QUOTA'):\n"
+            "    print(json.dumps({'type': 'turn.failed', 'error': {'message': 'usage limit reached'}}))\n"
+            "    sys.exit(1)\n"
             "pathlib.Path(sys.argv[sys.argv.index('-o') + 1]).write_text("
             "'## Findings\\n\\nNone.\\n\\nVERDICT: Accept\\n')\n"
             "print(json.dumps({'type': 'turn.completed', 'usage': {'input_tokens': 3}}))\n")
         reviewer.chmod(0o755)
+        second = self.root / 'claude-second'
+        launched = self.root / 'second-launched'
+        second.write_text('#!/bin/sh\n: > "%s"\nexit 1\n' % launched)
+        second.chmod(0o755)
         scripts = self.install_wrapper()
-        env = self.review_env(ALIVE_FIFO=str(fifo), QUOTA_SEEN=str(self.root / 'quota-seen'),
-                              MYAGENTKIT_CAPTURE_QUOTA='1', REVIEW_CLI_BIN=str(reviewer),
-                              REVIEW_CODEX_MODEL='fixture-codex-model')
-        review = subprocess.Popen(['sh', str(scripts / 'review.sh'), '--reviewer', 'codex'],
+        for failing in (False, True):
+            with self.subTest(failing=failing):
+                fifo = self.root / ('alive-quota-%s' % failing)
+                os.mkfifo(fifo)
+                reader = os.open(fifo, os.O_RDONLY | os.O_NONBLOCK)
+                self.addCleanup(os.close, reader)
+                seen = self.root / ('quota-seen-%s' % failing)
+                env = self.review_env(ALIVE_FIFO=str(fifo), QUOTA_SEEN=str(seen),
+                                      MYAGENTKIT_CAPTURE_QUOTA='1', REVIEW_CLI_BIN=str(reviewer),
+                                      REVIEW_CODEX_MODEL='fixture-codex-model',
+                                      REVIEW_CLAUDE_MODEL='claude-opus-5', CLAUDE_CLI_BIN=str(second),
+                                      FAIL_QUOTA='1' if failing else '')
+                review = subprocess.Popen(['sh', str(scripts / 'review.sh'), '--reviewer', 'codex',
+                                           '--fallback'],
+                                          env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                self.addCleanup(lambda p=review: p.poll() is None and p.kill())
+
+                def read_until(done):
+                    deadline, seen = time.monotonic() + 20, b''
+                    while time.monotonic() < deadline:
+                        select.select([reader], [], [], 0.2)
+                        try:
+                            chunk = os.read(reader, 64)
+                        except BlockingIOError:
+                            continue
+                        seen += chunk
+                        if done(seen, chunk):
+                            return True
+                        if not chunk:
+                            if review.poll() is not None:
+                                return False
+                            time.sleep(0.05)
+                    return False
+
+                self.assertTrue(read_until(lambda seen, chunk: b'started' in seen), 'quota read never started')
+                review.send_signal(signal.SIGTERM)
+                output = review.communicate(timeout=30)[0]
+                self.assertTrue(read_until(lambda seen, chunk: chunk == b''),
+                                'the quota reader outlived the cancel')
+                self.assertFalse(launched.exists(), 'a cancelled review launched the other reviewer:\n' + output)
+                line = next((line.removeprefix('review invocation: ') for line in output.splitlines()
+                             if line.startswith('review invocation: ')), None)
+                self.assertIsNotNone(line, output)
+                usage = json.loads(Path(json.loads(line)['usage_record']).read_text())
+                self.assertEqual((usage['status'], usage['failure_kind']),
+                                 ('failed', 'cancelled') if failing else ('completed', None))
+                self.assertEqual(usage['usage']['account_quota_snapshots']['after']['status'], 'cancelled')
+                if not failing:
+                    self.assertEqual(usage['usage']['input_tokens'], 3)
+                else:
+                    chain = json.loads(next(line.removeprefix('review dispatch: ') for line in output.splitlines()
+                                            if line.startswith('review dispatch: ')))
+                    self.assertEqual([a['reviewer'] for a in chain['attempts']], ['codex'])
+                    self.assertEqual(chain['failure_kind'], 'cancelled')
+
+    def test_a_cancel_during_the_claude_final_snapshot_keeps_the_usage_record(self):
+        # The Claude adapter restored the default handlers when the reviewer exited, so a
+        # SIGTERM while it hashed the checkout for the stale check ended it before the paid
+        # review's evidence and usage were written. A fake git on PATH holds that snapshot.
+        import select
+        import shutil
+        import signal
+        import time
+        fifo = self.root / 'alive-final'
+        os.mkfifo(fifo)
+        reader = os.open(fifo, os.O_RDONLY | os.O_NONBLOCK)
+        self.addCleanup(os.close, reader)
+        mark, tools = self.root / 'reviewer-ran', self.root / 'slow-git'
+        tools.mkdir()
+        (tools / 'git').write_text('#!/bin/sh\nif [ -e "%s" ] && mkdir "%s.once" 2>/dev/null; then\n'
+                                   '  printf \'started\\n\' > "%s"\n  sleep 2\nfi\nexec "%s" "$@"\n'
+                                   % (mark, mark, fifo, shutil.which('git')))
+        (tools / 'git').chmod(0o755)
+        reviewer = self.root / 'claude-marking'
+        reviewer.write_text('#!/bin/sh\n: > "%s"\nexec "%s" "$@"\n' % (mark, self.fixture))
+        reviewer.chmod(0o755)
+        scripts = self.install_wrapper()
+        env = self.review_env(CLAUDE_CLI_BIN=str(reviewer), REVIEW_CLAUDE_MODEL='claude-opus-5',
+                              PATH=str(tools) + os.pathsep + os.environ['PATH'])
+        review = subprocess.Popen(['sh', str(scripts / 'review.sh'), '--reviewer', 'claude'],
                                   env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         self.addCleanup(lambda: review.poll() is None and review.kill())
-
-        def read_until(done):
-            deadline, seen = time.monotonic() + 20, b''
-            while time.monotonic() < deadline:
-                select.select([reader], [], [], 0.2)
-                try:
-                    chunk = os.read(reader, 64)
-                except BlockingIOError:
-                    continue
-                seen += chunk
-                if done(seen, chunk):
-                    return True
-                if not chunk:
-                    if review.poll() is not None:
-                        return False
-                    time.sleep(0.05)
-            return False
-
-        self.assertTrue(read_until(lambda seen, chunk: b'started' in seen), 'quota read never started')
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline and review.poll() is None:
+            select.select([reader], [], [], 0.2)
+            try:
+                if b'started' in os.read(reader, 64):
+                    break
+            except BlockingIOError:
+                pass
+        else:
+            self.fail('the final snapshot never started')
         review.send_signal(signal.SIGTERM)
         output = review.communicate(timeout=30)[0]
-        self.assertTrue(read_until(lambda seen, chunk: chunk == b''),
-                        'the quota reader outlived the cancel')
-        line = next((line.removeprefix('review invocation: ') for line in output.splitlines()
-                     if line.startswith('review invocation: ')), None)
-        self.assertIsNotNone(line, output)
-        usage = json.loads(Path(json.loads(line)['usage_record']).read_text())
+        chain = json.loads(next((line.removeprefix('review dispatch: ') for line in output.splitlines()
+                                 if line.startswith('review dispatch: ')), 'null'))
+        self.assertIsNotNone(chain, output)
+        usage = json.loads(Path(chain['attempts'][0]['usage_record']).read_text())
         self.assertEqual((usage['status'], usage['failure_kind']), ('completed', None))
-        self.assertEqual(usage['usage']['input_tokens'], 3)
-        self.assertEqual(usage['usage']['account_quota_snapshots']['after']['status'], 'cancelled')
 
     def test_both_unavailable_stop_after_two_and_keep_review_pending(self):
         result, chain = self.dispatch_result(FIXTURE_CASE='quota', CODEX_FIXTURE_CASE='quota')

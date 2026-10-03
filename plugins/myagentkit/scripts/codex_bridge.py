@@ -79,6 +79,7 @@ def main(argv=None, result_sink=None):
             capture_quota = os.environ.get("MYAGENTKIT_CAPTURE_QUOTA", "1") == "1"
             before = codex_quota.snapshot(command[0], repo) if capture_quota else {"status": "disabled"}
             execution = None
+            cancelled = []
             try:
                 execution = agent_process.run(command, prompt, repo, timeout)
                 # A cancelled review must stop now, not start another CLI process to read quota.
@@ -89,8 +90,10 @@ def main(argv=None, result_sink=None):
                 if execution is None:
                     raise
                 after = {"status": "cancelled"}
-            # From here to the record a cancel is dropped: the record is what it would lose.
-            agent_process.hold(lambda signum, frame: None)
+                cancelled.append(True)
+            # From here to the record a cancel is noted, not acted on: the record is what it
+            # would lose.
+            agent_process.hold(lambda signum, frame: cancelled.append(signum))
             execution["account_quota_snapshots"] = {"before": before, "after": after,
                                                    "per_call_attribution": "unproven"}
             values = agent_usage.decode("codex", execution["stdout"])
@@ -119,6 +122,10 @@ def main(argv=None, result_sink=None):
                 if not any(check and check not in {'none', 'n/a', 'not applicable', 'not run'}
                            and not check.startswith(('#', 'verdict:')) for check in checks):
                     reason = 'invalid_evidence'
+            # A failed attempt that was cancelled is cancelled: its eligible failure once let
+            # --fallback launch the other paid reviewer after the owner had stopped the review.
+            if cancelled and reason:
+                reason = "cancelled"
         status = "failed" if reason else "completed"
         # Codex publishes no model identity in its JSON output, so the pin is recorded as
         # requested-not-attested. Saying which it is beats a record that implies verification

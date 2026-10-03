@@ -299,3 +299,47 @@ class DoctorTests(unittest.TestCase):
             ready = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=project, capture_output=True,
                                    text=True, env=dict(env, DOCTOR_TEST_TOOLCHAIN=''))
             self.assertEqual(ready.returncode, 0, ready.stdout + ready.stderr)
+            check.write_text(check.read_text().replace(
+                'toolchain_path="${DOCTOR_TEST_TOOLCHAIN}/bin"', 'toolchain_path="{{TOOLCHAIN_PATH_SETUP}}"'))
+
+            # A required hook that does not exist: the loop below skipped what was not there,
+            # and the wiring check reads only core.hooksPath, so ordinary commits went ungated.
+            pre_commit = project / '.githooks/pre-commit'
+            pre_commit_bytes = pre_commit.read_bytes()
+            pre_commit.unlink()
+            red = doctor()
+            self.assertEqual(red.returncode, 1, red.stdout)
+            self.assertIn('MISSING: .githooks/pre-commit does not exist', red.stdout)
+            self.assertEqual(red.stdout.count('MISSING:'), 1, red.stdout)
+            pre_commit.write_bytes(pre_commit_bytes)
+            pre_commit.chmod(0o755)
+
+            # Node as the gate resolves it: a hook inherits its caller's PATH (check.sh adds
+            # only toolchain_path in front). The probe once used a login-less PATH instead and
+            # read a system Node the gate never ran, in both directions. A fake getconf gives
+            # that login-less probe a system directory this test controls.
+            (project / '.nvmrc').write_text('22\n')
+            system, inherited, conf = tmp / 'system-bin', tmp / 'inherited-bin', tmp / 'conf-bin'
+            for directory in (system, inherited, conf):
+                directory.mkdir()
+            (conf / 'getconf').write_text('#!/bin/sh\necho %s:/usr/bin:/bin\n' % system)
+            for system_node, inherited_node, expect in (('v22.1.0', 'v18.2.0', 'MISSING'),
+                                                        ('v18.2.0', 'v22.1.0', 'ready')):
+                with self.subTest(system=system_node, inherited=inherited_node):
+                    for directory, version in ((system, system_node), (inherited, inherited_node)):
+                        (directory / 'node').write_text('#!/bin/sh\necho %s\n' % version)
+                    for tool in (conf / 'getconf', system / 'node', inherited / 'node'):
+                        tool.chmod(0o755)
+                    result = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=project, capture_output=True,
+                                            text=True, env=dict(env, PATH=os.pathsep.join(
+                                                (str(inherited), str(conf), env['PATH']))))
+                    if expect == 'MISSING':
+                        self.assertEqual(result.returncode, 1, result.stdout)
+                        self.assertIn('MISSING: a git hook resolves node v18.2.0, .nvmrc wants 22',
+                                      result.stdout)
+                        self.assertEqual(result.stdout.count('MISSING:'), 1, result.stdout)
+                    else:
+                        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertIn('NOTE: a hook started from a login-less shell would see node %s'
+                                  % system_node, result.stdout)
+            (project / '.nvmrc').unlink()

@@ -159,8 +159,9 @@ hand merge; `sync-kit.sh` now keeps listing them until you confirm (see "Sync st
   the build command. `.githooks/commit-msg` (new, kit-owned) rejects an AI credit in a
   `Co-Authored-By`, `Signed-off-by` or `Assisted-by` trailer or a "Generated with" line, only
   when the whole trailer name is a tool or model, the address is a vendor's or a `[bot]`;
-  human names that contain a tool's pass, and the `commit -v` diff is ignored. The rule
-  "No AI attribution in git" in `AGENTS.md` is the owner's switch: without that line the hook
+  human names that contain a tool's pass. Nothing below a `commit -v` scissors line is cut: a
+  credit quoted in that diff is rejected too, and the way past it is to commit without -v.
+  The rule "No AI attribution in git" in `AGENTS.md` is the owner's switch: without that line the hook
   gives way (a missing `AGENTS.md` keeps it on), and the setup interview asks. **ACTION:** copy
   the rule bullet and the extended hook sentence from `core/AGENTS.md` into your `AGENTS.md`;
   to allow AI credit, delete the rule line there. **ACTION:** copy the `build_log=` line, the

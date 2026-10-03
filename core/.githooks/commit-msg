@@ -53,7 +53,14 @@ prefix='^[^[:alnum:]]*'
 # Git takes whitespace before a trailer's colon and folds a value onto indented lines, so
 # "Co-Authored-By : Claude" and an identity on the next line are trailers too. Each folded
 # line is checked as it stands and again joined to the lines it continues.
-trailer="$prefix[a-z]+(-[a-z]+)*-by[[:space:]]*:"
+# trailer.separators makes other characters separators ("Co-Authored-By=Claude" with "="),
+# so each configured one counts, and the colon always does. In the bracket expression "]"
+# goes first and "-" last, where both are literal.
+seps=$(git config --get trailer.separators 2>/dev/null)
+bracket=:$(printf '%s' "$seps" | tr -d ':]-')
+case $seps in *']'*) bracket="]$bracket" ;; esac
+case $seps in *-*) bracket="$bracket-" ;; esac
+trailer="$prefix[a-z]+(-[a-z]+)*-by[[:space:]]*[$bracket]"
 text=$(awk '{ print } NR > 1 && /^[[:space:]]/ { line = line " " $0; print line; next }
             { line = $0 }' "$msg") || {
   echo "commit-msg: cannot unfold the commit message; refusing to pass it unchecked." >&2
