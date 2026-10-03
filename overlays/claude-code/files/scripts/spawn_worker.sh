@@ -76,17 +76,20 @@ tmux paste-buffer -d -b "spawn-$name" -t "$name"
 
 # Submit only once the paste has landed: an Enter sent while the TUI is still receiving a
 # bracketed paste is swallowed and the brief sits unsent at the prompt (seen on the first
-# run of this script). Then confirm the prompt line emptied; if not, press Enter once more.
+# run of this script). A short brief shows its text; a multi-line brief shows only the
+# placeholder "[Pasted text #1 +N lines]" (seen on the first real worker), so both count.
+# Then confirm the prompt line emptied; if not, press Enter once more.
 head=$(head -c 40 "$brief" | tr -d '\n')
+landed() { tmux capture-pane -p -t "$name" -J | grep -qF -e "$head" -e "[Pasted text"; }
 i=0
-until tmux capture-pane -p -t "$name" -J | grep -qF -- "$head"; do
+until landed; do
   i=$((i + 1)); [ "$i" -lt 30 ] || die "the brief did not appear in session '$name' (tmux attach -t $name)"
   sleep 1
 done
 sleep 1
 tmux send-keys -t "$name" Enter
 sleep 3
-if tmux capture-pane -p -t "$name" -J | grep -q "^❯.*$(printf '%s' "$head" | head -c 20 | sed 's/[][\\.*^$/]/\\&/g')"; then
+if tmux capture-pane -p -t "$name" -J | grep -q "^❯.*\(\[Pasted text\|$(printf '%s' "$head" | head -c 20 | sed 's/[][\\.*^$/]/\\&/g')\)"; then
   tmux send-keys -t "$name" Enter
 fi
 echo "spawn_worker: '$name' started with $brief (tmux attach -t $name to watch)"
