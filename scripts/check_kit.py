@@ -4,6 +4,7 @@ import argparse
 import ast
 import json
 import io
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -51,8 +52,9 @@ def run_tests(root, directory, required):
     print(output.getvalue().strip())
 
 
-def run(args, cwd=ROOT, expected=0, reason=None):
-    result = subprocess.run(args, cwd=cwd, capture_output=True, text=True)
+def run(args, cwd=ROOT, expected=0, reason=None, env=None, timeout=None):
+    result = subprocess.run(args, cwd=cwd, capture_output=True, text=True, env=env,
+                            timeout=timeout)
     output = result.stdout + result.stderr
     if result.returncode != expected or (reason and reason not in output):
         raise RuntimeError(f"{args}: expected exit {expected}, reason {reason!r}\n{output}")
@@ -97,8 +99,41 @@ def main():
         run(["sh", "scripts/check.sh"], project, reason="CHECK: PASS")
         print("PASS: bootstrap rejects missing setup and accepts the configured synthetic project")
         if args.self_test:
-            print(run(["sh", "scripts/check.sh", "--self-test"], project,
-                      reason="SELF-TEST: PASS").strip())
+            with tempfile.TemporaryDirectory(prefix="myagentkit-side-") as side:
+                side = Path(side)
+                status = ["git", "status", "--porcelain", "--untracked-files=all"]
+                before = run(status, project)
+                # Every nested gate run records the tree through the build command, so a case
+                # that writes into the tree and cleans up afterwards is still caught.
+                log = side / "status.log"
+                record = dict(os.environ, GATE_BUILD_CMD_OVERRIDE=(
+                    f'{{ git status --porcelain --untracked-files=all; echo ==; }} >> "{log}"'))
+                print(run(["sh", "scripts/check.sh", "--self-test"], project, env=record,
+                          reason="SELF-TEST: PASS").strip())
+                seen = log.read_text().split("==\n")[:-1]
+                if not seen or any(s != before for s in seen) or run(status, project) != before:
+                    raise RuntimeError("check.sh --self-test changed the working tree:\n"
+                                       + "".join(s for s in seen if s != before))
+                print("PASS: the working tree stays byte-identical throughout --self-test")
+                # Two gate runs sharing one build directory: the second must wait, not race.
+                racy = dict(os.environ, GATE_BUILD_CMD_OVERRIDE=(
+                    f'mkdir "{side}/build" && sleep 2 && rmdir "{side}/build"'))
+                pair = [subprocess.Popen(["sh", "scripts/check.sh"], cwd=project, env=racy,
+                                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                         text=True) for _ in range(2)]
+                outputs = [p.communicate(timeout=60)[0] for p in pair]
+                if (any(p.returncode or "CHECK: PASS" not in o for p, o in zip(pair, outputs))
+                        or not any("NOTE [lock]" in o for o in outputs)):
+                    raise RuntimeError("concurrent gate runs raced:\n" + "\n".join(outputs))
+                print("PASS: two concurrent gate runs sharing a build directory both pass")
+                # A holder killed without cleanup must not block every later run.
+                dead = subprocess.Popen(["true"])
+                dead.wait()
+                lock = project / ".git/check.lock"
+                lock.mkdir()
+                (lock / "pid").write_text(f"{dead.pid}\n")
+                run(["sh", "scripts/check.sh"], project, reason="CHECK: PASS", timeout=60)
+                print("PASS: a lock left by a killed gate run is reclaimed")
             tests = project / "scripts/test_claude_bridge.py"
             original_tests = tests.read_bytes()
             tests.unlink()

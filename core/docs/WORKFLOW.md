@@ -57,6 +57,13 @@ breaks, everything keeps looking green.
   every commit.
 - **Ship a negative test with it** — `./scripts/check.sh --self-test`. A manual proof rots
   the moment someone edits the script; the automated one does not.
+- **A self-test case never changes a tracked file**, and writes nothing else into the
+  working tree when it can avoid it: point the gate at a synthetic file outside the tree
+  through an overridable path, or run against a disposable copy. Several sessions share one
+  checkout, and a file injected into it is seen by their `git add -A`, their edits and their
+  commits. `check.sh` holds a per-checkout lock for a whole run (the self-test included), so
+  a second gate run waits instead of racing; tests that write scratch files still use a
+  unique temporary directory, never a fixed name in the build or working directory.
 - **Make destructive probes interruption-safe.** Prefer a disposable project snapshot.
   If a test modifies an existing file, save its current bytes and mode, including
   uncommitted edits, and register EXIT/INT/TERM restoration before the first mutation.
