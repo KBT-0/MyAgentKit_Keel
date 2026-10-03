@@ -203,8 +203,10 @@ One topic per turn. Suggested order, because each answer informs the next:
    minutes, so a worker that waits longer re-writes its whole context after every wait; in
    the kit's founding project that was 87 percent of all cache-write tokens
    (`docs/WORKFLOW.md`, "Worker cost"). If the answer is yes and the Claude Code overlay is
-   installed, fill `{{WORKER_MODEL}}` and `{{LONG_JOBS}}` in `.claude/agents/worker.md` with
-   the author model and those job names, and tell the owner that workers for such tasks are
+   installed, fill `{{WORKER_MODEL}}`, `{{WORKER_EFFORT}}` and `{{LONG_JOBS}}` in
+   `.claude/agents/worker.md` with the author model, its effort (`high` when the workers'
+   tasks bear design, lower when they are mechanical; without the field a sub-agent runs at
+   whatever effort its lead session has) and those job names, and tell the owner that workers for such tasks are
    spawned with that definition instead of the general-purpose one. If the answer is no,
    delete `.claude/agents/worker.md` and `scripts/spawn_worker.sh` (Phase 4, "Delete what
    does not apply"). Either way the rules in that section bind the lead from day one.

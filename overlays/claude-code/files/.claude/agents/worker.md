@@ -6,6 +6,7 @@ description: >
   longer than a few minutes ({{LONG_JOBS}}). Runs with a one-hour prompt cache and ends
   under about 150 turns; a review-fix round goes to a FRESH worker, never a resumed one.
 model: {{WORKER_MODEL}}
+effort: {{WORKER_EFFORT}}
 maxTurns: 150
 experimental:
   cacheTtl: 1h

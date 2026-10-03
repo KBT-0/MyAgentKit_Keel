@@ -12,7 +12,8 @@
 #
 # The lead then subscribes once with SendMessage `notify_when_idle` and reads the result
 # FILE the brief asks the worker to write. It does not poll and it does not chat with the
-# worker: every message to an idle session is a full-context turn.
+# worker: every message to an idle session is a full-context turn. After reading the file
+# the lead closes the session with `tmux kill-session -t NAME`; it does not end by itself.
 #
 # Pitfalls this script encodes (each one cost a session):
 #   - The prompt is pasted AFTER the TUI is up, never passed on the command line after a
@@ -95,3 +96,7 @@ if tmux capture-pane -p -t "$name" -J | grep -q "^❯.*\(\[Pasted text\|$(printf
   tmux send-keys -t "$name" Enter
 fi
 echo "spawn_worker: '$name' started with $brief (tmux attach -t $name to watch)"
+# The session does not end when its task does: a pilot worker wrote its result file and sat
+# idle for 40 minutes until killed by hand, and the idle notice also fires on every park on a
+# background job. The result file is the end signal, and closing is the lead's job.
+echo "spawn_worker: after reading the result file, close it: tmux kill-session -t $name"

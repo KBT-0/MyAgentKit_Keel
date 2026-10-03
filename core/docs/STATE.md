@@ -26,9 +26,16 @@ history, and nobody looks there — git is an audit trail, not a knowledge base.
 is then a grep, not a re-read — and a tagged line may not be deleted until it has a home.
 
 **Completed work is DELETED, not marked DONE.** The dates live in git
-(`git log -p -- docs/STATE.md`). A multi-item operation tracks its progress in its OWN file
-with checkboxes, not as a growing list here; the last acceptance item of every such
-operation is "STATE.md harvested and pruned".
+(`git log -p -- docs/STATE.md`).
+
+**An operation's detail lives in its own file, `docs/<OPERATION>.md`, never here.** This
+file holds one status line per operation and a pointer to that file. Workers write their
+results straight into the operation file, so there is no note to fold back in here. The
+operation file tracks progress with checkboxes; its last acceptance item is "STATE.md
+harvested and pruned", and the file is deleted when the operation closes (the history is in
+git). Without this rule a long operation keeps "Active work" non-empty, every integration
+folds more into this file, and it only grows: one project reached 38 KB, and after adding a
+10 KB limit hit it three times in one day on a single bullet.
 
 Write full, explicit sentences with a tool+model trace per entry. Compressed chat styles do
 not apply to this file: the next tool reading it knows nothing about your plugins.
@@ -37,8 +44,9 @@ not apply to this file: the next tool reading it knows nothing about your plugin
 
 ## Active work
 
-(task + module + status; delete when done — an EMPTY section means nothing is in flight,
-and `check.sh` reads it that way, so never park closed work here)
+(task + module + status, or one line per operation pointing at its `docs/<OPERATION>.md`;
+delete when done — an EMPTY section means nothing is in flight, and `check.sh` reads it that
+way, so never park closed work here)
 
 ## Blocked / waiting on {{OWNER_NAME}}
 

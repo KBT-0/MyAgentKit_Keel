@@ -262,7 +262,14 @@ Rules, binding for whoever routes workers, in order of measured weight:
 4. **The lead does not poll either.** It waits for task notifications or an idle notice from
    a separate session; it does not check on workers or CI in a loop.
 5. **Mechanical work goes to the cheaper model**: doc fixes, running a documented proof,
-   folding notes. The stronger model is for design-bearing code and for reviews.
+   folding notes. The stronger model is for design-bearing code and for reviews. **Effort is
+   set per task the same way**: the strongest model at high effort for design-bearing work
+   and for reviews, the cheaper model at a lower effort for mechanical work. It is never
+   left to inheritance: a sub-agent runs at its lead session's effort unless its definition
+   sets `effort:` (the Claude Code overlay's `worker.md` and `diff-reviewer.md` do), and
+   nothing in its output shows which one it got. For a separate session the lever is
+   `scripts/spawn_worker.sh --effort`. The brief states model and effort, and the lead
+   verifies both after the run in the transcript, not in the report.
 6. **Parallel workers only for independent modules**; each one multiplies the bill.
 7. **Worker reports are short** (about 400 words), and long output goes to a file with a
    summary line: the lead pays for a report again on every later turn.
@@ -273,7 +280,10 @@ Rules, binding for whoever routes workers, in order of measured weight:
 Separate sessions and one-hour sub-agents cost the same. A separate session adds visibility
 and survives a lead handoff; the Claude Code overlay's `scripts/spawn_worker.sh` opens one
 in tmux and hands it a brief file, and the lead subscribes once for its idle notice instead
-of messaging it (every message to an idle session is a full-context turn).
+of messaging it (every message to an idle session is a full-context turn). Such a session
+does not end when its task does, and the idle notice also fires on every park on a
+background job, so it cannot serve as the end signal: the result file is the end signal,
+and the lead closes the session after reading it (`tmux kill-session -t NAME`).
 
 ## Token economics — the always-loaded prefix is money
 

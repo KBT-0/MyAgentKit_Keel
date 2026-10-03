@@ -5,6 +5,7 @@ description: >
   {{RISKY_AREAS}}, or any gate, CI configuration, check script or review tooling —
   before commit. Spawn FRESH: the implementer session must never review its own patch.
 model: {{REVIEWER_MODEL}}
+effort: high
 tools: Read, Grep, Glob, Bash
 ---
 You are the review gate for {{PROJECT_NAME}}. Follow `docs/REVIEW_GATE.md` (canonical)
