@@ -687,6 +687,78 @@ exit 1
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn('  ok   — ', result.stdout)
 
+    def test_a_carried_setting_in_both_scopes_is_refused_by_name(self):
+        # The local and worktree scopes were merged into the copy's one local file: a key set once
+        # in each became two values there, and a gate's `git config core.filemode false`, which
+        # changes only the local file in the original, failed in the copy.
+        for scopes in ('both', 'worktree'):
+            with self.subTest(scopes=scopes), tempfile.TemporaryDirectory() as tmp:
+                root, git = self.fixture(tmp, 'git config core.filemode false || exit 1\n')
+                git('config', 'extensions.worktreeConfig', 'true')
+                if scopes == 'worktree':
+                    git('config', '--unset', 'core.filemode')
+                linked = Path(tmp) / 'linked'
+                git('worktree', 'add', '-q', str(linked))
+                subprocess.run(['git', 'config', '--worktree', 'core.filemode', 'true'], cwd=linked, check=True)
+                result = self.self_test(tmp, linked)
+                if scopes == 'both':
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    self.assertIn('core.filemode is set in both the local and the worktree configuration;'
+                                  ' the existing-file probe does not support it', result.stdout)
+                    self.assertNotIn('  ok   — ', result.stdout)
+                else:
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertIn('  ok   — ', result.stdout)
+                # The premise: the gate's write succeeds in the original.
+                subprocess.run(['git', 'config', 'core.filemode', 'false'], cwd=linked, check=True)
+
+    def test_an_ignored_uninitialised_submodule_is_not_intent_to_add(self):
+        # The diff that counts intent-to-add entries honoured submodule.<name>.ignore=all and left
+        # the gitlink out, so the count reported a missing intent-to-add file that did not exist.
+        with tempfile.TemporaryDirectory() as tmp:
+            root, git = self.fixture(tmp, '[ "$(git ls-files -s)" = "$EXPECT_INDEX" ] || exit 1\n',
+                                     names=('EXPECT_INDEX',))
+            linked = Path(tmp) / 'linked'
+            git('worktree', 'add', '-q', str(linked))
+            run = lambda *args: subprocess.run(['git', *args], cwd=linked, check=True,
+                                               capture_output=True, text=True).stdout
+            (linked / '.gitmodules').write_text('[submodule "sub"]\n\tpath = sub\n\turl = ./sub\n\tignore = all\n')
+            (linked / 'sub').mkdir()
+            run('add', '.gitmodules')
+            run('update-index', '--add', '--cacheinfo', '160000,%s,sub' % run('rev-parse', 'HEAD').strip())
+            expected = run('ls-files', '-s').rstrip('\n')
+            self.assertIn('160000 ', expected)
+            result = self.self_test(tmp, linked, EXPECT_INDEX=expected)
+            self.assertNotIn('intent-to-add', result.stdout)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('  ok   — ', result.stdout)
+
+    def test_an_allowlisted_setting_from_an_include_is_carried(self):
+        # Read with --no-includes, a named key the original sets through include.path was not
+        # carried: the gate failed the copy's baseline and the printed advice could not fix it.
+        # Only the named key is taken from the include; one set in two files is refused by name,
+        # since the copy's single local file would hold two values.
+        for duplicate in (False, True):
+            with self.subTest(duplicate=duplicate), tempfile.TemporaryDirectory() as tmp:
+                root, git = self.fixture(tmp, '[ "$(git config --get kit.required)" = yes ] || exit 1\n'
+                                              '! git config --get kit.other >/dev/null || exit 1\n',
+                                         config_keys='kit.required')
+                included = Path(tmp) / 'included'
+                included.write_text('[kit]\n\trequired = yes\n\tother = 1\n')
+                if duplicate:
+                    git('config', 'kit.required', 'no')
+                git('config', 'include.path', str(included))
+                linked, result = self.linked_self_test(tmp, git)
+                if duplicate:
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    self.assertIn('kit.required is set in more than one configuration file through an include;'
+                                  ' the existing-file probe does not support it', result.stdout)
+                    self.assertNotIn('  ok   — ', result.stdout)
+                else:
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertIn('  ok   — ', result.stdout)
+                    self.assertIn('NOTE — existing-file probe: include.path is not carried', result.stdout)
+
 
 if __name__ == '__main__':
     unittest.main()
