@@ -369,7 +369,7 @@ exit 1
         with tempfile.TemporaryDirectory() as tmp:
             root, git = self.fixture(tmp, 'git add src/domain/existing.py || exit 1\n')
             objects = root / '.git/objects'
-            count = lambda: sum(len(files) for _, _, files in os.walk(objects))
+            count = lambda: len(list(objects.glob('[0-9a-f][0-9a-f]/*')))  # loose objects only
             before = count()
             scratch = Path(tmp) / 'scratch'
             scratch.mkdir()
@@ -405,6 +405,96 @@ exit 1
                 self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
                 self.assertIn(message, result.stdout)
                 self.assertNotIn('  ok   — ', result.stdout)
+
+    def self_test(self, tmp, cwd, **env):
+        scratch = Path(tmp) / 'scratch'
+        scratch.mkdir()
+        return subprocess.run(['sh', 'scripts/check.sh', '--self-test'], cwd=cwd, capture_output=True,
+                              text=True, timeout=30, env=dict(os.environ, TMPDIR=str(scratch), **env))
+
+    def test_a_symlinked_object_store_cannot_take_the_copy_s_writes(self):
+        # The containment check validated the git and common directories, not what lies in
+        # them: cp -R kept `.git/objects` as an absolute symlink to the original's store, and a
+        # copied gate's `git add` wrote the injected blob there.
+        with tempfile.TemporaryDirectory() as tmp:
+            root, git = self.fixture(tmp, 'git add src/domain/existing.py || exit 1\n')
+            store = Path(tmp) / 'store'
+            (root / '.git/objects').rename(store)
+            (root / '.git/objects').symlink_to(store)
+            count = lambda: len(list(store.glob('[0-9a-f][0-9a-f]/*')))  # loose objects only
+            before = count()
+            result = self.self_test(tmp, root)
+            self.assertEqual(count(), before, 'the copy wrote objects into the original')
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn("the copy's git storage at .git/objects points outside the copy", result.stdout)
+            self.assertNotIn('  ok   — ', result.stdout)
+
+    def test_a_linked_worktree_copy_keeps_the_local_configuration(self):
+        # The copy's repository was a fresh `git init`: a gate that needs a locally configured
+        # setting, in the repository's or the worktree's configuration, failed its baseline.
+        with tempfile.TemporaryDirectory() as tmp:
+            root, git = self.fixture(tmp, '[ "$(git config --get kit.required)" = yes ] || exit 1\n'
+                                          '[ "$(git config --get kit.worktree)" = yes ] || exit 1\n')
+            git('config', 'kit.required', 'yes')
+            git('config', 'extensions.worktreeConfig', 'true')
+            linked = Path(tmp) / 'linked'
+            git('worktree', 'add', '-q', str(linked))
+            subprocess.run(['git', 'config', '--worktree', 'kit.worktree', 'yes'], cwd=linked, check=True)
+            result = self.self_test(tmp, linked)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('  ok   — ', result.stdout)
+            self.assertIn('NOTE — existing-file probe: extensions.worktreeconfig is not carried', result.stdout)
+
+    def test_a_redirecting_configuration_key_is_not_carried(self):
+        # Carrying the configuration must not carry a hooks path into the original.
+        with tempfile.TemporaryDirectory() as tmp:
+            root, git = self.fixture(tmp, '[ -z "$(git config --get core.hooksPath)" ] || exit 1\n')
+            git('config', 'core.hooksPath', str(root / 'hooks'))
+            linked, result = self.linked_self_test(tmp, git)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('  ok   — ', result.stdout)
+            self.assertIn('NOTE — existing-file probe: core.hookspath is not carried', result.stdout)
+
+    def test_a_linked_worktree_copy_keeps_intent_to_add(self):
+        # The index rebuilt from `ls-files -s` made an intent-to-add path an ordinary staged
+        # empty blob: a gate checking the staged changes passed the original, failed the copy.
+        with tempfile.TemporaryDirectory() as tmp:
+            root, git = self.fixture(tmp, '[ "$(git diff --cached --name-only)" = "$EXPECT_CACHED" ] || exit 1\n',
+                                     names=('EXPECT_CACHED',))
+            linked = Path(tmp) / 'linked'
+            git('worktree', 'add', '-q', str(linked))
+            run = lambda *args: subprocess.run(['git', *args], cwd=linked, check=True,
+                                               capture_output=True, text=True).stdout
+            (linked / 'staged.txt').write_text('staged only\n')
+            run('add', 'staged.txt')
+            (linked / 'later.txt').write_text('intent to add\n')
+            run('add', '-N', 'later.txt')
+            expected = run('diff', '--cached', '--name-only').rstrip('\n')
+            self.assertEqual(expected, 'staged.txt')
+            result = self.self_test(tmp, linked, EXPECT_CACHED=expected)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('  ok   — ', result.stdout)
+
+    def test_an_unmerged_index_is_refused_by_name(self):
+        # An index state the rebuild cannot reproduce faithfully is refused, not approximated.
+        with tempfile.TemporaryDirectory() as tmp:
+            root, git = self.fixture(tmp, '')
+            ident = ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
+                     '-c', 'core.hooksPath=/dev/null', '-c', 'commit.gpgsign=false']
+            linked = Path(tmp) / 'linked'
+            git('worktree', 'add', '-q', str(linked))
+            (linked / 'src/domain/existing.py').write_text('linked side\n')
+            subprocess.run(['git', *ident, 'commit', '-qam', 'linked'], cwd=linked, check=True)
+            git('checkout', '-q', '-b', 'other')
+            (root / 'src/domain/existing.py').write_text('other side\n')
+            git(*ident, 'commit', '-qam', 'other')
+            merge = subprocess.run(['git', *ident, 'merge', 'other'], cwd=linked, capture_output=True)
+            self.assertNotEqual(merge.returncode, 0, 'the fixture merge did not conflict')
+            result = self.self_test(tmp, linked)
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn('the original index has unmerged entries; the existing-file probe does not support them',
+                          result.stdout)
+            self.assertNotIn('  ok   — ', result.stdout)
 
 if __name__ == '__main__':
     unittest.main()
