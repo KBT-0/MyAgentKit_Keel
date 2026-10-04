@@ -96,14 +96,29 @@ budget, so the full review was split into two consistent commit ranges, each its
   `-codex-review.md`, each Reject). Round 5 is void: it reviewed a tree missing the merge of
   the round-4 fixes, and round 6 reviewed the tree that carried them. Every finding of rounds
   1 to 4 and 6 to 8 was fixed with its negative test, round 6 in dd5acbb, round 7 (four
-  Medium, one Low) in b9cf724 and round 8 in 228ad03. Round 9 (four Medium, one Low) has its
-  fixes in progress.
+  Medium, one Low) in b9cf724 and round 8 in 228ad03. Round 9 (four Medium, one Low) was
+  fixed in 1756e45 and 40262f6.
+- Range C, `bdcd611..master` (the head round 9 reviewed, to the current tree; range B had
+  reached the 400000-byte budget), a fresh label per round: round 1
+  `20261004T195249Z-9a9e54643ea6` (three Medium, one Low), round 2
+  `20261004T201308Z-3dea73a08595` (three Medium, one Low), round 3
+  `20261004T203516Z-bce36a675f76` (three Medium), round 4
+  `20261004T205924Z-61bb88198af0` (two Medium), each Reject with no High and every finding
+  in the existing-file example of `boundary_selftests.sh`, each fixed with negative tests
+  watched red first. A first run of round 4 (`20261004T205442Z-1e33a769aa72`) reported no
+  defects but was recorded as a CLI failure over unrelated stderr noise and is not counted.
+  Round 5 `20261004T211622Z-253b94e13ad5` on head 771951e: **Accept with Manual Checks, no
+  findings.** Its two manual checks: the kit self-test, executed on that head (`KIT CHECK:
+  PASS`); and the red-then-green proof of each negative test, executed by the author of each
+  fix and quoted in `RESEARCH_LOG.md`, not re-executed by the reviewer.
 
-PENDING: the range-B round on the head after the round-9 fixes, a fresh label on the head
-that carries them; the range-B acceptance closes on the first round that is not a Reject. The round-1 record of the
+The cross-model acceptance closes here: range A's and range B's findings are fixed within
+ranges B and C, and range C's last round is an Accept. What this does NOT establish: one
+review of the whole diff in a single prompt (it exceeds the budget), and the commits after
+head 771951e, which change documentation only. The round-1 record of the
 first attempt was written by the pre-fix kit (no resolved reference, no archive hash), so
 later rounds ran under new task labels and did not carry earlier ones: the carried-round
-path is proven by the regression tests only.
+path is proven by the regression tests and by rounds 3 and 4 of the first attempt.
 
 
 ## Issue #6 — what is still live-only, 2026-10-03

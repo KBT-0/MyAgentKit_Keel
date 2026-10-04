@@ -703,6 +703,16 @@ can act on, and the example lost fourteen lines. The first run of this round als
 noise, and was not counted; the rerun found the two configuration cases. Lesson: when each
 fix to an emulation opens the next finding, refuse the unsupported shape instead.
 
+#### Range C, round 5: Accept, no findings
+
+The fifth round on the current tree returned Accept with Manual Checks and no findings at
+any severity. The count for the whole hardening: ten rounds on the first full diff, one on
+the intermediate tree, nine on range B (one void), five on range C (one not counted): the
+last High was in range B round 8, the last finding outside the existing-file example in
+range B round 9. What ended the stream in that example was not another patch but two
+changes of approach: an allowlist in place of every denylist, and refusing by name what the
+copy cannot reproduce in place of emulating it.
+
 #### The review gate held on the kit's own hardening
 
 Five of the nine work packages (the gate lock, both review-tooling packages, the commit gates
