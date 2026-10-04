@@ -638,6 +638,17 @@ The hook gave `core.commentString` unconditional precedence where git takes whic
 was set last. Lesson: a helper that reproduces a git repository is tested against the
 repository shapes git supports (linked worktree, split index, SHA-256), not only the default.
 
+#### Range B, round 8: close the class, not the case
+
+Two High and six Medium, and four of the nine were the disposable copy losing to its
+environment one variable or one path at a time (`CDPATH` steering the path guard past a
+symlink, a nested linked worktree keeping its git directory pointer, an exported
+`GIT_OBJECT_DIRECTORY`, a failed pipeline producer). The fix replaces per-variable unsets
+with an allowlisted environment, writes to the validated absolute path and refuses the
+shapes the probe does not support. Handler restoration got the same treatment: blocking the
+signals closes the whole window rather than re-guarding each step. Lesson: when a review
+finds the third instance of one gap, close the class.
+
 #### The review gate held on the kit's own hardening
 
 Five of the nine work packages (the gate lock, both review-tooling packages, the commit gates

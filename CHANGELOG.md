@@ -227,6 +227,18 @@ hand merge; `sync-kit.sh` now keeps listing them until you confirm (see "Sync st
   **ACTION:** copy `.githooks/commit-msg` and the two adapters again; apply the
   `--object-format` and `ls-files -s | update-index --index-info` changes to an adapted
   existing-file example.
+- **Full cross-model review, range B round 8.** The existing-file boundary example runs git
+  and the copied gate under `probe_env`, which passes only the variables it names (no
+  `CDPATH`, no inherited `GIT_*`). Every resolving `cd` is `CDPATH= cd -P`, the injection
+  goes to the validated absolute path, a nested repository or worktree fails the case by
+  name, and so does a failed read of the original's index or refs. Both review adapters hand
+  back the caller's handlers with the cancel signals blocked, so a cancel arriving then is
+  recorded before it reaches the caller; the Codex adapter keeps its guard through its final
+  output. `scripts/check.sh` takes the gate lock on NFS, and a file system without locks
+  fails `FAIL [lock]` by name. `.githooks/commit-msg` reads `core.commentString` only on git
+  2.45 or later. **ACTION:** copy `core/scripts/check.sh` (keep your filled placeholders),
+  `.githooks/commit-msg` and the adapters with `agent_process.py`; re-apply the example to
+  an adapted existing-file probe, adding any variable your gate needs to `probe_env` by name.
 - **Scan failures that were not scanner failures (issues #13, #14).** A tracked file deleted
   without `git rm` now fails `[scan]` under its own name with the command that fixes it, and
   every other scan still runs. A symlink to a directory (for example `node_modules` linked
