@@ -576,13 +576,28 @@ class BridgeTests(unittest.TestCase):
                 os.kill(os.getpid(), signal.SIGTERM)
             return real_signal(sig, handler)
 
-        received = []
-        with patch.dict(os.environ, self.review_env()), patch('agent_process.run', side_effect=quota), \
-                patch.object(agent_process.signal, 'signal', side_effect=install), redirect_stdout(StringIO()):
-            code = codex_bridge.main(['--model', 'fixture-codex-model', '--repo', str(self.repo),
-                                      '--uncommitted'], received.append)
+        class CallerCancel(Exception):
+            pass
+
+        def caller(signum, frame):
+            raise CallerCancel
+
+        # Held while the handlers go back, the cancel reaches the caller's own handler once
+        # the records say cancelled; a caller default would end the test run there.
+        received, caught = [], []
+        previous = real_signal(signal.SIGTERM, caller)
+        try:
+            with patch.dict(os.environ, self.review_env()), patch('agent_process.run', side_effect=quota), \
+                    patch.object(agent_process.signal, 'signal', side_effect=install), redirect_stdout(StringIO()):
+                try:
+                    codex_bridge.main(['--model', 'fixture-codex-model', '--repo', str(self.repo),
+                                       '--uncommitted'], received.append)
+                except CallerCancel:
+                    caught.append(True)
+        finally:
+            real_signal(signal.SIGTERM, previous)
         self.assertTrue(fired)
-        self.assertEqual(code, 5)
+        self.assertEqual(caught, [True])
         self.assertEqual((received[0]['failure_kind'], received[0]['cancelled']), ('cancelled', True))
         self.persisted_cancel(received[0])
 
@@ -605,23 +620,36 @@ class BridgeTests(unittest.TestCase):
                 returned.append(True)
 
         def install(sig, handler):
-            # The first handler change after run() has returned.
+            # The first handler change after run() has returned: since the guard stays up to
+            # the last line, that is the hand-back to the caller's handlers.
             if returned and not fired:
                 fired.append(sig)
                 os.kill(os.getpid(), signal.SIGTERM)
             return real_signal(sig, handler)
 
-        received = []
-        with patch.dict(os.environ, self.review_env(REVIEW_CLI_BIN=str(self.build_fake_codex()))), \
-                patch.object(agent_process, 'run', side_effect=run), \
-                patch.object(agent_process.signal, 'signal', side_effect=install), redirect_stdout(StringIO()):
-            try:
-                code = codex_bridge.main(['--model', 'fixture-codex-model', '--repo', str(self.repo),
-                                          '--uncommitted'], received.append)
-            except KeyboardInterrupt:
-                self.fail('a cancel while the adapter switched to noting lost the completed review')
+        class CallerCancel(Exception):
+            pass
+
+        def caller(signum, frame):
+            raise CallerCancel
+
+        received, caught = [], []
+        previous = real_signal(signal.SIGTERM, caller)
+        try:
+            with patch.dict(os.environ, self.review_env(REVIEW_CLI_BIN=str(self.build_fake_codex()))), \
+                    patch.object(agent_process, 'run', side_effect=run), \
+                    patch.object(agent_process.signal, 'signal', side_effect=install), redirect_stdout(StringIO()):
+                try:
+                    codex_bridge.main(['--model', 'fixture-codex-model', '--repo', str(self.repo),
+                                       '--uncommitted'], received.append)
+                except KeyboardInterrupt:
+                    self.fail('a cancel while the adapter switched to noting lost the completed review')
+                except CallerCancel:
+                    caught.append(True)
+        finally:
+            real_signal(signal.SIGTERM, previous)
         self.assertTrue(fired)
-        self.assertEqual(code, 0)
+        self.assertEqual(caught, [True])
         self.assertEqual((received[0]['status'], received[0]['cancelled']), ('completed', True))
         self.assertEqual(json.loads(Path(received[0]['usage_record']).read_text())['status'], 'completed')
         self.assertTrue(Path(received[0]['evidence']).is_file())
@@ -708,17 +736,11 @@ class BridgeTests(unittest.TestCase):
             os.kill(os.getpid(), signal.SIGTERM)
             return relabel(*args, **kwargs)
 
-        def install(sig, handler):
-            # Codex: the first cancel while its guard puts the caller's SIGINT back.
-            if sig == signal.SIGINT and handler is signal.default_int_handler and not fired:
-                fired.append('restore')
-                os.kill(os.getpid(), signal.SIGTERM)
-            return real_signal(sig, handler)
-
         class Blocked(StringIO):
             def write(self, text):
-                # Claude: the first cancel while its result line is written.
-                if text.startswith('{"status": "failed"') and not fired:
+                # Either adapter: the first cancel while its result line is written. A cancel
+                # while the handlers go back has its own test.
+                if text.startswith(('{"status": "failed"', 'review invocation: ')) and not fired:
                     fired.append('print')
                     os.kill(os.getpid(), signal.SIGTERM)
                 return super().write(text)
@@ -726,8 +748,7 @@ class BridgeTests(unittest.TestCase):
         for name, main, args, hooks in (
                 ('claude', bridge.main, ['review', '--repo', str(self.repo), '--uncommitted'], ()),
                 ('codex', codex_bridge.main, ['--model', 'fixture-codex-model', '--repo', str(self.repo),
-                                              '--uncommitted'],
-                 (patch.object(agent_process.signal, 'signal', side_effect=install),))):
+                                              '--uncommitted'], ())):
             with self.subTest(adapter=name):
                 fired, out, received = [], Blocked(), []
                 previous = real_signal(signal.SIGTERM, caller)
@@ -754,6 +775,120 @@ class BridgeTests(unittest.TestCase):
                 last = json.loads(next(line.removeprefix('review invocation: ') for line in reversed(last)
                                        if line.startswith(('{', 'review invocation: '))))
                 self.assertEqual((last['cancelled'], last['failure_kind']), (True, 'cancelled'), out.getvalue())
+
+    def test_a_second_cancel_inside_the_handler_restoration_leaves_the_records_cancelled(self):
+        # A first SIGTERM was noted while the adapter put the caller's SIGINT back; with the
+        # caller's SIGTERM handler back, a second one ended the adapter before the late
+        # correction, and the records of a quota-failed attempt still said quota.
+        from contextlib import redirect_stdout
+        from io import StringIO
+        import signal
+        from unittest.mock import patch
+        import agent_process
+        import codex_bridge
+        real_signal = signal.signal
+
+        class CallerCancel(Exception):
+            pass
+
+        def caller(signum, frame):
+            raise CallerCancel
+
+        def quota(command, prompt, repo, timeout, into=None):
+            value = ({'type': 'turn.failed', 'error': {'message': 'usage limit reached'}}
+                     if '-o' in command else
+                     {'type': 'result', 'subtype': 'success', 'is_error': True,
+                      'api_error_status': 429, 'modelUsage': {'claude-opus-5': {}}})
+            return {'exit_code': 1, 'stdout': json.dumps(value), 'stderr': '',
+                    'termination': None, 'duration_ms': 1}
+
+        def install(sig, handler):
+            previous = real_signal(sig, handler)
+            if sig == signal.SIGINT and handler is signal.default_int_handler and not fired:
+                fired.append('first')
+                os.kill(os.getpid(), signal.SIGTERM)
+            elif sig == signal.SIGTERM and handler is caller and fired == ['first']:
+                fired.append('second')
+                os.kill(os.getpid(), signal.SIGTERM)
+            return previous
+
+        for name, main, args in (
+                ('claude', bridge.main, ['review', '--repo', str(self.repo), '--uncommitted']),
+                ('codex', codex_bridge.main, ['--model', 'fixture-codex-model', '--repo', str(self.repo),
+                                              '--uncommitted'])):
+            with self.subTest(adapter=name):
+                fired, out, received, caught = [], StringIO(), [], []
+                previous = real_signal(signal.SIGTERM, caller)
+                try:
+                    with patch.dict(os.environ, self.review_env()), \
+                            patch('agent_process.run', side_effect=quota), \
+                            patch.object(agent_process.signal, 'signal', side_effect=install), \
+                            redirect_stdout(out):
+                        try:
+                            main(args, received.append)
+                        except CallerCancel:
+                            caught.append(True)
+                finally:
+                    real_signal(signal.SIGTERM, previous)
+                self.assertEqual(fired, ['first', 'second'])
+                self.persisted_cancel(received[0])
+                last = out.getvalue().strip().splitlines()
+                last = json.loads(next(line.removeprefix('review invocation: ') for line in reversed(last)
+                                       if line.startswith(('{', 'review invocation: '))))
+                self.assertEqual((last['cancelled'], last['failure_kind']), (True, 'cancelled'), out.getvalue())
+                # Held while the records were corrected, the cancel still reaches the caller's handler.
+                self.assertEqual(caught, [True])
+
+    def test_a_cancel_while_the_codex_result_prints_still_reaches_the_dispatcher_checkpoint(self):
+        # The Codex guard was gone before its result lines printed: a SIGTERM while stdout was
+        # blocked ended the adapter, the failed attempt stayed quota, and the dispatcher never
+        # wrote its final checkpoint.
+        from contextlib import redirect_stdout
+        from io import StringIO
+        import signal
+        import review_dispatch
+
+        class CallerCancel(Exception):
+            pass
+
+        def caller(signum, frame):
+            raise CallerCancel
+
+        def quota(command, prompt, repo, timeout, into=None):
+            launched.append(command[0])
+            return {'exit_code': 1, 'stdout': json.dumps({'type': 'turn.failed',
+                    'error': {'message': 'usage limit reached'}}), 'stderr': '',
+                    'termination': None, 'duration_ms': 1}
+
+        class Blocked(StringIO):
+            def write(self, text):
+                if text.startswith('review invocation: ') and not fired:
+                    fired.append(text)
+                    os.kill(os.getpid(), signal.SIGTERM)
+                return super().write(text)
+
+        from unittest.mock import patch
+        launched, fired, out = [], [], Blocked()
+        previous = signal.signal(signal.SIGTERM, caller)
+        try:
+            with patch.dict(os.environ, self.review_env()), patch('agent_process.run', side_effect=quota), \
+                    redirect_stdout(out):
+                try:
+                    code = review_dispatch.main(['--repo', str(self.repo), '--uncommitted', '--reviewer', 'codex',
+                                                 '--allow-fallback', '--claude-model', 'claude-opus-5',
+                                                 '--codex-model', 'fixture-codex-model'])
+                except CallerCancel:
+                    self.fail('a cancel while the Codex result printed ended the adapter:\n' + out.getvalue())
+        finally:
+            signal.signal(signal.SIGTERM, previous)
+        self.assertTrue(fired)
+        self.assertEqual(len(launched), 1, 'a cancelled review launched the other reviewer:\n' + out.getvalue())
+        self.assertNotEqual(code, 0)
+        chain = json.loads(next(line.removeprefix('review dispatch: ') for line in
+                                out.getvalue().splitlines() if line.startswith('review dispatch: ')))
+        self.assertEqual(chain['failure_kind'], 'cancelled')
+        self.assertTrue(chain['attempts'][0]['cancelled'])
+        self.persisted_cancel(chain['attempts'][0])
 
     def test_a_cancel_whose_archive_replacement_fails_is_still_recorded_and_returned(self):
         # The relabel replaced the archive before the usage record, so a failure between the

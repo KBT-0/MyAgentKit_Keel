@@ -1,6 +1,7 @@
 """Interrupt the shipped existing-file example: the checkout is never the one it changes."""
 import os
 from pathlib import Path
+import shutil
 import signal
 import subprocess
 import sys
@@ -17,6 +18,9 @@ class BoundaryRestoreTests(unittest.TestCase):
                     'core/scripts/boundary_selftests.sh').read_text()
         example = '\n'.join(line[4:] for line in template.splitlines() if line.startswith('# | '))
         self.assertTrue(example.strip(), 'missing executable existing-file example')
+        # The copied gate sees only what probe_env names: a gate that needs more names it there.
+        example = example.replace('LC_ALL=C ', 'LC_ALL=C READY="$READY" INTERRUPT="$INTERRUPT" ', 1)
+        self.assertIn('INTERRUPT="$INTERRUPT"', example)
         for interruption in (None, signal.SIGINT, signal.SIGTERM, signal.SIGKILL):
             with self.subTest(interruption=interruption), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp) / 'project'
@@ -157,10 +161,14 @@ exit 1
             self.assertIn('is a symlink', result.stdout)
             self.assertNotIn('  ok   — ', result.stdout)
 
-    def fixture(self, tmp, gate_body, *init):
+    def fixture(self, tmp, gate_body, *init, names=()):
         example = '\n'.join(line[4:] for line in (Path(__file__).resolve().parents[1] /
                             'core/scripts/boundary_selftests.sh').read_text().splitlines()
                             if line.startswith('# | '))
+        extra = ''.join('%s="$%s" ' % (name, name) for name in names)
+        if extra:
+            self.assertIn('LC_ALL=C ', example)
+            example = example.replace('LC_ALL=C ', 'LC_ALL=C ' + extra, 1)
         root = Path(tmp) / 'project'
         (root / 'src/domain').mkdir(parents=True)
         (root / 'src/domain/existing.py').write_bytes(b'committed original\n')
@@ -234,7 +242,8 @@ exit 1
         with tempfile.TemporaryDirectory() as tmp:
             root, git = self.fixture(tmp, '[ "$(git rev-parse --verify HEAD)" = "$EXPECT_HEAD" ] || exit 1\n'
                                           'git describe --tags --exact-match >/dev/null 2>&1 || exit 1\n'
-                                          '[ "$(git diff --cached --name-only)" = staged.txt ] || exit 1\n')
+                                          '[ "$(git diff --cached --name-only)" = staged.txt ] || exit 1\n',
+                                     names=('EXPECT_HEAD',))
             git('tag', 'v1')
             linked = Path(tmp) / 'linked'
             git('worktree', 'add', '-q', str(linked))
@@ -289,6 +298,113 @@ exit 1
             linked, result = self.linked_self_test(tmp, git, GIT_DEFAULT_HASH='sha1')
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn('  ok   — ', result.stdout)
+
+    def test_cdpath_cannot_carry_the_probe_into_the_checkout(self):
+        # With CDPATH=safe, `cd -P src/domain` went to the copy's safe/src/domain and passed the
+        # guard, while the write to the relative src/domain/existing.py followed `src`, a
+        # symlink to the checkout's lib, and overwrote owner content there.
+        with tempfile.TemporaryDirectory() as tmp:
+            root, git = self.fixture(tmp, '')
+            real = root / 'lib/domain/existing.py'
+            real.parent.mkdir(parents=True)
+            original = b'Uncommitted owner content.\n'
+            real.write_bytes(original)
+            for path in (root / 'src/domain/existing.py', root / 'src/domain'):
+                path.unlink() if path.is_file() else path.rmdir()
+            (root / 'src').rmdir()
+            (root / 'src').symlink_to(root / 'lib')
+            (root / 'safe/src/domain').mkdir(parents=True)
+            # An absolute CDPATH into the copy: bash prints a relative CDPATH match, which
+            # failed the old guard by accident. A fixed mktemp gives the copy a known path.
+            copy = os.path.realpath(tmp) + '/scratch/copy'
+            shim = Path(tmp) / 'shim'
+            shim.mkdir()
+            (shim / 'mktemp').write_text('#!/bin/sh\nmkdir "%s" && echo "%s"\n' % (copy, copy))
+            (shim / 'mktemp').chmod(0o755)
+            (Path(tmp) / 'scratch').mkdir()
+            result = subprocess.run(['sh', str(root / 'scripts/check.sh'), '--self-test'], cwd=root,
+                                    capture_output=True, text=True, timeout=30,
+                                    env=dict(os.environ, CDPATH=copy + '/checkout/safe',
+                                             PATH='%s%s%s' % (shim, os.pathsep, os.environ['PATH'])))
+            self.assertEqual(real.read_bytes(), original, 'the probe wrote into the checkout')
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn('resolves outside the disposable copy', result.stdout)
+            self.assertNotIn('  ok   — ', result.stdout)
+
+    def test_a_nested_linked_worktree_is_refused_by_name(self):
+        # Only the top level got its own repository: a linked worktree nested at src/domain kept
+        # its pointer to the original's administrative directory, and a gate that ran
+        # `git -C src/domain add` staged the injection into the original nested index.
+        with tempfile.TemporaryDirectory() as tmp:
+            root, git = self.fixture(tmp, 'git -C src/domain add existing.py\n')
+            other = Path(tmp) / 'other'
+            other.mkdir()
+            run = lambda *args, cwd=other: subprocess.run(['git', *args], cwd=cwd, check=True,
+                                                          capture_output=True, text=True).stdout
+            run('init', '-q')
+            (other / 'existing.py').write_bytes(b'committed original\n')
+            run('add', '.')
+            run('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
+                '-c', 'core.hooksPath=/dev/null', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'fixture')
+            git('rm', '-rq', 'src/domain')
+            git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
+                '-c', 'core.hooksPath=/dev/null', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'nested')
+            run('worktree', 'add', '-q', str(root / 'src/domain'))
+            nested = root / 'src/domain'
+            before = run('status', '--porcelain', cwd=nested)
+            scratch = Path(tmp) / 'scratch'
+            scratch.mkdir()
+            result = subprocess.run(['sh', 'scripts/check.sh', '--self-test'], cwd=root, capture_output=True,
+                                    text=True, timeout=30, env=dict(os.environ, TMPDIR=str(scratch)))
+            self.assertEqual(run('status', '--porcelain', cwd=nested), before,
+                             'the copy staged into the original nested index')
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn('the checkout contains a nested repository or worktree at src/domain;'
+                          ' the existing-file probe does not support it', result.stdout)
+            self.assertNotIn('  ok   — ', result.stdout)
+
+    def test_an_exported_object_directory_cannot_take_the_copy_s_writes(self):
+        # GIT_OBJECT_DIRECTORY survived the unset of four variables: a copied gate's `git add`
+        # wrote the injection's objects into the original's object store.
+        with tempfile.TemporaryDirectory() as tmp:
+            root, git = self.fixture(tmp, 'git add src/domain/existing.py || exit 1\n')
+            objects = root / '.git/objects'
+            count = lambda: sum(len(files) for _, _, files in os.walk(objects))
+            before = count()
+            scratch = Path(tmp) / 'scratch'
+            scratch.mkdir()
+            result = subprocess.run(['sh', 'scripts/check.sh', '--self-test'], cwd=root, capture_output=True,
+                                    text=True, timeout=30,
+                                    env=dict(os.environ, TMPDIR=str(scratch), GIT_OBJECT_DIRECTORY=str(objects)))
+            self.assertEqual(count(), before, 'the copy wrote objects into the original')
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('  ok   — ', result.stdout)
+
+    def test_a_failed_index_or_ref_read_is_refused_by_name(self):
+        # The reconstruction piped the original's ls-files and for-each-ref into their
+        # consumers: a failed producer gave an empty index or no refs, the later checks
+        # still passed, and the probe ran against an incomplete snapshot.
+        real_git = shutil.which('git')
+        for producer, message in (('ls-files', "could not read the original's index (git ls-files)"),
+                                  ('for-each-ref', "could not read the original's refs (git for-each-ref)")):
+            with self.subTest(producer=producer), tempfile.TemporaryDirectory() as tmp:
+                root, git = self.fixture(tmp, '')
+                linked = Path(tmp) / 'linked'
+                git('worktree', 'add', '-q', str(linked))
+                shim = Path(tmp) / 'shim'
+                shim.mkdir()
+                (shim / 'git').write_text('#!/bin/sh\ncase " $* " in *" -C %s %s "*) exit 128 ;; esac\n'
+                                          'exec %s "$@"\n' % (os.path.realpath(linked), producer, real_git))
+                (shim / 'git').chmod(0o755)
+                scratch = Path(tmp) / 'scratch'
+                scratch.mkdir()
+                result = subprocess.run(['sh', 'scripts/check.sh', '--self-test'], cwd=linked,
+                                        capture_output=True, text=True, timeout=30,
+                                        env=dict(os.environ, TMPDIR=str(scratch),
+                                                 PATH='%s%s%s' % (shim, os.pathsep, os.environ['PATH'])))
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn(message, result.stdout)
+                self.assertNotIn('  ok   — ', result.stdout)
 
 if __name__ == '__main__':
     unittest.main()

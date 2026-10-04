@@ -78,28 +78,35 @@ case "$lock_path" in /*) ;; *) lock_path="$(pwd -P)/$lock_path" ;; esac
 # the file cannot take it, and that descriptor itself holds it: flock on it succeeds at once
 # only on the open file description already holding the lock. A descriptor opened on the same
 # file independently, while another gate holds it, would block. Otherwise it FAILS by name;
-# it never skips the lock on a claim.
+# it never skips the lock on a claim. The independent descriptor is open for writing: Linux's
+# NFS client refuses an exclusive flock on a read-only one, and every fresh run failed here.
+# A flock error other than "would block" is the file system, not the claim: FAIL [lock].
 inherited=""
 if [ "${GATE_LOCK_HELD:-}" = "$lock_path" ]; then
-  if python3 -c '
+  lock_probe=0
+  python3 -c '
 import fcntl, os, sys
 held, lock = os.fstat(int(sys.argv[1])), os.stat(sys.argv[2])
 if (held.st_dev, held.st_ino) != (lock.st_dev, lock.st_ino):
     sys.exit(1)
+other = os.open(sys.argv[2], os.O_RDWR)
 try:
-    fcntl.flock(os.open(sys.argv[2], os.O_RDONLY), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    sys.exit(1)
 except BlockingIOError:
     pass
-else:
-    sys.exit(1)
+except OSError as error:
+    print("FAIL [lock]: this file system does not support the gate lock (%s); the lock file is %s." % (error.strerror or error, sys.argv[2]))
+    sys.exit(3)
 fcntl.flock(int(sys.argv[1]), fcntl.LOCK_EX | fcntl.LOCK_NB)
-' "${GATE_LOCK_FD:-}" "$lock_path" 2>/dev/null; then
-    inherited=1
-  else
-    echo "FAIL [env]: GATE_LOCK_HELD names this checkout's lock, but this run did not inherit the descriptor"
-    echo "            holding it (GATE_LOCK_FD); a copied variable is not the lock. Unset GATE_LOCK_HELD and GATE_LOCK_FD."
-    fail=1
-  fi
+' "${GATE_LOCK_FD:-}" "$lock_path" 2>/dev/null || lock_probe=$?
+  case "$lock_probe" in
+    0) inherited=1 ;;
+    3) fail=1 ;;
+    *) echo "FAIL [env]: GATE_LOCK_HELD names this checkout's lock, but this run did not inherit the descriptor"
+       echo "            holding it (GATE_LOCK_FD); a copied variable is not the lock. Unset GATE_LOCK_HELD and GATE_LOCK_FD."
+       fail=1 ;;
+  esac
 fi
 if [ -z "$inherited" ] || [ -z "${GATE_SELFTEST_NESTED:-}" ] ||
    [ "$(cat "$lock_path" 2>/dev/null)" != "$GATE_SELFTEST_NESTED" ]; then
@@ -158,6 +165,9 @@ while True:
         break
     except BlockingIOError:
         pass
+    except OSError as error:
+        print("FAIL [lock]: this file system does not support the gate lock (%s); the lock file is %s." % (error.strerror or error, path), flush=True)
+        sys.exit(1)
     if wait and waited >= int(wait):
         print("NOT RUN [lock]: another gate run, or a process it started, has held %s for %ds; GATE_LOCK_WAIT=%s ran out." % (path, waited, wait), flush=True)
         sys.exit(75)

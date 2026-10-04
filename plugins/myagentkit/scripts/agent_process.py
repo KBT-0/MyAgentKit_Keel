@@ -1,4 +1,5 @@
 """Bounded child execution shared by both CLI adapters; preserve partial diagnostics."""
+import contextlib
 import os
 from pathlib import Path
 import signal
@@ -27,6 +28,23 @@ def hold(handler) -> dict:
 def restore(previous: dict) -> None:
     for sig, handler in previous.items():
         signal.signal(sig, handler)
+
+
+@contextlib.contextmanager
+def handing_back(previous: dict):
+    """Restore `previous` with the cancel signals blocked; yield those that arrived meanwhile.
+
+    Restored one at a time, a cancel between two swaps met the caller's handler (SIG_DFL ends
+    the process) before the adapter had persisted the cancel it had already noted. Blocked, it
+    waits while the adapter corrects its records and writes its last line, then reaches the
+    caller's handler when the block exits.
+    """
+    mask = signal.pthread_sigmask(signal.SIG_BLOCK, CANCEL_SIGNALS)
+    try:
+        restore(previous)
+        yield signal.sigpending() & set(previous)
+    finally:
+        signal.pthread_sigmask(signal.SIG_SETMASK, mask)
 
 
 class OneShot:

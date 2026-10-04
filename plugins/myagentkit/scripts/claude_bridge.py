@@ -578,15 +578,13 @@ def main(argv=None, result_sink=None) -> int:
         # Corrected before the caller's handlers go back: a second cancel during the relabel
         # once met them and ended the adapter before the records and the correction line.
         correct()
-        agent_process.restore(held)
-        # Noted while the handlers went back one signal at a time: corrected under a noting
-        # handler again. A cancel during that restore changes nothing; the attempt is cancelled.
-        if result is not None and cancelled and not result["cancelled"]:
-            held = agent_process.hold(lambda signum, frame: cancelled.append(signum))
-            try:
-                correct()
-            finally:
-                agent_process.restore(held)
+        # The caller's handlers go back with the cancel signals blocked: one arriving during
+        # the restore, a second one included, once met the caller's SIGTERM default and ended
+        # the adapter before the correction. Held, it is corrected here first, then delivered.
+        with agent_process.handing_back(held) as pending:
+            if pending:
+                cancelled.append(True)
+            correct()
 
 
 if __name__ == "__main__":
