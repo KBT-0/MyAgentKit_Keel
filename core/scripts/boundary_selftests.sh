@@ -74,7 +74,10 @@
 # copy. diff-files misses an intent-to-add path whose file was deleted, which then became a
 # staged empty blob all the same: every intent-to-add entry is counted with
 # `diff-index --cached --ita-invisible-in-index`, and one diff-files did not report is refused
-# by name, as are unmerged, skip-worktree and assume-unchanged entries. `git add -N` records the
+# by name, as are unmerged, skip-worktree and assume-unchanged entries. Both diffs run with
+# submodule ignoring off: an uninitialised submodule with ignore=all was left out of the diff and
+# refused as a missing intent-to-add file; its gitlink entry is now copied like any other, and
+# the whole-index comparison below proves it. `git add -N` records the
 # file's current mode, not the original index's, so the rebuilt index is compared with the
 # original's entry for entry and a difference fails the case by name. Every git command that
 # reads the original runs through probe_original, with the filesystem monitor, hooks and the
@@ -83,7 +86,13 @@
 # allowlist of the original's local (and, with extensions.worktreeConfig, worktree) settings
 # plus the keys named in probe_config_keys: a denylist of settings that redirect storage or
 # execution still passed the next one (tar.<format>.command ran from a copied gate's
-# `git archive`). Every other key gets a NOTE line. git init's own instances of a carried key are
+# `git archive`). Every other key gets a NOTE line, include.path and includeIf among them. The
+# settings are read with their includes, read only: with --no-includes an allowlisted key set
+# through include.path was dropped and the printed advice could not bring it back. The copy has
+# one local configuration file, so an allowlisted key set in both the local and the worktree
+# scope, or in more than one file through an include, fails the case by name: merged, it held
+# two values, and a gate's `git config core.filemode false`, which changes one file in the
+# original, failed in the copy. git init's own instances of a carried key are
 # removed first, so a gate's `git config core.filemode false` does not meet two values, and
 # the original's values are added in order. A valueless key is appended to the copy's config
 # file as valueless: carried as the string `true`, an untyped read of it in the copy differed
@@ -143,27 +152,48 @@
 # |       probe_fail "the original index has skip-worktree entries; the existing-file probe does not support them."
 # |     ! grep -q '^[a-z] ' "$probe_copy/flags" ||
 # |       probe_fail "the original index has assume-unchanged entries; the existing-file probe does not support them."
-# |     probe_original diff-files --diff-filter=A --name-only -z > "$probe_copy/ita" ||
+# |     # Submodule ignoring off: an ignored gitlink left out of a diff was counted as intent-to-add.
+# |     probe_original -c diff.ignoreSubmodules=none diff-files --ignore-submodules=none --diff-filter=A \
+# |       --name-only -z > "$probe_copy/ita" ||
 # |       probe_fail "could not read the original's intent-to-add entries (git diff-files); refusing to run."
 # |     # Every intent-to-add entry, whatever its working tree: those --ita-invisible-in-index hides.
 # |     probe_original ls-files > "$probe_copy/paths" &&
 # |       probe_empty=$(probe_original hash-object -t tree /dev/null) &&
-# |       probe_original diff-index --cached --ita-invisible-in-index --name-only "$probe_empty" > "$probe_copy/visible" ||
+# |       probe_original -c diff.ignoreSubmodules=none diff-index --cached --ignore-submodules=none \
+# |         --ita-invisible-in-index --name-only "$probe_empty" > "$probe_copy/visible" ||
 # |       probe_fail "could not count the original's intent-to-add entries (git diff-index); refusing to run."
 # |     [ $(( $(wc -l < "$probe_copy/paths") - $(wc -l < "$probe_copy/visible") )) -eq $(( $(tr -cd '\000' < "$probe_copy/ita" | wc -c) )) ] ||
 # |       probe_fail "the original index has an intent-to-add entry whose file is missing from the working tree; the existing-file probe does not support it."
-# |     probe_original config --local --no-includes --list -z > "$probe_copy/config" ||
+# |     probe_allowed="user.name user.email core.autocrlf core.eol core.safecrlf core.filemode
+# |       core.ignorecase core.symlinks core.quotepath core.precomposeunicode core.whitespace
+# |       core.abbrev init.defaultbranch $probe_config_keys"
+# |     # Included files are only read; of their keys, as of all others, only allowlisted ones are carried.
+# |     probe_original config --local --includes --list -z > "$probe_copy/config" &&
+# |       probe_original config --local --includes --show-origin --name-only --list > "$probe_copy/local" ||
 # |       probe_fail "could not read the original's configuration (git config --local); refusing to run."
+# |     : > "$probe_copy/worktree" || exit 1
 # |     if [ "$(probe_original config --bool extensions.worktreeConfig)" = true ]; then
-# |       probe_original config --worktree --no-includes --list -z >> "$probe_copy/config" ||
+# |       probe_original config --worktree --includes --list -z >> "$probe_copy/config" &&
+# |         probe_original config --worktree --includes --show-origin --name-only --list > "$probe_copy/worktree" ||
 # |         probe_fail "could not read the original's worktree configuration (git config --worktree); refusing to run."
 # |     fi
+# |     # The copy has one local file: a key from two files would become two values there, and a gate's
+# |     # `git config <key> <value>`, which changes one file in the original, would fail in the copy.
+# |     probe_origins() {
+# |       PROBE_KEY=$1 awk '{ i = index($0, "\t") }
+# |         substr($0, i + 1) == ENVIRON["PROBE_KEY"] { print substr($0, 1, i - 1) }' "$2" | sort -u | wc -l
+# |     }
+# |     for probe_key in $probe_allowed; do
+# |       probe_local=$(( $(probe_origins "$probe_key" "$probe_copy/local") ))
+# |       probe_worktree=$(( $(probe_origins "$probe_key" "$probe_copy/worktree") ))
+# |       [ "$probe_local" -eq 0 ] || [ "$probe_worktree" -eq 0 ] ||
+# |         probe_fail "$probe_key is set in both the local and the worktree configuration; the existing-file probe does not support it."
+# |       [ $(( probe_local + probe_worktree )) -le 1 ] ||
+# |         probe_fail "$probe_key is set in more than one configuration file through an include; the existing-file probe does not support it."
+# |     done
 # |     { probe_from=$(CDPATH= cd -P "$probe_checkout" && CDPATH= cd -P "$(probe_original rev-parse --git-common-dir)" && pwd -P) &&
 # |       probe_format=$(probe_original rev-parse --show-object-format) &&
 # |       rm -f .git && probe_env git init -q --object-format="$probe_format" &&
-# |       probe_allowed="user.name user.email core.autocrlf core.eol core.safecrlf core.filemode
-# |         core.ignorecase core.symlinks core.quotepath core.precomposeunicode core.whitespace
-# |         core.abbrev init.defaultbranch $probe_config_keys" &&
 # |       # Status 5 is "not set": git init wrote no instance of that key.
 # |       probe_env sh -c 'for probe_key; do git config --unset-all "$probe_key" || [ $? -eq 5 ] || exit 1; done' \
 # |         sh $probe_allowed &&
