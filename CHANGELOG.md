@@ -239,6 +239,16 @@ hand merge; `sync-kit.sh` now keeps listing them until you confirm (see "Sync st
   2.45 or later. **ACTION:** copy `core/scripts/check.sh` (keep your filled placeholders),
   `.githooks/commit-msg` and the adapters with `agent_process.py`; re-apply the example to
   an adapted existing-file probe, adding any variable your gate needs to `probe_env` by name.
+- **Full cross-model review, range B round 9.** The existing-file boundary example refuses
+  a symlink in the copy's git storage that leads outside the copy, carries the original's
+  local and worktree configuration into a linked-worktree copy except keys that redirect
+  storage or execution (each named in a NOTE), keeps intent-to-add entries, and refuses
+  unmerged, skip-worktree and assume-unchanged entries by name. The Codex adapter checks the
+  usage record on disk at every cancel sample and once more at the end, so a cancel noted
+  between the persistence check and the returned flag no longer leaves the record and the
+  archive saying quota while the result says cancelled. **ACTION:** re-copy an adapted
+  existing-file example from `core/scripts/boundary_selftests.sh`; copy `codex_bridge.py`
+  and `test_claude_bridge.py` again.
 - **Scan failures that were not scanner failures (issues #13, #14).** A tracked file deleted
   without `git rm` now fails `[scan]` under its own name with the command that fixes it, and
   every other scan still runs. A symlink to a directory (for example `node_modules` linked

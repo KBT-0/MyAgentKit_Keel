@@ -649,6 +649,17 @@ shapes the probe does not support. Handler restoration got the same treatment: b
 signals closes the whole window rather than re-guarding each step. Lesson: when a review
 finds the third instance of one gap, close the class.
 
+#### Range B, round 9: no High, and the owner keeps the copy
+
+Four Medium. Three were more ways the disposable copy differed from or leaked into the
+original: git storage reached through a symlink, local configuration lost on
+reinitialising, index flags lost in the rebuild; each now has a regression that failed on
+the old example. The fourth was a cancel landing between two samples of the same flag, fixed
+by reconciling against the record on disk rather than the value in memory. The owner was
+offered a smaller design for the copy (support a plain repository only and refuse the rest
+by name, let git create the copy, or drop the example) and chose to keep patching it; the
+example now refuses by name what it cannot reproduce.
+
 #### The review gate held on the kit's own hardening
 
 Five of the nine work packages (the gate lock, both review-tooling packages, the commit gates
