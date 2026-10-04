@@ -660,6 +660,17 @@ offered a smaller design for the copy (support a plain repository only and refus
 by name, let git create the copy, or drop the example) and chose to keep patching it; the
 example now refuses by name what it cannot reproduce.
 
+#### Range C, round 1: findings only in the copy
+
+Three Medium and one Low, all in the existing-file example; the adapters, the gate and the
+hooks drew none. `find` does not descend through a directory symlink, so checking a
+symlink's own target let a link beneath an inside-the-copy directory reach the original's
+object store: the general fix is to refuse every directory symlink in git storage.
+`diff-files --diff-filter=A` sees an intent-to-add entry only while its file exists, so the
+full set comes from `diff-index --cached --ita-invisible-in-index`. Two refusal branches
+added in the previous round had shipped without their negative tests; each guard was then
+deleted in a copy of the script to watch its test go red.
+
 #### The review gate held on the kit's own hardening
 
 Five of the nine work packages (the gate lock, both review-tooling packages, the commit gates

@@ -249,6 +249,12 @@ hand merge; `sync-kit.sh` now keeps listing them until you confirm (see "Sync st
   archive saying quota while the result says cancelled. **ACTION:** re-copy an adapted
   existing-file example from `core/scripts/boundary_selftests.sh`; copy `codex_bridge.py`
   and `test_claude_bridge.py` again.
+- **Full cross-model review, range C round 1.** The existing-file boundary example refuses
+  any directory symlink in the copy's git storage (a link beneath an inside-the-copy
+  directory could still reach the original's object store), refuses an intent-to-add entry
+  whose file was deleted, and keeps a valueless configuration key valueless. The
+  skip-worktree and assume-unchanged refusals each have a negative test. **ACTION:** re-copy
+  an adapted existing-file example from `core/scripts/boundary_selftests.sh`.
 - **Scan failures that were not scanner failures (issues #13, #14).** A tracked file deleted
   without `git rm` now fails `[scan]` under its own name with the command that fixes it, and
   every other scan still runs. A symlink to a directory (for example `node_modules` linked
