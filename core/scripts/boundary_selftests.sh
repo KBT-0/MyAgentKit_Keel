@@ -68,9 +68,20 @@
 # fit a SHA-1 copy) and an index rebuilt from the original's entries: a copied index file left
 # a split index's shared part behind, and the copy's index was unreadable. The original's
 # entries and refs are read into files first and each read's status checked: piped, a failed
-# read fed an empty index to a consumer that succeeded. Copying a large tree (dependencies,
-# build output) costs time: copy only what the gate reads if that is known, but never let the
-# probe write into the checkout.
+# read fed an empty index to a consumer that succeeded. The rebuilt index keeps intent-to-add
+# (`git add -N`), read with `git diff-files --diff-filter=A`: rebuilt from `ls-files -s` alone,
+# such a path became a staged empty blob and a gate checking the staged changes rejected the
+# copy; unmerged, skip-worktree and assume-unchanged entries are refused by name. The copy
+# carries the original's local configuration, and its worktree configuration when
+# extensions.worktreeConfig is on (a gate needing a locally configured setting failed the
+# copy's baseline), except keys that redirect storage or execution (hooks path, editors,
+# drivers, filters, includes, aliases, credentials, URL rewrites), each dropped with a NOTE
+# line. The directories inside the copy's git storage were not checked: cp -R kept
+# `.git/objects` as a symlink to the original's store and a copied gate's `git add` wrote
+# there, so any symlink in the git storage that resolves outside the copy fails the case by
+# name; the original's objects stay reachable only through the alternates file, read-only.
+# Copying a large tree (dependencies, build output) costs time: copy only what the gate reads
+# if that is known, but never let the probe write into the checkout.
 #
 # This worked example runs in a subshell so its traps do not replace the surrounding
 # self-test traps. `$0` is the checkout's gate; the copy's own gate, at the same relative
@@ -103,9 +114,42 @@
 # |       probe_fail "could not read the original's refs (git for-each-ref); refusing to run."
 # |     probe_env git -C "$probe_checkout" ls-files -s -z --full-name > "$probe_copy/index" ||
 # |       probe_fail "could not read the original's index (git ls-files); refusing to run."
+# |     # ls-files -v tags: M unmerged, S skip-worktree, lower case assume-unchanged.
+# |     probe_env git -C "$probe_checkout" ls-files -v > "$probe_copy/flags" ||
+# |       probe_fail "could not read the original's index flags (git ls-files -v); refusing to run."
+# |     ! grep -q '^[Mm] ' "$probe_copy/flags" ||
+# |       probe_fail "the original index has unmerged entries; the existing-file probe does not support them."
+# |     ! grep -q '^[Ss] ' "$probe_copy/flags" ||
+# |       probe_fail "the original index has skip-worktree entries; the existing-file probe does not support them."
+# |     ! grep -q '^[a-z] ' "$probe_copy/flags" ||
+# |       probe_fail "the original index has assume-unchanged entries; the existing-file probe does not support them."
+# |     probe_env git -C "$probe_checkout" diff-files --diff-filter=A --name-only -z > "$probe_copy/ita" ||
+# |       probe_fail "could not read the original's intent-to-add entries (git diff-files); refusing to run."
+# |     probe_env git -C "$probe_checkout" config --local --no-includes --list -z > "$probe_copy/config" ||
+# |       probe_fail "could not read the original's configuration (git config --local); refusing to run."
+# |     if [ "$(probe_env git -C "$probe_checkout" config --bool extensions.worktreeConfig)" = true ]; then
+# |       probe_env git -C "$probe_checkout" config --worktree --no-includes --list -z >> "$probe_copy/config" ||
+# |         probe_fail "could not read the original's worktree configuration (git config --worktree); refusing to run."
+# |     fi
 # |     { probe_from=$(CDPATH= cd -P "$probe_checkout" && CDPATH= cd -P "$(probe_env git rev-parse --git-common-dir)" && pwd -P) &&
 # |       probe_format=$(probe_env git -C "$probe_checkout" rev-parse --show-object-format) &&
 # |       rm -f .git && probe_env git init -q --object-format="$probe_format" &&
+# |       probe_env xargs -0 sh -c '
+# |         for probe_entry; do
+# |           probe_key=$(printf "%s\n" "$probe_entry" | sed -n 1p) || exit 1
+# |           case $probe_key in
+# |             core.worktree|core.hookspath|core.fsmonitor|core.sshcommand|core.gitproxy|core.editor|\
+# |             core.pager|core.askpass|core.alternaterefscommand|sequence.editor|gpg.program|gpg.*.program|\
+# |             pager.*|include.path|includeif.*.path|alias.*|filter.*|diff.external|diff.*.command|\
+# |             diff.*.textconv|merge.*.driver|credential.*|url.*.insteadof|url.*.pushinsteadof|\
+# |             remote.*.uploadpack|remote.*.receivepack|extensions.worktreeconfig)
+# |               echo "  NOTE — existing-file probe: $probe_key is not carried into the disposable copy: it can redirect storage or execution outside it." ;;
+# |             core.repositoryformatversion|core.bare|extensions.*) ;;
+# |             *) probe_value=true
+# |                [ "$probe_entry" = "$probe_key" ] || probe_value=${probe_entry#"$probe_key"?}
+# |                git config --add "$probe_key" "$probe_value" || exit 1 ;;
+# |           esac
+# |         done' sh < "$probe_copy/config" &&
 # |       printf '%s/objects\n' "$probe_from" > .git/objects/info/alternates &&
 # |       probe_env git update-ref --stdin < "$probe_copy/refs" &&
 # |       if probe_branch=$(probe_env git -C "$probe_checkout" symbolic-ref -q HEAD); then
@@ -114,6 +158,9 @@
 # |         probe_env git update-ref --no-deref HEAD "$probe_head"
 # |       fi &&
 # |       probe_env git update-index -z --index-info < "$probe_copy/index" &&
+# |       probe_env git update-index -z --force-remove --stdin < "$probe_copy/ita" &&
+# |       { [ ! -s "$probe_copy/ita" ] ||
+# |         probe_env git --literal-pathspecs add -f -N --pathspec-from-file="$probe_copy/ita" --pathspec-file-nul; } &&
 # |       { probe_env git update-index -q --refresh >/dev/null 2>&1 || :; } &&
 # |       probe_env git ls-files -s >/dev/null &&
 # |       [ "$(probe_env git rev-parse -q --verify HEAD)" = "$probe_head" ]; } ||
@@ -128,6 +175,20 @@
 # |         "$probe_root"/*) ;;
 # |         *) probe_fail "the copy shares the original's git directory ($probe_git); refusing to run." ;;
 # |       esac
+# |       find "$probe_git" -type l > "$probe_copy/links" ||
+# |         probe_fail "could not search the copy's git storage for symlinks; refusing to run."
+# |       while IFS= read -r probe_link; do
+# |         if [ -d "$probe_link" ]; then
+# |           probe_to=$(CDPATH= cd -P "$probe_link" && pwd -P)
+# |         else
+# |           probe_to=$(probe_target=$(readlink "$probe_link") && CDPATH= cd -P "$(dirname "$probe_link")" &&
+# |             CDPATH= cd -P "$(dirname "$probe_target")" && [ ! -L "${probe_target##*/}" ] && pwd -P)
+# |         fi || probe_to=
+# |         case "$probe_to/" in
+# |           "$probe_root"/*) ;;
+# |           *) probe_fail "the copy's git storage at ${probe_link#"$probe_root"/} points outside the copy; refusing to run." ;;
+# |         esac
+# |       done < "$probe_copy/links"
 # |     done
 # |   fi
 # |   # Resolved physically to an absolute path inside the copy, and never itself a symlink.
