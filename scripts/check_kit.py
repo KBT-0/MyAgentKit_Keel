@@ -293,6 +293,34 @@ def main():
                 print("PASS: a symlink at the lock path is refused; a bounded lock wait stops with"
                       " NOT RUN; only the own lock path, with the descriptor holding it, is inherited, never"
                       " an independently opened one")
+                # Linux's NFS client takes an exclusive flock only on a descriptor open for
+                # writing: the inheritance probe opened its own read-only, and every fresh run
+                # failed FAIL [env]. A sitecustomize refuses such a flock as NFS does, then
+                # every flock (the probe's, then the first one) as a lockless file system does.
+                fake = side / "fake-flock"
+                fake.mkdir()
+                (fake / "sitecustomize.py").write_text(
+                    "import errno, fcntl, os\n"
+                    "real, mode = fcntl.flock, os.environ.get('FAKE_FLOCK')\n"
+                    "def flock(fd, op):\n"
+                    "    fd = fd if isinstance(fd, int) else fd.fileno()\n"
+                    "    if mode == 'nfs' and op & fcntl.LOCK_EX and (\n"
+                    "            fcntl.fcntl(fd, fcntl.F_GETFL) & os.O_ACCMODE == os.O_RDONLY):\n"
+                    "        raise OSError(errno.EBADF, os.strerror(errno.EBADF))\n"
+                    "    if mode == 'none' or (mode == 'none-held' and 'GATE_LOCK_HELD' in os.environ):\n"
+                    "        raise OSError(errno.ENOLCK, os.strerror(errno.ENOLCK))\n"
+                    "    return real(fd, op)\n"
+                    "fcntl.flock = flock\n")
+                run(["sh", "scripts/check.sh"], project, reason="CHECK: PASS", timeout=60,
+                    env=dict(os.environ, PYTHONPATH=str(fake), FAKE_FLOCK="nfs"))
+                for mode in ("none-held", "none"):
+                    out = run(["sh", "scripts/check.sh"], project, expected=1, timeout=30,
+                              reason="FAIL [lock]: this file system does not support the gate lock (",
+                              env=dict(os.environ, PYTHONPATH=str(fake), FAKE_FLOCK=mode))
+                    if "FAIL [env]" in out:
+                        raise RuntimeError("a lockless file system was reported as an environment fault:\n" + out)
+                print("PASS: a lock that needs a writable descriptor (NFS) is taken; a file system"
+                      " without locks fails FAIL [lock] by name")
                 # python3 only in the configured toolchain directory, as a hook sees a Python
                 # installed per user: the lock, which is taken through python3, still finds it.
                 tc, no_python = side / "tc", side / "no-python"

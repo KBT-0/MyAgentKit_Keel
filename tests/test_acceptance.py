@@ -35,3 +35,16 @@ class AcceptanceTests(unittest.TestCase):
 
     def test_packaging_suite_is_required_by_the_real_gate(self):
         self.assertGreaterEqual(gate.REQUIRED_SUITES['tests']['test_packaging'], 1)
+
+    def test_the_record_marks_covered_limitations_superseded_and_names_real_tests(self):
+        # The record still listed the Popen-window orphan and a syntax-only Stop hook check as
+        # current after both had regressions, and readers could not tell history from a gap.
+        import re
+        record = (ROOT / 'docs/ACCEPTANCE.md').read_text()
+        for bullet in re.split(r'\n- ', record):
+            if 'inside `Popen`' in bullet or 'exit-75' in bullet:
+                self.assertIn('Superseded', bullet, bullet)
+        cited = re.findall(r'`([\w/]+\.py)`\s*\(`(test_\w+)`\)', record)
+        self.assertTrue(cited, 'the superseded statements name no covering test')
+        for path, name in cited:
+            self.assertIn('def %s(' % name, (ROOT / path).read_text(), path)

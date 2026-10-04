@@ -53,9 +53,14 @@ old code, fixed, then merged to master.
 - git older than 2.24 (no `pre-merge-commit`: merges are ungated there) and older than 2.28:
   neither path was run.
 - `doctor.sh` branches for node, npm and a real reviewer CLI; the macOS no-`timeout` path;
-  the Stop hook's exit-75 branch (`sh -n` only); the 30 s lock NOTE repeating; the `mktemp`
-  build-log fallback outside git.
-- A signal arriving inside `Popen`, and SIGKILL of the dispatcher, still orphan the reviewer.
+  the 30 s lock NOTE repeating; the `mktemp` build-log fallback outside git.
+- SIGKILL of the dispatcher still orphans the reviewer: no handler runs, so nothing stops it.
+- Superseded (recorded here when this run was made, covered since): "the Stop hook's exit-75
+  branch, `sh -n` only" is now run by `tests/test_stop_hook.py`
+  (`test_pass_fail_and_not_run_each_reach_the_agent`), and "a signal arriving inside `Popen`
+  orphans the reviewer" is now fixed and run by `core/scripts/test_agent_usage.py`
+  (`test_a_cancel_inside_popen_still_stops_the_reviewer`) and `core/scripts/test_codex_quota.py`
+  (`test_a_cancel_inside_the_launch_leaves_no_quota_reader_running`).
 - Open issues: #32 (`spawn_worker.sh --worktree` starts from a stale base) and #29.
 
 Cross-model review (executed): `scripts/review.sh --base 5c80c36 --reviewer codex`, round 1

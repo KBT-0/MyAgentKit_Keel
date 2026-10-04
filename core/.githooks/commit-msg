@@ -63,7 +63,18 @@ fail_parse() {
   echo "commit-msg: cannot parse $1 from git config; refusing to pass the message unchecked." >&2
   exit 1
 }
-config_get --get-regexp '^core\.comment(char|string)$' 'core.commentChar or core.commentString'
+# Git before 2.45 ignores core.commentString: there "commentChar=x, then commentString=y"
+# keeps "x Co-Authored-By:", and reading both skipped only "y". An unreadable version fails closed.
+version=$(git version 2>/dev/null | sed -n 's/^git version \([0-9][0-9]*\)\.\([0-9][0-9]*\).*/\1 \2/p')
+[ -n "$version" ] || {
+  echo "commit-msg: cannot read the git version; refusing to pass the message unchecked." >&2
+  exit 1
+}
+keys=char
+if [ "${version% *}" -gt 2 ] || { [ "${version% *}" -eq 2 ] && [ "${version#* }" -ge 45 ]; }; then
+  keys='(char|string)'
+fi
+config_get --get-regexp "^core\\.comment$keys\$" 'core.commentChar or core.commentString'
 # One "key value" line per setting, in configuration order: the last one is git's.
 comment=$(printf '%s\n' "$value" | sed -n '$s/^[^ ]* //p') || fail_parse core.commentChar
 comment=$(printf '%s' "$comment" | tr -cd '[:alnum:]') || fail_parse core.commentChar

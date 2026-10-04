@@ -66,12 +66,15 @@ def main(argv=None, result_sink=None):
     report = repo / "docs/reviews" / (stamp + "-codex-review.md")
     agent_usage.require_private_storage(repo, report)
     report.parent.mkdir(parents=True, exist_ok=True)
-    # Held from here to the usage record: with the default handlers back after the review,
-    # a cancel during the closing quota read ended the adapter before a paid, completed
-    # review was recorded. A cancel now ends that read, and only that read: the first one
-    # raises, every later one is noted.
+    # Held from here to the last line printed: with the default handlers back after the
+    # review, a cancel during the closing quota read ended the adapter before a paid,
+    # completed review was recorded, and one while the result printed (a blocked stdout)
+    # ended it before the dispatcher's checkpoint. A cancel ends that read, and only that
+    # read: the first one raises, every later one is noted.
     guard = agent_process.OneShot()
-    with guard:
+    guard.previous = agent_process.hold(guard)
+    result = None
+    try:
         with tempfile.TemporaryDirectory(prefix="myagentkit-codex-") as tmp:
             last = Path(tmp) / "final.txt"
             command = [os.environ.get("REVIEW_CLI_BIN", "codex"), "exec", "--json", "--ephemeral",
@@ -181,33 +184,44 @@ def main(argv=None, result_sink=None):
         # reporter reads the records, and a direct call has no chain to keep it.
         if (cancelled or guard.noted or execution["termination"] == "cancelled") and usage["failure_kind"]:
             usage, report_text = persist_cancel(usage)
-    # Noted while the guard put the caller's handlers back, after the check above: once only
-    # the returned result said cancelled, and the records of a failed attempt said quota.
-    # Persisted under a noting handler: with the caller's back, a second cancel during the
-    # relabel ended the adapter before the records said cancelled.
-    if guard.noted and usage["failure_kind"] not in (None, "cancelled"):
-        held = agent_process.hold(lambda signum, frame: guard.noted.append(signum))
-        try:
-            usage, report_text = persist_cancel(usage)
-        finally:
-            agent_process.restore(held)
-    status, reason = usage["status"], usage["failure_kind"]
-    # The handler kept noting signals through both writes above: a cancel there is a cancel
-    # too, or a quota-failed attempt stayed eligible and --fallback started another reviewer.
-    cancelled = bool(cancelled or guard.noted) or execution["termination"] == "cancelled"
-    if cancelled and reason:
-        reason = "cancelled"
-    result = {"status": status, "failure_kind": reason, "evidence": archived,
-              "usage_record": str(path), "recovery": usage["recovery"], "cancelled": cancelled}
-    if result_sink is not None:
-        result_sink(result)
-    print("review invocation: " + json.dumps(result))
-    # Not a report the accounting contradicted: a lost archive once printed its Accept.
-    if archived and status == header["status"]:
-        print(report_text)
-    if reason:
-        print("FAIL [review]: " + reason)
-    return 5 if reason else 0
+        status, reason = usage["status"], usage["failure_kind"]
+        # The handler kept noting signals through both writes above: a cancel there is a cancel
+        # too, or a quota-failed attempt stayed eligible and --fallback started another reviewer.
+        cancelled = bool(cancelled or guard.noted) or execution["termination"] == "cancelled"
+        if cancelled and reason:
+            reason = "cancelled"
+        result = {"status": status, "failure_kind": reason, "evidence": archived,
+                  "usage_record": str(path), "recovery": usage["recovery"], "cancelled": cancelled}
+        if result_sink is not None:
+            result_sink(result)
+        print("review invocation: " + json.dumps(result))
+        # Not a report the accounting contradicted: a lost archive once printed its Accept.
+        if archived and status == header["status"]:
+            print(report_text)
+        if reason:
+            print("FAIL [review]: " + reason)
+        return 5 if reason else 0
+    finally:
+        # A cancel noted while the result printed, or held while the caller's handlers went
+        # back, is persisted and printed as a correction line; the dispatcher holds the same
+        # result dict. A first cancel noted during the restore and a second one meeting the
+        # caller's SIGTERM default once ended the adapter before the records said cancelled.
+        def correct():
+            nonlocal usage
+            if result is None or result["cancelled"]:
+                return
+            result["cancelled"] = True
+            if result["failure_kind"]:
+                if usage["failure_kind"] != "cancelled":
+                    usage = persist_cancel(usage)[0]
+                result.update(status=usage["status"], failure_kind="cancelled")
+            print("review invocation: " + json.dumps(dict(result, correction=True)))
+
+        if guard.noted:
+            correct()
+        with agent_process.handing_back(guard.previous) as pending:
+            if pending or guard.noted:
+                correct()
 
 
 if __name__ == "__main__":

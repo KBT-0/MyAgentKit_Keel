@@ -182,6 +182,27 @@ class GitHookTests(unittest.TestCase):
                     self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
                     self.assertIn('crediting an AI tool', result.stderr)
 
+    def test_a_git_before_2_45_reads_only_comment_char(self):
+        # Git before 2.45 ignores core.commentString: with commentChar=x set before
+        # commentString=y it keeps "x Co-Authored-By: ..." under -m, and a hook that took the
+        # last of the two skipped only "y" and passed it.
+        real_git = shutil.which('git')
+        with tempfile.TemporaryDirectory() as tmp:
+            root, git = self.repo(tmp)
+            git('config', 'core.commentChar', 'x')
+            git('config', 'core.commentString', 'y')
+            shim = Path(tmp) / 'shim'
+            shim.mkdir()
+            (shim / 'git').write_text('#!/bin/sh\n[ "$1" != version ] || { echo "git version 2.44.0"; exit 0; }\n'
+                                      'exec %s "$@"\n' % real_git)
+            (shim / 'git').chmod(0o755)
+            (root / 'msg').write_text('change c\n\nx Co-Authored-By: Claude <noreply@anthropic.com>\n')
+            result = subprocess.run(['sh', '.githooks/commit-msg', 'msg'], cwd=root, text=True,
+                                    capture_output=True,
+                                    env=dict(os.environ, PATH='%s%s%s' % (shim, os.pathsep, os.environ['PATH'])))
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn('crediting an AI tool', result.stderr)
+
     def test_a_configured_trailer_separator_is_a_separator(self):
         # With trailer.separators set, git takes "Co-Authored-By=Claude" as a trailer; the
         # hook's expressions required a colon and passed it.
