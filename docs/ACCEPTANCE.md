@@ -91,13 +91,16 @@ budget, so the full review was split into two consistent commit ranges, each its
   `20261003T172613Z-9f6797d5a28c`, round 3 `20261003T175947Z-7f10f94f8a81`, round 4
   `20261003T184823Z-9b1d42b2cc4f`, round 5 `20261003T193937Z-3384a82cc750` (head 16baa3f),
   round 6 `20261003T195627Z-67016b7c4a7b` (head 3e0d50d), round 7
-  `20261003T202321Z-d36f584a7812` (head 7c2c8a6) (each `-codex-review.md`, each Reject).
-  Round 5 is void: it reviewed a tree missing the merge of the round-4 fixes, and round 6
-  reviewed the tree that carried them. Every finding of rounds 1 to 4, 6 and 7 was fixed with
-  its negative test, round 6 in dd5acbb and round 7 (four Medium, one Low) by this change.
+  `20261003T202321Z-d36f584a7812` (head 7c2c8a6), round 8 `20261003T205214Z-b9c4f6ac62c3`
+  (head db86cd8), round 9 `20261004T181452Z-6d78654b4641` (head bdcd611) (each
+  `-codex-review.md`, each Reject). Round 5 is void: it reviewed a tree missing the merge of
+  the round-4 fixes, and round 6 reviewed the tree that carried them. Every finding of rounds
+  1 to 4 and 6 to 8 was fixed with its negative test, round 6 in dd5acbb, round 7 (four
+  Medium, one Low) in b9cf724 and round 8 in 228ad03. Round 9 (four Medium, one Low) has its
+  fixes in progress.
 
-PENDING: range B round 8, a fresh label on the head after this change, the one that carries
-the round-7 fixes; the range-B acceptance closes on the first round that is not a Reject. The round-1 record of the
+PENDING: the range-B round on the head after the round-9 fixes, a fresh label on the head
+that carries them; the range-B acceptance closes on the first round that is not a Reject. The round-1 record of the
 first attempt was written by the pre-fix kit (no resolved reference, no archive hash), so
 later rounds ran under new task labels and did not carry earlier ones: the carried-round
 path is proven by the regression tests only.

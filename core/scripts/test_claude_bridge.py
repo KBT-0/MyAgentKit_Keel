@@ -601,6 +601,48 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual((received[0]['failure_kind'], received[0]['cancelled']), ('cancelled', True))
         self.persisted_cancel(received[0])
 
+    def test_a_cancel_between_the_codex_persist_and_result_samples_is_persisted(self):
+        # The persistence check and the returned flag were two samples: a cancel noted between
+        # them returned cancelled while the usage record and archive kept quota, and the final
+        # correction skipped the repair because the result already said cancelled.
+        from contextlib import redirect_stdout
+        from io import StringIO
+        from unittest.mock import patch
+        import signal
+        import agent_usage
+        import codex_bridge
+        recorded, fired = [], []
+
+        class Execution(dict):
+            # The first termination read after the record is the persistence sample: the cancel
+            # lands after that sample has read the noting guard, before the result is built.
+            def __getitem__(self, key):
+                if key == 'termination' and recorded and not fired:
+                    fired.append(True)
+                    os.kill(os.getpid(), signal.SIGTERM)
+                return dict.__getitem__(self, key)
+
+        def quota(command, prompt, repo, timeout, into=None):
+            return Execution({'exit_code': 1, 'stdout': json.dumps({'type': 'turn.failed',
+                              'error': {'message': 'usage limit reached'}}), 'stderr': '',
+                              'termination': None, 'duration_ms': 1})
+
+        record = agent_usage.record
+
+        def recording(*args, **kwargs):
+            value = record(*args, **kwargs)
+            recorded.append(True)
+            return value
+
+        received = []
+        with patch.dict(os.environ, self.review_env()), patch('agent_process.run', side_effect=quota), \
+                patch.object(agent_usage, 'record', side_effect=recording), redirect_stdout(StringIO()):
+            codex_bridge.main(['--model', 'fixture-codex-model', '--repo', str(self.repo),
+                               '--uncommitted'], received.append)
+        self.assertTrue(fired)
+        self.assertEqual((received[0]['failure_kind'], received[0]['cancelled']), ('cancelled', True))
+        self.persisted_cancel(received[0])
+
     def test_a_cancel_while_codex_switches_to_noting_keeps_the_completed_review(self):
         # After run() returned, the adapter installed its noting handler one signal at a time:
         # a SIGTERM before the swap reached SIGTERM still met the raising handler, unwound the

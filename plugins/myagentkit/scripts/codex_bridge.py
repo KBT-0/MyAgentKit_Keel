@@ -180,18 +180,33 @@ def main(argv=None, result_sink=None):
                 print("FAIL [review]: cancellation could not be persisted: " + str(error))
                 return dict(usage, status="failed", failure_kind="cancelled"), text
 
-        # A cancel noted during either write is persisted too, not only returned: the usage
-        # reporter reads the records, and a direct call has no chain to keep it.
-        if (cancelled or guard.noted or execution["termination"] == "cancelled") and usage["failure_kind"]:
+        def cancel_noted():
+            return bool(cancelled or guard.noted) or execution["termination"] == "cancelled"
+
+        def reconcile():
+            # A cancel noted during either write is persisted too, not only returned: the usage
+            # reporter reads the records, and a direct call has no chain to keep it. Decided by
+            # the record on disk, never by the returned flag: the two were separate samples, and
+            # a cancel between them returned cancelled while both files kept quota. Idempotent,
+            # so it runs at every sample and once more at the very end.
+            nonlocal usage, report_text
+            if not cancel_noted() or not usage["failure_kind"]:
+                return
+            try:
+                if json.loads(path.read_text()).get("failure_kind") == "cancelled":
+                    return
+            except (OSError, ValueError):
+                pass
             usage, report_text = persist_cancel(usage)
-        status, reason = usage["status"], usage["failure_kind"]
+
         # The handler kept noting signals through both writes above: a cancel there is a cancel
         # too, or a quota-failed attempt stayed eligible and --fallback started another reviewer.
-        cancelled = bool(cancelled or guard.noted) or execution["termination"] == "cancelled"
-        if cancelled and reason:
-            reason = "cancelled"
+        # Sampled before the records are reconciled, so a cancel the flag saw is on disk.
+        was_cancelled = cancel_noted()
+        reconcile()
+        status, reason = usage["status"], usage["failure_kind"]
         result = {"status": status, "failure_kind": reason, "evidence": archived,
-                  "usage_record": str(path), "recovery": usage["recovery"], "cancelled": cancelled}
+                  "usage_record": str(path), "recovery": usage["recovery"], "cancelled": was_cancelled}
         if result_sink is not None:
             result_sink(result)
         print("review invocation: " + json.dumps(result))
@@ -207,13 +222,14 @@ def main(argv=None, result_sink=None):
         # result dict. A first cancel noted during the restore and a second one meeting the
         # caller's SIGTERM default once ended the adapter before the records said cancelled.
         def correct():
-            nonlocal usage
-            if result is None or result["cancelled"]:
+            if result is None:
+                return
+            cancelled.append(True)
+            reconcile()
+            if result["cancelled"]:
                 return
             result["cancelled"] = True
             if result["failure_kind"]:
-                if usage["failure_kind"] != "cancelled":
-                    usage = persist_cancel(usage)[0]
                 result.update(status=usage["status"], failure_kind="cancelled")
             print("review invocation: " + json.dumps(dict(result, correction=True)))
 
@@ -222,6 +238,8 @@ def main(argv=None, result_sink=None):
         with agent_process.handing_back(guard.previous) as pending:
             if pending or guard.noted:
                 correct()
+            elif result is not None:
+                reconcile()
 
 
 if __name__ == "__main__":
