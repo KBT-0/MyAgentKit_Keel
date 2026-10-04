@@ -692,6 +692,17 @@ settings hide gitlinks from plumbing diffs, so a count that subtracts a diff fro
 turns submodule ignoring off first. `--no-includes` had kept an allowlisted key out of the
 copy when the original defined it in an include.
 
+#### Range C, round 4: delete the emulation
+
+Four rounds had found divergences caused by flattening git's configuration layers (local,
+worktree, includes) into the copy's single local file; the previous round's own fix, reading
+through includes, opened two more. The emulation is gone: a carried setting must come from
+the repository's own config file, anything else is refused by name with advice the owner
+can act on, and the example lost fourteen lines. The first run of this round also returned
+"no actionable defects" but was recorded as a CLI failure because of unrelated stderr
+noise, and was not counted; the rerun found the two configuration cases. Lesson: when each
+fix to an emulation opens the next finding, refuse the unsupported shape instead.
+
 #### The review gate held on the kit's own hardening
 
 Five of the nine work packages (the gate lock, both review-tooling packages, the commit gates
