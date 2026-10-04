@@ -71,15 +71,21 @@
 # read fed an empty index to a consumer that succeeded. The rebuilt index keeps intent-to-add
 # (`git add -N`), read with `git diff-files --diff-filter=A`: rebuilt from `ls-files -s` alone,
 # such a path became a staged empty blob and a gate checking the staged changes rejected the
-# copy; unmerged, skip-worktree and assume-unchanged entries are refused by name. The copy
+# copy. diff-files misses an intent-to-add path whose file was deleted, which then became a
+# staged empty blob all the same: every intent-to-add entry is counted with
+# `diff-index --cached --ita-invisible-in-index`, and one diff-files did not report is refused
+# by name, as are unmerged, skip-worktree and assume-unchanged entries. The copy
 # carries the original's local configuration, and its worktree configuration when
 # extensions.worktreeConfig is on (a gate needing a locally configured setting failed the
 # copy's baseline), except keys that redirect storage or execution (hooks path, editors,
 # drivers, filters, includes, aliases, credentials, URL rewrites), each dropped with a NOTE
-# line. The directories inside the copy's git storage were not checked: cp -R kept
+# line. A valueless key is appended to the copy's config file as valueless: carried as the
+# string `true`, an untyped read of it in the copy differed from the original's. The directories inside the copy's git storage were not checked: cp -R kept
 # `.git/objects` as a symlink to the original's store and a copied gate's `git add` wrote
-# there, so any symlink in the git storage that resolves outside the copy fails the case by
-# name; the original's objects stay reachable only through the alternates file, read-only.
+# there, so a file symlink in the git storage that resolves outside the copy fails the case by
+# name. A directory symlink fails it whatever its target: find does not descend through one, so
+# `.git/objects -> ../store` passed while an absolute link beneath `store` took the copy's
+# writes outside it. The original's objects stay reachable only through the alternates file.
 # Copying a large tree (dependencies, build output) costs time: copy only what the gate reads
 # if that is known, but never let the probe write into the checkout.
 #
@@ -125,6 +131,13 @@
 # |       probe_fail "the original index has assume-unchanged entries; the existing-file probe does not support them."
 # |     probe_env git -C "$probe_checkout" diff-files --diff-filter=A --name-only -z > "$probe_copy/ita" ||
 # |       probe_fail "could not read the original's intent-to-add entries (git diff-files); refusing to run."
+# |     # Every intent-to-add entry, whatever its working tree: those --ita-invisible-in-index hides.
+# |     probe_env git -C "$probe_checkout" ls-files > "$probe_copy/paths" &&
+# |       probe_empty=$(probe_env git -C "$probe_checkout" hash-object -t tree /dev/null) &&
+# |       probe_env git -C "$probe_checkout" diff-index --cached --ita-invisible-in-index --name-only "$probe_empty" > "$probe_copy/visible" ||
+# |       probe_fail "could not count the original's intent-to-add entries (git diff-index); refusing to run."
+# |     [ $(( $(wc -l < "$probe_copy/paths") - $(wc -l < "$probe_copy/visible") )) -eq $(( $(tr -cd '\000' < "$probe_copy/ita" | wc -c) )) ] ||
+# |       probe_fail "the original index has an intent-to-add entry whose file is missing from the working tree; the existing-file probe does not support it."
 # |     probe_env git -C "$probe_checkout" config --local --no-includes --list -z > "$probe_copy/config" ||
 # |       probe_fail "could not read the original's configuration (git config --local); refusing to run."
 # |     if [ "$(probe_env git -C "$probe_checkout" config --bool extensions.worktreeConfig)" = true ]; then
@@ -145,9 +158,17 @@
 # |             remote.*.uploadpack|remote.*.receivepack|extensions.worktreeconfig)
 # |               echo "  NOTE — existing-file probe: $probe_key is not carried into the disposable copy: it can redirect storage or execution outside it." ;;
 # |             core.repositoryformatversion|core.bare|extensions.*) ;;
-# |             *) probe_value=true
-# |                [ "$probe_entry" = "$probe_key" ] || probe_value=${probe_entry#"$probe_key"?}
-# |                git config --add "$probe_key" "$probe_value" || exit 1 ;;
+# |             *) if [ "$probe_entry" != "$probe_key" ]; then
+# |                  git config --add "$probe_key" "${probe_entry#"$probe_key"?}" || exit 1
+# |                else
+# |                  # A valueless key (no newline in the entry) has no `git config` syntax: append it.
+# |                  probe_section=${probe_key%.*}
+# |                  case $probe_section in
+# |                    *.*) probe_sub=$(printf "%s\n" "${probe_section#*.}" | sed "s/[\\\\\"]/\\\\&/g") || exit 1
+# |                         probe_section="${probe_section%%.*} \"$probe_sub\"" ;;
+# |                  esac
+# |                  printf "[%s]\n\t%s\n" "$probe_section" "${probe_key##*.}" >> .git/config || exit 1
+# |                fi ;;
 # |           esac
 # |         done' sh < "$probe_copy/config" &&
 # |       printf '%s/objects\n' "$probe_from" > .git/objects/info/alternates &&
@@ -178,12 +199,11 @@
 # |       find "$probe_git" -type l > "$probe_copy/links" ||
 # |         probe_fail "could not search the copy's git storage for symlinks; refusing to run."
 # |       while IFS= read -r probe_link; do
-# |         if [ -d "$probe_link" ]; then
-# |           probe_to=$(CDPATH= cd -P "$probe_link" && pwd -P)
-# |         else
-# |           probe_to=$(probe_target=$(readlink "$probe_link") && CDPATH= cd -P "$(dirname "$probe_link")" &&
-# |             CDPATH= cd -P "$(dirname "$probe_target")" && [ ! -L "${probe_target##*/}" ] && pwd -P)
-# |         fi || probe_to=
+# |         # find does not descend through a directory symlink, so nothing beneath one is checked.
+# |         [ ! -d "$probe_link" ] ||
+# |           probe_fail "the copy's git storage has a directory symlink at ${probe_link#"$probe_root"/}; the existing-file probe does not support it."
+# |         probe_to=$(probe_target=$(readlink "$probe_link") && CDPATH= cd -P "$(dirname "$probe_link")" &&
+# |           CDPATH= cd -P "$(dirname "$probe_target")" && [ ! -L "${probe_target##*/}" ] && pwd -P) || probe_to=
 # |         case "$probe_to/" in
 # |           "$probe_root"/*) ;;
 # |           *) probe_fail "the copy's git storage at ${probe_link#"$probe_root"/} points outside the copy; refusing to run." ;;
