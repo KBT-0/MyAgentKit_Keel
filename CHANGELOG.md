@@ -264,6 +264,13 @@ hand merge; `sync-kit.sh` now keeps listing them until you confirm (see "Sync st
   **ACTION:** re-copy an adapted existing-file example from
   `core/scripts/boundary_selftests.sh`; if your gate reads a local git setting outside the
   built-in allowlist, add its lowercase name to `probe_config_keys`.
+- **Full cross-model review, range C round 3.** The existing-file probe reads allowlisted
+  settings through `include.path` and `includeIf`, and refuses by name a carried key set in
+  both the local and the worktree configuration or in more than one file (merged into the
+  copy's one file it would become two values). It counts intent-to-add entries with
+  submodule ignoring off, so an ignored uninitialised submodule is no longer reported as a
+  missing intent-to-add file. **ACTION:** re-copy an adapted existing-file example from
+  `core/scripts/boundary_selftests.sh`.
 - **Scan failures that were not scanner failures (issues #13, #14).** A tracked file deleted
   without `git rm` now fails `[scan]` under its own name with the command that fixes it, and
   every other scan still runs. A symlink to a directory (for example `node_modules` linked

@@ -682,6 +682,16 @@ cannot reproduce. Rule: a denylist over an open set (git's configuration keys, i
 environment variables, its index states) is the next finding waiting; name what is
 supported and refuse the rest.
 
+#### Range C, round 3: one setting, two values
+
+Three Medium, all in the existing-file example. Merging two configuration scopes or files
+into the copy's one local file turned a single setting into two values, so a gate's
+`git config <key> <value>` that works in the original failed in the copy; the probe now
+refuses a carried key that comes from more than one scope or file. Submodule ignore
+settings hide gitlinks from plumbing diffs, so a count that subtracts a diff from the index
+turns submodule ignoring off first. `--no-includes` had kept an allowlisted key out of the
+copy when the original defined it in an include.
+
 #### The review gate held on the kit's own hardening
 
 Five of the nine work packages (the gate lock, both review-tooling packages, the commit gates
