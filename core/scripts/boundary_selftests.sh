@@ -83,16 +83,13 @@
 # reads the original runs through probe_original, with the filesystem monitor, hooks and the
 # untracked cache off and no optional locks: with the original's configuration active, its
 # core.fsmonitor hook ran during a read and wrote into the original. The copy carries only an
-# allowlist of the original's local (and, with extensions.worktreeConfig, worktree) settings
-# plus the keys named in probe_config_keys: a denylist of settings that redirect storage or
-# execution still passed the next one (tar.<format>.command ran from a copied gate's
-# `git archive`). Every other key gets a NOTE line, include.path and includeIf among them. The
-# settings are read with their includes, read only: with --no-includes an allowlisted key set
-# through include.path was dropped and the printed advice could not bring it back. The copy has
-# one local configuration file, so an allowlisted key set in both the local and the worktree
-# scope, or in more than one file through an include, fails the case by name: merged, it held
-# two values, and a gate's `git config core.filemode false`, which changes one file in the
-# original, failed in the copy. git init's own instances of a carried key are
+# allowlist of settings plus the keys named in probe_config_keys: a denylist of settings that
+# redirect storage or execution still passed the next one (tar.<format>.command ran from a
+# copied gate's `git archive`). Every other key gets a NOTE line, include.path and includeIf
+# among them. An allowlisted key is carried only when every value of it comes from the
+# repository's own config file; one set in the worktree configuration or an included file fails
+# the case by name, since the copy has one local file and flattening scopes and includes into
+# it changed what a gate's `git config <key> <value>` did. git init's own instances of a carried key are
 # removed first, so a gate's `git config core.filemode false` does not meet two values, and
 # the original's values are added in order. A valueless key is appended to the copy's config
 # file as valueless: carried as the string `true`, an untyped read of it in the copy differed
@@ -167,30 +164,28 @@
 # |     probe_allowed="user.name user.email core.autocrlf core.eol core.safecrlf core.filemode
 # |       core.ignorecase core.symlinks core.quotepath core.precomposeunicode core.whitespace
 # |       core.abbrev init.defaultbranch $probe_config_keys"
-# |     # Included files are only read; of their keys, as of all others, only allowlisted ones are carried.
-# |     probe_original config --local --includes --list -z > "$probe_copy/config" &&
-# |       probe_original config --local --includes --show-origin --name-only --list > "$probe_copy/local" ||
-# |       probe_fail "could not read the original's configuration (git config --local); refusing to run."
-# |     : > "$probe_copy/worktree" || exit 1
-# |     if [ "$(probe_original config --bool extensions.worktreeConfig)" = true ]; then
-# |       probe_original config --worktree --includes --list -z >> "$probe_copy/config" &&
-# |         probe_original config --worktree --includes --show-origin --name-only --list > "$probe_copy/worktree" ||
-# |         probe_fail "could not read the original's worktree configuration (git config --worktree); refusing to run."
-# |     fi
-# |     # The copy has one local file: a key from two files would become two values there, and a gate's
-# |     # `git config <key> <value>`, which changes one file in the original, would fail in the copy.
-# |     probe_origins() {
-# |       PROBE_KEY=$1 awk '{ i = index($0, "\t") }
-# |         substr($0, i + 1) == ENVIRON["PROBE_KEY"] { print substr($0, 1, i - 1) }' "$2" | sort -u | wc -l
-# |     }
-# |     for probe_key in $probe_allowed; do
-# |       probe_local=$(( $(probe_origins "$probe_key" "$probe_copy/local") ))
-# |       probe_worktree=$(( $(probe_origins "$probe_key" "$probe_copy/worktree") ))
-# |       [ "$probe_local" -eq 0 ] || [ "$probe_worktree" -eq 0 ] ||
-# |         probe_fail "$probe_key is set in both the local and the worktree configuration; the existing-file probe does not support it."
-# |       [ $(( probe_local + probe_worktree )) -le 1 ] ||
-# |         probe_fail "$probe_key is set in more than one configuration file through an include; the existing-file probe does not support it."
-# |     done
+# |     # Only the repository's own config file is carried: the copy has one local file, and a value
+# |     # from the worktree configuration or an include placed there changes what a gate's write does.
+# |     probe_original config --show-scope --show-origin --includes --name-only --list > "$probe_copy/names" &&
+# |       probe_original config --local --no-includes --show-origin --name-only --list > "$probe_copy/own" &&
+# |       probe_original config --local --no-includes --list -z > "$probe_copy/config" ||
+# |       probe_fail "could not read the original's configuration (git config); refusing to run."
+# |     probe_own=$(LC_ALL=C awk -F '\t' 'NR == 1 { print $1 }' "$probe_copy/own") || exit 1
+# |     PROBE_OWN=$probe_own PROBE_ALLOWED=$probe_allowed LC_ALL=C awk -F '\t' '
+# |       BEGIN { n = split(ENVIRON["PROBE_ALLOWED"], k, " "); for (i = 1; i <= n; i++) allowed[k[i]] = 1 }
+# |       $1 != "local" && $1 != "worktree" { next }
+# |       { key = $0; sub(/^[^\t]*\t[^\t]*\t/, "", key) }
+# |       !(key in allowed) {
+# |         # git init in the copy sets these from the copy itself.
+# |         if (key !~ /^(core\.repositoryformatversion|core\.bare|extensions\.objectformat)$/ && !noted[key]++)
+# |           print "  NOTE — existing-file probe: " key " is not carried into the disposable copy; a setting your gate reads goes in probe_config_keys."
+# |         next
+# |       }
+# |       $1 == "worktree" || $2 != ENVIRON["PROBE_OWN"] {
+# |         print "  FAIL — existing-file probe: " key " is set in " ($1 == "worktree" ? "the worktree configuration" : "an included configuration file") \
+# |           "; the existing-file probe carries a setting only from the repository'"'"'s own config file: set it there, or remove it from probe_config_keys."
+# |         exit 1
+# |       }' "$probe_copy/names" || exit 1
 # |     { probe_from=$(CDPATH= cd -P "$probe_checkout" && CDPATH= cd -P "$(probe_original rev-parse --git-common-dir)" && pwd -P) &&
 # |       probe_format=$(probe_original rev-parse --show-object-format) &&
 # |       rm -f .git && probe_env git init -q --object-format="$probe_format" &&
@@ -202,17 +197,8 @@
 # |           probe_key=$(printf "%s\n" "$probe_entry" | sed -n 1p) || exit 1
 # |           probe_carry=
 # |           for probe_allowed in $PROBE_ALLOWED; do [ "$probe_key" != "$probe_allowed" ] || probe_carry=1; done
-# |           if [ -z "$probe_carry" ]; then
-# |             # git init in the copy sets these from the copy itself.
-# |             case $probe_key in
-# |               core.repositoryformatversion|core.bare|extensions.objectformat) ;;
-# |               *) case " $probe_noted " in
-# |                    *" $probe_key "*) ;;
-# |                    *) echo "  NOTE — existing-file probe: $probe_key is not carried into the disposable copy; a setting your gate reads goes in probe_config_keys."
-# |                       probe_noted="$probe_noted $probe_key" ;;
-# |                  esac ;;
-# |             esac
-# |           elif [ "$probe_entry" != "$probe_key" ]; then
+# |           [ -n "$probe_carry" ] || continue
+# |           if [ "$probe_entry" != "$probe_key" ]; then
 # |             git config --add "$probe_key" "${probe_entry#"$probe_key"?}" || exit 1
 # |           else
 # |             # A valueless key (no newline in the entry) has no `git config` syntax: append it.
