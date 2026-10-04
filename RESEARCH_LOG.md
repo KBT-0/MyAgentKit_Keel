@@ -671,6 +671,17 @@ full set comes from `diff-index --cached --ita-invisible-in-index`. Two refusal 
 added in the previous round had shipped without their negative tests; each guard was then
 deleted in a copy of the script to watch its test go red.
 
+#### Range C, round 2: six rounds on one example, then the classes
+
+Six review rounds on the existing-file example had each found the next instance of a class
+the previous patch handled one case at a time: one more variable, one more configuration
+key, one more index state. This round closed each class at once: one helper for every read
+of the original (its fsmonitor, hooks and optional locks off), an allowlist of carried
+settings instead of a denylist, and a whole-index comparison that refuses what the rebuild
+cannot reproduce. Rule: a denylist over an open set (git's configuration keys, its
+environment variables, its index states) is the next finding waiting; name what is
+supported and refuse the rest.
+
 #### The review gate held on the kit's own hardening
 
 Five of the nine work packages (the gate lock, both review-tooling packages, the commit gates

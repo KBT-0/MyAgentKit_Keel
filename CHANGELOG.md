@@ -255,6 +255,15 @@ hand merge; `sync-kit.sh` now keeps listing them until you confirm (see "Sync st
   whose file was deleted, and keeps a valueless configuration key valueless. The
   skip-worktree and assume-unchanged refusals each have a negative test. **ACTION:** re-copy
   an adapted existing-file example from `core/scripts/boundary_selftests.sh`.
+- **Full cross-model review, range C round 2.** The existing-file probe reads the original
+  through one helper with its fsmonitor, hooks and untracked cache off and no optional
+  locks. It carries only an allowlist of settings plus the ones named in
+  `probe_config_keys` (every other local key is named in a NOTE and left behind), removes
+  `git init`'s own instances of the carried keys, and compares the whole rebuilt index with
+  the original's, refusing by name an intent-to-add entry whose mode differs from its file.
+  **ACTION:** re-copy an adapted existing-file example from
+  `core/scripts/boundary_selftests.sh`; if your gate reads a local git setting outside the
+  built-in allowlist, add its lowercase name to `probe_config_keys`.
 - **Scan failures that were not scanner failures (issues #13, #14).** A tracked file deleted
   without `git rm` now fails `[scan]` under its own name with the command that fixes it, and
   every other scan still runs. A symlink to a directory (for example `node_modules` linked
