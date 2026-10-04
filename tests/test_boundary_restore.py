@@ -1,5 +1,6 @@
 """Interrupt the shipped existing-file example: the checkout is never the one it changes."""
 import os
+import shlex
 from pathlib import Path
 import shutil
 import signal
@@ -161,10 +162,14 @@ exit 1
             self.assertIn('is a symlink', result.stdout)
             self.assertNotIn('  ok   — ', result.stdout)
 
-    def fixture(self, tmp, gate_body, *init, names=()):
+    def fixture(self, tmp, gate_body, *init, names=(), config_keys=None):
         example = '\n'.join(line[4:] for line in (Path(__file__).resolve().parents[1] /
                             'core/scripts/boundary_selftests.sh').read_text().splitlines()
                             if line.startswith('# | '))
+        if config_keys is not None:
+            # A setting the gate reads is carried only when the project names it.
+            self.assertIn('probe_config_keys=""', example)
+            example = example.replace('probe_config_keys=""', 'probe_config_keys="%s"' % config_keys, 1)
         extra = ''.join('%s="$%s" ' % (name, name) for name in names)
         if extra:
             self.assertIn('LC_ALL=C ', example)
@@ -435,7 +440,8 @@ exit 1
         # setting, in the repository's or the worktree's configuration, failed its baseline.
         with tempfile.TemporaryDirectory() as tmp:
             root, git = self.fixture(tmp, '[ "$(git config --get kit.required)" = yes ] || exit 1\n'
-                                          '[ "$(git config --get kit.worktree)" = yes ] || exit 1\n')
+                                          '[ "$(git config --get kit.worktree)" = yes ] || exit 1\n',
+                                     config_keys='kit.required kit.worktree')
             git('config', 'kit.required', 'yes')
             git('config', 'extensions.worktreeConfig', 'true')
             linked = Path(tmp) / 'linked'
@@ -585,7 +591,7 @@ exit 1
         for setting in ('\trequired\n', '\trequired =\n'):
             with self.subTest(setting=setting), tempfile.TemporaryDirectory() as tmp:
                 root, git = self.fixture(tmp, '[ "$(%s)" = "$EXPECT_CONFIG" ] || exit 1\n' % probe,
-                                         names=('EXPECT_CONFIG',))
+                                         names=('EXPECT_CONFIG',), config_keys='kit.required')
                 with open(root / '.git/config', 'a') as config:
                     config.write('[kit]\n' + setting)
                 linked = Path(tmp) / 'linked'
@@ -595,6 +601,92 @@ exit 1
                 result = self.self_test(tmp, linked, EXPECT_CONFIG=expected)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertIn('  ok   — ', result.stdout)
+
+    def test_an_fsmonitor_hook_cannot_write_into_the_original(self):
+        # The original's reads ran with its configuration: git ran the core.fsmonitor hook while
+        # reading the index, and a hook that writes a relative file wrote it into the original.
+        with tempfile.TemporaryDirectory() as tmp:
+            root, git = self.fixture(tmp, '')
+            linked = Path(tmp) / 'linked'
+            git('worktree', 'add', '-q', str(linked))
+            hook = Path(tmp) / 'fsmonitor-hook'
+            hook.write_text('#!/bin/sh\n: > fsmonitor-ran\n')
+            hook.chmod(0o755)
+            git('config', 'core.fsmonitor', str(hook))
+            run = lambda *args: subprocess.run(['git', '-c', 'core.fsmonitor=false', *args], cwd=linked,
+                                               check=True, capture_output=True, text=True).stdout
+            state = lambda: (run('status', '--porcelain', '--untracked-files=all'),
+                             sorted(str(path.relative_to(linked)) for path in linked.rglob('*')))
+            before = state()
+            result = self.self_test(tmp, linked)
+            self.assertEqual(state(), before, "the probe ran the original's fsmonitor hook")
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('  ok   — ', result.stdout)
+
+    def test_an_archive_command_is_not_carried(self):
+        # A denylist carried tar.<format>.command: a copied gate's `git archive` ran it, and a
+        # command that also writes elsewhere escaped the disposable copy.
+        with tempfile.TemporaryDirectory() as tmp:
+            escaped = Path(tmp) / 'escaped'
+            root, git = self.fixture(tmp, '! git config --get tar.tar.gz.command >/dev/null || exit 1\n'
+                                          'git archive --format=tar.gz HEAD >/dev/null || exit 1\n')
+            git('config', 'tar.tar.gz.command', ': > %s; gzip -cn' % shlex.quote(str(escaped)))
+            linked, result = self.linked_self_test(tmp, git)
+            self.assertFalse(escaped.exists(), 'the archive command ran outside the copy')
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('  ok   — ', result.stdout)
+            self.assertIn('NOTE — existing-file probe: tar.tar.gz.command is not carried', result.stdout)
+
+    def test_an_intent_to_add_entry_whose_mode_changed_is_refused_by_name(self):
+        # Re-adding intent-to-add with `git add -N` recorded the file's current mode, not the
+        # original index's: a gate reading indexed permissions saw a different state.
+        for chmod in (False, True):
+            with self.subTest(chmod=chmod), tempfile.TemporaryDirectory() as tmp:
+                root, git = self.fixture(tmp, '[ "$(git ls-files -s later.sh)" = "$EXPECT_ENTRY" ] || exit 1\n',
+                                         names=('EXPECT_ENTRY',))
+                linked = Path(tmp) / 'linked'
+                git('worktree', 'add', '-q', str(linked))
+                run = lambda *args: subprocess.run(['git', *args], cwd=linked, check=True,
+                                                   capture_output=True, text=True).stdout
+                later = linked / 'later.sh'
+                later.write_text('echo later\n')
+                later.chmod(0o644)
+                run('add', '-N', 'later.sh')
+                if chmod:
+                    later.chmod(0o755)
+                expected = run('ls-files', '-s', 'later.sh').rstrip('\n')
+                self.assertTrue(expected.startswith('100644 '), expected)
+                result = self.self_test(tmp, linked, EXPECT_ENTRY=expected)
+                if chmod:
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    self.assertIn('the original index has an intent-to-add entry whose mode differs from its'
+                                  ' file; the existing-file probe does not support it', result.stdout)
+                    self.assertNotIn('  ok   — ', result.stdout)
+                else:
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertIn('  ok   — ', result.stdout)
+
+    def test_a_carried_setting_can_be_reassigned_in_the_copy(self):
+        # Replayed on top of git init's own core.filemode, the copy held two values, and a gate's
+        # `git config core.filemode false` failed there while it succeeded in the original.
+        with tempfile.TemporaryDirectory() as tmp:
+            root, git = self.fixture(tmp, 'git config core.filemode false || exit 1\n')
+            self.assertEqual(len(git('config', '--get-all', 'core.filemode').splitlines()), 1)
+            linked, result = self.linked_self_test(tmp, git)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('  ok   — ', result.stdout)
+
+    def test_a_multi_valued_carried_setting_keeps_its_values_in_order(self):
+        # Removing git init's instances of a key must not remove the original's intentional values.
+        with tempfile.TemporaryDirectory() as tmp:
+            root, git = self.fixture(tmp, '[ "$(git config --get-all kit.multi)" = "$(printf \'one\\ntwo\')" ]'
+                                          ' || exit 1\n', config_keys='kit.multi')
+            git('config', '--add', 'kit.multi', 'one')
+            git('config', '--add', 'kit.multi', 'two')
+            linked, result = self.linked_self_test(tmp, git)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('  ok   — ', result.stdout)
+
 
 if __name__ == '__main__':
     unittest.main()
