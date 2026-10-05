@@ -105,9 +105,8 @@ exit 1
                     if interruption is None:
                         self.assertIn('\n  ok   — ', '\n' + stdout)
                 finally:
-                    if child.poll() is None:
-                        os.killpg(child.pid, signal.SIGKILL)
-                    child.communicate()
+                    if child.returncode is None:
+                        self.reap(child)
 
     def test_a_symlinked_parent_cannot_carry_the_probe_into_the_checkout(self):
         # cp -R keeps an absolute symlink as a symlink, so a `src` linked to the checkout's
@@ -348,20 +347,64 @@ exit 1
         return self.finish(subprocess.Popen(args, cwd=cwd, env=env, text=True, stdout=subprocess.PIPE,
                                             stderr=subprocess.PIPE, start_new_session=True))
 
-    def finish(self, child):
+    def finish(self, child, limit=DEADLINE):
+        # Each child runs in its own process group, so a deadline kills all it started.
         try:
-            stdout, stderr = child.communicate(timeout=DEADLINE)
+            stdout, stderr = child.communicate(timeout=limit)
         except subprocess.TimeoutExpired:
-            self.stop(child, 'the example did not end')
+            self.stop(child, 'the child did not end', limit)
         return subprocess.CompletedProcess(child.args, child.returncode, stdout, stderr)
 
-    def stop(self, child, what):
+    def stop(self, child, what, limit=DEADLINE):
         # The output's tail tells a real hang (where it stopped) from a slow host (cut short).
-        if child.poll() is None:
-            os.killpg(child.pid, signal.SIGKILL)
-        stdout, stderr = child.communicate()
+        stdout, stderr = self.reap(child)
         self.fail('%s within %g s (exit %s)\n--- stdout tail\n%s\n--- stderr tail\n%s'
-                  % (what, DEADLINE, child.returncode, stdout[-2000:], stderr[-2000:]))
+                  % (what, limit, child.returncode, stdout[-2000:], stderr[-2000:]))
+
+    def reap(self, child):
+        # Kill the group whatever the leader's state: an exited leader can leave a descendant
+        # holding the pipes. The pgid is the one start_new_session made (child.pid); it names no
+        # other group, since an unreaped leader holds that pid and a reaped one leaves it held
+        # by its group while any member lives; once the group is empty the kill finds nothing.
+        try:
+            os.killpg(child.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        try:
+            return child.communicate(timeout=5)
+        except subprocess.TimeoutExpired as late:
+            # A process that left the group still holds a pipe: report what came before it.
+            for pipe in (child.stdout, child.stderr):
+                pipe.close()
+            child.wait(timeout=5)
+            return ((late.output or b'').decode(errors='replace'),
+                    (late.stderr or b'').decode(errors='replace')
+                    + '\n(output incomplete: a pipe stayed open after the group was killed)')
+
+    def test_a_deadline_ends_a_descendant_that_outlives_its_leader(self):
+        # The leader exits at once; its background descendant keeps the pipes and sleeps on.
+        # A deadline killed the group only while the leader ran, then waited for the pipes forever.
+        probe = ('import subprocess, test_boundary_restore as t\n'
+                 'child = subprocess.Popen(["sh", "-c", "sleep 120 & echo \\"held $!\\""], text=True,\n'
+                 '                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)\n'
+                 'try:\n'
+                 '    t.BoundaryRestoreTests("run").finish(child)\n'
+                 'except AssertionError as failure:\n'
+                 '    print(failure)\n')
+        # The probe's own limit keeps a hang a short failure here, not a stalled suite.
+        result = subprocess.run([sys.executable, '-c', probe], cwd=Path(__file__).resolve().parent,
+                                capture_output=True, text=True, timeout=DEADLINE / 3,
+                                env=dict(os.environ, MYAGENTKIT_TEST_TIMEOUT_SCALE='0.01'))
+        self.assertIn('the child did not end within 0.3 s', result.stdout, result.stderr)
+        held = int(result.stdout.split('held ', 1)[1].split()[0])
+        deadline = time.monotonic() + DEADLINE
+        while time.monotonic() < deadline:
+            try:
+                os.kill(held, 0)
+            except ProcessLookupError:
+                return
+            time.sleep(0.05)
+        self.fail('the descendant %d outlived the deadline' % held)
 
     def test_nothing_the_baseline_run_leaves_reaches_the_second_run(self):
         # With one copy reused for both runs, three review rounds in a row found something the

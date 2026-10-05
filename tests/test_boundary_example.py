@@ -96,9 +96,8 @@ while :; do sleep 1; done
                     self.assertEqual(child.returncode, 128 + interruption)
                     self.assertFalse((root / 'src/domain/.selftest.py').exists(), 'the injection was left behind')
                 finally:
-                    if child.poll() is None:
-                        os.killpg(child.pid, signal.SIGKILL)
-                    child.communicate()
+                    if child.returncode is None:
+                        self.reap(child)
 
     def test_the_interrupted_cases_pass_under_a_caller_that_ignores_sigint(self):
         # A `&` job of a non-interactive shell, or nohup, starts with SIGINT ignored, which a
@@ -123,8 +122,26 @@ while :; do sleep 1; done
 
     def stop(self, child, what, limit=DEADLINE):
         # The output's tail tells a real hang (where it stopped) from a slow host (cut short).
-        if child.poll() is None:
-            os.killpg(child.pid, signal.SIGKILL)
-        stdout, stderr = child.communicate()
+        stdout, stderr = self.reap(child)
         self.fail('%s within %g s (exit %s)\n--- stdout tail\n%s\n--- stderr tail\n%s'
                   % (what, limit, child.returncode, stdout[-2000:], stderr[-2000:]))
+
+    def reap(self, child):
+        # Kill the group whatever the leader's state: an exited leader can leave a descendant
+        # holding the pipes. The pgid is the one start_new_session made (child.pid); it names no
+        # other group, since an unreaped leader holds that pid and a reaped one leaves it held
+        # by its group while any member lives; once the group is empty the kill finds nothing.
+        try:
+            os.killpg(child.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        try:
+            return child.communicate(timeout=5)
+        except subprocess.TimeoutExpired as late:
+            # A process that left the group still holds a pipe: report what came before it.
+            for pipe in (child.stdout, child.stderr):
+                pipe.close()
+            child.wait(timeout=5)
+            return ((late.output or b'').decode(errors='replace'),
+                    (late.stderr or b'').decode(errors='replace')
+                    + '\n(output incomplete: a pipe stayed open after the group was killed)')
