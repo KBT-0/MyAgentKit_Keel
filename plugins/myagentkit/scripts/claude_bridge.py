@@ -13,6 +13,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import subprocess
 import sys
 import uuid
@@ -174,11 +175,17 @@ def prior_rounds(repo: Path, task_id: str | None, scope: str, reference: str | N
     rounds = []
     resolved = resolve(repo, scope, reference) if task_id else None
 
+    # Records written by v0.7 and v0.8 with an empty task id are refused here too, and stop
+    # every review through review.sh until they are set aside: the message says exactly how.
+    aside = repo / ".myagentkit/usage-set-aside"
+
     def damaged(path, what):
         return BridgeError("usage record %s %s; an earlier round of task %s may be in it. Every "
                            "labelled round reads every record, so a new task label does not "
-                           "help: restore it, or move it out of .myagentkit/usage"
-                           % (path, what, task_id))
+                           "help. Restore it, or set it aside (a record written by v0.7 or v0.8 "
+                           "with an empty task id is one of these): mkdir -p %s && mv %s %s/"
+                           % (path, what, task_id, shlex.quote(str(aside)),
+                              shlex.quote(str(path)), shlex.quote(str(aside))))
     # Path.glob() swallows a listing error: a usage directory the owner could write but not
     # list read as "no earlier rounds". Only an absent directory has none.
     usage, names = repo / ".myagentkit/usage", []
@@ -476,8 +483,10 @@ def main(argv=None, result_sink=None) -> int:
         # handlers back after the review, a SIGTERM during the final snapshot ended the adapter
         # before the paid review's evidence and usage were written. run() stops the reviewer
         # on a cancel while it runs.
+        # A cancel noted between here and run()'s own guard stops the launch: run() checks the
+        # list right before it starts the reviewer, with the cancel signals blocked.
         held = agent_process.hold(lambda signum, frame: cancelled.append(signum))
-        execution = agent_process.run(command, prompt, repo, args.timeout)
+        execution = agent_process.run(command, prompt, repo, args.timeout, noted=cancelled)
         if execution.pop("cancelled", False):
             cancelled.append(True)
         evidence.update(execution)

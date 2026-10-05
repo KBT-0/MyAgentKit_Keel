@@ -117,9 +117,9 @@ def main(argv=None):
             checkpoint()
             break  # Accept, manual checks AND Reject are terminal review results.
         chain["status"] = "failed"
-        # A cancel at any point after launch ends the chain, whatever the failure says.
+        # A cancel at any point after launch ends the chain: both adapters relabel a cancelled
+        # failure "cancelled", which is not in UNAVAILABLE, before they return.
         eligible = (provider == args.reviewer and chain["failure_kind"] in UNAVAILABLE
-                    and not result.get("cancelled")
                     and bool(result.get("evidence")) and bool(result.get("usage_record")))
         if eligible and not args.allow_fallback:
             chain["fallback_blocked"] = "not requested; --fallback allows one other configured reviewer"
