@@ -66,6 +66,30 @@ class UsageTests(unittest.TestCase):
                              'a failed replacement must remove its staging file')
             self.assertEqual(report.read_text(), 'private output')
 
+    def test_a_cancel_relabel_with_the_archive_momentarily_absent_publishes_its_hash(self):
+        # An archive absent when the relabel looked kept the record's old sha256 and was not
+        # replaced: the record said cancelled, and the old quota archive put back later
+        # matched it, so no integrity check saw the disagreement.
+        import hashlib
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            subprocess.run(['git', 'init', '-q', str(repo)], check=True)
+            (repo / '.gitignore').write_text('/.myagentkit/\n/docs/reviews/*-review.md\n')
+            report = repo / 'docs/reviews/fixture-review.md'
+            old = b'| status | failed |\n| failure_kind | quota |\n'
+            agent_usage.write_evidence(repo, report, old.decode(), private=True)
+            path, _ = agent_usage.record(repo, 'codex', 'fixture', 'tester', {'id': 'fixture'},
+                                         {'stdout': ''}, 'failed', 'quota', str(report), old)
+            report.unlink()
+            text = '| status | failed |\n| failure_kind | cancelled |\n'
+            agent_usage.relabel_cancelled(repo, path, str(report), text)
+            recorded = json.loads(path.read_text())['evidence_sha256']
+            self.assertEqual(recorded, hashlib.sha256(text.encode()).hexdigest())
+            self.assertEqual(report.read_text(), text)
+            report.write_bytes(old)
+            self.assertNotEqual(hashlib.sha256(report.read_bytes()).hexdigest(), recorded,
+                                'the old quota archive matches a record that says cancelled')
+
     def test_private_storage_cannot_follow_an_in_repo_symlink(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)

@@ -270,9 +270,12 @@ def relabel_cancelled(repo: Path, usage_path: Path, evidence: str | None, text: 
     The usage record is the authority and goes first, with the new archive's sha256: written
     second, a failure in between left the archive cancelled and the record quota. Now an
     archive left unreplaced fails that sha256, and the error says what the bytes show.
+    Whether the archive exists at this moment is not asked: one absent when sampled kept the
+    old sha256 and was not replaced, and the old archive put back later matched a record
+    that said cancelled. A recorded archive always gets the new sha256 and is written anew.
     """
     value = json.loads(usage_path.read_text())
-    archived = bool(evidence and os.path.isfile(evidence))
+    archived = bool(evidence)
     if archived:
         value["evidence_sha256"] = hashlib.sha256(text.encode()).hexdigest()
     value.update(status="failed", failure_kind="cancelled")
