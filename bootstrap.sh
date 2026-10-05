@@ -54,9 +54,37 @@ version=$(sed -n 's/^## v\([0-9][0-9.]*\).*/\1/p' "$kit/CHANGELOG.md" 2>/dev/nul
 [ -n "$version" ] || die "cannot read a version from $kit/CHANGELOG.md — refusing to record a blank one"
 
 skiplist=$(mktemp) || die "cannot create a temp file"
-# A stop that `set -e` made says so: the failing command named its path, this says what it means.
-trap 'rc=$?; rm -f "$skiplist"; [ "$rc" -eq 0 ] || [ -n "$said" ] ||
-  echo "bootstrap: stopped by the failure above, before the version was recorded" >&2' EXIT
+note_part=""
+stamp_part=""
+wiring=""
+recorded=""
+# finish RC — the exit trap. A stop that `set -e` made says so: the failing command named its
+# path, this says what it means. A stop after core.hooksPath was changed puts the project's
+# own value back (or unsets it again): the stop is no install, and the hooks it now names may
+# not be there. A signal ends the run through here too.
+finish() {
+  rm -f "$skiplist" ${note_part:+"$note_part"} ${stamp_part:+"$stamp_part"}
+  [ "$1" -ne 0 ] || return 0
+  if [ -n "$wiring" ]; then
+    if [ -n "$had" ]; then git -C "$target" config core.hooksPath "$hooks_was"
+    else git -C "$target" config --unset core.hooksPath; fi >/dev/null 2>&1 || :
+    now=$(git -C "$target" config --local --get core.hooksPath) || now=""
+    if [ "$now" = "$hooks_was" ] && [ -n "$had" ]; then
+      printf '%s\n' "bootstrap: core.hooksPath put back to '$hooks_was', as it was" >&2
+    elif [ "$now" = "$hooks_was" ]; then
+      echo "bootstrap: core.hooksPath unset again, as it was" >&2
+    else
+      printf '%s\n' "bootstrap: could not put core.hooksPath back to ${had:+"'$hooks_was'"}${had:-unset};" \
+        "           it is '$now' now: set it by hand." >&2
+    fi
+  fi
+  [ -n "$said" ] || [ -n "$recorded" ] ||
+    echo "bootstrap: stopped by the failure above, before the version was recorded" >&2
+}
+trap 'finish "$?"' EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 # blocked REL [dir] — the one check for every path bootstrap writes or creates (copied files,
 # the files it generates, the folders it makes): prints why REL may not be written, nothing
@@ -65,6 +93,7 @@ trap 'rc=$?; rm -f "$skiplist"; [ "$rc" -eq 0 ] || [ -n "$said" ] ||
 # opened: `cmp` on a FIFO, or writing to one, blocked forever; a symlink, or a symlinked folder
 # above, carried the read or write outside the project; a file where a folder belongs made
 # every mkdir and cp under it fail. The target itself may be a symlink: the owner named it.
+# sync-kit.sh holds the same function; a test holds the two copies equal.
 # The check runs BEFORE the write, not with it: a path is not opened when it fails the check
 # at that moment, but another process that changes the tree during the run (a checked
 # folder swapped for a symlink) is not guarded against. The owner runs this in the owner's
@@ -102,8 +131,9 @@ copy_tree() {
     # Running Python tooling must not change the installed skeleton with local bytecode.
     case "$rel" in __pycache__/*|*/__pycache__/*|*.pyc|*.pyo) continue ;; esac
     dest="${prefix:+$prefix/}$rel"
-    # Only a destination `blocked` passes is compared or replaced; anything else is listed, unread.
-    if [ -n "$(blocked "$dest")" ]; then
+    # Only a destination `blocked` passes, with the temporary it is written through, is
+    # compared or replaced; anything else is listed, unread.
+    if [ -n "$(blocked "$dest")$(blocked "$dest.kit-tmp")" ]; then
       printf '%s\n' "$dest" >> "$skiplist"
       continue
     fi
@@ -112,8 +142,11 @@ copy_tree() {
       printf '%s\n' "$dest" >> "$skiplist"
       continue
     fi
+    # Copied to a sibling and moved over: a `cp` cut short on the destination itself was
+    # taken by the retry for the owner's own differing file, and the version recorded over it.
     mkdir -p "$target/$(dirname "$dest")"
-    cp "$src/$rel" "$target/$dest"
+    { cp -f "$src/$rel" "$target/$dest.kit-tmp" && mv -f "$target/$dest.kit-tmp" "$target/$dest"; } ||
+      { rm -f "$target/$dest.kit-tmp"; exit 1; }
   done
 }
 
@@ -130,9 +163,13 @@ done
 
 # The folders and files bootstrap makes itself pass the same check: one it may not write is
 # a conflict that stops the run, like a kept gate, and is not created or opened. The files
-# are written only after the stop below.
+# are written only after the stop below, each to a fixed sibling (FILE.kit-tmp, judged here
+# too) that then replaces FILE whole with `mv`: a redirection empties FILE before writing it,
+# so a full disk on a rerun left an empty stamp, which the next sync refuses. A temporary a
+# killed run left behind is a regular file and is overwritten; the exit trap removes it.
 own="docs/reviews docs/audits docs/worktree-notes docs/spikes docs/kit docs/kit/.kit-version"
-[ -z "$note" ] || own="$own docs/kit/BOOTSTRAP_NOTE.md"
+own="$own docs/kit/.kit-version.kit-tmp"
+[ -z "$note" ] || own="$own docs/kit/BOOTSTRAP_NOTE.md docs/kit/BOOTSTRAP_NOTE.md.kit-tmp"
 stops=""
 for d in $own; do
   case "$d" in docs/kit/*) kind=file ;; *) kind=dir ;; esac
@@ -170,7 +207,10 @@ fi
 # version stamped .kit-version first and then refused — after which sync-kit.sh greeted the
 # gateless project with "already current. Nothing to do."
 gates=$(grep -E '^(scripts/check\.sh|\.githooks/(pre-commit|pre-merge-commit|commit-msg))$' "$skiplist" 2>/dev/null |
-  while IFS= read -r g; do why=$(blocked "$g"); printf '%s%s\n' "$g" "${why:+ ($why)}"; done)
+  while IFS= read -r g; do
+    why=$(blocked "$g")
+    [ -n "$why" ] || { why=$(blocked "$g.kit-tmp"); why=${why:+$g.kit-tmp: $why}; }
+    printf '%s%s\n' "$g" "${why:+ ($why)}"; done)
 # Two lists: only a gate conflict means missing enforcement; a folder or file bootstrap makes
 # itself (docs/reviews, the stamp) is a plain destination that could not be written.
 if [ -n "$gates" ]; then
@@ -204,6 +244,7 @@ if [ -n "$gates$stops" ]; then
 fi
 
 if [ -n "$note" ]; then
+  note_part="$target/docs/kit/BOOTSTRAP_NOTE.md.kit-tmp"
   {
     echo "# Bootstrap note — the owner's agenda for this setup"
     echo
@@ -211,22 +252,37 @@ if [ -n "$note" ]; then
     echo "reads this in Phase 0 and must address it explicitly rather than working around it."
     echo
     printf '%s\n' "$note"
-  } > "$target/docs/kit/BOOTSTRAP_NOTE.md"
+  } > "$note_part"
+  mv -f "$note_part" "$target/docs/kit/BOOTSTRAP_NOTE.md"
   echo "bootstrap: wrote docs/kit/BOOTSTRAP_NOTE.md"
 fi
 
+# The finish is ordered so that a failure changes nothing outside the files: the stamp's
+# content is written to its temporary first, then core.hooksPath is set, and the `mv` that
+# records the version comes last. Setting the hooks path first left the project's own value
+# replaced when the stamp write then failed; a stop between the two is undone by `finish`.
+stamp_part="$target/docs/kit/.kit-version.kit-tmp"
+printf '%s\n' "$version" > "$stamp_part"
+repo=""
 if git -C "$target" rev-parse --git-dir >/dev/null 2>&1; then
+  repo=1
+  hooks_was=$(git -C "$target" config --local --get core.hooksPath) && had=1 || had=""
+  wiring=1
   git -C "$target" config core.hooksPath .githooks
+fi
+# The stamp is the LAST write, so it records only an install whose every write succeeded:
+# sync-kit.sh trusts it, and a stamp over a short install answers "already current".
+mv -f "$stamp_part" "$target/docs/kit/.kit-version"
+recorded=1
+wiring=""
+
+if [ -n "$repo" ]; then
   echo "bootstrap: wired core.hooksPath -> .githooks"
 else
   echo "bootstrap: NOT a git repository yet. After 'git init', run:"
   echo "             git config core.hooksPath .githooks"
   echo "           Without it there is no commit gate (docs/DEV_SETUP.md)."
 fi
-
-# The stamp is the LAST write, so it records only an install whose every write succeeded:
-# sync-kit.sh trusts it, and a stamp over a short install answers "already current".
-printf '%s\n' "$version" > "$target/docs/kit/.kit-version"
 
 cat <<'EOF'
 

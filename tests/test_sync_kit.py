@@ -185,6 +185,105 @@ class SyncKitTests(unittest.TestCase):
                 else:
                     self.assertTrue(stamp.is_fifo() or stamp.is_dir())
 
+    def test_a_hook_without_the_executable_bit_is_never_same(self):
+        # "same" was decided from the content alone: a hook copied before its chmod failed, or
+        # one the project holds identical but at mode 0644, was passed over on the next run and
+        # the version recorded over a hook git does not run.
+        rel = '.githooks/commit-msg'
+        for case in ('chmod failed, then a retry', 'identical at 0644'):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
+                kit, project = Path(tmp) / 'kit', Path(tmp) / 'project'
+                self.sync(tmp, '- A kit-owned file changed.\n', '--dry-run')
+                (kit / 'core' / rel).parent.mkdir(parents=True)
+                shutil.copyfile(ROOT / 'core' / rel, kit / 'core' / rel)
+                hook = project / rel
+                if case == 'identical at 0644':
+                    hook.parent.mkdir(parents=True)
+                    shutil.copyfile(ROOT / 'core' / rel, hook)
+                    hook.chmod(0o644)
+                else:
+                    shims = Path(tmp) / 'shims'
+                    shims.mkdir()
+                    (shims / 'chmod').write_text('#!/bin/sh\nexit 1\n')
+                    (shims / 'chmod').chmod(0o755)
+                    env = dict(os.environ, PATH=str(shims) + os.pathsep + os.environ['PATH'])
+                    result = subprocess.run(['sh', str(kit / 'sync-kit.sh'), str(project)], env=env,
+                                            capture_output=True, text=True, timeout=30)
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    self.assertEqual((project / 'docs/kit/.kit-version').read_text(), '0.1\n')
+                result = subprocess.run(['sh', str(kit / 'sync-kit.sh'), str(project)],
+                                        capture_output=True, text=True, timeout=30)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertTrue(os.access(hook, os.X_OK), 'version recorded over a hook git does not run')
+                self.assertEqual((project / 'docs/kit/.kit-version').read_text(), '0.2\n')
+
+    def test_a_write_that_fails_midway_leaves_the_old_file_whole(self):
+        # The stamp was written by redirection, which empties the file before writing, and the
+        # kit-owned files by `cp` over them: a full disk left an empty stamp (which the next sync
+        # refuses) or a hook cut short. A file-size limit stands in for the full disk.
+        rel = '.githooks/commit-msg'
+        for case, blocks in (('stamp', 0), ('kit-owned file', 1)):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
+                kit, project = Path(tmp) / 'kit', Path(tmp) / 'project'
+                self.sync(tmp, '- A kit-owned file changed.\n', '--dry-run')
+                old = b'#!/bin/sh\n# KIT-OWNED: an older copy\n' + b'#\n' * 400
+                if case == 'kit-owned file':
+                    (kit / 'core' / rel).parent.mkdir(parents=True)
+                    shutil.copyfile(ROOT / 'core' / rel, kit / 'core' / rel)
+                    (project / rel).parent.mkdir(parents=True)
+                    (project / rel).write_bytes(old)
+                result = subprocess.run(['sh', '-c', 'trap "" XFSZ; ulimit -f %d; exec sh "$0" "$@"' % blocks,
+                                         str(kit / 'sync-kit.sh'), str(project)],
+                                        capture_output=True, text=True, timeout=30)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertEqual((project / 'docs/kit/.kit-version').read_bytes(), b'0.1\n')
+                if case == 'kit-owned file':
+                    self.assertEqual((project / rel).read_bytes(), old, 'a hook cut short')
+                self.assertEqual(sorted(p.name for p in project.rglob('*.kit-tmp')), [], 'temporary left')
+
+    def test_a_leftover_temporary_is_overwritten_and_one_that_is_no_file_stops_the_sync(self):
+        # The stamp and the kit-owned files are written through a fixed sibling name, judged
+        # like the file itself: one a killed run left behind is replaced; a folder or a symlink
+        # there is a conflict, and nothing is copied or recorded.
+        rel = '.githooks/commit-msg'
+        for kind, stops in (('leftover file', False), ('folder', True), ('symlink', True)):
+            for where in ('docs/kit/.kit-version.kit-tmp', rel + '.kit-tmp'):
+                with self.subTest(kind=kind, where=where), tempfile.TemporaryDirectory() as tmp:
+                    kit, project = Path(tmp) / 'kit', Path(tmp) / 'project'
+                    self.sync(tmp, '- A kit-owned file changed.\n', '--dry-run')
+                    (kit / 'core' / rel).parent.mkdir(parents=True)
+                    shutil.copyfile(ROOT / 'core' / rel, kit / 'core' / rel)
+                    (project / where).parent.mkdir(parents=True, exist_ok=True)
+                    if kind == 'leftover file':
+                        (project / where).write_text('9.9\n' * 300)
+                        self.sync(tmp, '', '--dry-run')
+                        self.assertTrue((project / where).exists(), 'a dry run removed a file')
+                    elif kind == 'folder':
+                        (project / where).mkdir()
+                    else:
+                        (project / where).symlink_to(Path(tmp) / 'outside')
+                    result = subprocess.run(['sh', str(kit / 'sync-kit.sh'), str(project)],
+                                            capture_output=True, text=True, timeout=30)
+                    self.assertEqual(result.returncode, 1 if stops else 0, result.stdout + result.stderr)
+                    self.assertEqual((project / 'docs/kit/.kit-version').read_text(), '0.1\n' if stops else '0.2\n')
+                    self.assertEqual((project / rel).exists(), not stops, 'copied past a conflict')
+                    self.assertFalse((Path(tmp) / 'outside').exists(), 'written through a symlink')
+                    if stops:
+                        self.assertIn(where, result.stdout + result.stderr)
+                    else:
+                        self.assertFalse((project / where).exists(), 'temporary left')
+                        self.assertEqual((project / rel).read_bytes(), (ROOT / 'core' / rel).read_bytes())
+
+    def test_the_path_check_is_the_same_function_in_bootstrap_and_sync(self):
+        # bootstrap.sh and sync-kit.sh each hold `blocked`, the one check for every path they
+        # write; two copies with nothing holding them equal drift, and one script then writes
+        # where the other refuses.
+        def body(name):
+            text = (ROOT / name).read_text()
+            start = text.index('\nblocked() {\n')
+            return text[start:text.index('\n}\n', start) + 3]
+        self.assertEqual(body('sync-kit.sh'), body('bootstrap.sh'))
+
     def test_every_printed_action_item_of_the_real_changelog_is_whole(self):
         # The checklist printed only the physical line holding the marker, so an owner
         # confirming it read "one would be. **ACTION:** copy" and twice nothing at all.

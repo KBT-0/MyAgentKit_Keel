@@ -48,13 +48,14 @@ done
 target=$(CDPATH= cd -- "$target" 2>/dev/null && pwd) || die "no such directory"
 [ "$target" = "$kit" ] && die "refusing to sync the kit with itself"
 
-# blocked REL — the one check for every path the sync reads or writes (the kit-owned files and
-# the version stamp): prints why REL may not be used, nothing when it may. Every existing
-# component below the target must be a real folder, and REL itself absent or a regular file.
+# blocked REL [dir] — the one check for every path the sync reads or writes (the kit-owned
+# files, the version stamp and their temporaries): prints why REL may not be used, nothing
+# when it may. Every existing component below the target must be a real folder, and REL itself
+# absent or a regular file (with `dir`, which only bootstrap.sh uses: absent or a real folder).
 # What fails is not opened: `cmp` on a FIFO blocked forever; a symlink, or a symlinked
 # folder above, carried the read or write outside the project; a file where a folder belongs
 # failed the copy midway through the copies. The target itself may be a symlink: the owner
-# named it. bootstrap.sh holds the same check, with a form for folders.
+# named it. bootstrap.sh holds the same function; a test holds the two copies equal.
 # The check runs BEFORE the write, not with it: a path is not opened when it fails the check
 # at that moment, but another process that changes the tree during the run (a checked
 # folder swapped for a symlink) is not guarded against. The owner runs this in the owner's
@@ -68,13 +69,23 @@ blocked() {
     if [ -e "$target/$_p" ] && [ ! -d "$target/$_p" ]; then printf 'not a folder: %s\n' "$_p"; return 0; fi
   done
   if [ -L "$target/$_p" ]; then printf 'symlink: %s\n' "$_p"
-  elif [ -e "$target/$_p" ] && [ ! -f "$target/$_p" ]; then echo 'not a regular file'
+  elif [ ! -e "$target/$_p" ]; then :
+  elif [ "${2:-}" = dir ]; then [ -d "$target/$_p" ] || echo 'not a folder'
+  else [ -f "$target/$_p" ] || echo 'not a regular file'
   fi
 }
 
 why=$(blocked docs/kit/.kit-version)
 [ -z "$why" ] || die "conflict: docs/kit/.kit-version ($why); the version is not read or written there"
 stamp="$target/docs/kit/.kit-version"
+# Every file the sync writes goes to a fixed sibling first (FILE.kit-tmp, judged like FILE) and
+# replaces FILE whole with `mv`: a redirection or `cp` empties FILE before writing it, so a full
+# disk left an empty stamp, which the next sync refuses, or a gate cut short. A temporary a
+# killed run left behind is a regular file and is overwritten; the exit trap removes it.
+why=$(blocked docs/kit/.kit-version.kit-tmp)
+[ -z "$why" ] || die "conflict: docs/kit/.kit-version.kit-tmp ($why); the version is not written there"
+part=""
+cpart=""
 [ -f "$stamp" ] || die "$stamp not found — this project was not installed with bootstrap.sh"
 have=$(tr -d '[:space:]' < "$stamp")
 [ -n "$have" ] || die "$stamp is empty; refusing to guess which version this project has"
@@ -87,7 +98,7 @@ pending=$(mktemp) || { rm -f "$work_list"; echo "sync-kit: cannot create a temp 
 copies=$(mktemp) || { rm -f "$work_list" "$pending"; echo "sync-kit: cannot create a temp file" >&2; exit 1; }
 # A signal handler that only cleaned up let the run resume with the pending list deleted,
 # which reads as "no ACTION items" and stamped the version: a signal now ends the run.
-trap 'rm -f "$work_list" "$pending" "$copies"' EXIT
+trap 'rm -f "$work_list" "$pending" "$copies" ${part:+"$part"} ${cpart:+"$cpart"}' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
@@ -123,6 +134,7 @@ while IFS= read -r src; do
   [ -n "$src" ] || continue
   relpath "$src" || continue
   why=$(blocked "$rel")
+  [ -n "$why" ] || { why=$(blocked "$rel.kit-tmp"); why=${why:+$rel.kit-tmp: $why}; }
   # An overlay file is synced only where it already exists: its presence is the only record
   # of whether the project took that overlay, and installing an overlay is bootstrap's job.
   # A symlink in its path is no absence: a dangling one fails `-e` and was skipped without a
@@ -138,8 +150,9 @@ while IFS= read -r src; do
   elif [ ! -e "$target/$rel" ]; then
     printf '%s\n' "  new:     $rel"
   elif cmp -s "$src" "$target/$rel"; then
+    # Listed for the copy step all the same: same content is not the same file while the
+    # executable bit is missing (a chmod that failed on an earlier run), and that step sets it.
     printf '%s\n' "  same:    $rel"
-    continue
   elif grep -qE '^(# |<!-- )KIT-OWNED:' "$target/$rel" 2>/dev/null; then
     printf '%s\n' "  update:  $rel"
   else
@@ -164,12 +177,20 @@ regular file, or a symlink or a file in their path) at paths the kit owns now. N
 EOF
   exit 1
 fi
+# exe FILE — the one place that decides which kit-owned files must be executable (the hooks
+# and scripts git or a gate runs directly), for a copied file and an identical one alike. A
+# hook git cannot run is skipped without a word, and a gate that cannot run is not there.
+exe() { case "$rel" in *.sh|.githooks/*|.claude/hooks/*) chmod +x "$1" ;; esac; }
 if [ "$dry" -eq 0 ]; then
   while IFS= read -r src; do
     relpath "$src"
-    { mkdir -p "$target/$(dirname "$rel")" && cp "$src" "$target/$rel" &&
-      case "$rel" in *.sh|.githooks/*) chmod +x "$target/$rel" ;; esac; } ||
-      die "could not write $rel; version left at v$have"
+    if cmp -s "$src" "$target/$rel"; then
+      exe "$target/$rel"
+    else
+      cpart="$target/$rel.kit-tmp"
+      mkdir -p "$target/$(dirname "$rel")" && cp -f "$src" "$cpart" && exe "$cpart" &&
+        mv -f "$cpart" "$target/$rel"
+    fi || die "could not write $rel; version left at v$have"
   done < "$copies"
 fi
 
@@ -240,7 +261,9 @@ if [ -s "$pending" ] && [ "$applied" -eq 0 ]; then
   exit 2
 fi
 
-printf '%s\n' "$latest" > "$stamp" || die "could not write $stamp"
+part="$stamp.kit-tmp"
+{ printf '%s\n' "$latest" > "$part" && mv -f "$part" "$stamp"; } ||
+  die "could not write $stamp; version left at v$have"
 echo
 printf '%s\n' "sync-kit: recorded v$latest."
 echo "sync-kit: now run ./scripts/check.sh, and ./scripts/check.sh --self-test."
