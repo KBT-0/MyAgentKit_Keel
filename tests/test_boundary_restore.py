@@ -13,6 +13,7 @@ import unittest
 # Seconds any wait here may take; MYAGENTKIT_TEST_TIMEOUT_SCALE multiplies it on a slow host.
 DEADLINE = 30 * float(os.environ.get('MYAGENTKIT_TEST_TIMEOUT_SCALE', '1'))
 
+
 def alive(pid):
     # ps, not kill -0: a killed child not yet reaped is a zombie, and kill -0 still finds it.
     state = subprocess.run(['ps', '-o', 'stat=', '-p', str(pid)], capture_output=True, text=True)
@@ -401,20 +402,24 @@ exit 1
             except (FileNotFoundError, ProcessLookupError):
                 pass
         self.addCleanup(end_fixture)
-        # The marker holds the group's id, then the descendant's pid.
+        # The marker (the group's id, then the descendant's pid) is the fixture's readiness: it
+        # is awaited with the scalable deadline, and only then runs the short deadline under test.
         fixture = 'sleep 120 & echo "$$ $!" >"$0.part" && mv "$0.part" "$0"'
-        probe = ('import subprocess, sys, test_boundary_restore as t\n'
+        probe = ('import os, subprocess, sys, time, test_boundary_restore as t\n'
                  'child = subprocess.Popen(["sh", "-c", %r, sys.argv[1]], text=True,\n'
                  '                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)\n'
+                 'ready = time.monotonic() + t.DEADLINE\n'
+                 'while not os.path.exists(sys.argv[1]) and time.monotonic() < ready:\n'
+                 '    time.sleep(0.05)\n'
                  'try:\n'
-                 '    t.BoundaryRestoreTests("run").finish(child)\n'
+                 '    t.BoundaryRestoreTests("run").finish(child, 0.5)\n'
                  'except AssertionError as failure:\n'
                  '    print(failure)\n' % fixture)
-        # The probe's own limit keeps a hang a short failure here, not a stalled suite.
+        # The probe's own limit keeps a hang a failure here, not a stalled suite.
         result = subprocess.run([sys.executable, '-c', probe, str(mark)], cwd=Path(__file__).resolve().parent,
-                                capture_output=True, text=True, timeout=DEADLINE / 3,
-                                env=dict(os.environ, MYAGENTKIT_TEST_TIMEOUT_SCALE='0.01'))
-        self.assertIn('the child did not end within 0.3 s', result.stdout, result.stderr)
+                                capture_output=True, text=True, timeout=2 * DEADLINE)
+        self.assertTrue(mark.is_file(), 'the fixture never became ready\n' + result.stdout + result.stderr)
+        self.assertIn('the child did not end within 0.5 s', result.stdout, result.stderr)
         held = int(mark.read_text().split()[1])
         deadline = time.monotonic() + DEADLINE
         while time.monotonic() < deadline:
