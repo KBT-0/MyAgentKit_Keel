@@ -528,7 +528,7 @@ def main():
             original_quota = quota_tests.read_bytes()
             quota_tests.write_text("import unittest\nclass QuotaTests(unittest.TestCase):\n    pass\n")
             run(["sh", "scripts/review.sh", "--self-test"], project, expected=2,
-                reason="QuotaTests has 0 of at least 3 tests")
+                reason="QuotaTests has 0 of at least %d tests" % BRIDGE_MINIMUMS["test_codex_quota"])
             quota_tests.write_bytes(original_quota)
             # Boundary checks whose self-test file runs no case are skipped, not passed. The
             # stubbed review run keeps this case to the boundary branch alone.
@@ -574,7 +574,7 @@ def main():
             wrapper.write_bytes(original_wrapper)
             print("PASS: missing review tests, failed runner, absent completion evidence, an emptied "
                   "suite and boundary checks whose self-tests ran no case reject; the existing-file example "
-                  "runs as a case; an owner's AI-credit choice is a visible skip")
+                  "runs as a case; a missing attribution rule line is a visible skip")
     print("KIT CHECK: PASS")
 
 
