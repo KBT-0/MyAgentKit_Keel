@@ -77,9 +77,9 @@ dir=$PWD
 # neither is refused for the same reason. The other values name no file: the brief is
 # absolute already, and --allowed-tools patterns are meant for the worker's own tree.
 # JSON may start with whitespace: only a leading `{` counted, and ' {"model":"x"}' was refused
-# as a file name with --worktree. Space, tab and newline before the `{` mark it inline, and
-# the value is passed on unchanged.
-ws=" $(printf '\t')$nl"
+# as a file name with --worktree. JSON's four whitespace characters (space, tab, LF, CR)
+# before the `{` mark it inline, and the value is passed on unchanged.
+ws=" $(printf '\t\r')$nl"
 lead=${settings%%[!$ws]*}
 case "$settings" in
   ""|"$lead{"*|/*) ;;
