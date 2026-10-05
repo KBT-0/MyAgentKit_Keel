@@ -176,6 +176,10 @@ budget, so the full review was split into two consistent commit ranges, each its
   Both findings were fixed with tests watched red first and mutation-checked (merge G53).
   **NOT REVIEWED: the G53 fixes themselves.** Range D therefore closes on a Reject whose
   findings are fixed, not on an Accept; the last Accept in it is d7, on head 3d4f45c.
+- Round close-6 `20261005T214819Z-589eee86f46b` on head 2b1f73a (`1a13854..2b1f73a`: the
+  close-5 fixes and issues #29, #34, #36, #37): **Reject, no High, one Medium** (the #29
+  fix's own cleanup), fixed in G55. This replaces the "NOT REVIEWED: the G53 fixes" above:
+  G53 and G54 were reviewed in this round.
 - NOT ESTABLISHED in range D: one fresh review of the whole `3536cb7..master` diff in a
   single prompt (422 KB and more, over the 400000-byte budget); the closing review that fit
   (`20261005T180801Z-c1e3bb54cf44`, head 77377f4) was a Reject and everything after it was

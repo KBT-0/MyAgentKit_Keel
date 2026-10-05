@@ -958,6 +958,21 @@ fail again (80 busy loops and six parallel copies of the suite: the old 5 s code
 every time), so its fix is a wider, scalable deadline with the child's output on expiry,
 not a reproduced red. Not reviewed by anyone but the author, by the owner's stopping rule.
 
+#### Back to review after the "last" fixes, and one contradiction in a record
+
+The owner asked whether the fixes merged after the loop ended had gone back to review;
+they had not, and the lead had read the stopping rule as leave to skip it. Round close-6
+on `1a13854..2b1f73a` (the close-5 fixes and the four issues): Reject, no High, one Medium,
+a regression in the #29 fix itself (the deadline's cleanup killed the process group only
+while its leader ran). Fixed. Lesson: a stopping rule ends the hunt for new classes; it
+does not excuse unreviewed code. Separately a worker had noticed that the Claude adapter
+returned `completed` together with `failure_kind: quota` for a success envelope carrying
+`api_error_status: 429`, and the dispatcher took it for a finished review. The CLI's own
+source settled the reading: the status is set from the last assistant message only, so a
+status that is not null means the turn ended on an API error; there is no recovered case
+as with Codex. The adapter now fails such an envelope, and a test holds both adapters to
+"completed if and only if the failure kind is null".
+
 #### The review gate held on the kit's own hardening
 
 Five of the nine work packages (the gate lock, both review-tooling packages, the commit gates

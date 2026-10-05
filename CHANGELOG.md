@@ -97,7 +97,8 @@ in `RESEARCH_LOG.md` (2026-10-03). Most of the files below are project-owned, so
   to attest the pin `claude-opus-5`; issue #36). One review resolves its base once, and the
   diff, the usage record and the carried-round check share that commit (issue #37). A Codex
   review that completed is not failed by a stream error it recovered from, such as an MCP
-  reconnect (issue #34). The
+  reconnect (issue #34). A Claude review whose final result names an API error status is
+  failed (`quota` for 429), never recorded as completed with a failure kind. The
   review self-test has a minimum test count per suite.
 - **Review rounds converge (issue #18).** Both reviewers are asked for every finding, a
   severity (Critical, High, Medium, Low) on each, and a fix sketch. With the same
@@ -226,7 +227,8 @@ in `RESEARCH_LOG.md` (2026-10-03). Most of the files below are project-owned, so
   git) is no longer counted as a pass, the suites no longer fail when the caller ignores
   SIGINT, and `check_kit.py` holds every suite to its current test count. The boundary
   suites wait 30 s per step, times `MYAGENTKIT_TEST_TIMEOUT_SCALE` on a slow host, and a
-  deadline that fires prints the child's output (issue #29).
+  deadline that fires ends the child's whole process group and prints its output (issue
+  #29).
 
 ### Upgrading a project from v0.8
 
