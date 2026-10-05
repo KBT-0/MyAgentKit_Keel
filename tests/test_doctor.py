@@ -1,6 +1,8 @@
 """doctor.sh must go red on a machine trap and stay green on a ready synthetic machine."""
+import ast
 import os
 from pathlib import Path
+import re
 import select
 import shutil
 import signal
@@ -10,6 +12,22 @@ import time
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def review_runtime():
+    """The modules scripts/review.sh runs: review_dispatch.py and what it imports, transitively."""
+    scripts, todo, found = ROOT / 'core/scripts', ['review_dispatch'], set()
+    while todo:
+        name = todo.pop()
+        if name in found or not (scripts / (name + '.py')).is_file():
+            continue
+        found.add(name)
+        for node in ast.walk(ast.parse((scripts / (name + '.py')).read_text())):
+            if isinstance(node, ast.Import):
+                todo += [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                todo.append(node.module)
+    return {name + '.py' for name in found}
 
 
 def alive(pid):
@@ -67,6 +85,15 @@ class DoctorTests(unittest.TestCase):
             ready = doctor()
             self.assertEqual(ready.returncode, 0, ready.stdout + ready.stderr)
             self.assertIn('DOCTOR: ready', ready.stdout)
+            self.assertEqual(ready.stderr, '')
+
+            # An exported CDPATH naming a directory with a scripts/ in it took doctor's first
+            # cd there, and it reported that other tree as a broken machine.
+            (tmp / 'elsewhere/scripts').mkdir(parents=True)
+            moved = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=project, capture_output=True,
+                                   text=True, env=dict(env, CDPATH=str(tmp / 'elsewhere')))
+            self.assertEqual(moved.returncode, 0, moved.stdout + moved.stderr)
+            self.assertIn('DOCTOR: ready', moved.stdout)
 
             hook = project / '.claude/hooks/gate_on_stop.sh'
             hook.chmod(0o644)
@@ -186,6 +213,22 @@ class DoctorTests(unittest.TestCase):
             self.assertEqual(no_setsid.returncode, 0, no_setsid.stdout + no_setsid.stderr)
             self.assertIn('NOTE: no setsid on this machine', no_setsid.stdout)
 
+            # doctor reaped the probe's session leader, then killed the group id it had saved,
+            # which by then could name an unrelated group. A stand-in setsid hands back the id
+            # of such a group and exits: that group must survive.
+            victim = subprocess.Popen(['sleep', '60'], start_new_session=True)
+            self.addCleanup(victim.wait)
+            self.addCleanup(victim.kill)
+            fake_setsid = tmp / 'fake-setsid'
+            fake_setsid.mkdir()
+            (fake_setsid / 'setsid').write_text('#!/bin/sh\necho %d\n' % victim.pid)
+            (fake_setsid / 'setsid').chmod(0o755)
+            reused = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=project, capture_output=True,
+                                    text=True, timeout=20,
+                                    env=dict(env, PATH=str(fake_setsid) + os.pathsep + env['PATH']))
+            self.assertTrue(alive(victim.pid), 'doctor killed a process group it did not start')
+            self.assertIn('NOTE: grep probe did not complete', reused.stdout)
+
             shell.write_text('#!/bin/sh\ncommand() { echo "grep is an alias for ugrep"; }\neval "$2"\n')
             red = doctor()
             self.assertEqual(red.returncode, 1, red.stdout)
@@ -199,6 +242,16 @@ class DoctorTests(unittest.TestCase):
             shell.write_text("#!/bin/sh\ncommand() { echo \"grep is aliased to \\`grep --colour=auto'\"; }\neval \"$2\"\n")
             ready = doctor()
             self.assertEqual(ready.returncode, 0, ready.stdout + ready.stderr)
+            # oh-my-zsh's default alias skips directories, which only a recursive grep reads:
+            # ready. --exclude skips a NAMED file whose name matches, so a pipeline tried with
+            # it lies: shadowed.
+            for alias, expect in (('grep --color=auto --exclude-dir={.bzr,CVS,.git,.hg,.svn,.idea,.tox}', 0),
+                                  ('grep --color=auto --exclude=*.md', 1)):
+                with self.subTest(alias=alias):
+                    shell.write_text('#!/bin/sh\ncommand() { echo "grep is an alias for %s"; }\neval "$2"\n'
+                                     % alias)
+                    probed = doctor()
+                    self.assertEqual(probed.returncode, expect, probed.stdout + probed.stderr)
             # An rc file that prints a banner: doctor read the banner as the probe's answer
             # and called a shell that aliases grep to `grep -v` ready.
             shell.write_text('#!/bin/sh\necho Welcome\ncommand() { echo "grep is an alias for grep -v"; }\n'
@@ -419,6 +472,18 @@ class DoctorTests(unittest.TestCase):
                 self.assertEqual(red.stdout.count('MISSING:'), 1, red.stdout)
             review.write_text(review_before)
 
+            # Every module review.sh runs: deleting one left doctor ready and review.sh broken.
+            for name in sorted(review_runtime()):
+                with self.subTest(runtime=name):
+                    module = project / 'scripts' / name
+                    module_bytes = module.read_bytes()
+                    module.unlink()
+                    red = doctor()
+                    self.assertEqual(red.returncode, 1, red.stdout)
+                    self.assertIn('MISSING: scripts/%s does not exist' % name, red.stdout)
+                    self.assertEqual(red.stdout.count('MISSING:'), 1, red.stdout)
+                    module.write_bytes(module_bytes)
+
             # A required hook that does not exist: the loop below skipped what was not there,
             # and the wiring check reads only core.hooksPath, so ordinary commits went ungated.
             pre_commit = project / '.githooks/pre-commit'
@@ -460,3 +525,18 @@ class DoctorTests(unittest.TestCase):
                     self.assertIn('NOTE: a hook started from a login-less shell would see node %s'
                                   % system_node, result.stdout)
             (project / '.nvmrc').unlink()
+
+    def test_the_required_review_files_match_what_review_sh_runs(self):
+        # doctor.sh is copied into projects, where neither the packaging list nor the kit's
+        # sources exist, so its list is kept by hand; this keeps it equal to the modules
+        # review.sh imports and to the runtime the plugin packages.
+        doctor = (ROOT / 'core/scripts/doctor.sh').read_text()
+        listed = re.search(r'^for f in (scripts/check\.sh[^;]*);', doctor, re.M).group(1).split()
+        listed = {f[len('scripts/'):] for f in listed if f.endswith('.py')}
+        packaged = next(
+            {element.value for element in node.elts}
+            for node in ast.walk(ast.parse((ROOT / 'scripts/package_codex_plugin.py').read_text()))
+            if isinstance(node, ast.List) and node.elts
+            and all(isinstance(e, ast.Constant) and str(e.value).endswith('.py') for e in node.elts))
+        self.assertEqual(listed, review_runtime())
+        self.assertEqual(packaged, review_runtime())

@@ -126,3 +126,15 @@ A repository on a Windows drive seen from WSL gets CRLF line endings from git's 
 Windows-native binaries into `node_modules`, and runs its gate many times slower than on the
 Linux filesystem. Clone into the WSL home instead. `scripts/doctor.sh` names the path and
 flags a CR in a script.
+
+## A build server the gate started keeps the gate lock
+
+`scripts/check.sh` runs one gate per checkout at a time, through a kernel lock that every
+process the build command starts inherits. A build tool that leaves a server running after
+the build holds that lock for the server's whole idle life, and the next gate waits for it;
+the commit hook waits without a limit. Known ones: MSBuild node reuse and the VBCSCompiler
+server after `dotnet build` or `dotnet test`, the Gradle daemon, the `sccache` server. Turn
+the server off in the build command (`dotnet build -nodeReuse:false
+-p:UseSharedCompilation=false`, `gradle --no-daemon`, `sccache --stop-server` at the end).
+The gate's waiting `NOTE [lock]` line names the lock file; `fuser -v <lock file>` or
+`lsof <lock file>` shows which process holds it.

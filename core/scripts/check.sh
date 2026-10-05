@@ -37,8 +37,10 @@
 # while enforcing nothing; a cross-model review found them.
 set -u
 # CDPATH cleared: exported, it made `cd scripts` print the directory into $gate, and the
-# lock below re-ran a two-line file name instead of the gate.
-gate=$(CDPATH= cd -- "$(dirname "$0")" && pwd -P)/${0##*/}
+# lock below re-ran a two-line file name instead of the gate. The path is LOGICAL (pwd, not
+# pwd -P): the lock re-runs the gate by it, and the re-run cd's to its parent. With scripts/
+# a symlink into a shared tree, the physical path made the re-run check and build that tree.
+gate=$(CDPATH= cd -- "$(dirname "$0")" && pwd)/${0##*/}
 CDPATH= cd -- "$(dirname "$0")/.."
 fail=0
 
@@ -85,7 +87,12 @@ inherited=""
 if [ "${GATE_LOCK_HELD:-}" = "$lock_path" ]; then
   lock_probe=0
   python3 -c '
-import fcntl, os, sys
+import os, sys
+try:
+    import fcntl
+except ImportError:
+    print("FAIL [lock]: python3 has no fcntl module, which the gate lock needs; native Windows Python lacks it. Run the gate with a POSIX python3 (WSL, MSYS2, Cygwin).")
+    sys.exit(3)
 held, lock = os.fstat(int(sys.argv[1])), os.stat(sys.argv[2])
 if (held.st_dev, held.st_ino) != (lock.st_dev, lock.st_ino):
     sys.exit(1)
@@ -131,7 +138,9 @@ fi
 # Nothing is ever reclaimed and no pid is trusted; the symlink lock this replaces guessed
 # staleness from pids, and let a third waiter, or a build left running, through. The cost:
 # a build tool that leaves a server running after the build (a compiler server, a build
-# daemon) holds the lock until that server exits, so such a build command turns it off.
+# daemon) holds the lock until that server exits, so such a build command turns it off
+# (docs/GOTCHAS.md); the waiting NOTE says how to find the holder. The lock needs Python's
+# fcntl, which native Windows Python lacks: that is FAIL [lock] by name, not a traceback.
 # The self-test holds the lock for its whole run, so no other gate sees a case mid-injection.
 # Nested runs (the self-test's own `sh "$0"`, the commit hook it calls) inherit the lock:
 # GATE_LOCK_HELD names the lock path, so a gate in another checkout started from the build
@@ -148,7 +157,12 @@ if [ -z "$inherited" ]; then
   # what sh would have given them.
   # O_NOFOLLOW: a symlink here (the older lock's, left by a killed run) is refused by name.
   exec python3 -c '
-import fcntl, os, signal, sys, time
+import os, signal, sys, time
+try:
+    import fcntl
+except ImportError:
+    print("FAIL [lock]: python3 has no fcntl module, which the gate lock needs; native Windows Python lacks it. Run the gate with a POSIX python3 (WSL, MSYS2, Cygwin).", flush=True)
+    sys.exit(1)
 path, gate, wait, waited = sys.argv[1], sys.argv[2], os.environ.get("GATE_LOCK_WAIT", ""), 0
 if signal.getsignal(signal.SIGINT) is signal.default_int_handler:
     signal.signal(signal.SIGINT, signal.SIG_DFL)
@@ -173,6 +187,9 @@ while True:
         sys.exit(75)
     if waited % 30 == 0:
         print("NOTE [lock]: another gate run, or a process it started, has held %s for %ds; waiting for it." % (path, waited), flush=True)
+        if waited == 0:
+            print("             To see the holder: fuser -v %s, or lsof %s. A server the build left running (a compiler\n"
+                  "             server, a build daemon) holds it until that server exits: docs/GOTCHAS.md." % (path, path), flush=True)
     time.sleep(1)
     waited += 1
 os.ftruncate(fd, 0)
@@ -491,13 +508,21 @@ else
 fi
 # Paths grep cannot read as files are sorted out here, each under its real cause, instead of
 # surfacing later as "a scanner failed to run". A tracked file deleted without `git rm` is
-# named and FAILS the gate: the scan cannot vouch for a path the commit may still carry. A
-# symlink to a directory (a dependency directory linked into a fresh worktree, which an
-# ignore pattern with a trailing slash does not match) holds nothing git tracks: skipped,
-# with a line. What git does track of any symlink is its link text, read here without
-# following the link and scanned as a line of its own: a dangling link whose text held a
-# setup marker was once skipped whole, and the unfilled marker passed the setup gate. The
+# named and FAILS the gate: the scan cannot vouch for a path the commit may still carry.
+# Only a regular file reaches grep (an allowlist): anything else is named here.
+# A SYMLINK IS NEVER FOLLOWED. What git tracks of a symlink is its link text, read here
+# without following the link and scanned as a line of its own; the link then leaves the file
+# list, whatever it points at. grep once followed a link to an existing file: a file outside
+# the tree leaked its lines into the scan, and a link to a FIFO hung the gate. A dangling
+# link whose text held a setup marker was once skipped whole, and the marker passed. A link
+# to a directory (a dependency directory linked into a fresh worktree, which an ignore
+# pattern with a trailing slash does not match) and a dangling link each get a line. The
 # path goes to readlink behind "./": a link named "--version" was read as the option.
+# A submodule (a gitlink, mode 160000) and a repository inside this one (git lists it as
+# "dir/") are directories whose files belong to another repository: skipped with a line,
+# nothing inside scanned. grep exited 2 on them and the gate could never pass. Any other
+# path that is not a regular file (a tracked file replaced by a directory or a FIFO) FAILS
+# by name: grep hung on the FIFO and called the directory a scanner failure.
 # Each line carries the link's own path in grep's "path:line:" form, and scan_grep prints it
 # as is: reported under the temporary file's name, a link in the exempt setup/ failed the gate.
 # One line per link, every newline in it written as \n: link text that went on over a newline
@@ -521,17 +546,26 @@ if ! xargs -0 sh -c '
         : > "$scan_work/scan_missing"
       fi
     fi
-    if [ -L "$p" ] && [ -d "$p" ]; then
-      printf "%s\n" "NOTE [scan]: skipped $p, a symlink to a directory; git tracks nothing inside it." >&3
-      printf "%s\n" "             To ignore it, write it in .gitignore without a trailing slash." >&3
-    elif [ -L "$p" ] && [ ! -e "$p" ]; then
-      printf "%s\n" "NOTE [scan]: skipped $p, a symlink whose target is missing; its link text is scanned instead." >&3
+    if [ -L "$p" ]; then
+      if [ -d "$p" ]; then
+        printf "%s\n" "NOTE [scan]: skipped $p, a symlink to a directory; git tracks nothing inside it." >&3
+        printf "%s\n" "             To ignore it, write it in .gitignore without a trailing slash." >&3
+      elif [ ! -e "$p" ]; then
+        printf "%s\n" "NOTE [scan]: skipped $p, a symlink whose target is missing; its link text is scanned instead." >&3
+      fi
+    elif [ -f "$p" ]; then
+      printf "%s\0" "$p"
+    elif [ -d "$p" ] && { case "$p" in */) true ;; *) false ;; esac ||
+                          [ "$(git ls-files -s -- ":(literal)$p" | cut -c1-6)" = 160000 ]; }; then
+      printf "%s\n" "NOTE [scan]: skipped $p, a submodule or a repository inside this one; its files belong to that repository." >&3
     elif [ ! -e "$p" ]; then
       printf "%s\n" "FAIL [scan]: $p is tracked but missing from the working tree (deleted, not staged)." >&3
       printf "%s\n" "             Run git rm -- \"$p\" to record the deletion, or git restore -- \"$p\"." >&3
       : > "$scan_work/scan_missing"
     else
-      printf "%s\0" "$p"
+      printf "%s\n" "FAIL [scan]: $p is not a regular file (a directory, FIFO, socket or device where git expects a file)." >&3
+      printf "%s\n" "             The scan cannot read it; restore the file or record the change with git." >&3
+      : > "$scan_work/scan_missing"
     fi
   done
 ' sh "$work" "$escape_lines" < "$filelist" 3>&1 > "$filelist.kept"; then
