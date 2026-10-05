@@ -185,6 +185,38 @@ class SyncKitTests(unittest.TestCase):
                 else:
                     self.assertTrue(stamp.is_fifo() or stamp.is_dir())
 
+    def test_a_hook_without_the_executable_bit_is_never_same(self):
+        # "same" was decided from the content alone: a hook copied before its chmod failed, or
+        # one the project holds identical but at mode 0644, was passed over on the next run and
+        # the version recorded over a hook git does not run.
+        rel = '.githooks/commit-msg'
+        for case in ('chmod failed, then a retry', 'identical at 0644'):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
+                kit, project = Path(tmp) / 'kit', Path(tmp) / 'project'
+                self.sync(tmp, '- A kit-owned file changed.\n', '--dry-run')
+                (kit / 'core' / rel).parent.mkdir(parents=True)
+                shutil.copyfile(ROOT / 'core' / rel, kit / 'core' / rel)
+                hook = project / rel
+                if case == 'identical at 0644':
+                    hook.parent.mkdir(parents=True)
+                    shutil.copyfile(ROOT / 'core' / rel, hook)
+                    hook.chmod(0o644)
+                else:
+                    shims = Path(tmp) / 'shims'
+                    shims.mkdir()
+                    (shims / 'chmod').write_text('#!/bin/sh\nexit 1\n')
+                    (shims / 'chmod').chmod(0o755)
+                    env = dict(os.environ, PATH=str(shims) + os.pathsep + os.environ['PATH'])
+                    result = subprocess.run(['sh', str(kit / 'sync-kit.sh'), str(project)], env=env,
+                                            capture_output=True, text=True, timeout=30)
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    self.assertEqual((project / 'docs/kit/.kit-version').read_text(), '0.1\n')
+                result = subprocess.run(['sh', str(kit / 'sync-kit.sh'), str(project)],
+                                        capture_output=True, text=True, timeout=30)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertTrue(os.access(hook, os.X_OK), 'version recorded over a hook git does not run')
+                self.assertEqual((project / 'docs/kit/.kit-version').read_text(), '0.2\n')
+
     def test_every_printed_action_item_of_the_real_changelog_is_whole(self):
         # The checklist printed only the physical line holding the marker, so an owner
         # confirming it read "one would be. **ACTION:** copy" and twice nothing at all.

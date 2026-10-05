@@ -145,6 +145,35 @@ class BootstrapTests(unittest.TestCase):
                 self.assertFalse((project / 'docs/kit/.kit-version').exists(), 'stamped')
                 self.assertEqual(self._hooks_path(project), '', 'hooks wired')
 
+    def test_a_hook_without_the_executable_bit_is_repaired_on_every_run(self):
+        # An identical file is passed over by the copy, so the executable bit must be enforced
+        # apart from it: a hook copied before its chmod failed, or one the project holds
+        # identical at mode 0644, would otherwise be recorded as installed while git skips it.
+        root = Path(__file__).resolve().parents[1]
+        rel = '.githooks/commit-msg'
+        for case in ('chmod failed, then a retry', 'identical at 0644'):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
+                project, shims = Path(tmp) / 'project', Path(tmp) / 'shims'
+                hook = project / rel
+                if case == 'identical at 0644':
+                    hook.parent.mkdir(parents=True)
+                    shutil.copyfile(root / 'core' / rel, hook)
+                    hook.chmod(0o644)
+                else:
+                    shims.mkdir()
+                    (shims / 'chmod').write_text('#!/bin/sh\nexit 1\n')
+                    (shims / 'chmod').chmod(0o755)
+                    env = dict(os.environ, PATH=str(shims) + os.pathsep + os.environ['PATH'])
+                    result = subprocess.run(['sh', str(root / 'bootstrap.sh'), str(project)], env=env,
+                                            capture_output=True, text=True, timeout=60)
+                    self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertFalse((project / 'docs/kit/.kit-version').exists(), 'stamped')
+                result = subprocess.run(['sh', str(root / 'bootstrap.sh'), str(project)],
+                                        capture_output=True, text=True, timeout=60)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertTrue(os.access(hook, os.X_OK), 'installed a hook git does not run')
+                self.assertTrue((project / 'docs/kit/.kit-version').is_file())
+
     def test_a_conflict_outside_the_gates_claims_no_missing_enforcement(self):
         # Every conflict was printed under "the gate files already existed" with the warning
         # that the enforcement was not installed, also for a symlinked docs/reviews with every

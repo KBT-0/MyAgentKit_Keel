@@ -138,8 +138,9 @@ while IFS= read -r src; do
   elif [ ! -e "$target/$rel" ]; then
     printf '%s\n' "  new:     $rel"
   elif cmp -s "$src" "$target/$rel"; then
+    # Listed for the copy step all the same: same content is not the same file while the
+    # executable bit is missing (a chmod that failed on an earlier run), and that step sets it.
     printf '%s\n' "  same:    $rel"
-    continue
   elif grep -qE '^(# |<!-- )KIT-OWNED:' "$target/$rel" 2>/dev/null; then
     printf '%s\n' "  update:  $rel"
   else
@@ -164,12 +165,18 @@ regular file, or a symlink or a file in their path) at paths the kit owns now. N
 EOF
   exit 1
 fi
+# exe FILE — the one place that decides which kit-owned files must be executable (the hooks
+# and scripts git or a gate runs directly), for a copied file and an identical one alike. A
+# hook git cannot run is skipped without a word, and a gate that cannot run is not there.
+exe() { case "$rel" in *.sh|.githooks/*|.claude/hooks/*) chmod +x "$1" ;; esac; }
 if [ "$dry" -eq 0 ]; then
   while IFS= read -r src; do
     relpath "$src"
-    { mkdir -p "$target/$(dirname "$rel")" && cp "$src" "$target/$rel" &&
-      case "$rel" in *.sh|.githooks/*) chmod +x "$target/$rel" ;; esac; } ||
-      die "could not write $rel; version left at v$have"
+    if cmp -s "$src" "$target/$rel"; then
+      exe "$target/$rel"
+    else
+      mkdir -p "$target/$(dirname "$rel")" && cp "$src" "$target/$rel" && exe "$target/$rel"
+    fi || die "could not write $rel; version left at v$have"
   done < "$copies"
 fi
 
