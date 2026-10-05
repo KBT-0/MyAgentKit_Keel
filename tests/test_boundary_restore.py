@@ -366,6 +366,34 @@ exit 1
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertIn('  ok   — ', result.stdout)
 
+    def test_a_baseline_that_swaps_in_a_symlink_is_refused_by_name(self):
+        # The target and the gate were validated before the baseline gate ran: a baseline that
+        # replaced src/domain or the gate with a symlink sent the injection, or the second run,
+        # out of the copy.
+        swaps = {'target out': ('mv src/domain src/was && ln -s "$OUTSIDE" src/domain',
+                                'src/domain is a symlink that leads out of the disposable copy'),
+                 'gate out': ('mv scripts/check.sh scripts/was.sh && ln -s "$OUTSIDE/gate.sh" scripts/check.sh',
+                              'scripts/check.sh is a symlink that leads out of the disposable copy'),
+                 'target inside': ('mv src/domain src/was && ln -s was src/domain',
+                                   'src/domain/existing.py runs through a symlink at src/domain')}
+        for name, (swap, message) in swaps.items():
+            with self.subTest(swap=name), tempfile.TemporaryDirectory() as tmp:
+                outside = Path(tmp) / 'outside'
+                outside.mkdir()
+                (outside / 'existing.py').write_text('committed original\n')
+                (outside / 'gate.sh').write_text(': > "$OUTSIDE/ran"\n'
+                                                 "echo 'FAIL [boundary]: the domain layer imports the web layer:'\n"
+                                                 'exit 1\n')
+                root, git = self.fixture(tmp, '[ -e "$TMPDIR/swapped" ] || { : > "$TMPDIR/swapped"; %s; }\n' % swap,
+                                         names=('OUTSIDE',))
+                result = self.self_test(tmp, root, OUTSIDE=str(outside))
+                self.assertEqual((outside / 'existing.py').read_text(), 'committed original\n',
+                                 'the injection followed the swapped symlink')
+                self.assertFalse((outside / 'ran').exists(), 'the second run ran the swapped gate')
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn('NOT RUN — existing-file probe: ' + message, result.stdout)
+                self.assertNotIn('  ok   — ', result.stdout)
+
     def test_a_symlinked_object_store_cannot_take_the_copy_s_writes(self):
         # The containment check validated the git and common directories, not what lies in
         # them: cp -R kept `.git/objects` as an absolute symlink to the original's store, and a

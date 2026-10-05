@@ -78,6 +78,9 @@
 # through no symlink at all (an absolute link at the gate ran a gate that resolves its own
 # location against the checkout), and both are written and run by their absolute paths
 # (with CDPATH set, a relative write once missed the directory that was validated).
+# The audit runs again after the baseline gate run and before the injection: checked only
+# before it, a baseline that replaced src/domain or the gate with a symlink sent the injection,
+# or the second run, out of the copy.
 # Copying a large tree (dependencies, build output) costs time: copy only what the gate reads
 # if that is known, but never let the probe write into the checkout.
 #
@@ -178,6 +181,7 @@
 # |       done' sh < "$probe_copy/config"; } ||
 # |     probe_fail "could not carry the allowlisted settings into the disposable copy; refusing to run."
 # |   probe_env sh "$probe_root/$probe_gate" >/dev/null 2>&1 || exit 1
+# |   probe_audit
 # |   printf 'from myapp.web import router\n' > "$probe_root/$probe_target" || exit 1
 # |   probe_status=0
 # |   probe_output=$(probe_env sh "$probe_root/$probe_gate" 2>&1) || probe_status=$?
