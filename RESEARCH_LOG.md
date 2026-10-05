@@ -905,6 +905,18 @@ exists twice with no test holding the copies equal; test names still say "never 
 written". Rounds of the day: 7, 2, 4, 4, 4, 2, Accept (carried), 4, 5: the findings follow
 the last fix from file to file, which is what a diff-scoped review does.
 
+#### Round close-3: Reject, on runs that fail part way
+
+Round close-3 on `42e5a19..68e9ae5`: one High, two Medium, all three the same shape and all
+opened by the round before (stopping on a failed write made "what does the retry do" a
+question): a hook left at 0644 by a failed `chmod` compared `same` on the retry and the
+version advanced; the stamp was truncated before it was written; the hooks path was changed
+before the last write that could fail. Fixes: the executable bit is part of "same", every
+file goes through a sibling moved over it, the finish is ordered and undone on failure. The
+worker was asked to walk every write with "the run dies here; what does a retry do" and
+found one more itself (a copy cut short taken for the owner's file). Left and named: SIGKILL
+or power loss between `git config` and the stamp's `mv` loses the old hooks path.
+
 #### The review gate held on the kit's own hardening
 
 Five of the nine work packages (the gate lock, both review-tooling packages, the commit gates
