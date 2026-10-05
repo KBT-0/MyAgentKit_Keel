@@ -138,6 +138,28 @@ class SpawnWorkerTests(unittest.TestCase):
             self.assertIn(str(brief), result.stderr)
             self.assertNotIn('new-session', self.tmux_log(), brief)
 
+    def test_worktree_is_built_from_the_leads_current_commit(self):
+        git = lambda *a: subprocess.run(['git', *a], cwd=self.cwd, check=True, capture_output=True,
+                                        text=True).stdout.strip()
+        git('init', '-q')
+        git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'a')
+        git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'b')
+        head = git('rev-parse', 'HEAD')
+        result = self.spawn('w3', str(self.brief), '--worktree')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        tree = self.cwd / '.claude/worktrees/w3'
+        launched = self.launched()
+        self.assertNotIn('-w', launched['argv'])
+        self.assertEqual(Path(launched['cwd']).resolve(), tree.resolve())
+        self.assertEqual(git('-C', str(tree), 'rev-parse', 'HEAD'), head)
+        self.assertEqual(git('-C', str(tree), 'branch', '--show-current'), 'worktree-w3')
+        # A second spawn under the same name would reuse a stale branch: refused by name.
+        (self.state / 'tmux.log').unlink()
+        again = self.spawn('w3', str(self.brief), '--worktree')
+        self.assertNotEqual(again.returncode, 0)
+        self.assertIn('worktree-w3', again.stderr)
+        self.assertNotIn('new-session', self.tmux_log())
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -25,6 +25,9 @@
 #   - Every value that goes into the session's shell command, and the brief path, passes
 #     through `q`: a value with an apostrophe (a --settings JSON string, a name) otherwise
 #     ends its quoting and the rest runs as shell in the new pane.
+#   - --worktree makes the worktree here with `git worktree add` from the commit the lead's
+#     checkout is on now. Passing `-w` to the tool built it from a stale base, and workers
+#     started without fixes the lead had already merged.
 #   - Readiness is detected from the pane text, not from `pgrep -f`, which matches its own
 #     command line.
 #   - The folder must already be trusted by Claude Code; an untrusted folder blocks the
@@ -59,10 +62,19 @@ done
 
 tmux has-session -t "=$name" 2>/dev/null && die "tmux session '$name' already exists"
 
+dir=$PWD
+if [ -n "$worktree" ]; then
+  top=$(git rev-parse --show-toplevel) || die "--worktree needs a git repository"
+  dir=$top/.claude/worktrees/$name
+  ! git show-ref --verify --quiet "refs/heads/worktree-$name" ||
+    die "branch worktree-$name already exists and may be stale; delete it or pick another name"
+  [ ! -e "$dir" ] || die "worktree path already exists: $dir"
+  git worktree add -q "$dir" -b "worktree-$name" HEAD >&2 || die "git worktree add failed: $dir"
+fi
+
 # Variadic flags come LAST and the prompt is never on this line (see the header).
 cmd="claude -n $(q "$name")"
 [ -n "$model" ]    && cmd="$cmd --model $(q "$model")"
-[ -n "$worktree" ] && cmd="$cmd -w $(q "$name")"
 [ -n "$effort" ]   && cmd="$cmd --effort $(q "$effort")"
 [ -n "$settings" ] && cmd="$cmd --settings $(q "$settings")"
 [ -n "$tools" ]    && cmd="$cmd --allowedTools $(q "$tools")"
@@ -70,7 +82,7 @@ cmd="claude -n $(q "$name")"
 # `cd` first: tmux hands new sessions the PWD of whichever client last created one, and
 # the tool exits with "the current working directory was deleted" when that folder (a
 # removed worktree, say) is gone, whatever -c says.
-tmux new-session -d -s "$name" -c "$PWD" -x 200 -y 50 "cd $(q "$PWD") && exec $cmd"
+tmux new-session -d -s "$name" -c "$dir" -x 200 -y 50 "cd $(q "$dir") && exec $cmd"
 
 # Wait for the input line: the TUI shows its prompt arrow at the start of a line once ready
 # (v2.1.285 follows the arrow with a NO-BREAK space, so the match is on the arrow alone)

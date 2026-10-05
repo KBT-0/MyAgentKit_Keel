@@ -67,6 +67,11 @@ If the project has no such jobs, delete both files instead of filling them.
   confirmation; another model given the same block started at once. `spawn_worker.sh`
   types `Read '<absolute path of the brief>' and follow it.` and refuses, before any tmux
   session opens, a brief file that does not exist or cannot be read.
+- **A worker's worktree is made with `git worktree add`, not with `claude -w`.**
+  `claude -w` built the worktree from a stale base, so workers spawned after the lead
+  merged fixes started without them. `spawn_worker.sh --worktree` runs
+  `git worktree add .claude/worktrees/NAME -b worktree-NAME HEAD` from the lead's checkout
+  and opens the session inside it; a leftover `worktree-NAME` branch is refused by name.
 - **Every value the script puts into the session's shell command is quoted by one helper.**
   A `--settings` JSON string or a name with an apostrophe otherwise ended its quoting and
   the rest ran as shell in the new pane.
