@@ -145,6 +145,24 @@ class BootstrapTests(unittest.TestCase):
                 self.assertFalse((project / 'docs/kit/.kit-version').exists(), 'stamped')
                 self.assertEqual(self._hooks_path(project), '', 'hooks wired')
 
+    def test_a_conflict_outside_the_gates_claims_no_missing_enforcement(self):
+        # Every conflict was printed under "the gate files already existed" with the warning
+        # that the enforcement was not installed, also for a symlinked docs/reviews with every
+        # gate file installed.
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as tmp:
+            project, outside = Path(tmp) / 'project', Path(tmp) / 'outside'
+            (project / 'docs').mkdir(parents=True)
+            outside.mkdir()
+            (project / 'docs/reviews').symlink_to(outside)
+            result = subprocess.run(['sh', str(root / 'bootstrap.sh'), str(project)],
+                                    capture_output=True, text=True, timeout=60)
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn('STOPPING: these destinations could not be written', result.stdout)
+            self.assertIn('conflict: docs/reviews (symlink: docs/reviews)', result.stdout)
+            for claim in ('gate files', 'enforcement', 'no-op'):
+                self.assertNotIn(claim, result.stdout)
+
     def _listed(self, stdout):
         # The files a run reports as already existing: the indented paths under its header.
         return {line.strip() for line in stdout.splitlines() if line.startswith(' ' * 13)

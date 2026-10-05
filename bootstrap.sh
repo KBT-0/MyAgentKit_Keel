@@ -167,12 +167,12 @@ fi
 # gateless project with "already current. Nothing to do."
 gates=$(grep -E '^(scripts/check\.sh|\.githooks/(pre-commit|pre-merge-commit|commit-msg))$' "$skiplist" 2>/dev/null |
   while IFS= read -r g; do why=$(blocked "$g"); printf '%s%s\n' "$g" "${why:+ ($why)}"; done)
-if [ -n "$gates$stops" ]; then
-  said=1
+# Two lists: only a gate conflict means missing enforcement; a folder or file bootstrap makes
+# itself (docs/reviews, the stamp) is a plain destination that could not be written.
+if [ -n "$gates" ]; then
   echo
   echo "STOPPING: the gate files already existed, differ from the kit's, and were NOT replaced:"
-  printf '%s' "${gates:+$gates
-}$stops" | sed 's/^/  conflict: /'
+  printf '%s\n' "$gates" | sed 's/^/  conflict: /'
   cat <<'EOF'
 
   They are the enforcement. Whatever is in this repository now is what will run — and if
@@ -181,10 +181,21 @@ if [ -n "$gates$stops" ]; then
   For each one: move yours aside, re-run to install the kit's file (files an earlier run
   copied are identical and pass), then carry what yours did into it by hand (docs/RETROFIT.md).
   --force instead overwrites EVERY differing regular file listed above, not only these;
-  a symlink, folder or special file at such a path, or a symlinked folder above it, is
-  never replaced: move it aside.
+  a symlink, folder or special file at such a path, or a symlink or a file in its path,
+  is never replaced: move it aside.
   Finish with:  ./scripts/check.sh --self-test
 EOF
+fi
+if [ -n "$stops" ]; then
+  echo
+  echo "STOPPING: these destinations could not be written:"
+  printf '%s' "$stops" | sed 's/^/  conflict: /'
+  echo "  Move each one, or what is in its path, aside and re-run."
+fi
+if [ -n "$gates$stops" ]; then
+  said=1
+  echo
+  echo "bootstrap: the version was not recorded and core.hooksPath was not set."
   exit 1
 fi
 
