@@ -43,28 +43,29 @@
 #
 # {{BOUNDARY_SELF_TESTS}}
 
-# Existing-file probes run in a disposable copy of the checkout, never in the checkout:
-# a self-test never changes a tracked file. An edit made in place and restored by traps was
+# Existing-file probes run in a disposable copy of the checkout, never in the checkout: a
+# self-test never changes a tracked file. An edit made in place and restored by traps was
 # seen by a concurrent `git add -A`, and SIGKILL or a power loss, which run no trap, left it
 # in the tree. The copy holds the current bytes, uncommitted edits included, and is deleted
 # on exit and on INT/TERM; a SIGKILL leaves it in $TMPDIR, outside the checkout. The copy
 # itself must lie outside the checkout (a TMPDIR set to the checkout put it, and a SIGKILL's
 # leftovers, in the working tree). Every command that touches the copy, git and the copied
 # gate alike, runs under probe_env, which passes ONLY the variables it names: removing
-# variables one at a time missed each next one (an exported GIT_DIR built in the checkout; an
-# exported GIT_OBJECT_DIRECTORY took the copy's `git add` into the original's object store).
-# A gate that needs more variables gets them by adding NAME="$NAME" to probe_env. HOME is an
-# empty directory in the copy and no system or global git configuration is read: with the real
-# HOME, a global tar.<format>.command ran from a copied gate's `git archive` and wrote outside
-# the copy. A tool that needs a cache directory gets its own variable (GRADLE_USER_HOME and the
-# like) in probe_env, never the real HOME.
+# variables one at a time missed each next one (an exported GIT_DIR built in the checkout;
+# an exported GIT_OBJECT_DIRECTORY took the copy's `git add` into the original's object
+# store). A gate that needs more variables gets them by adding NAME="$NAME" to probe_env.
+# HOME is an empty directory in the copy and no system or global git configuration is read:
+# with the real HOME, a global tar.<format>.command ran from a copied gate's `git archive`
+# and wrote outside the copy. A tool that needs a cache directory gets its own variable
+# (GRADLE_USER_HOME and the like) in probe_env, never the real HOME.
 # The example supports a PLAIN repository only: a checkout whose `.git` is a file or a
 # symlink (a linked worktree, a submodule, `--separate-git-dir`) is refused by name and
-# reported NOT RUN, never passed. Its copied pointer kept the original's git directory, so a
-# gate that stages its inputs staged the injection into the original's index, and rebuilding
-# such a repository inside the copy (refs, HEAD, index, object format, intent-to-add) took
-# fourteen review rounds and still recreated symbolic refs as direct ones. A nested repository
-# (a `.git` below the top level) is refused by name for the same reason.
+# reported NOT RUN, which fails the self-test: run it from the main checkout. Its copied
+# pointer kept the original's git directory, so a gate that stages its inputs staged the
+# injection into the original's index, and rebuilding such a repository inside the copy
+# (refs, HEAD, index, object format, intent-to-add) took fourteen review rounds and still
+# recreated symbolic refs as direct ones. A nested repository (a `.git` below the top level)
+# is refused by name for the same reason.
 # The copied .git/config is replaced by an allowlist of its settings plus the keys named in
 # probe_config_keys: kept verbatim, it ran the original's core.hooksPath and a copied gate's
 # `git archive` ran its tar.<format>.command, and a denylist of such keys had already missed
@@ -75,19 +76,20 @@
 # changed what a gate's `git config <key> <value>` did. The values are added in order, and a
 # valueless key is written as valueless: carried as the string `true`, an untyped read of it
 # in the copy differed from the original's.
-# cp keeps a symlink as a symlink, and every symlink in the copy whose target resolves outside
-# it is refused by name, wherever it is: checking only the target, the gate and the git
-# storage let an unrelated `build -> <checkout>/out` take a baseline gate's build output into
-# the checkout, as `.git/objects -> <store>` once took a copied gate's `git add`, and
-# `src -> <checkout>/lib` the injection itself. The path to the target and to the gate runs
-# through no symlink at all (an absolute link at the gate ran a gate that resolves its own
-# location against the checkout), and both are written and run by their absolute paths
-# (with CDPATH set, a relative write once missed the directory that was validated).
+# `cp -RP` keeps a symlink as a symlink (POSIX leaves a plain `cp -R` unspecified), and
+# every symlink in the copy whose target resolves outside it is refused by name, wherever it
+# is: checking only the target, the gate and the git storage let an unrelated `build ->
+# <checkout>/out` take a baseline gate's build output into the checkout, as `.git/objects ->
+# <store>` once took a copied gate's `git add`, and `src -> <checkout>/lib` the injection
+# itself. The path to the target and to the gate runs through no symlink at all (an absolute
+# link at the gate ran a gate that resolves its own location against the checkout), and both
+# are written and run by their absolute paths (with CDPATH set, a relative write once missed
+# the directory that was validated).
 # The audit runs again after the baseline gate run and before the injection: checked only
-# before it, a baseline that replaced src/domain or the gate with a symlink sent the injection,
-# or the second run, out of the copy.
-# Copying a large tree (dependencies, build output) costs time: copy only what the gate reads
-# if that is known, but never let the probe write into the checkout.
+# before it, a baseline that replaced src/domain or the gate with a symlink sent the
+# injection, or the second run, out of the copy.
+# Copying a large tree (dependencies, build output) costs time: copy only what the gate
+# reads if that is known, but never let the probe write into the checkout.
 #
 # This worked example runs in a subshell so its traps do not replace the surrounding
 # self-test traps. `$0` is the checkout's gate; the copy's own gate, at the same relative
@@ -103,9 +105,10 @@
 # |   trap 'exit 130' INT
 # |   trap 'exit 143' TERM
 # |   probe_copy=$(CDPATH= cd -P "$probe_copy" && pwd -P) || exit 1
+# |   probe_fail() { echo "  FAIL — existing-file probe: $*"; exit 1; }
+# |   probe_skip() { echo "  NOT RUN — existing-file probe: $*"; exit 1; }
 # |   case "$probe_copy/" in
-# |     "$probe_checkout"/*) echo "  FAIL — existing-file probe: the disposable copy ($probe_copy) is inside the checkout; set TMPDIR outside it."
-# |        exit 1 ;;
+# |     "$probe_checkout"/*) probe_fail "the disposable copy ($probe_copy) is inside the checkout; set TMPDIR outside it." ;;
 # |   esac
 # |   # An empty HOME and no system or global git configuration: nothing but the copy's own is active.
 # |   mkdir "$probe_copy/home" || exit 1
@@ -113,11 +116,9 @@
 # |     env -i PATH="$PATH" LC_ALL=C HOME="$probe_copy/home" XDG_CONFIG_HOME="$probe_copy/home" \
 # |       GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null TMPDIR="${TMPDIR:-/tmp}" "$@"
 # |   }
-# |   probe_fail() { echo "  FAIL — existing-file probe: $*"; exit 1; }
-# |   probe_skip() { echo "  NOT RUN — existing-file probe: $*"; exit 1; }
 # |   [ -d .git ] && [ ! -L .git ] && [ ! -e .git/commondir ] ||
 # |     probe_skip "the checkout's .git is not a directory (a linked worktree, a submodule or a separate git directory); this example supports a plain repository only: run the self-test from the main checkout."
-# |   cp -R . "$probe_copy/checkout" && CDPATH= cd -P "$probe_copy/checkout" || exit 1
+# |   cp -RP . "$probe_copy/checkout" && CDPATH= cd -P "$probe_copy/checkout" || exit 1
 # |   probe_root=$(pwd -P) || exit 1
 # |   probe_target=src/domain/existing.py
 # |   probe_gate="$(basename "$(dirname "$0")")/${0##*/}"
