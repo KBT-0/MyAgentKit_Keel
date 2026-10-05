@@ -870,6 +870,25 @@ chose to answer by disposition, not by code: only an empty directory at the exam
 temporary name can be removed, nothing with content; the comment that claimed more was
 corrected. Counts: 7, 2, 4, 4, 4, 2.
 
+#### Round d7 accepts; the closing review under a new label rejects
+
+Round d7, carrying d6 and the author's dispositions, was an Accept with Manual Checks: the
+High confirmed fixed, the cleanup limit kept open as a limit. The closing review, a new
+label over the whole of `3536cb7..77377f4` with no earlier round in its prompt, was a
+Reject: one High and two Medium that seven incremental rounds had not raised, plus the
+known limit. The High was the mirror of d6's: the copies run without global git
+configuration, so a gate setting that lives there is on in the real checkout and off in
+the copies. The two Medium were outside the example (a FIFO at a bootstrap destination
+hangs `cmp`; control bytes in a brief path reach the terminal). This is the reason the
+review gate asks for the fresh label: rounds that carry their history converge on that
+history. The fixing worker listed five things it noticed and left; this time each was
+treated as a finding: three fixed by a further worker (a symlinked folder on the way to a
+destination, a dangling link skipped silently, a raw path printed before its check), two
+accepted with reasons (the scope check covers only the keys the owner names, since a global
+`user.name` would refuse every run; a FIFO as the live `.git/config` blocks every git
+command, the gate included). Named and left by that worker: the window between the symlink
+check and the copy; bootstrap's STOPPING header says "the gate files" for a `docs/` path.
+
 #### The review gate held on the kit's own hardening
 
 Five of the nine work packages (the gate lock, both review-tooling packages, the commit gates

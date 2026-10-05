@@ -117,6 +117,9 @@ in `RESEARCH_LOG.md` (2026-10-03). Most of the files below are project-owned, so
   `bootstrap.sh` again passes over every file identical to the kit's and lists only the
   files that differ; a differing gate file (`scripts/check.sh` or one of the three hooks)
   stops the run as `conflict: <path>`; `--force` overwrites every differing file listed.
+  Both scripts compare regular files only and follow no symlink below the target: a FIFO,
+  device, folder or symlink at a destination, or a symlinked folder on the way to it, is a
+  conflict that is never read or written, `--force` included (a FIFO used to hang the run).
   `docs/UPDATING.md` and the README describe both.
 - **`scripts/doctor.sh` (new, kit-owned; issue #10).** A machine check to run at session
   start, with one `MISSING: <what> — fix: <command>` line per trap and `DOCTOR: ready` or
@@ -176,7 +179,10 @@ in `RESEARCH_LOG.md` (2026-10-03). Most of the files below are project-owned, so
   hash covers every entry's permission bits and the git index. Any `include.path` or
   `includeIf` entry in the repository's configuration is refused by name (`NOT RUN`),
   whatever its condition: an include matching only the checkout could turn the real gate
-  off while the copies ran it on. `TMPDIR` is resolved once, so a relative one names the same
+  off while the copies ran it on. For the same reason a key named in `probe_config_keys`
+  that has a value from outside the repository's own config file (system, global, worktree
+  or command scope) is `NOT RUN` by name, checked once in the real checkout before the first
+  copy; this needs git 2.26. `TMPDIR` is resolved once, so a relative one names the same
   folder for both copies. The dot-file
   example runs in a subshell that removes its injection on INT/TERM as well as on exit.
 - **Worker spawning (issues #32, #35).** `spawn_worker.sh` `cd`s into the folder before
@@ -187,8 +193,9 @@ in `RESEARCH_LOG.md` (2026-10-03). Most of the files below are project-owned, so
   runs `git worktree add .claude/worktrees/NAME -b worktree-NAME HEAD` itself instead of the
   tool's `-w` and refuses a leftover branch or path of that name; a relative `--settings`
   file is made absolute against the caller's folder, and inline JSON may start with
-  whitespace. `unity_gate.sh` and `gate_on_stop.sh`
-  ignore `CDPATH`.
+  whitespace. A control character in the worker name or the brief path is refused before
+  anything else, and no message prints a raw control byte. `unity_gate.sh` and
+  `gate_on_stop.sh` ignore `CDPATH`.
 - **Tests that could not go red.** Twenty-two guards in `doctor.sh`, `commit-msg`,
   `check.sh`, `claude_bridge.py` and `sync-kit.sh` had a negative test that stayed green with
   the guard deleted; each now has one that goes red. A case that cannot run (uid 0, an old
@@ -211,7 +218,9 @@ from, and `5c80c36` is the kit's v0.8 commit.
    `.githooks/pre-merge-commit` (both new), `.githooks/pre-commit`, `scripts/doctor.sh`
    (new) and `setup/INTERVIEW.md`. If it stops with `conflict:` lines, the project has a
    file of its own at one of those paths: move yours aside, run the sync again, then carry
-   what your file did into the project by hand (the kit's `docs/RETROFIT.md`).
+   what your file did into the project by hand (the kit's `docs/RETROFIT.md`). A symlink
+   or special file at one of those paths, or a symlinked folder on the way to it, is a
+   conflict too: replace it with a real file or folder first.
 3. **ACTION:** Copy these files whole from `$KIT/core/scripts/` into `scripts/`, replacing
    yours (they hold no project content): `agent_process.py`, `agent_usage.py`,
    `claude_bridge.py`, `codex_bridge.py`, `codex_quota.py`, `review_dispatch.py`,
@@ -278,7 +287,9 @@ from, and `5c80c36` is the kit's v0.8 commit.
    (it must be set in the repository's own config file) and add each variable your gate
    needs to `probe_env` by name (a tool that needs a cache directory gets its own); if the
    repository's configuration uses `include.path` or `includeIf`, move the settings your
-   gate reads into `.git/config`, or do not use the existing-file example.
+   gate reads into `.git/config`, or do not use the existing-file example; the same goes
+   for a key you name in `probe_config_keys` that is set in your global or system git
+   configuration.
 8. **ACTION:** Decide the attribution rule. The merged `AGENTS.md` now holds the bullet "No
    AI attribution in git", and the kit's `commit-msg` hook rejects AI credit while that
    line is there. To allow AI credit, delete that bullet, and with the Claude Code overlay

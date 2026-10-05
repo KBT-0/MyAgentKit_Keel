@@ -153,6 +153,10 @@ budget, so the full review was split into two consistent commit ranges, each its
   `rmdir`; a process of the same user that swaps an EMPTY directory into the name between
   the two gets that empty directory removed. Nothing with content, no file and no link
   target can be removed this way. NOT RUN: a deterministic test of that window.
+- The closing review of range D under a new label, `20261005T180801Z-c1e3bb54cf44` on head
+  77377f4, the whole of `3536cb7..77377f4` in one prompt: **Reject**, one High, three
+  Medium (one of them the open limit above). The three were fixed with negative tests
+  watched red first, and three further cases the fixing worker reported.
 - NOT RUN by the reviewer in range D: any test. The kit self-test was executed by the lead
   on each reviewed head (`KIT CHECK: PASS` on 31c8f7a, 1afba49, 62d2988, d826ccd, ed29079,
   4baf4e0 and 3d4f45c).
