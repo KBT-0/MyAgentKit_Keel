@@ -51,10 +51,14 @@ target=$(CDPATH= cd -- "$target" 2>/dev/null && pwd) || die "no such directory"
 # blocked REL — the one check for every path the sync reads or writes (the kit-owned files and
 # the version stamp): prints why REL may not be used, nothing when it may. Every existing
 # component below the target must be a real folder, and REL itself absent or a regular file.
-# What fails is never opened: `cmp` on a FIFO blocked forever; a symlink, or a symlinked
+# What fails is not opened: `cmp` on a FIFO blocked forever; a symlink, or a symlinked
 # folder above, carried the read or write outside the project; a file where a folder belongs
 # failed the copy midway through the copies. The target itself may be a symlink: the owner
 # named it. bootstrap.sh holds the same check, with a form for folders.
+# The check runs BEFORE the write, not with it: a path is not opened when it fails the check
+# at that moment, but another process that changes the tree during the run (a checked
+# folder swapped for a symlink) is not guarded against. The owner runs this in the owner's
+# own project, where a process able to make that swap could write the file itself.
 blocked() {
   _rest=$1; _p=""
   while :; do

@@ -61,10 +61,14 @@ trap 'rc=$?; rm -f "$skiplist"; [ "$rc" -eq 0 ] || [ -n "$said" ] ||
 # blocked REL [dir] — the one check for every path bootstrap writes or creates (copied files,
 # the files it generates, the folders it makes): prints why REL may not be written, nothing
 # when it may. Every existing component below the target must be a real folder, and REL
-# itself absent or a regular file (with `dir`: absent or a real folder). What fails is never
+# itself absent or a regular file (with `dir`: absent or a real folder). What fails is not
 # opened: `cmp` on a FIFO, or writing to one, blocked forever; a symlink, or a symlinked folder
 # above, carried the read or write outside the project; a file where a folder belongs made
 # every mkdir and cp under it fail. The target itself may be a symlink: the owner named it.
+# The check runs BEFORE the write, not with it: a path is not opened when it fails the check
+# at that moment, but another process that changes the tree during the run (a checked
+# folder swapped for a symlink) is not guarded against. The owner runs this in the owner's
+# own project, where a process able to make that swap could write the file itself.
 blocked() {
   _rest=$1; _p=""
   while :; do
@@ -125,7 +129,7 @@ for name in $overlays; do
 done
 
 # The folders and files bootstrap makes itself pass the same check: one it may not write is
-# a conflict that stops the run, like a kept gate, and is never created or opened. The files
+# a conflict that stops the run, like a kept gate, and is not created or opened. The files
 # are written only after the stop below.
 own="docs/reviews docs/audits docs/worktree-notes docs/spikes docs/kit docs/kit/.kit-version"
 [ -z "$note" ] || own="$own docs/kit/BOOTSTRAP_NOTE.md"
