@@ -202,8 +202,9 @@ os.execvp("sh", ["sh", gate] + sys.argv[3:])
 ' "$lock_path" "$gate" "$@"
 fi
 
-# Overridable so the self-test can point the rot gate at a synthetic file instead of
-# mutating the real one. Only the self-test sets it (the seam block above).
+# Overridable so the self-test can point the state checks at a synthetic file, and at a
+# history of its own (GATE_SELFTEST_HISTORY, section 2), instead of mutating the real ones.
+# Only the self-test sets them (the seam block above).
 GATE_SELFTEST_STATE_FILE="${GATE_SELFTEST_STATE_FILE:-docs/STATE.md}"
 
 # Overridable so the self-test can prove these branches without mutating the repository.
@@ -288,27 +289,18 @@ self_test() {
   # ...and does NOT fire on the two paths that carry markers forever by design.
   expect_pass "placeholder gate ignores setup/ and the module template"
 
-  # --- STATE.md rot gate, all four branches ---------------------------------
-  rot="$work/rot.md"; live="$work/live.md"; noheading="$work/noheading.md"
+  # --- STATE.md: present, with its heading, and never measured ---------------
+  long="$work/long.md"; noheading="$work/noheading.md"
   {
-    echo "# STATE"; echo; echo "## Active work"
-    echo "(nothing in flight — this hint line must NOT be counted as work)"; echo
-    echo "## History"
-    i=0; while [ "$i" -lt 250 ]; do echo "stale line $i"; i=$((i + 1)); done
-  } > "$rot"
-  {
-    echo "# STATE"; echo; echo "## Active work"
-    echo "(nothing in flight — this hint line must NOT be counted as work)"
-    echo "- a genuine bullet: one task is in flight right now"; echo
-    echo "## History"
-    i=0; while [ "$i" -lt 250 ]; do echo "stale line $i"; i=$((i + 1)); done
-  } > "$live"
-  sed 's/^## Active work/## Current things/' "$rot" > "$noheading"
+    echo "# STATE"; echo; echo "## Active work"; echo
+    echo "## Notes"
+    i=0; while [ "$i" -lt 500 ]; do echo "line $i"; i=$((i + 1)); done
+  } > "$long"
+  sed 's/^## Active work/## Current things/' "$long" > "$noheading"
 
-  expect_fail "rot gate rejects a long file nobody pruned after the work closed" GATE_SELFTEST_STATE_FILE="$rot"
-  expect_pass "rot gate stays quiet while a real bullet is under 'Active work'" GATE_SELFTEST_STATE_FILE="$live"
-  expect_fail "rot gate rejects a MISSING state file"        GATE_SELFTEST_STATE_FILE="$work/absent.md"
-  expect_fail "rot gate rejects a renamed 'Active work' heading" GATE_SELFTEST_STATE_FILE="$noheading"
+  expect_pass "state gate does not measure length: a long file with nothing active passes" GATE_SELFTEST_STATE_FILE="$long"
+  expect_fail "state gate rejects a MISSING state file"        GATE_SELFTEST_STATE_FILE="$work/absent.md"
+  expect_fail "state gate rejects a renamed 'Active work' heading" GATE_SELFTEST_STATE_FILE="$noheading"
 
   # --- a finished task still named in the state files -----------------------
   # A history of its own, outside the tree, whose one commit closed K4; and one with none.
@@ -672,44 +664,23 @@ if [ -n "$hits" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 2) STATE.md rot
+# 2) STATE.md: present, and free of finished tasks
 # ---------------------------------------------------------------------------
-# Length alone is NOT the signal. A long state file is healthy in the middle of a long
-# operation and rot the day after it closes; a fixed line limit cannot tell those apart.
-# This can: an EMPTY "Active work" section means everything left in the file is history,
-# and history belongs in git — once the permanent parts have been harvested into their real
-# homes (AGENTS.md, "STATE.md discipline").
+# Its LENGTH is not checked. A line or size limit cannot tell a live line from a finished
+# one: a project that added a size limit hit it four times in one session, while half the
+# file was a backlog and much of the rest narrated work already in git. The backlog now has
+# its own file (docs/BACKLOG.md), and finished work is caught by name, below.
 #
 # A missing file or a renamed heading is a FAILURE, not a skip. Skipping there meant the
-# whole gate could be disabled by deleting one file or editing one line.
+# whole check could be disabled by deleting one file or editing one line.
 if [ ! -f "$GATE_SELFTEST_STATE_FILE" ]; then
-  echo "FAIL [state]: $GATE_SELFTEST_STATE_FILE does not exist. It is the cross-session memory and the"
-  echo "              rot gate's only input; without it this check proves nothing."
+  echo "FAIL [state]: $GATE_SELFTEST_STATE_FILE does not exist. It is the cross-session memory; without it"
+  echo "              this check proves nothing."
   fail=1
 elif ! grep -q "^## Active work" "$GATE_SELFTEST_STATE_FILE"; then
-  echo "FAIL [state]: $GATE_SELFTEST_STATE_FILE has no '## Active work' heading, so the rot gate cannot"
-  echo "              run. Restore the heading rather than removing the check."
+  echo "FAIL [state]: $GATE_SELFTEST_STATE_FILE has no '## Active work' heading. Restore the heading"
+  echo "              rather than removing the check."
   fail=1
-else
-  lines=$(wc -l < "$GATE_SELFTEST_STATE_FILE")
-  # Count BULLETS, never lines. Prose under the heading is the section's own hint text and
-  # must not read as work — it wraps, so any "skip the first line" filter silently counts
-  # the second one and defeats the gate. That precise bug shipped once; hence the case in
-  # self_test().
-  active=$(awk '/^## Active work/{f=1;next} /^## /{f=0} f' "$GATE_SELFTEST_STATE_FILE" \
-    | grep -c "^[[:space:]]*[-*][[:space:]]")
-  if [ "$active" -eq 0 ] && [ "$lines" -gt 200 ]; then
-    echo "FAIL [state]: $GATE_SELFTEST_STATE_FILE is $lines lines with an EMPTY 'Active work' section —"
-    echo "              the operation closed but the file was never pruned. Harvest the"
-    echo "              permanent parts (grep for [LESSON] / [GOTCHA]) into their homes,"
-    echo "              then delete the rest: it is in git. Operation detail belongs in"
-    echo "              docs/<OPERATION>.md, with one pointer line here (docs/STATE.md)."
-    fail=1
-  elif [ "$lines" -gt 400 ]; then
-    echo "NOTE [state]: $GATE_SELFTEST_STATE_FILE is $lines lines with work still active. Move operation"
-    echo "              detail into docs/<OPERATION>.md and keep one status line and a"
-    echo "              pointer here; harvest as you go, so the prune is small later."
-  fi
 fi
 
 # Finished work. The commit that finishes a task says so with a "Done: <id>" trailer

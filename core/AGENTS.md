@@ -144,8 +144,9 @@ FAILING for the right reason.
 - Multi-item operations track their progress in their OWN file, `docs/<OPERATION>.md`, with
   checkboxes; workers write results straight into it, and STATE.md keeps one status line
   and a pointer. No note-then-fold step.
-- Length is free while work is active. `./scripts/check.sh` FAILS only when "Active work"
-  is empty and the file is still long — the operation closed and nobody pruned.
+- No size limit applies to STATE.md, and none is the remedy: a limit cannot tell a live
+  line from a finished one. What keeps it small is the rule above, deleting finished work in
+  the commit that finishes it, and the backlog living in `docs/BACKLOG.md`.
 
 ### Review gate and validation honesty
 
