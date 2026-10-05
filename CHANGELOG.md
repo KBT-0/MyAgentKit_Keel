@@ -210,7 +210,8 @@ from, and `5c80c36` is the kit's v0.8 commit.
    from `$KIT/overlays/unity/files/scripts/`.
 4. **ACTION:** Merge the kit's changes since v0.8 into the files that hold your setup
    content, one three-way merge per file (yours, the kit's v0.8 copy, the kit's current
-   copy). Conflicts are left in the file as `<<<<<<<` markers for the next item:
+   copy). Start from a committed project: the next item compares each merged file with
+   `HEAD`. Conflicts are left in the file as `<<<<<<<` markers for the next item:
    ```sh
    for f in AGENTS.md docs/DEV_SETUP.md docs/GOTCHAS.md docs/HANDOFF.md docs/REVIEW_GATE.md \
        docs/STATE.md docs/USAGE.md docs/WORKFLOW.md scripts/check.sh scripts/review.sh \
@@ -223,12 +224,28 @@ from, and `5c80c36` is the kit's v0.8 commit.
    `.claude/agents/worker.md` and `.claude/hooks/gate_on_stop.sh`, with
    `overlays/claude-code/files/$f` in place of `core/$f` in both places.
 5. **ACTION:** Resolve every conflict the merge left (`git diff --check` names each
-   leftover marker): take the kit's side and put back into it each value you had filled in
-   on your side. Expect them where a filled placeholder sits next to a kit change: the
+   leftover marker) so that both sides survive: the kit's new structure, and everything your
+   side added, that is each value you had filled in and every check, step or rule of your
+   own. Never drop a line of yours without knowing what it did: taking the kit's side whole
+   deleted a project's own check from the build arm and the gate still passed. Expect
+   conflicts where a filled placeholder sits next to a kit change: the
    `.githooks/pre-merge-commit` sentence in `AGENTS.md`, `build_test_cmd` in
-   `scripts/check.sh`, and the `model:` line of both `.claude/agents/` files. If you replaced
-   `scripts/boundary_selftests.sh` with your own cases at setup, keep your side there
-   instead and see the boundary self-test item below. Then fill the placeholders the merge brought in, which
+   `scripts/check.sh`, and the `model:` line of both `.claude/agents/` files; and wherever
+   you extended a block the kit rewrote, such as a check of your own in the build arm of
+   `scripts/check.sh`, which goes into the kit's new arm after its `fi`, before the `;;`.
+   If you replaced `scripts/boundary_selftests.sh` with your own cases at setup, the whole
+   file is one conflict: keep your side there and see the boundary self-test item below.
+   Then compare each merged file with your pre-merge copy (`git diff HEAD -- <file>`) and
+   account for every removed line. For each file `$f` of the previous item, with `$src` its
+   kit path there (`core/$f` or `overlays/claude-code/files/$f`), this prints the removed
+   lines the kit's own change does not also remove; each must be a line of yours whose job
+   now sits in a kit line (a value you put back, a kit line you had edited), never a check,
+   step or rule of yours that is gone:
+   ```sh
+   git -C "$KIT" diff 5c80c36 -- "$src" | grep '^-[^-]' > "$f.kit-removed"
+   git diff HEAD -- "$f" | grep '^-[^-]' | grep -vxF -f "$f.kit-removed"; rm -f "$f.kit-removed"
+   ```
+   Then fill the placeholders the merge brought in, which
    `./scripts/check.sh` lists: `{{OWNER_NAME}}` in new lines of `AGENTS.md` and
    `docs/WORKFLOW.md`, and `{{WORKER_EFFORT}}` in `.claude/agents/worker.md` (`low`,
    `medium` or `high`: the effort a delegated worker runs at, setup interview question 8).
