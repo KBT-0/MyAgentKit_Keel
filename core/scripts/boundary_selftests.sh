@@ -56,49 +56,18 @@
 # to probe_env. Every resolving cd is `CDPATH= cd -P`, and the injection is written to the
 # resolved, validated absolute path: with CDPATH set, `cd -P src/domain` validated a
 # directory the relative write never reached, and the write followed a symlink into the
-# checkout. A nested repository or linked worktree (a `.git` below the top level) keeps its
-# pointer to the original's git directory, so the case fails by name on one. A linked
-# worktree's `.git` is a pointer file, and the copied pointer kept the original's git
-# directory: a gate that stages its inputs staged the injection into the original's index.
-# Such a copy gets its own repository with the original's refs, HEAD and index, reading the
-# original's objects read-only through alternates (a bare `git init` lost HEAD, tags and the
-# staged state, and a gate that needs them failed the copy's baseline), and both the git
-# directory and the common directory must resolve inside the copy, else the case fails by
-# name. The repository takes the original's object format (a SHA-256 original's IDs did not
-# fit a SHA-1 copy) and an index rebuilt from the original's entries: a copied index file left
-# a split index's shared part behind, and the copy's index was unreadable. The original's
-# entries and refs are read into files first and each read's status checked: piped, a failed
-# read fed an empty index to a consumer that succeeded. The rebuilt index keeps intent-to-add
-# (`git add -N`), read with `git diff-files --diff-filter=A`: rebuilt from `ls-files -s` alone,
-# such a path became a staged empty blob and a gate checking the staged changes rejected the
-# copy. diff-files misses an intent-to-add path whose file was deleted, which then became a
-# staged empty blob all the same: every intent-to-add entry is counted with
-# `diff-index --cached --ita-invisible-in-index`, and one diff-files did not report is refused
-# by name, as are unmerged, skip-worktree and assume-unchanged entries. Both diffs run with
-# submodule ignoring off: an uninitialised submodule with ignore=all was left out of the diff and
-# refused as a missing intent-to-add file; its gitlink entry is now copied like any other, and
-# the whole-index comparison below proves it. `git add -N` records the
-# file's current mode, not the original index's, so the rebuilt index is compared with the
-# original's entry for entry and a difference fails the case by name. Every git command that
-# reads the original runs through probe_original, with the filesystem monitor, hooks and the
-# untracked cache off and no optional locks: with the original's configuration active, its
-# core.fsmonitor hook ran during a read and wrote into the original. The copy carries only an
-# allowlist of settings plus the keys named in probe_config_keys: a denylist of settings that
-# redirect storage or execution still passed the next one (tar.<format>.command ran from a
-# copied gate's `git archive`). Every other key gets a NOTE line, include.path and includeIf
-# among them. An allowlisted key is carried only when every value of it comes from the
-# repository's own config file; one set in the worktree configuration or an included file fails
-# the case by name, since the copy has one local file and flattening scopes and includes into
-# it changed what a gate's `git config <key> <value>` did. git init's own instances of a carried key are
-# removed first, so a gate's `git config core.filemode false` does not meet two values, and
-# the original's values are added in order. A valueless key is appended to the copy's config
-# file as valueless: carried as the string `true`, an untyped read of it in the copy differed
-# from the original's. The directories inside the copy's git storage were not checked: cp -R kept
-# `.git/objects` as a symlink to the original's store and a copied gate's `git add` wrote
-# there, so a file symlink in the git storage that resolves outside the copy fails the case by
-# name. A directory symlink fails it whatever its target: find does not descend through one, so
-# `.git/objects -> ../store` passed while an absolute link beneath `store` took the copy's
-# writes outside it. The original's objects stay reachable only through the alternates file.
+# checkout. The example supports a PLAIN repository only: a checkout whose `.git` is a file or
+# a symlink (a linked worktree, a submodule, `--separate-git-dir`) is refused by name and
+# reported NOT RUN, never passed. Its copied pointer kept the original's git directory, so a
+# gate that stages its inputs staged the injection into the original's index, and rebuilding
+# such a repository inside the copy (refs, HEAD, index, object format, intent-to-add) took
+# fourteen review rounds and still recreated symbolic refs as direct ones. A nested repository
+# (a `.git` below the top level) is refused by name for the same reason. The directories
+# inside the copy's git storage were not checked: cp -R kept `.git/objects` as a symlink to
+# the original's store and a copied gate's `git add` wrote there, so a file symlink in the git
+# storage that resolves outside the copy fails the case by name. A directory symlink fails it
+# whatever its target: find does not descend through one, so `.git/objects -> ../store` passed
+# while an absolute link beneath `store` took the copy's writes outside it.
 # Copying a large tree (dependencies, build output) costs time: copy only what the gate reads
 # if that is known, but never let the probe write into the checkout.
 #
@@ -122,10 +91,9 @@
 # |   esac
 # |   probe_env() { env -i PATH="$PATH" HOME="$HOME" LC_ALL=C TMPDIR="${TMPDIR:-/tmp}" "$@"; }
 # |   probe_fail() { echo "  FAIL — existing-file probe: $*"; exit 1; }
-# |   probe_original() {
-# |     probe_env GIT_OPTIONAL_LOCKS=0 git -c core.fsmonitor=false -c core.hooksPath=/dev/null \
-# |       -c core.untrackedCache=false -C "$probe_checkout" "$@"
-# |   }
+# |   probe_skip() { echo "  NOT RUN — existing-file probe: $*"; exit 1; }
+# |   [ -d .git ] && [ ! -L .git ] && [ ! -e .git/commondir ] ||
+# |     probe_skip "the checkout's .git is not a directory (a linked worktree, a submodule or a separate git directory); this example supports a plain repository only: run the self-test from the main checkout."
 # |   cp -R . "$probe_copy/checkout" && CDPATH= cd -P "$probe_copy/checkout" || exit 1
 # |   probe_root=$(pwd -P) || exit 1
 # |   probe_nested=$(find . -path ./.git -prune -o -name .git -print) ||
@@ -133,101 +101,6 @@
 # |   if [ -n "$probe_nested" ]; then
 # |     probe_nested=$(printf '%s\n' "$probe_nested" | sed -n '1{s|^\./||;s|/\.git$||;p;}')
 # |     probe_fail "the checkout contains a nested repository or worktree at $probe_nested; the existing-file probe does not support it."
-# |   fi
-# |   if [ -L .git ] || [ -f .git ]; then
-# |     probe_head=$(probe_original rev-parse -q --verify HEAD) || probe_head=
-# |     probe_original for-each-ref --format='create %(refname) %(objectname)' > "$probe_copy/refs" ||
-# |       probe_fail "could not read the original's refs (git for-each-ref); refusing to run."
-# |     probe_original ls-files -s -z --full-name > "$probe_copy/index" ||
-# |       probe_fail "could not read the original's index (git ls-files); refusing to run."
-# |     # ls-files -v tags: M unmerged, S skip-worktree, lower case assume-unchanged.
-# |     probe_original ls-files -v > "$probe_copy/flags" ||
-# |       probe_fail "could not read the original's index flags (git ls-files -v); refusing to run."
-# |     ! grep -q '^[Mm] ' "$probe_copy/flags" ||
-# |       probe_fail "the original index has unmerged entries; the existing-file probe does not support them."
-# |     ! grep -q '^[Ss] ' "$probe_copy/flags" ||
-# |       probe_fail "the original index has skip-worktree entries; the existing-file probe does not support them."
-# |     ! grep -q '^[a-z] ' "$probe_copy/flags" ||
-# |       probe_fail "the original index has assume-unchanged entries; the existing-file probe does not support them."
-# |     # Submodule ignoring off: an ignored gitlink left out of a diff was counted as intent-to-add.
-# |     probe_original -c diff.ignoreSubmodules=none diff-files --ignore-submodules=none --diff-filter=A \
-# |       --name-only -z > "$probe_copy/ita" ||
-# |       probe_fail "could not read the original's intent-to-add entries (git diff-files); refusing to run."
-# |     # Every intent-to-add entry, whatever its working tree: those --ita-invisible-in-index hides.
-# |     probe_original ls-files > "$probe_copy/paths" &&
-# |       probe_empty=$(probe_original hash-object -t tree /dev/null) &&
-# |       probe_original -c diff.ignoreSubmodules=none diff-index --cached --ignore-submodules=none \
-# |         --ita-invisible-in-index --name-only "$probe_empty" > "$probe_copy/visible" ||
-# |       probe_fail "could not count the original's intent-to-add entries (git diff-index); refusing to run."
-# |     [ $(( $(wc -l < "$probe_copy/paths") - $(wc -l < "$probe_copy/visible") )) -eq $(( $(tr -cd '\000' < "$probe_copy/ita" | wc -c) )) ] ||
-# |       probe_fail "the original index has an intent-to-add entry whose file is missing from the working tree; the existing-file probe does not support it."
-# |     probe_allowed="user.name user.email core.autocrlf core.eol core.safecrlf core.filemode
-# |       core.ignorecase core.symlinks core.quotepath core.precomposeunicode core.whitespace
-# |       core.abbrev init.defaultbranch $probe_config_keys"
-# |     # Only the repository's own config file is carried: the copy has one local file, and a value
-# |     # from the worktree configuration or an include placed there changes what a gate's write does.
-# |     probe_original config --show-scope --show-origin --includes --name-only --list > "$probe_copy/names" &&
-# |       probe_original config --local --no-includes --show-origin --name-only --list > "$probe_copy/own" &&
-# |       probe_original config --local --no-includes --list -z > "$probe_copy/config" ||
-# |       probe_fail "could not read the original's configuration (git config); refusing to run."
-# |     probe_own=$(LC_ALL=C awk -F '\t' 'NR == 1 { print $1 }' "$probe_copy/own") || exit 1
-# |     PROBE_OWN=$probe_own PROBE_ALLOWED=$probe_allowed LC_ALL=C awk -F '\t' '
-# |       BEGIN { n = split(ENVIRON["PROBE_ALLOWED"], k, " "); for (i = 1; i <= n; i++) allowed[k[i]] = 1 }
-# |       $1 != "local" && $1 != "worktree" { next }
-# |       { key = $0; sub(/^[^\t]*\t[^\t]*\t/, "", key) }
-# |       !(key in allowed) {
-# |         # git init in the copy sets these from the copy itself.
-# |         if (key !~ /^(core\.repositoryformatversion|core\.bare|extensions\.objectformat)$/ && !noted[key]++)
-# |           print "  NOTE — existing-file probe: " key " is not carried into the disposable copy; a setting your gate reads goes in probe_config_keys."
-# |         next
-# |       }
-# |       $1 == "worktree" || $2 != ENVIRON["PROBE_OWN"] {
-# |         print "  FAIL — existing-file probe: " key " is set in " ($1 == "worktree" ? "the worktree configuration" : "an included configuration file") \
-# |           "; the existing-file probe carries a setting only from the repository'"'"'s own config file: set it there, or remove it from probe_config_keys."
-# |         exit 1
-# |       }' "$probe_copy/names" || exit 1
-# |     { probe_from=$(CDPATH= cd -P "$probe_checkout" && CDPATH= cd -P "$(probe_original rev-parse --git-common-dir)" && pwd -P) &&
-# |       probe_format=$(probe_original rev-parse --show-object-format) &&
-# |       rm -f .git && probe_env git init -q --object-format="$probe_format" &&
-# |       # Status 5 is "not set": git init wrote no instance of that key.
-# |       probe_env sh -c 'for probe_key; do git config --unset-all "$probe_key" || [ $? -eq 5 ] || exit 1; done' \
-# |         sh $probe_allowed &&
-# |       probe_env PROBE_ALLOWED="$probe_allowed" xargs -0 sh -c '
-# |         for probe_entry; do
-# |           probe_key=$(printf "%s\n" "$probe_entry" | sed -n 1p) || exit 1
-# |           probe_carry=
-# |           for probe_allowed in $PROBE_ALLOWED; do [ "$probe_key" != "$probe_allowed" ] || probe_carry=1; done
-# |           [ -n "$probe_carry" ] || continue
-# |           if [ "$probe_entry" != "$probe_key" ]; then
-# |             git config --add "$probe_key" "${probe_entry#"$probe_key"?}" || exit 1
-# |           else
-# |             # A valueless key (no newline in the entry) has no `git config` syntax: append it.
-# |             probe_section=${probe_key%.*}
-# |             case $probe_section in
-# |               *.*) probe_sub=$(printf "%s\n" "${probe_section#*.}" | sed "s/[\\\\\"]/\\\\&/g") || exit 1
-# |                    probe_section="${probe_section%%.*} \"$probe_sub\"" ;;
-# |             esac
-# |             printf "[%s]\n\t%s\n" "$probe_section" "${probe_key##*.}" >> .git/config || exit 1
-# |           fi
-# |         done' sh < "$probe_copy/config" &&
-# |       printf '%s/objects\n' "$probe_from" > .git/objects/info/alternates &&
-# |       probe_env git update-ref --stdin < "$probe_copy/refs" &&
-# |       if probe_branch=$(probe_original symbolic-ref -q HEAD); then
-# |         probe_env git symbolic-ref HEAD "$probe_branch"
-# |       elif [ -n "$probe_head" ]; then
-# |         probe_env git update-ref --no-deref HEAD "$probe_head"
-# |       fi &&
-# |       probe_env git update-index -z --index-info < "$probe_copy/index" &&
-# |       probe_env git update-index -z --force-remove --stdin < "$probe_copy/ita" &&
-# |       { [ ! -s "$probe_copy/ita" ] ||
-# |         probe_env git --literal-pathspecs add -f -N --pathspec-from-file="$probe_copy/ita" --pathspec-file-nul; } &&
-# |       { probe_env git update-index -q --refresh >/dev/null 2>&1 || :; } &&
-# |       probe_env git ls-files -s -z --full-name > "$probe_copy/rebuilt" &&
-# |       [ "$(probe_env git rev-parse -q --verify HEAD)" = "$probe_head" ]; } ||
-# |       probe_fail "could not give the disposable copy its own git repository with the original's HEAD, history and index; refusing to run."
-# |     # --index-info copies every other entry verbatim; only a re-added intent-to-add can differ.
-# |     cmp -s "$probe_copy/index" "$probe_copy/rebuilt" ||
-# |       probe_fail "the original index has an intent-to-add entry whose mode differs from its file; the existing-file probe does not support it."
 # |   fi
 # |   if probe_top=$(probe_env git rev-parse --show-toplevel 2>/dev/null); then
 # |     [ "$(CDPATH= cd -P "$probe_top" && pwd -P)" = "$probe_root" ] ||
