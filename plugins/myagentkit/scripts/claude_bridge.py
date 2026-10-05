@@ -315,8 +315,10 @@ def validate(envelope: object, mode: str, model: str) -> dict:
     if envelope.get("type") != "result" or envelope.get("subtype") != "success":
         raise BridgeError("CLI result is incomplete (budget, turns, or execution failed)")
     used = envelope.get("modelUsage", {})
+    # The pinned id itself, or it with a -YYYYMMDD date: a prefix match let claude-opus-5-5,
+    # another model, attest the pin claude-opus-5.
     if not isinstance(used, dict) or not any(
-        key == model or key.startswith(model + "-") for key in used if isinstance(key, str)
+        re.fullmatch(re.escape(model) + r"(-[0-9]{8})?", key) for key in used if isinstance(key, str)
     ):
         raise BridgeError("requested model is absent from CLI modelUsage evidence")
     value = envelope.get("structured_output")

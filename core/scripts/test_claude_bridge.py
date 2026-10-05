@@ -21,7 +21,7 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'MYAGENTKIT_TASK_ID', 'MYAGENTKIT_R
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 83, 'test_agent_usage': 19, 'test_codex_quota': 5}
+SUITE_MINIMUMS = {'test_claude_bridge': 84, 'test_agent_usage': 19, 'test_codex_quota': 5}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -1473,6 +1473,22 @@ class BridgeTests(unittest.TestCase):
                 self.assertEqual(header_of(result["evidence"])["status"], "failed")
                 # A failed run that still printed a verdict would read as an approval.
                 self.assertEqual(verdicts_of(result["evidence"]), [])
+
+    def test_the_pin_is_attested_by_its_exact_id_or_a_dated_one_only(self):
+        # Matched as a prefix, the usage key claude-opus-5-5, another model, attested the pin
+        # claude-opus-5. Only the pinned id itself, or it with a -YYYYMMDD date, attests it.
+        value = {'verdict': 'Accept', 'findings': [], 'manual_checks': []}
+        for key, attested in (('claude-opus-5', True), ('claude-opus-5-20261001', True),
+                              ('claude-opus-5-5', False), ('claude-opus-5-5-20261001', False),
+                              ('claude-opus-5-2026100', False), ('claude-opus-5-20261001x', False)):
+            with self.subTest(key=key):
+                envelope = {'type': 'result', 'subtype': 'success', 'is_error': False,
+                            'modelUsage': {key: {}}, 'structured_output': value}
+                if attested:
+                    self.assertEqual(bridge.validate(envelope, 'review', 'claude-opus-5'), value)
+                else:
+                    with self.assertRaisesRegex(bridge.BridgeError, 'modelUsage'):
+                        bridge.validate(envelope, 'review', 'claude-opus-5')
 
     def test_timeout_fails_and_archives_failure(self):
         code, result = self.run_bridge("timeout", extra=["--timeout", "1"])
