@@ -72,10 +72,13 @@
 # probe_config_keys: kept verbatim, it ran the original's core.hooksPath and a copied gate's
 # `git archive` ran its tar.<format>.command, and a denylist of such keys had already missed
 # the next one. Every other key gets a NOTE line, include.path and includeIf among them, and
-# .git/config.worktree is removed. An allowlisted key is carried only when every value of it
-# comes from the repository's own config file; one set in the worktree configuration or an
-# included file fails the case by name, since flattening scopes and includes into one file
-# changed what a gate's `git config <key> <value>` did. The values are added in order, and a
+# .git/config.worktree is removed. The settings are read from the copy's .git/config as copied,
+# so equal digests mean equal settings: read again from the live checkout after the copy was
+# hashed, a setting changed in between made the injected run fail on its own. An allowlisted
+# key is carried only when every value of it comes from the repository's own config file;
+# one set in the worktree configuration or an included file fails the case by name, since
+# flattening scopes and includes into one file changed what a gate's `git config <key>
+# <value>` did. The values are added in order, and a
 # valueless key is written as valueless: carried as the string `true`, an untyped read of it
 # in the copy differed from the original's. The copy's .git/hooks starts empty: copied with
 # the rest, the original's hooks ran from a copied gate's `git commit`.
@@ -259,10 +262,11 @@
 # |     cp -RP "$probe_checkout" "$probe_copy/checkout" && CDPATH= cd -P "$probe_copy/checkout" || exit 1
 # |     probe_root=$(pwd -P) || exit 1
 # |     probe_audit
-# |     probe_env git -C "$probe_checkout" config --show-origin --includes --name-only --list > "$probe_copy/names" &&
-# |       probe_env git -C "$probe_checkout" config --local --no-includes --show-origin --name-only --list > "$probe_copy/own" &&
-# |       probe_env git -C "$probe_checkout" config --local --no-includes --list -z > "$probe_copy/config" ||
-# |       probe_fail "could not read the original's configuration (git config); refusing to run."
+# |     # The settings come from the copy's .git/config as copied and hashed, never the live checkout.
+# |     probe_env git config --show-origin --includes --name-only --list > "$probe_copy/names" &&
+# |       probe_env git config --local --no-includes --show-origin --name-only --list > "$probe_copy/own" &&
+# |       probe_env git config --local --no-includes --list -z > "$probe_copy/config" ||
+# |       probe_fail "could not read the copy's configuration (git config); refusing to run."
 # |     probe_own=$(LC_ALL=C awk -F '\t' 'NR == 1 { print $1 }' "$probe_copy/own") || exit 1
 # |     PROBE_NOTED=$probe_noted PROBE_OWN=$probe_own PROBE_ALLOWED=$probe_allowed LC_ALL=C awk -F '\t' '
 # |       BEGIN { n = split(ENVIRON["PROBE_ALLOWED"], k, " "); for (i = 1; i <= n; i++) allowed[k[i]] = 1 }

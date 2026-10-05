@@ -633,6 +633,34 @@ exit 1
                           ' run the self-test again', result.stdout)
             self.assertNotIn('  ok   — ', result.stdout)
 
+    def test_the_carried_configuration_is_the_copy_s_own(self):
+        # After the second copy was hashed, its carried settings were read again from the live
+        # checkout: a setting changed in between made the injected run print the diagnostic on
+        # its own, with both digests equal. A git wrapper changes the checkout's setting just
+        # before the second copy's configuration is read; the copy's own, as hashed, is carried.
+        with tempfile.TemporaryDirectory() as tmp:
+            # The gate never sees the injection: only kit.mode=fail makes it print the diagnostic.
+            root, git = self.fixture(tmp, '[ "$(git config kit.mode)" != fail ] || '
+                                          "{ echo 'FAIL [boundary]: the domain layer imports the web layer:'; exit 1; }\n"
+                                          'exit 0\n', config_keys='kit.mode')
+            git('config', 'kit.mode', 'pass')
+            shim, first, second = (Path(tmp) / name for name in ('shim', 'first', 'second'))
+            shim.mkdir()
+            real = shlex.quote(shutil.which('git'))
+            (shim / 'git').write_text(
+                '#!/bin/sh\ncase " $* " in *" --includes "*)\n'
+                '  if [ -e %s ]; then [ -e %s ] || { : > %s && %s --git-dir=%s config kit.mode fail; } || exit 1\n'
+                '  else : > %s; fi ;;\nesac\nexec %s "$@"\n'
+                % (shlex.quote(str(first)), shlex.quote(str(second)), shlex.quote(str(second)), real,
+                   shlex.quote(str(root / '.git')), shlex.quote(str(first)), real))
+            (shim / 'git').chmod(0o755)
+            result = self.self_test(tmp, root, PATH='%s%s%s' % (shim, os.pathsep, os.environ['PATH']))
+            self.assertTrue(second.exists(), 'the wrapper did not change the checkout')
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn("FAIL — existing-file probe: the injection did not produce the domain/web gate's failure",
+                          result.stdout)
+            self.assertNotIn('  ok   — ', result.stdout)
+
     def test_a_special_file_in_the_checkout_is_refused_by_name(self):
         # The digest reads regular files only: a FIFO would block the read, a device has no end.
         with tempfile.TemporaryDirectory() as tmp:
