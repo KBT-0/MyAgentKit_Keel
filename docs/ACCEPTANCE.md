@@ -132,7 +132,32 @@ budget, so the full review was split into two consistent commit ranges, each its
   PASS`); and the red-then-green proof of each negative test, executed by the author of each
   fix and quoted in `RESEARCH_LOG.md`, not re-executed by the reviewer.
 
-The cross-model acceptance closes here: range A's and range B's findings are fixed within
+- Range D, from `3536cb7` (the tree range C accepted) after four more reviewers on it
+  (Codex gpt-5.6-sol at maximum effort, Claude Opus 5.5, Claude Fable 5.1 and the cloud
+  review: three Reject, 6 High, about 15 Medium, about 30 Low) and their fixes: Codex
+  gpt-6-astra, a new label per round, each round on the commits since the round before:
+  d1 `20261005T144654Z-4b7c6350ed86` (head 31c8f7a; one High, five Medium, one Low), d2
+  `20261005T155154Z-d99adf9eb392` (head 1afba49; one High, one Medium), d3
+  `20261005T161651Z-96d3a0005405` (head 62d2988; one High, two Medium, one Low), d4
+  `20261005T164918Z-641c82c536dd` (head d826ccd; one High, two Medium, one Low), d5
+  `20261005T171817Z-3dadd6d72417` (head ed29079; two High, two Medium), d6
+  `20261005T174251Z-84db650194f0` (head 4baf4e0; one High, one Medium), each Reject, each
+  finding fixed with negative tests watched red first except the one below. From d2 on
+  every High, and from d5 on every finding, was in the existing-file example of
+  `boundary_selftests.sh`. Round d7 `20261005T180545Z-c0facc9ab29b` on head 3d4f45c, under
+  d6's label with the author's dispositions: **Accept with Manual Checks**, the d6 High
+  confirmed fixed, no new finding.
+- OPEN, an accepted limit, not a fix (the owner's decision, the reviewer's deferred
+  finding): when the existing-file example deletes a copy, its last step checks that the
+  temporary root is still the folder `mktemp` made and then removes that name with
+  `rmdir`; a process of the same user that swaps an EMPTY directory into the name between
+  the two gets that empty directory removed. Nothing with content, no file and no link
+  target can be removed this way. NOT RUN: a deterministic test of that window.
+- NOT RUN by the reviewer in range D: any test. The kit self-test was executed by the lead
+  on each reviewed head (`KIT CHECK: PASS` on 31c8f7a, 1afba49, 62d2988, d826ccd, ed29079,
+  4baf4e0 and 3d4f45c).
+
+The cross-model acceptance of ranges A to C closed here: range A's and range B's findings are fixed within
 ranges B and C, and range C's last round is an Accept. What this does NOT establish: one
 review of the whole diff in a single prompt (it exceeds the budget), and the commits after
 head 771951e, which change documentation only. The round-1 record of the

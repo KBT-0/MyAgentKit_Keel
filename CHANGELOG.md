@@ -170,7 +170,8 @@ in `RESEARCH_LOG.md` (2026-10-03). Most of the files below are project-owned, so
   that changed between the two is reported `NOT RUN` (run the self-test again). The example
   changes no mode and deletes a copy only through the folder `mktemp` made, entry by entry
   from that open folder: a root that is no longer that folder is refused by name with
-  nothing deleted, and a copy the gate left unreadable fails the case with its path. The
+  nothing deleted (one stated limit: an empty directory swapped into the name between that
+  check and the last `rmdir` is removed), and a copy the gate left unreadable fails the case with its path. The
   carried git settings are read from the copy, never from the live checkout again, and the
   hash covers every entry's permission bits and the git index. Any `include.path` or
   `includeIf` entry in the repository's configuration is refused by name (`NOT RUN`),
