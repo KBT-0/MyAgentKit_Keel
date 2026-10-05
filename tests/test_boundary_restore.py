@@ -556,6 +556,46 @@ exit 1
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn('  ok   — ', result.stdout)
 
+    def test_cleanup_changes_no_mode_of_a_hard_linked_checkout_file(self):
+        # The cleanup ran `chmod -R u+rwx` on the copy before `rm -rf`: a hard link the baseline
+        # made to a checkout file got that file's mode changed, and a temporary root replaced by
+        # a symlink took chmod into the link's target. Only folders of the copy, reached without
+        # following a link, get a mode now, and a root that is no longer the one made is refused.
+        with tempfile.TemporaryDirectory() as tmp:
+            # The checkout and TMPDIR share one filesystem by construction, so the hard link is made.
+            root, git = self.fixture(tmp, "grep -q 'myapp.web' src/domain/existing.py || "
+                                          'ln "$ORIGIN/src/domain/existing.py" hard || exit 1\n', names=('ORIGIN',))
+            original = root / 'src/domain/existing.py'
+            original.chmod(0o640)
+            result = self.self_test(tmp, root, ORIGIN=str(root))
+            self.assertEqual(original.stat().st_mode & 0o777, 0o640, 'the cleanup changed a checkout file')
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('  ok   — ', result.stdout)
+
+    def test_a_temporary_root_replaced_by_a_symlink_is_refused_by_name(self):
+        # See the test above: chmod -R walked the link's target outside the copy.
+        with tempfile.TemporaryDirectory() as tmp:
+            outside = Path(tmp) / 'outside'
+            (outside / 'sub').mkdir(parents=True)
+            (outside / 'kept').write_text('outside\n')
+            (outside / 'kept').chmod(0o600)
+            (outside / 'sub').chmod(0o500)
+            modes = lambda: [(path.name, path.lstat().st_mode) for path in (outside, outside / 'kept', outside / 'sub')]
+            before = modes()
+            root, git = self.fixture(tmp, "grep -q 'myapp.web' src/domain/existing.py || { copy=$(dirname \"$(pwd -P)\") && "
+                                          'mv "$copy" "$copy.moved" && ln -s "$OUTSIDE" "$copy"; } || exit 1\n',
+                                     names=('OUTSIDE',))
+            try:
+                result = self.self_test(tmp, root, OUTSIDE=str(outside))
+                self.assertEqual(modes(), before, 'the cleanup changed a mode outside the copy')
+            finally:
+                (outside / 'sub').chmod(0o700)
+            self.assertEqual((outside / 'kept').read_text(), 'outside\n')
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn('is no longer the directory made for the disposable copy', result.stdout)
+            self.assertIn('deleted nothing', result.stdout)
+            self.assertNotIn('  ok   — ', result.stdout)
+
     def test_a_folder_the_baseline_hides_goes_with_its_copy(self):
         # os.walk skips a folder it cannot read: a baseline that hid an outside symlink in one
         # passed the audit run again on its copy, and the next run made it readable and wrote

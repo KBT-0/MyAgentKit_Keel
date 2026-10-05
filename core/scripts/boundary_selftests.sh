@@ -96,6 +96,13 @@
 # still share PATH, which a baseline changes only through a writable PATH directory, outside
 # the example's reach, and the checkout, which the example only reads. A folder the audit
 # cannot read fails it by name (os.walk skips one), and its Python runs isolated (-I).
+# Deleting a copy changes the mode of its folders only, never of a file, each set by name
+# relative to its open parent without following a link: `chmod -R u+rwx` before `rm -rf`
+# made a checkout file the baseline had hard-linked into its copy executable, and followed a
+# temporary root the baseline had replaced with a symlink. `find -type d -exec chmod` is not
+# enough, since chmod resolves the whole path again and a folder swapped for a link in between
+# takes it outside. The root's device and inode are recorded when mktemp makes it; a root that
+# is no longer that folder is refused by name, and nothing is deleted.
 # Copying a large tree (dependencies, build output) costs time, twice: copy only what the
 # gate reads if that is known, but never let the probe write into the checkout.
 #
@@ -109,9 +116,47 @@
 # |   probe_config_keys=""
 # |   probe_checkout=$(pwd -P) || exit 1
 # |   probe_copy=
-# |   # Made writable first: a read-only folder (a module cache) would survive `rm -rf`.
-# |   probe_delete() { [ -z "$probe_copy" ] || { chmod -R u+rwx "$probe_copy" 2>/dev/null; rm -rf "$probe_copy"; }; }
-# |   trap probe_delete EXIT
+# |   probe_id=
+# |   # Only folders of the copy are made writable (a read-only one, a module cache, survives
+# |   # `rm -rf`), each by name relative to its open parent and never through a link; the root
+# |   # must still be the folder mktemp made (device and inode), or nothing is deleted.
+# |   probe_delete() {
+# |     [ -z "$probe_copy" ] || {
+# |       python3 -I -c '
+# | import os, stat, sys
+# | path, made = sys.argv[1], sys.argv[2]
+# | def refuse(why):
+# |     print("  FAIL — existing-file probe: " + why + "; deleted nothing.")
+# |     sys.exit(1)
+# | def writable(dir_fd, name, made=None):
+# |     mode = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+# |     if made is not None and (not stat.S_ISDIR(mode.st_mode) or "%d %d" % (mode.st_dev, mode.st_ino) != made):
+# |         refuse(path + " is no longer the directory made for the disposable copy")
+# |     if not stat.S_ISDIR(mode.st_mode):
+# |         return
+# |     if mode.st_mode & 0o700 != 0o700:
+# |         os.chmod(name, stat.S_IMODE(mode.st_mode) | 0o700, dir_fd=dir_fd, follow_symlinks=False)
+# |     fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=dir_fd)
+# |     try:
+# |         opened = os.fstat(fd)
+# |         if made is not None and "%d %d" % (opened.st_dev, opened.st_ino) != made:
+# |             refuse(path + " is no longer the directory made for the disposable copy")
+# |         for entry in os.listdir(fd):
+# |             writable(fd, entry)
+# |     finally:
+# |         os.close(fd)
+# | try:
+# |     writable(os.open(os.path.dirname(path), os.O_RDONLY | os.O_DIRECTORY), os.path.basename(path), made)
+# | except (OSError, NotImplementedError) as error:
+# |     refuse("could not make " + path + " deletable without following a link (" + str(error) + ")")
+# | ' "$probe_copy" "$probe_id" && rm -rf "$probe_copy"
+# |       probe_gone=$?
+# |       probe_copy=
+# |       return "$probe_gone"
+# |     }
+# |   }
+# |   # A copy that could not be deleted fails the case, after a run that passed as well.
+# |   trap 'probe_exit=$?; probe_delete || [ "$probe_exit" -ne 0 ] || exit 1' EXIT
 # |   trap 'exit 130' INT
 # |   trap 'exit 143' TERM
 # |   probe_fail() { echo "  FAIL — existing-file probe: $*"; exit 1; }
@@ -168,6 +213,8 @@
 # |   # directory, audited, with empty hooks and only the allowlisted settings.
 # |   probe_fresh_copy() {
 # |     probe_copy=$(mktemp -d) && probe_copy=$(CDPATH= cd -P "$probe_copy" && pwd -P) || exit 1
+# |     probe_id=$(python3 -I -c 'import os, sys; made = os.lstat(sys.argv[1]); print(made.st_dev, made.st_ino)' \
+# |       "$probe_copy") || exit 1
 # |     case "$probe_copy/" in
 # |       "$probe_checkout"/*) probe_fail "the disposable copy ($probe_copy) is inside the checkout; set TMPDIR outside it." ;;
 # |     esac
@@ -217,7 +264,7 @@
 # |   probe_env sh "$probe_root/$probe_gate" >/dev/null 2>&1 ||
 # |     probe_fail "the baseline is already red; the injection would prove nothing."
 # |   cd / && probe_delete ||
-# |     probe_fail "could not delete the baseline run's copy ($probe_copy); refusing to run."
+# |     probe_fail "could not delete the baseline run's copy; refusing to run."
 # |   probe_fresh_copy
 # |   printf 'from myapp.web import router\n' > "$probe_root/$probe_target" || exit 1
 # |   probe_status=0
