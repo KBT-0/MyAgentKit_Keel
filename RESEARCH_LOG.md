@@ -745,6 +745,19 @@ store) and left one gap named: a signal between the last pending check and the u
 reaches the caller's handler as a signal after the hand-back. Both are for the next
 cross-model round to judge.
 
+#### Existing-file example: plain repository only
+
+A second model found four High in the example that five rounds of the first had accepted:
+a symlink anywhere in the copy leading back into the checkout, a plain repository's config
+copied verbatim (every configuration test had used a linked worktree), the real HOME and
+global git configuration, and a baseline run that swaps the target for a link. The owner
+reversed "keep patching": the example supports a plain repository only and refuses the
+rest by name as NOT RUN, which fails the self-test. Cost, known and accepted: a project
+that adopts the example cannot get a green `--self-test` inside a linked worktree, which
+is where the kit's own workers run. The rebuild block and nineteen tests went; one audit of
+the whole copy runs before and after the baseline. Not run: macOS/BSD, git older than
+2.55, Python 3.10. Open at merge: the copy keeps the original's `.git/hooks` files.
+
 #### The review gate held on the kit's own hardening
 
 Five of the nine work packages (the gate lock, both review-tooling packages, the commit gates

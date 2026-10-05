@@ -406,6 +406,20 @@ hand merge; `sync-kit.sh` now keeps listing them until you confirm (see "Sync st
   conflict, merge your hook's checks into the kit's file (or move yours aside) and sync
   again; port the `LC_ALL=C` lines into your `scripts/check.sh`; copy `agent_process.py`,
   `agent_usage.py`, `claude_bridge.py`, `codex_bridge.py`, `codex_quota.py` again.
+- **Existing-file example: a plain repository only (review of 2026-10-05).** The worked
+  example in `scripts/boundary_selftests.sh` lost its rebuild of linked-worktree git state
+  (286 lines to 206). A checkout whose `.git` is not a directory (a linked worktree, a
+  submodule, a separate git directory) or that holds a nested repository is refused by name
+  and reported `NOT RUN`, which FAILS the self-test: run `--self-test` from the main
+  checkout. On the plain path the copy is made with `cp -RP`; every symlink that leads out
+  of the copy is refused, before the baseline gate run and again after it; git and the
+  copied gate run with an empty HOME and no system or global git configuration; the copied
+  `.git/config` is replaced by an allowlist plus `probe_config_keys`. The dot-file example
+  removes its injection on INT/TERM as well as on exit. **ACTION:** this supersedes every
+  earlier v0.9 ACTION about the existing-file example: replace your copy of it with the
+  kit's current one and adapt the target and diagnostic again; port the dot-file example's
+  subshell and trap; name any repository setting your gate reads in `probe_config_keys`;
+  give a tool that needs a cache directory its own variable in `probe_env`.
 
 ## v0.8 — 2026-10-03
 
