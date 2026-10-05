@@ -56,7 +56,7 @@ def main(argv=None):
         raise ValueError("empty diff: nothing was reviewed")
     # Once for either reviewer: a missing, foreign or oversized earlier round stops the review
     # here, exit 2 with one message, before a chain is recorded or any model is called.
-    claude_bridge.prior_rounds(repo, os.environ.get("MYAGENTKIT_TASK_ID"), scope, ref,
+    claude_bridge.prior_rounds(repo, os.environ.get("MYAGENTKIT_TASK_ID"), scope, original[3],
                                original[0], original[2])
     timeout = int(os.environ.get("REVIEW_TIMEOUT_SECONDS", str(agent_process.DEFAULT_REVIEW_TIMEOUT)))
     if not 1 <= timeout <= 3600:

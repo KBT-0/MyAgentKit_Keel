@@ -21,7 +21,7 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'MYAGENTKIT_TASK_ID', 'MYAGENTKIT_R
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 84, 'test_agent_usage': 19, 'test_codex_quota': 5}
+SUITE_MINIMUMS = {'test_claude_bridge': 85, 'test_agent_usage': 19, 'test_codex_quota': 5}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -329,6 +329,65 @@ class BridgeTests(unittest.TestCase):
                 self.assertEqual(received[0]['failure_kind'], 'stale_checkout')
                 usage = json.loads(Path(received[0]['usage_record']).read_text())
                 self.assertEqual(usage['task']['resolved'], original)
+
+    def test_one_review_resolves_its_base_reference_once(self):
+        # Resolved three times in one review (the diff, the usage record, the carried-round
+        # check), a reference moved in between gave a diff against one commit, a record keyed
+        # to another and a carried round refused against the second.
+        from contextlib import redirect_stdout
+        from io import StringIO
+        import shutil
+        from unittest.mock import patch
+        import codex_bridge
+        original = self.git('rev-parse', 'HEAD').stdout.decode().strip()
+        (self.repo / 'intermediate.txt').write_text('INTERMEDIATE_CHANGE\n')
+        self.commit_fixture('Intermediate revision')
+        intermediate = self.git('rev-parse', 'HEAD').stdout.decode().strip()
+        (self.repo / 'file.py').write_text('final\n')
+        self.commit_fixture('Reviewed revision')
+        # A git that moves the reference right after the review's first resolve of it, once.
+        shim, moved, real = self.root / 'shim', self.root / 'moved', shutil.which('git')
+        shim.mkdir()
+        (shim / 'git').write_text(
+            '#!/bin/sh\n"%s" "$@"; status=$?\ncase "$*" in *"--verify review-base^{commit}"*)\n'
+            '  [ -e "%s" ] || { : > "%s"; "%s" -C "%s" update-ref refs/heads/review-base %s; } ;;\n'
+            'esac\nexit $status\n' % (real, moved, moved, real, self.repo, intermediate))
+        (shim / 'git').chmod(0o755)
+        for main, args in ((bridge.main, ['review']),
+                           (codex_bridge.main, ['--model', 'fixture-codex-model'])):
+            label = 'moving-base-' + ('claude' if main is bridge.main else 'codex')
+            prompts = []
+
+            def execution(command, prompt, repo, timeout, into=None, noted=None):
+                prompts.append(prompt)
+                if '-o' in command:
+                    Path(command[command.index('-o') + 1]).write_text('VERDICT: Accept\n')
+                    value = {'type': 'turn.completed', 'usage': {}}
+                else:
+                    value = {'type': 'result', 'subtype': 'success', 'is_error': False,
+                             'modelUsage': {'claude-opus-5': {}}, 'structured_output':
+                             {'verdict': 'Accept', 'findings': [], 'manual_checks': []}}
+                return {'exit_code': 0, 'stdout': json.dumps(value), 'stderr': '',
+                        'termination': None, 'duration_ms': 1}
+
+            with self.subTest(label=label):
+                self.git('update-ref', 'refs/heads/review-base', original)
+                moved.unlink(missing_ok=True)
+                received = []
+                # Round one, nothing moves; round two, the reference moves after its first resolve.
+                for path in (os.environ['PATH'], str(shim) + os.pathsep + os.environ['PATH']):
+                    with patch.dict(os.environ, self.review_env(MYAGENTKIT_TASK_ID=label, PATH=path)), \
+                            patch('agent_process.run', side_effect=execution), redirect_stdout(StringIO()):
+                        main([*args, '--repo', str(self.repo), '--base', 'review-base'], received.append)
+                self.assertTrue(moved.exists(), 'the reference never moved')
+                self.assertEqual(received[0]['status'], 'completed', received[0])
+                # The diff, the carried round and the record all use the commit resolved first.
+                self.assertIn('INTERMEDIATE_CHANGE', prompts[1])
+                self.assertIn('This is review round 2', prompts[1])
+                usage = json.loads(Path(received[1]['usage_record']).read_text())
+                self.assertEqual(usage['task']['resolved'], original)
+                # The reference did move during the review: the result is stale, as before.
+                self.assertEqual(received[1]['failure_kind'], 'stale_checkout')
 
     def test_an_archive_gone_before_accounting_still_records_the_attempt(self):
         # record() reopened the archive to hash it, so an archive deleted in between aborted
@@ -1534,7 +1593,7 @@ class BridgeTests(unittest.TestCase):
         code, result = self.run_bridge(extra=["--commit", "HEAD"])
         self.assertEqual(code, 0, result)
         (self.repo / "new file.txt").write_text("a new file\n")
-        _, _, diff = bridge.snapshot(self.repo, "uncommitted", None)
+        diff = bridge.snapshot(self.repo, "uncommitted", None)[2]
         self.assertIn("new file.txt", diff)
 
     def test_archiving_does_not_recursively_expand_the_next_review(self):
