@@ -85,6 +85,7 @@ class DoctorTests(unittest.TestCase):
             ready = doctor()
             self.assertEqual(ready.returncode, 0, ready.stdout + ready.stderr)
             self.assertIn('DOCTOR: ready', ready.stdout)
+            self.assertEqual(ready.stderr, '')
 
             # An exported CDPATH naming a directory with a scripts/ in it took doctor's first
             # cd there, and it reported that other tree as a broken machine.
@@ -212,6 +213,22 @@ class DoctorTests(unittest.TestCase):
             self.assertEqual(no_setsid.returncode, 0, no_setsid.stdout + no_setsid.stderr)
             self.assertIn('NOTE: no setsid on this machine', no_setsid.stdout)
 
+            # doctor reaped the probe's session leader, then killed the group id it had saved,
+            # which by then could name an unrelated group. A stand-in setsid hands back the id
+            # of such a group and exits: that group must survive.
+            victim = subprocess.Popen(['sleep', '60'], start_new_session=True)
+            self.addCleanup(victim.wait)
+            self.addCleanup(victim.kill)
+            fake_setsid = tmp / 'fake-setsid'
+            fake_setsid.mkdir()
+            (fake_setsid / 'setsid').write_text('#!/bin/sh\necho %d\n' % victim.pid)
+            (fake_setsid / 'setsid').chmod(0o755)
+            reused = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=project, capture_output=True,
+                                    text=True, timeout=20,
+                                    env=dict(env, PATH=str(fake_setsid) + os.pathsep + env['PATH']))
+            self.assertTrue(alive(victim.pid), 'doctor killed a process group it did not start')
+            self.assertIn('NOTE: grep probe did not complete', reused.stdout)
+
             shell.write_text('#!/bin/sh\ncommand() { echo "grep is an alias for ugrep"; }\neval "$2"\n')
             red = doctor()
             self.assertEqual(red.returncode, 1, red.stdout)
@@ -225,6 +242,16 @@ class DoctorTests(unittest.TestCase):
             shell.write_text("#!/bin/sh\ncommand() { echo \"grep is aliased to \\`grep --colour=auto'\"; }\neval \"$2\"\n")
             ready = doctor()
             self.assertEqual(ready.returncode, 0, ready.stdout + ready.stderr)
+            # oh-my-zsh's default alias skips directories, which only a recursive grep reads:
+            # ready. --exclude skips a NAMED file whose name matches, so a pipeline tried with
+            # it lies: shadowed.
+            for alias, expect in (('grep --color=auto --exclude-dir={.bzr,CVS,.git,.hg,.svn,.idea,.tox}', 0),
+                                  ('grep --color=auto --exclude=*.md', 1)):
+                with self.subTest(alias=alias):
+                    shell.write_text('#!/bin/sh\ncommand() { echo "grep is an alias for %s"; }\neval "$2"\n'
+                                     % alias)
+                    probed = doctor()
+                    self.assertEqual(probed.returncode, expect, probed.stdout + probed.stderr)
             # An rc file that prints a banner: doctor read the banner as the probe's answer
             # and called a shell that aliases grep to `grep -v` ready.
             shell.write_text('#!/bin/sh\necho Welcome\ncommand() { echo "grep is an alias for grep -v"; }\n'

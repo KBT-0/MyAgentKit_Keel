@@ -199,10 +199,10 @@ fi
 # grep in its own shell too, which only `type grep` in that shell shows. An rc file that
 # prompts on /dev/tty (keychain, ssh-add, an updater) would hang the probe, hence the timeout
 # (-k: an interactive shell ignores SIGTERM). Where setsid exists the probe runs in a session
-# of its own, with no terminal to stop on; its first output line is that session's process
-# group, and the whole group is killed once the probe returns, normally or by timeout:
-# `timeout` ends when its own child does, so a child the rc file started in the background
-# outlived the probe. Without setsid, --foreground keeps the shell from stopping on SIGTTIN,
+# of its own, with no terminal to stop on, and the whole process group is killed once the
+# probe returns, normally or by timeout, by the group's own leader (below): `timeout` ends
+# when its own child does, so a child the rc file started in the background outlived the
+# probe. Without setsid, --foreground keeps the shell from stopping on SIGTTIN,
 # only the shell is signalled, and such a child is not stopped: that is a NOTE. The output
 # goes to a file, never a pipe: a child left running held the pipe open, and reading it
 # waited for that child, far past the bound. Stock macOS has no `timeout`, and an unbounded
@@ -220,15 +220,16 @@ elif [ -n "${SHELL:-}" ]; then
   probe_mark="<<DOCTOR-PROBE-$$>>"
   probe_cmd="printf '%s\\n' '$probe_mark'; command -V grep; printf '%s\\n' '$probe_mark'"
   if command -v setsid >/dev/null 2>&1; then
-    # $$ of the sh that setsid started is the new session's process group, forked or not.
-    setsid sh -c 'echo "$$"; exec timeout -k 1 5 "$0" -ic "$1"' "$SHELL" "$probe_cmd" \
-      </dev/null >"$probe_out" 2>/dev/null
-    probe_status=$?
-    probe_group=$(sed -n 1p "$probe_out")
-    case "$probe_group" in
-      ""|*[!0-9]*) ;;
-      *) kill -s KILL -- "-$probe_group" 2>/dev/null ;;
-    esac
+    # The sh that setsid starts leads the new session's process group; --foreground keeps
+    # the shell and its children in that group. Once timeout returns, the leader writes the
+    # exit status, then kills its own group (kill 0) while it is still alive, so the group
+    # killed is the probe's. doctor once reaped the leader first and then killed the group
+    # by its saved number, which by then could name another process group. The subshell
+    # takes the "Killed" line bash prints for a command killed by a signal; the ":" keeps it
+    # from exec-ing setsid in its own place, which put that line back on doctor's stderr.
+    ( setsid sh -c 'timeout --foreground -k 1 5 "$0" -ic "$1"; echo "$2 $?"; kill -s KILL 0' \
+        "$SHELL" "$probe_cmd" "$probe_mark-exit" </dev/null >"$probe_out" 2>/dev/null; : ) 2>/dev/null
+    probe_status=$(awk -v m="$probe_mark-exit " 'index($0, m) == 1 { print substr($0, length(m) + 1) }' "$probe_out")
   else
     timeout --foreground -k 1 5 "$SHELL" -ic "$probe_cmd" </dev/null >"$probe_out" 2>/dev/null
     probe_status=$?
@@ -243,15 +244,18 @@ elif [ -n "${SHELL:-}" ]; then
     "grep is "*function*) shadowed=1 ;;
     "grep is "*alias*)
       expansion=${grep_is#*alias for }; expansion=${expansion#*aliased to }; expansion=${expansion#\`}
-      # grep plus colour options only: `grep -v` inverts every match, and --color=always
-      # puts escape codes into pipes.
+      # grep plus an ALLOWLIST of options that leave a named file's matches alone: colour
+      # off or auto, and --exclude-dir, which skips only directories (oh-my-zsh's default
+      # alias adds it). `grep -v` inverts every match, --color=always puts escape codes into
+      # pipes, and --exclude skips a NAMED file whose name matches: all shadow grep.
       printf '%s\n' "${expansion%\'}" | awk '$1 != "grep" { exit 1 }
-        { for (i = 2; i <= NF; i++) if ($i !~ /^--colou?r(=(auto|never))?$/) exit 1 }' || shadowed=1 ;;
+        { for (i = 2; i <= NF; i++)
+            if ($i !~ /^--colou?r(=(auto|never))?$/ && $i !~ /^--exclude-dir=./) exit 1 }' || shadowed=1 ;;
   esac
   if [ -n "$shadowed" ]; then
     miss "grep is shadowed in $SHELL ($grep_is)" "remove it from the rc file, or test gate pipelines with sh -c"
-  elif [ "$probe_status" -ne 0 ] || [ "${grep_is#grep is }" = "$grep_is" ]; then
-    echo "NOTE: grep probe did not complete (exit $probe_status, answered: ${grep_is:-nothing between its delimiters}); grep shadowing was not checked"
+  elif [ "$probe_status" != 0 ] || [ "${grep_is#grep is }" = "$grep_is" ]; then
+    echo "NOTE: grep probe did not complete (exit ${probe_status:-unknown}, answered: ${grep_is:-nothing between its delimiters}); grep shadowing was not checked"
   fi
 fi
 
