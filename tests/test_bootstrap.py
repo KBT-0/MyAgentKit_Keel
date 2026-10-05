@@ -1,10 +1,26 @@
 """Bootstrap must not distribute locally generated Python bytecode."""
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
 import tempfile
 import unittest
+
+
+def cut_short(shims, needle):
+    # A `cat` on PATH that cuts the one write whose "SOURCE:FIRST LINE" matches the shell
+    # pattern `needle` short: it writes part of it, leaves `fired` and fails. `put` writes
+    # every content through `cat` (stdin is "-"), so this is the intended write, reached.
+    shims.mkdir(exist_ok=True)
+    real = shutil.which('cat')
+    (shims / 'cat').write_text(
+        '#!/bin/sh\n[ $# -gt 0 ] || exec "{real}"\nsrc=$1\n'
+        'if [ "$src" = - ]; then src=$(mktemp "{shims}/in.XXXXXX") && "{real}" > "$src" || exit 1; fi\n'
+        'case "$1:$(head -n 1 "$src")" in {needle}) printf "cut sh"; : > "{shims}/fired"; exit 1 ;; esac\n'
+        'exec "{real}" "$src"\n'.format(real=real, shims=shims, needle=needle))
+    (shims / 'cat').chmod(0o755)
+    return dict(os.environ, PATH=str(shims) + os.pathsep + os.environ['PATH'])
 
 
 class BootstrapTests(unittest.TestCase):
@@ -174,66 +190,80 @@ class BootstrapTests(unittest.TestCase):
                 self.assertTrue(os.access(hook, os.X_OK), 'installed a hook git does not run')
                 self.assertTrue((project / 'docs/kit/.kit-version').is_file())
 
-    def test_a_generated_file_is_replaced_whole_or_not_at_all(self):
-        # The stamp and the note were written by redirection, which empties the file before
-        # writing: a full disk on a rerun left an empty stamp, which the next sync refuses. A
-        # file-size limit stands in for the full disk. The temporary had a fixed name and an
-        # existing file there was written into: one hard-linked to the stamp had the failed
-        # write empty the live stamp. A temporary is created fresh; the old name is the owner's.
+    def test_a_write_that_fails_midway_leaves_the_destination_as_it_was(self):
+        # The stamp and the note were written by redirection and each file by `cp` straight
+        # onto the destination: a full disk left an empty stamp, which the next sync refuses,
+        # or a copy cut short that the retry took for the owner's own file. The temporary had a
+        # fixed name and an existing file there was written into: one hard-linked to the stamp
+        # had the failed write empty the live stamp. A `cat` that cuts the one write short
+        # stands in for the full disk; a file-size limit stopped the run before any of them.
         root = Path(__file__).resolve().parents[1]
-        for flags in ((), ('--note', 'the agenda')):
-            with self.subTest(flags=flags), tempfile.TemporaryDirectory() as tmp:
-                project = Path(tmp) / 'project'
-                kit_dir = project / 'docs/kit'
-                run = lambda prefix: subprocess.run([*prefix, str(root / 'bootstrap.sh'), str(project), *flags],
-                                                    capture_output=True, text=True, timeout=60)
-                first = run(['sh'])
-                self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
-                (kit_dir / '.kit-version').write_text('0.1\n')
-                os.link(kit_dir / '.kit-version', kit_dir / '.kit-version.kit-tmp')
-                before = {p.name: p.read_bytes() for p in kit_dir.iterdir()}
-                failed = run(['sh', '-c', 'trap "" XFSZ; ulimit -f 0; exec sh "$0" "$@"'])
+        current = re.search(r'^## v([0-9][0-9.]*)', (root / 'CHANGELOG.md').read_text(), re.M).group(1)
+        for case, rel, needle, flags in (
+                ('copied file', '.githooks/commit-msg', '*/.githooks/commit-msg:*', ()),
+                ('note', 'docs/kit/BOOTSTRAP_NOTE.md', '"-:# Bootstrap note"*', ('--note', 'new agenda')),
+                ('stamp', 'docs/kit/.kit-version', '-:[0-9]*', ())):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
+                project, shims = Path(tmp) / 'project', Path(tmp) / 'shims'
+                dest = project / rel
+                run = lambda *flags, env=None: subprocess.run(['sh', str(root / 'bootstrap.sh'), str(project), *flags],
+                                                              env=env, capture_output=True, text=True, timeout=60)
+                project.mkdir()
+                if case != 'copied file':
+                    first = run('--note', 'old agenda')
+                    self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
+                if case == 'stamp':
+                    dest.write_text('0.1\n')
+                    os.link(dest, dest.parent / '.kit-version.kit-tmp')
+                before = dest.read_bytes() if dest.exists() else None
+                failed = run(*flags, env=cut_short(shims, needle))
                 self.assertNotEqual(failed.returncode, 0, failed.stdout + failed.stderr)
-                self.assertEqual({p.name: p.read_bytes() for p in kit_dir.iterdir()}, before)
-                again = run(['sh'])
+                self.assertTrue((shims / 'fired').exists(), 'the write of %s was never reached' % rel)
+                self.assertEqual(dest.read_bytes() if dest.exists() else None, before, 'cut short: ' + rel)
+                self.assertEqual(list(project.rglob('.kit-tmp.*')), [], 'temporary left')
+                again = run(*flags)
                 self.assertEqual(again.returncode, 0, again.stdout + again.stderr)
-                self.assertEqual(sorted(p.name for p in kit_dir.iterdir()),
-                                 sorted(['.kit-version', '.kit-version.kit-tmp'] +
-                                        (['BOOTSTRAP_NOTE.md'] if flags else [])))
-                self.assertEqual((kit_dir / '.kit-version.kit-tmp').read_text(), '0.1\n')
-                self.assertNotEqual((kit_dir / '.kit-version').read_text(), '0.1\n')
+                self.assertEqual(self._listed(again.stdout), set(), 'a cut-short copy taken for the owner\'s file')
+                if case == 'note':
+                    self.assertIn('new agenda', dest.read_text())
+                else:
+                    self.assertEqual(dest.read_bytes(), (current + '\n').encode() if case == 'stamp'
+                                     else (root / 'core' / rel).read_bytes())
+                if case == 'stamp':
+                    self.assertEqual((dest.parent / '.kit-version.kit-tmp').read_text(), '0.1\n')
 
-    def test_a_copy_that_fails_midway_leaves_no_cut_short_file(self):
-        # Each file was copied straight onto its destination: a full disk midway left it cut
-        # short, the retry took it for the owner's own differing file, listed it as left
-        # alone and recorded the version over it. A file-size limit stands in for the full disk.
+    def test_a_failed_write_of_the_file_list_stops_before_anything_is_written(self):
+        # The copy loop reads its file list from a temporary file; a write there that fails (a
+        # file-size limit stands in for a full disk) must stop the run before it writes anything.
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp) / 'project'
-            run = lambda prefix: subprocess.run([*prefix, str(root / 'bootstrap.sh'), str(project)],
-                                                capture_output=True, text=True, timeout=60)
-            failed = run(['sh', '-c', 'trap "" XFSZ; ulimit -f 1; exec sh "$0" "$@"'])
+            project.mkdir()
+            failed = subprocess.run(['sh', '-c', 'trap "" XFSZ; ulimit -f 0; exec sh "$0" "$@"',
+                                     str(root / 'bootstrap.sh'), str(project)],
+                                    capture_output=True, text=True, timeout=60)
             self.assertNotEqual(failed.returncode, 0, failed.stdout + failed.stderr)
-            self.assertEqual([p for p in project.rglob('.kit-tmp.*')], [], 'temporary left')
-            again = run(['sh'])
-            self.assertEqual(again.returncode, 0, again.stdout + again.stderr)
-            self.assertEqual(self._listed(again.stdout), set(), 'a cut-short copy taken for the owner\'s file')
+            self.assertIn('before the version was recorded', failed.stderr)
+            self.assertEqual(list(project.iterdir()), [], 'written before the stop')
 
     def test_a_finish_that_fails_after_wiring_the_hooks_puts_the_hooks_path_back(self):
         # core.hooksPath was set before the stamp was written: a read-only stamp, a full disk or
         # a signal there stopped the run with the project's own hooks path already replaced.
         # A shim stands in for each failure after the `git config`, so it holds for root too.
         # A signal right after the stamp's `mv` had the trap put the hooks path back under the
-        # new stamp: the project was recorded as installed with its gates disconnected.
+        # new stamp: the project was recorded as installed with its gates disconnected. A rerun
+        # of the SAME version found its stamp already holding the version and took the failure
+        # for the commit: the owner's hooks path stayed replaced.
         root = Path(__file__).resolve().parents[1]
+        current = re.search(r'^## v([0-9][0-9.]*)', (root / 'CHANGELOG.md').read_text(), re.M).group(1)
         faults = {'signal': ('git', 'case "$*" in *"config core.hooksPath .githooks")\n'
                                     '  "%s" "$@"; rc=$?; kill -TERM "$PPID"; exit $rc ;; esac\n'),
                   'mv fails': ('mv', 'case "$*" in */.kit-version) exit 1 ;; esac\n'),
                   'signal after the mv': ('mv', 'case "$*" in */.kit-version)\n'
                                                 '  "%s" "$@"; rc=$?; kill -TERM "$PPID"; exit $rc ;; esac\n')}
         for fault, (tool, body) in faults.items():
-            for prior in ('custom-hooks', None):
-                with self.subTest(fault=fault, prior=prior), tempfile.TemporaryDirectory() as tmp:
+            for prior, start in (('custom-hooks', '0.1'), (None, '0.1'), ('custom-hooks', current)):
+                with self.subTest(fault=fault, prior=prior, start=start), tempfile.TemporaryDirectory() as tmp:
                     project, shims = Path(tmp) / 'project', Path(tmp) / 'shims'
                     (project / 'docs/kit').mkdir(parents=True)
                     shims.mkdir()
@@ -241,7 +271,7 @@ class BootstrapTests(unittest.TestCase):
                     if prior:
                         subprocess.run(['git', '-C', str(project), 'config', 'core.hooksPath', prior], check=True)
                     stamp = project / 'docs/kit/.kit-version'
-                    stamp.write_text('0.1\n')
+                    stamp.write_text(start + '\n')
                     stamp.chmod(0o444)
                     real = shutil.which(tool)
                     (shims / tool).write_text('#!/bin/sh\n' + (body % real if '%s' in body else body) +
@@ -252,7 +282,10 @@ class BootstrapTests(unittest.TestCase):
                                             capture_output=True, text=True, timeout=60)
                     self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
                     self.assertEqual(list((project / 'docs/kit').glob('*kit-tmp*')), [], 'temporary left')
-                    state = (stamp.read_bytes() == b'0.1\n', self._hooks_path(project))
+                    state = (stamp.read_bytes() == (start + '\n').encode(), self._hooks_path(project))
+                    if fault == 'signal after the mv' and start == current:
+                        self.assertEqual(state, (True, '.githooks'), 'recorded with the gates disconnected')
+                        continue
                     if fault == 'signal after the mv':
                         self.assertIn(state, [(True, prior or ''), (False, '.githooks')],
                                       'stamped and hooks path not wired, or the reverse')

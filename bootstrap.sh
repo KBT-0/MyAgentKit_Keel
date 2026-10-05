@@ -66,33 +66,39 @@ skiplist=$(mktemp) || die "cannot create a temp file"
 files=$(mktemp) || { rm -f "$skiplist"; die "cannot create a temp file"; }
 part=""
 wiring=""
-# stamped — the stamp holds this run's version. Read from the disk, never from a variable set
-# after the write: a signal between the stamp's `mv` and that variable read as "not recorded".
-stamped() {
-  [ -z "$(blocked docs/kit/.kit-version)" ] && [ "$(cat "$target/docs/kit/.kit-version" 2>/dev/null)" = "$version" ]
+staged=""
+# committed — this run moved its stamp into place: `staged`, the stamp's temporary, is gone
+# and the stamp holds this run's version. Read from the disk: a variable set after the `mv`
+# read as "not recorded" after a signal between the two. The temporary marks THIS run's
+# `mv`: a stamp that held the version before the run (a rerun of it) is no commit.
+committed() {
+  [ -n "$staged" ] && [ ! -e "$staged" ] && [ -z "$(blocked docs/kit/.kit-version)" ] &&
+    [ "$(cat "$target/docs/kit/.kit-version" 2>/dev/null)" = "$version" ]
 }
 # finish RC — the exit trap. A stop that `set -e` made says so: the failing command named its
 # path, this says what it means. A stop after core.hooksPath was changed and before the version
 # was recorded puts the project's own value back (or unsets it again): the stop is no install,
-# and the hooks it now names may not be there. A signal ends the run through here too.
+# and the hooks it now names may not be there. A signal ends the run through here too. The
+# temporary is removed only after `committed` has read it.
 finish() {
-  rm -f "$skiplist" "$files" ${part:+"$part"}
-  [ "$1" -ne 0 ] || return 0
-  if [ -n "$wiring" ] && ! stamped; then
-    if [ -n "$had" ]; then git -C "$target" config core.hooksPath "$hooks_was"
-    else git -C "$target" config --unset core.hooksPath; fi >/dev/null 2>&1 || :
-    now=$(git -C "$target" config --local --get core.hooksPath) || now=""
-    if [ "$now" = "$hooks_was" ] && [ -n "$had" ]; then
-      printf '%s\n' "bootstrap: core.hooksPath put back to '$hooks_was', as it was" >&2
-    elif [ "$now" = "$hooks_was" ]; then
-      echo "bootstrap: core.hooksPath unset again, as it was" >&2
-    else
-      printf '%s\n' "bootstrap: could not put core.hooksPath back to ${had:+"'$hooks_was'"}${had:-unset};" \
-        "           it is '$now' now: set it by hand." >&2
+  rm -f "$skiplist" "$files"
+  if [ "$1" -ne 0 ] && ! committed; then
+    if [ -n "$wiring" ]; then
+      if [ -n "$had" ]; then git -C "$target" config core.hooksPath "$hooks_was"
+      else git -C "$target" config --unset core.hooksPath; fi >/dev/null 2>&1 || :
+      now=$(git -C "$target" config --local --get core.hooksPath) || now=""
+      if [ "$now" = "$hooks_was" ] && [ -n "$had" ]; then
+        printf '%s\n' "bootstrap: core.hooksPath put back to '$hooks_was', as it was" >&2
+      elif [ "$now" = "$hooks_was" ]; then
+        echo "bootstrap: core.hooksPath unset again, as it was" >&2
+      else
+        printf '%s\n' "bootstrap: could not put core.hooksPath back to ${had:+"'$hooks_was'"}${had:-unset};" \
+          "           it is '$now' now: set it by hand." >&2
+      fi
     fi
+    [ -n "$said" ] || echo "bootstrap: stopped by the failure above, before the version was recorded" >&2
   fi
-  [ -n "$said" ] || stamped ||
-    echo "bootstrap: stopped by the failure above, before the version was recorded" >&2
+  rm -f ${part:+"$part"}
 }
 trap 'finish "$?"' EXIT
 trap 'exit 129' HUP
@@ -137,14 +143,17 @@ perms() {
 # only that. It carries DEST's own mode, or for a new file the mode a plain `cp` (or
 # redirection) gives under the umask, set before a byte is written: a temporary made under the
 # umask turned a 0600 note into 0644. It is opened before the chmod, so a mode without write
-# permission still takes the content.
-put() {
+# permission still takes the content. `stage` is all of it but the `mv`.
+stage() {
   if [ -e "$1" ]; then _m=$(perms "$1")
   elif [ -n "${2:-}" ]; then _m=$(perms "$2")
   else _m=666; fi
   [ -e "$1" ] || _m=$(printf '%o' $(( 0$_m & ~0$(umask) )))
   part=$(mktemp "${1%/*}/.kit-tmp.XXXXXX") &&
-    { chmod "$_m" "$part" && cat "${2:--}"; } > "$part" && mv -f "$part" "$1" && part=""
+    { chmod "$_m" "$part" && cat "${2:--}"; } > "$part"
+}
+put() {
+  stage "$@" && mv -f "$part" "$1" && part=""
 }
 
 # copy_tree SRC [DEST_PREFIX] — copies SRC's contents into the target, optionally under a
@@ -290,13 +299,23 @@ EOF
   echo "bootstrap: wrote docs/kit/BOOTSTRAP_NOTE.md"
 fi
 
-# The finish has three states, each read from the disk by `finish`: core.hooksPath untouched
-# (`wiring` unset), nothing outside the files changed; hooks path set and the stamp not holding
-# $version, no install, so the trap puts the project's value back; the stamp holds $version (its
-# `mv` in `put` is the commit), the install is whole and nothing is undone. A trap that judged by
-# a variable cleared after the `mv` disconnected the gates under the new stamp. The hooks path
-# comes first: SIGKILL between the two leaves the gates wired under the old stamp, never the
-# version recorded with them disconnected; a rerun of the same version is recorded throughout.
+# The finish has three states, each read by `finish`: core.hooksPath untouched (`wiring`
+# unset), nothing outside the files changed; hooks path set and this run's stamp temporary
+# still there, no install, so the trap puts the project's value back; the temporary moved over
+# the stamp (that `mv` is the commit), the install is whole and nothing is undone. The stamp is
+# staged BEFORE the hooks path is set, so the temporary exists through every step that can
+# fail after it, and only the `mv` removes it before the trap reads it. A trap that judged by
+# a variable cleared after the `mv` disconnected the gates under the new stamp; one that judged
+# by the stamp's content took a rerun of the same version for committed. The hooks path comes
+# before the `mv`: SIGKILL between the two leaves the gates wired under the old stamp, never
+# the version recorded with them disconnected. A rerun of the same version rewrites the stamp
+# all the same: one path, and its commit is the same `mv`.
+# The stamp is the LAST write, so it records only an install whose every write succeeded:
+# sync-kit.sh trusts it, and a stamp over a short install answers "already current".
+stage "$target/docs/kit/.kit-version" <<EOF
+$version
+EOF
+staged=$part
 repo=""
 if git -C "$target" rev-parse --git-dir >/dev/null 2>&1; then
   repo=1
@@ -304,11 +323,8 @@ if git -C "$target" rev-parse --git-dir >/dev/null 2>&1; then
   wiring=1
   git -C "$target" config core.hooksPath .githooks
 fi
-# The stamp is the LAST write, so it records only an install whose every write succeeded:
-# sync-kit.sh trusts it, and a stamp over a short install answers "already current".
-put "$target/docs/kit/.kit-version" <<EOF
-$version
-EOF
+mv -f "$part" "$target/docs/kit/.kit-version"
+part=""
 
 if [ -n "$repo" ]; then
   echo "bootstrap: wired core.hooksPath -> .githooks"

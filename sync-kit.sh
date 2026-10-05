@@ -95,14 +95,17 @@ perms() {
 # only that. It carries DEST's own mode, or for a new file the mode a plain `cp` (or
 # redirection) gives under the umask, set before a byte is written: a temporary made under the
 # umask turned a 0600 note into 0644. It is opened before the chmod, so a mode without write
-# permission still takes the content.
-put() {
+# permission still takes the content. `stage` is all of it but the `mv`.
+stage() {
   if [ -e "$1" ]; then _m=$(perms "$1")
   elif [ -n "${2:-}" ]; then _m=$(perms "$2")
   else _m=666; fi
   [ -e "$1" ] || _m=$(printf '%o' $(( 0$_m & ~0$(umask) )))
   part=$(mktemp "${1%/*}/.kit-tmp.XXXXXX") &&
-    { chmod "$_m" "$part" && cat "${2:--}"; } > "$part" && mv -f "$part" "$1" && part=""
+    { chmod "$_m" "$part" && cat "${2:--}"; } > "$part"
+}
+put() {
+  stage "$@" && mv -f "$part" "$1" && part=""
 }
 
 why=$(blocked docs/kit/.kit-version)
