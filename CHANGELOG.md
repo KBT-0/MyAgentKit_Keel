@@ -157,16 +157,16 @@ in `RESEARCH_LOG.md` (2026-10-03). Most of the files below are project-owned, so
   submodule, a separate git directory) or that holds a nested repository is refused by name
   and reported `NOT RUN`, which fails the self-test, so run `--self-test` from the main
   checkout. The copy is made with `cp -RP` outside the checkout (a `TMPDIR` inside it is
-  refused); an audit before and after the baseline gate run refuses every symlink that leads
+  refused); an audit of each copy before its run refuses every symlink that leads
   out of the copy and fails by name on a folder or link it cannot read; the target and the
   gate are resolved physically and a symlinked one is refused; git and the copied gate run
   under `probe_env`, which passes only the variables it names, with an empty HOME and no
   system or global git configuration; the copy's `.git/config` is replaced by an allowlist
-  plus the keys named in `probe_config_keys`, and its `.git/hooks` is emptied; after the
-  baseline run the copy's git configuration must be byte for byte what the example wrote
-  (a baseline that set `core.hooksPath` had its hook run by the second run), with no
-  `config.worktree`, no `commondir` and an empty `.git/hooks`, or the case is refused by
-  name: a gate that writes git configuration during its run cannot use the example. The dot-file
+  plus the keys named in `probe_config_keys`, and its `.git/hooks` is emptied. The baseline gate run and
+  the injected run each get a fresh copy with its own empty HOME and TMPDIR, and the
+  baseline's copy is deleted first, so nothing the baseline run wrote (a hook, a git
+  setting, a Python start-up file in HOME, a link swapped in, a rewritten gate) can act in
+  the injected run; the tree is copied twice. The dot-file
   example runs in a subshell that removes its injection on INT/TERM as well as on exit.
 - **Worker spawning (issues #32, #35).** `spawn_worker.sh` `cd`s into the folder before
   starting the tool (tmux hands a new session a stale `PWD`) and ignores `CDPATH`. Every

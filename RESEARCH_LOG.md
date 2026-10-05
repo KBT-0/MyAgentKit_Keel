@@ -816,6 +816,21 @@ commit, synced and upgraded by the list alone, compared equal (`diff -r`) to a f
 bootstrap from master. Not covered by that run: a project with its own boundary checks, an
 adapted existing-file example, or old usage records, which is what both real projects are.
 
+#### Cross-model round d3: Reject, and a fresh copy in place of re-checks
+
+Round d3 on `1afba49..62d2988`: one High, two Medium, one Low. The High was the fourth of
+one class in a day: something the baseline gate run leaves in the copy acts in the injected
+run (this time a `.pth` in the copy's HOME, run by the gate's own Python). The equality
+check added one round earlier had itself opened a Medium (a config file swapped for a link
+to `/dev/zero` hung the read). The owner chose to keep the example. The class is closed by
+construction instead of by checks: the baseline runs in one copy, which is deleted, and the
+injection goes into a fresh one. Every after-baseline check was deleted, the earlier
+attack cases now pass as ordinary runs, and the cost is a second copy of the tree. Lesson,
+again: when each check on shared state opens the next finding, stop sharing the state.
+The checklist finding was confirmed by doing it: with "take the kit's side" a project's own
+licence check vanished and its gate still passed; the list now says both sides survive and
+prints the lines a merge removed.
+
 #### The review gate held on the kit's own hardening
 
 Five of the nine work packages (the gate lock, both review-tooling packages, the commit gates
