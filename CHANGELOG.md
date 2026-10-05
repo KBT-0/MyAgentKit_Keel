@@ -447,6 +447,11 @@ hand merge; `sync-kit.sh` now keeps listing them until you confirm (see "Sync st
   and the fix: `mkdir -p .myagentkit/usage-set-aside && mv <record>
   .myagentkit/usage-set-aside/` (find them with `grep -l '"id": ""'
   .myagentkit/usage/*.json`).
+- **Bootstrap re-run (review of 2026-10-05).** After a STOP, running `bootstrap.sh` again
+  passes over every file identical to the kit's (what the first run copied) and lists only
+  the files that differ; a differing gate file stops the run as `conflict: <path>`, the
+  form `sync-kit.sh` uses. Move yours aside, re-run, then carry what yours did into the
+  kit's file; `--force` overwrites every differing file listed. No ACTION.
 
 ## v0.8 — 2026-10-03
 
