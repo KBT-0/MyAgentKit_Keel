@@ -143,6 +143,36 @@ class CheckGateTests(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertEqual(where.read_text().strip(), str(self.project.resolve()))
 
+    def test_python_without_fcntl_fails_the_lock_by_name(self):
+        # Native Windows Python has no fcntl: the gate died with a traceback, read as a
+        # failed gate. It names the cause instead, on both paths that take or probe the lock.
+        stub = self.tmp / 'no-fcntl'
+        stub.mkdir()
+        (stub / 'sitecustomize.py').write_text("import sys\nsys.modules['fcntl'] = None\n")
+        lock = subprocess.run(['git', 'rev-parse', '--git-path', 'check.lock'], cwd=self.project,
+                              capture_output=True, text=True, check=True).stdout.strip()
+        lock = str((self.project / lock).resolve())
+        for extra in ({}, {'GATE_LOCK_HELD': lock, 'GATE_LOCK_FD': '0'}):
+            with self.subTest(extra=extra):
+                code, out = gate(self.project, self.build, PYTHONPATH=str(stub), **extra)
+                self.assertEqual(code, 1, out)
+                self.assertIn('FAIL [lock]: python3 has no fcntl module', out)
+                self.assertNotIn('Traceback', out)
+                self.assertNotIn('FAIL [env]', out)
+
+    def test_a_held_lock_says_how_to_find_its_holder(self):
+        # A build server the build command left running holds the lock for its whole idle
+        # life, and the commit hook waits without bound: the NOTE names how to find it.
+        lock = subprocess.run(['git', 'rev-parse', '--git-path', 'check.lock'], cwd=self.project,
+                              capture_output=True, text=True, check=True).stdout.strip()
+        lock = (self.project / lock).resolve()
+        with open(lock, 'a') as held:
+            fcntl.flock(held, fcntl.LOCK_EX)
+            code, out = gate(self.project, self.build, GATE_LOCK_WAIT='1')
+        self.assertEqual(code, 75, out)
+        self.assertIn('fuser -v %s' % lock, out)
+        self.assertIn('lsof %s' % lock, out)
+
 
 if __name__ == '__main__':
     unittest.main()

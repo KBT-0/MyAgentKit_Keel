@@ -87,7 +87,12 @@ inherited=""
 if [ "${GATE_LOCK_HELD:-}" = "$lock_path" ]; then
   lock_probe=0
   python3 -c '
-import fcntl, os, sys
+import os, sys
+try:
+    import fcntl
+except ImportError:
+    print("FAIL [lock]: python3 has no fcntl module, which the gate lock needs; native Windows Python lacks it. Run the gate with a POSIX python3 (WSL, MSYS2, Cygwin).")
+    sys.exit(3)
 held, lock = os.fstat(int(sys.argv[1])), os.stat(sys.argv[2])
 if (held.st_dev, held.st_ino) != (lock.st_dev, lock.st_ino):
     sys.exit(1)
@@ -133,7 +138,9 @@ fi
 # Nothing is ever reclaimed and no pid is trusted; the symlink lock this replaces guessed
 # staleness from pids, and let a third waiter, or a build left running, through. The cost:
 # a build tool that leaves a server running after the build (a compiler server, a build
-# daemon) holds the lock until that server exits, so such a build command turns it off.
+# daemon) holds the lock until that server exits, so such a build command turns it off
+# (docs/GOTCHAS.md); the waiting NOTE says how to find the holder. The lock needs Python's
+# fcntl, which native Windows Python lacks: that is FAIL [lock] by name, not a traceback.
 # The self-test holds the lock for its whole run, so no other gate sees a case mid-injection.
 # Nested runs (the self-test's own `sh "$0"`, the commit hook it calls) inherit the lock:
 # GATE_LOCK_HELD names the lock path, so a gate in another checkout started from the build
@@ -150,7 +157,12 @@ if [ -z "$inherited" ]; then
   # what sh would have given them.
   # O_NOFOLLOW: a symlink here (the older lock's, left by a killed run) is refused by name.
   exec python3 -c '
-import fcntl, os, signal, sys, time
+import os, signal, sys, time
+try:
+    import fcntl
+except ImportError:
+    print("FAIL [lock]: python3 has no fcntl module, which the gate lock needs; native Windows Python lacks it. Run the gate with a POSIX python3 (WSL, MSYS2, Cygwin).", flush=True)
+    sys.exit(1)
 path, gate, wait, waited = sys.argv[1], sys.argv[2], os.environ.get("GATE_LOCK_WAIT", ""), 0
 if signal.getsignal(signal.SIGINT) is signal.default_int_handler:
     signal.signal(signal.SIGINT, signal.SIG_DFL)
@@ -175,6 +187,9 @@ while True:
         sys.exit(75)
     if waited % 30 == 0:
         print("NOTE [lock]: another gate run, or a process it started, has held %s for %ds; waiting for it." % (path, waited), flush=True)
+        if waited == 0:
+            print("             To see the holder: fuser -v %s, or lsof %s. A server the build left running (a compiler\n"
+                  "             server, a build daemon) holds it until that server exits: docs/GOTCHAS.md." % (path, path), flush=True)
     time.sleep(1)
     waited += 1
 os.ftruncate(fd, 0)
