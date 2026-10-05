@@ -178,10 +178,10 @@ exit 1
             # A setting the gate reads is carried only when the project names it.
             self.assertIn('probe_config_keys=""', example)
             example = example.replace('probe_config_keys=""', 'probe_config_keys="%s"' % config_keys, 1)
-        extra = ''.join('%s="$%s" ' % (name, name) for name in names)
-        if extra:
-            self.assertIn('LC_ALL=C ', example)
-            example = example.replace('LC_ALL=C ', 'LC_ALL=C ' + extra, 1)
+        # SCRATCH, the test's own directory outside the copies, holds what a gate records.
+        extra = ''.join('%s="$%s" ' % (name, name) for name in ('SCRATCH',) + tuple(names))
+        self.assertIn('LC_ALL=C ', example)
+        example = example.replace('LC_ALL=C ', 'LC_ALL=C ' + extra, 1)
         root = Path(tmp) / 'project'
         (root / 'src/domain').mkdir(parents=True)
         (root / 'src/domain/existing.py').write_bytes(b'committed original\n')
@@ -339,8 +339,66 @@ exit 1
     def self_test(self, tmp, cwd, **env):
         scratch = Path(tmp) / 'scratch'
         scratch.mkdir()
-        return subprocess.run(['sh', 'scripts/check.sh', '--self-test'], cwd=cwd, capture_output=True,
-                              text=True, timeout=30, env=dict(os.environ, TMPDIR=str(scratch), **env))
+        # Its own process group: a timeout kills every process the example started, not only sh.
+        child = subprocess.Popen(['sh', 'scripts/check.sh', '--self-test'], cwd=cwd, text=True,
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True,
+                                 env=dict(os.environ, TMPDIR=str(scratch), SCRATCH=str(scratch), **env))
+        try:
+            stdout, stderr = child.communicate(timeout=30)
+        except subprocess.TimeoutExpired:
+            os.killpg(child.pid, signal.SIGKILL)
+            child.communicate()
+            self.fail('the example did not end within 30 seconds')
+        return subprocess.CompletedProcess(child.args, child.returncode, stdout, stderr)
+
+    def test_nothing_the_baseline_run_leaves_reaches_the_second_run(self):
+        # With one copy reused for both runs, three review rounds in a row found something the
+        # baseline left that acted in the second run, and each re-check added after the baseline
+        # was bypassed by the next: a hook in .git/hooks, a core.hooksPath to a hook, a
+        # .git/config.worktree, a .git/commondir naming hooks outside, a symlink swapped in for
+        # the target or the gate, a .pth file in HOME that the gate's own `python3 -c` ran, a
+        # gate rewritten in place, and a .git/config linked to /dev/zero that hung the check.
+        # The second run starts from a fresh copy: each passes, and nothing outside is written.
+        hook = "printf '#!/bin/sh\\n: > {escaped}\\n' > {hook} && chmod +x {hook}"
+        leaves = {
+            'hook': hook.replace('{hook}', '.git/hooks/post-index-change'),
+            'hooks path': 'git config core.hooksPath .githooks && mkdir .githooks && ' +
+                          hook.replace('{hook}', '.githooks/post-index-change'),
+            'unrelated key': 'git config kit.unrelated yes',
+            'config.worktree': "printf '[kit]\\n\\tunrelated = yes\\n' > .git/config.worktree",
+            'commondir': 'cp -R .git "$TMPDIR/common" && ' + hook.replace('{hook}', '"$TMPDIR/common/hooks/post-index-change"') +
+                         ' && printf "%s\\n" "$TMPDIR/common" > .git/commondir',
+            'target out': 'mv src/domain src/was && ln -s "$OUTSIDE" src/domain',
+            'gate out': 'mv scripts/check.sh scripts/was.sh && ln -s "$OUTSIDE/gate.sh" scripts/check.sh',
+            'target inside': 'mv src/domain src/was && ln -s was src/domain',
+            'python startup file': 'site=$(python3 -c "import site; print(site.getusersitepackages())") && '
+                                   'mkdir -p "$site" && printf "%s\\n" {pth} > "$site/probe.pth"',
+            'gate rewritten': "printf '%s\\n' ': > {escaped}' \"echo 'FAIL [boundary]: the domain layer imports"
+                              " the web layer:'\" 'exit 1' > scripts/new.sh && mv scripts/new.sh scripts/check.sh",
+            'config linked to /dev/zero': 'rm .git/config && ln -s /dev/zero .git/config',
+        }
+        for name, leave in leaves.items():
+            with self.subTest(leave=name), tempfile.TemporaryDirectory() as tmp:
+                escaped, outside = Path(tmp) / 'escaped', Path(tmp) / 'outside'
+                outside.mkdir()
+                (outside / 'existing.py').write_text('committed original\n')
+                (outside / 'gate.sh').write_text(': > %s\n' % shlex.quote(str(escaped)) +
+                                                 "echo 'FAIL [boundary]: the domain layer imports the web layer:'\n"
+                                                 'exit 1\n')
+                leave = leave.replace('{escaped}', shlex.quote(str(escaped))).replace(
+                    '{pth}', shlex.quote('import os; open(%r, "w")' % str(escaped)))
+                # Like the kit's gate, every run starts python3; only the baseline leaves something.
+                root, git = self.fixture(tmp, 'python3 -c pass || exit 1\n'
+                                              "grep -q 'myapp.web' src/domain/existing.py || { %s || exit 1; exit 0; }\n"
+                                              'git add -A || exit 1\n' % leave, names=('OUTSIDE',))
+                status = git('status', '--porcelain')
+                result = self.self_test(tmp, root, OUTSIDE=str(outside))
+                self.assertFalse(escaped.exists(), 'something the baseline left ran in the second run')
+                self.assertEqual((outside / 'existing.py').read_text(), 'committed original\n',
+                                 'the injection followed a symlink the baseline left')
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn('  ok   — ', result.stdout)
+                self.assertEqual(git('status', '--porcelain'), status)
 
     def test_any_symlink_leaving_the_copy_is_refused_by_name(self):
         # Only the target, the gate and the git storage were checked: cp -R kept an unrelated
@@ -371,34 +429,6 @@ exit 1
                 self.assertFalse(escaped.exists(), 'a global archive command ran outside the copy')
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertIn('  ok   — ', result.stdout)
-
-    def test_a_baseline_that_swaps_in_a_symlink_is_refused_by_name(self):
-        # The target and the gate were validated before the baseline gate ran: a baseline that
-        # replaced src/domain or the gate with a symlink sent the injection, or the second run,
-        # out of the copy.
-        swaps = {'target out': ('mv src/domain src/was && ln -s "$OUTSIDE" src/domain',
-                                'src/domain is a symlink that leads out of the disposable copy'),
-                 'gate out': ('mv scripts/check.sh scripts/was.sh && ln -s "$OUTSIDE/gate.sh" scripts/check.sh',
-                              'scripts/check.sh is a symlink that leads out of the disposable copy'),
-                 'target inside': ('mv src/domain src/was && ln -s was src/domain',
-                                   'src/domain/existing.py runs through a symlink at src/domain')}
-        for name, (swap, message) in swaps.items():
-            with self.subTest(swap=name), tempfile.TemporaryDirectory() as tmp:
-                outside = Path(tmp) / 'outside'
-                outside.mkdir()
-                (outside / 'existing.py').write_text('committed original\n')
-                (outside / 'gate.sh').write_text(': > "$OUTSIDE/ran"\n'
-                                                 "echo 'FAIL [boundary]: the domain layer imports the web layer:'\n"
-                                                 'exit 1\n')
-                root, git = self.fixture(tmp, '[ -e "$TMPDIR/swapped" ] || { : > "$TMPDIR/swapped"; %s; }\n' % swap,
-                                         names=('OUTSIDE',))
-                result = self.self_test(tmp, root, OUTSIDE=str(outside))
-                self.assertEqual((outside / 'existing.py').read_text(), 'committed original\n',
-                                 'the injection followed the swapped symlink')
-                self.assertFalse((outside / 'ran').exists(), 'the second run ran the swapped gate')
-                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-                self.assertIn('NOT RUN — existing-file probe: ' + message, result.stdout)
-                self.assertNotIn('  ok   — ', result.stdout)
 
     def test_the_probe_requires_a_green_baseline_and_its_own_diagnostic(self):
         # Deleting the baseline run or the diagnostic match left every copy test green: the
@@ -526,86 +556,11 @@ exit 1
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn('  ok   — ', result.stdout)
 
-    def test_a_hook_the_baseline_leaves_is_refused_by_name(self):
-        # The copy's hooks directory starts empty, but a hook the baseline run wrote there would
-        # run from the second run's `git add` or `git commit`: refused before the injection.
-        with tempfile.TemporaryDirectory() as tmp:
-            escaped = Path(tmp) / 'escaped'
-            root, git = self.fixture(tmp, '[ -e "$TMPDIR/hooked" ] || { : > "$TMPDIR/hooked"; '
-                                          "printf '#!/bin/sh\\n: > %s\\n' > .git/hooks/post-index-change; "
-                                          'chmod +x .git/hooks/post-index-change; exit 0; }\n'
-                                          'git add -A || exit 1\n' % shlex.quote(str(escaped)))
-            result = self.self_test(tmp, root)
-            self.assertFalse(escaped.exists(), 'a hook the baseline wrote ran in the second run')
-            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-            self.assertIn("NOT RUN — existing-file probe: the baseline gate run left a hook in the disposable"
-                          " copy's .git/hooks", result.stdout)
-            self.assertNotIn('  ok   — ', result.stdout)
-
-    def test_a_configuration_the_baseline_changes_is_refused_by_name(self):
-        # Only .git/hooks was re-checked: a baseline that set core.hooksPath to a directory
-        # holding a hook passed, and the second run's `git add` ran it. Any change is refused,
-        # an unrelated key too: the rule is equality with what the example wrote, not a key list.
-        for name, change in (
-                ('hooks path', "git config core.hooksPath .githooks && mkdir .githooks && "
-                               "printf '#!/bin/sh\\n: > {escaped}\\n' > .githooks/post-index-change && "
-                               'chmod +x .githooks/post-index-change'),
-                ('unrelated key', 'git config kit.unrelated yes')):
-            with self.subTest(change=name), tempfile.TemporaryDirectory() as tmp:
-                escaped = Path(tmp) / 'escaped'
-                change = change.replace('{escaped}', shlex.quote(str(escaped)))
-                root, git = self.fixture(tmp, '[ -e "$TMPDIR/changed" ] || { : > "$TMPDIR/changed"; ' + change +
-                                              '; exit 0; }\ngit add -A || exit 1\n')
-                result = self.self_test(tmp, root)
-                self.assertFalse(escaped.exists(), 'a hook the baseline configured ran in the second run')
-                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-                self.assertIn("NOT RUN — existing-file probe: the baseline gate run changed the disposable copy's"
-                              " .git/config", result.stdout)
-                self.assertNotIn('  ok   — ', result.stdout)
-
-    def test_a_configuration_source_the_baseline_adds_is_refused_by_name(self):
-        # Under probe_env git reads only the copy's .git/config, plus .git/config.worktree when
-        # .git/config enables it and the common directory's config when .git/commondir names one.
-        # A .git/commondir sent the second run's `git add` to hooks outside the copy.
-        for name, add, refused in (
-                ('config.worktree', "printf '[kit]\\n\\tunrelated = yes\\n' > .git/config.worktree",
-                 'the baseline gate run left a .git/config.worktree in the disposable copy'),
-                ('commondir', 'cp -R .git "$TMPDIR/common" && '
-                              "printf '#!/bin/sh\\n: > {escaped}\\n' > \"$TMPDIR/common/hooks/post-index-change\" && "
-                              'chmod +x "$TMPDIR/common/hooks/post-index-change" && '
-                              'printf "%s\\n" "$TMPDIR/common" > .git/commondir',
-                 'the baseline gate run left a .git/commondir in the disposable copy, or replaced its .git')):
-            with self.subTest(add=name), tempfile.TemporaryDirectory() as tmp:
-                escaped = Path(tmp) / 'escaped'
-                add = add.replace('{escaped}', shlex.quote(str(escaped)))
-                root, git = self.fixture(tmp, '[ -e "$TMPDIR/added" ] || { : > "$TMPDIR/added"; ' + add +
-                                              '; exit 0; }\ngit add -A || exit 1\n')
-                result = self.self_test(tmp, root)
-                self.assertFalse(escaped.exists(), 'a configuration source the baseline added ran a hook')
-                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-                self.assertIn('NOT RUN — existing-file probe: ' + refused, result.stdout)
-                self.assertNotIn('  ok   — ', result.stdout)
-
-    def test_a_python_startup_file_the_baseline_leaves_does_not_run(self):
-        # The audit after the baseline ran python3 under the copy's empty HOME: a .pth file the
-        # baseline left in that HOME's user site directory (a `pip install --user` writes them)
-        # ran in the audit, and one that writes elsewhere escaped the copy.
-        with tempfile.TemporaryDirectory() as tmp:
-            escaped = Path(tmp) / 'escaped'
-            root, git = self.fixture(tmp, '[ -e "$TMPDIR/planted" ] || { : > "$TMPDIR/planted"; '
-                                          'site=$(python3 -c "import site; print(site.getusersitepackages())") && '
-                                          'mkdir -p "$site" && printf "%%s\\n" %s > "$site/probe.pth" || exit 1; }\n'
-                                          % shlex.quote('import os; open(%r, "w")' % str(escaped)))
-            result = self.self_test(tmp, root)
-            self.assertFalse(escaped.exists(), "a .pth file the baseline left ran in the example's audit")
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertIn('  ok   — ', result.stdout)
-
-    def test_a_folder_the_audit_cannot_read_is_refused_by_name(self):
+    def test_a_folder_the_baseline_hides_goes_with_its_copy(self):
         # os.walk skips a folder it cannot read: a baseline that hid an outside symlink in one
-        # passed the second audit, and the next run made it readable and wrote through it. A
-        # path longer than PATH_MAX cannot be read by any user, root included; a mode-000 or
-        # mode-444 folder stops every user but root, who then reads it and finds the symlink.
+        # passed the audit run again on its copy, and the next run made it readable and wrote
+        # through it. Now the next run gets a fresh copy, and the baseline's copy is made
+        # writable before it is deleted: a mode-000 or mode-444 folder survived `rm -rf`.
         deep = 'd' * 200
         hide = {'too long': ('i=0; while [ $i -lt 25 ]; do mkdir %s && cd %s || exit 1; i=$((i + 1)); done; '
                              'ln -s "$OUTSIDE" out' % (deep, deep),
@@ -619,8 +574,8 @@ exit 1
             with self.subTest(hide=name), tempfile.TemporaryDirectory() as tmp:
                 outside = Path(tmp) / 'outside'
                 outside.mkdir()
-                root, git = self.fixture(tmp, 'if [ -e "$TMPDIR/hidden" ]; then (%s) 2>/dev/null; '
-                                              'else : > "$TMPDIR/hidden"; (%s) || exit 1; fi\n' % (use, make),
+                root, git = self.fixture(tmp, "if grep -q 'myapp.web' src/domain/existing.py; then (%s) 2>/dev/null; "
+                                              'else (%s) || exit 1; fi\n' % (use, make),
                                          names=('OUTSIDE',))
                 try:
                     result = self.self_test(tmp, root, OUTSIDE=str(outside))
@@ -628,21 +583,15 @@ exit 1
                     for left in Path(tmp, 'scratch').glob('*/checkout/hidden'):
                         left.chmod(0o755)
                 self.assertFalse((outside / 'escaped').exists(), 'the second run wrote through a hidden symlink')
-                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-                if name == 'too long' or os.geteuid() != 0:
-                    self.assertIn('NOT RUN — existing-file probe: the audit could not read ', result.stdout)
-                else:
-                    self.assertIn('NOT RUN — existing-file probe: hidden/out is a symlink that leads out of the'
-                                  ' disposable copy', result.stdout)
-                self.assertNotIn('  ok   — ', result.stdout)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn('  ok   — ', result.stdout)
+                self.assertEqual(list(Path(tmp, 'scratch').iterdir()), [], 'a copy was left behind')
 
     def test_a_carried_setting_can_be_reassigned_in_the_copy(self):
         # Replayed on top of an existing core.filemode, the copy held two values, and a gate's
         # `git config core.filemode false` failed there while it succeeded in the original.
-        # The write runs in the injected run: one in the baseline is refused as a changed .git/config.
         with tempfile.TemporaryDirectory() as tmp:
-            root, git = self.fixture(tmp, "! grep -q 'myapp.web' src/domain/existing.py ||"
-                                          ' git config core.filemode false || exit 1\n')
+            root, git = self.fixture(tmp, 'git config core.filemode false || exit 1\n')
             self.assertEqual(len(git('config', '--get-all', 'core.filemode').splitlines()), 1)
             result = self.self_test(tmp, root)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -661,10 +610,8 @@ exit 1
                        'git config %s kit.required yes; echo "status $?"; '
                        'git config --get-all kit.required; echo "status $?"; } 2>/dev/null' % write)
             with self.subTest(setting=name), tempfile.TemporaryDirectory() as tmp:
-                # The copy's gate records what it saw on the injected run only: a write in the
-                # baseline is refused as a changed .git/config.
-                root, git = self.fixture(tmp, "! grep -q 'myapp.web' src/domain/existing.py ||"
-                                              ' %s > "$TMPDIR/observed"\n' % observe,
+                # The copy's gate records what it saw on its first (baseline) run only.
+                root, git = self.fixture(tmp, '[ -e "$SCRATCH/observed" ] || %s > "$SCRATCH/observed"\n' % observe,
                                          config_keys='kit.required')
                 with open(root / '.git/config', 'a') as config:
                     config.write('[kit]\n' + setting)
@@ -681,7 +628,7 @@ exit 1
         # but made the copy's false. Set in both scopes it became two values and the write failed.
         for scopes in ('both', 'worktree'):
             with self.subTest(scopes=scopes), tempfile.TemporaryDirectory() as tmp:
-                root, git = self.fixture(tmp, ': > "$TMPDIR/gate-ran"\n')
+                root, git = self.fixture(tmp, ': > "$SCRATCH/gate-ran"\n')
                 git('config', 'extensions.worktreeConfig', 'true')
                 if scopes == 'worktree':
                     git('config', '--unset', 'core.filemode')

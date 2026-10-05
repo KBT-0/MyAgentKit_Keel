@@ -86,20 +86,18 @@
 # link at the gate ran a gate that resolves its own location against the checkout), and both
 # are written and run by their absolute paths (with CDPATH set, a relative write once missed
 # the directory that was validated).
-# The audit runs again after the baseline gate run and before the injection: checked only
-# before it, a baseline that replaced src/domain or the gate with a symlink sent the
-# injection, or the second run, out of the copy. A hook the baseline left in .git/hooks is
-# refused by name there too: the second run's `git add` would run it. So is any change to the
-# copy's git configuration: a baseline that set core.hooksPath to a directory holding a hook
-# passed that check, so .git/config must still hold the bytes written before the baseline, and
-# a .git/config.worktree or .git/commondir it left is refused (git reads no configuration from
-# the copy's HOME under probe_env; attributes run nothing without a configured driver). The
-# audit's Python runs isolated (-I): a .pth file the baseline left in that HOME ran in it.
-# A folder or entry the audit cannot read fails it by name: os.walk skipped an unreadable
-# folder, and a baseline that hid an outside symlink in one passed, then made it readable and
-# wrote through it.
-# Copying a large tree (dependencies, build output) costs time: copy only what the gate
-# reads if that is known, but never let the probe write into the checkout.
+# The second run starts from a fresh copy; nothing the baseline run wrote exists in it. With
+# one copy reused, three review rounds in a row found something the baseline left that acted
+# in the second run (a hook in .git/hooks, a core.hooksPath, a .pth file in HOME that the
+# second run's python3 executed), and each re-check added after the baseline was the next
+# thing to bypass (a .git/config replaced by a link to /dev/zero hung the comparison). So the
+# baseline's copy, its own HOME and TMPDIR inside, is deleted (one that cannot be deleted
+# fails the case by name), and the same function makes the injected run a new one. The runs
+# still share PATH, which a baseline changes only through a writable PATH directory, outside
+# the example's reach, and the checkout, which the example only reads. A folder the audit
+# cannot read fails it by name (os.walk skips one), and its Python runs isolated (-I).
+# Copying a large tree (dependencies, build output) costs time, twice: copy only what the
+# gate reads if that is known, but never let the probe write into the checkout.
 #
 # This worked example runs in a subshell so its traps do not replace the surrounding
 # self-test traps. `$0` is the checkout's gate; the copy's own gate, at the same relative
@@ -110,26 +108,21 @@
 # |   # key in lower case), e.g. "kit.required"; never one that names a command or a path.
 # |   probe_config_keys=""
 # |   probe_checkout=$(pwd -P) || exit 1
-# |   probe_copy=$(mktemp -d) || exit 1
-# |   trap 'rm -rf "$probe_copy"' EXIT
+# |   probe_copy=
+# |   # Made writable first: a read-only folder (a module cache) would survive `rm -rf`.
+# |   probe_delete() { [ -z "$probe_copy" ] || { chmod -R u+rwx "$probe_copy" 2>/dev/null; rm -rf "$probe_copy"; }; }
+# |   trap probe_delete EXIT
 # |   trap 'exit 130' INT
 # |   trap 'exit 143' TERM
-# |   probe_copy=$(CDPATH= cd -P "$probe_copy" && pwd -P) || exit 1
 # |   probe_fail() { echo "  FAIL — existing-file probe: $*"; exit 1; }
 # |   probe_skip() { echo "  NOT RUN — existing-file probe: $*"; exit 1; }
-# |   case "$probe_copy/" in
-# |     "$probe_checkout"/*) probe_fail "the disposable copy ($probe_copy) is inside the checkout; set TMPDIR outside it." ;;
-# |   esac
-# |   # An empty HOME and no system or global git configuration: nothing but the copy's own is active.
-# |   mkdir "$probe_copy/home" || exit 1
+# |   # The copy's own empty HOME and TMPDIR, no system or global git configuration.
 # |   probe_env() {
 # |     env -i PATH="$PATH" LC_ALL=C HOME="$probe_copy/home" XDG_CONFIG_HOME="$probe_copy/home" \
-# |       GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null TMPDIR="${TMPDIR:-/tmp}" "$@"
+# |       GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null TMPDIR="$probe_copy/tmp" "$@"
 # |   }
 # |   [ -d .git ] && [ ! -L .git ] && [ ! -e .git/commondir ] ||
 # |     probe_skip "the checkout's .git is not a directory (a linked worktree, a submodule or a separate git directory); this example supports a plain repository only: run the self-test from the main checkout."
-# |   cp -RP . "$probe_copy/checkout" && CDPATH= cd -P "$probe_copy/checkout" || exit 1
-# |   probe_root=$(pwd -P) || exit 1
 # |   probe_target=src/domain/existing.py
 # |   probe_gate="$(basename "$(dirname "$0")")/${0##*/}"
 # |   # Every symlink resolves inside the copy, no `.git` lies below the top level, and the path to
@@ -167,60 +160,65 @@
 # | ' "$probe_root" "$probe_target" "$probe_gate" 2>&1) ||
 # |       probe_skip "${probe_why:-could not search the disposable copy}; the existing-file probe does not support it."
 # |   }
-# |   probe_audit
 # |   probe_allowed="core.repositoryformatversion core.bare extensions.objectformat extensions.refstorage
 # |     user.name user.email core.autocrlf core.eol core.safecrlf core.filemode core.ignorecase core.symlinks
 # |     core.quotepath core.precomposeunicode core.whitespace core.abbrev init.defaultbranch $probe_config_keys"
-# |   probe_env git -C "$probe_checkout" config --show-origin --includes --name-only --list > "$probe_copy/names" &&
-# |     probe_env git -C "$probe_checkout" config --local --no-includes --show-origin --name-only --list > "$probe_copy/own" &&
-# |     probe_env git -C "$probe_checkout" config --local --no-includes --list -z > "$probe_copy/config" ||
-# |     probe_fail "could not read the original's configuration (git config); refusing to run."
-# |   probe_own=$(LC_ALL=C awk -F '\t' 'NR == 1 { print $1 }' "$probe_copy/own") || exit 1
-# |   PROBE_OWN=$probe_own PROBE_ALLOWED=$probe_allowed LC_ALL=C awk -F '\t' '
-# |     BEGIN { n = split(ENVIRON["PROBE_ALLOWED"], k, " "); for (i = 1; i <= n; i++) allowed[k[i]] = 1 }
-# |     !($2 in allowed) {
-# |       if (!noted[$2]++)
-# |         print "  NOTE — existing-file probe: " $2 " is not carried into the disposable copy; a setting your gate reads goes in probe_config_keys."
-# |       next
-# |     }
-# |     $1 != ENVIRON["PROBE_OWN"] {
-# |       print "  FAIL — existing-file probe: " $2 " is set in " $1 ", not in the repository'"'"'s own config file; set it there, or remove it from probe_config_keys."
-# |       exit 1
-# |     }' "$probe_copy/names" || exit 1
-# |   { rm -f .git/config.worktree && rm -rf .git/hooks && mkdir .git/hooks && : > .git/config &&
-# |     probe_env PROBE_ALLOWED="$probe_allowed" xargs -0 sh -c '
-# |       for probe_entry; do
-# |         probe_key=$(printf "%s\n" "$probe_entry" | sed -n 1p) || exit 1
-# |         probe_carry=
-# |         for probe_allowed in $PROBE_ALLOWED; do [ "$probe_key" != "$probe_allowed" ] || probe_carry=1; done
-# |         [ -n "$probe_carry" ] || continue
-# |         if [ "$probe_entry" != "$probe_key" ]; then
-# |           git config --file .git/config --add "$probe_key" "${probe_entry#"$probe_key"?}" || exit 1
-# |         else
-# |           # A valueless key (no newline in the entry) has no `git config` syntax: append it.
-# |           probe_section=${probe_key%.*}
-# |           case $probe_section in
-# |             *.*) probe_sub=$(printf "%s\n" "${probe_section#*.}" | sed "s/[\\\\\"]/\\\\&/g") || exit 1
-# |                  probe_section="${probe_section%%.*} \"$probe_sub\"" ;;
-# |           esac
-# |           printf "[%s]\n\t%s\n" "$probe_section" "${probe_key##*.}" >> .git/config || exit 1
-# |         fi
-# |       done' sh < "$probe_copy/config"; } ||
-# |     probe_fail "could not carry the allowlisted settings into the disposable copy; refusing to run."
-# |   probe_config=$(od -An -tx1 -v .git/config) || exit 1
+# |   probe_noted=
+# |   # Each run gets a copy of its own, made by this one function: the checkout's bytes in a fresh
+# |   # directory, audited, with empty hooks and only the allowlisted settings.
+# |   probe_fresh_copy() {
+# |     probe_copy=$(mktemp -d) && probe_copy=$(CDPATH= cd -P "$probe_copy" && pwd -P) || exit 1
+# |     case "$probe_copy/" in
+# |       "$probe_checkout"/*) probe_fail "the disposable copy ($probe_copy) is inside the checkout; set TMPDIR outside it." ;;
+# |     esac
+# |     mkdir "$probe_copy/home" "$probe_copy/tmp" || exit 1
+# |     cp -RP "$probe_checkout" "$probe_copy/checkout" && CDPATH= cd -P "$probe_copy/checkout" || exit 1
+# |     probe_root=$(pwd -P) || exit 1
+# |     probe_audit
+# |     probe_env git -C "$probe_checkout" config --show-origin --includes --name-only --list > "$probe_copy/names" &&
+# |       probe_env git -C "$probe_checkout" config --local --no-includes --show-origin --name-only --list > "$probe_copy/own" &&
+# |       probe_env git -C "$probe_checkout" config --local --no-includes --list -z > "$probe_copy/config" ||
+# |       probe_fail "could not read the original's configuration (git config); refusing to run."
+# |     probe_own=$(LC_ALL=C awk -F '\t' 'NR == 1 { print $1 }' "$probe_copy/own") || exit 1
+# |     PROBE_NOTED=$probe_noted PROBE_OWN=$probe_own PROBE_ALLOWED=$probe_allowed LC_ALL=C awk -F '\t' '
+# |       BEGIN { n = split(ENVIRON["PROBE_ALLOWED"], k, " "); for (i = 1; i <= n; i++) allowed[k[i]] = 1 }
+# |       !($2 in allowed) {
+# |         if (ENVIRON["PROBE_NOTED"] == "" && !noted[$2]++)
+# |           print "  NOTE — existing-file probe: " $2 " is not carried into the disposable copy; a setting your gate reads goes in probe_config_keys."
+# |         next
+# |       }
+# |       $1 != ENVIRON["PROBE_OWN"] {
+# |         print "  FAIL — existing-file probe: " $2 " is set in " $1 ", not in the repository'"'"'s own config file; set it there, or remove it from probe_config_keys."
+# |         exit 1
+# |       }' "$probe_copy/names" || exit 1
+# |     probe_noted=1
+# |     { rm -f .git/config.worktree .git/config && rm -rf .git/hooks && mkdir .git/hooks && : > .git/config &&
+# |       probe_env PROBE_ALLOWED="$probe_allowed" xargs -0 sh -c '
+# |         for probe_entry; do
+# |           probe_key=$(printf "%s\n" "$probe_entry" | sed -n 1p) || exit 1
+# |           probe_carry=
+# |           for probe_allowed in $PROBE_ALLOWED; do [ "$probe_key" != "$probe_allowed" ] || probe_carry=1; done
+# |           [ -n "$probe_carry" ] || continue
+# |           if [ "$probe_entry" != "$probe_key" ]; then
+# |             git config --file .git/config --add "$probe_key" "${probe_entry#"$probe_key"?}" || exit 1
+# |           else
+# |             # A valueless key (no newline in the entry) has no `git config` syntax: append it.
+# |             probe_section=${probe_key%.*}
+# |             case $probe_section in
+# |               *.*) probe_sub=$(printf "%s\n" "${probe_section#*.}" | sed "s/[\\\\\"]/\\\\&/g") || exit 1
+# |                    probe_section="${probe_section%%.*} \"$probe_sub\"" ;;
+# |             esac
+# |             printf "[%s]\n\t%s\n" "$probe_section" "${probe_key##*.}" >> .git/config || exit 1
+# |           fi
+# |         done' sh < "$probe_copy/config"; } ||
+# |       probe_fail "could not carry the allowlisted settings into the disposable copy; refusing to run."
+# |   }
+# |   probe_fresh_copy
 # |   probe_env sh "$probe_root/$probe_gate" >/dev/null 2>&1 ||
 # |     probe_fail "the baseline is already red; the injection would prove nothing."
-# |   probe_hooks=$(ls -A .git/hooks) && [ -z "$probe_hooks" ] ||
-# |     probe_skip "the baseline gate run left a hook in the disposable copy's .git/hooks (or removed it); the second run would run it."
-# |   # Under probe_env git reads only .git/config, .git/config.worktree when that enables it,
-# |   # and the configuration .git/commondir points to: the second run gets exactly what was carried.
-# |   [ -d .git ] && [ ! -L .git ] && [ ! -e .git/commondir ] && [ ! -L .git/commondir ] ||
-# |     probe_skip "the baseline gate run left a .git/commondir in the disposable copy, or replaced its .git; the second run would read another configuration."
-# |   [ ! -e .git/config.worktree ] && [ ! -L .git/config.worktree ] ||
-# |     probe_skip "the baseline gate run left a .git/config.worktree in the disposable copy; the second run would read a configuration the example did not write."
-# |   [ "$(od -An -tx1 -v .git/config)" = "$probe_config" ] ||
-# |     probe_skip "the baseline gate run changed the disposable copy's .git/config; the second run would read a configuration the example did not write."
-# |   probe_audit
+# |   cd / && probe_delete ||
+# |     probe_fail "could not delete the baseline run's copy ($probe_copy); refusing to run."
+# |   probe_fresh_copy
 # |   printf 'from myapp.web import router\n' > "$probe_root/$probe_target" || exit 1
 # |   probe_status=0
 # |   probe_output=$(probe_env sh "$probe_root/$probe_gate" 2>&1) || probe_status=$?
