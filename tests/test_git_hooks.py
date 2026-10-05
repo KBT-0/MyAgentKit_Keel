@@ -334,6 +334,65 @@ class GitHookTests(unittest.TestCase):
             result = self.commit(root, git, 'Co-Authored-By: Claude <noreply@anthropic.com>\n')
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def docs(self, root, git, state='', backlog=''):
+        (root / 'docs').mkdir(exist_ok=True)
+        (root / 'docs/STATE.md').write_text('# STATE\n\n## Active work\n' + state)
+        (root / 'docs/BACKLOG.md').write_text('# BACKLOG\n\n## Next tasks\n' + backlog)
+        git('add', 'docs')
+
+    def test_a_done_task_the_staged_state_files_still_mention_is_rejected_by_name(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, git = self.repo(tmp)
+            for state, backlog, where in (('- K4: in flight\n', '', 'docs/STATE.md'),
+                                          ('', '- K4 later\n', 'docs/BACKLOG.md')):
+                with self.subTest(where=where):
+                    self.docs(root, git, state, backlog)
+                    result = self.commit(root, git, where + '\n\nDone: K4\n')
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    self.assertIn('closes K4 but %s still mentions it' % where, result.stderr)
+                    self.assertIn(where + ':4:', result.stderr)
+            # The line deleted and staged, the same commit passes; a longer id is another task.
+            self.docs(root, git, '- K4b: a different task\n')
+            result = self.commit(root, git, 'closed\n\nDone: K4\n')
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_the_index_is_checked_not_the_working_tree(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, git = self.repo(tmp)
+            self.docs(root, git, '- K4: in flight\n')
+            (root / 'docs/STATE.md').write_text('# STATE\n\n## Active work\n')
+            result = self.commit(root, git, 'unstaged\n\nDone: K4\n')
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn('closes K4 but docs/STATE.md', result.stderr)
+            self.docs(root, git)
+            (root / 'docs/STATE.md').write_text('# STATE\n\n## Active work\n- K4: in flight\n')
+            result = self.commit(root, git, 'staged\n\nDone: K4\n')
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_every_done_trailer_is_checked_and_must_name_a_task_id(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, git = self.repo(tmp)
+            self.docs(root, git, '- L1b: still here\n')
+            result = self.commit(root, git, 'two\n\nDone: K4\nDone: L1b\n')
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn('closes L1b but docs/STATE.md', result.stderr)
+            for value in ('K', '4K', 'K4,', 'K4-', 'K-4-a'):
+                with self.subTest(value=value):
+                    result = self.commit(root, git, value + '\n\nDone: ' + value + '\n')
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    self.assertIn("'Done: %s' does not name a task id" % value, result.stderr)
+            result = self.commit(root, git, 'valid\n\nDone: R12\nDone: K7-a\n')
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_the_done_check_runs_without_the_attribution_rule(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, git = self.repo(tmp)
+            (root / 'AGENTS.md').write_text('AI tools may be credited.\n')
+            self.docs(root, git, '- K4: in flight\n')
+            result = self.commit(root, git, 'Done: K4\n')
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn('closes K4 but docs/STATE.md', result.stderr)
+
     def test_comment_lines_are_checked_whatever_git_would_do_with_them(self):
         # Whether git keeps a "#" line depends on commit.cleanup, a --cleanup flag the hook
         # cannot see, and -m versus the editor (git's default keeps them for -m). The hook

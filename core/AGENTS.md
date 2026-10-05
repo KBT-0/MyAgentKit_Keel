@@ -127,7 +127,10 @@ FAILING for the right reason.
   someone. It is read every session, so its length is a bill paid every session.
 - A next task or a parked item is written to `docs/BACKLOG.md`, never to STATE.md. A
   backlog only grows, and in STATE.md it is read every session for nothing.
-- **Completed work is DELETED, not marked DONE.** The history lives in git.
+- **Completed work is DELETED, not marked DONE.** The history lives in git. The commit that
+  finishes a task with an id carries a `Done: <id>` trailer, and the commit-msg hook and
+  `./scripts/check.sh` then refuse a STATE.md or BACKLOG.md that still names it
+  (`docs/WORKFLOW.md`, "Task ids").
 - Before deleting a line, ask: *is this still true next month?* If yes, it must have a
   permanent home BEFORE it leaves — `docs/PROJECT.md` (a decision, as a numbered item),
   `docs/ARCHITECTURE.md` (a module or boundary), `docs/WORKFLOW.md` (a process or gate

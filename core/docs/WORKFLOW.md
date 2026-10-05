@@ -41,6 +41,25 @@ a risky change ships. Agents propose; {{OWNER_NAME}} decides.
 8. **Summarize:** what, why, which files. If you hit an OPEN design item, flag it as a
    question rather than deciding it.
 
+## Task ids
+
+Finished work that nobody deleted is how `docs/STATE.md` rots: a project's state file held
+lines like "Committed: K4" and "merged after three review rounds" long after the work was in
+git, and a size limit could not tell those lines from live ones. A task id makes the
+deletion checkable.
+
+- A task id is a short token that starts with a letter and holds at least one digit:
+  letters and digits, with at most one inner `-` (`K4`, `L1b`, `R12`, `K7-a`). A line in
+  `docs/STATE.md` or `docs/BACKLOG.md` MAY name its task by id; none has to.
+- The commit that finishes a task says so with a trailer, ONE per id, in the last paragraph
+  of the message: `Done: K4`. For work done on a branch, the integrating session's merge
+  commit carries it.
+- `.githooks/commit-msg` rejects that commit while the `docs/STATE.md` or `docs/BACKLOG.md`
+  it records still names the id, and says which line; `./scripts/check.sh` fails `[state]`
+  when either file names an id that any commit in the history closed. Whole word: closing
+  `K3` says nothing about `K3b`.
+- A closed id is never reused. A task needed again gets a new id.
+
 ## Task sizing
 
 - Ideal: one module, one to five files, finishes in one session, describable in one sentence.
