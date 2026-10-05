@@ -22,18 +22,23 @@
 #   elif [ -e src/domain/.selftest.py ] || [ -L src/domain/.selftest.py ]; then
 #     echo "  FAIL — the injection path already exists; refusing to overwrite owner content."
 #     st_fail=1
-#   else
-#     mkdir -p src/domain && printf 'from myapp.web import router\n' > src/domain/.selftest.py
+#   elif (
+#     # A subshell, so these traps do not replace the self-test's: interrupted, the file goes too.
+#     trap 'rm -f src/domain/.selftest.py' EXIT
+#     trap 'exit 130' INT
+#     trap 'exit 143' TERM
+#     mkdir -p src/domain && printf 'from myapp.web import router\n' > src/domain/.selftest.py || exit 1
 #     boundary_status=0
 #     boundary_output=$(sh "$0" 2>&1) || boundary_status=$?
-#     if [ "$boundary_status" -ne 0 ] && printf '%s\n' "$boundary_output" |
-#         grep -Fq 'FAIL [boundary]: the domain layer imports the web layer:'; then
-#       echo "  ok   — domain/web boundary gate rejects a forbidden import"
-#     else
-#       echo "  FAIL — the injection did not produce the domain/web gate's failure."
-#       st_fail=1
-#     fi
-#     rm -f src/domain/.selftest.py
+#     [ "$boundary_status" -ne 0 ] && printf '%s\n' "$boundary_output" |
+#       grep -Fq 'FAIL [boundary]: the domain layer imports the web layer:'
+#   ); then
+#     echo "  ok   — domain/web boundary gate rejects a forbidden import"
+#   else
+#     boundary_status=$?
+#     case $boundary_status in 130|143) exit "$boundary_status" ;; esac
+#     echo "  FAIL — the injection did not produce the domain/web gate's failure."
+#     st_fail=1
 #   fi
 #
 # {{BOUNDARY_SELF_TESTS}}
