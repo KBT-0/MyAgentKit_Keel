@@ -317,6 +317,10 @@ def validate(envelope: object, mode: str, model: str) -> dict:
         raise BridgeError("CLI did not return a successful result envelope")
     if envelope.get("type") != "result" or envelope.get("subtype") != "success":
         raise BridgeError("CLI result is incomplete (budget, turns, or execution failed)")
+    # The CLI copies this from the message that ended the turn, not from an error it retried
+    # through: a valid Accept beside a 429 was recorded completed with failure_kind quota.
+    if envelope.get("api_error_status") is not None:
+        raise BridgeError("CLI result ended on API error status %r" % envelope["api_error_status"])
     used = envelope.get("modelUsage", {})
     # The pinned id itself, or it with a -YYYYMMDD date: a prefix match let claude-opus-5-5,
     # another model, attest the pin claude-opus-5.

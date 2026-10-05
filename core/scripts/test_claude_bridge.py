@@ -21,7 +21,7 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'MYAGENTKIT_TASK_ID', 'MYAGENTKIT_R
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 86, 'test_agent_usage': 19, 'test_codex_quota': 5}
+SUITE_MINIMUMS = {'test_claude_bridge': 89, 'test_agent_usage': 19, 'test_codex_quota': 5}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -59,6 +59,8 @@ if case == 'conflict': value['findings'] = ['Unresolved defect.']
 if case == 'turns': result['subtype'] = 'error_max_turns'
 if case == 'model': result['modelUsage'] = {'different-model': {}}
 if case == 'error': result['is_error'] = True
+# A valid review in an envelope that also names an API error status on its final result.
+if case.startswith('api_'): result['api_error_status'] = int(case[4:])
 if case == 'exit': print(json.dumps(result)); sys.exit(9)
 if case == 'mutation': pathlib.Path('file.py').write_text('changed during review')
 if case == 'kit_docs': assert 'core/docs/ARCHITECTURE.md' in prompt
@@ -1533,6 +1535,56 @@ class BridgeTests(unittest.TestCase):
                 # A failed run that still printed a verdict would read as an approval.
                 self.assertEqual(verdicts_of(result["evidence"]), [])
 
+    def test_an_api_error_status_on_the_final_result_fails_the_review(self):
+        # An exit-0 success envelope with a valid Accept and api_error_status 429 was recorded
+        # completed AND quota, and the dispatcher took it as a finished review. The CLI copies
+        # that status from the message that ended the turn, never from an error it retried
+        # through, so its presence is a failure, whatever the text holds. "error" is is_error
+        # with a valid verdict; "accept" is the clean completion.
+        for case, kind in (('api_429', 'quota'), ('api_401', 'invalid_evidence'),
+                           ('api_500', 'invalid_evidence'), ('api_529', 'invalid_evidence'),
+                           ('error', 'cli_error'), ('accept', None)):
+            with self.subTest(case=case):
+                code, result = self.run_bridge(case)
+                self.assertEqual((code, result['status'], result['failure_kind']),
+                                 (0, 'completed', None) if kind is None else (5, 'failed', kind))
+                self.assertEqual(header_of(result['evidence'])['status'], result['status'])
+                self.assertEqual(verdicts_of(result['evidence']), [] if kind else ['VERDICT: Accept'])
+                usage = json.loads(Path(result['usage_record']).read_text())
+                self.assertEqual((usage['status'], usage['failure_kind']), (result['status'], kind))
+                if case.startswith('api_'):
+                    self.assertIn('"api_error_status": ' + case[4:], usage['raw_stdout'])
+
+    def test_a_record_is_completed_exactly_when_it_names_no_failure(self):
+        # Every outcome either fake CLI can produce, through each adapter directly.
+        claude = sorted(set(re.findall(r"case == '(\w+)'", FIXTURE)) | {'api_429', 'api_500'})
+        codex = sorted(set(re.findall(r"case == '(\w+)'", self.build_fake_codex().read_text()))
+                       | {'accept', 'mcp', 'mcp_reconnect', 'mcp_no_verdict', 'mcp_two_verdicts'})
+        env = dict(os.environ, MYAGENTKIT_DELEGATION_DEPTH='0', MYAGENTKIT_CAPTURE_QUOTA='0',
+                   REVIEW_TIMEOUT_SECONDS='2', REVIEW_CLI_BIN=str(self.build_fake_codex()),
+                   REVIEW_DOCS='AGENTS.md, docs/ARCHITECTURE.md and docs/REVIEW_GATE.md')
+        runs = [('claude', case, [sys.executable, '-B', str(BRIDGE), 'review', '--repo', str(self.repo),
+                                  '--timeout', '2'], {'CLAUDE_CLI_BIN': str(self.fixture), 'FIXTURE_CASE': case})
+                for case in claude]
+        runs += [('codex', case, [sys.executable, '-B', str(ROOT / 'codex_bridge.py'), '--repo',
+                                  str(self.repo), '--model', 'fixture-codex-model', '--uncommitted'],
+                  {'CODEX_FIXTURE_CASE': case}) for case in codex]
+        for adapter, case, command, extra in runs:
+            with self.subTest(adapter=adapter, case=case):
+                run = subprocess.run(command, env=dict(env, **extra), capture_output=True, text=True)
+                lines = [line.removeprefix('review invocation: ') for line in run.stdout.splitlines()
+                         if line.startswith(('{', 'review invocation: {'))]
+                result = json.loads(lines[-1])
+                self.assertEqual(result['status'] == 'completed', result['failure_kind'] is None, result)
+                self.assertEqual(run.returncode == 0, result['status'] == 'completed', result)
+                if result.get('usage_record'):
+                    usage = json.loads(Path(result['usage_record']).read_text())
+                    self.assertEqual((usage['status'], usage['failure_kind']),
+                                     (result['status'], result['failure_kind']))
+            if (self.repo / 'docs/reviews').is_file():  # archive_failure blocks the next case
+                (self.repo / 'docs/reviews').unlink()
+            (self.repo / 'file.py').write_text('changed\n')
+
     def test_the_pin_is_attested_by_its_exact_id_or_a_dated_one_only(self):
         # Matched as a prefix, the usage key claude-opus-5-5, another model, attested the pin
         # claude-opus-5. Only the pinned id itself, or it with a -YYYYMMDD date, attests it.
@@ -2321,6 +2373,23 @@ if case == 'archive_failure':
                 self.assertEqual(usage['status'], 'failed' if kind else 'completed')
                 if case.startswith('mcp'):
                     self.assertIn('Transport channel closed', usage['raw_stderr'])
+
+    def test_a_quota_status_on_a_valid_claude_review_is_a_quota_failure_for_the_dispatcher(self):
+        # It once ended the chain as a completed review by claude whose failure_kind was quota.
+        result, chain = self.dispatch_result(fallback=False, FIXTURE_CASE='api_429')
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertEqual((chain['status'], chain['failure_kind']), ('failed', 'quota'))
+        self.assertEqual([a['reviewer'] for a in chain['attempts']], ['claude'])
+        self.assertIn('not requested', chain['fallback_blocked'])
+        self.assertNotIn('selected_reviewer', chain)
+        self.assertEqual(chain['recovery']['action'], 'continue_independent_work')
+        # With --fallback, quota is an unavailable reviewer like any other: Codex runs once.
+        result, chain = self.dispatch_result(FIXTURE_CASE='api_429', MYAGENTKIT_TASK_ID='api-fallback')
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual([(a['reviewer'], a['status'], a['failure_kind']) for a in chain['attempts']],
+                         [('claude', 'failed', 'quota'), ('codex', 'completed', None)])
+        self.assertEqual(chain['selected_reviewer'], 'codex')
+        self.assertFalse(chain['review_approved'])
 
     def test_cancelled_review_stops_the_reviewer_records_usage_and_never_fails_over(self):
         # SIGTERM and SIGHUP used to end the dispatcher without its cleanup, leaving the paid
