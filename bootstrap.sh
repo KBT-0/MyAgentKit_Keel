@@ -131,8 +131,9 @@ copy_tree() {
     # Running Python tooling must not change the installed skeleton with local bytecode.
     case "$rel" in __pycache__/*|*/__pycache__/*|*.pyc|*.pyo) continue ;; esac
     dest="${prefix:+$prefix/}$rel"
-    # Only a destination `blocked` passes is compared or replaced; anything else is listed, unread.
-    if [ -n "$(blocked "$dest")" ]; then
+    # Only a destination `blocked` passes, with the temporary it is written through, is
+    # compared or replaced; anything else is listed, unread.
+    if [ -n "$(blocked "$dest")$(blocked "$dest.kit-tmp")" ]; then
       printf '%s\n' "$dest" >> "$skiplist"
       continue
     fi
@@ -141,8 +142,11 @@ copy_tree() {
       printf '%s\n' "$dest" >> "$skiplist"
       continue
     fi
+    # Copied to a sibling and moved over: a `cp` cut short on the destination itself was
+    # taken by the retry for the owner's own differing file, and the version recorded over it.
     mkdir -p "$target/$(dirname "$dest")"
-    cp "$src/$rel" "$target/$dest"
+    { cp -f "$src/$rel" "$target/$dest.kit-tmp" && mv -f "$target/$dest.kit-tmp" "$target/$dest"; } ||
+      { rm -f "$target/$dest.kit-tmp"; exit 1; }
   done
 }
 
@@ -203,7 +207,10 @@ fi
 # version stamped .kit-version first and then refused — after which sync-kit.sh greeted the
 # gateless project with "already current. Nothing to do."
 gates=$(grep -E '^(scripts/check\.sh|\.githooks/(pre-commit|pre-merge-commit|commit-msg))$' "$skiplist" 2>/dev/null |
-  while IFS= read -r g; do why=$(blocked "$g"); printf '%s%s\n' "$g" "${why:+ ($why)}"; done)
+  while IFS= read -r g; do
+    why=$(blocked "$g")
+    [ -n "$why" ] || { why=$(blocked "$g.kit-tmp"); why=${why:+$g.kit-tmp: $why}; }
+    printf '%s%s\n' "$g" "${why:+ ($why)}"; done)
 # Two lists: only a gate conflict means missing enforcement; a folder or file bootstrap makes
 # itself (docs/reviews, the stamp) is a plain destination that could not be written.
 if [ -n "$gates" ]; then

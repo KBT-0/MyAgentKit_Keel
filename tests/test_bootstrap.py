@@ -110,6 +110,8 @@ class BootstrapTests(unittest.TestCase):
                 ('file for a created folder', 'docs/reviews', 'file', (), 'conflict: docs/reviews (not a folder)'),
                 ('folder at the stamp temporary', 'docs/kit/.kit-version.kit-tmp', 'dir', (),
                  'conflict: docs/kit/.kit-version.kit-tmp (not a regular file)'),
+                ('folder at a gate temporary', '.githooks/commit-msg.kit-tmp', 'dir', (),
+                 'conflict: .githooks/commit-msg (.githooks/commit-msg.kit-tmp: not a regular file)'),
                 ('fifo at the note temporary', 'docs/kit/BOOTSTRAP_NOTE.md.kit-tmp', 'fifo', ('--note', 'n'),
                  'conflict: docs/kit/BOOTSTRAP_NOTE.md.kit-tmp (not a regular file)')):
             with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
@@ -202,6 +204,22 @@ class BootstrapTests(unittest.TestCase):
                 self.assertEqual(sorted(p.name for p in kit_dir.iterdir()),
                                  sorted(['.kit-version'] + (['BOOTSTRAP_NOTE.md'] if flags else [])))
                 self.assertNotEqual((kit_dir / '.kit-version').read_text(), '0.1\n')
+
+    def test_a_copy_that_fails_midway_leaves_no_cut_short_file(self):
+        # Each file was copied straight onto its destination: a full disk midway left it cut
+        # short, the retry took it for the owner's own differing file, listed it as left
+        # alone and recorded the version over it. A file-size limit stands in for the full disk.
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / 'project'
+            run = lambda prefix: subprocess.run([*prefix, str(root / 'bootstrap.sh'), str(project)],
+                                                capture_output=True, text=True, timeout=60)
+            failed = run(['sh', '-c', 'trap "" XFSZ; ulimit -f 1; exec sh "$0" "$@"'])
+            self.assertNotEqual(failed.returncode, 0, failed.stdout + failed.stderr)
+            self.assertEqual([p for p in project.rglob('*.kit-tmp')], [], 'temporary left')
+            again = run(['sh'])
+            self.assertEqual(again.returncode, 0, again.stdout + again.stderr)
+            self.assertEqual(self._listed(again.stdout), set(), 'a cut-short copy taken for the owner\'s file')
 
     def test_a_finish_that_fails_after_wiring_the_hooks_puts_the_hooks_path_back(self):
         # core.hooksPath was set before the stamp was written: a read-only stamp, a full disk or
