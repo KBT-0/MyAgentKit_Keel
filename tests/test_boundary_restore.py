@@ -596,6 +596,34 @@ exit 1
             self.assertIn('deleted nothing', result.stdout)
             self.assertNotIn('  ok   — ', result.stdout)
 
+    def test_a_checkout_changed_between_the_copies_is_not_run(self):
+        # Each run copied the live checkout: a gate changed between the copies to always print
+        # the diagnostic and fail passed the probe with no green baseline. Here the baseline
+        # itself rewrites the checkout's gate, the simplest synchronised change.
+        with tempfile.TemporaryDirectory() as tmp:
+            root, git = self.fixture(tmp, "grep -q 'myapp.web' src/domain/existing.py || { printf '%s\\n' "
+                                          "\"echo 'FAIL [boundary]: the domain layer imports the web layer:'\" 'exit 1' "
+                                          '> "$ORIGIN/scripts/new.sh" && mv "$ORIGIN/scripts/new.sh" "$ORIGIN/scripts/check.sh"; '
+                                          '} || exit 1\n', names=('ORIGIN',))
+            result = self.self_test(tmp, root, ORIGIN=str(root))
+            self.assertNotIn('the domain layer', (root / 'scripts/check.sh').read_text().split('\n')[1],
+                             'the gate was not rewritten')
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn('NOT RUN — existing-file probe: the checkout changed between the two copies;'
+                          ' run the self-test again', result.stdout)
+            self.assertNotIn('  ok   — ', result.stdout)
+
+    def test_a_special_file_in_the_checkout_is_refused_by_name(self):
+        # The digest reads regular files only: a FIFO would block the read, a device has no end.
+        with tempfile.TemporaryDirectory() as tmp:
+            root, git = self.fixture(tmp, '')
+            os.mkfifo(root / 'pipe')
+            result = self.self_test(tmp, root)
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn('NOT RUN — existing-file probe: pipe is not a regular file, a folder or a symlink',
+                          result.stdout)
+            self.assertNotIn('  ok   — ', result.stdout)
+
     def test_a_folder_the_baseline_hides_goes_with_its_copy(self):
         # os.walk skips a folder it cannot read: a baseline that hid an outside symlink in one
         # passed the audit run again on its copy, and the next run made it readable and wrote
