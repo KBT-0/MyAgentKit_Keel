@@ -124,8 +124,8 @@ class SyncKitTests(unittest.TestCase):
         # Only the last component was checked: with `.githooks` a symlink to a folder outside
         # the project, the kit's hook was listed "new:" and written there. And an overlay file
         # whose destination was a dangling symlink was skipped without a word (`-e` is false).
-        cases = (('core/.githooks/commit-msg', '.githooks', '.githooks/commit-msg (the symlink .githooks'),
-                 ('overlays/o/files/scripts/tool.sh', 'scripts/tool.sh', 'scripts/tool.sh (the symlink scripts/tool.sh'))
+        cases = (('core/.githooks/commit-msg', '.githooks', '.githooks/commit-msg (symlink: .githooks'),
+                 ('overlays/o/files/scripts/tool.sh', 'scripts/tool.sh', 'scripts/tool.sh (symlink: scripts/tool.sh'))
         for src, link, needle in cases:
             with self.subTest(link=link), tempfile.TemporaryDirectory() as tmp:
                 kit, project = Path(tmp) / 'kit', Path(tmp) / 'project'
@@ -144,6 +144,46 @@ class SyncKitTests(unittest.TestCase):
                 self.assertEqual((project / 'docs/kit/.kit-version').read_text(), '0.1\n')
                 self.assertEqual(list(outside.iterdir()) if outside.is_dir() else outside.exists(),
                                  [] if link == '.githooks' else False, 'written through a symlink')
+
+    def test_a_destination_that_cannot_be_written_is_a_conflict_and_a_failed_write_keeps_the_stamp(self):
+        # A regular FILE at `.githooks` made the hook "new:" and its copy failed midway through
+        # the copies; a failed chmod was ignored and the version stamped over a hook that cannot
+        # run; a FIFO or folder at the stamp read as "not installed with bootstrap.sh".
+        rel = '.githooks/commit-msg'
+        cases = (('file for a folder', 'conflict: .githooks/commit-msg (not a folder: .githooks,'),
+                 ('fifo stamp', 'conflict: docs/kit/.kit-version (not a regular file)'),
+                 ('folder stamp', 'conflict: docs/kit/.kit-version (not a regular file)'),
+                 ('chmod fails', 'could not write .githooks/commit-msg; version left at v0.1'))
+        for case, needle in cases:
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
+                kit, project = Path(tmp) / 'kit', Path(tmp) / 'project'
+                self.sync(tmp, '- A kit-owned file changed.\n', '--dry-run')
+                (kit / 'core' / rel).parent.mkdir(parents=True)
+                shutil.copyfile(ROOT / 'core' / rel, kit / 'core' / rel)
+                env = None
+                stamp = project / 'docs/kit/.kit-version'
+                if case == 'file for a folder':
+                    (project / '.githooks').write_text('x\n')
+                elif case != 'chmod fails':
+                    stamp.unlink()
+                    os.mkfifo(stamp) if case == 'fifo stamp' else stamp.mkdir()
+                else:
+                    shims = Path(tmp) / 'shims'
+                    shims.mkdir()
+                    (shims / 'chmod').write_text('#!/bin/sh\nexit 1\n')
+                    (shims / 'chmod').chmod(0o755)
+                    env = dict(os.environ, PATH=str(shims) + os.pathsep + os.environ['PATH'])
+                try:
+                    result = subprocess.run(['sh', str(kit / 'sync-kit.sh'), str(project)], env=env,
+                                            capture_output=True, text=True, timeout=30)
+                except subprocess.TimeoutExpired:
+                    self.fail('blocked')
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn(needle, result.stdout + result.stderr)
+                if stamp.is_file():
+                    self.assertEqual(stamp.read_text(), '0.1\n')
+                else:
+                    self.assertTrue(stamp.is_fifo() or stamp.is_dir())
 
     def test_every_printed_action_item_of_the_real_changelog_is_whole(self):
         # The checklist printed only the physical line holding the marker, so an owner

@@ -91,6 +91,78 @@ class BootstrapTests(unittest.TestCase):
                     self.assertEqual(list(outside.iterdir()), [], 'written through a symlinked folder')
                     self.assertEqual((project / 'docs/kit/.kit-version').exists(), not stops)
 
+    def _hooks_path(self, project):
+        return subprocess.run(['git', '-C', str(project), 'config', '--local', '--get', 'core.hooksPath'],
+                              capture_output=True, text=True).stdout.strip()
+
+    def test_a_destination_that_cannot_be_written_stops_unopened(self):
+        # A regular FILE at `.githooks` made every hook "absent": mkdir and cp failed unchecked,
+        # and the run stamped the version and wired the hooks with no hook installed. A FIFO at
+        # a file bootstrap GENERATES (the stamp, the --note file) only had the symlink check and
+        # blocked forever when opened for writing; a folder there was an ignored write failure.
+        root = Path(__file__).resolve().parents[1]
+        for case, rel, make, flags, needle in (
+                ('file for a folder', '.githooks', 'file', (), 'conflict: .githooks/commit-msg (not a folder: .githooks)'),
+                ('fifo stamp', 'docs/kit/.kit-version', 'fifo', (), 'conflict: docs/kit/.kit-version (not a regular file)'),
+                ('fifo note', 'docs/kit/BOOTSTRAP_NOTE.md', 'fifo', ('--note', 'n'),
+                 'conflict: docs/kit/BOOTSTRAP_NOTE.md (not a regular file)'),
+                ('folder stamp', 'docs/kit/.kit-version', 'dir', (), 'conflict: docs/kit/.kit-version (not a regular file)'),
+                ('file for a created folder', 'docs/reviews', 'file', (), 'conflict: docs/reviews (not a folder)')):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
+                project = Path(tmp) / 'project'
+                project.mkdir()
+                subprocess.run(['git', 'init', '-q', str(project)], check=True)
+                (project / rel).parent.mkdir(parents=True, exist_ok=True)
+                {'file': lambda p: p.write_text('x\n'), 'fifo': os.mkfifo, 'dir': Path.mkdir}[make](project / rel)
+                try:
+                    result = subprocess.run(['sh', str(root / 'bootstrap.sh'), str(project), *flags],
+                                            capture_output=True, text=True, timeout=60)
+                except subprocess.TimeoutExpired:
+                    self.fail('blocked on ' + rel)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn(needle, result.stdout)
+                self.assertFalse((project / 'docs/kit/.kit-version').is_file(), 'stamped')
+                self.assertEqual(self._hooks_path(project), '', 'hooks wired')
+
+    def test_a_failed_write_stops_before_the_stamp_and_the_hooks(self):
+        # Every mkdir, cp and chmod ran unchecked: one that failed (a full disk, a read-only
+        # folder) left the install short while the version was stamped and the hooks wired.
+        root = Path(__file__).resolve().parents[1]
+        for tool, match in (('cp', 'commit-msg'), ('chmod', 'pre-commit'), ('mkdir', 'docs/audits')):
+            with self.subTest(tool=tool), tempfile.TemporaryDirectory() as tmp:
+                project, shims = Path(tmp) / 'project', Path(tmp) / 'shims'
+                project.mkdir()
+                shims.mkdir()
+                subprocess.run(['git', 'init', '-q', str(project)], check=True)
+                (shims / tool).write_text('#!/bin/sh\ncase "$*" in *%s*) exit 1 ;; esac\nexec "%s" "$@"\n'
+                                          % (match, shutil.which(tool)))
+                (shims / tool).chmod(0o755)
+                env = dict(os.environ, PATH=str(shims) + os.pathsep + os.environ['PATH'])
+                result = subprocess.run(['sh', str(root / 'bootstrap.sh'), str(project)], env=env,
+                                        capture_output=True, text=True, timeout=60)
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn('before the version was recorded', result.stderr)
+                self.assertFalse((project / 'docs/kit/.kit-version').exists(), 'stamped')
+                self.assertEqual(self._hooks_path(project), '', 'hooks wired')
+
+    def test_a_conflict_outside_the_gates_claims_no_missing_enforcement(self):
+        # Every conflict was printed under "the gate files already existed" with the warning
+        # that the enforcement was not installed, also for a symlinked docs/reviews with every
+        # gate file installed.
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as tmp:
+            project, outside = Path(tmp) / 'project', Path(tmp) / 'outside'
+            (project / 'docs').mkdir(parents=True)
+            outside.mkdir()
+            (project / 'docs/reviews').symlink_to(outside)
+            result = subprocess.run(['sh', str(root / 'bootstrap.sh'), str(project)],
+                                    capture_output=True, text=True, timeout=60)
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn('STOPPING: these destinations could not be written', result.stdout)
+            self.assertIn('conflict: docs/reviews (symlink: docs/reviews)', result.stdout)
+            for claim in ('gate files', 'enforcement', 'no-op'):
+                self.assertNotIn(claim, result.stdout)
+
     def _listed(self, stdout):
         # The files a run reports as already existing: the indented paths under its header.
         return {line.strip() for line in stdout.splitlines() if line.startswith(' ' * 13)

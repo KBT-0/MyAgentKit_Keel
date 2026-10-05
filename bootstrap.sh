@@ -18,15 +18,19 @@
 # already under way — a retrofit is incremental, never a big bang. A file byte-identical to
 # the kit's is what an earlier run copied, not a conflict, so a re-run after a STOP names
 # only the files that still differ.
-set -u
+#
+# A failed write stops the run (`set -e`): with only `set -u`, a failed mkdir, cp or chmod
+# was ignored and the version was stamped and the hooks wired over a short install.
+set -eu
 
 kit=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 target="."
 note=""
 force=0
 overlays=""
+said=""
 
-die() { echo "bootstrap: $1" >&2; exit 1; }
+die() { said=1; printf '%s\n' "bootstrap: $1" >&2; exit 1; }
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -40,7 +44,7 @@ while [ $# -gt 0 ]; do
 done
 
 [ -d "$target" ] || mkdir -p "$target" || die "cannot create $target"
-target=$(CDPATH= cd -- "$target" && pwd)
+target=$(CDPATH= cd -- "$target" && pwd) || die "cannot enter $target"
 [ "$target" = "$kit" ] && die "refusing to install the kit into itself"
 
 # The version a project records is the one thing sync-kit.sh has to trust later, so read it
@@ -49,20 +53,35 @@ target=$(CDPATH= cd -- "$target" && pwd)
 version=$(sed -n 's/^## v\([0-9][0-9.]*\).*/\1/p' "$kit/CHANGELOG.md" 2>/dev/null | head -1)
 [ -n "$version" ] || die "cannot read a version from $kit/CHANGELOG.md — refusing to record a blank one"
 
-skiplist=$(mktemp)
-trap 'rm -f "$skiplist"' EXIT
+skiplist=$(mktemp) || die "cannot create a temp file"
+# A stop that `set -e` made says so: the failing command named its path, this says what it means.
+trap 'rc=$?; rm -f "$skiplist"; [ "$rc" -eq 0 ] || [ -n "$said" ] ||
+  echo "bootstrap: stopped by the failure above, before the version was recorded" >&2' EXIT
 
-# linked REL — prints the first component of REL, below the target, that is a symlink, and
-# nothing when there is none. Checking only the last component let a symlinked folder
-# (`.githooks -> /elsewhere`) carry every read and write under it outside the project. The
-# target itself may be a symlink: the owner named it. Every destination goes through this.
-linked() {
+# blocked REL [dir] — the one check for every path bootstrap writes or creates (copied files,
+# the files it generates, the folders it makes): prints why REL may not be written, nothing
+# when it may. Every existing component below the target must be a real folder, and REL
+# itself absent or a regular file (with `dir`: absent or a real folder). What fails is not
+# opened: `cmp` on a FIFO, or writing to one, blocked forever; a symlink, or a symlinked folder
+# above, carried the read or write outside the project; a file where a folder belongs made
+# every mkdir and cp under it fail. The target itself may be a symlink: the owner named it.
+# The check runs BEFORE the write, not with it: a path is not opened when it fails the check
+# at that moment, but another process that changes the tree during the run (a checked
+# folder swapped for a symlink) is not guarded against. The owner runs this in the owner's
+# own project, where a process able to make that swap could write the file itself.
+blocked() {
   _rest=$1; _p=""
   while :; do
     _p=${_p:+$_p/}${_rest%%/*}
-    [ -L "$target/$_p" ] && { printf '%s\n' "$_p"; return 0; }
-    case "$_rest" in */*) _rest=${_rest#*/} ;; *) return 0 ;; esac
+    case "$_rest" in */*) _rest=${_rest#*/} ;; *) break ;; esac
+    if [ -L "$target/$_p" ]; then printf 'symlink: %s\n' "$_p"; return 0; fi
+    if [ -e "$target/$_p" ] && [ ! -d "$target/$_p" ]; then printf 'not a folder: %s\n' "$_p"; return 0; fi
   done
+  if [ -L "$target/$_p" ]; then printf 'symlink: %s\n' "$_p"
+  elif [ ! -e "$target/$_p" ]; then :
+  elif [ "${2:-}" = dir ]; then [ -d "$target/$_p" ] || echo 'not a folder'
+  else [ -f "$target/$_p" ] || echo 'not a regular file'
+  fi
 }
 
 # copy_tree SRC [DEST_PREFIX] — copies SRC's contents into the target, optionally under a
@@ -83,16 +102,14 @@ copy_tree() {
     # Running Python tooling must not change the installed skeleton with local bytecode.
     case "$rel" in __pycache__/*|*/__pycache__/*|*.pyc|*.pyo) continue ;; esac
     dest="${prefix:+$prefix/}$rel"
-    # Only a regular file is compared or replaced: `cmp` on a FIFO blocked forever, and a
-    # symlink, or a symlinked folder above it, was compared or written through by its target.
-    # Anything else is listed, unread.
-    if [ -n "$(linked "$dest")" ] || { [ -e "$target/$dest" ] && [ ! -f "$target/$dest" ]; }; then
-      echo "$dest" >> "$skiplist"
+    # Only a destination `blocked` passes is compared or replaced; anything else is listed, unread.
+    if [ -n "$(blocked "$dest")" ]; then
+      printf '%s\n' "$dest" >> "$skiplist"
       continue
     fi
     if [ -e "$target/$dest" ] && [ "$force" -eq 0 ]; then
       cmp -s "$src/$rel" "$target/$dest" && continue
-      echo "$dest" >> "$skiplist"
+      printf '%s\n' "$dest" >> "$skiplist"
       continue
     fi
     mkdir -p "$target/$(dirname "$dest")"
@@ -100,42 +117,44 @@ copy_tree() {
   done
 }
 
-echo "bootstrap: installing MyAgentKit_Keel v$version into $target"
+printf '%s\n' "bootstrap: installing MyAgentKit_Keel v$version into $target"
 
 copy_tree "$kit/core"
 copy_tree "$kit/setup" "setup"
 
 for name in $overlays; do
   [ -d "$kit/overlays/$name/files" ] || die "no such overlay: $name (looked in $kit/overlays/$name/files)"
-  echo "bootstrap: overlay '$name'"
+  printf '%s\n' "bootstrap: overlay '$name'"
   copy_tree "$kit/overlays/$name/files"
 done
 
-# The folders and files bootstrap writes itself pass the same check: one under a symlinked
-# folder is a conflict that stops the run, like a kept gate, and is never created.
+# The folders and files bootstrap makes itself pass the same check: one it may not write is
+# a conflict that stops the run, like a kept gate, and is not created or opened. The files
+# are written only after the stop below.
 own="docs/reviews docs/audits docs/worktree-notes docs/spikes docs/kit docs/kit/.kit-version"
 [ -z "$note" ] || own="$own docs/kit/BOOTSTRAP_NOTE.md"
 stops=""
 for d in $own; do
-  l=$(linked "$d")
-  if [ -n "$l" ]; then
-    stops="$stops$d (symlink: $l)
+  case "$d" in docs/kit/*) kind=file ;; *) kind=dir ;; esac
+  why=$(blocked "$d" "$kind")
+  if [ -n "$why" ]; then
+    stops="$stops$d ($why)
 "
-  else
-    case "$d" in docs/kit/*) ;; *) mkdir -p "$target/$d" ;; esac
+  elif [ "$kind" = dir ]; then
+    mkdir -p "$target/$d"
   fi
 done
 
 # The executable bit does not survive every filesystem, and a gate that cannot run is a
-# gate that is not there. CI dies on this with exit 126 (docs/GOTCHAS.md). Never through a
-# symlink: chmod would change the file it points to, outside the project.
+# gate that is not there. CI dies on this with exit 126 (docs/GOTCHAS.md). Only on what
+# `blocked` passes: chmod through a symlink changes the file it points to, outside the project.
 for f in "$target"/scripts/*.sh "$target"/.githooks/* "$target"/.claude/hooks/*; do
-  [ -f "$f" ] && [ -z "$(linked "${f#"$target"/}")" ] && chmod +x "$f"
+  if [ -e "$f" ] && [ -z "$(blocked "${f#"$target"/}")" ]; then chmod +x "$f"; fi
 done
 
 if [ -s "$skiplist" ]; then
   echo
-  echo "bootstrap: $(wc -l < "$skiplist") file(s) already existed, differ from the kit's, and were left alone:"
+  printf '%s\n' "bootstrap: $(wc -l < "$skiplist") file(s) already existed, differ from the kit's, and were left alone:"
   sed 's/^/             /' "$skiplist"
   echo "           Merge the kit's content into each by hand, or move it aside and re-run;"
   echo "           --force overwrites each one that is a regular file, never a symlink,"
@@ -151,12 +170,13 @@ fi
 # version stamped .kit-version first and then refused — after which sync-kit.sh greeted the
 # gateless project with "already current. Nothing to do."
 gates=$(grep -E '^(scripts/check\.sh|\.githooks/(pre-commit|pre-merge-commit|commit-msg))$' "$skiplist" 2>/dev/null |
-  while IFS= read -r g; do l=$(linked "$g"); printf '%s%s\n' "$g" "${l:+ (symlink: $l)}"; done)
-if [ -n "$gates$stops" ]; then
+  while IFS= read -r g; do why=$(blocked "$g"); printf '%s%s\n' "$g" "${why:+ ($why)}"; done)
+# Two lists: only a gate conflict means missing enforcement; a folder or file bootstrap makes
+# itself (docs/reviews, the stamp) is a plain destination that could not be written.
+if [ -n "$gates" ]; then
   echo
   echo "STOPPING: the gate files already existed, differ from the kit's, and were NOT replaced:"
-  printf '%s' "${gates:+$gates
-}$stops" | sed 's/^/  conflict: /'
+  printf '%s\n' "$gates" | sed 's/^/  conflict: /'
   cat <<'EOF'
 
   They are the enforcement. Whatever is in this repository now is what will run — and if
@@ -165,20 +185,29 @@ if [ -n "$gates$stops" ]; then
   For each one: move yours aside, re-run to install the kit's file (files an earlier run
   copied are identical and pass), then carry what yours did into it by hand (docs/RETROFIT.md).
   --force instead overwrites EVERY differing regular file listed above, not only these;
-  a symlink, folder or special file at such a path, or a symlinked folder above it, is
-  never replaced: move it aside.
+  a symlink, folder or special file at such a path, or a symlink or a file in its path,
+  is never replaced: move it aside.
   Finish with:  ./scripts/check.sh --self-test
 EOF
+fi
+if [ -n "$stops" ]; then
+  echo
+  echo "STOPPING: these destinations could not be written:"
+  printf '%s' "$stops" | sed 's/^/  conflict: /'
+  echo "  Move each one, or what is in its path, aside and re-run."
+fi
+if [ -n "$gates$stops" ]; then
+  said=1
+  echo
+  echo "bootstrap: the version was not recorded and core.hooksPath was not set."
   exit 1
 fi
-
-printf '%s\n' "$version" > "$target/docs/kit/.kit-version"
 
 if [ -n "$note" ]; then
   {
     echo "# Bootstrap note — the owner's agenda for this setup"
     echo
-    echo "Written by \`bootstrap.sh --note\` on $(date -u +%Y-%m-%d). The setup interview"
+    printf '%s\n' "Written by \`bootstrap.sh --note\` on $(date -u +%Y-%m-%d). The setup interview"
     echo "reads this in Phase 0 and must address it explicitly rather than working around it."
     echo
     printf '%s\n' "$note"
@@ -194,6 +223,10 @@ else
   echo "             git config core.hooksPath .githooks"
   echo "           Without it there is no commit gate (docs/DEV_SETUP.md)."
 fi
+
+# The stamp is the LAST write, so it records only an install whose every write succeeded:
+# sync-kit.sh trusts it, and a stamp over a short install answers "already current".
+printf '%s\n' "$version" > "$target/docs/kit/.kit-version"
 
 cat <<'EOF'
 

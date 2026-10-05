@@ -64,7 +64,7 @@ usage() {
   echo "       review.sh --self-test"
   exit 2
 }
-die() { echo "FAIL [review]: $1"; exit 2; }
+die() { printf '%s\n' "FAIL [review]: $1"; exit 2; }
 
 if [ "${1:-}" = "--self-test" ]; then
   [ $# -eq 1 ] || usage

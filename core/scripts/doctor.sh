@@ -20,7 +20,7 @@ set -u
 CDPATH= cd -- "$(dirname "$0")/.." || exit 1
 missing=0
 
-miss() { echo "MISSING: $1 — fix: $2"; missing=$((missing + 1)); }
+miss() { printf '%s\n' "MISSING: $1 — fix: $2"; missing=$((missing + 1)); }
 
 # The same PATH preamble as scripts/check.sh, read from it so it is configured once: a check
 # here that saw a different PATH from the hook would prove nothing about the hook. The line
@@ -181,7 +181,7 @@ if [ -f .nvmrc ] || [ -f package.json ]; then
   [ -n "$toolchain_path" ] && base="$toolchain_path:$base"
   bare_node=$(env -i HOME="$HOME" PATH="$base" sh -c 'node --version' 2>/dev/null)
   [ "$bare_node" = "$hook_node" ] ||
-    echo "NOTE: a hook started from a login-less shell would see node ${bare_node:-none} (set toolchain_path in scripts/check.sh if hooks start that way)"
+    printf '%s\n' "NOTE: a hook started from a login-less shell would see node ${bare_node:-none} (set toolchain_path in scripts/check.sh if hooks start that way)"
 fi
 
 # --- an npm cache this user cannot write ---------------------------------------------
@@ -263,7 +263,7 @@ elif [ -n "${SHELL:-}" ]; then
   if [ -n "$shadowed" ]; then
     miss "grep is shadowed in $SHELL ($grep_is)" "remove it from the rc file, or test gate pipelines with sh -c"
   elif [ "$probe_status" != 0 ] || [ "${grep_is#grep is }" = "$grep_is" ]; then
-    echo "NOTE: grep probe did not complete (exit ${probe_status:-unknown}, answered: ${grep_is:-nothing between its delimiters}); grep shadowing was not checked"
+    printf '%s\n' "NOTE: grep probe did not complete (exit ${probe_status:-unknown}, answered: ${grep_is:-nothing between its delimiters}); grep shadowing was not checked"
   fi
 fi
 

@@ -158,8 +158,8 @@ sleep 3
 if tmux capture-pane -p -t "$name" -J | grep -qE '^❯.*(\[Pasted text|and follow it\.)'; then
   tmux send-keys -t "$name" Enter
 fi
-echo "spawn_worker: '$name' started with $brief (tmux attach -t $name to watch)"
+printf '%s\n' "spawn_worker: '$name' started with $brief (tmux attach -t $name to watch)"
 # The session does not end when its task does: a pilot worker wrote its result file and sat
 # idle for 40 minutes until killed by hand, and the idle notice also fires on every park on a
 # background job. The result file is the end signal, and closing is the lead's job.
-echo "spawn_worker: after reading the result file, close it: tmux kill-session -t $name"
+printf '%s\n' "spawn_worker: after reading the result file, close it: tmux kill-session -t $name"
