@@ -124,7 +124,8 @@ class SyncKitTests(unittest.TestCase):
         # Only the last component was checked: with `.githooks` a symlink to a folder outside
         # the project, the kit's hook was listed "new:" and written there. And an overlay file
         # whose destination was a dangling symlink was skipped without a word (`-e` is false).
-        cases = (('core/.githooks/commit-msg', '.githooks', '.githooks/commit-msg (the symlink .githooks'),)
+        cases = (('core/.githooks/commit-msg', '.githooks', '.githooks/commit-msg (the symlink .githooks'),
+                 ('overlays/o/files/scripts/tool.sh', 'scripts/tool.sh', 'scripts/tool.sh (the symlink scripts/tool.sh'))
         for src, link, needle in cases:
             with self.subTest(link=link), tempfile.TemporaryDirectory() as tmp:
                 kit, project = Path(tmp) / 'kit', Path(tmp) / 'project'

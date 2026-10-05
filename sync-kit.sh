@@ -108,18 +108,19 @@ relpath() {
 while IFS= read -r src; do
   [ -n "$src" ] || continue
   relpath "$src" || continue
-  # An overlay file is synced only where it already exists: its presence is the only record
-  # of whether the project took that overlay, and installing an overlay is bootstrap's job.
-  if [ "$overlay" -eq 1 ] && [ ! -e "$target/$rel" ]; then
-    continue
-  fi
-  # A symlink anywhere in the path, the file itself or a folder above it, is a conflict:
-  # a symlinked folder had the kit's file written through it outside the project.
+  # A symlink anywhere in the path, the file itself or a folder above it, is checked first, for
+  # every tier: a dangling one at an overlay path fails `-e` and was skipped without a word,
+  # and a symlinked folder had the kit's file written through it outside the project.
   l=$(linked "$rel")
   if [ -n "$l" ]; then
     found=1
     echo "  conflict: $rel (the symlink $l is in its path, so it is the project's)"
     conflict=1
+    continue
+  fi
+  # An overlay file is synced only where it already exists: its presence is the only record
+  # of whether the project took that overlay, and installing an overlay is bootstrap's job.
+  if [ "$overlay" -eq 1 ] && [ ! -e "$target/$rel" ]; then
     continue
   fi
   found=1
