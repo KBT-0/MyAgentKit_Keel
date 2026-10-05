@@ -1,5 +1,6 @@
 """Bootstrap must not distribute locally generated Python bytecode."""
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -224,16 +225,19 @@ class BootstrapTests(unittest.TestCase):
         # a signal there stopped the run with the project's own hooks path already replaced.
         # A shim stands in for each failure after the `git config`, so it holds for root too.
         # A signal right after the stamp's `mv` had the trap put the hooks path back under the
-        # new stamp: the project was recorded as installed with its gates disconnected.
+        # new stamp: the project was recorded as installed with its gates disconnected. A rerun
+        # of the SAME version found its stamp already holding the version and took the failure
+        # for the commit: the owner's hooks path stayed replaced.
         root = Path(__file__).resolve().parents[1]
+        current = re.search(r'^## v([0-9][0-9.]*)', (root / 'CHANGELOG.md').read_text(), re.M).group(1)
         faults = {'signal': ('git', 'case "$*" in *"config core.hooksPath .githooks")\n'
                                     '  "%s" "$@"; rc=$?; kill -TERM "$PPID"; exit $rc ;; esac\n'),
                   'mv fails': ('mv', 'case "$*" in */.kit-version) exit 1 ;; esac\n'),
                   'signal after the mv': ('mv', 'case "$*" in */.kit-version)\n'
                                                 '  "%s" "$@"; rc=$?; kill -TERM "$PPID"; exit $rc ;; esac\n')}
         for fault, (tool, body) in faults.items():
-            for prior in ('custom-hooks', None):
-                with self.subTest(fault=fault, prior=prior), tempfile.TemporaryDirectory() as tmp:
+            for prior, start in (('custom-hooks', '0.1'), (None, '0.1'), ('custom-hooks', current)):
+                with self.subTest(fault=fault, prior=prior, start=start), tempfile.TemporaryDirectory() as tmp:
                     project, shims = Path(tmp) / 'project', Path(tmp) / 'shims'
                     (project / 'docs/kit').mkdir(parents=True)
                     shims.mkdir()
@@ -241,7 +245,7 @@ class BootstrapTests(unittest.TestCase):
                     if prior:
                         subprocess.run(['git', '-C', str(project), 'config', 'core.hooksPath', prior], check=True)
                     stamp = project / 'docs/kit/.kit-version'
-                    stamp.write_text('0.1\n')
+                    stamp.write_text(start + '\n')
                     stamp.chmod(0o444)
                     real = shutil.which(tool)
                     (shims / tool).write_text('#!/bin/sh\n' + (body % real if '%s' in body else body) +
@@ -252,7 +256,10 @@ class BootstrapTests(unittest.TestCase):
                                             capture_output=True, text=True, timeout=60)
                     self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
                     self.assertEqual(list((project / 'docs/kit').glob('*kit-tmp*')), [], 'temporary left')
-                    state = (stamp.read_bytes() == b'0.1\n', self._hooks_path(project))
+                    state = (stamp.read_bytes() == (start + '\n').encode(), self._hooks_path(project))
+                    if fault == 'signal after the mv' and start == current:
+                        self.assertEqual(state, (True, '.githooks'), 'recorded with the gates disconnected')
+                        continue
                     if fault == 'signal after the mv':
                         self.assertIn(state, [(True, prior or ''), (False, '.githooks')],
                                       'stamped and hooks path not wired, or the reverse')

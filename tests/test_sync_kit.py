@@ -289,7 +289,7 @@ class SyncKitTests(unittest.TestCase):
             text = (ROOT / name).read_text()
             start = text.index('\n%s() {\n' % fn)
             return text[start:text.index('\n}\n', start) + 3]
-        for fn in ('blocked', 'perms', 'put'):
+        for fn in ('blocked', 'perms', 'stage', 'put'):
             with self.subTest(fn=fn):
                 self.assertEqual(body('sync-kit.sh', fn), body('bootstrap.sh', fn))
 
