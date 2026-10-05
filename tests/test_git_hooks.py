@@ -384,6 +384,26 @@ class GitHookTests(unittest.TestCase):
             result = self.commit(root, git, 'valid\n\nDone: R12\nDone: K7-a\n')
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_a_done_value_is_one_id_whole_folded_and_any_key_case(self):
+        # Word splitting passed "Done: K4 K5" as two ids, which the gate reads as one bad
+        # value closing neither; an empty value passed unchecked. Git unfolds a folded value
+        # and matches the key in any case; the hook reads it the same way.
+        with tempfile.TemporaryDirectory() as tmp:
+            root, git = self.repo(tmp)
+            self.docs(root, git)
+            for trailer, value in (('Done: K4 K5', 'K4 K5'), ('Done: K4, K5', 'K4, K5'), ('Done:', ''),
+                                   ('Done:   ', ''), ('Done: K4\n  K5', 'K4 K5')):
+                with self.subTest(trailer=trailer):
+                    result = self.commit(root, git, 'bad\n\n' + trailer + '\n')
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    self.assertIn("'Done: %s' does not name a task id" % value, result.stderr)
+            self.docs(root, git, '- K4: in flight\n- K5: in flight\n')
+            for trailer, closed in (('done: K4', 'K4'), ('DONE: K5', 'K5'), ('Done:\n  K4', 'K4')):
+                with self.subTest(trailer=trailer):
+                    result = self.commit(root, git, 'case\n\n' + trailer + '\n')
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    self.assertIn('closes %s but docs/STATE.md' % closed, result.stderr)
+
     def test_the_done_check_runs_without_the_attribution_rule(self):
         with tempfile.TemporaryDirectory() as tmp:
             root, git = self.repo(tmp)

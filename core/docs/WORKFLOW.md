@@ -52,7 +52,10 @@ deletion checkable.
   letters and digits, with at most one inner `-` (`K4`, `L1b`, `R12`, `K7-a`). A line in
   `docs/STATE.md` or `docs/BACKLOG.md` MAY name its task by id; none has to.
 - The commit that finishes a task says so with a trailer, ONE per id, in the last paragraph
-  of the message: `Done: K4`. For work done on a branch, the integrating session's merge
+  of the message: `Done: K4`. The value is exactly one id: the hook rejects `Done: K4 K5`,
+  `Done: K4, K5` and an empty `Done:`, and such a value already in the history closes
+  nothing (`check.sh` prints a NOTE naming the commit). Git reads the key in any case, so
+  `done: K4` closes K4 too. For work done on a branch, the integrating session's merge
   commit carries it.
 - `.githooks/commit-msg` rejects that commit while the `docs/STATE.md` or `docs/BACKLOG.md`
   it records still names the id, and says which line; `./scripts/check.sh` fails `[state]`
