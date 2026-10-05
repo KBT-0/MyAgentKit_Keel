@@ -21,6 +21,15 @@
 #
 # A failed write stops the run (`set -e`): with only `set -u`, a failed mkdir, cp or chmod
 # was ignored and the version was stamped and the hooks wired over a short install.
+#
+# Threat model. The owner runs this in the owner's own project. It protects against its own
+# failures and interruptions: a failed write, a full disk, INT, TERM or HUP part way, and a
+# retry after any of them; and against honest mistakes in the tree: a file, folder, symlink or
+# special file where it means to write is refused by name, never written through. By decision
+# it does NOT protect against another process changing the tree while it runs (a checked path
+# swapped between the check and the write), files placed in the project to attack it, or
+# SIGKILL or power loss between two steps. Whoever can do the first two can write the same
+# files directly.
 set -eu
 
 kit=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
@@ -54,18 +63,22 @@ version=$(sed -n 's/^## v\([0-9][0-9.]*\).*/\1/p' "$kit/CHANGELOG.md" 2>/dev/nul
 [ -n "$version" ] || die "cannot read a version from $kit/CHANGELOG.md — refusing to record a blank one"
 
 skiplist=$(mktemp) || die "cannot create a temp file"
-note_part=""
-stamp_part=""
+files=$(mktemp) || { rm -f "$skiplist"; die "cannot create a temp file"; }
+part=""
 wiring=""
-recorded=""
+# stamped — the stamp holds this run's version. Read from the disk, never from a variable set
+# after the write: a signal between the stamp's `mv` and that variable read as "not recorded".
+stamped() {
+  [ -z "$(blocked docs/kit/.kit-version)" ] && [ "$(cat "$target/docs/kit/.kit-version" 2>/dev/null)" = "$version" ]
+}
 # finish RC — the exit trap. A stop that `set -e` made says so: the failing command named its
-# path, this says what it means. A stop after core.hooksPath was changed puts the project's
-# own value back (or unsets it again): the stop is no install, and the hooks it now names may
-# not be there. A signal ends the run through here too.
+# path, this says what it means. A stop after core.hooksPath was changed and before the version
+# was recorded puts the project's own value back (or unsets it again): the stop is no install,
+# and the hooks it now names may not be there. A signal ends the run through here too.
 finish() {
-  rm -f "$skiplist" ${note_part:+"$note_part"} ${stamp_part:+"$stamp_part"}
+  rm -f "$skiplist" "$files" ${part:+"$part"}
   [ "$1" -ne 0 ] || return 0
-  if [ -n "$wiring" ]; then
+  if [ -n "$wiring" ] && ! stamped; then
     if [ -n "$had" ]; then git -C "$target" config core.hooksPath "$hooks_was"
     else git -C "$target" config --unset core.hooksPath; fi >/dev/null 2>&1 || :
     now=$(git -C "$target" config --local --get core.hooksPath) || now=""
@@ -78,7 +91,7 @@ finish() {
         "           it is '$now' now: set it by hand." >&2
     fi
   fi
-  [ -n "$said" ] || [ -n "$recorded" ] ||
+  [ -n "$said" ] || stamped ||
     echo "bootstrap: stopped by the failure above, before the version was recorded" >&2
 }
 trap 'finish "$?"' EXIT
@@ -94,10 +107,7 @@ trap 'exit 143' TERM
 # above, carried the read or write outside the project; a file where a folder belongs made
 # every mkdir and cp under it fail. The target itself may be a symlink: the owner named it.
 # sync-kit.sh holds the same function; a test holds the two copies equal.
-# The check runs BEFORE the write, not with it: a path is not opened when it fails the check
-# at that moment, but another process that changes the tree during the run (a checked
-# folder swapped for a symlink) is not guarded against. The owner runs this in the owner's
-# own project, where a process able to make that swap could write the file itself.
+# The check runs BEFORE the write, not with it (the threat model above).
 blocked() {
   _rest=$1; _p=""
   while :; do
@@ -113,6 +123,30 @@ blocked() {
   fi
 }
 
+# perms FILE — FILE's permission bits in octal, read from `ls -l` (POSIX has no portable stat).
+perms() {
+  ls -ld -- "$1" | awk '{ m = 0; for (i = 2; i <= 10; i++) m = m * 2 + (substr($1, i, 1) !~ /[-ST]/); printf "%o\n", m }'
+}
+
+# put DEST [SRC] — the one writer: DEST gets SRC's content (stdin without SRC) whole or not at
+# all, through a temporary that `mv` moves over it. A redirection or `cp` empties DEST before
+# writing, so a full disk left an empty stamp or a gate cut short. The temporary is created
+# fresh by `mktemp` (exclusively, never an existing file) in DEST's folder: a fixed name
+# trusted what was there, so a hard link to the stamp had a failed write empty the stamp and an
+# owner's file at that name was overwritten. `part` names it for the exit trap, which removes
+# only that. It carries DEST's own mode, or for a new file the mode a plain `cp` (or
+# redirection) gives under the umask, set before a byte is written: a temporary made under the
+# umask turned a 0600 note into 0644. It is opened before the chmod, so a mode without write
+# permission still takes the content.
+put() {
+  if [ -e "$1" ]; then _m=$(perms "$1")
+  elif [ -n "${2:-}" ]; then _m=$(perms "$2")
+  else _m=666; fi
+  [ -e "$1" ] || _m=$(printf '%o' $(( 0$_m & ~0$(umask) )))
+  part=$(mktemp "${1%/*}/.kit-tmp.XXXXXX") &&
+    { chmod "$_m" "$part" && cat "${2:--}"; } > "$part" && mv -f "$part" "$1" && part=""
+}
+
 # copy_tree SRC [DEST_PREFIX] — copies SRC's contents into the target, optionally under a
 # subdirectory. Existing files that differ are recorded and left alone unless --force;
 # identical ones are passed over (an earlier run put them there).
@@ -126,14 +160,16 @@ copy_tree() {
   if find "$src" -name "$(printf '*\n*')" 2>/dev/null | grep -q .; then
     die "a filename under $src contains a newline; refusing to copy blind"
   fi
-  ( cd "$src" && find . -type f -print ) | sed 's|^\./||' | while IFS= read -r rel; do
+  # The list is read in this shell, not a pipeline's subshell, so the exit trap knows the
+  # temporary of a copy a signal cuts short.
+  ( cd "$src" && find . -type f -print ) | sed 's|^\./||' > "$files"
+  while IFS= read -r rel; do
     [ -n "$rel" ] || continue
     # Running Python tooling must not change the installed skeleton with local bytecode.
     case "$rel" in __pycache__/*|*/__pycache__/*|*.pyc|*.pyo) continue ;; esac
     dest="${prefix:+$prefix/}$rel"
-    # Only a destination `blocked` passes, with the temporary it is written through, is
-    # compared or replaced; anything else is listed, unread.
-    if [ -n "$(blocked "$dest")$(blocked "$dest.kit-tmp")" ]; then
+    # Only a destination `blocked` passes is compared or replaced; anything else is listed, unread.
+    if [ -n "$(blocked "$dest")" ]; then
       printf '%s\n' "$dest" >> "$skiplist"
       continue
     fi
@@ -145,10 +181,14 @@ copy_tree() {
     # Copied to a sibling and moved over: a `cp` cut short on the destination itself was
     # taken by the retry for the owner's own differing file, and the version recorded over it.
     mkdir -p "$target/$(dirname "$dest")"
-    { cp -f "$src/$rel" "$target/$dest.kit-tmp" && mv -f "$target/$dest.kit-tmp" "$target/$dest"; } ||
-      { rm -f "$target/$dest.kit-tmp"; exit 1; }
-  done
+    put "$target/$dest" "$src/$rel"
+  done < "$files"
 }
+
+# A temporary a stopped run left behind (`put` names them .kit-tmp.*) is not this run's to
+# delete: it is named, for the owner to remove.
+left=$(cd "$target" && find . -name .git -prune -o -type f -name '.kit-tmp.*' -print 2>/dev/null) || :
+[ -z "$left" ] || printf '%s\n' "bootstrap: NOTE: temporaries a stopped run left behind; remove them:" "$left"
 
 printf '%s\n' "bootstrap: installing MyAgentKit_Keel v$version into $target"
 
@@ -163,13 +203,9 @@ done
 
 # The folders and files bootstrap makes itself pass the same check: one it may not write is
 # a conflict that stops the run, like a kept gate, and is not created or opened. The files
-# are written only after the stop below, each to a fixed sibling (FILE.kit-tmp, judged here
-# too) that then replaces FILE whole with `mv`: a redirection empties FILE before writing it,
-# so a full disk on a rerun left an empty stamp, which the next sync refuses. A temporary a
-# killed run left behind is a regular file and is overwritten; the exit trap removes it.
+# are written only after the stop below, each by `put`.
 own="docs/reviews docs/audits docs/worktree-notes docs/spikes docs/kit docs/kit/.kit-version"
-own="$own docs/kit/.kit-version.kit-tmp"
-[ -z "$note" ] || own="$own docs/kit/BOOTSTRAP_NOTE.md docs/kit/BOOTSTRAP_NOTE.md.kit-tmp"
+[ -z "$note" ] || own="$own docs/kit/BOOTSTRAP_NOTE.md"
 stops=""
 for d in $own; do
   case "$d" in docs/kit/*) kind=file ;; *) kind=dir ;; esac
@@ -209,7 +245,6 @@ fi
 gates=$(grep -E '^(scripts/check\.sh|\.githooks/(pre-commit|pre-merge-commit|commit-msg))$' "$skiplist" 2>/dev/null |
   while IFS= read -r g; do
     why=$(blocked "$g")
-    [ -n "$why" ] || { why=$(blocked "$g.kit-tmp"); why=${why:+$g.kit-tmp: $why}; }
     printf '%s%s\n' "$g" "${why:+ ($why)}"; done)
 # Two lists: only a gate conflict means missing enforcement; a folder or file bootstrap makes
 # itself (docs/reviews, the stamp) is a plain destination that could not be written.
@@ -244,25 +279,24 @@ if [ -n "$gates$stops" ]; then
 fi
 
 if [ -n "$note" ]; then
-  note_part="$target/docs/kit/BOOTSTRAP_NOTE.md.kit-tmp"
-  {
-    echo "# Bootstrap note — the owner's agenda for this setup"
-    echo
-    printf '%s\n' "Written by \`bootstrap.sh --note\` on $(date -u +%Y-%m-%d). The setup interview"
-    echo "reads this in Phase 0 and must address it explicitly rather than working around it."
-    echo
-    printf '%s\n' "$note"
-  } > "$note_part"
-  mv -f "$note_part" "$target/docs/kit/BOOTSTRAP_NOTE.md"
+  put "$target/docs/kit/BOOTSTRAP_NOTE.md" <<EOF
+# Bootstrap note — the owner's agenda for this setup
+
+Written by \`bootstrap.sh --note\` on $(date -u +%Y-%m-%d). The setup interview
+reads this in Phase 0 and must address it explicitly rather than working around it.
+
+$note
+EOF
   echo "bootstrap: wrote docs/kit/BOOTSTRAP_NOTE.md"
 fi
 
-# The finish is ordered so that a failure changes nothing outside the files: the stamp's
-# content is written to its temporary first, then core.hooksPath is set, and the `mv` that
-# records the version comes last. Setting the hooks path first left the project's own value
-# replaced when the stamp write then failed; a stop between the two is undone by `finish`.
-stamp_part="$target/docs/kit/.kit-version.kit-tmp"
-printf '%s\n' "$version" > "$stamp_part"
+# The finish has three states, each read from the disk by `finish`: core.hooksPath untouched
+# (`wiring` unset), nothing outside the files changed; hooks path set and the stamp not holding
+# $version, no install, so the trap puts the project's value back; the stamp holds $version (its
+# `mv` in `put` is the commit), the install is whole and nothing is undone. A trap that judged by
+# a variable cleared after the `mv` disconnected the gates under the new stamp. The hooks path
+# comes first: SIGKILL between the two leaves the gates wired under the old stamp, never the
+# version recorded with them disconnected; a rerun of the same version is recorded throughout.
 repo=""
 if git -C "$target" rev-parse --git-dir >/dev/null 2>&1; then
   repo=1
@@ -272,9 +306,9 @@ if git -C "$target" rev-parse --git-dir >/dev/null 2>&1; then
 fi
 # The stamp is the LAST write, so it records only an install whose every write succeeded:
 # sync-kit.sh trusts it, and a stamp over a short install answers "already current".
-mv -f "$stamp_part" "$target/docs/kit/.kit-version"
-recorded=1
-wiring=""
+put "$target/docs/kit/.kit-version" <<EOF
+$version
+EOF
 
 if [ -n "$repo" ]; then
   echo "bootstrap: wired core.hooksPath -> .githooks"

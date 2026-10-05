@@ -26,6 +26,15 @@
 #
 # A failed write stops the run before the stamp (`set -e`, and the copy step names its file):
 # a failed chmod was ignored and the version recorded over a hook that could not run.
+#
+# Threat model. The owner runs this in the owner's own project. It protects against its own
+# failures and interruptions: a failed write, a full disk, INT, TERM or HUP part way, and a
+# retry after any of them; and against honest mistakes in the tree: a file, folder, symlink or
+# special file where it means to write is refused by name, never written through. By decision
+# it does NOT protect against another process changing the tree while it runs (a checked path
+# swapped between the check and the write), files placed in the project to attack it, or
+# SIGKILL or power loss between two steps. Whoever can do the first two can write the same
+# files directly.
 set -eu
 
 kit=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
@@ -49,17 +58,14 @@ target=$(CDPATH= cd -- "$target" 2>/dev/null && pwd) || die "no such directory"
 [ "$target" = "$kit" ] && die "refusing to sync the kit with itself"
 
 # blocked REL [dir] — the one check for every path the sync reads or writes (the kit-owned
-# files, the version stamp and their temporaries): prints why REL may not be used, nothing
+# files and the version stamp): prints why REL may not be used, nothing
 # when it may. Every existing component below the target must be a real folder, and REL itself
 # absent or a regular file (with `dir`, which only bootstrap.sh uses: absent or a real folder).
 # What fails is not opened: `cmp` on a FIFO blocked forever; a symlink, or a symlinked
 # folder above, carried the read or write outside the project; a file where a folder belongs
 # failed the copy midway through the copies. The target itself may be a symlink: the owner
 # named it. bootstrap.sh holds the same function; a test holds the two copies equal.
-# The check runs BEFORE the write, not with it: a path is not opened when it fails the check
-# at that moment, but another process that changes the tree during the run (a checked
-# folder swapped for a symlink) is not guarded against. The owner runs this in the owner's
-# own project, where a process able to make that swap could write the file itself.
+# The check runs BEFORE the write, not with it (the threat model above).
 blocked() {
   _rest=$1; _p=""
   while :; do
@@ -75,17 +81,34 @@ blocked() {
   fi
 }
 
+# perms FILE — FILE's permission bits in octal, read from `ls -l` (POSIX has no portable stat).
+perms() {
+  ls -ld -- "$1" | awk '{ m = 0; for (i = 2; i <= 10; i++) m = m * 2 + (substr($1, i, 1) !~ /[-ST]/); printf "%o\n", m }'
+}
+
+# put DEST [SRC] — the one writer: DEST gets SRC's content (stdin without SRC) whole or not at
+# all, through a temporary that `mv` moves over it. A redirection or `cp` empties DEST before
+# writing, so a full disk left an empty stamp or a gate cut short. The temporary is created
+# fresh by `mktemp` (exclusively, never an existing file) in DEST's folder: a fixed name
+# trusted what was there, so a hard link to the stamp had a failed write empty the stamp and an
+# owner's file at that name was overwritten. `part` names it for the exit trap, which removes
+# only that. It carries DEST's own mode, or for a new file the mode a plain `cp` (or
+# redirection) gives under the umask, set before a byte is written: a temporary made under the
+# umask turned a 0600 note into 0644. It is opened before the chmod, so a mode without write
+# permission still takes the content.
+put() {
+  if [ -e "$1" ]; then _m=$(perms "$1")
+  elif [ -n "${2:-}" ]; then _m=$(perms "$2")
+  else _m=666; fi
+  [ -e "$1" ] || _m=$(printf '%o' $(( 0$_m & ~0$(umask) )))
+  part=$(mktemp "${1%/*}/.kit-tmp.XXXXXX") &&
+    { chmod "$_m" "$part" && cat "${2:--}"; } > "$part" && mv -f "$part" "$1" && part=""
+}
+
 why=$(blocked docs/kit/.kit-version)
 [ -z "$why" ] || die "conflict: docs/kit/.kit-version ($why); the version is not read or written there"
 stamp="$target/docs/kit/.kit-version"
-# Every file the sync writes goes to a fixed sibling first (FILE.kit-tmp, judged like FILE) and
-# replaces FILE whole with `mv`: a redirection or `cp` empties FILE before writing it, so a full
-# disk left an empty stamp, which the next sync refuses, or a gate cut short. A temporary a
-# killed run left behind is a regular file and is overwritten; the exit trap removes it.
-why=$(blocked docs/kit/.kit-version.kit-tmp)
-[ -z "$why" ] || die "conflict: docs/kit/.kit-version.kit-tmp ($why); the version is not written there"
 part=""
-cpart=""
 [ -f "$stamp" ] || die "$stamp not found — this project was not installed with bootstrap.sh"
 have=$(tr -d '[:space:]' < "$stamp")
 [ -n "$have" ] || die "$stamp is empty; refusing to guess which version this project has"
@@ -98,9 +121,15 @@ pending=$(mktemp) || { rm -f "$work_list"; echo "sync-kit: cannot create a temp 
 copies=$(mktemp) || { rm -f "$work_list" "$pending"; echo "sync-kit: cannot create a temp file" >&2; exit 1; }
 # A signal handler that only cleaned up let the run resume with the pending list deleted,
 # which reads as "no ACTION items" and stamped the version: a signal now ends the run.
-trap 'rm -f "$work_list" "$pending" "$copies" ${part:+"$part"} ${cpart:+"$cpart"}' EXIT
+trap 'rm -f "$work_list" "$pending" "$copies" ${part:+"$part"}' EXIT
+trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
+
+# A temporary a stopped run left behind (`put` names them .kit-tmp.*) is not this run's to
+# delete: it is named, for the owner to remove.
+left=$(cd "$target" && find . -name .git -prune -o -type f -name '.kit-tmp.*' -print 2>/dev/null) || :
+[ -z "$left" ] || printf '%s\n' "sync-kit: NOTE: temporaries a stopped run left behind; remove them:" "$left"
 
 printf '%s\n' "sync-kit: project has v$have, kit is v$latest"
 if [ "$have" = "$latest" ]; then
@@ -134,7 +163,6 @@ while IFS= read -r src; do
   [ -n "$src" ] || continue
   relpath "$src" || continue
   why=$(blocked "$rel")
-  [ -n "$why" ] || { why=$(blocked "$rel.kit-tmp"); why=${why:+$rel.kit-tmp: $why}; }
   # An overlay file is synced only where it already exists: its presence is the only record
   # of whether the project took that overlay, and installing an overlay is bootstrap's job.
   # A symlink in its path is no absence: a dangling one fails `-e` and was skipped without a
@@ -184,13 +212,8 @@ exe() { case "$rel" in *.sh|.githooks/*|.claude/hooks/*) chmod +x "$1" ;; esac; 
 if [ "$dry" -eq 0 ]; then
   while IFS= read -r src; do
     relpath "$src"
-    if cmp -s "$src" "$target/$rel"; then
-      exe "$target/$rel"
-    else
-      cpart="$target/$rel.kit-tmp"
-      mkdir -p "$target/$(dirname "$rel")" && cp -f "$src" "$cpart" && exe "$cpart" &&
-        mv -f "$cpart" "$target/$rel"
-    fi || die "could not write $rel; version left at v$have"
+    { cmp -s "$src" "$target/$rel" || { mkdir -p "$target/$(dirname "$rel")" && put "$target/$rel" "$src"; }; } &&
+      exe "$target/$rel" || die "could not write $rel; version left at v$have"
   done < "$copies"
 fi
 
@@ -261,9 +284,9 @@ if [ -s "$pending" ] && [ "$applied" -eq 0 ]; then
   exit 2
 fi
 
-part="$stamp.kit-tmp"
-{ printf '%s\n' "$latest" > "$part" && mv -f "$part" "$stamp"; } ||
-  die "could not write $stamp; version left at v$have"
+put "$stamp" <<EOF || die "could not write $stamp; version left at v$have"
+$latest
+EOF
 echo
 printf '%s\n' "sync-kit: recorded v$latest."
 echo "sync-kit: now run ./scripts/check.sh, and ./scripts/check.sh --self-test."
