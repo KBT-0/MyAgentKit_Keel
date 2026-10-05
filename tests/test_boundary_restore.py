@@ -351,6 +351,21 @@ exit 1
                               ' copy', result.stdout)
                 self.assertNotIn('  ok   — ', result.stdout)
 
+    def test_global_git_configuration_is_not_active_in_the_copy(self):
+        # probe_env kept the real HOME: a global tar.<format>.command (or hooks path, filter,
+        # fsmonitor) ran from a copied gate's `git archive` and wrote outside the copy.
+        for config in ('.gitconfig', '.config/git/config'):
+            with self.subTest(config=config), tempfile.TemporaryDirectory() as tmp:
+                root, git = self.fixture(tmp, 'git archive --format=tar.gz HEAD >/dev/null || exit 1\n')
+                escaped = Path(tmp) / 'escaped'
+                home = Path(tmp) / 'home'
+                (home / config).parent.mkdir(parents=True, exist_ok=True)
+                (home / config).write_text('[tar "tar.gz"]\n\tcommand = : > %s; gzip -cn\n' % shlex.quote(str(escaped)))
+                result = self.self_test(tmp, root, HOME=str(home), XDG_CONFIG_HOME=str(home / '.config'))
+                self.assertFalse(escaped.exists(), 'a global archive command ran outside the copy')
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn('  ok   — ', result.stdout)
+
     def test_a_symlinked_object_store_cannot_take_the_copy_s_writes(self):
         # The containment check validated the git and common directories, not what lies in
         # them: cp -R kept `.git/objects` as an absolute symlink to the original's store, and a

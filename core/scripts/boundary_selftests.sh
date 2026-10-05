@@ -48,7 +48,11 @@
 # gate alike, runs under probe_env, which passes ONLY the variables it names: removing
 # variables one at a time missed each next one (an exported GIT_DIR built in the checkout; an
 # exported GIT_OBJECT_DIRECTORY took the copy's `git add` into the original's object store).
-# A gate that needs more variables gets them by adding NAME="$NAME" to probe_env.
+# A gate that needs more variables gets them by adding NAME="$NAME" to probe_env. HOME is an
+# empty directory in the copy and no system or global git configuration is read: with the real
+# HOME, a global tar.<format>.command ran from a copied gate's `git archive` and wrote outside
+# the copy. A tool that needs a cache directory gets its own variable (GRADLE_USER_HOME and the
+# like) in probe_env, never the real HOME.
 # The example supports a PLAIN repository only: a checkout whose `.git` is a file or a
 # symlink (a linked worktree, a submodule, `--separate-git-dir`) is refused by name and
 # reported NOT RUN, never passed. Its copied pointer kept the original's git directory, so a
@@ -85,7 +89,12 @@
 # |     "$probe_checkout"/*) echo "  FAIL — existing-file probe: the disposable copy ($probe_copy) is inside the checkout; set TMPDIR outside it."
 # |        exit 1 ;;
 # |   esac
-# |   probe_env() { env -i PATH="$PATH" HOME="$HOME" LC_ALL=C TMPDIR="${TMPDIR:-/tmp}" "$@"; }
+# |   # An empty HOME and no system or global git configuration: nothing but the copy's own is active.
+# |   mkdir "$probe_copy/home" || exit 1
+# |   probe_env() {
+# |     env -i PATH="$PATH" LC_ALL=C HOME="$probe_copy/home" XDG_CONFIG_HOME="$probe_copy/home" \
+# |       GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null TMPDIR="${TMPDIR:-/tmp}" "$@"
+# |   }
 # |   probe_fail() { echo "  FAIL — existing-file probe: $*"; exit 1; }
 # |   probe_skip() { echo "  NOT RUN — existing-file probe: $*"; exit 1; }
 # |   [ -d .git ] && [ ! -L .git ] && [ ! -e .git/commondir ] ||
