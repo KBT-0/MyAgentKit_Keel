@@ -2,8 +2,8 @@
 
 When handing work to another tool, model or session, produce ONE self-contained prompt. The
 target has NO chat memory: if it is not in the prompt or in `docs/STATE.md`, it does not
-exist. Write full, explicit sentences — terse-output style rules do not apply to this file
-or to anything produced from it.
+exist. A brief is a written artifact (`AGENTS.md`, "Language & style", rule 2): full
+sentences, one instruction per sentence, one term per thing. State each requirement once.
 
 ## The brief
 
@@ -30,6 +30,8 @@ or to anything produced from it.
    visible in the run". Not "it works", not "tests added" — something the implementer can
    run and {{OWNER_NAME}} can re-run. If a stated check could not be executed, the
    implementer reports "not run". It is never assumed.
+   The implementer's report has a word cap: 350 words unless the brief sets another. Its two sections
+   "Not run / not verified" and "Noticed, not fixed" are always present, outside the cap.
 7. **If ambiguous: STOP and ask.** Do not assume, do not invent scope, do not widen the task
    to make an unclear part fit. An unanswered question comes back as a question, not as a
    guess buried in the diff.

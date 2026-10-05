@@ -24,10 +24,13 @@ the rules below exist).
 - One task, then stop. If the brief turns out to need a second module or a second task,
   report that and stop; do not widen the work. You end under about 150 turns.
 - Write long output (logs, tables, captures) to a file and report its path with one summary
-  line. Your final report stays under about 400 words unless figures are needed, and it is
-  your FINAL MESSAGE: as a sub-agent you are refused a report file ("Subagents should return
+  line. Your final report is your FINAL MESSAGE: as a sub-agent you are refused a report file ("Subagents should return
   findings as text, not write report files"), so never write a `REPORT.md`. Only when the
   brief names a result FILE for a spawned session do you write the report there, last.
+- The report gives the result first and stays within the brief's word cap (350 by default).
+  List the files changed and the tests with their red and green lines, or use a table.
+  It always ends with two sections, "Not run / not verified" and "Noticed, not fixed".
+  Write "none" in an empty section. These two sections do not count toward the cap.
 - In a worktree-isolated session run plain commands only, one per call. Claude Code refuses
   a command it cannot prove keeps git inside your worktree: `$(...)` or a variable around a
   program, a loop, `sh -c` or `source` of a string, `flock <lock> <cmd>` when the command
