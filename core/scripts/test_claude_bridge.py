@@ -21,7 +21,7 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'MYAGENTKIT_TASK_ID', 'MYAGENTKIT_R
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 85, 'test_agent_usage': 19, 'test_codex_quota': 5}
+SUITE_MINIMUMS = {'test_claude_bridge': 86, 'test_agent_usage': 19, 'test_codex_quota': 5}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -1819,10 +1819,24 @@ if case == 'archive_failure':
                         "    sys.stderr.write(\"error: unexpected argument '--ephemeral' found\\n\"); sys.exit(2)\n"
                         "if case == 'quota':\n"
                         "    print(json.dumps({'type': 'turn.failed', 'error': {'message': 'usage limit reached'}})); sys.exit(1)\n"
+                        # The CLI's own MCP client failing on stderr, and a reconnect it
+                        # recovered from in the stream, around an otherwise normal review.
+                        "if case.startswith('mcp'):\n"
+                        "    sys.stderr.write('ERROR rmcp::transport::worker: worker quit with fatal: "
+                        "Transport channel closed\\n')\n"
+                        "if case.startswith('mcp_'):\n"
+                        "    print(json.dumps({'type': 'error', 'message': 'Reconnecting... 2/5 "
+                        "(stream disconnected before completion)'}))\n"
+                        "if case == 'mcp_quota':\n"
+                        "    print(json.dumps({'type': 'error', 'message': 'usage limit reached'})); sys.exit(0)\n"
                         "verdict = 'Reject' if case == 'reject' else 'Accept'\n"
-                        "pathlib.Path(sys.argv[sys.argv.index('-o') + 1]).write_text("
-                        "'## Findings\\n\\nFixture finding.\\n\\nVERDICT: ' + verdict + '\\n')\n"
-                        "print(json.dumps({'type': 'turn.completed', 'usage': {}}))\n")
+                        "text = '## Findings\\n\\nFixture finding.\\n\\nVERDICT: ' + verdict + '\\n'\n"
+                        "text = {'mcp_no_verdict': '## Findings\\n\\nFixture finding.\\n',\n"
+                        "        'mcp_two_verdicts': text + 'VERDICT: Reject\\n'}.get(case, text)\n"
+                        "pathlib.Path(sys.argv[sys.argv.index('-o') + 1]).write_text(text)\n"
+                        "if case == 'mcp_failed_turn': print(json.dumps({'type': 'turn.failed', 'error': {}}))\n"
+                        "if case != 'mcp_no_completion': print(json.dumps({'type': 'turn.completed', 'usage': {}}))\n"
+                        "if case == 'mcp_exit': sys.exit(1)\n")
         fake.chmod(0o755)
         return fake
 
@@ -2286,6 +2300,27 @@ if case == 'archive_failure':
                 self.assertEqual([a['reviewer'] for a in chain['attempts']], [primary])
                 self.assertEqual(chain['failure_kind'], 'cli_unsupported')
                 self.assertIn('upgrade the CLI', result.stdout)
+
+    def test_a_completed_codex_review_is_not_failed_by_noise_it_recovered_from(self):
+        # A review that exited 0, closed its stream with turn.completed and gave one verdict was
+        # recorded cli_error: the stream carried a reconnect error event the CLI recovered from,
+        # while its own MCP client logged a transport failure on stderr. Both are kept in the
+        # usage record; a failure of the structured outcome itself still fails as before.
+        for case, kind in (('mcp', None), ('mcp_reconnect', None), ('mcp_exit', 'cli_error'),
+                           ('mcp_no_completion', 'cli_error'), ('mcp_no_verdict', 'cli_error'),
+                           ('mcp_two_verdicts', 'cli_error'), ('mcp_failed_turn', 'cli_error'),
+                           ('mcp_quota', 'quota'), ('unknown_flag', 'cli_unsupported')):
+            with self.subTest(case=case):
+                result, chain = self.dispatch_result('codex', fallback=False, CODEX_FIXTURE_CASE=case,
+                                                     MYAGENTKIT_TASK_ID='noise-' + case)
+                attempt = chain['attempts'][0]
+                self.assertEqual(attempt['failure_kind'], kind, result.stdout)
+                self.assertEqual(result.returncode, 0 if kind is None else 5, result.stdout)
+                self.assertEqual(verdicts_of(attempt['evidence']), [] if kind else ['VERDICT: Accept'])
+                usage = json.loads(Path(attempt['usage_record']).read_text())
+                self.assertEqual(usage['status'], 'failed' if kind else 'completed')
+                if case.startswith('mcp'):
+                    self.assertIn('Transport channel closed', usage['raw_stderr'])
 
     def test_cancelled_review_stops_the_reviewer_records_usage_and_never_fails_over(self):
         # SIGTERM and SIGHUP used to end the dispatcher without its cleanup, leaving the paid
