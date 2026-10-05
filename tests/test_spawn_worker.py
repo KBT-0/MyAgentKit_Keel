@@ -195,6 +195,28 @@ class SpawnWorkerTests(unittest.TestCase):
         self.assertIn('absent.json', result.stderr)
         self.assertNotIn('new-session', self.tmux_log())
 
+    def test_inline_settings_with_leading_whitespace_arrive_unchanged(self):
+        # Only a first byte of `{` counted as inline JSON: with --worktree, ' {"model": "x"}'
+        # was taken for a relative file name and the worker never started.
+        git = lambda *a: subprocess.run(['git', *a], cwd=self.cwd, check=True, capture_output=True)
+        git('init', '-q')
+        git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'a')
+        n = 0
+        for lead in (' ', '\t', '\n', ' \t\n '):
+            for worktree in ((), ('--worktree',)):
+                n += 1
+                value = lead + '{"model": "x"}'
+                with self.subTest(lead=lead, worktree=bool(worktree)):
+                    result = self.spawn('ws%d' % n, str(self.brief), *worktree, '--settings', value)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    argv = self.launched()['argv']
+                    self.assertEqual(argv[argv.index('--settings') + 1], value)
+        # Whitespace alone is no JSON: with --worktree it is still refused before any session.
+        (self.state / 'tmux.log').unlink()
+        result = self.spawn('ws0', str(self.brief), '--worktree', '--settings', ' \t')
+        self.assertNotEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn('new-session', self.tmux_log())
+
     def test_worktree_is_built_from_the_leads_current_commit(self):
         git = lambda *a: subprocess.run(['git', *a], cwd=self.cwd, check=True, capture_output=True,
                                         text=True).stdout.strip()
