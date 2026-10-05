@@ -80,9 +80,14 @@
 # checkout, so both copies ran the gate on and the case passed. An allowlisted key is carried
 # only when every value of it comes from the repository's own config file; one set in the
 # worktree configuration fails the case by name, since flattening both scopes into one file
-# changed what a gate's `git config <key> <value>` did. The values are added in order, and a
-# valueless key is written as valueless: carried as the string `true`, an untyped read of it
-# in the copy differed from the original's. The copy's .git/hooks starts empty: copied with
+# changed what a gate's `git config <key> <value>` did. A key named in probe_config_keys that
+# has any value from outside the repository's own file (system, global, worktree, or `git -c`
+# and GIT_CONFIG_COUNT in the environment) is reported NOT RUN by name: a global kit.disabled
+# turned the real gate off while both copies, which read no such scope, ran it on and passed.
+# That is one read of the live checkout's git configuration (`git config --show-scope`, git
+# 2.26 or later), with the caller's environment, before anything is copied. The values are
+# added in order, and a valueless key is written as valueless: carried as the string `true`,
+# an untyped read of it in the copy differed from the original's. The copy's .git/hooks starts empty: copied with
 # the rest, the original's hooks ran from a copied gate's `git commit`.
 # `cp -RP` keeps a symlink as a symlink (POSIX leaves a plain `cp -R` unspecified), and
 # every symlink in the copy whose target resolves outside it is refused by name, wherever it
@@ -108,7 +113,8 @@
 # sees. The git index is hashed too, so another session's `git status` refreshing it between
 # the copies also reports NOT RUN: run the self-test again. The runs still share PATH, which
 # a baseline changes only through a writable PATH directory, outside the example's reach, and
-# the checkout, which the example only reads, once per copy, by the `cp`. A folder the audit
+# the checkout, which the example only reads, once per copy, by the `cp` (and its git
+# configuration once, before the first copy). A folder the audit
 # cannot read fails it by name (os.walk skips one), and its Python runs isolated (-I).
 # The example changes no mode and deletes only through the directory it made. `chmod -R u+rwx`
 # before `rm -rf` made a checkout file the baseline had hard-linked into its copy executable;
@@ -195,6 +201,17 @@
 # |   }
 # |   [ -d .git ] && [ ! -L .git ] && [ ! -e .git/commondir ] ||
 # |     probe_skip "the checkout's .git is not a directory (a linked worktree, a submodule or a separate git directory); this example supports a plain repository only: run the self-test from the main checkout."
+# |   # The one read of the live checkout's configuration, made before anything is copied and with the
+# |   # caller's own environment: a key named in probe_config_keys has every value from the local scope.
+# |   probe_scopes=$(git config --show-scope --name-only --list) ||
+# |     probe_skip "could not list the checkout's git configuration with its scopes (git config --show-scope needs git 2.26 or later)."
+# |   printf '%s\n' "$probe_scopes" | PROBE_KEYS=$probe_config_keys LC_ALL=C awk '
+# |     BEGIN { n = split(ENVIRON["PROBE_KEYS"], k, " "); for (i = 1; i <= n; i++) named[k[i]] = 1 }
+# |     { scope = $0; sub(/\t.*/, "", scope); name = $0; sub(/^[^\t]*\t/, "", name) }
+# |     scope != "local" && (name in named) {
+# |       print "  NOT RUN — existing-file probe: " name " has a value in the " scope " scope of the git configuration; the copies run without system and global git configuration: set " name " in the repository'"'"'s own config file, or do not use the existing-file example."
+# |       exit 1
+# |     }' || exit 1
 # |   probe_target=src/domain/existing.py
 # |   probe_gate="$(basename "$(dirname "$0")")/${0##*/}"
 # |   # Every symlink resolves inside the copy, no `.git` lies below the top level, and the path to

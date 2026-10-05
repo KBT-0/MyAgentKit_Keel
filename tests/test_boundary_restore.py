@@ -841,6 +841,36 @@ exit 1
                 git('config', '--' + scope, 'includeIf.onbranch:never-checked-out.path', str(Path(tmp) / 'absent'))
                 self.assert_include_not_run(self.self_test(tmp, root), 'includeif.onbranch:never-checked-out.path')
 
+    def test_a_named_setting_from_outside_the_repository_is_not_run_by_name(self):
+        # The copies run with no system or global git configuration: a global kit.disabled=yes
+        # turned the real gate off, both copies ran it on, and the case printed ok.
+        for scope in ('global', 'system', 'command'):
+            with self.subTest(scope=scope), tempfile.TemporaryDirectory() as tmp:
+                root, git = self.fixture(tmp, '[ "$(git config kit.disabled)" != yes ] || exit 0\n',
+                                         config_keys='kit.disabled')
+                setting = Path(tmp) / 'setting'
+                setting.write_text('[kit]\n\tdisabled = yes\n')
+                env = {'global': {'GIT_CONFIG_GLOBAL': str(setting)},
+                       'system': {'GIT_CONFIG_SYSTEM': str(setting)},
+                       'command': {'GIT_CONFIG_COUNT': '1', 'GIT_CONFIG_KEY_0': 'kit.disabled',
+                                   'GIT_CONFIG_VALUE_0': 'yes'}}[scope]
+                result = self.self_test(tmp, root, **env)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn('NOT RUN — existing-file probe: kit.disabled has a value in the %s scope of the'
+                              ' git configuration; the copies run without system and global git configuration:'
+                              " set kit.disabled in the repository's own config file, or do not use the"
+                              ' existing-file example' % scope, result.stdout)
+                self.assertNotIn('  ok   — ', result.stdout)
+
+    def test_a_named_setting_set_only_in_the_repository_runs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, git = self.fixture(tmp, '[ "$(git config kit.disabled)" = no ] || exit 1\n',
+                                     config_keys='kit.disabled')
+            git('config', 'kit.disabled', 'no')
+            result = self.self_test(tmp, root, GIT_CONFIG_GLOBAL='/dev/null', GIT_CONFIG_NOSYSTEM='1')
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('  ok   — ', result.stdout)
+
 
 if __name__ == '__main__':
     unittest.main()

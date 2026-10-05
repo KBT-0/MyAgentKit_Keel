@@ -101,11 +101,16 @@ while IFS= read -r src; do
   found=1
   if [ ! -e "$target/$rel" ] && [ ! -L "$target/$rel" ]; then
     echo "  new:     $rel"
+  elif [ -L "$target/$rel" ] || [ ! -f "$target/$rel" ]; then
+    # Only a regular file is read: `cmp` on a FIFO blocked forever, and a symlink to an
+    # identical copy read as "same". A symlink, folder or special file is a conflict, unread.
+    echo "  conflict: $rel (exists and is not a regular file, so it is the project's)"
+    conflict=1
+    continue
   elif cmp -s "$src" "$target/$rel"; then
     echo "  same:    $rel"
     continue
-  elif [ -f "$target/$rel" ] && [ ! -L "$target/$rel" ] &&
-       grep -qE '^(# |<!-- )KIT-OWNED:' "$target/$rel" 2>/dev/null; then
+  elif grep -qE '^(# |<!-- )KIT-OWNED:' "$target/$rel" 2>/dev/null; then
     echo "  update:  $rel"
   else
     # No KIT-OWNED header: the project's own file at a path the kit now owns (a project's
