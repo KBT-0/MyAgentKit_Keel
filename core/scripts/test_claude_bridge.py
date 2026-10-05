@@ -19,8 +19,9 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'MYAGENTKIT_TASK_ID', 'MYAGENTKIT_R
                       'MYAGENTKIT_REVIEW_ATTEMPT', 'MYAGENTKIT_REVIEW_FALLBACK_FROM',
                       'MYAGENTKIT_REQUESTER', 'CLAUDE_REVIEW_DOCS')
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
-# the sum and the self-test passed without running its checks. The kit gate reads this too.
-SUITE_MINIMUMS = {'test_claude_bridge': 60, 'test_agent_usage': 12, 'test_codex_quota': 3}
+# the sum and the self-test passed without running its checks. Each is the suite's current
+# count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
+SUITE_MINIMUMS = {'test_claude_bridge': 83, 'test_agent_usage': 19, 'test_codex_quota': 5}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)

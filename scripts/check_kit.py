@@ -27,20 +27,17 @@ if BRIDGE_MINIMUMS is None:
     sys.exit('KIT CHECK: FAIL — SUITE_MINIMUMS not found in core/scripts/test_claude_bridge.py')
 REQUIRED_SUITES = {
     'core/scripts': dict(BRIDGE_MINIMUMS, test_agent_cost=2),
-    'tests': {'test_packaging': 1, 'test_bootstrap': 1, 'test_acceptance': 2,
-              'test_review_upgrade': 1, 'test_boundary_example': 1, 'test_scan_gate': 1,
-              'test_check_gate': 8,
-              'test_boundary_restore': 1, 'test_sync_kit': 3, 'test_doctor': 2,
-              'test_git_hooks': 8, 'test_stop_hook': 1, 'test_spawn_worker': 4},
+    # Each suite's current count: a minimum far below it (1 of 30) let a suite lose almost
+    # every test with the kit check green. A new test raises its suite's number here.
+    'tests': {'test_packaging': 1, 'test_bootstrap': 2, 'test_acceptance': 5,
+              'test_review_upgrade': 2, 'test_boundary_example': 3, 'test_scan_gate': 1,
+              'test_check_gate': 11, 'test_boundary_restore': 24, 'test_sync_kit': 6,
+              'test_doctor': 2, 'test_git_hooks': 18, 'test_stop_hook': 1, 'test_spawn_worker': 5},
 }
 
 
-def run_tests(root, directory, required):
-    """Require named regression suites to execute; absence and skips are failures."""
-    folder = root / directory
-    for name in required:
-        if not (folder / (name + '.py')).is_file():
-            raise RuntimeError('missing required test suite: ' + name)
+def discover(folder):
+    """The suite under `folder` and the number of tests in each of its modules."""
     suite = unittest.TestLoader().discover(str(folder), pattern='test_*.py')
 
     def cases(node):
@@ -50,11 +47,21 @@ def run_tests(root, directory, required):
             else:
                 yield item
 
-    counts = dict.fromkeys(required, 0)
+    counts = {}
     for test in cases(suite):
         module = test.id().split('.')[0]
-        if module in counts:
-            counts[module] += 1
+        counts[module] = counts.get(module, 0) + 1
+    return suite, counts
+
+
+def run_tests(root, directory, required):
+    """Require named regression suites to execute; absence and skips are failures."""
+    folder = root / directory
+    for name in required:
+        if not (folder / (name + '.py')).is_file():
+            raise RuntimeError('missing required test suite: ' + name)
+    suite, found = discover(folder)
+    counts = {name: found.get(name, 0) for name in required}
     for name, minimum in required.items():
         if counts[name] < minimum:
             raise RuntimeError('required test suite is incomplete: ' + name)
@@ -84,16 +91,31 @@ def utf8_locale():
     raise RuntimeError("no UTF-8 locale (C.UTF-8 or en_US.UTF-8) for the locale cases: " + " ".join(have))
 
 
+def check_syntax(root):
+    """Parse every .py file as Python 3.10, the oldest CI runs, and every .sh file with `sh -n`.
+
+    ast.parse alone used the host's grammar: syntax newer than 3.10 passed here and broke only
+    on CI. feature_version is best effort (it rejects newer statements such as `type` and
+    `except*`, not every newer construct). `sh -n` is the host's sh, which is bash on many
+    hosts: it proves the file parses, and a bashism that bash accepts passes; only dash
+    (Ubuntu's sh, on CI) or a review catches that.
+    """
+    for path in root.rglob("*.py"):
+        if ".git" not in path.parts:
+            try:
+                ast.parse(path.read_text(), filename=str(path), feature_version=(3, 10))
+            except SyntaxError as error:
+                raise RuntimeError("%s is not Python 3.10 syntax: %s" % (path, error)) from error
+    for path in root.rglob("*.sh"):
+        if ".git" not in path.parts:
+            run(["sh", "-n", str(path)])
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
-    for path in ROOT.rglob("*.py"):
-        if ".git" not in path.parts:
-            ast.parse(path.read_text(), filename=str(path))
-    for path in ROOT.rglob("*.sh"):
-        if ".git" not in path.parts:
-            run(["sh", "-n", str(path)])
+    check_syntax(ROOT)
     manifest = json.loads((ROOT / "plugins/myagentkit/.codex-plugin/plugin.json").read_text())
     if manifest["name"] != "myagentkit" or manifest["skills"] != "./skills/":
         raise RuntimeError("plugin manifest does not expose the expected package")
@@ -529,14 +551,15 @@ def main():
                               "  { echo 'FAIL [boundary]: the domain layer imports the web layer:'; fail=1; }\n")
             example = (ROOT / "core/scripts/boundary_selftests.sh").read_text().splitlines()
             selftests.write_text("\n".join(line[4:] for line in example if line.startswith("# | ")) + "\n")
-            # An owner who allows AI credit has no rule line; the hook's case says it skipped.
+            # Without the rule line (an owner who allows AI credit, or a sync that has not added
+            # it yet) the hook's case says it is off and why, never that an owner chose it.
             agents = project / "AGENTS.md"
             original_agents = agents.read_bytes()
             agents.write_text(original_agents.decode().replace("No AI attribution in git", "AI credit allowed"))
             status = run(["git", "status", "--porcelain"], project)
             out = run(["sh", "scripts/check.sh", "--self-test"], project, reason="SELF-TEST: PASS")
-            if "skipped by owner choice" not in out:
-                raise RuntimeError("the commit-msg case did not say it was skipped by owner choice:\n" + out)
+            if "commit-msg hook: off, AGENTS.md has no 'No AI attribution in git' rule line" not in out:
+                raise RuntimeError("the commit-msg case did not say the rule line is missing:\n" + out)
             if "  ok   — domain/web boundary gate rejects a forbidden import in an existing file" not in out:
                 raise RuntimeError("the existing-file boundary example did not run as a case:\n" + out)
             if (src / "domain/existing.py").read_text() != "original\n":

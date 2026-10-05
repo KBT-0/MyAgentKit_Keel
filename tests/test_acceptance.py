@@ -33,6 +33,26 @@ class AcceptanceTests(unittest.TestCase):
                     with self.assertRaisesRegex(RuntimeError, 'required|skipped'):
                         gate.run_tests(root, 'tests', {name: 1})
 
+    def test_python_newer_than_3_10_is_refused(self):
+        # The parse used the host's grammar: syntax newer than 3.10, the oldest CI runs,
+        # passed here and broke only on CI.
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / 'module.py'
+            source.write_text('match value:\n    case 1:\n        pass\n')
+            gate.check_syntax(Path(tmp))
+            source.write_text('type Alias = int\n')
+            with self.assertRaisesRegex(RuntimeError, 'is not Python 3.10 syntax'):
+                gate.check_syntax(Path(tmp))
+
+    def test_every_suite_is_required_at_its_current_count(self):
+        # A minimum far below its suite (1 of 30 tests) let the suite lose almost every test
+        # with the kit check still green: each minimum is the suite's count, and a new test
+        # raises it in the same change.
+        for directory, required in gate.REQUIRED_SUITES.items():
+            with self.subTest(directory=directory):
+                found = gate.discover(ROOT / directory)[1]
+                self.assertEqual(required, found)
+
     def test_packaging_suite_is_required_by_the_real_gate(self):
         self.assertGreaterEqual(gate.REQUIRED_SUITES['tests']['test_packaging'], 1)
 
