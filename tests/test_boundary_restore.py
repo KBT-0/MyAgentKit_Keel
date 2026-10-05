@@ -556,45 +556,65 @@ exit 1
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn('  ok   — ', result.stdout)
 
+    def test_the_cleanup_changes_no_mode_and_deletes_only_through_the_directory_it_made(self):
+        # Source-level, because the races cannot be timed from a test: a folder's chmod could be
+        # turned into a hard-linked checkout file's, and `rm -rf` after a separate root check
+        # deleted a root swapped in between. The example now has neither operation.
+        example = (Path(__file__).resolve().parents[1] / 'core/scripts/boundary_selftests.sh').read_text()
+        code = [line[4:] for line in example.splitlines()
+                if line.startswith('# | ') and not line[4:].lstrip().startswith('#')]
+        self.assertTrue(code)
+        for line in code:
+            self.assertNotRegex(line, r'chmod|\brm\s+-[A-Za-z]*[rR]', 'the example changes a mode or deletes by path')
+
     def test_cleanup_changes_no_mode_of_a_hard_linked_checkout_file(self):
         # The cleanup ran `chmod -R u+rwx` on the copy before `rm -rf`: a hard link the baseline
-        # made to a checkout file got that file's mode changed, and a temporary root replaced by
-        # a symlink took chmod into the link's target. Only folders of the copy, reached without
-        # following a link, get a mode now, and a root that is no longer the one made is refused.
+        # made to a checkout file got that file's mode changed. Deleting the link changes nothing
+        # of the file it shares.
         with tempfile.TemporaryDirectory() as tmp:
             # The checkout and TMPDIR share one filesystem by construction, so the hard link is made.
             root, git = self.fixture(tmp, "grep -q 'myapp.web' src/domain/existing.py || "
                                           'ln "$ORIGIN/src/domain/existing.py" hard || exit 1\n', names=('ORIGIN',))
             original = root / 'src/domain/existing.py'
             original.chmod(0o640)
+            before = original.lstat()
             result = self.self_test(tmp, root, ORIGIN=str(root))
-            self.assertEqual(original.stat().st_mode & 0o777, 0o640, 'the cleanup changed a checkout file')
+            after = original.lstat()
+            self.assertEqual(after.st_mode, before.st_mode, 'the cleanup changed a checkout file')
+            self.assertEqual((after.st_ino, after.st_nlink), (before.st_ino, before.st_nlink))
+            self.assertEqual(original.read_bytes(), b'committed original\n')
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn('  ok   — ', result.stdout)
 
-    def test_a_temporary_root_replaced_by_a_symlink_is_refused_by_name(self):
-        # See the test above: chmod -R walked the link's target outside the copy.
-        with tempfile.TemporaryDirectory() as tmp:
-            outside = Path(tmp) / 'outside'
-            (outside / 'sub').mkdir(parents=True)
-            (outside / 'kept').write_text('outside\n')
-            (outside / 'kept').chmod(0o600)
-            (outside / 'sub').chmod(0o500)
-            modes = lambda: [(path.name, path.lstat().st_mode) for path in (outside, outside / 'kept', outside / 'sub')]
-            before = modes()
-            root, git = self.fixture(tmp, "grep -q 'myapp.web' src/domain/existing.py || { copy=$(dirname \"$(pwd -P)\") && "
-                                          'mv "$copy" "$copy.moved" && ln -s "$OUTSIDE" "$copy"; } || exit 1\n',
-                                     names=('OUTSIDE',))
-            try:
-                result = self.self_test(tmp, root, OUTSIDE=str(outside))
-                self.assertEqual(modes(), before, 'the cleanup changed a mode outside the copy')
-            finally:
-                (outside / 'sub').chmod(0o700)
-            self.assertEqual((outside / 'kept').read_text(), 'outside\n')
-            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-            self.assertIn('is no longer the directory made for the disposable copy', result.stdout)
-            self.assertIn('deleted nothing', result.stdout)
-            self.assertNotIn('  ok   — ', result.stdout)
+    def test_a_replaced_temporary_root_is_refused_by_name(self):
+        # chmod -R walked a symlinked root's target outside the copy; a root that is no longer the
+        # directory mktemp made, a link or another directory with content, is left as it is.
+        for shape, replace in (('symlink', 'ln -s "$OUTSIDE" "$copy"'),
+                               ('directory', 'mkdir "$copy" && echo replacement > "$copy/kept"')):
+            with self.subTest(shape=shape), tempfile.TemporaryDirectory() as tmp:
+                outside = Path(tmp) / 'outside'
+                (outside / 'sub').mkdir(parents=True)
+                (outside / 'kept').write_text('outside\n')
+                (outside / 'kept').chmod(0o600)
+                (outside / 'sub').chmod(0o500)
+                modes = lambda: [(path.name, path.lstat().st_mode) for path in (outside, outside / 'kept', outside / 'sub')]
+                before = modes()
+                root, git = self.fixture(tmp, "grep -q 'myapp.web' src/domain/existing.py || { copy=$(dirname \"$(pwd -P)\") && "
+                                              'mv "$copy" "$copy.moved" && %s; } || exit 1\n' % replace,
+                                         names=('OUTSIDE',))
+                try:
+                    result = self.self_test(tmp, root, OUTSIDE=str(outside))
+                    self.assertEqual(modes(), before, 'the cleanup changed a mode outside the copy')
+                finally:
+                    (outside / 'sub').chmod(0o700)
+                self.assertEqual((outside / 'kept').read_text(), 'outside\n')
+                if shape == 'directory':
+                    self.assertEqual([path.read_text() for path in Path(tmp, 'scratch').glob('*/kept')],
+                                     ['replacement\n'], 'the replacement was deleted')
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn('is no longer the directory made for the disposable copy', result.stdout)
+                self.assertIn('deleted nothing', result.stdout)
+                self.assertNotIn('  ok   — ', result.stdout)
 
     def test_a_checkout_changed_between_the_copies_is_not_run(self):
         # Each run copied the live checkout: a gate changed between the copies to always print
@@ -636,8 +656,8 @@ exit 1
     def test_a_folder_the_baseline_hides_goes_with_its_copy(self):
         # os.walk skips a folder it cannot read: a baseline that hid an outside symlink in one
         # passed the audit run again on its copy, and the next run made it readable and wrote
-        # through it. Now the next run gets a fresh copy, and the baseline's copy is made
-        # writable before it is deleted: a mode-000 or mode-444 folder survived `rm -rf`.
+        # through it. Now the next run gets a fresh copy. The example changes no mode, so a
+        # mode-000 or mode-444 folder the baseline left keeps its copy, and the case fails by name.
         deep = 'd' * 200
         hide = {'too long': ('i=0; while [ $i -lt 25 ]; do mkdir %s && cd %s || exit 1; i=$((i + 1)); done; '
                              'ln -s "$OUTSIDE" out' % (deep, deep),
@@ -660,9 +680,17 @@ exit 1
                     for left in Path(tmp, 'scratch').glob('*/checkout/hidden'):
                         left.chmod(0o755)
                 self.assertFalse((outside / 'escaped').exists(), 'the second run wrote through a hidden symlink')
-                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                self.assertIn('  ok   — ', result.stdout)
-                self.assertEqual(list(Path(tmp, 'scratch').iterdir()), [], 'a copy was left behind')
+                self.assertEqual(list(outside.iterdir()), [], 'the cleanup touched something outside the copy')
+                if name == 'too long':
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertIn('  ok   — ', result.stdout)
+                    self.assertEqual(list(Path(tmp, 'scratch').iterdir()), [], 'a copy was left behind')
+                else:
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    self.assertIn('FAIL — existing-file probe: could not delete the disposable copy at %s/'
+                                  % os.path.realpath(Path(tmp, 'scratch')), result.stdout)
+                    self.assertIn('; delete it yourself', result.stdout)
+                    self.assertNotIn('  ok   — ', result.stdout)
 
     def test_a_carried_setting_can_be_reassigned_in_the_copy(self):
         # Replayed on top of an existing core.filemode, the copy held two values, and a gate's

@@ -102,13 +102,14 @@
 # still share PATH, which a baseline changes only through a writable PATH directory, outside
 # the example's reach, and the checkout, which the example only reads. A folder the audit
 # cannot read fails it by name (os.walk skips one), and its Python runs isolated (-I).
-# Deleting a copy changes the mode of its folders only, never of a file, each set by name
-# relative to its open parent without following a link: `chmod -R u+rwx` before `rm -rf`
-# made a checkout file the baseline had hard-linked into its copy executable, and followed a
-# temporary root the baseline had replaced with a symlink. `find -type d -exec chmod` is not
-# enough, since chmod resolves the whole path again and a folder swapped for a link in between
-# takes it outside. The root's device and inode are recorded when mktemp makes it; a root that
-# is no longer that folder is refused by name, and nothing is deleted.
+# The example changes no mode and deletes only through the directory it made. `chmod -R u+rwx`
+# before `rm -rf` made a checkout file the baseline had hard-linked into its copy executable;
+# a chmod limited to folders could still be raced onto such a link, and `rm -rf` after a
+# separate check of the root deleted a root swapped in between. So the root's device and inode
+# are recorded when mktemp makes it, a root that is no longer that folder is refused by name
+# and nothing is deleted, and the tree is removed entry by entry relative to its open folders.
+# A copy the gate left unreadable or unwritable is not repaired: it fails the case by name,
+# and that is the project's gate to fix.
 # Copying a large tree (dependencies, build output) costs time, twice: copy only what the
 # gate reads if that is known, but never let the probe write into the checkout.
 #
@@ -123,39 +124,43 @@
 # |   probe_checkout=$(pwd -P) || exit 1
 # |   probe_copy=
 # |   probe_id=
-# |   # Only folders of the copy are made writable (a read-only one, a module cache, survives
-# |   # `rm -rf`), each by name relative to its open parent and never through a link; the root
-# |   # must still be the folder mktemp made (device and inode), or nothing is deleted.
+# |   # The one way a copy is deleted: through the open root mktemp made (device and inode), each
+# |   # entry by name relative to its open folder, never a path from the top, never a mode changed.
 # |   probe_delete() {
 # |     [ -z "$probe_copy" ] || {
 # |       python3 -I -c '
 # | import os, stat, sys
 # | path, made = sys.argv[1], sys.argv[2]
-# | def refuse(why):
-# |     print("  FAIL — existing-file probe: " + why + "; deleted nothing.")
-# |     sys.exit(1)
-# | def writable(dir_fd, name, made=None):
-# |     mode = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
-# |     if made is not None and (not stat.S_ISDIR(mode.st_mode) or "%d %d" % (mode.st_dev, mode.st_ino) != made):
-# |         refuse(path + " is no longer the directory made for the disposable copy")
-# |     if not stat.S_ISDIR(mode.st_mode):
-# |         return
-# |     if mode.st_mode & 0o700 != 0o700:
-# |         os.chmod(name, stat.S_IMODE(mode.st_mode) | 0o700, dir_fd=dir_fd, follow_symlinks=False)
-# |     fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=dir_fd)
-# |     try:
-# |         opened = os.fstat(fd)
-# |         if made is not None and "%d %d" % (opened.st_dev, opened.st_ino) != made:
-# |             refuse(path + " is no longer the directory made for the disposable copy")
-# |         for entry in os.listdir(fd):
-# |             writable(fd, entry)
-# |     finally:
-# |         os.close(fd)
+# | name = os.path.basename(path)
+# | def same(found):
+# |     return stat.S_ISDIR(found.st_mode) and "%d %d" % (found.st_dev, found.st_ino) == made
+# | def empty(fd):
+# |     for entry in os.listdir(fd):
+# |         if stat.S_ISDIR(os.stat(entry, dir_fd=fd, follow_symlinks=False).st_mode):
+# |             sub = os.open(entry, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+# |             try:
+# |                 empty(sub)
+# |             finally:
+# |                 os.close(sub)
+# |             os.rmdir(entry, dir_fd=fd)
+# |         else:
+# |             os.unlink(entry, dir_fd=fd)
 # | try:
-# |     writable(os.open(os.path.dirname(path), os.O_RDONLY | os.O_DIRECTORY), os.path.basename(path), made)
-# | except (OSError, NotImplementedError) as error:
-# |     refuse("could not make " + path + " deletable without following a link (" + str(error) + ")")
-# | ' "$probe_copy" "$probe_id" && rm -rf "$probe_copy"
+# |     parent = os.open(os.path.dirname(path), os.O_RDONLY | os.O_DIRECTORY)
+# |     root = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
+# | except OSError:
+# |     root = None
+# | if root is None or not same(os.fstat(root)):
+# |     sys.exit("  FAIL — existing-file probe: " + path + " is no longer the directory made for the disposable copy; deleted nothing.")
+# | try:
+# |     empty(root)
+# |     # rmdir removes only an empty directory: one swapped in under this name since is not deleted.
+# |     if not same(os.stat(name, dir_fd=parent, follow_symlinks=False)):
+# |         raise OSError(path + " is no longer the directory made for it")
+# |     os.rmdir(name, dir_fd=parent)
+# | except (OSError, RecursionError) as error:
+# |     sys.exit("  FAIL — existing-file probe: could not delete the disposable copy at " + path + "; delete it yourself (" + str(error) + ").")
+# | ' "$probe_copy" "$probe_id" 2>&1
 # |       probe_gone=$?
 # |       probe_copy=
 # |       return "$probe_gone"
@@ -271,7 +276,9 @@
 # |         exit 1
 # |       }' "$probe_copy/names" || exit 1
 # |     probe_noted=1
-# |     { rm -f .git/config.worktree .git/config && rm -rf .git/hooks && mkdir .git/hooks && : > .git/config &&
+# |     # The copied hooks move beside the copied checkout, deleted with the copy (mkdir fails if any are left).
+# |     { rm -f .git/config.worktree .git/config && { mv .git/hooks "$probe_copy/hooks" 2>/dev/null; mkdir .git/hooks; } &&
+# |       : > .git/config &&
 # |       probe_env PROBE_ALLOWED="$probe_allowed" xargs -0 sh -c '
 # |         for probe_entry; do
 # |           probe_key=$(printf "%s\n" "$probe_entry" | sed -n 1p) || exit 1
@@ -296,8 +303,7 @@
 # |   probe_first=$probe_digest
 # |   probe_env sh "$probe_root/$probe_gate" >/dev/null 2>&1 ||
 # |     probe_fail "the baseline is already red; the injection would prove nothing."
-# |   cd / && probe_delete ||
-# |     probe_fail "could not delete the baseline run's copy; refusing to run."
+# |   cd / && probe_delete || exit 1
 # |   probe_fresh_copy
 # |   [ "$probe_digest" = "$probe_first" ] ||
 # |     probe_skip "the checkout changed between the two copies; run the self-test again."
