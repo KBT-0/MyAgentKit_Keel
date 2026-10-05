@@ -343,15 +343,25 @@ does not end when its task does, and the idle notice also fires on every park on
 background job, so it cannot serve as the end signal: the result file is the end signal,
 and the lead closes the session after reading it (`tmux kill-session -t NAME`).
 
-Closing the session leaves the worktree. With the Claude Code overlay, `.githooks/post-merge`
-removes it after the next merge in the main worktree, but only when
-`scripts/clean_worktrees.sh` proves nothing in it can be lost: merged into main, no tracked
-change, no operation under way, nothing in use, and every file git does not track either in
-a folder `.claude/worktree-disposable` lists or byte-identical to main's copy. Anything not
-proven keeps the worktree with the reason printed, a squash-merged branch included (its
-commits are not in main). Each removal is logged first in `<git dir>/kit-worktree-removals.log`
-and prints `git branch <name> <hash>`, which brings the branch back. `KIT_NO_WORKTREE_CLEANUP=1`
-turns the hook off; the script without `--apply` is a dry run.
+Closing the session leaves the worktree. **Once a worktree's branch is merged, the worktree
+is FINISHED**: a further round on that task starts a NEW worktree, never the old one. With the
+Claude Code overlay, `.githooks/post-merge` removes a finished worktree after the next merge
+in the main worktree, but only when `scripts/clean_worktrees.sh` finds nothing in it that
+would be lost: its branch has commits of its own and every commit it or its reflogs name is
+in main, no tracked change, no operation under way, no git filter that could hide an edit,
+and every file git does not track either in a folder `.claude/worktree-disposable` lists or
+byte-identical to main's copy. That it is no longer in use is NOT proven (a sub-agent worker
+holds no process inside it between commands): nothing in it may have changed for the quiet
+period (60 minutes by default), a margin, not a proof. Anything else keeps the worktree with
+the reason, a squash-merged branch included (its commits are not in main); `git worktree lock
+<path>` keeps one the lead still wants. Each removal is logged first in
+`<git dir>/kit-worktree-removals.log` and prints the command that restores the branch at its
+last commit. `KIT_NO_WORKTREE_CLEANUP=1` turns the hook off; the script without `--apply` is
+a dry run.
+
+A worker whose worktree directory is missing STOPS and reports. It never recreates the
+directory and never runs a git command from where it used to be: that folder lies inside the
+main checkout, so git there acts on the owner's main worktree.
 
 ## Token economics — the always-loaded prefix is money
 

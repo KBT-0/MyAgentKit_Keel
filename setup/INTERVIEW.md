@@ -230,9 +230,13 @@ One topic per turn. Suggested order, because each answer informs the next:
     project declared disposable: build output and installed dependencies a checkout makes again
     (the usual ones: `build`, `node_modules`, `dist`, `target`, `.venv`). Write the owner's
     answer into `.claude/worktree-disposable`, one name or root-relative path per line; those
-    folders must also be in `.gitignore`. Nothing listed is the safe default: a worktree with
-    build output is then kept and its report names the folders. The reason to ask: in a
-    project using the kit, merged worktrees piled up to 34 GB before anyone removed them.
+    folders must also be in `.gitignore`. A name never matches below `docs`, `.claude`,
+    `scripts`, `.myagentkit` or `.git`. Nothing listed is the safe default: a worktree with
+    build output is then kept and its report names the folders. Keep the file even if empty:
+    without it the hook does nothing. Ask too whether the quiet period suits them: a worktree
+    in which anything changed in the last 60 minutes is kept (`quiet-minutes=<n>` in the same
+    file, at least 10). The reason to ask: in a project using the kit, merged worktrees piled
+    up to 34 GB before anyone removed them.
 
 ## Phase 3 — PROJECT.md and PHASES.md
 

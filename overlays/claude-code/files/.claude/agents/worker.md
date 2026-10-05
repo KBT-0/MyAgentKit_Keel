@@ -39,4 +39,7 @@ the rules below exist).
 - No AI attribution in git: no `Co-Authored-By` line, no tool or model name in any commit
   message, whatever your default is.
 <!-- END attribution rule -->
+- Your worktree is finished once its branch is merged; a further round gets a NEW one. If
+  your worktree directory is missing, STOP and report: never recreate it, and never run git
+  from where it was (git there acts on the main checkout).
 - `./scripts/check.sh` before you finish; report "not run" for any check you did not run.
