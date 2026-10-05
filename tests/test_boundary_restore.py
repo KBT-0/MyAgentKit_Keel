@@ -508,6 +508,22 @@ exit 1
             self.assertIn('  ok   — ', result.stdout)
             self.assertIn('NOTE — existing-file probe: tar.tar.gz.command is not carried', result.stdout)
 
+    def test_the_original_s_hooks_do_not_run_in_the_copy(self):
+        # cp -RP copied .git/hooks with the rest, and the rebuilt configuration leaves git's
+        # default hooks directory: a copied gate's `git commit` ran the original's pre-commit,
+        # and a hook that writes elsewhere escaped the copy.
+        with tempfile.TemporaryDirectory() as tmp:
+            escaped = Path(tmp) / 'escaped'
+            root, git = self.fixture(tmp, 'git -c user.name=g -c user.email=g@example.invalid -c commit.gpgsign=false'
+                                          ' commit -q --allow-empty -m probe >/dev/null 2>&1 || exit 1\n')
+            for hook in ('pre-commit', 'post-commit'):
+                (root / '.git/hooks' / hook).write_text('#!/bin/sh\n: > %s\n' % shlex.quote(str(escaped)))
+                (root / '.git/hooks' / hook).chmod(0o755)
+            result = self.self_test(tmp, root)
+            self.assertFalse(escaped.exists(), "the original's hook ran in the copy")
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('  ok   — ', result.stdout)
+
     def test_a_carried_setting_can_be_reassigned_in_the_copy(self):
         # Replayed on top of an existing core.filemode, the copy held two values, and a gate's
         # `git config core.filemode false` failed there while it succeeded in the original.
