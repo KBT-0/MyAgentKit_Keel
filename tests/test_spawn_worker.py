@@ -202,7 +202,7 @@ class SpawnWorkerTests(unittest.TestCase):
         git('init', '-q')
         git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'a')
         n = 0
-        for lead in (' ', '\t', '\n', ' \t\n '):
+        for lead in (' ', '\t', '\n', '\r', '\r\n', ' \t\r\n '):
             for worktree in ((), ('--worktree',)):
                 n += 1
                 value = lead + '{"model": "x"}'

@@ -54,6 +54,14 @@ old code, fixed, then merged to master.
   the three new kit-owned files missing from the index, which is why the last item stages
   first. Not run: a project with its own boundary checks, an
   adapted existing-file example or review usage records.
+- The same checklist after review round d3, on a customised project bootstrapped from
+  `git archive 5c80c36` with the Claude Code overlay: an extra check of its own in the build
+  arm of `scripts/check.sh` (red while a marker file exists), its own boundary check with one
+  self-test case, and a rule line of its own in `AGENTS.md`. Taking the kit's side of the
+  build-arm conflict dropped that check with `CHECK: PASS`, and the removed-line listing
+  item 5 now gives named it; resolved as item 5 now says, every step followed literally,
+  `doctor.sh` printed `DOCTOR: ready`, `check.sh` `CHECK: PASS`, `--self-test` exited 0 with
+  the project's own `ok` line, the marker still turned the gate red, and the rule line stayed.
 
 **NOT run**
 
