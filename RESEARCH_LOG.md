@@ -732,6 +732,19 @@ by path. `--worktree` used the tool's `-w`, which branched from a stale base; th
 makes the worktree with git from the lead's current commit and refuses a leftover name.
 Not run: a live session (the tests use stub `tmux` and `claude`), and a non-bash `/bin/sh`.
 
+#### Fail-open and data-loss group
+
+The one fail-open of the four reviews was a locale: `grep -I` in a UTF-8 locale calls a
+line with an invalid byte binary and prints nothing, so the gate passed a marker it was
+looking at. The gate and the commit-msg hook now run in C and hand the build its own locale
+back. The sync had the guard bootstrap got in the fifth round, one script late: paths that
+became kit-owned in v0.9 overwrote a project's own hooks. In the review runtime the worker
+left the signal mask out of the guard switch on purpose (a handler raising just after the
+block would leave the cancel signals blocked for the process; the switch is one attribute
+store) and left one gap named: a signal between the last pending check and the unblock
+reaches the caller's handler as a signal after the hand-back. Both are for the next
+cross-model round to judge.
+
 #### The review gate held on the kit's own hardening
 
 Five of the nine work packages (the gate lock, both review-tooling packages, the commit gates

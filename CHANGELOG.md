@@ -392,6 +392,20 @@ hand merge; `sync-kit.sh` now keeps listing them until you confirm (see "Sync st
   `git worktree add .claude/worktrees/NAME -b worktree-NAME HEAD` itself and refuses a
   leftover branch or path of that name. **ACTION:** copy `spawn_worker.sh` again; keep the
   brief file in place until the worker has read it.
+- **Fail-open and lost records (review of 2026-10-05).** `scripts/check.sh` and
+  `.githooks/commit-msg` read text in the C locale: in a UTF-8 locale `grep -I` printed
+  nothing for a matching line holding a non-UTF-8 byte, so a placeholder on a Latin-1 line
+  passed the gate; your build command still gets your own locale. `sync-kit.sh` stops with
+  `conflict:` lines, copies nothing and leaves the stamp when a kit-owned path holds a
+  differing file without the KIT-OWNED header (v0.9 made `.githooks/commit-msg`,
+  `.githooks/pre-merge-commit` and `scripts/doctor.sh` kit-owned; the first sync used to
+  overwrite your own). The review runtime: a cancel that arrives after the reviewer has
+  finished no longer records a completed review as cancelled or skips the cleanup; a quota
+  read that fails is "unavailable" and never costs a finished review its evidence; a
+  cancelled record always carries the new archive hash. **ACTION:** if the sync reports a
+  conflict, merge your hook's checks into the kit's file (or move yours aside) and sync
+  again; port the `LC_ALL=C` lines into your `scripts/check.sh`; copy `agent_process.py`,
+  `agent_usage.py`, `claude_bridge.py`, `codex_bridge.py`, `codex_quota.py` again.
 
 ## v0.8 — 2026-10-03
 
