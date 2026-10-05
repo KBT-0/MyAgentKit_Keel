@@ -223,10 +223,14 @@ class BootstrapTests(unittest.TestCase):
         # core.hooksPath was set before the stamp was written: a read-only stamp, a full disk or
         # a signal there stopped the run with the project's own hooks path already replaced.
         # A shim stands in for each failure after the `git config`, so it holds for root too.
+        # A signal right after the stamp's `mv` had the trap put the hooks path back under the
+        # new stamp: the project was recorded as installed with its gates disconnected.
         root = Path(__file__).resolve().parents[1]
         faults = {'signal': ('git', 'case "$*" in *"config core.hooksPath .githooks")\n'
                                     '  "%s" "$@"; rc=$?; kill -TERM "$PPID"; exit $rc ;; esac\n'),
-                  'mv fails': ('mv', 'case "$*" in */.kit-version) exit 1 ;; esac\n')}
+                  'mv fails': ('mv', 'case "$*" in */.kit-version) exit 1 ;; esac\n'),
+                  'signal after the mv': ('mv', 'case "$*" in */.kit-version)\n'
+                                                '  "%s" "$@"; rc=$?; kill -TERM "$PPID"; exit $rc ;; esac\n')}
         for fault, (tool, body) in faults.items():
             for prior in ('custom-hooks', None):
                 with self.subTest(fault=fault, prior=prior), tempfile.TemporaryDirectory() as tmp:
@@ -247,10 +251,14 @@ class BootstrapTests(unittest.TestCase):
                     result = subprocess.run(['sh', str(root / 'bootstrap.sh'), str(project)], env=env,
                                             capture_output=True, text=True, timeout=60)
                     self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
-                    self.assertEqual(self._hooks_path(project), prior or '', 'hooks path left replaced')
-                    self.assertIn('core.hooksPath', result.stderr)
-                    self.assertEqual(stamp.read_bytes(), b'0.1\n')
                     self.assertEqual(list((project / 'docs/kit').glob('*kit-tmp*')), [], 'temporary left')
+                    state = (stamp.read_bytes() == b'0.1\n', self._hooks_path(project))
+                    if fault == 'signal after the mv':
+                        self.assertIn(state, [(True, prior or ''), (False, '.githooks')],
+                                      'stamped and hooks path not wired, or the reverse')
+                        continue
+                    self.assertEqual(state, (True, prior or ''), 'hooks path left replaced')
+                    self.assertIn('core.hooksPath', result.stderr)
 
     def test_a_replaced_file_keeps_its_mode(self):
         # Each file was replaced by a sibling created under the umask: a note at 0600 became

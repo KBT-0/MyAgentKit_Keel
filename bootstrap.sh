@@ -57,15 +57,19 @@ skiplist=$(mktemp) || die "cannot create a temp file"
 files=$(mktemp) || { rm -f "$skiplist"; die "cannot create a temp file"; }
 part=""
 wiring=""
-recorded=""
+# stamped — the stamp holds this run's version. Read from the disk, never from a variable set
+# after the write: a signal between the stamp's `mv` and that variable read as "not recorded".
+stamped() {
+  [ -z "$(blocked docs/kit/.kit-version)" ] && [ "$(cat "$target/docs/kit/.kit-version" 2>/dev/null)" = "$version" ]
+}
 # finish RC — the exit trap. A stop that `set -e` made says so: the failing command named its
-# path, this says what it means. A stop after core.hooksPath was changed puts the project's
-# own value back (or unsets it again): the stop is no install, and the hooks it now names may
-# not be there. A signal ends the run through here too.
+# path, this says what it means. A stop after core.hooksPath was changed and before the version
+# was recorded puts the project's own value back (or unsets it again): the stop is no install,
+# and the hooks it now names may not be there. A signal ends the run through here too.
 finish() {
   rm -f "$skiplist" "$files" ${part:+"$part"}
   [ "$1" -ne 0 ] || return 0
-  if [ -n "$wiring" ]; then
+  if [ -n "$wiring" ] && ! stamped; then
     if [ -n "$had" ]; then git -C "$target" config core.hooksPath "$hooks_was"
     else git -C "$target" config --unset core.hooksPath; fi >/dev/null 2>&1 || :
     now=$(git -C "$target" config --local --get core.hooksPath) || now=""
@@ -78,7 +82,7 @@ finish() {
         "           it is '$now' now: set it by hand." >&2
     fi
   fi
-  [ -n "$said" ] || [ -n "$recorded" ] ||
+  [ -n "$said" ] || stamped ||
     echo "bootstrap: stopped by the failure above, before the version was recorded" >&2
 }
 trap 'finish "$?"' EXIT
@@ -280,10 +284,13 @@ EOF
   echo "bootstrap: wrote docs/kit/BOOTSTRAP_NOTE.md"
 fi
 
-# The finish is ordered so that a failure changes nothing outside the files: the stamp's
-# content is written to its temporary first, then core.hooksPath is set, and the `mv` that
-# records the version comes last. Setting the hooks path first left the project's own value
-# replaced when the stamp write then failed; a stop between the two is undone by `finish`.
+# The finish has three states, each read from the disk by `finish`: core.hooksPath untouched
+# (`wiring` unset), nothing outside the files changed; hooks path set and the stamp not holding
+# $version, no install, so the trap puts the project's value back; the stamp holds $version (its
+# `mv` in `put` is the commit), the install is whole and nothing is undone. A trap that judged by
+# a variable cleared after the `mv` disconnected the gates under the new stamp. The hooks path
+# comes first: SIGKILL between the two leaves the gates wired under the old stamp, never the
+# version recorded with them disconnected; a rerun of the same version is recorded throughout.
 repo=""
 if git -C "$target" rev-parse --git-dir >/dev/null 2>&1; then
   repo=1
@@ -296,8 +303,6 @@ fi
 put "$target/docs/kit/.kit-version" <<EOF
 $version
 EOF
-recorded=1
-wiring=""
 
 if [ -n "$repo" ]; then
   echo "bootstrap: wired core.hooksPath -> .githooks"
