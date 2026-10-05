@@ -9,9 +9,10 @@ nothing else, and it does not depend on any conversation that happened before yo
 **What was installed.** A set of instruction files, gates and templates that make a
 repository safe for agents to work in over a long time: a constitution (`AGENTS.md`), a
 workflow (`docs/WORKFLOW.md`), a review protocol (`docs/REVIEW_GATE.md`), a cross-session
-memory file (`docs/STATE.md`), a task-handoff template (`docs/HANDOFF.md`), a trap log
-(`docs/GOTCHAS.md`), a quality gate (`scripts/check.sh`) wired into git as a pre-commit
-hook, and a cross-model review wrapper (`scripts/review.sh`).
+memory file (`docs/STATE.md`) with its backlog (`docs/BACKLOG.md`), a task-handoff
+template (`docs/HANDOFF.md`), a trap log (`docs/GOTCHAS.md`), a quality gate
+(`scripts/check.sh`) wired into git as a pre-commit hook, and a cross-model review wrapper
+(`scripts/review.sh`).
 
 **What is missing.** Everything project-specific. The files are full of `{{PLACEHOLDER}}`
 markers, and `./scripts/check.sh` FAILS while any of them survive. Your job is to have a
@@ -351,7 +352,8 @@ placeholder is either a quoted value or a whole file.
 3. **Run `./scripts/check.sh --self-test`.** Show that output too. If a gate does not go red
    when its failure is injected, it is protecting nothing — fix it before you continue.
 4. **Initialise `docs/STATE.md`**: what was set up, what is open, what the owner still has to
-   do, with a tool+model trace. Full sentences.
+   do, with a tool+model trace. Full sentences. The first tasks after setup, and anything the
+   owner parked, go to `docs/BACKLOG.md`.
 5. **Delete what does not apply.** An overlay or a section for something this project does
    not have is not harmless — it is a lie the next agent will believe.
 6. **Stage and hand off for fresh review before commit.** If the repository has no commit

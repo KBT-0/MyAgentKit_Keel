@@ -80,5 +80,6 @@ DONE:   <the command or observation that proves it>
 If this task touches {{RISKY_AREAS}}, or any gate/CI/check script: before commit, run the
 review gate per docs/REVIEW_GATE.md in a FRESH session, preferably a different tool.
 
-When finishing: update docs/STATE.md with a tool+model trace, then a short summary.
+When finishing: update docs/STATE.md with a tool+model trace (a follow-up task goes to
+docs/BACKLOG.md), then a short summary.
 ```

@@ -46,7 +46,9 @@ more importantly, what is deliberately out of scope until later.
    copy its text elsewhere: a quotation is a duplicate, a citation is not.
 
 Not read per session, but read it when something behaves unexpectedly: `docs/GOTCHAS.md`
-(environment and tooling traps this project has already paid for).
+(environment and tooling traps this project has already paid for). Not read per session
+either: `docs/BACKLOG.md` (the next tasks and the parked ones), read when the next task is
+chosen.
 
 ## HARD RULES (violation = failed task)
 
@@ -121,8 +123,10 @@ FAILING for the right reason.
 
 ### STATE.md discipline
 
-- `docs/STATE.md` is TRANSIENT: current state only. It is read every session, so its length
-  is a bill paid every session.
+- `docs/STATE.md` is TRANSIENT: current state only — what is in flight and what waits on
+  someone. It is read every session, so its length is a bill paid every session.
+- A next task or a parked item is written to `docs/BACKLOG.md`, never to STATE.md. A
+  backlog only grows, and in STATE.md it is read every session for nothing.
 - **Completed work is DELETED, not marked DONE.** The history lives in git.
 - Before deleting a line, ask: *is this still true next month?* If yes, it must have a
   permanent home BEFORE it leaves — `docs/PROJECT.md` (a decision, as a numbered item),

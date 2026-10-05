@@ -4,8 +4,10 @@
 transfer between sessions or between tools. Updating this file at the end of any session
 with meaningful progress is the AGENT'S job, not {{OWNER_NAME}}'s.
 
-This file is TRANSIENT and stays SMALL — current state only. It is read at the start of
-every session, in every tool, so its length is a bill paid every session.
+This file is TRANSIENT and stays SMALL — current state only: what is in flight, and what
+waits on someone. It is read at the start of every session, in every tool, so its length is
+a bill paid every session. What is planned next, and what was parked on purpose, is a
+BACKLOG, and it lives in `docs/BACKLOG.md`, which is read only when the next task is chosen.
 
 **Permanent knowledge is never stored here. It passes THROUGH here into a real home:**
 
@@ -50,9 +52,7 @@ way, so never park closed work here)
 
 ## Blocked / waiting on {{OWNER_NAME}}
 
-## Next tasks (priority order)
-
-## Deferred / parked
+(a decision, an approval, or a manual check owed by {{OWNER_NAME}})
 
 ## Known issues / watch out
 
