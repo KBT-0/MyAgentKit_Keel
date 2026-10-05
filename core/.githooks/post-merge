@@ -2,16 +2,19 @@
 # KIT-OWNED: do not edit locally; change it in the kit and re-sync.
 # After a merge in the MAIN worktree, removes the finished worker worktrees under
 # .claude/worktrees that scripts/clean_worktrees.sh proves merged and holding nothing else
-# (Claude Code overlay; without that script this hook does nothing). Merged worktrees piled up
-# otherwise: 39 of them, 34 GB, in a project using the kit, each audited and removed by hand.
+# (Claude Code overlay). Merged worktrees piled up otherwise: 39 of them, 34 GB, in a project
+# using the kit, each audited and removed by hand.
 # Not after a merge inside a linked worktree: a worker merging main into its branch is not the
 # moment its siblings are finished.
 #
+# Installed by the overlay: scripts/clean_worktrees.sh (+ .py) and .claude/worktree-disposable.
+# Without all three this hook does nothing, and says so once (a marker in the git directory).
 # Off switch: KIT_NO_WORKTREE_CLEANUP=1 (in the environment of the merge).
 #
 # The merge is already complete when this runs, and git ignores this hook's exit status; it
 # exits 0 anyway. It changes nothing itself: the script writes its log, then removes only a
-# worktree that passed every check, and keeps every one it could not prove.
+# worktree that passed every check, and keeps every one it could not prove. It prints the
+# removals and one summary line; the dry run (the script without options) gives the reasons.
 set -u
 [ -z "${KIT_NO_WORKTREE_CLEANUP:-}" ] || exit 0
 # The main worktree's git directory is the common one; a linked worktree's is below it.
@@ -22,7 +25,12 @@ common=$(CDPATH= cd -- "$common" 2>/dev/null && pwd -P) || exit 0
 [ "$here" = "$common" ] || exit 0
 root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
 CDPATH= cd -- "$root" || exit 0
-[ -f scripts/clean_worktrees.sh ] && [ -x scripts/clean_worktrees.sh ] || exit 0
-./scripts/clean_worktrees.sh --apply </dev/null ||
+if ! { [ -x scripts/clean_worktrees.sh ] && [ -f scripts/clean_worktrees.py ] && [ -f .claude/worktree-disposable ]; }; then
+  [ -e "$common/kit-worktree-cleanup-absent" ] ||
+    { echo "post-merge: worktree clean-up is not installed (scripts/clean_worktrees.sh, scripts/clean_worktrees.py and .claude/worktree-disposable, from the Claude Code overlay); finished worktrees stay. Said once." >&2
+      : > "$common/kit-worktree-cleanup-absent"; }
+  exit 0
+fi
+./scripts/clean_worktrees.sh --apply --quiet </dev/null ||
   echo "post-merge: scripts/clean_worktrees.sh stopped with an error; the merge is complete and every worktree it did not remove is as it was." >&2
 exit 0
