@@ -42,6 +42,18 @@ old code, fixed, then merged to master.
 - Fresh-reviewer rounds: two each for G1, G3a, G3b, G5 and G6; one each for G2, G4, G7 and
   G8. Each second round reviewed the fixes of the first.
 - On a real machine, a fresh bootstrap passed `doctor.sh` except for the unset hooks path.
+- The "Upgrading a project from v0.8" checklist, followed literally. A project bootstrapped
+  from `git archive 5c80c36` with both overlays into a fresh git repository, its
+  placeholders filled the way `scripts/check_kit.py` fills them, and committed; then the
+  current `sync-kit.sh` (exit 2, the twelve items listed whole) and the twelve items in
+  order, each conflict resolved to the kit's side with the filled values put back. Its
+  `doctor.sh` (`DOCTOR: ready`), `check.sh` (`CHECK: PASS`) and `check.sh --self-test`
+  (exit 0) printed the same as a fresh bootstrap of the current kit filled the same way,
+  apart from the test run's timing line; `diff -r` of the two trees outside `.git` was
+  empty; `--actions-applied` recorded v0.9. Run before `git add -A`, `doctor.sh` exits 1 on
+  the three new kit-owned files missing from the index, which is why the last item stages
+  first. Not run: a project with its own boundary checks, an
+  adapted existing-file example or review usage records.
 
 **NOT run**
 
