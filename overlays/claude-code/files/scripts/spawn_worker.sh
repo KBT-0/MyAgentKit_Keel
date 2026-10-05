@@ -42,7 +42,7 @@ q() { set -- "$(printf '%sx' "$1" | sed "s/'/'\\\\''/g")"; printf "'%s'" "${1%x}
 [ $# -ge 2 ] || { sed -n '2,8p' "$0"; exit 2; }
 name=$1; brief=$2; shift 2
 { [ -f "$brief" ] && [ -r "$brief" ]; } || die "brief file not found or not readable: $brief"
-brief=$(cd "$(dirname "$brief")" && pwd)/$(basename "$brief")
+brief=$(CDPATH= cd -- "$(dirname "$brief")" && pwd)/$(basename "$brief")
 case "$brief" in *"
 "*) die "brief path contains a newline, which would submit the instruction early: $brief" ;; esac
 command -v tmux >/dev/null || die "tmux is not installed"
