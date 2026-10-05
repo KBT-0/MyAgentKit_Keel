@@ -15,7 +15,8 @@ LC_ALL=C; export LC_ALL
 # The owner decides (setup interview): without the rule line in AGENTS.md, AI tools may be
 # credited. A missing AGENTS.md is a broken setup, not a choice: the hook stays on, and so
 # does an AGENTS.md that is not a readable file: an error is not the owner's choice either.
-# (A directory is tested here, not left to grep: GNU grep -q skips one with status 1.)
+# (A directory is tested here, not left to grep: GNU grep exits 2 on one, but a grep set to
+# skip directories exits 1, which would read as the owner's choice.)
 if [ -e AGENTS.md ]; then
   rule=2
   [ ! -f AGENTS.md ] || { grep -q 'No AI attribution in git' AGENTS.md; rule=$?; }
