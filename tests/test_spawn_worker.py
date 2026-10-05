@@ -120,6 +120,24 @@ class SpawnWorkerTests(unittest.TestCase):
         self.assertEqual(Path(launched['cwd']).resolve(), self.cwd.resolve())
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_brief_is_delivered_by_path_as_one_typed_instruction(self):
+        result = self.spawn('w1', str(self.brief))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        submitted = (self.state / 'submitted').read_text().splitlines()
+        self.assertEqual(submitted[0], f'Read {shq(str(self.brief))} and follow it.')
+        self.assertNotIn('Line one of the brief', (self.state / 'submitted').read_text())
+
+    def test_missing_or_unreadable_brief_is_refused_before_any_session(self):
+        cases = [self.cwd / 'absent.md']
+        if os.geteuid() != 0:  # root reads a mode-000 file, so only the absent case holds there
+            self.brief.chmod(0)
+            cases.append(self.brief)
+        for brief in cases:
+            result = self.spawn('w2', str(brief))
+            self.assertNotEqual(result.returncode, 0, brief)
+            self.assertIn(str(brief), result.stderr)
+            self.assertNotIn('new-session', self.tmux_log(), brief)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -16,12 +16,15 @@
 # the lead closes the session with `tmux kill-session -t NAME`; it does not end by itself.
 #
 # Pitfalls this script encodes (each one cost a session):
-#   - The prompt is pasted AFTER the TUI is up, never passed on the command line after a
+#   - The prompt is typed AFTER the TUI is up, never passed on the command line after a
 #     variadic flag such as --allowedTools, which would swallow it as one more value and
 #     leave the session idle at an empty input line.
-#   - Every value that goes into the session's shell command passes through `q`: a value
-#     with an apostrophe (a --settings JSON string, a name) otherwise ends its quoting and
-#     the rest runs as shell in the new pane.
+#   - The prompt is ONE typed sentence, "Read '<brief path>' and follow it.", not the brief
+#     pasted as a block: one model took a pasted brief with no typed sentence of the user's
+#     own for mere content and sat idle for 35 minutes asking for confirmation.
+#   - Every value that goes into the session's shell command, and the brief path, passes
+#     through `q`: a value with an apostrophe (a --settings JSON string, a name) otherwise
+#     ends its quoting and the rest runs as shell in the new pane.
 #   - Readiness is detected from the pane text, not from `pgrep -f`, which matches its own
 #     command line.
 #   - The folder must already be trusted by Claude Code; an untrusted folder blocks the
@@ -35,7 +38,10 @@ q() { set -- "$(printf '%sx' "$1" | sed "s/'/'\\\\''/g")"; printf "'%s'" "${1%x}
 
 [ $# -ge 2 ] || { sed -n '2,8p' "$0"; exit 2; }
 name=$1; brief=$2; shift 2
-[ -f "$brief" ] || die "brief file not found: $brief"
+{ [ -f "$brief" ] && [ -r "$brief" ]; } || die "brief file not found or not readable: $brief"
+brief=$(cd "$(dirname "$brief")" && pwd)/$(basename "$brief")
+case "$brief" in *"
+"*) die "brief path contains a newline, which would submit the instruction early: $brief" ;; esac
 command -v tmux >/dev/null || die "tmux is not installed"
 command -v claude >/dev/null || die "claude is not on PATH"
 
@@ -84,25 +90,24 @@ while :; do
   sleep 1
 done
 
-tmux load-buffer -b "spawn-$name" "$brief"
-tmux paste-buffer -d -b "spawn-$name" -t "$name"
+# One typed sentence naming the brief by its absolute path, quoted by the same helper so a
+# path with a space or an apostrophe still reads as one path.
+tmux send-keys -t "$name" -l "Read $(q "$brief") and follow it."
 
-# Submit only once the paste has landed: an Enter sent while the TUI is still receiving a
-# bracketed paste is swallowed and the brief sits unsent at the prompt (seen on the first
-# run of this script). A short brief shows its text; a multi-line brief shows only the
-# placeholder "[Pasted text #1 +N lines]" (seen on the first real worker), so both count.
+# Submit only once the line has landed: an Enter sent while the TUI is still receiving
+# input is swallowed and the line sits unsent at the prompt (seen on the first run of this
+# script). Fast input may show as the placeholder "[Pasted text", so both count.
 # Then confirm the prompt line emptied; if not, press Enter once more.
-head=$(head -c 40 "$brief" | tr -d '\n')
-landed() { tmux capture-pane -p -t "$name" -J | grep -qF -e "$head" -e "[Pasted text"; }
+landed() { tmux capture-pane -p -t "$name" -J | grep -qF -e "and follow it." -e "[Pasted text"; }
 i=0
 until landed; do
-  i=$((i + 1)); [ "$i" -lt 30 ] || die "the brief did not appear in session '$name' (tmux attach -t $name)"
+  i=$((i + 1)); [ "$i" -lt 30 ] || die "the instruction did not appear in session '$name' (tmux attach -t $name)"
   sleep 1
 done
 sleep 1
 tmux send-keys -t "$name" Enter
 sleep 3
-if tmux capture-pane -p -t "$name" -J | grep -q "^❯.*\(\[Pasted text\|$(printf '%s' "$head" | head -c 20 | sed 's/[][\\.*^$/]/\\&/g')\)"; then
+if tmux capture-pane -p -t "$name" -J | grep -qE '^❯.*(\[Pasted text|and follow it\.)'; then
   tmux send-keys -t "$name" Enter
 fi
 echo "spawn_worker: '$name' started with $brief (tmux attach -t $name to watch)"
