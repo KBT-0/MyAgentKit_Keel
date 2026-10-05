@@ -452,6 +452,18 @@ hand merge; `sync-kit.sh` now keeps listing them until you confirm (see "Sync st
   the files that differ; a differing gate file stops the run as `conflict: <path>`, the
   form `sync-kit.sh` uses. Move yours aside, re-run, then carry what yours did into the
   kit's file; `--force` overwrites every differing file listed. No ACTION.
+- **Review round d1 (2026-10-05).** Existing-file example: the audit fails by name on a
+  folder or link it cannot read (it used to pass over it), and a `.git/hooks` that is
+  missing or not empty after the baseline run is refused. `spawn_worker.sh`: a newline in
+  the brief argument is refused before anything else and the file name's bytes are kept; a
+  relative `--settings` file is made absolute against the caller's folder, and with
+  `--worktree` a relative value that is neither a file nor inline JSON is refused.
+  `doctor.sh`: every word of a grep alias must match an allowlist of plain options
+  (`--exclude-dir=x>/dev/null` used to pass). The kit's own check picks a UTF-8 locale by
+  codeset, not from four names. `unity_gate.sh` and `gate_on_stop.sh` ignore CDPATH.
+  **ACTION:** replace your existing-file example with the kit's current one again; copy
+  `spawn_worker.sh` again; with the Unity overlay copy `unity_gate.sh`, with the Claude Code
+  overlay `gate_on_stop.sh`.
 
 ## v0.8 — 2026-10-03
 
