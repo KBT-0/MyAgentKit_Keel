@@ -98,6 +98,34 @@ class SyncKitTests(unittest.TestCase):
             self.assertEqual((project / 'scripts/agent_cost.py').read_bytes(),
                              (ROOT / 'core/scripts/agent_cost.py').read_bytes())
 
+    def test_every_printed_action_item_of_the_real_changelog_is_whole(self):
+        # The checklist printed only the physical line holding the marker, so an owner
+        # confirming it read "one would be. **ACTION:** copy" and twice nothing at all.
+        with tempfile.TemporaryDirectory() as tmp:
+            kit, project = Path(tmp) / 'kit', Path(tmp) / 'project'
+            kit.mkdir()
+            for name in ('sync-kit.sh', 'CHANGELOG.md'):
+                shutil.copyfile(ROOT / name, kit / name)
+            (project / 'docs/kit').mkdir(parents=True)
+            # A version the changelog does not hold: every version's items are listed.
+            (project / 'docs/kit/.kit-version').write_text('0.0\n')
+            result = subprocess.run(['sh', str(kit / 'sync-kit.sh'), str(project), '--dry-run'],
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            checklist = result.stdout.split('ACTION items since v0.0')[1].split('sync-kit: dry run')[0]
+            items = []
+            for line in checklist.splitlines()[1:]:
+                if line.startswith('  v'):
+                    items.append(line.split(': ', 1)[1].strip())
+                elif line.strip():
+                    self.assertTrue(items and line.startswith('      '), line)
+                    items[-1] += ' ' + line.strip()
+            self.assertGreater(len(items), 10)
+            for item in items:
+                after = item.split('**ACTION', 1)[1].lstrip('*: ')
+                self.assertTrue(after.strip(), 'nothing after the marker: ' + item)
+                self.assertRegex(item, r'[.!?:][`*)"]*$', 'cut mid-sentence: ' + item)
+
     def test_a_signal_while_printing_the_checklist_keeps_the_stamp(self):
         # A handler that only cleaned up let the run resume with the pending list deleted,
         # which reads as "no ACTION items", and stamp the version.

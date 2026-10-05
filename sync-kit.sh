@@ -168,10 +168,20 @@ fi
 # version is unknown), repeated as a checklist. Stamping past them unconfirmed once made the
 # next run say "already current" while the hand edits had never been made. A scan that
 # failed leaves the list empty, which reads as "no ACTION items": it stops the sync instead.
+#
+# Each item is printed from its marker to the end of its list item or paragraph (up to a
+# blank line, a heading or the next list item): printing only the marker's own line cut
+# items mid-sentence.
 awk -v want="v$have" '
   $1 == "##" && $2 == want { exit }
-  /^## v/ { v = $2 }
-  v && /\*\*ACTION/ && !/\*\*ACTION\*\* — none/ { print "  " v ": " $0 }
+  /^## v/ { v = $2; item = 0; next }
+  item && /[^ \t]/ && !/^#/ && !/^[ \t]*([-*]|[0-9]+\.)[ \t]/ {
+    sub(/^[ \t]+/, ""); print "      " $0; next
+  }
+  { item = 0 }
+  v && /\*\*ACTION/ && !/\*\*ACTION\*\* — none/ {
+    print "  " v ": " substr($0, index($0, "**ACTION")); item = 1
+  }
 ' "$kit/CHANGELOG.md" > "$pending" ||
   die "cannot scan the changelog for ACTION items; version left at v$have. Rerun once awk can read $kit/CHANGELOG.md."
 
