@@ -831,6 +831,18 @@ The checklist finding was confirmed by doing it: with "take the kit's side" a pr
 licence check vanished and its gate still passed; the list now says both sides survive and
 prints the lines a merge removed.
 
+#### Cross-model round d4: Reject, on what the fresh copy opened
+
+Round d4 on `62d2988..d826ccd`: one High, two Medium, one Low, three of them opened by the
+previous round's redesign: the cleanup's `chmod -R` followed a hard link and a swapped root
+out of the copy; two copies of a live checkout need not be the same tree; a relative
+TMPDIR resolved differently after `cd /`. Fixes: modes only on the copy's folders, by name
+from an open parent, with the root's device and inode checked; a sha256 of each copy as
+taken, equal or NOT RUN; TMPDIR resolved once. Known side effect: another session's
+`git status` rewriting `.git/index` between the copies also gives NOT RUN. The fourth was
+the checklist's own diagnostic hiding a removed Markdown bullet. Counts for the day's
+rounds: 7, 2, 4, 4, a High in each, three of the four opened by the round before.
+
 #### The review gate held on the kit's own hardening
 
 Five of the nine work packages (the gate lock, both review-tooling packages, the commit gates
