@@ -162,7 +162,11 @@ in `RESEARCH_LOG.md` (2026-10-03). Most of the files below are project-owned, so
   gate are resolved physically and a symlinked one is refused; git and the copied gate run
   under `probe_env`, which passes only the variables it names, with an empty HOME and no
   system or global git configuration; the copy's `.git/config` is replaced by an allowlist
-  plus the keys named in `probe_config_keys`, and its `.git/hooks` is emptied. The dot-file
+  plus the keys named in `probe_config_keys`, and its `.git/hooks` is emptied; after the
+  baseline run the copy's git configuration must be byte for byte what the example wrote
+  (a baseline that set `core.hooksPath` had its hook run by the second run), with no
+  `config.worktree`, no `commondir` and an empty `.git/hooks`, or the case is refused by
+  name: a gate that writes git configuration during its run cannot use the example. The dot-file
   example runs in a subshell that removes its injection on INT/TERM as well as on exit.
 - **Worker spawning (issues #32, #35).** `spawn_worker.sh` `cd`s into the folder before
   starting the tool (tmux hands a new session a stale `PWD`) and ignores `CDPATH`. Every
@@ -171,7 +175,8 @@ in `RESEARCH_LOG.md` (2026-10-03). Most of the files below are project-owned, so
   unreadable brief, or a newline in its argument, before any session opens. `--worktree`
   runs `git worktree add .claude/worktrees/NAME -b worktree-NAME HEAD` itself instead of the
   tool's `-w` and refuses a leftover branch or path of that name; a relative `--settings`
-  file is made absolute against the caller's folder. `unity_gate.sh` and `gate_on_stop.sh`
+  file is made absolute against the caller's folder, and inline JSON may start with
+  whitespace. `unity_gate.sh` and `gate_on_stop.sh`
   ignore `CDPATH`.
 - **Tests that could not go red.** Twenty-two guards in `doctor.sh`, `commit-msg`,
   `check.sh`, `claude_bridge.py` and `sync-kit.sh` had a negative test that stayed green with

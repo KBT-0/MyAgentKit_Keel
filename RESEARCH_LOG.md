@@ -796,6 +796,26 @@ a newline, a relative `--settings` file after the change of directory) and one i
 grep-alias allowance, where a whitespace split accepted `--exclude-dir=x>/dev/null`. Each
 first cut of a fix again drew findings its author's tests did not.
 
+#### Cross-model round d2: Reject, and equality in place of a list
+
+Round d2 on `31c8f7a..1afba49`: one High, one Medium. The High was the third hook route in
+the example in one day (the configured path, then the default directory, then a path the
+baseline itself configures). The fix stops naming hook routes: the copy's `.git/config`
+after the baseline must equal, byte for byte, what the example wrote, and no other
+configuration source may have appeared. Checked with git: under the probe's environment
+only `.git/config` is read. The worker also found, unasked, that the audit's own `python3`
+ran a `.pth` file a baseline left in the copy's HOME; it now runs with `-I`. Cost: a gate
+that writes git configuration during its run cannot use the example.
+
+#### One upgrade checklist, proved by using it
+
+Two reviewers found the v0.9 ACTION items could not be followed: fifty lines, cut
+mid-sentence, superseding each other. The section is now final-state bullets and one
+twelve-item checklist. The proof was to use it: a project bootstrapped from the v0.8
+commit, synced and upgraded by the list alone, compared equal (`diff -r`) to a fresh
+bootstrap from master. Not covered by that run: a project with its own boundary checks, an
+adapted existing-file example, or old usage records, which is what both real projects are.
+
 #### The review gate held on the kit's own hardening
 
 Five of the nine work packages (the gate lock, both review-tooling packages, the commit gates
