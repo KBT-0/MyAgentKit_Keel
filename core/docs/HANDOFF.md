@@ -38,7 +38,9 @@ End the prompt with: updating `docs/STATE.md` at session end is the implementer'
 the task belongs to an operation with its own file, `docs/<OPERATION>.md`, the detail and
 the result go straight into THAT file and `docs/STATE.md` gets one status line pointing at
 it — no separate note and no fold step. A project that folded every worker's note into
-`docs/STATE.md` hit its 10 KB limit three times in one day on a single growing bullet.
+`docs/STATE.md` grew one bullet without end. When the task has an id, the commit that
+finishes it carries `Done: <id>` and its line leaves `docs/STATE.md` in that same commit
+(`docs/WORKFLOW.md`, "Task ids").
 
 A brief for a separate worker session (`scripts/spawn_worker.sh` in the Claude Code overlay)
 also ends with the path of its result FILE and this line: "The lead closes this session
@@ -80,5 +82,6 @@ DONE:   <the command or observation that proves it>
 If this task touches {{RISKY_AREAS}}, or any gate/CI/check script: before commit, run the
 review gate per docs/REVIEW_GATE.md in a FRESH session, preferably a different tool.
 
-When finishing: update docs/STATE.md with a tool+model trace, then a short summary.
+When finishing: update docs/STATE.md with a tool+model trace (a follow-up task goes to
+docs/BACKLOG.md), then a short summary.
 ```

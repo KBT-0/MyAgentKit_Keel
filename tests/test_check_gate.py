@@ -239,6 +239,39 @@ class CheckGateTests(unittest.TestCase):
             self.assertIn(line, out)
         self.assertIn('SELF-TEST: FAIL', out)
 
+    def test_a_task_a_done_trailer_closed_fails_the_state_check_by_name(self):
+        # setUp already ran the gate green with no commit at all.
+        git = lambda *args: subprocess.run(GIT + ['-c', 'core.hooksPath=/dev/null', *args], cwd=self.project,
+                                           check=True, capture_output=True, text=True).stdout
+        git('add', '-A')
+        git('commit', '-q', '-m', 'close K4', '-m', 'Done: K4')
+        closer = git('log', '-1', '--format=%h').strip()
+        state = self.project / 'docs/STATE.md'
+        for text in ('- K4b: another task\n', '- K4 sounds done\n'):
+            state.write_text('# STATE\n\n## Active work\n' + text)
+            code, out = gate(self.project, self.build)
+            if 'K4b' in text:
+                self.assertEqual(code, 0, out)
+            else:
+                self.assertEqual(code, 1, out)
+                self.assertIn('FAIL [state]: docs/STATE.md:4 names K4, which commit %s closed' % closer, out)
+        state.write_text('# STATE\n\n## Active work\n')
+        (self.project / 'docs/BACKLOG.md').write_text('- K4 again\n')
+        code, out = gate(self.project, self.build)
+        self.assertEqual(code, 1, out)
+        self.assertIn('FAIL [state]: docs/BACKLOG.md:1 names K4', out)
+        # A shallow clone sees only what it holds, and says so.
+        (self.project / 'docs/BACKLOG.md').unlink()
+        git('add', '-A')
+        git('commit', '-q', '--allow-empty', '-m', 'second')
+        clone = self.tmp / 'clone'
+        subprocess.run(['git', 'clone', '-q', '--depth', '1', 'file://%s' % self.project, str(clone)],
+                       check=True, capture_output=True)
+        (clone / 'docs/STATE.md').write_text('# STATE\n\n## Active work\n- K4 is only in the history\n')
+        code, out = gate(clone, self.build)
+        self.assertEqual(code, 0, out)
+        self.assertIn('NOTE [state]: a shallow clone', out)
+
     def test_every_cd_ignores_cdpath(self):
         # An exported CDPATH turned `cd scripts` into another directory (and printed it):
         # doctor.sh then checked another tree, and review.sh could review one. Every cd in a

@@ -31,8 +31,8 @@ REQUIRED_SUITES = {
     # every test with the kit check green. A new test raises its suite's number here.
     'tests': {'test_packaging': 1, 'test_bootstrap': 16, 'test_acceptance': 6,
               'test_review_upgrade': 2, 'test_boundary_example': 3, 'test_scan_gate': 1,
-              'test_check_gate': 11, 'test_boundary_restore': 38, 'test_sync_kit': 15,
-              'test_doctor': 2, 'test_git_hooks': 18, 'test_stop_hook': 1, 'test_spawn_worker': 12},
+              'test_check_gate': 12, 'test_boundary_restore': 38, 'test_sync_kit': 15,
+              'test_doctor': 2, 'test_git_hooks': 22, 'test_stop_hook': 1, 'test_spawn_worker': 12},
 }
 
 
@@ -133,6 +133,8 @@ def main():
         project = Path(tmp)
         run(["sh", str(ROOT / "bootstrap.sh"), str(project)])
         run(["git", "init", "-q"], project)
+        if not (project / "docs/BACKLOG.md").is_file():
+            raise RuntimeError("bootstrap did not deliver the docs/BACKLOG.md template")
         output = run(["sh", "scripts/check.sh"], project, expected=1)
         if "FAIL" not in output:
             raise RuntimeError("fresh bootstrap did not reject absent configuration")
@@ -152,12 +154,6 @@ def main():
         # With CDPATH exported, `cd scripts` printed the directory into the gate's own path,
         # and the gate re-ran a two-line file name instead of its checks.
         run(["sh", "scripts/check.sh"], project, reason="CHECK: PASS", env=dict(os.environ, CDPATH="."))
-        # The rot gate's message must name where operation detail goes instead.
-        state = project / "docs/STATE.md"
-        original_state = state.read_bytes()
-        state.write_text("# STATE\n\n## Active work\n\n" + "closed work\n" * 250)
-        run(["sh", "scripts/check.sh"], project, expected=1, reason="docs/<OPERATION>.md")
-        state.write_bytes(original_state)
         print("PASS: bootstrap rejects missing setup and accepts the configured synthetic project")
         if args.self_test:
             with tempfile.TemporaryDirectory(prefix="myagentkit-side-") as side:
@@ -194,7 +190,7 @@ def main():
                          "BOUNDARY_CHECKS_FILE": "scripts/boundary_checks.sh",
                          "BOUNDARY_SELFTESTS_FILE": "scripts/boundary_selftests.sh",
                          "GATE_SELFTEST_EXTRA_FILE": "docs/STATE.md",
-                         "GATE_SELFTEST_BREAK_SCANNER": "1"}
+                         "GATE_SELFTEST_BREAK_SCANNER": "1", "GATE_SELFTEST_HISTORY": "."}
                 build.write_text("false\n")
                 own_lock = os.path.realpath(project) + "/.git/check.lock"
                 for name, value in seams.items():

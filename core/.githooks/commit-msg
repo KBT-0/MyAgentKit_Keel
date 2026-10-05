@@ -1,7 +1,8 @@
 #!/usr/bin/env sh
 # KIT-OWNED: do not edit locally; change it in the kit and re-sync.
-# Rejects a trailer crediting an AI tool (AGENTS.md: no AI attribution in git).
-# Coding tools add that trailer by default at commit time, so a rule in a document did not
+# Two separate checks. First, a "Done: <id>" trailer closes a task, so the state files this
+# commit records may not still mention it (docs/WORKFLOW.md, "Task ids"). Second, a trailer
+# crediting an AI tool is rejected (AGENTS.md: no AI attribution in git). Coding tools add that trailer by default at commit time, so a rule in a document did not
 # hold: sessions carried it into most commits of a project whose owner had forbidden it,
 # and removing it later meant rewriting every commit and a force-push. The trailer is
 # written into the message file git passes here, so this is the only place to catch it.
@@ -12,6 +13,40 @@ set -u
 # C locale: in a UTF-8 one grep's "." stopped at a byte that is not valid UTF-8, and a
 # "[bot]" trailer whose name held a Latin-1 byte passed. In C every byte is a character.
 LC_ALL=C; export LC_ALL
+msg=${1:-}
+if [ ! -f "$msg" ] || [ ! -r "$msg" ]; then
+  echo "commit-msg: cannot read the commit message file '$msg'; refusing to pass it unchecked." >&2
+  exit 1
+fi
+# Finished tasks. Runs whatever AGENTS.md says about attribution: the two rules are separate.
+# Git's own parser reads the trailers, so what counts is what `git log` will show. The files
+# are read from the index (`git show :path`), which is what this commit records; the working
+# tree may differ. A mention is the id with no letter, digit, "_" or "-" either side, so
+# closing K3 does not match K3b or K3-a. One trailer per id: "Done: K4, K5" is rejected.
+trailers=$(git interpret-trailers --parse "$msg") || {
+  echo "commit-msg: cannot parse the trailers; refusing to pass the message unchecked." >&2
+  exit 1
+}
+mentioned=0
+set -f
+for id in $(printf '%s\n' "$trailers" | sed -n 's/^[Dd][Oo][Nn][Ee]: //p'); do
+  if ! printf '%s\n' "$id" | grep -qE '^[A-Za-z][A-Za-z0-9]*(-[A-Za-z0-9]+)?$' ||
+     ! printf '%s\n' "$id" | grep -q '[0-9]'; then
+    echo "commit-msg: 'Done: $id' does not name a task id: a letter, then letters and digits with at" >&2
+    echo "            least one digit and at most one inner '-' (K4, L1b, K7-a). One trailer per id." >&2
+    exit 1
+  fi
+  for f in docs/STATE.md docs/BACKLOG.md; do
+    hits=$(git show ":$f" 2>/dev/null | grep -nE "(^|[^A-Za-z0-9_-])$id([^A-Za-z0-9_-]|\$)")
+    [ -n "$hits" ] || continue
+    echo "commit-msg: this commit closes $id but $f still mentions it: delete the line (the history" >&2
+    echo "            is in git), or drop the trailer." >&2
+    printf '%s\n' "$hits" | sed "s|^|            $f:|" >&2
+    mentioned=1
+  done
+done
+set +f
+[ "$mentioned" -eq 0 ] || exit 1
 # The owner decides (setup interview): without the rule line in AGENTS.md, AI tools may be
 # credited. A missing AGENTS.md is a broken setup, not a choice: the hook stays on, and so
 # does an AGENTS.md that is not a readable file: an error is not the owner's choice either.
@@ -27,7 +62,6 @@ if [ -e AGENTS.md ]; then
        exit 1 ;;
   esac
 fi
-msg=${1:-}
 # Nothing is cut, not even below the scissors line `commit -v` writes: the hook cannot tell
 # git's editor header from the same lines given with -m, which git keeps, and cutting at the
 # header let a credit below it into the history. A trailer quoted in a `commit -v` diff is
@@ -36,10 +70,6 @@ msg=${1:-}
 # --cleanup flag this hook cannot see, and on `-m` versus the editor (git's default keeps
 # them for -m). Checking them fails closed; a commented-out credit left by a squash is one
 # line to delete.
-if [ ! -f "$msg" ] || [ ! -r "$msg" ]; then
-  echo "commit-msg: cannot read the commit message file '$msg'; refusing to pass it unchecked." >&2
-  exit 1
-fi
 # ponytail: fixed lists of tool, model and vendor names; extend them when a new tool's trailer gets through.
 tools='claude|anthropic|openai|chatgpt|gpt|codex|copilot|gemini|cursor|aider|devin|windsurf|codeium|tabnine|amp|qwen|cline|kiro|opencode|junie|openhands|warp'
 words="$tools|opus|sonnet|haiku|fable|mythos|context|code|coder|agent|ai|assist|assistant|cli|chat|pro|flash|mini|turbo|[a-z]*[0-9][a-z0-9.]*"

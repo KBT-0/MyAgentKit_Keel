@@ -35,10 +35,30 @@ a risky change ships. Agents propose; {{OWNER_NAME}} decides.
    script — go through `docs/REVIEW_GATE.md` before commit, in a FRESH session. The author
    never approves their own patch.
 6. **Document:** if a public API changed, update that module's README in the same task.
-7. **Update `docs/STATE.md`:** active work, next steps, deferred items, with a tool+model
-   trace. Unwritten progress does not exist.
+7. **Update `docs/STATE.md`:** active work and what waits on {{OWNER_NAME}}, with a
+   tool+model trace. Unwritten progress does not exist. A next task or a parked item goes to
+   `docs/BACKLOG.md`, which is read when the next task is chosen, not every session.
 8. **Summarize:** what, why, which files. If you hit an OPEN design item, flag it as a
    question rather than deciding it.
+
+## Task ids
+
+Finished work that nobody deleted is how `docs/STATE.md` rots: a project's state file held
+lines like "Committed: K4" and "merged after three review rounds" long after the work was in
+git, and a size limit could not tell those lines from live ones. A task id makes the
+deletion checkable.
+
+- A task id is a short token that starts with a letter and holds at least one digit:
+  letters and digits, with at most one inner `-` (`K4`, `L1b`, `R12`, `K7-a`). A line in
+  `docs/STATE.md` or `docs/BACKLOG.md` MAY name its task by id; none has to.
+- The commit that finishes a task says so with a trailer, ONE per id, in the last paragraph
+  of the message: `Done: K4`. For work done on a branch, the integrating session's merge
+  commit carries it.
+- `.githooks/commit-msg` rejects that commit while the `docs/STATE.md` or `docs/BACKLOG.md`
+  it records still names the id, and says which line; `./scripts/check.sh` fails `[state]`
+  when either file names an id that any commit in the history closed. Whole word: closing
+  `K3` says nothing about `K3b`.
+- A closed id is never reused. A task needed again gets a new id.
 
 ## Task sizing
 
@@ -189,11 +209,13 @@ stream of merged work — it produces a queue.
 `docs/STATE.md` is a single hot file. If three branches append to it, every merge is a
 conflict in the one file nobody may resolve carelessly.
 
-- A session working on a branch or in a worktree **does not write `docs/STATE.md`.**
+- A session working on a branch or in a worktree **does not write `docs/STATE.md`** or
+  `docs/BACKLOG.md`, which is just as shared.
 - It writes `docs/worktree-notes/<branch>.md` — its own file, so it cannot conflict. Same
-  content rules: full sentences, tool+model trace, an honest "not run".
-- `docs/STATE.md` is updated on the main branch at merge time by the integrating session,
-  which folds the note in and deletes it.
+  content rules: full sentences, tool+model trace, an honest "not run". A follow-up task it
+  found goes in the note too.
+- `docs/STATE.md` and `docs/BACKLOG.md` are updated on the main branch at merge time by the
+  integrating session, which folds the note in and deletes it.
 - "If it is not in STATE.md it did not happen" still holds; it simply applies at merge. A
   branch note is a draft, not memory.
 

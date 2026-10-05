@@ -46,7 +46,9 @@ more importantly, what is deliberately out of scope until later.
    copy its text elsewhere: a quotation is a duplicate, a citation is not.
 
 Not read per session, but read it when something behaves unexpectedly: `docs/GOTCHAS.md`
-(environment and tooling traps this project has already paid for).
+(environment and tooling traps this project has already paid for). Not read per session
+either: `docs/BACKLOG.md` (the next tasks and the parked ones), read when the next task is
+chosen.
 
 ## HARD RULES (violation = failed task)
 
@@ -121,9 +123,14 @@ FAILING for the right reason.
 
 ### STATE.md discipline
 
-- `docs/STATE.md` is TRANSIENT: current state only. It is read every session, so its length
-  is a bill paid every session.
-- **Completed work is DELETED, not marked DONE.** The history lives in git.
+- `docs/STATE.md` is TRANSIENT: current state only — what is in flight and what waits on
+  someone. It is read every session, so its length is a bill paid every session.
+- A next task or a parked item is written to `docs/BACKLOG.md`, never to STATE.md. A
+  backlog only grows, and in STATE.md it is read every session for nothing.
+- **Completed work is DELETED, not marked DONE.** The history lives in git. The commit that
+  finishes a task with an id carries a `Done: <id>` trailer, and the commit-msg hook and
+  `./scripts/check.sh` then refuse a STATE.md or BACKLOG.md that still names it
+  (`docs/WORKFLOW.md`, "Task ids").
 - Before deleting a line, ask: *is this still true next month?* If yes, it must have a
   permanent home BEFORE it leaves — `docs/PROJECT.md` (a decision, as a numbered item),
   `docs/ARCHITECTURE.md` (a module or boundary), `docs/WORKFLOW.md` (a process or gate
@@ -137,8 +144,9 @@ FAILING for the right reason.
 - Multi-item operations track their progress in their OWN file, `docs/<OPERATION>.md`, with
   checkboxes; workers write results straight into it, and STATE.md keeps one status line
   and a pointer. No note-then-fold step.
-- Length is free while work is active. `./scripts/check.sh` FAILS only when "Active work"
-  is empty and the file is still long — the operation closed and nobody pruned.
+- No size limit applies to STATE.md, and none is the remedy: a limit cannot tell a live
+  line from a finished one. What keeps it small is the rule above, deleting finished work in
+  the commit that finishes it, and the backlog living in `docs/BACKLOG.md`.
 
 ### Review gate and validation honesty
 

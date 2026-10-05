@@ -4,8 +4,10 @@
 transfer between sessions or between tools. Updating this file at the end of any session
 with meaningful progress is the AGENT'S job, not {{OWNER_NAME}}'s.
 
-This file is TRANSIENT and stays SMALL — current state only. It is read at the start of
-every session, in every tool, so its length is a bill paid every session.
+This file is TRANSIENT and stays SMALL — current state only: what is in flight, and what
+waits on someone. It is read at the start of every session, in every tool, so its length is
+a bill paid every session. What is planned next, and what was parked on purpose, is a
+BACKLOG, and it lives in `docs/BACKLOG.md`, which is read only when the next task is chosen.
 
 **Permanent knowledge is never stored here. It passes THROUGH here into a real home:**
 
@@ -26,16 +28,22 @@ history, and nobody looks there — git is an audit trail, not a knowledge base.
 is then a grep, not a re-read — and a tagged line may not be deleted until it has a home.
 
 **Completed work is DELETED, not marked DONE.** The dates live in git
-(`git log -p -- docs/STATE.md`).
+(`git log -p -- docs/STATE.md`). A line may name its task by id (`K4`); the commit that
+finishes it carries `Done: K4`, and the commit hook and `check.sh` refuse this file while it
+still names a closed id (`docs/WORKFLOW.md`, "Task ids").
 
 **An operation's detail lives in its own file, `docs/<OPERATION>.md`, never here.** This
 file holds one status line per operation and a pointer to that file. Workers write their
 results straight into the operation file, so there is no note to fold back in here. The
 operation file tracks progress with checkboxes; its last acceptance item is "STATE.md
 harvested and pruned", and the file is deleted when the operation closes (the history is in
-git). Without this rule a long operation keeps "Active work" non-empty, every integration
-folds more into this file, and it only grows: one project reached 38 KB, and after adding a
-10 KB limit hit it three times in one day on a single bullet.
+git). Without this rule every integration folds more into this file, and it only grows: one
+project's state file reached 38 KB.
+
+**No size limit applies to this file.** A limit cannot tell a live line from a finished
+one, and a project that added one hit it again and again while half the file was backlog and
+much of the rest narrated work already in git. The backlog lives in `docs/BACKLOG.md`, and
+finished work is deleted in the commit that finishes it.
 
 Write full, explicit sentences with a tool+model trace per entry. Compressed chat styles do
 not apply to this file: the next tool reading it knows nothing about your plugins.
@@ -45,14 +53,12 @@ not apply to this file: the next tool reading it knows nothing about your plugin
 ## Active work
 
 (task + module + status, or one line per operation pointing at its `docs/<OPERATION>.md`;
-delete when done — an EMPTY section means nothing is in flight, and `check.sh` reads it that
-way, so never park closed work here)
+delete when done — an EMPTY section means nothing is in flight, so never park closed work
+here)
 
 ## Blocked / waiting on {{OWNER_NAME}}
 
-## Next tasks (priority order)
-
-## Deferred / parked
+(a decision, an approval, or a manual check owed by {{OWNER_NAME}})
 
 ## Known issues / watch out
 
