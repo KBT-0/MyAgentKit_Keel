@@ -54,8 +54,11 @@ version=$(sed -n 's/^## v\([0-9][0-9.]*\).*/\1/p' "$kit/CHANGELOG.md" 2>/dev/nul
 [ -n "$version" ] || die "cannot read a version from $kit/CHANGELOG.md — refusing to record a blank one"
 
 skiplist=$(mktemp) || die "cannot create a temp file"
+note_part=""
+stamp_part=""
 # A stop that `set -e` made says so: the failing command named its path, this says what it means.
-trap 'rc=$?; rm -f "$skiplist"; [ "$rc" -eq 0 ] || [ -n "$said" ] ||
+trap 'rc=$?; rm -f "$skiplist" ${note_part:+"$note_part"} ${stamp_part:+"$stamp_part"}
+  [ "$rc" -eq 0 ] || [ -n "$said" ] ||
   echo "bootstrap: stopped by the failure above, before the version was recorded" >&2' EXIT
 
 # blocked REL [dir] — the one check for every path bootstrap writes or creates (copied files,
@@ -130,9 +133,13 @@ done
 
 # The folders and files bootstrap makes itself pass the same check: one it may not write is
 # a conflict that stops the run, like a kept gate, and is not created or opened. The files
-# are written only after the stop below.
+# are written only after the stop below, each to a fixed sibling (FILE.kit-tmp, judged here
+# too) that then replaces FILE whole with `mv`: a redirection empties FILE before writing it,
+# so a full disk on a rerun left an empty stamp, which the next sync refuses. A temporary a
+# killed run left behind is a regular file and is overwritten; the exit trap removes it.
 own="docs/reviews docs/audits docs/worktree-notes docs/spikes docs/kit docs/kit/.kit-version"
-[ -z "$note" ] || own="$own docs/kit/BOOTSTRAP_NOTE.md"
+own="$own docs/kit/.kit-version.kit-tmp"
+[ -z "$note" ] || own="$own docs/kit/BOOTSTRAP_NOTE.md docs/kit/BOOTSTRAP_NOTE.md.kit-tmp"
 stops=""
 for d in $own; do
   case "$d" in docs/kit/*) kind=file ;; *) kind=dir ;; esac
@@ -204,6 +211,7 @@ if [ -n "$gates$stops" ]; then
 fi
 
 if [ -n "$note" ]; then
+  note_part="$target/docs/kit/BOOTSTRAP_NOTE.md.kit-tmp"
   {
     echo "# Bootstrap note — the owner's agenda for this setup"
     echo
@@ -211,7 +219,8 @@ if [ -n "$note" ]; then
     echo "reads this in Phase 0 and must address it explicitly rather than working around it."
     echo
     printf '%s\n' "$note"
-  } > "$target/docs/kit/BOOTSTRAP_NOTE.md"
+  } > "$note_part"
+  mv -f "$note_part" "$target/docs/kit/BOOTSTRAP_NOTE.md"
   echo "bootstrap: wrote docs/kit/BOOTSTRAP_NOTE.md"
 fi
 
@@ -226,7 +235,9 @@ fi
 
 # The stamp is the LAST write, so it records only an install whose every write succeeded:
 # sync-kit.sh trusts it, and a stamp over a short install answers "already current".
-printf '%s\n' "$version" > "$target/docs/kit/.kit-version"
+stamp_part="$target/docs/kit/.kit-version.kit-tmp"
+printf '%s\n' "$version" > "$stamp_part"
+mv -f "$stamp_part" "$target/docs/kit/.kit-version"
 
 cat <<'EOF'
 

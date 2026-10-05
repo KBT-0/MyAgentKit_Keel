@@ -75,6 +75,14 @@ blocked() {
 why=$(blocked docs/kit/.kit-version)
 [ -z "$why" ] || die "conflict: docs/kit/.kit-version ($why); the version is not read or written there"
 stamp="$target/docs/kit/.kit-version"
+# Every file the sync writes goes to a fixed sibling first (FILE.kit-tmp, judged like FILE) and
+# replaces FILE whole with `mv`: a redirection or `cp` empties FILE before writing it, so a full
+# disk left an empty stamp, which the next sync refuses, or a gate cut short. A temporary a
+# killed run left behind is a regular file and is overwritten; the exit trap removes it.
+why=$(blocked docs/kit/.kit-version.kit-tmp)
+[ -z "$why" ] || die "conflict: docs/kit/.kit-version.kit-tmp ($why); the version is not written there"
+part="$stamp.kit-tmp"
+cpart=""
 [ -f "$stamp" ] || die "$stamp not found — this project was not installed with bootstrap.sh"
 have=$(tr -d '[:space:]' < "$stamp")
 [ -n "$have" ] || die "$stamp is empty; refusing to guess which version this project has"
@@ -87,7 +95,7 @@ pending=$(mktemp) || { rm -f "$work_list"; echo "sync-kit: cannot create a temp 
 copies=$(mktemp) || { rm -f "$work_list" "$pending"; echo "sync-kit: cannot create a temp file" >&2; exit 1; }
 # A signal handler that only cleaned up let the run resume with the pending list deleted,
 # which reads as "no ACTION items" and stamped the version: a signal now ends the run.
-trap 'rm -f "$work_list" "$pending" "$copies"' EXIT
+trap 'rm -f "$work_list" "$pending" "$copies" "$part" ${cpart:+"$cpart"}' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
@@ -123,6 +131,7 @@ while IFS= read -r src; do
   [ -n "$src" ] || continue
   relpath "$src" || continue
   why=$(blocked "$rel")
+  [ -n "$why" ] || { why=$(blocked "$rel.kit-tmp"); why=${why:+$rel.kit-tmp: $why}; }
   # An overlay file is synced only where it already exists: its presence is the only record
   # of whether the project took that overlay, and installing an overlay is bootstrap's job.
   # A symlink in its path is no absence: a dangling one fails `-e` and was skipped without a
@@ -175,7 +184,9 @@ if [ "$dry" -eq 0 ]; then
     if cmp -s "$src" "$target/$rel"; then
       exe "$target/$rel"
     else
-      mkdir -p "$target/$(dirname "$rel")" && cp "$src" "$target/$rel" && exe "$target/$rel"
+      cpart="$target/$rel.kit-tmp"
+      mkdir -p "$target/$(dirname "$rel")" && cp -f "$src" "$cpart" && exe "$cpart" &&
+        mv -f "$cpart" "$target/$rel"
     fi || die "could not write $rel; version left at v$have"
   done < "$copies"
 fi
@@ -247,7 +258,8 @@ if [ -s "$pending" ] && [ "$applied" -eq 0 ]; then
   exit 2
 fi
 
-printf '%s\n' "$latest" > "$stamp" || die "could not write $stamp"
+{ printf '%s\n' "$latest" > "$part" && mv -f "$part" "$stamp"; } ||
+  die "could not write $stamp; version left at v$have"
 echo
 printf '%s\n' "sync-kit: recorded v$latest."
 echo "sync-kit: now run ./scripts/check.sh, and ./scripts/check.sh --self-test."

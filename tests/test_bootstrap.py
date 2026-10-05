@@ -107,7 +107,11 @@ class BootstrapTests(unittest.TestCase):
                 ('fifo note', 'docs/kit/BOOTSTRAP_NOTE.md', 'fifo', ('--note', 'n'),
                  'conflict: docs/kit/BOOTSTRAP_NOTE.md (not a regular file)'),
                 ('folder stamp', 'docs/kit/.kit-version', 'dir', (), 'conflict: docs/kit/.kit-version (not a regular file)'),
-                ('file for a created folder', 'docs/reviews', 'file', (), 'conflict: docs/reviews (not a folder)')):
+                ('file for a created folder', 'docs/reviews', 'file', (), 'conflict: docs/reviews (not a folder)'),
+                ('folder at the stamp temporary', 'docs/kit/.kit-version.kit-tmp', 'dir', (),
+                 'conflict: docs/kit/.kit-version.kit-tmp (not a regular file)'),
+                ('fifo at the note temporary', 'docs/kit/BOOTSTRAP_NOTE.md.kit-tmp', 'fifo', ('--note', 'n'),
+                 'conflict: docs/kit/BOOTSTRAP_NOTE.md.kit-tmp (not a regular file)')):
             with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
                 project = Path(tmp) / 'project'
                 project.mkdir()
@@ -173,6 +177,31 @@ class BootstrapTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertTrue(os.access(hook, os.X_OK), 'installed a hook git does not run')
                 self.assertTrue((project / 'docs/kit/.kit-version').is_file())
+
+    def test_a_generated_file_is_replaced_whole_or_not_at_all(self):
+        # The stamp and the note were written by redirection, which empties the file before
+        # writing: a full disk on a rerun left an empty stamp, which the next sync refuses. A
+        # file-size limit stands in for the full disk; a leftover temporary is overwritten.
+        root = Path(__file__).resolve().parents[1]
+        for flags in ((), ('--note', 'the agenda')):
+            with self.subTest(flags=flags), tempfile.TemporaryDirectory() as tmp:
+                project = Path(tmp) / 'project'
+                kit_dir = project / 'docs/kit'
+                run = lambda prefix: subprocess.run([*prefix, str(root / 'bootstrap.sh'), str(project), *flags],
+                                                    capture_output=True, text=True, timeout=60)
+                first = run(['sh'])
+                self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
+                (kit_dir / '.kit-version').write_text('0.1\n')
+                before = {p.name: p.read_bytes() for p in kit_dir.iterdir()}
+                failed = run(['sh', '-c', 'trap "" XFSZ; ulimit -f 0; exec sh "$0" "$@"'])
+                self.assertNotEqual(failed.returncode, 0, failed.stdout + failed.stderr)
+                self.assertEqual({p.name: p.read_bytes() for p in kit_dir.iterdir()}, before)
+                (kit_dir / '.kit-version.kit-tmp').write_text('9.9\n' * 300)
+                again = run(['sh'])
+                self.assertEqual(again.returncode, 0, again.stdout + again.stderr)
+                self.assertEqual(sorted(p.name for p in kit_dir.iterdir()),
+                                 sorted(['.kit-version'] + (['BOOTSTRAP_NOTE.md'] if flags else [])))
+                self.assertNotEqual((kit_dir / '.kit-version').read_text(), '0.1\n')
 
     def test_a_conflict_outside_the_gates_claims_no_missing_enforcement(self):
         # Every conflict was printed under "the gate files already existed" with the warning
