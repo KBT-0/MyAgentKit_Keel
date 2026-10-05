@@ -472,6 +472,18 @@ class DoctorTests(unittest.TestCase):
                 self.assertEqual(red.stdout.count('MISSING:'), 1, red.stdout)
             review.write_text(review_before)
 
+            # Every module review.sh runs: deleting one left doctor ready and review.sh broken.
+            for name in sorted(review_runtime()):
+                with self.subTest(runtime=name):
+                    module = project / 'scripts' / name
+                    module_bytes = module.read_bytes()
+                    module.unlink()
+                    red = doctor()
+                    self.assertEqual(red.returncode, 1, red.stdout)
+                    self.assertIn('MISSING: scripts/%s does not exist' % name, red.stdout)
+                    self.assertEqual(red.stdout.count('MISSING:'), 1, red.stdout)
+                    module.write_bytes(module_bytes)
+
             # A required hook that does not exist: the loop below skipped what was not there,
             # and the wiring check reads only core.hooksPath, so ordinary commits went ungated.
             pre_commit = project / '.githooks/pre-commit'
@@ -513,3 +525,18 @@ class DoctorTests(unittest.TestCase):
                     self.assertIn('NOTE: a hook started from a login-less shell would see node %s'
                                   % system_node, result.stdout)
             (project / '.nvmrc').unlink()
+
+    def test_the_required_review_files_match_what_review_sh_runs(self):
+        # doctor.sh is copied into projects, where neither the packaging list nor the kit's
+        # sources exist, so its list is kept by hand; this keeps it equal to the modules
+        # review.sh imports and to the runtime the plugin packages.
+        doctor = (ROOT / 'core/scripts/doctor.sh').read_text()
+        listed = re.search(r'^for f in (scripts/check\.sh[^;]*);', doctor, re.M).group(1).split()
+        listed = {f[len('scripts/'):] for f in listed if f.endswith('.py')}
+        packaged = next(
+            {element.value for element in node.elts}
+            for node in ast.walk(ast.parse((ROOT / 'scripts/package_codex_plugin.py').read_text()))
+            if isinstance(node, ast.List) and node.elts
+            and all(isinstance(e, ast.Constant) and str(e.value).endswith('.py') for e in node.elts))
+        self.assertEqual(listed, review_runtime())
+        self.assertEqual(packaged, review_runtime())

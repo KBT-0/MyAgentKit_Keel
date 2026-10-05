@@ -88,7 +88,12 @@ esac
 # --- the gate's own files -------------------------------------------------------------
 # The loop below inspects the files it finds, and the wiring check reads core.hooksPath
 # only: a deleted .githooks/pre-commit left every ordinary commit ungated and doctor ready.
-for f in scripts/check.sh .githooks/pre-commit .githooks/pre-merge-commit .githooks/commit-msg scripts/doctor.sh scripts/review.sh; do
+# The .py files are every module scripts/review.sh runs: one deleted left doctor ready and
+# the review gate unable to start. A project has no other list to read them from, so the
+# kit's tests keep this one equal to what review_dispatch.py imports.
+for f in scripts/check.sh .githooks/pre-commit .githooks/pre-merge-commit .githooks/commit-msg scripts/doctor.sh scripts/review.sh \
+         scripts/review_dispatch.py scripts/claude_bridge.py scripts/codex_bridge.py scripts/agent_process.py \
+         scripts/agent_usage.py scripts/codex_quota.py; do
   [ -f "$f" ] || miss "$f does not exist (the gate needs it)" "git checkout -- $f, or sync the kit again"
 done
 
