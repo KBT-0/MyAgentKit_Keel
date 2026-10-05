@@ -74,6 +74,15 @@ def run(args, cwd=ROOT, expected=0, reason=None, env=None, timeout=300, **popen)
     return output
 
 
+def utf8_locale():
+    """A UTF-8 locale this host has; none is a failure, never a silent skip."""
+    have = run(["locale", "-a"]).split()
+    for name in ("C.UTF-8", "C.utf8", "en_US.UTF-8", "en_US.utf8"):
+        if name in have:
+            return name
+    raise RuntimeError("no UTF-8 locale (C.UTF-8 or en_US.UTF-8) for the locale cases: " + " ".join(have))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--self-test", action="store_true")
@@ -415,6 +424,36 @@ def main():
                 finally:
                     run(["git", "rm", "-q", "--cached", "--", name], project)
                     (project / name).unlink()
+            # In a UTF-8 locale grep took a line with a non-UTF-8 byte as binary and printed
+            # nothing: a marker on a Latin-1 line, in a file or in a link's text, passed.
+            utf8 = utf8_locale()
+            latin = {"LC_ALL": utf8, "LANG": utf8}
+            text = b"caf\xe9/{{" + b"CONFIG_DIR}}"
+            for name, make in (("latin.md", lambda path: path.write_bytes(text + b"\n")),
+                               ("latin-link", lambda path: os.symlink(text, bytes(path)))):
+                make(project / name)
+                run(["git", "add", "--", name], project)
+                try:
+                    run(["sh", "scripts/check.sh"], project, expected=1,
+                        reason=name + ":1:", env=dict(os.environ, **latin), errors="replace")
+                finally:
+                    run(["git", "rm", "-q", "--cached", "--", name], project)
+                    (project / name).unlink()
+            # The build/test command alone gets the caller's locale back, set or unset.
+            gate = project / "scripts/check.sh"
+            original_gate = gate.read_text()
+            gate.write_text(original_gate.replace('build_test_cmd="test -f scripts/claude_bridge.py"',
+                                                  'build_test_cmd=\'[ "${LC_ALL-unset}" = "$EXPECT_LC" ]\''))
+            try:
+                for value in (utf8, None):
+                    env = {k: v for k, v in os.environ.items() if k != "LC_ALL"}
+                    env["EXPECT_LC"] = value or "unset"
+                    if value:
+                        env["LC_ALL"] = value
+                    run(["sh", "scripts/check.sh"], project, reason="CHECK: PASS", env=env)
+            finally:
+                gate.write_text(original_gate)
+            print("PASS: a marker on a non-UTF-8 line or link fails the gate in a UTF-8 locale; the build keeps the caller's locale")
             # A failed append of link text (a full disk, a lost permission) was ignored: the
             # link's marker went unscanned and the gate could pass. Here a stand-in readlink
             # puts a directory where the second link's text is appended.

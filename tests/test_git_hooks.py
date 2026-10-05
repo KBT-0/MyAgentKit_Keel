@@ -352,6 +352,23 @@ class GitHookTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertIn('cannot read AGENTS.md', result.stderr)
 
+    def test_a_non_utf8_byte_on_the_trailer_line_is_checked_in_a_utf8_locale(self):
+        # In a UTF-8 locale grep's "." stopped at a byte that is not valid UTF-8, and a
+        # "[bot]" trailer whose name held a Latin-1 byte passed the hook.
+        have = subprocess.run(['locale', '-a'], capture_output=True, text=True).stdout.split()
+        utf8 = next((name for name in ('C.UTF-8', 'C.utf8', 'en_US.UTF-8', 'en_US.utf8') if name in have), None)
+        self.assertIsNotNone(utf8, 'no UTF-8 locale to run this case in: ' + ' '.join(have))
+        with tempfile.TemporaryDirectory() as tmp:
+            root, _ = self.repo(tmp)
+            message = root / 'message'
+            message.write_bytes(b'change\n\nCo-authored-by: Caf\xe9 Helper '
+                                b'<1+helper[bot]@users.noreply.github.com>\n')
+            result = subprocess.run(['sh', '.githooks/commit-msg', str(message)], cwd=root,
+                                    env=dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull,
+                                             GIT_CONFIG_NOSYSTEM='1', LC_ALL=utf8, LANG=utf8),
+                                    capture_output=True)
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -9,6 +9,9 @@
 # a trailer is rejected only when its whole name is a tool or model name, its address is
 # a tool vendor's or a [bot], or a "Generated with" line names a tool.
 set -u
+# C locale: in a UTF-8 one grep's "." stopped at a byte that is not valid UTF-8, and a
+# "[bot]" trailer whose name held a Latin-1 byte passed. In C every byte is a character.
+LC_ALL=C; export LC_ALL
 # The owner decides (setup interview): without the rule line in AGENTS.md, AI tools may be
 # credited. A missing AGENTS.md is a broken setup, not a choice: the hook stays on, and so
 # does an AGENTS.md that is not a readable file: an error is not the owner's choice either.
