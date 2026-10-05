@@ -421,6 +421,119 @@ exit 1
             self.assertIn('.git/description is a symlink that leads out of the disposable copy', result.stdout)
             self.assertNotIn('  ok   — ', result.stdout)
 
+    def test_a_named_local_setting_is_carried(self):
+        # Only an allowlist is carried: a gate that needs a locally configured setting names it.
+        with tempfile.TemporaryDirectory() as tmp:
+            root, git = self.fixture(tmp, '[ "$(git config --get kit.required)" = yes ] || exit 1\n',
+                                     config_keys='kit.required')
+            git('config', 'kit.required', 'yes')
+            git('config', 'extensions.worktreeConfig', 'true')
+            result = self.self_test(tmp, root)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('  ok   — ', result.stdout)
+            self.assertIn('NOTE — existing-file probe: extensions.worktreeconfig is not carried', result.stdout)
+
+    def test_a_redirecting_configuration_key_is_not_carried(self):
+        # The plain copy kept the original's .git/config verbatim, hooks path included.
+        with tempfile.TemporaryDirectory() as tmp:
+            root, git = self.fixture(tmp, '[ -z "$(git config --get core.hooksPath)" ] || exit 1\n')
+            git('config', 'core.hooksPath', str(root / 'hooks'))
+            result = self.self_test(tmp, root)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('  ok   — ', result.stdout)
+            self.assertIn('NOTE — existing-file probe: core.hookspath is not carried', result.stdout)
+
+    def test_an_archive_command_is_not_carried(self):
+        # The plain copy kept tar.<format>.command verbatim (a denylist had missed it before): a
+        # copied gate's `git archive` ran it, and a command that writes elsewhere escaped the copy.
+        with tempfile.TemporaryDirectory() as tmp:
+            escaped = Path(tmp) / 'escaped'
+            root, git = self.fixture(tmp, 'git archive --format=tar.gz HEAD >/dev/null || exit 1\n')
+            git('config', 'tar.tar.gz.command', ': > %s; gzip -cn' % shlex.quote(str(escaped)))
+            result = self.self_test(tmp, root)
+            self.assertFalse(escaped.exists(), 'the archive command ran outside the copy')
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('  ok   — ', result.stdout)
+            self.assertIn('NOTE — existing-file probe: tar.tar.gz.command is not carried', result.stdout)
+
+    def test_a_carried_setting_can_be_reassigned_in_the_copy(self):
+        # Replayed on top of an existing core.filemode, the copy held two values, and a gate's
+        # `git config core.filemode false` failed there while it succeeded in the original.
+        with tempfile.TemporaryDirectory() as tmp:
+            root, git = self.fixture(tmp, 'git config core.filemode false || exit 1\n')
+            self.assertEqual(len(git('config', '--get-all', 'core.filemode').splitlines()), 1)
+            result = self.self_test(tmp, root)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('  ok   — ', result.stdout)
+
+    def test_a_local_setting_reads_and_writes_as_in_the_original(self):
+        # A valueless key carried as the string `true` read differently in the copy, and a value
+        # flattened from another file turned a gate's `git config <key> <value>` into exit 5.
+        # A key from the repository's own config file reads, and takes a write, as in the original.
+        for name, setting, write in (('single', '\trequired = no\n', ''),
+                                     ('valueless', '\trequired\n', ''),
+                                     ('empty', '\trequired =\n', ''),
+                                     ('two values', '\trequired = one\n\trequired = two\n', '--replace-all')):
+            observe = ('{ git config --get-all kit.required; echo "status $?"; '
+                       'git config --bool --get kit.required; echo "status $?"; '
+                       'git config %s kit.required yes; echo "status $?"; '
+                       'git config --get-all kit.required; echo "status $?"; } 2>/dev/null' % write)
+            with self.subTest(setting=name), tempfile.TemporaryDirectory() as tmp:
+                # The copy's gate records what it saw on its first (baseline) run only.
+                root, git = self.fixture(tmp, '[ -e "$TMPDIR/observed" ] || %s > "$TMPDIR/observed"\n' % observe,
+                                         config_keys='kit.required')
+                with open(root / '.git/config', 'a') as config:
+                    config.write('[kit]\n' + setting)
+                result = self.self_test(tmp, root)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn('  ok   — ', result.stdout)
+                original = subprocess.run(['sh', '-c', observe], cwd=root, capture_output=True,
+                                          text=True).stdout
+                self.assertEqual((Path(tmp) / 'scratch/observed').read_text(), original)
+
+    def test_a_carried_setting_from_the_worktree_configuration_is_refused_by_name(self):
+        # A worktree-only key was moved into the copy's local file: a gate's `git config
+        # core.filemode false` left the original's effective value true (the worktree file wins)
+        # but made the copy's false. Set in both scopes it became two values and the write failed.
+        for scopes in ('both', 'worktree'):
+            with self.subTest(scopes=scopes), tempfile.TemporaryDirectory() as tmp:
+                root, git = self.fixture(tmp, ': > "$TMPDIR/gate-ran"\n')
+                git('config', 'extensions.worktreeConfig', 'true')
+                if scopes == 'worktree':
+                    git('config', '--unset', 'core.filemode')
+                git('config', '--worktree', 'core.filemode', 'true')
+                result = self.self_test(tmp, root)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("core.filemode is set in file:.git/config.worktree, not in the repository's own"
+                              " config file; set it there, or remove it from probe_config_keys", result.stdout)
+                self.assertNotIn('  ok   — ', result.stdout)
+                # Refused before the copy got a repository: no carry, no gate run, nothing to diverge.
+                self.assertFalse((Path(tmp) / 'scratch/gate-ran').exists(), 'the copy ran its gate')
+
+    def test_an_allowlisted_setting_from_an_include_is_refused_by_name(self):
+        # Flattened into the copy's local file, an included key changed what a gate's write did:
+        # one file included twice gave two local values, and `git config kit.required yes`, which
+        # succeeds in the original, exited 5 in the copy. Not allowlisted, it is only noted.
+        for times, keys in ((1, 'kit.required'), (2, 'kit.required'), (1, None)):
+            with self.subTest(times=times, keys=keys), tempfile.TemporaryDirectory() as tmp:
+                root, git = self.fixture(tmp, '! git config --get kit.required >/dev/null || exit 1\n',
+                                         config_keys=keys)
+                included = Path(tmp) / 'included'
+                included.write_text('[kit]\n\trequired = yes\n')
+                for _ in range(times):
+                    git('config', '--add', 'include.path', str(included))
+                result = self.self_test(tmp, root)
+                if keys:
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    self.assertIn("kit.required is set in file:%s, not in the repository's own config file;"
+                                  " set it there, or remove it from probe_config_keys" % included, result.stdout)
+                    self.assertNotIn('  ok   — ', result.stdout)
+                else:
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertIn('  ok   — ', result.stdout)
+                    self.assertIn('NOTE — existing-file probe: kit.required is not carried', result.stdout)
+                    self.assertIn('NOTE — existing-file probe: include.path is not carried', result.stdout)
+
 
 if __name__ == '__main__':
     unittest.main()

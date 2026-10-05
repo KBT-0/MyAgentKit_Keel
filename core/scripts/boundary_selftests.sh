@@ -60,6 +60,16 @@
 # such a repository inside the copy (refs, HEAD, index, object format, intent-to-add) took
 # fourteen review rounds and still recreated symbolic refs as direct ones. A nested repository
 # (a `.git` below the top level) is refused by name for the same reason.
+# The copied .git/config is replaced by an allowlist of its settings plus the keys named in
+# probe_config_keys: kept verbatim, it ran the original's core.hooksPath and a copied gate's
+# `git archive` ran its tar.<format>.command, and a denylist of such keys had already missed
+# the next one. Every other key gets a NOTE line, include.path and includeIf among them, and
+# .git/config.worktree is removed. An allowlisted key is carried only when every value of it
+# comes from the repository's own config file; one set in the worktree configuration or an
+# included file fails the case by name, since flattening scopes and includes into one file
+# changed what a gate's `git config <key> <value>` did. The values are added in order, and a
+# valueless key is written as valueless: carried as the string `true`, an untyped read of it
+# in the copy differed from the original's.
 # cp keeps a symlink as a symlink, and every symlink in the copy whose target resolves outside
 # it is refused by name, wherever it is: checking only the target, the gate and the git
 # storage let an unrelated `build -> <checkout>/out` take a baseline gate's build output into
@@ -128,6 +138,45 @@
 # |       probe_skip "${probe_why:-could not search the disposable copy}; the existing-file probe does not support it."
 # |   }
 # |   probe_audit
+# |   probe_allowed="core.repositoryformatversion core.bare extensions.objectformat extensions.refstorage
+# |     user.name user.email core.autocrlf core.eol core.safecrlf core.filemode core.ignorecase core.symlinks
+# |     core.quotepath core.precomposeunicode core.whitespace core.abbrev init.defaultbranch $probe_config_keys"
+# |   probe_env git -C "$probe_checkout" config --show-origin --includes --name-only --list > "$probe_copy/names" &&
+# |     probe_env git -C "$probe_checkout" config --local --no-includes --show-origin --name-only --list > "$probe_copy/own" &&
+# |     probe_env git -C "$probe_checkout" config --local --no-includes --list -z > "$probe_copy/config" ||
+# |     probe_fail "could not read the original's configuration (git config); refusing to run."
+# |   probe_own=$(LC_ALL=C awk -F '\t' 'NR == 1 { print $1 }' "$probe_copy/own") || exit 1
+# |   PROBE_OWN=$probe_own PROBE_ALLOWED=$probe_allowed LC_ALL=C awk -F '\t' '
+# |     BEGIN { n = split(ENVIRON["PROBE_ALLOWED"], k, " "); for (i = 1; i <= n; i++) allowed[k[i]] = 1 }
+# |     !($2 in allowed) {
+# |       if (!noted[$2]++)
+# |         print "  NOTE — existing-file probe: " $2 " is not carried into the disposable copy; a setting your gate reads goes in probe_config_keys."
+# |       next
+# |     }
+# |     $1 != ENVIRON["PROBE_OWN"] {
+# |       print "  FAIL — existing-file probe: " $2 " is set in " $1 ", not in the repository'"'"'s own config file; set it there, or remove it from probe_config_keys."
+# |       exit 1
+# |     }' "$probe_copy/names" || exit 1
+# |   { rm -f .git/config.worktree && : > .git/config &&
+# |     probe_env PROBE_ALLOWED="$probe_allowed" xargs -0 sh -c '
+# |       for probe_entry; do
+# |         probe_key=$(printf "%s\n" "$probe_entry" | sed -n 1p) || exit 1
+# |         probe_carry=
+# |         for probe_allowed in $PROBE_ALLOWED; do [ "$probe_key" != "$probe_allowed" ] || probe_carry=1; done
+# |         [ -n "$probe_carry" ] || continue
+# |         if [ "$probe_entry" != "$probe_key" ]; then
+# |           git config --file .git/config --add "$probe_key" "${probe_entry#"$probe_key"?}" || exit 1
+# |         else
+# |           # A valueless key (no newline in the entry) has no `git config` syntax: append it.
+# |           probe_section=${probe_key%.*}
+# |           case $probe_section in
+# |             *.*) probe_sub=$(printf "%s\n" "${probe_section#*.}" | sed "s/[\\\\\"]/\\\\&/g") || exit 1
+# |                  probe_section="${probe_section%%.*} \"$probe_sub\"" ;;
+# |           esac
+# |           printf "[%s]\n\t%s\n" "$probe_section" "${probe_key##*.}" >> .git/config || exit 1
+# |         fi
+# |       done' sh < "$probe_copy/config"; } ||
+# |     probe_fail "could not carry the allowlisted settings into the disposable copy; refusing to run."
 # |   probe_env sh "$probe_root/$probe_gate" >/dev/null 2>&1 || exit 1
 # |   printf 'from myapp.web import router\n' > "$probe_root/$probe_target" || exit 1
 # |   probe_status=0
