@@ -16,7 +16,8 @@
 # missing second CLI, a commit with no author, a cache npm could not write to, a checkout
 # on a Windows drive under WSL, CRLF in a script, a node_modules symlink git does not ignore.
 set -u
-cd "$(dirname "$0")/.." || exit 1
+# CDPATH cleared: exported, it sent this cd into another tree with a scripts/ in it.
+CDPATH= cd -- "$(dirname "$0")/.." || exit 1
 missing=0
 
 miss() { echo "MISSING: $1 — fix: $2"; missing=$((missing + 1)); }

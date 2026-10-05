@@ -173,6 +173,19 @@ class CheckGateTests(unittest.TestCase):
         self.assertIn('fuser -v %s' % lock, out)
         self.assertIn('lsof %s' % lock, out)
 
+    def test_every_cd_ignores_cdpath(self):
+        # An exported CDPATH turned `cd scripts` into another directory (and printed it):
+        # doctor.sh then checked another tree. Every cd in the gate, doctor and the hooks
+        # clears it.
+        shipped = [ROOT / 'core/scripts/check.sh', ROOT / 'core/scripts/doctor.sh',
+                   *(ROOT / 'core/.githooks').iterdir()]
+        found = []
+        for path in shipped:
+            for number, line in enumerate(path.read_text().splitlines(), 1):
+                if not line.lstrip().startswith('#') and re.search(r'(^|[;&|(`])\s*cd\s', line):
+                    found.append('%s:%d: %s' % (path.relative_to(ROOT), number, line.strip()))
+        self.assertEqual(found, [], 'a cd without CDPATH= in front')
+
 
 if __name__ == '__main__':
     unittest.main()

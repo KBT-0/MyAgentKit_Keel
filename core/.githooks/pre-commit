@@ -16,7 +16,7 @@
 set -u
 
 root=$(git rev-parse --show-toplevel) || exit 1
-cd "$root" || exit 1
+CDPATH= cd -- "$root" || exit 1
 
 # Fast gate only, deliberately with no flags. Everything slow stays out of the commit path:
 # --self-test invokes the whole gate a dozen times, and a project's opt-in gates (an engine

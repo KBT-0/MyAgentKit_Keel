@@ -1,6 +1,8 @@
 """doctor.sh must go red on a machine trap and stay green on a ready synthetic machine."""
+import ast
 import os
 from pathlib import Path
+import re
 import select
 import shutil
 import signal
@@ -10,6 +12,22 @@ import time
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def review_runtime():
+    """The modules scripts/review.sh runs: review_dispatch.py and what it imports, transitively."""
+    scripts, todo, found = ROOT / 'core/scripts', ['review_dispatch'], set()
+    while todo:
+        name = todo.pop()
+        if name in found or not (scripts / (name + '.py')).is_file():
+            continue
+        found.add(name)
+        for node in ast.walk(ast.parse((scripts / (name + '.py')).read_text())):
+            if isinstance(node, ast.Import):
+                todo += [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                todo.append(node.module)
+    return {name + '.py' for name in found}
 
 
 def alive(pid):
@@ -67,6 +85,14 @@ class DoctorTests(unittest.TestCase):
             ready = doctor()
             self.assertEqual(ready.returncode, 0, ready.stdout + ready.stderr)
             self.assertIn('DOCTOR: ready', ready.stdout)
+
+            # An exported CDPATH naming a directory with a scripts/ in it took doctor's first
+            # cd there, and it reported that other tree as a broken machine.
+            (tmp / 'elsewhere/scripts').mkdir(parents=True)
+            moved = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=project, capture_output=True,
+                                   text=True, env=dict(env, CDPATH=str(tmp / 'elsewhere')))
+            self.assertEqual(moved.returncode, 0, moved.stdout + moved.stderr)
+            self.assertIn('DOCTOR: ready', moved.stdout)
 
             hook = project / '.claude/hooks/gate_on_stop.sh'
             hook.chmod(0o644)
