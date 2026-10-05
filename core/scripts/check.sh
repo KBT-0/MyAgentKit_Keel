@@ -416,6 +416,35 @@ self_test() {
   else
     echo "  ok   — commit-msg hook rejects an AI co-author trailer and keeps a human one"
   fi
+  # A "Done: K4" trailer while the STATE.md this commit records still names K4 is refused,
+  # whatever AGENTS.md says about attribution: the two checks are separate. The hook reads
+  # the index, so the case stages its files in a throwaway repository, never in this one.
+  if [ ! -f .githooks/commit-msg ]; then
+    echo "  FAIL — .githooks/commit-msg is missing: nothing rejects a Done: trailer for a task still listed."
+    st_fail=1
+  else
+    msg_hook="$(pwd)/.githooks/commit-msg"; done_repo="$work/done-repo"
+    printf 'close K4\n\nDone: K4\n' > "$work/msg_done"
+    git init -q "$done_repo" && mkdir "$done_repo/docs" ||
+      { echo "  FAIL — could not build the throwaway repository for the Done: hook cases"; st_fail=1; }
+    for rule in present absent; do
+      if [ "$rule" = present ]; then echo '- **No AI attribution in git.**'; else echo 'AI tools may be credited.'; fi > "$done_repo/AGENTS.md"
+      printf '# STATE\n\n## Active work\n- K4: still listed\n' > "$done_repo/docs/STATE.md"
+      git -C "$done_repo" add -A
+      if (CDPATH= cd -- "$done_repo" && sh "$msg_hook" "$work/msg_done") >/dev/null 2>&1; then
+        echo "  FAIL — commit-msg hook accepted Done: K4 while the staged STATE.md names K4 (rule line $rule)"
+        st_fail=1; continue
+      fi
+      printf '# STATE\n\n## Active work\n' > "$done_repo/docs/STATE.md"
+      git -C "$done_repo" add -A
+      if (CDPATH= cd -- "$done_repo" && sh "$msg_hook" "$work/msg_done") >/dev/null 2>&1; then
+        echo "  ok   — commit-msg hook refuses Done: K4 until the staged STATE.md drops it (rule line $rule)"
+      else
+        echo "  FAIL — commit-msg hook rejected Done: K4 after the line was deleted (rule line $rule; false positive)"
+        st_fail=1
+      fi
+    done
+  fi
 
   # --- build failure output -----------------------------------------------------
   # The lines that locate a compile error ("In function", "required from", "note:") come
@@ -688,7 +717,7 @@ fi
 # be gone from the state file and from the BACKLOG.md beside it, which may be absent (a
 # project may keep its backlog elsewhere). The commit-msg hook checks the closing commit;
 # this also catches a line written back later, or a commit the hook never saw. Git's own
-# trailer parser reads the history (%(trailers:key=...,valueonly), git 2.22 or later). A
+# trailer parser reads the history (%(trailers:key=...,unfold), git 2.22 or later). A
 # mention is the id as a whole token: closing K3 does not match K3b or K3-a. No repository,
 # or no commit yet: nothing has been closed, and nothing is checked. A shallow clone holds
 # part of the history: a NOTE says so, and the part it holds is checked.
@@ -696,12 +725,21 @@ history_repo="${GATE_SELFTEST_HISTORY:-.}"
 if git -C "$history_repo" rev-parse -q --verify HEAD >/dev/null 2>&1; then
   [ "$(git -C "$history_repo" rev-parse --is-shallow-repository)" != true ] ||
     echo "NOTE [state]: a shallow clone; only the Done: trailers of the commits it holds are checked."
-  if git -C "$history_repo" log --format='@%h%n%(trailers:key=Done,valueonly)' HEAD > "$work/done-ids"; then
+  # One grammar with the hook: git matches the key in any case and unfolds a folded value,
+  # and the value, trimmed, is exactly one id. A value that is not one (the hook bypassed, or
+  # older than it) closes nothing, and a NOTE names it; every well-formed one still counts.
+  if git -C "$history_repo" log --format='@%h%n%(trailers:key=Done,unfold)' HEAD > "$work/done-trailers" &&
+     awk -v out="$work/done-ids" '
+       /^@/ { commit = substr($0, 2); print > out; next }
+       /./ { id = $0; sub(/^[^:]*:[ \t]*/, "", id); sub(/[ \t]+$/, "", id)
+             if (id ~ /^[A-Za-z][A-Za-z0-9]*(-[A-Za-z0-9]+)?$/ && id ~ /[0-9]/) print id > out
+             else printf "NOTE [state]: commit %s has \"Done: %s\", which is not one task id; it closes nothing.\n", commit, id }
+       END { close(out) }' "$work/done-trailers"; then
     for f in "$GATE_SELFTEST_STATE_FILE" "$(dirname "$GATE_SELFTEST_STATE_FILE")/BACKLOG.md"; do
       [ ! -f "$f" ] || awk -v closed="$work/done-ids" '
         FILENAME == closed {
           if (sub(/^@/, "")) commit = $0
-          else if (/^[A-Za-z][A-Za-z0-9]*(-[A-Za-z0-9]+)?$/ && /[0-9]/ && !($0 in by)) by[$0] = commit
+          else if (!($0 in by)) by[$0] = commit
           next
         }
         { n = split($0, word, /[^A-Za-z0-9_-]+/)

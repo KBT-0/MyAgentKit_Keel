@@ -28,9 +28,10 @@ history, and nobody looks there — git is an audit trail, not a knowledge base.
 is then a grep, not a re-read — and a tagged line may not be deleted until it has a home.
 
 **Completed work is DELETED, not marked DONE.** The dates live in git
-(`git log -p -- docs/STATE.md`). A line may name its task by id (`K4`); the commit that
-finishes it carries `Done: K4`, and the commit hook and `check.sh` refuse this file while it
-still names a closed id (`docs/WORKFLOW.md`, "Task ids").
+(`git log -p -- docs/STATE.md`). A line may name its task by a short task id; the commit
+that finishes it carries a `Done:` trailer with that id, and the commit hook and `check.sh`
+refuse this file while it still names a closed id. The id format and its examples are in
+`docs/WORKFLOW.md`, "Task ids"; none is written here, because this file is the one checked.
 
 **An operation's detail lives in its own file, `docs/<OPERATION>.md`, never here.** This
 file holds one status line per operation and a pointer to that file. Workers write their

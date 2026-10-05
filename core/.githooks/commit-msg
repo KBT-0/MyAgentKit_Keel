@@ -19,21 +19,26 @@ if [ ! -f "$msg" ] || [ ! -r "$msg" ]; then
   exit 1
 fi
 # Finished tasks. Runs whatever AGENTS.md says about attribution: the two rules are separate.
-# Git's own parser reads the trailers, so what counts is what `git log` will show. The files
-# are read from the index (`git show :path`), which is what this commit records; the working
-# tree may differ. A mention is the id with no letter, digit, "_" or "-" either side, so
-# closing K3 does not match K3b or K3-a. One trailer per id: "Done: K4, K5" is rejected.
+# Git's own parser reads the trailers, so what counts is what `git log` will show: it matches
+# the key in any case ("done:") and unfolds a value folded onto indented lines. Each value,
+# trimmed, is ONE id, read whole as the gate's history scan reads it: "Done: K4 K5" and an
+# empty "Done:" are rejected, never split into words. The files are read from the index
+# (`git show :path`), which is what this commit records; the working tree may differ. A
+# mention is the id with no letter, digit, "_" or "-" either side, so closing K3 does not
+# match K3b or K3-a.
 trailers=$(git interpret-trailers --parse "$msg") || {
   echo "commit-msg: cannot parse the trailers; refusing to pass the message unchecked." >&2
   exit 1
 }
 mentioned=0
-set -f
-for id in $(printf '%s\n' "$trailers" | sed -n 's/^[Dd][Oo][Nn][Ee]: //p'); do
+while IFS= read -r line; do
+  case $line in [Dd][Oo][Nn][Ee]:*) ;; *) continue ;; esac
+  id=$(printf '%s\n' "${line#*:}" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
   if ! printf '%s\n' "$id" | grep -qE '^[A-Za-z][A-Za-z0-9]*(-[A-Za-z0-9]+)?$' ||
      ! printf '%s\n' "$id" | grep -q '[0-9]'; then
-    echo "commit-msg: 'Done: $id' does not name a task id: a letter, then letters and digits with at" >&2
-    echo "            least one digit and at most one inner '-' (K4, L1b, K7-a). One trailer per id." >&2
+    echo "commit-msg: 'Done: $id' does not name a task id: exactly one id, a letter, then letters" >&2
+    echo "            and digits with at least one digit and at most one inner '-' (K4, L1b, K7-a)." >&2
+    echo "            One trailer per id." >&2
     exit 1
   fi
   for f in docs/STATE.md docs/BACKLOG.md; do
@@ -44,8 +49,9 @@ for id in $(printf '%s\n' "$trailers" | sed -n 's/^[Dd][Oo][Nn][Ee]: //p'); do
     printf '%s\n' "$hits" | sed "s|^|            $f:|" >&2
     mentioned=1
   done
-done
-set +f
+done <<EOF
+$trailers
+EOF
 [ "$mentioned" -eq 0 ] || exit 1
 # The owner decides (setup interview): without the rule line in AGENTS.md, AI tools may be
 # credited. A missing AGENTS.md is a broken setup, not a choice: the hook stays on, and so

@@ -180,7 +180,9 @@ in `RESEARCH_LOG.md` (2026-10-03). Most of the files below are project-owned, so
   `Done: <id>` trailer per id; `commit-msg` rejects that commit while the staged STATE.md or
   BACKLOG.md still names the id, and `check.sh` fails `[state]` with file, line and closing
   commit when either file names an id any commit closed (git 2.22 or later; a shallow clone
-  checks only the commits it holds and says so). A closed id is never reused. Every length
+  checks only the commits it holds and says so). A `Done:` value is exactly one id, read whole by the hook and the gate
+  (folded values unfolded, the key in any case); a malformed one already in history closes
+  nothing and gets a NOTE. A closed id is never reused, and the two templates name no id. Every length
   limit on STATE.md is removed: a limit saw neither a backlog that only grows nor finished
   work left in a live bullet.
 - **Rules (issues #26, #27, #28, #31).** A web request carries no personal data
