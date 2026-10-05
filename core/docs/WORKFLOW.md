@@ -70,12 +70,15 @@ breaks, everything keeps looking green.
   which run no trap, left it in the tree. The existing-file example in
   `scripts/boundary_selftests.sh` copies the tree (uncommitted edits included), runs the
   copy's gate, deletes the copy on exit and on INT/TERM, and ends the test on a signal; its
-  traps live in a subshell so they do not replace the surrounding self-test's. The copy
-  must lie outside the checkout (it refuses a TMPDIR inside it), and git inside the copy
-  must work on the copy: it drops an inherited GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE and
-  GIT_COMMON_DIR and checks `git rev-parse --show-toplevel`. Prove it by
-  interrupting the injected test, SIGKILL included: the checkout's bytes and `git status`
-  stay as they were.
+  traps live in a subshell so they do not replace the surrounding self-test's. It supports a
+  PLAIN repository only: a checkout whose `.git` is a file or a symlink (a linked worktree, a
+  submodule, a separate git directory), a nested repository, or a symlink anywhere in the copy
+  that leads out of it is refused by name and reported NOT RUN, before the gate runs and again
+  after the baseline run. The copy must lie outside the checkout (it refuses a TMPDIR inside
+  it); git and the gate run with only the environment variables the example names, an empty
+  HOME, no system or global git configuration, and an allowlist of the repository's own
+  settings. Prove it by interrupting the injected test, SIGKILL included: the checkout's bytes
+  and `git status` stay as they were.
 - **Test both directions** where a gate can produce false positives. A gate that always
   fails is as useless as one that never does, and it gets deleted by the first person it
   blocks unfairly.

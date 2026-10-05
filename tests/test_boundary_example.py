@@ -1,8 +1,10 @@
 """Execute the shipped boundary-test example against real and misleading gate failures."""
 import os
 from pathlib import Path
+import signal
 import subprocess
 import tempfile
+import time
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -45,3 +47,43 @@ esac
                     self.assertEqual(injection.read_text(), 'Uncommitted owner content.\n')
                 else:
                     self.assertFalse(injection.exists())
+
+    def test_example_removes_its_injection_when_interrupted(self):
+        # The injection was removed by a plain `rm -f` after the gate returned: SIGINT during
+        # the injected run left src/domain/.selftest.py in the checkout, where `git add -A`
+        # staged it and the next self-test refused the path as owner content.
+        template = (ROOT / 'core/scripts/boundary_selftests.sh').read_text()
+        example = '\n'.join(line[4:] for line in template.splitlines() if line.startswith('#   '))
+        for interruption in (signal.SIGINT, signal.SIGTERM):
+            with self.subTest(interruption=interruption), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                ready = root / 'ready'
+                gate = root / 'check.sh'
+                gate.write_text('''#!/bin/sh
+trap 'exit 130' INT
+trap 'exit 143' TERM
+if [ "${1:-}" = --self-test ]; then
+  st_fail=0
+''' + example + '''
+  exit "$st_fail"
+fi
+[ -f src/domain/.selftest.py ] || exit 0
+: > "$READY"
+while :; do sleep 1; done
+''')
+                child = subprocess.Popen(['sh', str(gate), '--self-test'], cwd=root, start_new_session=True,
+                                         env=dict(os.environ, READY=str(ready)),
+                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                try:
+                    deadline = time.monotonic() + 5
+                    while not ready.exists() and child.poll() is None and time.monotonic() < deadline:
+                        time.sleep(0.01)
+                    self.assertTrue(ready.exists(), 'the injected run did not start')
+                    os.killpg(child.pid, interruption)
+                    child.communicate(timeout=5)
+                    self.assertEqual(child.returncode, 128 + interruption)
+                    self.assertFalse((root / 'src/domain/.selftest.py').exists(), 'the injection was left behind')
+                finally:
+                    if child.poll() is None:
+                        os.killpg(child.pid, signal.SIGKILL)
+                    child.communicate()

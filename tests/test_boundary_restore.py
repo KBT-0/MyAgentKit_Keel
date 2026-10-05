@@ -112,6 +112,7 @@ exit 1
             original = b'Uncommitted owner content.\n'
             real.write_bytes(original)
             (root / 'src').symlink_to(root / 'lib')
+            subprocess.run(['git', 'init', '-q'], cwd=root, check=True)
             (root / 'scripts').mkdir()
             gate = root / 'scripts/check.sh'
             gate.write_text('#!/bin/sh\ncd "$(dirname "$0")/.."\n'
@@ -125,7 +126,7 @@ exit 1
                                     text=True, timeout=30, env=dict(os.environ, TMPDIR=str(scratch)))
             self.assertEqual(real.read_bytes(), original, 'the probe wrote into the checkout')
             self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-            self.assertIn('resolves outside the disposable copy', result.stdout)
+            self.assertIn('src is a symlink that leads out of the disposable copy', result.stdout)
             self.assertNotIn('  ok   — ', result.stdout)
 
 
@@ -152,6 +153,7 @@ exit 1
                             "echo 'FAIL [boundary]: the domain layer imports the web layer:'\nexit 1\n")
             (root / 'scripts').mkdir()
             (root / 'scripts/check.sh').symlink_to(real)
+            subprocess.run(['git', 'init', '-q'], cwd=root, check=True)
             scratch = Path(tmp) / 'scratch'
             scratch.mkdir()
             result = subprocess.run(['sh', str(root / 'scripts/check.sh'), '--self-test'], cwd=root,
@@ -221,88 +223,31 @@ exit 1
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn('  ok   — ', result.stdout)
 
-    def test_a_linked_worktree_copy_cannot_stage_into_the_original_index(self):
-        # cp -R copied a linked worktree's `.git` pointer file unchanged: git inside the copy
-        # reported the copy as its top level but used the original's git directory, so a
-        # gate that stages its inputs staged the injection into the original's index.
-        with tempfile.TemporaryDirectory() as tmp:
-            root, git = self.fixture(tmp, 'git add src/domain/existing.py\n')
-            linked = Path(tmp) / 'linked'
-            git('worktree', 'add', '-q', str(linked))
-            status = lambda: subprocess.run(['git', 'status', '--porcelain'], cwd=linked, check=True,
-                                            capture_output=True, text=True).stdout
-            before = status()
-            scratch = Path(tmp) / 'scratch'
-            scratch.mkdir()
-            result = subprocess.run(['sh', 'scripts/check.sh', '--self-test'], cwd=linked,
-                                    capture_output=True, text=True, timeout=30,
-                                    env=dict(os.environ, TMPDIR=str(scratch)))
-            self.assertEqual(status(), before, 'the copy staged into the original index')
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertIn('  ok   — ', result.stdout)
-
-    def test_a_linked_worktree_copy_keeps_head_history_and_index(self):
-        # The copy's own repository was a fresh `git init`: a gate that needs HEAD, a tag or
-        # the staged state passed in the linked worktree and failed the copy's baseline.
-        with tempfile.TemporaryDirectory() as tmp:
-            root, git = self.fixture(tmp, '[ "$(git rev-parse --verify HEAD)" = "$EXPECT_HEAD" ] || exit 1\n'
-                                          'git describe --tags --exact-match >/dev/null 2>&1 || exit 1\n'
-                                          '[ "$(git diff --cached --name-only)" = staged.txt ] || exit 1\n',
-                                     names=('EXPECT_HEAD',))
-            git('tag', 'v1')
-            linked = Path(tmp) / 'linked'
-            git('worktree', 'add', '-q', str(linked))
-            (linked / 'staged.txt').write_text('staged only\n')
-            subprocess.run(['git', 'add', 'staged.txt'], cwd=linked, check=True)
-            head = git('rev-parse', 'HEAD').strip()
-            scratch = Path(tmp) / 'scratch'
-            scratch.mkdir()
-            result = subprocess.run(['sh', 'scripts/check.sh', '--self-test'], cwd=linked,
-                                    capture_output=True, text=True, timeout=30,
-                                    env=dict(os.environ, TMPDIR=str(scratch), EXPECT_HEAD=head))
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertIn('  ok   — ', result.stdout)
-
-    def linked_self_test(self, tmp, git, **env):
-        linked = Path(tmp) / 'linked'
-        git('worktree', 'add', '-q', str(linked))
-        (linked / 'staged.txt').write_text('staged only\n')
-        subprocess.run(['git', 'add', 'staged.txt'], cwd=linked, check=True)
-        scratch = Path(tmp) / 'scratch'
-        scratch.mkdir()
-        return linked, subprocess.run(['sh', 'scripts/check.sh', '--self-test'], cwd=linked,
-                                      capture_output=True, text=True, timeout=30,
-                                      env=dict(os.environ, TMPDIR=str(scratch), **env))
-
-    def test_a_linked_worktree_copy_has_a_whole_index_under_split_index(self):
-        # The copy took the linked worktree's index file alone: with core.splitIndex that file
-        # names a shared index left in the original's git directory, the copy's index was
-        # unreadable, and a gate that reads the index failed the copy's baseline.
-        with tempfile.TemporaryDirectory() as tmp:
-            root, git = self.fixture(tmp, 'git ls-files -s >/dev/null || exit 1\n'
-                                          '[ "$(git diff --cached --name-only)" = staged.txt ] || exit 1\n')
-            git('config', 'core.splitIndex', 'true')
-            linked, result = self.linked_self_test(tmp, git)
-            gitdir = Path(subprocess.run(['git', 'rev-parse', '--absolute-git-dir'], cwd=linked, check=True,
-                                         capture_output=True, text=True).stdout.strip())
-            self.assertTrue(list(gitdir.glob('sharedindex.*')), 'the fixture wrote no split index')
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertIn('  ok   — ', result.stdout)
-
-    def test_a_linked_worktree_copy_keeps_a_sha256_object_format(self):
-        # The copy was initialised in git's default format: a SHA-256 original's object IDs
-        # could not be imported into a SHA-1 copy, and the probe refused a valid checkout.
-        with tempfile.TemporaryDirectory() as tmp:
-            try:
-                root, git = self.fixture(tmp, '[ "$(git diff --cached --name-only)" = staged.txt ] || exit 1\n',
-                                         '--object-format=sha256')
-            except subprocess.CalledProcessError as error:
-                sys.stderr.write('NOT RUN: this git cannot create a SHA-256 repository: %s\n'
-                                 % (error.stderr or '').strip())
-                self.skipTest('no SHA-256 repositories in this git')
-            linked, result = self.linked_self_test(tmp, git, GIT_DEFAULT_HASH='sha1')
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertIn('  ok   — ', result.stdout)
+    def test_a_checkout_that_is_not_a_plain_repository_is_not_run(self):
+        # A `.git` that is a file or a symlink names a git directory outside the copy: the copied
+        # pointer staged the injection into the original's index, and rebuilding that repository
+        # inside the copy took fourteen review rounds. Such a checkout is refused by name.
+        for shape in ('linked worktree', 'separate git directory', 'symlinked .git'):
+            with self.subTest(shape=shape), tempfile.TemporaryDirectory() as tmp:
+                root, git = self.fixture(tmp, 'git add src/domain/existing.py\n')
+                checkout = root
+                if shape == 'linked worktree':
+                    checkout = Path(tmp) / 'linked'
+                    git('worktree', 'add', '-q', str(checkout))
+                elif shape == 'separate git directory':
+                    git('init', '-q', '--separate-git-dir', str(Path(tmp) / 'gitdir'))
+                else:
+                    (root / '.git').rename(Path(tmp) / 'gitdir')
+                    (root / '.git').symlink_to(Path(tmp) / 'gitdir')
+                status = lambda: subprocess.run(['git', 'status', '--porcelain'], cwd=checkout, check=True,
+                                                capture_output=True, text=True).stdout
+                before = status()
+                result = self.self_test(tmp, checkout)
+                self.assertEqual(status(), before, 'the copy staged into the original index')
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("NOT RUN — existing-file probe: the checkout's .git is not a directory", result.stdout)
+                self.assertIn('this example supports a plain repository only', result.stdout)
+                self.assertNotIn('  ok   — ', result.stdout)
 
     def test_cdpath_cannot_carry_the_probe_into_the_checkout(self):
         # With CDPATH=safe, `cd -P src/domain` went to the copy's safe/src/domain and passed the
@@ -333,7 +278,7 @@ exit 1
                                              PATH='%s%s%s' % (shim, os.pathsep, os.environ['PATH'])))
             self.assertEqual(real.read_bytes(), original, 'the probe wrote into the checkout')
             self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-            self.assertIn('resolves outside the disposable copy', result.stdout)
+            self.assertIn('src is a symlink that leads out of the disposable copy', result.stdout)
             self.assertNotIn('  ok   — ', result.stdout)
 
     def test_a_nested_linked_worktree_is_refused_by_name(self):
@@ -385,37 +330,87 @@ exit 1
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn('  ok   — ', result.stdout)
 
-    def test_a_failed_index_or_ref_read_is_refused_by_name(self):
-        # The reconstruction piped the original's ls-files and for-each-ref into their
-        # consumers: a failed producer gave an empty index or no refs, the later checks
-        # still passed, and the probe ran against an incomplete snapshot.
-        real_git = shutil.which('git')
-        for producer, message in (('ls-files', "could not read the original's index (git ls-files)"),
-                                  ('for-each-ref', "could not read the original's refs (git for-each-ref)")):
-            with self.subTest(producer=producer), tempfile.TemporaryDirectory() as tmp:
-                root, git = self.fixture(tmp, '')
-                linked = Path(tmp) / 'linked'
-                git('worktree', 'add', '-q', str(linked))
-                shim = Path(tmp) / 'shim'
-                shim.mkdir()
-                (shim / 'git').write_text('#!/bin/sh\ncase " $* " in *" -C %s %s "*) exit 128 ;; esac\n'
-                                          'exec %s "$@"\n' % (os.path.realpath(linked), producer, real_git))
-                (shim / 'git').chmod(0o755)
-                scratch = Path(tmp) / 'scratch'
-                scratch.mkdir()
-                result = subprocess.run(['sh', 'scripts/check.sh', '--self-test'], cwd=linked,
-                                        capture_output=True, text=True, timeout=30,
-                                        env=dict(os.environ, TMPDIR=str(scratch),
-                                                 PATH='%s%s%s' % (shim, os.pathsep, os.environ['PATH'])))
-                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-                self.assertIn(message, result.stdout)
-                self.assertNotIn('  ok   — ', result.stdout)
-
     def self_test(self, tmp, cwd, **env):
         scratch = Path(tmp) / 'scratch'
         scratch.mkdir()
         return subprocess.run(['sh', 'scripts/check.sh', '--self-test'], cwd=cwd, capture_output=True,
                               text=True, timeout=30, env=dict(os.environ, TMPDIR=str(scratch), **env))
+
+    def test_any_symlink_leaving_the_copy_is_refused_by_name(self):
+        # Only the target, the gate and the git storage were checked: cp -R kept an unrelated
+        # `build -> <checkout>/out`, and a baseline gate writing build/output wrote into the checkout.
+        for name, link in (('absolute', None), ('relative', '../outside')):
+            with self.subTest(link=name), tempfile.TemporaryDirectory() as tmp:
+                root, git = self.fixture(tmp, ': > build/output || exit 1\n')
+                (root / 'out').mkdir()
+                (root / 'build').symlink_to(link or root / 'out')
+                result = self.self_test(tmp, root)
+                self.assertFalse((root / 'out/output').exists(), 'the copy wrote into the checkout')
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn('NOT RUN — existing-file probe: build is a symlink that leads out of the disposable'
+                              ' copy', result.stdout)
+                self.assertNotIn('  ok   — ', result.stdout)
+
+    def test_global_git_configuration_is_not_active_in_the_copy(self):
+        # probe_env kept the real HOME: a global tar.<format>.command (or hooks path, filter,
+        # fsmonitor) ran from a copied gate's `git archive` and wrote outside the copy.
+        for config in ('.gitconfig', '.config/git/config'):
+            with self.subTest(config=config), tempfile.TemporaryDirectory() as tmp:
+                root, git = self.fixture(tmp, 'git archive --format=tar.gz HEAD >/dev/null || exit 1\n')
+                escaped = Path(tmp) / 'escaped'
+                home = Path(tmp) / 'home'
+                (home / config).parent.mkdir(parents=True, exist_ok=True)
+                (home / config).write_text('[tar "tar.gz"]\n\tcommand = : > %s; gzip -cn\n' % shlex.quote(str(escaped)))
+                result = self.self_test(tmp, root, HOME=str(home), XDG_CONFIG_HOME=str(home / '.config'))
+                self.assertFalse(escaped.exists(), 'a global archive command ran outside the copy')
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn('  ok   — ', result.stdout)
+
+    def test_a_baseline_that_swaps_in_a_symlink_is_refused_by_name(self):
+        # The target and the gate were validated before the baseline gate ran: a baseline that
+        # replaced src/domain or the gate with a symlink sent the injection, or the second run,
+        # out of the copy.
+        swaps = {'target out': ('mv src/domain src/was && ln -s "$OUTSIDE" src/domain',
+                                'src/domain is a symlink that leads out of the disposable copy'),
+                 'gate out': ('mv scripts/check.sh scripts/was.sh && ln -s "$OUTSIDE/gate.sh" scripts/check.sh',
+                              'scripts/check.sh is a symlink that leads out of the disposable copy'),
+                 'target inside': ('mv src/domain src/was && ln -s was src/domain',
+                                   'src/domain/existing.py runs through a symlink at src/domain')}
+        for name, (swap, message) in swaps.items():
+            with self.subTest(swap=name), tempfile.TemporaryDirectory() as tmp:
+                outside = Path(tmp) / 'outside'
+                outside.mkdir()
+                (outside / 'existing.py').write_text('committed original\n')
+                (outside / 'gate.sh').write_text(': > "$OUTSIDE/ran"\n'
+                                                 "echo 'FAIL [boundary]: the domain layer imports the web layer:'\n"
+                                                 'exit 1\n')
+                root, git = self.fixture(tmp, '[ -e "$TMPDIR/swapped" ] || { : > "$TMPDIR/swapped"; %s; }\n' % swap,
+                                         names=('OUTSIDE',))
+                result = self.self_test(tmp, root, OUTSIDE=str(outside))
+                self.assertEqual((outside / 'existing.py').read_text(), 'committed original\n',
+                                 'the injection followed the swapped symlink')
+                self.assertFalse((outside / 'ran').exists(), 'the second run ran the swapped gate')
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn('NOT RUN — existing-file probe: ' + message, result.stdout)
+                self.assertNotIn('  ok   — ', result.stdout)
+
+    def test_the_probe_requires_a_green_baseline_and_its_own_diagnostic(self):
+        # Deleting the baseline run or the diagnostic match left every copy test green: the
+        # probe must prove the gate rejects THIS injection, not that the gate fails somehow.
+        diagnostic = "echo 'FAIL [boundary]: the domain layer imports the web layer:'"
+        injected = 'grep -q myapp.web src/domain/existing.py && '
+        cases = {'baseline red': (diagnostic + '; exit 1\n', 'the baseline is already red'),
+                 'wrong reason': (injected + "{ echo 'FAIL: unrelated build error'; exit 1; }\n",
+                                  "the injection did not produce the domain/web gate's failure"),
+                 'misleading success': (injected + '{ %s; exit 0; }\n' % diagnostic,
+                                        "the injection did not produce the domain/web gate's failure")}
+        for name, (body, message) in cases.items():
+            with self.subTest(case=name), tempfile.TemporaryDirectory() as tmp:
+                root, git = self.fixture(tmp, body)
+                result = self.self_test(tmp, root)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn('FAIL — existing-file probe: ' + message, result.stdout)
+                self.assertNotIn('  ok   — ', result.stdout)
 
     def test_a_symlinked_object_store_cannot_take_the_copy_s_writes(self):
         # The containment check validated the git and common directories, not what lies in
@@ -431,119 +426,13 @@ exit 1
             result = self.self_test(tmp, root)
             self.assertEqual(count(), before, 'the copy wrote objects into the original')
             self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-            self.assertIn("the copy's git storage has a directory symlink at .git/objects;"
-                          " the existing-file probe does not support it", result.stdout)
+            self.assertIn('.git/objects is a symlink that leads out of the disposable copy', result.stdout)
             self.assertNotIn('  ok   — ', result.stdout)
 
-    def test_a_linked_worktree_copy_keeps_the_local_configuration(self):
-        # The copy's repository was a fresh `git init`: a gate that needs a locally configured
-        # setting failed its baseline.
-        with tempfile.TemporaryDirectory() as tmp:
-            root, git = self.fixture(tmp, '[ "$(git config --get kit.required)" = yes ] || exit 1\n',
-                                     config_keys='kit.required')
-            git('config', 'kit.required', 'yes')
-            git('config', 'extensions.worktreeConfig', 'true')
-            linked, result = self.linked_self_test(tmp, git)
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertIn('  ok   — ', result.stdout)
-            self.assertIn('NOTE — existing-file probe: extensions.worktreeconfig is not carried', result.stdout)
-
-    def test_a_redirecting_configuration_key_is_not_carried(self):
-        # Carrying the configuration must not carry a hooks path into the original.
-        with tempfile.TemporaryDirectory() as tmp:
-            root, git = self.fixture(tmp, '[ -z "$(git config --get core.hooksPath)" ] || exit 1\n')
-            git('config', 'core.hooksPath', str(root / 'hooks'))
-            linked, result = self.linked_self_test(tmp, git)
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertIn('  ok   — ', result.stdout)
-            self.assertIn('NOTE — existing-file probe: core.hookspath is not carried', result.stdout)
-
-    def test_a_linked_worktree_copy_keeps_intent_to_add(self):
-        # The index rebuilt from `ls-files -s` made an intent-to-add path an ordinary staged
-        # empty blob: a gate checking the staged changes passed the original, failed the copy.
-        with tempfile.TemporaryDirectory() as tmp:
-            root, git = self.fixture(tmp, '[ "$(git diff --cached --name-only)" = "$EXPECT_CACHED" ] || exit 1\n',
-                                     names=('EXPECT_CACHED',))
-            linked = Path(tmp) / 'linked'
-            git('worktree', 'add', '-q', str(linked))
-            run = lambda *args: subprocess.run(['git', *args], cwd=linked, check=True,
-                                               capture_output=True, text=True).stdout
-            (linked / 'staged.txt').write_text('staged only\n')
-            run('add', 'staged.txt')
-            (linked / 'later.txt').write_text('intent to add\n')
-            run('add', '-N', 'later.txt')
-            expected = run('diff', '--cached', '--name-only').rstrip('\n')
-            self.assertEqual(expected, 'staged.txt')
-            result = self.self_test(tmp, linked, EXPECT_CACHED=expected)
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertIn('  ok   — ', result.stdout)
-
-    def test_an_unmerged_index_is_refused_by_name(self):
-        # An index state the rebuild cannot reproduce faithfully is refused, not approximated.
-        with tempfile.TemporaryDirectory() as tmp:
-            root, git = self.fixture(tmp, '')
-            ident = ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
-                     '-c', 'core.hooksPath=/dev/null', '-c', 'commit.gpgsign=false']
-            linked = Path(tmp) / 'linked'
-            git('worktree', 'add', '-q', str(linked))
-            (linked / 'src/domain/existing.py').write_text('linked side\n')
-            subprocess.run(['git', *ident, 'commit', '-qam', 'linked'], cwd=linked, check=True)
-            git('checkout', '-q', '-b', 'other')
-            (root / 'src/domain/existing.py').write_text('other side\n')
-            git(*ident, 'commit', '-qam', 'other')
-            merge = subprocess.run(['git', *ident, 'merge', 'other'], cwd=linked, capture_output=True)
-            self.assertNotEqual(merge.returncode, 0, 'the fixture merge did not conflict')
-            result = self.self_test(tmp, linked)
-            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-            self.assertIn('the original index has unmerged entries; the existing-file probe does not support them',
-                          result.stdout)
-            self.assertNotIn('  ok   — ', result.stdout)
-
-    def test_a_skip_worktree_or_assume_unchanged_index_is_refused_by_name(self):
-        # The rebuilt index drops both flags; without the guards the copy ran on a different index.
-        for flag, name in (('--skip-worktree', 'skip-worktree'), ('--assume-unchanged', 'assume-unchanged')):
-            with self.subTest(flag=flag), tempfile.TemporaryDirectory() as tmp:
-                root, git = self.fixture(tmp, '')
-                linked = Path(tmp) / 'linked'
-                git('worktree', 'add', '-q', str(linked))
-                run = lambda *args: subprocess.run(['git', *args], cwd=linked, check=True,
-                                                   capture_output=True, text=True).stdout
-                run('update-index', flag, 'src/domain/existing.py')
-                before = run('ls-files', '-v')
-                result = self.self_test(tmp, linked)
-                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-                self.assertIn('the original index has %s entries; the existing-file probe does not support them'
-                              % name, result.stdout)
-                self.assertNotIn('  ok   — ', result.stdout)
-                self.assertEqual(run('ls-files', '-v'), before, 'the probe changed the original index')
-
-    def test_a_deleted_intent_to_add_entry_is_refused_by_name(self):
-        # `diff-files --diff-filter=A` skips an intent-to-add path whose file was deleted, so the
-        # rebuild made it an ordinary staged empty blob and the copy's staged changes differed.
-        with tempfile.TemporaryDirectory() as tmp:
-            root, git = self.fixture(tmp, '[ "$(git diff --cached --name-only)" = "$EXPECT_CACHED" ] || exit 1\n',
-                                     names=('EXPECT_CACHED',))
-            linked = Path(tmp) / 'linked'
-            git('worktree', 'add', '-q', str(linked))
-            run = lambda *args: subprocess.run(['git', *args], cwd=linked, check=True,
-                                               capture_output=True, text=True).stdout
-            (linked / 'staged.txt').write_text('staged only\n')
-            run('add', 'staged.txt')
-            (linked / 'later.txt').write_text('intent to add\n')
-            run('add', '-N', 'later.txt')
-            (linked / 'later.txt').unlink()
-            expected = run('diff', '--cached', '--name-only').rstrip('\n')
-            result = self.self_test(tmp, linked, EXPECT_CACHED=expected)
-            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-            self.assertIn('the original index has an intent-to-add entry whose file is missing from the working'
-                          ' tree; the existing-file probe does not support it', result.stdout)
-            self.assertNotIn('  ok   — ', result.stdout)
-            self.assertEqual(run('diff', '--cached', '--name-only').rstrip('\n'), expected)
-
-    def test_a_directory_symlink_in_git_storage_is_refused_by_name(self):
+    def test_a_symlink_beneath_a_directory_symlink_is_refused_by_name(self):
         # `.git/objects -> ../store` resolved inside the copy and passed, but find does not
         # descend through it: an absolute link beneath `store` took the copy's `git add` into
-        # an object fanout outside the copy.
+        # an object fanout outside the copy. The whole copy is walked, so `store` is too.
         with tempfile.TemporaryDirectory() as tmp:
             root, git = self.fixture(tmp, 'git add src/domain/existing.py || exit 1\n')
             blob = subprocess.run(['git', 'hash-object', '--stdin'], cwd=root, input='from myapp.web import router\n',
@@ -562,8 +451,7 @@ exit 1
             result = self.self_test(tmp, root)
             self.assertEqual(len(list(fanout.iterdir())), before, 'the copy wrote objects outside the copy')
             self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-            self.assertIn("the copy's git storage has a directory symlink at .git/objects;"
-                          " the existing-file probe does not support it", result.stdout)
+            self.assertIn('store/%s is a symlink that leads out of the disposable copy' % blob[:2], result.stdout)
             self.assertNotIn('  ok   — ', result.stdout)
 
     def test_a_file_symlink_out_of_git_storage_is_refused_by_name(self):
@@ -576,80 +464,51 @@ exit 1
             (root / '.git/description').symlink_to(outside)
             result = self.self_test(tmp, root)
             self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-            self.assertIn("the copy's git storage at .git/description points outside the copy", result.stdout)
+            self.assertIn('.git/description is a symlink that leads out of the disposable copy', result.stdout)
             self.assertNotIn('  ok   — ', result.stdout)
 
-    def test_an_fsmonitor_hook_cannot_write_into_the_original(self):
-        # The original's reads ran with its configuration: git ran the core.fsmonitor hook while
-        # reading the index, and a hook that writes a relative file wrote it into the original.
+    def test_a_named_local_setting_is_carried(self):
+        # Only an allowlist is carried: a gate that needs a locally configured setting names it.
         with tempfile.TemporaryDirectory() as tmp:
-            root, git = self.fixture(tmp, '')
-            linked = Path(tmp) / 'linked'
-            git('worktree', 'add', '-q', str(linked))
-            hook = Path(tmp) / 'fsmonitor-hook'
-            hook.write_text('#!/bin/sh\n: > fsmonitor-ran\n')
-            hook.chmod(0o755)
-            git('config', 'core.fsmonitor', str(hook))
-            run = lambda *args: subprocess.run(['git', '-c', 'core.fsmonitor=false', *args], cwd=linked,
-                                               check=True, capture_output=True, text=True).stdout
-            state = lambda: (run('status', '--porcelain', '--untracked-files=all'),
-                             sorted(str(path.relative_to(linked)) for path in linked.rglob('*')))
-            before = state()
-            result = self.self_test(tmp, linked)
-            self.assertEqual(state(), before, "the probe ran the original's fsmonitor hook")
+            root, git = self.fixture(tmp, '[ "$(git config --get kit.required)" = yes ] || exit 1\n',
+                                     config_keys='kit.required')
+            git('config', 'kit.required', 'yes')
+            git('config', 'extensions.worktreeConfig', 'true')
+            result = self.self_test(tmp, root)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn('  ok   — ', result.stdout)
+            self.assertIn('NOTE — existing-file probe: extensions.worktreeconfig is not carried', result.stdout)
+
+    def test_a_redirecting_configuration_key_is_not_carried(self):
+        # The plain copy kept the original's .git/config verbatim, hooks path included.
+        with tempfile.TemporaryDirectory() as tmp:
+            root, git = self.fixture(tmp, '[ -z "$(git config --get core.hooksPath)" ] || exit 1\n')
+            git('config', 'core.hooksPath', str(root / 'hooks'))
+            result = self.self_test(tmp, root)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('  ok   — ', result.stdout)
+            self.assertIn('NOTE — existing-file probe: core.hookspath is not carried', result.stdout)
 
     def test_an_archive_command_is_not_carried(self):
-        # A denylist carried tar.<format>.command: a copied gate's `git archive` ran it, and a
-        # command that also writes elsewhere escaped the disposable copy.
+        # The plain copy kept tar.<format>.command verbatim (a denylist had missed it before): a
+        # copied gate's `git archive` ran it, and a command that writes elsewhere escaped the copy.
         with tempfile.TemporaryDirectory() as tmp:
             escaped = Path(tmp) / 'escaped'
-            root, git = self.fixture(tmp, '! git config --get tar.tar.gz.command >/dev/null || exit 1\n'
-                                          'git archive --format=tar.gz HEAD >/dev/null || exit 1\n')
+            root, git = self.fixture(tmp, 'git archive --format=tar.gz HEAD >/dev/null || exit 1\n')
             git('config', 'tar.tar.gz.command', ': > %s; gzip -cn' % shlex.quote(str(escaped)))
-            linked, result = self.linked_self_test(tmp, git)
+            result = self.self_test(tmp, root)
             self.assertFalse(escaped.exists(), 'the archive command ran outside the copy')
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn('  ok   — ', result.stdout)
             self.assertIn('NOTE — existing-file probe: tar.tar.gz.command is not carried', result.stdout)
 
-    def test_an_intent_to_add_entry_whose_mode_changed_is_refused_by_name(self):
-        # Re-adding intent-to-add with `git add -N` recorded the file's current mode, not the
-        # original index's: a gate reading indexed permissions saw a different state.
-        for chmod in (False, True):
-            with self.subTest(chmod=chmod), tempfile.TemporaryDirectory() as tmp:
-                root, git = self.fixture(tmp, '[ "$(git ls-files -s later.sh)" = "$EXPECT_ENTRY" ] || exit 1\n',
-                                         names=('EXPECT_ENTRY',))
-                linked = Path(tmp) / 'linked'
-                git('worktree', 'add', '-q', str(linked))
-                run = lambda *args: subprocess.run(['git', *args], cwd=linked, check=True,
-                                                   capture_output=True, text=True).stdout
-                later = linked / 'later.sh'
-                later.write_text('echo later\n')
-                later.chmod(0o644)
-                run('add', '-N', 'later.sh')
-                if chmod:
-                    later.chmod(0o755)
-                expected = run('ls-files', '-s', 'later.sh').rstrip('\n')
-                self.assertTrue(expected.startswith('100644 '), expected)
-                result = self.self_test(tmp, linked, EXPECT_ENTRY=expected)
-                if chmod:
-                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-                    self.assertIn('the original index has an intent-to-add entry whose mode differs from its'
-                                  ' file; the existing-file probe does not support it', result.stdout)
-                    self.assertNotIn('  ok   — ', result.stdout)
-                else:
-                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                    self.assertIn('  ok   — ', result.stdout)
-
     def test_a_carried_setting_can_be_reassigned_in_the_copy(self):
-        # Replayed on top of git init's own core.filemode, the copy held two values, and a gate's
+        # Replayed on top of an existing core.filemode, the copy held two values, and a gate's
         # `git config core.filemode false` failed there while it succeeded in the original.
         with tempfile.TemporaryDirectory() as tmp:
             root, git = self.fixture(tmp, 'git config core.filemode false || exit 1\n')
             self.assertEqual(len(git('config', '--get-all', 'core.filemode').splitlines()), 1)
-            linked, result = self.linked_self_test(tmp, git)
+            result = self.self_test(tmp, root)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn('  ok   — ', result.stdout)
 
@@ -671,10 +530,10 @@ exit 1
                                          config_keys='kit.required')
                 with open(root / '.git/config', 'a') as config:
                     config.write('[kit]\n' + setting)
-                linked, result = self.linked_self_test(tmp, git)
+                result = self.self_test(tmp, root)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertIn('  ok   — ', result.stdout)
-                original = subprocess.run(['sh', '-c', observe], cwd=linked, capture_output=True,
+                original = subprocess.run(['sh', '-c', observe], cwd=root, capture_output=True,
                                           text=True).stdout
                 self.assertEqual((Path(tmp) / 'scratch/observed').read_text(), original)
 
@@ -688,38 +547,14 @@ exit 1
                 git('config', 'extensions.worktreeConfig', 'true')
                 if scopes == 'worktree':
                     git('config', '--unset', 'core.filemode')
-                linked = Path(tmp) / 'linked'
-                git('worktree', 'add', '-q', str(linked))
-                subprocess.run(['git', 'config', '--worktree', 'core.filemode', 'true'], cwd=linked, check=True)
-                result = self.self_test(tmp, linked)
+                git('config', '--worktree', 'core.filemode', 'true')
+                result = self.self_test(tmp, root)
                 self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-                self.assertIn("core.filemode is set in the worktree configuration; the existing-file probe carries"
-                              " a setting only from the repository's own config file: set it there, or remove it"
-                              " from probe_config_keys", result.stdout)
+                self.assertIn("core.filemode is set in file:.git/config.worktree, not in the repository's own"
+                              " config file; set it there, or remove it from probe_config_keys", result.stdout)
                 self.assertNotIn('  ok   — ', result.stdout)
                 # Refused before the copy got a repository: no carry, no gate run, nothing to diverge.
                 self.assertFalse((Path(tmp) / 'scratch/gate-ran').exists(), 'the copy ran its gate')
-
-    def test_an_ignored_uninitialised_submodule_is_not_intent_to_add(self):
-        # The diff that counts intent-to-add entries honoured submodule.<name>.ignore=all and left
-        # the gitlink out, so the count reported a missing intent-to-add file that did not exist.
-        with tempfile.TemporaryDirectory() as tmp:
-            root, git = self.fixture(tmp, '[ "$(git ls-files -s)" = "$EXPECT_INDEX" ] || exit 1\n',
-                                     names=('EXPECT_INDEX',))
-            linked = Path(tmp) / 'linked'
-            git('worktree', 'add', '-q', str(linked))
-            run = lambda *args: subprocess.run(['git', *args], cwd=linked, check=True,
-                                               capture_output=True, text=True).stdout
-            (linked / '.gitmodules').write_text('[submodule "sub"]\n\tpath = sub\n\turl = ./sub\n\tignore = all\n')
-            (linked / 'sub').mkdir()
-            run('add', '.gitmodules')
-            run('update-index', '--add', '--cacheinfo', '160000,%s,sub' % run('rev-parse', 'HEAD').strip())
-            expected = run('ls-files', '-s').rstrip('\n')
-            self.assertIn('160000 ', expected)
-            result = self.self_test(tmp, linked, EXPECT_INDEX=expected)
-            self.assertNotIn('intent-to-add', result.stdout)
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertIn('  ok   — ', result.stdout)
 
     def test_an_allowlisted_setting_from_an_include_is_refused_by_name(self):
         # Flattened into the copy's local file, an included key changed what a gate's write did:
@@ -733,12 +568,11 @@ exit 1
                 included.write_text('[kit]\n\trequired = yes\n')
                 for _ in range(times):
                     git('config', '--add', 'include.path', str(included))
-                linked, result = self.linked_self_test(tmp, git)
+                result = self.self_test(tmp, root)
                 if keys:
                     self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-                    self.assertIn("kit.required is set in an included configuration file; the existing-file probe"
-                                  " carries a setting only from the repository's own config file: set it there, or"
-                                  " remove it from probe_config_keys", result.stdout)
+                    self.assertIn("kit.required is set in file:%s, not in the repository's own config file;"
+                                  " set it there, or remove it from probe_config_keys" % included, result.stdout)
                     self.assertNotIn('  ok   — ', result.stdout)
                 else:
                     self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
