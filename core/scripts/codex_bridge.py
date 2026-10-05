@@ -81,7 +81,18 @@ def main(argv=None, result_sink=None):
                        "-s", "read-only", "-c", "model_reasoning_effort=" + args.effort,
                        "-c", "approval_policy=never", "-o", str(last), "-m", args.model, "-"]
             capture_quota = os.environ.get("MYAGENTKIT_CAPTURE_QUOTA", "1") == "1"
-            before = codex_quota.snapshot(command[0], repo) if capture_quota else {"status": "disabled"}
+            def quota_read():
+                # Optional telemetry: ANY error of the read is "unavailable". Raised, one after
+                # the review (BrokenPipeError from a reader that exited at once) left a
+                # completed, paid review with no evidence and no usage record. A cancel is not
+                # an Exception and still ends the read.
+                try:
+                    return codex_quota.snapshot(command[0], repo)
+                except Exception as error:
+                    return {"status": "unavailable", "error": "quota read failed: %r" % error,
+                            "buckets": {}}
+
+            before = quota_read() if capture_quota else {"status": "disabled"}
             execution = None
             cancelled = []
             # run() fills this before it restores the raising handler held above: a cancel
@@ -94,7 +105,7 @@ def main(argv=None, result_sink=None):
                 # A cancelled review must stop now, not start another CLI process to read quota.
                 after = ({"status": "disabled"} if not capture_quota else
                          {"status": "skipped: review cancelled"} if cancelled
-                         else codex_quota.snapshot(command[0], repo))
+                         else quota_read())
                 # From here to the record a cancel is noted, not acted on: the record is what
                 # it would lose. A flag set inside the try, not a second hold(): a cancel while
                 # that one installed its handlers met the raising one, and the review was lost

@@ -656,6 +656,37 @@ class BridgeTests(unittest.TestCase):
             finally:
                 signal.signal(signal.SIGTERM, previous)
 
+    def test_a_quota_read_that_raises_still_records_the_completed_review(self):
+        # The closing quota read raised (BrokenPipeError from a reader that exited at once),
+        # the adapter caught only a cancel there, and a completed, paid review ended with no
+        # evidence and no usage record. Any error of the optional read is "unavailable".
+        from contextlib import redirect_stdout
+        from io import StringIO
+        from unittest.mock import patch
+        import codex_bridge
+        import codex_quota
+        for error in (BrokenPipeError(32, 'Broken pipe'), RuntimeError('unexpected')):
+            reads, received = [], []
+
+            def snapshot(cli, repo, timeout=5):
+                reads.append(cli)
+                if len(reads) == 2:
+                    raise error
+                return {'status': 'unavailable', 'buckets': {}}
+
+            with self.subTest(error=repr(error)), \
+                    patch.dict(os.environ, self.review_env(REVIEW_CLI_BIN=str(self.build_fake_codex()),
+                                                           MYAGENTKIT_CAPTURE_QUOTA='1')), \
+                    patch.object(codex_quota, 'snapshot', side_effect=snapshot), redirect_stdout(StringIO()):
+                code = codex_bridge.main(['--model', 'fixture-codex-model', '--repo', str(self.repo),
+                                          '--uncommitted'], received.append)
+                self.assertEqual(len(reads), 2)
+                self.assertEqual((code, received[0]['status']), (0, 'completed'))
+                self.assertTrue(Path(received[0]['evidence']).is_file())
+                usage = json.loads(Path(received[0]['usage_record']).read_text())
+                self.assertEqual(usage['status'], 'completed')
+                self.assertEqual(usage['usage']['account_quota_snapshots']['after']['status'], 'unavailable')
+
     def test_a_cancel_between_the_codex_persist_and_result_samples_is_persisted(self):
         # The persistence check and the returned flag were two samples: a cancel noted between
         # them returned cancelled while the usage record and archive kept quota, and the final
