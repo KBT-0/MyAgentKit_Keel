@@ -131,6 +131,18 @@ class CheckGateTests(unittest.TestCase):
         self.assertEqual(code, 1, out)
         self.assertIn('FAIL [env]: GATE_BUILD_CMD_OVERRIDE is set', out)
 
+    def test_a_symlinked_scripts_directory_runs_the_gate_in_the_project(self):
+        # The gate re-executed itself by its physical path: with scripts/ a symlink into a
+        # shared tree, it then checked and built that tree instead of the project.
+        shared = self.tmp / 'shared'
+        (self.project / 'scripts').rename(shared)
+        (self.project / 'scripts').symlink_to(shared)
+        where = self.tmp / 'where'
+        self.build.write_text('pwd -P > %s\n' % where)
+        code, out = gate(self.project, self.build)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(where.read_text().strip(), str(self.project.resolve()))
+
 
 if __name__ == '__main__':
     unittest.main()

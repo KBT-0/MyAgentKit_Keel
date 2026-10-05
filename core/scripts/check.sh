@@ -37,8 +37,10 @@
 # while enforcing nothing; a cross-model review found them.
 set -u
 # CDPATH cleared: exported, it made `cd scripts` print the directory into $gate, and the
-# lock below re-ran a two-line file name instead of the gate.
-gate=$(CDPATH= cd -- "$(dirname "$0")" && pwd -P)/${0##*/}
+# lock below re-ran a two-line file name instead of the gate. The path is LOGICAL (pwd, not
+# pwd -P): the lock re-runs the gate by it, and the re-run cd's to its parent. With scripts/
+# a symlink into a shared tree, the physical path made the re-run check and build that tree.
+gate=$(CDPATH= cd -- "$(dirname "$0")" && pwd)/${0##*/}
 CDPATH= cd -- "$(dirname "$0")/.."
 fail=0
 
