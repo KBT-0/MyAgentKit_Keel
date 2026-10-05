@@ -889,6 +889,22 @@ accepted with reasons (the scope check covers only the keys the owner names, sin
 command, the gate included). Named and left by that worker: the window between the symlink
 check and the copy; bootstrap's STOPPING header says "the gate files" for a `docs/` path.
 
+#### Round close-2: Reject, and the setup scripts take the example's place
+
+Round close-2 on `77377f4..42e5a19`: one High, three Medium, one Low, none in the example
+and all in what the two merges before it had touched. Three small steps had each added one
+guard at one more call site of `bootstrap.sh` and `sync-kit.sh`; the reviewer found the
+call sites still without one (the files bootstrap generates, a regular file where a folder
+belongs) and, underneath, that both scripts ran without `set -e`: a failed `mkdir` or `cp`
+was ignored and the version stamped. One function now judges every path either script
+writes, both run with `set -eu`, and the stamp is the last write. The check-then-copy
+window was not closed, by the lead's decision in line with the owner's on the cleanup
+limit: the scripts' comments now say the check runs before the write and guards against
+nothing that changes the tree meanwhile. Named and left by the worker: that function
+exists twice with no test holding the copies equal; test names still say "never read or
+written". Rounds of the day: 7, 2, 4, 4, 4, 2, Accept (carried), 4, 5: the findings follow
+the last fix from file to file, which is what a diff-scoped review does.
+
 #### The review gate held on the kit's own hardening
 
 Five of the nine work packages (the gate lock, both review-tooling packages, the commit gates

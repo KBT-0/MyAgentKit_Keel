@@ -157,6 +157,12 @@ budget, so the full review was split into two consistent commit ranges, each its
   77377f4, the whole of `3536cb7..77377f4` in one prompt: **Reject**, one High, three
   Medium (one of them the open limit above). The three were fixed with negative tests
   watched red first, and three further cases the fixing worker reported.
+- Round close-2 `20261005T184656Z-69c6cdd154e5` on head 42e5a19 (`77377f4..42e5a19`, a new
+  label): **Reject**, one High, three Medium, one Low, all in `bootstrap.sh`, `sync-kit.sh`
+  and `spawn_worker.sh`; fixed with negative tests watched red first, except one accepted
+  limit: the path check of bootstrap and sync runs before each write and does not guard
+  against another process changing the tree during the run (dash was NOT RUN: not
+  installed; the `echo` case was run under `bash -O xpg_echo`).
 - NOT RUN by the reviewer in range D: any test. The kit self-test was executed by the lead
   on each reviewed head (`KIT CHECK: PASS` on 31c8f7a, 1afba49, 62d2988, d826ccd, ed29079,
   4baf4e0 and 3d4f45c).

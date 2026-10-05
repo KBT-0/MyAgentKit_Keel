@@ -117,9 +117,16 @@ in `RESEARCH_LOG.md` (2026-10-03). Most of the files below are project-owned, so
   `bootstrap.sh` again passes over every file identical to the kit's and lists only the
   files that differ; a differing gate file (`scripts/check.sh` or one of the three hooks)
   stops the run as `conflict: <path>`; `--force` overwrites every differing file listed.
-  Both scripts compare regular files only and follow no symlink below the target: a FIFO,
-  device, folder or symlink at a destination, or a symlinked folder on the way to it, is a
-  conflict that is never read or written, `--force` included (a FIFO used to hang the run).
+  Both scripts judge every path they write or create one way (copied files, the version
+  stamp, the note, the folders): each existing component below the target must be a real
+  folder and the destination absent or a regular file; a FIFO, device, symlink, or a file
+  where a folder belongs is a conflict that is not opened, `--force` included (a FIFO used
+  to hang the run). Any failed write stops the run before the version is recorded or the
+  hooks are wired (a regular file at `.githooks` used to end in a stamped project with no
+  hooks). The check runs before each write: it does not guard against another process
+  changing the tree during the run. Bootstrap's stop lists gate-file conflicts apart from
+  other destinations it could not write. No script prints a supplied value through `echo`,
+  so a backslash in a name or path is not turned into a terminal escape.
   `docs/UPDATING.md` and the README describe both.
 - **`scripts/doctor.sh` (new, kit-owned; issue #10).** A machine check to run at session
   start, with one `MISSING: <what> — fix: <command>` line per trap and `DOCTOR: ready` or
