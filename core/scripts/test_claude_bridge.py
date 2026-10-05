@@ -601,6 +601,61 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual((received[0]['failure_kind'], received[0]['cancelled']), ('cancelled', True))
         self.persisted_cancel(received[0])
 
+    def test_a_cancel_after_the_hand_back_sample_is_persisted_before_the_caller_gets_it(self):
+        # handing_back() sampled the pending cancels once: one arriving after that sample,
+        # while the adapter still held the signals, reached the caller's handler with the
+        # usage record and archive of a quota-failed attempt still saying quota.
+        from contextlib import redirect_stdout
+        from io import StringIO
+        import signal
+        from unittest.mock import patch
+        import agent_process
+        import codex_bridge
+        real_pending = signal.sigpending
+
+        def quota(command, prompt, repo, timeout, into=None):
+            value = ({'type': 'turn.failed', 'error': {'message': 'usage limit reached'}}
+                     if '-o' in command else
+                     {'type': 'result', 'subtype': 'success', 'is_error': True,
+                      'api_error_status': 429, 'modelUsage': {'claude-opus-5': {}}})
+            return {'exit_code': 1, 'stdout': json.dumps(value), 'stderr': '',
+                    'termination': None, 'duration_ms': 1}
+
+        def pending():
+            value = real_pending()
+            if not fired:
+                fired.append(True)
+                os.kill(os.getpid(), signal.SIGTERM)
+            return value
+
+        class CallerCancel(Exception):
+            pass
+
+        def caller(signum, frame):
+            raise CallerCancel
+
+        for name, adapter in (('claude', (bridge.main, ['review'])),
+                              ('codex', (codex_bridge.main, ['--model', 'fixture-codex-model']))):
+            fired, received, caught = [], [], []
+            previous = signal.signal(signal.SIGTERM, caller)
+            try:
+                with self.subTest(adapter=name), patch.dict(os.environ, self.review_env()), \
+                        patch('agent_process.run', side_effect=quota), \
+                        patch.object(agent_process.signal, 'sigpending', side_effect=pending), \
+                        redirect_stdout(StringIO()):
+                    try:
+                        adapter[0]([*adapter[1], '--repo', str(self.repo), '--uncommitted'],
+                                   received.append)
+                    except CallerCancel:
+                        caught.append(True)
+                    self.assertTrue(fired)
+                    self.assertEqual(caught, [True])
+                    self.assertEqual((received[0]['failure_kind'], received[0]['cancelled']),
+                                     ('cancelled', True))
+                    self.persisted_cancel(received[0])
+            finally:
+                signal.signal(signal.SIGTERM, previous)
+
     def test_a_cancel_between_the_codex_persist_and_result_samples_is_persisted(self):
         # The persistence check and the returned flag were two samples: a cancel noted between
         # them returned cancelled while the usage record and archive kept quota, and the final

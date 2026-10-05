@@ -272,6 +272,57 @@ class UsageTests(unittest.TestCase):
                 self.assertEqual(result['termination'], expected, result)
                 self.assertTrue(result['cancelled'], result)
 
+    def test_a_cancel_at_any_line_after_a_completed_wait_keeps_the_review_completed(self):
+        # The raising handler stayed armed into the cleanup: a cancel at a signal check before
+        # the switch raised inside `finally`, past the group kill, the reap and the result,
+        # and one just after a successful wait() turned a completed review into a cancel.
+        # Each line boundary of the supervisor after the wait gets the guard's own handler
+        # once, the way a signal arriving there would.
+        import os
+        import signal
+        from unittest.mock import patch
+        real_popen, code = subprocess.Popen, agent_process._supervise.__code__
+
+        class Popen(real_popen):
+            def wait(self, *args, **kwargs):
+                value = super().wait(*args, **kwargs)
+                waited.append(True)
+                return value
+
+        def tracer(frame, event, arg):
+            if frame.f_code is not code:
+                return None
+
+            def line(frame, event, arg):
+                if event == 'line' and waited:
+                    seen.append(frame.f_lineno)
+                    if len(seen) == target:
+                        frame.f_locals['guard'](signal.SIGTERM, None)
+                return line
+            return line
+
+        target, total = 0, None
+        while total is None or target <= total:
+            waited, seen, killed = [], [], []
+            real_killpg = os.killpg
+            with self.subTest(boundary=target), \
+                    patch.object(agent_process.subprocess, 'Popen', Popen), \
+                    patch.object(agent_process.os, 'killpg',
+                                 side_effect=lambda pid, sig: (killed.append(pid), real_killpg(pid, sig))):
+                sys.settrace(tracer)
+                try:
+                    result = agent_process.run([sys.executable, '-c', 'print("done")'], '', Path.cwd(), 5)
+                except KeyboardInterrupt:
+                    self.fail('a cancel at line %d after the wait escaped run()' % seen[-1])
+                finally:
+                    sys.settrace(None)
+                self.assertEqual(killed and len(killed), 1, 'the group kill was skipped')
+                self.assertEqual((result['exit_code'], result['termination']), (0, None), result)
+                self.assertEqual(result['cancelled'], bool(target), result)
+            total = len(seen) if total is None else total
+            target += 1
+        self.assertGreater(total, 3)
+
     def test_unavailable_child_is_a_returned_failure_not_an_exception(self):
         result = agent_process.run(["/nonexistent-myagentkit-cli"], "", Path.cwd(), 1)
         self.assertEqual(result["termination"], "unavailable")

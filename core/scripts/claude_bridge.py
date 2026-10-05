@@ -581,10 +581,12 @@ def main(argv=None, result_sink=None) -> int:
         # The caller's handlers go back with the cancel signals blocked: one arriving during
         # the restore, a second one included, once met the caller's SIGTERM default and ended
         # the adapter before the correction. Held, it is corrected here first, then delivered.
-        with agent_process.handing_back(held) as pending:
+        def settle(pending):
             if pending:
                 cancelled.append(True)
             correct()
+
+        agent_process.handing_back(held, settle)
 
 
 if __name__ == "__main__":

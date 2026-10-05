@@ -235,11 +235,13 @@ def main(argv=None, result_sink=None):
 
         if guard.noted:
             correct()
-        with agent_process.handing_back(guard.previous) as pending:
+        def settle(pending):
             if pending or guard.noted:
                 correct()
             elif result is not None:
                 reconcile()
+
+        agent_process.handing_back(guard.previous, settle)
 
 
 if __name__ == "__main__":
