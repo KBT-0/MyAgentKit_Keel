@@ -432,6 +432,21 @@ hand merge; `sync-kit.sh` now keeps listing them until you confirm (see "Sync st
   `scripts/check.sh` again, keeping your `toolchain_path` and `build_test_cmd` lines;
   `doctor.sh` and the hooks arrive with the sync; a build command that leaves a server
   running holds the gate lock: turn the server off in the command (see GOTCHAS).
+- **Tests that could not go red (review of 2026-10-05).** Twenty-two guards in `doctor.sh`,
+  `commit-msg`, `check.sh`, `claude_bridge.py` and `sync-kit.sh` had a negative test that
+  stayed green with the guard deleted; each now has one that goes red. A case that cannot
+  run (uid 0, an old git) is no longer printed as NOT RUN and counted as a pass. The suites
+  no longer fail when the caller ignores SIGINT. `check_kit.py` holds every suite to its
+  current test count. Also: a cancel noted before the reviewer starts stops the launch;
+  the damaged-usage-record refusal names the file and the command that moves it aside;
+  `commit-msg` knows seven more tool names; the existing-file example empties the copy's
+  `.git/hooks`; `review.sh` and `spawn_worker.sh` ignore CDPATH. **ACTION:** copy
+  `agent_process.py`, `claude_bridge.py`, `review_dispatch.py` and `scripts/review.sh`
+  again; port the `.git/hooks` line into your existing-file example. Upgrading from
+  v0.7/v0.8: a usage record with an empty task id stops every review; the refusal names it
+  and the fix: `mkdir -p .myagentkit/usage-set-aside && mv <record>
+  .myagentkit/usage-set-aside/` (find them with `grep -l '"id": ""'
+  .myagentkit/usage/*.json`).
 
 ## v0.8 — 2026-10-03
 

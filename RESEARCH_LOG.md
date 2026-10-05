@@ -768,6 +768,26 @@ list. `--exclude` was left off the grep-alias allowlist on evidence: GNU grep 3.
 excluded file even when it is named on the command line. Not run: a real Windows Python
 (the missing `fcntl` is a stub), macOS/BSD, dash as `sh`.
 
+#### Guards without a killing test
+
+One reviewer deleted guards one at a time and listed those whose negative test stayed
+green: the code was right and nothing kept it right. Twenty-two now have a case watched red
+with the guard removed. One clause the report called redundant was deleted
+(`review_dispatch.py`); the other was kept and pinned by a test, because its job (no new
+CLI process after a cancel) is not what the report took it for. The first self-test of this
+group failed on its own doing, a suite minimum hard-coded in `check_kit.py`; the minimums
+now equal the counts and a test holds them equal. Cost: `test_doctor` takes about six
+minutes on a WSL host whose PATH includes Windows directories.
+
+#### Cross-model round d1 on the five groups: Reject
+
+Codex gpt-6-astra on `3536cb7..31c8f7a`: one High (the copy kept `.git/hooks`, already in
+the running group's brief), five Medium, one Low. Three of the Medium were in the
+`spawn_worker.sh` rewrite of the same day (CDPATH in the brief path, a file name ending in
+a newline, a relative `--settings` file after the change of directory) and one in the
+grep-alias allowance, where a whitespace split accepted `--exclude-dir=x>/dev/null`. Each
+first cut of a fix again drew findings its author's tests did not.
+
 #### The review gate held on the kit's own hardening
 
 Five of the nine work packages (the gate lock, both review-tooling packages, the commit gates
