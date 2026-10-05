@@ -365,7 +365,9 @@ def main():
                     if os.path.isdir(directory):
                         for name in os.listdir(directory):
                             source = Path(directory) / name
-                            if (not name.startswith("python") and source.exists()
+                            # os.path.exists: Path.exists raises before Python 3.12 on an entry
+                            # it may not stat (macOS /usr/sbin/weakpass_edit).
+                            if (not name.startswith("python") and os.path.exists(source)
                                     and not os.path.lexists(no_python / name)):
                                 (no_python / name).symlink_to(source.resolve())
                 if 'toolchain_path=""' not in gate.read_text():
