@@ -23,7 +23,10 @@
 # here", not "the files were copied". While the printed entries hold an **ACTION** item, the
 # version stays put, the items are printed again on every run, and the exit status is 2.
 # Rerun with --actions-applied once you have applied them; only then is the version recorded.
-set -u
+#
+# A failed write stops the run before the stamp (`set -e`, and the copy step names its file):
+# a failed chmod was ignored and the version recorded over a hook that could not run.
+set -eu
 
 kit=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 target="."
@@ -45,21 +48,28 @@ done
 target=$(CDPATH= cd -- "$target" 2>/dev/null && pwd) || die "no such directory"
 [ "$target" = "$kit" ] && die "refusing to sync the kit with itself"
 
-# linked REL — prints the first component of REL, below the target, that is a symlink, and
-# nothing when there is none. Checking only the last component let a symlinked folder
-# (`.githooks -> /elsewhere`) carry every read and write under it outside the project. The
-# target itself may be a symlink: the owner named it. Every destination goes through this.
-linked() {
+# blocked REL — the one check for every path the sync reads or writes (the kit-owned files and
+# the version stamp): prints why REL may not be used, nothing when it may. Every existing
+# component below the target must be a real folder, and REL itself absent or a regular file.
+# What fails is never opened: `cmp` on a FIFO blocked forever; a symlink, or a symlinked
+# folder above, carried the read or write outside the project; a file where a folder belongs
+# failed the copy midway through the copies. The target itself may be a symlink: the owner
+# named it. bootstrap.sh holds the same check, with a form for folders.
+blocked() {
   _rest=$1; _p=""
   while :; do
     _p=${_p:+$_p/}${_rest%%/*}
-    [ -L "$target/$_p" ] && { printf '%s\n' "$_p"; return 0; }
-    case "$_rest" in */*) _rest=${_rest#*/} ;; *) return 0 ;; esac
+    case "$_rest" in */*) _rest=${_rest#*/} ;; *) break ;; esac
+    if [ -L "$target/$_p" ]; then printf 'symlink: %s\n' "$_p"; return 0; fi
+    if [ -e "$target/$_p" ] && [ ! -d "$target/$_p" ]; then printf 'not a folder: %s\n' "$_p"; return 0; fi
   done
+  if [ -L "$target/$_p" ]; then printf 'symlink: %s\n' "$_p"
+  elif [ -e "$target/$_p" ] && [ ! -f "$target/$_p" ]; then echo 'not a regular file'
+  fi
 }
 
-l=$(linked docs/kit/.kit-version)
-[ -z "$l" ] || die "conflict: docs/kit/.kit-version (the symlink $l is in its path); the version is never read or written through it"
+why=$(blocked docs/kit/.kit-version)
+[ -z "$why" ] || die "conflict: docs/kit/.kit-version ($why); the version is not read or written there"
 stamp="$target/docs/kit/.kit-version"
 [ -f "$stamp" ] || die "$stamp not found — this project was not installed with bootstrap.sh"
 have=$(tr -d '[:space:]' < "$stamp")
@@ -108,30 +118,21 @@ relpath() {
 while IFS= read -r src; do
   [ -n "$src" ] || continue
   relpath "$src" || continue
-  # A symlink anywhere in the path, the file itself or a folder above it, is checked first, for
-  # every tier: a dangling one at an overlay path fails `-e` and was skipped without a word,
-  # and a symlinked folder had the kit's file written through it outside the project.
-  l=$(linked "$rel")
-  if [ -n "$l" ]; then
-    found=1
-    echo "  conflict: $rel (the symlink $l is in its path, so it is the project's)"
-    conflict=1
-    continue
-  fi
+  why=$(blocked "$rel")
   # An overlay file is synced only where it already exists: its presence is the only record
   # of whether the project took that overlay, and installing an overlay is bootstrap's job.
+  # A symlink in its path is no absence: a dangling one fails `-e` and was skipped without a
+  # word, and a symlinked folder had the kit's file written through it outside the project.
   if [ "$overlay" -eq 1 ] && [ ! -e "$target/$rel" ]; then
-    continue
+    case "$why" in "symlink: "*) ;; *) continue ;; esac
   fi
   found=1
-  if [ ! -e "$target/$rel" ]; then
-    echo "  new:     $rel"
-  elif [ ! -f "$target/$rel" ]; then
-    # Only a regular file is read: `cmp` on a FIFO blocked forever. A folder or special file
-    # is a conflict, unread.
-    echo "  conflict: $rel (exists and is not a regular file, so it is the project's)"
+  if [ -n "$why" ]; then
+    echo "  conflict: $rel ($why, so it is the project's)"
     conflict=1
     continue
+  elif [ ! -e "$target/$rel" ]; then
+    echo "  new:     $rel"
   elif cmp -s "$src" "$target/$rel"; then
     echo "  same:    $rel"
     continue
@@ -152,7 +153,7 @@ if [ "$conflict" -eq 1 ] && [ "$dry" -eq 0 ]; then
   cat <<EOF
 
 STOPPING: the files listed as conflict are project-owned (no KIT-OWNED header, not a
-regular file, or under a symlink) at paths the kit owns now. Nothing was copied and the version stays at v$have.
+regular file, or a symlink or a file in their path) at paths the kit owns now. Nothing was copied and the version stays at v$have.
 
   For each one: move yours aside, rerun the sync to install the kit's file, then carry
   what yours did into the project's own files by hand (the kit's docs/RETROFIT.md).
@@ -162,9 +163,9 @@ fi
 if [ "$dry" -eq 0 ]; then
   while IFS= read -r src; do
     relpath "$src"
-    mkdir -p "$target/$(dirname "$rel")"
-    cp "$src" "$target/$rel" || die "could not copy $rel; version left at v$have"
-    case "$rel" in *.sh|.githooks/*) chmod +x "$target/$rel" ;; esac
+    { mkdir -p "$target/$(dirname "$rel")" && cp "$src" "$target/$rel" &&
+      case "$rel" in *.sh|.githooks/*) chmod +x "$target/$rel" ;; esac; } ||
+      die "could not write $rel; version left at v$have"
   done < "$copies"
 fi
 
@@ -235,7 +236,7 @@ if [ -s "$pending" ] && [ "$applied" -eq 0 ]; then
   exit 2
 fi
 
-printf '%s\n' "$latest" > "$stamp"
+printf '%s\n' "$latest" > "$stamp" || die "could not write $stamp"
 echo
 echo "sync-kit: recorded v$latest."
 echo "sync-kit: now run ./scripts/check.sh, and ./scripts/check.sh --self-test."
