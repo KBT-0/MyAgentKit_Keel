@@ -389,19 +389,33 @@ exit 1
     def test_a_deadline_ends_a_descendant_that_outlives_its_leader(self):
         # The leader exits at once; its background descendant keeps the pipes and sleeps on.
         # A deadline killed the group only while the leader ran, then waited for the pipes forever.
-        probe = ('import subprocess, test_boundary_restore as t\n'
-                 'child = subprocess.Popen(["sh", "-c", "sleep 120 & echo \\"held $!\\""], text=True,\n'
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        mark = Path(tmp.name) / 'held'
+
+        def end_fixture():
+            # Whatever the code under test did, even when the probe ran out of time: the group
+            # the fixture recorded itself is ended here, so no sleep outlives a failing run.
+            try:
+                os.killpg(int(mark.read_text().split()[0]), signal.SIGKILL)
+            except (FileNotFoundError, ProcessLookupError):
+                pass
+        self.addCleanup(end_fixture)
+        # The marker holds the group's id, then the descendant's pid.
+        fixture = 'sleep 120 & echo "$$ $!" >"$0.part" && mv "$0.part" "$0"'
+        probe = ('import subprocess, sys, test_boundary_restore as t\n'
+                 'child = subprocess.Popen(["sh", "-c", %r, sys.argv[1]], text=True,\n'
                  '                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)\n'
                  'try:\n'
                  '    t.BoundaryRestoreTests("run").finish(child)\n'
                  'except AssertionError as failure:\n'
-                 '    print(failure)\n')
+                 '    print(failure)\n' % fixture)
         # The probe's own limit keeps a hang a short failure here, not a stalled suite.
-        result = subprocess.run([sys.executable, '-c', probe], cwd=Path(__file__).resolve().parent,
+        result = subprocess.run([sys.executable, '-c', probe, str(mark)], cwd=Path(__file__).resolve().parent,
                                 capture_output=True, text=True, timeout=DEADLINE / 3,
                                 env=dict(os.environ, MYAGENTKIT_TEST_TIMEOUT_SCALE='0.01'))
         self.assertIn('the child did not end within 0.3 s', result.stdout, result.stderr)
-        held = int(result.stdout.split('held ', 1)[1].split()[0])
+        held = int(mark.read_text().split()[1])
         deadline = time.monotonic() + DEADLINE
         while time.monotonic() < deadline:
             if not alive(held):
