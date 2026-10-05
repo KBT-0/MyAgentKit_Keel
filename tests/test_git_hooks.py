@@ -1,4 +1,5 @@
 """Git itself must call the shipped hooks: on a clean merge commit and on every commit message."""
+import importlib.util
 import os
 from pathlib import Path
 import shutil
@@ -8,6 +9,9 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
+spec = importlib.util.spec_from_file_location('kit_check', ROOT / 'scripts/check_kit.py')
+kit_check = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(kit_check)
 
 
 class GitHookTests(unittest.TestCase):
@@ -409,9 +413,8 @@ class GitHookTests(unittest.TestCase):
     def test_a_non_utf8_byte_on_the_trailer_line_is_checked_in_a_utf8_locale(self):
         # In a UTF-8 locale grep's "." stopped at a byte that is not valid UTF-8, and a
         # "[bot]" trailer whose name held a Latin-1 byte passed the hook.
-        have = subprocess.run(['locale', '-a'], capture_output=True, text=True).stdout.split()
-        utf8 = next((name for name in ('C.UTF-8', 'C.utf8', 'en_US.UTF-8', 'en_US.utf8') if name in have), None)
-        self.assertIsNotNone(utf8, 'no UTF-8 locale to run this case in: ' + ' '.join(have))
+        # The kit check's own selection, one copy: none is an error, never a pass.
+        utf8 = kit_check.utf8_locale()
         with tempfile.TemporaryDirectory() as tmp:
             root, _ = self.repo(tmp)
             message = root / 'message'
