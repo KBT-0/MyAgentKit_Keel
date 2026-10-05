@@ -50,6 +50,27 @@ class QuotaTests(unittest.TestCase):
                 self.assertEqual(result['status'], 'unavailable')
                 self.assertEqual(result['buckets'], {})
 
+    def test_a_reader_that_exits_at_once_is_unavailable_not_an_exception(self):
+        # The first write met a closed pipe and was caught, but its bytes stayed buffered:
+        # stdin.close() in the cleanup flushed them again and raised BrokenPipeError out of
+        # snapshot(). Here the app-server has exited before the first write, every time.
+        import subprocess
+        from unittest.mock import patch
+        real_popen = subprocess.Popen
+
+        def exited(*args, **kwargs):
+            proc = real_popen(*args, **kwargs)
+            proc.wait()
+            return proc
+
+        with tempfile.TemporaryDirectory() as tmp, \
+                patch.object(codex_quota.subprocess, 'Popen', side_effect=exited):
+            try:
+                result = codex_quota.snapshot('false', Path(tmp), timeout=2)
+            except OSError as error:
+                self.fail('the quota read raised %r' % error)
+        self.assertEqual(result['status'], 'unavailable')
+
     def test_a_cancel_inside_the_launch_leaves_no_quota_reader_running(self):
         # The closing read runs under a raising cancel handler: a cancel after the app-server
         # existed but before Popen returned left no handle, and cleanup killed nothing.

@@ -104,8 +104,13 @@ def snapshot(cli: str, repo: Path, timeout: float = 5) -> dict:
                 except ProcessLookupError:
                     pass
                 proc.wait()
-                proc.stdin.close()
-                proc.stdout.close()
+                # Never raising: a write that met the exited reader left its bytes buffered,
+                # and close() flushed them again and raised BrokenPipeError out of here.
+                for stream in (proc.stdin, proc.stdout):
+                    try:
+                        stream.close()
+                    except OSError:
+                        pass
             finally:
                 signal.pthread_sigmask(signal.SIG_SETMASK, mask)
 

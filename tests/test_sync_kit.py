@@ -57,6 +57,39 @@ class SyncKitTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn('cannot scan the changelog for ACTION items', result.stderr)
 
+    def test_a_project_owned_file_at_a_kit_owned_path_is_a_conflict_not_overwritten(self):
+        # A path that became kit-owned in a later version held the project's own hook; the
+        # sync replaced it with the kit's, reported "update:", and the project's own message
+        # check was gone. A file without the KIT-OWNED header is the project's.
+        owned = ('.githooks/commit-msg', '.githooks/pre-merge-commit', 'scripts/doctor.sh')
+        with tempfile.TemporaryDirectory() as tmp:
+            kit, project = Path(tmp) / 'kit', Path(tmp) / 'project'
+            self.sync(tmp, '- A kit-owned file changed.\n', '--dry-run')
+            for rel in owned + ('.githooks/pre-commit', 'scripts/agent_cost.py'):
+                (kit / 'core' / rel).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(ROOT / 'core' / rel, kit / 'core' / rel)
+            for rel in owned:
+                (project / rel).parent.mkdir(parents=True, exist_ok=True)
+                (project / rel).write_text('#!/bin/sh\n# the project\'s own %s\nexit 1\n' % rel)
+            # A kit-owned copy that differs is still the kit's to update.
+            (project / 'scripts/agent_cost.py').write_text('# KIT-OWNED: an older copy\n')
+            for flags in ((), ('--actions-applied',)):
+                with self.subTest(flags=flags):
+                    result, stamp = self.sync(tmp, '- A kit-owned file changed.\n', *flags)
+                    self.assertEqual(stamp, '0.1', 'stamped past a conflict')
+                    self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                    for rel in owned:
+                        self.assertIn('conflict: ' + rel, result.stdout)
+                        self.assertIn("the project's own " + rel, (project / rel).read_text())
+                    self.assertFalse((project / '.githooks/pre-commit').exists(), 'copied past a conflict')
+                    self.assertIn('older copy', (project / 'scripts/agent_cost.py').read_text())
+            for rel in owned:
+                (project / rel).unlink()
+            result, stamp = self.sync(tmp, '- A kit-owned file changed.\n')
+            self.assertEqual((result.returncode, stamp), (0, '0.2'), result.stdout + result.stderr)
+            self.assertEqual((project / 'scripts/agent_cost.py').read_bytes(),
+                             (ROOT / 'core/scripts/agent_cost.py').read_bytes())
+
     def test_a_signal_while_printing_the_checklist_keeps_the_stamp(self):
         # A handler that only cleaned up let the run resume with the pending list deleted,
         # which reads as "no ACTION items", and stamp the version.

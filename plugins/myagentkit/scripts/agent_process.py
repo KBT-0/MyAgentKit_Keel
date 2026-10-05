@@ -1,5 +1,4 @@
 """Bounded child execution shared by both CLI adapters; preserve partial diagnostics."""
-import contextlib
 import os
 from pathlib import Path
 import signal
@@ -30,19 +29,27 @@ def restore(previous: dict) -> None:
         signal.signal(sig, handler)
 
 
-@contextlib.contextmanager
-def handing_back(previous: dict):
-    """Restore `previous` with the cancel signals blocked; yield those that arrived meanwhile.
+def handing_back(previous: dict, settle) -> None:
+    """Restore `previous` with the cancel signals blocked; `settle(pending)` the records.
 
     Restored one at a time, a cancel between two swaps met the caller's handler (SIG_DFL ends
     the process) before the adapter had persisted the cancel it had already noted. Blocked, it
     waits while the adapter corrects its records and writes its last line, then reaches the
-    caller's handler when the block exits.
+    caller's handler when the block exits. Sampled once, a cancel arriving while `settle` ran
+    reached the caller with the records still saying quota: `settle` runs again for every
+    cancel that is new since the last sample, and the block is lifted right after a sample
+    that found none, with nothing in between.
     """
     mask = signal.pthread_sigmask(signal.SIG_BLOCK, CANCEL_SIGNALS)
     try:
         restore(previous)
-        yield signal.sigpending() & set(previous)
+        seen = None
+        while True:
+            pending = signal.sigpending() & set(previous)
+            if seen is not None and pending <= seen:
+                break
+            seen = pending
+            settle(pending)
     finally:
         signal.pthread_sigmask(signal.SIG_SETMASK, mask)
 
@@ -149,14 +156,21 @@ def _supervise(command, prompt, repo, timeout, started, guard):
                         child.wait(timeout=max(0, timeout - (time.monotonic() - started)))
                     except subprocess.TimeoutExpired:
                         termination = "timeout"
+            # Leaving supervision: the guard turns to noting INSIDE the try. Armed into the
+            # `finally`, a cancel at a signal check there raised past the group kill, the reap
+            # and the result. A cancel before this store raises here and is caught below; one
+            # after it is noted. No signal block around it: a cancel raised just after
+            # pthread_sigmask returned left the signals blocked for good.
+            guard.armed = False
         except KeyboardInterrupt:
             # Cancelled: stop the group below and return what was captured, so the adapter
             # records the attempt (it may have been billed) and the dispatcher never fails over.
-            termination = "cancelled"
+            # Not when wait() had already reaped the reviewer: that review ran to its end, and
+            # the cancel is returned as noted, never as its termination.
+            if termination or child is None or child.returncode is None:
+                termination = "cancelled"
         finally:
-            # From here a cancel is noted, not raised: raised, it broke off the group kill or
-            # the reap, and run() returned nothing to record. A flag, not a handler swap: the
-            # first statement here, so no signal is checked before it.
+            # Already noting on every path through the try; this covers an unexpected error.
             guard.armed = False
             noted = guard.noted
             # Also stop descendants left behind by a parent that already exited.

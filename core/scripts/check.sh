@@ -459,6 +459,16 @@ case "${1:-}" in
   *)            echo "usage: check.sh [--self-test]"; exit 2 ;;
 esac
 
+# Every scan, filter and boundary check below reads text in the C locale. In a UTF-8 locale
+# GNU grep takes a line holding a byte that is not valid UTF-8 (a Latin-1 comment, a legacy
+# string literal, a symlink target) as binary: `grep -I` skipped the file, a plain grep
+# printed "binary file matches" on stderr and nothing on stdout, and `.` stopped at the byte.
+# A placeholder on such a line passed the gate, and so did a boundary hit piped through
+# `grep '^src/domain/'`. In C every byte is a character. The build/test command alone gets
+# the caller's locale back (section 4): compilers and test runners read sources by locale.
+caller_lc_all=${LC_ALL-} caller_lc_all_set=${LC_ALL+1}
+LC_ALL=C; export LC_ALL
+
 # ---------------------------------------------------------------------------
 # The scanners' shared input: every tracked file plus every untracked one git does not
 # ignore, NUL-separated so that newlines and spaces in names survive.
@@ -740,7 +750,8 @@ case "$(printf '%s' "$build_test_cmd" | tr -d '[:space:]')" in
     # tail, so CI prints the whole log.
     # ponytail: a fixed tail; raise build_tail if your diagnostic chains run longer.
     build_tail=150
-    sh -c "$build_test_cmd" > "$build_log" 2>&1
+    ( if [ -n "$caller_lc_all_set" ]; then LC_ALL=$caller_lc_all; else unset LC_ALL; fi
+      exec sh -c "$build_test_cmd" ) > "$build_log" 2>&1
     rc=$?
     if [ "$rc" -ne 0 ] && [ -n "${CI:-}" ]; then
       echo "FAIL [build]: the build/test command exited $rc. Its whole output follows (CI)."

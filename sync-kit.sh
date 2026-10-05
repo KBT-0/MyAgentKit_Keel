@@ -6,7 +6,9 @@
 # Two tiers of ownership, and the line between them is drawn in the files themselves:
 #
 #   KIT-OWNED    the file carries a "KIT-OWNED" marker in its header. It holds no project
-#                content, so this script overwrites it wholesale.
+#                content, so this script overwrites it wholesale. A file at that path in the
+#                project WITHOUT the marker is the project's own: listed as a conflict, and
+#                the sync stops before it copies anything or records a version.
 #   PROJECT-OWNED  everything else. Never touched. Most of the kit is project-owned by
 #                design — the constitution, the workflow, the gate and the boundary checks
 #                are all customised during setup, and overwriting them would throw that away
@@ -34,7 +36,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) dry=1; shift ;;
     --actions-applied) applied=1; shift ;;
-    -h|--help) sed -n '2,23p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,25p' "$0"; exit 0 ;;
     -*)        die "unknown option: $1" ;;
     *)         target="$1"; shift ;;
   esac
@@ -53,9 +55,10 @@ latest=$(sed -n 's/^## v\([0-9][0-9.]*\).*/\1/p' "$kit/CHANGELOG.md" | head -1)
 
 work_list=$(mktemp) || { echo "sync-kit: cannot create a temp file" >&2; exit 1; }
 pending=$(mktemp) || { rm -f "$work_list"; echo "sync-kit: cannot create a temp file" >&2; exit 1; }
+copies=$(mktemp) || { rm -f "$work_list" "$pending"; echo "sync-kit: cannot create a temp file" >&2; exit 1; }
 # A signal handler that only cleaned up let the run resume with the pending list deleted,
 # which reads as "no ACTION items" and stamped the version: a signal now ends the run.
-trap 'rm -f "$work_list" "$pending"' EXIT
+trap 'rm -f "$work_list" "$pending" "$copies"' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
@@ -69,6 +72,7 @@ fi
 echo
 echo "KIT-OWNED files (overwritten):"
 found=0
+conflict=0
 # Read the list line by line rather than through word splitting: a path containing a space
 # would otherwise be torn into two nonexistent paths and silently skipped.
 #
@@ -77,35 +81,62 @@ found=0
 # would have been silently overwritten wholesale.
 grep -rlE '^(# |<!-- )KIT-OWNED:' "$kit/core" "$kit/setup" "$kit/overlays" 2>/dev/null \
   | sort > "$work_list"
+relpath() {
+  overlay=0
+  case "$1" in
+    "$kit/core/"*)             rel=${1#"$kit/core/"} ;;
+    "$kit/setup/"*)            rel="setup/${1#"$kit/setup/"}" ;;
+    "$kit/overlays/"*/files/*) rel=${1#"$kit"/overlays/*/files/}; overlay=1 ;;
+    *) return 1 ;;
+  esac
+}
 while IFS= read -r src; do
   [ -n "$src" ] || continue
-  overlay=0
-  case "$src" in
-    "$kit/core/"*)             rel=${src#"$kit/core/"} ;;
-    "$kit/setup/"*)            rel="setup/${src#"$kit/setup/"}" ;;
-    "$kit/overlays/"*/files/*) rel=${src#"$kit"/overlays/*/files/}; overlay=1 ;;
-    *) continue ;;
-  esac
+  relpath "$src" || continue
   # An overlay file is synced only where it already exists: its presence is the only record
   # of whether the project took that overlay, and installing an overlay is bootstrap's job.
   if [ "$overlay" -eq 1 ] && [ ! -e "$target/$rel" ]; then
     continue
   fi
   found=1
-  if [ ! -e "$target/$rel" ]; then
+  if [ ! -e "$target/$rel" ] && [ ! -L "$target/$rel" ]; then
     echo "  new:     $rel"
   elif cmp -s "$src" "$target/$rel"; then
     echo "  same:    $rel"
     continue
-  else
+  elif [ -f "$target/$rel" ] && [ ! -L "$target/$rel" ] &&
+       grep -qE '^(# |<!-- )KIT-OWNED:' "$target/$rel" 2>/dev/null; then
     echo "  update:  $rel"
+  else
+    # No KIT-OWNED header: the project's own file at a path the kit now owns (a project's
+    # own commit-msg hook once, replaced by the kit's that passed every message). Listed,
+    # never overwritten; nothing else is copied either, so the sync is all or nothing.
+    echo "  conflict: $rel (exists without the KIT-OWNED header, so it is the project's)"
+    conflict=1
+    continue
   fi
-  [ "$dry" -eq 1 ] && continue
-  mkdir -p "$target/$(dirname "$rel")"
-  cp "$src" "$target/$rel"
-  case "$rel" in *.sh|.githooks/*) chmod +x "$target/$rel" ;; esac
+  printf '%s\n' "$src" >> "$copies" || die "cannot record $rel for copying; version left at v$have"
 done < "$work_list"
 [ "$found" -eq 1 ] || echo "  (none)"
+if [ "$conflict" -eq 1 ] && [ "$dry" -eq 0 ]; then
+  cat <<EOF
+
+STOPPING: the files listed as conflict are project-owned (no KIT-OWNED header) at paths
+the kit owns now. Nothing was copied and the version stays at v$have.
+
+  For each one: move yours aside, rerun the sync to install the kit's file, then carry
+  what yours did into the project's own files by hand (the kit's docs/RETROFIT.md).
+EOF
+  exit 1
+fi
+if [ "$dry" -eq 0 ]; then
+  while IFS= read -r src; do
+    relpath "$src"
+    mkdir -p "$target/$(dirname "$rel")"
+    cp "$src" "$target/$rel" || die "could not copy $rel; version left at v$have"
+    case "$rel" in *.sh|.githooks/*) chmod +x "$target/$rel" ;; esac
+  done < "$copies"
+fi
 
 # --- tier 2: print what has to be applied by hand -----------------------------------
 # Everything from the top of the changelog down to (but not including) the recorded
