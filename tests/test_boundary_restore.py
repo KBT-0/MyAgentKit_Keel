@@ -13,6 +13,11 @@ import unittest
 # Seconds any wait here may take; MYAGENTKIT_TEST_TIMEOUT_SCALE multiplies it on a slow host.
 DEADLINE = 30 * float(os.environ.get('MYAGENTKIT_TEST_TIMEOUT_SCALE', '1'))
 
+def alive(pid):
+    # ps, not kill -0: a killed child not yet reaped is a zombie, and kill -0 still finds it.
+    state = subprocess.run(['ps', '-o', 'stat=', '-p', str(pid)], capture_output=True, text=True)
+    return state.returncode == 0 and not state.stdout.strip().startswith('Z')
+
 
 class BoundaryRestoreTests(unittest.TestCase):
     def setUp(self):
@@ -399,9 +404,7 @@ exit 1
         held = int(result.stdout.split('held ', 1)[1].split()[0])
         deadline = time.monotonic() + DEADLINE
         while time.monotonic() < deadline:
-            try:
-                os.kill(held, 0)
-            except ProcessLookupError:
+            if not alive(held):
                 return
             time.sleep(0.05)
         self.fail('the descendant %d outlived the deadline' % held)
