@@ -49,7 +49,9 @@
 # in the tree. The copy holds the current bytes, uncommitted edits included, and is deleted
 # on exit and on INT/TERM; a SIGKILL leaves it in $TMPDIR, outside the checkout. The copy
 # itself must lie outside the checkout (a TMPDIR set to the checkout put it, and a SIGKILL's
-# leftovers, in the working tree). Every command that touches the copy, git and the copied
+# leftovers, in the working tree). TMPDIR is resolved to one physical folder before any `cd`
+# and both copies are made there: the second copy, made after `cd /`, found a relative
+# TMPDIR naming another folder. Every command that touches the copy, git and the copied
 # gate alike, runs under probe_env, which passes ONLY the variables it names: removing
 # variables one at a time missed each next one (an exported GIT_DIR built in the checkout;
 # an exported GIT_OBJECT_DIRECTORY took the copy's `git add` into the original's object
@@ -92,10 +94,21 @@
 # second run's python3 executed), and each re-check added after the baseline was the next
 # thing to bypass (a .git/config replaced by a link to /dev/zero hung the comparison). So the
 # baseline's copy, its own HOME and TMPDIR inside, is deleted (one that cannot be deleted
-# fails the case by name), and the same function makes the injected run a new one. The runs
+# fails the case by name), and the same function makes the injected run a new one. Each copy
+# is hashed as taken, before anything runs in it (every entry's path, type, executable bit and
+# content, `.git` included; a FIFO, socket or device is refused by name): taken from the live
+# checkout at two times, the second copy's gate need not be the one the baseline proved green,
+# so copies that differ are reported NOT RUN. The runs
 # still share PATH, which a baseline changes only through a writable PATH directory, outside
 # the example's reach, and the checkout, which the example only reads. A folder the audit
 # cannot read fails it by name (os.walk skips one), and its Python runs isolated (-I).
+# Deleting a copy changes the mode of its folders only, never of a file, each set by name
+# relative to its open parent without following a link: `chmod -R u+rwx` before `rm -rf`
+# made a checkout file the baseline had hard-linked into its copy executable, and followed a
+# temporary root the baseline had replaced with a symlink. `find -type d -exec chmod` is not
+# enough, since chmod resolves the whole path again and a folder swapped for a link in between
+# takes it outside. The root's device and inode are recorded when mktemp makes it; a root that
+# is no longer that folder is refused by name, and nothing is deleted.
 # Copying a large tree (dependencies, build output) costs time, twice: copy only what the
 # gate reads if that is known, but never let the probe write into the checkout.
 #
@@ -109,13 +122,58 @@
 # |   probe_config_keys=""
 # |   probe_checkout=$(pwd -P) || exit 1
 # |   probe_copy=
-# |   # Made writable first: a read-only folder (a module cache) would survive `rm -rf`.
-# |   probe_delete() { [ -z "$probe_copy" ] || { chmod -R u+rwx "$probe_copy" 2>/dev/null; rm -rf "$probe_copy"; }; }
-# |   trap probe_delete EXIT
+# |   probe_id=
+# |   # Only folders of the copy are made writable (a read-only one, a module cache, survives
+# |   # `rm -rf`), each by name relative to its open parent and never through a link; the root
+# |   # must still be the folder mktemp made (device and inode), or nothing is deleted.
+# |   probe_delete() {
+# |     [ -z "$probe_copy" ] || {
+# |       python3 -I -c '
+# | import os, stat, sys
+# | path, made = sys.argv[1], sys.argv[2]
+# | def refuse(why):
+# |     print("  FAIL — existing-file probe: " + why + "; deleted nothing.")
+# |     sys.exit(1)
+# | def writable(dir_fd, name, made=None):
+# |     mode = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+# |     if made is not None and (not stat.S_ISDIR(mode.st_mode) or "%d %d" % (mode.st_dev, mode.st_ino) != made):
+# |         refuse(path + " is no longer the directory made for the disposable copy")
+# |     if not stat.S_ISDIR(mode.st_mode):
+# |         return
+# |     if mode.st_mode & 0o700 != 0o700:
+# |         os.chmod(name, stat.S_IMODE(mode.st_mode) | 0o700, dir_fd=dir_fd, follow_symlinks=False)
+# |     fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=dir_fd)
+# |     try:
+# |         opened = os.fstat(fd)
+# |         if made is not None and "%d %d" % (opened.st_dev, opened.st_ino) != made:
+# |             refuse(path + " is no longer the directory made for the disposable copy")
+# |         for entry in os.listdir(fd):
+# |             writable(fd, entry)
+# |     finally:
+# |         os.close(fd)
+# | try:
+# |     writable(os.open(os.path.dirname(path), os.O_RDONLY | os.O_DIRECTORY), os.path.basename(path), made)
+# | except (OSError, NotImplementedError) as error:
+# |     refuse("could not make " + path + " deletable without following a link (" + str(error) + ")")
+# | ' "$probe_copy" "$probe_id" && rm -rf "$probe_copy"
+# |       probe_gone=$?
+# |       probe_copy=
+# |       return "$probe_gone"
+# |     }
+# |   }
+# |   # A copy that could not be deleted fails the case, after a run that passed as well.
+# |   trap 'probe_exit=$?; probe_delete || [ "$probe_exit" -ne 0 ] || exit 1' EXIT
 # |   trap 'exit 130' INT
 # |   trap 'exit 143' TERM
 # |   probe_fail() { echo "  FAIL — existing-file probe: $*"; exit 1; }
 # |   probe_skip() { echo "  NOT RUN — existing-file probe: $*"; exit 1; }
+# |   # One folder for both copies, resolved before any `cd` (after `cd /`, a relative TMPDIR
+# |   # named another one), and outside the checkout.
+# |   probe_base=$(CDPATH= cd -P "${TMPDIR:-/tmp}" && pwd -P) ||
+# |     probe_fail "could not resolve TMPDIR (${TMPDIR:-/tmp}); refusing to run."
+# |   case "$probe_base/" in
+# |     "$probe_checkout"/*) probe_fail "the disposable copy's folder, TMPDIR ($probe_base), is inside the checkout; set TMPDIR outside it." ;;
+# |   esac
 # |   # The copy's own empty HOME and TMPDIR, no system or global git configuration.
 # |   probe_env() {
 # |     env -i PATH="$PATH" LC_ALL=C HOME="$probe_copy/home" XDG_CONFIG_HOME="$probe_copy/home" \
@@ -126,27 +184,48 @@
 # |   probe_target=src/domain/existing.py
 # |   probe_gate="$(basename "$(dirname "$0")")/${0##*/}"
 # |   # Every symlink resolves inside the copy, no `.git` lies below the top level, and the path to
-# |   # the target and to the gate runs through no symlink and ends at a regular file.
+# |   # the target and to the gate runs through no symlink and ends at a regular file. Prints the
+# |   # copy's digest as taken: every entry's path, type, executable bit and content, `.git` included.
 # |   probe_audit() {
-# |     probe_why=$(probe_env python3 -I -c '
-# | import os, stat, sys
+# |     probe_digest=$(probe_env python3 -I -c '
+# | import hashlib, os, stat, sys
 # | root = sys.argv[1]
+# | digest = hashlib.sha256()
+# | # Unreachable by construction (cp -RP fails first on what it cannot read); kept as the guard.
 # | def unread(error):
 # |     sys.exit("the audit could not read " + os.path.relpath(error.filename or root, root) + " (" + str(error.strerror or error) + ")")
 # | try:
 # |     for top, dirs, files in os.walk(root, onerror=unread):
-# |         for name in dirs + files:
+# |         dirs.sort()
+# |         for name in sorted(dirs + files):
 # |             path = os.path.join(top, name)
+# |             rel = os.path.relpath(path, root)
 # |             if name == ".git" and top != root:
 # |                 sys.exit("the checkout contains a nested repository or worktree at " + os.path.relpath(top, root))
-# |             if not stat.S_ISLNK(os.lstat(path).st_mode):
-# |                 continue
-# |             try:
-# |                 real = os.path.realpath(path, strict=True)
-# |             except FileNotFoundError:
-# |                 real = os.path.realpath(path)
-# |             if os.path.commonpath([root, real]) != root:
-# |                 sys.exit(os.path.relpath(path, root) + " is a symlink that leads out of the disposable copy")
+# |             mode = os.lstat(path).st_mode
+# |             content = hashlib.sha256()
+# |             if stat.S_ISDIR(mode):
+# |                 kind = b"d"
+# |             elif stat.S_ISREG(mode):
+# |                 kind = b"x" if mode & stat.S_IXUSR else b"f"
+# |                 fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0))
+# |                 with open(fd, "rb") as data:
+# |                     if not stat.S_ISREG(os.fstat(fd).st_mode):
+# |                         sys.exit(rel + " stopped being a regular file while the audit read it")
+# |                     for chunk in iter(lambda: data.read(1 << 20), b""):
+# |                         content.update(chunk)
+# |             elif stat.S_ISLNK(mode):
+# |                 kind = b"l"
+# |                 content.update(os.fsencode(os.readlink(path)))
+# |                 try:
+# |                     real = os.path.realpath(path, strict=True)
+# |                 except FileNotFoundError:
+# |                     real = os.path.realpath(path)
+# |                 if os.path.commonpath([root, real]) != root:
+# |                     sys.exit(rel + " is a symlink that leads out of the disposable copy")
+# |             else:
+# |                 sys.exit(rel + " is not a regular file, a folder or a symlink (a FIFO, socket or device)")
+# |             digest.update(os.fsencode(rel) + b"\0" + kind + content.hexdigest().encode() + b"\n")
 # | except OSError as error:
 # |     unread(error)
 # | for rel in sys.argv[2:]:
@@ -157,8 +236,9 @@
 # |             sys.exit(rel + " runs through a symlink at " + os.path.relpath(path, root))
 # |     if not os.path.isfile(path):
 # |         sys.exit(rel + " is not a regular file in the disposable copy")
+# | print(digest.hexdigest())
 # | ' "$probe_root" "$probe_target" "$probe_gate" 2>&1) ||
-# |       probe_skip "${probe_why:-could not search the disposable copy}; the existing-file probe does not support it."
+# |       probe_skip "${probe_digest:-could not search the disposable copy}; the existing-file probe does not support it."
 # |   }
 # |   probe_allowed="core.repositoryformatversion core.bare extensions.objectformat extensions.refstorage
 # |     user.name user.email core.autocrlf core.eol core.safecrlf core.filemode core.ignorecase core.symlinks
@@ -167,10 +247,9 @@
 # |   # Each run gets a copy of its own, made by this one function: the checkout's bytes in a fresh
 # |   # directory, audited, with empty hooks and only the allowlisted settings.
 # |   probe_fresh_copy() {
-# |     probe_copy=$(mktemp -d) && probe_copy=$(CDPATH= cd -P "$probe_copy" && pwd -P) || exit 1
-# |     case "$probe_copy/" in
-# |       "$probe_checkout"/*) probe_fail "the disposable copy ($probe_copy) is inside the checkout; set TMPDIR outside it." ;;
-# |     esac
+# |     probe_copy=$(TMPDIR=$probe_base mktemp -d) || exit 1
+# |     probe_id=$(python3 -I -c 'import os, sys; made = os.lstat(sys.argv[1]); print(made.st_dev, made.st_ino)' \
+# |       "$probe_copy") || exit 1
 # |     mkdir "$probe_copy/home" "$probe_copy/tmp" || exit 1
 # |     cp -RP "$probe_checkout" "$probe_copy/checkout" && CDPATH= cd -P "$probe_copy/checkout" || exit 1
 # |     probe_root=$(pwd -P) || exit 1
@@ -214,11 +293,14 @@
 # |       probe_fail "could not carry the allowlisted settings into the disposable copy; refusing to run."
 # |   }
 # |   probe_fresh_copy
+# |   probe_first=$probe_digest
 # |   probe_env sh "$probe_root/$probe_gate" >/dev/null 2>&1 ||
 # |     probe_fail "the baseline is already red; the injection would prove nothing."
 # |   cd / && probe_delete ||
-# |     probe_fail "could not delete the baseline run's copy ($probe_copy); refusing to run."
+# |     probe_fail "could not delete the baseline run's copy; refusing to run."
 # |   probe_fresh_copy
+# |   [ "$probe_digest" = "$probe_first" ] ||
+# |     probe_skip "the checkout changed between the two copies; run the self-test again."
 # |   printf 'from myapp.web import router\n' > "$probe_root/$probe_target" || exit 1
 # |   probe_status=0
 # |   probe_output=$(probe_env sh "$probe_root/$probe_gate" 2>&1) || probe_status=$?
