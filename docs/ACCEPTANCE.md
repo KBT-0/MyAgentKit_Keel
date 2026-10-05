@@ -171,9 +171,20 @@ budget, so the full review was split into two consistent commit ranges, each its
   fixed with negative tests watched red first. The owner then set the stopping rule: the
   scripts state their threat model, and the next round ends the loop unless it holds a
   High outside that model.
+- Round close-5 `20261005T202345Z-884b576d395c` on head 1a13854 (`2f2ef6b..1a13854`, a new
+  label): **Reject, no High, two Medium.** By the owner's rule the review loop ended here.
+  Both findings were fixed with tests watched red first and mutation-checked (merge G53).
+  **NOT REVIEWED: the G53 fixes themselves.** Range D therefore closes on a Reject whose
+  findings are fixed, not on an Accept; the last Accept in it is d7, on head 3d4f45c.
+- NOT ESTABLISHED in range D: one fresh review of the whole `3536cb7..master` diff in a
+  single prompt (422 KB and more, over the 400000-byte budget); the closing review that fit
+  (`20261005T180801Z-c1e3bb54cf44`, head 77377f4) was a Reject and everything after it was
+  reviewed in increments.
+- NOT RUN in range D, by anyone: macOS or BSD, dash as `sh`, Python 3.10, a real Windows
+  Python, a live tmux and Claude session.
 - NOT RUN by the reviewer in range D: any test. The kit self-test was executed by the lead
   on each reviewed head (`KIT CHECK: PASS` on 31c8f7a, 1afba49, 62d2988, d826ccd, ed29079,
-  4baf4e0 and 3d4f45c).
+  4baf4e0, 3d4f45c, 42e5a19, 68e9ae5, 2f2ef6b and 1a13854).
 
 The cross-model acceptance of ranges A to C closed here: range A's and range B's findings are fixed within
 ranges B and C, and range C's last round is an Accept. What this does NOT establish: one

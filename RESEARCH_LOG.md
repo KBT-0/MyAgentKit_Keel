@@ -933,6 +933,20 @@ model; findings inside it are answered by disposition and recorded as accepted l
 Lesson: write the threat model before the first hardening round, not after the eleventh;
 without one, "close the class" has no edge.
 
+#### Round close-5: no High, and the loop ends by the owner's rule
+
+Round close-5 on `2f2ef6b..1a13854`: Reject with two Medium and no High, so by the owner's
+rule the review loop ended there. Both findings were inside what the scripts promise and
+were fixed, not accepted: on a re-run at the same version the stamp on disk already held
+the version and was taken for this run's commit (the commit is now this run's own
+temporary moved into place); and two partial-write tests had gone hollow one round
+earlier, failing on bootstrap's file list before any write they named (they now cut short
+the named write, prove it was reached, and were mutation-checked). These two fixes were
+not reviewed by anyone but their author. Twelve rounds in the day: 7, 2, 4, 4, 4, 2, Accept
+(carried), 4, 5, 3, 4, 2. What the day did not establish: one fresh review of the whole
+`3536cb7..master` diff in a single prompt (it grew past the 400000-byte budget), any run
+on macOS/BSD, with dash as `sh`, on Python 3.10, or a live tmux and Claude session.
+
 #### The review gate held on the kit's own hardening
 
 Five of the nine work packages (the gate lock, both review-tooling packages, the commit gates

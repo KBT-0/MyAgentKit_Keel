@@ -130,8 +130,9 @@ in `RESEARCH_LOG.md` (2026-10-03). Most of the files below are project-owned, so
   sibling (`.kit-tmp.XXXXXX`) that takes the destination's mode first (a new file takes the
   umask's) and is then moved over it, so a full disk leaves the old stamp, note or hook
   whole and a 0600 note stays 0600; a stopped run's leftovers are named in a NOTE, not
-  deleted. In bootstrap the stamp's move is the commit: before it, a failure or INT, TERM
-  or HUP puts the project's own `core.hooksPath` back; after it nothing is undone. Both
+  deleted. In bootstrap this run's own stamp move is the commit (a stamp that already held
+  the version, on a re-run, is not): before it, a failure or INT, TERM or HUP puts the
+  project's own `core.hooksPath` back; after it nothing is undone. Both
   scripts state their threat model in their header and `docs/UPDATING.md` repeats it: they
   protect against their own failures and interruptions and against honest mistakes in the
   tree, and by decision not against another process changing the tree during the run,
