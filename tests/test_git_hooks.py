@@ -89,7 +89,15 @@ class GitHookTests(unittest.TestCase):
                             # A whitespace-only line ends the value: unfolded across it, the
                             # indented prose below hid the bare tool name.
                             'Co-Authored-By: Claude\n \n  Additional notes',
-                            'Co-Authored-By: Claude\n\t\n\tAdditional notes'):
+                            'Co-Authored-By: Claude\n\t\n\tAdditional notes',
+                            # Current model and tool names, with an address no domain rule knows.
+                            'Co-Authored-By: Claude Fable 5.1 <noreply@example.invalid>',
+                            'Co-Authored-By: Claude Mythos 5.1 <noreply@example.invalid>',
+                            'Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@example.invalid>',
+                            'Co-authored-by: opencode <opencode@example.invalid>',
+                            'Co-authored-by: Junie <junie@example.invalid>',
+                            'Co-authored-by: OpenHands <openhands@example.invalid>',
+                            'Co-authored-by: Warp <agent@example.invalid>'):
                 with self.subTest(trailer=trailer):
                     result = self.commit(root, git, trailer + '\n')
                     self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -156,13 +164,17 @@ class GitHookTests(unittest.TestCase):
     def test_the_comment_setting_git_reads_last_is_the_one_skipped(self):
         # Git 2.45 added core.commentString as an alias of core.commentChar, and the one set
         # last wins: a hook that read only commentChar, or preferred commentString wherever it
-        # was set, skipped the wrong prefix and passed "x Co-Authored-By: ...".
+        # was set, skipped the wrong prefix and passed "x Co-Authored-By: ...". The hook runs
+        # directly, with git reporting 2.45: on an older git this case returned early and
+        # counted as a pass. Reading both keys in order works on any git.
+        real_git = shutil.which('git')
         with tempfile.TemporaryDirectory() as tmp:
             root, git = self.repo(tmp)
-            version = git('--version').stdout.split()[2]
-            if tuple(int(part) for part in version.split('.')[:2]) < (2, 45):
-                sys.stderr.write('NOT RUN: core.commentString needs git 2.45, this is %s\n' % version)
-                return
+            shim = Path(tmp) / 'shim'
+            shim.mkdir()
+            (shim / 'git').write_text('#!/bin/sh\n[ "$1" != version ] || { echo "git version 2.45.0"; exit 0; }\n'
+                                      'exec %s "$@"\n' % real_git)
+            (shim / 'git').chmod(0o755)
             glob = Path(tmp) / 'global.gitconfig'
             # (global settings, local settings), each in the order written; x is set last.
             for case, scopes in enumerate((((), (('commentChar', ';'), ('commentString', 'x'))),
@@ -176,9 +188,13 @@ class GitHookTests(unittest.TestCase):
                         git('config', '--file', str(glob), 'core.' + key, value)
                     for key, value in scopes[1]:
                         git('config', '--local', 'core.' + key, value)
-                    # A distinct message per case: one that passed leaves nothing for the next.
-                    result = self.commit(root, git, 'y%d\nx Co-Authored-By: Claude <noreply@anthropic.com>\n'
-                                         % case, GIT_CONFIG_GLOBAL=str(glob))
+                    (root / 'msg').write_text('y%d\n\nx Co-Authored-By: Claude <noreply@anthropic.com>\n'
+                                              % case)
+                    result = subprocess.run(['sh', '.githooks/commit-msg', 'msg'], cwd=root, text=True,
+                                            capture_output=True,
+                                            env=dict(os.environ, GIT_CONFIG_GLOBAL=str(glob),
+                                                     GIT_CONFIG_NOSYSTEM='1',
+                                                     PATH='%s%s%s' % (shim, os.pathsep, os.environ['PATH'])))
                     self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
                     self.assertIn('crediting an AI tool', result.stderr)
 
@@ -270,6 +286,43 @@ class GitHookTests(unittest.TestCase):
                     self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
                     self.assertIn('cannot read %s' % key, result.stderr)
 
+    def test_a_missing_agents_file_keeps_the_hook_on(self):
+        # Only the owner's choice turns the hook off: an AGENTS.md that is not there is a
+        # broken setup, and the credit is still refused.
+        with tempfile.TemporaryDirectory() as tmp:
+            root, git = self.repo(tmp)
+            (root / 'AGENTS.md').unlink()
+            result = self.commit(root, git, 'Co-Authored-By: Claude <noreply@anthropic.com>\n')
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('crediting an AI tool', result.stderr)
+
+    def test_a_tool_that_fails_inside_the_hook_fails_it_closed(self):
+        # Each of these once had an unchecked result: a version git did not report, a message
+        # that could not be unfolded, or a trailer check that failed would have let the
+        # credit below through.
+        with tempfile.TemporaryDirectory() as tmp:
+            root, _ = self.repo(tmp)
+            shim = Path(tmp) / 'shim'
+            shim.mkdir()
+            (root / 'msg').write_text('change c\n\nCo-Authored-By: Claude <noreply@anthropic.com>\n')
+            for tool, broken, message in (
+                    ('git', '[ "$1" != version ] || { echo "version unknown"; exit 0; }',
+                     'cannot read the git version'),
+                    ('awk', 'exit 1', 'cannot unfold the commit message'),
+                    ('grep', 'case " $* " in *" -iE "*) exit 2 ;; esac', 'the trailer check itself failed')):
+                with self.subTest(tool=tool):
+                    for stale in shim.iterdir():
+                        stale.unlink()
+                    (shim / tool).write_text('#!/bin/sh\n%s\nexec %s "$@"\n' % (broken, shutil.which(tool)))
+                    (shim / tool).chmod(0o755)
+                    result = subprocess.run(['sh', '.githooks/commit-msg', 'msg'], cwd=root, text=True,
+                                            capture_output=True,
+                                            env=dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull,
+                                                     GIT_CONFIG_NOSYSTEM='1',
+                                                     PATH='%s%s%s' % (shim, os.pathsep, os.environ['PATH'])))
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    self.assertIn(message, result.stderr)
+
     def test_the_owner_may_allow_ai_attribution(self):
         with tempfile.TemporaryDirectory() as tmp:
             root, git = self.repo(tmp)
@@ -330,25 +383,26 @@ class GitHookTests(unittest.TestCase):
 
     def test_an_unreadable_agents_file_fails_closed(self):
         # A grep that could not read the rule is not an owner's choice to allow AI credit.
-        # A directory cannot be read by any user, root included; mode 000 stops everyone but
-        # root, so under root that variant says it did not run instead of passing silently.
-        for damage in ('directory', 'mode 000'):
+        # A directory cannot be read by any user, root included. Mode 000 does not stop root,
+        # and a case that cannot run under root is no pass there: a grep that fails to read
+        # the file (exit 2, as on a permission error) stands in for it under every user.
+        real_grep = shutil.which('grep')
+        for damage in ('directory', 'grep cannot read it'):
             with self.subTest(damage=damage), tempfile.TemporaryDirectory() as tmp:
                 root, git = self.repo(tmp)
                 agents = root / 'AGENTS.md'
+                extra = {}
                 if damage == 'directory':
                     agents.unlink()
                     agents.mkdir()
-                elif os.geteuid() == 0:
-                    sys.stderr.write('NOT RUN: unreadable AGENTS.md (mode 000) under root; '
-                                     'the directory case covers the read failure\n')
-                    continue
                 else:
-                    agents.chmod(0)
-                try:
-                    result = self.commit(root, git, 'Co-Authored-By: Claude <noreply@anthropic.com>\n')
-                finally:
-                    agents.chmod(0o755 if damage == 'directory' else 0o644)
+                    shim = Path(tmp) / 'shim'
+                    shim.mkdir()
+                    (shim / 'grep').write_text('#!/bin/sh\nfor last; do :; done\n[ "$last" != AGENTS.md ] || exit 2\n'
+                                               'exec %s "$@"\n' % real_grep)
+                    (shim / 'grep').chmod(0o755)
+                    extra['PATH'] = '%s%s%s' % (shim, os.pathsep, os.environ['PATH'])
+                result = self.commit(root, git, 'Co-Authored-By: Claude <noreply@anthropic.com>\n', **extra)
                 self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertIn('cannot read AGENTS.md', result.stderr)
 

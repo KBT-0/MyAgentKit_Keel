@@ -3,6 +3,7 @@ import fcntl
 import os
 from pathlib import Path
 import re
+import shutil
 import signal
 import subprocess
 import tempfile
@@ -28,14 +29,14 @@ def make_project(path):
     subprocess.run(['git', 'init', '-q', str(path)], check=True)
 
 
-def gate(cwd, build, timeout=60, **extra):
+def gate(cwd, build, timeout=60, args=(), pass_fds=(), **extra):
     """Run the gate in its own session; on timeout kill the whole session and return None."""
     env = {k: v for k, v in os.environ.items()
            if not k.startswith(('GATE_', 'BOUNDARY_')) and k != 'CDPATH'}
     env.update(GATE_TEST_BUILD=str(build), **extra)
-    proc = subprocess.Popen(['sh', 'scripts/check.sh'], cwd=cwd, env=env, text=True,
+    proc = subprocess.Popen(['sh', 'scripts/check.sh', *args], cwd=cwd, env=env, text=True,
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                            start_new_session=True)
+                            start_new_session=True, pass_fds=pass_fds)
     try:
         out = proc.communicate(timeout=timeout)[0]
     except subprocess.TimeoutExpired:
@@ -173,12 +174,78 @@ class CheckGateTests(unittest.TestCase):
         self.assertIn('fuser -v %s' % lock, out)
         self.assertIn('lsof %s' % lock, out)
 
+    def lock_path(self):
+        lock = subprocess.run(['git', 'rev-parse', '--git-path', 'check.lock'], cwd=self.project,
+                              capture_output=True, text=True, check=True).stdout.strip()
+        return (self.project / lock).resolve()
+
+    def test_a_descriptor_open_on_another_file_is_not_the_lock(self):
+        # GATE_LOCK_FD must be open on this checkout's lock file: a descriptor on any other
+        # file takes its own flock at once, and with the lock held by another gate and the
+        # marker copied, the seams then turned a red build green.
+        lock = self.lock_path()
+        self.build.write_text('false\n')
+        with open(lock, 'a') as held, open(self.tmp / 'another-file', 'w') as other:
+            fcntl.flock(held, fcntl.LOCK_EX)
+            held.truncate(0)
+            held.write(str(os.getpid()))
+            held.flush()
+            code, out = gate(self.project, self.build, pass_fds=(other.fileno(),),
+                             GATE_LOCK_HELD=str(lock), GATE_LOCK_FD=str(other.fileno()),
+                             GATE_SELFTEST_NESTED=str(os.getpid()), GATE_BUILD_CMD_OVERRIDE='true')
+        self.assertEqual(code, 1, out)
+        self.assertIn("FAIL [env]: GATE_LOCK_HELD names this checkout's lock, but this run did not inherit", out)
+
+    def test_a_link_text_that_cannot_be_read_fails_the_gate(self):
+        # A symlink whose link text readlink could not read was named, and the gate passed
+        # without scanning what git tracks for it.
+        shim = self.tmp / 'shim'
+        shim.mkdir()
+        (shim / 'readlink').write_text('#!/bin/sh\nexit 1\n')
+        (shim / 'readlink').chmod(0o755)
+        (self.project / 'a-link').symlink_to('target.md')
+        subprocess.run(['git', 'add', 'a-link'], cwd=self.project, check=True)
+        code, out = gate(self.project, self.build,
+                         PATH=str(shim) + os.pathsep + os.environ['PATH'])
+        self.assertEqual(code, 1, out)
+        self.assertIn('FAIL [scan]: cannot read the link text of the symlink a-link.', out)
+
+    def test_the_self_tests_hook_and_build_log_cases_go_red(self):
+        # The self-test's own cases for a missing hook, a hook that passes a red gate, a
+        # commit-msg hook that passes an AI trailer and a build log that is not kept could
+        # each be deleted, and every kit test stayed green. Here each meets its failure.
+        project = self.project
+        shutil.copytree(ROOT / 'core/.githooks', project / '.githooks')
+        (project / 'scripts/check.sh').chmod(0o755)
+        (project / 'scripts/review.sh').write_text("echo 'REVIEW SELF-TEST: PASS'\n")
+        (project / 'scripts/boundary_selftests.sh').write_text('# The fixture has no boundaries.\n')
+        (project / 'AGENTS.md').write_text('- **No AI attribution in git.**\n')
+        code, out = gate(project, self.build, timeout=300, args=('--self-test',))
+        self.assertEqual(code, 0, out)
+        self.assertIn('SELF-TEST: PASS', out)
+        (project / '.githooks/pre-merge-commit').unlink()
+        (project / '.githooks/pre-commit').write_text('exit 0\n')
+        (project / '.githooks/commit-msg').write_text('exit 0\n')
+        text = (project / 'scripts/check.sh').read_text()
+        kept = '*) build_log="${lock_path%.lock}-build.log" ;;'
+        self.assertIn(kept, text)
+        (project / 'scripts/check.sh').write_text(text.replace(kept, '*) build_log=$(mktemp) ;;'))
+        code, out = gate(project, self.build, timeout=300, args=('--self-test',))
+        self.assertEqual(code, 1, out)
+        for line in ('FAIL — .githooks/pre-merge-commit is missing',
+                     'FAIL — .githooks/pre-commit exited 0 while the gate was RED',
+                     'FAIL — commit-msg hook accepted an AI co-author trailer',
+                     'FAIL — a build failure was not named, lost its diagnostic chain, left no full log'):
+            self.assertIn(line, out)
+        self.assertIn('SELF-TEST: FAIL', out)
+
     def test_every_cd_ignores_cdpath(self):
         # An exported CDPATH turned `cd scripts` into another directory (and printed it):
-        # doctor.sh then checked another tree. Every cd in the gate, doctor and the hooks
-        # clears it.
-        shipped = [ROOT / 'core/scripts/check.sh', ROOT / 'core/scripts/doctor.sh',
-                   *(ROOT / 'core/.githooks').iterdir()]
+        # doctor.sh then checked another tree, and review.sh could review one. Every cd in a
+        # shipped shell script and hook clears it.
+        shipped = [*sorted((ROOT / 'core/scripts').glob('*.sh')), *(ROOT / 'core/.githooks').iterdir(),
+                   *sorted((ROOT / 'overlays/claude-code/files/scripts').glob('*.sh'))]
+        self.assertIn(ROOT / 'core/scripts/review.sh', shipped)
         found = []
         for path in shipped:
             for number, line in enumerate(path.read_text().splitlines(), 1):

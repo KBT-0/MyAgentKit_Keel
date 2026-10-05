@@ -127,16 +127,26 @@ class SpawnWorkerTests(unittest.TestCase):
         self.assertEqual(submitted[0], f'Read {shq(str(self.brief))} and follow it.')
         self.assertNotIn('Line one of the brief', (self.state / 'submitted').read_text())
 
+    def assert_refused(self, brief):
+        result = self.spawn('w2', str(brief))
+        self.assertNotEqual(result.returncode, 0, brief)
+        self.assertIn(str(brief), result.stderr)
+        self.assertNotIn('new-session', self.tmux_log(), brief)
+
     def test_missing_or_unreadable_brief_is_refused_before_any_session(self):
-        cases = [self.cwd / 'absent.md']
-        if os.geteuid() != 0:  # root reads a mode-000 file, so only the absent case holds there
-            self.brief.chmod(0)
-            cases.append(self.brief)
-        for brief in cases:
-            result = self.spawn('w2', str(brief))
-            self.assertNotEqual(result.returncode, 0, brief)
-            self.assertIn(str(brief), result.stderr)
-            self.assertNotIn('new-session', self.tmux_log(), brief)
+        # A directory is no brief for any user, root included.
+        (self.cwd / 'a-directory.md').mkdir()
+        for brief in (self.cwd / 'absent.md', self.cwd / 'a-directory.md'):
+            with self.subTest(brief=brief.name):
+                self.assert_refused(brief)
+
+    def test_a_brief_without_read_permission_is_refused(self):
+        # Root reads a mode-000 file: there this case cannot run, and a case that cannot run
+        # is reported as a skip, which the kit check refuses, never as a pass.
+        if os.geteuid() == 0:
+            self.skipTest('root reads a mode-000 file; run the kit check as an ordinary user')
+        self.brief.chmod(0)
+        self.assert_refused(self.brief)
 
     def test_worktree_is_built_from_the_leads_current_commit(self):
         git = lambda *a: subprocess.run(['git', *a], cwd=self.cwd, check=True, capture_output=True,

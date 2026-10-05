@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -11,6 +12,12 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class BoundaryExampleTests(unittest.TestCase):
+    def setUp(self):
+        # A caller that ignores SIGINT (a `&` job of a non-interactive shell, nohup) passes that
+        # on to every child, an ignored signal cannot be trapped, and the interrupted cases
+        # failed only there. Each test starts from Python's own default, its children from SIG_DFL.
+        self.addCleanup(signal.signal, signal.SIGINT, signal.signal(signal.SIGINT, signal.default_int_handler))
+
     def test_example_requires_a_green_baseline_and_the_intended_failure(self):
         template = (ROOT / 'core/scripts/boundary_selftests.sh').read_text()
         example = '\n'.join(line[4:] for line in template.splitlines() if line.startswith('#   '))
@@ -87,3 +94,14 @@ while :; do sleep 1; done
                     if child.poll() is None:
                         os.killpg(child.pid, signal.SIGKILL)
                     child.communicate()
+
+    def test_the_interrupted_cases_pass_under_a_caller_that_ignores_sigint(self):
+        # A `&` job of a non-interactive shell, or nohup, starts with SIGINT ignored, which a
+        # shell cannot trap: the interrupted cases failed only there, as timeouts.
+        result = subprocess.run(
+            [sys.executable, '-m', 'unittest',
+             'test_boundary_example.BoundaryExampleTests.test_example_removes_its_injection_when_interrupted',
+             'test_boundary_restore.BoundaryRestoreTests.test_existing_file_example_runs_in_a_disposable_copy'],
+            cwd=Path(__file__).resolve().parent, capture_output=True, text=True, timeout=300,
+            preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_IGN))
+        self.assertEqual(result.returncode, 0, result.stderr[-3000:])

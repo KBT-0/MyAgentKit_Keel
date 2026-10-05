@@ -381,12 +381,15 @@ self_test() {
   # --- the commit message hook --------------------------------------------------
   # A coding tool's default instruction adds an AI co-author trailer to every commit; a rule
   # in AGENTS.md alone did not stop it. A human co-author must still get through, even one
-  # whose name contains a tool's. An owner who allows AI credit drops the rule line from
-  # AGENTS.md (setup interview); the hook then gives way, and this case says so out loud.
+  # whose name contains a tool's. Without the rule line in AGENTS.md the hook gives way, and
+  # this case says so out loud: an owner who allows AI credit drops the line (setup
+  # interview), and a project synced from before v0.9 has not added it yet. The skip names
+  # the missing line, never a choice nobody may have made.
   printf 'change\n\nCo-Authored-By: Claude <noreply@anthropic.com>\n' > "$work/msg_ai"
   printf 'change\n\nCo-authored-by: Claude Monet <person@example.invalid>\n' > "$work/msg_human"
   if [ -f AGENTS.md ] && ! grep -q 'No AI attribution in git' AGENTS.md; then
-    echo "  skip — commit-msg hook: skipped by owner choice (AGENTS.md has no 'No AI attribution in git' rule)"
+    echo "  skip — commit-msg hook: off, AGENTS.md has no 'No AI attribution in git' rule line (the owner allows"
+    echo "         AI credit, or the line was never added after a sync); the hook passes every message."
   elif [ ! -f .githooks/commit-msg ]; then
     echo "  FAIL — .githooks/commit-msg is missing: nothing rejects an AI co-author trailer."
     st_fail=1

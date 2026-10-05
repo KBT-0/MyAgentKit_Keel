@@ -75,7 +75,8 @@
 # included file fails the case by name, since flattening scopes and includes into one file
 # changed what a gate's `git config <key> <value>` did. The values are added in order, and a
 # valueless key is written as valueless: carried as the string `true`, an untyped read of it
-# in the copy differed from the original's.
+# in the copy differed from the original's. The copy's .git/hooks starts empty: copied with
+# the rest, the original's hooks ran from a copied gate's `git commit`.
 # `cp -RP` keeps a symlink as a symlink (POSIX leaves a plain `cp -R` unspecified), and
 # every symlink in the copy whose target resolves outside it is refused by name, wherever it
 # is: checking only the target, the gate and the git storage let an unrelated `build ->
@@ -166,7 +167,7 @@
 # |       print "  FAIL — existing-file probe: " $2 " is set in " $1 ", not in the repository'"'"'s own config file; set it there, or remove it from probe_config_keys."
 # |       exit 1
 # |     }' "$probe_copy/names" || exit 1
-# |   { rm -f .git/config.worktree && : > .git/config &&
+# |   { rm -f .git/config.worktree && rm -rf .git/hooks && mkdir .git/hooks && : > .git/config &&
 # |     probe_env PROBE_ALLOWED="$probe_allowed" xargs -0 sh -c '
 # |       for probe_entry; do
 # |         probe_key=$(printf "%s\n" "$probe_entry" | sed -n 1p) || exit 1

@@ -36,7 +36,8 @@
 #   CLAUDE_CLI_BIN   the Claude binary            (default: claude)
 set -u
 script_dir=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
-cd "${REVIEW_REPO_ROOT:-$script_dir/..}" || exit 2
+# CDPATH cleared: exported, it sent a relative REVIEW_REPO_ROOT into another tree with that name.
+CDPATH= cd -- "${REVIEW_REPO_ROOT:-$script_dir/..}" || exit 2
 
 # ---------------------------------------------------------------------------------------
 # PROJECT-OWNED CONFIGURATION. Set during setup; sync-kit.sh never overwrites this file.

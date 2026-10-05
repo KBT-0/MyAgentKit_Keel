@@ -79,14 +79,27 @@ class OneShot:
         return self
 
     def __exit__(self, *exc):
-        restore(self.previous)
+        # Restored with the cancel signals blocked: one at a time, a cancel after the first
+        # restore met the caller's raising handler there and left the other signals routed to
+        # this guard, whose notes nobody read afterwards. A cancel held while they went back is
+        # this guard's: taken off the pending set and noted, so run() returns it as a cancel.
+        mask = signal.pthread_sigmask(signal.SIG_BLOCK, CANCEL_SIGNALS)
+        try:
+            restore(self.previous)
+            for sig in sorted(signal.sigpending() & set(self.previous)):
+                self.noted.append(signal.sigwait({sig}))
+        finally:
+            signal.pthread_sigmask(signal.SIG_SETMASK, mask)
 
 
-def run(command: list[str], prompt: str, repo: Path, timeout: int, into: dict | None = None) -> dict:
+def run(command: list[str], prompt: str, repo: Path, timeout: int, into: dict | None = None,
+        noted: list | None = None) -> dict:
     """Return exit status, partial output, and termination reason without retrying.
 
     `into` receives the result before the caller's handlers are restored: a raising one
     restored there raised before the returned result was assigned, and the attempt was lost.
+    `noted` is the caller's own list of cancels its noting handler saw before this guard was
+    up: one there stops the launch, as a cancel during the run stops the reviewer.
     """
     if not 1 <= timeout <= 3600:
         raise ValueError("timeout must be 1..3600 seconds")
@@ -95,7 +108,7 @@ def run(command: list[str], prompt: str, repo: Path, timeout: int, into: dict | 
     guard = OneShot()
     try:
         with guard:
-            result.update(_supervise(command, prompt, repo, timeout, started, guard))
+            result.update(_supervise(command, prompt, repo, timeout, started, guard, noted))
             return result
     finally:
         # Noted while the handlers were restored: still a cancel.
@@ -103,7 +116,7 @@ def run(command: list[str], prompt: str, repo: Path, timeout: int, into: dict | 
             result["cancelled"] = True
 
 
-def _supervise(command, prompt, repo, timeout, started, guard):
+def _supervise(command, prompt, repo, timeout, started, guard, prior=None):
     with tempfile.TemporaryFile() as inp, selectors.DefaultSelector() as selector:
         # A file gives even a slow-starting CLI the entire prompt and EOF. Repeated
         # communicate(input=None) after a short timeout can strand a partially written pipe.
@@ -119,6 +132,10 @@ def _supervise(command, prompt, repo, timeout, started, guard):
                 # exec; here a pending cancel is raised on unblock, with the handle kept.
                 mask = signal.pthread_sigmask(signal.SIG_BLOCK, CANCEL_SIGNALS)
                 try:
+                    # A cancel the caller noted before this guard was up: never launched. One
+                    # after that met the guard, or is pending here and raised on unblock.
+                    if prior:
+                        raise KeyboardInterrupt
                     child = subprocess.Popen(command, cwd=repo, stdin=inp, stdout=subprocess.PIPE,
                                              stderr=subprocess.PIPE, start_new_session=True,
                                              env=dict(os.environ, MYAGENTKIT_DELEGATION_DEPTH="1"),

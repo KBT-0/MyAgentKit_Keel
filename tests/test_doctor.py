@@ -118,14 +118,14 @@ class DoctorTests(unittest.TestCase):
             dangling.mkdir()
             (dangling / 'tmux').symlink_to(tmp / 'absent')
 
-            def path_without(tool):
-                links = tmp / ('no-%s-bin' % tool)
+            def path_without(*tools):
+                links = tmp / ('no-%s-bin' % '-'.join(tools))
                 links.mkdir()
                 for directory in [str(dangling), *env['PATH'].split(os.pathsep) * 2]:
                     if os.path.isdir(directory):
                         for name in os.listdir(directory):
                             source = Path(directory) / name
-                            if name != tool and source.exists() and not os.path.lexists(links / name):
+                            if name not in tools and source.exists() and not os.path.lexists(links / name):
                                 (links / name).symlink_to(source.resolve())
                 return str(links)
             no_timeout = path_without('timeout')
@@ -275,6 +275,60 @@ class DoctorTests(unittest.TestCase):
             self.assertEqual(red.returncode, 1, red.stdout)
             self.assertIn('MISSING: the commit gate is not wired (core.hooksPath)', red.stdout)
             git('config', 'core.hooksPath', '.githooks')
+
+            # Executable on disk, 100644 in the index: CI and the next clone get exit 126.
+            git('update-index', '--chmod=-x', '.claude/hooks/gate_on_stop.sh')
+            red = doctor()
+            self.assertEqual(red.returncode, 1, red.stdout)
+            self.assertIn('MISSING: .claude/hooks/gate_on_stop.sh is not executable (disk or git index)', red.stdout)
+            self.assertEqual(red.stdout.count('MISSING:'), 1, red.stdout)
+            git('update-index', '--chmod=+x', '.claude/hooks/gate_on_stop.sh')
+
+            # No commit author: the first commit of the session fails.
+            git('config', '--unset', 'user.name')
+            red = doctor()
+            self.assertEqual(red.returncode, 1, red.stdout)
+            self.assertIn('MISSING: git identity', red.stdout)
+            self.assertEqual(red.stdout.count('MISSING:'), 1, red.stdout)
+            git('config', 'user.name', 'fixture')
+
+            # Each tool doctor asks for, made absent or wrong by a stand-in: a python3 older
+            # than 3.10, no tmux for spawn_worker.sh, no node for a project that pins one, and an
+            # npm cache owned by another user (a stand-in id names this user as someone else).
+            older = tmp / 'older-python'
+            older.mkdir()
+            (older / 'python3').write_text('#!/bin/sh\ncase "$*" in *version_info*) exit 1 ;; esac\n'
+                                           'exec %s "$@"\n' % shutil.which('python3', path=env['PATH']))
+            fake_id = tmp / 'other-user'
+            fake_id.mkdir()
+            (fake_id / 'id').write_text('#!/bin/sh\n[ "$1" != -u ] || { echo 99999; exit 0; }\n'
+                                        'exec %s "$@"\n' % shutil.which('id', path=env['PATH']))
+            for stand_in in (older / 'python3', fake_id / 'id'):
+                stand_in.chmod(0o755)
+            (home / '.npm/_cacache/index').mkdir(parents=True)
+            (home / '.npm/_cacache/index/entry').write_text('cached\n')
+            # One scan of PATH for both (each scan is slow where PATH holds large directories);
+            # the stub tmux in front again for the node case, so only node is absent there.
+            no_tmux_node = path_without('tmux', 'node')
+            for path, expect in ((str(older) + os.pathsep + env['PATH'],
+                                  'MISSING: Python 3.10 or newer as python3'),
+                                 (no_tmux_node, 'MISSING: tmux, which scripts/spawn_worker.sh needs'),
+                                 (str(bin_dir) + os.pathsep + no_tmux_node,
+                                  'MISSING: node is not resolvable on the PATH a git hook inherits'),
+                                 (str(fake_id) + os.pathsep + env['PATH'],
+                                  'MISSING: files in the npm cache %s are owned by another user' % (home / '.npm'))):
+                with self.subTest(expect=expect):
+                    if 'node' in expect:
+                        (project / '.nvmrc').write_text('22\n')
+                    try:
+                        red = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=project, capture_output=True,
+                                             text=True, env=dict(env, PATH=path))
+                    finally:
+                        (project / '.nvmrc').unlink(missing_ok=True)
+                    self.assertEqual(red.returncode, 1, red.stdout)
+                    self.assertIn(expect, red.stdout)
+                    self.assertEqual(red.stdout.count('MISSING:'), 1, red.stdout)
+            shutil.rmtree(home / '.npm')
 
             # A checkout on a Windows drive under WSL. The path and /proc/version are injected
             # (DOCTOR_CHECKOUT, DOCTOR_PROC_VERSION) because this machine may be neither.
