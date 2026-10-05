@@ -92,7 +92,12 @@ in `RESEARCH_LOG.md` (2026-10-03). Most of the files below are project-owned, so
   mismatching record, or a usage directory that cannot be listed, stops a labelled round
   (exit 2), and the refusal names the file and the command that moves it aside. An empty
   `MYAGENTKIT_TASK_ID` counts as unset. `review.sh` puts `~/.local/bin` at the end of PATH,
-  not the front (an old binary there shadowed the current one), and ignores `CDPATH`. The
+  not the front (an old binary there shadowed the current one), and ignores `CDPATH`. Claude's
+  pin is attested only by its exact id or that id plus `-YYYYMMDD` (`claude-opus-5-5` used
+  to attest the pin `claude-opus-5`; issue #36). One review resolves its base once, and the
+  diff, the usage record and the carried-round check share that commit (issue #37). A Codex
+  review that completed is not failed by a stream error it recovered from, such as an MCP
+  reconnect (issue #34). The
   review self-test has a minimum test count per suite.
 - **Review rounds converge (issue #18).** Both reviewers are asked for every finding, a
   severity (Critical, High, Medium, Low) on each, and a fix sketch. With the same
@@ -219,7 +224,9 @@ in `RESEARCH_LOG.md` (2026-10-03). Most of the files below are project-owned, so
   `check.sh`, `claude_bridge.py` and `sync-kit.sh` had a negative test that stayed green with
   the guard deleted; each now has one that goes red. A case that cannot run (uid 0, an old
   git) is no longer counted as a pass, the suites no longer fail when the caller ignores
-  SIGINT, and `check_kit.py` holds every suite to its current test count.
+  SIGINT, and `check_kit.py` holds every suite to its current test count. The boundary
+  suites wait 30 s per step, times `MYAGENTKIT_TEST_TIMEOUT_SCALE` on a slow host, and a
+  deadline that fires prints the child's output (issue #29).
 
 ### Upgrading a project from v0.8
 

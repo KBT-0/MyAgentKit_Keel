@@ -947,6 +947,17 @@ not reviewed by anyone but their author. Twelve rounds in the day: 7, 2, 4, 4, 4
 `3536cb7..master` diff in a single prompt (it grew past the 400000-byte budget), any run
 on macOS/BSD, with dash as `sh`, on Python 3.10, or a live tmux and Claude session.
 
+#### The four issues left open "on purpose"
+
+Issues #29, #34, #36 and #37 had been carried as open on purpose from one handoff to the
+next without a reason anyone could state; the owner asked why, and there was none. Fixed in
+one round. Two things the fixes showed: #34's own diagnosis was wrong (the completed review
+was failed by `error` events in the stream for a reconnect it recovered from, not by
+stderr text; the stderr-only case passes on the old code), and #29 could not be made to
+fail again (80 busy loops and six parallel copies of the suite: the old 5 s code passed
+every time), so its fix is a wider, scalable deadline with the child's output on expiry,
+not a reproduced red. Not reviewed by anyone but the author, by the owner's stopping rule.
+
 #### The review gate held on the kit's own hardening
 
 Five of the nine work packages (the gate lock, both review-tooling packages, the commit gates
