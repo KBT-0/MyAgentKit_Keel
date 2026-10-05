@@ -202,6 +202,21 @@ class SpawnWorkerTests(unittest.TestCase):
         self.assertIn('control character', result.stderr)
         self.assertNotIn('new-session', self.tmux_log())
 
+    def test_no_error_message_echoes_a_control_character(self):
+        # "brief file not found" ran before the control-character check and printed the raw
+        # path, ESC included, to the lead's terminal; so did "unknown option" and --settings.
+        cases = (('missing brief', ('w10', str(self.cwd / 'absent\x1b[2J.md'))),
+                 ('missing name', ('w\x1b[2J', str(self.cwd / 'absent.md'))),
+                 ('unknown option', ('w11', str(self.brief), '--x\x1b[2J')),
+                 ('settings', ('w12', str(self.brief), '--worktree', '--settings', 'a\x1b[2J.json')))
+        for case, args in cases:
+            with self.subTest(case=case):
+                result = self.spawn(*args)
+                self.assertNotEqual(result.returncode, 0, result.stderr)
+                self.assertNotIn('\x1b', result.stdout + result.stderr)
+                self.assertNotIn('new-session', self.tmux_log())
+        self.assertIn('control character', self.spawn(*cases[0][1]).stderr)
+
     def test_a_relative_settings_file_resolves_against_the_caller_with_a_worktree(self):
         # The worktree is entered before the tool starts: a relative --settings file then
         # named the worktree's copy (absent when untracked, or another tracked file).
