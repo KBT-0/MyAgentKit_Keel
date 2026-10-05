@@ -217,7 +217,8 @@ One topic per turn. Suggested order, because each answer informs the next:
    is a hard rule in `AGENTS.md` either way. No (the default): keep the "No AI attribution
    in git" rule; `.githooks/commit-msg` enforces it. Yes: replace that rule with one saying
    AI tools may be credited; the hook keys on the rule line, so without it the hook gives
-   way and `check.sh --self-test` reports its case as skipped by owner choice. If the Claude
+   way and `check.sh --self-test` reports its case as a `skip` naming the absent rule line
+   (`AGENTS.md has no 'No AI attribution in git' rule line`). If the Claude
    Code overlay is installed, also delete the block from `<!-- BEGIN attribution rule` to
    `<!-- END attribution rule -->` in `.claude/agents/worker.md`, and tell the owner you did:
    left there, it told every worker the opposite of the owner's answer.

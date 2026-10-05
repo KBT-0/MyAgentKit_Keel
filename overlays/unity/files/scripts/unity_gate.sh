@@ -11,7 +11,7 @@
 #
 # CLOSE THE EDITOR FIRST. Batchmode cannot open a project that already holds a lock file.
 set -u
-cd "$(dirname "$0")/.."
+CDPATH= cd -- "$(dirname "$0")/.."
 
 project_dir="${UNITY_PROJECT:-unity}"
 unity_bin="${UNITY_PATH:-unity}"
@@ -29,7 +29,7 @@ run_gate() {
   # shell's. The file then lands somewhere nobody looks, Unity still exits 0, and a gate
   # that trusts the exit code reports PASS for a run that executed nothing. So: absolute
   # paths, translated when a Windows .exe is driven from a POSIX shell. (docs/GOTCHAS.md)
-  proj=$(cd "$project_dir" && pwd)
+  proj=$(CDPATH= cd -- "$project_dir" && pwd)
   logs="$proj/Logs"
   case "$unity_bin" in
     *.exe)
