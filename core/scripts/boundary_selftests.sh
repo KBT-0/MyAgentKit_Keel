@@ -72,10 +72,13 @@
 # probe_config_keys: kept verbatim, it ran the original's core.hooksPath and a copied gate's
 # `git archive` ran its tar.<format>.command, and a denylist of such keys had already missed
 # the next one. Every other key gets a NOTE line, include.path and includeIf among them, and
-# .git/config.worktree is removed. An allowlisted key is carried only when every value of it
-# comes from the repository's own config file; one set in the worktree configuration or an
-# included file fails the case by name, since flattening scopes and includes into one file
-# changed what a gate's `git config <key> <value>` did. The values are added in order, and a
+# .git/config.worktree is removed. The settings are read from the copy's .git/config as copied,
+# so equal digests mean equal settings: read again from the live checkout after the copy was
+# hashed, a setting changed in between made the injected run fail on its own. An allowlisted
+# key is carried only when every value of it comes from the repository's own config file;
+# one set in the worktree configuration or an included file fails the case by name, since
+# flattening scopes and includes into one file changed what a gate's `git config <key>
+# <value>` did. The values are added in order, and a
 # valueless key is written as valueless: carried as the string `true`, an untyped read of it
 # in the copy differed from the original's. The copy's .git/hooks starts empty: copied with
 # the rest, the original's hooks ran from a copied gate's `git commit`.
@@ -95,20 +98,24 @@
 # thing to bypass (a .git/config replaced by a link to /dev/zero hung the comparison). So the
 # baseline's copy, its own HOME and TMPDIR inside, is deleted (one that cannot be deleted
 # fails the case by name), and the same function makes the injected run a new one. Each copy
-# is hashed as taken, before anything runs in it (every entry's path, type, executable bit and
-# content, `.git` included; a FIFO, socket or device is refused by name): taken from the live
-# checkout at two times, the second copy's gate need not be the one the baseline proved green,
-# so copies that differ are reported NOT RUN. The runs
-# still share PATH, which a baseline changes only through a writable PATH directory, outside
-# the example's reach, and the checkout, which the example only reads. A folder the audit
+# is hashed as taken, before anything runs in it (every entry's path, type, full permission
+# bits and content, the root and `.git` included; a FIFO, socket or device is refused by
+# name): taken from the live checkout at two times, the second copy's gate need not be the one
+# the baseline proved green, so copies that differ are reported NOT RUN. A digest of only the
+# executable bit missed a file changed from 0644 to 0444, which a gate reading `[ -w policy ]`
+# sees. The git index is hashed too, so another session's `git status` refreshing it between
+# the copies also reports NOT RUN: run the self-test again. The runs still share PATH, which
+# a baseline changes only through a writable PATH directory, outside the example's reach, and
+# the checkout, which the example only reads, once per copy, by the `cp`. A folder the audit
 # cannot read fails it by name (os.walk skips one), and its Python runs isolated (-I).
-# Deleting a copy changes the mode of its folders only, never of a file, each set by name
-# relative to its open parent without following a link: `chmod -R u+rwx` before `rm -rf`
-# made a checkout file the baseline had hard-linked into its copy executable, and followed a
-# temporary root the baseline had replaced with a symlink. `find -type d -exec chmod` is not
-# enough, since chmod resolves the whole path again and a folder swapped for a link in between
-# takes it outside. The root's device and inode are recorded when mktemp makes it; a root that
-# is no longer that folder is refused by name, and nothing is deleted.
+# The example changes no mode and deletes only through the directory it made. `chmod -R u+rwx`
+# before `rm -rf` made a checkout file the baseline had hard-linked into its copy executable;
+# a chmod limited to folders could still be raced onto such a link, and `rm -rf` after a
+# separate check of the root deleted a root swapped in between. So the root's device and inode
+# are recorded when mktemp makes it, a root that is no longer that folder is refused by name
+# and nothing is deleted, and the tree is removed entry by entry relative to its open folders.
+# A copy the gate left unreadable or unwritable is not repaired: it fails the case by name,
+# and that is the project's gate to fix.
 # Copying a large tree (dependencies, build output) costs time, twice: copy only what the
 # gate reads if that is known, but never let the probe write into the checkout.
 #
@@ -123,39 +130,43 @@
 # |   probe_checkout=$(pwd -P) || exit 1
 # |   probe_copy=
 # |   probe_id=
-# |   # Only folders of the copy are made writable (a read-only one, a module cache, survives
-# |   # `rm -rf`), each by name relative to its open parent and never through a link; the root
-# |   # must still be the folder mktemp made (device and inode), or nothing is deleted.
+# |   # The one way a copy is deleted: through the open root mktemp made (device and inode), each
+# |   # entry by name relative to its open folder, never a path from the top, never a mode changed.
 # |   probe_delete() {
 # |     [ -z "$probe_copy" ] || {
 # |       python3 -I -c '
 # | import os, stat, sys
 # | path, made = sys.argv[1], sys.argv[2]
-# | def refuse(why):
-# |     print("  FAIL — existing-file probe: " + why + "; deleted nothing.")
-# |     sys.exit(1)
-# | def writable(dir_fd, name, made=None):
-# |     mode = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
-# |     if made is not None and (not stat.S_ISDIR(mode.st_mode) or "%d %d" % (mode.st_dev, mode.st_ino) != made):
-# |         refuse(path + " is no longer the directory made for the disposable copy")
-# |     if not stat.S_ISDIR(mode.st_mode):
-# |         return
-# |     if mode.st_mode & 0o700 != 0o700:
-# |         os.chmod(name, stat.S_IMODE(mode.st_mode) | 0o700, dir_fd=dir_fd, follow_symlinks=False)
-# |     fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=dir_fd)
-# |     try:
-# |         opened = os.fstat(fd)
-# |         if made is not None and "%d %d" % (opened.st_dev, opened.st_ino) != made:
-# |             refuse(path + " is no longer the directory made for the disposable copy")
-# |         for entry in os.listdir(fd):
-# |             writable(fd, entry)
-# |     finally:
-# |         os.close(fd)
+# | name = os.path.basename(path)
+# | def same(found):
+# |     return stat.S_ISDIR(found.st_mode) and "%d %d" % (found.st_dev, found.st_ino) == made
+# | def empty(fd):
+# |     for entry in os.listdir(fd):
+# |         if stat.S_ISDIR(os.stat(entry, dir_fd=fd, follow_symlinks=False).st_mode):
+# |             sub = os.open(entry, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+# |             try:
+# |                 empty(sub)
+# |             finally:
+# |                 os.close(sub)
+# |             os.rmdir(entry, dir_fd=fd)
+# |         else:
+# |             os.unlink(entry, dir_fd=fd)
 # | try:
-# |     writable(os.open(os.path.dirname(path), os.O_RDONLY | os.O_DIRECTORY), os.path.basename(path), made)
-# | except (OSError, NotImplementedError) as error:
-# |     refuse("could not make " + path + " deletable without following a link (" + str(error) + ")")
-# | ' "$probe_copy" "$probe_id" && rm -rf "$probe_copy"
+# |     parent = os.open(os.path.dirname(path), os.O_RDONLY | os.O_DIRECTORY)
+# |     root = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
+# | except OSError:
+# |     root = None
+# | if root is None or not same(os.fstat(root)):
+# |     sys.exit("  FAIL — existing-file probe: " + path + " is no longer the directory made for the disposable copy; deleted nothing.")
+# | try:
+# |     empty(root)
+# |     # rmdir removes only an empty directory: one swapped in under this name since is not deleted.
+# |     if not same(os.stat(name, dir_fd=parent, follow_symlinks=False)):
+# |         raise OSError(path + " is no longer the directory made for it")
+# |     os.rmdir(name, dir_fd=parent)
+# | except (OSError, RecursionError) as error:
+# |     sys.exit("  FAIL — existing-file probe: could not delete the disposable copy at " + path + "; delete it yourself (" + str(error) + ").")
+# | ' "$probe_copy" "$probe_id" 2>&1
 # |       probe_gone=$?
 # |       probe_copy=
 # |       return "$probe_gone"
@@ -185,12 +196,13 @@
 # |   probe_gate="$(basename "$(dirname "$0")")/${0##*/}"
 # |   # Every symlink resolves inside the copy, no `.git` lies below the top level, and the path to
 # |   # the target and to the gate runs through no symlink and ends at a regular file. Prints the
-# |   # copy's digest as taken: every entry's path, type, executable bit and content, `.git` included.
+# |   # copy's digest as taken: every entry's path, type, permission bits and content, `.git` included.
 # |   probe_audit() {
 # |     probe_digest=$(probe_env python3 -I -c '
 # | import hashlib, os, stat, sys
 # | root = sys.argv[1]
-# | digest = hashlib.sha256()
+# | # Every entry has its full permission bits hashed, the root of the copy too: cp -RP gives both copies the same.
+# | digest = hashlib.sha256(b"%o\n" % stat.S_IMODE(os.lstat(root).st_mode))
 # | # Unreachable by construction (cp -RP fails first on what it cannot read); kept as the guard.
 # | def unread(error):
 # |     sys.exit("the audit could not read " + os.path.relpath(error.filename or root, root) + " (" + str(error.strerror or error) + ")")
@@ -207,7 +219,7 @@
 # |             if stat.S_ISDIR(mode):
 # |                 kind = b"d"
 # |             elif stat.S_ISREG(mode):
-# |                 kind = b"x" if mode & stat.S_IXUSR else b"f"
+# |                 kind = b"f"
 # |                 fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0))
 # |                 with open(fd, "rb") as data:
 # |                     if not stat.S_ISREG(os.fstat(fd).st_mode):
@@ -225,7 +237,7 @@
 # |                     sys.exit(rel + " is a symlink that leads out of the disposable copy")
 # |             else:
 # |                 sys.exit(rel + " is not a regular file, a folder or a symlink (a FIFO, socket or device)")
-# |             digest.update(os.fsencode(rel) + b"\0" + kind + content.hexdigest().encode() + b"\n")
+# |             digest.update(os.fsencode(rel) + b"\0" + kind + b"%o " % stat.S_IMODE(mode) + content.hexdigest().encode() + b"\n")
 # | except OSError as error:
 # |     unread(error)
 # | for rel in sys.argv[2:]:
@@ -254,10 +266,11 @@
 # |     cp -RP "$probe_checkout" "$probe_copy/checkout" && CDPATH= cd -P "$probe_copy/checkout" || exit 1
 # |     probe_root=$(pwd -P) || exit 1
 # |     probe_audit
-# |     probe_env git -C "$probe_checkout" config --show-origin --includes --name-only --list > "$probe_copy/names" &&
-# |       probe_env git -C "$probe_checkout" config --local --no-includes --show-origin --name-only --list > "$probe_copy/own" &&
-# |       probe_env git -C "$probe_checkout" config --local --no-includes --list -z > "$probe_copy/config" ||
-# |       probe_fail "could not read the original's configuration (git config); refusing to run."
+# |     # The settings come from the copy's .git/config as copied and hashed, never the live checkout.
+# |     probe_env git config --show-origin --includes --name-only --list > "$probe_copy/names" &&
+# |       probe_env git config --local --no-includes --show-origin --name-only --list > "$probe_copy/own" &&
+# |       probe_env git config --local --no-includes --list -z > "$probe_copy/config" ||
+# |       probe_fail "could not read the copy's configuration (git config); refusing to run."
 # |     probe_own=$(LC_ALL=C awk -F '\t' 'NR == 1 { print $1 }' "$probe_copy/own") || exit 1
 # |     PROBE_NOTED=$probe_noted PROBE_OWN=$probe_own PROBE_ALLOWED=$probe_allowed LC_ALL=C awk -F '\t' '
 # |       BEGIN { n = split(ENVIRON["PROBE_ALLOWED"], k, " "); for (i = 1; i <= n; i++) allowed[k[i]] = 1 }
@@ -271,7 +284,9 @@
 # |         exit 1
 # |       }' "$probe_copy/names" || exit 1
 # |     probe_noted=1
-# |     { rm -f .git/config.worktree .git/config && rm -rf .git/hooks && mkdir .git/hooks && : > .git/config &&
+# |     # The copied hooks move beside the copied checkout, deleted with the copy (mkdir fails if any are left).
+# |     { rm -f .git/config.worktree .git/config && { mv .git/hooks "$probe_copy/hooks" 2>/dev/null; mkdir .git/hooks; } &&
+# |       : > .git/config &&
 # |       probe_env PROBE_ALLOWED="$probe_allowed" xargs -0 sh -c '
 # |         for probe_entry; do
 # |           probe_key=$(printf "%s\n" "$probe_entry" | sed -n 1p) || exit 1
@@ -296,11 +311,10 @@
 # |   probe_first=$probe_digest
 # |   probe_env sh "$probe_root/$probe_gate" >/dev/null 2>&1 ||
 # |     probe_fail "the baseline is already red; the injection would prove nothing."
-# |   cd / && probe_delete ||
-# |     probe_fail "could not delete the baseline run's copy; refusing to run."
+# |   cd / && probe_delete || exit 1
 # |   probe_fresh_copy
 # |   [ "$probe_digest" = "$probe_first" ] ||
-# |     probe_skip "the checkout changed between the two copies; run the self-test again."
+# |     probe_skip "the checkout, or its git index, changed between the two copies; run the self-test again."
 # |   printf 'from myapp.web import router\n' > "$probe_root/$probe_target" || exit 1
 # |   probe_status=0
 # |   probe_output=$(probe_env sh "$probe_root/$probe_gate" 2>&1) || probe_status=$?
