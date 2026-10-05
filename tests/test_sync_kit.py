@@ -220,9 +220,11 @@ class SyncKitTests(unittest.TestCase):
     def test_a_write_that_fails_midway_leaves_the_old_file_whole(self):
         # The stamp was written by redirection, which empties the file before writing, and the
         # kit-owned files by `cp` over them: a full disk left an empty stamp (which the next sync
-        # refuses) or a hook cut short. A file-size limit stands in for the full disk.
+        # refuses) or a hook cut short. A file-size limit stands in for the full disk. A file at
+        # the old fixed temporary name, hard-linked to the stamp, was written into: the failed
+        # write emptied the live stamp through it.
         rel = '.githooks/commit-msg'
-        for case, blocks in (('stamp', 0), ('kit-owned file', 1)):
+        for case, blocks in (('stamp', 0), ('kit-owned file', 1), ('stamp hard-linked', 0)):
             with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
                 kit, project = Path(tmp) / 'kit', Path(tmp) / 'project'
                 self.sync(tmp, '- A kit-owned file changed.\n', '--dry-run')
@@ -232,6 +234,8 @@ class SyncKitTests(unittest.TestCase):
                     shutil.copyfile(ROOT / 'core' / rel, kit / 'core' / rel)
                     (project / rel).parent.mkdir(parents=True)
                     (project / rel).write_bytes(old)
+                if case == 'stamp hard-linked':
+                    os.link(project / 'docs/kit/.kit-version', project / 'docs/kit/.kit-version.kit-tmp')
                 result = subprocess.run(['sh', '-c', 'trap "" XFSZ; ulimit -f %d; exec sh "$0" "$@"' % blocks,
                                          str(kit / 'sync-kit.sh'), str(project)],
                                         capture_output=True, text=True, timeout=30)
@@ -239,14 +243,14 @@ class SyncKitTests(unittest.TestCase):
                 self.assertEqual((project / 'docs/kit/.kit-version').read_bytes(), b'0.1\n')
                 if case == 'kit-owned file':
                     self.assertEqual((project / rel).read_bytes(), old, 'a hook cut short')
-                self.assertEqual(sorted(p.name for p in project.rglob('*.kit-tmp')), [], 'temporary left')
+                self.assertEqual(sorted(p.name for p in project.rglob('.kit-tmp.*')), [], 'temporary left')
 
-    def test_a_leftover_temporary_is_overwritten_and_one_that_is_no_file_stops_the_sync(self):
-        # The stamp and the kit-owned files are written through a fixed sibling name, judged
-        # like the file itself: one a killed run left behind is replaced; a folder or a symlink
-        # there is a conflict, and nothing is copied or recorded.
+    def test_whatever_is_at_an_old_temporary_name_or_a_leftover_is_left_alone(self):
+        # The stamp and the kit-owned files were written through a fixed sibling, FILE.kit-tmp:
+        # an owner's file there was overwritten and removed, and a folder or symlink there
+        # stopped the sync. A temporary is created fresh; one a stopped run left is named only.
         rel = '.githooks/commit-msg'
-        for kind, stops in (('leftover file', False), ('folder', True), ('symlink', True)):
+        for kind in ('file', 'folder', 'symlink', 'hard link to the stamp'):
             for where in ('docs/kit/.kit-version.kit-tmp', rel + '.kit-tmp'):
                 with self.subTest(kind=kind, where=where), tempfile.TemporaryDirectory() as tmp:
                     kit, project = Path(tmp) / 'kit', Path(tmp) / 'project'
@@ -254,25 +258,28 @@ class SyncKitTests(unittest.TestCase):
                     (kit / 'core' / rel).parent.mkdir(parents=True)
                     shutil.copyfile(ROOT / 'core' / rel, kit / 'core' / rel)
                     (project / where).parent.mkdir(parents=True, exist_ok=True)
-                    if kind == 'leftover file':
-                        (project / where).write_text('9.9\n' * 300)
-                        self.sync(tmp, '', '--dry-run')
-                        self.assertTrue((project / where).exists(), 'a dry run removed a file')
+                    leftover = project / 'docs/kit/.kit-tmp.Ab12Cd'
+                    leftover.write_text('left\n')
+                    if kind == 'file':
+                        (project / where).write_text('mine\n')
                     elif kind == 'folder':
                         (project / where).mkdir()
-                    else:
+                    elif kind == 'symlink':
                         (project / where).symlink_to(Path(tmp) / 'outside')
+                    else:
+                        os.link(project / 'docs/kit/.kit-version', project / where)
                     result = subprocess.run(['sh', str(kit / 'sync-kit.sh'), str(project)],
                                             capture_output=True, text=True, timeout=30)
-                    self.assertEqual(result.returncode, 1 if stops else 0, result.stdout + result.stderr)
-                    self.assertEqual((project / 'docs/kit/.kit-version').read_text(), '0.1\n' if stops else '0.2\n')
-                    self.assertEqual((project / rel).exists(), not stops, 'copied past a conflict')
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertEqual((project / 'docs/kit/.kit-version').read_text(), '0.2\n')
+                    self.assertEqual((project / rel).read_bytes(), (ROOT / 'core' / rel).read_bytes())
                     self.assertFalse((Path(tmp) / 'outside').exists(), 'written through a symlink')
-                    if stops:
-                        self.assertIn(where, result.stdout + result.stderr)
-                    else:
-                        self.assertFalse((project / where).exists(), 'temporary left')
-                        self.assertEqual((project / rel).read_bytes(), (ROOT / 'core' / rel).read_bytes())
+                    self.assertEqual({'file': lambda p: p.read_text() == 'mine\n', 'folder': Path.is_dir,
+                                      'symlink': Path.is_symlink,
+                                      'hard link to the stamp': lambda p: p.read_text() == '0.1\n'}[kind](project / where),
+                                     True, 'the owner\'s ' + kind + ' was changed')
+                    self.assertEqual(leftover.read_text(), 'left\n')
+                    self.assertIn('docs/kit/.kit-tmp.Ab12Cd', result.stdout)
 
     def test_the_path_check_and_the_writer_are_the_same_functions_in_bootstrap_and_sync(self):
         # bootstrap.sh and sync-kit.sh each hold `blocked`, the one check for every path they

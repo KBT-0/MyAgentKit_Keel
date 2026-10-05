@@ -49,7 +49,7 @@ target=$(CDPATH= cd -- "$target" 2>/dev/null && pwd) || die "no such directory"
 [ "$target" = "$kit" ] && die "refusing to sync the kit with itself"
 
 # blocked REL [dir] — the one check for every path the sync reads or writes (the kit-owned
-# files, the version stamp and their temporaries): prints why REL may not be used, nothing
+# files and the version stamp): prints why REL may not be used, nothing
 # when it may. Every existing component below the target must be a real folder, and REL itself
 # absent or a regular file (with `dir`, which only bootstrap.sh uses: absent or a real folder).
 # What fails is not opened: `cmp` on a FIFO blocked forever; a symlink, or a symlinked
@@ -82,28 +82,26 @@ perms() {
 
 # put DEST [SRC] — the one writer: DEST gets SRC's content (stdin without SRC) whole or not at
 # all, through a temporary that `mv` moves over it. A redirection or `cp` empties DEST before
-# writing, so a full disk left an empty stamp or a gate cut short. The temporary carries DEST's
-# own mode, or for a new file the mode a plain `cp` (or redirection) gives under the umask, set
-# before a byte is written: a temporary made under the umask turned a 0600 note into 0644.
-# It is opened before the chmod, so a mode without write permission still takes the content.
+# writing, so a full disk left an empty stamp or a gate cut short. The temporary is created
+# fresh by `mktemp` (exclusively, never an existing file) in DEST's folder: a fixed name
+# trusted what was there, so a hard link to the stamp had a failed write empty the stamp and an
+# owner's file at that name was overwritten. `part` names it for the exit trap, which removes
+# only that. It carries DEST's own mode, or for a new file the mode a plain `cp` (or
+# redirection) gives under the umask, set before a byte is written: a temporary made under the
+# umask turned a 0600 note into 0644. It is opened before the chmod, so a mode without write
+# permission still takes the content.
 put() {
   if [ -e "$1" ]; then _m=$(perms "$1")
   elif [ -n "${2:-}" ]; then _m=$(perms "$2")
   else _m=666; fi
   [ -e "$1" ] || _m=$(printf '%o' $(( 0$_m & ~0$(umask) )))
-  part="$1.kit-tmp" &&
+  part=$(mktemp "${1%/*}/.kit-tmp.XXXXXX") &&
     { chmod "$_m" "$part" && cat "${2:--}"; } > "$part" && mv -f "$part" "$1" && part=""
 }
 
 why=$(blocked docs/kit/.kit-version)
 [ -z "$why" ] || die "conflict: docs/kit/.kit-version ($why); the version is not read or written there"
 stamp="$target/docs/kit/.kit-version"
-# Every file the sync writes goes to a fixed sibling first (FILE.kit-tmp, judged like FILE) and
-# replaces FILE whole with `mv`: a redirection or `cp` empties FILE before writing it, so a full
-# disk left an empty stamp, which the next sync refuses, or a gate cut short. A temporary a
-# killed run left behind is a regular file and is overwritten; the exit trap removes it.
-why=$(blocked docs/kit/.kit-version.kit-tmp)
-[ -z "$why" ] || die "conflict: docs/kit/.kit-version.kit-tmp ($why); the version is not written there"
 part=""
 [ -f "$stamp" ] || die "$stamp not found — this project was not installed with bootstrap.sh"
 have=$(tr -d '[:space:]' < "$stamp")
@@ -120,6 +118,11 @@ copies=$(mktemp) || { rm -f "$work_list" "$pending"; echo "sync-kit: cannot crea
 trap 'rm -f "$work_list" "$pending" "$copies" ${part:+"$part"}' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+
+# A temporary a stopped run left behind (`put` names them .kit-tmp.*) is not this run's to
+# delete: it is named, for the owner to remove.
+left=$(cd "$target" && find . -name .git -prune -o -type f -name '.kit-tmp.*' -print 2>/dev/null) || :
+[ -z "$left" ] || printf '%s\n' "sync-kit: NOTE: temporaries a stopped run left behind; remove them:" "$left"
 
 printf '%s\n' "sync-kit: project has v$have, kit is v$latest"
 if [ "$have" = "$latest" ]; then
@@ -153,7 +156,6 @@ while IFS= read -r src; do
   [ -n "$src" ] || continue
   relpath "$src" || continue
   why=$(blocked "$rel")
-  [ -n "$why" ] || { why=$(blocked "$rel.kit-tmp"); why=${why:+$rel.kit-tmp: $why}; }
   # An overlay file is synced only where it already exists: its presence is the only record
   # of whether the project took that overlay, and installing an overlay is bootstrap's job.
   # A symlink in its path is no absence: a dangling one fails `-e` and was skipped without a

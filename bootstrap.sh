@@ -54,6 +54,7 @@ version=$(sed -n 's/^## v\([0-9][0-9.]*\).*/\1/p' "$kit/CHANGELOG.md" 2>/dev/nul
 [ -n "$version" ] || die "cannot read a version from $kit/CHANGELOG.md — refusing to record a blank one"
 
 skiplist=$(mktemp) || die "cannot create a temp file"
+files=$(mktemp) || { rm -f "$skiplist"; die "cannot create a temp file"; }
 part=""
 wiring=""
 recorded=""
@@ -62,7 +63,7 @@ recorded=""
 # own value back (or unsets it again): the stop is no install, and the hooks it now names may
 # not be there. A signal ends the run through here too.
 finish() {
-  rm -f "$skiplist" ${part:+"$part"}
+  rm -f "$skiplist" "$files" ${part:+"$part"}
   [ "$1" -ne 0 ] || return 0
   if [ -n "$wiring" ]; then
     if [ -n "$had" ]; then git -C "$target" config core.hooksPath "$hooks_was"
@@ -119,16 +120,20 @@ perms() {
 
 # put DEST [SRC] — the one writer: DEST gets SRC's content (stdin without SRC) whole or not at
 # all, through a temporary that `mv` moves over it. A redirection or `cp` empties DEST before
-# writing, so a full disk left an empty stamp or a gate cut short. The temporary carries DEST's
-# own mode, or for a new file the mode a plain `cp` (or redirection) gives under the umask, set
-# before a byte is written: a temporary made under the umask turned a 0600 note into 0644.
-# It is opened before the chmod, so a mode without write permission still takes the content.
+# writing, so a full disk left an empty stamp or a gate cut short. The temporary is created
+# fresh by `mktemp` (exclusively, never an existing file) in DEST's folder: a fixed name
+# trusted what was there, so a hard link to the stamp had a failed write empty the stamp and an
+# owner's file at that name was overwritten. `part` names it for the exit trap, which removes
+# only that. It carries DEST's own mode, or for a new file the mode a plain `cp` (or
+# redirection) gives under the umask, set before a byte is written: a temporary made under the
+# umask turned a 0600 note into 0644. It is opened before the chmod, so a mode without write
+# permission still takes the content.
 put() {
   if [ -e "$1" ]; then _m=$(perms "$1")
   elif [ -n "${2:-}" ]; then _m=$(perms "$2")
   else _m=666; fi
   [ -e "$1" ] || _m=$(printf '%o' $(( 0$_m & ~0$(umask) )))
-  part="$1.kit-tmp" &&
+  part=$(mktemp "${1%/*}/.kit-tmp.XXXXXX") &&
     { chmod "$_m" "$part" && cat "${2:--}"; } > "$part" && mv -f "$part" "$1" && part=""
 }
 
@@ -145,14 +150,16 @@ copy_tree() {
   if find "$src" -name "$(printf '*\n*')" 2>/dev/null | grep -q .; then
     die "a filename under $src contains a newline; refusing to copy blind"
   fi
-  ( cd "$src" && find . -type f -print ) | sed 's|^\./||' | while IFS= read -r rel; do
+  # The list is read in this shell, not a pipeline's subshell, so the exit trap knows the
+  # temporary of a copy a signal cuts short.
+  ( cd "$src" && find . -type f -print ) | sed 's|^\./||' > "$files"
+  while IFS= read -r rel; do
     [ -n "$rel" ] || continue
     # Running Python tooling must not change the installed skeleton with local bytecode.
     case "$rel" in __pycache__/*|*/__pycache__/*|*.pyc|*.pyo) continue ;; esac
     dest="${prefix:+$prefix/}$rel"
-    # Only a destination `blocked` passes, with the temporary it is written through, is
-    # compared or replaced; anything else is listed, unread.
-    if [ -n "$(blocked "$dest")$(blocked "$dest.kit-tmp")" ]; then
+    # Only a destination `blocked` passes is compared or replaced; anything else is listed, unread.
+    if [ -n "$(blocked "$dest")" ]; then
       printf '%s\n' "$dest" >> "$skiplist"
       continue
     fi
@@ -164,9 +171,14 @@ copy_tree() {
     # Copied to a sibling and moved over: a `cp` cut short on the destination itself was
     # taken by the retry for the owner's own differing file, and the version recorded over it.
     mkdir -p "$target/$(dirname "$dest")"
-    put "$target/$dest" "$src/$rel" || { rm -f ${part:+"$part"}; exit 1; }
-  done
+    put "$target/$dest" "$src/$rel"
+  done < "$files"
 }
+
+# A temporary a stopped run left behind (`put` names them .kit-tmp.*) is not this run's to
+# delete: it is named, for the owner to remove.
+left=$(cd "$target" && find . -name .git -prune -o -type f -name '.kit-tmp.*' -print 2>/dev/null) || :
+[ -z "$left" ] || printf '%s\n' "bootstrap: NOTE: temporaries a stopped run left behind; remove them:" "$left"
 
 printf '%s\n' "bootstrap: installing MyAgentKit_Keel v$version into $target"
 
@@ -181,13 +193,9 @@ done
 
 # The folders and files bootstrap makes itself pass the same check: one it may not write is
 # a conflict that stops the run, like a kept gate, and is not created or opened. The files
-# are written only after the stop below, each to a fixed sibling (FILE.kit-tmp, judged here
-# too) that then replaces FILE whole with `mv`: a redirection empties FILE before writing it,
-# so a full disk on a rerun left an empty stamp, which the next sync refuses. A temporary a
-# killed run left behind is a regular file and is overwritten; the exit trap removes it.
+# are written only after the stop below, each by `put`.
 own="docs/reviews docs/audits docs/worktree-notes docs/spikes docs/kit docs/kit/.kit-version"
-own="$own docs/kit/.kit-version.kit-tmp"
-[ -z "$note" ] || own="$own docs/kit/BOOTSTRAP_NOTE.md docs/kit/BOOTSTRAP_NOTE.md.kit-tmp"
+[ -z "$note" ] || own="$own docs/kit/BOOTSTRAP_NOTE.md"
 stops=""
 for d in $own; do
   case "$d" in docs/kit/*) kind=file ;; *) kind=dir ;; esac
@@ -227,7 +235,6 @@ fi
 gates=$(grep -E '^(scripts/check\.sh|\.githooks/(pre-commit|pre-merge-commit|commit-msg))$' "$skiplist" 2>/dev/null |
   while IFS= read -r g; do
     why=$(blocked "$g")
-    [ -n "$why" ] || { why=$(blocked "$g.kit-tmp"); why=${why:+$g.kit-tmp: $why}; }
     printf '%s%s\n' "$g" "${why:+ ($why)}"; done)
 # Two lists: only a gate conflict means missing enforcement; a folder or file bootstrap makes
 # itself (docs/reviews, the stamp) is a plain destination that could not be written.
