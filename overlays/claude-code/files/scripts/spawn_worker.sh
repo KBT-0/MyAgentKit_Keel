@@ -34,7 +34,9 @@
 #     session in the trust dialog, which this script reports instead of waiting forever.
 set -eu
 
-die() { echo "spawn_worker: $1" >&2; exit 1; }
+# Every message is printed with its control bytes as `?`: a value echoed raw (an unknown
+# option, a --settings value) put ESC sequences on the lead's terminal.
+die() { { printf 'spawn_worker: %s' "$1" | LC_ALL=C tr '\001-\037\177' '?'; echo; } >&2; exit 1; }
 # Quote one value for a POSIX shell: wrap it in '...' and write each ' inside as '\''.
 # The x keeps a trailing newline that $(...) would strip.
 q() { set -- "$(printf '%sx' "$1" | sed "s/'/'\\\\''/g")"; printf "'%s'" "${1%x}"; }
@@ -43,20 +45,22 @@ q() { set -- "$(printf '%sx' "$1" | sed "s/'/'\\\\''/g")"; printf "'%s'" "${1%x}
 name=$1; brief=$2; shift 2
 # The name and the brief path reach tmux and the TUI: `send-keys -l` types every byte, and a
 # control byte (0x01-0x1F, 0x7F) acts as a key there: a carriage return submitted the
-# instruction early, ESC edits it. Refused by name, checked on bytes, before any tmux call.
+# instruction early, ESC edits it. Refused by name, checked on bytes, FIRST: before any other
+# check prints the argument and before any tmux call. The message names the argument, never
+# its bytes.
 ctl() {
   [ "$(printf '%sx' "$2" | LC_ALL=C tr -d '\001-\037\177')" = "${2}x" ] ||
-    die "$1 contains a control character (a newline, carriage return, tab, ESC or DEL), which the worker's input line would act on: $(printf '%s' "$2" | LC_ALL=C tr '\001-\037\177' '?')"
+    die "the $1 contains a control character (a newline, carriage return, tab, ESC or DEL), which the worker's input line would act on; it is not printed"
 }
-ctl "worker name" "$name"
-{ [ -f "$brief" ] && [ -r "$brief" ]; } || die "brief file not found or not readable: $brief"
 # Checked in the argument itself, before anything rewrites it: $(...) strips trailing
 # newlines, and "task.md<newline>" was checked while "task.md" was handed over. The folder
 # and file name are split by parameter expansion, which keeps every byte, and the folder's
 # absolute path keeps a trailing newline through the x guard; the resolved path is checked again.
+ctl "worker name" "$name"
+ctl "brief path" "$brief"
 nl='
 '
-ctl "brief path" "$brief"
+{ [ -f "$brief" ] && [ -r "$brief" ]; } || die "brief file not found or not readable: $brief"
 case "$brief" in */*) brief_dir=${brief%/*}/ ;; *) brief_dir=. ;; esac
 brief_dir=$(CDPATH= cd -- "$brief_dir" && pwd && echo x) || die "cannot resolve the brief's folder: $brief"
 brief=${brief_dir%"${nl}x"}/${brief##*/}

@@ -52,6 +52,19 @@ version=$(sed -n 's/^## v\([0-9][0-9.]*\).*/\1/p' "$kit/CHANGELOG.md" 2>/dev/nul
 skiplist=$(mktemp)
 trap 'rm -f "$skiplist"' EXIT
 
+# linked REL — prints the first component of REL, below the target, that is a symlink, and
+# nothing when there is none. Checking only the last component let a symlinked folder
+# (`.githooks -> /elsewhere`) carry every read and write under it outside the project. The
+# target itself may be a symlink: the owner named it. Every destination goes through this.
+linked() {
+  _rest=$1; _p=""
+  while :; do
+    _p=${_p:+$_p/}${_rest%%/*}
+    [ -L "$target/$_p" ] && { printf '%s\n' "$_p"; return 0; }
+    case "$_rest" in */*) _rest=${_rest#*/} ;; *) return 0 ;; esac
+  done
+}
+
 # copy_tree SRC [DEST_PREFIX] — copies SRC's contents into the target, optionally under a
 # subdirectory. Existing files that differ are recorded and left alone unless --force;
 # identical ones are passed over (an earlier run put them there).
@@ -71,8 +84,9 @@ copy_tree() {
     case "$rel" in __pycache__/*|*/__pycache__/*|*.pyc|*.pyo) continue ;; esac
     dest="${prefix:+$prefix/}$rel"
     # Only a regular file is compared or replaced: `cmp` on a FIFO blocked forever, and a
-    # symlink was compared, or written through, by its target. Anything else is listed, unread.
-    if [ -L "$target/$dest" ] || { [ -e "$target/$dest" ] && [ ! -f "$target/$dest" ]; }; then
+    # symlink, or a symlinked folder above it, was compared or written through by its target.
+    # Anything else is listed, unread.
+    if [ -n "$(linked "$dest")" ] || { [ -e "$target/$dest" ] && [ ! -f "$target/$dest" ]; }; then
       echo "$dest" >> "$skiplist"
       continue
     fi
@@ -97,13 +111,26 @@ for name in $overlays; do
   copy_tree "$kit/overlays/$name/files"
 done
 
-mkdir -p "$target/docs/reviews" "$target/docs/audits" \
-         "$target/docs/worktree-notes" "$target/docs/spikes" "$target/docs/kit"
+# The folders and files bootstrap writes itself pass the same check: one under a symlinked
+# folder is a conflict that stops the run, like a kept gate, and is never created.
+own="docs/reviews docs/audits docs/worktree-notes docs/spikes docs/kit docs/kit/.kit-version"
+[ -z "$note" ] || own="$own docs/kit/BOOTSTRAP_NOTE.md"
+stops=""
+for d in $own; do
+  l=$(linked "$d")
+  if [ -n "$l" ]; then
+    stops="$stops$d (symlink: $l)
+"
+  else
+    case "$d" in docs/kit/*) ;; *) mkdir -p "$target/$d" ;; esac
+  fi
+done
 
 # The executable bit does not survive every filesystem, and a gate that cannot run is a
-# gate that is not there. CI dies on this with exit 126 (docs/GOTCHAS.md).
+# gate that is not there. CI dies on this with exit 126 (docs/GOTCHAS.md). Never through a
+# symlink: chmod would change the file it points to, outside the project.
 for f in "$target"/scripts/*.sh "$target"/.githooks/* "$target"/.claude/hooks/*; do
-  [ -f "$f" ] && chmod +x "$f"
+  [ -f "$f" ] && [ -z "$(linked "${f#"$target"/}")" ] && chmod +x "$f"
 done
 
 if [ -s "$skiplist" ]; then
@@ -123,11 +150,13 @@ fi
 # The stop comes BEFORE the version stamp, the note and the hooks wiring: an earlier
 # version stamped .kit-version first and then refused — after which sync-kit.sh greeted the
 # gateless project with "already current. Nothing to do."
-gates=$(grep -E '^(scripts/check\.sh|\.githooks/(pre-commit|pre-merge-commit|commit-msg))$' "$skiplist" 2>/dev/null)
-if [ -n "$gates" ]; then
+gates=$(grep -E '^(scripts/check\.sh|\.githooks/(pre-commit|pre-merge-commit|commit-msg))$' "$skiplist" 2>/dev/null |
+  while IFS= read -r g; do l=$(linked "$g"); printf '%s%s\n' "$g" "${l:+ (symlink: $l)}"; done)
+if [ -n "$gates$stops" ]; then
   echo
   echo "STOPPING: the gate files already existed, differ from the kit's, and were NOT replaced:"
-  printf '%s\n' "$gates" | sed 's/^/  conflict: /'
+  printf '%s' "${gates:+$gates
+}$stops" | sed 's/^/  conflict: /'
   cat <<'EOF'
 
   They are the enforcement. Whatever is in this repository now is what will run — and if
@@ -136,7 +165,8 @@ if [ -n "$gates" ]; then
   For each one: move yours aside, re-run to install the kit's file (files an earlier run
   copied are identical and pass), then carry what yours did into it by hand (docs/RETROFIT.md).
   --force instead overwrites EVERY differing regular file listed above, not only these;
-  a symlink, folder or special file at such a path is never replaced: move it aside.
+  a symlink, folder or special file at such a path, or a symlinked folder above it, is
+  never replaced: move it aside.
   Finish with:  ./scripts/check.sh --self-test
 EOF
   exit 1

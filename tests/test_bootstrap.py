@@ -69,6 +69,28 @@ class BootstrapTests(unittest.TestCase):
                     if kind == 'dangling symlink':
                         self.assertFalse(outside.exists(), 'written through a symlink')
 
+    def test_a_symlinked_folder_in_the_target_is_never_read_or_written(self):
+        # Only the last component of a destination was checked: with `.githooks` a symlink to
+        # a folder outside the project, the kit's hooks were written there and the run passed.
+        # Any symlink in a destination's path is a conflict for a gate (or the version stamp)
+        # and a listed skip for any other file, never read or written, --force included.
+        root = Path(__file__).resolve().parents[1]
+        for folder, stops, needle in (('.githooks', True, 'conflict: .githooks/commit-msg (symlink: .githooks)'),
+                                      ('docs', True, 'conflict: docs/kit/.kit-version (symlink: docs)'),
+                                      ('setup', False, 'setup/INTERVIEW.md')):
+            for force in ((), ('--force',)):
+                with self.subTest(folder=folder, force=force), tempfile.TemporaryDirectory() as tmp:
+                    project, outside = Path(tmp) / 'project', Path(tmp) / 'outside'
+                    project.mkdir()
+                    outside.mkdir()
+                    (project / folder).symlink_to(outside)
+                    result = subprocess.run(['sh', str(root / 'bootstrap.sh'), str(project), *force],
+                                            capture_output=True, text=True, timeout=60)
+                    self.assertEqual(result.returncode, 1 if stops else 0, result.stdout + result.stderr)
+                    self.assertIn(needle, result.stdout)
+                    self.assertEqual(list(outside.iterdir()), [], 'written through a symlinked folder')
+                    self.assertEqual((project / 'docs/kit/.kit-version').exists(), not stops)
+
     def _listed(self, stdout):
         # The files a run reports as already existing: the indented paths under its header.
         return {line.strip() for line in stdout.splitlines() if line.startswith(' ' * 13)

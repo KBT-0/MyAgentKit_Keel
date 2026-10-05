@@ -45,6 +45,21 @@ done
 target=$(CDPATH= cd -- "$target" 2>/dev/null && pwd) || die "no such directory"
 [ "$target" = "$kit" ] && die "refusing to sync the kit with itself"
 
+# linked REL — prints the first component of REL, below the target, that is a symlink, and
+# nothing when there is none. Checking only the last component let a symlinked folder
+# (`.githooks -> /elsewhere`) carry every read and write under it outside the project. The
+# target itself may be a symlink: the owner named it. Every destination goes through this.
+linked() {
+  _rest=$1; _p=""
+  while :; do
+    _p=${_p:+$_p/}${_rest%%/*}
+    [ -L "$target/$_p" ] && { printf '%s\n' "$_p"; return 0; }
+    case "$_rest" in */*) _rest=${_rest#*/} ;; *) return 0 ;; esac
+  done
+}
+
+l=$(linked docs/kit/.kit-version)
+[ -z "$l" ] || die "conflict: docs/kit/.kit-version (the symlink $l is in its path); the version is never read or written through it"
 stamp="$target/docs/kit/.kit-version"
 [ -f "$stamp" ] || die "$stamp not found — this project was not installed with bootstrap.sh"
 have=$(tr -d '[:space:]' < "$stamp")
@@ -93,17 +108,27 @@ relpath() {
 while IFS= read -r src; do
   [ -n "$src" ] || continue
   relpath "$src" || continue
+  # A symlink anywhere in the path, the file itself or a folder above it, is checked first, for
+  # every tier: a dangling one at an overlay path fails `-e` and was skipped without a word,
+  # and a symlinked folder had the kit's file written through it outside the project.
+  l=$(linked "$rel")
+  if [ -n "$l" ]; then
+    found=1
+    echo "  conflict: $rel (the symlink $l is in its path, so it is the project's)"
+    conflict=1
+    continue
+  fi
   # An overlay file is synced only where it already exists: its presence is the only record
   # of whether the project took that overlay, and installing an overlay is bootstrap's job.
   if [ "$overlay" -eq 1 ] && [ ! -e "$target/$rel" ]; then
     continue
   fi
   found=1
-  if [ ! -e "$target/$rel" ] && [ ! -L "$target/$rel" ]; then
+  if [ ! -e "$target/$rel" ]; then
     echo "  new:     $rel"
-  elif [ -L "$target/$rel" ] || [ ! -f "$target/$rel" ]; then
-    # Only a regular file is read: `cmp` on a FIFO blocked forever, and a symlink to an
-    # identical copy read as "same". A symlink, folder or special file is a conflict, unread.
+  elif [ ! -f "$target/$rel" ]; then
+    # Only a regular file is read: `cmp` on a FIFO blocked forever. A folder or special file
+    # is a conflict, unread.
     echo "  conflict: $rel (exists and is not a regular file, so it is the project's)"
     conflict=1
     continue
@@ -126,8 +151,8 @@ done < "$work_list"
 if [ "$conflict" -eq 1 ] && [ "$dry" -eq 0 ]; then
   cat <<EOF
 
-STOPPING: the files listed as conflict are project-owned (no KIT-OWNED header) at paths
-the kit owns now. Nothing was copied and the version stays at v$have.
+STOPPING: the files listed as conflict are project-owned (no KIT-OWNED header, not a
+regular file, or under a symlink) at paths the kit owns now. Nothing was copied and the version stays at v$have.
 
   For each one: move yours aside, rerun the sync to install the kit's file, then carry
   what yours did into the project's own files by hand (the kit's docs/RETROFIT.md).
