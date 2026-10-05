@@ -224,6 +224,16 @@ One topic per turn. Suggested order, because each answer informs the next:
    `<!-- END attribution rule -->` in `.claude/agents/worker.md`, and tell the owner you did:
    left there, it told every worker the opposite of the owner's answer.
 
+10. **Which folders may a finished worktree lose?** Only if the Claude Code overlay is
+    installed. `.githooks/post-merge` removes a merged worker worktree only when every file git
+    does not track in it has an identical copy in the main worktree or sits in a folder the
+    project declared disposable: build output and installed dependencies a checkout makes again
+    (the usual ones: `build`, `node_modules`, `dist`, `target`, `.venv`). Write the owner's
+    answer into `.claude/worktree-disposable`, one name or root-relative path per line; those
+    folders must also be in `.gitignore`. Nothing listed is the safe default: a worktree with
+    build output is then kept and its report names the folders. The reason to ask: in a
+    project using the kit, merged worktrees piled up to 34 GB before anyone removed them.
+
 ## Phase 3 — PROJECT.md and PHASES.md
 
 Both files ship as skeletons and both are LIVING documents. Do not fill them in from a

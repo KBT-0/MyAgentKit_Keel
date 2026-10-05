@@ -340,6 +340,16 @@ does not end when its task does, and the idle notice also fires on every park on
 background job, so it cannot serve as the end signal: the result file is the end signal,
 and the lead closes the session after reading it (`tmux kill-session -t NAME`).
 
+Closing the session leaves the worktree. With the Claude Code overlay, `.githooks/post-merge`
+removes it after the next merge in the main worktree, but only when
+`scripts/clean_worktrees.sh` proves nothing in it can be lost: merged into main, no tracked
+change, no operation under way, nothing in use, and every file git does not track either in
+a folder `.claude/worktree-disposable` lists or byte-identical to main's copy. Anything not
+proven keeps the worktree with the reason printed, a squash-merged branch included (its
+commits are not in main). Each removal is logged first in `<git dir>/kit-worktree-removals.log`
+and prints `git branch <name> <hash>`, which brings the branch back. `KIT_NO_WORKTREE_CLEANUP=1`
+turns the hook off; the script without `--apply` is a dry run.
+
 ## Token economics — the always-loaded prefix is money
 
 Cached input tokens are discounted heavily, so a STABLE prompt prefix — the documents loaded

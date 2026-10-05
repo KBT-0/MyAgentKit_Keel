@@ -35,6 +35,8 @@ repository.
 | `.claude/agents/diff-reviewer.md` | Read-only review subagent carrying THIS project's risky areas and `docs/REVIEW_GATE.md` |
 | `.claude/agents/worker.md` | Implementation worker with a one-hour prompt cache and a 150-turn cap, for tasks that run jobs longer than five minutes (`docs/WORKFLOW.md`, "Worker cost") |
 | `scripts/spawn_worker.sh` | Opens a SEPARATE worker session in tmux and hands it a brief file; the lead then subscribes for its idle notice instead of polling |
+| `scripts/clean_worktrees.sh` (+ `.py`) | Removes the finished worktrees under `.claude/worktrees`, only what it proves safe to lose; `.githooks/post-merge` runs it after every merge in the main worktree |
+| `.claude/worktree-disposable` | The project's list of folders a finished worktree may lose (build output); ships empty, the interview fills it |
 
 ## Placeholders this overlay brings
 
@@ -120,6 +122,32 @@ If the project has no such jobs, delete both files instead of filling them.
   (`docs/WORKFLOW.md`, "Worker cost", rule 7).
 - **Every message to an idle session is a full-context turn.** Ask the brief for a result
   FILE, subscribe once with `notify_when_idle`, and read the file.
+
+## Finished worktrees are removed after a merge, and only those
+
+A project using the kit piled up 39 merged worker worktrees, 34 GB, and a session removed them
+by hand after auditing each: merged into main, nothing uncommitted, and in 17 the only extra
+file a review report whose identical copy was archived on main. `scripts/clean_worktrees.sh`
+is that audit, run by `.githooks/post-merge` after every merge in the main worktree (never after
+a merge inside a linked one). Without an option it is a dry run; `--apply` removes.
+
+- **Removed** only when every check is proven: a linked worktree directly under
+  `.claude/worktrees/`, not locked or missing, no merge, rebase, cherry-pick, revert or bisect
+  under way, its HEAD an ancestor of main's HEAD, no tracked change (including one git hides
+  with skip-worktree or assume-unchanged), no submodule, every file git does not track inside
+  a folder `.claude/worktree-disposable` lists or byte-identical to the file at the same path
+  in main, no process working inside it, no tmux session of its name, the gate's lock free.
+- **Kept**, with every reason printed, otherwise. A squash-merged or rebased branch is kept:
+  its own commits are not in main, so nothing proves them safe. So is a worktree holding build
+  output that is not listed as disposable; the report names the folders to consider listing.
+  Where processes cannot be inspected (no `/proc`, e.g. macOS), every worktree is kept, and
+  the report gives `scripts/clean_worktrees.sh --apply --assume-idle` to run by hand.
+- **The log** comes first: `<git dir>/kit-worktree-removals.log` gets one line per removal
+  (time, path, branch, tip commit, main HEAD, identical files, disposable bytes) before
+  anything is deleted. Then the identical untracked copies go, then `git worktree remove`
+  without `--force` checks again on its own, then `git branch -d` (never `-D`).
+- **A branch comes back** with the line each removal prints: `git branch <name> <hash>`.
+- **Off:** `KIT_NO_WORKTREE_CLEANUP=1` in the merge's environment.
 
 ## Why this is an overlay and not part of the core
 
