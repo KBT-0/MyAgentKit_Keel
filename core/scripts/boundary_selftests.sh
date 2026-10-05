@@ -98,12 +98,15 @@
 # thing to bypass (a .git/config replaced by a link to /dev/zero hung the comparison). So the
 # baseline's copy, its own HOME and TMPDIR inside, is deleted (one that cannot be deleted
 # fails the case by name), and the same function makes the injected run a new one. Each copy
-# is hashed as taken, before anything runs in it (every entry's path, type, executable bit and
-# content, `.git` included; a FIFO, socket or device is refused by name): taken from the live
-# checkout at two times, the second copy's gate need not be the one the baseline proved green,
-# so copies that differ are reported NOT RUN. The runs
-# still share PATH, which a baseline changes only through a writable PATH directory, outside
-# the example's reach, and the checkout, which the example only reads. A folder the audit
+# is hashed as taken, before anything runs in it (every entry's path, type, full permission
+# bits and content, the root and `.git` included; a FIFO, socket or device is refused by
+# name): taken from the live checkout at two times, the second copy's gate need not be the one
+# the baseline proved green, so copies that differ are reported NOT RUN. A digest of only the
+# executable bit missed a file changed from 0644 to 0444, which a gate reading `[ -w policy ]`
+# sees. The git index is hashed too, so another session's `git status` refreshing it between
+# the copies also reports NOT RUN: run the self-test again. The runs still share PATH, which
+# a baseline changes only through a writable PATH directory, outside the example's reach, and
+# the checkout, which the example only reads, once per copy, by the `cp`. A folder the audit
 # cannot read fails it by name (os.walk skips one), and its Python runs isolated (-I).
 # The example changes no mode and deletes only through the directory it made. `chmod -R u+rwx`
 # before `rm -rf` made a checkout file the baseline had hard-linked into its copy executable;
@@ -193,12 +196,13 @@
 # |   probe_gate="$(basename "$(dirname "$0")")/${0##*/}"
 # |   # Every symlink resolves inside the copy, no `.git` lies below the top level, and the path to
 # |   # the target and to the gate runs through no symlink and ends at a regular file. Prints the
-# |   # copy's digest as taken: every entry's path, type, executable bit and content, `.git` included.
+# |   # copy's digest as taken: every entry's path, type, permission bits and content, `.git` included.
 # |   probe_audit() {
 # |     probe_digest=$(probe_env python3 -I -c '
 # | import hashlib, os, stat, sys
 # | root = sys.argv[1]
-# | digest = hashlib.sha256()
+# | # Every entry has its full permission bits hashed, the root of the copy too: cp -RP gives both copies the same.
+# | digest = hashlib.sha256(b"%o\n" % stat.S_IMODE(os.lstat(root).st_mode))
 # | # Unreachable by construction (cp -RP fails first on what it cannot read); kept as the guard.
 # | def unread(error):
 # |     sys.exit("the audit could not read " + os.path.relpath(error.filename or root, root) + " (" + str(error.strerror or error) + ")")
@@ -215,7 +219,7 @@
 # |             if stat.S_ISDIR(mode):
 # |                 kind = b"d"
 # |             elif stat.S_ISREG(mode):
-# |                 kind = b"x" if mode & stat.S_IXUSR else b"f"
+# |                 kind = b"f"
 # |                 fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0))
 # |                 with open(fd, "rb") as data:
 # |                     if not stat.S_ISREG(os.fstat(fd).st_mode):
@@ -233,7 +237,7 @@
 # |                     sys.exit(rel + " is a symlink that leads out of the disposable copy")
 # |             else:
 # |                 sys.exit(rel + " is not a regular file, a folder or a symlink (a FIFO, socket or device)")
-# |             digest.update(os.fsencode(rel) + b"\0" + kind + content.hexdigest().encode() + b"\n")
+# |             digest.update(os.fsencode(rel) + b"\0" + kind + b"%o " % stat.S_IMODE(mode) + content.hexdigest().encode() + b"\n")
 # | except OSError as error:
 # |     unread(error)
 # | for rel in sys.argv[2:]:
@@ -310,7 +314,7 @@
 # |   cd / && probe_delete || exit 1
 # |   probe_fresh_copy
 # |   [ "$probe_digest" = "$probe_first" ] ||
-# |     probe_skip "the checkout changed between the two copies; run the self-test again."
+# |     probe_skip "the checkout, or its git index, changed between the two copies; run the self-test again."
 # |   printf 'from myapp.web import router\n' > "$probe_root/$probe_target" || exit 1
 # |   probe_status=0
 # |   probe_output=$(probe_env sh "$probe_root/$probe_gate" 2>&1) || probe_status=$?

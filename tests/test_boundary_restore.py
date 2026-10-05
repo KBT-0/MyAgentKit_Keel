@@ -629,7 +629,7 @@ exit 1
             self.assertNotIn('the domain layer', (root / 'scripts/check.sh').read_text().split('\n')[1],
                              'the gate was not rewritten')
             self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-            self.assertIn('NOT RUN — existing-file probe: the checkout changed between the two copies;'
+            self.assertIn('NOT RUN — existing-file probe: the checkout, or its git index, changed between the two copies;'
                           ' run the self-test again', result.stdout)
             self.assertNotIn('  ok   — ', result.stdout)
 
@@ -660,6 +660,26 @@ exit 1
             self.assertIn("FAIL — existing-file probe: the injection did not produce the domain/web gate's failure",
                           result.stdout)
             self.assertNotIn('  ok   — ', result.stdout)
+
+    def test_a_permission_change_between_the_copies_is_not_run(self):
+        # The digest kept only the owner-execute bit: a checkout file changed from 0644 to 0444
+        # between the copies went unnoticed, and a gate choosing its policy by `[ -w policy ]`
+        # could print the diagnostic on its own in the second run.
+        for shape, change in (('file', 'chmod 444 "$ORIGIN/policy"'), ('directory', 'chmod 555 "$ORIGIN/rules"')):
+            with self.subTest(shape=shape), tempfile.TemporaryDirectory() as tmp:
+                root, git = self.fixture(tmp, "grep -q 'myapp.web' src/domain/existing.py || { %s || exit 1; }\n" % change,
+                                         names=('ORIGIN',))
+                (root / 'policy').write_text('policy\n')
+                (root / 'policy').chmod(0o644)
+                (root / 'rules').mkdir(0o755)
+                try:
+                    result = self.self_test(tmp, root, ORIGIN=str(root))
+                finally:
+                    (root / 'rules').chmod(0o755)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn('NOT RUN — existing-file probe: the checkout, or its git index, changed between the two'
+                              ' copies; run the self-test again', result.stdout)
+                self.assertNotIn('  ok   — ', result.stdout)
 
     def test_a_special_file_in_the_checkout_is_refused_by_name(self):
         # The digest reads regular files only: a FIFO would block the read, a device has no end.
