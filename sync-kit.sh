@@ -26,6 +26,15 @@
 #
 # A failed write stops the run before the stamp (`set -e`, and the copy step names its file):
 # a failed chmod was ignored and the version recorded over a hook that could not run.
+#
+# Threat model. The owner runs this in the owner's own project. It protects against its own
+# failures and interruptions: a failed write, a full disk, INT, TERM or HUP part way, and a
+# retry after any of them; and against honest mistakes in the tree: a file, folder, symlink or
+# special file where it means to write is refused by name, never written through. By decision
+# it does NOT protect against another process changing the tree while it runs (a checked path
+# swapped between the check and the write), files placed in the project to attack it, or
+# SIGKILL or power loss between two steps. Whoever can do the first two can write the same
+# files directly.
 set -eu
 
 kit=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
@@ -56,10 +65,7 @@ target=$(CDPATH= cd -- "$target" 2>/dev/null && pwd) || die "no such directory"
 # folder above, carried the read or write outside the project; a file where a folder belongs
 # failed the copy midway through the copies. The target itself may be a symlink: the owner
 # named it. bootstrap.sh holds the same function; a test holds the two copies equal.
-# The check runs BEFORE the write, not with it: a path is not opened when it fails the check
-# at that moment, but another process that changes the tree during the run (a checked
-# folder swapped for a symlink) is not guarded against. The owner runs this in the owner's
-# own project, where a process able to make that swap could write the file itself.
+# The check runs BEFORE the write, not with it (the threat model above).
 blocked() {
   _rest=$1; _p=""
   while :; do
@@ -116,6 +122,7 @@ copies=$(mktemp) || { rm -f "$work_list" "$pending"; echo "sync-kit: cannot crea
 # A signal handler that only cleaned up let the run resume with the pending list deleted,
 # which reads as "no ACTION items" and stamped the version: a signal now ends the run.
 trap 'rm -f "$work_list" "$pending" "$copies" ${part:+"$part"}' EXIT
+trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
 

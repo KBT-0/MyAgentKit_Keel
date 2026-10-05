@@ -21,6 +21,15 @@
 #
 # A failed write stops the run (`set -e`): with only `set -u`, a failed mkdir, cp or chmod
 # was ignored and the version was stamped and the hooks wired over a short install.
+#
+# Threat model. The owner runs this in the owner's own project. It protects against its own
+# failures and interruptions: a failed write, a full disk, INT, TERM or HUP part way, and a
+# retry after any of them; and against honest mistakes in the tree: a file, folder, symlink or
+# special file where it means to write is refused by name, never written through. By decision
+# it does NOT protect against another process changing the tree while it runs (a checked path
+# swapped between the check and the write), files placed in the project to attack it, or
+# SIGKILL or power loss between two steps. Whoever can do the first two can write the same
+# files directly.
 set -eu
 
 kit=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
@@ -98,10 +107,7 @@ trap 'exit 143' TERM
 # above, carried the read or write outside the project; a file where a folder belongs made
 # every mkdir and cp under it fail. The target itself may be a symlink: the owner named it.
 # sync-kit.sh holds the same function; a test holds the two copies equal.
-# The check runs BEFORE the write, not with it: a path is not opened when it fails the check
-# at that moment, but another process that changes the tree during the run (a checked
-# folder swapped for a symlink) is not guarded against. The owner runs this in the owner's
-# own project, where a process able to make that swap could write the file itself.
+# The check runs BEFORE the write, not with it (the threat model above).
 blocked() {
   _rest=$1; _p=""
   while :; do
