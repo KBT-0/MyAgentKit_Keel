@@ -63,6 +63,18 @@ checklist names each overlay file that changed. Re-run `bootstrap.sh --overlay <
 you want a new file from one: it adds what is missing, passes over files identical to the
 kit's and lists the ones that differ without touching them.
 
+## What the scripts protect against, and what they do not
+
+The owner runs `sync-kit.sh` and `bootstrap.sh` in the owner's own project. They protect
+against their own failures and interruptions (a failed write, a full disk, INT, TERM or HUP
+part way, and a retry after any of them) and against honest mistakes in the tree: a file,
+folder, symlink or special file where a script means to write is refused by name, never
+written through. There is no rollback: files already copied stay copied when a later step
+fails, each one whole, and the version is recorded last. By decision they do NOT protect
+against another process changing the tree while they run, files placed in the project to
+attack them, or SIGKILL or power loss between two steps; whoever can do the first two can
+write the same files directly.
+
 ## Backflow — the other direction
 
 Updates are supposed to flow both ways, and the direction from a project back into the kit

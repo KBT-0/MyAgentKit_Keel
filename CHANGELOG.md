@@ -123,14 +123,19 @@ in `RESEARCH_LOG.md` (2026-10-03). Most of the files below are project-owned, so
   where a folder belongs is a conflict that is not opened, `--force` included (a FIFO used
   to hang the run). Any failed write stops the run before the version is recorded or the
   hooks are wired (a regular file at `.githooks` used to end in a stamped project with no
-  hooks). A failed run leaves the project as it was and a retry never records a version
-  over a weaker state: a file is unchanged only when its content and its executable bit
-  both match; every file is written through a sibling `FILE.kit-tmp` that is then moved
-  over it, so a full disk leaves the old stamp, note or hook whole; bootstrap sets
-  `core.hooksPath` only after the stamp is prepared and puts the project's own value back
-  when the finish fails or is interrupted (not on SIGKILL or power loss, where no trap
-  runs). The check runs before each write: it does not guard against another process
-  changing the tree during the run. Bootstrap's stop lists gate-file conflicts apart from
+  hooks). A retry after a failed run never records a version over a weaker state. There is no
+  rollback: files a run already copied stay copied when a later step fails; each single
+  file is either the old one or the new one, whole. A file is unchanged only when its
+  content and its executable bit both match. Every file is written to a fresh `mktemp`
+  sibling (`.kit-tmp.XXXXXX`) that takes the destination's mode first (a new file takes the
+  umask's) and is then moved over it, so a full disk leaves the old stamp, note or hook
+  whole and a 0600 note stays 0600; a stopped run's leftovers are named in a NOTE, not
+  deleted. In bootstrap the stamp's move is the commit: before it, a failure or INT, TERM
+  or HUP puts the project's own `core.hooksPath` back; after it nothing is undone. Both
+  scripts state their threat model in their header and `docs/UPDATING.md` repeats it: they
+  protect against their own failures and interruptions and against honest mistakes in the
+  tree, and by decision not against another process changing the tree during the run,
+  files placed to attack them, or SIGKILL or power loss between two steps. Bootstrap's stop lists gate-file conflicts apart from
   other destinations it could not write. No script prints a supplied value through `echo`,
   so a backslash in a name or path is not turned into a terminal escape.
   `docs/UPDATING.md` and the README describe both.

@@ -917,6 +917,22 @@ worker was asked to walk every write with "the run dies here; what does a retry 
 found one more itself (a copy cut short taken for the owner's file). Left and named: SIGKILL
 or power loss between `git config` and the stamp's `mv` loses the old hooks path.
 
+#### Round close-4: Reject, and the owner sets a threat model and a stopping rule
+
+Round close-4 on `68e9ae5..2f2ef6b`: two High, one Medium, one Low, every one in what the
+round before had added (the fixed-name temporary, the finish trap, and the lead's own
+CHANGELOG sentence claiming a rollback that does not exist). Eleven rounds in the day: 7,
+2, 4, 4, 4, 2, Accept (carried), 4, 5, 3, 4. A diff-scoped reviewer asked for every finding
+will find some in any new mechanism, and each fix was a new mechanism. The owner decided:
+these four are fixed (fresh `mktemp` temporaries, one write helper that sets the mode
+first, the stamp's move as the commit point read from disk), `bootstrap.sh` and
+`sync-kit.sh` state a threat model (own failures, interruptions, retries and honest
+mistakes in the tree: yes; another process changing the tree, planted files, SIGKILL
+between steps: no), and the loop ends with the next round that has no High outside that
+model; findings inside it are answered by disposition and recorded as accepted limits.
+Lesson: write the threat model before the first hardening round, not after the eleventh;
+without one, "close the class" has no edge.
+
 #### The review gate held on the kit's own hardening
 
 Five of the nine work packages (the gate lock, both review-tooling packages, the commit gates

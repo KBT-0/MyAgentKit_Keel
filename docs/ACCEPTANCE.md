@@ -166,6 +166,11 @@ budget, so the full review was split into two consistent commit ranges, each its
 - Round close-3 `20261005T192430Z-692242e44f4c` on head 68e9ae5 (`42e5a19..68e9ae5`, a new
   label): **Reject**, one High, two Medium, all in `sync-kit.sh` and `bootstrap.sh` (a run
   that fails part way, then a retry); fixed with negative tests watched red first.
+- Round close-4 `20261005T195010Z-d4bdf360c89a` on head 2f2ef6b (`68e9ae5..2f2ef6b`, a new
+  label): **Reject**, two High, one Medium, one Low, all in what close-3's fixes added;
+  fixed with negative tests watched red first. The owner then set the stopping rule: the
+  scripts state their threat model, and the next round ends the loop unless it holds a
+  High outside that model.
 - NOT RUN by the reviewer in range D: any test. The kit self-test was executed by the lead
   on each reviewed head (`KIT CHECK: PASS` on 31c8f7a, 1afba49, 62d2988, d826ccd, ed29079,
   4baf4e0 and 3d4f45c).
