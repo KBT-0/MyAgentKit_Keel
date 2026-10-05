@@ -272,6 +272,40 @@ class CheckGateTests(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertIn('NOTE [state]: a shallow clone', out)
 
+    def test_the_hook_and_the_gate_close_the_same_ids(self):
+        # One grammar: a Done: value, trimmed, is exactly one id; git unfolds a folded value
+        # and matches the key in any case. The same messages go to the hook and to the gate.
+        shutil.copytree(ROOT / 'core/.githooks', self.project / '.githooks')
+        git = lambda *args: subprocess.run(GIT + ['-c', 'core.hooksPath=/dev/null', *args], cwd=self.project,
+                                           check=True, capture_output=True, text=True).stdout
+        ids = ['K%d' % n for n in range(1, 13)]
+        state = self.project / 'docs/STATE.md'
+        state.write_text('# STATE\n\n## Active work\n' + ''.join('- %s\n' % i for i in ids))
+        git('add', '-A')
+        trailers = ['Done: K1 K2', 'Done: K3, K4', 'Done:', 'Done:   ', 'Done: K5\n  K6',
+                    'Done:\n  K7', 'done: K8', 'DONE: K9', 'Done: K10']
+        msg = self.tmp / 'msg'
+        hook, commits = {}, {}
+        for trailer in trailers:
+            msg.write_text('m\n\n' + trailer + '\n')
+            out = subprocess.run(['sh', '.githooks/commit-msg', str(msg)], cwd=self.project,
+                                 capture_output=True, text=True).stderr
+            hook[trailer] = set(re.findall(r'closes (\S+) but', out))
+            git('commit', '-q', '--allow-empty', '-F', str(msg))
+            commits[git('log', '-1', '--format=%h').strip()] = trailer
+        # A bad value next to a good one: the good one still closes its id.
+        git('commit', '-q', '--allow-empty', '-m', 'm', '-m', 'Done: K11\nDone: K12 x')
+        code, out = gate(self.project, self.build)
+        self.assertEqual(code, 1, out)
+        closed = {}
+        for name, commit in re.findall(r'names (\S+), which commit (\S+) closed', out):
+            closed.setdefault(commits.get(commit, 'mixed'), set()).add(name)
+        for trailer in trailers:
+            self.assertEqual(hook[trailer], closed.get(trailer, set()), trailer + '\n' + out)
+        self.assertEqual(closed['mixed'], {'K11'}, out)
+        for value in ('K1 K2', 'K3, K4', '', 'K5 K6', 'K12 x'):
+            self.assertIn('"Done: %s", which is not one task id' % value, out)
+
     def test_every_cd_ignores_cdpath(self):
         # An exported CDPATH turned `cd scripts` into another directory (and printed it):
         # doctor.sh then checked another tree, and review.sh could review one. Every cd in a

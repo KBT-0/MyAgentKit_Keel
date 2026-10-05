@@ -688,7 +688,7 @@ fi
 # be gone from the state file and from the BACKLOG.md beside it, which may be absent (a
 # project may keep its backlog elsewhere). The commit-msg hook checks the closing commit;
 # this also catches a line written back later, or a commit the hook never saw. Git's own
-# trailer parser reads the history (%(trailers:key=...,valueonly), git 2.22 or later). A
+# trailer parser reads the history (%(trailers:key=...,unfold), git 2.22 or later). A
 # mention is the id as a whole token: closing K3 does not match K3b or K3-a. No repository,
 # or no commit yet: nothing has been closed, and nothing is checked. A shallow clone holds
 # part of the history: a NOTE says so, and the part it holds is checked.
@@ -696,12 +696,21 @@ history_repo="${GATE_SELFTEST_HISTORY:-.}"
 if git -C "$history_repo" rev-parse -q --verify HEAD >/dev/null 2>&1; then
   [ "$(git -C "$history_repo" rev-parse --is-shallow-repository)" != true ] ||
     echo "NOTE [state]: a shallow clone; only the Done: trailers of the commits it holds are checked."
-  if git -C "$history_repo" log --format='@%h%n%(trailers:key=Done,valueonly)' HEAD > "$work/done-ids"; then
+  # One grammar with the hook: git matches the key in any case and unfolds a folded value,
+  # and the value, trimmed, is exactly one id. A value that is not one (the hook bypassed, or
+  # older than it) closes nothing, and a NOTE names it; every well-formed one still counts.
+  if git -C "$history_repo" log --format='@%h%n%(trailers:key=Done,unfold)' HEAD > "$work/done-trailers" &&
+     awk -v out="$work/done-ids" '
+       /^@/ { commit = substr($0, 2); print > out; next }
+       /./ { id = $0; sub(/^[^:]*:[ \t]*/, "", id); sub(/[ \t]+$/, "", id)
+             if (id ~ /^[A-Za-z][A-Za-z0-9]*(-[A-Za-z0-9]+)?$/ && id ~ /[0-9]/) print id > out
+             else printf "NOTE [state]: commit %s has \"Done: %s\", which is not one task id; it closes nothing.\n", commit, id }
+       END { close(out) }' "$work/done-trailers"; then
     for f in "$GATE_SELFTEST_STATE_FILE" "$(dirname "$GATE_SELFTEST_STATE_FILE")/BACKLOG.md"; do
       [ ! -f "$f" ] || awk -v closed="$work/done-ids" '
         FILENAME == closed {
           if (sub(/^@/, "")) commit = $0
-          else if (/^[A-Za-z][A-Za-z0-9]*(-[A-Za-z0-9]+)?$/ && /[0-9]/ && !($0 in by)) by[$0] = commit
+          else if (!($0 in by)) by[$0] = commit
           next
         }
         { n = split($0, word, /[^A-Za-z0-9_-]+/)
