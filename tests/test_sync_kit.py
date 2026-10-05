@@ -43,6 +43,14 @@ class SyncKitTests(unittest.TestCase):
             result, stamp = self.sync(tmp, '- A kit-owned file changed.\n')
             self.assertEqual((result.returncode, stamp), (0, '0.2'), result.stdout + result.stderr)
 
+    def test_an_action_none_line_is_not_an_item(self):
+        # A release with nothing to do by hand says so with "**ACTION** — none"; listed as an
+        # item, it stopped the sync and left the version unstamped for nothing.
+        with tempfile.TemporaryDirectory() as tmp:
+            result, stamp = self.sync(tmp, '- A kit-owned file changed. **ACTION** \u2014 none\n')
+            self.assertEqual((result.returncode, stamp), (0, '0.2'), result.stdout + result.stderr)
+            self.assertNotIn('ACTION items since', result.stdout)
+
     def test_a_failed_action_scan_keeps_the_stamp(self):
         # An empty pending list from a scanner that died reads as "no ACTION items".
         with tempfile.TemporaryDirectory() as tmp:
