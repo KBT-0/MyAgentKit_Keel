@@ -416,6 +416,35 @@ self_test() {
   else
     echo "  ok   — commit-msg hook rejects an AI co-author trailer and keeps a human one"
   fi
+  # A "Done: K4" trailer while the STATE.md this commit records still names K4 is refused,
+  # whatever AGENTS.md says about attribution: the two checks are separate. The hook reads
+  # the index, so the case stages its files in a throwaway repository, never in this one.
+  if [ ! -f .githooks/commit-msg ]; then
+    echo "  FAIL — .githooks/commit-msg is missing: nothing rejects a Done: trailer for a task still listed."
+    st_fail=1
+  else
+    msg_hook="$(pwd)/.githooks/commit-msg"; done_repo="$work/done-repo"
+    printf 'close K4\n\nDone: K4\n' > "$work/msg_done"
+    git init -q "$done_repo" && mkdir "$done_repo/docs" ||
+      { echo "  FAIL — could not build the throwaway repository for the Done: hook cases"; st_fail=1; }
+    for rule in present absent; do
+      if [ "$rule" = present ]; then echo '- **No AI attribution in git.**'; else echo 'AI tools may be credited.'; fi > "$done_repo/AGENTS.md"
+      printf '# STATE\n\n## Active work\n- K4: still listed\n' > "$done_repo/docs/STATE.md"
+      git -C "$done_repo" add -A
+      if (CDPATH= cd -- "$done_repo" && sh "$msg_hook" "$work/msg_done") >/dev/null 2>&1; then
+        echo "  FAIL — commit-msg hook accepted Done: K4 while the staged STATE.md names K4 (rule line $rule)"
+        st_fail=1; continue
+      fi
+      printf '# STATE\n\n## Active work\n' > "$done_repo/docs/STATE.md"
+      git -C "$done_repo" add -A
+      if (CDPATH= cd -- "$done_repo" && sh "$msg_hook" "$work/msg_done") >/dev/null 2>&1; then
+        echo "  ok   — commit-msg hook refuses Done: K4 until the staged STATE.md drops it (rule line $rule)"
+      else
+        echo "  FAIL — commit-msg hook rejected Done: K4 after the line was deleted (rule line $rule; false positive)"
+        st_fail=1
+      fi
+    done
+  fi
 
   # --- build failure output -----------------------------------------------------
   # The lines that locate a compile error ("In function", "required from", "note:") come

@@ -235,6 +235,8 @@ class CheckGateTests(unittest.TestCase):
         for line in ('FAIL — .githooks/pre-merge-commit is missing',
                      'FAIL — .githooks/pre-commit exited 0 while the gate was RED',
                      'FAIL — commit-msg hook accepted an AI co-author trailer',
+                     'FAIL — commit-msg hook accepted Done: K4 while the staged STATE.md names K4 (rule line present)',
+                     'FAIL — commit-msg hook accepted Done: K4 while the staged STATE.md names K4 (rule line absent)',
                      'FAIL — a build failure was not named, lost its diagnostic chain, left no full log'):
             self.assertIn(line, out)
         self.assertIn('SELF-TEST: FAIL', out)
