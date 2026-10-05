@@ -172,7 +172,10 @@ in `RESEARCH_LOG.md` (2026-10-03). Most of the files below are project-owned, so
   from that open folder: a root that is no longer that folder is refused by name with
   nothing deleted, and a copy the gate left unreadable fails the case with its path. The
   carried git settings are read from the copy, never from the live checkout again, and the
-  hash covers every entry's permission bits and the git index. `TMPDIR` is resolved once, so a relative one names the same
+  hash covers every entry's permission bits and the git index. Any `include.path` or
+  `includeIf` entry in the repository's configuration is refused by name (`NOT RUN`),
+  whatever its condition: an include matching only the checkout could turn the real gate
+  off while the copies ran it on. `TMPDIR` is resolved once, so a relative one names the same
   folder for both copies. The dot-file
   example runs in a subshell that removes its injection on INT/TERM as well as on exit.
 - **Worker spawning (issues #32, #35).** `spawn_worker.sh` `cd`s into the folder before
@@ -272,7 +275,9 @@ from, and `5c80c36` is the kit's v0.8 commit.
    example, replace your copy with the kit's current one and adapt its target and
    diagnostic again, name each repository setting your gate reads in `probe_config_keys`
    (it must be set in the repository's own config file) and add each variable your gate
-   needs to `probe_env` by name (a tool that needs a cache directory gets its own).
+   needs to `probe_env` by name (a tool that needs a cache directory gets its own); if the
+   repository's configuration uses `include.path` or `includeIf`, move the settings your
+   gate reads into `.git/config`, or do not use the existing-file example.
 8. **ACTION:** Decide the attribution rule. The merged `AGENTS.md` now holds the bullet "No
    AI attribution in git", and the kit's `commit-msg` hook rejects AI credit while that
    line is there. To allow AI credit, delete that bullet, and with the Claude Code overlay

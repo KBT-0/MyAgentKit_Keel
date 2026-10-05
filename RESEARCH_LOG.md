@@ -856,6 +856,20 @@ process a baseline gate leaves running is contained by nothing here; an allowlis
 set only through `includeIf "gitdir:<checkout>"` is no longer refused, it is not carried
 (with a NOTE). Counts: 7, 2, 4, 4, 4.
 
+#### Cross-model round d6: Reject, a regression the lead let through, and a disposition
+
+Round d6 on `ed29079..4baf4e0`: one High, one Medium, both in the example. The High was a
+regression the previous round's worker had named in its report ("not done": a setting
+supplied through `includeIf "gitdir:<checkout>"` is no longer refused, only not carried)
+and the lead merged without having it fixed; the reviewer showed why it matters (the
+setting can turn the real gate off while the copies run it on). Lesson for the lead: a
+"not done" in a worker's report is a finding, not a footnote. Fix: every include is refused
+by name, whatever its condition. The Medium (an empty directory swapped into the copy's
+temporary name between the identity check and the final `rmdir` gets removed) the owner
+chose to answer by disposition, not by code: only an empty directory at the example's own
+temporary name can be removed, nothing with content; the comment that claimed more was
+corrected. Counts: 7, 2, 4, 4, 4, 2.
+
 #### The review gate held on the kit's own hardening
 
 Five of the nine work packages (the gate lock, both review-tooling packages, the commit gates
