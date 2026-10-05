@@ -88,9 +88,9 @@ class SpawnWorkerTests(unittest.TestCase):
     def tearDown(self):
         self._tmp.cleanup()
 
-    def spawn(self, *args):
+    def spawn(self, *args, **extra):
         env = dict(os.environ, PATH=f'{self.bin}{os.pathsep}{os.environ["PATH"]}',
-                   SPAWN_STATE=str(self.state))
+                   SPAWN_STATE=str(self.state), **extra)
         return subprocess.run(['sh', str(SCRIPT), *args], cwd=self.cwd, env=env,
                               capture_output=True, text=True, timeout=60)
 
@@ -147,6 +147,53 @@ class SpawnWorkerTests(unittest.TestCase):
             self.skipTest('root reads a mode-000 file; run the kit check as an ordinary user')
         self.brief.chmod(0)
         self.assert_refused(self.brief)
+
+    def test_a_relative_brief_resolves_here_whatever_cdpath_says(self):
+        # With CDPATH exported, `cd briefs` went to another briefs/ and printed it: the path
+        # took a newline and a valid brief was refused, or another folder's brief was named.
+        (self.cwd / 'briefs').mkdir()
+        (self.cwd / 'briefs/task.md').write_text('here\n')
+        (self.tmp / 'elsewhere/briefs').mkdir(parents=True)
+        (self.tmp / 'elsewhere/briefs/task.md').write_text('elsewhere\n')
+        result = self.spawn('w4', 'briefs/task.md', CDPATH=str(self.tmp / 'elsewhere'))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        submitted = (self.state / 'submitted').read_text().splitlines()
+        self.assertEqual(submitted[0], 'Read %s and follow it.' % shq(str(self.cwd / 'briefs/task.md')))
+
+    def test_a_brief_name_ending_in_a_newline_is_refused(self):
+        # $(basename ...) stripped the trailing newline: "task.md<newline>" was checked and
+        # "task.md", another file, was handed to the worker.
+        (self.cwd / 'task.md').write_text('the other brief\n')
+        (self.cwd / 'task.md\n').write_text('the checked brief\n')
+        for brief in (self.cwd / 'task.md\n', 'task.md\n'):
+            with self.subTest(brief=str(brief)):
+                result = self.spawn('w5', str(brief))
+                self.assertNotEqual(result.returncode, 0, result.stderr)
+                self.assertIn('newline', result.stderr)
+                self.assertNotIn('new-session', self.tmux_log())
+
+    def test_a_relative_settings_file_resolves_against_the_caller_with_a_worktree(self):
+        # The worktree is entered before the tool starts: a relative --settings file then
+        # named the worktree's copy (absent when untracked, or another tracked file).
+        git = lambda *a: subprocess.run(['git', *a], cwd=self.cwd, check=True, capture_output=True)
+        git('init', '-q')
+        git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'a')
+        (self.cwd / 'local.json').write_text('{}\n')
+        inline = '{"model": "x"}'
+        for name, value, expect in (('w6', 'local.json', str(self.cwd / 'local.json')),
+                                    ('w7', inline, inline)):
+            with self.subTest(settings=value):
+                result = self.spawn(name, str(self.brief), '--worktree', '--settings', value)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                argv = self.launched()['argv']
+                self.assertEqual(argv[argv.index('--settings') + 1], expect)
+        # A relative value that is neither inline JSON nor a file here could name a tracked
+        # file in the worktree: refused by name before any session.
+        (self.state / 'tmux.log').unlink()
+        result = self.spawn('w8', str(self.brief), '--worktree', '--settings', 'absent.json')
+        self.assertNotEqual(result.returncode, 0, result.stderr)
+        self.assertIn('absent.json', result.stderr)
+        self.assertNotIn('new-session', self.tmux_log())
 
     def test_worktree_is_built_from_the_leads_current_commit(self):
         git = lambda *a: subprocess.run(['git', *a], cwd=self.cwd, check=True, capture_output=True,

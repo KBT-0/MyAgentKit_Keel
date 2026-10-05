@@ -32,7 +32,7 @@ REQUIRED_SUITES = {
     'tests': {'test_packaging': 1, 'test_bootstrap': 2, 'test_acceptance': 6,
               'test_review_upgrade': 2, 'test_boundary_example': 3, 'test_scan_gate': 1,
               'test_check_gate': 11, 'test_boundary_restore': 24, 'test_sync_kit': 6,
-              'test_doctor': 2, 'test_git_hooks': 18, 'test_stop_hook': 1, 'test_spawn_worker': 5},
+              'test_doctor': 2, 'test_git_hooks': 18, 'test_stop_hook': 1, 'test_spawn_worker': 8},
 }
 
 
