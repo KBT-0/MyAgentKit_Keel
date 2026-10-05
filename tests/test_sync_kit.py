@@ -120,6 +120,30 @@ class SyncKitTests(unittest.TestCase):
                 self.assertIn('conflict: ' + rel, result.stdout)
                 self.assertEqual((project / 'docs/kit/.kit-version').read_text(), '0.1\n')
 
+    def test_a_symlinked_folder_or_a_dangling_overlay_link_is_a_conflict_untouched(self):
+        # Only the last component was checked: with `.githooks` a symlink to a folder outside
+        # the project, the kit's hook was listed "new:" and written there. And an overlay file
+        # whose destination was a dangling symlink was skipped without a word (`-e` is false).
+        cases = (('core/.githooks/commit-msg', '.githooks', '.githooks/commit-msg (the symlink .githooks'),)
+        for src, link, needle in cases:
+            with self.subTest(link=link), tempfile.TemporaryDirectory() as tmp:
+                kit, project = Path(tmp) / 'kit', Path(tmp) / 'project'
+                outside = Path(tmp) / 'outside'
+                self.sync(tmp, '- A kit-owned file changed.\n', '--dry-run')
+                (kit / src).parent.mkdir(parents=True)
+                (kit / src).write_text('#!/bin/sh\n# KIT-OWNED: fixture\n')
+                (project / link).parent.mkdir(parents=True, exist_ok=True)
+                if link == '.githooks':
+                    outside.mkdir()
+                (project / link).symlink_to(outside)
+                result = subprocess.run(['sh', str(kit / 'sync-kit.sh'), str(project), '--actions-applied'],
+                                        capture_output=True, text=True, timeout=30)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn('conflict: ' + needle, result.stdout)
+                self.assertEqual((project / 'docs/kit/.kit-version').read_text(), '0.1\n')
+                self.assertEqual(list(outside.iterdir()) if outside.is_dir() else outside.exists(),
+                                 [] if link == '.githooks' else False, 'written through a symlink')
+
     def test_every_printed_action_item_of_the_real_changelog_is_whole(self):
         # The checklist printed only the physical line holding the marker, so an owner
         # confirming it read "one would be. **ACTION:** copy" and twice nothing at all.
