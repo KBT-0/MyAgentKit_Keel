@@ -89,9 +89,15 @@
 # The audit runs again after the baseline gate run and before the injection: checked only
 # before it, a baseline that replaced src/domain or the gate with a symlink sent the
 # injection, or the second run, out of the copy. A hook the baseline left in .git/hooks is
-# refused by name there too: the second run's `git add` would run it. A folder or entry the
-# audit cannot read fails it by name: os.walk skipped an unreadable folder, and a baseline
-# that hid an outside symlink in one passed, then made it readable and wrote through it.
+# refused by name there too: the second run's `git add` would run it. So is any change to the
+# copy's git configuration: a baseline that set core.hooksPath to a directory holding a hook
+# passed that check, so .git/config must still hold the bytes written before the baseline, and
+# a .git/config.worktree or .git/commondir it left is refused (git reads no configuration from
+# the copy's HOME under probe_env; attributes run nothing without a configured driver). The
+# audit's Python runs isolated (-I): a .pth file the baseline left in that HOME ran in it.
+# A folder or entry the audit cannot read fails it by name: os.walk skipped an unreadable
+# folder, and a baseline that hid an outside symlink in one passed, then made it readable and
+# wrote through it.
 # Copying a large tree (dependencies, build output) costs time: copy only what the gate
 # reads if that is known, but never let the probe write into the checkout.
 #
@@ -129,7 +135,7 @@
 # |   # Every symlink resolves inside the copy, no `.git` lies below the top level, and the path to
 # |   # the target and to the gate runs through no symlink and ends at a regular file.
 # |   probe_audit() {
-# |     probe_why=$(probe_env python3 -c '
+# |     probe_why=$(probe_env python3 -I -c '
 # | import os, stat, sys
 # | root = sys.argv[1]
 # | def unread(error):
@@ -201,10 +207,19 @@
 # |         fi
 # |       done' sh < "$probe_copy/config"; } ||
 # |     probe_fail "could not carry the allowlisted settings into the disposable copy; refusing to run."
+# |   probe_config=$(od -An -tx1 -v .git/config) || exit 1
 # |   probe_env sh "$probe_root/$probe_gate" >/dev/null 2>&1 ||
 # |     probe_fail "the baseline is already red; the injection would prove nothing."
 # |   probe_hooks=$(ls -A .git/hooks) && [ -z "$probe_hooks" ] ||
 # |     probe_skip "the baseline gate run left a hook in the disposable copy's .git/hooks (or removed it); the second run would run it."
+# |   # Under probe_env git reads only .git/config, .git/config.worktree when that enables it,
+# |   # and the configuration .git/commondir points to: the second run gets exactly what was carried.
+# |   [ -d .git ] && [ ! -L .git ] && [ ! -e .git/commondir ] && [ ! -L .git/commondir ] ||
+# |     probe_skip "the baseline gate run left a .git/commondir in the disposable copy, or replaced its .git; the second run would read another configuration."
+# |   [ ! -e .git/config.worktree ] && [ ! -L .git/config.worktree ] ||
+# |     probe_skip "the baseline gate run left a .git/config.worktree in the disposable copy; the second run would read a configuration the example did not write."
+# |   [ "$(od -An -tx1 -v .git/config)" = "$probe_config" ] ||
+# |     probe_skip "the baseline gate run changed the disposable copy's .git/config; the second run would read a configuration the example did not write."
 # |   probe_audit
 # |   printf 'from myapp.web import router\n' > "$probe_root/$probe_target" || exit 1
 # |   probe_status=0
