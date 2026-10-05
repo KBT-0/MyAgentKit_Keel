@@ -203,6 +203,39 @@ class BootstrapTests(unittest.TestCase):
                                  sorted(['.kit-version'] + (['BOOTSTRAP_NOTE.md'] if flags else [])))
                 self.assertNotEqual((kit_dir / '.kit-version').read_text(), '0.1\n')
 
+    def test_a_finish_that_fails_after_wiring_the_hooks_puts_the_hooks_path_back(self):
+        # core.hooksPath was set before the stamp was written: a read-only stamp, a full disk or
+        # a signal there stopped the run with the project's own hooks path already replaced.
+        # A shim stands in for each failure after the `git config`, so it holds for root too.
+        root = Path(__file__).resolve().parents[1]
+        faults = {'signal': ('git', 'case "$*" in *"config core.hooksPath .githooks")\n'
+                                    '  "%s" "$@"; rc=$?; kill -TERM "$PPID"; exit $rc ;; esac\n'),
+                  'mv fails': ('mv', 'case "$*" in *.kit-version.kit-tmp*) exit 1 ;; esac\n')}
+        for fault, (tool, body) in faults.items():
+            for prior in ('custom-hooks', None):
+                with self.subTest(fault=fault, prior=prior), tempfile.TemporaryDirectory() as tmp:
+                    project, shims = Path(tmp) / 'project', Path(tmp) / 'shims'
+                    (project / 'docs/kit').mkdir(parents=True)
+                    shims.mkdir()
+                    subprocess.run(['git', 'init', '-q', str(project)], check=True)
+                    if prior:
+                        subprocess.run(['git', '-C', str(project), 'config', 'core.hooksPath', prior], check=True)
+                    stamp = project / 'docs/kit/.kit-version'
+                    stamp.write_text('0.1\n')
+                    stamp.chmod(0o444)
+                    real = shutil.which(tool)
+                    (shims / tool).write_text('#!/bin/sh\n' + (body % real if '%s' in body else body) +
+                                              'exec "%s" "$@"\n' % real)
+                    (shims / tool).chmod(0o755)
+                    env = dict(os.environ, PATH=str(shims) + os.pathsep + os.environ['PATH'])
+                    result = subprocess.run(['sh', str(root / 'bootstrap.sh'), str(project)], env=env,
+                                            capture_output=True, text=True, timeout=60)
+                    self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertEqual(self._hooks_path(project), prior or '', 'hooks path left replaced')
+                    self.assertIn('core.hooksPath', result.stderr)
+                    self.assertEqual(stamp.read_bytes(), b'0.1\n')
+                    self.assertFalse((project / 'docs/kit/.kit-version.kit-tmp').exists(), 'temporary left')
+
     def test_a_conflict_outside_the_gates_claims_no_missing_enforcement(self):
         # Every conflict was printed under "the gate files already existed" with the warning
         # that the enforcement was not installed, also for a symlinked docs/reviews with every

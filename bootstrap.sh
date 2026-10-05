@@ -56,10 +56,35 @@ version=$(sed -n 's/^## v\([0-9][0-9.]*\).*/\1/p' "$kit/CHANGELOG.md" 2>/dev/nul
 skiplist=$(mktemp) || die "cannot create a temp file"
 note_part=""
 stamp_part=""
-# A stop that `set -e` made says so: the failing command named its path, this says what it means.
-trap 'rc=$?; rm -f "$skiplist" ${note_part:+"$note_part"} ${stamp_part:+"$stamp_part"}
-  [ "$rc" -eq 0 ] || [ -n "$said" ] ||
-  echo "bootstrap: stopped by the failure above, before the version was recorded" >&2' EXIT
+wiring=""
+recorded=""
+# finish RC — the exit trap. A stop that `set -e` made says so: the failing command named its
+# path, this says what it means. A stop after core.hooksPath was changed puts the project's
+# own value back (or unsets it again): the stop is no install, and the hooks it now names may
+# not be there. A signal ends the run through here too.
+finish() {
+  rm -f "$skiplist" ${note_part:+"$note_part"} ${stamp_part:+"$stamp_part"}
+  [ "$1" -ne 0 ] || return 0
+  if [ -n "$wiring" ]; then
+    if [ -n "$had" ]; then git -C "$target" config core.hooksPath "$hooks_was"
+    else git -C "$target" config --unset core.hooksPath; fi >/dev/null 2>&1 || :
+    now=$(git -C "$target" config --local --get core.hooksPath) || now=""
+    if [ "$now" = "$hooks_was" ] && [ -n "$had" ]; then
+      printf '%s\n' "bootstrap: core.hooksPath put back to '$hooks_was', as it was" >&2
+    elif [ "$now" = "$hooks_was" ]; then
+      echo "bootstrap: core.hooksPath unset again, as it was" >&2
+    else
+      printf '%s\n' "bootstrap: could not put core.hooksPath back to ${had:+"'$hooks_was'"}${had:-unset};" \
+        "           it is '$now' now: set it by hand." >&2
+    fi
+  fi
+  [ -n "$said" ] || [ -n "$recorded" ] ||
+    echo "bootstrap: stopped by the failure above, before the version was recorded" >&2
+}
+trap 'finish "$?"' EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 # blocked REL [dir] — the one check for every path bootstrap writes or creates (copied files,
 # the files it generates, the folders it makes): prints why REL may not be written, nothing
@@ -224,20 +249,32 @@ if [ -n "$note" ]; then
   echo "bootstrap: wrote docs/kit/BOOTSTRAP_NOTE.md"
 fi
 
+# The finish is ordered so that a failure changes nothing outside the files: the stamp's
+# content is written to its temporary first, then core.hooksPath is set, and the `mv` that
+# records the version comes last. Setting the hooks path first left the project's own value
+# replaced when the stamp write then failed; a stop between the two is undone by `finish`.
+stamp_part="$target/docs/kit/.kit-version.kit-tmp"
+printf '%s\n' "$version" > "$stamp_part"
+repo=""
 if git -C "$target" rev-parse --git-dir >/dev/null 2>&1; then
+  repo=1
+  hooks_was=$(git -C "$target" config --local --get core.hooksPath) && had=1 || had=""
+  wiring=1
   git -C "$target" config core.hooksPath .githooks
+fi
+# The stamp is the LAST write, so it records only an install whose every write succeeded:
+# sync-kit.sh trusts it, and a stamp over a short install answers "already current".
+mv -f "$stamp_part" "$target/docs/kit/.kit-version"
+recorded=1
+wiring=""
+
+if [ -n "$repo" ]; then
   echo "bootstrap: wired core.hooksPath -> .githooks"
 else
   echo "bootstrap: NOT a git repository yet. After 'git init', run:"
   echo "             git config core.hooksPath .githooks"
   echo "           Without it there is no commit gate (docs/DEV_SETUP.md)."
 fi
-
-# The stamp is the LAST write, so it records only an install whose every write succeeded:
-# sync-kit.sh trusts it, and a stamp over a short install answers "already current".
-stamp_part="$target/docs/kit/.kit-version.kit-tmp"
-printf '%s\n' "$version" > "$stamp_part"
-mv -f "$stamp_part" "$target/docs/kit/.kit-version"
 
 cat <<'EOF'
 
