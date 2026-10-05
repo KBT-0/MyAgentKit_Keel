@@ -5,6 +5,7 @@ import json
 import os
 import re
 from pathlib import Path
+import shutil
 import signal
 import subprocess
 import sys
@@ -1556,34 +1557,80 @@ class BridgeTests(unittest.TestCase):
                     self.assertIn('"api_error_status": ' + case[4:], usage['raw_stdout'])
 
     def test_a_record_is_completed_exactly_when_it_names_no_failure(self):
-        # Every outcome either fake CLI can produce, through each adapter directly.
-        claude = sorted(set(re.findall(r"case == '(\w+)'", FIXTURE)) | {'api_429', 'api_500'})
-        codex = sorted(set(re.findall(r"case == '(\w+)'", self.build_fake_codex().read_text()))
-                       | {'accept', 'mcp', 'mcp_reconnect', 'mcp_no_verdict', 'mcp_two_verdicts'})
+        # Every outcome either fake CLI can produce, each in its own fresh copy of the repository
+        # and configured for the outcome it is named for. Sharing one repository, several cases
+        # fell into a fixture failure and passed as cli_error without reaching their own path.
+        claude = {'accept': None, 'reject': None, 'manual': None, 'no_budget': None,
+                  'explicit_budget': None, 'kit_docs': None, 'proposal': None, 'questions': None,
+                  'api_429': 'quota', 'api_500': 'invalid_evidence', 'quota': 'quota',
+                  'archive_failure': 'evidence_write_failed', 'auth': 'authentication',
+                  'context': 'context_limit', 'conflict': 'invalid_evidence', 'error': 'cli_error',
+                  'exit': 'cli_error', 'malformed_envelope': 'invalid_evidence',
+                  'missing': 'invalid_evidence', 'model': 'invalid_evidence',
+                  'transcript': 'invalid_evidence', 'mutation': 'stale_checkout',
+                  'partial_timeout': 'timeout', 'timeout': 'timeout',
+                  'turns': 'budget_or_turn_limit', 'unknown_flag': 'cli_unsupported'}
+        codex = {'accept': None, 'reject': None, 'mcp': None, 'mcp_reconnect': None,
+                 'quota': 'quota', 'mcp_quota': 'quota', 'mcp_exit': 'cli_error',
+                 'mcp_no_completion': 'cli_error', 'mcp_no_verdict': 'cli_error',
+                 'mcp_two_verdicts': 'cli_error', 'mcp_failed_turn': 'cli_error',
+                 'unknown_flag': 'cli_unsupported'}
+        # Only the dispatcher writes the chain and fails a quota on a changed checkout: the
+        # attempt's own record, then what the chain says (None: no chain was written).
+        dispatched = {'chain_failure': ('quota', None), 'quota_mutation': ('quota', 'stale_checkout')}
+        self.assertLessEqual(set(re.findall(r"case == '(\w+)'", FIXTURE)), set(claude) | set(dispatched))
+        self.assertLessEqual(set(re.findall(r"case == '(\w+)'", self.build_fake_codex().read_text())),
+                             set(codex))
+        task = self.root / 'handoff.md'
+        task.write_text('Propose a fix and stop on ambiguity.\n')
         env = dict(os.environ, MYAGENTKIT_DELEGATION_DEPTH='0', MYAGENTKIT_CAPTURE_QUOTA='0',
                    REVIEW_TIMEOUT_SECONDS='2', REVIEW_CLI_BIN=str(self.build_fake_codex()),
                    REVIEW_DOCS='AGENTS.md, docs/ARCHITECTURE.md and docs/REVIEW_GATE.md')
-        runs = [('claude', case, [sys.executable, '-B', str(BRIDGE), 'review', '--repo', str(self.repo),
-                                  '--timeout', '2'], {'CLAUDE_CLI_BIN': str(self.fixture), 'FIXTURE_CASE': case})
-                for case in claude]
-        runs += [('codex', case, [sys.executable, '-B', str(ROOT / 'codex_bridge.py'), '--repo',
-                                  str(self.repo), '--model', 'fixture-codex-model', '--uncommitted'],
-                  {'CODEX_FIXTURE_CASE': case}) for case in codex]
-        for adapter, case, command, extra in runs:
+        pristine = self.repo
+        runs = [('claude', case, kind) for case, kind in claude.items()]
+        runs += [('codex', case, kind) for case, kind in codex.items()]
+        runs += [('dispatch', case, kinds) for case, kinds in dispatched.items()]
+        for adapter, case, kind in runs:
             with self.subTest(adapter=adapter, case=case):
+                self.repo = repo = self.root / 'repos' / (adapter + '-' + case)
+                shutil.copytree(pristine, repo, symlinks=True)
+                if adapter == 'dispatch':
+                    run, chain = self.dispatch_result(FIXTURE_CASE=case)
+                    records = list(repo.glob('.myagentkit/usage/*.json'))
+                    self.assertEqual(len(records), 1, run.stdout + run.stderr)
+                    usage = json.loads(records[0].read_text())
+                    self.assertEqual(usage['status'] == 'completed', usage['failure_kind'] is None, usage)
+                    self.assertEqual((usage['status'], usage['failure_kind'], chain and chain['failure_kind']),
+                                     ('failed',) + kind, run.stdout + run.stderr)
+                    continue
+                if adapter == 'codex':
+                    command = [sys.executable, '-B', str(ROOT / 'codex_bridge.py'), '--repo', str(repo),
+                               '--model', 'fixture-codex-model', '--uncommitted']
+                    extra = {'CODEX_FIXTURE_CASE': case}
+                else:
+                    mode = 'propose' if case in ('proposal', 'questions') else 'review'
+                    command = [sys.executable, '-B', str(BRIDGE), mode, '--repo', str(repo), '--timeout', '2',
+                               *(['--task-file', str(task)] if mode == 'propose' else []),
+                               *(['--max-budget-usd', '7.5'] if case == 'explicit_budget' else [])]
+                    extra = {'CLAUDE_CLI_BIN': str(self.fixture), 'FIXTURE_CASE': case}
+                if case == 'kit_docs':  # the kit's own layout, whose guidance the prompt must name
+                    (repo / 'AGENTS.md').unlink()
+                    (repo / 'core/docs').mkdir(parents=True)
+                    for name in ('CONTRIBUTING.md', 'core/AGENTS.md', 'core/docs/REVIEW_GATE.md',
+                                 'core/docs/ARCHITECTURE.md'):
+                        (repo / name).write_text('Synthetic kit guidance.\n')
                 run = subprocess.run(command, env=dict(env, **extra), capture_output=True, text=True)
                 lines = [line.removeprefix('review invocation: ') for line in run.stdout.splitlines()
                          if line.startswith(('{', 'review invocation: {'))]
                 result = json.loads(lines[-1])
                 self.assertEqual(result['status'] == 'completed', result['failure_kind'] is None, result)
+                self.assertEqual((result['status'], result['failure_kind']),
+                                 ('completed' if kind is None else 'failed', kind), result)
                 self.assertEqual(run.returncode == 0, result['status'] == 'completed', result)
                 if result.get('usage_record'):
                     usage = json.loads(Path(result['usage_record']).read_text())
                     self.assertEqual((usage['status'], usage['failure_kind']),
                                      (result['status'], result['failure_kind']))
-            if (self.repo / 'docs/reviews').is_file():  # archive_failure blocks the next case
-                (self.repo / 'docs/reviews').unlink()
-            (self.repo / 'file.py').write_text('changed\n')
 
     def test_the_pin_is_attested_by_its_exact_id_or_a_dated_one_only(self):
         # Matched as a prefix, the usage key claude-opus-5-5, another model, attested the pin
