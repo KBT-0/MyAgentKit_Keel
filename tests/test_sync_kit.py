@@ -126,6 +126,32 @@ class SyncKitTests(unittest.TestCase):
                 self.assertTrue(after.strip(), 'nothing after the marker: ' + item)
                 self.assertRegex(item, r'[.!?:][`*)"]*$', 'cut mid-sentence: ' + item)
 
+    def test_the_upgrade_checklist_reports_every_removed_line_of_the_project(self):
+        # The removed-line filter `grep '^-[^-]'` skipped the diff's file headers and with them
+        # every removed line that itself starts with a hyphen: a deleted Markdown rule
+        # `- Require a licence check.` shows as `--` and was hidden. Run the real snippet.
+        text = (ROOT / 'CHANGELOG.md').read_text()
+        block = next(part for part in text.split('```sh\n')[1:] if 'kit-removed' in part.split('```')[0])
+        snippet = '\n'.join(line.strip() for line in block.split('```')[0].splitlines())
+        with tempfile.TemporaryDirectory() as tmp:
+            env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1', GIT_PAGER='cat')
+            kit, project = Path(tmp) / 'kit', Path(tmp) / 'project'
+            common = 'keep\nkit-line\n'
+            for repo, path, body in ((kit, 'core/RULES.md', common),
+                                     (project, 'RULES.md', '- bullet\n-- double\nplain\n' + common)):
+                (repo / path).parent.mkdir(parents=True, exist_ok=True)
+                (repo / path).write_text(body)
+                for args in (('init', '-q'), ('add', '.'),
+                             ('-c', 'user.name=F', '-c', 'user.email=f@example.invalid', 'commit', '-qm', 'base')):
+                    subprocess.run(['git', *args], cwd=repo, check=True, capture_output=True, env=env)
+                (repo / path).write_text('keep\n')
+            base = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=kit, check=True, capture_output=True,
+                                  text=True, env=env).stdout.strip()
+            self.assertIn('5c80c36', snippet)
+            result = subprocess.run(['sh', '-c', snippet.replace('5c80c36', base)], cwd=project, capture_output=True,
+                                    text=True, env=dict(env, KIT=str(kit), f='RULES.md', src='core/RULES.md'))
+            self.assertEqual(result.stdout.splitlines(), ['-- bullet', '--- double', '-plain'], result.stderr)
+
     def test_a_signal_while_printing_the_checklist_keeps_the_stamp(self):
         # A handler that only cleaned up let the run resume with the pending list deleted,
         # which reads as "no ACTION items", and stamp the version.

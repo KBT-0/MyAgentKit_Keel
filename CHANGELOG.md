@@ -238,12 +238,13 @@ from, and `5c80c36` is the kit's v0.8 commit.
    Then compare each merged file with your pre-merge copy (`git diff HEAD -- <file>`) and
    account for every removed line. For each file `$f` of the previous item, with `$src` its
    kit path there (`core/$f` or `overlays/claude-code/files/$f`), this prints the removed
-   lines the kit's own change does not also remove; each must be a line of yours whose job
+   lines (taken from inside the hunks, so a removed `- rule` shows too) that the kit's own
+   change does not also remove; each must be a line of yours whose job
    now sits in a kit line (a value you put back, a kit line you had edited), never a check,
    step or rule of yours that is gone:
    ```sh
-   git -C "$KIT" diff 5c80c36 -- "$src" | grep '^-[^-]' > "$f.kit-removed"
-   git diff HEAD -- "$f" | grep '^-[^-]' | grep -vxF -f "$f.kit-removed"; rm -f "$f.kit-removed"
+   git -C "$KIT" diff 5c80c36 -- "$src" | sed '1,/^@@/d' | grep '^-' > "$f.kit-removed"
+   git diff HEAD -- "$f" | sed '1,/^@@/d' | grep '^-' | grep -vxF -f "$f.kit-removed"; rm -f "$f.kit-removed"
    ```
    Then fill the placeholders the merge brought in, which
    `./scripts/check.sh` lists: `{{OWNER_NAME}}` in new lines of `AGENTS.md` and
