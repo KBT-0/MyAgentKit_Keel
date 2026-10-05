@@ -42,9 +42,17 @@ q() { set -- "$(printf '%sx' "$1" | sed "s/'/'\\\\''/g")"; printf "'%s'" "${1%x}
 [ $# -ge 2 ] || { sed -n '2,8p' "$0"; exit 2; }
 name=$1; brief=$2; shift 2
 { [ -f "$brief" ] && [ -r "$brief" ]; } || die "brief file not found or not readable: $brief"
-brief=$(CDPATH= cd -- "$(dirname "$brief")" && pwd)/$(basename "$brief")
-case "$brief" in *"
-"*) die "brief path contains a newline, which would submit the instruction early: $brief" ;; esac
+# A newline is refused in the argument itself, before anything rewrites it: $(...) strips
+# trailing newlines, and "task.md<newline>" was checked while "task.md" was handed over.
+# The folder and file name are split by parameter expansion, which keeps every byte, and
+# the folder's absolute path keeps a trailing newline through the x guard.
+nl='
+'
+case "$brief" in *"$nl"*) die "brief path contains a newline, which would submit the instruction early: $brief" ;; esac
+case "$brief" in */*) brief_dir=${brief%/*}/ ;; *) brief_dir=. ;; esac
+brief_dir=$(CDPATH= cd -- "$brief_dir" && pwd && echo x) || die "cannot resolve the brief's folder: $brief"
+brief=${brief_dir%"${nl}x"}/${brief##*/}
+case "$brief" in *"$nl"*) die "brief path contains a newline, which would submit the instruction early: $brief" ;; esac
 command -v tmux >/dev/null || die "tmux is not installed"
 command -v claude >/dev/null || die "claude is not on PATH"
 
@@ -63,6 +71,17 @@ done
 tmux has-session -t "=$name" 2>/dev/null && die "tmux session '$name' already exists"
 
 dir=$PWD
+# --settings is inline JSON or a file. The tool starts in the worktree, so a relative file is
+# made absolute here, against the caller's folder: resolved there, an untracked settings file
+# was missing and a tracked one of the same name was loaded instead. A relative value that is
+# neither is refused for the same reason. The other values name no file: the brief is
+# absolute already, and --allowed-tools patterns are meant for the worker's own tree.
+case "$settings" in
+  ""|"{"*|/*) ;;
+  *) [ -f "$settings" ] || [ -z "$worktree" ] ||
+       die "--settings is neither inline JSON nor a file here, and the worktree could hold another: $settings"
+     [ ! -f "$settings" ] || settings=$PWD/$settings ;;
+esac
 if [ -n "$worktree" ]; then
   top=$(git rev-parse --show-toplevel) || die "--worktree needs a git repository"
   dir=$top/.claude/worktrees/$name

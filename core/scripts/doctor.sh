@@ -252,10 +252,13 @@ elif [ -n "${SHELL:-}" ]; then
       # grep plus an ALLOWLIST of options that leave a named file's matches alone: colour
       # off or auto, and --exclude-dir, which skips only directories (oh-my-zsh's default
       # alias adds it). `grep -v` inverts every match, --color=always puts escape codes into
-      # pipes, and --exclude skips a NAMED file whose name matches: all shadow grep.
-      printf '%s\n' "${expansion%\'}" | awk '$1 != "grep" { exit 1 }
+      # pipes, and --exclude skips a NAMED file whose name matches: all shadow grep. Each word
+      # must be a whole plain token: `--exclude-dir=x>/dev/null` passed a prefix match and sent
+      # every match to /dev/null, so a directory list holds only name characters and braces.
+      printf '%s\n' "${expansion%\'}" | LC_ALL=C awk '$1 != "grep" { exit 1 }
         { for (i = 2; i <= NF; i++)
-            if ($i !~ /^--colou?r(=(auto|never))?$/ && $i !~ /^--exclude-dir=./) exit 1 }' || shadowed=1 ;;
+            if ($i !~ /^--colou?r(=(auto|never))?$/ && $i !~ /^--exclude-dir=[A-Za-z0-9._,{}\/-]+$/) exit 1 }' ||
+        shadowed=1 ;;
   esac
   if [ -n "$shadowed" ]; then
     miss "grep is shadowed in $SHELL ($grep_is)" "remove it from the rc file, or test gate pipelines with sh -c"

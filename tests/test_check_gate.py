@@ -244,8 +244,10 @@ class CheckGateTests(unittest.TestCase):
         # doctor.sh then checked another tree, and review.sh could review one. Every cd in a
         # shipped shell script and hook clears it.
         shipped = [*sorted((ROOT / 'core/scripts').glob('*.sh')), *(ROOT / 'core/.githooks').iterdir(),
-                   *sorted((ROOT / 'overlays/claude-code/files/scripts').glob('*.sh'))]
+                   *sorted(ROOT.glob('overlays/*/files/**/*.sh'))]
         self.assertIn(ROOT / 'core/scripts/review.sh', shipped)
+        self.assertIn(ROOT / 'overlays/unity/files/scripts/unity_gate.sh', shipped)
+        self.assertIn(ROOT / 'overlays/claude-code/files/.claude/hooks/gate_on_stop.sh', shipped)
         found = []
         for path in shipped:
             for number, line in enumerate(path.read_text().splitlines(), 1):

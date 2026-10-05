@@ -17,7 +17,7 @@ case "$input" in
 esac
 
 root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
-cd "$root" || exit 0
+CDPATH= cd -- "$root" || exit 0
 
 # Only work in these paths needs the gate; documentation and tooling turns skip it, which is
 # why the hook is cheap in practice. Untracked files count — `git status` reports them where

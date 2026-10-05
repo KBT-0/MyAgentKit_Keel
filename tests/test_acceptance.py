@@ -53,6 +53,14 @@ class AcceptanceTests(unittest.TestCase):
                 found = gate.discover(ROOT / directory)[1]
                 self.assertEqual(required, found)
 
+    def test_a_utf8_locale_is_picked_by_its_codeset_and_none_is_not_run(self):
+        # Only four locale names counted: a host with de_DE.UTF-8 alone failed acceptance.
+        self.assertEqual(gate.utf8_locale(['C', 'POSIX', 'de_DE.UTF-8']), 'de_DE.UTF-8')
+        self.assertEqual(gate.utf8_locale(['en_GB.iso885915', 'sr_RS.utf8@latin']), 'sr_RS.utf8@latin')
+        self.assertEqual(gate.utf8_locale(['fr_FR.Utf-8', 'C.UTF-8']), 'C.UTF-8')
+        with self.assertRaisesRegex(RuntimeError, 'NOT RUN'):
+            gate.utf8_locale(['C', 'POSIX', 'en_US.iso885915', 'utf8'])
+
     def test_packaging_suite_is_required_by_the_real_gate(self):
         self.assertGreaterEqual(gate.REQUIRED_SUITES['tests']['test_packaging'], 1)
 

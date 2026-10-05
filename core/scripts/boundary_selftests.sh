@@ -88,7 +88,10 @@
 # the directory that was validated).
 # The audit runs again after the baseline gate run and before the injection: checked only
 # before it, a baseline that replaced src/domain or the gate with a symlink sent the
-# injection, or the second run, out of the copy.
+# injection, or the second run, out of the copy. A hook the baseline left in .git/hooks is
+# refused by name there too: the second run's `git add` would run it. A folder or entry the
+# audit cannot read fails it by name: os.walk skipped an unreadable folder, and a baseline
+# that hid an outside symlink in one passed, then made it readable and wrote through it.
 # Copying a large tree (dependencies, build output) costs time: copy only what the gate
 # reads if that is known, but never let the probe write into the checkout.
 #
@@ -127,15 +130,26 @@
 # |   # the target and to the gate runs through no symlink and ends at a regular file.
 # |   probe_audit() {
 # |     probe_why=$(probe_env python3 -c '
-# | import os, sys
+# | import os, stat, sys
 # | root = sys.argv[1]
-# | for top, dirs, files in os.walk(root):
-# |     for name in dirs + files:
-# |         path = os.path.join(top, name)
-# |         if name == ".git" and top != root:
-# |             sys.exit("the checkout contains a nested repository or worktree at " + os.path.relpath(top, root))
-# |         if os.path.islink(path) and os.path.commonpath([root, os.path.realpath(path)]) != root:
-# |             sys.exit(os.path.relpath(path, root) + " is a symlink that leads out of the disposable copy")
+# | def unread(error):
+# |     sys.exit("the audit could not read " + os.path.relpath(error.filename or root, root) + " (" + str(error.strerror or error) + ")")
+# | try:
+# |     for top, dirs, files in os.walk(root, onerror=unread):
+# |         for name in dirs + files:
+# |             path = os.path.join(top, name)
+# |             if name == ".git" and top != root:
+# |                 sys.exit("the checkout contains a nested repository or worktree at " + os.path.relpath(top, root))
+# |             if not stat.S_ISLNK(os.lstat(path).st_mode):
+# |                 continue
+# |             try:
+# |                 real = os.path.realpath(path, strict=True)
+# |             except FileNotFoundError:
+# |                 real = os.path.realpath(path)
+# |             if os.path.commonpath([root, real]) != root:
+# |                 sys.exit(os.path.relpath(path, root) + " is a symlink that leads out of the disposable copy")
+# | except OSError as error:
+# |     unread(error)
 # | for rel in sys.argv[2:]:
 # |     path = root
 # |     for part in rel.split("/"):
@@ -189,6 +203,8 @@
 # |     probe_fail "could not carry the allowlisted settings into the disposable copy; refusing to run."
 # |   probe_env sh "$probe_root/$probe_gate" >/dev/null 2>&1 ||
 # |     probe_fail "the baseline is already red; the injection would prove nothing."
+# |   probe_hooks=$(ls -A .git/hooks) && [ -z "$probe_hooks" ] ||
+# |     probe_skip "the baseline gate run left a hook in the disposable copy's .git/hooks (or removed it); the second run would run it."
 # |   probe_audit
 # |   printf 'from myapp.web import router\n' > "$probe_root/$probe_target" || exit 1
 # |   probe_status=0

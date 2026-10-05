@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import re
 import select
+import shlex
 import shutil
 import signal
 import subprocess
@@ -244,14 +245,26 @@ class DoctorTests(unittest.TestCase):
             self.assertEqual(ready.returncode, 0, ready.stdout + ready.stderr)
             # oh-my-zsh's default alias skips directories, which only a recursive grep reads:
             # ready. --exclude skips a NAMED file whose name matches, so a pipeline tried with
-            # it lies: shadowed.
+            # it lies: shadowed. An allowed option holding shell syntax is no plain option:
+            # `--exclude-dir=x>/dev/null` sent every match to /dev/null and passed.
             for alias, expect in (('grep --color=auto --exclude-dir={.bzr,CVS,.git,.hg,.svn,.idea,.tox}', 0),
-                                  ('grep --color=auto --exclude=*.md', 1)):
+                                  ('grep --color --exclude-dir=node_modules', 0),
+                                  ('grep --color=auto --exclude=*.md', 1),
+                                  ('grep --exclude-dir=x>/dev/null', 1),
+                                  ('grep --exclude-dir=x;true', 1),
+                                  ('grep --exclude-dir=x|cat', 1),
+                                  ('grep --exclude-dir=$(true)', 1),
+                                  ('grep --exclude-dir=`true`', 1),
+                                  ('grep --exclude-dir=x&', 1),
+                                  ('grep --exclude-dir=*', 1),
+                                  ('grep --color=auto>/dev/null', 1)):
                 with self.subTest(alias=alias):
-                    shell.write_text('#!/bin/sh\ncommand() { echo "grep is an alias for %s"; }\neval "$2"\n'
-                                     % alias)
+                    shell.write_text("#!/bin/sh\ncommand() { printf '%%s\\n' %s; }\neval \"$2\"\n"
+                                     % shlex.quote('grep is an alias for ' + alias))
                     probed = doctor()
                     self.assertEqual(probed.returncode, expect, probed.stdout + probed.stderr)
+                    if expect:
+                        self.assertIn('MISSING: grep is shadowed', probed.stdout)
             # An rc file that prints a banner: doctor read the banner as the probe's answer
             # and called a shell that aliases grep to `grep -v` ready.
             shell.write_text('#!/bin/sh\necho Welcome\ncommand() { echo "grep is an alias for grep -v"; }\n'
