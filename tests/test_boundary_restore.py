@@ -10,6 +10,9 @@ import tempfile
 import time
 import unittest
 
+# Seconds any wait here may take; MYAGENTKIT_TEST_TIMEOUT_SCALE multiplies it on a slow host.
+DEADLINE = 30 * float(os.environ.get('MYAGENTKIT_TEST_TIMEOUT_SCALE', '1'))
+
 
 class BoundaryRestoreTests(unittest.TestCase):
     def setUp(self):
@@ -72,23 +75,25 @@ exit 1
                                                   CONTINUED=str(continued),
                                                   INTERRUPT='yes' if interruption else 'no'),
                                          start_new_session=True, stdout=subprocess.PIPE,
-                                         stderr=subprocess.PIPE)
+                                         stderr=subprocess.PIPE, text=True)
                 try:
                     if interruption:
-                        deadline = time.monotonic() + 5
+                        deadline = time.monotonic() + DEADLINE
                         while not ready.exists() and time.monotonic() < deadline:
                             if child.poll() is not None:
                                 break
                             time.sleep(0.01)
-                        self.assertTrue(ready.exists(), 'injection did not reach the gate')
+                        if not ready.exists():
+                            self.stop(child, 'injection did not reach the gate')
                         # Mid-injection, the checkout is untouched: the copy took the edit.
                         self.assertEqual(source.read_bytes(), original)
                         os.killpg(child.pid, interruption)
-                    stdout, stderr = child.communicate(timeout=5)
+                    done = self.finish(child)
+                    stdout, stderr = done.stdout, done.stderr
                     self.assertEqual(child.returncode,
                                      -interruption if interruption == signal.SIGKILL
                                      else 128 + interruption if interruption else 0,
-                                     (stdout + stderr).decode(errors='replace'))
+                                     stdout + stderr)
                     self.assertEqual(source.read_bytes(), original)
                     self.assertEqual(source.stat().st_mode & 0o777, 0o640)
                     self.assertEqual(git('status', '--porcelain'), status)
@@ -98,7 +103,7 @@ exit 1
                     self.assertEqual(continued.exists(), interruption is None)
                     # check.sh --self-test counts a boundary self-test as run only by this line.
                     if interruption is None:
-                        self.assertIn('\n  ok   — ', '\n' + stdout.decode())
+                        self.assertIn('\n  ok   — ', '\n' + stdout)
                 finally:
                     if child.poll() is None:
                         os.killpg(child.pid, signal.SIGKILL)
@@ -128,8 +133,8 @@ exit 1
                             "echo 'FAIL [boundary]: the domain layer imports the web layer:'\nexit 1\n")
             scratch = Path(tmp) / 'scratch'
             scratch.mkdir()
-            result = subprocess.run(['sh', str(gate), '--self-test'], cwd=root, capture_output=True,
-                                    text=True, timeout=30, env=dict(os.environ, TMPDIR=str(scratch)))
+            result = self.run_gate(['sh', str(gate), '--self-test'], root,
+                                   dict(os.environ, TMPDIR=str(scratch)))
             self.assertEqual(real.read_bytes(), original, 'the probe wrote into the checkout')
             self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
             self.assertIn('src is a symlink that leads out of the disposable copy', result.stdout)
@@ -162,9 +167,8 @@ exit 1
             subprocess.run(['git', 'init', '-q'], cwd=root, check=True)
             scratch = Path(tmp) / 'scratch'
             scratch.mkdir()
-            result = subprocess.run(['sh', str(root / 'scripts/check.sh'), '--self-test'], cwd=root,
-                                    capture_output=True, text=True, timeout=30,
-                                    env=dict(os.environ, TMPDIR=str(scratch)))
+            result = self.run_gate(['sh', str(root / 'scripts/check.sh'), '--self-test'], root,
+                                   dict(os.environ, TMPDIR=str(scratch)))
             self.assertFalse((root / 'built-here').exists(), 'the probe ran its gate in the checkout')
             self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
             self.assertIn('is a symlink', result.stdout)
@@ -206,8 +210,8 @@ exit 1
         with tempfile.TemporaryDirectory() as tmp:
             root, git = self.fixture(tmp, '')
             status = git('status', '--porcelain', '--ignored')
-            result = subprocess.run(['sh', 'scripts/check.sh', '--self-test'], cwd=root, capture_output=True,
-                                    text=True, timeout=30, env=dict(os.environ, TMPDIR=str(root)))
+            result = self.run_gate(['sh', 'scripts/check.sh', '--self-test'], root,
+                                   dict(os.environ, TMPDIR=str(root)))
             self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
             self.assertIn('the disposable copy', result.stdout)
             self.assertIn('is inside the checkout', result.stdout)
@@ -221,10 +225,9 @@ exit 1
             root, git = self.fixture(tmp, ': > "$(git rev-parse --show-toplevel)/built-here"\n')
             scratch = Path(tmp) / 'scratch'
             scratch.mkdir()
-            result = subprocess.run(['sh', 'scripts/check.sh', '--self-test'], cwd=root, capture_output=True,
-                                    text=True, timeout=30,
-                                    env=dict(os.environ, TMPDIR=str(scratch), GIT_DIR=str(root / '.git'),
-                                             GIT_WORK_TREE=str(root)))
+            result = self.run_gate(['sh', 'scripts/check.sh', '--self-test'], root,
+                                   dict(os.environ, TMPDIR=str(scratch), GIT_DIR=str(root / '.git'),
+                                        GIT_WORK_TREE=str(root)))
             self.assertFalse((root / 'built-here').exists(), 'the copy\'s gate built in the checkout')
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn('  ok   — ', result.stdout)
@@ -278,10 +281,9 @@ exit 1
             (shim / 'mktemp').write_text('#!/bin/sh\nmkdir "%s" && echo "%s"\n' % (copy, copy))
             (shim / 'mktemp').chmod(0o755)
             (Path(tmp) / 'scratch').mkdir()
-            result = subprocess.run(['sh', str(root / 'scripts/check.sh'), '--self-test'], cwd=root,
-                                    capture_output=True, text=True, timeout=30,
-                                    env=dict(os.environ, CDPATH=copy + '/checkout/safe',
-                                             PATH='%s%s%s' % (shim, os.pathsep, os.environ['PATH'])))
+            result = self.run_gate(['sh', str(root / 'scripts/check.sh'), '--self-test'], root,
+                                   dict(os.environ, CDPATH=copy + '/checkout/safe',
+                                        PATH='%s%s%s' % (shim, os.pathsep, os.environ['PATH'])))
             self.assertEqual(real.read_bytes(), original, 'the probe wrote into the checkout')
             self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
             self.assertIn('src is a symlink that leads out of the disposable copy', result.stdout)
@@ -310,8 +312,8 @@ exit 1
             before = run('status', '--porcelain', cwd=nested)
             scratch = Path(tmp) / 'scratch'
             scratch.mkdir()
-            result = subprocess.run(['sh', 'scripts/check.sh', '--self-test'], cwd=root, capture_output=True,
-                                    text=True, timeout=30, env=dict(os.environ, TMPDIR=str(scratch)))
+            result = self.run_gate(['sh', 'scripts/check.sh', '--self-test'], root,
+                                   dict(os.environ, TMPDIR=str(scratch)))
             self.assertEqual(run('status', '--porcelain', cwd=nested), before,
                              'the copy staged into the original nested index')
             self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
@@ -329,9 +331,8 @@ exit 1
             before = count()
             scratch = Path(tmp) / 'scratch'
             scratch.mkdir()
-            result = subprocess.run(['sh', 'scripts/check.sh', '--self-test'], cwd=root, capture_output=True,
-                                    text=True, timeout=30,
-                                    env=dict(os.environ, TMPDIR=str(scratch), GIT_OBJECT_DIRECTORY=str(objects)))
+            result = self.run_gate(['sh', 'scripts/check.sh', '--self-test'], root,
+                                   dict(os.environ, TMPDIR=str(scratch), GIT_OBJECT_DIRECTORY=str(objects)))
             self.assertEqual(count(), before, 'the copy wrote objects into the original')
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn('  ok   — ', result.stdout)
@@ -339,17 +340,28 @@ exit 1
     def self_test(self, tmp, cwd, **env):
         scratch = Path(tmp) / 'scratch'
         scratch.mkdir()
+        return self.run_gate(['sh', 'scripts/check.sh', '--self-test'], cwd,
+                             dict(os.environ, **{'TMPDIR': str(scratch), 'SCRATCH': str(scratch), **env}))
+
+    def run_gate(self, args, cwd, env):
         # Its own process group: a timeout kills every process the example started, not only sh.
-        child = subprocess.Popen(['sh', 'scripts/check.sh', '--self-test'], cwd=cwd, text=True,
-                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True,
-                                 env=dict(os.environ, **{'TMPDIR': str(scratch), 'SCRATCH': str(scratch), **env}))
+        return self.finish(subprocess.Popen(args, cwd=cwd, env=env, text=True, stdout=subprocess.PIPE,
+                                            stderr=subprocess.PIPE, start_new_session=True))
+
+    def finish(self, child):
         try:
-            stdout, stderr = child.communicate(timeout=30)
+            stdout, stderr = child.communicate(timeout=DEADLINE)
         except subprocess.TimeoutExpired:
-            os.killpg(child.pid, signal.SIGKILL)
-            child.communicate()
-            self.fail('the example did not end within 30 seconds')
+            self.stop(child, 'the example did not end')
         return subprocess.CompletedProcess(child.args, child.returncode, stdout, stderr)
+
+    def stop(self, child, what):
+        # The output's tail tells a real hang (where it stopped) from a slow host (cut short).
+        if child.poll() is None:
+            os.killpg(child.pid, signal.SIGKILL)
+        stdout, stderr = child.communicate()
+        self.fail('%s within %g s (exit %s)\n--- stdout tail\n%s\n--- stderr tail\n%s'
+                  % (what, DEADLINE, child.returncode, stdout[-2000:], stderr[-2000:]))
 
     def test_nothing_the_baseline_run_leaves_reaches_the_second_run(self):
         # With one copy reused for both runs, three review rounds in a row found something the
