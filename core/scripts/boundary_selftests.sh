@@ -180,13 +180,15 @@
 # |         fi
 # |       done' sh < "$probe_copy/config"; } ||
 # |     probe_fail "could not carry the allowlisted settings into the disposable copy; refusing to run."
-# |   probe_env sh "$probe_root/$probe_gate" >/dev/null 2>&1 || exit 1
+# |   probe_env sh "$probe_root/$probe_gate" >/dev/null 2>&1 ||
+# |     probe_fail "the baseline is already red; the injection would prove nothing."
 # |   probe_audit
 # |   printf 'from myapp.web import router\n' > "$probe_root/$probe_target" || exit 1
 # |   probe_status=0
 # |   probe_output=$(probe_env sh "$probe_root/$probe_gate" 2>&1) || probe_status=$?
 # |   [ "$probe_status" -ne 0 ] && printf '%s\n' "$probe_output" |
-# |     grep -Fq 'FAIL [boundary]: the domain layer imports the web layer:'
+# |     grep -Fq 'FAIL [boundary]: the domain layer imports the web layer:' ||
+# |     probe_fail "the injection did not produce the domain/web gate's failure."
 # | ); then
 # |   echo "  ok   — domain/web boundary gate rejects a forbidden import in an existing file"
 # | else

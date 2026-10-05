@@ -394,6 +394,24 @@ exit 1
                 self.assertIn('NOT RUN — existing-file probe: ' + message, result.stdout)
                 self.assertNotIn('  ok   — ', result.stdout)
 
+    def test_the_probe_requires_a_green_baseline_and_its_own_diagnostic(self):
+        # Deleting the baseline run or the diagnostic match left every copy test green: the
+        # probe must prove the gate rejects THIS injection, not that the gate fails somehow.
+        diagnostic = "echo 'FAIL [boundary]: the domain layer imports the web layer:'"
+        injected = 'grep -q myapp.web src/domain/existing.py && '
+        cases = {'baseline red': (diagnostic + '; exit 1\n', 'the baseline is already red'),
+                 'wrong reason': (injected + "{ echo 'FAIL: unrelated build error'; exit 1; }\n",
+                                  "the injection did not produce the domain/web gate's failure"),
+                 'misleading success': (injected + '{ %s; exit 0; }\n' % diagnostic,
+                                        "the injection did not produce the domain/web gate's failure")}
+        for name, (body, message) in cases.items():
+            with self.subTest(case=name), tempfile.TemporaryDirectory() as tmp:
+                root, git = self.fixture(tmp, body)
+                result = self.self_test(tmp, root)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn('FAIL — existing-file probe: ' + message, result.stdout)
+                self.assertNotIn('  ok   — ', result.stdout)
+
     def test_a_symlinked_object_store_cannot_take_the_copy_s_writes(self):
         # The containment check validated the git and common directories, not what lies in
         # them: cp -R kept `.git/objects` as an absolute symlink to the original's store, and a
