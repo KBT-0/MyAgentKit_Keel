@@ -54,8 +54,7 @@ version=$(sed -n 's/^## v\([0-9][0-9.]*\).*/\1/p' "$kit/CHANGELOG.md" 2>/dev/nul
 [ -n "$version" ] || die "cannot read a version from $kit/CHANGELOG.md — refusing to record a blank one"
 
 skiplist=$(mktemp) || die "cannot create a temp file"
-note_part=""
-stamp_part=""
+part=""
 wiring=""
 recorded=""
 # finish RC — the exit trap. A stop that `set -e` made says so: the failing command named its
@@ -63,7 +62,7 @@ recorded=""
 # own value back (or unsets it again): the stop is no install, and the hooks it now names may
 # not be there. A signal ends the run through here too.
 finish() {
-  rm -f "$skiplist" ${note_part:+"$note_part"} ${stamp_part:+"$stamp_part"}
+  rm -f "$skiplist" ${part:+"$part"}
   [ "$1" -ne 0 ] || return 0
   if [ -n "$wiring" ]; then
     if [ -n "$had" ]; then git -C "$target" config core.hooksPath "$hooks_was"
@@ -113,6 +112,26 @@ blocked() {
   fi
 }
 
+# perms FILE — FILE's permission bits in octal, read from `ls -l` (POSIX has no portable stat).
+perms() {
+  ls -ld -- "$1" | awk '{ m = 0; for (i = 2; i <= 10; i++) m = m * 2 + (substr($1, i, 1) !~ /[-ST]/); printf "%o\n", m }'
+}
+
+# put DEST [SRC] — the one writer: DEST gets SRC's content (stdin without SRC) whole or not at
+# all, through a temporary that `mv` moves over it. A redirection or `cp` empties DEST before
+# writing, so a full disk left an empty stamp or a gate cut short. The temporary carries DEST's
+# own mode, or for a new file the mode a plain `cp` (or redirection) gives under the umask, set
+# before a byte is written: a temporary made under the umask turned a 0600 note into 0644.
+# It is opened before the chmod, so a mode without write permission still takes the content.
+put() {
+  if [ -e "$1" ]; then _m=$(perms "$1")
+  elif [ -n "${2:-}" ]; then _m=$(perms "$2")
+  else _m=666; fi
+  [ -e "$1" ] || _m=$(printf '%o' $(( 0$_m & ~0$(umask) )))
+  part="$1.kit-tmp" &&
+    { chmod "$_m" "$part" && cat "${2:--}"; } > "$part" && mv -f "$part" "$1" && part=""
+}
+
 # copy_tree SRC [DEST_PREFIX] — copies SRC's contents into the target, optionally under a
 # subdirectory. Existing files that differ are recorded and left alone unless --force;
 # identical ones are passed over (an earlier run put them there).
@@ -145,8 +164,7 @@ copy_tree() {
     # Copied to a sibling and moved over: a `cp` cut short on the destination itself was
     # taken by the retry for the owner's own differing file, and the version recorded over it.
     mkdir -p "$target/$(dirname "$dest")"
-    { cp -f "$src/$rel" "$target/$dest.kit-tmp" && mv -f "$target/$dest.kit-tmp" "$target/$dest"; } ||
-      { rm -f "$target/$dest.kit-tmp"; exit 1; }
+    put "$target/$dest" "$src/$rel" || { rm -f ${part:+"$part"}; exit 1; }
   done
 }
 
@@ -244,16 +262,14 @@ if [ -n "$gates$stops" ]; then
 fi
 
 if [ -n "$note" ]; then
-  note_part="$target/docs/kit/BOOTSTRAP_NOTE.md.kit-tmp"
-  {
-    echo "# Bootstrap note — the owner's agenda for this setup"
-    echo
-    printf '%s\n' "Written by \`bootstrap.sh --note\` on $(date -u +%Y-%m-%d). The setup interview"
-    echo "reads this in Phase 0 and must address it explicitly rather than working around it."
-    echo
-    printf '%s\n' "$note"
-  } > "$note_part"
-  mv -f "$note_part" "$target/docs/kit/BOOTSTRAP_NOTE.md"
+  put "$target/docs/kit/BOOTSTRAP_NOTE.md" <<EOF
+# Bootstrap note — the owner's agenda for this setup
+
+Written by \`bootstrap.sh --note\` on $(date -u +%Y-%m-%d). The setup interview
+reads this in Phase 0 and must address it explicitly rather than working around it.
+
+$note
+EOF
   echo "bootstrap: wrote docs/kit/BOOTSTRAP_NOTE.md"
 fi
 
@@ -261,8 +277,6 @@ fi
 # content is written to its temporary first, then core.hooksPath is set, and the `mv` that
 # records the version comes last. Setting the hooks path first left the project's own value
 # replaced when the stamp write then failed; a stop between the two is undone by `finish`.
-stamp_part="$target/docs/kit/.kit-version.kit-tmp"
-printf '%s\n' "$version" > "$stamp_part"
 repo=""
 if git -C "$target" rev-parse --git-dir >/dev/null 2>&1; then
   repo=1
@@ -272,7 +286,9 @@ if git -C "$target" rev-parse --git-dir >/dev/null 2>&1; then
 fi
 # The stamp is the LAST write, so it records only an install whose every write succeeded:
 # sync-kit.sh trusts it, and a stamp over a short install answers "already current".
-mv -f "$stamp_part" "$target/docs/kit/.kit-version"
+put "$target/docs/kit/.kit-version" <<EOF
+$version
+EOF
 recorded=1
 wiring=""
 

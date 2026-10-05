@@ -274,15 +274,17 @@ class SyncKitTests(unittest.TestCase):
                         self.assertFalse((project / where).exists(), 'temporary left')
                         self.assertEqual((project / rel).read_bytes(), (ROOT / 'core' / rel).read_bytes())
 
-    def test_the_path_check_is_the_same_function_in_bootstrap_and_sync(self):
+    def test_the_path_check_and_the_writer_are_the_same_functions_in_bootstrap_and_sync(self):
         # bootstrap.sh and sync-kit.sh each hold `blocked`, the one check for every path they
-        # write; two copies with nothing holding them equal drift, and one script then writes
-        # where the other refuses.
-        def body(name):
+        # write, and `put`, the one writer; two copies with nothing holding them equal drift,
+        # and one script then writes where, or how, the other refuses.
+        def body(name, fn):
             text = (ROOT / name).read_text()
-            start = text.index('\nblocked() {\n')
+            start = text.index('\n%s() {\n' % fn)
             return text[start:text.index('\n}\n', start) + 3]
-        self.assertEqual(body('sync-kit.sh'), body('bootstrap.sh'))
+        for fn in ('blocked', 'perms', 'put'):
+            with self.subTest(fn=fn):
+                self.assertEqual(body('sync-kit.sh', fn), body('bootstrap.sh', fn))
 
     def test_every_printed_action_item_of_the_real_changelog_is_whole(self):
         # The checklist printed only the physical line holding the marker, so an owner

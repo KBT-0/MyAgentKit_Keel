@@ -75,6 +75,26 @@ blocked() {
   fi
 }
 
+# perms FILE — FILE's permission bits in octal, read from `ls -l` (POSIX has no portable stat).
+perms() {
+  ls -ld -- "$1" | awk '{ m = 0; for (i = 2; i <= 10; i++) m = m * 2 + (substr($1, i, 1) !~ /[-ST]/); printf "%o\n", m }'
+}
+
+# put DEST [SRC] — the one writer: DEST gets SRC's content (stdin without SRC) whole or not at
+# all, through a temporary that `mv` moves over it. A redirection or `cp` empties DEST before
+# writing, so a full disk left an empty stamp or a gate cut short. The temporary carries DEST's
+# own mode, or for a new file the mode a plain `cp` (or redirection) gives under the umask, set
+# before a byte is written: a temporary made under the umask turned a 0600 note into 0644.
+# It is opened before the chmod, so a mode without write permission still takes the content.
+put() {
+  if [ -e "$1" ]; then _m=$(perms "$1")
+  elif [ -n "${2:-}" ]; then _m=$(perms "$2")
+  else _m=666; fi
+  [ -e "$1" ] || _m=$(printf '%o' $(( 0$_m & ~0$(umask) )))
+  part="$1.kit-tmp" &&
+    { chmod "$_m" "$part" && cat "${2:--}"; } > "$part" && mv -f "$part" "$1" && part=""
+}
+
 why=$(blocked docs/kit/.kit-version)
 [ -z "$why" ] || die "conflict: docs/kit/.kit-version ($why); the version is not read or written there"
 stamp="$target/docs/kit/.kit-version"
@@ -85,7 +105,6 @@ stamp="$target/docs/kit/.kit-version"
 why=$(blocked docs/kit/.kit-version.kit-tmp)
 [ -z "$why" ] || die "conflict: docs/kit/.kit-version.kit-tmp ($why); the version is not written there"
 part=""
-cpart=""
 [ -f "$stamp" ] || die "$stamp not found — this project was not installed with bootstrap.sh"
 have=$(tr -d '[:space:]' < "$stamp")
 [ -n "$have" ] || die "$stamp is empty; refusing to guess which version this project has"
@@ -98,7 +117,7 @@ pending=$(mktemp) || { rm -f "$work_list"; echo "sync-kit: cannot create a temp 
 copies=$(mktemp) || { rm -f "$work_list" "$pending"; echo "sync-kit: cannot create a temp file" >&2; exit 1; }
 # A signal handler that only cleaned up let the run resume with the pending list deleted,
 # which reads as "no ACTION items" and stamped the version: a signal now ends the run.
-trap 'rm -f "$work_list" "$pending" "$copies" ${part:+"$part"} ${cpart:+"$cpart"}' EXIT
+trap 'rm -f "$work_list" "$pending" "$copies" ${part:+"$part"}' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
@@ -184,13 +203,8 @@ exe() { case "$rel" in *.sh|.githooks/*|.claude/hooks/*) chmod +x "$1" ;; esac; 
 if [ "$dry" -eq 0 ]; then
   while IFS= read -r src; do
     relpath "$src"
-    if cmp -s "$src" "$target/$rel"; then
-      exe "$target/$rel"
-    else
-      cpart="$target/$rel.kit-tmp"
-      mkdir -p "$target/$(dirname "$rel")" && cp -f "$src" "$cpart" && exe "$cpart" &&
-        mv -f "$cpart" "$target/$rel"
-    fi || die "could not write $rel; version left at v$have"
+    { cmp -s "$src" "$target/$rel" || { mkdir -p "$target/$(dirname "$rel")" && put "$target/$rel" "$src"; }; } &&
+      exe "$target/$rel" || die "could not write $rel; version left at v$have"
   done < "$copies"
 fi
 
@@ -261,9 +275,9 @@ if [ -s "$pending" ] && [ "$applied" -eq 0 ]; then
   exit 2
 fi
 
-part="$stamp.kit-tmp"
-{ printf '%s\n' "$latest" > "$part" && mv -f "$part" "$stamp"; } ||
-  die "could not write $stamp; version left at v$have"
+put "$stamp" <<EOF || die "could not write $stamp; version left at v$have"
+$latest
+EOF
 echo
 printf '%s\n' "sync-kit: recorded v$latest."
 echo "sync-kit: now run ./scripts/check.sh, and ./scripts/check.sh --self-test."

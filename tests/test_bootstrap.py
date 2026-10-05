@@ -134,7 +134,7 @@ class BootstrapTests(unittest.TestCase):
         # Every mkdir, cp and chmod ran unchecked: one that failed (a full disk, a read-only
         # folder) left the install short while the version was stamped and the hooks wired.
         root = Path(__file__).resolve().parents[1]
-        for tool, match in (('cp', 'commit-msg'), ('chmod', 'pre-commit'), ('mkdir', 'docs/audits')):
+        for tool, match in (('cat', 'commit-msg'), ('chmod', 'pre-commit'), ('mkdir', 'docs/audits')):
             with self.subTest(tool=tool), tempfile.TemporaryDirectory() as tmp:
                 project, shims = Path(tmp) / 'project', Path(tmp) / 'shims'
                 project.mkdir()
@@ -253,6 +253,61 @@ class BootstrapTests(unittest.TestCase):
                     self.assertIn('core.hooksPath', result.stderr)
                     self.assertEqual(stamp.read_bytes(), b'0.1\n')
                     self.assertFalse((project / 'docs/kit/.kit-version.kit-tmp').exists(), 'temporary left')
+
+    def test_a_replaced_file_keeps_its_mode(self):
+        # Each file was replaced by a sibling created under the umask: a note at 0600 became
+        # 0644 on a rerun of --note, its agenda readable by every local user, and a file of the
+        # project's replaced under --force lost its 0640. The mode is set before the content.
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as tmp:
+            project, shims, log = Path(tmp) / 'project', Path(tmp) / 'shims', Path(tmp) / 'log'
+            note, stamp = project / 'docs/kit/BOOTSTRAP_NOTE.md', project / 'docs/kit/.kit-version'
+            run = lambda *flags, env=None: subprocess.run(['sh', str(root / 'bootstrap.sh'), str(project), *flags],
+                                                          env=env, capture_output=True, text=True, timeout=60)
+            project.mkdir()
+            (project / 'AGENTS.md').write_text('mine\n')
+            (project / 'AGENTS.md').chmod(0o640)
+            first = run('--note', 'first agenda', '--force')
+            self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
+            note.chmod(0o600)
+            stamp.chmod(0o600)
+            # Every write's content passes through `cat`: the shim records the temporary's mode
+            # at that moment, before a byte is in it.
+            shims.mkdir()
+            (shims / 'cat').write_text('#!/bin/sh\nfor f in "%s"/*kit-tmp*; do [ -e "$f" ] && ls -l "$f" >> "%s"; done\n'
+                                       'exec "%s" "$@"\n' % (project / 'docs/kit', log, shutil.which('cat')))
+            (shims / 'cat').chmod(0o755)
+            env = dict(os.environ, PATH=str(shims) + os.pathsep + os.environ['PATH'])
+            second = run('--note', 'second agenda', env=env)
+            self.assertEqual(second.returncode, 0, second.stdout + second.stderr)
+            self.assertIn('second agenda', note.read_text())
+            self.assertEqual((project / 'AGENTS.md').read_bytes(), (root / 'core/AGENTS.md').read_bytes())
+            modes = {p: (project / p).stat().st_mode & 0o7777
+                     for p in ('AGENTS.md', 'docs/kit/BOOTSTRAP_NOTE.md', 'docs/kit/.kit-version')}
+            self.assertEqual(modes, {'AGENTS.md': 0o640, 'docs/kit/BOOTSTRAP_NOTE.md': 0o600,
+                                     'docs/kit/.kit-version': 0o600})
+            seen = log.read_text().splitlines() if log.exists() else []
+            self.assertTrue(seen, 'no write into a temporary observed')
+            for line in seen:
+                self.assertTrue(line.startswith('-rw------- '), 'wider while written: ' + line)
+
+
+    def test_a_new_file_takes_the_mode_the_umask_gives(self):
+        # The mode a plain redirection or `cp` gives under the caller's umask, not a fixed one
+        # and not the 0600 of a fresh temporary; a file executable in the kit stays executable.
+        root = Path(__file__).resolve().parents[1]
+        for mask in (0o077, 0o002):
+            with self.subTest(umask=oct(mask)), tempfile.TemporaryDirectory() as tmp:
+                project = Path(tmp) / 'project'
+                result = subprocess.run(['sh', '-c', 'umask %03o; exec sh "$0" "$@"' % mask,
+                                         str(root / 'bootstrap.sh'), str(project)],
+                                        capture_output=True, text=True, timeout=60)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                mode = lambda p: p.stat().st_mode & 0o777
+                self.assertEqual(mode(project / 'docs/kit/.kit-version'), 0o666 & ~mask)
+                for rel in ('AGENTS.md', 'scripts/agent_cost.py'):
+                    self.assertEqual(mode(project / rel), mode(root / 'core' / rel) & ~mask, rel)
+
 
     def test_a_conflict_outside_the_gates_claims_no_missing_enforcement(self):
         # Every conflict was printed under "the gate files already existed" with the warning
