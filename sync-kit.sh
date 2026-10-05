@@ -84,7 +84,7 @@ stamp="$target/docs/kit/.kit-version"
 # killed run left behind is a regular file and is overwritten; the exit trap removes it.
 why=$(blocked docs/kit/.kit-version.kit-tmp)
 [ -z "$why" ] || die "conflict: docs/kit/.kit-version.kit-tmp ($why); the version is not written there"
-part="$stamp.kit-tmp"
+part=""
 cpart=""
 [ -f "$stamp" ] || die "$stamp not found — this project was not installed with bootstrap.sh"
 have=$(tr -d '[:space:]' < "$stamp")
@@ -98,7 +98,7 @@ pending=$(mktemp) || { rm -f "$work_list"; echo "sync-kit: cannot create a temp 
 copies=$(mktemp) || { rm -f "$work_list" "$pending"; echo "sync-kit: cannot create a temp file" >&2; exit 1; }
 # A signal handler that only cleaned up let the run resume with the pending list deleted,
 # which reads as "no ACTION items" and stamped the version: a signal now ends the run.
-trap 'rm -f "$work_list" "$pending" "$copies" "$part" ${cpart:+"$cpart"}' EXIT
+trap 'rm -f "$work_list" "$pending" "$copies" ${part:+"$part"} ${cpart:+"$cpart"}' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
@@ -261,6 +261,7 @@ if [ -s "$pending" ] && [ "$applied" -eq 0 ]; then
   exit 2
 fi
 
+part="$stamp.kit-tmp"
 { printf '%s\n' "$latest" > "$part" && mv -f "$part" "$stamp"; } ||
   die "could not write $stamp; version left at v$have"
 echo

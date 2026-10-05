@@ -256,6 +256,8 @@ class SyncKitTests(unittest.TestCase):
                     (project / where).parent.mkdir(parents=True, exist_ok=True)
                     if kind == 'leftover file':
                         (project / where).write_text('9.9\n' * 300)
+                        self.sync(tmp, '', '--dry-run')
+                        self.assertTrue((project / where).exists(), 'a dry run removed a file')
                     elif kind == 'folder':
                         (project / where).mkdir()
                     else:
