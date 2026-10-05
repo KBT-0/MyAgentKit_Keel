@@ -1,0 +1,12 @@
+# The folders a finished worktree may lose without a copy: build output and installed
+# dependencies that a fresh checkout makes again. scripts/clean_worktrees.sh removes a merged
+# worktree only when every file git does not track is inside one of these folders or has a
+# byte-identical copy at the same path in the main worktree. Nothing listed means nothing is
+# disposable, and a worktree holding build output is kept with the folders named.
+#
+# One entry per line, `#` starts a comment line:
+#   a NAME (build, node_modules, dist, target, .venv) matches a folder of that name anywhere;
+#   a root-relative PATH (app/build) matches that folder only.
+# Refused: an empty entry, an absolute path, "..", and the places that hold work: .git, docs,
+# .claude, .myagentkit, scripts. The content of these folders must also be git-ignored:
+# `git worktree remove` refuses untracked files, and the worktree is then kept.
