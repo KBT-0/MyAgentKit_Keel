@@ -40,3 +40,46 @@ class BootstrapTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
                 self.assertIn('STOPPING: the gate files already existed', result.stdout)
                 self.assertFalse((project / 'docs/kit/.kit-version').exists())
+
+    def _listed(self, stdout):
+        # The files a run reports as already existing: the indented paths under its header.
+        return {line.strip() for line in stdout.splitlines() if line.startswith(' ' * 13)
+                and line.strip() and ' ' not in line.strip()}
+
+    def test_a_rerun_after_a_stop_names_only_the_differing_file(self):
+        # The first run copies every other file before it stops, so a rerun that counted those
+        # as conflicts stopped again on files the kit itself had put there: only --force got
+        # through, and it overwrote the owner's kept hook.
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / 'project'
+            (project / '.githooks').mkdir(parents=True)
+            (project / '.githooks/commit-msg').write_text('#!/bin/sh\nexit 0\n')
+            run = lambda: subprocess.run(['sh', str(root / 'bootstrap.sh'), str(project)],
+                                         capture_output=True, text=True)
+            self.assertEqual(run().returncode, 1)
+            second = run()
+            self.assertEqual(second.returncode, 1, second.stdout + second.stderr)
+            self.assertEqual(self._listed(second.stdout), {'.githooks/commit-msg'}, second.stdout)
+
+    def test_a_resolved_stop_completes_without_force(self):
+        # Moving the kept hook aside is the advice; the rerun must then finish without --force
+        # and leave the owner's other files as they were.
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / 'project'
+            (project / '.githooks').mkdir(parents=True)
+            (project / '.githooks/commit-msg').write_text('#!/bin/sh\nexit 0\n')
+            (project / 'AGENTS.md').write_text('the owner\'s own\n')
+            run = lambda: subprocess.run(['sh', str(root / 'bootstrap.sh'), str(project)],
+                                         capture_output=True, text=True)
+            self.assertEqual(run().returncode, 1)
+            (project / '.githooks/commit-msg').rename(project / 'commit-msg.mine')
+            second = run()
+            self.assertEqual(second.returncode, 0, second.stdout + second.stderr)
+            self.assertTrue((project / 'docs/kit/.kit-version').is_file())
+            self.assertEqual((project / 'AGENTS.md').read_text(), 'the owner\'s own\n')
+            self.assertEqual((project / 'commit-msg.mine').read_text(), '#!/bin/sh\nexit 0\n')
+            self.assertEqual((project / '.githooks/commit-msg').read_bytes(),
+                             (root / 'core/.githooks/commit-msg').read_bytes())
+            self.assertEqual(self._listed(second.stdout), {'AGENTS.md'}, second.stdout)

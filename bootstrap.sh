@@ -12,10 +12,12 @@
 #   --overlay    add a per-stack overlay, e.g. --overlay unity. Repeatable.
 #   --note       an agenda for the setup conversation; written to
 #                docs/kit/BOOTSTRAP_NOTE.md and read in Phase 0 of the interview.
-#   --force      overwrite files that already exist (default: skip them and report)
+#   --force      overwrite files that already exist and differ (default: skip and report)
 #
 # Existing files are SKIPPED by default so this is safe to run inside a project that is
-# already under way — a retrofit is incremental, never a big bang.
+# already under way — a retrofit is incremental, never a big bang. A file byte-identical to
+# the kit's is what an earlier run copied, not a conflict, so a re-run after a STOP names
+# only the files that still differ.
 set -u
 
 kit=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
@@ -51,7 +53,8 @@ skiplist=$(mktemp)
 trap 'rm -f "$skiplist"' EXIT
 
 # copy_tree SRC [DEST_PREFIX] — copies SRC's contents into the target, optionally under a
-# subdirectory. Existing files are recorded and left alone unless --force.
+# subdirectory. Existing files that differ are recorded and left alone unless --force;
+# identical ones are passed over (an earlier run put them there).
 copy_tree() {
   src="$1"
   prefix="${2:-}"
@@ -68,6 +71,7 @@ copy_tree() {
     case "$rel" in __pycache__/*|*/__pycache__/*|*.pyc|*.pyo) continue ;; esac
     dest="${prefix:+$prefix/}$rel"
     if [ -e "$target/$dest" ] && [ "$force" -eq 0 ]; then
+      cmp -s "$src/$rel" "$target/$dest" && continue
       echo "$dest" >> "$skiplist"
       continue
     fi
@@ -98,9 +102,10 @@ done
 
 if [ -s "$skiplist" ]; then
   echo
-  echo "bootstrap: $(wc -l < "$skiplist") file(s) already existed and were left alone:"
+  echo "bootstrap: $(wc -l < "$skiplist") file(s) already existed, differ from the kit's, and were left alone:"
   sed 's/^/             /' "$skiplist"
-  echo "           Merge by hand, or re-run with --force to overwrite."
+  echo "           Merge the kit's content into each by hand, or move it aside and re-run;"
+  echo "           --force overwrites every one of them."
 fi
 
 # A retrofit that skipped the ENFORCEMENT files installed no enforcement, and saying so in
@@ -111,19 +116,20 @@ fi
 # The stop comes BEFORE the version stamp, the note and the hooks wiring: an earlier
 # version stamped .kit-version first and then refused — after which sync-kit.sh greeted the
 # gateless project with "already current. Nothing to do."
-if grep -qE '^(scripts/check\.sh|\.githooks/(pre-commit|pre-merge-commit|commit-msg))$' "$skiplist" 2>/dev/null; then
+gates=$(grep -E '^(scripts/check\.sh|\.githooks/(pre-commit|pre-merge-commit|commit-msg))$' "$skiplist" 2>/dev/null)
+if [ -n "$gates" ]; then
+  echo
+  echo "STOPPING: the gate files already existed, differ from the kit's, and were NOT replaced:"
+  printf '%s\n' "$gates" | sed 's/^/  conflict: /'
   cat <<'EOF'
 
-STOPPING: the gate files already existed and were NOT replaced.
+  They are the enforcement. Whatever is in this repository now is what will run — and if
+  it is a no-op, this install just gave you the paperwork of a gate with none of the gate.
 
-  scripts/check.sh and .githooks/pre-commit, pre-merge-commit and commit-msg are the
-  enforcement. Whatever is in this repository now is what will run — and if it is a no-op,
-  this install just gave you the paperwork of a gate with none of the gate.
-
-  Decide deliberately, then re-run:
-    - keep yours:      merge the kit's checks into your script by hand (docs/RETROFIT.md)
-    - take the kit's:  re-run with --force, then re-add your own checks
-  Either way, finish with:  ./scripts/check.sh --self-test
+  For each one: move yours aside, re-run to install the kit's file (files an earlier run
+  copied are identical and pass), then carry what yours did into it by hand (docs/RETROFIT.md).
+  --force instead overwrites EVERY differing file listed above, not only these.
+  Finish with:  ./scripts/check.sh --self-test
 EOF
   exit 1
 fi
