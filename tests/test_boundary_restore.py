@@ -804,10 +804,13 @@ exit 1
         # passed the audit run again on its copy, and the next run made it readable and wrote
         # through it. Now the next run gets a fresh copy. The example changes no mode, so a
         # mode-000 or mode-444 folder the baseline left keeps its copy, and the case fails by name.
+        # `cd -P`: dash's logical `cd` calls chdir() with the whole path, which fails past PATH_MAX
+        # (Ubuntu's sh): the baseline went red there, and a second run handed the same copy could
+        # not have reached `out` either, so the case would prove nothing on dash.
         deep = 'd' * 200
-        hide = {'too long': ('i=0; while [ $i -lt 25 ]; do mkdir %s && cd %s || exit 1; i=$((i + 1)); done; '
+        hide = {'too long': ('i=0; while [ $i -lt 25 ]; do mkdir %s && cd -P %s || exit 1; i=$((i + 1)); done; '
                              'ln -s "$OUTSIDE" out' % (deep, deep),
-                             'i=0; while [ $i -lt 25 ]; do cd %s || exit 0; i=$((i + 1)); done; '
+                             'i=0; while [ $i -lt 25 ]; do cd -P %s || exit 0; i=$((i + 1)); done; '
                              ': > out/escaped' % deep),
                 'mode 000': ('mkdir hidden && ln -s "$OUTSIDE" hidden/out && chmod 000 hidden',
                              'chmod 755 hidden && : > hidden/out/escaped'),
