@@ -162,7 +162,8 @@
 # |     sys.exit("  FAIL — existing-file probe: " + path + " is no longer the directory made for the disposable copy; deleted nothing.")
 # | try:
 # |     empty(root)
-# |     # rmdir removes only an empty directory: one swapped in under this name since is not deleted.
+# |     # The check and the rmdir are two steps: an EMPTY directory a process of the same user swaps in
+# |     # between them is removed, nothing with content can be. Kept, as skipping it leaves a root per run.
 # |     if not same(os.stat(name, dir_fd=parent, follow_symlinks=False)):
 # |         raise OSError(path + " is no longer the directory made for it")
 # |     os.rmdir(name, dir_fd=parent)
