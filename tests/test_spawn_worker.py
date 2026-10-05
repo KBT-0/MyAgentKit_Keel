@@ -172,6 +172,36 @@ class SpawnWorkerTests(unittest.TestCase):
                 self.assertIn('newline', result.stderr)
                 self.assertNotIn('new-session', self.tmux_log())
 
+    def test_a_control_character_in_the_brief_path_or_the_name_is_refused(self):
+        # Only LF was refused: `tmux send-keys -l` typed a carriage return in the brief path
+        # into the TUI, which submitted the instruction early (ESC edits it, and so on).
+        for label, char in (('CR', '\r'), ('ESC', '\x1b'), ('TAB', '\t'), ('DEL', '\x7f')):
+            brief = self.cwd / ('task%s.md' % char)
+            brief.write_text('a brief\n')
+            folder = self.cwd / ('in%sside' % char)
+            folder.mkdir()
+            (folder / 'task.md').write_text('a brief\n')
+            for case, name, path in (('brief', 'w9', str(brief)), ('relative brief', 'w9', brief.name),
+                                     ('folder', 'w9', str(folder / 'task.md')),
+                                     ('name', 'w%s9' % char, str(self.brief))):
+                with self.subTest(char=label, case=case):
+                    if (self.state / 'tmux.log').exists():
+                        (self.state / 'tmux.log').unlink()
+                    result = self.spawn(name, path)
+                    self.assertNotEqual(result.returncode, 0, result.stderr)
+                    self.assertIn('control character', result.stderr)
+                    self.assertNotIn('new-session', self.tmux_log())
+        # The caller's own folder holding one is refused too: the resolved path carries it.
+        cwd = self.tmp / 'lead\rdir'
+        cwd.mkdir()
+        (cwd / 'task.md').write_text('a brief\n')
+        env = dict(os.environ, PATH=f'{self.bin}{os.pathsep}{os.environ["PATH"]}', SPAWN_STATE=str(self.state))
+        result = subprocess.run(['sh', str(SCRIPT), 'w9', 'task.md'], cwd=cwd, env=env,
+                                capture_output=True, text=True, timeout=60)
+        self.assertNotEqual(result.returncode, 0, result.stderr)
+        self.assertIn('control character', result.stderr)
+        self.assertNotIn('new-session', self.tmux_log())
+
     def test_a_relative_settings_file_resolves_against_the_caller_with_a_worktree(self):
         # The worktree is entered before the tool starts: a relative --settings file then
         # named the worktree's copy (absent when untracked, or another tracked file).

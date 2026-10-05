@@ -41,18 +41,26 @@ q() { set -- "$(printf '%sx' "$1" | sed "s/'/'\\\\''/g")"; printf "'%s'" "${1%x}
 
 [ $# -ge 2 ] || { sed -n '2,8p' "$0"; exit 2; }
 name=$1; brief=$2; shift 2
+# The name and the brief path reach tmux and the TUI: `send-keys -l` types every byte, and a
+# control byte (0x01-0x1F, 0x7F) acts as a key there: a carriage return submitted the
+# instruction early, ESC edits it. Refused by name, checked on bytes, before any tmux call.
+ctl() {
+  [ "$(printf '%sx' "$2" | LC_ALL=C tr -d '\001-\037\177')" = "${2}x" ] ||
+    die "$1 contains a control character (a newline, carriage return, tab, ESC or DEL), which the worker's input line would act on: $(printf '%s' "$2" | LC_ALL=C tr '\001-\037\177' '?')"
+}
+ctl "worker name" "$name"
 { [ -f "$brief" ] && [ -r "$brief" ]; } || die "brief file not found or not readable: $brief"
-# A newline is refused in the argument itself, before anything rewrites it: $(...) strips
-# trailing newlines, and "task.md<newline>" was checked while "task.md" was handed over.
-# The folder and file name are split by parameter expansion, which keeps every byte, and
-# the folder's absolute path keeps a trailing newline through the x guard.
+# Checked in the argument itself, before anything rewrites it: $(...) strips trailing
+# newlines, and "task.md<newline>" was checked while "task.md" was handed over. The folder
+# and file name are split by parameter expansion, which keeps every byte, and the folder's
+# absolute path keeps a trailing newline through the x guard; the resolved path is checked again.
 nl='
 '
-case "$brief" in *"$nl"*) die "brief path contains a newline, which would submit the instruction early: $brief" ;; esac
+ctl "brief path" "$brief"
 case "$brief" in */*) brief_dir=${brief%/*}/ ;; *) brief_dir=. ;; esac
 brief_dir=$(CDPATH= cd -- "$brief_dir" && pwd && echo x) || die "cannot resolve the brief's folder: $brief"
 brief=${brief_dir%"${nl}x"}/${brief##*/}
-case "$brief" in *"$nl"*) die "brief path contains a newline, which would submit the instruction early: $brief" ;; esac
+ctl "brief path" "$brief"
 command -v tmux >/dev/null || die "tmux is not installed"
 command -v claude >/dev/null || die "claude is not on PATH"
 
