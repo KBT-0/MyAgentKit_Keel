@@ -19,6 +19,9 @@
 #   - The prompt is pasted AFTER the TUI is up, never passed on the command line after a
 #     variadic flag such as --allowedTools, which would swallow it as one more value and
 #     leave the session idle at an empty input line.
+#   - Every value that goes into the session's shell command passes through `q`: a value
+#     with an apostrophe (a --settings JSON string, a name) otherwise ends its quoting and
+#     the rest runs as shell in the new pane.
 #   - Readiness is detected from the pane text, not from `pgrep -f`, which matches its own
 #     command line.
 #   - The folder must already be trusted by Claude Code; an untrusted folder blocks the
@@ -26,6 +29,10 @@
 set -eu
 
 die() { echo "spawn_worker: $1" >&2; exit 1; }
+# Quote one value for a POSIX shell: wrap it in '...' and write each ' inside as '\''.
+# The x keeps a trailing newline that $(...) would strip.
+q() { set -- "$(printf '%sx' "$1" | sed "s/'/'\\\\''/g")"; printf "'%s'" "${1%x}"; }
+
 [ $# -ge 2 ] || { sed -n '2,8p' "$0"; exit 2; }
 name=$1; brief=$2; shift 2
 [ -f "$brief" ] || die "brief file not found: $brief"
@@ -47,19 +54,17 @@ done
 tmux has-session -t "=$name" 2>/dev/null && die "tmux session '$name' already exists"
 
 # Variadic flags come LAST and the prompt is never on this line (see the header).
-cmd="claude -n '$name'"
-[ -n "$model" ]    && cmd="$cmd --model '$model'"
-[ -n "$worktree" ] && cmd="$cmd -w '$name'"
-[ -n "$effort" ]   && cmd="$cmd --effort '$effort'"
-[ -n "$settings" ] && cmd="$cmd --settings '$settings'"
-[ -n "$tools" ]    && cmd="$cmd --allowedTools '$tools'"
+cmd="claude -n $(q "$name")"
+[ -n "$model" ]    && cmd="$cmd --model $(q "$model")"
+[ -n "$worktree" ] && cmd="$cmd -w $(q "$name")"
+[ -n "$effort" ]   && cmd="$cmd --effort $(q "$effort")"
+[ -n "$settings" ] && cmd="$cmd --settings $(q "$settings")"
+[ -n "$tools" ]    && cmd="$cmd --allowedTools $(q "$tools")"
 
 # `cd` first: tmux hands new sessions the PWD of whichever client last created one, and
 # the tool exits with "the current working directory was deleted" when that folder (a
-# removed worktree, say) is gone, whatever -c says. The path goes into a shell command, so
-# an apostrophe in it is escaped the POSIX way ('\''), or the worker never starts.
-q=$(printf %s "$PWD" | sed "s/'/'\\\\''/g")
-tmux new-session -d -s "$name" -c "$PWD" -x 200 -y 50 "cd '$q' && exec $cmd"
+# removed worktree, say) is gone, whatever -c says.
+tmux new-session -d -s "$name" -c "$PWD" -x 200 -y 50 "cd $(q "$PWD") && exec $cmd"
 
 # Wait for the input line: the TUI shows its prompt arrow at the start of a line once ready
 # (v2.1.285 follows the arrow with a NO-BREAK space, so the match is on the arrow alone)

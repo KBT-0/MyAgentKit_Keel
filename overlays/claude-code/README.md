@@ -61,6 +61,9 @@ If the project has no such jobs, delete both files instead of filling them.
 - **The prompt must never follow a variadic flag.** `claude --allowedTools A,B "prompt"`
   reads the prompt as one more tool name and opens idle at an empty input line.
   `spawn_worker.sh` pastes the brief after the TUI is up for that reason.
+- **Every value the script puts into the session's shell command is quoted by one helper.**
+  A `--settings` JSON string or a name with an apostrophe otherwise ended its quoting and
+  the rest ran as shell in the new pane.
 - **A standalone `sleep` in a Bash tool call is refused by the tool**, so a worker cannot
   even wait badly; it starts the job in the background and is re-invoked when it exits.
 - **`pgrep -f` matches its own command line** (`docs/GOTCHAS.md`).
