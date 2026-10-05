@@ -420,6 +420,18 @@ hand merge; `sync-kit.sh` now keeps listing them until you confirm (see "Sync st
   kit's current one and adapt the target and diagnostic again; port the dot-file example's
   subshell and trap; name any repository setting your gate reads in `probe_config_keys`;
   give a tool that needs a cache directory its own variable in `probe_env`.
+- **Gate, scan and doctor (review of 2026-10-05).** The scan drops every symlink from its
+  file list once the link text is recorded and hands grep regular files only (a link to a
+  FIFO hung the gate, a link to an outside file leaked its lines); a submodule or a
+  repository inside the tree is skipped with a NOTE instead of "a scanner failed to run".
+  The gate re-executes by the path it was called with (a symlinked `scripts/` ran it in the
+  wrong tree), fails `FAIL [lock]` by name where Python has no `fcntl`, and its waiting NOTE
+  names `fuser -v` and `lsof` on the lock file. `doctor.sh` requires all six review runtime
+  modules, never signals a saved process-group number, ignores CDPATH, and accepts a grep
+  alias that adds only `--color` or `--exclude-dir` (oh-my-zsh's default). **ACTION:** copy
+  `scripts/check.sh` again, keeping your `toolchain_path` and `build_test_cmd` lines;
+  `doctor.sh` and the hooks arrive with the sync; a build command that leaves a server
+  running holds the gate lock: turn the server off in the command (see GOTCHAS).
 
 ## v0.8 — 2026-10-03
 

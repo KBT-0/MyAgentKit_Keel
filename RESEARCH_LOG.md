@@ -758,6 +758,16 @@ is where the kit's own workers run. The rebuild block and nineteen tests went; o
 the whole copy runs before and after the baseline. Not run: macOS/BSD, git older than
 2.55, Python 3.10. Open at merge: the copy keeps the original's `.git/hooks` files.
 
+#### Gate, scan and doctor group
+
+The scan had dropped directory and dangling links but kept a link to a regular file, and
+grep followed it; now only regular files reach grep and a gitlink is a named case. The
+doctor's required-file list is still kept by hand (a project has nowhere to read it from),
+held equal by a kit test to what `review_dispatch.py` imports and to the plugin's parity
+list. `--exclude` was left off the grep-alias allowlist on evidence: GNU grep 3.12 skips an
+excluded file even when it is named on the command line. Not run: a real Windows Python
+(the missing `fcntl` is a stub), macOS/BSD, dash as `sh`.
+
 #### The review gate held on the kit's own hardening
 
 Five of the nine work packages (the gate lock, both review-tooling packages, the commit gates
