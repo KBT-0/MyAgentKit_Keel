@@ -126,7 +126,7 @@ exit 1
                                     text=True, timeout=30, env=dict(os.environ, TMPDIR=str(scratch)))
             self.assertEqual(real.read_bytes(), original, 'the probe wrote into the checkout')
             self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-            self.assertIn('resolves outside the disposable copy', result.stdout)
+            self.assertIn('src is a symlink that leads out of the disposable copy', result.stdout)
             self.assertNotIn('  ok   — ', result.stdout)
 
 
@@ -278,7 +278,7 @@ exit 1
                                              PATH='%s%s%s' % (shim, os.pathsep, os.environ['PATH'])))
             self.assertEqual(real.read_bytes(), original, 'the probe wrote into the checkout')
             self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-            self.assertIn('resolves outside the disposable copy', result.stdout)
+            self.assertIn('src is a symlink that leads out of the disposable copy', result.stdout)
             self.assertNotIn('  ok   — ', result.stdout)
 
     def test_a_nested_linked_worktree_is_refused_by_name(self):
@@ -336,6 +336,21 @@ exit 1
         return subprocess.run(['sh', 'scripts/check.sh', '--self-test'], cwd=cwd, capture_output=True,
                               text=True, timeout=30, env=dict(os.environ, TMPDIR=str(scratch), **env))
 
+    def test_any_symlink_leaving_the_copy_is_refused_by_name(self):
+        # Only the target, the gate and the git storage were checked: cp -R kept an unrelated
+        # `build -> <checkout>/out`, and a baseline gate writing build/output wrote into the checkout.
+        for name, link in (('absolute', None), ('relative', '../outside')):
+            with self.subTest(link=name), tempfile.TemporaryDirectory() as tmp:
+                root, git = self.fixture(tmp, ': > build/output || exit 1\n')
+                (root / 'out').mkdir()
+                (root / 'build').symlink_to(link or root / 'out')
+                result = self.self_test(tmp, root)
+                self.assertFalse((root / 'out/output').exists(), 'the copy wrote into the checkout')
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn('NOT RUN — existing-file probe: build is a symlink that leads out of the disposable'
+                              ' copy', result.stdout)
+                self.assertNotIn('  ok   — ', result.stdout)
+
     def test_a_symlinked_object_store_cannot_take_the_copy_s_writes(self):
         # The containment check validated the git and common directories, not what lies in
         # them: cp -R kept `.git/objects` as an absolute symlink to the original's store, and a
@@ -350,14 +365,13 @@ exit 1
             result = self.self_test(tmp, root)
             self.assertEqual(count(), before, 'the copy wrote objects into the original')
             self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-            self.assertIn("the copy's git storage has a directory symlink at .git/objects;"
-                          " the existing-file probe does not support it", result.stdout)
+            self.assertIn('.git/objects is a symlink that leads out of the disposable copy', result.stdout)
             self.assertNotIn('  ok   — ', result.stdout)
 
-    def test_a_directory_symlink_in_git_storage_is_refused_by_name(self):
+    def test_a_symlink_beneath_a_directory_symlink_is_refused_by_name(self):
         # `.git/objects -> ../store` resolved inside the copy and passed, but find does not
         # descend through it: an absolute link beneath `store` took the copy's `git add` into
-        # an object fanout outside the copy.
+        # an object fanout outside the copy. The whole copy is walked, so `store` is too.
         with tempfile.TemporaryDirectory() as tmp:
             root, git = self.fixture(tmp, 'git add src/domain/existing.py || exit 1\n')
             blob = subprocess.run(['git', 'hash-object', '--stdin'], cwd=root, input='from myapp.web import router\n',
@@ -376,8 +390,7 @@ exit 1
             result = self.self_test(tmp, root)
             self.assertEqual(len(list(fanout.iterdir())), before, 'the copy wrote objects outside the copy')
             self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-            self.assertIn("the copy's git storage has a directory symlink at .git/objects;"
-                          " the existing-file probe does not support it", result.stdout)
+            self.assertIn('store/%s is a symlink that leads out of the disposable copy' % blob[:2], result.stdout)
             self.assertNotIn('  ok   — ', result.stdout)
 
     def test_a_file_symlink_out_of_git_storage_is_refused_by_name(self):
@@ -390,7 +403,7 @@ exit 1
             (root / '.git/description').symlink_to(outside)
             result = self.self_test(tmp, root)
             self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-            self.assertIn("the copy's git storage at .git/description points outside the copy", result.stdout)
+            self.assertIn('.git/description is a symlink that leads out of the disposable copy', result.stdout)
             self.assertNotIn('  ok   — ', result.stdout)
 
 

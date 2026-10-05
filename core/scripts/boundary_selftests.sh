@@ -42,32 +42,28 @@
 # a self-test never changes a tracked file. An edit made in place and restored by traps was
 # seen by a concurrent `git add -A`, and SIGKILL or a power loss, which run no trap, left it
 # in the tree. The copy holds the current bytes, uncommitted edits included, and is deleted
-# on exit and on INT/TERM; a SIGKILL leaves it in $TMPDIR, outside the checkout. cp -R keeps
-# a symlink as a symlink, so a symlinked parent directory (src -> the checkout's lib) once
-# took the write back into the checkout: the target and the gate are resolved physically
-# and must lie inside the copy, and neither may itself be a symlink (an absolute one at the
-# gate ran a gate that resolves its own location against the checkout), else the case fails
-# by name. The copy itself must lie outside the checkout (a TMPDIR set to the checkout put
-# it, and a SIGKILL's leftovers, in the working tree). Every command that touches the copy,
-# git and the copied gate alike, runs under probe_env, which passes ONLY the variables it
-# names: removing variables one at a time missed each next one (an exported GIT_DIR built in
-# the checkout; an exported GIT_OBJECT_DIRECTORY took the copy's `git add` into the
-# original's object store). A gate that needs more variables gets them by adding NAME="$NAME"
-# to probe_env. Every resolving cd is `CDPATH= cd -P`, and the injection is written to the
-# resolved, validated absolute path: with CDPATH set, `cd -P src/domain` validated a
-# directory the relative write never reached, and the write followed a symlink into the
-# checkout. The example supports a PLAIN repository only: a checkout whose `.git` is a file or
-# a symlink (a linked worktree, a submodule, `--separate-git-dir`) is refused by name and
+# on exit and on INT/TERM; a SIGKILL leaves it in $TMPDIR, outside the checkout. The copy
+# itself must lie outside the checkout (a TMPDIR set to the checkout put it, and a SIGKILL's
+# leftovers, in the working tree). Every command that touches the copy, git and the copied
+# gate alike, runs under probe_env, which passes ONLY the variables it names: removing
+# variables one at a time missed each next one (an exported GIT_DIR built in the checkout; an
+# exported GIT_OBJECT_DIRECTORY took the copy's `git add` into the original's object store).
+# A gate that needs more variables gets them by adding NAME="$NAME" to probe_env.
+# The example supports a PLAIN repository only: a checkout whose `.git` is a file or a
+# symlink (a linked worktree, a submodule, `--separate-git-dir`) is refused by name and
 # reported NOT RUN, never passed. Its copied pointer kept the original's git directory, so a
 # gate that stages its inputs staged the injection into the original's index, and rebuilding
 # such a repository inside the copy (refs, HEAD, index, object format, intent-to-add) took
 # fourteen review rounds and still recreated symbolic refs as direct ones. A nested repository
-# (a `.git` below the top level) is refused by name for the same reason. The directories
-# inside the copy's git storage were not checked: cp -R kept `.git/objects` as a symlink to
-# the original's store and a copied gate's `git add` wrote there, so a file symlink in the git
-# storage that resolves outside the copy fails the case by name. A directory symlink fails it
-# whatever its target: find does not descend through one, so `.git/objects -> ../store` passed
-# while an absolute link beneath `store` took the copy's writes outside it.
+# (a `.git` below the top level) is refused by name for the same reason.
+# cp keeps a symlink as a symlink, and every symlink in the copy whose target resolves outside
+# it is refused by name, wherever it is: checking only the target, the gate and the git
+# storage let an unrelated `build -> <checkout>/out` take a baseline gate's build output into
+# the checkout, as `.git/objects -> <store>` once took a copied gate's `git add`, and
+# `src -> <checkout>/lib` the injection itself. The path to the target and to the gate runs
+# through no symlink at all (an absolute link at the gate ran a gate that resolves its own
+# location against the checkout), and both are written and run by their absolute paths
+# (with CDPATH set, a relative write once missed the directory that was validated).
 # Copying a large tree (dependencies, build output) costs time: copy only what the gate reads
 # if that is known, but never let the probe write into the checkout.
 #
@@ -96,56 +92,37 @@
 # |     probe_skip "the checkout's .git is not a directory (a linked worktree, a submodule or a separate git directory); this example supports a plain repository only: run the self-test from the main checkout."
 # |   cp -R . "$probe_copy/checkout" && CDPATH= cd -P "$probe_copy/checkout" || exit 1
 # |   probe_root=$(pwd -P) || exit 1
-# |   probe_nested=$(find . -path ./.git -prune -o -name .git -print) ||
-# |     probe_fail "could not search the disposable copy for nested repositories; refusing to run."
-# |   if [ -n "$probe_nested" ]; then
-# |     probe_nested=$(printf '%s\n' "$probe_nested" | sed -n '1{s|^\./||;s|/\.git$||;p;}')
-# |     probe_fail "the checkout contains a nested repository or worktree at $probe_nested; the existing-file probe does not support it."
-# |   fi
-# |   if probe_top=$(probe_env git rev-parse --show-toplevel 2>/dev/null); then
-# |     [ "$(CDPATH= cd -P "$probe_top" && pwd -P)" = "$probe_root" ] ||
-# |       probe_fail "git inside the disposable copy works on $probe_top; refusing to run."
-# |     for probe_git in "$(probe_env git rev-parse --absolute-git-dir)" "$(probe_env git rev-parse --git-common-dir)"; do
-# |       probe_git=$(CDPATH= cd -P "$probe_git" && pwd -P) || exit 1
-# |       case "$probe_git/" in
-# |         "$probe_root"/*) ;;
-# |         *) probe_fail "the copy shares the original's git directory ($probe_git); refusing to run." ;;
-# |       esac
-# |       find "$probe_git" -type l > "$probe_copy/links" ||
-# |         probe_fail "could not search the copy's git storage for symlinks; refusing to run."
-# |       while IFS= read -r probe_link; do
-# |         # find does not descend through a directory symlink, so nothing beneath one is checked.
-# |         [ ! -d "$probe_link" ] ||
-# |           probe_fail "the copy's git storage has a directory symlink at ${probe_link#"$probe_root"/}; the existing-file probe does not support it."
-# |         probe_to=$(probe_target=$(readlink "$probe_link") && CDPATH= cd -P "$(dirname "$probe_link")" &&
-# |           CDPATH= cd -P "$(dirname "$probe_target")" && [ ! -L "${probe_target##*/}" ] && pwd -P) || probe_to=
-# |         case "$probe_to/" in
-# |           "$probe_root"/*) ;;
-# |           *) probe_fail "the copy's git storage at ${probe_link#"$probe_root"/} points outside the copy; refusing to run." ;;
-# |         esac
-# |       done < "$probe_copy/links"
-# |     done
-# |   fi
-# |   # Resolved physically to an absolute path inside the copy, and never itself a symlink.
-# |   probe_resolve() {
-# |     probe_dir=$(CDPATH= cd -P "$(dirname "$1")" && pwd -P) || exit 1
-# |     case "$probe_dir/" in
-# |       "$probe_root"/*) ;;
-# |       *) probe_fail "$1 resolves outside the disposable copy ($probe_dir); refusing to write." ;;
-# |     esac
-# |     probe_resolved=$probe_dir/${1##*/}
-# |     [ ! -L "$probe_resolved" ] ||
-# |       probe_fail "$1 is a symlink, which can lead out of the disposable copy; refusing to run."
+# |   probe_target=src/domain/existing.py
+# |   probe_gate="$(basename "$(dirname "$0")")/${0##*/}"
+# |   # Every symlink resolves inside the copy, no `.git` lies below the top level, and the path to
+# |   # the target and to the gate runs through no symlink and ends at a regular file.
+# |   probe_audit() {
+# |     probe_why=$(probe_env python3 -c '
+# | import os, sys
+# | root = sys.argv[1]
+# | for top, dirs, files in os.walk(root):
+# |     for name in dirs + files:
+# |         path = os.path.join(top, name)
+# |         if name == ".git" and top != root:
+# |             sys.exit("the checkout contains a nested repository or worktree at " + os.path.relpath(top, root))
+# |         if os.path.islink(path) and os.path.commonpath([root, os.path.realpath(path)]) != root:
+# |             sys.exit(os.path.relpath(path, root) + " is a symlink that leads out of the disposable copy")
+# | for rel in sys.argv[2:]:
+# |     path = root
+# |     for part in rel.split("/"):
+# |         path = os.path.join(path, part)
+# |         if os.path.islink(path):
+# |             sys.exit(rel + " runs through a symlink at " + os.path.relpath(path, root))
+# |     if not os.path.isfile(path):
+# |         sys.exit(rel + " is not a regular file in the disposable copy")
+# | ' "$probe_root" "$probe_target" "$probe_gate" 2>&1) ||
+# |       probe_skip "${probe_why:-could not search the disposable copy}; the existing-file probe does not support it."
 # |   }
-# |   probe_resolve src/domain/existing.py
-# |   probe_target=$probe_resolved
-# |   [ -f "$probe_target" ] || exit 1
-# |   probe_resolve "$(basename "$(dirname "$0")")/${0##*/}"
-# |   probe_gate=$probe_resolved
-# |   probe_env sh "$probe_gate" >/dev/null 2>&1 || exit 1
-# |   printf 'from myapp.web import router\n' > "$probe_target" || exit 1
+# |   probe_audit
+# |   probe_env sh "$probe_root/$probe_gate" >/dev/null 2>&1 || exit 1
+# |   printf 'from myapp.web import router\n' > "$probe_root/$probe_target" || exit 1
 # |   probe_status=0
-# |   probe_output=$(probe_env sh "$probe_gate" 2>&1) || probe_status=$?
+# |   probe_output=$(probe_env sh "$probe_root/$probe_gate" 2>&1) || probe_status=$?
 # |   [ "$probe_status" -ne 0 ] && printf '%s\n' "$probe_output" |
 # |     grep -Fq 'FAIL [boundary]: the domain layer imports the web layer:'
 # | ); then
