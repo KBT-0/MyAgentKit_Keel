@@ -382,9 +382,16 @@ hand merge; `sync-kit.sh` now keeps listing them until you confirm (see "Sync st
   exports them.
 - **Worker spawning (found while applying the above).** `spawn_worker.sh` now
   `cd`s into the folder before starting the tool, because tmux hands a new session a stale
-  `PWD`. Still open: `spawn_worker.sh --worktree` starts from a stale base (issue #32); branch
-  the worktree from the commit you mean, not from the default. **ACTION:** copy
-  `spawn_worker.sh` (same copy as above).
+  `PWD`. **ACTION:** copy `spawn_worker.sh` (same copy as above).
+- **Worker spawning, second pass (issues #32, #35, review of 2026-10-05).** `spawn_worker.sh`
+  quotes every value it puts into the session command (name, `--model`, `--effort`,
+  `--settings`, `--allowed-tools`, the folder) through one helper: an apostrophe in one used
+  to end the quoting and run the rest as shell. The brief is no longer pasted: the script
+  types `Read '<absolute path>' and follow it.` and refuses a missing or unreadable brief
+  before any session opens. `--worktree` no longer passes `-w` to the tool: the script runs
+  `git worktree add .claude/worktrees/NAME -b worktree-NAME HEAD` itself and refuses a
+  leftover branch or path of that name. **ACTION:** copy `spawn_worker.sh` again; keep the
+  brief file in place until the worker has read it.
 
 ## v0.8 — 2026-10-03
 

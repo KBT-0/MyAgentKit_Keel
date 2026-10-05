@@ -713,6 +713,25 @@ range B round 9. What ended the stream in that example was not another patch but
 changes of approach: an allowlist in place of every denylist, and refusing by name what the
 copy cannot reproduce in place of emulating it.
 
+#### Four more reviewers on the accepted tree (2026-10-05)
+
+The tree the fifth round accepted went to four more reviewers: Codex gpt-5.6-sol at maximum
+effort, Claude Opus 5.5, Claude Fable 5.1 and the cloud review. Three said Reject: 6 High,
+about 15 Medium, about 30 Low between them, with little overlap. An Accept from one reviewer
+is a statement about that reviewer's reach, not about the tree; the reviewer that deleted
+guards one by one found a class (negative tests that stay green without their guard) no
+reading reviewer had reported. The fixes land in groups, recorded below.
+
+#### Overlay group: quoting, the brief by path, the worktree (#32, #35)
+
+`spawn_worker.sh` had escaped only the folder; every other value went into the session
+command in bare single quotes. One helper now quotes all of them. A brief pasted as one
+block, with no typed sentence, was taken by one model for content without an instruction
+and the session sat idle for 35 minutes; the script now types one sentence naming the brief
+by path. `--worktree` used the tool's `-w`, which branched from a stale base; the script
+makes the worktree with git from the lead's current commit and refuses a leftover name.
+Not run: a live session (the tests use stub `tmux` and `claude`), and a non-bash `/bin/sh`.
+
 #### The review gate held on the kit's own hardening
 
 Five of the nine work packages (the gate lock, both review-tooling packages, the commit gates
