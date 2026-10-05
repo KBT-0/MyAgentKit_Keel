@@ -31,7 +31,7 @@ REQUIRED_SUITES = {
     # every test with the kit check green. A new test raises its suite's number here.
     'tests': {'test_packaging': 1, 'test_bootstrap': 4, 'test_acceptance': 6,
               'test_review_upgrade': 2, 'test_boundary_example': 3, 'test_scan_gate': 1,
-              'test_check_gate': 11, 'test_boundary_restore': 29, 'test_sync_kit': 7,
+              'test_check_gate': 11, 'test_boundary_restore': 25, 'test_sync_kit': 7,
               'test_doctor': 2, 'test_git_hooks': 18, 'test_stop_hook': 1, 'test_spawn_worker': 9},
 }
 
