@@ -486,7 +486,7 @@ reopening it. Two test-quality lessons came with it: a stand-in that does not en
 it replaces proves nothing (a `timeout` fixture that only ran its command), and an early
 return under uid 0 is a silent pass; prefer a failure every uid hits (a directory where a
 file is expected), and verify the tool's exit code rather than assuming it (GNU `grep -q`
-returns 1 on a directory, not 2).
+returns 2 on a directory, not 1).
 
 #### Fifth cross-model round: new ground, not residue
 
@@ -543,6 +543,14 @@ and later fixes work together. The fresh full review under a new label that REVI
 requires is still PENDING. The full diff exceeds the 400000-byte budget, so it is to be split
 into path groups, each reviewed under its own new label and recorded in `docs/reviews/`:
 review tooling; gate scripts and hooks; docs and overlays.
+
+#### Tenth cross-model round: report only what was observed
+
+The cancel relabel's error reports only what was observed: whether the archive on disk
+matches the usage record (with its sha256), does not match it, or could not be read, plus
+the write's own error. Fault-injection tests cover a directory fsync failing after the
+replacement and an unreadable archive. The acceptance notes count these incremental rounds
+as remediation reviews; the final full review under a new label is recorded separately.
 
 #### The final full review, first attempt: split by paths, and what that taught
 

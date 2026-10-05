@@ -13,457 +13,263 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## v0.9 — 2026-10-03
 
-Hardening from the unreported findings of two projects using the kit. `scripts/check.sh`,
-`scripts/review.sh` and the review scripts are project-owned, so most items below need a
-hand merge; `sync-kit.sh` now keeps listing them until you confirm (see "Sync stamp").
+Hardening from the unreported findings of two projects using the kit, then from cross-model
+reviews of the result. Why each change was made, and the review history that shaped it, is
+in `RESEARCH_LOG.md` (2026-10-03). Most of the files below are project-owned, so the section
+"Upgrading a project from v0.8" at the end lists what to do by hand, once, in order.
 
 - **Gate lock (issues #19, #20, #11).** `scripts/check.sh` runs one gate per checkout at a
-  time: it re-executes itself under a few lines of Python holding `fcntl.flock` on
-  `<git dir>/check.lock`, and the gate and everything it starts keep the lock until the last
-  of them exits. Nothing is reclaimed and no pid is trusted. A second run (Stop hook, commit
-  hook, manual) waits with a NOTE every 30 s instead of sharing the build directory and
-  reporting a false FAIL; INT/TERM stop the run after cleanup. The gate now needs `python3`.
-  A build that leaves a compiler server or build daemon running holds the lock until it
-  exits: turn that off in the build command.
-  `GATE_LOCK_WAIT=<seconds>` bounds the wait: when it runs out the gate prints `NOT RUN [lock]`
-  and exits 75 ("did not run", neither pass nor fail). `--self-test` no longer writes into
-  the working tree: its injections come from outside it (`GATE_SELFTEST_EXTRA_FILE`), and the
-  rule "a self-test case never changes a tracked file" is in check.sh and `docs/WORKFLOW.md`.
-  A commit made during a long self-test now waits for it. **ACTION:** port into your
-  project-owned `scripts/check.sh` the EXIT CODES and SELF-TEST CASE comments, the `gate=`
-  line before `cd` (see "Third cross-model round" below), the lock block,
-  `cleanup` with its traps and the `GATE_SELFTEST_EXTRA_FILE` line; move any self-test case
-  (your `boundary_selftests.sh` included) that writes into the tree to a place outside it.
-  Re-sync `docs/WORKFLOW.md` if you own a modified copy. **ACTION:** Claude Code overlay: copy
-  `.claude/hooks/gate_on_stop.sh` again from `overlays/claude-code/files/` (it sets
-  `GATE_LOCK_WAIT=500` and reports exit 75 as "gate did not run") and re-fill its placeholders.
-  A `.git/check.lock` directory left by a killed run of an unreleased build must be removed
-  by hand.
-- **The reviewer CLI on PATH wins over `~/.local/bin`.** `review.sh` used to put
-  `~/.local/bin` FIRST when a `codex` lived there, so an old standalone build left behind
-  shadowed the current binary and every review failed with "requires a newer version" while
-  the same command worked at the prompt. It is now a fallback at the end of PATH; the
-  regression builds both binaries. **ACTION:** in your project-owned `scripts/review.sh`,
-  change the `PATH="$HOME/.local/bin:$PATH"` line to `PATH="$PATH:$HOME/.local/bin"`, and
-  copy the synced `test_claude_bridge.py`.
-- **Cross-model review round.** A second model's review of this version's diff found holes
-  the first pass had left, fixed before release: two rounds on the gate lock ended in the
-  kernel lock above, after a reclaim-by-rename still let three waiters race and a gate killed
-  with SIGKILL leave its build running under a reclaimed lock (**ACTION:** copy the lock
-  block and `cleanup()` from `core/scripts/check.sh` into your `scripts/check.sh`; delete a
-  `.git/check.lock` symlink left by the older gate, the new one refuses it by name);
-  `.githooks/commit-msg` cuts below a scissors line only when it is git's own editor header
-  (a scissors line in a `-m` message is kept and checked) and rejects a commented-out
-  trailer; `pre-commit` and `pre-merge-commit` report exit 75 as "did NOT RUN, commit
-  blocked", never as FAILED; the review adapters keep the usage record of a review whose
-  reference was deleted mid-run, and an unreadable or malformed usage record stops a
-  labelled round instead of being skipped; `sync-kit.sh` refuses to stamp when its ACTION
-  scan fails; `doctor.sh` no longer evaluates the `toolchain_path` line (`$NAME` and
-  `${NAME}` only; other shell syntax is MISSING), finds the reviewer CLI with `review.sh`'s
-  `~/.local/bin` fallback, and accepts a `grep` alias only with `--color`/`--colour`;
-  `.githooks/commit-msg` fails closed on an `AGENTS.md` it cannot read, checks comment
-  lines too (whether git keeps a `#` line depends on `commit.cleanup`, a `--cleanup` flag the
-  hook cannot see, and `-m` versus the editor; a commented-out credit left by a squash is one
-  line to delete), and rejects "Generated with GitHub Copilot" and "Generated with Google
-  Gemini"; review rounds are carried only for the same resolved reference (`--commit HEAD`
-  one commit later is another change), the same HEAD for `--commit` and `--uncommitted`, and
-  only while the archive's sha256 matches its usage record, so rounds recorded by an older
-  kit are refused and need a new task label (**ACTION:** copy `claude_bridge.py`,
-  `codex_bridge.py`, `agent_usage.py` and `test_claude_bridge.py` from `core/scripts/` and the
-  "stops (exit 2)" paragraph of `docs/REVIEW_GATE.md`); `doctor.sh` requires mode 100755 in the
-  index for every hook and script (an untracked one is MISSING), skips the grep probe with a
-  NOTE where `timeout` is absent, and reads the npm cache's third level; `spawn_worker.sh`
-  starts in a checkout path containing an apostrophe (**ACTION:** copy it from the overlay).
-- **Third cross-model round.** `scripts/check.sh`: a nested run must show it INHERITED the
-  lock, not name it: the holder exports `GATE_LOCK_FD`, and a run whose `GATE_LOCK_HELD`
-  names this checkout's lock proves that descriptor is open on the lock file and held before
-  it skips the lock or honours a seam; otherwise `FAIL [env]` by name, so variables copied
-  from a gate killed with SIGKILL no longer let a build override through. `toolchain_path`
-  is applied before the lock resolves `python3`. **ACTION:** copy the toolchain block (now at
-  the top, keep your `toolchain_path` value), the seam block and the lock block from
-  `core/scripts/check.sh`, and its `gate=$(cd "$(dirname "$0")" && pwd -P)/${0##*/}` line
-  above your `cd "$(dirname "$0")/.."` line: the lock block re-executes the gate by that
-  absolute path, and without the line every gate run, and so every commit, stops at once on
-  an unset `gate`. `.githooks/
-  commit-msg` cuts nothing below a scissors line (a `-m` message can reproduce git's whole
-  header): a credit quoted in a `commit -v` diff is rejected and the message says to commit
-  without `-v`; an alphanumeric `core.commentChar` counts as a comment prefix. A malformed
-  usage record, or a completed review with no evidence, stops a labelled round, and the
-  message says to move the record out of `.myagentkit/usage` (a new label does not help: the
-  scan cannot tell whose round a file held until it parses). **ACTION:** copy
-  `claude_bridge.py` and `test_claude_bridge.py`. `doctor.sh` bounds the grep probe's whole
-  process tree (`setsid` where present), reports a probe that did not complete as a NOTE,
-  and honours `REVIEW_REVIEWER`, `REVIEW_CLI_BIN` and `CLAUDE_CLI_BIN` like the wrapper. The
-  Claude Code Stop hook's exit-75 path has a test. **ACTION:** if your
-  `scripts/boundary_selftests.sh` copied the existing-file example, replace its `:` with an
-  `echo "  ok   — <label>"` line, or the self-test reports "ran no case".
-- **Fourth cross-model round (issue #33).** `sync-kit.sh` exits on INT/TERM instead of
-  stamping. The review adapters treat a usage record with a bad status or task fields as an
-  integrity failure, hash the evidence bytes they publish (a lost archive is recorded as
-  `evidence_unavailable`, never as no record), and a Codex cancel during the closing quota
-  read keeps the record. `.githooks/commit-msg` checks `Key : value` spacing and folded
-  trailers, honours `core.commentString` over `core.commentChar`, and treats a directory at
-  `AGENTS.md` as unreadable. `doctor.sh` reports an unset variable inside `toolchain_path`.
-  The existing-file boundary example runs in a disposable copy of the checkout. **ACTION:**
-  copy `claude_bridge.py`, `codex_bridge.py`, `agent_usage.py` and `agent_process.py` from
-  `core/scripts/`; replace the existing-file example in your `scripts/boundary_selftests.sh`
-  and merge the "disposable copy" bullet into `docs/WORKFLOW.md`.
-- **Fifth cross-model round.** The existing-file boundary example resolves its target and
-  gate physically and fails by name when either lies outside the disposable copy (a
-  symlinked parent directory carried the write into the checkout). The review adapters treat
-  any configured `filter.*.clean` or `process` key as a filter, whatever its value. A cancel
-  during the Codex quota read turns a failed attempt into `cancelled`, so `--fallback` never
-  starts a second reviewer after a cancel; the Claude adapter keeps its usage record when
-  cancelled during its final snapshot. `.githooks/commit-msg` honours `trailer.separators`.
-  `bootstrap.sh` stops a retrofit that kept a `pre-merge-commit` or `commit-msg` of its own.
-  `doctor.sh` checks an explicit list of required scripts and hooks and probes `node` with
-  the PATH the gate really uses (the login-less probe is a separate NOTE). The attribution
-  opt-out in the setup interview also removes the worker definition's bullet. **ACTION:**
-  copy the adapters from `core/scripts/` again; if you allow AI credit, delete the marked
-  block in `.claude/agents/worker.md`.
-- **Sixth cross-model round.** A cancel during a review's evidence or usage write ends the
-  review: the result says cancelled and `--fallback` never starts the other reviewer. The
-  Codex adapter no longer prints a completed report whose accounting failed. An empty
-  `MYAGENTKIT_TASK_ID` is treated as unset instead of being recorded as an id that blocked
-  every later labelled review. `doctor.sh` reports a `toolchain_path` line that is not
-  exactly `toolchain_path="..."` (it used to read it as empty), notes a `check.sh` without
-  one, requires `scripts/review.sh` with a readable `DEFAULT_REVIEWER="..."` line, and kills
-  the grep probe's whole process group after it returns. **ACTION:** copy the adapters and
-  `doctor.sh` again; if doctor reports the `toolchain_path` form, rewrite that line in your
-  `scripts/check.sh` as `toolchain_path="<path>"` with no trailing comment.
-- **Seventh cross-model round.** A cancel that arrives while the evidence or the usage
-  record is being written is now persisted, not only returned: the usage record and the
-  archived header say failed/cancelled, so the usage reporter and direct adapter calls see
-  it. The doctor test asserts descendant cleanup only where `setsid` exists and the NOTE
-  elsewhere (stock macOS). **ACTION:** copy the synced adapters and `agent_usage.py` again.
-- **Eighth cross-model round.** The cancel relabel stages its replacement archive inside
-  the verified-ignored usage directory (a crash can no longer leave stageable reviewer
-  output), writes the usage record first as the authoritative one, and reports an archive
-  that could not be replaced as a hash mismatch that later rounds refuse (exit 2, naming the
-  archive and its record): a failed round is never carried, but its archive is checked as
-  one would be. **ACTION:** copy
-  the synced `agent_usage.py` and `codex_bridge.py` again.
-- **Tenth cross-model round.** The cancel relabel error reports only what was observed:
-  whether the archive on disk matches the usage record (with its sha256), does not match
-  it, or could not be read, plus the write's own error; fault-injection tests cover a
-  directory fsync failing after the replacement and an unreadable archive. The acceptance
-  notes count the incremental rounds as remediation reviews; the final full review under a
-  new label is recorded separately. **ACTION:** copy the synced `agent_usage.py` again.
-- **Full cross-model review, review tooling.** A cancel that lands while the reviewer
-  process is being created still stops its process group, and a cancel during cleanup no
-  longer escapes before the attempt is recorded. A usage directory the owner cannot list
-  stops a labelled round (exit 2) instead of reading as "no earlier rounds". The bridge
-  self-test no longer inherits `REVIEW_DISPOSITIONS` or `MYAGENTKIT_TASK_ID` from the shell.
-  `docs/REVIEW_GATE.md` says a signal while a completed review is being finalised keeps it
-  completed. **ACTION:** copy `agent_process.py`, `claude_bridge.py`, `test_agent_usage.py`,
-  `test_claude_bridge.py` and the REVIEW_GATE paragraph from core.
-- **Full cross-model review of the integrated tree, round 1.** The gate lock is inherited
-  only through the descriptor that holds it: an independently opened descriptor to the lock
-  file, with the holder's pid copied, passed the check and bypassed both the lock and the
-  seam guard. A cancel during a reviewer's cleanup is returned as its own fact, so a zero-exit
-  error result (429) that was cancelled no longer starts the fallback reviewer. The
-  existing-file probe refuses a symlinked gate or target. `doctor.sh` reads the grep probe
-  only between delimiters, so an rc-file banner is no longer taken for the answer.
-  `.githooks/commit-msg` rejects a quoted tool display name. **ACTION:** copy the
-  lock-inheritance Python block from `core/scripts/check.sh` into your `scripts/check.sh`;
-  copy the adapters again; add the `[ -L ... ]` refusal to a copy-based probe of your own.
-- **Full cross-model review, split by commit ranges.** A reviewer CLI that cannot be
-  launched and is cancelled during cleanup is `cancelled`, never an eligible `unavailable`
-  that starts the fallback. `.githooks/commit-msg` rejects the message when parsing
-  `core.commentChar` or `trailer.separators` fails. `doctor.sh` reports an explicitly empty
-  `REVIEW_CLI_BIN` or `CLAUDE_CLI_BIN` as MISSING. `scripts/check.sh` scans every tracked
-  symlink's link text (never following it), so an unfilled marker in a dangling link fails
-  the setup gate. The existing-file example refuses a disposable copy inside the checkout and
-  runs the copy's gate without an inherited `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE` or
-  `GIT_COMMON_DIR`. **ACTION:** port the symlink link-text scan into your `scripts/check.sh`;
-  copy `agent_process.py`; if you adapted the existing-file example, add its TMPDIR check,
-  the `unset` line and the `git rev-parse --show-toplevel` check.
-- **Full cross-model review, range B round 2.** `scripts/check.sh` hands a symlink to
-  `readlink` as `./name`, so a link named `--version` can no longer hide a marker in its
-  link text. `.githooks/commit-msg` rejects the message when `git config` fails to read
-  `trailer.separators`, `core.commentChar` or `core.commentString` (only an absent key means
-  the default), and matches a folded trailer only once all its lines are joined, so a human
-  name folded over several lines passes. A failed review round whose archive no longer
-  matches its usage record stops the next labelled round. The lock upgrade ACTION was
-  validated by assembling it literally onto the base version and running the result.
-  **ACTION:** copy the symlink scan line into your `scripts/check.sh`; copy
-  `.githooks/commit-msg`, `claude_bridge.py` and `test_claude_bridge.py` again.
-- **Full cross-model review, range B round 3.** A cancel as the reviewer's cleanup begins is
-  only noted: the cancel handler raises once, then notes, and cleanup disarms it with a flag
-  instead of swapping handlers (a window in which a second SIGTERM escaped past the group
-  kill). The Codex adapter keeps a completed review whose cancel arrived while the supervisor
-  restored its handlers. `.githooks/commit-msg` stops unfolding at a blank or
-  whitespace-only line. `scripts/check.sh` resolves its own path with `CDPATH` cleared and
-  reports a symlink's link text under the link's own path, so a link in `setup/` stays
-  exempt. **ACTION:** copy `agent_process.py`, `codex_bridge.py` and both test modules
-  again; in your `scripts/check.sh` change the `gate=` and `cd` lines to `CDPATH= cd --` and
-  port the symlink-text block at the end of `scan_grep`.
-- **Full cross-model review, range B round 4.** The existing-file boundary probe gives a
-  linked worktree's copy its own git repository and refuses a copy whose git or common
-  directory lies outside it (a gate that staged its inputs used to stage the injection into
-  the original's index). A cancel while the Codex adapter switched to noting, or while the
-  Claude adapter printed its result, can no longer lose a completed review or let
-  `--fallback` start the other reviewer: cancellation is a flag on a shared one-shot guard
-  and Claude samples it last. The scan writes symlink text one line per link with newlines
-  escaped, so the `setup/` exemption stays tied to the link's own path, and a failed append
-  is fatal. **ACTION:** port the `.git` block and the git-directory check into an adapted
-  existing-file example; copy the adapters and `scripts/check.sh` again.
-- **Full cross-model review, range B round 6.** A cancel noted while the Codex adapter
-  puts the caller's signal handlers back is persisted to the usage record and archive of a
-  failed attempt, not only returned. The closing Codex quota read blocks cancel signals
-  across its app-server launch and cleanup. The Claude adapter prints a final
-  `"correction": true` JSON line when a cancel lands while its result is printed; the last
-  JSON line is authoritative. The existing-file boundary example gives a linked worktree's
-  disposable copy the original's refs, HEAD and index (objects through alternates) instead of
-  a bare `git init`. **ACTION:** copy the adapters, `codex_quota.py` and the test modules
-  again; replace the `.git` block of an adapted existing-file example with core's.
-- **Full cross-model review, range B round 7.** A second cancel while either review adapter
-  persists a late cancellation is noted rather than ending the adapter, so the records and
-  the last printed line say cancelled. The existing-file boundary probe's linked-worktree
-  copy takes the original's object format (SHA-256 originals work) and rebuilds its index
-  from the original's entries, so a split-index checkout no longer leaves the copy with an
-  unreadable index. `.githooks/commit-msg` resolves `core.commentChar` and
-  `core.commentString` as git does: the one set last, across global and local config, wins.
-  **ACTION:** copy `.githooks/commit-msg` and the two adapters again; apply the
-  `--object-format` and `ls-files -s | update-index --index-info` changes to an adapted
-  existing-file example.
-- **Full cross-model review, range B round 8.** The existing-file boundary example runs git
-  and the copied gate under `probe_env`, which passes only the variables it names (no
-  `CDPATH`, no inherited `GIT_*`). Every resolving `cd` is `CDPATH= cd -P`, the injection
-  goes to the validated absolute path, a nested repository or worktree fails the case by
-  name, and so does a failed read of the original's index or refs. Both review adapters hand
-  back the caller's handlers with the cancel signals blocked, so a cancel arriving then is
-  recorded before it reaches the caller; the Codex adapter keeps its guard through its final
-  output. `scripts/check.sh` takes the gate lock on NFS, and a file system without locks
-  fails `FAIL [lock]` by name. `.githooks/commit-msg` reads `core.commentString` only on git
-  2.45 or later. **ACTION:** copy `core/scripts/check.sh` (keep your filled placeholders),
-  `.githooks/commit-msg` and the adapters with `agent_process.py`; re-apply the example to
-  an adapted existing-file probe, adding any variable your gate needs to `probe_env` by name.
-- **Full cross-model review, range B round 9.** The existing-file boundary example refuses
-  a symlink in the copy's git storage that leads outside the copy, carries the original's
-  local and worktree configuration into a linked-worktree copy except keys that redirect
-  storage or execution (each named in a NOTE), keeps intent-to-add entries, and refuses
-  unmerged, skip-worktree and assume-unchanged entries by name. The Codex adapter checks the
-  usage record on disk at every cancel sample and once more at the end, so a cancel noted
-  between the persistence check and the returned flag no longer leaves the record and the
-  archive saying quota while the result says cancelled. **ACTION:** re-copy an adapted
-  existing-file example from `core/scripts/boundary_selftests.sh`; copy `codex_bridge.py`
-  and `test_claude_bridge.py` again.
-- **Full cross-model review, range C round 1.** The existing-file boundary example refuses
-  any directory symlink in the copy's git storage (a link beneath an inside-the-copy
-  directory could still reach the original's object store), refuses an intent-to-add entry
-  whose file was deleted, and keeps a valueless configuration key valueless. The
-  skip-worktree and assume-unchanged refusals each have a negative test. **ACTION:** re-copy
-  an adapted existing-file example from `core/scripts/boundary_selftests.sh`.
-- **Full cross-model review, range C round 2.** The existing-file probe reads the original
-  through one helper with its fsmonitor, hooks and untracked cache off and no optional
-  locks. It carries only an allowlist of settings plus the ones named in
-  `probe_config_keys` (every other local key is named in a NOTE and left behind), removes
-  `git init`'s own instances of the carried keys, and compares the whole rebuilt index with
-  the original's, refusing by name an intent-to-add entry whose mode differs from its file.
-  **ACTION:** re-copy an adapted existing-file example from
-  `core/scripts/boundary_selftests.sh`; if your gate reads a local git setting outside the
-  built-in allowlist, add its lowercase name to `probe_config_keys`.
-- **Full cross-model review, range C rounds 3 and 4.** The existing-file probe carries an
-  allowlisted setting only from the repository's own config file. One set in the worktree
-  configuration or in an included file fails the case by name instead of being flattened
-  into the copy (flattening turned one setting into two values, or moved a worktree value
-  into the local scope, so a gate's `git config <key> <value>` behaved differently in the
-  copy). It counts intent-to-add entries with submodule ignoring off, so an ignored
-  uninitialised submodule is no longer reported as a missing intent-to-add file.
-  **ACTION:** re-copy an adapted existing-file example from
-  `core/scripts/boundary_selftests.sh`; move a setting your gate needs into the
-  repository's config file, or remove it from `probe_config_keys`.
-- **Scan failures that were not scanner failures (issues #13, #14).** A tracked file deleted
-  without `git rm` now fails `[scan]` under its own name with the command that fixes it, and
-  every other scan still runs. A symlink to a directory (for example `node_modules` linked
-  into a throwaway worktree) is skipped with a `NOTE [scan]` line instead of failing the scan.
-  A real grep failure keeps its old message. `docs/GOTCHAS.md` describes the NOTE.
-  **ACTION:** copy the scan-list block from `core/scripts/check.sh` into your `scripts/check.sh`
-  (keep your filled placeholders); copy `core/docs/GOTCHAS.md` if your project syncs it.
+  time. It re-executes itself, by the path it was called with, under a few lines of Python
+  holding `fcntl.flock` on `<git dir>/check.lock`; the gate and everything it starts hold
+  the lock until the last of them exits, and the kernel releases it. Nothing is reclaimed
+  and no pid is trusted: a nested run skips the lock only by proving the descriptor it
+  inherited (`GATE_LOCK_FD`) is open on this lock file and held, so variables copied from a
+  gate killed with SIGKILL fail `FAIL [env]`. A second run (Stop hook, commit hook, manual)
+  waits with a NOTE every 30 s that names `fuser -v` and `lsof` on the lock file instead of
+  sharing the build directory and reporting a false FAIL. `GATE_LOCK_WAIT=<seconds>` bounds
+  the wait: when it runs out the gate prints `NOT RUN [lock]` and exits 75 ("did not run",
+  neither pass nor fail); `pre-commit` and `pre-merge-commit` report that as "did NOT RUN,
+  commit blocked", and the Claude Code Stop hook waits up to 500 s and reports "gate did not
+  run". INT/TERM stop the run after cleanup. The lock works on NFS; a file system without
+  locks, or a Python without `fcntl` (native Windows), fails `FAIL [lock]` by name. The gate
+  now needs `python3`, and applies `toolchain_path`, now at the top of the script, before it
+  looks for one. It ignores `CDPATH`. A build that leaves a compiler server or build daemon
+  running holds the lock until that exits (`docs/GOTCHAS.md`). A commit made during a long
+  self-test waits for it.
+- **Self-test seams are not a bypass (issues #25, #11).** `--self-test` writes nothing into
+  the working tree: its injections come from outside it (`GATE_SELFTEST_EXTRA_FILE`), and
+  "a self-test case never changes a tracked file" is a rule in `check.sh` and
+  `docs/WORKFLOW.md`. The overrides are `GATE_BUILD_CMD_OVERRIDE`, `GATE_SELFTEST_STATE_FILE`,
+  `GATE_SELFTEST_PROJECT_FILE`, `BOUNDARY_CHECKS_FILE`, `BOUNDARY_SELFTESTS_FILE`,
+  `GATE_SELFTEST_EXTRA_FILE` and `GATE_SELFTEST_BREAK_SCANNER` (`STATE_FILE` and
+  `PROJECT_FILE` were renamed). Only the self-test's own nested runs, which hold the lock,
+  honour them; any other run prints `FAIL [env]: <name> is set; ...` and exits 1. The
+  self-test fails when `boundary_checks.sh` has checks but the boundary self-tests printed no
+  `  ok   — <label>` line, and has new cases for the hooks loop, the commit-msg hook and the
+  build failure output.
+- **Scan (issues #13, #14).** The gate reads text in the C locale: in a UTF-8 locale
+  `grep -I` printed nothing for a line holding a non-UTF-8 byte, so a placeholder on a
+  Latin-1 line passed. The build command still gets your own locale. A tracked file deleted
+  without `git rm` fails `[scan]` under its own name with the command that fixes it, and
+  every other scan still runs. Every tracked symlink's link text is scanned and the link is
+  never followed, so an unfilled marker in a dangling link fails the setup gate (a link in
+  `setup/` stays exempt); only regular files reach grep. A directory symlink (`node_modules`
+  linked into a throwaway worktree), a submodule or a repository inside the tree is skipped
+  with a `NOTE [scan]` line. A real grep failure keeps its old message.
+- **Build output (issue #23).** The build step is quiet on a pass. On a failure it prints
+  `FAIL [build]`, the last 150 lines (the whole log when `CI` is set) and the path of the
+  full log, never a filtered subset. Keep deploy-shaped steps, dry runs included, out of the
+  build command.
+- **Commit gates (issues #16, #24).** `.githooks/pre-merge-commit` (new, kit-owned) runs the
+  gate for the commit a clean `git merge` creates, where git does not run pre-commit; git
+  older than 2.24 has no such hook and leaves merges ungated (`docs/DEV_SETUP.md` says so).
+  `.githooks/commit-msg` (new, kit-owned) rejects an AI credit: a `Co-Authored-By`,
+  `Signed-off-by` or `Assisted-by` trailer or a "Generated with" line whose whole name is a
+  tool or model (quoted or not, from a list of current tool names), or whose address is a
+  vendor's or a `[bot]`; a human name that contains a tool's passes. It checks the message whatever git later keeps: comment
+  lines too, and nothing below a `commit -v` scissors line is cut (a credit quoted in that
+  diff is rejected; commit without `-v`). It honours `Key : value` spacing, folded trailers,
+  `trailer.separators`, `core.commentChar` and, on git 2.45 or later, `core.commentString`,
+  and rejects the message when reading any of them fails. The line "No AI attribution in
+  git" in `AGENTS.md` is the owner's switch: without it the hook passes every message; a
+  missing or unreadable `AGENTS.md` keeps it on. The setup interview asks, and its opt-out
+  also removes the worker definition's bullet.
 - **Review tooling fails closed (issues #12, #9, #8).** A named reviewer is never silently
   replaced: `review.sh` fails when the requested reviewer cannot run, and `--fallback`
   (dispatcher `--allow-fallback`) allows one substitute whose evidence opens with
-  `FALLBACK REVIEWER:`. A CLI that rejects a required flag (`cli_unsupported`, Claude or Codex)
-  never fails over. Scope with an effective Git clean/process filter or `ident` is refused
-  before launch, since the filtered diff can omit lines the fingerprint hashed. Ctrl-C,
-  SIGTERM and SIGHUP now kill the reviewer's process group and record `cancelled`; a signal
-  the caller set to ignore (`nohup`, a background job) stays ignored. The review self-test has
-  a minimum test count per suite, and `check.sh --self-test` fails when `boundary_checks.sh`
-  has checks but the boundary self-tests printed no case. **ACTION:** none of these scripts is
-  kit-owned, so copy the review tooling as one set into `scripts/`: `agent_process.py`,
-  `agent_usage.py`, `claude_bridge.py`, `codex_bridge.py`, `review_dispatch.py`,
-  `test_agent_usage.py`, `test_claude_bridge.py`; add the `--fallback` case to your
-  `scripts/review.sh` (pass `$fallback` to the dispatcher; core has it) and the boundary
-  self-test hunk to your `scripts/check.sh`. **ACTION:** automation that relied on automatic
-  failover must now pass `--fallback`. **ACTION:** each `boundary_selftests.sh` case must print
-  `  ok   — <label>`. **ACTION:** a repository with Git LFS, a clean filter or `ident` in the
-  review scope cannot use `review.sh`; use the manual template in `docs/REVIEW_GATE.md`.
+  `FALLBACK REVIEWER:`. A CLI that rejects a required flag (`cli_unsupported`) or cannot be
+  launched after a cancel never fails over. A review scope with an effective git clean or
+  process filter (any configured value) or `ident` is refused before launch, since the
+  filtered diff can omit lines the fingerprint hashed. Ctrl-C, SIGTERM and SIGHUP kill the
+  reviewer's process group and record `cancelled` wherever the cancel lands (launch, cleanup,
+  the closing Codex quota read, the evidence and usage writes); a cancelled attempt never
+  starts the fallback reviewer, a cancel after the reviewer finished keeps the completed
+  review, and a signal the caller set to ignore (`nohup`, a background job) stays ignored.
+  The Claude adapter prints a final `"correction": true` JSON line when a cancel lands while
+  it prints its result; the last JSON line is authoritative. A failed quota read is
+  "unavailable" and never costs a finished review its evidence. The usage record carries the
+  archive's sha256 (a lost archive is `evidence_unavailable`); a malformed, unreadable or
+  mismatching record, or a usage directory that cannot be listed, stops a labelled round
+  (exit 2), and the refusal names the file and the command that moves it aside. An empty
+  `MYAGENTKIT_TASK_ID` counts as unset. `review.sh` puts `~/.local/bin` at the end of PATH,
+  not the front (an old binary there shadowed the current one), and ignores `CDPATH`. The
+  review self-test has a minimum test count per suite.
 - **Review rounds converge (issue #18).** Both reviewers are asked for every finding, a
   severity (Critical, High, Medium, Low) on each, and a fix sketch. With the same
   `MYAGENTKIT_TASK_ID` a later round's prompt carries the earlier completed reviews from the
   reviewer's own archive, plus `REVIEW_DISPOSITIONS=<file>` for the author's answers. A
   disposition is a claim the reviewer verifies, never a settlement: a deferred finding stays
   open under Manual checks, and the closing Accept comes from one fresh review under a new
-  label. Carried rounds must share scope and reference with the new review and have an
-  ancestor head (a rebase, an amend or a `--commit` round with another head is refused and
-  the message says to use a new label), count toward the 400000-byte diff budget, and
-  show their verdicts as `Earlier verdict:`. A missing earlier archive exits 2 for both
-  reviewers. `stale_checkout` still fails the review, and now says why and what to do.
-  **ACTION:** copy the review tooling set named in the previous bullet; add the two new
-  "Running it" paragraphs and the template change from `core/docs/REVIEW_GATE.md` to your
-  project-owned `docs/REVIEW_GATE.md`.
-- **Sync stamp (issue #15).** `sync-kit.sh` records a new kit version only after its ACTION
-  items are confirmed. It lists the pending ACTION lines as a checklist after the full
-  entries on every run, leaves `docs/kit/.kit-version` unchanged and exits 2 until you rerun
-  with `--actions-applied`; a line of the form `**ACTION** — none` is not an item. Versions without
-  ACTION items are stamped as before. `docs/UPDATING.md` and the README describe it.
-  **ACTION:** a script of yours that runs `sync-kit.sh` must expect exit 2 while items are
-  pending. If a project was stamped past versions whose ACTIONs it never applied, set
-  `docs/kit/.kit-version` back to the last version really applied and sync again.
-- **Commit gates (issues #16, #24, #23).** `.githooks/pre-merge-commit` (new, kit-owned)
-  runs the gate for the commit a clean `git merge` creates, where git does not run
-  pre-commit; git older than 2.24 has no such hook and leaves merges ungated
-  (`docs/DEV_SETUP.md` says so). The `check.sh` build step is quiet on a pass; on failure it
-  prints `FAIL [build]`, the last 150 lines (the whole log when `CI` is set) and the path of
-  the full log, never a filtered subset. Keep deploy-shaped steps, dry runs included, out of
-  the build command. `.githooks/commit-msg` (new, kit-owned) rejects an AI credit in a
-  `Co-Authored-By`, `Signed-off-by` or `Assisted-by` trailer or a "Generated with" line, only
-  when the whole trailer name is a tool or model, the address is a vendor's or a `[bot]`;
-  human names that contain a tool's pass. Nothing below a `commit -v` scissors line is cut: a
-  credit quoted in that diff is rejected too, and the way past it is to commit without -v.
-  The rule "No AI attribution in git" in `AGENTS.md` is the owner's switch: without that line the hook
-  gives way (a missing `AGENTS.md` keeps it on), and the setup interview asks. **ACTION:** copy
-  the rule bullet and the extended hook sentence from `core/AGENTS.md` into your `AGENTS.md`;
-  to allow AI credit, delete the rule line there. **ACTION:** copy the `build_log=` line, the
-  build section and the new self-test cases (hooks loop, commit-msg, build failure output)
-  from `core/scripts/check.sh` into your `scripts/check.sh`, and remove any `grep error`
-  filter from your build command. Optional: the `docs/DEV_SETUP.md` and `setup/INTERVIEW.md`
-  sentences.
-- **Effort, STATE operation files, doctor.sh, closing a worker (issues #17, #21, #10, #30).**
-  Delegated agents run at a stated effort: `worker.md` gets `effort: {{WORKER_EFFORT}}`
-  (filled at interview question 8), `diff-reviewer.md` gets `effort: high`, and WORKFLOW and
-  HANDOFF say the brief names model and effort and the lead verifies both in the transcript.
+  label. Carried rounds must share scope and resolved reference with the new review, the same
+  HEAD for `--commit` and `--uncommitted`, an ancestor head, and an archive whose sha256
+  matches its usage record (a rebase, an amend or another head is refused and the message
+  says to use a new label); they count toward the 400000-byte diff budget and show their
+  verdicts as `Earlier verdict:`. A missing earlier archive exits 2 for both reviewers.
+  `stale_checkout` still fails the review, and now says why and what to do.
+  `docs/REVIEW_GATE.md` and `docs/USAGE.md` describe the rounds and the fallback.
+- **Sync and bootstrap (issue #15).** `sync-kit.sh` records a new kit version only after its
+  ACTION items are confirmed: it prints the entries, then the items again as a checklist,
+  each item whole; leaves `docs/kit/.kit-version` unchanged and exits 2 until you rerun with
+  `--actions-applied`. A line of the form `**ACTION** — none` is not an item, and versions
+  without items are stamped as before. A kit-owned path holding a differing file without the
+  KIT-OWNED header is reported as `conflict:`, and the sync copies nothing and keeps the
+  stamp. A failed ACTION scan, or INT/TERM, never stamps. After a STOP, running
+  `bootstrap.sh` again passes over every file identical to the kit's and lists only the
+  files that differ; a differing gate file (`scripts/check.sh` or one of the three hooks)
+  stops the run as `conflict: <path>`; `--force` overwrites every differing file listed.
+  `docs/UPDATING.md` and the README describe both.
+- **`scripts/doctor.sh` (new, kit-owned; issue #10).** A machine check to run at session
+  start, with one `MISSING: <what> — fix: <command>` line per trap and `DOCTOR: ready` or
+  `DOCTOR: setup incomplete` (exit 1): mode 100755 on disk and in the index for every
+  required hook and script (an untracked one is MISSING), `core.hooksPath`, the git identity,
+  Python 3.10+, the six review runtime modules, `scripts/review.sh` with a readable
+  `DEFAULT_REVIEWER="..."` line and the reviewer CLI it names (with `review.sh`'s
+  `~/.local/bin` fallback and the `REVIEW_REVIEWER`, `REVIEW_CLI_BIN` and `CLAUDE_CLI_BIN`
+  overrides; an explicitly empty one is MISSING), tmux where the worker script is installed,
+  the `node` a git hook resolves with the PATH the gate really uses (`toolchain_path`) against
+  `.nvmrc` (the login-less probe is a separate NOTE), the npm cache owner (three levels deep),
+  `grep` shadowed by an alias or function in the interactive shell, a checkout under
+  `/mnt/<drive>` on WSL, CRLF in a script, and an unignored `node_modules` symlink. It never
+  evaluates `toolchain_path`: the line must read exactly `toolchain_path="..."`, only
+  `$NAME` and `${NAME}` are expanded, an unset variable in it is reported, and a `check.sh`
+  without the line gets a NOTE. A grep alias is accepted only when each word is a plain
+  allowlisted option (`--color`, `--colour`, `--exclude-dir`). It changes nothing in the
+  project; the grep probe starts the owner's interactive shell, so the shell's rc files run,
+  under a 5 s bound on its whole process tree, and is skipped with a NOTE where `timeout` is
+  absent.
+- **Effort, STATE operation files, closing a worker (issues #17, #21, #30).** Delegated
+  agents run at a stated effort: `worker.md` gets `effort: {{WORKER_EFFORT}}` (setup
+  interview question 8), `diff-reviewer.md` gets `effort: high`, and WORKFLOW and HANDOFF
+  say the brief names model and effort and the lead verifies both in the transcript.
   `docs/STATE.md` keeps a status line and a pointer; operation detail and worker results go
-  to `docs/<OPERATION>.md`, and both rot-gate messages name it. `scripts/doctor.sh` (new,
-  kit-owned) is a read-only machine check with one MISSING line per trap: exec bits, hooks
-  path, git identity, Python 3.10+, the default reviewer CLI, tmux, the `node` a git hook
-  resolves against `toolchain_path` and `.nvmrc`, the npm cache owner, a shadowed `grep`, a
-  checkout under `/mnt/<drive>` on WSL, CRLF in a script, and an unignored `node_modules`
-  symlink. A spawned worker session is closed by the lead once it has read the result file;
-  `spawn_worker.sh` prints the command. **ACTION:** add `effort:` to both files in your
-  `.claude/agents/`, fill `WORKER_EFFORT` and restart Claude Code. **ACTION:** copy the changed
-  paragraphs into `docs/STATE.md`, `docs/HANDOFF.md` and the "STATE.md discipline" in
-  `AGENTS.md`, and the two message lines into `scripts/check.sh`. **ACTION:** add reading-order
-  step 0 (`scripts/doctor.sh`) to `AGENTS.md` and `docs/DEV_SETUP.md` §4. **ACTION:** copy
-  `spawn_worker.sh` and the overlay README bullet, and add the closing line to your briefs. In a
-  project whose `.gitignore` says `node_modules/` and that symlinks `node_modules`, write
-  `node_modules` without the slash.
+  to `docs/<OPERATION>.md`, and both rot-gate messages name it. A spawned worker session is
+  closed by the lead once it has read the result file; `spawn_worker.sh` prints the command.
 - **Rules (issues #26, #27, #28, #31).** A web request carries no personal data
   (`docs/WORKFLOW.md` "Web requests carry no personal data", HANDOFF brief item 3,
   `docs/GOTCHAS.md`). A sub-agent returns its report as its final message; only a spawned
-  session writes a result file (WORKFLOW rule 7). Worktree-isolated agents run plain commands,
-  one per call, and put compound work in a script file (`worker.md`, overlay README). A red
-  gate that passes on re-run is recorded, not retried away (WORKFLOW, GOTCHAS). **ACTION:** copy
-  the new WORKFLOW section, rule 7's sentences, the HANDOFF sentence and the GOTCHAS entries into
-  your project-owned docs, the `worker.md` bullets into `.claude/agents/worker.md`, and name a
-  generic User-Agent in every brief that sends an agent to the web.
-- **Self-test seams are not a bypass (issue #25).** `check.sh` used to honour its self-test
-  overrides in every run, so one exported variable could skip the build or point a gate at
-  another file and still print `CHECK: PASS`. They are now `GATE_BUILD_CMD_OVERRIDE`,
-  `GATE_SELFTEST_STATE_FILE`, `GATE_SELFTEST_PROJECT_FILE`, `BOUNDARY_CHECKS_FILE`,
-  `BOUNDARY_SELFTESTS_FILE`, `GATE_SELFTEST_EXTRA_FILE` and `GATE_SELFTEST_BREAK_SCANNER`, and
-  only the self-test's nested runs honour them (they carry `GATE_SELFTEST_NESTED`, which must
-  match the live lock holder). Any other run prints `FAIL [env]: <name> is set; ...` and exits
-  1. `STATE_FILE` and `PROJECT_FILE` were renamed. **ACTION:** merge into your `scripts/check.sh`
-  the SELF-TEST SEAMS block after `fail=0`, the `GATE_SELFTEST_NESTED` export at the top of
-  `self_test()` and the "seam outside the self-test" case; add any override variable your own
-  boundary checks read to the list; unset these variables where a shell profile or CI step
-  exports them.
-- **Worker spawning (found while applying the above).** `spawn_worker.sh` now
-  `cd`s into the folder before starting the tool, because tmux hands a new session a stale
-  `PWD`. **ACTION:** copy `spawn_worker.sh` (same copy as above).
-- **Worker spawning, second pass (issues #32, #35, review of 2026-10-05).** `spawn_worker.sh`
-  quotes every value it puts into the session command (name, `--model`, `--effort`,
-  `--settings`, `--allowed-tools`, the folder) through one helper: an apostrophe in one used
-  to end the quoting and run the rest as shell. The brief is no longer pasted: the script
-  types `Read '<absolute path>' and follow it.` and refuses a missing or unreadable brief
-  before any session opens. `--worktree` no longer passes `-w` to the tool: the script runs
-  `git worktree add .claude/worktrees/NAME -b worktree-NAME HEAD` itself and refuses a
-  leftover branch or path of that name. **ACTION:** copy `spawn_worker.sh` again; keep the
-  brief file in place until the worker has read it.
-- **Fail-open and lost records (review of 2026-10-05).** `scripts/check.sh` and
-  `.githooks/commit-msg` read text in the C locale: in a UTF-8 locale `grep -I` printed
-  nothing for a matching line holding a non-UTF-8 byte, so a placeholder on a Latin-1 line
-  passed the gate; your build command still gets your own locale. `sync-kit.sh` stops with
-  `conflict:` lines, copies nothing and leaves the stamp when a kit-owned path holds a
-  differing file without the KIT-OWNED header (v0.9 made `.githooks/commit-msg`,
-  `.githooks/pre-merge-commit` and `scripts/doctor.sh` kit-owned; the first sync used to
-  overwrite your own). The review runtime: a cancel that arrives after the reviewer has
-  finished no longer records a completed review as cancelled or skips the cleanup; a quota
-  read that fails is "unavailable" and never costs a finished review its evidence; a
-  cancelled record always carries the new archive hash. **ACTION:** if the sync reports a
-  conflict, merge your hook's checks into the kit's file (or move yours aside) and sync
-  again; port the `LC_ALL=C` lines into your `scripts/check.sh`; copy `agent_process.py`,
-  `agent_usage.py`, `claude_bridge.py`, `codex_bridge.py`, `codex_quota.py` again.
-- **Existing-file example: a plain repository only (review of 2026-10-05).** The worked
-  example in `scripts/boundary_selftests.sh` lost its rebuild of linked-worktree git state
-  (286 lines to 206). A checkout whose `.git` is not a directory (a linked worktree, a
+  session writes a result file (WORKFLOW rule 7). Worktree-isolated agents run plain
+  commands, one per call, and put compound work in a script file (`worker.md`, overlay
+  README). A red gate that passes on re-run is recorded, not retried away (WORKFLOW,
+  GOTCHAS).
+- **The boundary self-test examples.** The worked existing-file example in
+  `scripts/boundary_selftests.sh` runs its probe in a disposable copy of the checkout, for a
+  plain repository only: a checkout whose `.git` is not a directory (a linked worktree, a
   submodule, a separate git directory) or that holds a nested repository is refused by name
-  and reported `NOT RUN`, which FAILS the self-test: run `--self-test` from the main
-  checkout. On the plain path the copy is made with `cp -RP`; every symlink that leads out
-  of the copy is refused, before the baseline gate run and again after it; git and the
-  copied gate run with an empty HOME and no system or global git configuration; the copied
-  `.git/config` is replaced by an allowlist plus `probe_config_keys`. The dot-file example
-  removes its injection on INT/TERM as well as on exit. **ACTION:** this supersedes every
-  earlier v0.9 ACTION about the existing-file example: replace your copy of it with the
-  kit's current one and adapt the target and diagnostic again; port the dot-file example's
-  subshell and trap; name any repository setting your gate reads in `probe_config_keys`;
-  give a tool that needs a cache directory its own variable in `probe_env`.
-- **Gate, scan and doctor (review of 2026-10-05).** The scan drops every symlink from its
-  file list once the link text is recorded and hands grep regular files only (a link to a
-  FIFO hung the gate, a link to an outside file leaked its lines); a submodule or a
-  repository inside the tree is skipped with a NOTE instead of "a scanner failed to run".
-  The gate re-executes by the path it was called with (a symlinked `scripts/` ran it in the
-  wrong tree), fails `FAIL [lock]` by name where Python has no `fcntl`, and its waiting NOTE
-  names `fuser -v` and `lsof` on the lock file. `doctor.sh` requires all six review runtime
-  modules, never signals a saved process-group number, ignores CDPATH, and accepts a grep
-  alias that adds only `--color` or `--exclude-dir` (oh-my-zsh's default). **ACTION:** copy
-  `scripts/check.sh` again, keeping your `toolchain_path` and `build_test_cmd` lines;
-  `doctor.sh` and the hooks arrive with the sync; a build command that leaves a server
-  running holds the gate lock: turn the server off in the command (see GOTCHAS).
-- **Tests that could not go red (review of 2026-10-05).** Twenty-two guards in `doctor.sh`,
-  `commit-msg`, `check.sh`, `claude_bridge.py` and `sync-kit.sh` had a negative test that
-  stayed green with the guard deleted; each now has one that goes red. A case that cannot
-  run (uid 0, an old git) is no longer printed as NOT RUN and counted as a pass. The suites
-  no longer fail when the caller ignores SIGINT. `check_kit.py` holds every suite to its
-  current test count. Also: a cancel noted before the reviewer starts stops the launch;
-  the damaged-usage-record refusal names the file and the command that moves it aside;
-  `commit-msg` knows seven more tool names; the existing-file example empties the copy's
-  `.git/hooks`; `review.sh` and `spawn_worker.sh` ignore CDPATH. **ACTION:** copy
-  `agent_process.py`, `claude_bridge.py`, `review_dispatch.py` and `scripts/review.sh`
-  again; port the `.git/hooks` line into your existing-file example. Upgrading from
-  v0.7/v0.8: a usage record with an empty task id stops every review; the refusal names it
-  and the fix: `mkdir -p .myagentkit/usage-set-aside && mv <record>
-  .myagentkit/usage-set-aside/` (find them with `grep -l '"id": ""'
-  .myagentkit/usage/*.json`).
-- **Bootstrap re-run (review of 2026-10-05).** After a STOP, running `bootstrap.sh` again
-  passes over every file identical to the kit's (what the first run copied) and lists only
-  the files that differ; a differing gate file stops the run as `conflict: <path>`, the
-  form `sync-kit.sh` uses. Move yours aside, re-run, then carry what yours did into the
-  kit's file; `--force` overwrites every differing file listed. No ACTION.
-- **Review round d1 (2026-10-05).** Existing-file example: the audit fails by name on a
-  folder or link it cannot read (it used to pass over it), and a `.git/hooks` that is
-  missing or not empty after the baseline run is refused. `spawn_worker.sh`: a newline in
-  the brief argument is refused before anything else and the file name's bytes are kept; a
-  relative `--settings` file is made absolute against the caller's folder, and with
-  `--worktree` a relative value that is neither a file nor inline JSON is refused.
-  `doctor.sh`: every word of a grep alias must match an allowlist of plain options
-  (`--exclude-dir=x>/dev/null` used to pass). The kit's own check picks a UTF-8 locale by
-  codeset, not from four names. `unity_gate.sh` and `gate_on_stop.sh` ignore CDPATH.
-  **ACTION:** replace your existing-file example with the kit's current one again; copy
-  `spawn_worker.sh` again; with the Unity overlay copy `unity_gate.sh`, with the Claude Code
-  overlay `gate_on_stop.sh`.
+  and reported `NOT RUN`, which fails the self-test, so run `--self-test` from the main
+  checkout. The copy is made with `cp -RP` outside the checkout (a `TMPDIR` inside it is
+  refused); an audit before and after the baseline gate run refuses every symlink that leads
+  out of the copy and fails by name on a folder or link it cannot read; the target and the
+  gate are resolved physically and a symlinked one is refused; git and the copied gate run
+  under `probe_env`, which passes only the variables it names, with an empty HOME and no
+  system or global git configuration; the copy's `.git/config` is replaced by an allowlist
+  plus the keys named in `probe_config_keys`, and its `.git/hooks` is emptied. The dot-file
+  example runs in a subshell that removes its injection on INT/TERM as well as on exit.
+- **Worker spawning (issues #32, #35).** `spawn_worker.sh` `cd`s into the folder before
+  starting the tool (tmux hands a new session a stale `PWD`) and ignores `CDPATH`. Every
+  value it puts into the session command goes through one quoting helper. The brief is not
+  pasted: the script types `Read '<absolute path>' and follow it.`, and refuses a missing or
+  unreadable brief, or a newline in its argument, before any session opens. `--worktree`
+  runs `git worktree add .claude/worktrees/NAME -b worktree-NAME HEAD` itself instead of the
+  tool's `-w` and refuses a leftover branch or path of that name; a relative `--settings`
+  file is made absolute against the caller's folder. `unity_gate.sh` and `gate_on_stop.sh`
+  ignore `CDPATH`.
+- **Tests that could not go red.** Twenty-two guards in `doctor.sh`, `commit-msg`,
+  `check.sh`, `claude_bridge.py` and `sync-kit.sh` had a negative test that stayed green with
+  the guard deleted; each now has one that goes red. A case that cannot run (uid 0, an old
+  git) is no longer counted as a pass, the suites no longer fail when the caller ignores
+  SIGINT, and `check_kit.py` holds every suite to its current test count.
+
+### Upgrading a project from v0.8
+
+<!-- Each numbered item is one checklist entry. sync-kit.sh prints an item from its marker to
+the end of the item, so an item holds no blank line and no line that starts a list. -->
+
+Work from the project's root, top to bottom. `KIT` is the kit checkout you run `sync-kit.sh`
+from, and `5c80c36` is the kit's v0.8 commit.
+
+1. **ACTION:** If this project was stamped past a version whose ACTION items it never
+   applied, set `docs/kit/.kit-version` back to the last version really applied and sync
+   again, so those versions' items are listed too. A script of yours that runs
+   `sync-kit.sh` must expect exit 2 while items are pending.
+2. **ACTION:** Let the sync install the kit-owned files: `.githooks/commit-msg` and
+   `.githooks/pre-merge-commit` (both new), `.githooks/pre-commit`, `scripts/doctor.sh`
+   (new) and `setup/INTERVIEW.md`. If it stops with `conflict:` lines, the project has a
+   file of its own at one of those paths: move yours aside, run the sync again, then carry
+   what your file did into the project by hand (the kit's `docs/RETROFIT.md`).
+3. **ACTION:** Copy these files whole from `$KIT/core/scripts/` into `scripts/`, replacing
+   yours (they hold no project content): `agent_process.py`, `agent_usage.py`,
+   `claude_bridge.py`, `codex_bridge.py`, `codex_quota.py`, `review_dispatch.py`,
+   `test_agent_usage.py`, `test_claude_bridge.py`, `test_codex_quota.py`. With the Claude
+   Code overlay also copy `scripts/spawn_worker.sh` from
+   `$KIT/overlays/claude-code/files/scripts/`; with the Unity overlay, `scripts/unity_gate.sh`
+   from `$KIT/overlays/unity/files/scripts/`.
+4. **ACTION:** Merge the kit's changes since v0.8 into the files that hold your setup
+   content, one three-way merge per file (yours, the kit's v0.8 copy, the kit's current
+   copy). Conflicts are left in the file as `<<<<<<<` markers for the next item:
+   ```sh
+   for f in AGENTS.md docs/DEV_SETUP.md docs/GOTCHAS.md docs/HANDOFF.md docs/REVIEW_GATE.md \
+       docs/STATE.md docs/USAGE.md docs/WORKFLOW.md scripts/check.sh scripts/review.sh \
+       scripts/boundary_selftests.sh; do
+     git -C "$KIT" show "5c80c36:core/$f" > "$f.v0.8" && git merge-file "$f" "$f.v0.8" "$KIT/core/$f"
+     rm -f "$f.v0.8"
+   done
+   ```
+   With the Claude Code overlay, run the same loop over `.claude/agents/diff-reviewer.md`,
+   `.claude/agents/worker.md` and `.claude/hooks/gate_on_stop.sh`, with
+   `overlays/claude-code/files/$f` in place of `core/$f` in both places.
+5. **ACTION:** Resolve every conflict the merge left (`git diff --check` names each
+   leftover marker): take the kit's side and put back into it each value you had filled in
+   on your side. Expect them where a filled placeholder sits next to a kit change: the
+   `.githooks/pre-merge-commit` sentence in `AGENTS.md`, `build_test_cmd` in
+   `scripts/check.sh`, and the `model:` line of both `.claude/agents/` files. If you replaced
+   `scripts/boundary_selftests.sh` with your own cases at setup, keep your side there
+   instead and see the boundary self-test item below. Then fill the placeholders the merge brought in, which
+   `./scripts/check.sh` lists: `{{OWNER_NAME}}` in new lines of `AGENTS.md` and
+   `docs/WORKFLOW.md`, and `{{WORKER_EFFORT}}` in `.claude/agents/worker.md` (`low`,
+   `medium` or `high`: the effort a delegated worker runs at, setup interview question 8).
+6. **ACTION:** Check the configured lines of `scripts/check.sh`: `toolchain_path` must read
+   exactly `toolchain_path="<path>"` with no trailing comment, or doctor reports it. The
+   build command must not filter its output (remove a `grep error` filter: the gate prints
+   the tail and the log path itself), must not leave a compiler server or build daemon
+   running (it would hold the gate lock; `docs/GOTCHAS.md` shows the flags) and must hold no
+   deploy-shaped step, dry runs included. The gate now needs `python3` on the PATH a git
+   hook sees; `toolchain_path` is applied first. Add any override variable your own boundary
+   checks read to the list in the SELF-TEST SEAMS block.
+7. **ACTION:** Bring `scripts/boundary_selftests.sh` up to the new contract: every case
+   prints `  ok   — <label>` when it passes; a case that writes into the working tree moves
+   outside it, or removes its file on INT/TERM as well as on exit, as the kit's dot-file
+   example now does in a subshell with its own trap. If you adapted the existing-file
+   example, replace your copy with the kit's current one and adapt its target and
+   diagnostic again, name each repository setting your gate reads in `probe_config_keys`
+   (it must be set in the repository's own config file) and add each variable your gate
+   needs to `probe_env` by name (a tool that needs a cache directory gets its own).
+8. **ACTION:** Decide the attribution rule. The merged `AGENTS.md` now holds the bullet "No
+   AI attribution in git", and the kit's `commit-msg` hook rejects AI credit while that
+   line is there. To allow AI credit, delete that bullet, and with the Claude Code overlay
+   the block marked "attribution rule" in `.claude/agents/worker.md`.
+9. **ACTION:** Outside the files: unset the self-test seam variables named in
+   `scripts/check.sh` wherever a shell profile or CI step exports them, since a normal gate
+   run now fails `FAIL [env]` on them; pass `--fallback` to `scripts/review.sh` in any
+   automation that relied on automatic reviewer failover; a repository with Git LFS, a
+   clean filter or `ident` in the review scope cannot use `review.sh`, so use the manual
+   template in `docs/REVIEW_GATE.md`; and where `.gitignore` says `node_modules/` and
+   `node_modules` is a symlink, write `node_modules` without the slash.
+10. **ACTION:** Move aside the review usage records that v0.7 and v0.8 wrote with an empty
+   task id, which now stop every review: find them with
+   `grep -l '"id": ""' .myagentkit/usage/*.json` and move each with
+   `mkdir -p .myagentkit/usage-set-aside && mv <record> .myagentkit/usage-set-aside/`.
+   Rounds recorded before v0.9 are not carried: give the next review a new
+   `MYAGENTKIT_TASK_ID`.
+11. **ACTION:** Prove the result, in this order: `git add -A` (doctor requires every hook
+   and script in the index with mode 100755), `./scripts/doctor.sh` (fix each `MISSING:`
+   line), `./scripts/check.sh` (expect `CHECK: PASS`), `./scripts/check.sh --self-test`
+   from the main checkout, then commit. With the Claude Code overlay, restart Claude Code so
+   the agents' `effort:` lines take effect.
+12. **ACTION:** As the lead, from now on: a brief names the worker's model and effort and
+   you check both in the transcript; you close a spawned worker session once you have read
+   its result file (`spawn_worker.sh` prints the command); a brief file stays in place
+   until the worker has read it; a brief that sends an agent to the web names a generic
+   User-Agent. Then record the version with `"$KIT/sync-kit.sh" . --actions-applied`.
 
 ## v0.8 — 2026-10-03
 
