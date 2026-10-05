@@ -512,17 +512,70 @@ exit 1
         # cp -RP copied .git/hooks with the rest, and the rebuilt configuration leaves git's
         # default hooks directory: a copied gate's `git commit` ran the original's pre-commit,
         # and a hook that writes elsewhere escaped the copy.
+        # A `git add` ran post-index-change the same way.
         with tempfile.TemporaryDirectory() as tmp:
             escaped = Path(tmp) / 'escaped'
-            root, git = self.fixture(tmp, 'git -c user.name=g -c user.email=g@example.invalid -c commit.gpgsign=false'
+            root, git = self.fixture(tmp, 'git add -A || exit 1\n'
+                                          'git -c user.name=g -c user.email=g@example.invalid -c commit.gpgsign=false'
                                           ' commit -q --allow-empty -m probe >/dev/null 2>&1 || exit 1\n')
-            for hook in ('pre-commit', 'post-commit'):
+            for hook in ('pre-commit', 'post-commit', 'post-index-change'):
                 (root / '.git/hooks' / hook).write_text('#!/bin/sh\n: > %s\n' % shlex.quote(str(escaped)))
                 (root / '.git/hooks' / hook).chmod(0o755)
             result = self.self_test(tmp, root)
             self.assertFalse(escaped.exists(), "the original's hook ran in the copy")
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn('  ok   — ', result.stdout)
+
+    def test_a_hook_the_baseline_leaves_is_refused_by_name(self):
+        # The copy's hooks directory starts empty, but a hook the baseline run wrote there would
+        # run from the second run's `git add` or `git commit`: refused before the injection.
+        with tempfile.TemporaryDirectory() as tmp:
+            escaped = Path(tmp) / 'escaped'
+            root, git = self.fixture(tmp, '[ -e "$TMPDIR/hooked" ] || { : > "$TMPDIR/hooked"; '
+                                          "printf '#!/bin/sh\\n: > %s\\n' > .git/hooks/post-index-change; "
+                                          'chmod +x .git/hooks/post-index-change; exit 0; }\n'
+                                          'git add -A || exit 1\n' % shlex.quote(str(escaped)))
+            result = self.self_test(tmp, root)
+            self.assertFalse(escaped.exists(), 'a hook the baseline wrote ran in the second run')
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn("NOT RUN — existing-file probe: the baseline gate run left a hook in the disposable"
+                          " copy's .git/hooks", result.stdout)
+            self.assertNotIn('  ok   — ', result.stdout)
+
+    def test_a_folder_the_audit_cannot_read_is_refused_by_name(self):
+        # os.walk skips a folder it cannot read: a baseline that hid an outside symlink in one
+        # passed the second audit, and the next run made it readable and wrote through it. A
+        # path longer than PATH_MAX cannot be read by any user, root included; a mode-000 or
+        # mode-444 folder stops every user but root, who then reads it and finds the symlink.
+        deep = 'd' * 200
+        hide = {'too long': ('i=0; while [ $i -lt 25 ]; do mkdir %s && cd %s || exit 1; i=$((i + 1)); done; '
+                             'ln -s "$OUTSIDE" out' % (deep, deep),
+                             'i=0; while [ $i -lt 25 ]; do cd %s || exit 0; i=$((i + 1)); done; '
+                             ': > out/escaped' % deep),
+                'mode 000': ('mkdir hidden && ln -s "$OUTSIDE" hidden/out && chmod 000 hidden',
+                             'chmod 755 hidden && : > hidden/out/escaped'),
+                'mode 444': ('mkdir hidden && ln -s "$OUTSIDE" hidden/out && chmod 444 hidden',
+                             'chmod 755 hidden && : > hidden/out/escaped')}
+        for name, (make, use) in hide.items():
+            with self.subTest(hide=name), tempfile.TemporaryDirectory() as tmp:
+                outside = Path(tmp) / 'outside'
+                outside.mkdir()
+                root, git = self.fixture(tmp, 'if [ -e "$TMPDIR/hidden" ]; then (%s) 2>/dev/null; '
+                                              'else : > "$TMPDIR/hidden"; (%s) || exit 1; fi\n' % (use, make),
+                                         names=('OUTSIDE',))
+                try:
+                    result = self.self_test(tmp, root, OUTSIDE=str(outside))
+                finally:
+                    for left in Path(tmp, 'scratch').glob('*/checkout/hidden'):
+                        left.chmod(0o755)
+                self.assertFalse((outside / 'escaped').exists(), 'the second run wrote through a hidden symlink')
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                if name == 'too long' or os.geteuid() != 0:
+                    self.assertIn('NOT RUN — existing-file probe: the audit could not read ', result.stdout)
+                else:
+                    self.assertIn('NOT RUN — existing-file probe: hidden/out is a symlink that leads out of the'
+                                  ' disposable copy', result.stdout)
+                self.assertNotIn('  ok   — ', result.stdout)
 
     def test_a_carried_setting_can_be_reassigned_in_the_copy(self):
         # Replayed on top of an existing core.filemode, the copy held two values, and a gate's
