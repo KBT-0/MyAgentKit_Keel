@@ -10,6 +10,21 @@ ROOT = Path(__file__).resolve().parents[1]
 ACTION = '- A rule moved. **ACTION:** copy it into your project-owned workflow.\n'
 
 
+def cut_short(shims, needle):
+    # A `cat` on PATH that cuts the one write whose "SOURCE:FIRST LINE" matches the shell
+    # pattern `needle` short: it writes part of it, leaves `fired` and fails. `put` writes
+    # every content through `cat` (stdin is "-"), so this is the intended write, reached.
+    shims.mkdir(exist_ok=True)
+    real = shutil.which('cat')
+    (shims / 'cat').write_text(
+        '#!/bin/sh\n[ $# -gt 0 ] || exec "{real}"\nsrc=$1\n'
+        'if [ "$src" = - ]; then src=$(mktemp "{shims}/in.XXXXXX") && "{real}" > "$src" || exit 1; fi\n'
+        'case "$1:$(head -n 1 "$src")" in {needle}) printf "cut sh"; : > "{shims}/fired"; exit 1 ;; esac\n'
+        'exec "{real}" "$src"\n'.format(real=real, shims=shims, needle=needle))
+    (shims / 'cat').chmod(0o755)
+    return dict(os.environ, PATH=str(shims) + os.pathsep + os.environ['PATH'])
+
+
 class SyncKitTests(unittest.TestCase):
     def sync(self, tmp, entry, *flags, env=None):
         kit, project = Path(tmp) / 'kit', Path(tmp) / 'project'
@@ -220,30 +235,35 @@ class SyncKitTests(unittest.TestCase):
     def test_a_write_that_fails_midway_leaves_the_old_file_whole(self):
         # The stamp was written by redirection, which empties the file before writing, and the
         # kit-owned files by `cp` over them: a full disk left an empty stamp (which the next sync
-        # refuses) or a hook cut short. A file-size limit stands in for the full disk. A file at
-        # the old fixed temporary name, hard-linked to the stamp, was written into: the failed
-        # write emptied the live stamp through it.
+        # refuses) or a hook cut short. A `cat` that cuts the one write short stands in for the
+        # full disk. A file at the old fixed temporary name, hard-linked to the stamp, was
+        # written into: the failed write emptied the live stamp through it.
         rel = '.githooks/commit-msg'
-        for case, blocks in (('stamp', 0), ('kit-owned file', 1), ('stamp hard-linked', 0)):
+        for case, needle in (('stamp', '-:[0-9]*'), ('kit-owned file', '*/.githooks/commit-msg:*'),
+                             ('stamp hard-linked', '-:[0-9]*')):
             with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
-                kit, project = Path(tmp) / 'kit', Path(tmp) / 'project'
+                kit, project, shims = Path(tmp) / 'kit', Path(tmp) / 'project', Path(tmp) / 'shims'
                 self.sync(tmp, '- A kit-owned file changed.\n', '--dry-run')
-                old = b'#!/bin/sh\n# KIT-OWNED: an older copy\n' + b'#\n' * 400
-                if case == 'kit-owned file':
-                    (kit / 'core' / rel).parent.mkdir(parents=True)
-                    shutil.copyfile(ROOT / 'core' / rel, kit / 'core' / rel)
-                    (project / rel).parent.mkdir(parents=True)
-                    (project / rel).write_bytes(old)
+                old = b'#!/bin/sh\n# KIT-OWNED: an older copy\n'
+                (kit / 'core' / rel).parent.mkdir(parents=True)
+                shutil.copyfile(ROOT / 'core' / rel, kit / 'core' / rel)
+                (project / rel).parent.mkdir(parents=True)
+                (project / rel).write_bytes(old)
                 if case == 'stamp hard-linked':
                     os.link(project / 'docs/kit/.kit-version', project / 'docs/kit/.kit-version.kit-tmp')
-                result = subprocess.run(['sh', '-c', 'trap "" XFSZ; ulimit -f %d; exec sh "$0" "$@"' % blocks,
-                                         str(kit / 'sync-kit.sh'), str(project)],
+                result = subprocess.run(['sh', str(kit / 'sync-kit.sh'), str(project)], env=cut_short(shims, needle),
                                         capture_output=True, text=True, timeout=30)
                 self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertTrue((shims / 'fired').exists(), 'the intended write was never reached')
                 self.assertEqual((project / 'docs/kit/.kit-version').read_bytes(), b'0.1\n')
                 if case == 'kit-owned file':
                     self.assertEqual((project / rel).read_bytes(), old, 'a hook cut short')
                 self.assertEqual(sorted(p.name for p in project.rglob('.kit-tmp.*')), [], 'temporary left')
+                again = subprocess.run(['sh', str(kit / 'sync-kit.sh'), str(project)],
+                                       capture_output=True, text=True, timeout=30)
+                self.assertEqual(again.returncode, 0, again.stdout + again.stderr)
+                self.assertEqual((project / 'docs/kit/.kit-version').read_bytes(), b'0.2\n')
+                self.assertEqual((project / rel).read_bytes(), (ROOT / 'core' / rel).read_bytes())
 
     def test_whatever_is_at_an_old_temporary_name_or_a_leftover_is_left_alone(self):
         # The stamp and the kit-owned files were written through a fixed sibling, FILE.kit-tmp:
