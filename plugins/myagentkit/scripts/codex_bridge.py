@@ -13,7 +13,7 @@ import uuid
 import agent_process
 import agent_usage
 import codex_quota
-from claude_bridge import REVIEW_ASKS, BridgeError, git, prior_rounds, resolve, snapshot
+from claude_bridge import REVIEW_ASKS, BridgeError, git, prior_rounds, snapshot
 
 
 def main(argv=None, result_sink=None):
@@ -39,10 +39,9 @@ def main(argv=None, result_sink=None):
     if Path(os.fsdecode(git(repo, "rev-parse", "--show-toplevel")).strip()).resolve() != repo:
         raise ValueError("--repo must name the repository root")
     scope, ref = ("base", args.base) if args.base else (("commit", args.commit) if args.commit else ("uncommitted", None))
-    head, fingerprint, diff = snapshot(repo, scope, ref)
-    # Captured with the snapshot: the usage record names what was reviewed even when the
-    # reference is deleted or moved before the review ends.
-    resolved = resolve(repo, scope, ref)
+    # resolved is captured with the snapshot: the usage record names what was reviewed even
+    # when the reference is deleted or moved before the review ends.
+    head, fingerprint, diff, resolved = snapshot(repo, scope, ref)
     if not diff.strip():
         raise ValueError("empty diff: nothing was reviewed")
     docs = os.environ.get("REVIEW_DOCS", "AGENTS.md, docs/ARCHITECTURE.md and docs/REVIEW_GATE.md")
@@ -59,7 +58,7 @@ def main(argv=None, result_sink=None):
         "line: VERDICT: Accept / VERDICT: Accept with Manual Checks / VERDICT: Reject "
         "(choose one). Put the findings under a '## Findings' heading and the explicit manual "
         "checks under a '## Manual checks' heading, as full sentences.\n"
-        + prior_rounds(repo, os.environ.get("MYAGENTKIT_TASK_ID"), scope, ref, head, diff)
+        + prior_rounds(repo, os.environ.get("MYAGENTKIT_TASK_ID"), scope, resolved, head, diff)
         + f"Scope: {scope} {ref or ''}; HEAD: {head}\nDiff:\n{diff}"
     )
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:12]
@@ -123,6 +122,15 @@ def main(argv=None, result_sink=None):
                                                    "per_call_attribution": "unproven"}
             values = agent_usage.decode("codex", execution["stdout"])
             reason = agent_usage.failure("codex", execution, values)
+            # Exit 0 and a turn that completed and did not fail: an error event in the stream is
+            # one the CLI recovered from (a reconnect), kept in the usage record's raw output.
+            # It once failed a paid, completed review as cli_error. It decides the status only
+            # when a check below fails, exactly as before.
+            types = [value.get("type") for value in values]
+            recovered = None
+            if (reason and execution["exit_code"] == 0 and not execution["termination"]
+                    and "turn.completed" in types and "turn.failed" not in types):
+                recovered, reason = reason, None
             final = ""
             try:
                 if last.is_file():
@@ -147,6 +155,8 @@ def main(argv=None, result_sink=None):
                 if not any(check and check not in {'none', 'n/a', 'not applicable', 'not run'}
                            and not check.startswith(('#', 'verdict:')) for check in checks):
                     reason = 'invalid_evidence'
+            if recovered and reason:
+                reason = recovered
             # A failed attempt that was cancelled is cancelled: its eligible failure once let
             # --fallback launch the other paid reviewer after the owner had stopped the review.
             if (cancelled or guard.noted) and reason:

@@ -21,7 +21,7 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'MYAGENTKIT_TASK_ID', 'MYAGENTKIT_R
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 83, 'test_agent_usage': 19, 'test_codex_quota': 5}
+SUITE_MINIMUMS = {'test_claude_bridge': 86, 'test_agent_usage': 19, 'test_codex_quota': 5}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -329,6 +329,65 @@ class BridgeTests(unittest.TestCase):
                 self.assertEqual(received[0]['failure_kind'], 'stale_checkout')
                 usage = json.loads(Path(received[0]['usage_record']).read_text())
                 self.assertEqual(usage['task']['resolved'], original)
+
+    def test_one_review_resolves_its_base_reference_once(self):
+        # Resolved three times in one review (the diff, the usage record, the carried-round
+        # check), a reference moved in between gave a diff against one commit, a record keyed
+        # to another and a carried round refused against the second.
+        from contextlib import redirect_stdout
+        from io import StringIO
+        import shutil
+        from unittest.mock import patch
+        import codex_bridge
+        original = self.git('rev-parse', 'HEAD').stdout.decode().strip()
+        (self.repo / 'intermediate.txt').write_text('INTERMEDIATE_CHANGE\n')
+        self.commit_fixture('Intermediate revision')
+        intermediate = self.git('rev-parse', 'HEAD').stdout.decode().strip()
+        (self.repo / 'file.py').write_text('final\n')
+        self.commit_fixture('Reviewed revision')
+        # A git that moves the reference right after the review's first resolve of it, once.
+        shim, moved, real = self.root / 'shim', self.root / 'moved', shutil.which('git')
+        shim.mkdir()
+        (shim / 'git').write_text(
+            '#!/bin/sh\n"%s" "$@"; status=$?\ncase "$*" in *"--verify review-base^{commit}"*)\n'
+            '  [ -e "%s" ] || { : > "%s"; "%s" -C "%s" update-ref refs/heads/review-base %s; } ;;\n'
+            'esac\nexit $status\n' % (real, moved, moved, real, self.repo, intermediate))
+        (shim / 'git').chmod(0o755)
+        for main, args in ((bridge.main, ['review']),
+                           (codex_bridge.main, ['--model', 'fixture-codex-model'])):
+            label = 'moving-base-' + ('claude' if main is bridge.main else 'codex')
+            prompts = []
+
+            def execution(command, prompt, repo, timeout, into=None, noted=None):
+                prompts.append(prompt)
+                if '-o' in command:
+                    Path(command[command.index('-o') + 1]).write_text('VERDICT: Accept\n')
+                    value = {'type': 'turn.completed', 'usage': {}}
+                else:
+                    value = {'type': 'result', 'subtype': 'success', 'is_error': False,
+                             'modelUsage': {'claude-opus-5': {}}, 'structured_output':
+                             {'verdict': 'Accept', 'findings': [], 'manual_checks': []}}
+                return {'exit_code': 0, 'stdout': json.dumps(value), 'stderr': '',
+                        'termination': None, 'duration_ms': 1}
+
+            with self.subTest(label=label):
+                self.git('update-ref', 'refs/heads/review-base', original)
+                moved.unlink(missing_ok=True)
+                received = []
+                # Round one, nothing moves; round two, the reference moves after its first resolve.
+                for path in (os.environ['PATH'], str(shim) + os.pathsep + os.environ['PATH']):
+                    with patch.dict(os.environ, self.review_env(MYAGENTKIT_TASK_ID=label, PATH=path)), \
+                            patch('agent_process.run', side_effect=execution), redirect_stdout(StringIO()):
+                        main([*args, '--repo', str(self.repo), '--base', 'review-base'], received.append)
+                self.assertTrue(moved.exists(), 'the reference never moved')
+                self.assertEqual(received[0]['status'], 'completed', received[0])
+                # The diff, the carried round and the record all use the commit resolved first.
+                self.assertIn('INTERMEDIATE_CHANGE', prompts[1])
+                self.assertIn('This is review round 2', prompts[1])
+                usage = json.loads(Path(received[1]['usage_record']).read_text())
+                self.assertEqual(usage['task']['resolved'], original)
+                # The reference did move during the review: the result is stale, as before.
+                self.assertEqual(received[1]['failure_kind'], 'stale_checkout')
 
     def test_an_archive_gone_before_accounting_still_records_the_attempt(self):
         # record() reopened the archive to hash it, so an archive deleted in between aborted
@@ -1474,6 +1533,22 @@ class BridgeTests(unittest.TestCase):
                 # A failed run that still printed a verdict would read as an approval.
                 self.assertEqual(verdicts_of(result["evidence"]), [])
 
+    def test_the_pin_is_attested_by_its_exact_id_or_a_dated_one_only(self):
+        # Matched as a prefix, the usage key claude-opus-5-5, another model, attested the pin
+        # claude-opus-5. Only the pinned id itself, or it with a -YYYYMMDD date, attests it.
+        value = {'verdict': 'Accept', 'findings': [], 'manual_checks': []}
+        for key, attested in (('claude-opus-5', True), ('claude-opus-5-20261001', True),
+                              ('claude-opus-5-5', False), ('claude-opus-5-5-20261001', False),
+                              ('claude-opus-5-2026100', False), ('claude-opus-5-20261001x', False)):
+            with self.subTest(key=key):
+                envelope = {'type': 'result', 'subtype': 'success', 'is_error': False,
+                            'modelUsage': {key: {}}, 'structured_output': value}
+                if attested:
+                    self.assertEqual(bridge.validate(envelope, 'review', 'claude-opus-5'), value)
+                else:
+                    with self.assertRaisesRegex(bridge.BridgeError, 'modelUsage'):
+                        bridge.validate(envelope, 'review', 'claude-opus-5')
+
     def test_timeout_fails_and_archives_failure(self):
         code, result = self.run_bridge("timeout", extra=["--timeout", "1"])
         self.assertEqual(code, 5)
@@ -1518,7 +1593,7 @@ class BridgeTests(unittest.TestCase):
         code, result = self.run_bridge(extra=["--commit", "HEAD"])
         self.assertEqual(code, 0, result)
         (self.repo / "new file.txt").write_text("a new file\n")
-        _, _, diff = bridge.snapshot(self.repo, "uncommitted", None)
+        diff = bridge.snapshot(self.repo, "uncommitted", None)[2]
         self.assertIn("new file.txt", diff)
 
     def test_archiving_does_not_recursively_expand_the_next_review(self):
@@ -1744,10 +1819,24 @@ if case == 'archive_failure':
                         "    sys.stderr.write(\"error: unexpected argument '--ephemeral' found\\n\"); sys.exit(2)\n"
                         "if case == 'quota':\n"
                         "    print(json.dumps({'type': 'turn.failed', 'error': {'message': 'usage limit reached'}})); sys.exit(1)\n"
+                        # The CLI's own MCP client failing on stderr, and a reconnect it
+                        # recovered from in the stream, around an otherwise normal review.
+                        "if case.startswith('mcp'):\n"
+                        "    sys.stderr.write('ERROR rmcp::transport::worker: worker quit with fatal: "
+                        "Transport channel closed\\n')\n"
+                        "if case.startswith('mcp_'):\n"
+                        "    print(json.dumps({'type': 'error', 'message': 'Reconnecting... 2/5 "
+                        "(stream disconnected before completion)'}))\n"
+                        "if case == 'mcp_quota':\n"
+                        "    print(json.dumps({'type': 'error', 'message': 'usage limit reached'})); sys.exit(0)\n"
                         "verdict = 'Reject' if case == 'reject' else 'Accept'\n"
-                        "pathlib.Path(sys.argv[sys.argv.index('-o') + 1]).write_text("
-                        "'## Findings\\n\\nFixture finding.\\n\\nVERDICT: ' + verdict + '\\n')\n"
-                        "print(json.dumps({'type': 'turn.completed', 'usage': {}}))\n")
+                        "text = '## Findings\\n\\nFixture finding.\\n\\nVERDICT: ' + verdict + '\\n'\n"
+                        "text = {'mcp_no_verdict': '## Findings\\n\\nFixture finding.\\n',\n"
+                        "        'mcp_two_verdicts': text + 'VERDICT: Reject\\n'}.get(case, text)\n"
+                        "pathlib.Path(sys.argv[sys.argv.index('-o') + 1]).write_text(text)\n"
+                        "if case == 'mcp_failed_turn': print(json.dumps({'type': 'turn.failed', 'error': {}}))\n"
+                        "if case != 'mcp_no_completion': print(json.dumps({'type': 'turn.completed', 'usage': {}}))\n"
+                        "if case == 'mcp_exit': sys.exit(1)\n")
         fake.chmod(0o755)
         return fake
 
@@ -2211,6 +2300,27 @@ if case == 'archive_failure':
                 self.assertEqual([a['reviewer'] for a in chain['attempts']], [primary])
                 self.assertEqual(chain['failure_kind'], 'cli_unsupported')
                 self.assertIn('upgrade the CLI', result.stdout)
+
+    def test_a_completed_codex_review_is_not_failed_by_noise_it_recovered_from(self):
+        # A review that exited 0, closed its stream with turn.completed and gave one verdict was
+        # recorded cli_error: the stream carried a reconnect error event the CLI recovered from,
+        # while its own MCP client logged a transport failure on stderr. Both are kept in the
+        # usage record; a failure of the structured outcome itself still fails as before.
+        for case, kind in (('mcp', None), ('mcp_reconnect', None), ('mcp_exit', 'cli_error'),
+                           ('mcp_no_completion', 'cli_error'), ('mcp_no_verdict', 'cli_error'),
+                           ('mcp_two_verdicts', 'cli_error'), ('mcp_failed_turn', 'cli_error'),
+                           ('mcp_quota', 'quota'), ('unknown_flag', 'cli_unsupported')):
+            with self.subTest(case=case):
+                result, chain = self.dispatch_result('codex', fallback=False, CODEX_FIXTURE_CASE=case,
+                                                     MYAGENTKIT_TASK_ID='noise-' + case)
+                attempt = chain['attempts'][0]
+                self.assertEqual(attempt['failure_kind'], kind, result.stdout)
+                self.assertEqual(result.returncode, 0 if kind is None else 5, result.stdout)
+                self.assertEqual(verdicts_of(attempt['evidence']), [] if kind else ['VERDICT: Accept'])
+                usage = json.loads(Path(attempt['usage_record']).read_text())
+                self.assertEqual(usage['status'], 'failed' if kind else 'completed')
+                if case.startswith('mcp'):
+                    self.assertIn('Transport channel closed', usage['raw_stderr'])
 
     def test_cancelled_review_stops_the_reviewer_records_usage_and_never_fails_over(self):
         # SIGTERM and SIGHUP used to end the dispatcher without its cleanup, leaving the paid
