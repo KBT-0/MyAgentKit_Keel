@@ -49,7 +49,9 @@
 # in the tree. The copy holds the current bytes, uncommitted edits included, and is deleted
 # on exit and on INT/TERM; a SIGKILL leaves it in $TMPDIR, outside the checkout. The copy
 # itself must lie outside the checkout (a TMPDIR set to the checkout put it, and a SIGKILL's
-# leftovers, in the working tree). Every command that touches the copy, git and the copied
+# leftovers, in the working tree). TMPDIR is resolved to one physical folder before any `cd`
+# and both copies are made there: the second copy, made after `cd /`, found a relative
+# TMPDIR naming another folder. Every command that touches the copy, git and the copied
 # gate alike, runs under probe_env, which passes ONLY the variables it names: removing
 # variables one at a time missed each next one (an exported GIT_DIR built in the checkout;
 # an exported GIT_OBJECT_DIRECTORY took the copy's `git add` into the original's object
@@ -165,6 +167,13 @@
 # |   trap 'exit 143' TERM
 # |   probe_fail() { echo "  FAIL — existing-file probe: $*"; exit 1; }
 # |   probe_skip() { echo "  NOT RUN — existing-file probe: $*"; exit 1; }
+# |   # One folder for both copies, resolved before any `cd` (after `cd /`, a relative TMPDIR
+# |   # named another one), and outside the checkout.
+# |   probe_base=$(CDPATH= cd -P "${TMPDIR:-/tmp}" && pwd -P) ||
+# |     probe_fail "could not resolve TMPDIR (${TMPDIR:-/tmp}); refusing to run."
+# |   case "$probe_base/" in
+# |     "$probe_checkout"/*) probe_fail "the disposable copy's folder, TMPDIR ($probe_base), is inside the checkout; set TMPDIR outside it." ;;
+# |   esac
 # |   # The copy's own empty HOME and TMPDIR, no system or global git configuration.
 # |   probe_env() {
 # |     env -i PATH="$PATH" LC_ALL=C HOME="$probe_copy/home" XDG_CONFIG_HOME="$probe_copy/home" \
@@ -238,12 +247,9 @@
 # |   # Each run gets a copy of its own, made by this one function: the checkout's bytes in a fresh
 # |   # directory, audited, with empty hooks and only the allowlisted settings.
 # |   probe_fresh_copy() {
-# |     probe_copy=$(mktemp -d) && probe_copy=$(CDPATH= cd -P "$probe_copy" && pwd -P) || exit 1
+# |     probe_copy=$(TMPDIR=$probe_base mktemp -d) || exit 1
 # |     probe_id=$(python3 -I -c 'import os, sys; made = os.lstat(sys.argv[1]); print(made.st_dev, made.st_ino)' \
 # |       "$probe_copy") || exit 1
-# |     case "$probe_copy/" in
-# |       "$probe_checkout"/*) probe_fail "the disposable copy ($probe_copy) is inside the checkout; set TMPDIR outside it." ;;
-# |     esac
 # |     mkdir "$probe_copy/home" "$probe_copy/tmp" || exit 1
 # |     cp -RP "$probe_checkout" "$probe_copy/checkout" && CDPATH= cd -P "$probe_copy/checkout" || exit 1
 # |     probe_root=$(pwd -P) || exit 1

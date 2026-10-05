@@ -342,7 +342,7 @@ exit 1
         # Its own process group: a timeout kills every process the example started, not only sh.
         child = subprocess.Popen(['sh', 'scripts/check.sh', '--self-test'], cwd=cwd, text=True,
                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True,
-                                 env=dict(os.environ, TMPDIR=str(scratch), SCRATCH=str(scratch), **env))
+                                 env=dict(os.environ, **{'TMPDIR': str(scratch), 'SCRATCH': str(scratch), **env}))
         try:
             stdout, stderr = child.communicate(timeout=30)
         except subprocess.TimeoutExpired:
@@ -623,6 +623,15 @@ exit 1
             self.assertIn('NOT RUN — existing-file probe: pipe is not a regular file, a folder or a symlink',
                           result.stdout)
             self.assertNotIn('  ok   — ', result.stdout)
+
+    def test_a_relative_tmpdir_names_one_place_for_both_copies(self):
+        # The second copy was made after `cd /`, where TMPDIR=../scratch named another directory.
+        with tempfile.TemporaryDirectory() as tmp:
+            root, git = self.fixture(tmp, '')
+            result = self.self_test(tmp, root, TMPDIR='../scratch')
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('  ok   — ', result.stdout)
+            self.assertEqual(list(Path(tmp, 'scratch').iterdir()), [], 'a copy was left behind')
 
     def test_a_folder_the_baseline_hides_goes_with_its_copy(self):
         # os.walk skips a folder it cannot read: a baseline that hid an outside symlink in one
