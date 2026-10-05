@@ -843,6 +843,19 @@ taken, equal or NOT RUN; TMPDIR resolved once. Known side effect: another sessio
 the checklist's own diagnostic hiding a removed Markdown bullet. Counts for the day's
 rounds: 7, 2, 4, 4, a High in each, three of the four opened by the round before.
 
+#### Cross-model round d5: Reject, and removing what races
+
+Round d5 on `d826ccd..ed29079`: two High, two Medium, all four in the existing-file example
+and nothing anywhere else. Both High were races on the previous round's guards (a check,
+then a concurrent swap, then the act). The rule for the fix: remove the operation that
+races. The permission repair is gone (the example changes no mode; a copy it cannot delete
+fails the case by name), deletion runs from the open, identity-checked folder with no
+`rm -r` on a path, the carried settings come from the copy so the live checkout is read
+once per copy, and the hash covers full permission bits. Left open and named: a background
+process a baseline gate leaves running is contained by nothing here; an allowlisted key
+set only through `includeIf "gitdir:<checkout>"` is no longer refused, it is not carried
+(with a NOTE). Counts: 7, 2, 4, 4, 4.
+
 #### The review gate held on the kit's own hardening
 
 Five of the nine work packages (the gate lock, both review-tooling packages, the commit gates

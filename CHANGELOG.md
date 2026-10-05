@@ -167,10 +167,12 @@ in `RESEARCH_LOG.md` (2026-10-03). Most of the files below are project-owned, so
   baseline's copy is deleted first, so nothing the baseline run wrote (a hook, a git
   setting, a Python start-up file in HOME, a link swapped in, a rewritten gate) can act in
   the injected run; the tree is copied twice. Each copy is hashed as taken, and a checkout
-  that changed between the two is reported `NOT RUN` (run the self-test again). Deleting a
-  copy changes no mode outside it: only the copy's folders are made writable, never through
-  a link, and a temporary root that is no longer the folder `mktemp` made is refused by
-  name with nothing deleted. `TMPDIR` is resolved once, so a relative one names the same
+  that changed between the two is reported `NOT RUN` (run the self-test again). The example
+  changes no mode and deletes a copy only through the folder `mktemp` made, entry by entry
+  from that open folder: a root that is no longer that folder is refused by name with
+  nothing deleted, and a copy the gate left unreadable fails the case with its path. The
+  carried git settings are read from the copy, never from the live checkout again, and the
+  hash covers every entry's permission bits and the git index. `TMPDIR` is resolved once, so a relative one names the same
   folder for both copies. The dot-file
   example runs in a subshell that removes its injection on INT/TERM as well as on exit.
 - **Worker spawning (issues #32, #35).** `spawn_worker.sh` `cd`s into the folder before
