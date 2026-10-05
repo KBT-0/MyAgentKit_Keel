@@ -30,7 +30,7 @@ force=0
 overlays=""
 said=""
 
-die() { said=1; echo "bootstrap: $1" >&2; exit 1; }
+die() { said=1; printf '%s\n' "bootstrap: $1" >&2; exit 1; }
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -100,12 +100,12 @@ copy_tree() {
     dest="${prefix:+$prefix/}$rel"
     # Only a destination `blocked` passes is compared or replaced; anything else is listed, unread.
     if [ -n "$(blocked "$dest")" ]; then
-      echo "$dest" >> "$skiplist"
+      printf '%s\n' "$dest" >> "$skiplist"
       continue
     fi
     if [ -e "$target/$dest" ] && [ "$force" -eq 0 ]; then
       cmp -s "$src/$rel" "$target/$dest" && continue
-      echo "$dest" >> "$skiplist"
+      printf '%s\n' "$dest" >> "$skiplist"
       continue
     fi
     mkdir -p "$target/$(dirname "$dest")"
@@ -113,14 +113,14 @@ copy_tree() {
   done
 }
 
-echo "bootstrap: installing MyAgentKit_Keel v$version into $target"
+printf '%s\n' "bootstrap: installing MyAgentKit_Keel v$version into $target"
 
 copy_tree "$kit/core"
 copy_tree "$kit/setup" "setup"
 
 for name in $overlays; do
   [ -d "$kit/overlays/$name/files" ] || die "no such overlay: $name (looked in $kit/overlays/$name/files)"
-  echo "bootstrap: overlay '$name'"
+  printf '%s\n' "bootstrap: overlay '$name'"
   copy_tree "$kit/overlays/$name/files"
 done
 
@@ -150,7 +150,7 @@ done
 
 if [ -s "$skiplist" ]; then
   echo
-  echo "bootstrap: $(wc -l < "$skiplist") file(s) already existed, differ from the kit's, and were left alone:"
+  printf '%s\n' "bootstrap: $(wc -l < "$skiplist") file(s) already existed, differ from the kit's, and were left alone:"
   sed 's/^/             /' "$skiplist"
   echo "           Merge the kit's content into each by hand, or move it aside and re-run;"
   echo "           --force overwrites each one that is a regular file, never a symlink,"
@@ -203,7 +203,7 @@ if [ -n "$note" ]; then
   {
     echo "# Bootstrap note — the owner's agenda for this setup"
     echo
-    echo "Written by \`bootstrap.sh --note\` on $(date -u +%Y-%m-%d). The setup interview"
+    printf '%s\n' "Written by \`bootstrap.sh --note\` on $(date -u +%Y-%m-%d). The setup interview"
     echo "reads this in Phase 0 and must address it explicitly rather than working around it."
     echo
     printf '%s\n' "$note"

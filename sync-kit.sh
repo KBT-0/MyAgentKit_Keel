@@ -33,7 +33,7 @@ target="."
 dry=0
 applied=0
 
-die() { echo "sync-kit: $1" >&2; exit 1; }
+die() { printf '%s\n' "sync-kit: $1" >&2; exit 1; }
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -87,7 +87,7 @@ trap 'rm -f "$work_list" "$pending" "$copies"' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-echo "sync-kit: project has v$have, kit is v$latest"
+printf '%s\n' "sync-kit: project has v$have, kit is v$latest"
 if [ "$have" = "$latest" ]; then
   echo "sync-kit: already current. Nothing to do."
   exit 0
@@ -128,21 +128,21 @@ while IFS= read -r src; do
   fi
   found=1
   if [ -n "$why" ]; then
-    echo "  conflict: $rel ($why, so it is the project's)"
+    printf '%s\n' "  conflict: $rel ($why, so it is the project's)"
     conflict=1
     continue
   elif [ ! -e "$target/$rel" ]; then
-    echo "  new:     $rel"
+    printf '%s\n' "  new:     $rel"
   elif cmp -s "$src" "$target/$rel"; then
-    echo "  same:    $rel"
+    printf '%s\n' "  same:    $rel"
     continue
   elif grep -qE '^(# |<!-- )KIT-OWNED:' "$target/$rel" 2>/dev/null; then
-    echo "  update:  $rel"
+    printf '%s\n' "  update:  $rel"
   else
     # No KIT-OWNED header: the project's own file at a path the kit now owns (a project's
     # own commit-msg hook once, replaced by the kit's that passed every message). Listed,
     # never overwritten; nothing else is copied either, so the sync is all or nothing.
-    echo "  conflict: $rel (exists without the KIT-OWNED header, so it is the project's)"
+    printf '%s\n' "  conflict: $rel (exists without the KIT-OWNED header, so it is the project's)"
     conflict=1
     continue
   fi
@@ -175,7 +175,7 @@ fi
 # rather than printing nothing — an empty report would read as "no changes".
 echo
 echo "=============================================================================="
-echo " Changelog since v$have — apply these to your PROJECT-OWNED files by hand"
+printf '%s\n' " Changelog since v$have — apply these to your PROJECT-OWNED files by hand"
 echo "=============================================================================="
 # The recorded version is matched as an exact FIELD, never as a prefix: `index()` against
 # "## v0.1" also matched "## v0.10", so the slice stopped at the wrong heading and printed
@@ -189,7 +189,7 @@ if awk -v want="v$have" '$1 == "##" && $2 == want { found = 1 } END { exit !foun
     p
   ' "$kit/CHANGELOG.md"
 else
-  echo "(v$have is not in this changelog — printing all of it. Check that the recorded"
+  printf '%s\n' "(v$have is not in this changelog — printing all of it. Check that the recorded"
   echo " version is right.)"
   echo
   cat "$kit/CHANGELOG.md"
@@ -218,26 +218,26 @@ awk -v want="v$have" '
 
 if [ -s "$pending" ]; then
   echo
-  echo "ACTION items since v$have (the full entries are above):"
+  printf '%s\n' "ACTION items since v$have (the full entries are above):"
   cat "$pending"
 fi
 
 if [ "$dry" -eq 1 ]; then
   echo
-  echo "sync-kit: dry run — nothing written, version left at v$have."
+  printf '%s\n' "sync-kit: dry run — nothing written, version left at v$have."
   exit 0
 fi
 
 if [ -s "$pending" ] && [ "$applied" -eq 0 ]; then
   echo
-  echo "sync-kit: version left at v$have: the ACTION items above are not confirmed."
-  echo "          Apply them, then rerun with --actions-applied to record v$latest."
+  printf '%s\n' "sync-kit: version left at v$have: the ACTION items above are not confirmed."
+  printf '%s\n' "          Apply them, then rerun with --actions-applied to record v$latest."
   echo "          Until then every sync prints them again."
   exit 2
 fi
 
 printf '%s\n' "$latest" > "$stamp" || die "could not write $stamp"
 echo
-echo "sync-kit: recorded v$latest."
+printf '%s\n' "sync-kit: recorded v$latest."
 echo "sync-kit: now run ./scripts/check.sh, and ./scripts/check.sh --self-test."
 echo "          A sync that leaves the gate red or a gate unable to fail is not finished."

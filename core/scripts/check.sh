@@ -148,7 +148,7 @@ fi
 # the seam block checks before it believes the claim. The holder writes its pid, which after
 # the exec is the gate's, into the lock file for the self-test marker (the seam block).
 case "${GATE_LOCK_WAIT:-}" in
-  *[!0-9]*) echo "FAIL [lock]: GATE_LOCK_WAIT must be a number of seconds, got '$GATE_LOCK_WAIT'."; exit 1 ;;
+  *[!0-9]*) printf '%s\n' "FAIL [lock]: GATE_LOCK_WAIT must be a number of seconds, got '$GATE_LOCK_WAIT'."; exit 1 ;;
 esac
 if [ -z "$inherited" ]; then
   command -v python3 >/dev/null 2>&1 ||
@@ -644,8 +644,8 @@ scan_grep() {
 hits=$(scan_grep '\{\{[A-Z0-9_]+\}\}' | grep -Ev '^(setup/|MODULE_AGENTS_TEMPLATE\.md:)' || true)
 if [ -n "$hits" ]; then
   echo "FAIL [setup]: unfilled placeholder markers remain — run setup/INTERVIEW.md:"
-  echo "$hits" | head -30
-  [ "$(echo "$hits" | wc -l)" -gt 30 ] && echo "              ... and more"
+  printf '%s\n' "$hits" | head -30
+  [ "$(printf '%s\n' "$hits" | wc -l)" -gt 30 ] && echo "              ... and more"
   fail=1
 fi
 

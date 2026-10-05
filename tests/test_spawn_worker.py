@@ -217,6 +217,24 @@ class SpawnWorkerTests(unittest.TestCase):
                 self.assertNotIn('new-session', self.tmux_log())
         self.assertIn('control character', self.spawn(*cases[0][1]).stderr)
 
+    def test_no_message_turns_a_backslash_in_a_value_into_an_escape(self):
+        # `echo` interprets backslash escapes in some shells (dash, macOS sh): a brief named
+        # with the literal characters \033[2J passed the control-byte check and the SUCCESS
+        # message put an ESC sequence on the lead's terminal. bash with xpg_echo behaves so.
+        brief = self.cwd / 'task\\033[2J.md'
+        brief.write_text('a brief\n')
+        env = dict(os.environ, PATH=f'{self.bin}{os.pathsep}{os.environ["PATH"]}', SPAWN_STATE=str(self.state))
+        result = subprocess.run(['bash', '-O', 'xpg_echo', str(SCRIPT), 'w\\033[2J', str(brief)], cwd=self.cwd,
+                                env=env, capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(str(brief), result.stdout)
+        self.assertNotIn('\x1b', result.stdout + result.stderr)
+        # The same holds in every shell only if no echo prints a value: none in these scripts.
+        for script in (SCRIPT, ROOT / 'bootstrap.sh', ROOT / 'sync-kit.sh'):
+            for n, line in enumerate(script.read_text().splitlines(), 1):
+                code = line.split('#', 1)[0] if line.lstrip().startswith('#') else line
+                self.assertNotRegex(code, r'\becho\b[^|;&]*\$', '%s:%d' % (script.name, n))
+
     def test_a_relative_settings_file_resolves_against_the_caller_with_a_worktree(self):
         # The worktree is entered before the tool starts: a relative --settings file then
         # named the worktree's copy (absent when untracked, or another tracked file).
