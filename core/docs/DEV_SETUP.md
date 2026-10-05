@@ -152,15 +152,16 @@ this section current; if it disagrees with reality, reality wins and this file i
 ./scripts/doctor.sh
 ```
 
-Read-only: it changes nothing and prints one `MISSING: <what> — fix: <command>` line per
+It changes nothing in the project and prints one `MISSING: <what> — fix: <command>` line per
 trap, then `DOCTOR: ready` or `DOCTOR: setup incomplete` (exit 1). It checks what made a gate
 fail for reasons unrelated to the code in the projects using the kit: the executable bit on
 the scripts and hooks (on disk and in the git index), `core.hooksPath`, the git identity,
 Python 3.10+, the second CLI `scripts/review.sh` calls, `tmux` when the worker script is
 installed, the `node` a git hook resolves (nvm's default alias lives in the interactive
 shell's rc file, so a hook never sees it), an npm cache owned by another user, and `grep`
-shadowed by an alias or function in the interactive shell. It is not part of the gate and CI
-does not run it. When switching machines, this is the first command.
+shadowed by an alias or function in the interactive shell. To see that alias it starts your
+interactive shell once (`$SHELL -ic`), so your rc files run, bounded to 5 s and skipped with a
+NOTE where `timeout` is absent. It is not part of the gate and CI does not run it. When switching machines, this is the first command.
 
 ## 5. Prove the gate actually works
 

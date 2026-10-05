@@ -232,10 +232,13 @@ the CLI contract. Supporting another binary does not mean accepting another CLI'
 
 Files are one of two kinds. **Kit-owned** files carry a header saying so; `sync-kit.sh`
 overwrites them wholesale. **Project-owned** files — the constitution, the workflow, the
-check script, the reviewer definition — are customised per project and are never
-overwritten. After overwriting, `sync-kit.sh` prints the `CHANGELOG.md` entries added since
-your recorded version and lists their **ACTION** items as a checklist, so you can hand-apply
-the rest deliberately. It records the new version only after those items are confirmed
+check script, the reviewer definition — are customised per project, and neither
+`sync-kit.sh` nor a re-run of `bootstrap.sh` overwrites one (only `bootstrap.sh --force`
+does). A file of the project's own at a path the kit has since made kit-owned, a hook for
+example, is listed as `conflict:` and the sync stops before it copies anything. After
+overwriting, `sync-kit.sh` prints the `CHANGELOG.md` entries added since your recorded
+version and lists their **ACTION** items as a checklist, each version's as one ordered list,
+so you can hand-apply the rest deliberately. It records the new version only after those items are confirmed
 (`--actions-applied`); until then every run reprints them and exits 2.
 
 Updates also flow the other way. Every project using the kit asks one question in its

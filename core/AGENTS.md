@@ -31,7 +31,7 @@ more importantly, what is deliberately out of scope until later.
 
 ## Reading order (new session)
 
-0. Run `./scripts/doctor.sh` (read-only). If it prints `MISSING:`, tell {{OWNER_NAME}} and
+0. Run `./scripts/doctor.sh` (it changes nothing in the project). If it prints `MISSING:`, tell {{OWNER_NAME}} and
    offer each fix before touching code: a red gate on an unready machine is not a code bug.
 1. This file
 2. `docs/PHASES.md` — what we are building now, and what is deliberately OUT of scope

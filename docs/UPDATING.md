@@ -9,8 +9,9 @@ KIT-OWNED: do not edit locally; change it in the kit and re-sync.
 ```
 
 They hold no project content, so `sync-kit.sh` overwrites them wholesale. Today that is a
-short list: the pre-commit hook, the module-rules template, the handoff skill, and the two
-setup documents.
+short list: the three git hooks (`pre-commit`, `pre-merge-commit`, `commit-msg`),
+`scripts/doctor.sh`, `scripts/agent_cost.py`, the module-rules template, and the two setup
+documents.
 
 **PROJECT-OWNED** is everything else, and that is most of the kit: the constitution, the
 workflow, the review gate, the architecture map, the check script, the boundary checks and
@@ -29,10 +30,18 @@ exactly the habit the review gate exists to prevent.
 ```
 
 1. Reads `docs/kit/.kit-version`. Missing or empty is a hard stop — it will not guess.
-2. Overwrites the kit-owned files, reporting each as new, updated or unchanged.
+2. Overwrites the kit-owned files, reporting each as new, updated or unchanged. A file at a
+   kit-owned path WITHOUT the KIT-OWNED header is the project's own (a hook the project
+   wrote before the kit owned that path): it is listed as `conflict:`, and the sync stops
+   before it copies anything or records a version. Move yours aside, sync again, then carry
+   what yours did into the project by hand (`docs/RETROFIT.md`).
 3. **Prints every `CHANGELOG.md` entry added since your version.** This is the real product.
-   Entries marked **ACTION** need a hand edit in a project-owned file; they are listed again
-   at the end as a checklist.
+   From v0.9 on, each version's entry ends with one ordered checklist, "Upgrading a project
+   from v<previous>": the files to copy whole, the project-owned files to merge, the lines
+   to check and the commands to run, each named once and in its final state. Every item
+   carries the **ACTION** marker, and the items are listed again at the end, each printed
+   whole. Work through them top to bottom; when you skip versions, do the oldest version's
+   items first.
 4. Records the new version — but only when there are no ACTION items, or you confirmed
    them. With ACTION items pending, the version stays where it was and the script exits 2,
    so the next sync prints the same entries and checklist again. Apply the items, then:
@@ -48,9 +57,11 @@ exactly the habit the review gate exists to prevent.
 Then run `./scripts/check.sh` and `./scripts/check.sh --self-test`. A sync that leaves the
 gate red, or leaves a gate that can no longer fail, is not finished.
 
-Overlays are not synced. They are installed once and then belong to the project; re-run
-`bootstrap.sh --overlay <name>` if you want a new file from one, and note that it skips
-anything you already have.
+Overlay files are installed once and then belong to the project: the sync updates one only
+if it is kit-owned and the project already has it, and none is kit-owned today, so the
+checklist names each overlay file that changed. Re-run `bootstrap.sh --overlay <name>` if
+you want a new file from one: it adds what is missing, passes over files identical to the
+kit's and lists the ones that differ without touching them.
 
 ## Backflow — the other direction
 
