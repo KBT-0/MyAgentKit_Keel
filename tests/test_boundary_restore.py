@@ -12,6 +12,12 @@ import unittest
 
 
 class BoundaryRestoreTests(unittest.TestCase):
+    def setUp(self):
+        # A caller that ignores SIGINT (a `&` job of a non-interactive shell, nohup) passes that
+        # on to every child, an ignored signal cannot be trapped, and the interrupted cases
+        # failed only there. Each test starts from Python's own default, its children from SIG_DFL.
+        self.addCleanup(signal.signal, signal.SIGINT, signal.signal(signal.SIGINT, signal.default_int_handler))
+
     def test_existing_file_example_runs_in_a_disposable_copy(self):
         # The example once overwrote the file in the checkout and restored it from traps:
         # a concurrent `git add -A` staged the injection, and SIGKILL left it there.

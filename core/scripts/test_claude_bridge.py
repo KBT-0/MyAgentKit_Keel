@@ -5,6 +5,7 @@ import json
 import os
 import re
 from pathlib import Path
+import signal
 import subprocess
 import sys
 import tempfile
@@ -175,6 +176,10 @@ class BridgeTests(unittest.TestCase):
         self.addCleanup(environment.stop)
         for name in INHERITED_CONTROLS:
             os.environ.pop(name, None)
+        # A caller that ignores SIGINT (a `&` job of a non-interactive shell, nohup) passes that
+        # on, the adapters keep an ignored SIGINT ignored (hold()), and the cancel cases failed
+        # only there. Each test starts from Python's own default, its children from SIG_DFL.
+        self.addCleanup(signal.signal, signal.SIGINT, signal.signal(signal.SIGINT, signal.default_int_handler))
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
@@ -1835,19 +1840,13 @@ if case == 'archive_failure':
         del no_head['task']['head']
         for damage in ('{"task": ', '[]', '{}', '{"task": "review", "status": "completed"}',
                        '{"task": {}, "status": "completed"}', weird_status,
-                       json.dumps(no_head), no_evidence, 'directory', 'mode 000'):
+                       json.dumps(no_head), no_evidence, 'directory'):
             with self.subTest(damage=damage):
-                # A directory fails the read for every user, root included; mode 000 does not
-                # stop root, so that variant says it did not run instead of passing silently.
+                # A directory fails the read for every user, root included. Mode 000 does not
+                # stop root, and a case that cannot run under root is not a pass there.
                 if damage == 'directory':
                     record.unlink()
                     record.mkdir()
-                elif damage == 'mode 000':
-                    if os.geteuid() == 0:
-                        sys.stderr.write('NOT RUN: unreadable usage record (mode 000) under '
-                                         'root; the directory case covers the read failure\n')
-                        continue
-                    record.chmod(0)
                 else:
                     record.write_text(damage)
                 try:
@@ -1855,8 +1854,6 @@ if case == 'archive_failure':
                 finally:
                     if record.is_dir():
                         record.rmdir()
-                    else:
-                        record.chmod(0o600)
                     record.write_text(original)
                 self.assertEqual(code, 2, refused)
                 self.assertIn(str(record), refused['error'])
@@ -1878,21 +1875,36 @@ if case == 'archive_failure':
             env=dict(os.environ, REVIEW_DISPOSITIONS=str(notes), MYAGENTKIT_TASK_ID='inherited-task'))
         self.assertEqual(result.returncode, 0, result.stderr[-3000:])
 
+    def test_the_cancel_cases_pass_under_a_caller_that_ignores_sigint(self):
+        # Started as a `&` job of a non-interactive shell or under nohup, the self-test
+        # inherited an ignored SIGINT and these cases failed, pointing at the review tooling
+        # rather than at the caller. They run here under exactly such a caller.
+        result = subprocess.run(
+            [sys.executable, '-B', '-m', 'unittest',
+             'test_claude_bridge.BridgeTests.test_cancelled_review_stops_the_reviewer_records_usage_and_never_fails_over',
+             'test_claude_bridge.BridgeTests.test_a_cancel_while_codex_restores_its_handlers_is_persisted_for_a_failed_attempt',
+             'test_claude_bridge.BridgeTests.test_a_second_cancel_inside_the_handler_restoration_leaves_the_records_cancelled'],
+            cwd=ROOT, capture_output=True, text=True, timeout=300,
+            preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_IGN))
+        self.assertEqual(result.returncode, 0, result.stderr[-3000:])
+
     def test_an_unlistable_usage_directory_stops_a_labelled_round(self):
         # Path.glob() swallows a listing error: a usage directory the owner can write but not
-        # list (mode 0300) read as "no earlier rounds" and the next round looked fresh.
-        if os.geteuid() == 0:
-            sys.stderr.write('NOT RUN: unlistable usage directory (mode 0300) under root\n')
-            return
+        # list (mode 0300) read as "no earlier rounds" and the next round looked fresh. Mode
+        # 0300 does not stop root, so the listing fails here the way it does for every user:
+        # a file where the directory is expected.
         task = {'MYAGENTKIT_TASK_ID': 'unlistable-task'}
         code, first = self.run_bridge('reject', env_extra=task)
         self.assertEqual(code, 0, first)
         usage = Path(first['usage_record']).parent
-        usage.chmod(0o300)
+        kept = usage.with_name('usage.kept')
+        usage.rename(kept)
+        usage.write_text('not a directory\n')
         try:
             code, refused = self.run_bridge(env_extra=task)
         finally:
-            usage.chmod(0o700)
+            usage.unlink()
+            kept.rename(usage)
         self.assertEqual(code, 2, refused)
         self.assertIn(str(usage), refused['error'])
         self.assertIn('cannot be listed', refused['error'])
