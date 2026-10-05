@@ -70,6 +70,12 @@ copy_tree() {
     # Running Python tooling must not change the installed skeleton with local bytecode.
     case "$rel" in __pycache__/*|*/__pycache__/*|*.pyc|*.pyo) continue ;; esac
     dest="${prefix:+$prefix/}$rel"
+    # Only a regular file is compared or replaced: `cmp` on a FIFO blocked forever, and a
+    # symlink was compared, or written through, by its target. Anything else is listed, unread.
+    if [ -L "$target/$dest" ] || { [ -e "$target/$dest" ] && [ ! -f "$target/$dest" ]; }; then
+      echo "$dest" >> "$skiplist"
+      continue
+    fi
     if [ -e "$target/$dest" ] && [ "$force" -eq 0 ]; then
       cmp -s "$src/$rel" "$target/$dest" && continue
       echo "$dest" >> "$skiplist"
@@ -105,7 +111,8 @@ if [ -s "$skiplist" ]; then
   echo "bootstrap: $(wc -l < "$skiplist") file(s) already existed, differ from the kit's, and were left alone:"
   sed 's/^/             /' "$skiplist"
   echo "           Merge the kit's content into each by hand, or move it aside and re-run;"
-  echo "           --force overwrites every one of them."
+  echo "           --force overwrites each one that is a regular file, never a symlink,"
+  echo "           folder or special file."
 fi
 
 # A retrofit that skipped the ENFORCEMENT files installed no enforcement, and saying so in
@@ -128,7 +135,8 @@ if [ -n "$gates" ]; then
 
   For each one: move yours aside, re-run to install the kit's file (files an earlier run
   copied are identical and pass), then carry what yours did into it by hand (docs/RETROFIT.md).
-  --force instead overwrites EVERY differing file listed above, not only these.
+  --force instead overwrites EVERY differing regular file listed above, not only these;
+  a symlink, folder or special file at such a path is never replaced: move it aside.
   Finish with:  ./scripts/check.sh --self-test
 EOF
   exit 1

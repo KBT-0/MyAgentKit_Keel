@@ -1,4 +1,5 @@
 """Bootstrap must not distribute locally generated Python bytecode."""
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -40,6 +41,33 @@ class BootstrapTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
                 self.assertIn('STOPPING: the gate files already existed', result.stdout)
                 self.assertFalse((project / 'docs/kit/.kit-version').exists())
+
+    def test_a_gate_path_that_is_not_a_regular_file_stops_unread(self):
+        # `cmp` on an existing FIFO at .githooks/commit-msg blocked forever, and a symlink
+        # there was compared, or written through, by its target: anything but a regular file
+        # is a conflict, never read or written, --force included.
+        root = Path(__file__).resolve().parents[1]
+        rel = '.githooks/commit-msg'
+        for kind in ('fifo', 'identical symlink', 'dangling symlink', 'directory'):
+            for force in ((), ('--force',)):
+                with self.subTest(kind=kind, force=force), tempfile.TemporaryDirectory() as tmp:
+                    project, outside = Path(tmp) / 'project', Path(tmp) / 'outside'
+                    (project / '.githooks').mkdir(parents=True)
+                    if kind == 'fifo':
+                        os.mkfifo(project / rel)
+                    elif kind == 'directory':
+                        (project / rel).mkdir()
+                    else:
+                        if kind == 'identical symlink':
+                            shutil.copyfile(root / 'core' / rel, outside)
+                        (project / rel).symlink_to(outside)
+                    result = subprocess.run(['sh', str(root / 'bootstrap.sh'), str(project), *force],
+                                            capture_output=True, text=True, timeout=30)
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    self.assertIn('conflict: ' + rel, result.stdout)
+                    self.assertFalse((project / 'docs/kit/.kit-version').exists())
+                    if kind == 'dangling symlink':
+                        self.assertFalse(outside.exists(), 'written through a symlink')
 
     def _listed(self, stdout):
         # The files a run reports as already existing: the indented paths under its header.

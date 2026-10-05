@@ -98,6 +98,28 @@ class SyncKitTests(unittest.TestCase):
             self.assertEqual((project / 'scripts/agent_cost.py').read_bytes(),
                              (ROOT / 'core/scripts/agent_cost.py').read_bytes())
 
+    def test_a_kit_owned_path_that_is_not_a_regular_file_is_a_conflict_unread(self):
+        # `cmp` on a FIFO at a kit-owned path blocked forever, and a symlink to an identical
+        # copy read as "same": anything but a regular file is a conflict, never read.
+        rel = '.githooks/commit-msg'
+        for kind in ('fifo', 'identical symlink'):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as tmp:
+                kit, project = Path(tmp) / 'kit', Path(tmp) / 'project'
+                self.sync(tmp, '- A kit-owned file changed.\n', '--dry-run')
+                (kit / 'core' / rel).parent.mkdir(parents=True)
+                shutil.copyfile(ROOT / 'core' / rel, kit / 'core' / rel)
+                (project / rel).parent.mkdir(parents=True)
+                if kind == 'fifo':
+                    os.mkfifo(project / rel)
+                else:
+                    shutil.copyfile(ROOT / 'core' / rel, Path(tmp) / 'outside')
+                    (project / rel).symlink_to(Path(tmp) / 'outside')
+                result = subprocess.run(['sh', str(kit / 'sync-kit.sh'), str(project)],
+                                        capture_output=True, text=True, timeout=30)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn('conflict: ' + rel, result.stdout)
+                self.assertEqual((project / 'docs/kit/.kit-version').read_text(), '0.1\n')
+
     def test_every_printed_action_item_of_the_real_changelog_is_whole(self):
         # The checklist printed only the physical line holding the marker, so an owner
         # confirming it read "one would be. **ACTION:** copy" and twice nothing at all.
