@@ -122,6 +122,15 @@ class CheckGateTests(unittest.TestCase):
                 self.assertIn('NOTE [scan]: skipped ' + name, out)
                 self.assertNotIn('a scanner failed to run', out)
 
+    def test_a_marker_that_does_not_name_the_live_holder_is_refused(self):
+        # A process the gate's build starts inherits the lock's descriptor, so the descriptor
+        # proof alone accepts it; only the marker check (it must be the holder's pid in the
+        # lock file) keeps a stray GATE_SELFTEST_NESTED from turning on the seams there.
+        self.build.write_text('GATE_SELFTEST_NESTED=1 GATE_BUILD_CMD_OVERRIDE=true sh scripts/check.sh\n')
+        code, out = gate(self.project, self.build)
+        self.assertEqual(code, 1, out)
+        self.assertIn('FAIL [env]: GATE_BUILD_CMD_OVERRIDE is set', out)
+
 
 if __name__ == '__main__':
     unittest.main()
