@@ -542,6 +542,65 @@ exit 1
                           " copy's .git/hooks", result.stdout)
             self.assertNotIn('  ok   — ', result.stdout)
 
+    def test_a_configuration_the_baseline_changes_is_refused_by_name(self):
+        # Only .git/hooks was re-checked: a baseline that set core.hooksPath to a directory
+        # holding a hook passed, and the second run's `git add` ran it. Any change is refused,
+        # an unrelated key too: the rule is equality with what the example wrote, not a key list.
+        for name, change in (
+                ('hooks path', "git config core.hooksPath .githooks && mkdir .githooks && "
+                               "printf '#!/bin/sh\\n: > {escaped}\\n' > .githooks/post-index-change && "
+                               'chmod +x .githooks/post-index-change'),
+                ('unrelated key', 'git config kit.unrelated yes')):
+            with self.subTest(change=name), tempfile.TemporaryDirectory() as tmp:
+                escaped = Path(tmp) / 'escaped'
+                change = change.replace('{escaped}', shlex.quote(str(escaped)))
+                root, git = self.fixture(tmp, '[ -e "$TMPDIR/changed" ] || { : > "$TMPDIR/changed"; ' + change +
+                                              '; exit 0; }\ngit add -A || exit 1\n')
+                result = self.self_test(tmp, root)
+                self.assertFalse(escaped.exists(), 'a hook the baseline configured ran in the second run')
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("NOT RUN — existing-file probe: the baseline gate run changed the disposable copy's"
+                              " .git/config", result.stdout)
+                self.assertNotIn('  ok   — ', result.stdout)
+
+    def test_a_configuration_source_the_baseline_adds_is_refused_by_name(self):
+        # Under probe_env git reads only the copy's .git/config, plus .git/config.worktree when
+        # .git/config enables it and the common directory's config when .git/commondir names one.
+        # A .git/commondir sent the second run's `git add` to hooks outside the copy.
+        for name, add, refused in (
+                ('config.worktree', "printf '[kit]\\n\\tunrelated = yes\\n' > .git/config.worktree",
+                 'the baseline gate run left a .git/config.worktree in the disposable copy'),
+                ('commondir', 'cp -R .git "$TMPDIR/common" && '
+                              "printf '#!/bin/sh\\n: > {escaped}\\n' > \"$TMPDIR/common/hooks/post-index-change\" && "
+                              'chmod +x "$TMPDIR/common/hooks/post-index-change" && '
+                              'printf "%s\\n" "$TMPDIR/common" > .git/commondir',
+                 'the baseline gate run left a .git/commondir in the disposable copy, or replaced its .git')):
+            with self.subTest(add=name), tempfile.TemporaryDirectory() as tmp:
+                escaped = Path(tmp) / 'escaped'
+                add = add.replace('{escaped}', shlex.quote(str(escaped)))
+                root, git = self.fixture(tmp, '[ -e "$TMPDIR/added" ] || { : > "$TMPDIR/added"; ' + add +
+                                              '; exit 0; }\ngit add -A || exit 1\n')
+                result = self.self_test(tmp, root)
+                self.assertFalse(escaped.exists(), 'a configuration source the baseline added ran a hook')
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn('NOT RUN — existing-file probe: ' + refused, result.stdout)
+                self.assertNotIn('  ok   — ', result.stdout)
+
+    def test_a_python_startup_file_the_baseline_leaves_does_not_run(self):
+        # The audit after the baseline ran python3 under the copy's empty HOME: a .pth file the
+        # baseline left in that HOME's user site directory (a `pip install --user` writes them)
+        # ran in the audit, and one that writes elsewhere escaped the copy.
+        with tempfile.TemporaryDirectory() as tmp:
+            escaped = Path(tmp) / 'escaped'
+            root, git = self.fixture(tmp, '[ -e "$TMPDIR/planted" ] || { : > "$TMPDIR/planted"; '
+                                          'site=$(python3 -c "import site; print(site.getusersitepackages())") && '
+                                          'mkdir -p "$site" && printf "%%s\\n" %s > "$site/probe.pth" || exit 1; }\n'
+                                          % shlex.quote('import os; open(%r, "w")' % str(escaped)))
+            result = self.self_test(tmp, root)
+            self.assertFalse(escaped.exists(), "a .pth file the baseline left ran in the example's audit")
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('  ok   — ', result.stdout)
+
     def test_a_folder_the_audit_cannot_read_is_refused_by_name(self):
         # os.walk skips a folder it cannot read: a baseline that hid an outside symlink in one
         # passed the second audit, and the next run made it readable and wrote through it. A
@@ -580,8 +639,10 @@ exit 1
     def test_a_carried_setting_can_be_reassigned_in_the_copy(self):
         # Replayed on top of an existing core.filemode, the copy held two values, and a gate's
         # `git config core.filemode false` failed there while it succeeded in the original.
+        # The write runs in the injected run: one in the baseline is refused as a changed .git/config.
         with tempfile.TemporaryDirectory() as tmp:
-            root, git = self.fixture(tmp, 'git config core.filemode false || exit 1\n')
+            root, git = self.fixture(tmp, "! grep -q 'myapp.web' src/domain/existing.py ||"
+                                          ' git config core.filemode false || exit 1\n')
             self.assertEqual(len(git('config', '--get-all', 'core.filemode').splitlines()), 1)
             result = self.self_test(tmp, root)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -600,8 +661,10 @@ exit 1
                        'git config %s kit.required yes; echo "status $?"; '
                        'git config --get-all kit.required; echo "status $?"; } 2>/dev/null' % write)
             with self.subTest(setting=name), tempfile.TemporaryDirectory() as tmp:
-                # The copy's gate records what it saw on its first (baseline) run only.
-                root, git = self.fixture(tmp, '[ -e "$TMPDIR/observed" ] || %s > "$TMPDIR/observed"\n' % observe,
+                # The copy's gate records what it saw on the injected run only: a write in the
+                # baseline is refused as a changed .git/config.
+                root, git = self.fixture(tmp, "! grep -q 'myapp.web' src/domain/existing.py ||"
+                                              ' %s > "$TMPDIR/observed"\n' % observe,
                                          config_keys='kit.required')
                 with open(root / '.git/config', 'a') as config:
                     config.write('[kit]\n' + setting)
