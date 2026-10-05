@@ -93,6 +93,7 @@ trap 'exit 143' TERM
 # opened: `cmp` on a FIFO, or writing to one, blocked forever; a symlink, or a symlinked folder
 # above, carried the read or write outside the project; a file where a folder belongs made
 # every mkdir and cp under it fail. The target itself may be a symlink: the owner named it.
+# sync-kit.sh holds the same function; a test holds the two copies equal.
 # The check runs BEFORE the write, not with it: a path is not opened when it fails the check
 # at that moment, but another process that changes the tree during the run (a checked
 # folder swapped for a symlink) is not guarded against. The owner runs this in the owner's

@@ -48,13 +48,14 @@ done
 target=$(CDPATH= cd -- "$target" 2>/dev/null && pwd) || die "no such directory"
 [ "$target" = "$kit" ] && die "refusing to sync the kit with itself"
 
-# blocked REL — the one check for every path the sync reads or writes (the kit-owned files and
-# the version stamp): prints why REL may not be used, nothing when it may. Every existing
-# component below the target must be a real folder, and REL itself absent or a regular file.
+# blocked REL [dir] — the one check for every path the sync reads or writes (the kit-owned
+# files, the version stamp and their temporaries): prints why REL may not be used, nothing
+# when it may. Every existing component below the target must be a real folder, and REL itself
+# absent or a regular file (with `dir`, which only bootstrap.sh uses: absent or a real folder).
 # What fails is not opened: `cmp` on a FIFO blocked forever; a symlink, or a symlinked
 # folder above, carried the read or write outside the project; a file where a folder belongs
 # failed the copy midway through the copies. The target itself may be a symlink: the owner
-# named it. bootstrap.sh holds the same check, with a form for folders.
+# named it. bootstrap.sh holds the same function; a test holds the two copies equal.
 # The check runs BEFORE the write, not with it: a path is not opened when it fails the check
 # at that moment, but another process that changes the tree during the run (a checked
 # folder swapped for a symlink) is not guarded against. The owner runs this in the owner's
@@ -68,7 +69,9 @@ blocked() {
     if [ -e "$target/$_p" ] && [ ! -d "$target/$_p" ]; then printf 'not a folder: %s\n' "$_p"; return 0; fi
   done
   if [ -L "$target/$_p" ]; then printf 'symlink: %s\n' "$_p"
-  elif [ -e "$target/$_p" ] && [ ! -f "$target/$_p" ]; then echo 'not a regular file'
+  elif [ ! -e "$target/$_p" ]; then :
+  elif [ "${2:-}" = dir ]; then [ -d "$target/$_p" ] || echo 'not a folder'
+  else [ -f "$target/$_p" ] || echo 'not a regular file'
   fi
 }
 
