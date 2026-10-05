@@ -973,6 +973,19 @@ status that is not null means the turn ended on an API error; there is no recove
 as with Codex. The adapter now fails such an envelope, and a test holds both adapters to
 "completed if and only if the failure kind is null".
 
+#### A size limit on STATE.md was a proxy; the causes were a backlog and narrated work
+
+A project had added a 10 KB limit on `docs/STATE.md` to its own gate and hit it four times
+in one session, with the file parked a few hundred bytes under it. The owner's judgement:
+a size limit is no answer to "finished tasks are sometimes not deleted". Reading that file
+gave two causes a byte count sees neither of: 53 of its 125 lines were a backlog (next and
+parked tasks) that nothing ever shrinks, and its live bullets narrated completed, committed
+work. The kit's own rot rule (long file with an empty "Active work") never fired there
+either, because something is always active. Now: the backlog has its own file, read when a
+task is chosen; a task id closed by a `Done:` trailer may not be named in either file, at
+commit time and in the gate; every length limit is gone. Scope, stated before building: a
+housekeeping aid for honest sessions, not a control against evasion.
+
 #### The review gate held on the kit's own hardening
 
 Five of the nine work packages (the gate lock, both review-tooling packages, the commit gates

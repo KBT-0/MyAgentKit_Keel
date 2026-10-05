@@ -67,4 +67,3 @@ something behaves unexpectedly. What belongs here instead is a check that is out
 RIGHT NOW — a manual verification owed before the next commit, a claim that has not been
 observed yet.
 
-## Last session summary

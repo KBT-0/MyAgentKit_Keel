@@ -170,8 +170,19 @@ in `RESEARCH_LOG.md` (2026-10-03). Most of the files below are project-owned, so
   interview question 8), `diff-reviewer.md` gets `effort: high`, and WORKFLOW and HANDOFF
   say the brief names model and effort and the lead verifies both in the transcript.
   `docs/STATE.md` keeps a status line and a pointer; operation detail and worker results go
-  to `docs/<OPERATION>.md`, and both rot-gate messages name it. A spawned worker session is
+  to `docs/<OPERATION>.md`. A spawned worker session is
   closed by the lead once it has read the result file; `spawn_worker.sh` prints the command.
+- **STATE.md stays clean by lifetime, not by size.** The next and parked tasks move to a
+  new template, `docs/BACKLOG.md`, read when the next task is chosen, not every session;
+  `docs/STATE.md` holds only what is in flight or waiting on someone, and its "Last session
+  summary" heading is gone (it invited narrating finished work). A task may carry an id
+  (K4, L1b: a letter first, at least one digit). The commit that finishes it carries one
+  `Done: <id>` trailer per id; `commit-msg` rejects that commit while the staged STATE.md or
+  BACKLOG.md still names the id, and `check.sh` fails `[state]` with file, line and closing
+  commit when either file names an id any commit closed (git 2.22 or later; a shallow clone
+  checks only the commits it holds and says so). A closed id is never reused. Every length
+  limit on STATE.md is removed: a limit saw neither a backlog that only grows nor finished
+  work left in a live bullet.
 - **Rules (issues #26, #27, #28, #31).** A web request carries no personal data
   (`docs/WORKFLOW.md` "Web requests carry no personal data", HANDOFF brief item 3,
   `docs/GOTCHAS.md`). A sub-agent returns its report as its final message; only a spawned
@@ -256,7 +267,14 @@ from, and `5c80c36` is the kit's v0.8 commit.
    Code overlay also copy `scripts/spawn_worker.sh` from
    `$KIT/overlays/claude-code/files/scripts/`; with the Unity overlay, `scripts/unity_gate.sh`
    from `$KIT/overlays/unity/files/scripts/`.
-4. **ACTION:** Merge the kit's changes since v0.8 into the files that hold your setup
+4. **ACTION:** Before the merge of the next item, split `docs/STATE.md` by hand: copy
+   `$KIT/core/docs/BACKLOG.md` to `docs/BACKLOG.md`, move your "Next tasks" and "Deferred /
+   parked" entries into it, delete the two headings and the "Last session summary" heading
+   from `docs/STATE.md`, and delete every line that narrates finished, committed work (it
+   is in git). Remove any size or line limit your own `scripts/check.sh` put on STATE.md.
+   From now on name tasks by id in both files and end the commit that finishes one (or the
+   merge commit that integrates it) with `Done: <id>`; never reuse a closed id.
+5. **ACTION:** Merge the kit's changes since v0.8 into the files that hold your setup
    content, one three-way merge per file (yours, the kit's v0.8 copy, the kit's current
    copy). Start from a committed project: the next item compares each merged file with
    `HEAD`. Conflicts are left in the file as `<<<<<<<` markers for the next item:
@@ -271,7 +289,7 @@ from, and `5c80c36` is the kit's v0.8 commit.
    With the Claude Code overlay, run the same loop over `.claude/agents/diff-reviewer.md`,
    `.claude/agents/worker.md` and `.claude/hooks/gate_on_stop.sh`, with
    `overlays/claude-code/files/$f` in place of `core/$f` in both places.
-5. **ACTION:** Resolve every conflict the merge left (`git diff --check` names each
+6. **ACTION:** Resolve every conflict the merge left (`git diff --check` names each
    leftover marker) so that both sides survive: the kit's new structure, and everything your
    side added, that is each value you had filled in and every check, step or rule of your
    own. Never drop a line of yours without knowing what it did: taking the kit's side whole
@@ -298,15 +316,16 @@ from, and `5c80c36` is the kit's v0.8 commit.
    `./scripts/check.sh` lists: `{{OWNER_NAME}}` in new lines of `AGENTS.md` and
    `docs/WORKFLOW.md`, and `{{WORKER_EFFORT}}` in `.claude/agents/worker.md` (`low`,
    `medium` or `high`: the effort a delegated worker runs at, setup interview question 8).
-6. **ACTION:** Check the configured lines of `scripts/check.sh`: `toolchain_path` must read
+7. **ACTION:** Check the configured lines of `scripts/check.sh`: `toolchain_path` must read
    exactly `toolchain_path="<path>"` with no trailing comment, or doctor reports it. The
    build command must not filter its output (remove a `grep error` filter: the gate prints
    the tail and the log path itself), must not leave a compiler server or build daemon
    running (it would hold the gate lock; `docs/GOTCHAS.md` shows the flags) and must hold no
    deploy-shaped step, dry runs included. The gate now needs `python3` on the PATH a git
    hook sees; `toolchain_path` is applied first. Add any override variable your own boundary
-   checks read to the list in the SELF-TEST SEAMS block.
-7. **ACTION:** Bring `scripts/boundary_selftests.sh` up to the new contract: every case
+   checks read to the list in the SELF-TEST SEAMS block; the kit's list now also holds
+   `GATE_SELFTEST_HISTORY`.
+8. **ACTION:** Bring `scripts/boundary_selftests.sh` up to the new contract: every case
    prints `  ok   — <label>` when it passes; a case that writes into the working tree moves
    outside it, or removes its file on INT/TERM as well as on exit, as the kit's dot-file
    example now does in a subshell with its own trap. If you adapted the existing-file
@@ -318,29 +337,29 @@ from, and `5c80c36` is the kit's v0.8 commit.
    gate reads into `.git/config`, or do not use the existing-file example; the same goes
    for a key you name in `probe_config_keys` that is set in your global or system git
    configuration.
-8. **ACTION:** Decide the attribution rule. The merged `AGENTS.md` now holds the bullet "No
+9. **ACTION:** Decide the attribution rule. The merged `AGENTS.md` now holds the bullet "No
    AI attribution in git", and the kit's `commit-msg` hook rejects AI credit while that
    line is there. To allow AI credit, delete that bullet, and with the Claude Code overlay
    the block marked "attribution rule" in `.claude/agents/worker.md`.
-9. **ACTION:** Outside the files: unset the self-test seam variables named in
+10. **ACTION:** Outside the files: unset the self-test seam variables named in
    `scripts/check.sh` wherever a shell profile or CI step exports them, since a normal gate
    run now fails `FAIL [env]` on them; pass `--fallback` to `scripts/review.sh` in any
    automation that relied on automatic reviewer failover; a repository with Git LFS, a
    clean filter or `ident` in the review scope cannot use `review.sh`, so use the manual
    template in `docs/REVIEW_GATE.md`; and where `.gitignore` says `node_modules/` and
    `node_modules` is a symlink, write `node_modules` without the slash.
-10. **ACTION:** Move aside the review usage records that v0.7 and v0.8 wrote with an empty
+11. **ACTION:** Move aside the review usage records that v0.7 and v0.8 wrote with an empty
    task id, which now stop every review: find them with
    `grep -l '"id": ""' .myagentkit/usage/*.json` and move each with
    `mkdir -p .myagentkit/usage-set-aside && mv <record> .myagentkit/usage-set-aside/`.
    Rounds recorded before v0.9 are not carried: give the next review a new
    `MYAGENTKIT_TASK_ID`.
-11. **ACTION:** Prove the result, in this order: `git add -A` (doctor requires every hook
+12. **ACTION:** Prove the result, in this order: `git add -A` (doctor requires every hook
    and script in the index with mode 100755), `./scripts/doctor.sh` (fix each `MISSING:`
    line), `./scripts/check.sh` (expect `CHECK: PASS`), `./scripts/check.sh --self-test`
    from the main checkout, then commit. With the Claude Code overlay, restart Claude Code so
    the agents' `effort:` lines take effect.
-12. **ACTION:** As the lead, from now on: a brief names the worker's model and effort and
+13. **ACTION:** As the lead, from now on: a brief names the worker's model and effort and
    you check both in the transcript; you close a spawned worker session once you have read
    its result file (`spawn_worker.sh` prints the command); a brief file stays in place
    until the worker has read it; a brief that sends an agent to the web names a generic
