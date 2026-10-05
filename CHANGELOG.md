@@ -185,6 +185,16 @@ in `RESEARCH_LOG.md` (2026-10-03). Most of the files below are project-owned, so
   nothing and gets a NOTE. A closed id is never reused, and the two templates name no id. Every length
   limit on STATE.md is removed: a limit saw neither a backlog that only grows nor finished
   work left in a live bullet.
+- **How agents write.** `AGENTS.md` ("Language & style") states two registers and one rule
+  above both. Chat and final answers: the result first, no restating, no prose between
+  routine tool calls, listable facts in a list or table. Written artifacts another session
+  reads cold (STATE.md, BACKLOG.md, operation files, handoff prompts, review verdicts,
+  docs): full sentences, one instruction per sentence, a target of 20 words per instruction
+  and 25 per description, active voice, one term per thing, numbered steps. Never shortened
+  by a cap or a style: what failed, what was not run or not verified, a security warning,
+  an action that cannot be undone. A worker's report defaults to 350 words with the
+  sections "Not run / not verified" and "Noticed, not fixed" always present and outside the
+  cap (`worker.md`, `docs/HANDOFF.md`). No standard or style product is named or required.
 - **Rules (issues #26, #27, #28, #31).** A web request carries no personal data
   (`docs/WORKFLOW.md` "Web requests carry no personal data", HANDOFF brief item 3,
   `docs/GOTCHAS.md`). A sub-agent returns its report as its final message; only a spawned
