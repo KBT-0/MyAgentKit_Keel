@@ -71,14 +71,16 @@
 # The copied .git/config is replaced by an allowlist of its settings plus the keys named in
 # probe_config_keys: kept verbatim, it ran the original's core.hooksPath and a copied gate's
 # `git archive` ran its tar.<format>.command, and a denylist of such keys had already missed
-# the next one. Every other key gets a NOTE line, include.path and includeIf among them, and
-# .git/config.worktree is removed. The settings are read from the copy's .git/config as copied,
-# so equal digests mean equal settings: read again from the live checkout after the copy was
-# hashed, a setting changed in between made the injected run fail on its own. An allowlisted
-# key is carried only when every value of it comes from the repository's own config file;
-# one set in the worktree configuration or an included file fails the case by name, since
-# flattening scopes and includes into one file changed what a gate's `git config <key>
-# <value>` did. The values are added in order, and a
+# the next one. Every other key gets a NOTE line, and .git/config.worktree is removed. The
+# settings are read from the copy's .git/config as copied, so equal digests mean equal
+# settings: read again from the live checkout after the copy was hashed, a setting changed in
+# between made the injected run fail on its own. Any include.path or includeIf entry, its
+# condition true or not, is refused by name and reported NOT RUN: read in the copy, an
+# includeIf "gitdir:<checkout>/.git" that turned the real gate off matched only in the
+# checkout, so both copies ran the gate on and the case passed. An allowlisted key is carried
+# only when every value of it comes from the repository's own config file; one set in the
+# worktree configuration fails the case by name, since flattening both scopes into one file
+# changed what a gate's `git config <key> <value>` did. The values are added in order, and a
 # valueless key is written as valueless: carried as the string `true`, an untyped read of it
 # in the copy differed from the original's. The copy's .git/hooks starts empty: copied with
 # the rest, the original's hooks ran from a copied gate's `git commit`.
@@ -160,7 +162,8 @@
 # |     sys.exit("  FAIL — existing-file probe: " + path + " is no longer the directory made for the disposable copy; deleted nothing.")
 # | try:
 # |     empty(root)
-# |     # rmdir removes only an empty directory: one swapped in under this name since is not deleted.
+# |     # The check and the rmdir are two steps: an EMPTY directory a process of the same user swaps in
+# |     # between them is removed, nothing with content can be. Kept, as skipping it leaves a root per run.
 # |     if not same(os.stat(name, dir_fd=parent, follow_symlinks=False)):
 # |         raise OSError(path + " is no longer the directory made for it")
 # |     os.rmdir(name, dir_fd=parent)
@@ -266,20 +269,23 @@
 # |     cp -RP "$probe_checkout" "$probe_copy/checkout" && CDPATH= cd -P "$probe_copy/checkout" || exit 1
 # |     probe_root=$(pwd -P) || exit 1
 # |     probe_audit
-# |     # The settings come from the copy's .git/config as copied and hashed, never the live checkout.
-# |     probe_env git config --show-origin --includes --name-only --list > "$probe_copy/names" &&
-# |       probe_env git config --local --no-includes --show-origin --name-only --list > "$probe_copy/own" &&
+# |     # The settings come from the copy's .git/config as copied and hashed, never the live checkout;
+# |     # --no-includes lists every include entry itself, whatever its condition, from every file git reads.
+# |     probe_env git config --no-includes --show-origin --name-only --list > "$probe_copy/names" &&
 # |       probe_env git config --local --no-includes --list -z > "$probe_copy/config" ||
 # |       probe_fail "could not read the copy's configuration (git config); refusing to run."
-# |     probe_own=$(LC_ALL=C awk -F '\t' 'NR == 1 { print $1 }' "$probe_copy/own") || exit 1
-# |     PROBE_NOTED=$probe_noted PROBE_OWN=$probe_own PROBE_ALLOWED=$probe_allowed LC_ALL=C awk -F '\t' '
+# |     PROBE_NOTED=$probe_noted PROBE_ALLOWED=$probe_allowed LC_ALL=C awk -F '\t' '
 # |       BEGIN { n = split(ENVIRON["PROBE_ALLOWED"], k, " "); for (i = 1; i <= n; i++) allowed[k[i]] = 1 }
+# |       $2 ~ /^include(if)?\./ {
+# |         print "  NOT RUN — existing-file probe: " $2 " includes git configuration, which this example cannot reproduce; put the settings the gate reads into the repository'"'"'s own config file, or keep the include and do not use the existing-file example."
+# |         exit 1
+# |       }
 # |       !($2 in allowed) {
 # |         if (ENVIRON["PROBE_NOTED"] == "" && !noted[$2]++)
 # |           print "  NOTE — existing-file probe: " $2 " is not carried into the disposable copy; a setting your gate reads goes in probe_config_keys."
 # |         next
 # |       }
-# |       $1 != ENVIRON["PROBE_OWN"] {
+# |       $1 != "file:.git/config" {
 # |         print "  FAIL — existing-file probe: " $2 " is set in " $1 ", not in the repository'"'"'s own config file; set it there, or remove it from probe_config_keys."
 # |         exit 1
 # |       }' "$probe_copy/names" || exit 1
