@@ -648,7 +648,7 @@ exit 1
             shim.mkdir()
             real = shlex.quote(shutil.which('git'))
             (shim / 'git').write_text(
-                '#!/bin/sh\ncase " $* " in *" --includes "*)\n'
+                '#!/bin/sh\ncase " $* " in *" --list -z "*)\n'
                 '  if [ -e %s ]; then [ -e %s ] || { : > %s && %s --git-dir=%s config kit.mode fail; } || exit 1\n'
                 '  else : > %s; fi ;;\nesac\nexec %s "$@"\n'
                 % (shlex.quote(str(first)), shlex.quote(str(second)), shlex.quote(str(second)), real,
@@ -794,10 +794,18 @@ exit 1
                 # Refused before the copy got a repository: no carry, no gate run, nothing to diverge.
                 self.assertFalse((Path(tmp) / 'scratch/gate-ran').exists(), 'the copy ran its gate')
 
-    def test_an_allowlisted_setting_from_an_include_is_refused_by_name(self):
+    def assert_include_not_run(self, result, key):
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('NOT RUN — existing-file probe: %s includes git configuration, which this example cannot'
+                      " reproduce; put the settings the gate reads into the repository's own config file, or"
+                      ' keep the include and do not use the existing-file example' % key, result.stdout)
+        self.assertNotIn('  ok   — ', result.stdout)
+
+    def test_any_include_is_not_run_by_name(self):
         # Flattened into the copy's local file, an included key changed what a gate's write did:
         # one file included twice gave two local values, and `git config kit.required yes`, which
-        # succeeds in the original, exited 5 in the copy. Not allowlisted, it is only noted.
+        # succeeds in the original, exited 5 in the copy. Not allowlisted, it was only noted, and a
+        # setting the gate reads but the project forgot to name ran the copies without it.
         for times, keys in ((1, 'kit.required'), (2, 'kit.required'), (1, None)):
             with self.subTest(times=times, keys=keys), tempfile.TemporaryDirectory() as tmp:
                 root, git = self.fixture(tmp, '! git config --get kit.required >/dev/null || exit 1\n',
@@ -806,17 +814,32 @@ exit 1
                 included.write_text('[kit]\n\trequired = yes\n')
                 for _ in range(times):
                     git('config', '--add', 'include.path', str(included))
-                result = self.self_test(tmp, root)
-                if keys:
-                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-                    self.assertIn("kit.required is set in file:%s, not in the repository's own config file;"
-                                  " set it there, or remove it from probe_config_keys" % included, result.stdout)
-                    self.assertNotIn('  ok   — ', result.stdout)
-                else:
-                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                    self.assertIn('  ok   — ', result.stdout)
-                    self.assertIn('NOTE — existing-file probe: kit.required is not carried', result.stdout)
-                    self.assertIn('NOTE — existing-file probe: include.path is not carried', result.stdout)
+                self.assert_include_not_run(self.self_test(tmp, root), 'include.path')
+
+    def test_a_checkout_specific_include_that_turns_the_gate_off_is_not_run(self):
+        # Read in the relocated copy, an includeIf "gitdir:<checkout>/.git" matched only in the
+        # checkout: its kit.disabled=yes turned the real gate off, both copies ran with the gate on,
+        # and the negative test passed for a gate that never runs in the checkout.
+        with tempfile.TemporaryDirectory() as tmp:
+            root, git = self.fixture(tmp, '[ "$(git config kit.disabled)" != yes ] || exit 0\n',
+                                     config_keys='kit.disabled')
+            included = Path(tmp) / 'included'
+            included.write_text('[kit]\n\tdisabled = yes\n')
+            key = 'includeif.gitdir:%s/.git.path' % root.resolve()
+            git('config', key, str(included))
+            self.assertEqual(git('config', 'kit.disabled'), 'yes\n', 'the include is not active in the checkout')
+            self.assert_include_not_run(self.self_test(tmp, root), key)
+
+    def test_an_include_is_not_run_whatever_its_condition(self):
+        # The class is refused, not the conditions that match: a condition false in the checkout
+        # today (a branch not checked out) is true after a `git switch`, and the worktree file
+        # includes as the local one does.
+        for scope in ('local', 'worktree'):
+            with self.subTest(scope=scope), tempfile.TemporaryDirectory() as tmp:
+                root, git = self.fixture(tmp, '')
+                git('config', 'extensions.worktreeConfig', 'true')
+                git('config', '--' + scope, 'includeIf.onbranch:never-checked-out.path', str(Path(tmp) / 'absent'))
+                self.assert_include_not_run(self.self_test(tmp, root), 'includeif.onbranch:never-checked-out.path')
 
 
 if __name__ == '__main__':
