@@ -485,6 +485,75 @@ class CleanWorktreesTests(unittest.TestCase):
         out = self.run_script('--apply', GIT_DIR=str(self.main / '.git'))
         self.assertKept(path, out, 'tracked change, staged: a')
 
+    # --- the hook --------------------------------------------------------------------------------
+
+    def hooked(self):
+        """main with the hook and the script committed, so every worktree carries them too."""
+        (self.main / '.githooks').mkdir()
+        shutil.copy(HOOK, self.main / '.githooks/post-merge')
+        (self.main / 'scripts').mkdir()
+        for name in ('clean_worktrees.sh', 'clean_worktrees.py'):
+            shutil.copy(SCRIPTS / name, self.main / 'scripts' / name)
+        self.git('add', '.githooks', 'scripts')
+        self.git('commit', '-q', '-m', 'hook')
+        self.git('config', 'core.hooksPath', '.githooks')
+
+    def test_the_hook_cleans_after_a_merge_in_the_main_worktree(self):
+        self.hooked()
+        path = self.worktree('done', merge=False)
+        merge = subprocess.run(['git', 'merge', '--no-ff', '-m', 'merge', 'worktree-done'], cwd=self.main,
+                               env=self.env, capture_output=True, text=True)
+        self.assertEqual(merge.returncode, 0, merge.stderr)
+        # git hands a hook's output to stderr. Without /proc the hook keeps it, and says how to
+        # run the script by hand.
+        if PROC:
+            self.assertRemoved(path, merge.stderr)
+            self.assertIn('clean_worktrees: removed 1', merge.stderr)
+        else:
+            self.assertIn('--apply --assume-idle', merge.stderr)
+
+    def test_the_hook_does_nothing_after_a_merge_inside_a_linked_worktree(self):
+        self.hooked()
+        finished = self.worktree('finished', commit=False)
+        worker = self.worktree('worker', merge=False)
+        self.git('commit', '-q', '--allow-empty', '-m', 'main moved')
+        merge = subprocess.run(['git', 'merge', '--no-ff', '-m', 'merge main', 'main'], cwd=worker,
+                               env=self.env, capture_output=True, text=True)
+        self.assertEqual(merge.returncode, 0, merge.stderr)
+        self.assertNotIn('clean_worktrees', merge.stdout + merge.stderr)
+        self.assertTrue(finished.is_dir())
+        self.assertIn('remove .claude/worktrees/finished', self.run_script())
+
+    def test_the_off_switch_stops_the_hook(self):
+        self.hooked()
+        path = self.worktree('done', merge=False)
+        merge = subprocess.run(['git', 'merge', '--no-ff', '-m', 'merge', 'worktree-done'], cwd=self.main,
+                               env=dict(self.env, KIT_NO_WORKTREE_CLEANUP='1'), capture_output=True, text=True)
+        self.assertEqual(merge.returncode, 0, merge.stderr)
+        self.assertTrue(path.is_dir())
+        self.assertNotIn('clean_worktrees', merge.stdout + merge.stderr)
+
+    def test_a_failing_script_leaves_the_merge_complete(self):
+        self.hooked()
+        path = self.worktree('done', merge=False)
+        (self.main / 'scripts/clean_worktrees.sh').write_text('#!/bin/sh\nexit 3\n')
+        merge = subprocess.run(['git', 'merge', '--no-ff', '-m', 'merge', 'worktree-done'], cwd=self.main,
+                               env=self.env, capture_output=True, text=True)
+        self.assertEqual(merge.returncode, 0, merge.stderr)
+        self.assertIn('post-merge: scripts/clean_worktrees.sh stopped with an error', merge.stderr)
+        self.assertEqual(self.git('rev-parse', 'HEAD^2'), self.git('rev-parse', 'worktree-done'))
+        self.assertTrue(path.is_dir())
+
+    def test_bootstrap_installs_the_script_the_list_and_the_hook(self):
+        project = self.tmp / 'project'
+        result = subprocess.run(['sh', str(ROOT / 'bootstrap.sh'), str(project), '--overlay', 'claude-code'],
+                                env=self.env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        for rel in ('scripts/clean_worktrees.sh', '.githooks/post-merge'):
+            self.assertTrue(os.access(project / rel, os.X_OK), rel)
+        for rel in ('scripts/clean_worktrees.py', '.claude/worktree-disposable'):
+            self.assertTrue((project / rel).is_file(), rel)
+
 
 if __name__ == '__main__':
     unittest.main()
