@@ -40,8 +40,8 @@ if [ ! -f "$msg" ] || [ ! -r "$msg" ]; then
   exit 1
 fi
 # ponytail: fixed lists of tool, model and vendor names; extend them when a new tool's trailer gets through.
-tools='claude|anthropic|openai|chatgpt|gpt|codex|copilot|gemini|cursor|aider|devin|windsurf|codeium|tabnine|amp|qwen|cline|kiro'
-words="$tools|opus|sonnet|haiku|code|coder|agent|ai|assist|assistant|cli|chat|pro|flash|mini|turbo|[a-z]*[0-9][a-z0-9.]*"
+tools='claude|anthropic|openai|chatgpt|gpt|codex|copilot|gemini|cursor|aider|devin|windsurf|codeium|tabnine|amp|qwen|cline|kiro|opencode|junie|openhands|warp'
+words="$tools|opus|sonnet|haiku|fable|mythos|context|code|coder|agent|ai|assist|assistant|cli|chat|pro|flash|mini|turbo|[a-z]*[0-9][a-z0-9.]*"
 domains='anthropic\.com|openai\.com|ampcode\.com|cursor\.(com|sh)|aider\.chat|devin\.ai|cognition\.ai|windsurf\.com|codeium\.com|tabnine\.com'
 # Behind a comment character a trailer is still checked: git keeps "# Co-Authored-By: ..."
 # under -m or verbatim cleanup. Punctuation is skipped whatever it is; a configured

@@ -89,7 +89,15 @@ class GitHookTests(unittest.TestCase):
                             # A whitespace-only line ends the value: unfolded across it, the
                             # indented prose below hid the bare tool name.
                             'Co-Authored-By: Claude\n \n  Additional notes',
-                            'Co-Authored-By: Claude\n\t\n\tAdditional notes'):
+                            'Co-Authored-By: Claude\n\t\n\tAdditional notes',
+                            # Current model and tool names, with an address no domain rule knows.
+                            'Co-Authored-By: Claude Fable 5.1 <noreply@example.invalid>',
+                            'Co-Authored-By: Claude Mythos 5.1 <noreply@example.invalid>',
+                            'Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@example.invalid>',
+                            'Co-authored-by: opencode <opencode@example.invalid>',
+                            'Co-authored-by: Junie <junie@example.invalid>',
+                            'Co-authored-by: OpenHands <openhands@example.invalid>',
+                            'Co-authored-by: Warp <agent@example.invalid>'):
                 with self.subTest(trailer=trailer):
                     result = self.commit(root, git, trailer + '\n')
                     self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -277,6 +285,43 @@ class GitHookTests(unittest.TestCase):
                                                                                    os.environ['PATH'])))
                     self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
                     self.assertIn('cannot read %s' % key, result.stderr)
+
+    def test_a_missing_agents_file_keeps_the_hook_on(self):
+        # Only the owner's choice turns the hook off: an AGENTS.md that is not there is a
+        # broken setup, and the credit is still refused.
+        with tempfile.TemporaryDirectory() as tmp:
+            root, git = self.repo(tmp)
+            (root / 'AGENTS.md').unlink()
+            result = self.commit(root, git, 'Co-Authored-By: Claude <noreply@anthropic.com>\n')
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('crediting an AI tool', result.stderr)
+
+    def test_a_tool_that_fails_inside_the_hook_fails_it_closed(self):
+        # Each of these once had an unchecked result: a version git did not report, a message
+        # that could not be unfolded, or a trailer check that failed would have let the
+        # credit below through.
+        with tempfile.TemporaryDirectory() as tmp:
+            root, _ = self.repo(tmp)
+            shim = Path(tmp) / 'shim'
+            shim.mkdir()
+            (root / 'msg').write_text('change c\n\nCo-Authored-By: Claude <noreply@anthropic.com>\n')
+            for tool, broken, message in (
+                    ('git', '[ "$1" != version ] || { echo "version unknown"; exit 0; }',
+                     'cannot read the git version'),
+                    ('awk', 'exit 1', 'cannot unfold the commit message'),
+                    ('grep', 'case " $* " in *" -iE "*) exit 2 ;; esac', 'the trailer check itself failed')):
+                with self.subTest(tool=tool):
+                    for stale in shim.iterdir():
+                        stale.unlink()
+                    (shim / tool).write_text('#!/bin/sh\n%s\nexec %s "$@"\n' % (broken, shutil.which(tool)))
+                    (shim / tool).chmod(0o755)
+                    result = subprocess.run(['sh', '.githooks/commit-msg', 'msg'], cwd=root, text=True,
+                                            capture_output=True,
+                                            env=dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull,
+                                                     GIT_CONFIG_NOSYSTEM='1',
+                                                     PATH='%s%s%s' % (shim, os.pathsep, os.environ['PATH'])))
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    self.assertIn(message, result.stderr)
 
     def test_the_owner_may_allow_ai_attribution(self):
         with tempfile.TemporaryDirectory() as tmp:
