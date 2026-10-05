@@ -308,6 +308,29 @@ class CheckGateTests(unittest.TestCase):
         for value in ('K1 K2', 'K3, K4', '', 'K5 K6', 'K12 x'):
             self.assertIn('"Done: %s", which is not one task id' % value, out)
 
+    def test_the_templates_name_no_id_the_docs_close(self):
+        # The state templates' own prose named K4, so a project that kept it could not close
+        # its real K4. Every id WORKFLOW.md's "Task ids" uses as an example is closed here.
+        text = (ROOT / 'core/docs/WORKFLOW.md').read_text()
+        section = text[text.index('## Task ids'):text.index('## Task sizing')]
+        ids = sorted({w for w in re.split(r'[^A-Za-z0-9_-]+', section)
+                      if re.fullmatch(r'[A-Za-z][A-Za-z0-9]*(-[A-Za-z0-9]+)?', w) and re.search(r'[0-9]', w)})
+        self.assertIn('K4', ids)
+        shutil.copytree(ROOT / 'core/.githooks', self.project / '.githooks')
+        for name in ('STATE.md', 'BACKLOG.md'):
+            template = (ROOT / 'core/docs' / name).read_text()
+            (self.project / 'docs' / name).write_text(re.sub(r'\{\{[A-Z0-9_]+\}\}', 'fixture', template))
+        msg = self.tmp / 'msg'
+        msg.write_text('close the examples\n\n' + ''.join('Done: %s\n' % i for i in ids))
+        subprocess.run(['git', 'add', '-A'], cwd=self.project, check=True)
+        hook = subprocess.run(['sh', '.githooks/commit-msg', str(msg)], cwd=self.project,
+                              capture_output=True, text=True)
+        self.assertEqual(hook.returncode, 0, hook.stderr)
+        subprocess.run(GIT + ['-c', 'core.hooksPath=/dev/null', 'commit', '-q', '-F', str(msg)],
+                       cwd=self.project, check=True)
+        code, out = gate(self.project, self.build)
+        self.assertEqual(code, 0, out)
+
     def test_every_cd_ignores_cdpath(self):
         # An exported CDPATH turned `cd scripts` into another directory (and printed it):
         # doctor.sh then checked another tree, and review.sh could review one. Every cd in a
