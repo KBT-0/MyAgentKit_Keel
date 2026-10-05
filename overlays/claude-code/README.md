@@ -60,7 +60,21 @@ If the project has no such jobs, delete both files instead of filling them.
   the account runs on usage credits.
 - **The prompt must never follow a variadic flag.** `claude --allowedTools A,B "prompt"`
   reads the prompt as one more tool name and opens idle at an empty input line.
-  `spawn_worker.sh` pastes the brief after the TUI is up for that reason.
+  `spawn_worker.sh` types its prompt after the TUI is up for that reason.
+- **The brief goes by path, as one typed sentence, never pasted as a block.** A session
+  handed its brief as one pasted block with no sentence typed by the user took it for
+  content carrying no instruction and sat idle for about 35 minutes asking for
+  confirmation; another model given the same block started at once. `spawn_worker.sh`
+  types `Read '<absolute path of the brief>' and follow it.` and refuses, before any tmux
+  session opens, a brief file that does not exist or cannot be read.
+- **A worker's worktree is made with `git worktree add`, not with `claude -w`.**
+  `claude -w` built the worktree from a stale base, so workers spawned after the lead
+  merged fixes started without them. `spawn_worker.sh --worktree` runs
+  `git worktree add .claude/worktrees/NAME -b worktree-NAME HEAD` from the lead's checkout
+  and opens the session inside it; a leftover `worktree-NAME` branch is refused by name.
+- **Every value the script puts into the session's shell command is quoted by one helper.**
+  A `--settings` JSON string or a name with an apostrophe otherwise ended its quoting and
+  the rest ran as shell in the new pane.
 - **A standalone `sleep` in a Bash tool call is refused by the tool**, so a worker cannot
   even wait badly; it starts the job in the background and is re-invoked when it exits.
 - **`pgrep -f` matches its own command line** (`docs/GOTCHAS.md`).
