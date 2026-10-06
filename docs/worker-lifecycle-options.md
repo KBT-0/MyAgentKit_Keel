@@ -31,8 +31,11 @@ requests. A reused warm session pays about 0.1 C per request (plus its own growt
 about 2 P + 0.1 P (n - 1), plus whatever of C it has to read again because the task needs it.
 At the example figures (C 113k, P 30k) the two cross at about seven requests: a SHORT
 follow-up is cheaper in the old session even when most of C is irrelevant, because the cold
-write of a fresh start outweighs a few requests of dead weight; a LONG task is cheaper fresh
-unless it needs most of C. When the task needs most of C anyway, reuse wins at any length.
+write of a fresh start outweighs a few requests of dead weight; a LONG task is cheaper fresh.
+When the next task needs part of C, count that part into the fresh session's context (it
+reads it again) and compare the same way: the crossover moves later, but a long enough task
+still favours a fresh start, because the fresh session carries only what the task needs and
+the old one carries everything. There is no length at which reuse wins unconditionally.
 This is arithmetic on list prices, not a measurement; the kit has not measured a follow-up
 task both ways.
 
@@ -122,8 +125,9 @@ must pass; integration steps are not in it.
 
 ## What a second model should attack
 
-- Whether 1b's default rule (three times P, cache lifetime, same files) is sound or needs a
-  measurement first, and what observable replaces "same files" when the lead cannot tell.
+- Whether 1b's heuristic (warm within the cache lifetime, and a short next task or one that
+  needs most of the held context) is sound or needs a measurement first, and what observable
+  replaces "needs most of the held context" when the lead cannot tell.
 - Whether 2b's "remaining work" line is something a worker can estimate honestly.
 - Whether an automatic close on merge (1a) can ever destroy something the audited worktree
   removal does not already protect.
