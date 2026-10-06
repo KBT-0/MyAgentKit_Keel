@@ -71,13 +71,14 @@ class AcceptanceTests(unittest.TestCase):
         top = (ROOT / 'scripts/check_kit.py').read_text().split('\nROOT =')[0]
         with tempfile.TemporaryDirectory() as tmp:
             module = Path(tmp) / 'stale_probe.py'
+            # Without the prefix a kit check run hands its children, so the pyc lands in the tree.
+            env = {k: v for k, v in os.environ.items() if k != 'PYTHONPYCACHEPREFIX'}
             module.write_text('X = 1\n')
-            subprocess.run([sys.executable, '-c', 'import stale_probe'], cwd=tmp, check=True)
+            subprocess.run([sys.executable, '-c', 'import stale_probe'], cwd=tmp, env=env, check=True)
             stamp = module.stat().st_mtime_ns
             module.write_text('X = 2\n')
             os.utime(module, ns=(stamp, stamp))
             probe = [sys.executable, '-B', '-c', 'import stale_probe; print(stale_probe.X)']
-            env = {k: v for k, v in os.environ.items() if k != 'PYTHONPYCACHEPREFIX'}
             stale = subprocess.run(probe, cwd=tmp, env=env, capture_output=True, text=True)
             self.assertEqual(stale.stdout, '1\n', 'the stale-pyc condition was not produced')
             code = (top + '\nimport stale_probe, subprocess\nprint(stale_probe.X, sys.pycache_prefix, flush=True)\n'

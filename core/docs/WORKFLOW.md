@@ -429,12 +429,12 @@ would pay a session start for nothing. The lead merges and, as the integrating s
 the integration build.
 
 The threshold is {{OWNER_NAME}}'s decision from use. The only cost comparison of the two
-shapes is one task on 2026-10-03 (the kit's `docs/worker-cost-setups.md`): about 107 against 110
-requests, a cost equivalent of about 2.44M against 2.40M tokens. It measured the cost per
-worker on one task with one long wait, not wall-clock time, the throughput of several tasks,
-or the lead's own cost. Measure in passing: wall-clock from brief to merge, total tokens
-including the lead's, review rounds, and waits on an exclusive resource. The sample will be
-thin.
+shapes is one task on 2026-10-03 (the kit's `docs/worker-cost-setups.md`): about 107 against
+110 requests, a cost equivalent of about 2.44M against 2.40M tokens. It measured the cost
+per worker on one task with one long wait, not wall-clock time, the throughput of several
+tasks, or the lead's own cost. Measure in passing: wall-clock from brief to merge, total
+tokens including the lead's, review rounds, and waits on an exclusive resource. The sample
+will be thin.
 
 `scripts/spawn_worker.sh` (Claude Code overlay) opens the session in tmux with a brief file.
 The lead subscribes once for its idle notice and does not message it: every message to an
