@@ -495,12 +495,14 @@ self_test() {
   # in its volume serial and first 64 bits only; a volume with no FILE_ID_INFO fails closed.
   # The holder refuses a reparse point at the lock path, never reports a gate killed by a
   # signal as a pass, passes a failing gate's status on, and a killed holder leaves the lock
-  # with the gate it started. Each case
-  # runs a copy of this gate in a throwaway repository, so its lock is not the one this run
-  # holds, and asserts the outcome by its message. Two cases need a fake: the proof's own code,
-  # cut out of this file, runs with GetFileInformationByHandleEx replaced. The reparse point
-  # carries a non-Microsoft tag, which any user may set, so no case needs the privilege a
-  # symlink does: a guard whose case cannot run there is a FAIL, never a skip.
+  # with the gate it started. Each case runs a copy of this gate in a throwaway repository, so
+  # its lock is not the one this run holds, and asserts the outcome by its message AND its exit
+  # status. The copy exits 0 right after it holds the lock, so a guard that prints its refusal
+  # and then carries on fails its case, instead of failing later on project files the throwaway
+  # lacks. Two cases need a fake: the proof's own code, cut out of this file, runs with
+  # GetFileInformationByHandleEx replaced. The reparse point carries a non-Microsoft tag, which
+  # any user may set, so no case needs the privilege a symlink does: a guard whose case cannot
+  # run there is a FAIL, never a skip.
   if python3 -c 'import os, sys; sys.exit(0 if os.name == "nt" else 1)' 2>/dev/null; then
     cat > "$work/lockcase.py" <<'LOCKCASE'
 import ctypes, os, re, struct, subprocess, sys, time
@@ -525,7 +527,8 @@ def run(environment=None, wait=None):
     return subprocess.call(["sh", gate], env=environment, close_fds=False, timeout=wait)
 def claimed(claim):
     os.set_handle_inheritable(claim, True)
-    return dict(os.environ, GATE_LOCK_HELD=lock, GATE_LOCK_FD=str(claim))
+    # A run whose refusal is lost goes on to wait for the lock the case holds: 2 s, then 75.
+    return dict(os.environ, GATE_LOCK_HELD=lock, GATE_LOCK_FD=str(claim), GATE_LOCK_WAIT="2")
 if mode == "reparse":
     link = handle(lock, 0x40000000, 0, 2, 0x02200000)
     data = struct.pack("<IHH", 0x99, 8, 0) + bytes(range(1, 17)) + b"reparse!"
@@ -648,37 +651,40 @@ LOCKCASE
     refused="^FAIL \\[env\\]: GATE_LOCK_HELD names this checkout's lock, but this run did not inherit"
     for lock_case in other reader unheld readonly wide noid reparse killgate failgate killholder; do
       case_dir="$work/lock-$lock_case"
-      also=""
+      also=""; code=1
       case $lock_case in
         other)      want=$refused; label="a nested run refuses a writable handle on another file while the lock is held" ;;
         reader)     want=$refused; label="a nested run refuses a read-only handle on the held lock file" ;;
         unheld)     want=$refused; label="a nested run refuses a write handle on the lock file while nothing holds it" ;;
         readonly)   want=$refused; label="a nested run refuses a fresh open that failed for a reason other than the lock" ;;
-        wide)       want='^lockcase: proof exit 1$'
+        wide)       want='^lockcase: proof exit 1$'; code=0
                     label="a nested run refuses a file id equal to the lock's in its volume and first 64 bits only" ;;
-        noid)       want='^FAIL \[lock\]: the volume holding .* no stable file id'; also='^lockcase: proof exit 3$'
+        noid)       want='^FAIL \[lock\]: the volume holding .* no stable file id'; also='^lockcase: proof exit 3$'; code=0
                     label="a nested run on a volume without FILE_ID_INFO fails closed" ;;
         reparse)    want='^FAIL \[lock\]: cannot open .*reparse point'; label="the gate lock refuses a reparse point at the lock path" ;;
-        killgate)   want='^lockcase: a gate killed by a signal exited [1-9]'; label="a gate killed by a signal never exits 0" ;;
-        failgate)   want='^lockcase: a gate that failed with 3 exited 3$'; label="the lock holder passes a failing gate's exit status on" ;;
-        killholder) want='^NOT RUN \[lock\]:'; label="a killed lock holder leaves the lock with the gate it started" ;;
+        killgate)   want='^lockcase: a gate killed by a signal exited [1-9]'; code=0; label="a gate killed by a signal never exits 0" ;;
+        failgate)   want='^lockcase: a gate that failed with 3 exited 3$'; code=0; label="the lock holder passes a failing gate's exit status on" ;;
+        killholder) want='^NOT RUN \[lock\]:'; code=75; label="a killed lock holder leaves the lock with the gate it started" ;;
       esac
-      # The copy stops or kills itself right after it holds the lock, when a case asks it to.
+      # The copy stops or kills itself right after it holds the lock, when a case asks it to,
+      # and otherwise passes there: the success a lost refusal would reach.
       if ! { ( fixture_env; git init -q "$case_dir" ) && mkdir "$case_dir/scripts" &&
              awk '/^work=\$\(mktemp -d\)/ {
                     print "[ -z \"${LOCKCASE_HOLD:-}\" ] || { : > \"$LOCKCASE_HOLD\"; sleep 10; exit 0; }"
                     print "[ -z \"${LOCKCASE_KILL:-}\" ] || { : > \"$LOCKCASE_KILL\"; kill -9 $$; }"
-                    print "[ -z \"${LOCKCASE_FAIL:-}\" ] || { : > \"$LOCKCASE_FAIL\"; exit 3; }" }
+                    print "[ -z \"${LOCKCASE_FAIL:-}\" ] || { : > \"$LOCKCASE_FAIL\"; exit 3; }"
+                    print "echo \"lockcase: the copy of the gate got past the lock\"; exit 0" }
                   { print }' "$0" > "$case_dir/scripts/check.sh"; }; then
         echo "  FAIL — could not build the throwaway repository for the Windows lock case: $label"
         st_fail=1; continue
       fi
       out=$(python3 "$work/lockcase.py" "$lock_case" "$(cygpath -m "$case_dir/.git/check.lock")" \
-              "$(cygpath -m "$case_dir/scripts/check.sh")" 2>&1)
-      if printf '%s\n' "$out" | grep -q "$want" && { [ -z "$also" ] || printf '%s\n' "$out" | grep -q "$also"; }; then
+              "$(cygpath -m "$case_dir/scripts/check.sh")" 2>&1); status=$?
+      if [ "$status" -eq "$code" ] && printf '%s\n' "$out" | grep -q "$want" &&
+         { [ -z "$also" ] || printf '%s\n' "$out" | grep -q "$also"; }; then
         echo "  ok   — $label"
       else
-        echo "  FAIL — $label: not refused, or the case could not run:"
+        echo "  FAIL — $label: not refused (exit $status, $code wanted), or the case could not run:"
         printf '%s\n' "$out" | tail -3 | sed 's/^/           /'
         st_fail=1
       fi
