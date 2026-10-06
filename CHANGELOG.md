@@ -390,9 +390,9 @@ from, and `5c80c36` is the kit's v0.8 commit.
    copy). Start from a committed project: the next item compares each merged file with
    `HEAD`. Conflicts are left in the file as `<<<<<<<` markers for the next item:
    ```sh
-   for f in AGENTS.md docs/DEV_SETUP.md docs/GOTCHAS.md docs/HANDOFF.md docs/REVIEW_GATE.md \
-       docs/STATE.md docs/USAGE.md docs/WORKFLOW.md scripts/check.sh scripts/review.sh \
-       scripts/boundary_selftests.sh; do
+   for f in AGENTS.md docs/ARCHITECTURE.md docs/DEV_SETUP.md docs/GOTCHAS.md docs/HANDOFF.md \
+       docs/PHASES.md docs/REVIEW_GATE.md docs/STATE.md docs/USAGE.md docs/WORKFLOW.md \
+       scripts/check.sh scripts/review.sh scripts/boundary_selftests.sh; do
      git -C "$KIT" show "5c80c36:core/$f" > "$f.v0.8" && git merge-file "$f" "$f.v0.8" "$KIT/core/$f"
      rm -f "$f.v0.8"
    done
@@ -460,7 +460,7 @@ from, and `5c80c36` is the kit's v0.8 commit.
    run now fails `FAIL [env]` on them; pass `--fallback` to `scripts/review.sh` in any
    automation that relied on automatic reviewer failover; a repository with Git LFS, a
    clean filter or `ident` in the review scope cannot use `review.sh`, so use the manual
-   template in `docs/REVIEW_GATE.md`; and where `.gitignore` says `node_modules/` and
+   template in `docs/REVIEW_RUNNING.md`, "Template to paste"; and where `.gitignore` says `node_modules/` and
    `node_modules` is a symlink, write `node_modules` without the slash.
 11. **ACTION:** Move aside the review usage records that v0.7 and v0.8 wrote with an empty
    task id, which now stop every review: find them with
