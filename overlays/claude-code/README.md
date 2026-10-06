@@ -86,7 +86,8 @@ person; for WAITING it prints what waits and the last lines of the pane, so the 
 the owner. Otherwise it ends after `--max-minutes` (110) with one line saying nothing waited.
 It reads each pane every `--interval` seconds (45, at least 10) with `tmux capture-pane`,
 which costs the worker nothing. A pane of a live session that cannot be read is exit 3 with
-`watch_workers: NAME: capture failed: ...` on stderr, never "nothing waiting". It stops at
+`watch_workers: NAME: capture failed: ...` on stderr, never "nothing waiting": the lead then
+looks at that tab itself and reruns the watcher once the session answers. It stops at
 its first report: while work remains, the lead starts it again after every report but DONE
 and GONE, and after its window ends.
 
@@ -252,8 +253,9 @@ The worker scripts (`spawn_worker.sh`, `show_workers.sh`, `watch_workers.sh`,
 where they exist. A copy from before the header is a sync conflict, and the sync copies
 nothing until it is resolved. The sync never installs an overlay file that is absent, so
 moving the copy aside is not enough: keep the old copy aside, copy the kit's current
-`overlays/claude-code/files/scripts/<name>` into place, carry your edits over into the
-project's own files by hand (`docs/UPDATING.md`), then sync.
+`overlays/claude-code/files/scripts/<name>` into place, then sync. The new copy is kit-owned
+and the next sync overwrites it, so an edit is never carried into it: a project that must
+keep one records it in `docs/GOTCHAS.md` or puts it in a wrapper script of its own.
 
 ## Finished worktrees are removed after a merge, and only those
 

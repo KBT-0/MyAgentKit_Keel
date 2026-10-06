@@ -228,8 +228,9 @@ EOF
 
   An overlay file listed is the kit's own file from an earlier version. Replace each one
   with the kit's current copy below, then sync again. A symlink or a symlinked folder on the
-  way becomes a real file or folder first. A project that edited its copy carries those
-  edits into the new copy by hand.$overlay_fix
+  way becomes a real file or folder first. The new copy is kit-owned and the next sync
+  overwrites it: a project that must keep an edit records it in docs/GOTCHAS.md or puts it
+  in a wrapper script of its own.$overlay_fix
 EOF
   exit 1
 fi
