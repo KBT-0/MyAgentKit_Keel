@@ -228,6 +228,13 @@ in `RESEARCH_LOG.md` (2026-10-03). Most of the files below are project-owned, so
   percent of the window used (the lead decides: finish, compact or hand off). The lead
   decides per task whether a finished session is reused or closed, from that figure, the
   idle time and the next task's length (`docs/worker-lifecycle-options.md` has the costs).
+  `scripts/close_worker.sh NAME` closes a finished worker: it ends the tmux session (the
+  terminal tab closes with it), waits up to 15 s for its processes to go, and removes the
+  worktree through the same audit as the hook (`clean_worktrees.sh --apply --only=NAME
+  --no-quiet`: the quiet period alone is lifted for that one worktree, because the lead has
+  just decided the work is finished; the hook never lifts it); the branch is never deleted.
+  `spawn_worker.sh`, `show_workers.sh`, `watch_workers.sh` and `waiting_patterns.txt` now
+  carry the KIT-OWNED header, so a sync updates them where they exist.
 - **Finished worker worktrees are removed after a merge, and only when nothing in them can
   be lost.** The new kit-owned `.githooks/post-merge` runs `scripts/clean_worktrees.sh
   --apply` (Claude Code overlay) after every merge that git completes in the main worktree.
@@ -358,7 +365,7 @@ from, and `5c80c36` is the kit's v0.8 commit.
    `test_agent_usage.py`, `test_claude_bridge.py`, `test_codex_quota.py`. With the Claude
    Code overlay also copy `scripts/spawn_worker.sh`, `scripts/show_workers.sh`,
    `scripts/watch_workers.sh`, `scripts/waiting_patterns.txt`,
-   `scripts/clean_worktrees.sh` and `scripts/clean_worktrees.py` from
+   `scripts/clean_worktrees.sh`, `scripts/clean_worktrees.py` and `scripts/close_worker.sh` from
    `$KIT/overlays/claude-code/files/scripts/`, and `.claude/worktree-disposable` from
    `$KIT/overlays/claude-code/files/.claude/` (the sync never adds an overlay file that is
    missing; `chmod +x` the `.sh` files and `git add --chmod=+x` them); list your
