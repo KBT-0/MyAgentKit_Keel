@@ -65,7 +65,7 @@ for name; do
     say "$name: dry run: would end tmux session $name (tmux kill-session -t =$name) and wait up to 15 s for it; while it runs, the audit below keeps its worktree"
   elif tmux kill-session -t "=$name" 2>/dev/null; then
     say "$name: tmux session ended; the terminal tab attached to it closes by itself"
-    wt=""; [ -z "$top" ] || wt=$(cd -P -- "$top/.claude/worktrees/$name" 2>/dev/null && pwd -P) || wt=""
+    wt=""; [ -z "$top" ] || wt=$(CDPATH= cd -P -- "$top/.claude/worktrees/$name" 2>/dev/null && pwd -P) || wt=""
     i=0; on=""
     while :; do
       if tmux has-session -t "=$name" 2>/dev/null; then w="the tmux session to end"
