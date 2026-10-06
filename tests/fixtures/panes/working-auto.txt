@@ -1,0 +1,6 @@
+✽ Crafting… (29s · ↓ 1.6k tokens)
+────────────
+❯
+────────────
+  📁a-worker (worktree-a…) │ 💰$0.34 │ 5h ██░░░░░░░░18% ⏰2h49m │ 7d ███░░░░░░░33% ⏰5d04h │ Opus 5.5 58k/1.0M high
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents

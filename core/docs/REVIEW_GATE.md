@@ -57,6 +57,12 @@ surface. For this project:
   A gate diff is reviewed for one question above all others: *has this been observed going
   RED, and does an automated negative test keep it that way?*
 
+**A change outside this list does not require a review.** {{OWNER_NAME}}'s own check, or the
+manual check that the brief names, is its acceptance. A lead does not send such a change
+through this gate by default. When a lead asks for a review anyway, it states the specific
+doubt the review is to settle. In one project a change outside the list went through review
+although no rule required it.
+
 ## What the reviewer reads
 
 Root `AGENTS.md` → `docs/ARCHITECTURE.md` → the diff → ALL callers of every changed public

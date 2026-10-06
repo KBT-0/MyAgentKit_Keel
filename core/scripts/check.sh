@@ -6,9 +6,11 @@
 # has the exit-126 case that kept a pipeline red for weeks). Check the pipeline after
 # pushing; do not infer it from a local pass.
 #
-# Usage: check.sh [--self-test]
-#   default      run the gates
-#   --self-test  prove the gates actually go RED (the block near the bottom)
+# Usage: check.sh [--self-test | --for-commit]
+#   default       run the gates
+#   --self-test   prove the gates actually go RED (the block near the bottom)
+#   --for-commit  what .githooks/pre-commit runs: the gates, without the build when the
+#                 staged change is documentation only (section 4 decides; the flag only asks)
 #
 # ADDING A GATE: add the check, AND add a case to self_test(). A gate without a negative
 # test has not been proven to fail — it has only been seen passing, which is not the same
@@ -60,7 +62,8 @@ esac
 # SELF-TEST SEAMS are honoured ONLY in the self-test's own nested runs. Each one exists so a
 # case can point a gate at a synthetic input, which means each one can also turn a gate green
 # without its work: GATE_BUILD_CMD_OVERRIDE=true skips the build, GATE_SELFTEST_STATE_FILE reads another
-# file, GATE_SELFTEST_HISTORY another repository's history. The commit hook inherits the committer's environment, so a variable left exported in
+# file, GATE_SELFTEST_HISTORY another repository's history, GATE_SELFTEST_COMMIT_REPO another
+# repository's index for the documentation-only commit (section 4). The commit hook inherits the committer's environment, so a variable left exported in
 # a profile or a CI step, or typed by an agent facing a red build, did exactly that. A run
 # that finds one without the self-test's marker FAILS and names it; it does not unset it and
 # carry on, because then the run that someone believed was overridden reports on something
@@ -119,7 +122,7 @@ if [ -z "$inherited" ] || [ -z "${GATE_SELFTEST_NESTED:-}" ] ||
    [ "$(cat "$lock_path" 2>/dev/null)" != "$GATE_SELFTEST_NESTED" ]; then
   for seam in GATE_BUILD_CMD_OVERRIDE GATE_SELFTEST_STATE_FILE GATE_SELFTEST_PROJECT_FILE BOUNDARY_CHECKS_FILE \
               BOUNDARY_SELFTESTS_FILE GATE_SELFTEST_EXTRA_FILE GATE_SELFTEST_BREAK_SCANNER \
-              GATE_SELFTEST_HISTORY; do
+              GATE_SELFTEST_HISTORY GATE_SELFTEST_COMMIT_REPO; do
     eval "seam_value=\${$seam:-}"
     [ -z "$seam_value" ] || { echo "FAIL [env]: $seam is set; self-test overrides are not honoured outside --self-test"; fail=1; }
   done
@@ -468,6 +471,48 @@ self_test() {
     st_fail=1
   fi
 
+  # --- a documentation-only commit skips the build, and only the build ------------
+  # The decision reads a throwaway repository's index (GATE_SELFTEST_COMMIT_REPO), never this
+  # one's. The build is `false` throughout, so a run that reached it fails.
+  docs_repo="$work/docs-commit"
+  if git init -q "$docs_repo" && printf 'int x;\n' > "$docs_repo/code.c" &&
+     git -C "$docs_repo" add code.c &&
+     git -C "$docs_repo" -c user.name=t -c user.email=t@example.invalid -c core.hooksPath=/dev/null \
+         -c commit.gpgsign=false commit -q -m base &&
+     printf 'a\n' > "$docs_repo/a.md" && printf 'b\n' > "$docs_repo/b.md" &&
+     git -C "$docs_repo" add a.md b.md; then
+    out=$(env GATE_SELFTEST_COMMIT_REPO="$docs_repo" GATE_BUILD_CMD_OVERRIDE=false sh "$0" --for-commit 2>&1)
+    if printf '%s\n' "$out" | grep -qx 'CHECK: PASS (build not run: documentation-only commit, 2 files)'; then
+      echo "  ok   — a commit of two documents skips the build and says so in the PASS line"
+    else
+      echo "  FAIL — a commit of two documents ran the build, or passed without saying it skipped it."
+      st_fail=1
+    fi
+    if env GATE_SELFTEST_COMMIT_REPO="$docs_repo" GATE_BUILD_CMD_OVERRIDE=false sh "$0" >/dev/null 2>&1; then
+      echo "  FAIL — a manual run with only documents staged skipped the build."
+      st_fail=1
+    else
+      echo "  ok   — a manual run with only documents staged still runs the build"
+    fi
+    if env GATE_SELFTEST_COMMIT_REPO="$docs_repo" GATE_BUILD_CMD_OVERRIDE=true GATE_SELFTEST_EXTRA_FILE="$inj" \
+         sh "$0" --for-commit >/dev/null 2>&1; then
+      echo "  FAIL — a documentation-only commit skipped the placeholder scan as well as the build."
+      st_fail=1
+    else
+      echo "  ok   — a documentation-only commit still fails an unfilled placeholder"
+    fi
+    printf 'int y;\n' > "$docs_repo/code.c" && git -C "$docs_repo" add code.c
+    if env GATE_SELFTEST_COMMIT_REPO="$docs_repo" GATE_BUILD_CMD_OVERRIDE=false sh "$0" --for-commit >/dev/null 2>&1; then
+      echo "  FAIL — a commit of documents and a code file skipped the build."
+      st_fail=1
+    else
+      echo "  ok   — a commit of documents and a code file runs the build"
+    fi
+  else
+    echo "  FAIL — could not build the throwaway repository for the documentation-only cases"
+    st_fail=1
+  fi
+
   # --- scanner integrity ------------------------------------------------------
   # The switch makes scan_grep report failure the way a broken grep would. This proves the
   # flag-file plumbing end to end — a failed scan cannot end in CHECK: PASS — though not a
@@ -516,10 +561,12 @@ self_test() {
   return 1
 }
 
+for_commit="" pass_note=""
 case "${1:-}" in
   "")           ;;
   --self-test)  self_test; exit $? ;;
-  *)            echo "usage: check.sh [--self-test]"; exit 2 ;;
+  --for-commit) for_commit=1 ;;
+  *)            echo "usage: check.sh [--self-test | --for-commit]"; exit 2 ;;
 esac
 
 # Every scan, filter and boundary check below reads text in the C locale. In a UTF-8 locale
@@ -836,6 +883,10 @@ fi
 # deploy configuration in its own CI step, or document an allow rule for that exact command.
 build_test_cmd="{{BUILD_TEST_COMMAND}}"
 [ -n "${GATE_BUILD_CMD_OVERRIDE:-}" ] && build_test_cmd="$GATE_BUILD_CMD_OVERRIDE"
+# A commit that changes only documentation skips the build/test command, and nothing else:
+# every scan and check above has run. A project's gate built for minutes on every such commit.
+# 1: on. 0: off, for a project whose build reads markdown (a documentation site, doc tests).
+docs_only_skip_build=1
 # Tested with its whitespace stripped: an all-blank command reaches `sh -c` as a no-op that
 # exits 0, which is a green gate with no build — the unconfigured case wearing spaces.
 case "$(printf '%s' "$build_test_cmd" | tr -d '[:space:]')" in
@@ -845,26 +896,71 @@ case "$(printf '%s' "$build_test_cmd" | tr -d '[:space:]')" in
     echo "              so that the choice is visible in the diff instead of implied."
     fail=1 ;;
   *)
-    # Quiet when it passes; on failure the summary line, then the TAIL, never a filter. The
-    # lines that locate a compile error ("In function", "required from", "note:") do not
-    # match "error", and a gate that printed only matching lines sent a CI-only failure out
-    # with its location cut away. The whole output stays in $build_log for a local run. On CI
-    # that file vanishes with the runner and the first error of a long chain sits above any
-    # tail, so CI prints the whole log.
-    # ponytail: a fixed tail; raise build_tail if your diagnostic chains run longer.
-    build_tail=150
-    ( if [ -n "$caller_lc_all_set" ]; then LC_ALL=$caller_lc_all; else unset LC_ALL; fi
-      exec sh -c "$build_test_cmd" ) > "$build_log" 2>&1
-    rc=$?
-    if [ "$rc" -ne 0 ] && [ -n "${CI:-}" ]; then
-      echo "FAIL [build]: the build/test command exited $rc. Its whole output follows (CI)."
-      cat "$build_log"
-      fail=1
-    elif [ "$rc" -ne 0 ]; then
-      echo "FAIL [build]: the build/test command exited $rc. Its last $build_tail lines follow;"
-      echo "              the whole output is in $build_log"
-      tail -n "$build_tail" "$build_log"
-      fail=1
+    # The path is taken only when .githooks/pre-commit asks (--for-commit) and the INDEX shows
+    # a documentation-only change; the caller cannot declare one. Documentation-only: at least
+    # one change against HEAD, renames off (a code file renamed to .md is a deletion of code),
+    # every path ending in .md, and each added, modified or deleted entry a regular file
+    # (mode 100644 or 100755: a symlink or a submodule is not documentation). Any doubt runs
+    # the build: no HEAD yet, a merge in progress, a git error, an entry that does not parse.
+    # The diff is against HEAD, which for an amend is the tree being amended: the build last
+    # vouched for HEAD, and the commit differs from it only by these documents. A clean
+    # `git merge` never comes here: pre-merge-commit asks for the full gate.
+    docs_only=""
+    if [ -n "$for_commit" ] && [ "$docs_only_skip_build" = 1 ]; then
+      docs_only=$(python3 -c '
+import os, subprocess, sys
+repo, env = sys.argv[1], dict(os.environ)
+if repo != ".":
+    env = {k: v for k, v in env.items() if not k.startswith("GIT_") or k.startswith("GIT_CONFIG")}
+def git(*args):
+    return subprocess.run(("git",) + args, cwd=repo, env=env, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+if git("rev-parse", "-q", "--verify", "HEAD").returncode != 0:
+    sys.exit(1)
+if git("rev-parse", "-q", "--verify", "MERGE_HEAD").returncode != 1:
+    sys.exit(1)
+diff = git("diff", "--cached", "--raw", "--no-renames", "-z", "HEAD", "--")
+fields = diff.stdout.split(b"\0")
+if diff.returncode != 0 or fields.pop() != b"" or not fields or len(fields) % 2:
+    sys.exit(1)
+regular = (b"100644", b"100755")
+for meta, path in zip(fields[0::2], fields[1::2]):
+    parts = meta.split(b" ")
+    if len(parts) != 5 or parts[0][:1] != b":" or not path.endswith(b".md"):
+        sys.exit(1)
+    old, new, status = parts[0][1:], parts[1], parts[4]
+    if not ((status == b"A" and new in regular) or (status == b"D" and old in regular) or
+            (status == b"M" and old in regular and new in regular)):
+        sys.exit(1)
+print(len(fields) // 2)
+' "${GATE_SELFTEST_COMMIT_REPO:-.}" 2>/dev/null) || docs_only=""
+      case "$docs_only" in ""|0|*[!0-9]*) docs_only="" ;; esac
+    fi
+    if [ -n "$docs_only" ]; then
+      if [ "$docs_only" = 1 ]; then unit=file; else unit=files; fi
+      pass_note=" (build not run: documentation-only commit, $docs_only $unit)"
+      echo "NOTE [build]: not run: every path this commit changes is documentation ($docs_only $unit)."
+    else
+      # Quiet when it passes; on failure the summary line, then the TAIL, never a filter. The
+      # lines that locate a compile error ("In function", "required from", "note:") do not
+      # match "error", and a gate that printed only matching lines sent a CI-only failure out
+      # with its location cut away. The whole output stays in $build_log for a local run. On CI
+      # that file vanishes with the runner and the first error of a long chain sits above any
+      # tail, so CI prints the whole log.
+      # ponytail: a fixed tail; raise build_tail if your diagnostic chains run longer.
+      build_tail=150
+      ( if [ -n "$caller_lc_all_set" ]; then LC_ALL=$caller_lc_all; else unset LC_ALL; fi
+        exec sh -c "$build_test_cmd" ) > "$build_log" 2>&1
+      rc=$?
+      if [ "$rc" -ne 0 ] && [ -n "${CI:-}" ]; then
+        echo "FAIL [build]: the build/test command exited $rc. Its whole output follows (CI)."
+        cat "$build_log"
+        fail=1
+      elif [ "$rc" -ne 0 ]; then
+        echo "FAIL [build]: the build/test command exited $rc. Its last $build_tail lines follow;"
+        echo "              the whole output is in $build_log"
+        tail -n "$build_tail" "$build_log"
+        fail=1
+      fi
     fi ;;
 esac
 
@@ -880,4 +976,4 @@ if [ -e "$work/scan_failed" ]; then
   fail=1
 fi
 
-if [ "$fail" -eq 0 ]; then echo "CHECK: PASS"; else echo "CHECK: FAIL"; exit 1; fi
+if [ "$fail" -eq 0 ]; then echo "CHECK: PASS${pass_note:-}"; else echo "CHECK: FAIL"; exit 1; fi

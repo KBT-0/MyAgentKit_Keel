@@ -17,7 +17,8 @@ sentences, one instruction per sentence, one term per thing. State each requirem
    A task with web access also quotes the web rule: no personal data in any request, and the
    generic User-Agent to use (`docs/WORKFLOW.md`, "Web requests carry no personal data").
 4. **Acceptance:** what the diff must and must NOT contain, and which gate follows (a risky
-   area means `docs/REVIEW_GATE.md`, fresh session).
+   area means `docs/REVIEW_GATE.md`, fresh session). Any other change needs no review;
+   {{OWNER_NAME}}'s check or the manual check named here accepts it.
 5. **Routing check:** does this task belong on the model it is being sent to? Judgement work
    — architecture, contracts, risky diffs — goes to the strongest model; bulk, mechanical,
    well-specified work goes to the cheaper one. If the requested route violates that, say so
@@ -30,6 +31,9 @@ sentences, one instruction per sentence, one term per thing. State each requirem
    visible in the run". Not "it works", not "tests added" — something the implementer can
    run and {{OWNER_NAME}} can re-run. If a stated check could not be executed, the
    implementer reports "not run". It is never assumed.
+   **Proof:** the cheapest check that proves this change, which the worker runs instead of
+   the expensive build; the integrating session builds after the merge. A brief with no
+   Proof line means the worker runs `./scripts/check.sh` (`docs/WORKFLOW.md`, "Worker cost").
    The implementer's report has a word cap: 350 words unless the brief sets another. Its two sections
    "Not run / not verified" and "Noticed, not fixed" are always present, outside the cap.
 7. **If ambiguous: STOP and ask.** Do not assume, do not invent scope, do not widen the task
@@ -78,11 +82,13 @@ Read: AGENTS.md, docs/PHASES.md, docs/STATE.md, docs/ARCHITECTURE.md, <target fo
 TASK:   <one sentence — one module>
 SCOPE:  <the files you may touch>
 DO NOT: <explicit non-goals — and everything docs/PHASES.md puts out of scope>
-VERIFY: ./scripts/check.sh — never report a check you did not run
+PROOF:  <the cheapest check that proves this change; none named means ./scripts/check.sh>
+        — never report a check you did not run
 DONE:   <the command or observation that proves it>
 
 If this task touches {{RISKY_AREAS}}, or any gate/CI/check script: before commit, run the
 review gate per docs/REVIEW_GATE.md in a FRESH session, preferably a different tool.
+Any other change needs no review unless this brief names the doubt a review is to settle.
 
 When finishing: update docs/STATE.md with a tool+model trace (a follow-up task goes to
 docs/BACKLOG.md), then a short summary.

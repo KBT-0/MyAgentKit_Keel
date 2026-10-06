@@ -38,6 +38,71 @@ repository.
 | `scripts/clean_worktrees.sh` (+ `.py`) | Removes the finished worktrees under `.claude/worktrees`, only what it proves safe to lose, never a branch; `.githooks/post-merge` runs it after every merge git completes itself in the main worktree |
 | `.claude/worktree-disposable` | The project's list of folders a finished worktree may lose (build output) and its quiet period; ships empty, the interview fills it; without it the hook does nothing |
 
+## A worker session is always visible
+
+A spawned session can stop on a permission prompt, the folder-trust dialog or a question,
+and the idle notice does not fire for a session that waits inside a dialog: it hangs where
+nobody looks, for as long as nobody looks. Two scripts close that, both kit-owned.
+
+**`scripts/show_workers.sh NAME [NAME...]`** opens ONE terminal window with a tab per named
+tmux session, each running `tmux attach -t =NAME`. `spawn_worker.sh` calls it for every
+session it starts, once the brief has landed. A lead starting several passes `--batch` to each
+spawn and then shows them together, so they open as one window and not one at a time:
+
+```sh
+scripts/spawn_worker.sh w1 briefs/w1.md --batch
+scripts/spawn_worker.sh w2 briefs/w2.md --batch
+scripts/show_workers.sh w1 w2
+```
+
+What opens where:
+
+- **WSL with Windows Terminal**: one `wt.exe -w kit-<project folder> new-tab ...` call, a
+  tab per session. The window name is fixed per project, so a later call adds its tabs to
+  the window that holds the earlier ones: that is what `-w NAME` is documented to do; a
+  script on the WSL side can see that each tab attached, not which window it is in.
+  `KIT_WT` names another launcher than the `wt.exe` found on PATH or under `/mnt/c/Users`.
+- **macOS, iTerm2** (the lead runs in it, or it is installed and the lead does not run in
+  Terminal.app): a new window, a tab per session, through `osascript`.
+- **macOS, Terminal.app**: one window per session. Adding a tab there needs the
+  accessibility permission, which a script must not ask for; the output says so.
+- **Anything else**: nothing opens; the script prints `attach by hand: tmux attach -t NAME`
+  for each session and exits 0.
+
+A session counts as shown only once `tmux list-clients` lists a client for it within eight
+seconds; any other gets its attach line. A session that already has a client is skipped
+with a line, so running the command twice opens no second tab. A session name outside
+`[A-Za-z0-9_-]` is refused by name (it crosses into a Windows command line or an AppleScript
+string, where `;` starts another subcommand), and so is a session that does not exist: in
+both cases nothing opens and the exit status is 1. Every launch is bounded at five seconds;
+WSL interop down ("Exec format error") is one line plus the attach lines. `--print` prints
+the exact command and runs nothing. Closing a tab detaches; the session keeps running.
+Attaching resizes the tmux window to the new tab, and the worker's TUI redraws to it.
+
+**`scripts/watch_workers.sh NAME [NAME...]`** is run by the lead as a BACKGROUND command. It
+returns, and so re-invokes the lead, as soon as a named session is GONE or WAITING on a
+person; for WAITING it prints what waits and the last lines of the pane, so the lead can tell
+the owner. Otherwise it ends after `--max-minutes` (110) with one line saying nothing waited.
+It reads each pane every `--interval` seconds (45, at least 10) with `tmux capture-pane`,
+which costs the worker nothing.
+
+What counts as waiting is in ONE file, `scripts/waiting_patterns.txt`, which
+`spawn_worker.sh` uses too (for the trust dialog at start-up). A rule needs the dialog's own
+key hint on the pane's LAST line and its option line just above: a worker whose output
+quotes "Do you want to proceed?" is not waiting, and a phrase match anywhere said it was.
+Each rule is flagged:
+
+- **VERIFIED**: written from a real pane captured on the Claude Code version it names (the
+  trust dialog, a permission prompt and a question on 2.1.285; the captures are the kit's
+  test fixtures).
+- **UNVERIFIED**: a guess nobody has seen on a real pane (an older wording of the trust
+  dialog, any other numbered choice ending in "Esc to cancel"). It ships, because a missed
+  wait costs more than a false one.
+
+`scripts/watch_workers.sh --list-patterns` prints the table. Not covered: a session idle at
+its input box (the idle notice covers that), a dialog drawn differently by a later version
+(capture it, add the rule with its version), and a terminal other than the three above.
+
 ## Placeholders this overlay brings
 
 | Placeholder | What goes in |
