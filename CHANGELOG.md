@@ -281,7 +281,12 @@ in `RESEARCH_LOG.md` (2026-10-03). Most of the files below are project-owned, so
   once where the CPUs allow (sequential under four), rebuilds only the PATH directories a
   fixture must change, scales its child timeouts with the degree of parallelism, and prints
   one line per unit with its seconds (`--timing` for a table). About eight minutes down to
-  under two on a twenty-CPU host.
+  under two on a twenty-CPU host. The kit check reads bytecode only from a private folder
+  (a stale `.pyc` of the same size and second was read even under `-B`), the bridged review
+  prompt asks for runs only where the reviewer's tools can execute (in a `git archive`
+  copy; the bridged reviewers stay reason-only until the sandbox is widened), a `Done:` id
+  matches the state files in any case, and the kit check prints a `NOT RUN:` line for each
+  test that could not run on that host.
 - **Rules (issues #26, #27, #28, #31).** A web request carries no personal data
   (`docs/WORKFLOW.md` "Web requests carry no personal data", HANDOFF brief item 3,
   `docs/GOTCHAS.md`). A sub-agent returns its report as its final message; only a spawned
