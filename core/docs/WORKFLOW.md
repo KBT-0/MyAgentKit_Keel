@@ -412,9 +412,11 @@ Rules, binding for whoever routes workers:
    reads the tool's cost screen and runs `scripts/agent_cost.py --latest` and writes both
    into the handoff, so the next routing decision is made from a number.
 9. **A worker runs the cheapest check that proves its change; the expensive step runs
-   once.** The brief names that check in its **Proof:** line (`docs/HANDOFF.md`, "The
-   brief"); with none named, the worker runs `./scripts/check.sh`. The expensive build or
-   package step runs once, in the integrating session, after the merge: in one project every
+   once.** The commit gate, `./scripts/check.sh` through pre-commit, always runs; the brief's
+   **Proof:** line names what the worker runs for its claim beyond the gate, never instead of
+   it (`docs/HANDOFF.md`, "The brief"), and with none named the gate alone is the proof. The
+   expensive integration step outside the gate, a full build or package step, runs once, in
+   the integrating session, after the merge: in one project every
    worker built the whole package in its worktree (7 to 40 minutes each), and the lead built
    it again. A defect only the full build shows is then found at integration. So the
    integrating session builds after each merge when the build is cheap, and names the merge
@@ -439,9 +441,10 @@ will be thin.
 `scripts/spawn_worker.sh` (Claude Code overlay) opens the session in tmux with a brief file.
 The lead subscribes once for its idle notice and does not message it: every message to an
 idle session is a full-context turn. The idle notice also fires on every park on a
-background job, and the session does not end with its task. The result file is therefore
-the end signal. After reading it, the lead decides per task whether the session is reused or
-closed. It reuses a session that was active within the cache lifetime (one hour) when the
+background job, and the session does not end with its task. A committed result file of
+`Kind: completed` is therefore the end signal; a file of another kind reports a worker still
+working or waiting, and is never a reason to close it. After reading a completed one, the
+lead decides per task whether the session is reused or closed. It reuses a session that was active within the cache lifetime (one hour) when the
 next task is short or needs most of what the session holds. It closes the session when no
 next task fits what it holds, or when it has been idle past the cache lifetime (nothing warm
 is lost then). Closing is explicit: `scripts/close_worker.sh NAME` ends the tmux session (its
@@ -450,7 +453,9 @@ post-merge hook's, for that worktree alone. It never deletes the branch.
 
 The result file starts with a fixed head (`docs/HANDOFF.md`): `Kind:`, `Task:`, `Attempt:`
 and `Remaining:`, and only `Kind: completed` is done. The lead runs `scripts/watch_workers.sh
---result NAME=PATH NAME` as a background command once per spawn. It returns DONE, BLOCKED,
+--result NAME=PATH NAME` as a background command, and starts it again after every report
+but DONE and GONE while work remains, and after its window ends: it stops at its first
+report. It returns DONE, BLOCKED,
 HANDOFF or PROGRESS once the file is committed on a clean tree, QUESTIONS when the file holds
 open questions, CONTEXT when the session's context passes the warning line (50 percent by
 default), WAITING on a dialog, and GONE. The lead acts on the report's first line

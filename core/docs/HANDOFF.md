@@ -35,9 +35,11 @@ sentences, one instruction per sentence, one term per thing. State each requirem
    visible in the run". Not "it works", not "tests added" — something the implementer can
    run and {{OWNER_NAME}} can re-run. If a stated check could not be executed, the
    implementer reports "not run". It is never assumed.
-   **Proof:** the cheapest check that proves this change, which the worker runs instead of
-   the expensive build; the integrating session builds after the merge. A brief with no
-   Proof line means the worker runs `./scripts/check.sh` (`docs/WORKFLOW.md`, "Worker cost").
+   **Proof:** the cheapest check that proves this change beyond the commit gate. The gate
+   (`./scripts/check.sh`, which pre-commit runs on every commit) always runs; the Proof line
+   names what the worker runs for its claim on top of it, never instead of it. The expensive
+   integration step outside the gate runs once, in the integrating session, after the merge.
+   A brief with no Proof line means the gate alone (`docs/WORKFLOW.md`, "Worker cost").
    The implementer's report has a word cap: 350 words unless the brief sets another. Its two sections
    "Not run / not verified" and "Noticed, not fixed" are always present, outside the cap.
 7. **If ambiguous: STOP and ask.** Do not assume, do not invent scope, do not widen the task
@@ -57,10 +59,11 @@ finishes it carries `Done: <id>` and its line leaves `docs/STATE.md` in that sam
 A brief for a separate worker session (`scripts/spawn_worker.sh` in the Claude Code overlay)
 also ends with the path of its result FILE and these lines: "Commit the result file and
 leave the tree clean; the watcher reads it only then; a question written there reaches the
-owner only after that commit. The lead reuses or closes this session after reading the
-result file (`scripts/close_worker.sh NAME`); write the file last and stop."
+owner only after that commit. The lead reuses or closes this session after reading a
+`Kind: completed` result file (`scripts/close_worker.sh NAME`); write the file last and stop."
 The session does not end by itself when the task is done, and its idle notice also fires
-whenever it parks on a background job, so the result file is the only end signal.
+whenever it parks on a background job, so a committed `Kind: completed` result file is the
+only end signal. A file of any other kind reports a worker that is still working or waiting.
 
 The result file starts with four lines, exact keys, in this order:
 
@@ -114,7 +117,7 @@ Read: AGENTS.md, docs/PHASES.md, docs/STATE.md, docs/ARCHITECTURE.md, <target fo
 TASK:   <one sentence — one module>
 SCOPE:  <the files you may touch>
 DO NOT: <explicit non-goals — and everything docs/PHASES.md puts out of scope>
-PROOF:  <the cheapest check that proves this change; none named means ./scripts/check.sh>
+PROOF:  <the cheapest check beyond the commit gate that proves this change; none: the gate>
         — never report a check you did not run
 DONE:   <the command or observation that proves it>
 REVIEW: <inner: you review your diff with fresh sub-agents before reporting | lead: you
