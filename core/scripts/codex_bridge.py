@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import subprocess
 import tempfile
+import time
 import uuid
 import agent_process
 import agent_usage
@@ -73,6 +74,7 @@ def main(argv=None, result_sink=None):
     guard = agent_process.OneShot()
     guard.previous = agent_process.hold(guard)
     result = None
+    deadline = time.monotonic() + timeout
     try:
         # The reviewer's workspace is a throwaway copy inside this directory, removed with it
         # on every way out (threat model: claude_bridge.throwaway_copy). Its sandbox confines
@@ -82,7 +84,7 @@ def main(argv=None, result_sink=None):
             workdir = Path(tmp) / "copy"
             workdir.mkdir()
             throwaway_copy(repo, head, diff if scope == "uncommitted" else None, workdir,
-                           timeout=timeout)
+                           deadline=deadline)
             command = [os.environ.get("REVIEW_CLI_BIN", "codex"), "exec", "--json", "--ephemeral",
                        "-s", "workspace-write", "-c", "sandbox_workspace_write.network_access=false",
                        "--skip-git-repo-check", "-c", "model_reasoning_effort=" + args.effort,
@@ -106,7 +108,10 @@ def main(argv=None, result_sink=None):
             # during that restore raised before the return value was assigned.
             handed = {}
             try:
-                execution = agent_process.run(command, prompt, workdir, timeout, into=handed)
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise BridgeError("the review wall-clock limit passed during preparation")
+                execution = agent_process.run(command, prompt, workdir, remaining, into=handed)
                 if execution.pop("cancelled", False):
                     cancelled.append(True)
                 # A cancelled review must stop now, not start another CLI process to read quota.

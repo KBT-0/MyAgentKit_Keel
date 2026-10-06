@@ -143,6 +143,9 @@ def main(argv=None):
         if chain["failure_kind"] == "cli_unsupported":
             print("FAIL [review]: the installed CLI rejected a flag the review requires; "
                   "upgrade the CLI. The review never drops a sandbox flag to make a run start.")
+        if chain["failure_kind"] == "content_flagged":
+            print("FAIL [review]: the provider's content classifier stopped the review; run it "
+                  "again, or send a smaller scope (--commit, or a shorter --base range).")
         if chain["failure_kind"] == "stale_checkout":
             # Correct to fail: the reviewer reads files while it runs, so its findings may
             # describe a tree the archived diff and fingerprint do not. The fix is the caller's.
