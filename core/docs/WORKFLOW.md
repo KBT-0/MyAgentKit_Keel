@@ -71,6 +71,30 @@ deletion checkable.
   with tests" is.
 - Big work is split into a task list first — planning is itself a task.
 
+## The state, backlog and phase files
+
+The rules for `docs/STATE.md` are in `AGENTS.md`, "STATE.md discipline". This section keeps
+their reasons, so that the always-loaded files carry only the rules.
+
+- `docs/STATE.md` is read at the start of every session, in every tool, so its length is a
+  bill paid every session. What is planned next, and what was parked on purpose, is a
+  backlog, and it lives in `docs/BACKLOG.md`, which is read only when the next task is chosen.
+- Pruning without harvesting buries the lesson in the git history, and nobody looks there —
+  git is an audit trail, not a knowledge base.
+- Completed work is deleted, not marked DONE: the dates live in git
+  (`git log -p -- docs/STATE.md`). The state templates name no example task id, because
+  those files are the ones checked ("Task ids").
+- An operation's detail lives in its own file, `docs/<OPERATION>.md`, never in STATE.md. The
+  operation file tracks progress with checkboxes; its last acceptance item is "STATE.md
+  harvested and pruned", and the file is deleted when the operation closes (the history is
+  in git). Without this rule every integration folds more into STATE.md, and it only grows:
+  one project's state file reached 38 KB.
+- No size limit applies to STATE.md. A limit cannot tell a live line from a finished one,
+  and a project that added one hit it again and again while half the file was backlog and
+  much of the rest narrated work already in git.
+- Compressed chat styles do not apply to STATE.md: the next tool reading it knows nothing
+  about your plugins.
+
 ## Writing a gate
 
 Gates get their own rules because they fail differently from ordinary code: when a gate
