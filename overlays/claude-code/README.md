@@ -271,7 +271,8 @@ then stays quiet.
   device than its parent folder), or, on Linux, one `/proc/self/mountinfo` lists, its paths
   compared as the bytes the kernel gives: only that table shows a bind mount on the same device. On macOS and other systems a bind
   mount on the same device cannot be seen; a mount on another device is seen everywhere. On
-  Linux without a readable mount table every worktree is kept.
+  Linux without a readable mount table every worktree is kept. A mount at the worktree's own
+  `.git` file counts too: git would delete the tracked files and its git directory first.
 - **Case.** On every file system, whatever it does with case, the places that hold work
   (`docs`, `.claude`, `.myagentkit`, `scripts`, `.git`) and the worktree's own
   `.claude/worktrees` are compared case-folded, as macOS compares names: `Docs/build` is under

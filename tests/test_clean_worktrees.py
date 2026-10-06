@@ -1946,6 +1946,33 @@ class CleanWorktreesTests(unittest.TestCase):
         # Without a mount, plain text in its git directory holds nothing, and goes with it.
         self.assertRemoved(path, self.run_script('--apply'))
 
+    def test_the_quiet_check_does_not_walk_into_a_mount_in_its_git_directory(self):
+        # Codex: the quiet check walked the git directory without the mount table, so a bind
+        # mount on the same device under it was read in full before the worktree was kept.
+        path = self.worktree('done')
+        archive = Path(os.path.realpath(self.gitdir(path))) / 'archive'
+        (archive / 'deep').mkdir(parents=True)
+        (archive / 'deep/f').write_text('f\n')
+        scan = ('real_scandir = os.scandir\n'
+                'def scandir(path):\n'
+                '    if os.fsencode(path).startswith(os.fsencode(values[0])):\n'
+                '        sys.stderr.write("scanned inside the mount: %s\\n" % os.fsdecode(path))\n'
+                '        os._exit(9)\n'
+                '    return real_scandir(path)\n'
+                'os.scandir = scandir\n')
+        self.env = dict(self.env, CLEAN_WORKTREES_MOUNTINFO=self.mountinfo(os.fsencode(archive)))
+        self.assertKept(path, self.drive(scan, str(archive)), "its git directory holds a mount point: what git "
+                        "would delete under it is not the worktree's: archive\n")
+
+    def test_a_mount_at_its_own_git_file_keeps_it(self):
+        # A reviewer, reproduced: a mount at <worktree>/.git was skipped as git's own file; git
+        # deleted the tracked files and its git directory, then failed (EBUSY).
+        path = self.worktree('done')
+        real = os.fsencode(os.path.realpath(path))
+        self.assertKept(path, self.run_script('--apply', CLEAN_WORKTREES_MOUNTINFO=self.mountinfo(real + b'/.git')),
+                        "holds a mount point: what git would delete under it is not the worktree's: .git\n")
+        self.assertRemoved(path, self.run_script('--apply'))
+
     def test_the_walk_does_not_go_into_a_mount_point(self):
         # A reviewer: a mount is counted, never walked; a whole disk under one is not read.
         root = self.tmp / 'root'
@@ -2081,7 +2108,9 @@ class CleanWorktreesTests(unittest.TestCase):
         # Case: a place that holds work under any spelling, an entry byte for byte (either only
         # ever keeps more).
         for rel, entries in ((b'Docs/build/x', [b'build']), (b'a/BUILD/x', [b'build']), (b'a/Build/x', [b'build']),
-                             (b'App/Build/x', [b'app/build']), (b'.GIT/build/x', [b'build'])):
+                             (b'App/Build/x', [b'app/build']), (b'.GIT/build/x', [b'build']),
+                             # A long s folds to s (`scripts`) under casefold, not under lower.
+                             (b'\xc5\xbfcripts/build/x', [b'build'])):
             with self.subTest(rel=rel, entries=entries):
                 self.assertIs(clean_worktrees.disposable(rel, entries), False)
 

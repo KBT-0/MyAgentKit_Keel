@@ -398,7 +398,7 @@ def walk(root, mounts=frozenset()):
     """(rel, lstat, is a folder, is a mount point) for every entry under ROOT, the root itself as
     b'', never through a symlink nor into a mount point: an entry MOUNTS lists, or on another
     device than ROOT (the root: than its parent folder). The worktree's own `.git` file is git's,
-    not content."""
+    not content, unless it is a mount point."""
     top = os.lstat(root)
     mount = root in mounts or top.st_dev != os.lstat(os.path.dirname(root)).st_dev
     yield b'', top, True, mount
@@ -408,12 +408,12 @@ def walk(root, mounts=frozenset()):
         with os.scandir(os.path.join(root, folder) if folder else root) as entries:
             for item in entries:
                 rel = folder + b'/' + item.name if folder else item.name
-                if rel == b'.git':
-                    continue
                 path = os.path.join(root, rel)
                 info = os.lstat(path)
                 is_dir = stat.S_ISDIR(info.st_mode)
                 mount = path in mounts or info.st_dev != top.st_dev
+                if rel == b'.git' and not mount:
+                    continue
                 if is_dir and not mount:
                     stack.append(rel)
                 yield rel, info, is_dir, mount
@@ -733,7 +733,7 @@ def audit(record, ctx):
         return []
 
     def quiet_gitdir():
-        return too_recent(max(changed(info) for _, info, _, _ in walk(gitdir)), ctx, 'its git directory')
+        return too_recent(max(changed(info) for _, info, _, _ in walk(gitdir, mount_points(ctx['mountinfo']))), ctx, 'its git directory')
 
     def operations():
         found = [op for op in OPERATIONS if os.path.lexists(os.path.join(gitdir, op))]

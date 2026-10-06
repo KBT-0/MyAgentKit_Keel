@@ -9,6 +9,7 @@
 #   a NAME (build, node_modules, dist, target, .venv) matches a folder of that name anywhere,
 #     except below a place that holds work (docs/build is not disposable);
 #   a root-relative PATH (app/build) matches that folder only, compared folder by folder.
+# Entries are matched exactly, case included (build is not Build).
 # Refused: an empty entry, an absolute path, "." or "..", and the places that hold work:
 # .git, docs, .claude, .myagentkit, scripts. The content of these folders must also be
 # git-ignored: `git worktree remove` refuses untracked files, and the worktree is then kept.
