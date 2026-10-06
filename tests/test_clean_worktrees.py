@@ -909,22 +909,31 @@ class CleanWorktreesTests(unittest.TestCase):
 
     def test_a_branch_or_path_that_cannot_be_printed_is_kept(self):
         # Through a git that reports the branch with a byte that is not UTF-8, on every file
-        # system; then for real where the file system takes such a name (APFS refuses it).
+        # system; then for real only where git and the file system took the name byte for byte
+        # (APFS refuses it: on macOS the branch is never made).
         reason = 'its path or branch name is not printable UTF-8: the command that brings it back could not be printed'
         path = self.worktree('done')
         out = self.run_script('--apply', SHIM='branch', **self.shim())
         self.assertKept(path, out, reason)
-        self.git('worktree', 'add', '-q', str(self.main / '.claude/worktrees/odd'), '-b',
-                 os.fsdecode(b'worktree-\xff'), check=False)
         odd = self.main / '.claude/worktrees/odd'
-        if odd.is_dir():
+        self.git('worktree', 'add', '-q', str(odd), '-b', os.fsdecode(b'worktree-\xff'), check=False)
+        refs = subprocess.run(['git', 'for-each-ref', '--format=%(refname)', 'refs/heads/'], cwd=self.main,
+                              env=self.env, stdout=subprocess.PIPE, check=True).stdout.split(b'\n')
+        if b'refs/heads/worktree-\xff' in refs and odd.is_dir():
             self.git('commit', '-q', '--allow-empty', '-m', 'work', cwd=odd)
             self.git('merge', '-q', os.fsdecode(b'worktree-\xff'))
             self.assertKept(odd, self.run_script('--apply'), reason)
+        else:
+            self.assertFalse(any(ref.startswith(b'refs/heads/worktree-') and ref != b'refs/heads/worktree-done'
+                                 for ref in refs), refs)
+            print('\non-disk variant not possible here: the file system or git refused the branch '
+                  "b'worktree-\\xff'; the injected variant above stands for it")
+        # A newline is printable to no one either; that folder is kept (a reason of its own may come first).
         line = self.main / '.claude/worktrees' / 'new\nline'
         self.git('worktree', 'add', '-q', str(line), '-b', 'worktree-newline')
-        self.assertIn(reason, self.run_script('--apply'))
-        self.assertTrue(line.is_dir())
+        out = self.run_script('--apply')
+        self.assertTrue(line.is_dir(), out)
+        self.assertIn('keep   .claude/worktrees/new\\nline\n', out)
 
     # --- b: finished: a commit made in it, and merged into the main branch -----------------
 
