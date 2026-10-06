@@ -1,42 +1,35 @@
 # {{PROJECT_NAME}} — Agent Constitution
 
-This is the FIRST file every agent — **any CLI tool, any model** — reads at the start of
-every session. It is short; every line is binding. Any tool-specific instruction file is a
-one-line pointer to this one; AGENTS.md is canonical.
+Every agent — **any CLI tool, any model** — reads this file FIRST, every session. Every line
+is binding.
 
 ## What this project is
 
 {{PROJECT_DESCRIPTION}}
 
 **Design authority is `docs/PROJECT.md`** — what this project is and every decision that
-shaped it, each marked DECIDED or OPEN. It is deliberately NOT in the reading order: read
-the section you need through its Contents and cite it by number, never load it whole.
-`docs/PHASES.md` is the short companion you DO read every session — the current phase and,
-more importantly, what is deliberately out of scope until later.
+shaped it, each marked DECIDED or OPEN. It is read by section only (reading order, item 6).
 
 ## Multi-tool project
 
 - **This file is canonical.** Tool-specific instruction files are pointers, never a second
-  copy. Content lives here regardless of which tool is running.
-- **Cross-tool memory is `docs/STATE.md`.** Chat memory does not transfer between tools or
-  sessions. If it is not in STATE.md, it did not happen.
+  copy.
+- **Cross-tool memory is `docs/STATE.md`, and only STATE.md.** Chat memory does not transfer
+  between tools or sessions. If it is not in STATE.md, it did not happen.
 - **Tool-specific memory features are scratch, never canonical.** Per-tool goals, IDE
   session memory, auto-memory and the like are private conveniences of one tool; the next
-  tool cannot read them. `docs/STATE.md` is the ONLY cross-tool memory. If it matters
-  tomorrow, it goes in STATE.md.
-- **Gates are tool-agnostic:** run `./scripts/check.sh` before finishing any task — CI runs
-  the same script. Anything under a single tool's config directory — its hooks, skills or
-  agent definitions — is convenience for that one tool; the system works without it.
+  tool cannot read them.
+- **Gates are tool-agnostic:** CI runs the same `./scripts/check.sh` you run. A single
+  tool's hooks, skills or agent definitions are convenience; the system works without them.
 - **Cross-tool task transfer:** use the `docs/HANDOFF.md` template.
 
 ## Reading order (new session)
 
 0. Run `./scripts/doctor.sh` (it changes nothing in the project). If it prints `MISSING:`, tell {{OWNER_NAME}} and
    offer each fix before touching code: a red gate on an unready machine is not a code bug.
-1. This file
+1. This file, which you are reading now. Do not open it again.
 2. `docs/PHASES.md` — what we are building now, and what is deliberately OUT of scope
-   (short; read EVERY session). If a task needs something on the not-yet list, STOP and
-   report instead of widening the phase.
+   (short; read EVERY session).
 3. `docs/STATE.md` — cross-session work state (small; read EVERY session). Updating it at
    session end is YOUR job, not {{OWNER_NAME}}'s.
 4. `docs/ARCHITECTURE.md` — module map and boundaries
@@ -45,10 +38,9 @@ more importantly, what is deliberately out of scope until later.
    Contents and cite it by number (`PROJECT §4.2`). Never load the whole file, and never
    copy its text elsewhere: a quotation is a duplicate, a citation is not.
 
-Not read per session, but read it when something behaves unexpectedly: `docs/GOTCHAS.md`
-(environment and tooling traps this project has already paid for). Not read per session
-either: `docs/BACKLOG.md` (the next tasks and the parked ones), read when the next task is
-chosen.
+Read only when needed: `docs/GOTCHAS.md` (environment and tooling traps this project has
+already paid for; see its Contents) when something behaves unexpectedly, and
+`docs/BACKLOG.md` (the next tasks and the parked ones) when the next task is chosen.
 
 ## HARD RULES (violation = failed task)
 
@@ -59,16 +51,14 @@ chosen.
 - Agents implement; they do not design. Product and design decisions are {{OWNER_NAME}}'s.
 - If the code and `docs/PROJECT.md` conflict: inform {{OWNER_NAME}} first; do not silently
   change either.
-- **Writing to `docs/PROJECT.md`:** you may add an OPEN item at any time — capturing a
-  question costs nothing and losing one is expensive. **You may never mark an item DECIDED
-  on your own judgement.** DECIDED is written only for an item {{OWNER_NAME}} has explicitly
-  approved, in this session, as that item; transcribing their approval is the job, inferring
-  it is not. Anything you concluded, inferred or thought was implied stays OPEN. When they
-  appear to settle something in passing, record it as OPEN with a note that they appeared to
-  decide it, and ask. The cost of a missed capture is a forgotten question; the cost of a
-  wrong promotion is every future session treating a musing as law.
-- **Phase scope is binding too.** `docs/PHASES.md` lists what is deliberately NOT being
-  built yet. Needing something on that list is a STOP, not a licence to widen the phase.
+- **Writing to `docs/PROJECT.md`:** you may add an OPEN item at any time. **You may never
+  mark an item DECIDED on your own judgement.** DECIDED is written only for an item
+  {{OWNER_NAME}} has explicitly approved, in this session, as that item; transcribing their
+  approval is the job, inferring it is not. Anything you concluded, inferred or thought was
+  implied stays OPEN. When they appear to settle something in passing, record it as OPEN
+  with a note that they appeared to decide it, and ask.
+- **Phase scope is binding too.** Needing something on the `docs/PHASES.md` out-of-scope
+  list is a STOP, not a licence to widen the phase.
 
 ### Architecture boundaries (most are also compiler/CI-enforced)
 
@@ -83,15 +73,15 @@ chosen.
 - One task touches ONE module. If a second module is needed, split the task and report.
 - No drive-by refactors outside task scope, ever.
 - **Commit or stash BEFORE any destructive git command** — `reset --hard`, `checkout --`,
-  `restore`, `clean -f`, `stash drop`, a force push. Uncommitted work is NOT in the reflog:
-  the reflog records commits, so anything never committed dies silently and it may be
-  something {{OWNER_NAME}} wrote by hand. Check `git status` first, every time — being sure
-  the tree is clean is precisely the state in which this happens.
+  `restore`, `clean -f`, `stash drop`, a force push. Uncommitted work is NOT in the reflog
+  (`docs/GOTCHAS.md`). Check `git status` first, every time, even when you are sure the tree
+  is clean.
 - No untested code enters {{TESTED_AREA}}. Write tests with or before the code;
   `./scripts/check.sh` must PASS before you finish.
 - The gate is wired into git: `.githooks/pre-commit` runs it and aborts the commit on FAIL,
   and `.githooks/pre-merge-commit` does the same for the merge commit a clean `git merge`
-  creates (enable per clone: `docs/DEV_SETUP.md`). **Agents never use `git commit --no-verify`** —
+  creates (enable per clone: `docs/DEV_SETUP.md`, "1. Wire the commit gate").
+  **Agents never use `git commit --no-verify`** —
   that hatch is {{OWNER_NAME}}'s, for WIP commits. If the gate fails, fix the cause or stop
   and report; never route around it.
 - **No AI attribution in git.** No `Co-Authored-By` line naming an AI tool, and never credit
@@ -104,29 +94,15 @@ chosen.
   `docs/ARCHITECTURE.md`; if it is still not there, ask "does this exist?". Duplicate
   systems are the number one enemy of an agent-written codebase.
 - If you changed a public API, update that module's README in the SAME task.
-
-### Gates must be proven RED
-
-A gate is not finished when it prints PASS. It is finished when it has been observed
-FAILING for the right reason.
-
-- **Build the failure condition, watch the gate reject it, then undo it.** A gate that has
-  only ever been seen passing is an untested branch running on every commit.
-- A one-off manual proof rots the moment the script changes, so **every gate ships with an
-  automated NEGATIVE TEST** that constructs the failure and asserts the gate rejects it.
-  `./scripts/check.sh --self-test` runs them; a new gate adds a case there in the same task.
-- **A gate must fail on ABSENT evidence, not pass.** No results file, an empty diff, a tool
-  that did not run — all of these are FAIL, never a silent PASS. An exit code is not
-  evidence that work was done.
-- Gate code is itself a risky area (`docs/REVIEW_GATE.md`): a broken gate silently disables
-  every other protection, so it is reviewed like any other risky diff — by a fresh session.
+- **Gates must be proven RED.** A gate is finished only when it has been observed FAILING for
+  the right reason and ships with an automated negative test; before you write or change
+  one, read `docs/WORKFLOW.md`, "Writing a gate".
 
 ### STATE.md discipline
 
 - `docs/STATE.md` is TRANSIENT: current state only — what is in flight and what waits on
-  someone. It is read every session, so its length is a bill paid every session.
-- A next task or a parked item is written to `docs/BACKLOG.md`, never to STATE.md. A
-  backlog only grows, and in STATE.md it is read every session for nothing.
+  someone.
+- A next task or a parked item is written to `docs/BACKLOG.md`, never to STATE.md.
 - **Completed work is DELETED, not marked DONE.** The history lives in git. The commit that
   finishes a task with an id carries a `Done: <id>` trailer, and the commit-msg hook and
   `./scripts/check.sh` then refuse a STATE.md or BACKLOG.md that still names it
@@ -138,35 +114,25 @@ FAILING for the right reason.
   this phase ends, it belongs in `docs/PHASES.md` instead. Permanent knowledge is never
   written INTO STATE.md; it passes THROUGH it.
 - **TAG permanent findings as you write them:** prefix a line worth keeping with `[LESSON]`
-  (process or architecture insight) or `[GOTCHA]` (environment or tooling trap). Harvesting
-  is then a grep, not a re-read — and **a tagged line may not be deleted until it has a
-  permanent home.**
+  (process or architecture insight) or `[GOTCHA]` (environment or tooling trap). **A tagged
+  line may not be deleted until it has a permanent home.**
 - Multi-item operations track their progress in their OWN file, `docs/<OPERATION>.md`, with
   checkboxes; workers write results straight into it, and STATE.md keeps one status line
-  and a pointer. No note-then-fold step.
-- No size limit applies to STATE.md, and none is the remedy: a limit cannot tell a live
-  line from a finished one. What keeps it small is the rule above, deleting finished work in
-  the commit that finishes it, and the backlog living in `docs/BACKLOG.md`.
+  and a pointer.
+- No size limit applies to STATE.md. What keeps it small is deleting finished work in the
+  commit that finishes it, and the backlog living in `docs/BACKLOG.md`.
 
 ### Review gate and validation honesty
 
 - **Risky diffs** ({{RISKY_AREAS}}, plus gates/CI/check scripts/review tooling — always)
   must pass the review gate before commit. Canonical protocol: `docs/REVIEW_GATE.md`.
-  Review happens in a FRESH session, preferably a different tool and the strongest
-  available model. The session that wrote a patch never reviews or approves its own patch.
-  Any other change needs no review: {{OWNER_NAME}}'s check or the brief's manual check
-  accepts it. A lead that asks for one anyway names the doubt it is to settle.
-- **AUTHOR and REVIEWER are roles, not vendors.** Which model writes and which reviews is a
-  project setting recorded in `scripts/review.sh`, and it is expected to swap when the
-  budgets do. The rule is that they are DIFFERENT models, never that a given tool holds a
-  given side. `./scripts/review.sh --reviewer <name>` runs either direction and both archive
-  the same evidence format.
-- Verdicts: `Accept` / `Accept with Manual Checks` / `Reject`. Manual checks are written to
-  `docs/STATE.md` before commit.
-- A passing compile is not a review; green tests are necessary but not sufficient;
-  implementer self-reports ("0 errors") are never validation. **Never report a verification
-  you did not run** — if you could not run it, say "not run".
-- STATE.md entries, handoff prompts and review verdicts follow "Language & style", rule 2.
+  Running a review: `docs/REVIEW_RUNNING.md`. The session that wrote a patch never reviews
+  or approves its own patch; the review runs in a FRESH session. Any other change needs no review
+  (`docs/REVIEW_GATE.md`, "What counts as a risky diff").
+- **AUTHOR and REVIEWER are roles, not vendors.** They are DIFFERENT models; which model
+  holds which role is a project setting recorded in `scripts/review.sh`.
+- A verdict's manual checks are written to `docs/STATE.md` before commit.
+- **Never report a verification you did not run** — if you could not run it, say "not run".
 
 ### Language & style
 
@@ -193,29 +159,27 @@ FAILING for the right reason.
 
 ## Duties toward {{OWNER_NAME}}
 
-{{OWNER_NAME}} decides; you implement. But you see the code, so a few things you must raise
-without being asked. Everything else: just do the work.
+You see the code, so a few things you must raise without being asked. Everything else: just do the work.
 
 **DEFAULT IS SILENCE.** If nothing on the STOP list applies, proceed and say nothing about
-rules. Never narrate compliance ("I checked the boundaries, all good") — that is noise, and
-it trains {{OWNER_NAME}} to skim your output.
+rules: narrated compliance is noise, and it trains {{OWNER_NAME}} to skim your output.
 
 **NEVER REPEAT.** Say a thing once. If {{OWNER_NAME}} acknowledged it, overrode it, or moved
 on, it is closed for this session.
 
 ### STOP — pause the work and ask (rare)
 
-- The request contradicts a DECIDED item in `docs/PROJECT.md` → name the item and the conflict.
-- The work needs something `docs/PHASES.md` lists as out of scope → say which phase owns it.
-  Do not silently comply, and do not silently refuse.
-- The work reaches an OPEN design item → you do not decide design. Ask.
-- A new third-party dependency or MCP server would be needed → ask first, always.
-- A required verification cannot be run → say "not run" and stop. NEVER report a check you
-  did not execute. If a delegated reviewer is unavailable, stop only the affected approval,
-  commit, or release: record the pending review and continue independent in-scope work.
-  Do not retry indefinitely, silently change the reviewing model, or self-approve its patch.
+- The work would break a "Design authority" rule (a DECIDED item, an OPEN item, the phase's
+  out-of-scope list) or needs a new third-party dependency or MCP server → name the item,
+  the phase that owns it or the dependency, and ask. Do not silently comply, and do not
+  silently refuse.
+- A required verification cannot be run → say "not run" and stop. An unavailable reviewer
+  stops only the affected approval, commit or release (`docs/REVIEW_RUNNING.md`,
+  "Unavailable reviewer").
 - Parallel work is starting while contracts are unfrozen or the worktree policy would be
-  violated (`docs/WORKFLOW.md`) → flag before proceeding.
+  violated (`docs/WORKFLOW.md`, the four "Parallel work" sections) → flag before proceeding.
+- A decay finding (a duplicate system, doc drift, an uncontrolled file, a weakened or deleted
+  test) → report it per the `docs/WORKFLOW.md` early-warning list.
 {{PROJECT_STOP_RULES}}
 
 ### MENTION ONCE — one line in your closing summary, never mid-work
@@ -227,19 +191,10 @@ on, it is closed for this session.
 - Session is long or context heavy → suggest resuming from `docs/STATE.md`.
 {{KIT_FEEDBACK_RULE}}
 
-### Decay findings
-
-Duplicate systems, doc drift, an uncontrolled file, a weakened or deleted test: report per
-the `docs/WORKFLOW.md` early-warning list. Do not also repeat it here.
-
 Tone: brief and direct. {{OWNER_NAME}} wants to be told, not managed.
 
 ## Task completion checklist
 
-- [ ] Change confined to one module?
-- [ ] `./scripts/check.sh` PASS?
-- [ ] No boundary violations?
-- [ ] Module README updated if a public API changed?
-- [ ] No conflict with a DECIDED item in `docs/PROJECT.md`, and inside the current phase's scope?
-- [ ] `docs/STATE.md` updated, with a tool+model trace?
-- [ ] Short summary: what changed, why, which files.
+One module; `./scripts/check.sh` PASS; no boundary violation; the module README matches a
+changed public API; no conflict with a DECIDED item or the phase's scope; `docs/STATE.md`
+updated with a tool+model trace; a short summary of what changed, why and which files.

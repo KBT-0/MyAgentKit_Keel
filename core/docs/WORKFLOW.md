@@ -79,6 +79,8 @@ their reasons, so that the always-loaded files carry only the rules.
 - `docs/STATE.md` is read at the start of every session, in every tool, so its length is a
   bill paid every session. What is planned next, and what was parked on purpose, is a
   backlog, and it lives in `docs/BACKLOG.md`, which is read only when the next task is chosen.
+  A backlog only grows, and in STATE.md it is read every session for nothing.
+- A `[LESSON]` or `[GOTCHA]` tag makes harvesting a grep, not a re-read.
 - Pruning without harvesting buries the lesson in the git history, and nobody looks there —
   git is an audit trail, not a knowledge base.
 - Completed work is deleted, not marked DONE: the dates live in git
@@ -103,8 +105,9 @@ breaks, everything keeps looking green.
 - **Prove it RED before you call it done.** Construct the failure condition, watch the gate
   reject it, then undo it. A gate observed only passing is an untested branch that runs on
   every commit.
-- **Ship a negative test with it** — `./scripts/check.sh --self-test`. A manual proof rots
-  the moment someone edits the script; the automated one does not.
+- **Ship a negative test with it** — `./scripts/check.sh --self-test`. A new gate adds its
+  case there in the same task. A manual proof rots the moment someone edits the script; the
+  automated one does not.
 - **A self-test case never changes a tracked file**, and writes nothing else into the
   working tree when it can avoid it: point the gate at a synthetic file outside the tree
   through an overridable path, or run against a disposable copy. Several sessions share one
@@ -411,8 +414,8 @@ one of those files invalidates the cache for every session after it.
 - Batch documentation edits into their own task and their own session.
 - Keep always-loaded docs SMALL and STABLE. Size here is not a readability preference; it is
   a recurring bill.
-- Volatile state belongs in `docs/STATE.md`, which is read on demand. Reference docs like
-  `docs/GOTCHAS.md` stay off the session-start list entirely.
+- Volatile state belongs in `docs/STATE.md`, which is read every session and therefore kept
+  small. Reference docs like `docs/GOTCHAS.md` stay off the session-start list entirely.
 
 ## Web requests carry no personal data
 
@@ -449,6 +452,8 @@ one names what would have to change before it is worth reopening.
 ## Documentation maintenance contract
 
 - `docs/PROJECT.md` changes only with {{OWNER_NAME}}'s approval for anything DECIDED; an
-  agent may add OPEN items freely (`AGENTS.md`, design authority).
+  agent may add OPEN items freely (`AGENTS.md`, design authority). Capturing a question costs
+  nothing and losing one is expensive. The cost of a missed capture is a forgotten question;
+  the cost of a wrong promotion is every future session treating a musing as law.
 - `docs/ARCHITECTURE.md` is updated in the SAME task that adds a module or moves a boundary.
 - These files are worth more than the code: code can be regenerated, context cannot.
