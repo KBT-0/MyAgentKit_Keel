@@ -256,7 +256,9 @@ then stays quiet.
   line-ending conversion is trusted; no unresolved entry, no submodule; every file git does not
   track inside a folder `.claude/worktree-disposable` lists or byte-identical to the regular
   file at the same path in main, outside main's `.claude/worktrees` under any spelling (what is
-  there is a worktree's, which may go too), and not a tracked file under another name (a
+  there is a worktree's, which may go too), on main's device (a mount inside main is not main),
+  not the worktree's own file seen from main (a hard link, a worktree folder mounted into
+  main: the same device and inode), and not a tracked file under another name (a
   case-only rename on macOS, a hard link: the same file on disk); no file at all under the
   worktree's own `.claude/worktrees` (a worktree inside a worktree is not judged);
   nothing anywhere in it, those folders included, changed within the quiet period.
@@ -310,15 +312,21 @@ then stays quiet.
 - **With `core.logAllRefUpdates=false`** git writes no HEAD reflog, so every worktree is kept
   ("no commit was made in this worktree").
 - **To keep a worktree** the lead still wants, lock it: `git worktree lock <path>`.
-- **The log**, `<git dir>/kit-worktree-removals.log`, gets two lines per removal. The `intent`
-  line comes first, before any ref is saved or file deleted: time, path, branch, tip commit,
+- **The log**, `<git dir>/kit-worktree-removals.log`, gets two lines per removal, each after
+  the time and `run=<UTC time>-<process id>`, the run's id, which pairs them. The `intent`
+  line comes first, before any ref is saved or file deleted: path, branch, tip commit,
   main HEAD, git directory, identical files, disposable bytes, each ref to save with its commit,
   each file to delete. The `outcome` line comes once `git worktree remove` returns or a step
-  stops it: `removed`, `partly-modified`, `possibly-modified` or `kept`, why, and each file
-  deleted. Both are on disk before the script goes on, and every line the script prints about a
-  removal comes after the log line it reports. A print never raises: what the terminal cannot
-  encode is escaped, and a closed or hung-up terminal is ignored, so neither changes the removal,
-  its outcome or its exit status. Every name the script prints or logs is escaped reversibly,
+  stops it: `removed` when git removed it, whatever was deleted before; else `partly-modified`
+  (stopped after a deletion), `possibly-modified` (`git worktree remove` failed) or `kept`;
+  why, and each file deleted. **An intent with no outcome of the same run and path is a run
+  that did not finish** (a SIGKILL, a crash): the refs and files it names may be saved or
+  deleted. Both are on disk before the script goes on, and every line the script
+  prints about a removal comes after the log line it reports. An outcome that cannot be written
+  leaves the removal as it is, stops the run there (the worktrees after it are not looked at)
+  and exits 1. A print never raises: what the terminal cannot encode is escaped, and a terminal
+  closed from the start, closed or hung up is ignored, so neither changes the removal, its
+  outcome or its exit status. Every name the script prints or logs is escaped reversibly,
   as the log's first line says: a backslash as `\\`, a newline as `\n`, any other byte that is
   not printable UTF-8 as `\xNN`. After the saved refs the identical copies git does not track
   go, then `git worktree remove` without `--force` checks again on its own. SIGINT, SIGTERM and SIGHUP are caught from the saved refs
@@ -333,7 +341,9 @@ then stays quiet.
   quiet period.
 - **A worktree comes back** with the command each removal prints on a line of its own, `git
   worktree add '<path>' '<branch>'`, quoted for a POSIX shell: its tracked files at the
-  branch's last commit. Lost for good: the ignored files in its disposable folders and its own
+  branch's last commit. A name that is not printable ASCII is printed as `"$(printf
+  '\NNN...')"`, octal escapes a POSIX shell turns back into its bytes, so the pasted command
+  reaches the same path and branch whatever the terminal can show. Lost for good: the ignored files in its disposable folders and its own
   reflogs (every commit they named is held by a ref, or saved).
 - **Installed** by the overlay: the two scripts (kit-owned: a sync updates them) and
   `.claude/worktree-disposable` (the project's). The hook comes with the core; without all

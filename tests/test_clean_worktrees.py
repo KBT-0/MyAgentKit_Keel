@@ -221,10 +221,12 @@ class CleanWorktreesTests(unittest.TestCase):
         self.assertTrue(lines[0].endswith('; in every name ' + clean_worktrees.ESCAPING))
         record = lines[1].split('\t')
         self.assertEqual(lines[3:], [''])
-        self.assertEqual(record[1:6], ['intent', os.path.realpath(path), 'refs/heads/worktree-done', tip,
+        self.assertEqual(record[2:7], ['intent', os.path.realpath(path), 'refs/heads/worktree-done', tip,
                                        self.git('rev-parse', 'HEAD')])
         self.assertTrue(record[0].endswith('Z'))
-        self.assertEqual(lines[2].split('\t')[1:], ['outcome', os.path.realpath(path), 'removed'])
+        # Both lines carry the run's id, which pairs them: its UTC time and its process id.
+        self.assertRegex(record[1], r'^run=\d{8}T\d{6}Z-\d+$')
+        self.assertEqual(lines[2].split('\t')[1:], [record[1], 'outcome', os.path.realpath(path), 'removed'])
 
     def test_the_restore_line_is_one_shell_safe_command_that_brings_the_worktree_back(self):
         for name, branch in (('semi', 'worktree-a;id;#'), ("it's", "worktree-it's")):
@@ -363,18 +365,47 @@ class CleanWorktreesTests(unittest.TestCase):
     def test_an_output_it_cannot_encode_changes_no_outcome(self):
         # Reproduced by a reviewer: under an ASCII stdout, the recovery line for a main folder
         # with a non-ASCII name raised after `git worktree remove`, and the report said "nothing
-        # deleted, the worktree stays" of a worktree that was gone.
+        # deleted, the worktree stays" of a worktree that was gone. A second reviewer: the
+        # command then printed held \xNN inside quotes, which a shell takes literally. Every
+        # printed command is run here and must reach the original names.
         self.main.rename(self.tmp / 'mäin')
         self.main = self.tmp / 'mäin'
-        path = self.worktree('done')
+        self.git('branch', '-m', 'mäin')
+        path = self.worktree('done', branch='worktree-dö')
         out = self.run_script('--apply', '--quiet', PYTHONIOENCODING='ascii')
         self.assertRemoved(path, out)
         self.assertNotIn('nothing deleted', out)
-        shown = ''.join(c if ord(c) < 128 else ''.join('\\x%02x' % b for b in c.encode())
-                        for c in os.path.realpath(path))
-        self.assertIn("\n           git worktree add '%s' 'worktree-done'\n" % shown, out)
+        self.assertTrue(out.isascii(), out)
         self.assertIn('clean_worktrees: removed 1, kept 1', out)
         self.assertRegex((self.main / '.git/kit-worktree-removals.log').read_text(), r'\toutcome\t[^\t]*\tremoved\n$')
+        for command in (self.restore(out).strip(),
+                        re.search(r'`(git branch --merged [^`]*)` lists them', out).group(1)):
+            ran = subprocess.run(['sh', '-c', command], cwd=self.main, env=self.env, capture_output=True)
+            self.assertEqual(ran.returncode, 0, (command, ran.stderr))
+        self.assertEqual(self.git('symbolic-ref', 'HEAD', cwd=path), 'refs/heads/worktree-dö')
+        self.assertTrue((path / 'done.txt').is_file())
+        self.assertIn(b'worktree-d\xc3\xb6', ran.stdout)
+        # The POSSIBLY MODIFIED report's command, when the git directory is gone.
+        self.git('commit', '-q', '--allow-empty', '-m', 'later', cwd=path)
+        self.git('merge', '-q', '--no-edit', 'worktree-dö', KIT_NO_WORKTREE_CLEANUP='1')
+        out = self.run_script('--apply', code=1, SHIM='halfremove', PYTHONIOENCODING='ascii', **self.shim())
+        self.assertIn('POSSIBLY MODIFIED', out)
+        path.rename(self.tmp / 'aside')
+        command = out.split('writes back once what is left of the folder is moved aside:\n')[1].split('\n')[0]
+        ran = subprocess.run(['sh', '-c', command], cwd=self.main, env=self.env, capture_output=True)
+        self.assertEqual(ran.returncode, 0, (command, ran.stderr))
+        self.assertEqual((path / 'done.txt').read_text(), 'done\n')
+
+    def test_a_shell_word_reads_back_to_its_bytes(self):
+        names = [b'plain', b"it's", b'a;id;#', b'-n', b'%s%%', b'back\\slash', b'caf\xc3\xa9', b'\xff\x01 x',
+                 b'$(id)', b'"q"', b'tab\tend', b'\x017\xc3\xa90', bytes(range(1, 10)) + bytes(range(11, 256))]
+        for name in names:
+            with self.subTest(name=name):
+                word = clean_worktrees.sh_word(name)
+                self.assertTrue(word.isascii() and word.isprintable(), word)
+                ran = subprocess.run(['sh', '-c', 'printf %%s %s' % word], capture_output=True)
+                self.assertEqual(ran.stdout, name, word)
+        self.assertEqual(clean_worktrees.sh_word(b"it's"), "'it'\\''s'")
 
     def run_closed(self, code):
         """The script with its stdout a pipe nobody reads any more, as after a hang-up."""
@@ -410,13 +441,43 @@ class CleanWorktreesTests(unittest.TestCase):
         self.assertFalse(path.exists())
         self.assertEqual(log.read_text().count('\n'), 5)
 
+    def test_a_stdout_closed_from_the_start_stops_nothing(self):
+        # Reproduced by a reviewer: started with `>&-`, Python has no sys.stdout and the first
+        # line printed raised AttributeError.
+        path = self.worktree('done')
+        ran = subprocess.run(['sh', '-c', 'exec sh "$0" --apply --assume-idle >&-', str(SCRIPT)], cwd=self.main,
+                             env=self.env, capture_output=True)
+        self.assertEqual((ran.returncode, ran.stderr), (0, b''))
+        self.assertFalse(path.exists())
+        self.assertRegex((self.main / '.git/kit-worktree-removals.log').read_text(), r'\toutcome\t[^\t]*\tremoved\n$')
+        # The other ways a stdout cannot be written: a closed file object, and one whose
+        # descriptor cannot be replaced by /dev/null.
+        class Broken:
+            encoding = 'ascii'
+
+            class buffer:
+                def write(data):
+                    raise OSError(5, 'injected')
+
+            def fileno():
+                return 1 << 30
+        closed = open(os.devnull, 'w')
+        closed.close()
+        saved = sys.stdout
+        try:
+            for stdout in (None, closed, Broken):
+                sys.stdout = stdout
+                clean_worktrees.say('x')
+        finally:
+            sys.stdout = saved
+
     def test_every_line_about_a_removal_comes_after_its_log_line(self):
         # Each line is printed with the number of intent and outcome lines the log held then: a
         # hung-up terminal must never leave saved refs, a deletion or a removal with no record.
         log = self.main / '.git/kit-worktree-removals.log'
         driver = ('import sys\nsys.path.insert(0, sys.argv[1])\nimport clean_worktrees as c\nsay, log = c.say, sys.argv[2]\n'
                   'def check(text):\n'
-                  '    try:\n        kinds = [line.split("\\t")[1:2] for line in open(log) if line[:1] != "#"]\n'
+                  '    try:\n        kinds = [line.split("\\t")[2:3] for line in open(log) if line[:1] != "#"]\n'
                   '    except OSError:\n        kinds = []\n'
                   '    say("%d %d " % (kinds.count(["intent"]), kinds.count(["outcome"])) + text)\n'
                   'c.say = check\nsys.argv = ["clean_worktrees", "--apply", "--assume-idle"]\nsys.exit(c.main())\n')
@@ -526,6 +587,40 @@ class CleanWorktreesTests(unittest.TestCase):
                         ': nothing is saved or deleted without its record')
         self.assertNotIn('remove .claude', out)
         self.assertEqual(self.git('for-each-ref', 'refs/kit/'), '')
+
+    def test_an_outcome_that_cannot_be_logged_stops_the_run_and_fails(self):
+        # Codex: a failed outcome write (or its fsync) was swallowed, further worktrees were
+        # removed, and the run exited 0. The removal stands; the run stops there and fails.
+        driver = ('import os, sys\nsys.path.insert(0, sys.argv[1])\nimport clean_worktrees as c\n'
+                  'mode, real_line, real_sync, calls = sys.argv[2], c.log_line, os.fsync, []\n'
+                  'def line(ctx, fields):\n'
+                  '    if mode == "write" and fields[0] == "outcome":\n'
+                  '        raise OSError(5, "injected")\n'
+                  '    return real_line(ctx, fields)\n'
+                  'def sync(fd):\n'
+                  '    calls.append(fd)\n'
+                  '    if mode == "fsync" and len(calls) == 2:\n'
+                  '        raise OSError(5, "injected")\n'
+                  '    return real_sync(fd)\n'
+                  'c.log_line, os.fsync = line, sync\n'
+                  'sys.argv = ["clean_worktrees", "--apply", "--assume-idle"]\nsys.exit(c.main())\n')
+        for mode in ('write', 'fsync'):
+            with self.subTest(mode=mode):
+                paths = [self.worktree(mode + '1'), self.worktree(mode + '2')]
+                result = subprocess.run([sys.executable, '-c', driver, str(SCRIPTS), mode], cwd=self.main,
+                                        env=self.env, capture_output=True, text=True)
+                out = result.stdout + result.stderr
+                self.assertEqual(result.returncode, 1, out)
+                self.assertEqual(sorted(p.exists() for p in paths), [False, True], out)
+                self.assertEqual(out.count('remove .claude/worktrees/'), 1, out)
+                self.assertIn('cannot write the outcome to the removal log', out)
+                self.assertIn('brings the worktree back:', out)
+                self.assertIn('clean_worktrees: stopped: the outcome of the last removal could not be written to the '
+                              'removal log; the worktrees after it were not looked at', out)
+                self.assertIn('clean_worktrees: removed 1, kept 1', out)
+                for path in paths:
+                    if path.exists():
+                        self.git('worktree', 'lock', str(path))
 
     def test_a_bare_main_repository_is_refused(self):
         bare = self.tmp / 'bare.git'
@@ -1230,7 +1325,7 @@ class CleanWorktreesTests(unittest.TestCase):
         self.assertTrue((path / 'r.md').is_file())
         self.assertIn('clean_worktrees: removed 0, kept 2', out)
         self.assertRegex((self.main / '.git/kit-worktree-removals.log').read_text(),
-                         r'\tintent\t[^\n]*\tsaved=refs/kit/saved/done-[^\n]*\n[^\t]*\toutcome\t[^\t]*\tkept\t'
+                         r'\tintent\t[^\n]*\tsaved=refs/kit/saved/done-[^\n]*\n[^\t]*\t[^\t]*\toutcome\t[^\t]*\tkept\t'
                          r'cannot save what only its git directory holds: [^\t]*\n$')
         self.assertEqual(self.git('for-each-ref', 'refs/kit/'), '')
 
@@ -1589,7 +1684,12 @@ class CleanWorktreesTests(unittest.TestCase):
         out = self.run_script('--apply')
         self.assertRemoved(path, out)
         self.assertIn('1 identical files', out)
+        self.assertIn('clean_worktrees: removed 1, kept 1, freed', out)
         self.assertEqual((self.main / 'docs/reviews/r.md').read_bytes(), b'report\n')
+        # Reproduced by two reviewers: a removal that deleted an identical copy first was logged
+        # partly-modified. It is removed; the copies it deleted stay listed.
+        self.assertTrue((self.main / '.git/kit-worktree-removals.log').read_text().endswith(
+            '\toutcome\t%s\tremoved\tdeleted=docs/reviews/r.md\n' % os.path.realpath(path)))
 
     def test_an_identical_copy_reached_through_a_symlink_in_main_does_not_count(self):
         path = self.worktree('done')
@@ -1607,12 +1707,39 @@ class CleanWorktreesTests(unittest.TestCase):
         real = os.fsync
         clean_worktrees.os.fsync = lambda fd: synced.append(os.fstat(fd).st_size) or real(fd)
         try:
-            clean_worktrees.log_line({'log': os.fsencode(log)}, ['intent', 'x'])
-            clean_worktrees.log_line({'log': os.fsencode(log)}, ['outcome', 'x', 'removed'])
+            clean_worktrees.log_line({'log': os.fsencode(log), 'run': 'r'}, ['intent', 'x'])
+            clean_worktrees.log_line({'log': os.fsencode(log), 'run': 'r'}, ['outcome', 'x', 'removed'])
         finally:
             clean_worktrees.os.fsync = real
         lines = log.read_bytes().split(b'\n')
         self.assertEqual(synced, [len(lines[0]) + len(lines[1]) + 2, log.stat().st_size])
+
+    def test_the_worktree_s_own_file_seen_from_main_is_no_copy(self):
+        # Reproduced by a reviewer: a worktree folder bind-mounted into main made main's "copy"
+        # the worktree's own file; it was deleted as an identical copy, and both were gone. A
+        # hard link is the same file without a mount; a mount inside main is not main.
+        path = self.worktree('done')
+        (path / 'notes').mkdir()
+        (path / 'notes/x').write_text('precious\n')
+        (self.main / 'notes').mkdir()
+        os.link(path / 'notes/x', self.main / 'notes/x')
+        self.assertKept(path, self.run_script('--apply'), 'no identical copy in main, outside a disposable folder: notes/x\n')
+        self.assertEqual((path / 'notes/x').read_text(), 'precious\n')
+        os.unlink(self.main / 'notes/x')
+        if subprocess.run(['unshare', '-rm', 'true'], capture_output=True).returncode if shutil.which('unshare') else 1:
+            sys.stderr.write('\n[bind mount] not run: no unprivileged mount namespace here\n')
+            return
+        for mount in ('mount --bind "$1/notes" "$2/notes"', 'mount -t tmpfs none "$2/notes" && echo precious > "$2/notes/x"',
+                      'mkdir "$2/t" && mount -t tmpfs none "$2/t" && echo precious > "$2/t/x" && : > "$2/notes/x" && '
+                      'mount --bind "$2/t/x" "$2/notes/x"'):
+            with self.subTest(mount=mount):
+                ran = subprocess.run(['unshare', '-rm', 'sh', '-c', mount + ' && exec sh "$0" --apply --assume-idle',
+                                      str(SCRIPT), str(path), str(self.main)],
+                                     cwd=self.main, env=self.env, capture_output=True, text=True)
+                out = ran.stdout + ran.stderr
+                self.assertEqual(ran.returncode, 0, out)
+                self.assertKept(path, out, 'no identical copy in main, outside a disposable folder: notes/x\n')
+                self.assertEqual((path / 'notes/x').read_text(), 'precious\n')
 
     def test_a_copy_inside_a_worktree_is_no_archive(self):
         # Reproduced by a reviewer: the "copy in main" of W/.claude/worktrees/a/build/r.log is

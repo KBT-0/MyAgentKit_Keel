@@ -44,9 +44,11 @@ all):
      does not judge); every other file git does not track is inside a directory
      .claude/worktree-disposable lists, or a regular file whose byte-identical copy is at the
      same path in the main worktree, outside its .claude/worktrees under any spelling (what is
-     there is a worktree's, which may go too), and that is not a tracked file under another
-     name (a case alias, a link: the same device and inode); nothing anywhere in it, disposable
-     folders included, changed within quiet-minutes.
+     there is a worktree's, which may go too), on main's device (a mount inside main is not
+     main) and not the worktree's file itself (a hard link, a mounted worktree folder: the same
+     device and inode), and that is not a tracked file under another name (a case alias, a
+     link: the same device and inode); nothing anywhere in it, disposable folders included,
+     changed within quiet-minutes.
 
 Proven: a, b, d, f, g, h's accounting. The quiet period (c, h) is a margin, not a proof: it
 covers a worker whose process the scan in e cannot see. e is read afresh for every worktree
@@ -64,10 +66,14 @@ every ignored file without asking.
 Removal order: the log's intent line (on disk; it names every ref to save and every file to
 delete), the saved refs, f and e again, the identical copies git does not track, e again, `git
 worktree remove` without --force (git's own check, independent of this one), the log's outcome
-line (removed, partly-modified, possibly-modified or kept, why, each file deleted). Each line
-about the removal is printed after the log line it reports; a print never raises (what stdout
-cannot encode is escaped, a closed or hung-up stdout is ignored), and the outcome is what
-happened, never whether a line could be printed. SIGINT, SIGTERM and SIGHUP are caught from
+line (removed when git removed it, whatever was deleted before; else partly-modified,
+possibly-modified or kept; why; each file deleted). Both lines carry the run's id, which pairs
+them; an intent with no outcome is a run that did not finish. An outcome that cannot be
+written leaves the removal as it is, stops the run and exits 1. Each line about the removal is
+printed after the log line it reports; a print never raises (what stdout cannot encode is
+escaped, a stdout closed or hung up is ignored), and the outcome is what happened, never
+whether a line could be printed. A printed command reads back to the exact bytes of its names
+whatever stdout can encode (sh_word). SIGINT, SIGTERM and SIGHUP are caught from
 the saved refs on and stop it at the next step. A step that fails or is
 stopped after a copy was deleted reports the worktree PARTLY MODIFIED, lists each file deleted
 (its identical copy is at the same path in the main worktree) and exits 1; a failed `git
@@ -127,10 +133,11 @@ class Unproven(Exception):
 
 ESCAPING = 'a backslash is \\\\, a newline \\n, any other byte that is not printable UTF-8 \\xNN'
 # Two lines per removal: the intent, logged before anything is saved or deleted, and the outcome.
-LOG_HEADER = ('# two lines per removal, tab-separated: "intent", logged before anything is saved or deleted (its '
-              'commits to save as saved=<ref>=<id>, its files to delete as delete=<path>), and "outcome", logged '
-              'when it ends (removed, partly-modified, possibly-modified or kept, why, and deleted=<path> for '
-              'each file deleted); in every name %s\n' % ESCAPING)
+LOG_HEADER = ('# two lines per removal, tab-separated, after the time and run=<the run\'s id>, which pairs them: '
+              '"intent", logged before anything is saved or deleted (its commits to save as saved=<ref>=<id>, its '
+              'files to delete as delete=<path>), and "outcome", logged when it ends (removed, partly-modified, '
+              'possibly-modified or kept, why, and deleted=<path> for each file deleted); an intent with no outcome '
+              'is a run that did not finish; in every name %s\n' % ESCAPING)
 
 
 def show(path):
@@ -160,13 +167,18 @@ codecs.register_error('kit-utf8-escape', utf8_escape)
 
 def say(text):
     """Print TEXT now; it never raises. What stdout cannot encode is escaped (utf8_escape); a
-    stdout that is closed or hung up (SIGHUP) is ignored from then on, so a removal still reaches
-    its log lines, its report and its exit status."""
+    stdout that is closed from the start (`>&-`: sys.stdout is None), closed or hung up (SIGHUP)
+    is ignored from then on, so a removal still reaches its log lines, its report and its exit
+    status."""
     try:
         sys.stdout.buffer.write(text.encode(sys.stdout.encoding, 'kit-utf8-escape') + b'\n')
         sys.stdout.buffer.flush()
-    except OSError:
-        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+    except (OSError, AttributeError, ValueError):
+        try:
+            fd = sys.stdout.fileno()
+            os.dup2(os.open(os.devnull, os.O_WRONLY), fd)
+        except (OSError, AttributeError, ValueError):
+            pass
 
 
 def names(paths):
@@ -182,6 +194,15 @@ def short(ref):
 def sh_quote(text):
     """TEXT as one word for a POSIX shell: in '...', each ' inside written as '\\''."""
     return "'" + text.replace("'", "'\\''") + "'"
+
+
+def sh_word(raw):
+    """The bytes RAW (no trailing newline) as one word a POSIX shell reads back exactly, in
+    printable ASCII whatever stdout can encode: quoted (sh_quote) when RAW is printable ASCII,
+    else "$(printf '...')" with every byte but a letter, a digit, / . _ as an octal escape."""
+    if re.fullmatch(rb'[ -~]*', raw):
+        return sh_quote(raw.decode())
+    return '"$(printf \'%s\')"' % re.sub(rb'[^A-Za-z0-9/._]', lambda m: b'\\%03o' % m.group()[0], raw).decode()
 
 
 def git_env():
@@ -284,9 +305,10 @@ def disposable(rel, entries):
     return False
 
 
-def entry(root, rel, avoid=None):
+def entry(root, rel, avoid=None, device=None):
     """The lstat of ROOT/REL reached through folders only (no symlink on the way, nor the folder
-    whose (device, inode) is AVOID), or None."""
+    whose (device, inode) is AVOID, nor, given DEVICE, a folder or file on another device), or
+    None."""
     path = root
     parts = rel.split(b'/')
     for part in parts[:-1]:
@@ -295,21 +317,26 @@ def entry(root, rel, avoid=None):
             info = os.lstat(path)
         except OSError:
             return None
-        if not stat.S_ISDIR(info.st_mode) or (info.st_dev, info.st_ino) == avoid:
+        if (not stat.S_ISDIR(info.st_mode) or (info.st_dev, info.st_ino) == avoid
+                or device not in (None, info.st_dev)):
             return None
     try:
-        return os.lstat(os.path.join(path, parts[-1]))
+        info = os.lstat(os.path.join(path, parts[-1]))
     except OSError:
         return None
+    return info if device in (None, info.st_dev) else None
 
 
 def copy_in(ctx, real, rel):
     """Whether the main worktree holds a regular file at REL with the bytes of REAL/REL, reached
     without a symlink and not through its .claude/worktrees, under any spelling: what is there is
-    a worktree's, which this run may remove too."""
+    a worktree's, which this run may remove too. Not a copy: REAL/REL itself (a hard link, a
+    worktree folder mounted into main: the same device and inode), nor a file on another device
+    than main's root (a mount inside main is not main)."""
     home = os.lstat(ctx['home'])
-    info = entry(ctx['main_root'], rel, avoid=(home.st_dev, home.st_ino))
+    info = entry(ctx['main_root'], rel, avoid=(home.st_dev, home.st_ino), device=os.lstat(ctx['main_root']).st_dev)
     return (info is not None and stat.S_ISREG(info.st_mode)
+            and not os.path.samestat(info, os.lstat(os.path.join(real, rel)))
             and filecmp.cmp(os.path.join(real, rel), os.path.join(ctx['main_root'], rel), shallow=False))
 
 
@@ -849,7 +876,8 @@ def log_line(ctx, fields):
     with open(ctx['log'], 'ab') as log:
         if log.tell() == 0:
             log.write(LOG_HEADER.encode())
-        log.write(('\t'.join([datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')] + fields)
+        log.write(('\t'.join([datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
+                               'run=%s' % ctx['run']] + fields)
                    + '\n').encode('utf-8', 'backslashreplace'))
         log.flush()
         os.fsync(log.fileno())
@@ -885,18 +913,19 @@ def remove(record, facts, ctx, shown, announce):
             why = 'not proven: %s' % (error or type(error).__name__)
         outcome = 'removed' if why is None else 'partly' if deleted or failed else 'kept'
         try:
-            log_line(ctx, ['outcome', show(facts['real']),
-                           'possibly-modified' if failed else 'partly-modified' if deleted else outcome]
+            log_line(ctx, ['outcome', show(facts['real']), 'removed' if why is None else 'possibly-modified' if failed
+                           else 'partly-modified' if deleted else 'kept']
                      + ([' '.join(why.split())] if why else []) + ['deleted=%s' % show(rel) for rel in deleted])
         except OSError as error:
+            # What happened stands; the run stops after this worktree and fails (main()).
+            ctx['unlogged'] = True
             say('         cannot write the outcome to the removal log %s (%s); its intent line is there'
                 % (show(ctx['log']), error))
         if outcome == 'removed':
             # The branch stays, so this brings back its files at their last commit; not the
             # worktree's ignored files, nor its reflogs.
             say('         this command, run in the main worktree, brings the worktree back:')
-            say('           git worktree add %s %s'
-                % (sh_quote(printable(facts['real'])), sh_quote(printable(short(facts['branch'])))))
+            say('           git worktree add %s %s' % (sh_word(facts['real']), sh_word(short(facts['branch']))))
         elif outcome == 'kept':
             say('         stopped: %s; nothing deleted, the worktree stays' % why)
         else:
@@ -932,8 +961,8 @@ def possibly(facts, ctx):
     say('         Each file it may have deleted was proven: a tracked file was its commit %s on the branch, which '
         'this command, run in the main worktree, writes back%s:'
         % (show(facts['head'][:12]), '' if whole else ' once what is left of the folder is moved aside'))
-    say('           ' + ('git -C %s restore -- .' % sh_quote(printable(real)) if whole else 'git worktree add %s %s'
-                         % (sh_quote(printable(real)), sh_quote(printable(short(facts['branch']))))))
+    say('           ' + ('git -C %s restore -- .' % sh_word(real) if whole else 'git worktree add %s %s'
+                         % (sh_word(real), sh_word(short(facts['branch'])))))
     say('         a file git does not track had a byte-identical copy at the same path in the main worktree; a file '
         'in a disposable folder is build output, which the build makes again.')
 
@@ -950,7 +979,7 @@ def removal(record, facts, ctx, saved, deleted, failed):
                     % (show(result.stderr.strip()) or 'exit %d' % result.returncode))
         say('         to delete the saved refs once you no longer want them, run in the main worktree:')
         say("           git for-each-ref --format='delete %%(refname)' %s | git update-ref --stdin"
-            % sh_quote(show(facts['saved'] + b'/')))
+            % sh_word(facts['saved'] + b'/'))
     # Again, now: whether a process came in, and what it holds with the saved refs counted.
     again = facts['idle']() + facts['history']()
     if again or facts['pin']:
@@ -1012,10 +1041,12 @@ def main():
            'own': os.path.realpath(git(here, 'rev-parse', '--show-toplevel').stdout.rstrip(b'\n')),
            'disposable': entries, 'quiet': quiet, 'unseen': None, 'source': None,
            'stamp': datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%SZ').encode(),
+           'unlogged': False,
            'now': float(clock or time.time()),
            'proc': os.fsencode(os.environ.get('CLEAN_WORKTREES_PROC', '/proc')),
            'assume_idle': args.assume_idle, 'all': args.all_reasons,
            'log': os.path.join(common, b'kit-worktree-removals.log')}
+    ctx['run'] = '%s-%d' % (ctx['stamp'].decode(), os.getpid())
     for line, why in refused:
         say('clean_worktrees: refused %s line %s %s' % (show(DISPOSABLE_FILE), show(line), why))
     removed = kept = partly = freed = 0
@@ -1055,6 +1086,10 @@ def main():
         if STOP:
             say('clean_worktrees: stopped by signal %d; the worktrees after this one were not looked at' % STOP[0])
             break
+        if ctx['unlogged']:
+            say('clean_worktrees: stopped: the outcome of the last removal could not be written to the removal log; '
+                'the worktrees after it were not looked at')
+            break
     if ctx['source'] and not args.quiet:
         say('clean_worktrees: processes listed by %s, %d could not be inspected (another user\'s, or not '
             'readable; lsof on macOS does not list another user\'s at all); the quiet period covers a '
@@ -1071,12 +1106,12 @@ def main():
             say('clean_worktrees: branches kept, their worktrees removed: %s' % names(gone))
             say('clean_worktrees: to delete merged branches yourself: `git branch --merged %s` lists them, '
                 '`git branch -d <name>` deletes one, and its reflog with it: the old tips a removal saved are '
-                'kept by the refs under refs/kit/saved/' % sh_quote(show(short(ctx['main_ref']))))
+                'kept by the refs under refs/kit/saved/' % sh_word(short(ctx['main_ref'])))
     else:
         say('clean_worktrees: dry run: would remove %d, keep %d, free %d bytes; to apply: '
             'scripts/clean_worktrees.sh --apply%s'
             % (removed, kept, freed, ' --assume-idle' if args.assume_idle else ''))
-    return 1 if partly or STOP else 0
+    return 1 if partly or STOP or ctx['unlogged'] else 0
 
 
 if __name__ == '__main__':
