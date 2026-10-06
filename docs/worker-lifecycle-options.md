@@ -1,6 +1,10 @@
 # When a worker session ends, continues, hands off or is reused — options and costs
 
-Status: a design note for a decision, not a rule. Nothing here is implemented. The owner's
+Status: decided by the owner on 2026-10-06 after two consultation rounds with a second
+model (evidence in `docs/reviews/`, label `v09-lifecycle-design`): question 1 option 1b,
+question 2 option 2b, questions 3 and 4 as rules, question 5 as stated. The note stays as the
+record of the costs and the options; the rules go into WORKFLOW, HANDOFF and the worker
+scripts. Nothing here was implemented when it was written. The owner's
 instruction (2026-10-06): the three questions below are not black and white; a finished
 session may be worth keeping for a task that fits what it already holds, a handoff may cost
 more than a compaction, and the answers are to be weighed by cost, reviewed by a second
