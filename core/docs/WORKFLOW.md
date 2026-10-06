@@ -33,7 +33,8 @@ a risky change ships. Agents propose; {{OWNER_NAME}} decides.
    backstop, not the plan, and agents never bypass it with `--no-verify`.
 5. **Review, if risky:** {{RISKY_AREAS}} — and any change to a gate, CI config or check
    script — go through `docs/REVIEW_GATE.md` before commit, in a FRESH session. The author
-   never approves their own patch.
+   never approves their own patch. Any other change needs no review by default
+   (`docs/REVIEW_GATE.md`, "What counts as a risky diff").
 6. **Document:** if a public API changed, update that module's README in the same task.
 7. **Update `docs/STATE.md`:** active work and what waits on {{OWNER_NAME}}, with a
    tool+model trace. Unwritten progress does not exist. A next task or a parked item goes to
@@ -295,7 +296,7 @@ request, and a controlled experiment ran the same task in six setups). What the 
 - **Tool output was not the problem**: all tool results of all agents together were about one
   million tokens. Trimming output is hygiene, a small lever.
 
-Rules, binding for whoever routes workers, in order of measured weight:
+Rules, binding for whoever routes workers:
 
 1. **A worker's cache must outlive its waits, and the worker must not poll.** A worker that
    runs jobs longer than a few minutes runs with a one-hour cache (a separate session, or a
@@ -306,42 +307,67 @@ Rules, binding for whoever routes workers, in order of measured weight:
    may have no such setting), choose the fallback from the measured table in the kit's
    `docs/worker-cost-setups.md`: usually waits split into pieces under five minutes, at the
    price of a context read per piece.
-2. **A review-fix round goes to a fresh worker**, briefed with the findings, the branch and
-   the files to read. Resume a finished worker only within a few minutes and for a few tool
-   calls.
+2. **A review-fix round goes back to the worker that wrote the change** (a resumed
+   sub-agent, or the same separate session) while it is available and its context is not
+   spent: a fresh worker re-reads the whole context to change a few lines. A fresh worker,
+   briefed with the findings, the branch and the files to read, takes the round when the
+   context is spent (near rule 3's limit) or the fix is a redesign. The reviewer is fresh in
+   every round; the worker never reviews its own change.
 3. **One small task per worker**, sized to end under roughly 150 requests (`maxTurns` in the
    worker definition enforces it). Split before starting: a mechanism first, then its uses.
 4. **The lead does not poll either.** It waits for task notifications or an idle notice from
    a separate session; it does not check on workers or CI in a loop.
-5. **Mechanical work goes to the cheaper model**: doc fixes, running a documented proof,
-   folding notes. The stronger model is for design-bearing code and for reviews. **Effort is
-   set per task the same way**: the strongest model at high effort for design-bearing work
-   and for reviews, the cheaper model at a lower effort for mechanical work. It is never
-   left to inheritance: a sub-agent runs at its lead session's effort unless its definition
-   sets `effort:` (the Claude Code overlay's `worker.md` and `diff-reviewer.md` do), and
-   nothing in its output shows which one it got. For a separate session the lever is
-   `scripts/spawn_worker.sh --effort`. The brief states model and effort, and the lead
-   verifies both after the run in the transcript, not in the report.
-6. **Parallel workers only for independent modules**; each one multiplies the bill.
+5. **Mechanical work goes to the cheaper model at a lower effort**: doc fixes, running a
+   documented proof, folding notes. Design-bearing code and reviews get the strongest model
+   at high effort. Effort is never left to inheritance: a sub-agent runs at its lead
+   session's effort unless its definition sets `effort:` (the Claude Code overlay's
+   `worker.md` and `diff-reviewer.md` do), and nothing in its output shows which one it got.
+   A separate session takes `scripts/spawn_worker.sh --effort`. The brief states model and
+   effort, and the lead verifies both in the transcript after the run, not in the report.
+6. **Parallel workers only for independent modules**; each one multiplies the bill. Workers
+   whose last step waits on one exclusive resource (a heavy lock, a device, a licence) run
+   one after another, or run only their independent parts in parallel: in one project,
+   "parallel" workers queued at one machine-wide lock.
 7. **Worker reports are short** (about 400 words), and long output goes to a file with a
-   summary line: the lead pays for a report again on every later turn. Which worker may
-   write the report itself to a file depends on its kind. A separate spawned session can,
-   and its brief ends with the result FILE's path. A sub-agent cannot: Claude Code refuses
-   its write of a report file ("Subagents should return findings as text, not write report
-   files"), and a worker briefed for a `REPORT.md` then spends turns working around the
-   refusal and ends up reporting in its final message anyway. A sub-agent keeps its short
-   report in its final message and writes only logs, tables and captures to files.
+   summary line: the lead pays for a report again on every later turn. A separate spawned
+   session writes its report to the result FILE its brief names. A sub-agent cannot: Claude
+   Code refuses its write of a report file ("Subagents should return findings as text, not
+   write report files"), and a worker briefed for a `REPORT.md` spends turns working around
+   the refusal. A sub-agent keeps its short report in its final message and writes only
+   logs, tables and captures to files.
 8. **The lead session is handed over before it grows**, and at the end of a working day it
    reads the tool's cost screen and runs `scripts/agent_cost.py --latest` and writes both
    into the handoff, so the next routing decision is made from a number.
+9. **A worker runs the cheapest check that proves its change; the expensive step runs
+   once.** The brief names that check (`docs/HANDOFF.md`, "Proof"); with none named, the
+   worker runs `./scripts/check.sh`. The expensive build or package step runs once, in the
+   integrating session, after the merge: in one project every worker built the whole
+   package in its worktree (7 to 40 minutes each), and the lead built it again. A defect only
+   the full build shows is then found at integration. So the integrating session builds after
+   each merge when the build is cheap, and names the merge that broke it when it is not.
 
-Separate sessions and one-hour sub-agents cost the same. A separate session adds visibility
-and survives a lead handoff; the Claude Code overlay's `scripts/spawn_worker.sh` opens one
-in tmux and hands it a brief file, and the lead subscribes once for its idle notice instead
-of messaging it (every message to an idle session is a full-context turn). Such a session
-does not end when its task does, and the idle notice also fires on every park on a
-background job, so it cannot serve as the end signal: the result file is the end signal,
-and the lead closes the session after reading it (`tmux kill-session -t NAME`).
+**The shape follows a threshold, so the lead does not decide it each time.** Work expected
+to take more than about an hour, or more than one review round, runs in its own separate
+session that {{OWNER_NAME}} can talk to directly (`scripts/spawn_worker.sh`): under a lead it
+would wake the whole lead context at every hand-back and stay hidden from {{OWNER_NAME}}. A
+short read-only diagnosis or review runs as a sub-agent under the lead: its own session
+would pay a session start for nothing. The lead merges and, as the integrating session, runs
+the integration build.
+
+The threshold is {{OWNER_NAME}}'s decision from use. The only cost comparison of the two
+shapes is one task on 2026-10-03 (`docs/worker-cost-setups.md`): about 107 against 110
+requests, a cost equivalent of about 2.44M against 2.40M tokens. It measured the cost per
+worker on one task with one long wait, not wall-clock time, the throughput of several tasks,
+or the lead's own cost. Measure in passing: wall-clock from brief to merge, total tokens
+including the lead's, review rounds, and waits on an exclusive resource. The sample will be
+thin.
+
+`scripts/spawn_worker.sh` (Claude Code overlay) opens the session in tmux with a brief file.
+The lead subscribes once for its idle notice and does not message it: every message to an
+idle session is a full-context turn. The idle notice also fires on every park on a
+background job, and the session does not end with its task. The result file is therefore
+the end signal, and the lead closes the session after reading it (`tmux kill-session -t
+NAME`).
 
 ## Token economics — the always-loaded prefix is money
 

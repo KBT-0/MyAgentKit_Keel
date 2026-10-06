@@ -4,7 +4,8 @@ description: >
   Implementation worker for {{PROJECT_NAME}}: one task in one module, briefed per
   docs/HANDOFF.md. Spawn it instead of general-purpose for any task that runs a job
   longer than a few minutes ({{LONG_JOBS}}). Runs with a one-hour prompt cache and ends
-  under about 150 turns; a review-fix round goes to a FRESH worker, never a resumed one.
+  under about 150 turns. A review-fix round comes back to the same worker while its context
+  lasts; the reviewer is always fresh.
 model: {{WORKER_MODEL}}
 effort: {{WORKER_EFFORT}}
 maxTurns: 150
@@ -42,4 +43,5 @@ the rules below exist).
 - No AI attribution in git: no `Co-Authored-By` line, no tool or model name in any commit
   message, whatever your default is.
 <!-- END attribution rule -->
-- `./scripts/check.sh` before you finish; report "not run" for any check you did not run.
+- Run the proof your brief names; if it names none, run the gate (`./scripts/check.sh`).
+  Report "not run" for any check you did not run.
