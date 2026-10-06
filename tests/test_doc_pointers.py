@@ -59,6 +59,14 @@ class ReviewerDocumentTests(unittest.TestCase):
 
 
 class SectionPointerTests(unittest.TestCase):
+    def test_readme_ci_platforms_match_the_matrix(self):
+        workflow = (ROOT / '.github/workflows/ci.yml').read_text()
+        self.assertIn('os: [ubuntu-latest, macos-latest]', workflow)
+        readme = (ROOT / 'README.md').read_text()
+        self.assertIn('Ubuntu and macOS are in CI', readme)
+        self.assertIn('developed under WSL', readme)
+        self.assertNotIn('Linux, WSL and macOS are in CI', readme)
+
     def test_every_named_section_exists_in_the_file_named(self):
         # A pointer such as (`docs/WORKFLOW.md`, "Writing a gate") sends an agent to one section
         # instead of the whole file; a renamed heading would send it nowhere.

@@ -440,11 +440,18 @@ class BootstrapTests(unittest.TestCase):
             # Chain every kit hook from .husky: accepted, the path stays, the version is recorded.
             for hook in (project / '.githooks').iterdir():
                 (project / '.husky' / hook.name).write_text('#!/bin/sh\nexec .githooks/%s "$@"\n' % hook.name)
+                (project / '.husky' / hook.name).chmod(0o755)
             result = subprocess.run(['sh', str(root / 'bootstrap.sh'), str(project)], capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn("stays '.husky'", result.stdout)
             self.assertTrue((project / 'docs/kit/.kit-version').exists())
             self.assertEqual(git('config', '--get', 'core.hooksPath').stdout.strip(), '.husky')
+            git('add', '-A')
+            rejected = git('-c', 'user.name=fixture', '-c', 'user.email=fixture@example.invalid',
+                           '-c', 'commit.gpgsign=false', 'commit', '-qm', 'Unfilled kit')
+            self.assertNotEqual(rejected.returncode, 0, rejected.stdout + rejected.stderr)
+            self.assertIn('placeholder', rejected.stdout + rejected.stderr)
+            self.assertIn('commit aborted', rejected.stderr)
             # A global scope that wins over the local setting stops the wiring too.
             git('config', '--worktree', '--unset', 'core.hooksPath')
             home = Path(tmp) / 'home'
@@ -456,6 +463,85 @@ class BootstrapTests(unittest.TestCase):
             self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
             self.assertIn('/elsewhere/hooks', result.stderr)
             self.assertFalse((project / 'docs/kit/.kit-version').exists())
+
+    def test_chained_hooks_must_execute_and_propagate_the_kit_failure(self):
+        root = Path(__file__).resolve().parents[1]
+        for broken in sorted((root / 'core/.githooks').iterdir()):
+            for kind in ('non-executable', 'comment-only', 'masked'):
+                with self.subTest(hook=broken.name, kind=kind), tempfile.TemporaryDirectory() as tmp:
+                    project = Path(tmp) / 'project'
+                    subprocess.run(['git', 'init', '-q', str(project)], check=True)
+                    subprocess.run(['git', '-C', str(project), 'config', 'core.hooksPath', '.husky'], check=True)
+                    (project / '.husky').mkdir()
+                    for hook in (root / 'core/.githooks').iterdir():
+                        chain = project / '.husky' / hook.name
+                        body = 'exec .githooks/%s "$@"\n' % hook.name
+                        if hook == broken and kind == 'comment-only':
+                            body = '# .githooks/%s\nexit 0\n' % hook.name
+                        elif hook == broken and kind == 'masked':
+                            body = '.githooks/%s "$@" || true\n' % hook.name
+                        chain.write_text('#!/bin/sh\n' + body)
+                        chain.chmod(0o644 if hook == broken and kind == 'non-executable' else 0o755)
+                    result = subprocess.run(['sh', str(root / 'bootstrap.sh'), str(project)],
+                                            capture_output=True, text=True, timeout=30)
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    self.assertIn("STOP: core.hooksPath is '.husky'", result.stderr)
+                    self.assertFalse((project / 'docs/kit/.kit-version').exists())
+
+    def test_changelog_crlf_repair_runs_verbatim(self):
+        root = Path(__file__).resolve().parents[1]
+        item = (root / 'CHANGELOG.md').read_text().split('14. **ACTION:**', 1)[1].split('\n\n', 1)[0]
+        commands = re.findall(r'`([^`]+)`', item)
+        commands = [command for command in commands if command.startswith(('git ', 'rm '))]
+        self.assertTrue(commands, item)
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            git = lambda *a: subprocess.run(['git', '-C', str(project), *a],
+                                            capture_output=True, text=True, check=True)
+            git('init', '-q')
+            git('config', 'core.autocrlf', 'true')
+            git('config', 'user.name', 'fixture')
+            git('config', 'user.email', 'fixture@example.invalid')
+            git('config', 'commit.gpgsign', 'false')
+            for directory in ('.githooks', 'scripts'):
+                (project / directory).mkdir()
+            for source, target in (('core/.githooks/pre-commit', '.githooks/pre-commit'),
+                                   ('core/scripts/check.sh', 'scripts/check.sh')):
+                (project / target).write_bytes((root / source).read_bytes().replace(b'\n', b'\r\n'))
+            # Seed an old CRLF index too, so omitting renormalisation cannot pass.
+            git('-c', 'core.autocrlf=false', 'add', '.')
+            git('commit', '-qm', 'Before LF attributes')
+            shutil.rmtree(project / '.githooks')
+            shutil.rmtree(project / 'scripts')
+            git('checkout', '--', '.githooks', 'scripts')
+            self.assertIn(b'\r\n', (project / '.githooks/pre-commit').read_bytes())
+            shutil.copyfile(root / 'core/.gitattributes', project / '.gitattributes')
+            git('add', '.gitattributes')
+            git('commit', '-qm', 'Pin LF attributes')
+            for command in commands:
+                run = subprocess.run(['sh', '-c', command], cwd=project, capture_output=True, text=True)
+                self.assertEqual(run.returncode, 0, command + '\n' + run.stdout + run.stderr)
+            self.assertEqual(git('diff', '--cached', '--name-only', '--diff-filter=D').stdout, '')
+            for name in ('.githooks/pre-commit', 'scripts/check.sh'):
+                self.assertNotIn(b'\r', (project / name).read_bytes())
+                indexed = subprocess.run(['git', '-C', str(project), 'show', ':' + name],
+                                         capture_output=True, check=True).stdout
+                self.assertNotIn(b'\r', indexed)
+            git('commit', '--allow-empty', '-qm', 'Renormalise scripts')
+
+    def test_an_exported_probe_variable_alone_does_not_switch_a_hook_off(self):
+        # The probe seam answers only to the nonce the prober wrote under .git: a committer
+        # or an agent exporting KIT_HOOK_PROBE=1 still runs the gate.
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / 'project'
+            project.mkdir()
+            subprocess.run(['git', 'init', '-q', str(project)], check=True)
+            subprocess.run(['sh', str(root / 'bootstrap.sh'), str(project)], capture_output=True, text=True, check=True)
+            env = dict(os.environ, KIT_HOOK_PROBE='1')
+            probe = subprocess.run(['sh', '.githooks/pre-commit'], cwd=project, env=env, capture_output=True, text=True)
+            self.assertNotEqual(probe.returncode, 97, 'a bare KIT_HOOK_PROBE switched the hook off')
+            self.assertFalse((project / '.git/kit-hook-probe').exists(), 'the nonce file outlived the probe')
 
     def test_the_hooks_and_scripts_stay_lf_under_autocrlf(self):
         # core.autocrlf=true gave a fresh checkout CRLF hooks (`#!/usr/bin/env sh\r`), and every

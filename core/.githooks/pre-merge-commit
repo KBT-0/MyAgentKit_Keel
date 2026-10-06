@@ -6,4 +6,8 @@
 # runs pre-commit; a fast-forward creates no commit and brings in a tree already gated.
 # --merge: a merge commit always gets the full gate, the build included, even when what the
 # merge brings in is documentation only (git shows no MERGE_HEAD to this hook).
+# Probe seam for a chained hooks path (bootstrap, doctor): the prober writes a nonce into
+# .git/kit-hook-probe and exports it; the hook exits 97 only for that nonce, so an exported
+# variable alone (the committer's, an agent's) cannot turn the hook off.
+[ -n "${KIT_HOOK_PROBE:-}" ] && [ "$(cat "$(git rev-parse --git-dir 2>/dev/null)/kit-hook-probe" 2>/dev/null)" = "$KIT_HOOK_PROBE" ] && exit 97
 exec sh "$(dirname -- "$0")/pre-commit" --merge

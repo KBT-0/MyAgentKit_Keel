@@ -92,6 +92,36 @@ class DoctorTests(unittest.TestCase):
             self.assertIn('DOCTOR: ready', ready.stdout)
             self.assertEqual(ready.stderr, '')
 
+            # The same executable chain bootstrap accepts must be ready in doctor.
+            chains = project / '.husky'
+            chains.mkdir()
+            hooks = sorted((project / '.githooks').iterdir())
+            for hook in hooks:
+                chain = chains / hook.name
+                chain.write_text('#!/bin/sh\nexec .githooks/%s "$@"\n' % hook.name)
+                chain.chmod(0o755)
+            git('config', 'core.hooksPath', '.husky')
+            chained = doctor()
+            self.assertEqual(chained.returncode, 0, chained.stdout + chained.stderr)
+            self.assertIn('chained through .husky', chained.stdout)
+            for hook in hooks:
+                for kind in ('non-executable', 'comment-only', 'masked'):
+                    with self.subTest(hook=hook.name, kind=kind):
+                        chain = chains / hook.name
+                        original = chain.read_text()
+                        if kind == 'non-executable':
+                            chain.chmod(0o644)
+                        elif kind == 'comment-only':
+                            chain.write_text('#!/bin/sh\n# .githooks/%s\nexit 0\n' % hook.name)
+                        else:
+                            chain.write_text('#!/bin/sh\n.githooks/%s "$@" || true\n' % hook.name)
+                        refused = doctor()
+                        self.assertEqual(refused.returncode, 1, refused.stdout + refused.stderr)
+                        self.assertIn('MISSING: the commit gate is not wired', refused.stdout)
+                        chain.write_text(original)
+                        chain.chmod(0o755)
+            git('config', 'core.hooksPath', '.githooks')
+
             # An exported CDPATH naming a directory with a scripts/ in it took doctor's first
             # cd there, and it reported that other tree as a broken machine.
             (tmp / 'elsewhere/scripts').mkdir(parents=True)

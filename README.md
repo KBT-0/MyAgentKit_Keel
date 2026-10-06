@@ -131,8 +131,8 @@ sync as a `conflict:` before anything is copied.
 ## Requirements
 
 POSIX `sh`, git (2.36 or newer for the worktree clean-up), Python 3.10 or newer for the
-review tooling and the kit's own tests. Linux, WSL and macOS are in CI; Windows is used
-through WSL with Windows Terminal tabs (on native Windows Python the kit's tooling imports,
+review tooling and the kit's own tests. Ubuntu and macOS are in CI. The kit is developed under WSL,
+where the owner also runs it with Windows Terminal tabs (on native Windows Python the kit's tooling imports,
 but a review run, the gate lock and the worktree clean-up need a POSIX host). One AI CLI runs the project; a second one runs
 the review gate. Without either, the rules, the gate and the hooks still work.
 

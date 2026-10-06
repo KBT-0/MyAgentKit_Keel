@@ -30,8 +30,10 @@ spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(bridge)
 
-FIXTURE = '''#!/usr/bin/env python3
-import json, os, pathlib, sys, time
+# A fallback named python or py may be the only Python command on PATH.
+PYTHON_SHEBANG = '#!' + sys.executable + '\n'
+
+FIXTURE = PYTHON_SHEBANG + '''import json, os, pathlib, sys, time
 args = sys.argv[1:]
 # A review executes in the throwaway copy; a proposal stays read-only.
 review = 'verdict' in args[args.index('--json-schema') + 1]
@@ -108,8 +110,7 @@ if case == 'questions':
 print(json.dumps(result))
 '''
 
-HANGING_CLI = '''#!/usr/bin/env python3
-import os, pathlib, subprocess, sys, time
+HANGING_CLI = PYTHON_SHEBANG + '''import os, pathlib, subprocess, sys, time
 sys.stdin.read()
 if os.environ.get('CWD_LOG'): pathlib.Path(os.environ['CWD_LOG']).write_text(os.getcwd())
 alive = os.open(os.environ['ALIVE_FIFO'], os.O_WRONLY)
@@ -1420,7 +1421,7 @@ class BridgeTests(unittest.TestCase):
 
     def test_codex_manual_verdict_requires_actual_manual_checks(self):
         fake = self.root / 'codex-manual'
-        fake.write_text('#!/usr/bin/env python3\nimport json,os,pathlib,sys\n'
+        fake.write_text(PYTHON_SHEBANG + 'import json,os,pathlib,sys\n'
                         'sys.stdin.read()\n'
                         'pathlib.Path(sys.argv[sys.argv.index("-o")+1]).write_text(os.environ["FINAL_RESPONSE"])\n'
                         'print(json.dumps({"type":"turn.completed","usage":{}}))\n')
@@ -1436,7 +1437,7 @@ class BridgeTests(unittest.TestCase):
 
     def test_a_verdict_inside_manual_checks_is_not_itself_a_check(self):
         fake = self.root / 'codex-manual-placement'
-        fake.write_text('#!/usr/bin/env python3\nimport json,os,pathlib,sys\n'
+        fake.write_text(PYTHON_SHEBANG + 'import json,os,pathlib,sys\n'
                         'sys.stdin.read()\n'
                         'pathlib.Path(sys.argv[sys.argv.index("-o")+1]).write_text(os.environ["FINAL_RESPONSE"])\n'
                         'print(json.dumps({"type":"turn.completed","usage":{}}))\n')
@@ -1534,7 +1535,7 @@ class BridgeTests(unittest.TestCase):
 
     def test_malformed_codex_verdict_never_becomes_accept(self):
         fake = self.root / 'codex-conflict'
-        fake.write_text('#!/usr/bin/env python3\n'
+        fake.write_text(PYTHON_SHEBANG +
                         'import json, os, pathlib, sys\n'
                         'sys.stdin.read()\n'
                         'pathlib.Path(sys.argv[sys.argv.index("-o") + 1]).write_text(os.environ["FINAL_RESPONSE"])\n'
@@ -1556,7 +1557,7 @@ class BridgeTests(unittest.TestCase):
 
     def test_transcript_accept_cannot_replace_a_missing_final_response(self):
         fake = self.root / 'codex-transcript'
-        fake.write_text('#!/usr/bin/env python3\n'
+        fake.write_text(PYTHON_SHEBANG +
                         'import json, sys\n'
                         'sys.stdin.read()\n'
                         'print(json.dumps({"type": "item.completed", "item": '
@@ -1883,8 +1884,7 @@ class BridgeTests(unittest.TestCase):
     def test_codex_wrapper_rejects_absent_and_conflicting_final_evidence(self):
         scripts = self.install_wrapper()
         fake = self.root / "codex"
-        fake.write_text('''#!/usr/bin/env python3
-import json, os, pathlib, sys, time
+        fake.write_text(PYTHON_SHEBANG + '''import json, os, pathlib, sys, time
 if '--version' in sys.argv: print('offline codex'); sys.exit(0)
 prompt = sys.stdin.read()
 assert 'PRIVATE_PREVIOUS_REVIEW' not in prompt
@@ -1964,7 +1964,7 @@ if case == 'archive_failure':
     def build_fake_codex(self):
         """A Codex stand-in that returns one valid Accept; no paid CLI is ever called."""
         fake = self.root / "codex-accept"
-        fake.write_text("#!/usr/bin/env python3\n"
+        fake.write_text(PYTHON_SHEBANG +
                         "import json, os, pathlib, sys\n"
                         "prompt = sys.stdin.read()\n"
                         "if os.environ.get('PROMPT_LOG'): pathlib.Path(os.environ['PROMPT_LOG']).write_text(prompt)\n"
@@ -3191,7 +3191,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         import time
         reviewer = self.root / 'codex-slow-quota'
         reviewer.write_text(
-            "#!/usr/bin/env python3\n"
+            PYTHON_SHEBANG +
             "import json, os, pathlib, sys, time\n"
             "if sys.argv[1] == 'app-server':\n"
             "    seen = pathlib.Path(os.environ['QUOTA_SEEN'])\n"
