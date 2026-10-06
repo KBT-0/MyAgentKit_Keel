@@ -140,7 +140,7 @@ def _supervise(command, prompt, repo, timeout, started, guard, prior=None):
                     # throwaway copy is not told the repository's path (claude_bridge.
                     # throwaway_copy). A GIT_DIR from a hook would send its git to the repository.
                     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")
-                           and k not in ("OLDPWD", "REVIEW_REPO_ROOT")}
+                           and k not in ("OLDPWD", "REVIEW_REPO_ROOT", "CLAUDE_PROJECT_DIR")}
                     # The reviewer's git never discovers a repository above its working
                     # directory: a copy made inside some checkout stays inside the copy.
                     env["GIT_CEILING_DIRECTORIES"] = str(repo.parent)

@@ -24,7 +24,7 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'MYAGENTKIT_TASK_ID', 'MYAGENTKIT_R
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 108, 'test_agent_usage': 19, 'test_codex_quota': 5}
+SUITE_MINIMUMS = {'test_claude_bridge': 109, 'test_agent_usage': 19, 'test_codex_quota': 5}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -2682,6 +2682,27 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
             else:
                 os.environ['TMPDIR'] = old
             tempfile.tempdir = None
+
+    def test_a_staging_change_by_the_reviewer_makes_the_review_stale(self):
+        # The fingerprint covered the working files and HEAD, not the index: a reviewer's
+        # `git reset --mixed` unstaged the owner's work and the review still completed.
+        import claude_bridge
+        (self.repo / 'file.py').write_text('staged\n')
+        self.git('add', 'file.py')
+        before = claude_bridge.snapshot(self.repo, 'uncommitted', None)[1]
+        self.git('reset', '-q', '--mixed', 'HEAD')
+        self.assertEqual((self.repo / 'file.py').read_text(), 'staged\n')
+        after = claude_bridge.snapshot(self.repo, 'uncommitted', None)[1]
+        self.assertNotEqual(before, after, 'an index-only change left the fingerprint unchanged')
+        # And the reviewer's environment names the repository through no variable at all,
+        # CLAUDE_PROJECT_DIR included.
+        import agent_process
+        os.environ['CLAUDE_PROJECT_DIR'] = str(self.repo)
+        try:
+            execution = agent_process.run(['sh', '-c', 'env'], '', self.root, 30)
+        finally:
+            del os.environ['CLAUDE_PROJECT_DIR']
+        self.assertNotIn('CLAUDE_PROJECT_DIR', execution['stdout'])
 
     def test_dispositions_are_claims_the_reviewer_verifies_not_settlements(self):
         # The author never approves its own work: a disproved finding counts only once the

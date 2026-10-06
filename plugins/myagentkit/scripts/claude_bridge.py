@@ -387,6 +387,9 @@ def snapshot(repo: Path, scope: str, reference: str | None) -> tuple[str, str, s
             checksum.update(str(mode).encode() + b'\0' + contents)
         except FileNotFoundError:
             checksum.update(b'missing')
+    # The index too: a `git reset --mixed` or `git add` run by a reviewer changes what is
+    # staged and nothing in the working tree or HEAD.
+    checksum.update(b'\0index\0' + git(repo, 'ls-files', '-s', '-z'))
     fingerprint = checksum.hexdigest()
     if len(diff) > DIFF_LIMIT:
         raise BridgeError("diff exceeds %d bytes; split the task" % DIFF_LIMIT)
