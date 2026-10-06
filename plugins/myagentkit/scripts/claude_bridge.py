@@ -133,11 +133,19 @@ def throwaway_copy(repo: Path, head: str, diff: str | None, copy: Path,
 
     def reap(child, pgid) -> None:
         if child is not None:
-            # The leader may have exited while a descendant still holds a pipe open.
-            try:
-                os.killpg(pgid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
+            # The leader may have exited while a descendant still holds a pipe open. On
+            # macOS a group whose leader is a zombie answers EPERM: the leader is then
+            # signalled by its pid, and the group again once it is reaped.
+            for target in ((pgid, True), (child.pid, False), (pgid, True)):
+                try:
+                    if target[1]:
+                        os.killpg(target[0], signal.SIGKILL)
+                    else:
+                        os.kill(target[0], signal.SIGKILL)
+                except (ProcessLookupError, PermissionError):
+                    pass
+                if not target[1]:
+                    child.wait()
             child.wait()
             for stream in (child.stdin, child.stdout, child.stderr):
                 if stream is not None:
