@@ -34,8 +34,8 @@ being checked.
 ## What counts as a risky diff
 
 When multiple models have authored the combined change, select a fresh reviewer that did
-not author any of it. Keep the reviewer read-only; an author verifies and implements its
-findings, then requests fresh review of the corrections. An existing local commit without
+not author any of it. The reviewer never changes the reviewed checkout; an author verifies
+and implements its findings, then requests fresh review of the corrections. An existing local commit without
 review is still unreviewed work, not an exception that moves this gate to push time.
 
 A diff is risky when a silent bug in it is expensive, hard to attribute, or slow to
@@ -68,6 +68,22 @@ although no rule required it.
 Root `AGENTS.md` → `docs/ARCHITECTURE.md` → the diff → ALL callers of every changed public
 member (grep them; do not assume). Design authority is `docs/PROJECT.md` — its DECIDED items
 are law, and the reviewer never decides an OPEN one.
+
+## The reviewer executes, in a throwaway copy
+
+A reviewer that only read the diff returned findings that a worker had to reproduce first,
+and some were false; a reviewer that executed found decisive, reproducible defects.
+
+- You may run the test suite, the self-test and your own reproductions, and you should.
+- Run them only in a throwaway copy of the checkout, never in the reviewed checkout.
+- Make the copy with `git worktree add --detach "$(mktemp -d)/copy" <commit>` and remove it
+  afterwards, or with `git archive <commit> | tar -x -C "$(mktemp -d)"` (then `git init`
+  there if the suite needs a repository).
+- Apply the uncommitted part of the diff to the copy with `git apply`.
+- Never use the network, and never call a paid model.
+- Mark each finding REPRODUCED, with the command that shows it, or REASONED.
+- A REASONED Critical or High finding names the command or input that would reproduce it.
+- List as NOT RUN only what you could not run, and why.
 
 ## Review priorities (in order)
 
@@ -137,9 +153,9 @@ Manual checks, so it rules out a plain Accept.
   anything is called accepted. "NOT RUN: <platform>" repeated across rounds is a finding,
   not a footnote. One release passed on the development machine a dozen times and failed
   all four CI jobs on its first run.
-- **A review that executed no tests is not test evidence.** The evidence that the tests ran
-  is the self-test, run by the author or the lead on the reviewed head and named in the
-  acceptance record.
+- **A reviewer's runs are evidence for its findings, not for acceptance.** The evidence that
+  the tests pass is the self-test, run by the author or the lead on the reviewed head and
+  named in the acceptance record.
 
 Running a review, an unavailable reviewer and the paste-by-hand template are for the caller,
 not the reviewer: `docs/REVIEW_RUNNING.md`.

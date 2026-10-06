@@ -2036,12 +2036,19 @@ if case == 'archive_failure':
         # Without these asks each fresh pass reported a different top few, and a later round,
         # blind to the earlier ones, re-raised findings the author had disproved or deferred.
         log = self.root / 'prompt.txt'
-        asks = ('EVERY finding', 'Critical, High, Medium or Low', 'Fix sketch:')
+        # A reviewer told not to run tests sent every finding back unreproduced, and a worker then
+        # spent a round reproducing it; one that executed in a throwaway copy found decisive defects.
+        asks = ('EVERY finding', 'Critical, High, Medium or Low', 'Fix sketch:',
+                'THROWAWAY copy', 'never in the reviewed checkout', 'REPRODUCED', 'REASONED',
+                'Never use the network')
+        forbidden = ('Do not run tests', 'run code')
         task = {'PROMPT_LOG': str(log), 'MYAGENTKIT_TASK_ID': 'rounds-task'}
         code, first = self.run_bridge('reject', env_extra=task)
         self.assertEqual(code, 0, first)
         for ask in asks:
             self.assertIn(ask, log.read_text())
+        for words in forbidden:
+            self.assertNotIn(words, log.read_text())
         self.assertNotIn('### Round 1', log.read_text())
         code, second = self.run_bridge('accept', env_extra=task)
         self.assertEqual(code, 0, second)
@@ -2058,6 +2065,8 @@ if case == 'archive_failure':
         prompt = log.read_text()
         for ask in asks:
             self.assertIn(ask, prompt)
+        for words in forbidden:
+            self.assertNotIn(words, prompt)
         # Oldest first inside the round sections; the templates name every verdict too.
         rounds = re.split(r'^### Round \d+$', prompt.split('\nDiff:\n')[0], flags=re.M)
         self.assertEqual(len(rounds), 3, prompt)
