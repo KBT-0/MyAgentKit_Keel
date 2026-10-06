@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -64,14 +65,40 @@ class KitRunnerTests(unittest.TestCase):
         passed, out = runner(('suite', self.suite_unit('True', 2)))
         self.assertTrue(passed, out)
 
+    def test_a_unit_that_exits_0_before_its_checks_finish_fails_the_run(self):
+        # A test module that called os._exit(0) while it was discovered ended its unit with
+        # status 0 before any suite ran, and the kit check passed. A unit's last line proves it.
+        command = self.suite_unit('True', 2)
+        (self.tmp / 'suite/test_kit_probe.py').write_text('import os\nos._exit(0)\n')
+        passed, out = runner(('suite', command))
+        self.assertFalse(passed, out)
+        self.assertIn('unit suite exited 0 without its completion line', out)
+        self.assertIn('KIT CHECK: FAIL — 1 of 1 units failed: suite', out)
+        passed, out = runner(('suite', self.suite_unit('True', 2)))
+        self.assertTrue(passed, out)
+        self.assertIn('\nUNIT DONE: suite\n', out)
+
+    def test_git_routing_variables_never_reach_a_unit(self):
+        # Inside a hook git exports GIT_INDEX_FILE: a synthetic project's `git add -A` wrote
+        # the caller's index. The kit check drops every such variable before any unit starts.
+        script = self.tmp / 'env.py'
+        script.write_text(UNIT.split('check_kit.ROOT')[0] % str(ROOT / 'scripts/check_kit.py')
+                          + 'import os\nprint(sorted(k for k in os.environ if k.startswith("GIT_")))\n')
+        env = dict(os.environ, GIT_INDEX_FILE=str(self.tmp / 'index'), GIT_DIR=str(self.tmp),
+                   GIT_OBJECT_DIRECTORY=str(self.tmp), GIT_CONFIG_COUNT='0')
+        out = subprocess.run([sys.executable, '-B', str(script)], env=env, capture_output=True, text=True).stdout
+        self.assertIn("'GIT_CONFIG_COUNT'", out)
+        for name in ('GIT_INDEX_FILE', 'GIT_DIR', 'GIT_OBJECT_DIRECTORY'):
+            self.assertNotIn(repr(name), out)
+
     def test_a_suite_under_its_minimum_fails_the_run(self):
         passed, out = runner(('suite', self.suite_unit('True', 3)))
         self.assertFalse(passed)
         self.assertIn('required test suite is incomplete: test_kit_probe', out)
 
     def test_units_print_in_the_given_order_whichever_ends_first(self):
-        slow = [sys.executable, '-c', 'import time; time.sleep(1); print("slow output")']
-        fast = [sys.executable, '-c', 'print("fast output")']
+        slow = [sys.executable, '-c', 'import time; time.sleep(1); print("slow output\\nUNIT DONE: slow")']
+        fast = [sys.executable, '-c', 'print("fast output\\nUNIT DONE: fast")']
         failing = [sys.executable, '-c', 'import sys; print("failing output"); sys.exit(3)']
         passed, out = runner(('slow', slow), ('failing', failing), ('fast', fast))
         self.assertFalse(passed)
@@ -90,8 +117,9 @@ class KitRunnerTests(unittest.TestCase):
         # A test that cannot run on this host (no unprivileged mount namespace, always on
         # macOS) passed silently: its NOT RUN line is collected and printed after the TIME
         # lines, so the end of the output says what this host did not run.
-        said = [sys.executable, '-c', 'import sys; sys.stderr.write("noise\\nNOT RUN: probe a (no b here)\\n")']
-        quiet = [sys.executable, '-c', 'print("quiet output")']
+        said = [sys.executable, '-c', 'import sys; sys.stderr.write("noise\\nNOT RUN: probe a (no b here)\\n"); '
+                'print("UNIT DONE: said")']
+        quiet = [sys.executable, '-c', 'print("quiet output\\nUNIT DONE: quiet")']
         passed, out = runner(('said', said), ('quiet', quiet))
         self.assertTrue(passed, out)
         tail = out[out.rindex('TIME: '):]
@@ -100,7 +128,8 @@ class KitRunnerTests(unittest.TestCase):
 
     def test_timing_prints_a_table_of_units_phases_and_tests_at_the_end(self):
         passed, out = runner(('suite', self.suite_unit('True', 2)),
-                             ('other', [sys.executable, '-c', 'print("other output")']), timing=True)
+                             ('other', [sys.executable, '-c', 'print("other output\\nUNIT DONE: other")']),
+                             timing=True)
         self.assertTrue(passed, out)
         table = out[out.index('TIMING'):]
         self.assertGreater(out.index('TIMING'), out.index('other output'))
@@ -120,11 +149,12 @@ class KitRunnerTests(unittest.TestCase):
 
     def test_units_run_that_many_at_once_with_their_timeouts_scaled_by_it(self):
         unit = [sys.executable, '-c', 'import os, time; s = time.time(); time.sleep(0.5); '
-                'print("span", os.environ["MYAGENTKIT_TEST_TIMEOUT_SCALE"], s, time.time())']
+                'print("span", os.environ["MYAGENTKIT_TEST_TIMEOUT_SCALE"], s, time.time()); '
+                'import sys; print("UNIT DONE: " + sys.argv[1])']
         for parallel, scale, overlap in ((1, 2.0, False), (2, 4.0, True)):
             with self.subTest(parallel=parallel), \
                     unittest.mock.patch.dict(os.environ, {'MYAGENTKIT_TEST_TIMEOUT_SCALE': '2'}):
-                passed, out = runner(('a', unit), ('b', unit), parallel=parallel)
+                passed, out = runner(('a', unit + ['a']), ('b', unit + ['b']), parallel=parallel)
                 self.assertTrue(passed, out)
                 spans = [line.split()[1:] for line in out.splitlines() if line.startswith('span ')]
                 self.assertEqual([float(s) for s, _, _ in spans], [scale, scale])
