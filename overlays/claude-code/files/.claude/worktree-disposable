@@ -1,6 +1,6 @@
 # The folders a finished worktree may lose without a copy: build output and installed
 # dependencies that a fresh checkout makes again. scripts/clean_worktrees.sh removes a merged
-# worktree only when every file git does not track is inside one of these folders or has a
+# worktree (never its branch) only when every file git does not track is inside one of these folders or has a
 # byte-identical copy at the same path in the main worktree. Nothing listed means nothing is
 # disposable, and a worktree holding build output is kept with the folders named. This file
 # must exist for .githooks/post-merge to clean at all.
@@ -14,5 +14,5 @@
 # git-ignored: `git worktree remove` refuses untracked files, and the worktree is then kept.
 #
 # One optional setting: `quiet-minutes=<n>` (default 60, at least 10). A worktree in which
-# anything outside these folders, or anything in its git directory, changed less than n
-# minutes ago is kept. It is a margin for a worker the process scan cannot see, not a proof.
+# anything changed less than n minutes ago (its files, these folders and its git directory;
+# mtime or ctime) is kept. It is a margin for a worker the process scan cannot see, not a proof.

@@ -91,12 +91,15 @@ esac
 # The .py files are every module scripts/review.sh runs: one deleted left doctor ready and
 # the review gate unable to start. A project has no other list to read them from, so the
 # kit's tests keep this one equal to what review_dispatch.py imports.
-for f in scripts/check.sh .githooks/pre-commit .githooks/pre-merge-commit .githooks/post-merge .githooks/commit-msg \
+for f in scripts/check.sh .githooks/pre-commit .githooks/pre-merge-commit .githooks/commit-msg \
          scripts/doctor.sh scripts/review.sh \
          scripts/review_dispatch.py scripts/claude_bridge.py scripts/codex_bridge.py scripts/agent_process.py \
          scripts/agent_usage.py scripts/codex_quota.py; do
   [ -f "$f" ] || miss "$f does not exist (the gate needs it)" "git checkout -- $f, or sync the kit again"
 done
+# Not the gate's: without it finished worker worktrees are never cleaned up after a merge.
+[ -f .githooks/post-merge ] ||
+  miss ".githooks/post-merge does not exist (worktree clean-up after a merge needs it)" "git checkout -- .githooks/post-merge, or sync the kit again"
 
 # --- the executable bit, on disk AND in the index -------------------------------------
 # On disk for this machine; in the index for CI and the next clone, where a 100644 script

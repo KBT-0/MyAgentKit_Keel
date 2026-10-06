@@ -2,10 +2,12 @@
 # KIT-OWNED: do not edit locally; change it in the kit and re-sync.
 # After a merge in the MAIN worktree, removes the finished worker worktrees under
 # .claude/worktrees that scripts/clean_worktrees.sh proves merged and holding nothing else
-# (Claude Code overlay). Merged worktrees piled up otherwise: 39 of them, 34 GB, in a project
-# using the kit, each audited and removed by hand.
-# Not after a merge inside a linked worktree: a worker merging main into its branch is not the
-# moment its siblings are finished.
+# (Claude Code overlay); their branches stay. Merged worktrees piled up otherwise: 39 of them,
+# 34 GB, in a project using the kit, each audited and removed by hand.
+# git runs this hook only after a merge it completes itself (`git merge`, `git pull`): not
+# after a conflicted merge finished with `git commit`, nor `pull --rebase` or `cherry-pick`;
+# the next merge, or the script by hand, covers those. Not after a merge inside a linked
+# worktree: a worker merging main into its branch is not the moment its siblings are finished.
 #
 # Installed by the overlay: scripts/clean_worktrees.sh (+ .py) and .claude/worktree-disposable.
 # Without all three this hook does nothing, and says so once (a marker in the git directory).
@@ -14,7 +16,7 @@
 # The merge is already complete when this runs, and git ignores this hook's exit status; it
 # exits 0 anyway. It changes nothing itself: the script writes its log, then removes only a
 # worktree that passed every check, and keeps every one it could not prove. It prints the
-# removals and one summary line; the dry run (the script without options) gives the reasons.
+# removals and the summary lines; the dry run (the script without options) gives the reasons.
 set -u
 [ -z "${KIT_NO_WORKTREE_CLEANUP:-}" ] || exit 0
 # The main worktree's git directory is the common one; a linked worktree's is below it.

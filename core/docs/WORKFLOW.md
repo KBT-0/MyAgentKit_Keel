@@ -346,17 +346,20 @@ and the lead closes the session after reading it (`tmux kill-session -t NAME`).
 Closing the session leaves the worktree. **Once a worktree's branch is merged, the worktree
 is FINISHED**: a further round on that task starts a NEW worktree, never the old one. With the
 Claude Code overlay, `.githooks/post-merge` removes a finished worktree after the next merge
-in the main worktree, but only when `scripts/clean_worktrees.sh` finds nothing in it that
-would be lost: its branch has commits of its own and every commit it or its reflogs name is
-in main, no tracked change, no operation under way, no git filter that could hide an edit,
-and every file git does not track either in a folder `.claude/worktree-disposable` lists or
-byte-identical to main's copy. That it is no longer in use is NOT proven (a sub-agent worker
-holds no process inside it between commands): nothing in it may have changed for the quiet
-period (60 minutes by default), a margin, not a proof. Anything else keeps the worktree with
-the reason, a squash-merged branch included (its commits are not in main); `git worktree lock
-<path>` keeps one the lead still wants. Each removal is logged first in
-`<git dir>/kit-worktree-removals.log` and prints the command that restores the branch at its
-last commit. `KIT_NO_WORKTREE_CLEANUP=1` turns the hook off; the script without `--apply` is
+git completes itself in the main worktree (not a conflicted merge finished with `git commit`,
+nor `pull --rebase` or `cherry-pick`), but only when `scripts/clean_worktrees.sh` finds
+nothing in it that would be lost: a commit was made in that worktree (its own HEAD reflog) and
+its HEAD is in the main branch; every object id in any file of its git directory names an
+object its branch or the main branch holds; every tracked file is byte for byte what the index
+records; no operation under way; and every file git does not track either in a folder
+`.claude/worktree-disposable` lists or byte-identical to main's copy. It never deletes a
+branch, and removes nothing while the main worktree's HEAD is detached. That it is no longer in
+use is NOT proven (a sub-agent worker holds no process inside it between commands): nothing in
+it may have changed for the quiet period (60 minutes by default), a margin, not a proof.
+Anything else keeps the worktree with the reason, a squash-merged branch included (its commits
+are not in main); `git worktree lock <path>` keeps one the lead still wants. Each removal is
+logged first in `<git dir>/kit-worktree-removals.log` and prints the command that brings the
+worktree back. `KIT_NO_WORKTREE_CLEANUP=1` turns the hook off; the script without `--apply` is
 a dry run.
 
 A worker whose worktree directory is missing STOPS and reports. It never recreates the
