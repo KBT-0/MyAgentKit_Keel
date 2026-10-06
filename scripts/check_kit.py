@@ -55,7 +55,7 @@ REQUIRED_SUITES = {
               'test_review_upgrade': 2, 'test_boundary_example': 3, 'test_scan_gate': 1,
               'test_check_gate': 22, 'test_boundary_restore': 39, 'test_sync_kit': 16,
               'test_doctor': 2, 'test_git_hooks': 25, 'test_stop_hook': 1, 'test_spawn_worker': 16,
-              'test_worker_visibility': 47, 'test_doc_pointers': 4,
+              'test_worker_visibility': 52, 'test_doc_pointers': 4,
               'test_kit_output': 1, 'test_kit_runner': 10, 'test_clean_worktrees': 135,
               'test_close_worker': 16},
 }
@@ -217,31 +217,28 @@ def check_syntax(root):
             lines = case_in_substitution(path.read_text())
             if lines:
                 raise RuntimeError("%s: `case` inside $( ) on line %s: bash 3.2, macOS's sh, reads its "
-                                   "pattern's `)` as the end of the $( ); move it out" % (path, lines[0]))
+                                   "pattern's `)` as the end of the $( ); move it out (a `case` argument "
+                                   "after a reserved word or a symbol is flagged too: rename or quote it)"
+                                   % (path, lines[0]))
             run(["sh", "-n", str(path)])
 
 
-def command_position(before):
-    """Whether a command starts after `before`: after a separator, an opening, or the `)` or `}`
-    that closes a subshell or group, or after a keyword that is itself where a command starts
-    (`if case` is a command, `echo if case` an argument); `do` also after `for NAME [in WORDS]`
-    or `select NAME [in WORDS]`, which is itself where a command starts.
+RESERVED = {"if", "then", "elif", "else", "fi", "for", "while", "until", "do", "done", "case", "esac",
+            "in", "select", "function", "time", "coproc"}
 
-    It must fail loudly: when unsure it says yes. A false `case` costs a rewrite; a missed one
-    passes here and breaks only on macOS. So every `)` counts, even one that closes a $( )."""
-    while True:
-        before = before.rstrip(" \t")
-        if not before or before[-1] in "\n;(|&{)" or re.search(r"(^|[\s;&|(])}$", before):
-            return True
-        keyword = re.search(r"(^|[\s;&|(])(then|do|else|elif|if|while|until|time|!)$", before)
-        if not keyword:
-            return False
-        before = before[:keyword.start(2)]
-        loop = keyword.group(2) == "do" and re.search(
-            r"(^|[\s;&|(])(for|select)[ \t]+[A-Za-z_][A-Za-z0-9_]*([ \t]+in([ \t][^;&|\n]*)?)?[ \t]*;?[ \t]*$",
-            before)
-        if loop and command_position(before[:loop.start(2)]):
-            return True
+
+def command_position(before):
+    """Whether a `case` after `before` may start a command: yes unless the token right before it
+    is a plain word that is not a reserved word. Tokens are words (\\w+) or single other
+    characters; spaces, tabs and backslash-newlines between them are skipped. A word right after
+    `-` is an option, not a plain word (`time -p case` is a command).
+
+    One flat rule, not the shell's grammar: every hand-rolled walk of that grammar missed a form.
+    It fails loudly: `echo if case` and `echo -n case` are flagged (rename or quote the word),
+    `echo case` is not."""
+    before = re.sub(r"(\\\n|[ \t])+$", "", before)
+    word = re.search(r"(-?)(\w+)$", before)
+    return not word or word.group(1) == "-" or word.group(2) in RESERVED
 
 
 def case_in_substitution(text):
@@ -250,8 +247,8 @@ def case_in_substitution(text):
 
     A sketch of the shell's grammar, not a parser: quotes, backslashes, comments and
     here-documents are skipped, every parenthesis is counted; inside $(( )) a `<<` is a shift and
-    only a nested $( ) is read for commands; `case` counts only where a command starts (`echo
-    case` and `echo if case` are arguments)."""
+    only a nested $( ) is read for commands; `case` counts unless a plain word precedes it
+    (command_position: `echo case` is an argument, `echo if case` is flagged anyway)."""
     found, stack, heredocs, i, line = [], [], [], 0, 1
     while i < len(text):
         c = text[i]
@@ -291,7 +288,7 @@ def case_in_substitution(text):
             # The innermost $( or $(( : in arithmetic, `<<` is a shift and no command starts.
             arithmetic = next((s for s in reversed(stack) if s in "$A"), "") == "A"
             here = not arithmetic and re.match(r"<<(-?)[ \t]*['\"]?([A-Za-z0-9_]+)['\"]?", text[i:i + 80])
-            word = text.startswith(("case ", "case\t"), i) and (i == 0 or text[i - 1] in " \t\n;(|&!)")
+            word = text.startswith(("case ", "case\t"), i) and (i == 0 or not re.match(r"\w", text[i - 1]))
             word = word and command_position(text[:i])
             if here:
                 heredocs.append((here.group(1) == "-", here.group(2)))
