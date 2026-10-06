@@ -459,7 +459,8 @@ report. It returns DONE, BLOCKED,
 HANDOFF or PROGRESS once the file is committed on a clean tree, QUESTIONS when the file holds
 open questions, CONTEXT when the session's context passes the warning line (50 percent by
 default), WAITING on a dialog, and GONE. The lead acts on the report's first line
-("The lead's steps when a branch is ready").
+("The lead's steps when a branch is ready"). Exit 3 means a live session's pane could not be
+read: the lead looks at that tab itself and reruns the watcher once the session answers.
 
 `close_worker.sh` waits up to 15 seconds for the session and the processes inside the worktree
 to be gone, then runs the audit below with one change: it lifts the quiet period

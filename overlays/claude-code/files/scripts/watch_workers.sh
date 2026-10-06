@@ -111,7 +111,9 @@ setmark() { tmux set-option -t "=$1:" "@kit_watch_$2" "$3" >/dev/null 2>&1 || tr
 # control bytes removed, in $win.
 classify() {
   tmux has-session -t "=$1" 2>/dev/null || { echo GONE; return 0; }
-  tmux capture-pane -p -J -t "=$1:" >"$win" 2>"$err" || { echo FAILED; return 0; }
+  # A session that ended during the capture is GONE, not an observation failure.
+  tmux capture-pane -p -J -t "=$1:" >"$win" 2>"$err" ||
+    { if tmux has-session -t "=$1" 2>/dev/null; then echo FAILED; else echo GONE; fi; return 0; }
   LC_ALL=C tr -d '\001-\011\013-\037\177' <"$win" | LC_ALL=C sed 's/[[:space:]]*$//' |
     grep -v '^$' | tail -n 15 >"$qs" || true
   cat "$qs" >"$win"
@@ -160,8 +162,14 @@ report() {
 hl() { LC_ALL=C sed -n "$1p" "$2" | LC_ALL=C tr -d '\001-\011\013-\037\177' | LC_ALL=C sed 's/[[:space:]]*$//'; }
 
 # Report NAME's result file and return 0 when it is committed, its tree is clean and this
-# version was not reported yet; return 1 otherwise.
+# version was not reported yet; return 1 otherwise. The once-marker is stored only after the
+# blob was read and reported: a failed read is read again on the next run.
 result() {
+  report_result "$1" || return 1
+  setmark "$1" result "$blob"
+}
+
+report_result() {
   # No `case` inside $( ): bash 3.2, macOS's sh, cannot parse its pattern's `)` there.
   f=""
   while IFS= read -r r; do
@@ -173,17 +181,19 @@ EOF
   case $f in */*) d=${f%/*} ;; *) d=. ;; esac
   # The commit is what is trusted: the head is read from the committed blob, never the working
   # file, which a committed symlink pointed outside the tree and a later write could change
-  # after the clean-tree check. The marker is that blob's id.
-  entry=$(git -C "$d" ls-tree HEAD -- "./${f##*/}" 2>/dev/null) || return 1
+  # after the clean-tree check. The marker is that blob's id. HEAD is resolved once, and must
+  # still be that commit after the clean-tree check: else entry and check saw different commits.
+  head=$(git -C "$d" rev-parse -q --verify HEAD 2>/dev/null) || return 1
+  entry=$(git -C "$d" ls-tree "$head" -- "./${f##*/}" 2>/dev/null) || return 1
   [ -n "$entry" ] || return 1
   mode=${entry%% *}; blob=${entry#* }; blob=${blob#* }; blob=${blob%%"	"*}
   dirty=$(git -C "$d" status --porcelain 2>/dev/null) || return 1
   [ -z "$dirty" ] || return 1
+  [ "$(git -C "$d" rev-parse -q --verify HEAD 2>/dev/null)" = "$head" ] || return 1
   [ "$(mark "$1" result)" != "$blob" ] || return 1
-  setmark "$1" result "$blob"
   case $mode in 100644|100755) ;; *)
     say "watch_workers: MALFORMED: $1, result file $f: it is not a regular file in HEAD (mode $mode); not done"
-    return 0 ;;
+    return ;;
   esac
   git -C "$d" cat-file blob "$blob" >"$body" 2>/dev/null || return 1
   k=$(hl 1 "$body"); t=$(hl 2 "$body"); a=$(hl 3 "$body"); r=$(hl 4 "$body")
@@ -196,7 +206,7 @@ EOF
   case $r in "Remaining: "?*) ;; *) bad=${bad:-"line 4 is not 'Remaining: <what is left>'"} ;; esac
   if [ -n "$bad" ]; then
     say "watch_workers: MALFORMED: $1, result file $f: $bad; not done"
-    return 0
+    return
   fi
   k=${k#Kind: }
   what=$(printf 'task %s, attempt %s, remaining: %s\n' "${t#Task: }" "$a" "${r#Remaining: }" | cutb)
@@ -216,7 +226,7 @@ EOF
     say "watch_workers: QUESTIONS: $1, $nq $qw for $owner (Kind: $k, $what)"
     sed -n 's/^[QL]//p' "$qs" | cutb | while IFS= read -r line; do say "  | $line"; done
     say "  ask them now, one at a time; each line is cut at 200 bytes, the full text is in $f"
-    return 0
+    return
   fi
   case $k in completed) k=DONE ;; blocked) k=BLOCKED ;; handoff) k=HANDOFF ;; *) k=PROGRESS ;; esac
   say "watch_workers: $k: $1, $what (result file $f)"

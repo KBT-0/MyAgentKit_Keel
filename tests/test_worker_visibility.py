@@ -9,6 +9,7 @@ import importlib.util
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import tempfile
 import time
@@ -35,7 +36,7 @@ if target and not target.startswith('='):
 name = target[1:].rstrip(':')
 sessions = os.environ.get('VIS_SESSIONS', '').split()
 if args[0] == 'has-session':
-    sys.exit(0 if name in sessions else 1)
+    sys.exit(0 if name in sessions and not os.path.exists(os.path.join(st, 'gone-' + name)) else 1)
 if args[0] == 'list-clients':
     if name in os.environ.get('VIS_ATTACHED', '').split() or os.path.exists(os.path.join(st, 'attached-' + name)):
         print('/dev/pts/9: %s [120x30 xterm-256color] (attached,UTF-8)' % name)
@@ -52,6 +53,8 @@ if args[0] in ('set-option', 'show-options'):
     sys.exit(0)
 if args[0] == 'capture-pane':
     if os.environ.get('VIS_CAPTURE_FAIL'):
+        if os.environ.get('VIS_CAPTURE_FAIL') == 'ended':  # the session ended during the capture
+            open(os.path.join(st, 'gone-' + name), 'w').close()
         sys.exit("can't find pane: " + name)
     pane = os.environ['VIS_PANE']
     if os.path.exists(os.path.join(st, 'slept')):
@@ -305,6 +308,13 @@ class WatchTests(Base):
                 self.assertIn("watch_workers: w1: capture failed: can't find pane: w1", result.stderr)
                 self.assertEqual(result.stdout, '')
 
+    def test_a_session_that_ended_during_the_capture_is_gone_not_a_failure(self):
+        result = self.watch('--once', 'w1', VIS_CAPTURE_FAIL='ended')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, 'watch_workers: GONE: w1 (the tmux session no longer exists: '
+                         'read its result file)\n')
+        self.assertEqual(result.stderr, '')
+
     def test_a_newline_in_a_name_or_a_result_mapping_is_refused(self):
         # The mappings are joined by newlines: `w1=docs/a<LF>w1=docs/b.md` announced docs/b.md.
         for args in (('--result', 'w1=docs/a\nw1=docs/b.md', 'w1'), ('w1\nw2',)):
@@ -433,6 +443,35 @@ class ResultTests(Base):
         self.assertEqual(out, 'watch_workers: MALFORMED: w1, result file docs/w1.md: it is not a regular file '
                          'in HEAD (mode 120000); not done\n')
 
+    def git_wrapper(self, body):
+        # A `git` first on PATH: `body` runs before the real git, with $real naming it.
+        folder = self.tmp / 'gitwrap'
+        folder.mkdir()
+        real = shutil.which('git')
+        (folder / 'git').write_text('#!/bin/sh\nreal=%s\nst=%s\n%s\nexec "$real" "$@"\n'
+                                    % (shq(real), shq(str(self.state)), body))
+        (folder / 'git').chmod(0o755)
+        return [folder]
+
+    def test_a_failed_blob_read_is_read_again_on_the_next_run(self):
+        # The once-marker was stored before the read: one failed `cat-file` hid the result forever.
+        self.commit(HEAD % ('completed', 'none'))
+        first = self.git_wrapper('case " $* " in *" cat-file "*) [ -e "$st/catfailed" ] || '
+                                 '{ : >"$st/catfailed"; echo "fatal: cannot read" >&2; exit 128; } ;; esac')
+        self.assertEqual(self.watch(path_first=first).stdout, '', 'a failed read was reported')
+        self.assertIn('DONE: w1', self.watch(path_first=first).stdout)
+
+    def test_a_head_that_moves_during_the_check_reports_nothing(self):
+        # The entry was read at one commit and the tree's cleanliness at the next: an obsolete
+        # completion was reported after a progress result had replaced it.
+        self.commit(HEAD % ('completed', 'none'))
+        first = self.git_wrapper(
+            'case " $* " in *" status "*) [ -e "$st/moved" ] || { : >"$st/moved"; '
+            'printf "Kind: progress\\nTask: T-7\\nAttempt: 2\\nRemaining: more\\n" >docs/w1.md; '
+            '"$real" -c user.name=t -c user.email=t@t commit -q -m p -- docs/w1.md; } ;; esac')
+        self.assertEqual(self.watch(path_first=first).stdout, '', 'a result of an older commit was reported')
+        self.assertIn('PROGRESS: w1', self.watch(path_first=first).stdout)
+
     def test_the_watcher_restarted_after_progress_reaches_done(self):
         # The lead restarts the watcher after every report but DONE and GONE while work
         # remains: the second run, after a PROGRESS report, still reports the completion.
@@ -495,6 +534,14 @@ class ResultTests(Base):
         self.assertEqual(gate.case_in_substitution('x=$(echo case value)\ny=$(f; then case)\n'), [])
         self.assertEqual(gate.case_in_substitution('x=$(true && case a in a) :;; esac)\n'), [1])
         self.assertEqual(gate.case_in_substitution('x=$(if :; then case a in a) :;; esac; fi)\n'), [1])
+        # Every keyword after which a command starts.
+        for start in ('if', 'while', 'until', '!', 'time', 'elif', 'then', 'do', 'else'):
+            with self.subTest(start=start):
+                self.assertEqual(gate.case_in_substitution('x=$(%s case a in a) :;; esac)\n' % start), [1])
+        # A $( ) inside $(( )) is still a substitution, and its `case` still counts.
+        self.assertEqual(gate.case_in_substitution('n=$(( $(case a in a) echo 1;; esac) + 1 ))\n'), [1])
+        self.assertEqual(gate.case_in_substitution('n=$(( (1 << 2) + $(echo 1) ))\nf=$(case x in x) :;; esac)\n'),
+                         [2])
         # A shift in $(( )) is not a here-document: the next line is still read.
         self.assertEqual(gate.case_in_substitution('n=$((1 << 2)) m="$((n << 1))"\n'
                                                    'f=$(case x in x) echo ok;; esac)\n'), [2])
@@ -505,8 +552,19 @@ class ResultTests(Base):
         gate = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(gate)
         (self.tmp / 'bad.sh').write_text('#!/bin/sh\nn=$((1 << 2))\nf=$(case x in x) echo ok;; esac)\n')
-        with self.assertRaisesRegex(RuntimeError, r'bad\.sh: `case` inside \$\( \) on line 3: bash 3\.2'):
-            gate.check_syntax(self.tmp)
+        # macOS's sh rejects the file itself; the named reason must still be the lint's. An `sh`
+        # that fails every `-n` stands in for it, so every host sees what macOS sees.
+        stub = self.tmp / 'stub-sh'
+        stub.mkdir()
+        (stub / 'sh').write_text('#!/bin/sh\necho "syntax error near unexpected token" >&2\nexit 2\n')
+        (stub / 'sh').chmod(0o755)
+        path = os.environ['PATH']
+        os.environ['PATH'] = '%s%s%s' % (stub, os.pathsep, path)
+        try:
+            with self.assertRaisesRegex(RuntimeError, r'bad\.sh: `case` inside \$\( \) on line 3: bash 3\.2'):
+                gate.check_syntax(self.tmp)
+        finally:
+            os.environ['PATH'] = path
 
 
 class ContextTests(Base):
