@@ -364,6 +364,32 @@ class CleanWorktreesTests(unittest.TestCase):
                 self.assertIn('--only takes the name of one folder under .claude/worktrees', out)
         self.assertTrue(other.is_dir())
 
+    def test_no_quiet_lifts_the_quiet_period_for_the_one_named_worktree_and_nothing_else(self):
+        # close_worker.sh: the lead has just ended the session and decided the work is finished.
+        out = self.run_script('--apply', '--no-quiet', code=2)
+        self.assertIn('--no-quiet is accepted only with --only', out)
+        fresh, other = self.worktree('fresh'), self.worktree('other')
+        self.recent(fresh / 'fresh.txt')
+        self.recent(other / 'other.txt')
+        out = self.run_script('--only=fresh')
+        self.assertKept(fresh, out, 'quiet period: a file in it changed 1 min ago')
+        out = self.run_script('--only=fresh', '--no-quiet')
+        self.assertIn("to apply: scripts/clean_worktrees.sh --apply --only='fresh' --no-quiet", out)
+        out = self.run_script('--apply', '--only=fresh', '--no-quiet')
+        self.assertIn('clean_worktrees: --no-quiet: the quiet period is not applied to .claude/worktrees/fresh\n', out)
+        self.assertRemoved(fresh, out)
+        self.assertTrue(other.is_dir())
+        # Every other proof stands: an uncommitted file, a process working inside.
+        (other / 'notes.txt').write_text('uncommitted\n')
+        out = self.run_script('--apply', '--only=other', '--no-quiet')
+        self.assertKept(other, out, 'notes.txt')
+        (other / 'notes.txt').unlink()
+        busy = subprocess.Popen(['sleep', '30'], cwd=other)
+        self.addCleanup(busy.wait)
+        self.addCleanup(busy.kill)
+        out = self.run_script('--apply', '--only=other', '--no-quiet', idle=False)
+        self.assertKept(other, out, 'in use: process %d works inside it' % busy.pid)
+
     def test_the_log_record_is_written_before_anything_is_deleted_and_a_rerun_finishes(self):
         (self.main / 'sub').mkdir()
         (self.main / 'sub/report.md').write_text('archived\n')

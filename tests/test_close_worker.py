@@ -7,6 +7,7 @@ hours ahead (CLEAN_WORKTREES_NOW), so the quiet period holds. No branch is ever 
 """
 import os
 from pathlib import Path
+import signal
 import shutil
 import subprocess
 import tempfile
@@ -15,6 +16,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / 'overlays/claude-code/files/scripts/close_worker.sh'
+PROC = os.path.exists('/proc/self/cwd')
 
 # Sessions live in a file, one name per line; every call is logged. Every target is exact.
 TMUX = r'''#!/usr/bin/env python3
@@ -34,12 +36,21 @@ target = args[args.index('-t') + 1]
 if not target.startswith('='):
     sys.exit('inexact target ' + target)
 name = target[1:]
+# CLOSE_LINGER=N: a killed session is still found by the next N has-session calls.
+linger = os.path.join(st, 'linger-' + name)
 if name not in sessions:
+    left = int(open(linger).read()) if os.path.exists(linger) else 0
+    if args[0] == 'has-session' and left:
+        with open(linger, 'w') as f:
+            f.write(str(left - 1))
+        sys.exit(0)
     sys.exit("can't find session: " + name)
 if args[0] == 'kill-session':
     sessions.remove(name)
     with open(path, 'w') as f:
         f.write('\n'.join(sessions))
+    with open(linger, 'w') as f:
+        f.write(os.environ.get('CLOSE_LINGER', '0'))
 '''
 
 
@@ -86,8 +97,9 @@ class CloseWorkerTests(unittest.TestCase):
                 f.write(name + '\n')
         return path
 
-    def close(self, *args, code=0):
-        result = subprocess.run(['sh', str(SCRIPT), *args], cwd=self.main, env=self.env, capture_output=True)
+    def close(self, *args, code=0, **extra):
+        result = subprocess.run(['sh', str(SCRIPT), *args], cwd=self.main, env=dict(self.env, **extra),
+                                capture_output=True)
         out = (result.stdout + result.stderr).decode('utf-8', 'replace')
         self.assertEqual(result.returncode, code, out)
         return out
@@ -147,6 +159,36 @@ class CloseWorkerTests(unittest.TestCase):
         self.assertIn('close_worker: w1: dry run: would end tmux session w1', out)
         self.assertIn('clean_worktrees: dry run:', out)
         self.assertIn('close_worker: dry run: nothing was changed', out)
+
+    def test_a_worktree_committed_a_moment_ago_is_removed_the_quiet_period_lifted(self):
+        # The real clock: the worker's last commit is seconds old. The hook would keep it.
+        path = self.worker('w1')
+        now = {'CLEAN_WORKTREES_NOW': str(time.time())}
+        out = self.close('--dry-run', 'w1', **now)
+        self.assertIn('close_worker: w1: dry run: the removal would lift the quiet period for this worktree alone '
+                      '(--no-quiet), every other proof stays', out)
+        self.assertIn('--only=\'w1\' --no-quiet', out)
+        out = self.close('w1', **now)
+        self.assertIn('clean_worktrees: --no-quiet: the quiet period is not applied to .claude/worktrees/w1', out)
+        self.assertFalse(path.exists(), out)
+        self.git('rev-parse', '--verify', 'worktree-w1')
+
+    def test_the_close_waits_for_a_lingering_session_and_its_processes_before_the_audit(self):
+        path = self.worker('w1')
+        # A process inside that exits by itself, after the session is gone, like the tool inside it.
+        busy = subprocess.Popen(['sleep', '5'], cwd=path)
+        self.addCleanup(busy.wait)
+        self.addCleanup(lambda: busy.poll() is None and busy.send_signal(signal.SIGKILL))
+        out = self.close('w1', CLOSE_LINGER='2', code=0 if PROC else 1)
+        has = [c for c in self.calls() if c.startswith("['has-session'")]
+        self.assertGreaterEqual(len(has), 4, out)  # before the kill, two lingering, one gone
+        self.assertRegex(out, r'close_worker: w1: waited \d+ s for the tmux session to end')
+        if PROC:  # /proc is polled: the audit runs once the process has exited
+            self.assertIn('process %d inside its worktree to exit' % busy.pid, out)
+            self.assertFalse(path.exists(), out)
+        else:  # no /proc to poll (macOS): the audit's own listing sees the process and keeps it
+            self.assertIn('in use: process', out)
+            self.assertTrue(path.is_dir(), out)
 
     def test_a_bad_name_is_refused_before_any_tmux_call(self):
         for bad in ('w1\n', 'w\x1b[31m', 'a b', 'a/b', '../w1', '', '--apply', 'w;id'):

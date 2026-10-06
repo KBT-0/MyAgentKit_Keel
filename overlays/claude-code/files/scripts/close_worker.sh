@@ -13,11 +13,15 @@
 #   1. A name outside [A-Za-z0-9_-], a control character included, or one starting with `-`,
 #      is refused before any tmux call; the next name still runs.
 #   2. `tmux kill-session -t =NAME`; the terminal tab attached to it closes by itself. A
-#      session that does not exist is reported, not an error.
-#   3. `clean_worktrees.sh --apply --only=NAME`: the post-merge hook's audit, every proof, for
-#      .claude/worktrees/NAME alone. No --assume-idle: the session has just ended, so a process
-#      still inside keeps the worktree, as does anything else the audit cannot prove (the quiet
-#      period included). The hook after a later merge, or this script again, removes it then.
+#      session that does not exist is reported, not an error. Then it waits, up to 15 s, until
+#      `tmux has-session` no longer finds it and, where /proc exists, no process works inside
+#      the worktree: the tool inside takes a moment to exit, and the audit would see it.
+#   3. `clean_worktrees.sh --apply --only=NAME --no-quiet`: the post-merge hook's audit, every
+#      proof, for .claude/worktrees/NAME alone, without the quiet period: that margin stands in
+#      for "no worker is still in it", and here the lead has just ended the session and decided
+#      the work is finished (the hook never lifts it). No --assume-idle: a process still inside
+#      keeps the worktree, as does anything else the audit cannot prove; the hook after a later
+#      merge, or this script again, removes it then.
 #   4. The branch worktree-NAME is never deleted; the line says how to delete merged branches.
 # Exit 0 when every named session is gone and every named worktree was removed or did not
 # exist; 1 otherwise, with the first reason on the last line; 2 on a usage error. A dry run
@@ -31,6 +35,17 @@ fail() { say "$1"; [ -n "$first" ] || first=$1; }
 nl='
 '
 case $0 in */*) kit=${0%/*} ;; *) kit=. ;; esac
+# The physical path of the worktree, or empty; /proc/PID/cwd names physical paths.
+top=$(git rev-parse --show-toplevel 2>/dev/null) || top=""
+# inside DIR: prints one process working in DIR or below and succeeds; Linux /proc only.
+inside() {
+  [ -n "$1" ] && [ -e /proc/self/cwd ] || return 1
+  for d in /proc/[0-9]*; do
+    c=$(readlink "$d/cwd" 2>/dev/null) || continue
+    case $c in "$1"|"$1"/*) printf '%s' "${d#/proc/}"; return 0 ;; esac
+  done
+  return 1
+}
 dry=""
 [ "${1-}" = --dry-run ] && { dry=1; shift; }
 [ $# -ge 1 ] || { sed -n '6,7p' "$0"; exit 2; }
@@ -47,15 +62,26 @@ for name; do
   elif ! tmux has-session -t "=$name" 2>/dev/null; then
     say "$name: no tmux session named $name; nothing to end"
   elif [ -n "$dry" ]; then
-    say "$name: dry run: would end tmux session $name (tmux kill-session -t =$name); while it runs, the audit below keeps its worktree"
+    say "$name: dry run: would end tmux session $name (tmux kill-session -t =$name) and wait up to 15 s for it; while it runs, the audit below keeps its worktree"
   elif tmux kill-session -t "=$name" 2>/dev/null; then
     say "$name: tmux session ended; the terminal tab attached to it closes by itself"
+    wt=""; [ -z "$top" ] || wt=$(cd -P -- "$top/.claude/worktrees/$name" 2>/dev/null && pwd -P) || wt=""
+    i=0; on=""
+    while :; do
+      if tmux has-session -t "=$name" 2>/dev/null; then w="the tmux session to end"
+      elif pid=$(inside "$wt"); then w="process $pid inside its worktree to exit"
+      else break; fi
+      case " $on " in *" $w; "*) ;; *) on="$on$w; " ;; esac
+      [ "$i" -lt 15 ] || { say "$name: still waiting on ${on%; } after 15 s; the audit below decides"; break; }
+      i=$((i + 1)); sleep 1
+    done
+    [ "$i" -eq 0 ] || [ "$i" -ge 15 ] || say "$name: waited $i s for ${on%; }"
   else
     fail "$name: tmux kill-session -t =$name failed; the session may still run"
   fi
 
-  apply=--apply; [ -z "$dry" ] || apply=""
-  out=$(sh "$kit/clean_worktrees.sh" $apply "--only=$name" 2>&1); rc=$?
+  apply=--apply; [ -z "$dry" ] || { apply=""; say "$name: dry run: the removal would lift the quiet period for this worktree alone (--no-quiet), every other proof stays"; }
+  out=$(sh "$kit/clean_worktrees.sh" $apply "--only=$name" --no-quiet 2>&1); rc=$?
   printf '%s\n' "$out" | LC_ALL=C tr '\001-\011\013-\037\177' '?'
   case $nl$out in
     *"${nl}clean_worktrees: no worktree at "*)
