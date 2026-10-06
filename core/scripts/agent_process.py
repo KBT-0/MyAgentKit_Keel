@@ -59,28 +59,20 @@ def stop_group(child, pgid) -> None:
     if POSIX:
         # The leader's pid is signalled only while it is ours (not yet reaped): a reaped
         # pid may already be another process.
-        # The group is signalled while its leader is still ours (not yet reaped). Only when
-        # that answers EPERM (macOS: the leader is a zombie) is the leader signalled by pid
-        # and the group once more right after the reap: a reaped group id may already be
-        # another process's, so that second signal is sent in no other case.
-        zombie = False
+        # The group is signalled ONCE, while its leader is still ours (not yet reaped): a
+        # reaped group id may already be another process's. macOS answers EPERM for a group
+        # whose only member is the zombie leader (nothing left to stop); the leader is then
+        # signalled by pid, a no-op for a zombie, and reaped.
         if child.returncode is None:
             try:
                 os.killpg(pgid, signal.SIGKILL)
-            except PermissionError:
-                zombie = True
-            except ProcessLookupError:
+            except (ProcessLookupError, PermissionError):
                 pass
             try:
                 os.kill(child.pid, signal.SIGKILL)
             except (ProcessLookupError, PermissionError):
                 pass
             child.wait()
-            if zombie:
-                try:
-                    os.killpg(pgid, signal.SIGKILL)
-                except (ProcessLookupError, PermissionError):
-                    pass
     else:
         try:
             done = subprocess.run(["taskkill", "/T", "/F", "/PID", str(child.pid)],

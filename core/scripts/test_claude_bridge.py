@@ -2291,17 +2291,21 @@ from pathlib import Path
 import claude_bridge
 try:
     resource.setrlimit(resource.RLIMIT_AS, (100 * 1024 * 1024, 100 * 1024 * 1024))
-except ValueError:
-    print("NOT RUN: the address-space limit cannot be lowered on this host (macOS)")
-    raise SystemExit(0)
+except (ValueError, OSError):
+    # macOS refuses to lower RLIMIT_AS: said, and the process ends with 0 through no
+    # interpreter teardown (which failed under the limit once set partway).
+    sys.stdout.write("NOT RUN: the address-space limit cannot be lowered on this host (macOS)\\n")
+    sys.stdout.flush()
+    import os
+    os._exit(0)
 claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
 '''
         result = subprocess.run([sys.executable, '-B', '-c', script, str(self.repo), str(copy)],
                                 cwd=ROOT, capture_output=True, text=True, timeout=30)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        if 'NOT RUN:' in result.stdout:
-            print(result.stdout.strip())
+        if 'NOT RUN:' in result.stdout + result.stderr:
+            print((result.stdout + result.stderr).strip())
             return
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         with asset.open('rb') as source, (copy / 'large.bin').open('rb') as target:
             while True:
                 chunk = source.read(64 * 1024)
