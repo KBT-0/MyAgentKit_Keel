@@ -450,6 +450,23 @@ the previous fix had added, in classes the reviewers had already shown once. The
 move the review into the worker's warm context and run together what can run together. They
 remove no review.
 
+### Design before code
+
+- A new mechanism gets a one-page design before any code. A new mechanism is anything that
+  deletes or moves files, rewrites history, or changes a gate.
+- The design names what the mechanism protects, what it excludes by decision, its rules, and
+  the cases in which it still loses data or fails. It is the threat model of
+  `docs/REVIEW_GATE.md`, "A review loop: threat model, stopping rule, evidence".
+- The design is reviewed under its own review label (`docs/REVIEW_RUNNING.md`, "Rounds,
+  labels and designs"). Code starts after that review.
+- The design's exclusions are the dispositions for later code rounds. A finding inside an
+  exclusion is answered with the exclusion, not with a fix.
+- The kit repository's `docs/worker-lifecycle-options.md` shows the shape: the facts, the
+  options with their costs, and what a second model should attack.
+
+A design round on one page takes about fifteen minutes, and the same flaw found in code
+costs a fix round.
+
 ### Review inside the worker
 
 - A worker that can start a sub-agent (a separate session) reviews its own diff before it

@@ -118,6 +118,18 @@ authorization check. The adapter enforces per-invocation limits only. Automation
 authorizes a commit, push, deployment, or an author-only approval. The host is responsible
 for choosing a different reviewing model; `--requester` is reported metadata, not attestation.
 
+## Rounds, labels and designs
+
+When the rounds start and what runs in parallel is the lead's part, in `docs/WORKFLOW.md`,
+"Review rounds — early, inside the worker, in parallel". This section says how to run them.
+
+- Review a design under its own label, such as `<feature>-design`, before any code exists.
+  Commit the design on the feature's branch, so that every code round's diff carries it.
+- In the code rounds, answer a finding inside one of the design's exclusions with that
+  exclusion as its disposition ("deferred by decision", naming the design's section). Pass
+  it in `REVIEW_DISPOSITIONS` from the second round on; the first round has no earlier round
+  to attach it to, and the reviewer reads the exclusion in the diff.
+
 ## Unavailable reviewer
 
 Reviews have no default monetary budget cap. Pass a supported monetary-cap option only
