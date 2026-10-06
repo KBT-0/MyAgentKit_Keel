@@ -44,9 +44,9 @@ REQUIRED_SUITES = {
               'test_review_upgrade': 2, 'test_boundary_example': 3, 'test_scan_gate': 1,
               'test_check_gate': 18, 'test_boundary_restore': 39, 'test_sync_kit': 16,
               'test_doctor': 2, 'test_git_hooks': 25, 'test_stop_hook': 1, 'test_spawn_worker': 15,
-              'test_worker_visibility': 27, 'test_doc_pointers': 4,
-              'test_kit_output': 1, 'test_kit_runner': 8, 'test_clean_worktrees': 134,
-              'test_close_worker': 8},
+              'test_worker_visibility': 28, 'test_doc_pointers': 4,
+              'test_kit_output': 1, 'test_kit_runner': 8, 'test_clean_worktrees': 135,
+              'test_close_worker': 10},
 }
 
 
@@ -213,8 +213,9 @@ def case_in_substitution(text):
     """The lines where a `case` starts inside $( ). bash 3.2, macOS's sh, does not parse it, and
     the `sh -n` of a host with a newer shell passes it: one did, and only macOS CI failed.
 
-    A sketch of the shell's grammar, not a parser: quotes, backslashes, comments and here-documents
-    are skipped, every other parenthesis is counted."""
+    A sketch of the shell's grammar, not a parser: quotes, backslashes, comments, here-documents
+    and $(( )) are skipped, every other parenthesis is counted; `case` counts only where a
+    command starts (`echo case` is an argument)."""
     found, stack, heredocs, i, line = [], [], [], 0, 1
     while i < len(text):
         c = text[i]
@@ -232,6 +233,13 @@ def case_in_substitution(text):
         elif c == "\\":
             line += text[i + 1:i + 2] == "\n"
             i += 2
+        elif text.startswith("$((", i):  # arithmetic: its `1 << 2` is a shift, not a here-document
+            depth, j = 2, i + 3
+            while j < len(text) and depth:
+                depth += {"(": 1, ")": -1}.get(text[j], 0)
+                j += 1
+            line += text.count("\n", i, j)
+            i = j
         elif stack and stack[-1] == '"':
             if c == '"':
                 stack.pop()
@@ -250,6 +258,10 @@ def case_in_substitution(text):
         else:
             here = re.match(r"<<(-?)[ \t]*['\"]?([A-Za-z0-9_]+)['\"]?", text[i:i + 80])
             word = text.startswith(("case ", "case\t"), i) and (i == 0 or text[i - 1] in " \t\n;(|&")
+            if word:  # Where a command starts: after a separator, an opening or then/do/else/elif.
+                before = text[:i].rstrip(" \t")
+                word = (not before or before[-1] in "\n;(|&{"
+                        or re.search(r"(^|[\s;&|(])(then|do|else|elif)$", before))
             if here:
                 heredocs.append((here.group(1) == "-", here.group(2)))
                 i += here.end()

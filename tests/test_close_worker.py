@@ -25,6 +25,8 @@ st = os.environ['CLOSE_STATE']
 args = sys.argv[1:]
 with open(os.path.join(st, 'tmux.log'), 'a') as log:
     log.write(repr(args) + '\n')
+if os.environ.get('CLOSE_TMUX_ERROR'):  # a server tmux cannot reach: no answer either way
+    sys.exit(os.environ['CLOSE_TMUX_ERROR'])
 path = os.path.join(st, 'sessions')
 sessions = open(path).read().split() if os.path.exists(path) else []
 if args[0] == 'list-sessions':
@@ -189,6 +191,33 @@ class CloseWorkerTests(unittest.TestCase):
         else:  # no /proc to poll (macOS): the audit's own listing sees the process and keeps it
             self.assertIn('in use: process', out)
             self.assertTrue(path.is_dir(), out)
+
+    def test_a_tmux_that_cannot_answer_is_not_proof_of_absence(self):
+        # Only "no such session or server" proves absence; a socket tmux cannot read may hold it.
+        denied = 'error connecting to /tmp/tmux-1000/default (Permission denied)'
+        path = self.worker('w1')
+        for name in ('w1', 'nobody'):  # with a worktree, and without one: no audit then asks tmux again
+            with self.subTest(name=name):
+                out = self.close(name, code=1, CLOSE_TMUX_ERROR=denied)
+                self.assertFalse([c for c in self.calls() if 'kill-session' in c], out)
+                self.assertNotIn('no tmux session named', out)
+                last = out.rstrip('\n').split('\n')[-1]
+                self.assertEqual(last, 'close_worker: FAILED: %s: tmux could not say whether session %s exists, so it may '
+                                 'still run: %s' % (name, name, denied), out)
+        self.assertTrue(path.is_dir())
+
+    def test_a_cleaner_that_exits_nonzero_fails_the_close_whatever_its_summary_says(self):
+        # The cleaner exits 1 after a removal whose outcome line it could not write to its log.
+        kit = self.tmp / 'kit'
+        kit.mkdir()
+        shutil.copy(SCRIPT, kit / 'close_worker.sh')
+        (kit / 'clean_worktrees.sh').write_text('echo "clean_worktrees: removed 1, kept 0"\n'
+                                                'echo "clean_worktrees: the outcome log could not be written"\nexit 1\n')
+        result = subprocess.run(['sh', str(kit / 'close_worker.sh'), 'w1'], cwd=self.main, env=self.env,
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual(result.stdout.rstrip('\n').split('\n')[-1], 'close_worker: FAILED: w1: clean_worktrees.sh '
+                         'exited 1: clean_worktrees: the outcome log could not be written', result.stdout)
 
     def test_a_bad_name_is_refused_before_any_tmux_call(self):
         for bad in ('w1\n', 'w\x1b[31m', 'a b', 'a/b', '../w1', '', '--apply', 'w;id'):

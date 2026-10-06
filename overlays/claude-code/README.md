@@ -244,9 +244,10 @@ updated from then on.
 The worker scripts (`spawn_worker.sh`, `show_workers.sh`, `watch_workers.sh`,
 `waiting_patterns.txt`, `close_worker.sh`) carry the KIT-OWNED header, so a sync updates them
 where they exist. A copy from before the header is a sync conflict, and the sync copies
-nothing until it is resolved: an unedited copy is moved aside, and the rerun installs the
-kit's; an edited one is moved aside too, and its change is carried into the project's own
-files by hand (`docs/UPDATING.md`).
+nothing until it is resolved. The sync never installs an overlay file that is absent, so
+moving the copy aside is not enough: keep the old copy aside, copy the kit's current
+`overlays/claude-code/files/scripts/<name>` into place, carry your edits over into the
+project's own files by hand (`docs/UPDATING.md`), then sync.
 
 ## Finished worktrees are removed after a merge, and only those
 
@@ -334,9 +335,11 @@ then stays quiet.
   what the reason names, then `git worktree remove <path>` without `--force` (git refuses a
   worktree with changes of its own; the branch stays). A squash-merged branch, or one whose
   commits main took by rebase or cherry-pick, is kept: its own tip is not in main. A tree or
-  blob id in its git directory keeps it: reachability is checked for commits only. A repository
-  using Git LFS or any other filter, or `core.autocrlf`, is not cleaned automatically: the
-  worktree's bytes differ from the blobs. A worktree holding build output that is not listed as
+  blob id in its git directory keeps it: reachability is checked for commits only. A filter
+  (Git LFS included), `ident` or `core.autocrlf` is not trusted: each tracked file's raw bytes
+  are compared with its index blob, so a file whose bytes a filter or conversion changed is
+  kept, and one whose bytes equal the blob, filter or not, loses nothing and does not keep
+  the worktree. A worktree holding build output that is not listed as
   disposable is kept, and the report names the folders to consider listing.
 - **Not in use: what each platform counts.** Before it trusts a process listing the script
   finds ITSELF in it with its own working directory; a listing that does not show it is not

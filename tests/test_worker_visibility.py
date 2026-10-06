@@ -426,6 +426,22 @@ class ResultTests(Base):
         # Quoted, commented or in a here-document, the word is not a `case`.
         self.assertEqual(gate.case_in_substitution('x=$(echo "case a" \'case b\') # $( case\n'
                                                    'cat <<-E\n\t$(case\n\tE\n'), [])
+        # An argument is not a command: `case` counts only where a command starts.
+        self.assertEqual(gate.case_in_substitution('x=$(echo case value)\ny=$(f; then case)\n'), [])
+        self.assertEqual(gate.case_in_substitution('x=$(true && case a in a) :;; esac)\n'), [1])
+        self.assertEqual(gate.case_in_substitution('x=$(if :; then case a in a) :;; esac; fi)\n'), [1])
+        # A shift in $(( )) is not a here-document: the next line is still read.
+        self.assertEqual(gate.case_in_substitution('n=$((1 << 2)) m="$((n << 1))"\n'
+                                                   'f=$(case x in x) echo ok;; esac)\n'), [2])
+
+    def test_the_kit_check_rejects_a_case_inside_a_substitution(self):
+        # The scan alone is not the gate: check_syntax must run it and stop on it.
+        spec = importlib.util.spec_from_file_location('kit_check', ROOT / 'scripts/check_kit.py')
+        gate = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(gate)
+        (self.tmp / 'bad.sh').write_text('#!/bin/sh\nn=$((1 << 2))\nf=$(case x in x) echo ok;; esac)\n')
+        with self.assertRaisesRegex(RuntimeError, r'bad\.sh: `case` inside \$\( \) on line 3: bash 3\.2'):
+            gate.check_syntax(self.tmp)
 
 
 class ContextTests(Base):

@@ -251,7 +251,7 @@ in `RESEARCH_LOG.md` (2026-10-03). Most of the files below are project-owned, so
   quiet for 60 minutes (`quiet-minutes=` in the list); not in use (no process with its
   working directory inside, read fresh before each step through `/proc` or, elsewhere,
   `lsof`, which must show the script itself; no tmux session of its name; the gate lock not
-  held); no git filter or `ident` in the repository. A branch is never deleted. The log
+  held); no filter or `ident` trusted: the bytes are compared. A branch is never deleted. The log
   `<git dir>/kit-worktree-removals.log` gets an `intent` line before anything is deleted and
   an `outcome` line after; the report prints the restore command. A failed `git worktree
   remove` is POSSIBLY MODIFIED and SIGINT, SIGTERM or SIGHUP during a removal is reported;
