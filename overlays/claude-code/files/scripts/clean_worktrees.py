@@ -32,17 +32,21 @@ all):
      no remote-tracking ref: `git fetch --prune` drops it), or a commit this saves: before
      removing, one `git update-ref --stdin` transaction pins every commit only its git
      directory holds that no other of them reaches, as refs/kit/saved/<its git directory name,
-     percent-encoded>-<UTC time>/<n>, and the check runs again with those refs. A tree or
+     percent-encoded, cut to 64 bytes>-<12 hex digits of its SHA-256>-<UTC time>/<n>, and the
+     check runs again with those refs. A tree or
      blob id keeps it: rev-list cannot tell whether one is held. The files ref backend; no
      per-worktree config;
   g. tracked content, by bytes: no change `git status` reports with the stat settings forced to
      their defaults; the index equals HEAD's tree; every tracked path is, in the worktree,
      exactly the blob the index records (raw bytes, no filter or line-ending conversion, the
      same executable bit; a symlink's text); no unresolved entry, no submodule;
-  h. every file git does not track is inside a directory .claude/worktree-disposable lists, or
-     a regular file whose byte-identical copy is at the same path in the main worktree and that
-     is not a tracked file under another name (a case alias, a link: the same device and
-     inode); nothing anywhere in it, disposable folders included, changed within quiet-minutes.
+  h. no file under its own .claude/worktrees (a worktree inside a worktree, which this script
+     does not judge); every other file git does not track is inside a directory
+     .claude/worktree-disposable lists, or a regular file whose byte-identical copy is at the
+     same path in the main worktree, outside its .claude/worktrees under any spelling (what is
+     there is a worktree's, which may go too), and that is not a tracked file under another
+     name (a case alias, a link: the same device and inode); nothing anywhere in it, disposable
+     folders included, changed within quiet-minutes.
 
 Proven: a, b, d, f, g, h's accounting. The quiet period (c, h) is a margin, not a proof: it
 covers a worker whose process the scan in e cannot see. e is read afresh for every worktree
@@ -57,11 +61,14 @@ own, never through a symlink, and every entry that is not tracked must be accoun
 status` does not list a FIFO, a socket or a device, and `git worktree remove` deletes them and
 every ignored file without asking.
 
-Removal order: the saved refs, the log record (flushed; it names every ref saved and every
-file about to be deleted; written before any line about the removal, and a closed or hung-up
-stdout does not stop the removal), f and e again, the identical copies git does not track, e
-again, `git worktree remove` without --force (git's own check, independent of this one). SIGINT,
-SIGTERM and SIGHUP are caught meanwhile and stop it at the next step. A step that fails or is
+Removal order: the log's intent line (on disk; it names every ref to save and every file to
+delete), the saved refs, f and e again, the identical copies git does not track, e again, `git
+worktree remove` without --force (git's own check, independent of this one), the log's outcome
+line (removed, partly-modified, possibly-modified or kept, why, each file deleted). Each line
+about the removal is printed after the log line it reports; a print never raises (what stdout
+cannot encode is escaped, a closed or hung-up stdout is ignored), and the outcome is what
+happened, never whether a line could be printed. SIGINT, SIGTERM and SIGHUP are caught from
+the saved refs on and stop it at the next step. A step that fails or is
 stopped after a copy was deleted reports the worktree PARTLY MODIFIED, lists each file deleted
 (its identical copy is at the same path in the main worktree) and exits 1; a failed `git
 worktree remove`, which may have deleted files before it failed, is reported POSSIBLY
@@ -70,9 +77,11 @@ safe, as what is left still holds; each deletion changed its folder, so it finis
 quiet period.
 """
 import argparse
+import codecs
 import datetime
 import fcntl
 import filecmp
+import hashlib
 import os
 import re
 import shutil
@@ -117,6 +126,11 @@ class Unproven(Exception):
 
 
 ESCAPING = 'a backslash is \\\\, a newline \\n, any other byte that is not printable UTF-8 \\xNN'
+# Two lines per removal: the intent, logged before anything is saved or deleted, and the outcome.
+LOG_HEADER = ('# two lines per removal, tab-separated: "intent", logged before anything is saved or deleted (its '
+              'commits to save as saved=<ref>=<id>, its files to delete as delete=<path>), and "outcome", logged '
+              'when it ends (removed, partly-modified, possibly-modified or kept, why, and deleted=<path> for '
+              'each file deleted); in every name %s\n' % ESCAPING)
 
 
 def show(path):
@@ -135,11 +149,22 @@ def show(path):
     return ''.join(out)
 
 
+def utf8_escape(error):
+    """The codec error handler of say(): a character stdout cannot encode becomes its UTF-8
+    bytes as \\xNN, as ESCAPING reads."""
+    return ''.join('\\x%02x' % b for b in error.object[error.start:error.end].encode('utf-8', 'surrogatepass')), error.end
+
+
+codecs.register_error('kit-utf8-escape', utf8_escape)
+
+
 def say(text):
-    """Print TEXT now. A stdout that is closed or hung up (SIGHUP) is ignored from then on, so a
-    removal still reaches its log record, its report of what it deleted and its exit status."""
+    """Print TEXT now; it never raises. What stdout cannot encode is escaped (utf8_escape); a
+    stdout that is closed or hung up (SIGHUP) is ignored from then on, so a removal still reaches
+    its log lines, its report and its exit status."""
     try:
-        print(text, flush=True)
+        sys.stdout.buffer.write(text.encode(sys.stdout.encoding, 'kit-utf8-escape') + b'\n')
+        sys.stdout.buffer.flush()
     except OSError:
         os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
 
@@ -259,16 +284,18 @@ def disposable(rel, entries):
     return False
 
 
-def entry(root, rel):
-    """The lstat of ROOT/REL reached through folders only (no symlink on the way), or None."""
+def entry(root, rel, avoid=None):
+    """The lstat of ROOT/REL reached through folders only (no symlink on the way, nor the folder
+    whose (device, inode) is AVOID), or None."""
     path = root
     parts = rel.split(b'/')
     for part in parts[:-1]:
         path = os.path.join(path, part)
         try:
-            if not stat.S_ISDIR(os.lstat(path).st_mode):
-                return None
+            info = os.lstat(path)
         except OSError:
+            return None
+        if not stat.S_ISDIR(info.st_mode) or (info.st_dev, info.st_ino) == avoid:
             return None
     try:
         return os.lstat(os.path.join(path, parts[-1]))
@@ -276,11 +303,14 @@ def entry(root, rel):
         return None
 
 
-def copy_in(main_root, real, rel):
-    """Whether MAIN_ROOT holds a regular file at REL, reached without a symlink, with the bytes of REAL/REL."""
-    info = entry(main_root, rel)
+def copy_in(ctx, real, rel):
+    """Whether the main worktree holds a regular file at REL with the bytes of REAL/REL, reached
+    without a symlink and not through its .claude/worktrees, under any spelling: what is there is
+    a worktree's, which this run may remove too."""
+    home = os.lstat(ctx['home'])
+    info = entry(ctx['main_root'], rel, avoid=(home.st_dev, home.st_ino))
     return (info is not None and stat.S_ISREG(info.st_mode)
-            and filecmp.cmp(os.path.join(real, rel), os.path.join(main_root, rel), shallow=False))
+            and filecmp.cmp(os.path.join(real, rel), os.path.join(ctx['main_root'], rel), shallow=False))
 
 
 def walk(root):
@@ -389,6 +419,8 @@ def differing(real, blobs):
     return out
 
 
+# How Linux lsof names a cwd it cannot read; any other name is a path, whatever it ends with.
+LSOF_UNREADABLE = re.compile(rb'/proc/\d+/cwd \((readlink|stat): [^)]*\)')
 LSOF_ESCAPES = {b'\\': b'\\', b'b': b'\b', b'f': b'\f', b'n': b'\n', b'r': b'\r', b't': b'\t'}
 
 
@@ -414,10 +446,11 @@ def lsof_name(value):
 def parse_lsof(out):
     """{pid: cwd} and the number of processes listed without a readable cwd, from the output
     of `lsof -a -d cwd -F pn`: a `p<pid>` record per process, then its `n<path>` record (macOS
-    lsof also prints an `fcwd` record between them), read back by lsof_name. Linux lsof names an
-    unreadable cwd as `<proc path> (readlink: <error>)`; a name that is not an absolute path
-    counts the same."""
-    cwds, pids, pid = {}, [], None
+    lsof also prints an `fcwd` record between them), read back by lsof_name. A process whose cwd
+    Linux lsof could not read (LSOF_UNREADABLE), or whose name is not an absolute path, counts as
+    not inspected; the first is kept as a cwd all the same, so that a worktree of that name is
+    never taken for an error."""
+    cwds, pids, unseen, pid = {}, [], set(), None
     for line in out.split(b'\n'):
         if not line:
             continue
@@ -428,11 +461,13 @@ def parse_lsof(out):
         elif tag == b'f' and value == b'cwd' and pid is not None:
             continue
         elif tag == b'n' and pid is not None:
-            if value.startswith(b'/') and not re.search(rb' \((readlink|stat): [^)]*\)$', value):
+            if value.startswith(b'/'):
                 cwds[pid] = lsof_name(value)
+            if LSOF_UNREADABLE.fullmatch(value):
+                unseen.add(pid)
         else:
             raise Unproven('`lsof` printed a record this script does not know: %s' % show(line[:40]))
-    return cwds, sum(1 for p in pids if p not in cwds)
+    return cwds, len(unseen.union(p for p in pids if p not in cwds))
 
 
 def read_proc(proc):
@@ -696,9 +731,12 @@ def audit(record, ctx):
         # Only the commits no other of them reaches: a pin holds what its commit reaches.
         facts['pin'] = sorted(git(real, 'merge-base', '--independent', *loose).stdout.split()) if loose else []
         # Not the branch name, which another worktree may reuse; its git directory's name with
-        # every byte but a letter, a digit, - and _ percent-encoded, so no name is refused as a ref.
-        name = re.sub(rb'[^A-Za-z0-9_-]', lambda m: b'%%%02X' % m.group()[0], os.path.basename(gitdir))
-        facts['saved'] = b'refs/kit/saved/%s-%s' % (name, ctx['stamp'])
+        # every byte but a letter, a digit, - and _ percent-encoded, so no name is refused as a
+        # ref, cut to 64 bytes so that the folder name stays under the 255 a file system allows,
+        # and a hash of the whole name, which the log holds.
+        base = os.path.basename(gitdir)
+        name = re.sub(rb'[^A-Za-z0-9_-]', lambda m: b'%%%02X' % m.group()[0], base)[:64]
+        facts['saved'] = b'refs/kit/saved/%s-%s-%s' % (name, hashlib.sha256(base).hexdigest()[:12].encode(), ctx['stamp'])
         return []
 
     def contents():
@@ -743,13 +781,16 @@ def audit(record, ctx):
         if loose:
             out.append('untracked and not ignored inside a disposable folder (`git worktree remove` refuses '
                        'them; ignore that folder in .gitignore): %s' % names(loose))
-        unique, odd, alias, suggest, recent = [], [], [], set(), None
+        unique, odd, alias, nested, suggest, recent = [], [], [], [], set(), None
         # What each tracked path IS on disk: on a file system that ignores case or Unicode form
         # (macOS), a tracked `a` renamed `A` passes every check by its old name, and the walk
         # meets it under a name the index does not hold.
         ids = set((i.st_dev, i.st_ino) for i in (entry(real, rel) for rel in tracked) if i is not None)
         for rel, info, is_dir in walk(real):
             recent = max(recent or 0, changed(info))
+            if not is_dir and rel.startswith(b'.claude/worktrees/'):
+                nested.append(rel)
+                continue
             if disposable(rel + b'/x' if is_dir else rel, ctx['disposable']):
                 if not is_dir:
                     facts['bytes'] += info.st_size
@@ -764,13 +805,15 @@ def audit(record, ctx):
                 alias.append(rel)
             elif not stat.S_ISREG(info.st_mode):
                 odd.append(rel)
-            elif copy_in(ctx['main_root'], real, rel):
+            elif copy_in(ctx, real, rel):
                 facts['identical'] += 1
                 facts['delete'].append(rel)
             else:
                 unique.append(rel)
                 if rel in ignored and b'/' in rel:
                     suggest.add(rel.split(b'/')[0])
+        if nested:
+            out.append('inside .claude/worktrees of it, which this script does not judge: %s' % names(nested))
         if alias:
             out.append('a case alias of a tracked file, or another link to one (the same file on disk), under a name '
                        'the index does not hold: %s' % names(alias))
@@ -800,31 +843,72 @@ def saves(facts):
         show(facts['saved']), ', '.join(pins[:CAP]), ' and %d more' % more if more > 0 else '')
 
 
-def remove(record, facts, ctx):
+def log_line(ctx, fields):
+    """Append FIELDS, after the time, as one tab-separated line of the removal log, on disk when
+    this returns; an OSError when it cannot."""
+    with open(ctx['log'], 'ab') as log:
+        if log.tell() == 0:
+            log.write(LOG_HEADER.encode())
+        log.write(('\t'.join([datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')] + fields)
+                   + '\n').encode('utf-8', 'backslashreplace'))
+        log.flush()
+        os.fsync(log.fileno())
+
+
+def remove(record, facts, ctx, shown, announce):
     """'removed', 'kept' (nothing changed but saved refs), or 'partly' (identical copies deleted,
-    or `git worktree remove` failed, which may have deleted files first). SIGNALS are caught
-    meanwhile: one that comes stops it at the next step, reported like a failure."""
+    or `git worktree remove` failed, which may have deleted files first). The intent line is
+    logged first, then ANNOUNCE (the lines about this removal) is printed; the outcome line is
+    logged before anything about the outcome is printed, and the outcome is what happened, never
+    whether a line could be printed. SIGNALS are caught meanwhile: one that comes stops it at the
+    next step, reported like a failure."""
+    saved = [b'%s/%d' % (facts['saved'], n) for n in range(1, len(facts['pin']) + 1)]
+    try:
+        log_line(ctx, ['intent', show(facts['real']), show(facts['branch']), show(facts['head']),
+                       show(ctx['main_head']), 'gitdir=%s' % show(facts['gitdir']),
+                       'identical_files=%d' % facts['identical'], 'disposable_bytes=%d' % facts['disposable']]
+                 + ['saved=%s=%s' % (show(ref), show(oid)) for ref, oid in zip(saved, facts['pin'])]
+                 + ['delete=%s' % show(rel) for rel in facts['delete']])
+    except OSError as error:
+        say('keep   %s' % show(shown))
+        say('         - cannot write the removal log %s (%s): nothing is saved or deleted without its record'
+            % (show(ctx['log']), error))
+        return 'kept'
+    for text in announce:
+        say(text)
     deleted, failed = [], []
     caught = {number: signal.signal(number, lambda number, frame: STOP.append(number)) for number in SIGNALS}
     try:
         try:
-            why = removal(record, facts, ctx, deleted, failed)
+            why = removal(record, facts, ctx, saved, deleted, failed)
         except Exception as error:  # a keep, like an error in the audit
             why = 'not proven: %s' % (error or type(error).__name__)
-        if why is None:
-            return 'removed'
-        if not deleted and not failed:
+        outcome = 'removed' if why is None else 'partly' if deleted or failed else 'kept'
+        try:
+            log_line(ctx, ['outcome', show(facts['real']),
+                           'possibly-modified' if failed else 'partly-modified' if deleted else outcome]
+                     + ([' '.join(why.split())] if why else []) + ['deleted=%s' % show(rel) for rel in deleted])
+        except OSError as error:
+            say('         cannot write the outcome to the removal log %s (%s); its intent line is there'
+                % (show(ctx['log']), error))
+        if outcome == 'removed':
+            # The branch stays, so this brings back its files at their last commit; not the
+            # worktree's ignored files, nor its reflogs.
+            say('         this command, run in the main worktree, brings the worktree back:')
+            say('           git worktree add %s %s'
+                % (sh_quote(printable(facts['real'])), sh_quote(printable(short(facts['branch'])))))
+        elif outcome == 'kept':
             say('         stopped: %s; nothing deleted, the worktree stays' % why)
-            return 'kept'
-        say('         stopped: %s' % why)
-        if failed:
-            possibly(facts, ctx)
-        if deleted:
-            say('         PARTLY MODIFIED: %d files git does not track were deleted from it, each with a byte-identical '
-                'copy at the same path in the main worktree, which brings it back:' % len(deleted))
-            for rel in deleted:
-                say('           %s' % show(rel))
-        return 'partly'
+        else:
+            say('         stopped: %s' % why)
+            if failed:
+                possibly(facts, ctx)
+            if deleted:
+                say('         PARTLY MODIFIED: %d files git does not track were deleted from it, each with a '
+                    'byte-identical copy at the same path in the main worktree, which brings it back:' % len(deleted))
+                for rel in deleted:
+                    say('           %s' % show(rel))
+        return outcome
     finally:
         for number, handler in caught.items():
             signal.signal(number, handler)
@@ -854,41 +938,19 @@ def possibly(facts, ctx):
         'in a disposable folder is build output, which the build makes again.')
 
 
-def removal(record, facts, ctx, deleted, failed):
-    """Save, log, check again, delete the identical copies git does not track, then let git
-    remove it. None when removed, else why it stopped; DELETED lists what was deleted, FAILED
-    is set when `git worktree remove` failed."""
-    path, branch = record['worktree'], facts['branch']
-    saved = [b'%s/%d' % (facts['saved'], n) for n in range(1, len(facts['pin']) + 1)]
+def removal(record, facts, ctx, saved, deleted, failed):
+    """Save, check again, delete the identical copies git does not track, then let git remove it.
+    None when removed, else why it stopped; DELETED lists what was deleted, FAILED is set when
+    `git worktree remove` failed. It prints only the command that deletes the SAVED refs."""
     if saved:
         result = subprocess.run(['git', 'update-ref', '--stdin'], cwd=ctx['main_root'], env=ENV, capture_output=True,
                                 input=b''.join(b'create %s %s\n' % pair for pair in zip(saved, facts['pin'])))
         if result.returncode != 0:  # one transaction: all of them or none
             return ('cannot save what only its git directory holds: `git update-ref --stdin` failed: %s'
                     % (show(result.stderr.strip()) or 'exit %d' % result.returncode))
-    line = '\t'.join([datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
-                      show(facts['real']), show(branch), show(facts['head']),
-                      show(ctx['main_head']), 'identical_files=%d' % facts['identical'],
-                      'disposable_bytes=%d' % facts['disposable']]
-                     + ['saved=%s=%s' % (show(ref), show(oid)) for ref, oid in zip(saved, facts['pin'])]
-                     + ['delete=%s' % show(rel) for rel in facts['delete']]) + '\n'
-    # The log first, before any line about the removal: a hung-up terminal loses only output.
-    try:
-        with open(ctx['log'], 'ab') as log:
-            if log.tell() == 0:
-                log.write(('# one line per removal, tab-separated; in every name %s\n' % ESCAPING).encode())
-            log.write(line.encode())
-            log.flush()
-            os.fsync(log.fileno())
-        logged = None
-    except OSError as error:
-        logged = 'cannot write the removal log %s (%s)' % (show(ctx['log']), error)
-    if saved:
         say('         to delete the saved refs once you no longer want them, run in the main worktree:')
         say("           git for-each-ref --format='delete %%(refname)' %s | git update-ref --stdin"
-          % sh_quote(show(facts['saved'] + b'/')))
-    if logged:
-        return logged
+            % sh_quote(show(facts['saved'] + b'/')))
     # Again, now: whether a process came in, and what it holds with the saved refs counted.
     again = facts['idle']() + facts['history']()
     if again or facts['pin']:
@@ -906,15 +968,11 @@ def removal(record, facts, ctx, deleted, failed):
         return 'changed since its audit: %s' % '; '.join(again)
     if STOP:
         return 'interrupted by signal %d' % STOP[0]
-    result = subprocess.run(['git', 'worktree', 'remove', path], cwd=ctx['main_root'], env=ENV,
+    result = subprocess.run(['git', 'worktree', 'remove', record['worktree']], cwd=ctx['main_root'], env=ENV,
                             stdin=subprocess.DEVNULL, capture_output=True)
     if result.returncode != 0:
         failed.append(result.returncode)
         return 'git refused to remove it: %s' % (show(result.stderr.strip()) or 'exit %d' % result.returncode)
-    # The branch stays, so this brings back its files at their last commit; not the worktree's
-    # ignored files, nor its reflogs.
-    say('         this command, run in the main worktree, brings the worktree back:')
-    say('           git worktree add %s %s' % (sh_quote(printable(facts['real'])), sh_quote(printable(short(branch)))))
     return None
 
 
@@ -977,11 +1035,15 @@ def main():
                 for reason in reasons:
                     say('         - %s' % reason)
             continue
-        say('remove %s (branch %s, %d identical files, %d disposable bytes, %d bytes)'
-            % (show(shown), show(short(facts['branch'])), facts['identical'], facts['disposable'], facts['bytes']))
-        if facts['pin']:
-            say(saves(facts))
-        outcome = remove(record, facts, ctx) if args.apply else 'removed'
+        announce = ['remove %s (branch %s, %d identical files, %d disposable bytes, %d bytes)'
+                    % (show(shown), show(short(facts['branch'])), facts['identical'], facts['disposable'],
+                       facts['bytes'])] + ([saves(facts)] if facts['pin'] else [])
+        if args.apply:
+            outcome = remove(record, facts, ctx, shown, announce)
+        else:
+            outcome = 'removed'
+            for text in announce:
+                say(text)
         if outcome == 'removed':
             removed += 1
             freed += facts['bytes']

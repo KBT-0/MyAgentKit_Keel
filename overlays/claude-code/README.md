@@ -232,21 +232,24 @@ then stays quiet.
   records, with the same executable bit (a symlink: the same text), so no stat cache, filter or
   line-ending conversion is trusted; no unresolved entry, no submodule; every file git does not
   track inside a folder `.claude/worktree-disposable` lists or byte-identical to the regular
-  file at the same path in main, and not a tracked file under another name (a case-only rename
-  on macOS, a hard link: the same file on disk); nothing anywhere in it, those folders included, changed within
-  the quiet period.
+  file at the same path in main, outside main's `.claude/worktrees` under any spelling (what is
+  there is a worktree's, which may go too), and not a tracked file under another name (a
+  case-only rename on macOS, a hard link: the same file on disk); no file at all under the
+  worktree's own `.claude/worktrees` (a worktree inside a worktree is not judged);
+  nothing anywhere in it, those folders included, changed within the quiet period.
 - **What only its git directory holds is saved, then it is removed.** A commit no ref holds
   (an amended, reset or rebased-away tip, a squash's intermediate commits, a `FETCH_HEAD`, a
   `refs/worktree/*` ref) is pinned before anything is deleted, in one `git update-ref --stdin`
-  transaction, as `refs/kit/saved/<git directory name>-<UTC time>/<n>`, never under the branch
-  name; only the commits no other saved one reaches get a ref, and every byte of the name but a
-  letter, a digit, `-` and `_` is percent-encoded. The audit then runs again with those refs
+  transaction, as `refs/kit/saved/<git directory name>-<hash>-<UTC time>/<n>`, never under the
+  branch name; only the commits no other saved one reaches get a ref. Every byte of the name but
+  a letter, a digit, `-` and `_` is percent-encoded, the result is cut to 64 bytes, and 12 hex
+  digits of the whole name's SHA-256 tell two cut names apart (the log holds the whole name). The audit then runs again with those refs
   counted. A failed save keeps the worktree. The report names
   each saved commit and prints one command that deletes all of that removal's saved refs: `git
-  for-each-ref --format='delete %(refname)' 'refs/kit/saved/<name>-<time>/' | git update-ref
+  for-each-ref --format='delete %(refname)' 'refs/kit/saved/<name>-<hash>-<time>/' | git update-ref
   --stdin`. **These refs never expire on their own**: they are gc roots, they appear in `git
   log --all`, and `git push --mirror` would publish them. They pile up, one
-  `<git directory name>-<UTC time>/` folder per removal that saved something: `git
+  `<git directory name>-<hash>-<UTC time>/` folder per removal that saved something: `git
   for-each-ref refs/kit/saved/` lists them all, and `git for-each-ref --format='delete
   %(refname)' refs/kit/saved/ | git update-ref --stdin` deletes them all.
 - **Kept**, with the reason, otherwise; each of these is the owner's to remove by hand: check
@@ -284,14 +287,18 @@ then stays quiet.
 - **With `core.logAllRefUpdates=false`** git writes no HEAD reflog, so every worktree is kept
   ("no commit was made in this worktree").
 - **To keep a worktree** the lead still wants, lock it: `git worktree lock <path>`.
-- **The log** comes right after the saved refs: `<git dir>/kit-worktree-removals.log` gets one
-  line per removal (time, path, branch, tip commit, main HEAD, identical files, disposable
-  bytes, each saved ref with its commit, each file about to be deleted) before anything is
-  deleted, and before any line about the removal is printed: a closed or hung-up terminal does
-  not stop the removal or change its exit status. Every name the script prints or logs is
-  escaped reversibly, as the log's first line says: a backslash as `\\`, a newline as `\n`, any
-  other byte that is not printable UTF-8 as `\xNN`. Then the identical copies git does not track go, then `git worktree remove` without
-  `--force` checks again on its own. SIGINT, SIGTERM and SIGHUP are caught from the saved refs
+- **The log**, `<git dir>/kit-worktree-removals.log`, gets two lines per removal. The `intent`
+  line comes first, before any ref is saved or file deleted: time, path, branch, tip commit,
+  main HEAD, git directory, identical files, disposable bytes, each ref to save with its commit,
+  each file to delete. The `outcome` line comes once `git worktree remove` returns or a step
+  stops it: `removed`, `partly-modified`, `possibly-modified` or `kept`, why, and each file
+  deleted. Both are on disk before the script goes on, and every line the script prints about a
+  removal comes after the log line it reports. A print never raises: what the terminal cannot
+  encode is escaped, and a closed or hung-up terminal is ignored, so neither changes the removal,
+  its outcome or its exit status. Every name the script prints or logs is escaped reversibly,
+  as the log's first line says: a backslash as `\\`, a newline as `\n`, any other byte that is
+  not printable UTF-8 as `\xNN`. After the saved refs the identical copies git does not track
+  go, then `git worktree remove` without `--force` checks again on its own. SIGINT, SIGTERM and SIGHUP are caught from the saved refs
   to the end of `git worktree remove` and stop it at the next step. If a step fails or is
   stopped after a copy was deleted, the report says **PARTLY MODIFIED**, lists each deleted file
   (its byte-identical copy is at the same path in the main worktree) and the script exits 1. A

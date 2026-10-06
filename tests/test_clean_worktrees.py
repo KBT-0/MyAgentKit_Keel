@@ -217,11 +217,14 @@ class CleanWorktreesTests(unittest.TestCase):
             '`git branch -d <name>` deletes one, and its reflog with it: the old tips a removal saved are kept by '
             'the refs under refs/kit/saved/'), out)
         lines = (self.main / '.git/kit-worktree-removals.log').read_text().split('\n')
-        self.assertEqual(lines[0], '# one line per removal, tab-separated; in every name ' + clean_worktrees.ESCAPING)
+        self.assertEqual(lines[0] + '\n', clean_worktrees.LOG_HEADER)
+        self.assertTrue(lines[0].endswith('; in every name ' + clean_worktrees.ESCAPING))
         record = lines[1].split('\t')
-        self.assertEqual(lines[2:], [''])
-        self.assertEqual(record[1:5], [os.path.realpath(path), 'refs/heads/worktree-done', tip, self.git('rev-parse', 'HEAD')])
+        self.assertEqual(lines[3:], [''])
+        self.assertEqual(record[1:6], ['intent', os.path.realpath(path), 'refs/heads/worktree-done', tip,
+                                       self.git('rev-parse', 'HEAD')])
         self.assertTrue(record[0].endswith('Z'))
+        self.assertEqual(lines[2].split('\t')[1:], ['outcome', os.path.realpath(path), 'removed'])
 
     def test_the_restore_line_is_one_shell_safe_command_that_brings_the_worktree_back(self):
         for name, branch in (('semi', 'worktree-a;id;#'), ("it's", "worktree-it's")):
@@ -271,12 +274,16 @@ class CleanWorktreesTests(unittest.TestCase):
         self.assertNotIn('git refused', out)
         self.assertTrue((path / 'sub/report.md').is_file(), out)
         log = self.main / '.git/kit-worktree-removals.log'
-        self.assertEqual(log.read_text().count('\n'), 2, 'no record before the first deletion')
+        self.assertEqual(log.read_text().count('\tintent\t'), 1, 'no record before the first deletion')
+        self.assertTrue(log.read_text().endswith('\tkept\tcannot delete the identical copy sub/report.md '
+                                                 '([Errno 13] Permission denied: %r)\n'
+                                                 % os.path.join(os.fsencode(os.path.realpath(path)), b'sub/report.md')),
+                        log.read_text())
         # The state an interrupt after the record leaves: the re-run removes it, logged again.
         out = self.run_script('--apply')
         self.assertRemoved(path, out)
-        self.assertEqual(log.read_text().count('\n'), 3)
-        self.assertEqual(log.read_text().count('# one line per removal'), 1)
+        self.assertEqual(log.read_text().count('\n'), 5)
+        self.assertEqual(log.read_text().count(clean_worktrees.LOG_HEADER), 1)
 
     def test_a_failure_after_a_deletion_says_what_was_deleted_and_fails(self):
         path = self.worktree('done')
@@ -297,8 +304,10 @@ class CleanWorktreesTests(unittest.TestCase):
         self.assertFalse((path / 'report.md').exists())
         self.assertTrue((path / 'sub/report.md').is_file())
         # The record written first names every file about to be deleted.
-        self.assertTrue((self.main / '.git/kit-worktree-removals.log').read_text().endswith(
-            '\tidentical_files=2\tdisposable_bytes=0\tdelete=report.md\tdelete=sub/report.md\n'))
+        log = (self.main / '.git/kit-worktree-removals.log').read_text()
+        self.assertIn('\tidentical_files=2\tdisposable_bytes=0\tdelete=report.md\tdelete=sub/report.md\n', log)
+        self.assertRegex(log, r'\toutcome\t[^\t]*/done\tpartly-modified\tcannot delete the identical copy '
+                         r'sub/report\.md [^\t]*\tdeleted=report\.md\n$')
         # What is left holds: a re-run removes it.
         self.assertRemoved(path, self.run_script('--apply'))
 
@@ -320,6 +329,52 @@ class CleanWorktreesTests(unittest.TestCase):
         path.rename(self.tmp / 'aside')
         self.git('worktree', 'add', '-q', os.path.realpath(path), 'worktree-done')
         self.assertEqual((path / 'done.txt').read_text(), 'done\n')
+
+    def test_a_tracked_file_git_cannot_delete_is_reported_possibly_modified(self):
+        # The real git where it fails: a tracked file in a folder its user cannot write. Root
+        # deletes it all the same, so under root the shim plays git's part, as in the case above.
+        path = self.worktree('done')
+        (path / 'sub').mkdir()
+        (path / 'sub/kept.txt').write_text('kept\n')
+        self.git('add', 'sub/kept.txt', cwd=path)
+        self.git('commit', '-q', '-m', 'more', cwd=path)
+        self.git('merge', '-q', '--no-edit', 'worktree-done', KIT_NO_WORKTREE_CLEANUP='1')
+        if os.geteuid() != 0:
+            (path / 'sub').chmod(0o555)
+            try:
+                out = self.run_script('--apply', code=1)
+            finally:
+                (path / 'sub').chmod(0o755)
+            self.assertIn("stopped: git refused to remove it: error: failed to delete '", out)
+            self.assertTrue((path / 'sub/kept.txt').is_file(), out)
+        else:
+            out = self.run_script('--apply', code=1, SHIM='halfremove', **self.shim())
+            self.assertIn('stopped: git refused to remove it: error: failed to delete a file of the shim\n', out)
+        self.assertIn('         POSSIBLY MODIFIED: `git worktree remove` failed and may have deleted part of it first. '
+                      'Now its folder is still there, ', out)
+        self.assertIn('it is no longer a registered worktree, its git directory is gone.', out)
+        self.assertIn('clean_worktrees: removed 0, kept 1, PARTLY MODIFIED 1', out)
+        self.assertRegex((self.main / '.git/kit-worktree-removals.log').read_text(),
+                         r'\toutcome\t[^\t]*/done\tpossibly-modified\tgit refused to remove it: [^\t]*\n$')
+        path.rename(self.tmp / 'aside')
+        self.git('worktree', 'add', '-q', os.path.realpath(path), 'worktree-done')
+        self.assertEqual((path / 'sub/kept.txt').read_text(), 'kept\n')
+
+    def test_an_output_it_cannot_encode_changes_no_outcome(self):
+        # Reproduced by a reviewer: under an ASCII stdout, the recovery line for a main folder
+        # with a non-ASCII name raised after `git worktree remove`, and the report said "nothing
+        # deleted, the worktree stays" of a worktree that was gone.
+        self.main.rename(self.tmp / 'mäin')
+        self.main = self.tmp / 'mäin'
+        path = self.worktree('done')
+        out = self.run_script('--apply', '--quiet', PYTHONIOENCODING='ascii')
+        self.assertRemoved(path, out)
+        self.assertNotIn('nothing deleted', out)
+        shown = ''.join(c if ord(c) < 128 else ''.join('\\x%02x' % b for b in c.encode())
+                        for c in os.path.realpath(path))
+        self.assertIn("\n           git worktree add '%s' 'worktree-done'\n" % shown, out)
+        self.assertIn('clean_worktrees: removed 1, kept 1', out)
+        self.assertRegex((self.main / '.git/kit-worktree-removals.log').read_text(), r'\toutcome\t[^\t]*\tremoved\n$')
 
     def run_closed(self, code):
         """The script with its stdout a pipe nobody reads any more, as after a hang-up."""
@@ -353,29 +408,40 @@ class CleanWorktreesTests(unittest.TestCase):
         self.assertEqual(log.read_text().count('\tsaved=refs/kit/saved/done-'), 1)
         self.run_closed(0)
         self.assertFalse(path.exists())
-        self.assertEqual(log.read_text().count('\n'), 3)
+        self.assertEqual(log.read_text().count('\n'), 5)
 
-    def test_the_log_record_comes_before_any_line_about_the_removal(self):
-        # Each line is checked against the log as it is printed: a hung-up terminal must never
-        # leave saved refs, or a deletion, with no record.
-        path = self.worktree('done')
-        self.git('update-ref', 'refs/worktree/keep', self.loose(path), cwd=path)
+    def test_every_line_about_a_removal_comes_after_its_log_line(self):
+        # Each line is printed with the number of intent and outcome lines the log held then: a
+        # hung-up terminal must never leave saved refs, a deletion or a removal with no record.
         log = self.main / '.git/kit-worktree-removals.log'
         driver = ('import sys\nsys.path.insert(0, sys.argv[1])\nimport clean_worktrees as c\nsay, log = c.say, sys.argv[2]\n'
                   'def check(text):\n'
-                  '    try:\n        logged = "saved=" in open(log).read()\n'
-                  '    except OSError:\n        logged = False\n'
-                  '    say(("LOGGED " if logged else "NOT LOGGED ") + text)\n'
+                  '    try:\n        kinds = [line.split("\\t")[1:2] for line in open(log) if line[:1] != "#"]\n'
+                  '    except OSError:\n        kinds = []\n'
+                  '    say("%d %d " % (kinds.count(["intent"]), kinds.count(["outcome"])) + text)\n'
                   'c.say = check\nsys.argv = ["clean_worktrees", "--apply", "--assume-idle"]\nsys.exit(c.main())\n')
-        result = subprocess.run([sys.executable, '-c', driver, str(SCRIPTS), str(log)], cwd=self.main, env=self.env,
-                                capture_output=True, text=True)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertFalse(path.exists(), result.stdout)
-        lines = result.stdout.split('\n')
-        for text in ('         to delete the saved refs once you no longer want them, run in the main worktree:',
-                     '         this command, run in the main worktree, brings the worktree back:'):
-            self.assertIn('LOGGED ' + text, lines, result.stdout)
-            self.assertNotIn('NOT LOGGED ' + text, lines, result.stdout)
+
+        def run(code, *expected):
+            result = subprocess.run([sys.executable, '-c', driver, str(SCRIPTS), str(log)], cwd=self.main,
+                                    env=self.env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, code, result.stdout + result.stderr)
+            lines = result.stdout.split('\n')
+            for text in expected:
+                self.assertEqual(len([line for line in lines if line.startswith(text)]), 1, (text, result.stdout))
+        path = self.worktree('done')
+        self.git('update-ref', 'refs/worktree/keep', self.loose(path), cwd=path)
+        run(0, '1 0 remove .claude/worktrees/done (', '1 0          saves what only its git directory holds',
+            '1 0          to delete the saved refs once you no longer want them',
+            '1 1          this command, run in the main worktree, brings the worktree back:', '1 1            git worktree add')
+        self.assertFalse(path.exists())
+        # A stop after a deletion: the outcome is logged before the report of it.
+        path = self.worktree('late')
+        for root in (self.main, path):
+            (root / 'r.md').write_text('same\n')
+        self.trigger(self.tmp / 'proc', 3, then='  kill -TERM $PPID\n')
+        run(1, '2 1 remove .claude/worktrees/late (', '2 2          stopped: interrupted by signal 15',
+            '2 2          PARTLY MODIFIED: 1 files', '2 2            r.md')
+        self.assertTrue(path.is_dir())
 
     def test_a_signal_during_the_removal_is_reported_and_a_rerun_finishes(self):
         # tmux is asked a second time right before the first deletion, a third time after the
@@ -456,10 +522,10 @@ class CleanWorktreesTests(unittest.TestCase):
         self.git('update-ref', 'refs/worktree/keep', self.loose(path), cwd=path)
         (self.main / '.git/kit-worktree-removals.log').mkdir()
         out = self.run_script('--apply')
-        self.assertIn('stopped: cannot write the removal log', out)
-        self.assertTrue(path.is_dir(), out)
-        # The refs were saved before the log failed: the command that deletes them is printed.
-        self.assertIn("git for-each-ref --format='delete %(refname)' 'refs/kit/saved/done-", out)
+        self.assertKept(path, out, 'cannot write the removal log %s/.git/kit-worktree-removals.log' % os.path.realpath(self.main),
+                        ': nothing is saved or deleted without its record')
+        self.assertNotIn('remove .claude', out)
+        self.assertEqual(self.git('for-each-ref', 'refs/kit/'), '')
 
     def test_a_bare_main_repository_is_refused(self):
         bare = self.tmp / 'bare.git'
@@ -970,9 +1036,31 @@ class CleanWorktreesTests(unittest.TestCase):
         self.assertRemoved(path, out)
         self.assertIn('clean_worktrees: 1 processes could not be inspected', out)
 
+    def test_a_worktree_named_like_an_lsof_error_is_seen_in_use(self):
+        # Reproduced by a reviewer: a cwd ending in " (stat: x)" was read as lsof's unreadable
+        # cwd, and a worktree of that name with a process inside was removed.
+        path = self.worktree('w (stat: x)', branch='worktree-w-stat')
+        sleeper = subprocess.Popen(['sleep', '60'], cwd=path)
+        try:
+            out = self.run_script('--apply', idle=False, CLEAN_WORKTREES_PROC='/nonexistent')
+            self.assertKept(path, out, 'in use: process %d works inside it' % sleeper.pid
+                            if shutil.which('lsof', path=self.env['PATH']) else ', and no lsof here)')
+        finally:
+            sleeper.kill()
+            sleeper.wait()
+        # Only Linux lsof's own form counts as unreadable, and its name is a cwd all the same.
+        cwds, unseen = clean_worktrees.parse_lsof(b'p5\nn/r/.claude/worktrees/w (stat: x)\n'
+                                                  b'p6\nn/proc/6/cwd (stat: Permission denied)\n'
+                                                  b'p7\nn/proc/7/cwd (readlink: x) (stat: y)\n')
+        self.assertEqual(cwds, {b'5': b'/r/.claude/worktrees/w (stat: x)', b'6': b'/proc/6/cwd (stat: Permission denied)',
+                                b'7': b'/proc/7/cwd (readlink: x) (stat: y)'})
+        self.assertEqual(unseen, 1)
+
     def test_the_lsof_parser_reads_both_platforms_and_refuses_the_unknown(self):
         cwds, unseen = clean_worktrees.parse_lsof(LSOF_LINUX)
-        self.assertEqual(cwds, {b'4242': b'/home/u/project/.claude/worktrees/w/src', b'4243': b'/home/u/project'})
+        self.assertEqual(cwds, {b'4242': b'/home/u/project/.claude/worktrees/w/src', b'4243': b'/home/u/project',
+                                b'1': b'/proc/1/cwd (readlink: Permission denied)',
+                                b'77': b'/proc/77/cwd (stat: Permission denied)'})
         self.assertEqual(unseen, 2)
         cwds, unseen = clean_worktrees.parse_lsof(LSOF_MACOS)
         self.assertEqual(cwds, {b'1': b'/', b'501': b'/Users/u/project/.claude/worktrees/w',
@@ -1141,7 +1229,9 @@ class CleanWorktreesTests(unittest.TestCase):
                       'fatal: refused by the shim; nothing deleted, the worktree stays', out)
         self.assertTrue((path / 'r.md').is_file())
         self.assertIn('clean_worktrees: removed 0, kept 2', out)
-        self.assertFalse((self.main / '.git/kit-worktree-removals.log').exists(), out)
+        self.assertRegex((self.main / '.git/kit-worktree-removals.log').read_text(),
+                         r'\tintent\t[^\n]*\tsaved=refs/kit/saved/done-[^\n]*\n[^\t]*\toutcome\t[^\t]*\tkept\t'
+                         r'cannot save what only its git directory holds: [^\t]*\n$')
         self.assertEqual(self.git('for-each-ref', 'refs/kit/'), '')
 
     def test_a_commit_held_only_by_a_worktree_ref_or_its_reflog_is_saved(self):
@@ -1269,6 +1359,25 @@ class CleanWorktreesTests(unittest.TestCase):
         prefix = self.saved(out)
         self.assertTrue(prefix.startswith('refs/kit/saved/a%20b%2E%2Ec%25-'), out)
         self.assertIn(loose, self.git('rev-list', '--glob=' + prefix + '/*'))
+
+    def test_a_long_git_directory_name_is_cut_and_told_apart_by_a_hash(self):
+        # Reproduced by a reviewer: 100 times é, percent-encoded, is 600 bytes, over the 255 of
+        # one path component: `update-ref` failed on every run, and it was kept for ever.
+        prefixes = []
+        for name, count in (('one', 100), ('two', 101)):
+            path = self.worktree(name)
+            odd = self.gitdir(path).parent / ('é' * count)
+            self.gitdir(path).rename(odd)
+            (path / '.git').write_text('gitdir: %s\n' % odd)
+            loose = self.loose(path)
+            self.git('update-ref', 'refs/worktree/keep', loose, cwd=path)
+            out = self.run_script('--apply')
+            self.assertRemoved(path, out)
+            prefixes.append(self.saved(out))
+            self.assertRegex(prefixes[-1], r'^refs/kit/saved/(%C3%A9){10}%C3%-[0-9a-f]{12}-\d{8}T\d{6}Z$')
+            self.assertIn(loose, self.git('rev-list', '--glob=' + prefixes[-1] + '/*'))
+            self.assertIn('\tgitdir=%s\t' % odd, (self.main / '.git/kit-worktree-removals.log').read_text())
+        self.assertNotEqual(prefixes[0][:-17], prefixes[1][:-17])
 
     def test_a_tree_or_blob_id_keeps_it_with_the_honest_reason(self):
         # `rev-list --objects <tree> ^main` lists a tree main holds too: for a tree or a blob it
@@ -1492,6 +1601,42 @@ class CleanWorktreesTests(unittest.TestCase):
         (self.main / 'g').symlink_to(self.tmp / 'outside/f')
         (path / 'g').write_text('same\n')
         self.assertKept(path, self.run_script('--apply'), 'no identical copy in main, outside a disposable folder: g, linked/f\n')
+
+    def test_each_log_line_is_on_disk_before_it_is_reported(self):
+        log, synced = self.tmp / 'removals.log', []
+        real = os.fsync
+        clean_worktrees.os.fsync = lambda fd: synced.append(os.fstat(fd).st_size) or real(fd)
+        try:
+            clean_worktrees.log_line({'log': os.fsencode(log)}, ['intent', 'x'])
+            clean_worktrees.log_line({'log': os.fsencode(log)}, ['outcome', 'x', 'removed'])
+        finally:
+            clean_worktrees.os.fsync = real
+        lines = log.read_bytes().split(b'\n')
+        self.assertEqual(synced, [len(lines[0]) + len(lines[1]) + 2, log.stat().st_size])
+
+    def test_a_copy_inside_a_worktree_is_no_archive(self):
+        # Reproduced by a reviewer: the "copy in main" of W/.claude/worktrees/a/build/r.log is
+        # W's own disposable build/r.log, and of W/.claude/worktrees/b/build/r.log a sibling's:
+        # both copies went, one with W, one with the sibling.
+        self.disposable('build\n')
+        path, sibling = self.worktree('a'), self.worktree('b')
+        for root in (path, path / '.claude/worktrees/a', path / '.claude/worktrees/b', sibling):
+            (root / 'build').mkdir(parents=True)
+            (root / 'build/r.log').write_text('same\n')
+        out = self.run_script('--apply')
+        self.assertKept(path, out, 'inside .claude/worktrees of it, which this script does not judge: '
+                        '.claude/worktrees/a/build/r.log, .claude/worktrees/b/build/r.log\n')
+        self.assertRemoved(sibling, out)
+        for rel in ('build/r.log', '.claude/worktrees/a/build/r.log', '.claude/worktrees/b/build/r.log'):
+            self.assertEqual((path / rel).read_text(), 'same\n', rel)
+        # Below the name check: a copy reached through main's .claude/worktrees never counts.
+        main = os.fsencode(os.path.realpath(self.main))
+        ctx = {'main_root': main, 'home': main + b'/.claude/worktrees'}
+        (self.main / 'build').mkdir()
+        (self.main / 'build/r.log').write_text('same\n')
+        real = os.fsencode(os.path.realpath(path))
+        self.assertTrue(clean_worktrees.copy_in(ctx, real, b'build/r.log'))
+        self.assertFalse(clean_worktrees.copy_in(ctx, real, b'.claude/worktrees/a/build/r.log'))
 
     def test_a_disposable_folder_with_content_is_removed(self):
         self.disposable('# build output\nbuild\n')

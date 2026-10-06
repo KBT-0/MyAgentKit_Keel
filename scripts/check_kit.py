@@ -35,7 +35,7 @@ REQUIRED_SUITES = {
               'test_check_gate': 17, 'test_boundary_restore': 39, 'test_sync_kit': 15,
               'test_doctor': 2, 'test_git_hooks': 24, 'test_stop_hook': 1, 'test_spawn_worker': 15,
               'test_worker_visibility': 19, 'test_doc_pointers': 4,
-              'test_kit_output': 1, 'test_kit_runner': 7, 'test_clean_worktrees': 110},
+              'test_kit_output': 1, 'test_kit_runner': 7, 'test_clean_worktrees': 116},
 }
 
 

@@ -19,8 +19,9 @@
 # 17 of them the only extra file was a review report whose identical copy was archived on main.
 # This is that audit, done the same way every time. A worktree is removed only when every check
 # in clean_worktrees.py holds; anything else is a keep, with the reason. Each removal is logged
-# first, in <git dir>/kit-worktree-removals.log, and prints the command that brings the
-# worktree back (`git worktree add <path> <branch>`).
+# in <git dir>/kit-worktree-removals.log, its intent before anything is saved or deleted and its
+# outcome when it ends, and prints the command that brings the worktree back (`git worktree add
+# <path> <branch>`).
 #
 # It never deletes a branch: the branch keeps the worker's commits whatever happens to main
 # later (a merge undone, a reset). The report lists the branches whose worktrees it removed and
@@ -32,11 +33,12 @@
 # destroys, names a commit that a ref holds (no reflog counts: `git branch -d` deletes the
 # branch's; nor a remote-tracking ref, which `git fetch --prune` drops), or one it saves first: every commit only its git directory holds (an amended,
 # reset or rebased-away tip, a squash's intermediate commits, FETCH_HEAD) is pinned under
-# refs/kit/saved/<its git directory name>-<UTC time>/, in one transaction, before anything is
+# refs/kit/saved/<its git directory name>-<hash>-<UTC time>/, in one transaction, before anything is
 # deleted, and the report prints the command that deletes those refs; a tree or blob id keeps
 # it, as reachability is checked for commits only; every tracked file is byte for byte what the
-# index records (no stat cache, filter or line-ending conversion trusted); nothing untracked is
-# lost. What is a margin, not a proof: that no worker is still in it. A sub-agent worker holds
+# index records (no stat cache, filter or line-ending conversion trusted); every file git does
+# not track is in a disposable folder or has a byte-identical copy at the same path in the main
+# worktree, outside .claude/worktrees. What is a margin, not a proof: that no worker is still in it. A sub-agent worker holds
 # no process inside it between commands, and some processes cannot be inspected (Linux: another
 # user's or a non-dumpable one, counted in the report; macOS: lsof does not list another user's
 # at all, so they are not counted), so nothing in it, its git directory and its disposable
