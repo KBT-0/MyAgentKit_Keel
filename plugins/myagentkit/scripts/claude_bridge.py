@@ -179,9 +179,12 @@ def throwaway_copy(repo: Path, head: str, diff: str | None, copy: Path,
                 signal.pthread_sigmask(signal.SIG_SETMASK, mask)
             mask = signal.pthread_sigmask(signal.SIG_BLOCK, agent_process.CANCEL_SIGNALS)
             try:
+                # tar reads no option from the environment (TAR_OPTIONS=--exclude=... dropped
+                # a source file from the copy): the only variables it gets are these.
+                tar_env = {k: os.environ[k] for k in ("PATH", "HOME", "LANG", "LC_ALL") if k in os.environ}
                 unpacked = subprocess.Popen(["tar", "-x", "-f", "-", "-C", str(copy)],
                                             stdin=archive.stdout, stdout=subprocess.DEVNULL,
-                                            stderr=subprocess.PIPE, start_new_session=True,
+                                            stderr=subprocess.PIPE, start_new_session=True, env=tar_env,
                                             preexec_fn=lambda: signal.pthread_sigmask(signal.SIG_SETMASK, mask))
                 unpacked_pgid = unpacked.pid
             finally:
@@ -722,7 +725,8 @@ def main(argv=None, result_sink=None) -> int:
         held = agent_process.hold(lambda signum, frame: cancelled.append(signum))
         deadline = time.monotonic() + args.timeout
         # Removed when the attempt ends: a cancel is only noted here, so it reaches the cleanup.
-        review_tmpdir(repo)
+        if args.mode == "review":
+            review_tmpdir(repo)
         with tempfile.TemporaryDirectory(prefix="myagentkit-review-", ignore_cleanup_errors=True) as copy:
             workdir = repo
             # A preparation that uses up the deadline is a timeout like any other: it is

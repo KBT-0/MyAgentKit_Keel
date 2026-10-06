@@ -72,8 +72,10 @@ turn limit, timeout, evidence validation, and tool configuration are enforced by
 `review` and `propose` both pin `dontAsk`, safe mode, restricted mode, empty MCP
 configuration, and no session persistence. `propose` offers only `Read,Glob,Grep` in the
 checkout. `review` adds Bash and runs in a throwaway copy the adapter makes and removes
-(`core/docs/REVIEW_RUNNING.md`); its Bash has no OS sandbox. Neither can commit to the
-checkout or launch another agent. Safe mode disables automatic
+(`core/docs/REVIEW_RUNNING.md`); its Bash has no OS sandbox. The prompt forbids both from
+committing to the checkout or launching another agent; that is a prohibition, not a
+prevention: a review that reaches the checkout anyway is detected afterwards and fails as
+`stale_checkout`, with the change it made still there. Safe mode disables automatic
 customization loading; the prompt explicitly identifies the canonical project documents.
 Claude's normal CLI authentication is retained; `--bare` is intentionally not used because
 it bypasses subscription login. The machine must still authorize launching the CLI.

@@ -24,7 +24,7 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'MYAGENTKIT_TASK_ID', 'MYAGENTKIT_R
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 107, 'test_agent_usage': 19, 'test_codex_quota': 5}
+SUITE_MINIMUMS = {'test_claude_bridge': 108, 'test_agent_usage': 19, 'test_codex_quota': 5}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -2634,6 +2634,38 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         copy.mkdir()
         execution = agent_process.run(['git', 'rev-parse', '--show-toplevel'], '', copy, 30)
         self.assertNotEqual(execution['exit_code'], 0, execution)
+
+    def test_tar_reads_no_option_from_the_environment_and_a_proposal_ignores_tmpdir(self):
+        import claude_bridge
+        self.install_wrapper()
+        self.commit_fixture('A clean HEAD')
+        head = self.git('rev-parse', 'HEAD').stdout.decode().strip()
+        os.environ['TAR_OPTIONS'] = '--exclude=file.py'
+        try:
+            copy = Path(tempfile.mkdtemp(dir=self.root))
+            claude_bridge.throwaway_copy(self.repo, head, None, copy)
+            self.assertTrue((copy / 'file.py').exists(), 'TAR_OPTIONS dropped a source file from the copy')
+        finally:
+            del os.environ['TAR_OPTIONS']
+        # A proposal runs in the checkout and makes no copy: a TMPDIR inside the repository
+        # is no reason to refuse it.
+        inside = self.repo / 'build' / 'tmp'
+        inside.mkdir(parents=True)
+        with (self.repo / '.gitignore').open('a') as ignore:
+            ignore.write('build/\n')
+        self.commit_fixture('Ignore build')
+        old = os.environ.get('TMPDIR')
+        os.environ['TMPDIR'] = str(inside)
+        tempfile.tempdir = None
+        try:
+            code, result = self.run_bridge(extra=['--mode', 'propose', '--commit', 'HEAD'])
+            self.assertNotIn('inside the reviewed repository', json.dumps(result))
+        finally:
+            if old is None:
+                os.environ.pop('TMPDIR', None)
+            else:
+                os.environ['TMPDIR'] = old
+            tempfile.tempdir = None
 
     def test_dispositions_are_claims_the_reviewer_verifies_not_settlements(self):
         # The author never approves its own work: a disproved finding counts only once the
