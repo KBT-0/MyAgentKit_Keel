@@ -34,7 +34,7 @@ REQUIRED_SUITES = {
               'test_check_gate': 17, 'test_boundary_restore': 39, 'test_sync_kit': 15,
               'test_doctor': 2, 'test_git_hooks': 24, 'test_stop_hook': 1, 'test_spawn_worker': 15,
               'test_worker_visibility': 19, 'test_doc_pointers': 3,
-              'test_kit_output': 1},
+              'test_kit_output': 1, 'test_kit_runner': 1},
 }
 
 
@@ -127,6 +127,35 @@ def utf8_locale(have=None):
         raise RuntimeError("NOT RUN: the locale cases need a UTF-8 locale and `locale -a` lists none: "
                            + " ".join(have))
     return found[0][1]
+
+
+def path_without(path, drop, links):
+    """`path` with every command whose name `drop` selects removed; the rest resolve as before.
+
+    A directory holding such a command is replaced by a directory under `links` holding links
+    to its other entries; every other directory stays as it is, its entries never stat'ed.
+    Linking every entry of every directory took minutes on a WSL host whose PATH holds Windows
+    directories, each entry a slow stat. os.path.exists, not Path.exists: on Python before
+    3.12 the latter raised on an entry it may not stat (macOS /usr/sbin/weakpass_edit), and a
+    dangling link is left out.
+    """
+    kept = []
+    for number, directory in enumerate(path.split(os.pathsep)):
+        try:
+            names = os.listdir(directory)
+        except OSError:
+            continue
+        if not any(drop(name) for name in names):
+            kept.append(directory)
+            continue
+        copy = Path(links) / str(number)
+        copy.mkdir(parents=True)
+        for name in names:
+            source = os.path.join(directory, name)
+            if not drop(name) and os.path.exists(source):
+                os.symlink(os.path.realpath(source), copy / name)
+        kept.append(str(copy))
+    return os.pathsep.join(kept)
 
 
 def check_syntax(root):
@@ -391,23 +420,18 @@ def main():
                       " without locks fails FAIL [lock] by name")
                 # python3 only in the configured toolchain directory, as a hook sees a Python
                 # installed per user: the lock, which is taken through python3, still finds it.
-                tc, no_python = side / "tc", side / "no-python"
-                tc.mkdir(); no_python.mkdir()
+                tc = side / "tc"
+                tc.mkdir()
                 (tc / "python3").symlink_to(sys.executable)
-                for directory in os.environ["PATH"].split(os.pathsep):
-                    if os.path.isdir(directory):
-                        for name in os.listdir(directory):
-                            source = Path(directory) / name
-                            # os.path.exists: Path.exists raises before Python 3.12 on an entry
-                            # it may not stat (macOS /usr/sbin/weakpass_edit).
-                            if (not name.startswith("python") and os.path.exists(source)
-                                    and not os.path.lexists(no_python / name)):
-                                (no_python / name).symlink_to(source.resolve())
+                no_python = path_without(os.environ["PATH"], lambda name: name.startswith("python"),
+                                         side / "no-python")
+                if shutil.which("python3", path=no_python):
+                    raise RuntimeError("the PATH without python3 still finds one")
                 if 'toolchain_path=""' not in gate.read_text():
                     raise RuntimeError("the synthetic project's toolchain_path line was not found")
                 gate.write_text(gate.read_text().replace('toolchain_path=""', f'toolchain_path="{tc}"'))
                 run(["sh", "scripts/check.sh"], project, reason="CHECK: PASS", timeout=60,
-                    env=dict(os.environ, PATH=str(no_python)))
+                    env=dict(os.environ, PATH=no_python))
                 passed("a python3 found only through toolchain_path takes the gate lock")
                 gate.write_text(original_gate)
             # The scanners read untracked files too (git ls-files --others), not only the index.
