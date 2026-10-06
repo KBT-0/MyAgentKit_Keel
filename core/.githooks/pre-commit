@@ -17,7 +17,8 @@
 # one as pre-commit.project, project-owned, and runs FIRST with git's arguments: its failure
 # is the commit's failure, and this hook still runs after it. No other hooks path.
 project_hook="$(dirname -- "$0")/pre-commit.project"
-if [ -x "$project_hook" ]; then "$project_hook" "$@" || exit $?; fi
+# git passes pre-commit no arguments; --merge is this kit's own (from pre-merge-commit).
+if [ -x "$project_hook" ]; then "$project_hook" || exit $?; fi
 set -u
 
 root=$(git rev-parse --show-toplevel) || exit 1

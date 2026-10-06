@@ -6,6 +6,7 @@ import json
 import os
 import re
 from pathlib import Path
+import shlex
 import shutil
 import signal
 import subprocess
@@ -24,14 +25,16 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'MYAGENTKIT_TASK_ID', 'MYAGENTKIT_R
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 115, 'test_agent_usage': 19, 'test_codex_quota': 5}
+SUITE_MINIMUMS = {'test_claude_bridge': 116, 'test_agent_usage': 19, 'test_codex_quota': 5}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(bridge)
 
 # A fallback named python or py may be the only Python command on PATH.
-PYTHON_SHEBANG = '#!' + sys.executable + '\n'
+# A launcher sh and Python both read: sh runs `:` then execs the (quoted: a path with a
+# space) interpreter on this file; Python sees a string literal and goes on.
+PYTHON_SHEBANG = "#!/bin/sh\n''':'\nexec %s \"$0\" \"$@\"\n'''\n" % shlex.quote(sys.executable)
 
 FIXTURE = PYTHON_SHEBANG + '''import json, os, pathlib, sys, time
 args = sys.argv[1:]
@@ -2734,6 +2737,23 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         (self.repo / 'src/a.txt').write_text('HIDDEN\n')
         with self.assertRaises(claude_bridge.BridgeError):
             claude_bridge.snapshot(self.repo, 'uncommitted', None)
+
+    def test_fixture_launchers_run_under_an_interpreter_path_with_a_space(self):
+        # A shebang cannot quote: an interpreter under a directory with a space never ran
+        # the fixtures. The launcher is sh, which execs the quoted path.
+        with tempfile.TemporaryDirectory() as tmp:
+            link_dir = Path(tmp) / 'review python env'
+            link_dir.mkdir()
+            link = link_dir / 'python'
+            os.symlink(sys.executable, link)
+            script = Path(tmp) / 'fixture'
+            script.write_text(("#!/bin/sh\n\'\'\':\'\nexec %s \"$0\" \"$@\"\n\'\'\'\n" % shlex.quote(str(link)))
+                              + 'import sys\nprint("ran under", sys.executable)\n')
+            script.chmod(0o755)
+            result = subprocess.run([str(script)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('ran under', result.stdout)
+            self.assertTrue(PYTHON_SHEBANG.startswith('#!/bin/sh\n'), PYTHON_SHEBANG)
 
     def test_dispositions_are_claims_the_reviewer_verifies_not_settlements(self):
         # The author never approves its own work: a disproved finding counts only once the

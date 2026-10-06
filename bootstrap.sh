@@ -329,8 +329,9 @@ if git -C "$target" rev-parse --git-dir >/dev/null 2>&1; then
   if [ -n "$effective" ] && [ "$effective" != ".githooks" ]; then
     rm -f "$part"; part=""
     printf '%s\n' "bootstrap: STOP: core.hooksPath is '$effective', a hooks path of this project's own; the kit's hooks live in .githooks." >&2
-    printf '%s\n' "  Move each hook of '$effective' to .githooks/<same name>.project (executable; the kit's hook runs it first, with git's arguments)," >&2
-    printf '%s\n' "  then run: git config core.hooksPath .githooks (unset it in any other scope), and rerun bootstrap.sh; the kit's files are installed." >&2
+    printf '%s\n' "  Move each hook of '$effective' into .githooks: a pre-commit, commit-msg, pre-merge-commit or post-merge as .githooks/<same name>.project" >&2
+    printf '%s\n' "  (executable; the kit's hook runs it first, with git's arguments; post-merge cannot veto), any other name (pre-push, ...) as .githooks/<same name> itself." >&2
+    printf '%s\n' "  Then run: git config core.hooksPath .githooks (unset it in any other scope), and rerun bootstrap.sh; the kit's files are installed." >&2
     exit 1
   fi
   wiring=1

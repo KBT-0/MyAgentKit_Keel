@@ -154,7 +154,7 @@ python3 -c 'import sys; sys.exit(sys.version_info < (3, 10))' 2>/dev/null ||
 # and the worktree clean-up need a POSIX host. Only where python3 runs at all; a missing one
 # is the line above.
 if python3 -c 'import sys' 2>/dev/null && ! python3 -c "import os,sys; sys.exit(os.name!='posix')" 2>/dev/null; then
-  echo "NOTE: native Windows Python: the review run, the gate lock and the worktree clean-up need a POSIX host (WSL); run the kit from WSL"
+  miss "a POSIX host for python3 (native Windows Python has no fcntl, no select() on a pipe: the gate lock, a review run and the worktree clean-up cannot run)" "run the kit from WSL, in a checkout on the WSL file system"
 fi
 # Resolved as review.sh and its adapters resolve it: REVIEW_REVIEWER over the configured
 # reviewer, REVIEW_CLI_BIN (codex) or CLAUDE_CLI_BIN (claude) over the command name, and

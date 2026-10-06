@@ -16,10 +16,13 @@ git does not run pre-commit. `.githooks/commit-msg` rejects an AI co-author trai
 `core.hooksPath` is local configuration, not repository content, so **a clone without this
 line has NO gate** — the commit succeeds and CI catches the problem later, if at all.
 Git older than 2.24 has no `pre-merge-commit` hook, so a clean merge there is ungated.
-A hook of the project's own (husky, lefthook, a script of yours) lives beside the kit's as
-`.githooks/<name>.project`, executable and project-owned: the kit's hook runs it first with
-git's arguments, its failure is the commit's failure, and no other `core.hooksPath` is
-accepted (`bootstrap.sh` stops on one and names this migration).
+A hook of the project's own (husky, lefthook, a script of yours) lives in `.githooks` too,
+project-owned and executable: for a name the kit ships (`pre-commit`, `commit-msg`,
+`pre-merge-commit`, `post-merge`) as `.githooks/<name>.project`, which the kit's hook runs
+first with git's arguments (its failure fails the commit; `post-merge` runs after the merge
+and cannot veto it); for any other name (`pre-push`, `prepare-commit-msg`, ...) as
+`.githooks/<name>` itself, which git runs directly. No other `core.hooksPath` is accepted:
+`bootstrap.sh` stops on one and names this migration.
 
 Verify it is live:
 

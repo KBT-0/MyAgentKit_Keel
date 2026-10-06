@@ -1856,7 +1856,12 @@ class CleanWorktreesTests(unittest.TestCase):
             self.assertEqual(self.git('status', '--porcelain', cwd=path), '')
         # `git status` with the stat settings forced back misses it too when the edit falls in
         # the second the index was refreshed in (git compares whole seconds): the bytes catch it.
-        path = self.tracked(change, 'not byte for byte what its index records', flags=())
+        # On a host whose stat cache does not hide the edit (macOS, at times), git itself
+        # reports it: kept either way, and the reason says which one caught it.
+        path = self.tracked(change, flags=())
+        out = self.run_script('--apply')
+        self.assertKept(path, out)
+        self.assertTrue('not byte for byte what its index records' in out or 'tracked change, modified: a' in out, out)
         self.assertEqual((path / 'a').read_text(), 'b\n')
 
     def test_a_mode_only_or_line_ending_only_change_is_kept(self):

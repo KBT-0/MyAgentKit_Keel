@@ -58,18 +58,28 @@ def stop_group(child, pgid) -> None:
     if POSIX:
         # The leader's pid is signalled only while it is ours (not yet reaped): a reaped
         # pid may already be another process.
-        for target, group in ((pgid, True), (child.pid, False), (pgid, True)):
-            if not group and child.returncode is not None:
-                continue
+        # The group is signalled while its leader is still ours (not yet reaped). Only when
+        # that answers EPERM (macOS: the leader is a zombie) is the leader signalled by pid
+        # and the group once more right after the reap: a reaped group id may already be
+        # another process's, so that second signal is sent in no other case.
+        zombie = False
+        if child.returncode is None:
             try:
-                if group:
-                    os.killpg(target, signal.SIGKILL)
-                else:
-                    os.kill(target, signal.SIGKILL)
+                os.killpg(pgid, signal.SIGKILL)
+            except PermissionError:
+                zombie = True
+            except ProcessLookupError:
+                pass
+            try:
+                os.kill(child.pid, signal.SIGKILL)
             except (ProcessLookupError, PermissionError):
                 pass
-            if not group:
-                child.wait()
+            child.wait()
+            if zombie:
+                try:
+                    os.killpg(pgid, signal.SIGKILL)
+                except (ProcessLookupError, PermissionError):
+                    pass
     else:
         try:
             done = subprocess.run(["taskkill", "/T", "/F", "/PID", str(child.pid)],
@@ -186,6 +196,30 @@ def run(command: list[str], prompt: str, repo: Path, timeout: float, into: dict 
             result["cancelled"] = True
 
 
+def _exited_unreaped(child, timeout: float) -> bool:
+    """True once `child` has exited, leaving it unreaped on POSIX (waitid with WNOWAIT) so its
+    process group is still its own for stop_group; False at the deadline. Off POSIX the
+    ordinary wait reaps it: there is no group to keep."""
+    if not POSIX:
+        try:
+            child.wait(timeout=timeout)
+            return True
+        except subprocess.TimeoutExpired:
+            return False
+    deadline = time.monotonic() + timeout
+    while True:
+        if child.returncode is not None:
+            return True
+        try:
+            if os.waitid(os.P_PID, child.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is not None:
+                return True
+        except ChildProcessError:
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(min(0.02, max(0.0, deadline - time.monotonic())))
+
+
 def _supervise(command, prompt, repo, timeout, started, guard, prior=None):
     with tempfile.TemporaryFile() as inp, selectors.DefaultSelector() as selector:
         # A file gives even a slow-starting CLI the entire prompt and EOF. Repeated
@@ -247,9 +281,10 @@ def _supervise(command, prompt, repo, timeout, started, guard, prior=None):
                     if termination:
                         break
                 if not termination:
-                    try:
-                        child.wait(timeout=max(0, timeout - (time.monotonic() - started)))
-                    except subprocess.TimeoutExpired:
+                    # Waited for WITHOUT reaping: the leader stays a zombie until stop_group
+                    # has signalled its group, so the group id is still this reviewer's when
+                    # its descendants are stopped (a reaped id may be another process's).
+                    if not _exited_unreaped(child, max(0, timeout - (time.monotonic() - started))):
                         termination = "timeout"
             # Leaving supervision: the guard turns to noting INSIDE the try. Armed into the
             # `finally`, a cancel at a signal check there raised past the group kill, the reap

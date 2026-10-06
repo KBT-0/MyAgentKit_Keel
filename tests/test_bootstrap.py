@@ -473,6 +473,54 @@ class BootstrapTests(unittest.TestCase):
             self.assertIn('/elsewhere/hooks', result.stderr)
             self.assertFalse((project / 'docs/kit/.kit-version').exists())
 
+    def test_a_hook_name_the_kit_does_not_ship_runs_from_githooks_and_a_project_pre_commit_gets_no_merge_flag(self):
+        # The migration moves a pre-push into .githooks/pre-push, which git runs itself; and
+        # pre-merge-commit's private --merge never reaches pre-commit.project (git passes
+        # pre-commit no arguments). post-merge.project cannot veto a merge that is made.
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / 'project'
+            project.mkdir()
+            git = lambda *a, **k: subprocess.run(['git', '-C', str(project), '-c', 'user.name=fixture',
+                                                  '-c', 'user.email=fixture@example.invalid', '-c', 'commit.gpgsign=false', *a],
+                                                 capture_output=True, text=True, **k)
+            git('init', '-q')
+            subprocess.run(['sh', str(root / 'bootstrap.sh'), str(project)], capture_output=True, text=True, check=True)
+            self.assertIn('as .githooks/<same name> itself', '\n'.join(
+                line for line in (root / 'bootstrap.sh').read_text().splitlines() if 'pre-push' in line))
+            seen = project / 'seen'
+            (project / '.githooks/pre-push').write_text('#!/bin/sh\necho pre-push >> "%s"\nexit 1\n' % seen)
+            (project / '.githooks/pre-push').chmod(0o755)
+            (project / '.githooks/pre-commit.project').write_text('#!/bin/sh\necho "pre-commit.project:$#:$*" >> "%s"\n' % seen)
+            (project / '.githooks/pre-commit.project').chmod(0o755)
+            (project / '.githooks/post-merge.project').write_text('#!/bin/sh\necho post-merge.project >> "%s"\nexit 9\n' % seen)
+            (project / '.githooks/post-merge.project').chmod(0o755)
+            # A gate that passes: the hooks' plumbing is what this test is about.
+            (project / 'scripts/check.sh').write_text('#!/bin/sh\necho "CHECK: PASS"\n')
+            git('add', '-A')
+            self.assertEqual(git('commit', '-qm', 'base').returncode, 0)
+            self.assertIn('pre-commit.project:0:', seen.read_text())
+            # The merge path: pre-merge-commit runs pre-commit --merge, the project hook sees no flag.
+            git('checkout', '-q', '-b', 'side')
+            (project / 'side.txt').write_text('side\n')
+            git('add', 'side.txt')
+            git('commit', '-qm', 'side')
+            git('checkout', '-q', '-')
+            (project / 'main.txt').write_text('main\n')
+            git('add', 'main.txt')
+            git('commit', '-qm', 'main')
+            merge = git('merge', '--no-ff', '-q', '-m', 'merge side', 'side')
+            self.assertEqual(merge.returncode, 0, merge.stdout + merge.stderr)
+            self.assertNotIn('--merge', seen.read_text())
+            self.assertIn('post-merge.project', seen.read_text())
+            self.assertIn('post-merge cannot veto', merge.stderr)
+            # git runs .githooks/pre-push itself, and its rejection stops the push.
+            bare = Path(tmp) / 'bare.git'
+            subprocess.run(['git', 'init', '-q', '--bare', str(bare)], check=True)
+            push = git('push', '-q', str(bare), 'HEAD:refs/heads/main')
+            self.assertNotEqual(push.returncode, 0, push.stdout + push.stderr)
+            self.assertIn('pre-push', seen.read_text())
+
     def test_changelog_crlf_repair_runs_verbatim(self):
         root = Path(__file__).resolve().parents[1]
         item = (root / 'CHANGELOG.md').read_text().split('14. **ACTION:**', 1)[1].split('\n\n', 1)[0]
