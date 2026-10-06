@@ -1118,9 +1118,21 @@ class CleanWorktreesTests(unittest.TestCase):
                     for root in (bytes(path), bytes(self.gitdir(path)))
                     for rel, info, _, _ in clean_worktrees.walk(root)}
         before = times()
-        first = self.run_script('--all-reasons', idle=False)
+        self.run_script('--all-reasons', idle=False)
         self.assertEqual(times(), before)
-        self.assertEqual(self.run_script('--all-reasons', idle=False), first)
+        # The count of processes it could not inspect is the host's, not the audit's: another
+        # job starting or ending one between the runs changed it (a red that passed on re-run).
+        # A /proc of the case's own, one more unreadable process on the second run.
+        proc = self.tmp / 'proc'
+        runs = []
+        for pid in ('90001', '90002'):
+            (proc / pid).mkdir(parents=True)
+            (proc / pid / 'cwd').write_text('not a link\n')
+            runs.append(self.run_script('--all-reasons', idle=False, proc=proc))
+        self.assertIn(', 1 could not be inspected', runs[0])
+        self.assertIn(', 2 could not be inspected', runs[1])
+        self.assertEqual(*(re.sub(r'\d+ (processes )?could not be inspected', 'N could not be inspected', out)
+                           for out in runs))
 
     # --- d: an operation in progress -------------------------------------------------------
 
