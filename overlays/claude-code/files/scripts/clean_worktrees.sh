@@ -67,6 +67,6 @@ set -eu
 # run a function, so the exec sites use $kit_python, the resolved command.
 if command -v python3 >/dev/null 2>&1; then kit_python=python3
 elif command -v python >/dev/null 2>&1; then kit_python=python
-else kit_python=py; fi
-[ "$kit_python" = python3 ] || python3() { if [ "$kit_python" = py ]; then py -3 "$@"; else "$kit_python" "$@"; fi; }
-exec "$kit_python" "$(dirname -- "$0")/clean_worktrees.py" "$@"
+else kit_python="py -3"; fi   # the launcher, told which Python: unquoted at every use
+[ "$kit_python" = python3 ] || python3() { $kit_python "$@"; }
+exec $kit_python "$(dirname -- "$0")/clean_worktrees.py" "$@"

@@ -358,7 +358,7 @@ mv -f "$part" "$target/docs/kit/.kit-version"
 part=""
 
 if [ -n "$repo" ] && [ -n "$chained" ]; then
-  echo "bootstrap: core.hooksPath stays '$effective': each of its hooks calls the kit's"
+  printf '%s\n' "bootstrap: core.hooksPath stays '$effective': each of its hooks calls the kit's"
 elif [ -n "$repo" ]; then
   echo "bootstrap: wired core.hooksPath -> .githooks"
 else
