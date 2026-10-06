@@ -24,7 +24,7 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'MYAGENTKIT_TASK_ID', 'MYAGENTKIT_R
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 110, 'test_agent_usage': 19, 'test_codex_quota': 5}
+SUITE_MINIMUMS = {'test_claude_bridge': 113, 'test_agent_usage': 19, 'test_codex_quota': 5}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -354,6 +354,98 @@ class BridgeTests(unittest.TestCase):
             with self.subTest(scope=scope):
                 with self.assertRaisesRegex(bridge.BridgeError, 'clean filter or ident attribute on asset.bin'):
                     bridge.snapshot(self.repo, scope, reference)
+
+    def lfs_fixture(self):
+        """Commit asset.bin through a git-lfs-like clean filter (content to a pointer); return its path.
+        The driver is not named lfs: a host's global filter.lfs.process (git lfs install) would
+        replace its clean command, and the proof does not read the driver's name."""
+        clean = self.root / 'lfs-clean.py'
+        clean.write_text(
+            'import hashlib, sys\ndata = sys.stdin.buffer.read()\n'
+            'if not data.startswith(b"version https://git-lfs"):\n'
+            '    data = b"version https://git-lfs.github.com/spec/v1\\noid sha256:%s\\nsize %d\\n" % (\n'
+            '        hashlib.sha256(data).hexdigest().encode(), len(data))\n'
+            'sys.stdout.buffer.write(data)\n')
+        self.git('config', 'filter.fakelfs.clean', '"%s" "%s"' % (sys.executable, clean))
+        (self.repo / '.gitattributes').write_text('*.bin filter=fakelfs\n')
+        asset = self.repo / 'asset.bin'
+        asset.write_bytes(b'large binary content\n')
+        self.commit_fixture('LFS fixture')
+        self.assertTrue(self.git('cat-file', 'blob', 'HEAD:asset.bin').stdout.startswith(b'version https://'))
+        return asset
+
+    def test_an_lfs_change_only_the_index_holds_is_refused(self):
+        # A different pointer staged for asset.bin, the working file put back to HEAD's content:
+        # the working tree proves nothing changed, `git diff HEAD` shows nothing, and the commit
+        # that follows carries an LFS object the reviewer never saw.
+        asset = self.lfs_fixture()
+        (self.repo / 'file.py').write_text('CODE_ONLY_CHANGE\n')
+        self.assertIn('CODE_ONLY_CHANGE', bridge.snapshot(self.repo, 'uncommitted', None)[2])
+        asset.write_bytes(b'staged other content\n')
+        self.git('add', 'asset.bin')
+        asset.write_bytes(b'large binary content\n')
+        with self.assertRaisesRegex(bridge.BridgeError, 'clean filter or ident attribute on asset.bin'):
+            bridge.snapshot(self.repo, 'uncommitted', None)
+        # A staged deletion leaves no file and no index entry to look at.
+        self.git('reset', '-q', 'HEAD', '--', 'asset.bin')
+        self.git('rm', '-q', 'asset.bin')
+        with self.assertRaisesRegex(bridge.BridgeError, 'clean filter or ident attribute on asset.bin'):
+            bridge.snapshot(self.repo, 'uncommitted', None)
+
+    def test_a_range_that_deletes_renames_or_unfilters_an_lfs_file_is_refused(self):
+        # The filtered paths were read from the current checkout only: a commit that deleted
+        # asset.bin, renamed it out of the filter, or dropped its attribute while changing it,
+        # left no filtered path behind, and its pointer-side diff was reviewed as the change.
+        self.lfs_fixture()
+        changes = {
+            'deleted': lambda: self.git('rm', '-q', 'asset.bin'),
+            'renamed out of the filter': lambda: self.git('mv', 'asset.bin', 'asset.dat'),
+            'attribute removed while changed': lambda: (
+                (self.repo / '.gitattributes').write_text(''),
+                (self.repo / 'asset.bin').write_bytes(b'new content, no longer filtered\n')),
+        }
+        for change, apply in changes.items():
+            apply()
+            self.commit_fixture(change)
+            for scope, reference in (('commit', 'HEAD'), ('base', 'HEAD~1')):
+                with self.subTest(change=change, scope=scope):
+                    with self.assertRaisesRegex(bridge.BridgeError, 'clean filter or ident attribute on asset.bin'):
+                        bridge.snapshot(self.repo, scope, reference)
+            self.git('reset', '-q', '--hard', 'HEAD~1')
+
+    def test_a_filtered_file_whose_rendered_diff_disagrees_with_its_bytes_is_refused(self):
+        # Raw bytes equal to HEAD's did not prove what Git renders: a clean driver configured
+        # after the commit drops SECRET, and `git diff HEAD` claims the line was deleted while
+        # the copy the reviewer reads still holds it.
+        secret = self.repo / 'secret.txt'
+        secret.write_text('SECRET\nkeep\n')
+        (self.repo / '.gitattributes').write_text('secret.txt filter=strip\n')
+        self.commit_fixture('Unfiltered at commit time')
+        os.utime(secret, (time.time() - 100, time.time() - 100))
+        self.git('update-index', '--refresh')
+        self.git('config', 'filter.strip.clean', "sed '/SECRET/d'")
+        (self.repo / 'file.py').write_text('CODE_ONLY_CHANGE\n')
+        # Untouched since then, the file is clean by Git's stat cache and no diff names it. Raw
+        # bytes equal to a blob prove nothing about a filter; only an LFS pointer's sha256 does.
+        self.assertNotIn(b'secret.txt', self.git('diff', '--name-only', 'HEAD').stdout)
+        with self.assertRaisesRegex(bridge.BridgeError, 'clean filter or ident attribute on secret.txt'):
+            bridge.snapshot(self.repo, 'uncommitted', None)
+        secret.write_text('SECRET\nkeep\n')
+        os.utime(secret, (time.time() + 10, time.time() + 10))
+        with self.assertRaisesRegex(bridge.BridgeError, 'clean filter or ident attribute on secret.txt'):
+            bridge.snapshot(self.repo, 'uncommitted', None)
+        # An LFS pointer whose content the working file matches by sha256, while the configured
+        # driver renders something else: the rendered diff names the file, so it is refused.
+        secret.unlink()
+        (self.repo / '.gitattributes').write_text('')
+        self.commit_fixture('No secret')
+        asset = self.lfs_fixture()
+        self.git('config', 'filter.fakelfs.clean', 'cat')
+        asset.write_bytes(b'large binary content\n')
+        os.utime(asset, (time.time() + 20, time.time() + 20))
+        self.assertIn(b'asset.bin', self.git('diff', '--name-only', 'HEAD').stdout)
+        with self.assertRaisesRegex(bridge.BridgeError, 'clean filter or ident attribute on asset.bin'):
+            bridge.snapshot(self.repo, 'uncommitted', None)
 
     def test_direct_adapters_reject_a_base_ref_that_moves_during_review(self):
         from contextlib import redirect_stdout
