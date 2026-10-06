@@ -21,8 +21,10 @@
 # last pane lines for a WAITING one, and exits 0. Nothing waiting after --max-minutes
 # (default 110) prints one line saying so and exits 0. --once checks once and prints nothing
 # when nothing waits (spawn_worker.sh uses it). Exit 2 is a usage error. Exit 3: a pane of
-# a session that exists could not be read (`watch_workers: NAME: capture failed: ...` on
-# stderr); that is an observation failure, never "nothing waiting". Run once per spawn, the
+# a session that exists could not be read, or tmux could not say whether it exists
+# (`watch_workers: NAME: capture failed: ...` on stderr), or a committed result could not be
+# read (`... could not read the committed result ...`); that is an observation failure, never
+# "nothing waiting", and the run prints no result or context report. Run once per spawn, the
 # watcher stopped watching at the first PROGRESS, QUESTIONS or CONTEXT report (see above).
 #
 # A session that is neither gone nor waiting is checked for two more things:
@@ -93,7 +95,8 @@ win=$(mktemp) || die "cannot make a temporary file"
 qs=$(mktemp) || { rm -f "$win"; die "cannot make a temporary file"; }
 body=$(mktemp) || { rm -f "$win" "$qs"; die "cannot make a temporary file"; }
 err=$(mktemp) || { rm -f "$win" "$qs" "$body"; die "cannot make a temporary file"; }
-trap 'rm -f "$win" "$qs" "$body" "$err"' EXIT
+out=$(mktemp) || { rm -f "$win" "$qs" "$body" "$err"; die "cannot make a temporary file"; }
+trap 'rm -f "$win" "$qs" "$body" "$err" "$out"' EXIT
 
 # Each line cut to 200 BYTES in every locale (`cut -c` counted bytes in some), then a
 # UTF-8 character the cut split is dropped whole: the output stays UTF-8 when the input was.
@@ -102,18 +105,35 @@ cutb() {
   LC_ALL=C cut -b1-200 | LC_ALL=C sed -e "s/[$(printf '\300-\337')]\$//" \
     -e "s/[$(printf '\340-\357')][$c]\{0,1\}\$//" -e "s/[$(printf '\360-\367')][$c]\{0,2\}\$//"
 }
-# A once-marker: a user option of the tmux session.
+# A once-marker: a user option of the tmux session. setmark only queues it: the queue is
+# stored after the run's reports are printed, and dropped with them by a run that exits 3.
 mark() { tmux show-options -qv -t "=$1:" "@kit_watch_$2" 2>/dev/null || true; }
-setmark() { tmux set-option -t "=$1:" "@kit_watch_$2" "$3" >/dev/null 2>&1 || true; }
+setmark() { pending="$pending$1	$2	$3$nl"; }
 
-# Print GONE, FAILED (the pane could not be read; tmux's error is in $err), or
-# "WAITING KIND STATUS VERSION", or nothing; leaves the pane's last 15 non-empty lines,
-# control bytes removed, in $win.
+# has NAME: 0 the session exists, 1 tmux says it or its server does not, 2 tmux could not
+# tell (its words in $why): only the second is proof of absence. The wordings are those of
+# has() in close_worker.sh; keep the two lists identical (a test compares them).
+has() {
+  why=$(tmux has-session -t "=$1" 2>&1) && return 0
+  case $why in
+    *"can't find session"*|*"session not found"*|*"no server running"*|*"no sessions"*) return 1 ;;
+    *"error connecting to "*"(No such file or directory)"*) return 1 ;;
+  esac
+  return 2
+}
+
+# Print GONE, FAILED (the pane could not be read, or tmux could not say whether the session
+# exists; tmux's error is in $err), or "WAITING KIND STATUS VERSION", or nothing; leaves the
+# pane's last 15 non-empty lines, control bytes removed, in $win.
 classify() {
-  tmux has-session -t "=$1" 2>/dev/null || { echo GONE; return 0; }
+  s=0; has "$1" || s=$?
+  [ "$s" -ne 1 ] || { echo GONE; return 0; }
+  [ "$s" -eq 0 ] || { printf '%s\n' "$why" >"$err"; echo FAILED; return 0; }
   # A session that ended during the capture is GONE, not an observation failure.
-  tmux capture-pane -p -J -t "=$1:" >"$win" 2>"$err" ||
-    { if tmux has-session -t "=$1" 2>/dev/null; then echo FAILED; else echo GONE; fi; return 0; }
+  tmux capture-pane -p -J -t "=$1:" >"$win" 2>"$err" || {
+    s=0; has "$1" || s=$?
+    if [ "$s" -eq 1 ]; then echo GONE; else echo FAILED; fi
+    return 0; }
   LC_ALL=C tr -d '\001-\011\013-\037\177' <"$win" | LC_ALL=C sed 's/[[:space:]]*$//' |
     grep -v '^$' | tail -n 15 >"$qs" || true
   cat "$qs" >"$win"
@@ -195,7 +215,10 @@ EOF
     say "watch_workers: MALFORMED: $1, result file $f: it is not a regular file in HEAD (mode $mode); not done"
     return ;;
   esac
-  git -C "$d" cat-file blob "$blob" >"$body" 2>/dev/null || return 1
+  if ! git -C "$d" cat-file blob "$blob" >"$body" 2>"$err"; then
+    say "watch_workers: $1: could not read the committed result $blob: $(tr '\n' ' ' <"$err")" >&2
+    failed=1; return 1
+  fi
   k=$(hl 1 "$body"); t=$(hl 2 "$body"); a=$(hl 3 "$body"); r=$(hl 4 "$body")
   case $a in "Attempt: "*) a=${a#Attempt: } ;; *) a=x ;; esac
   bad=""
@@ -260,15 +283,22 @@ context() {
 
 end=$(( $(date +%s) + max * 60 ))
 while :; do
-  found="" failed=""
+  found="" failed="" pending=""
+  : >"$out"
   for n in "$@"; do
     st=$(classify "$n")
     if [ "$st" = FAILED ]; then report "$n" FAILED; failed=1
     elif [ -n "$st" ]; then report "$n" $st; found=1
-    elif result "$n" || context "$n"; then found=1
+    elif { result "$n" || context "$n"; } >>"$out"; then found=1
     fi
   done
+  # A run that failed (exit 3) is rerun: its result and context reports are not printed and
+  # their once-markers not stored, so the rerun reports them.
   [ -z "$failed" ] || exit 3
+  cat "$out"
+  printf '%s' "$pending" | while IFS='	' read -r n k v; do
+    tmux set-option -t "=$n:" "@kit_watch_$k" "$v" >/dev/null 2>&1 || true
+  done
   [ -z "$found" ] || exit 0
   [ -z "$once" ] || exit 0
   [ $(( $(date +%s) + interval )) -le "$end" ] ||
