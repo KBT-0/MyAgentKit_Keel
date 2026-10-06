@@ -55,7 +55,7 @@ REQUIRED_SUITES = {
               'test_review_upgrade': 2, 'test_boundary_example': 3, 'test_scan_gate': 1,
               'test_check_gate': 22, 'test_boundary_restore': 39, 'test_sync_kit': 16,
               'test_doctor': 2, 'test_git_hooks': 25, 'test_stop_hook': 1, 'test_spawn_worker': 16,
-              'test_worker_visibility': 38, 'test_doc_pointers': 4,
+              'test_worker_visibility': 42, 'test_doc_pointers': 4,
               'test_kit_output': 1, 'test_kit_runner': 10, 'test_clean_worktrees': 135,
               'test_close_worker': 16},
 }
@@ -221,6 +221,20 @@ def check_syntax(root):
             run(["sh", "-n", str(path)])
 
 
+def command_position(before):
+    """Whether a command starts after `before`: after a separator or an opening, or after a
+    keyword that is itself where a command starts (`if case` is a command, `echo if case` an
+    argument)."""
+    while True:
+        before = before.rstrip(" \t")
+        if not before or before[-1] in "\n;(|&{":
+            return True
+        keyword = re.search(r"(^|[\s;&|(])(then|do|else|elif|if|while|until|time|!)$", before)
+        if not keyword:
+            return False
+        before = before[:keyword.start(2)]
+
+
 def case_in_substitution(text):
     """The lines where a `case` starts inside $( ). bash 3.2, macOS's sh, does not parse it, and
     the `sh -n` of a host with a newer shell passes it: one did, and only macOS CI failed.
@@ -228,7 +242,7 @@ def case_in_substitution(text):
     A sketch of the shell's grammar, not a parser: quotes, backslashes, comments and
     here-documents are skipped, every parenthesis is counted; inside $(( )) a `<<` is a shift and
     only a nested $( ) is read for commands; `case` counts only where a command starts (`echo
-    case` is an argument)."""
+    case` and `echo if case` are arguments)."""
     found, stack, heredocs, i, line = [], [], [], 0, 1
     while i < len(text):
         c = text[i]
@@ -269,10 +283,7 @@ def case_in_substitution(text):
             arithmetic = next((s for s in reversed(stack) if s in "$A"), "") == "A"
             here = not arithmetic and re.match(r"<<(-?)[ \t]*['\"]?([A-Za-z0-9_]+)['\"]?", text[i:i + 80])
             word = text.startswith(("case ", "case\t"), i) and (i == 0 or text[i - 1] in " \t\n;(|&!")
-            if word:  # Where a command starts: after a separator, an opening or a keyword.
-                before = text[:i].rstrip(" \t")
-                word = (not before or before[-1] in "\n;(|&{"
-                        or re.search(r"(^|[\s;&|(])(then|do|else|elif|if|while|until|time|!)$", before))
+            word = word and command_position(text[:i])
             if here:
                 heredocs.append((here.group(1) == "-", here.group(2)))
                 i += here.end()

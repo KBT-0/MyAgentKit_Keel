@@ -36,7 +36,12 @@ if target and not target.startswith('='):
 name = target[1:].rstrip(':')
 sessions = os.environ.get('VIS_SESSIONS', '').split()
 if args[0] == 'has-session':
-    sys.exit(0 if name in sessions and not os.path.exists(os.path.join(st, 'gone-' + name)) else 1)
+    # A socket tmux cannot read: no answer either way.
+    if os.path.exists(os.path.join(st, 'denied-' + name)):
+        sys.exit('error connecting to /tmp/tmux-1000/default (Permission denied)')
+    if name in sessions and not os.path.exists(os.path.join(st, 'gone-' + name)):
+        sys.exit(0)
+    sys.exit("can't find session: " + name)
 if args[0] == 'list-clients':
     if name in os.environ.get('VIS_ATTACHED', '').split() or os.path.exists(os.path.join(st, 'attached-' + name)):
         print('/dev/pts/9: %s [120x30 xterm-256color] (attached,UTF-8)' % name)
@@ -52,9 +57,9 @@ if args[0] in ('set-option', 'show-options'):
             print(f.read())
     sys.exit(0)
 if args[0] == 'capture-pane':
-    if os.environ.get('VIS_CAPTURE_FAIL'):
-        if os.environ.get('VIS_CAPTURE_FAIL') == 'ended':  # the session ended during the capture
-            open(os.path.join(st, 'gone-' + name), 'w').close()
+    if name in os.environ.get('VIS_CAPTURE_FAIL_FOR', name).split() and os.environ.get('VIS_CAPTURE_FAIL'):
+        if os.environ.get('VIS_CAPTURE_FAIL') in ('ended', 'denied'):  # ended, or unreachable, during it
+            open(os.path.join(st, os.environ['VIS_CAPTURE_FAIL'].replace('ended', 'gone') + '-' + name), 'w').close()
         sys.exit("can't find pane: " + name)
     pane = os.environ['VIS_PANE']
     if os.path.exists(os.path.join(st, 'slept')):
@@ -315,6 +320,28 @@ class WatchTests(Base):
                          'read its result file)\n')
         self.assertEqual(result.stderr, '')
 
+    def test_a_tmux_that_cannot_answer_is_not_proof_of_absence(self):
+        # Only the wordings for an absent session or server mean GONE; a socket tmux cannot
+        # read may still hold the session: after a failed capture, and before any capture.
+        denied = 'error connecting to /tmp/tmux-1000/default (Permission denied)'
+        for before in (False, True):
+            with self.subTest(before=before):
+                if before:
+                    (self.state / 'denied-w1').touch()
+                result = self.watch('--once', 'w1', VIS_CAPTURE_FAIL='denied')
+                self.assertEqual(result.returncode, 3, result.stdout)
+                self.assertNotIn('GONE', result.stdout)
+                self.assertIn('watch_workers: w1: capture failed: ', result.stderr)
+                self.assertIn(denied if before else "can't find pane: w1", result.stderr)
+
+    def test_the_absence_wordings_are_those_of_close_worker(self):
+        lists = []
+        for script in (WATCH, SCRIPTS / 'close_worker.sh'):
+            lines = [line.strip() for line in script.read_text().splitlines() if line.strip().endswith(') return 1 ;;')]
+            lists.append(lines)
+        self.assertEqual(len(lists[0]), 2, lists)
+        self.assertEqual(lists[0], lists[1])
+
     def test_a_newline_in_a_name_or_a_result_mapping_is_refused(self):
         # The mappings are joined by newlines: `w1=docs/a<LF>w1=docs/b.md` announced docs/b.md.
         for args in (('--result', 'w1=docs/a\nw1=docs/b.md', 'w1'), ('w1\nw2',)):
@@ -458,8 +485,33 @@ class ResultTests(Base):
         self.commit(HEAD % ('completed', 'none'))
         first = self.git_wrapper('case " $* " in *" cat-file "*) [ -e "$st/catfailed" ] || '
                                  '{ : >"$st/catfailed"; echo "fatal: cannot read" >&2; exit 128; } ;; esac')
-        self.assertEqual(self.watch(path_first=first).stdout, '', 'a failed read was reported')
+        result = self.watch(path_first=first)
+        self.assertEqual((result.returncode, result.stdout), (3, ''), 'a failed read was reported')
         self.assertIn('DONE: w1', self.watch(path_first=first).stdout)
+
+    def test_a_blob_that_cannot_be_read_ends_the_run_like_a_failed_capture(self):
+        self.commit(HEAD % ('completed', 'none'))
+        blob = subprocess.run(['git', 'rev-parse', 'HEAD:docs/w1.md'], cwd=self.cwd, capture_output=True,
+                              text=True, check=True).stdout.strip()
+        always = self.git_wrapper('case " $* " in *" cat-file "*) echo "fatal: cannot read" >&2; exit 128 ;; esac')
+        for _ in range(2):
+            result = self.watch(path_first=always)
+            self.assertEqual((result.returncode, result.stdout), (3, ''))
+            self.assertEqual(result.stderr, 'watch_workers: w1: could not read the committed result %s: '
+                             'fatal: cannot read \n' % blob)
+
+    def test_a_failed_capture_of_one_session_consumes_no_result_of_another(self):
+        # A run that exits 3 is rerun: a DONE it printed, with its marker stored, was lost.
+        self.commit(HEAD % ('completed', 'none'))
+        args = ('--once', '--result', 'w2=docs/w1.md', 'w1', 'w2')
+        env = dict(VIS_SESSIONS='w1 w2', VIS_PANE=str(PANES / 'working-auto.txt'))
+        result = self.run_script(WATCH, *args, VIS_CAPTURE_FAIL='1', VIS_CAPTURE_FAIL_FOR='w1', **env)
+        self.assertEqual(result.returncode, 3, result.stderr)
+        self.assertNotIn('DONE', result.stdout)
+        self.assertIn('watch_workers: w1: capture failed', result.stderr)
+        result = self.run_script(WATCH, *args, **env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('watch_workers: DONE: w2, task T-7', result.stdout)
 
     def test_a_head_that_moves_during_the_check_reports_nothing(self):
         # The entry was read at one commit and the tree's cleanliness at the next: an obsolete
@@ -534,6 +586,13 @@ class ResultTests(Base):
         self.assertEqual(gate.case_in_substitution('x=$(echo case value)\ny=$(f; then case)\n'), [])
         self.assertEqual(gate.case_in_substitution('x=$(true && case a in a) :;; esac)\n'), [1])
         self.assertEqual(gate.case_in_substitution('x=$(if :; then case a in a) :;; esac; fi)\n'), [1])
+        # A keyword opens a command only where it is itself a command: as an argument it is a word.
+        for text in ('x=$(echo if case value)\n', 'x=$(echo time case a)\n', 'x=$(echo ! case a)\n',
+                     'x=$(echo then do case a)\n'):
+            with self.subTest(text=text):
+                self.assertEqual(gate.case_in_substitution(text), [])
+        self.assertEqual(gate.case_in_substitution('x=$(if ! case a in a) :;; esac; then :; fi)\n'), [1])
+        self.assertEqual(gate.case_in_substitution('x=$(\n  time case a in a) :;; esac)\n'), [2])
         # Every keyword after which a command starts.
         for start in ('if', 'while', 'until', '!', 'time', 'elif', 'then', 'do', 'else'):
             with self.subTest(start=start):

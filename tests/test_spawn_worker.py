@@ -39,7 +39,8 @@ cmd = args[0]
 started = os.path.join(state, 'started')
 target = args[args.index('-t') + 1].lstrip('=').rstrip(':') if '-t' in args else ''
 if cmd == 'has-session':
-    sys.exit(0 if target in read(started).split('\n') and 'SPAWN_GONE' not in os.environ else 1)
+    sys.exit(0 if target in read(started).split('\n') and 'SPAWN_GONE' not in os.environ
+             else "can't find session: " + target)
 if cmd == 'list-clients':
     if os.path.exists(os.path.join(state, 'attached')):
         print('/dev/pts/9: w [120x30 xterm-256color] (attached,UTF-8)')
