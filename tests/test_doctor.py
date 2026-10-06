@@ -100,6 +100,28 @@ class DoctorTests(unittest.TestCase):
             self.assertEqual(moved.returncode, 0, moved.stdout + moved.stderr)
             self.assertIn('DOCTOR: ready', moved.stdout)
 
+            # Native Windows Python (os.name is not 'posix'): a NOTE, not a trap; the review
+            # tooling imports and runs there, the gate lock and the worktree clean-up do not.
+            windows = tmp / 'windows-python'
+            windows.mkdir()
+            (windows / 'python3').write_text('#!/bin/sh\ncase "$*" in *os.name*) exit 1 ;; esac\n'
+                                             'exec %s "$@"\n' % shutil.which('python3', path=env['PATH']))
+            (windows / 'python3').chmod(0o755)
+            note = ('NOTE: native Windows Python: the review tooling runs, the gate lock and the '
+                    'worktree clean-up need a POSIX host (WSL)\n')
+            self.assertNotIn(note, ready.stdout)
+            native = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=project, capture_output=True, text=True,
+                                    env=dict(env, PATH=str(windows) + os.pathsep + env['PATH']))
+            self.assertEqual(native.returncode, 0, native.stdout + native.stderr)
+            self.assertIn(note, native.stdout)
+            self.assertIn('DOCTOR: ready', native.stdout)
+            # A python3 that does not run at all is the MISSING line, never this note.
+            (windows / 'python3').write_text('#!/bin/sh\nexit 127\n')
+            broken = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=project, capture_output=True, text=True,
+                                    env=dict(env, PATH=str(windows) + os.pathsep + env['PATH']))
+            self.assertIn('MISSING: Python 3.10 or newer as python3', broken.stdout)
+            self.assertNotIn(note, broken.stdout)
+
             hook = project / '.claude/hooks/gate_on_stop.sh'
             hook.chmod(0o644)
             red = doctor()

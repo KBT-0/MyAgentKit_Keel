@@ -130,6 +130,22 @@ LSOF_MACOS = (b'p1\nfcwd\nn/\n'
               b'p501\nfcwd\nn/Users/u/project/.claude/worktrees/w\n'
               b'p502\nfcwd\n'
               b'p503\nfcwd\nn/private/var/folders/x/project\n')
+# Native Windows Python, as far as this script can tell: os.name 'nt', no fcntl, and no SIGHUP,
+# SIGKILL, pthread_sigmask or os.killpg. The modules the script imports are loaded first, as the
+# real ones there are; then the script runs as `python3 clean_worktrees.py ...` would.
+WINDOWS = """import argparse, codecs, datetime, filecmp, hashlib, os, re, runpy, shutil, signal, stat
+import subprocess, sys, time, unicodedata
+for name in ('SIGHUP', 'SIGKILL', 'pthread_sigmask', 'sigpending', 'sigwait'):
+    delattr(signal, name)
+del os.killpg
+sys.modules['fcntl'] = None
+if not os.environ.get('KEEP_POSIX_NAME'):
+    os.name = 'nt'
+sys.argv = sys.argv[1:]
+runpy.run_path(sys.argv[0], run_name='__main__')
+"""
+NOT_RUN = ('clean_worktrees: NOT RUN on this platform: liveness cannot be proven here (no /proc, '
+           'no lsof); every worktree kept')
 
 
 class CleanWorktreesTests(unittest.TestCase):
@@ -2429,6 +2445,41 @@ class CleanWorktreesTests(unittest.TestCase):
         self.assertEqual(len(lines), len(expected), out)
         for line, part in zip(lines, expected):
             self.assertIn(part, line, out)
+
+    def test_off_posix_nothing_is_removed_and_one_line_says_why(self):
+        # Native Windows Python has no fcntl for the gate's lock and no /proc or lsof for
+        # liveness: the script, the hook and close_worker.sh each say so in one line, no traceback.
+        self.hooked()
+        path = self.worktree('done', merge=False)
+        (self.tmp / 'windows.py').write_text(WINDOWS)
+        self.stub('python3', '#!/bin/sh\nexec %s %s "$@"\n' % (sys.executable, self.tmp / 'windows.py'))
+        out = self.run_script('--apply', idle=False)
+        self.assertEqual(out, NOT_RUN + '\n')
+        self.assertTrue(path.is_dir(), out)
+        # A POSIX name with no fcntl (no lock can be taken) stops the same way.
+        out = self.run_script('--apply', idle=False, KEEP_POSIX_NAME='1')
+        self.assertEqual(out, NOT_RUN + '\n')
+        self.assertTrue(path.is_dir(), out)
+        out = self.merge_with_hook('worktree-done')
+        self.assertIn(NOT_RUN, out)
+        self.assertNotIn('Traceback', out)
+        self.assertTrue(path.is_dir(), out)
+        close = subprocess.run(['sh', str(SCRIPTS / 'close_worker.sh'), 'done'], cwd=self.main, env=self.env,
+                               capture_output=True, text=True)
+        self.assertEqual(close.returncode, 1, close.stdout + close.stderr)
+        self.assertIn('close_worker: done: worktree kept: ' + NOT_RUN + '\n', close.stdout)
+        self.assertNotIn('Traceback', close.stdout + close.stderr)
+        self.assertTrue(path.is_dir(), close.stdout)
+
+    def test_fcntl_is_imported_only_where_the_gate_lock_is_taken(self):
+        # At the top of the script it stopped the import on native Windows Python.
+        tree = ast.parse((SCRIPTS / 'clean_worktrees.py').read_text())
+        lock = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == 'lock_held')
+        lines = [node.lineno for node in ast.walk(tree)
+                 if isinstance(node, ast.Import) and any(alias.name == 'fcntl' for alias in node.names)
+                 or isinstance(node, ast.ImportFrom) and node.module == 'fcntl']
+        self.assertTrue(lines)
+        self.assertEqual([line for line in lines if not lock.lineno <= line <= lock.end_lineno], [])
 
     def test_the_hook_prints_one_line_when_nothing_is_removed(self):
         self.hooked()

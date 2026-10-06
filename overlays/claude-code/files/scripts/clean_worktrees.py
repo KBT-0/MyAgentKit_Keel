@@ -95,9 +95,9 @@ quiet period.
 import argparse
 import codecs
 import datetime
-import fcntl
 import filecmp
 import hashlib
+import importlib.util
 import os
 import re
 import shutil
@@ -132,8 +132,9 @@ LSOF_WARNINGS = re.compile(rb"lsof: WARNING: can't stat\(\) [^\n]*|\s*Output inf
 QUIET_DEFAULT, QUIET_MIN = 60, 10
 CAP = 5
 # Caught while a worktree is being removed, so that a stop is reported, never silent; the
-# signals that came, checked between two removal steps.
-SIGNALS = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
+# signals that came, checked between two removal steps. Those that exist: native Windows
+# Python has no SIGHUP, and the import must not fail there (main() then stops at once).
+SIGNALS = tuple(getattr(signal, name) for name in ('SIGINT', 'SIGTERM', 'SIGHUP') if hasattr(signal, name))
 STOP = []
 
 
@@ -642,6 +643,7 @@ def tmux_sessions():
 
 
 def lock_held(gitdir):
+    import fcntl  # here, not at the top: native Windows Python has none (main() stops first)
     try:
         fd = os.open(os.path.join(gitdir, b'check.lock'), os.O_RDWR)
     except FileNotFoundError:
@@ -1108,6 +1110,12 @@ def main():
         parser.error('--no-quiet is accepted only with --only: the post-merge hook never lifts the quiet period')
     if args.only is not None and (args.only in ('', '.', '..') or '/' in args.only):
         parser.error('--only takes the name of one folder under .claude/worktrees')
+    # Native Windows Python: no fcntl for the gate's lock, no /proc and no lsof for liveness. A
+    # worktree is removed only on proof, and none can be had here: one line, nothing touched.
+    if os.name != 'posix' or importlib.util.find_spec('fcntl') is None:
+        say('clean_worktrees: NOT RUN on this platform: liveness cannot be proven here (no /proc, '
+            'no lsof); every worktree kept')
+        return 0
     # CLEAN_WORKTREES_NOW, CLEAN_WORKTREES_PROC and CLEAN_WORKTREES_MOUNTINFO are for the tests:
     # a clock they can move instead of ageing files (a ctime cannot be set back), and a /proc and
     # a mount table they can build. Each is said on every run: exported by mistake, it would end
