@@ -40,7 +40,9 @@ shaped it, each marked DECIDED or OPEN. It is read by section only (reading orde
 
 Read only when needed: `docs/GOTCHAS.md` (environment and tooling traps this project has
 already paid for; see its Contents) when something behaves unexpectedly, and
-`docs/BACKLOG.md` (the next tasks and the parked ones) when the next task is chosen.
+`docs/BACKLOG.md` (the next tasks and the parked ones) when the next task is chosen. As the
+lead, before you brief, spawn, merge or close a worker, read `docs/WORKFLOW.md`, "Worker
+cost", and `docs/WORKFLOW.md`, "Review rounds".
 
 ## HARD RULES (violation = failed task)
 
