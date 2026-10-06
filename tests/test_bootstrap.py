@@ -540,6 +540,21 @@ class BootstrapTests(unittest.TestCase):
             git('merge', '--abort')
             (project / '.githooks/pre-merge-commit.project').unlink()
             (project / '.githooks/commit-msg.project').unlink()
+            # A hook that finds its check by its own path keeps its place behind a one-line
+            # wrapper, and its veto survives the migration.
+            (project / '.husky').mkdir(exist_ok=True)
+            (project / '.husky/check').write_text('#!/bin/sh\nexit 6\n')
+            (project / '.husky/check').chmod(0o755)
+            (project / '.husky/pre-commit').write_text('#!/bin/sh\nexec "$(dirname -- "$0")/check" "$@"\n')
+            (project / '.husky/pre-commit').chmod(0o755)
+            (project / '.githooks/pre-commit.project').write_text('#!/bin/sh\nexec "%s" "$@"\n' % (project / '.husky/pre-commit'))
+            (project / '.githooks/pre-commit.project').chmod(0o755)
+            (project / 'wrapped.txt').write_text('w\n')
+            git('add', 'wrapped.txt')
+            wrapped = git('commit', '-qm', 'through the wrapper')
+            self.assertEqual(wrapped.returncode, 1, wrapped.stdout + wrapped.stderr)
+            (project / '.githooks/pre-commit.project').unlink()
+            self.assertIn("exec '", '\n'.join(line for line in (root / 'bootstrap.sh').read_text().splitlines() if 'its own path' in line))
             # git runs .githooks/pre-push itself, and its rejection stops the push.
             bare = Path(tmp) / 'bare.git'
             subprocess.run(['git', 'init', '-q', '--bare', str(bare)], check=True)

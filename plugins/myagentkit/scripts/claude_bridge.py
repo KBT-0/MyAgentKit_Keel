@@ -78,21 +78,6 @@ def review_tmpdir(repo: Path) -> None:
                           "set TMPDIR outside it" % chosen)
 
 
-def _failed(child) -> bool:
-    """Whether an exited `child` failed, without reaping it where the platform allows (Linux:
-    waitid WNOWAIT); elsewhere it is reaped here, after it exited, and reap() finds it so."""
-    if child.returncode is not None:
-        return child.returncode != 0
-    if hasattr(os, "waitid"):
-        try:
-            status = os.waitid(os.P_PID, child.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
-        except ChildProcessError:
-            status = None
-        if status is not None:
-            return not (status.si_code == os.CLD_EXITED and status.si_status == 0)
-    return child.wait() != 0
-
-
 def throwaway_copy(repo: Path, head: str, diff: str | None, copy: Path,
                    cancelled: list | None = None, timeout: float = 300,
                    deadline: float | None = None) -> None:
@@ -146,7 +131,10 @@ def throwaway_copy(repo: Path, head: str, diff: str | None, copy: Path,
                               + ("cancelled" if cancelled else "the wall-clock limit passed"))
 
     def reap(child, pgid) -> None:
+        if child is not None and getattr(child, "_kit_reaped", False):
+            return
         if child is not None:
+            child._kit_reaped = True
             agent_process.stop_group(child, pgid)
             for stream in (child.stdin, child.stdout, child.stderr):
                 if stream is not None:
@@ -156,19 +144,23 @@ def throwaway_copy(repo: Path, head: str, diff: str | None, copy: Path,
         """stdout and stderr of `child`, read to EOF; then the child waited for WITHOUT reaping
         (its group is still its own when reap() stops it: a descendant that closed its pipes
         and ran on outlived a reaped leader's group kill)."""
-        import select
+        import selectors
         out = {"stdout": bytearray(), "stderr": bytearray()}
-        open_fds = {getattr(child, name).fileno(): name for name in ("stdout", "stderr")
-                    if getattr(child, name) is not None}
-        while open_fds:
-            check_running()
-            ready, _, _ = select.select(list(open_fds), [], [], 0.05)
-            for fd in ready:
-                data = os.read(fd, 65536)
-                if data:
-                    out[open_fds[fd]].extend(data)
-                else:
-                    del open_fds[fd]
+        # poll, not select: select() refuses a descriptor above its ceiling (1024).
+        selector = selectors.PollSelector() if hasattr(selectors, "PollSelector") else selectors.SelectSelector()
+        with selector:
+            for name in ("stdout", "stderr"):
+                stream = getattr(child, name)
+                if stream is not None:
+                    selector.register(stream.fileno(), selectors.EVENT_READ, name)
+            while selector.get_map():
+                check_running()
+                for key, _ in selector.select(0.05):
+                    data = os.read(key.fd, 65536)
+                    if data:
+                        out[key.data].extend(data)
+                    else:
+                        selector.unregister(key.fd)
         while not agent_process._exited_unreaped(child, 0.05):
             check_running()
         return bytes(out["stdout"]), bytes(out["stderr"])
@@ -212,9 +204,11 @@ def throwaway_copy(repo: Path, head: str, diff: str | None, copy: Path,
             _, err = collect(unpacked)
             while not agent_process._exited_unreaped(archive, 0.05):
                 check_running()
-            # The exit statuses, read after each group was stopped by reap() below: here only
-            # whether either failed, through a non-reaping look.
-            if _failed(archive) or _failed(unpacked):
+            # Each group stopped while its leader is still unreaped, then reaped: only then
+            # is an exit status read (a reap first would leave descendants their group).
+            reap(archive, archive_pgid)
+            reap(unpacked, unpacked_pgid)
+            if archive.returncode or unpacked.returncode:
                 raise BridgeError("could not copy HEAD for the reviewer: " + err.decode(errors="replace"))
             check_running()
         finally:
@@ -242,7 +236,8 @@ def throwaway_copy(repo: Path, head: str, diff: str | None, copy: Path,
         finally:
             agent_process.restore_mask(mask)
         listed, err = collect(listing)
-        if _failed(listing):
+        reap(listing, listing_pgid)
+        if listing.returncode:
             raise BridgeError("could not list the checkout: " + err.decode(errors="replace"))
     finally:
         # As for the archive: no raising cancel between the kill and the reap.
@@ -330,15 +325,17 @@ def snapshot(repo: Path, scope: str, reference: str | None) -> tuple[str, str, s
     exclusions = sorted(archives)
     # These index flags suppress real working-tree changes from Git's diff. Refuse
     # the scope before launch rather than attest to files that the diff cannot see.
-    # A skip-worktree entry whose file is NOT in the working tree (a sparse checkout leaves
-    # every path outside its cone like that) can hide no change: it is tolerated. One whose
-    # file is present can, and is refused like assume-unchanged.
+    # A skip-worktree entry whose file is NOT in the working tree is what a sparse checkout
+    # leaves outside its cone: tolerated, under an active sparse checkout only. Anywhere
+    # else an absent skip-marked file is a deletion the diff would not show, and a present
+    # one can hide an edit: both are refused like assume-unchanged.
+    sparse = git(repo, 'config', '--get', 'core.sparseCheckout', allowed=(0, 1)).strip() == b'true'
     entries = git(repo, 'ls-files', '-v', '-z', '--', '.', *exclusions).split(b'\0')
     for entry in entries:
         if not entry:
             continue
         hidden = entry[:1].islower() or (
-            entry[:1] == b'S' and os.path.lexists(os.path.join(os.fsencode(repo), entry[2:])))
+            entry[:1] == b'S' and (not sparse or os.path.lexists(os.path.join(os.fsencode(repo), entry[2:]))))
         if hidden:
             raise BridgeError('review scope has assume-unchanged or skip-worktree index flags; '
                               'clear those flags and use a complete checkout before review')

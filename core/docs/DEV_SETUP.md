@@ -21,8 +21,10 @@ project-owned and executable: for a name the kit ships (`pre-commit`, `commit-ms
 `pre-merge-commit`, `post-merge`) as `.githooks/<name>.project`, which the kit's hook runs
 first with git's arguments (its failure fails the commit; `post-merge` runs after the merge
 and cannot veto it); for any other name (`pre-push`, `prepare-commit-msg`, ...) as
-`.githooks/<name>` itself, which git runs directly. No other `core.hooksPath` is accepted:
-`bootstrap.sh` stops on one and names this migration.
+`.githooks/<name>` itself, which git runs directly. A hook that finds its checks by its
+own path (`$0`, its folder) stays where it is, and the `.project` file is one line:
+`exec /its/old/path "$@"`. No other `core.hooksPath` is accepted: `bootstrap.sh` stops on
+one and names this migration.
 
 Verify it is live:
 

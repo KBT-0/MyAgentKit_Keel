@@ -2737,6 +2737,11 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         (self.repo / 'src/a.txt').write_text('HIDDEN\n')
         with self.assertRaises(claude_bridge.BridgeError):
             claude_bridge.snapshot(self.repo, 'uncommitted', None)
+        # Outside sparse mode an ABSENT skip-marked file is a deletion the diff would not
+        # show: refused as well.
+        (self.repo / 'src/a.txt').unlink()
+        with self.assertRaises(claude_bridge.BridgeError):
+            claude_bridge.snapshot(self.repo, 'uncommitted', None)
 
     def test_fixture_launchers_run_under_an_interpreter_path_with_a_space(self):
         # A shebang cannot quote: an interpreter under a directory with a space never ran
