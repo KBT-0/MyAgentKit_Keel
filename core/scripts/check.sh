@@ -82,7 +82,11 @@ case "$lock_path" in /*|[A-Za-z]:/*) ;; *) lock_path="$(pwd -P)/$lock_path" ;; e
 # Git for Windows, MSYS2 and Cygwin: the path in the form a native program is handed (C:/...).
 # A native python3 receives /c/... as C:/... and exports GATE_LOCK_HELD in that form, so a
 # lock path kept as /c/... never matched its own nested runs, and each one waited for itself.
-! command -v cygpath >/dev/null 2>&1 || lock_path=$(cygpath -m "$lock_path")
+# Only on a host that names itself one of those: a cygpath that merely sits on a POSIX PATH (a
+# shim, a stray install) turned the POSIX lock path into one Python read as relative.
+case "$(uname -s 2>/dev/null)" in
+  MSYS*|MINGW*|CYGWIN*) lock_path=$(cygpath -m "$lock_path") ;;
+esac
 # A run that claims the lock (GATE_LOCK_HELD names this checkout's) proves it: the descriptor
 # GATE_LOCK_FD it inherited is open on this lock file, the lock is held, so a fresh open of
 # the file cannot take it, and that descriptor itself holds it: flock on it succeeds at once
@@ -92,11 +96,14 @@ case "$lock_path" in /*|[A-Za-z]:/*) ;; *) lock_path="$(pwd -P)/$lock_path" ;; e
 # NFS client refuses an exclusive flock on a read-only one, and every fresh run failed here.
 # A flock error other than "would block" is the file system, not the claim: FAIL [lock].
 # On native Windows GATE_LOCK_FD is the holder's Win32 handle (the lock below says why). It
-# must be open in this process on this lock file with write access (fsync needs it), and a
-# fresh open for writing must be refused. While the holder has the file open without write
-# sharing, no other handle with write access can be opened, so only the holder's handle and
-# the copies its descendants inherited pass all three. The number alone, copied into another
-# process, names nothing there or something else.
+# must be open in this process on this lock file with write access (FlushFileBuffers needs
+# it), and a fresh open for writing must fail with a sharing violation. While the holder has
+# the file open without write sharing, no other handle with write access can be opened, so
+# only the holder's handle and the copies its descendants inherited pass all three. The number
+# alone, copied into another process, names nothing there or something else. "This lock file"
+# is the whole FILE_ID_INFO, the volume serial and the 128-bit file id: os.stat's st_ino held
+# 64 bits of it before Python 3.12, which ReFS does not keep unique, so a writable handle on
+# another file could match. A volume that gives no FILE_ID_INFO fails FAIL [lock]: unproven.
 inherited=""
 if [ "${GATE_LOCK_HELD:-}" = "$lock_path" ]; then
   lock_probe=0
@@ -108,23 +115,39 @@ except ImportError:
     if os.name != "nt":
         print("FAIL [lock]: python3 has no fcntl module, which the gate lock needs on this system.")
         sys.exit(3)
-    import msvcrt
+    import ctypes
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateFileW.restype = ctypes.c_void_p
+    kernel32.CreateFileW.argtypes = (ctypes.c_wchar_p, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_void_p,
+                                     ctypes.c_ulong, ctypes.c_ulong, ctypes.c_void_p)
+    kernel32.GetFileInformationByHandleEx.argtypes = (ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p, ctypes.c_ulong)
+    kernel32.FlushFileBuffers.argtypes = kernel32.CloseHandle.argtypes = (ctypes.c_void_p,)
+    def file_id(handle):
+        info = ctypes.create_string_buffer(24)
+        return info.raw if kernel32.GetFileInformationByHandleEx(handle, 18, info, 24) else None
+    def open_lock(access):
+        # Shared every way, so only a holder that refuses writers can make it fail; a link as itself.
+        handle = kernel32.CreateFileW(sys.argv[2], access, 7, None, 3, 0x02200000, None)
+        return None if handle in (None, ctypes.c_void_p(-1).value) else handle
     try:
-        handle = msvcrt.open_osfhandle(int(sys.argv[1]), os.O_RDWR)
-        held = os.fstat(handle)
-        os.fsync(handle)
-        lock = os.stat(sys.argv[2])
-    except (OSError, ValueError):
+        held = int(sys.argv[1])
+    except ValueError:
         sys.exit(1)
-    if (held.st_dev, held.st_ino) != (lock.st_dev, lock.st_ino):
+    lock = open_lock(0x80)
+    if lock is None:
         sys.exit(1)
-    try:
-        os.open(sys.argv[2], os.O_RDWR)
-    except PermissionError:
-        sys.exit(0)
-    except OSError:
-        pass
-    sys.exit(1)
+    lock_id, error = file_id(lock), ctypes.get_last_error()
+    kernel32.CloseHandle(lock)
+    if lock_id is None:
+        print("FAIL [lock]: the volume holding %s gives it no stable file id (FILE_ID_INFO, Windows error %d), which a nested gate run needs to prove it holds the lock." % (sys.argv[2], error))
+        sys.exit(3)
+    if file_id(held) != lock_id or not kernel32.FlushFileBuffers(held):
+        sys.exit(1)
+    fresh = open_lock(0x40000000)
+    if fresh is not None:
+        kernel32.CloseHandle(fresh)
+        sys.exit(1)
+    sys.exit(0 if ctypes.get_last_error() == 32 else 1)
 held, lock = os.fstat(int(sys.argv[1])), os.stat(sys.argv[2])
 if (held.st_dev, held.st_ino) != (lock.st_dev, lock.st_ino):
     sys.exit(1)
@@ -446,6 +469,99 @@ self_test() {
   else
     echo "  FAIL — an override exported outside --self-test was honoured, not refused."
     st_fail=1
+  fi
+
+  # --- the gate lock's host detection and its native Windows proof ---------------------
+  # A cygpath that merely sits on a POSIX PATH turned the lock path into C:/..., which POSIX
+  # Python reads as relative: the nested run no longer knew its own lock. Only a host that
+  # names itself MSYS, MINGW or Cygwin converts it.
+  case "$(uname -s 2>/dev/null)" in
+    MSYS*|MINGW*|CYGWIN*)
+      echo "  skip — a stray cygpath on a POSIX PATH: this host is MSYS, MINGW or Cygwin, where cygpath is used" ;;
+    *)
+      mkdir "$work/fakebin" &&
+        printf '#!/bin/sh\n: > "%s"\necho C:/not-the-lock\n' "$work/cygpath-called" > "$work/fakebin/cygpath" &&
+        chmod +x "$work/fakebin/cygpath"
+      if env PATH="$work/fakebin:$PATH" GATE_LOCK_WAIT=5 sh "$0" >/dev/null 2>&1 && [ ! -e "$work/cygpath-called" ]; then
+        echo "  ok   — a cygpath on a POSIX PATH is never run and the nested run keeps its lock"
+      else
+        echo "  FAIL — a cygpath on a POSIX PATH was run, or the nested run beside it did not pass."
+        st_fail=1
+      fi ;;
+  esac
+  # Native Windows (no fcntl): the nested-run proof refuses a handle that fails any one of its
+  # three conditions, and the holder refuses a reparse point at the lock path. Each case runs a
+  # copy of this gate in a throwaway repository, so its lock is not the one this run holds, and
+  # asserts the refusal by its message. The reparse point carries a non-Microsoft tag, which any
+  # user may set, so the case runs without the privilege a symlink needs: a guard whose case
+  # cannot run there is a FAIL, never a skip.
+  if python3 -c 'import os, sys; sys.exit(0 if os.name == "nt" else 1)' 2>/dev/null; then
+    cat > "$work/lockcase.py" <<'LOCKCASE'
+import ctypes, os, struct, subprocess, sys
+mode, lock, gate = sys.argv[1:4]
+kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+kernel32.CreateFileW.restype = ctypes.c_void_p
+kernel32.CreateFileW.argtypes = (ctypes.c_wchar_p, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_void_p,
+                                 ctypes.c_ulong, ctypes.c_ulong, ctypes.c_void_p)
+kernel32.DeviceIoControl.argtypes = (ctypes.c_void_p, ctypes.c_ulong, ctypes.c_char_p, ctypes.c_ulong,
+                                     ctypes.c_void_p, ctypes.c_ulong, ctypes.c_void_p, ctypes.c_void_p)
+kernel32.CloseHandle.argtypes = (ctypes.c_void_p,)
+def handle(path, access, share, disposition=4, flags=0x80):
+    opened = kernel32.CreateFileW(path, access, share, None, disposition, flags, None)
+    if opened in (None, ctypes.c_void_p(-1).value):
+        print("lockcase: cannot open %s (Windows error %d)" % (path, ctypes.get_last_error()))
+        sys.exit(2)
+    return opened
+if mode == "reparse":
+    link = handle(lock, 0x40000000, 0, 2, 0x02200000)
+    data = struct.pack("<IHH", 0x99, 8, 0) + bytes(range(1, 17)) + b"reparse!"
+    done = kernel32.DeviceIoControl(link, 0x000900A4, data, len(data), None, 0,
+                                    ctypes.byref(ctypes.c_ulong()), None)
+    error = ctypes.get_last_error()
+    kernel32.CloseHandle(link)
+    try:
+        if not done:
+            print("lockcase: cannot set a reparse point on %s (Windows error %d)" % (lock, error))
+            sys.exit(2)
+        sys.exit(subprocess.call(["sh", gate]))
+    finally:
+        os.remove(lock)
+RW, R = 0xC0000000, 0x80000000
+if mode != "unheld":
+    holder = handle(lock, RW, 1)
+claim = {"other": lambda: handle(lock + ".other", RW, 3), "reader": lambda: handle(lock, R, 3),
+         "unheld": lambda: handle(lock, RW, 3)}[mode]()
+os.set_handle_inheritable(claim, True)
+environment = dict(os.environ, GATE_LOCK_HELD=lock, GATE_LOCK_FD=str(claim))
+sys.exit(subprocess.call(["sh", gate], env=environment, close_fds=False))
+LOCKCASE
+    for lock_case in other reader unheld reparse; do
+      case_dir="$work/lock-$lock_case"
+      case $lock_case in
+        other)   label="a nested run refuses a writable handle on another file while the lock is held" ;;
+        reader)  label="a nested run refuses a read-only handle on the held lock file" ;;
+        unheld)  label="a nested run refuses a write handle on the lock file while nothing holds it" ;;
+        reparse) label="the gate lock refuses a reparse point at the lock path" ;;
+      esac
+      if ! { ( fixture_env; git init -q "$case_dir" ) && mkdir "$case_dir/scripts" &&
+             cp "$0" "$case_dir/scripts/check.sh"; }; then
+        echo "  FAIL — could not build the throwaway repository for the Windows lock case: $label"
+        st_fail=1; continue
+      fi
+      out=$(python3 "$work/lockcase.py" "$lock_case" "$(cygpath -m "$case_dir/.git/check.lock")" \
+              "$(cygpath -m "$case_dir/scripts/check.sh")" 2>&1)
+      if [ "$lock_case" = reparse ]; then want='^FAIL \[lock\]: cannot open .*reparse point'
+      else want="^FAIL \\[env\\]: GATE_LOCK_HELD names this checkout's lock, but this run did not inherit"; fi
+      if printf '%s\n' "$out" | grep -q "$want"; then
+        echo "  ok   — $label"
+      else
+        echo "  FAIL — $label: not refused, or the case could not run:"
+        printf '%s\n' "$out" | tail -3 | sed 's/^/           /'
+        st_fail=1
+      fi
+    done
+  else
+    echo "  skip — native Windows gate lock cases: this python3 is not native Windows"
   fi
 
   # --- PROJECT.md navigability ------------------------------------------------

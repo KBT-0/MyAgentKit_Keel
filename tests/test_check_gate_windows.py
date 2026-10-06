@@ -4,8 +4,9 @@ Native Windows Python has no fcntl. The gate there holds its lock as a file hand
 without write sharing, which the holder makes inheritable, so the gate and every process it
 starts keep it and Windows closes it when the last of them exits. A nested run proves the
 inherited handle: open in its own process on this lock file, with write access, while a fresh
-open for writing is refused. Every case here runs only on native Windows; elsewhere each one
-prints a NOT RUN line and passes, as the kit check expects.
+open for writing is refused, the file compared by FILE_ID_INFO. Every case here runs only on
+native Windows; elsewhere each one prints a NOT RUN line and passes, as the kit check expects.
+On native Windows no case is NOT RUN: a guard whose case cannot run there fails.
 """
 import ctypes
 import os
@@ -109,6 +110,55 @@ def children(pid):
         KERNEL32.CloseHandle(snapshot)
     return found
 
+
+def set_reparse_point(path):
+    """Make path a file carrying a reparse point with a non-Microsoft tag. Unlike a symlink,
+    this needs no privilege; Python's os.remove deletes it, MSYS rm cannot."""
+    import struct
+    KERNEL32.DeviceIoControl.argtypes = (wintypes.HANDLE, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD,
+                                         ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD),
+                                         ctypes.c_void_p)
+    handle = KERNEL32.CreateFileW(str(path), GENERIC_WRITE, 0, None, 2, 0x02200000, None)
+    if handle in (None, wintypes.HANDLE(-1).value):
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        data = struct.pack('<IHH', 0x99, 8, 0) + bytes(range(1, 17)) + b'reparse!'
+        if not KERNEL32.DeviceIoControl(handle, 0x000900A4, data, len(data), None, 0,
+                                        ctypes.byref(wintypes.DWORD()), None):
+            raise ctypes.WinError(ctypes.get_last_error())
+    finally:
+        KERNEL32.CloseHandle(handle)
+
+
+PROBE_RUNNER = '''
+import ctypes, os, sys
+mode, source = sys.argv[1], sys.argv[2]
+sys.argv = ['-c'] + sys.argv[3:]
+if mode == 'collide':
+    class Same:
+        def __init__(self, result):
+            self.result = result
+        def __getattr__(self, name):
+            return 1 if name in ('st_dev', 'st_ino') else getattr(self.result, name)
+    real_stat, real_fstat = os.stat, os.fstat
+    os.stat = lambda *a, **k: Same(real_stat(*a, **k))
+    os.fstat = lambda *a, **k: Same(real_fstat(*a, **k))
+elif mode == 'noid':
+    real = ctypes.WinDLL
+    class Failing:
+        argtypes = restype = None
+        def __call__(self, *args):
+            ctypes.set_last_error(87)
+            return 0
+    class Proxy:
+        def __init__(self, dll):
+            object.__setattr__(self, 'dll', dll)
+            object.__setattr__(self, 'failing', Failing())
+        def __getattr__(self, name):
+            return self.failing if name == 'GetFileInformationByHandleEx' else getattr(self.dll, name)
+    ctypes.WinDLL = lambda *a, **k: Proxy(real(*a, **k))
+exec(compile(open(source, encoding='utf-8').read(), '<probe>', 'exec'), {'__name__': '__main__'})
+'''
 
 def kill_tree(pid):
     subprocess.run(['taskkill', '/F', '/T', '/PID', str(pid)], capture_output=True)
@@ -393,17 +443,61 @@ class WindowsGateLockTests(unittest.TestCase):
         self.assertNotIn('Traceback', out)
 
     @windows_only
-    def test_a_symlink_at_the_lock_path_is_refused(self):
-        try:
-            os.symlink('12345', self.lock)
-        except OSError as error:
-            sys.stderr.write('\nNOT RUN: %s (no symlink privilege on this host: %s)\n' % (self.id(), error))
-            return
+    def test_a_reparse_point_at_the_lock_path_is_refused(self):
+        # A symlink needs a privilege most accounts lack, and this case used to print NOT RUN
+        # and pass, so deleting the guard left the host green. Any user may set a reparse
+        # point with a non-Microsoft tag on a file of their own: the guard sees the same bit.
+        set_reparse_point(self.lock)
+        self.addCleanup(lambda: self.lock.exists() and os.remove(self.lock))
+        self.assertTrue(os.lstat(self.lock).st_file_attributes & 0x400)
         self.write_build('true\n')
         code, out = gate(self.project, self.build)
         self.assertEqual(code, 1, out)
         self.assertIn('FAIL [lock]: cannot open', out)
+        self.assertIn('reparse point', out)
 
+    def probe(self, mode, handle):
+        """Run the gate's own nested-run proof (the Python check.sh hands GATE_LOCK_FD to) with
+        `mode` faked: 'collide' makes os.stat report one identity for every file, as a 64-bit
+        file id that is not unique (ReFS before Python 3.12) does; 'noid' makes the volume give
+        no FILE_ID_INFO; 'none' fakes nothing."""
+        text = (ROOT / 'core/scripts/check.sh').read_text(encoding='utf-8')
+        source = re.search(r"lock_probe=0\n  python3 -c '\n(.*?)\n' \"\$\{GATE_LOCK_FD:-\}\"", text, re.S)
+        self.assertIsNotNone(source, 'the nested-run proof was not found in check.sh')
+        program = self.tmp / 'probe.py'
+        program.write_text(source[1], encoding='utf-8')
+        runner = self.tmp / 'runner.py'
+        runner.write_text(PROBE_RUNNER, encoding='utf-8')
+        return subprocess.run([sys.executable, str(runner), mode, str(program), str(handle), self.lock_form()],
+                              capture_output=True, text=True, close_fds=False)
+
+    @windows_only
+    def test_a_handle_whose_64_bit_identity_collides_is_not_the_lock(self):
+        # The proof compared os.stat's (st_dev, st_ino). Before Python 3.12 that held 64 bits of
+        # the file id, which ReFS does not keep unique: a writable handle on another file whose
+        # truncated id matched passed while the real lock was held. FILE_ID_INFO is compared now.
+        held = open_handle(self.lock, GENERIC_READ | GENERIC_WRITE, SHARE_READ)
+        other = open_handle(self.tmp / 'another-file', GENERIC_READ | GENERIC_WRITE, SHARE_READ | SHARE_WRITE)
+        try:
+            control = self.probe('none', held)
+            collided = self.probe('collide', other)
+        finally:
+            close_handle(other)
+            close_handle(held)
+        self.assertEqual(control.returncode, 0, control.stdout + control.stderr)
+        self.assertEqual(collided.returncode, 1, collided.stdout + collided.stderr)
+
+    @windows_only
+    def test_a_volume_without_a_stable_file_id_fails_closed(self):
+        # The holder's own handle, but no FILE_ID_INFO to prove it with: FAIL [lock], not a pass.
+        held = open_handle(self.lock, GENERIC_READ | GENERIC_WRITE, SHARE_READ)
+        try:
+            result = self.probe('noid', held)
+        finally:
+            close_handle(held)
+        self.assertEqual(result.returncode, 3, result.stdout + result.stderr)
+        self.assertIn('FAIL [lock]:', result.stdout)
+        self.assertIn('file id', result.stdout)
 
 if __name__ == '__main__':
     unittest.main()
