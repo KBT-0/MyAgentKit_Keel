@@ -38,7 +38,9 @@ If the gate fails with "command not found", that is this — not a broken build.
 
 The gate runs one at a time per checkout and needs `python3` for its lock: `fcntl.flock` on
 Linux, macOS, WSL and a POSIX Python under MSYS2 or Cygwin; on native Windows (Git for
-Windows' `sh` with a Windows Python) a lock file held open without write sharing. Every
+Windows' `sh` with a Windows Python) a lock file held open without write sharing, which a
+nested run proves it holds by the file's `FILE_ID_INFO` (NTFS and ReFS give one; on a volume
+that gives none, nested runs fail `FAIL [lock]`). Every
 process the build command starts holds the lock, so a build server it leaves running (a
 compiler server, a build daemon) makes the next gate, and the commit hook, wait until that
 server exits. Turn such servers off in the build command (`docs/GOTCHAS.md`); the waiting
@@ -48,6 +50,8 @@ server exits. Turn such servers off in the build command (`docs/GOTCHAS.md`); th
 
 `docs/REVIEW_GATE.md` asks for risky diffs to be reviewed by a DIFFERENT model in a fresh
 session. `scripts/review.sh` automates that, and it needs a second CLI on this machine.
+It needs a POSIX shell and Python as well (WSL, Linux, macOS): on native Windows its signal
+handling does not run yet, so start reviews from WSL there.
 
 **Ask your agent to set this up for you.** It can install the CLI and check the wiring; the
 parts it cannot do are called out below. Nothing here is required to write code — the gate,

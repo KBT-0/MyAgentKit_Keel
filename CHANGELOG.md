@@ -11,10 +11,11 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ---
 
-## v0.9.1 — 2026-10-06
+## v0.10 — 2026-10-07
 
 Two fixes for a project developed on native Windows, found when one project moved there from
-WSL. Why each change is safe is in `RESEARCH_LOG.md` (2026-10-06).
+WSL, then hardened by a cross-model review that rejected the first version of both. Why each
+change is safe is in `RESEARCH_LOG.md` (2026-10-06 and 2026-10-07).
 
 - **The gate lock on native Windows.** `scripts/check.sh` run by Git for Windows' `sh` with a
   Windows `python3` failed every run with `FAIL [lock]: python3 has no fcntl module`, so every
@@ -25,21 +26,37 @@ WSL. Why each change is safe is in `RESEARCH_LOG.md` (2026-10-06).
   run waits with the same `NOTE [lock]` line (the hint names Resource Monitor instead of
   `fuser`) and honours `GATE_LOCK_WAIT` (`NOT RUN [lock]`, exit 75). On Windows
   `GATE_LOCK_FD` holds the holder's Win32 handle: a nested run proves it is open in its own
-  process on this lock file with write access while a fresh open for writing is refused, so
-  variables copied out of a killed gate fail `FAIL [env]`. The self-test marker is a random
+  process on this lock file, compared by the whole `FILE_ID_INFO` (volume serial and 128-bit
+  file id), with write access, while a fresh open for writing fails with a sharing violation,
+  so variables copied out of a killed gate fail `FAIL [env]`. A volume that gives no
+  `FILE_ID_INFO` fails `FAIL [lock]` by name in a nested run. The self-test marker is a random
   token the holder clears when the gate ends. A gate that dies of a signal exits 128 + N
-  there, never 0. On Git for Windows, MSYS2 and Cygwin the lock path is kept in the `C:/`
-  form a native program receives (`cygpath -m`), and a linked worktree's `C:/` git path is
-  read as absolute. The POSIX lock is unchanged. `python3` without `fcntl` on any other
-  system still fails `FAIL [lock]` by name. `docs/DEV_SETUP.md` and `docs/GOTCHAS.md` say so.
+  there, never 0. On a host whose `uname -s` is MSYS, MINGW or Cygwin the lock path is kept in
+  the `C:/` form a native program receives (`cygpath -m`); a `cygpath` that is merely on a
+  POSIX `PATH` is never run. A linked worktree's `C:/` git path is read as absolute. The POSIX
+  lock is unchanged. `python3` without `fcntl` on any other system still fails `FAIL [lock]`
+  by name. `docs/DEV_SETUP.md` and `docs/GOTCHAS.md` say so.
+- **`--self-test` proves the Windows lock.** New cases: on native Windows, a nested run
+  refuses a writable handle on another file, a read-only handle on the held lock file and a
+  write handle while nothing holds the lock, and the lock refuses a reparse point at its path
+  (set with a tag any user may set, so the case never needs the symlink privilege and is
+  never skipped); on POSIX, a `cygpath` on `PATH` is never run. Each case says `skip` on the
+  other kind of host.
 - **`review.sh` and Git LFS.** The v0.9 filter refusal checked every path in the checkout,
   not the paths a review changes, and `git lfs install` sets `filter.lfs.clean` globally:
-  one LFS file anywhere refused every review. A filtered path the review does not change
-  now passes when its working bytes are proven to be what HEAD records, read with no
-  filter: the blob's own bytes, or the content an LFS pointer blob names by size and sha256.
-  A filtered path the review changes is still refused: an uncommitted change to it, or a
-  `--commit` or `--base` range whose diff names it. Other clean filters and `ident` on
-  changed paths are refused as before.
+  one LFS file anywhere refused every review. A filtered path the review does not change now
+  passes, and only when HEAD records it as a canonical LFS pointer, its working bytes (read
+  with no filter) are that pointer or the content it names by size and sha256, and Git's own
+  rendered diff of the working tree and of the index does not name it. A filtered path the
+  review changes is refused, whichever side was filtered: candidates include names staged in
+  the index, deleted and renamed-away names, and the attributes are read in the working tree
+  and at each end of the reviewed range. So an index-only change to an LFS file, a commit
+  that deletes one, renames it out of the filter or drops its attribute while changing it,
+  and any other clean filter or `ident` on a path are refused.
+- **Not yet on native Windows: `review.sh`.** The review adapters rely on POSIX signal masks
+  and process groups (`pthread_sigmask`, `killpg`, `SIGHUP`), so `review.sh` and the review
+  case of `check.sh --self-test` fail there. Run reviews, and the full self-test, from WSL or
+  another POSIX shell (item 3 below).
 
 ### Upgrading a project from v0.9
 
@@ -64,11 +81,20 @@ from, and `00581dd` is the kit's v0.9 commit.
    Resolve every conflict the merge left (`git diff --check` names each leftover marker) so
    that the kit's new lines and every line of yours survive, then read `git diff HEAD --
    <file>` for each file and account for every removed line.
-3. **ACTION:** Prove the result, in this order: `./scripts/doctor.sh`, `./scripts/check.sh`
-   (expect `CHECK: PASS`), `./scripts/check.sh --self-test` from the main checkout, then
-   commit. On native Windows, also run the gate once from Git for Windows' `sh` with the
-   Windows `python3` and expect `CHECK: PASS`. Then record the version with
-   `"$KIT/sync-kit.sh" . --actions-applied`.
+3. **ACTION:** Prove the result: `./scripts/doctor.sh`, `./scripts/check.sh` (expect `CHECK:
+   PASS`), then `./scripts/check.sh --self-test` (expect `SELF-TEST: PASS`). On native Windows
+   the self-test cannot pass yet: its review case fails because `review.sh` needs POSIX
+   signals (above). There, run `./scripts/check.sh` and `./scripts/check.sh --self-test` from
+   Git for Windows' `sh` with the Windows `python3`, expect `CHECK: PASS` and every case
+   except the review adapter case `ok` (the four Windows lock cases among them), and run the
+   whole `--self-test` once more from WSL or another POSIX shell on the same commit, where it
+   must say `SELF-TEST: PASS`. A project with no POSIX shell has partial acceptance only; say
+   so in its state file.
+4. **ACTION:** Record the version BEFORE the upgrade commit, so the commit carries it: run
+   `"$KIT/sync-kit.sh" . --actions-applied`, which writes `docs/kit/.kit-version`, then run
+   `./scripts/check.sh` again and commit everything the upgrade changed together with
+   `docs/kit/.kit-version` in one commit. Stamped after the commit, the version file was left
+   modified and every other clone still read v0.9.
 
 ## v0.9 — 2026-10-03
 

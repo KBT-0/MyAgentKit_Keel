@@ -250,13 +250,94 @@ the child a complete temporary stdin file and monitors its process, not partial 
 
 ## Backflow findings
 
+### 2026-10-07 — the cross-model review of the native Windows change
+
+The first version of the 2026-10-06 change (below) went to a cross-model review, which
+rejected it with three High and five Medium findings. Each fix was written as a test first and
+watched going red against that first version; then each new guard was deleted in turn and its
+test watched going red again. `CHANGELOG.md` v0.10 records what changed.
+
+**The nested-run proof compared a truncated file id.** The proof read the lock file's identity
+from `os.stat`, `(st_dev, st_ino)`. Before Python 3.12, `st_ino` on Windows held 64 bits of the
+file id, and Microsoft does not promise those are unique on ReFS. A writable handle on another
+file whose truncated id matched passed while the real lock was held, and the seams turned on.
+The proof now reads `FILE_ID_INFO` through `GetFileInformationByHandleEx` for the inherited
+handle and for the lock path, and compares all 24 bytes (the volume serial and the 128-bit
+id). When the volume gives none, the nested run fails `FAIL [lock]` by name: an identity that
+cannot be read is not proven. The fresh open for writing must also fail with a sharing
+violation (error 32), not any permission error, because a read-only lock file or an access
+rule would refuse it with nothing holding the lock. The test fakes the truncated identity by
+making `os.stat` report one `(st_dev, st_ino)` for every file and runs the gate's own proof
+code, cut out of `check.sh`: red on the first version, green now. Another fakes a volume with
+no `FILE_ID_INFO`.
+
+**`cygpath` changed POSIX behaviour by being on PATH.** The lock path was converted whenever
+`cygpath` existed. On Linux or macOS with a shim or a stray install, the converted `C:/` path
+is relative to POSIX Python, so the nested run no longer knew its own lock. Only a host whose
+`uname -s` names MSYS, MINGW or Cygwin converts it now. The new self-test case puts a fake
+`cygpath` that records its call on PATH: on WSL it went red with the first version's line and
+green with the fix.
+
+**The Windows lock had no negative test a project receives.** Its cases lived in a kit-only
+test file, and the reparse-point guard printed NOT RUN and passed on a host without the
+symlink privilege, so deleting the guard left that host green. `check.sh --self-test` now runs
+four Windows cases, each against a copy of the gate in a throwaway repository so its lock is
+not the one the self-test holds: a writable handle on another file, a read-only handle on the
+held lock file, a write handle while nothing holds the lock, and a reparse point at the lock
+path. The reparse point is not a symlink: a reparse point with a non-Microsoft tag can be set
+by any user on a file of their own (measured on Windows 11 without Developer Mode, where a
+symlink failed with WinError 1314), and the guard tests the same attribute bit. Each of the
+four guards was deleted in turn in a bootstrapped project, and only its own case went red. A
+case that cannot run is a FAIL there, never a skip.
+
+**Three ways a changed LFS file reached a review.** All three came from deciding which paths
+are filtered by the current checkout alone. (1) An uncommitted review never looked at the
+index: a different pointer staged for an LFS file, with the working file put back to HEAD's
+content, passed every check, and the commit that followed carried an object nobody reviewed.
+(2) A commit that deleted an LFS file, renamed it to a name the filter does not cover, or
+removed its attribute while changing it, left no filtered path in the checkout, and the range
+was reviewed from its pointer-side diff. (3) Raw bytes equal to HEAD's blob did not prove what
+Git renders: with a clean driver configured after the commit (one that deletes a line), `git
+diff HEAD` claimed a deletion the copied file did not show. The 2026-10-06 entry's sentence
+that hiding "can only happen to a path whose raw bytes differ from what HEAD records" was
+wrong for exactly this case. Now: the candidate names are the checkout, the index diff
+against HEAD, the working-tree diff against HEAD and the reviewed range, deleted and
+renamed-away names included; attributes are read in the working tree and, through a
+throwaway index (`read-tree` then `check-attr --cached`, so no newer git is needed), at each
+end of the range, HEAD for uncommitted work; a filtered name any of those diffs changes is
+refused. A filtered path nothing changes passes only when HEAD records a canonical LFS
+pointer, its raw bytes are that pointer or the content it names by sha256, and Git's rendered
+diffs, which run the filter, do not name it. The rendered check and the pointer restriction
+each have a case the other does not catch: a stat-clean file Git renders as unchanged, and a
+pointer whose content matches while the configured driver renders something else. The test
+fixtures name their driver `fakelfs`: a host's global `filter.lfs.process` from `git lfs
+install` replaces a test's `filter.lfs.clean`, and the first run of the rendered case passed
+for that reason alone.
+
+**`review.sh` on native Windows: measured, not fixed.** The review asked for `agent_process.py`
+to tolerate a missing `SIGHUP` so that the self-test's review case runs on native Windows. With
+`SIGHUP` made optional, 121 of the 137 review tests still failed there (163 of the errors were
+`pthread_sigmask`): the adapters block signals with `pthread_sigmask`, wait with `sigpending`
+and `sigwait`, start the reviewer in its own session and kill its group with `killpg`, and the
+tests create symlinks and FIFOs. The filter tests above passed there. A Windows design
+(job objects, console control events) is its own task for review tooling, so v0.10 says in its
+upgrade checklist that native Windows has partial acceptance and the full self-test runs from
+WSL or another POSIX shell.
+
+**The upgrade checklist stamped after its commit.** It said to commit and then run
+`sync-kit.sh --actions-applied`, which writes the tracked `docs/kit/.kit-version`: the stamp
+was left uncommitted and every other clone read v0.9. The stamp now comes before the one
+upgrade commit. The release is v0.10, not v0.9.1: the changelog defines versions as
+`MAJOR.MINOR`.
+
 ### 2026-10-06 — native Windows: the gate lock, and Git LFS beside a review
 
 A project moved from WSL to native Windows (Git for Windows' `sh`, CPython from python.org).
 Every commit there was blocked, and `review.sh` refused every review. The kit's own note that
 only Linux under WSL had ever been tested marked exactly where it broke. Each fix below was
 written as a test first and watched going red against v0.9; then each guard was deleted in
-turn and its test watched going red again. `CHANGELOG.md` v0.9.1 records what changed.
+turn and its test watched going red again. `CHANGELOG.md` v0.10 records what changed; the
+cross-model review of this first version (2026-10-07, above) changed four parts of it.
 
 #### The gate lock without fcntl
 
@@ -287,7 +368,8 @@ random token in the lock file was the first idea. A token alone has the weakness
 cross-model round of v0.9 found in the pid: copied out of a killed gate whose build still
 runs, it matches the file. The proof is the handle, which a copied variable cannot carry.
 `GATE_LOCK_FD` holds the holder's handle number. A nested run accepts it only when that handle
-is open in its own process on this lock file (volume and file id), can write (`fsync` needs
+is open in its own process on this lock file (volume and file id; since 2026-10-07 the whole
+`FILE_ID_INFO`), can write (`fsync` needs
 write access), and a fresh open for writing is refused. While the holder has the file open
 without write sharing, no other handle with write access can be opened, so only the holder's
 handle and its inherited copies pass all three. Three tests hand the gate a handle that fails
@@ -298,12 +380,14 @@ POSIX: the gate cannot learn the holder's process id as its own `$$`.
 
 Three smaller traps on the same host. A native program receives `/d/x` as `D:/x`, so
 `GATE_LOCK_HELD` came back from Python in another form; the nested run did not know its own
-lock and waited for itself. The lock path is now kept in the `C:/` form (`cygpath -m`, where
+lock and waited for itself. The lock path is now kept in the `C:/` form (`cygpath -m`, on a
+host whose `uname -s` is MSYS, MINGW or Cygwin since 2026-10-07; first, wherever
 it exists). Git for Windows prints a linked worktree's git path as `C:/...`, which the gate
 read as relative. Output to a pipe is in the ANSI code page, and a path outside it (a user
 name, or the U+F03A that cygpath makes of a colon) ended the waiting NOTE in a traceback.
 
-Not proven here: the refusal of a symlink at the lock path (creating one needs a privilege
+Not proven here at first (proven since 2026-10-07 with a reparse point any user may set):
+the refusal of a symlink at the lock path (creating one needs a privilege
 the host lacks, and the test says NOT RUN), and the lock on macOS.
 
 #### Git LFS and the filter refusal
@@ -317,7 +401,9 @@ two-line code fix included.
 
 Why the refusal exists (v0.9, #12): Git runs a clean filter on working-tree bytes before it
 diffs them, so a filter can drop lines or a whole file from the reviewer's payload while the
-fingerprint still hashes the raw bytes. That can only happen to a path whose raw bytes differ
+fingerprint still hashes the raw bytes. (Corrected 2026-10-07: the next sentence is wrong
+for a filter configured after the commit, and the proof below is now narrower.) That can only
+happen to a path whose raw bytes differ
 from what HEAD records. A filtered path therefore passes only with a proof, taken without
 running any filter, that its working bytes are exactly what HEAD records: they equal the
 blob's bytes (an unsmudged checkout), or the blob is a Git LFS pointer and the file has the
