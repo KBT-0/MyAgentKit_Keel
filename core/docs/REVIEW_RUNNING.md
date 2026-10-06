@@ -172,7 +172,8 @@ a reviewer that cannot run fails the review: nonzero exit, its `failure_kind`, a
 `FAIL [review]: requested reviewer ... did not produce a review` line. With `--fallback`,
 the wrapper and bundled `review_dispatch.py` try the other configured model once after an
 operational failure: quota, authentication, timeout, missing CLI, CLI error, context
-exhaustion, turn/budget exhaustion, or output limit. The substitute's archived evidence
+exhaustion, turn/budget exhaustion, output limit, or a provider's content classifier
+stopping the turn (`content_flagged`: a run may pass on a retry or with a smaller scope). The substitute's archived evidence
 then opens with a `FALLBACK REVIEWER:` line naming the requested reviewer and its failure,
 its usage record carries `review_fallback_from`, and the run prints a `FALLBACK [review]`
 line. A CLI that rejects a flag the review requires (`cli_unsupported`, typically an

@@ -182,6 +182,11 @@ def failure(provider: str, execution: dict, values: list[dict]) -> str | None:
         return "context_limit"
     if any(word in text for word in ("max_turns", "budget")):
         return "budget_or_turn_limit"
+    # A provider's content classifier stopping the turn is its own kind: the wording
+    # ("authorized security work") would otherwise read as an authentication fault. A retry
+    # with the same content may pass; a smaller scope usually does.
+    if any(word in text for word in ("flagged", "content policy", "safety system", "refused")):
+        return "content_flagged"
     if any(word in text for word in ("auth", "login", "401", "403")):
         return "authentication"
     # A CLI that rejects a required flag fails identically on every run. It is a setup fault,

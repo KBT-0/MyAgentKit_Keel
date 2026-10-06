@@ -24,7 +24,7 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'MYAGENTKIT_TASK_ID', 'MYAGENTKIT_R
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 100, 'test_agent_usage': 19, 'test_codex_quota': 5}
+SUITE_MINIMUMS = {'test_claude_bridge': 101, 'test_agent_usage': 19, 'test_codex_quota': 5}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -2391,6 +2391,14 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                         os.kill(sleeper, 0)
         finally:
             os.environ['PATH'] = old_path
+
+    def test_a_content_flag_is_its_own_failure_kind_not_authentication(self):
+        # Codex's "flagged for possible cybersecurity risk ... authorized security work" message
+        # was read as an authentication fault ("auth" in the text).
+        import agent_usage
+        values = [{"type": "turn.failed", "error": {"message": "This content was flagged for possible "
+                   "cybersecurity risk. If you're doing authorized security work, apply for access."}}]
+        self.assertEqual(agent_usage.failure("codex", {"exit_code": 0, "stderr": ""}, values), "content_flagged")
 
     def test_dispositions_are_claims_the_reviewer_verifies_not_settlements(self):
         # The author never approves its own work: a disproved finding counts only once the
