@@ -4,4 +4,6 @@
 # hook. Without it, two branches that each pass the gate can merge into a tree that fails
 # it, and nothing runs the gate. A conflicted merge is finished with `git commit`, which
 # runs pre-commit; a fast-forward creates no commit and brings in a tree already gated.
-exec sh "$(dirname -- "$0")/pre-commit"
+# --merge: a merge commit always gets the full gate, the build included, even when what the
+# merge brings in is documentation only (git shows no MERGE_HEAD to this hook).
+exec sh "$(dirname -- "$0")/pre-commit" --merge

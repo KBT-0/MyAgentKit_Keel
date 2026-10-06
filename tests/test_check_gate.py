@@ -331,6 +331,90 @@ class CheckGateTests(unittest.TestCase):
         code, out = gate(self.project, self.build)
         self.assertEqual(code, 0, out)
 
+    def commit_fixture(self):
+        """Commit the fixture, then make the build leave a mark and fail."""
+        git = lambda *args: subprocess.run(GIT + ['-c', 'core.hooksPath=/dev/null', *args],
+                                           cwd=self.project, check=True, capture_output=True)
+        (self.project / 'code.c').write_text('int main(void) { return 0; }\n')
+        git('add', '-A')
+        git('commit', '-q', '-m', 'base')
+        self.mark = self.tmp / 'built'
+        self.build.write_text('echo ran > "%s"; exit 1\n' % self.mark)
+        return git
+
+    def gate_built(self, args=('--for-commit',)):
+        """Run the gate; report whether the build ran."""
+        if self.mark.exists():
+            self.mark.unlink()
+        code, out = gate(self.project, self.build, args=args)
+        return code, out, self.mark.exists()
+
+    def test_a_documentation_only_commit_skips_the_build_and_only_the_build(self):
+        # A project's gate ran its full build for minutes on every commit that changed only
+        # documentation. The build is skipped for such a commit, and the PASS line says so.
+        git = self.commit_fixture()
+        (self.project / 'docs/a.md').write_text('a\n')
+        (self.project / 'b.md').write_text('b\n')
+        git('add', 'docs/a.md', 'b.md')
+        code, out, built = self.gate_built()
+        self.assertFalse(built, out)
+        self.assertEqual(code, 0, out)
+        self.assertIn('CHECK: PASS (build not run: documentation-only commit, 2 files)', out)
+        # Every other check still runs: a placeholder in a staged document fails the commit.
+        (self.project / 'b.md').write_text('b ' + MARKER + '\n')
+        git('add', 'b.md')
+        code, out, built = self.gate_built()
+        self.assertEqual(code, 1, out)
+        self.assertIn(MARKER, out)
+        self.assertFalse(built, out)
+        self.assertNotIn('CHECK: PASS', out)
+
+    def test_any_doubt_about_a_documentation_only_commit_runs_the_build(self):
+        git = self.commit_fixture()
+        cases = {
+            'a document and a code file': lambda: (
+                (self.project / 'code.c').write_text('int main(void) { return 1; }\n'),
+                git('add', 'code.c')),
+            'a code file renamed to .md': lambda: git('mv', 'code.c', 'code.md'),
+            'a deleted code file': lambda: git('rm', '-q', 'code.c'),
+            'a symlink named x.md': lambda: (
+                (self.project / 'x.md').symlink_to('code.c'), git('add', 'x.md')),
+            'an empty commit': lambda: None,
+        }
+        for name, change in cases.items():
+            with self.subTest(case=name):
+                try:
+                    change()
+                    if name != 'an empty commit':
+                        (self.project / 'notes.md').write_text('notes\n')
+                        git('add', 'notes.md')
+                    code, out, built = self.gate_built()
+                finally:
+                    git('reset', '-q', '--hard', 'HEAD')
+                    git('clean', '-fdq')
+                self.assertTrue(built, out)
+                self.assertEqual(code, 1, out)
+                self.assertNotIn('build not run', out)
+        # A manual run, the Stop hook and the self-test never ask for the path.
+        (self.project / 'notes.md').write_text('notes\n')
+        git('add', 'notes.md')
+        code, out, built = self.gate_built(args=())
+        self.assertTrue(built, out)
+        self.assertEqual(code, 1, out)
+
+    def test_the_off_switch_runs_the_build_on_a_documentation_only_commit(self):
+        # A project whose build reads markdown (a documentation site) turns the path off.
+        script = self.project / 'scripts/check.sh'
+        text = script.read_text()
+        self.assertIn('\ndocs_only_skip_build=1\n', text)
+        script.write_text(text.replace('\ndocs_only_skip_build=1\n', '\ndocs_only_skip_build=0\n'))
+        git = self.commit_fixture()
+        (self.project / 'notes.md').write_text('notes\n')
+        git('add', 'notes.md')
+        code, out, built = self.gate_built()
+        self.assertTrue(built, out)
+        self.assertEqual(code, 1, out)
+
     def test_every_cd_ignores_cdpath(self):
         # An exported CDPATH turned `cd scripts` into another directory (and printed it):
         # doctor.sh then checked another tree, and review.sh could review one. Every cd in a
