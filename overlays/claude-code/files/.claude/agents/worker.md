@@ -28,6 +28,12 @@ the rules below exist).
   line. Your final report is your FINAL MESSAGE: as a sub-agent you are refused a report file ("Subagents should return
   findings as text, not write report files"), so never write a `REPORT.md`. Only when the
   brief names a result FILE for a spawned session do you write the report there, last.
+- A result FILE starts with four lines, exact keys: `Kind: completed|blocked|handoff|progress`,
+  `Task: <id or the brief's name>`, `Attempt: <n>`, `Remaining: <one line, or "none">`; then
+  the body; then, if you have questions, `## Open questions for {{OWNER_NAME}}`, one numbered
+  question per item with its options on the lines after it (`docs/HANDOFF.md`). Only
+  `completed` is done. When you notice a compaction of your context, write `Kind: handoff`
+  with a handoff section at once and commit it.
 - The report gives the result first and stays within the brief's word cap (350 by default).
   List the files changed and the tests with their red and green lines, or use a table.
   It always ends with two sections, "Not run / not verified" and "Noticed, not fixed".

@@ -1016,6 +1016,65 @@ machine, had recorded "NOT RUN: macOS, dash, Python 3.10" each time and moved on
 a platform the kit claims is a platform it is run on before anything is called accepted;
 "not run" repeated ten times is a finding, not a footnote.
 
+#### A day of leeway's lead: four shape-independent causes and a hybrid
+
+A project's lead spent ten hours in the one-lead-with-sub-agents shape and the owner called
+it slow and expensive. Its own account named five causes; four of them had nothing to do
+with the shape: every worker built the whole package and the lead built it again; one
+machine-wide lock queued the "parallel" workers; a fresh worker per review round re-read
+100 to 250 thousand tokens to change a few lines; and the gate built on every
+documentation commit. The fifth, the lead idling and waking its whole context at every
+hand-back, is the shape's. The owner decided for the kit, not for the project: cheapest
+proof per worker and the expensive step once at integration; the same worker for a small
+fix round; "no review needed" stated as explicitly as "needed"; a documentation-only
+commit that skips the build; no parallel work that ends in one resource; a hybrid with a
+threshold (an hour or a second review round means a separate session). He declined one
+relayed item: "from the second round only High or Critical block". The 2026-10-03
+comparison is now described for what it measured: cost per worker on one task with one
+long wait, nothing about wall-clock, throughput or the lead.
+
+#### Reviews take too long: the owner refused "review less"
+
+Asked for a way out of seven-hour review loops, the lead first proposed one reviewer by
+default and a round budget. The owner rejected that outright: if reviews take too long,
+the answer is not fewer reviews. The levers that remain all cut waiting, not coverage: the
+review moves inside the worker's warm context (a separate session runs a fresh reviewer on
+its own diff before reporting); reviewers execute in a throwaway copy and say REPRODUCED or
+REASONED (the read-only reviewer's findings needed a worker to reproduce them, and some
+were false; the reviewer that executed was decisive); a new mechanism gets a design review
+before code (the lifecycle note took two fifteen-minute rounds; code rounds took hours);
+the week's finding classes become an attack list for reviewers and a pre-report checklist
+for workers; the self-test and both reviewers start together under one label; and the kit
+check itself fell from eight minutes to under two by running its units at once and not
+walking Windows directories on every PATH lookup. Still open: the Codex sandbox is pinned
+read-only on purpose, so that reviewer cannot execute until the owner widens it.
+
+#### Lifecycle of a worker session: decided by cost, consulted with a second model
+
+Three relayed requests (close a finished session automatically; hand off at a context
+threshold; "done" means a committed result file) were, in the owner's words, grey. A design
+note with the costs was consulted twice with Codex, which corrected it: the one-hour cache
+writes at 2x, not 1.25x; the comparison is over the whole next task (warm 0.1 C per request
+against a cold write of 2 P then 0.1 P per request: at C 113k and P 30k they cross near
+seven requests, so a short follow-up is cheaper in the old session and a long one fresh);
+and a committed result file is also where progress, blocked states and questions go, so
+"done" needs a kind. Decisions: the lead chooses reuse or close per task from the context
+figure, the idle time and the expected length; the watcher warns past half the window and
+the lead chooses finish, compact or hand off; a result file carries a kind
+(completed/blocked/handoff/progress), a task id and an attempt; questions sit under one
+heading and are asked at once.
+
+#### The first CI runs of v0.9, and what each taught
+
+Run one, red on all four jobs (Apple `mktemp` ignores TMPDIR without a template; `/var`
+against `/private/var`; dash `cd` past PATH_MAX; `Path.exists` raising on EACCES before
+Python 3.12). Run two, green. Run three, red on three: `cut -c` counts bytes on coreutils
+before 9.8 and cut a box-drawing character in half (invisible here, where cut 9.10 counts
+characters), and the parallel kit check on a three-CPU macOS runner pushed one phase past
+its fixed 300-second timeout. Run four, green. Each red was a platform fact the development
+machine could not show; none was a logic error. The rule "a claimed platform is run before
+acceptance" now stands in the kit because of these four runs.
+
 #### The review gate held on the kit's own hardening
 
 Five of the nine work packages (the gate lock, both review-tooling packages, the commit gates

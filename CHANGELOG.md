@@ -195,6 +195,61 @@ in `RESEARCH_LOG.md` (2026-10-03). Most of the files below are project-owned, so
   an action that cannot be undone. A worker's report defaults to 350 words with the
   sections "Not run / not verified" and "Noticed, not fixed" always present and outside the
   cap (`worker.md`, `docs/HANDOFF.md`). No standard or style product is named or required.
+- **Worker routing and a documentation-only commit.** A worker runs the proof its brief
+  names (`Proof:` in the brief skeleton); if it names none, it runs the gate; the expensive
+  build or package step runs once, by the integrating session, after the merge. A review-fix
+  round goes back to the worker that wrote the change while its context is not spent; a
+  fresh worker takes it when the context is spent or the fix is a redesign; the reviewer is
+  fresh in every round. A change outside the risky list does not require a review, and a
+  lead that asks for one anyway says what doubt it is to settle (the blocking rule is
+  unchanged). Work that ends in one exclusive resource is not run in parallel. The shape
+  has a threshold: work expected to take more than about an hour, or more than one review
+  round, runs in its own separate session the owner can talk to; a short read-only diagnosis
+  or review runs as a sub-agent under the lead. `WORKFLOW.md` now says what the 2026-10-03
+  comparison measured (cost per worker on one task) and what it did not (wall-clock,
+  throughput, the lead's cost). `pre-commit` runs `check.sh --for-commit`: when every staged
+  path is a regular `.md` file the build alone is skipped and the PASS line says so
+  (`docs_only_skip_build=0` beside `build_test_cmd` turns it off); merges, manual runs, the
+  Stop hook and the self-test always build.
+- **A spawned worker is always visible, and watched.** `spawn_worker.sh` shows its session
+  in a terminal tab once the worker has its brief (`--batch` defers; `scripts/show_workers.sh
+  NAME...` opens a batch together in one window: Windows Terminal under WSL, iTerm2 or
+  Terminal on macOS, otherwise it prints the attach line); its typed line tells the worker
+  to write questions into its result file. `scripts/watch_workers.sh NAME...` returns when
+  a session is gone or waits on a permission prompt, the folder-trust dialog or a question
+  (`scripts/waiting_patterns.txt`, from real captures, each marked VERIFIED or UNVERIFIED).
+  A spawned worker's result file starts with `Kind:` (`completed`, `blocked`, `handoff` or
+  `progress`), `Task:`, `Attempt:` and `Remaining:`; only `completed` is done, an idle
+  notice is a hint, and a worker that notices a compaction writes `Kind: handoff` at once.
+  `watch_workers.sh --result NAME=PATH` reports DONE, BLOCKED, HANDOFF, PROGRESS or
+  MALFORMED once the file is committed on a clean tree, QUESTIONS with their text when the
+  file holds a "## Open questions" section (the lead asks them at once, one at a time), and
+  CONTEXT once per session when the pane's status line shows more than `--context-warn`
+  percent of the window used (the lead decides: finish, compact or hand off). The lead
+  decides per task whether a finished session is reused or closed, from that figure, the
+  idle time and the next task's length (`docs/worker-lifecycle-options.md` has the costs).
+- **Six lessons become rules.** Before a review loop: write the threat model and agree the
+  stopping rule; a stopping rule ends the hunt, not the reviewing of what is merged after
+  it; a platform the kit claims is run before anything is called accepted; a review that
+  ran no tests is not test evidence; a worker's "not done" line on something the brief
+  asked for is a finding; under WSL a test never executes a `*.exe`.
+- **Less context, same rules.** The always-loaded files lose a third (AGENTS.md, STATE.md,
+  PHASES.md, ARCHITECTURE.md: duplicates and explanation moved to WORKFLOW and GOTCHAS, no
+  rule lost) and the reviewer's document loses half: the caller's part of the review
+  protocol moves to `docs/REVIEW_RUNNING.md`. `AGENTS.md` names sections, not whole files,
+  and a test holds every named heading to its file. Passing suites print one line; a
+  failing one prints its whole log. The Stop hook returns the whole failing gate output.
+- **Faster review rounds, same coverage.** A worker that can start sub-agents reviews its
+  own diff with fresh reviewers before it reports; reviewers are asked to run suites and
+  reproductions in a throwaway copy and mark each finding REPRODUCED or REASONED; a new
+  mechanism gets a one-page design review first; `REVIEW_GATE.md` gains "What a reviewer
+  attacks first" and the worker a pre-report checklist pointing at it; the lead starts the
+  self-test and two reviewers together under one label per feature.
+- **A faster kit check.** The kit's own check runs its suites and acceptance phases at
+  once where the CPUs allow (sequential under four), rebuilds only the PATH directories a
+  fixture must change, scales its child timeouts with the degree of parallelism, and prints
+  one line per unit with its seconds (`--timing` for a table). About eight minutes down to
+  under two on a twenty-CPU host.
 - **Rules (issues #26, #27, #28, #31).** A web request carries no personal data
   (`docs/WORKFLOW.md` "Web requests carry no personal data", HANDOFF brief item 3,
   `docs/GOTCHAS.md`). A sub-agent returns its report as its final message; only a spawned
@@ -276,9 +331,12 @@ from, and `5c80c36` is the kit's v0.8 commit.
    yours (they hold no project content): `agent_process.py`, `agent_usage.py`,
    `claude_bridge.py`, `codex_bridge.py`, `codex_quota.py`, `review_dispatch.py`,
    `test_agent_usage.py`, `test_claude_bridge.py`, `test_codex_quota.py`. With the Claude
-   Code overlay also copy `scripts/spawn_worker.sh` from
-   `$KIT/overlays/claude-code/files/scripts/`; with the Unity overlay, `scripts/unity_gate.sh`
-   from `$KIT/overlays/unity/files/scripts/`.
+   Code overlay also copy `scripts/spawn_worker.sh`, `scripts/show_workers.sh`,
+   `scripts/watch_workers.sh` and `scripts/waiting_patterns.txt` from
+   `$KIT/overlays/claude-code/files/scripts/` (the sync never adds an overlay file that is
+   missing); with the Unity overlay, `scripts/unity_gate.sh` from
+   `$KIT/overlays/unity/files/scripts/`. Copy `$KIT/core/docs/REVIEW_RUNNING.md` to
+   `docs/REVIEW_RUNNING.md` (new) and fill its `{{PROJECT_NAME}}` and `{{OWNER_NAME}}`.
 4. **ACTION:** Before the merge of the next item, split `docs/STATE.md` by hand: copy
    `$KIT/core/docs/BACKLOG.md` to `docs/BACKLOG.md`, move your "Next tasks" and "Deferred /
    parked" entries into it, delete the two headings and the "Last session summary" heading
@@ -330,6 +388,9 @@ from, and `5c80c36` is the kit's v0.8 commit.
    `medium` or `high`: the effort a delegated worker runs at, setup interview question 8).
 7. **ACTION:** Check the configured lines of `scripts/check.sh`: `toolchain_path` must read
    exactly `toolchain_path="<path>"` with no trailing comment, or doctor reports it. The
+   build command is the proof a commit must pass; a package or pipeline step that takes
+   many minutes is an integration step outside it. Set `docs_only_skip_build=0` beside it
+   only if your build reads markdown. The
    build command must not filter its output (remove a `grep error` filter: the gate prints
    the tail and the log path itself), must not leave a compiler server or build daemon
    running (it would hold the gate lock; `docs/GOTCHAS.md` shows the flags) and must hold no

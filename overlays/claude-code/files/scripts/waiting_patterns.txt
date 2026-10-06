@@ -9,7 +9,8 @@
 #   STATUS   VERIFIED: written from a real pane captured on VERSION (the capture is a test
 #            fixture under tests/fixtures/panes/ in the kit). UNVERIFIED: a guess nobody has
 #            seen on a real pane; it ships because a missed wait costs more than a false one.
-#   WHERE    last | near (above).
+#   WHERE    last | near (above), or status: the context rule below, which never makes a
+#            session WAITING.
 #   ERE      grep -E, matched byte by byte (LC_ALL=C) on the line with control bytes removed
 #            and trailing blanks stripped.
 #
@@ -38,3 +39,9 @@ question    VERIFIED    2.1.285  near  ^ *(❯ )?[0-9]+\. [^ ]
 # Any other numbered choice that ends in a cancel hint (an edit prompt, a plan approval).
 dialog      UNVERIFIED  -        last  Esc to cancel
 dialog      UNVERIFIED  -        near  ^ *❯ [0-9]+\. [^ ]
+
+# The context figure in the status line, <used>/<window> with a k or M on each ("Opus 5.5
+# 58k/1.0M high", between `│` separators). The watcher reports it past --context-warn; a
+# status line without it is reported once as unparsable, never guessed. Unlike the rules
+# above, its ERE is matched by awk against each blank-separated word of the pane's lines.
+context     VERIFIED    2.1.285  status  ^[0-9]+(\.[0-9]+)?[kM]/[0-9]+(\.[0-9]+)?[kM]$

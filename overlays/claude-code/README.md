@@ -103,6 +103,29 @@ Each rule is flagged:
 its input box (the idle notice covers that), a dialog drawn differently by a later version
 (capture it, add the rule with its version), and a terminal other than the three above.
 
+A session that is neither gone nor waiting is checked for two more things, and every report
+exits 0 with its kind on the first line (`watch_workers: KIND: NAME, ...`):
+
+- **The result file**, named per session with `--result NAME=PATH`. Once the file is in HEAD
+  of the tree that holds it and that tree is clean, the watcher reads its head
+  (`docs/HANDOFF.md`): `Kind: completed` is **DONE** with the task, the attempt and the
+  `Remaining:` line; `blocked`, `handoff` and `progress` are **BLOCKED**, **HANDOFF** and
+  **PROGRESS**, none of them done; a missing or malformed head is **MALFORMED**, not done. A
+  file with questions under `## Open questions for ...` is **QUESTIONS** first: "N questions
+  for OWNER" and their text with the options, each line cut at 200 bytes. Each committed
+  version of the file is reported once.
+- **The context figure** in the pane's status line, `<used>/<window>` with k or M (`Opus 5.5
+  58k/1.0M high` in the real capture; the `context` rule of `waiting_patterns.txt`). Past
+  `--context-warn` percent (50) it is **CONTEXT** with the figure, once per session. A status
+  line without the figure, or none at all, is CONTEXT once too, and the figure is never
+  guessed; `--once` skips that note, because `spawn_worker.sh` runs it before the status line
+  is drawn. The figure comes from the status line the project configured; a project whose
+  status line does not show it gets the note once and no warning.
+
+The once-markers are user options of the tmux session (`@kit_watch_result`,
+`@kit_watch_context`), so they end with the session. What the lead does with each report is
+in `docs/WORKFLOW.md`, "The lead's steps when a branch is ready".
+
 ## Placeholders this overlay brings
 
 | Placeholder | What goes in |
