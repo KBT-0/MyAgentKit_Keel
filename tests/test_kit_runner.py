@@ -86,6 +86,18 @@ class KitRunnerTests(unittest.TestCase):
         self.assertGreater(times[0], lines.index('fast output'))
         self.assertNotIn('TIMING', out)
 
+    def test_what_a_unit_could_not_run_is_repeated_under_the_summary(self):
+        # A test that cannot run on this host (no unprivileged mount namespace, always on
+        # macOS) passed silently: its NOT RUN line is collected and printed after the TIME
+        # lines, so the end of the output says what this host did not run.
+        said = [sys.executable, '-c', 'import sys; sys.stderr.write("noise\\nNOT RUN: probe a (no b here)\\n")']
+        quiet = [sys.executable, '-c', 'print("quiet output")']
+        passed, out = runner(('said', said), ('quiet', quiet))
+        self.assertTrue(passed, out)
+        tail = out[out.rindex('TIME: '):]
+        self.assertIn('\nNOT RUN: probe a (no b here)\n', tail)
+        self.assertEqual(out.count('NOT RUN: probe a'), 2, out)
+
     def test_timing_prints_a_table_of_units_phases_and_tests_at_the_end(self):
         passed, out = runner(('suite', self.suite_unit('True', 2)),
                              ('other', [sys.executable, '-c', 'print("other output")']), timing=True)

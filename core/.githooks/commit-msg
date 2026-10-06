@@ -25,7 +25,7 @@ fi
 # empty "Done:" are rejected, never split into words. The files are read from the index
 # (`git show :path`), which is what this commit records; the working tree may differ. A
 # mention is the id with no letter, digit, "_" or "-" either side, so closing K3 does not
-# match K3b or K3-a.
+# match K3b or K3-a. Ids are case-insensitive: "Done: k4" passed while STATE.md named K4.
 trailers=$(git interpret-trailers --parse "$msg") || {
   echo "commit-msg: cannot parse the trailers; refusing to pass the message unchecked." >&2
   exit 1
@@ -42,7 +42,7 @@ while IFS= read -r line; do
     exit 1
   fi
   for f in docs/STATE.md docs/BACKLOG.md; do
-    hits=$(git show ":$f" 2>/dev/null | grep -nE "(^|[^A-Za-z0-9_-])$id([^A-Za-z0-9_-]|\$)")
+    hits=$(git show ":$f" 2>/dev/null | grep -inE "(^|[^A-Za-z0-9_-])$id([^A-Za-z0-9_-]|\$)")
     [ -n "$hits" ] || continue
     echo "commit-msg: this commit closes $id but $f still mentions it: delete the line (the history" >&2
     echo "            is in git), or drop the trailer." >&2

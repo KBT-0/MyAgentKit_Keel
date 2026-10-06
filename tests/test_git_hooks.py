@@ -403,6 +403,17 @@ class GitHookTests(unittest.TestCase):
             result = self.commit(root, git, 'closed\n\nDone: K4\n')
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_a_done_id_matches_the_state_files_in_any_case(self):
+        # `Done: k4` passed while the staged STATE.md named K4: ids are case-insensitive.
+        with tempfile.TemporaryDirectory() as tmp:
+            root, git = self.repo(tmp)
+            for state, trailer in (('- K4: in flight\n', 'k4'), ('- k5: in flight\n', 'K5')):
+                with self.subTest(trailer=trailer):
+                    self.docs(root, git, state)
+                    result = self.commit(root, git, 'case\n\nDone: %s\n' % trailer)
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    self.assertIn('closes %s but docs/STATE.md still mentions it' % trailer, result.stderr)
+
     def test_the_index_is_checked_not_the_working_tree(self):
         with tempfile.TemporaryDirectory() as tmp:
             root, git = self.repo(tmp)

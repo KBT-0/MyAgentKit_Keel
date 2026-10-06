@@ -51,7 +51,8 @@ deletion checkable.
 
 - A task id is a short token that starts with a letter and holds at least one digit:
   letters and digits, with at most one inner `-` (`K4`, `L1b`, `R12`, `K7-a`). A line in
-  `docs/STATE.md` or `docs/BACKLOG.md` MAY name its task by id; none has to.
+  `docs/STATE.md` or `docs/BACKLOG.md` MAY name its task by id; none has to. Ids are
+  case-insensitive: `k4` and `K4` are the same task.
 - The commit that finishes a task says so with a trailer, ONE per id, in the last paragraph
   of the message: `Done: K4`. The value is exactly one id: the hook rejects `Done: K4 K5`,
   `Done: K4, K5` and an empty `Done:`, and such a value already in the history closes
@@ -400,7 +401,7 @@ Rules, binding for whoever routes workers:
    whose last step waits on one exclusive resource (a heavy lock, a device, a licence) run
    one after another, or run only their independent parts in parallel: in one project,
    "parallel" workers queued at one machine-wide lock.
-7. **Worker reports are short** (about 400 words), and long output goes to a file with a
+7. **Worker reports are short** (about 350 words), and long output goes to a file with a
    summary line: the lead pays for a report again on every later turn. A separate spawned
    session writes its report to the result FILE its brief names. A sub-agent cannot: Claude
    Code refuses its write of a report file ("Subagents should return findings as text, not
@@ -411,12 +412,13 @@ Rules, binding for whoever routes workers:
    reads the tool's cost screen and runs `scripts/agent_cost.py --latest` and writes both
    into the handoff, so the next routing decision is made from a number.
 9. **A worker runs the cheapest check that proves its change; the expensive step runs
-   once.** The brief names that check (`docs/HANDOFF.md`, "Proof"); with none named, the
-   worker runs `./scripts/check.sh`. The expensive build or package step runs once, in the
-   integrating session, after the merge: in one project every worker built the whole
-   package in its worktree (7 to 40 minutes each), and the lead built it again. A defect only
-   the full build shows is then found at integration. So the integrating session builds after
-   each merge when the build is cheap, and names the merge that broke it when it is not.
+   once.** The brief names that check in its **Proof:** line (`docs/HANDOFF.md`, "The
+   brief"); with none named, the worker runs `./scripts/check.sh`. The expensive build or
+   package step runs once, in the integrating session, after the merge: in one project every
+   worker built the whole package in its worktree (7 to 40 minutes each), and the lead built
+   it again. A defect only the full build shows is then found at integration. So the
+   integrating session builds after each merge when the build is cheap, and names the merge
+   that broke it when it is not.
 
 **The shape follows a threshold, so the lead does not decide it each time.** Work expected
 to take more than about an hour, or more than one review round, runs in its own separate
@@ -427,12 +429,12 @@ would pay a session start for nothing. The lead merges and, as the integrating s
 the integration build.
 
 The threshold is {{OWNER_NAME}}'s decision from use. The only cost comparison of the two
-shapes is one task on 2026-10-03 (`docs/worker-cost-setups.md`): about 107 against 110
-requests, a cost equivalent of about 2.44M against 2.40M tokens. It measured the cost per
-worker on one task with one long wait, not wall-clock time, the throughput of several tasks,
-or the lead's own cost. Measure in passing: wall-clock from brief to merge, total tokens
-including the lead's, review rounds, and waits on an exclusive resource. The sample will be
-thin.
+shapes is one task on 2026-10-03 (the kit's `docs/worker-cost-setups.md`): about 107 against
+110 requests, a cost equivalent of about 2.44M against 2.40M tokens. It measured the cost
+per worker on one task with one long wait, not wall-clock time, the throughput of several
+tasks, or the lead's own cost. Measure in passing: wall-clock from brief to merge, total
+tokens including the lead's, review rounds, and waits on an exclusive resource. The sample
+will be thin.
 
 `scripts/spawn_worker.sh` (Claude Code overlay) opens the session in tmux with a brief file.
 The lead subscribes once for its idle notice and does not message it: every message to an
@@ -561,8 +563,10 @@ What the watcher reports decides the lead's next step for a spawned worker:
   the worker finishes, compacts or hands off. A session with two short steps left finishes;
   one with a long operation ahead hands off or compacts, because it pays the figure on every
   remaining request.
-- **DONE:** the lead reads the result file before anything else. A `Kind: handoff` file
-  starts a fresh session from the file; `blocked` and `progress` are not done.
+- **DONE:** the lead reads the result file before anything else.
+- **HANDOFF:** the lead reads the result file and starts a fresh session from it. A
+  `Kind: handoff` file is not done.
+- **BLOCKED** and **PROGRESS:** the lead reads the result file. Neither is done.
 - **Finished session:** when the lead decides a session is finished (no next task fits what
   it holds, or it is idle past the cache lifetime), it runs `scripts/close_worker.sh NAME`.
   The worktree then goes through the same audit as the post-merge hook's; a kept worktree

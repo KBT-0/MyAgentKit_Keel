@@ -2,6 +2,7 @@
 """Offline kit acceptance: syntax, packaged source, regression tests, and bootstrap gates."""
 import argparse
 import ast
+import atexit
 import fcntl
 import json
 import io
@@ -17,6 +18,15 @@ import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 
+# A module edited within the same second at the same size was read from its stale `.pyc`,
+# even under `-B` (it stops writing, not reading). The kit check and every child it starts
+# look for bytecode in a fresh folder of their own, so the tree's __pycache__ is never read.
+# A unit inherits its parent's folder; the parent removes it at exit.
+if __name__ == '__main__' and '--unit' not in sys.argv:
+    _PYCACHE = tempfile.mkdtemp(prefix='myagentkit-pycache-')
+    os.environ['PYTHONPYCACHEPREFIX'] = sys.pycache_prefix = _PYCACHE
+    atexit.register(shutil.rmtree, _PYCACHE, True)
+
 ROOT = Path(__file__).resolve().parents[1]
 # The review self-test ships to projects with its own minimums; read them, never copy them.
 BRIDGE_MINIMUMS = next(
@@ -30,12 +40,12 @@ REQUIRED_SUITES = {
     'core/scripts': dict(BRIDGE_MINIMUMS, test_agent_cost=2),
     # Each suite's current count: a minimum far below it (1 of 30) let a suite lose almost
     # every test with the kit check green. A new test raises its suite's number here.
-    'tests': {'test_packaging': 1, 'test_bootstrap': 16, 'test_acceptance': 6,
+    'tests': {'test_packaging': 1, 'test_bootstrap': 16, 'test_acceptance': 7,
               'test_review_upgrade': 2, 'test_boundary_example': 3, 'test_scan_gate': 1,
-              'test_check_gate': 17, 'test_boundary_restore': 39, 'test_sync_kit': 15,
-              'test_doctor': 2, 'test_git_hooks': 24, 'test_stop_hook': 1, 'test_spawn_worker': 15,
+              'test_check_gate': 18, 'test_boundary_restore': 39, 'test_sync_kit': 16,
+              'test_doctor': 2, 'test_git_hooks': 25, 'test_stop_hook': 1, 'test_spawn_worker': 15,
               'test_worker_visibility': 27, 'test_doc_pointers': 4,
-              'test_kit_output': 1, 'test_kit_runner': 7, 'test_clean_worktrees': 134,
+              'test_kit_output': 1, 'test_kit_runner': 8, 'test_clean_worktrees': 134,
               'test_close_worker': 8},
 }
 
@@ -762,11 +772,14 @@ def run_units(units, timing=False, parallel=None):
         files = [os.path.join(times, str(number)) if timing else None for number in range(len(units))]
         futures = [pool.submit(one, name, command, timing_file)
                    for (name, command), timing_file in zip(units, files)]
-        summary, failed = [], []
+        summary, failed, not_run = [], [], []
         for (name, _), future, timing_file in zip(units, futures, files):
             code, output, seconds = future.result()
             sys.stdout.write(output)
             sys.stdout.flush()
+            # A test that cannot run on this host says so in one "NOT RUN:" line and passes;
+            # repeated under the summary, the end of the output names what this host did not run.
+            not_run += [line for line in output.splitlines() if line.startswith("NOT RUN:")]
             if code:
                 failed.append(name)
             summary.append("%7.1f s  %s%s" % (seconds, name, " (FAILED)" if code else ""))
@@ -777,6 +790,8 @@ def run_units(units, timing=False, parallel=None):
         print("\n".join(summary))
     else:
         print("\n".join("TIME: " + row.strip() for row in summary))
+    if not_run:
+        print("\n".join(not_run))
     if failed:
         print("KIT CHECK: FAIL — %d of %d units failed: %s" % (len(failed), len(units), ", ".join(failed)),
               file=sys.stderr)

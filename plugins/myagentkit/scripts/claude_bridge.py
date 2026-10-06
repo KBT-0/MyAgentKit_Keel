@@ -39,14 +39,15 @@ REVIEW_ASKS = (
     "suggested fix direction (a sketch, not a patch; the author verifies it before use).")
 # A reviewer told not to execute sent its findings back unreproduced, and a worker spent a round
 # reproducing them, some false; a reviewer that executed in a throwaway copy found decisive ones.
+# The bridged reviewers cannot execute yet (Read/Glob/Grep, `-s read-only`), so the ask is
+# conditional, and `git worktree add` is never suggested: it writes into the reviewed repository.
 REVIEW_RUNS = (
-    "You MAY and SHOULD run the test suite, the self-test and your own reproductions, only in a "
-    "THROWAWAY copy of the checkout and never in the reviewed checkout: for example `git "
-    "worktree add --detach` of the reviewed commit into a `mktemp -d` directory (remove it "
-    "afterwards), or `git archive <commit> | tar -x -C` into one, then `git apply` the "
-    "uncommitted part of the diff there. Never use the network and never call a paid model. Mark each finding REPRODUCED, with the command that shows it, or "
-    "REASONED; a REASONED Critical or High finding names what would reproduce it. List as NOT "
-    "RUN only what you could not run, and why (for example, your tools allow no execution).")
+    "If your tools can execute, run the suite and reproductions in a throwaway copy made with "
+    "`git archive <commit> | tar -x -C \"$(mktemp -d)\"` (never `git worktree add`, which writes "
+    "into the reviewed repository), apply the uncommitted part of the diff there with `git "
+    "apply`, and mark findings REPRODUCED with the command that shows each; if they cannot, mark "
+    "findings REASONED and name the command that would reproduce each; list as NOT RUN what you "
+    "could not run and why. Never use the network and never call a paid model.")
 DIFF_LIMIT = 400_000  # bytes of diff, plus any carried rounds, in one review prompt
 
 

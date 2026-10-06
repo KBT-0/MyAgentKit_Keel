@@ -145,6 +145,8 @@ echo
 echo "KIT-OWNED files (overwritten):"
 found=0
 conflict=0
+kit_conflict=0
+overlay_fix=''
 # Read the list line by line rather than through word splitting: a path containing a space
 # would otherwise be torn into two nonexistent paths and silently skipped.
 #
@@ -177,6 +179,8 @@ while IFS= read -r src; do
   if [ -n "$why" ]; then
     printf '%s\n' "  conflict: $rel ($why, so it is the project's)"
     conflict=1
+    if [ "$overlay" -eq 1 ]; then overlay_fix="$overlay_fix
+    $src -> $rel"; else kit_conflict=1; fi
     continue
   elif [ ! -e "$target/$rel" ]; then
     printf '%s\n' "  new:     $rel"
@@ -186,12 +190,22 @@ while IFS= read -r src; do
     printf '%s\n' "  same:    $rel"
   elif grep -qE '^(# |<!-- )KIT-OWNED:' "$target/$rel" 2>/dev/null; then
     printf '%s\n' "  update:  $rel"
+  elif [ "$overlay" -eq 1 ]; then
+    # An overlay file without the header is the kit's own copy from before the header (a
+    # v0.8 spawn_worker.sh): the sync never installs an absent overlay file, so it is
+    # replaced by hand, never moved aside, and there is nothing of the project to retrofit.
+    printf '%s\n' "  conflict: $rel (the kit's own file from an earlier version, without the KIT-OWNED header)"
+    conflict=1
+    overlay_fix="$overlay_fix
+    $src -> $rel"
+    continue
   else
     # No KIT-OWNED header: the project's own file at a path the kit now owns (a project's
     # own commit-msg hook once, replaced by the kit's that passed every message). Listed,
     # never overwritten; nothing else is copied either, so the sync is all or nothing.
     printf '%s\n' "  conflict: $rel (exists without the KIT-OWNED header, so it is the project's)"
     conflict=1
+    kit_conflict=1
     continue
   fi
   printf '%s\n' "$src" >> "$copies" || die "cannot record $rel for copying; version left at v$have"
@@ -200,11 +214,22 @@ done < "$work_list"
 if [ "$conflict" -eq 1 ] && [ "$dry" -eq 0 ]; then
   cat <<EOF
 
-STOPPING: the files listed as conflict are project-owned (no KIT-OWNED header, not a
-regular file, or a symlink or a file in their path) at paths the kit owns now. Nothing was copied and the version stays at v$have.
+STOPPING: the files listed as conflict stand at paths the kit owns now. Nothing was copied
+and the version stays at v$have.
+EOF
+  [ "$kit_conflict" -eq 0 ] || cat <<EOF
 
-  For each one: move yours aside, rerun the sync to install the kit's file, then carry
-  what yours did into the project's own files by hand (the kit's docs/RETROFIT.md).
+  A core or setup file listed is project-owned (no KIT-OWNED header, not a regular file, or
+  a symlink or a file in its path). For each one: move yours aside, rerun the sync to install
+  the kit's file, then carry what yours did into the project's own files by hand (the kit's
+  docs/RETROFIT.md).
+EOF
+  [ -z "$overlay_fix" ] || cat <<EOF
+
+  An overlay file listed is the kit's own file from an earlier version. Replace each one
+  with the kit's current copy below, then sync again. A symlink or a symlinked folder on the
+  way becomes a real file or folder first. A project that edited its copy carries those
+  edits into the new copy by hand.$overlay_fix
 EOF
   exit 1
 fi

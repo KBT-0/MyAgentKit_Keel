@@ -2038,10 +2038,13 @@ if case == 'archive_failure':
         log = self.root / 'prompt.txt'
         # A reviewer told not to run tests sent every finding back unreproduced, and a worker then
         # spent a round reproducing it; one that executed in a throwaway copy found decisive defects.
+        # The bridged reviewers cannot execute (Read/Glob/Grep, `-s read-only`): the ask is
+        # conditional, and `git worktree add` would write into the reviewed repository.
         asks = ('EVERY finding', 'Critical, High, Medium or Low', 'Fix sketch:',
-                'THROWAWAY copy', 'never in the reviewed checkout', 'REPRODUCED', 'REASONED',
-                'Never use the network')
-        forbidden = ('Do not run tests', 'run code')
+                'If your tools can execute', 'throwaway copy made with `git archive',
+                'never `git worktree add`', 'REPRODUCED', 'if they cannot, mark findings REASONED',
+                'NOT RUN', 'Never use the network')
+        forbidden = ('Do not run tests', 'run code', 'SHOULD run', 'worktree add --detach')
         task = {'PROMPT_LOG': str(log), 'MYAGENTKIT_TASK_ID': 'rounds-task'}
         code, first = self.run_bridge('reject', env_extra=task)
         self.assertEqual(code, 0, first)

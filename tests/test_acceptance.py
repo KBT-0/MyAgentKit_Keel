@@ -61,6 +61,36 @@ class AcceptanceTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'NOT RUN'):
             gate.utf8_locale(['C', 'POSIX', 'en_US.iso885915', 'utf8'])
 
+    def test_the_kit_check_never_reads_a_stale_pyc_from_the_tree(self):
+        # A module edited within the same second at the same size was read from its stale
+        # `.pyc`, even under `python3 -B` (-B stops writing, not reading). The top of the kit
+        # check, run as a script up to `ROOT =`, must see the new source, and so must a child.
+        import os
+        import subprocess
+        import sys
+        top = (ROOT / 'scripts/check_kit.py').read_text().split('\nROOT =')[0]
+        with tempfile.TemporaryDirectory() as tmp:
+            module = Path(tmp) / 'stale_probe.py'
+            # Without the prefix a kit check run hands its children, so the pyc lands in the tree.
+            env = {k: v for k, v in os.environ.items() if k != 'PYTHONPYCACHEPREFIX'}
+            module.write_text('X = 1\n')
+            subprocess.run([sys.executable, '-c', 'import stale_probe'], cwd=tmp, env=env, check=True)
+            stamp = module.stat().st_mtime_ns
+            module.write_text('X = 2\n')
+            os.utime(module, ns=(stamp, stamp))
+            probe = [sys.executable, '-B', '-c', 'import stale_probe; print(stale_probe.X)']
+            stale = subprocess.run(probe, cwd=tmp, env=env, capture_output=True, text=True)
+            self.assertEqual(stale.stdout, '1\n', 'the stale-pyc condition was not produced')
+            code = (top + '\nimport stale_probe, subprocess\nprint(stale_probe.X, sys.pycache_prefix, flush=True)\n'
+                    'subprocess.run(%r, check=True)\n' % probe)
+            seen = subprocess.run([sys.executable, '-B', '-c', code], cwd=tmp, env=env,
+                                  capture_output=True, text=True)
+            self.assertEqual(seen.returncode, 0, seen.stderr)
+            first, child = seen.stdout.splitlines()
+            value, folder = first.split(' ', 1)
+            self.assertEqual((value, child), ('2', '2'), 'the kit check read the stale .pyc')
+            self.assertFalse(os.path.exists(folder), 'the private pycache folder was left behind')
+
     def test_packaging_suite_is_required_by_the_real_gate(self):
         self.assertGreaterEqual(gate.REQUIRED_SUITES['tests']['test_packaging'], 1)
 
