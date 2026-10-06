@@ -61,7 +61,7 @@ all):
 Proven: a, b, d, f, g, h's accounting. The quiet period (c, h) is a margin, not a proof: it
 covers a worker whose process the scan in e cannot see. e is read afresh for every worktree
 and twice more right before removal. Not guarded, by the owner's decision: a process that
-changes a worktree's files between its audit and its removal, files planted to attack this
+changes a worktree's files, or main's copies of them, between its audit and its removal, files planted to attack this
 script, and a SIGKILL between two removal steps. Lost with a removal and never restored: the
 ignored files in disposable folders, and the worktree's own reflogs (every commit they name is
 held or saved, by f).

@@ -46,7 +46,7 @@
 # at all, so they are not counted), so nothing in it, its git directory and its disposable
 # folders included, may have changed (mtime or ctime) for the quiet period (quiet-minutes in
 # .claude/worktree-disposable, default 60). Not guarded, by the owner's decision: a process
-# changing a worktree's files between its audit and its removal (the process listing is read
+# changing a worktree's files, or main's copies of them, between its audit and its removal (the process listing is read
 # again right before), files planted to attack this script, and a SIGKILL between two removal
 # steps. A step that fails, or SIGINT, SIGTERM or SIGHUP, after an identical copy was deleted
 # reports the worktree PARTLY MODIFIED with each file deleted; a failed `git worktree remove`

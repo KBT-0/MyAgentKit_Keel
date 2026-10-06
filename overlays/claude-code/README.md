@@ -322,8 +322,8 @@ then stays quiet.
   nothing is disposable and 60 applies; the newest mtime or ctime of anything in it or its git
   directory) cover that worker; they are a margin, not a proof. The process listing is read
   afresh for each worktree, and again right before the first deletion and right before `git
-  worktree remove`. Not guarded, by the owner's decision: a process changing a worktree's files
-  between its audit and its removal, files planted to attack the script, and a SIGKILL between
+  worktree remove`. Not guarded, by the owner's decision: a process changing a worktree's files, or main's
+  copies of them, between its audit and its removal, files planted to attack the script, and a SIGKILL between
   two removal steps.
 - **With `core.logAllRefUpdates=false`** git writes no HEAD reflog, so every worktree is kept
   ("no commit was made in this worktree").
@@ -362,9 +362,14 @@ then stays quiet.
   '\NNN...')"`, octal escapes a POSIX shell turns back into its bytes, so the pasted command
   reaches the same path and branch whatever the terminal can show. Lost for good: the ignored files in its disposable folders and its own
   reflogs (every commit they named is held by a ref, or saved).
-- **Installed** by the overlay: the two scripts (kit-owned: a sync updates them) and
-  `.claude/worktree-disposable` (the project's). The hook comes with the core; without all
-  three it does nothing and says so once.
+- **Installed** by the overlay at setup: the two scripts and `.claude/worktree-disposable`
+  (the project's). The hook comes with the core. In a project set up before this feature,
+  the sync delivers the hook but never adds an overlay file that is missing: copy
+  `overlays/claude-code/files/scripts/clean_worktrees.sh` and `clean_worktrees.py` into
+  `scripts/` and `overlays/claude-code/files/.claude/worktree-disposable` into `.claude/`
+  by hand, then `chmod +x scripts/clean_worktrees.sh` and `git add --chmod=+x` it; from
+  then on a sync keeps the two scripts (kit-owned) updated. Until all three are present the
+  hook does nothing and says so once.
 - **Off:** `KIT_NO_WORKTREE_CLEANUP=1` in the merge's environment.
 
 ## Why this is an overlay and not part of the core
