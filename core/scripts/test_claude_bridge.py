@@ -24,7 +24,7 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'MYAGENTKIT_TASK_ID', 'MYAGENTKIT_R
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 113, 'test_agent_usage': 19, 'test_codex_quota': 5}
+SUITE_MINIMUMS = {'test_claude_bridge': 114, 'test_agent_usage': 19, 'test_codex_quota': 5}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -389,6 +389,30 @@ class BridgeTests(unittest.TestCase):
         # A staged deletion leaves no file and no index entry to look at.
         self.git('reset', '-q', 'HEAD', '--', 'asset.bin')
         self.git('rm', '-q', 'asset.bin')
+        with self.assertRaisesRegex(bridge.BridgeError, 'clean filter or ident attribute on asset.bin'):
+            bridge.snapshot(self.repo, 'uncommitted', None)
+
+    def test_an_lfs_rule_and_object_only_the_index_holds_are_refused(self):
+        # The attribute is staged too: a filter rule for *.bin and the pointer it makes are in
+        # the index, while the working tree and HEAD both hold neither. Read in the working tree
+        # and at HEAD, asset.bin was not filtered, and the commit that follows was never seen.
+        attributes, asset = self.repo / '.gitattributes', self.repo / 'asset.bin'
+        attributes.write_text('*.txt text\n')
+        asset.write_bytes(b'plain binary content\n')
+        self.commit_fixture('Unfiltered asset')
+        clean = self.root / 'lfs-clean.py'
+        clean.write_text(
+            'import hashlib, sys\ndata = sys.stdin.buffer.read()\n'
+            'sys.stdout.buffer.write(b"version https://git-lfs.github.com/spec/v1\\noid sha256:%s\\nsize %d\\n" % (\n'
+            '    hashlib.sha256(data).hexdigest().encode(), len(data)))\n')
+        self.git('config', 'filter.fakelfs.clean', '"%s" "%s"' % (sys.executable, clean))
+        attributes.write_text('*.txt text\n*.bin filter=fakelfs\n')
+        asset.write_bytes(b'unseen staged content\n')
+        self.git('add', '.gitattributes', 'asset.bin')
+        self.assertTrue(self.git('show', ':asset.bin').stdout.startswith(b'version https://'))
+        attributes.write_text('*.txt text\n')
+        asset.write_bytes(b'plain binary content\n')
+        (self.repo / 'file.py').write_text('CODE_ONLY_CHANGE\n')
         with self.assertRaisesRegex(bridge.BridgeError, 'clean filter or ident attribute on asset.bin'):
             bridge.snapshot(self.repo, 'uncommitted', None)
 

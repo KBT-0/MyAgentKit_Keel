@@ -332,13 +332,16 @@ def committed_as_is(repo: Path, head: str, name: bytes) -> bool:
 
 def filtered_names(repo: Path, names: set, drivers: set, tree: str | None = None) -> set:
     """The names a configured clean filter or `ident` applies to, by the attributes of the
-    working tree, or of `tree` (read into a throwaway index) when one is given."""
+    working tree; of the index when `tree` is 'index'; or of the commit `tree`, read into a
+    throwaway index."""
     if not names:
         return set()
     query = ('-z', '--stdin', 'filter', 'ident')
     stdin = b'\0'.join(sorted(names)) + b'\0'
     if tree is None:
         fields = git(repo, 'check-attr', *query, stdin=stdin)
+    elif tree == 'index':
+        fields = git(repo, 'check-attr', '--cached', *query, stdin=stdin)
     else:
         with tempfile.TemporaryDirectory() as scratch:
             env = dict(os.environ, GIT_INDEX_FILE=os.path.join(scratch, 'index'))
@@ -394,7 +397,8 @@ def snapshot(repo: Path, scope: str, reference: str | None) -> tuple[str, str, s
     # or not, does not name it. A filtered path the review changes is refused, whichever side
     # was filtered: a name is a candidate when it is in the checkout, in the index, or changed
     # by the reviewed range, deleted and renamed-away names included, and its attributes are
-    # read in the working tree and at each end of the range (HEAD for uncommitted work).
+    # read in the working tree, in the index, and at each end of the range (HEAD for
+    # uncommitted work): a rule staged with the object it filters is in the index alone.
     # Read only in the working tree, a commit that deleted an LFS file, renamed it out of the
     # filter or dropped its attribute while changing it was reviewed from its pointer-side diff.
     in_scope = git(repo, 'ls-files', '-z', '--cached', '--others', '--exclude-standard',
@@ -411,12 +415,12 @@ def snapshot(repo: Path, scope: str, reference: str | None) -> tuple[str, str, s
     # Rendered: these run the clean filters, so a path whose filter output differs from HEAD is named.
     changed = (names_of('diff', '--name-only', '--no-renames', '-z', 'HEAD', '--')
                | names_of('diff', '--cached', '--name-only', '--no-renames', '-z', 'HEAD', '--'))
-    ends = [head]
+    ends = ['index', head]
     if scope == 'base':
-        ends = [base, head]
+        ends = ['index', base, head]
         changed |= names_of('diff', '--name-only', '--no-renames', '-z', base, head, '--')
     elif scope == 'commit':
-        ends = parents[:1] + [resolved]
+        ends = ['index'] + parents[:1] + [resolved]
         changed |= (names_of('diff', '--name-only', '--no-renames', '-z', parents[0], resolved, '--') if parents
                     else names_of('diff-tree', '-r', '--root', '--no-commit-id', '--name-only', '-z', resolved))
     names = (set(in_scope.split(b'\0')) - {b''}) | changed
