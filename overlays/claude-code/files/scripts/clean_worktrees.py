@@ -26,11 +26,11 @@ all):
   f. nothing only its git directory holds: removal destroys that directory, so every object id
      in every file of it (both columns of every reflog line, every ref, every pseudo-ref, any
      file this script does not know, in either case), NO_HISTORY excepted, names no object, or
-     a commit or tag reachable from what removal leaves (every ref of the repository, its
-     branch's own reflog, which keeps an amended, reset or rebased-away tip), or a commit this
-     saves: before removing, one `git update-ref --stdin` transaction pins every commit only
-     its git directory holds as refs/kit/saved/<its git directory name>-<UTC time>/<n>, and
-     the check runs again with those refs. A tree or blob id keeps it: rev-list cannot tell
+     a commit or tag reachable from what a ref of the repository points at (no reflog: `git
+     branch -d` deletes the branch's, so an amended, reset or rebased-away tip is saved too),
+     or a commit this saves: before removing, one `git update-ref --stdin` transaction pins
+     every commit only its git directory holds as refs/kit/saved/<its git directory
+     name>-<UTC time>/<n>, and the check runs again with those refs. A tree or blob id keeps it: rev-list cannot tell
      whether one is held. The files ref backend; no per-worktree config;
   g. tracked content, by bytes: no change `git status` reports with the stat settings forced to
      their defaults; the index equals HEAD's tree; every tracked path is, in the worktree,
@@ -54,10 +54,14 @@ tracked must be accounted for: `git status` does not list a FIFO, a socket or a 
 
 Removal order: the saved refs, the log record (flushed; it names every ref saved and every
 file about to be deleted), f and e again, the identical copies git does not track, e again,
-`git worktree remove` without --force (git's own check, independent of this one). A step
-that fails after a copy was deleted reports the worktree PARTLY MODIFIED, lists each file
-deleted (its identical copy is at the same path in the main worktree) and exits 1; a re-run
-is safe, as what is left still holds.
+`git worktree remove` without --force (git's own check, independent of this one). SIGINT,
+SIGTERM and SIGHUP are caught meanwhile and stop it at the next step. A step that fails or is
+stopped after a copy was deleted reports the worktree PARTLY MODIFIED, lists each file deleted
+(its identical copy is at the same path in the main worktree) and exits 1; a failed `git
+worktree remove`, which may have deleted files before it failed, is reported POSSIBLY
+MODIFIED with what is left and how each kind of file comes back, and exits 1. A re-run is
+safe, as what is left still holds; each deletion changed its folder, so it finishes after the
+quiet period.
 """
 import argparse
 import datetime
@@ -66,6 +70,7 @@ import filecmp
 import os
 import re
 import shutil
+import signal
 import stat
 import subprocess
 import sys
@@ -94,6 +99,10 @@ NO_HISTORY = {b'index', b'check-build.log', b'AUTO_MERGE'}
 LSOF_WARNINGS = re.compile(rb"lsof: WARNING: can't stat\(\) [^\n]*|\s*Output information may be incomplete\.")
 QUIET_DEFAULT, QUIET_MIN = 60, 10
 CAP = 5
+# Caught while a worktree is being removed, so that a stop is reported, never silent; the
+# signals that came, checked between two removal steps.
+SIGNALS = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
+STOP = []
 
 
 class Unproven(Exception):
@@ -517,8 +526,9 @@ def audit(record, ctx):
     facts = {'real': real, 'name': os.path.basename(real), 'head': record.get('HEAD', b''),
              'branch': branch, 'delete': [], 'identical': 0, 'disposable': 0, 'bytes': 0,
              'pin': [], 'saved': None, 'holders': {}}
-    gitdir = git(real, 'rev-parse', '--absolute-git-dir').stdout.rstrip(b'\n')
-    tracked, seen = set(), {}
+    gitdir = facts['gitdir'] = git(real, 'rev-parse', '--absolute-git-dir').stdout.rstrip(b'\n')
+    tracked = facts['tracked'] = set()
+    seen = {}
 
     def finished():
         try:
@@ -589,21 +599,16 @@ def audit(record, ctx):
                 holders.setdefault(oid.lower(), rel)
         if not holders:
             return []
-        # Held, as removal destroys none of them: every ref of the shared repository (main's
-        # branch, its branch, refs/kit/saved/*) and its branch's own reflog, where an amended,
-        # reset or rebased-away tip stays. Read from the main worktree: this worktree's own
-        # refs (refs/worktree/*, refs/bisect/*) go with it.
+        # Held: what the refs of the shared repository point at (main's branch, its branch,
+        # refs/kit/saved/*), read from the main worktree, as this worktree's own refs
+        # (refs/worktree/*, refs/bisect/*) go with it. No reflog: `git branch -d` deletes the
+        # branch's, so an amended, reset or rebased-away tip is saved like any other.
         held = set(git(ctx['main_root'], 'for-each-ref', '--format=%(objectname)').stdout.split())
-        try:
-            with open(os.path.join(ctx['common'], b'logs', facts['branch']), 'rb') as handle:
-                held.update(token.findall(handle.read()))
-        except FileNotFoundError:
-            pass
         # Only an id git calls missing is dropped; every other goes to rev-list, which fails on
         # anything it cannot walk.
         kinds = dict(line.split(b' ', 1) for line in git(
             real, 'cat-file', '--batch-check=%(objectname) %(objecttype)',
-            stdin=b''.join(oid + b'\n' for oid in sorted(held.union(holders)))).stdout.split(b'\n') if line)
+            stdin=b''.join(oid + b'\n' for oid in sorted(holders))).stdout.split(b'\n') if line)
         # `rev-list --objects <tree> ^<commit>` lists a tree the commit holds too: for a tree or a
         # blob, held cannot be told from not held.
         plain = [oid for oid in sorted(holders) if kinds.get(oid) in (b'tree', b'blob')]
@@ -611,16 +616,16 @@ def audit(record, ctx):
             return ['%s is a tree or blob id (%s): reachability is checked for commits only; check and remove it '
                     'by hand' % (show(plain[0][:12]), show(holders[plain[0]]))]
         present = [oid for oid in sorted(holders) if kinds.get(oid) != b'missing']
-        loose = set(line.split(b' ')[0] for line in git(real, 'rev-list', '--objects', '--stdin', stdin=b''.join(
-            oid + b'\n' for oid in present) + b''.join(b'^' + oid + b'\n' for oid in sorted(held)
-                                                     if kinds.get(oid) != b'missing')).stdout.split(b'\n'))
+        listed = set(line.split(b' ')[0] for line in git(real, 'rev-list', '--objects', '--stdin', stdin=b''.join(
+            oid + b'\n' for oid in present) + b''.join(b'^' + oid + b'\n' for oid in sorted(held))).stdout.split(b'\n'))
+        loose = [oid for oid in present if oid in listed]
         # A commit nothing else holds is saved (remove() pins it to a ref) and covers what it
         # reaches; anything else not held keeps the worktree.
-        facts['pin'] = [oid for oid in present if oid in loose and kinds.get(oid) == b'commit']
-        other = [oid for oid in present if oid in loose and kinds.get(oid) != b'commit']
+        other = [oid for oid in loose if kinds.get(oid) != b'commit']
         if other:
             return ['%s, a %s, is held only by its git directory (%s); check and remove it by hand'
                     % (show(other[0][:12]), show(kinds.get(other[0], b'?')), show(holders[other[0]]))]
+        facts['pin'] = loose
         # Not the branch name, which another worktree may reuse; a name git refuses as a ref
         # fails the save, which keeps the worktree.
         facts['saved'] = b'refs/kit/saved/%s-%s' % (os.path.basename(gitdir), ctx['stamp'])
@@ -718,28 +723,62 @@ def saves(facts):
 
 def remove(record, facts, ctx):
     """'removed', 'kept' (nothing changed but saved refs), or 'partly' (identical copies deleted,
-    then a step failed)."""
-    deleted = []
+    or `git worktree remove` failed, which may have deleted files first). SIGNALS are caught
+    meanwhile: one that comes stops it at the next step, reported like a failure."""
+    deleted, failed = [], []
+    caught = {number: signal.signal(number, lambda number, frame: STOP.append(number)) for number in SIGNALS}
     try:
-        why = removal(record, facts, ctx, deleted)
-    except Exception as error:  # a keep, like an error in the audit
-        why = 'not proven: %s' % (error or type(error).__name__)
-    if why is None:
-        return 'removed'
-    if not deleted:
-        print('         stopped: %s; nothing deleted, the worktree stays' % why)
-        return 'kept'
-    print('         stopped: %s' % why)
-    print('         PARTLY MODIFIED: %d files git does not track were deleted from it, each with a byte-identical '
-          'copy at the same path in the main worktree, which brings it back:' % len(deleted))
-    for rel in deleted:
-        print('           %s' % show(rel))
-    return 'partly'
+        try:
+            why = removal(record, facts, ctx, deleted, failed)
+        except Exception as error:  # a keep, like an error in the audit
+            why = 'not proven: %s' % (error or type(error).__name__)
+        if why is None:
+            return 'removed'
+        if not deleted and not failed:
+            print('         stopped: %s; nothing deleted, the worktree stays' % why)
+            return 'kept'
+        print('         stopped: %s' % why)
+        if failed:
+            possibly(facts, ctx)
+        if deleted:
+            print('         PARTLY MODIFIED: %d files git does not track were deleted from it, each with a byte-identical '
+                  'copy at the same path in the main worktree, which brings it back:' % len(deleted))
+            for rel in deleted:
+                print('           %s' % show(rel))
+        return 'partly'
+    finally:
+        for number, handler in caught.items():
+            signal.signal(number, handler)
 
 
-def removal(record, facts, ctx, deleted):
+def possibly(facts, ctx):
+    """What a failed `git worktree remove` left (git deletes the folder file by file, then its git
+    directory even when that failed), and how each kind of file it may have deleted comes back."""
+    real = facts['real']
+    try:
+        registered = real in [os.path.realpath(r['worktree']) for r in worktrees(ctx['main_root'])]
+    except Unproven:
+        registered = False
+    whole = registered and os.path.isdir(facts['gitdir']) and os.path.isfile(os.path.join(real, b'.git'))
+    gone = sum(1 for rel in facts['tracked'] if not os.path.lexists(os.path.join(real, rel)))
+    print('         POSSIBLY MODIFIED: `git worktree remove` failed and may have deleted part of it first. Now its '
+          'folder %s; it is %s a registered worktree, its git directory is %s.'
+          % ('is still there, %d of its %d tracked files gone' % (gone, len(facts['tracked']))
+             if os.path.lexists(real) else 'is gone', 'still' if registered else 'no longer',
+             'still there' if os.path.isdir(facts['gitdir']) else 'gone'))
+    print('         Each file it may have deleted was proven: a tracked file was its commit %s on the branch, which '
+          'this command, run in the main worktree, writes back%s:'
+          % (show(facts['head'][:12]), '' if whole else ' once what is left of the folder is moved aside'))
+    print('           ' + ('git -C %s restore -- .' % sh_quote(printable(real)) if whole else 'git worktree add %s %s'
+                           % (sh_quote(printable(real)), sh_quote(printable(short(facts['branch']))))))
+    print('         a file git does not track had a byte-identical copy at the same path in the main worktree; a file '
+          'in a disposable folder is build output, which the build makes again.')
+
+
+def removal(record, facts, ctx, deleted, failed):
     """Save, log, check again, delete the identical copies git does not track, then let git
-    remove it. None when removed, else why it stopped; DELETED lists what was deleted."""
+    remove it. None when removed, else why it stopped; DELETED lists what was deleted, FAILED
+    is set when `git worktree remove` failed."""
     path, branch = record['worktree'], facts['branch']
     saved = [b'%s/%d' % (facts['saved'], n) for n in range(1, len(facts['pin']) + 1)]
     if saved:
@@ -769,6 +808,8 @@ def removal(record, facts, ctx, deleted):
     if again or facts['pin']:
         return 'changed since its audit: %s' % '; '.join(again or ['it holds commits not saved'])
     for rel in facts['delete']:
+        if STOP:
+            return 'interrupted by signal %d' % STOP[0]
         try:
             os.unlink(os.path.join(facts['real'], rel))
         except OSError as error:
@@ -777,10 +818,13 @@ def removal(record, facts, ctx, deleted):
     again = facts['idle']()
     if again:
         return 'changed since its audit: %s' % '; '.join(again)
+    if STOP:
+        return 'interrupted by signal %d' % STOP[0]
     result = subprocess.run(['git', 'worktree', 'remove', path], cwd=ctx['main_root'], env=ENV,
                             stdin=subprocess.DEVNULL, capture_output=True)
     if result.returncode != 0:
-        return 'git refused to remove it: %s' % show(result.stderr.strip())
+        failed.append(result.returncode)
+        return 'git refused to remove it: %s' % (show(result.stderr.strip()) or 'exit %d' % result.returncode)
     # The branch stays, so this brings back its files at their last commit; not the worktree's
     # ignored files, nor its reflogs.
     print('         this command, run in the main worktree, brings the worktree back:')
@@ -860,6 +904,9 @@ def main():
             partly += 1
         else:
             kept += 1
+        if STOP:
+            print('clean_worktrees: stopped by signal %d; the worktrees after this one were not looked at' % STOP[0])
+            break
     if ctx['source'] and not args.quiet:
         print('clean_worktrees: processes listed by %s, %d could not be inspected (another user\'s, or not '
               'readable; lsof on macOS does not list another user\'s at all); the quiet period covers a '
@@ -869,18 +916,19 @@ def main():
               'scan cannot see' % ctx['unseen'])
     if args.apply:
         print('clean_worktrees: removed %d, kept %d, %sfreed %d bytes; log: %s%s'
-              % (removed, kept, 'PARTLY MODIFIED %d (above: what was deleted, and its copy in the main worktree), '
+              % (removed, kept, 'PARTLY MODIFIED %d (above: what may be gone, and how it comes back), '
                  % partly if partly else '', freed, show(ctx['log']),
                  '; the reasons: scripts/clean_worktrees.sh' if args.quiet and kept else ''))
         if gone:
             print('clean_worktrees: branches kept, their worktrees removed: %s' % names(gone))
             print('clean_worktrees: to delete merged branches yourself: `git branch --merged %s` lists them, '
-                  '`git branch -d <name>` deletes one' % sh_quote(show(short(ctx['main_ref']))))
+                  '`git branch -d <name>` deletes one, and its reflog with it: the old tips a removal saved are '
+                  'kept by the refs under refs/kit/saved/' % sh_quote(show(short(ctx['main_ref']))))
     else:
         print('clean_worktrees: dry run: would remove %d, keep %d, free %d bytes; to apply: '
               'scripts/clean_worktrees.sh --apply%s'
               % (removed, kept, freed, ' --assume-idle' if args.assume_idle else ''))
-    return 1 if partly else 0
+    return 1 if partly or STOP else 0
 
 
 if __name__ == '__main__':

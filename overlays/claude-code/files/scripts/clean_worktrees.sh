@@ -29,9 +29,9 @@
 #
 # What is proven: a commit was made in the worktree itself (its own HEAD reflog) and its HEAD
 # is in the main branch; every object id in any file of its git directory, which removal
-# destroys, names a commit that a ref or its branch's reflog holds (an amended, reset or
-# rebased-away tip stays in that reflog), or one it saves first: every commit only its git
-# directory holds (a squash's intermediate commits, FETCH_HEAD) is pinned under
+# destroys, names a commit that a ref holds (no reflog counts: `git branch -d` deletes the
+# branch's), or one it saves first: every commit only its git directory holds (an amended,
+# reset or rebased-away tip, a squash's intermediate commits, FETCH_HEAD) is pinned under
 # refs/kit/saved/<its git directory name>-<UTC time>/, in one transaction, before anything is
 # deleted, and the report prints the command that deletes those refs; a tree or blob id keeps
 # it, as reachability is checked for commits only; every tracked file is byte for byte what the
@@ -44,8 +44,9 @@
 # .claude/worktree-disposable, default 60). Not guarded, by the owner's decision: a process
 # changing a worktree's files between its audit and its removal (the process listing is read
 # again right before), files planted to attack this script, and a SIGKILL between two removal
-# steps. A step that fails after an identical copy was deleted reports the worktree PARTLY
-# MODIFIED with each file deleted, and exits 1. Lost for good with a removal: the ignored files
+# steps. A step that fails, or SIGINT, SIGTERM or SIGHUP, after an identical copy was deleted
+# reports the worktree PARTLY MODIFIED with each file deleted; a failed `git worktree remove`
+# reports it POSSIBLY MODIFIED with how each file comes back; both exit 1. Lost for good with a removal: the ignored files
 # in disposable folders, and the worktree's own reflogs. `git worktree remove` without --force
 # checks again on its own. It never runs `rm -rf`, --force, `git worktree prune`, `git clean`
 # or `git branch -d`/`-D`, and never touches a stash, a tag or a remote. `git worktree lock

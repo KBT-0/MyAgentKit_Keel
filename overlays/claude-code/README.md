@@ -206,7 +206,8 @@ then stays quiet.
   commits whatever happens to main later (a merge undone with `git reset`, a merge into a
   detached HEAD). The report lists the branches whose worktrees it removed and says how to
   delete merged branches yourself: `git branch --merged <main branch>` lists them, `git branch
-  -d <name>` deletes one. Nothing is removed while the main worktree's HEAD is detached:
+  -d <name>` deletes one, and its reflog with it; the refs under `refs/kit/saved/` keep the old
+  tips a removal saved. Nothing is removed while the main worktree's HEAD is detached:
   "merged" is tested against its branch.
 - **Removed** only when every check holds, cheapest first: a linked worktree directly under
   `.claude/worktrees/`, its folder its own (not missing, not prunable), not locked, its path
@@ -222,8 +223,8 @@ then stays quiet.
   such as `refs/worktree/*`, `refs/bisect/*`, `refs/rewritten/*`, every pseudo-ref such as
   `ORIG_HEAD` or `FETCH_HEAD`, and any file the script does not know; only the index, the
   gate's build log and `AUTO_MERGE`, a tree git leaves after a merge or rebase step, are
-  skipped) names no object, or a commit that what removal leaves holds (any ref of the
-  repository, or its branch's own reflog), or a commit it saves first (below); the files ref
+  skipped) names no object, or a commit a ref of the repository holds (no reflog counts), or a
+  commit it saves first (below); the files ref
   backend (another one is kept); no per-worktree config; **tracked content by bytes**: no
   change `git status` reports with the stat settings forced to their defaults, the index equal
   to HEAD's tree, and every tracked path in the worktree byte for byte the blob the index
@@ -232,13 +233,9 @@ then stays quiet.
   track inside a folder `.claude/worktree-disposable` lists or byte-identical to the regular
   file at the same path in main; nothing anywhere in it, those folders included, changed within
   the quiet period.
-- **What only its git directory holds is saved, then it is removed.** An amended, reset or
-  rebased-away commit needs nothing: its branch's reflog, which stays in the shared git
-  directory, still names it, for as long as git keeps that entry (`gc.reflogExpireUnreachable`,
-  30 days by default), exactly as long as the worktree's own reflog would have; `git branch -d`
-  deletes that reflog with the branch. A commit
-  nothing else holds (a squash's intermediate commits, a `FETCH_HEAD`, a `refs/worktree/*` ref)
-  is pinned before anything is deleted, in one `git update-ref --stdin` transaction, as
+- **What only its git directory holds is saved, then it is removed.** A commit no ref holds
+  (an amended, reset or rebased-away tip, a squash's intermediate commits, a `FETCH_HEAD`, a
+  `refs/worktree/*` ref) is pinned before anything is deleted, in one `git update-ref --stdin` transaction, as
   `refs/kit/saved/<git directory name>-<UTC time>/<n>`, never under the branch name; the audit
   then runs again with those refs counted. A failed save keeps the worktree. The report names
   each saved commit and prints one command that deletes all of that removal's saved refs: `git
@@ -273,18 +270,27 @@ then stays quiet.
   worktree remove`. Not guarded, by the owner's decision: a process changing a worktree's files
   between its audit and its removal, files planted to attack the script, and a SIGKILL between
   two removal steps.
+- **With `core.logAllRefUpdates=false`** git writes no HEAD reflog, so every worktree is kept
+  ("no commit was made in this worktree").
 - **To keep a worktree** the lead still wants, lock it: `git worktree lock <path>`.
 - **The log** comes right after the saved refs: `<git dir>/kit-worktree-removals.log` gets one
   line per removal (time, path, branch, tip commit, main HEAD, identical files, disposable
   bytes, each saved ref with its commit, each file about to be deleted) before anything is
   deleted. Then the identical copies git does not track go, then `git worktree remove` without
-  `--force` checks again on its own. If a step fails after a copy was deleted, the report says
-  **PARTLY MODIFIED**, lists each deleted file (its byte-identical copy is at the same path in
-  the main worktree) and the script exits 1; a re-run is safe.
+  `--force` checks again on its own. SIGINT, SIGTERM and SIGHUP are caught from the saved refs
+  to the end of `git worktree remove` and stop it at the next step. If a step fails or is
+  stopped after a copy was deleted, the report says **PARTLY MODIFIED**, lists each deleted file
+  (its byte-identical copy is at the same path in the main worktree) and the script exits 1. A
+  failed `git worktree remove` may have deleted files first (git deletes file by file, then the
+  worktree's git directory even after a failure): the report says **POSSIBLY MODIFIED**, what
+  is left, and how each kind of file comes back (tracked: the printed `git restore` or `git
+  worktree add`; untracked: its copy in the main worktree; disposable: the build), and the
+  script exits 1. A re-run is safe; each deletion changed its folder, so it finishes after the
+  quiet period.
 - **A worktree comes back** with the command each removal prints on a line of its own, `git
   worktree add '<path>' '<branch>'`, quoted for a POSIX shell: its tracked files at the
   branch's last commit. Lost for good: the ignored files in its disposable folders and its own
-  reflogs (every commit they named is held by a ref or its branch's reflog, or saved).
+  reflogs (every commit they named is held by a ref, or saved).
 - **Installed** by the overlay: the two scripts (kit-owned: a sync updates them) and
   `.claude/worktree-disposable` (the project's). The hook comes with the core; without all
   three it does nothing and says so once.
