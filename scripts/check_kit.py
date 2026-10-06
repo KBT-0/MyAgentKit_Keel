@@ -55,7 +55,7 @@ REQUIRED_SUITES = {
               'test_review_upgrade': 2, 'test_boundary_example': 3, 'test_scan_gate': 1,
               'test_check_gate': 22, 'test_boundary_restore': 39, 'test_sync_kit': 16,
               'test_doctor': 2, 'test_git_hooks': 25, 'test_stop_hook': 1, 'test_spawn_worker': 16,
-              'test_worker_visibility': 53, 'test_doc_pointers': 4,
+              'test_worker_visibility': 55, 'test_doc_pointers': 4,
               'test_kit_output': 1, 'test_kit_runner': 10, 'test_clean_worktrees': 135,
               'test_close_worker': 16},
 }
@@ -289,7 +289,7 @@ def case_in_substitution(text):
             # The innermost $( or $(( : in arithmetic, `<<` is a shift and no command starts.
             arithmetic = next((s for s in reversed(stack) if s in "$A"), "") == "A"
             here = not arithmetic and re.match(r"<<(-?)[ \t]*['\"]?([A-Za-z0-9_]+)['\"]?", text[i:i + 80])
-            word = text.startswith(("case ", "case\t"), i) and (i == 0 or not re.match(r"\w", text[i - 1]))
+            word = text.startswith(("case ", "case\t"), i) and (i == 0 or text[i - 1] in " \t\n;&|(){}")
             word = word and command_position(text[:i])
             if here:
                 heredocs.append((here.group(1) == "-", here.group(2)))

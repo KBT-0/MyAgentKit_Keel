@@ -24,7 +24,7 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'MYAGENTKIT_TASK_ID', 'MYAGENTKIT_R
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 105, 'test_agent_usage': 19, 'test_codex_quota': 5}
+SUITE_MINIMUMS = {'test_claude_bridge': 106, 'test_agent_usage': 19, 'test_codex_quota': 5}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -2561,6 +2561,37 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
             self.assertNotEqual(outcome.returncode, 0)
             self.assertIn('"failure_kind": "timeout"', outcome.stdout + outcome.stderr)
         finally:
+            os.environ['PATH'] = old_path
+
+    def test_a_cancel_during_cleanup_still_reaps_the_extraction(self):
+        # With a raising cancel handler armed, a SIGTERM during the first reap skipped the
+        # second: the tar child survived. Cleanup runs with the cancel signals blocked.
+        import claude_bridge
+        import agent_process
+        bin_dir = self.root / 'slowbin3'
+        bin_dir.mkdir(exist_ok=True)
+        pid_file = self.root / 'tar.pid'
+        (bin_dir / 'tar').write_text('#!/bin/sh\necho $$ > %s\ncat > /dev/null\nsleep 30\n' % pid_file)
+        (bin_dir / 'tar').chmod(0o755)
+        head = self.git('rev-parse', 'HEAD').stdout.decode().strip()
+        old_path = os.environ['PATH']
+        os.environ['PATH'] = str(bin_dir) + os.pathsep + old_path
+        guard = agent_process.OneShot()
+        previous = agent_process.hold(guard)
+        try:
+            copy = Path(tempfile.mkdtemp(dir=self.root))
+            # The first reap raises the pending cancel once it is unblocked: send it while
+            # the copy waits on the bound.
+            import threading
+            threading.Timer(0.2, lambda: os.kill(os.getpid(), signal.SIGTERM)).start()
+            with self.assertRaises((claude_bridge.BridgeError, KeyboardInterrupt, SystemExit, Exception)):
+                claude_bridge.throwaway_copy(self.repo, head, None, copy, timeout=0.4)
+            time.sleep(0.3)
+            tar_pid = int(pid_file.read_text())
+            with self.assertRaises(ProcessLookupError, msg='the extraction outlived the cancel'):
+                os.kill(tar_pid, 0)
+        finally:
+            agent_process.restore(previous)
             os.environ['PATH'] = old_path
 
     def test_dispositions_are_claims_the_reviewer_verifies_not_settlements(self):

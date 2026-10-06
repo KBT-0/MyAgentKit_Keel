@@ -181,8 +181,15 @@ def throwaway_copy(repo: Path, head: str, diff: str | None, copy: Path,
                 raise BridgeError("could not copy HEAD for the reviewer: " + err.decode(errors="replace"))
             check_running()
         finally:
-            reap(archive, archive_pgid)
-            reap(unpacked, unpacked_pgid)
+            # A raising cancel handler (the Codex adapter's) must not run between the two
+            # reaps: the signals are blocked until both groups are gone and their streams
+            # closed, then the pending cancel is delivered.
+            mask = signal.pthread_sigmask(signal.SIG_BLOCK, agent_process.CANCEL_SIGNALS)
+            try:
+                reap(archive, archive_pgid)
+                reap(unpacked, unpacked_pgid)
+            finally:
+                signal.pthread_sigmask(signal.SIG_SETMASK, mask)
         return
 
     # No archive overlay: paths absent from the index and checkout never enter this tree.

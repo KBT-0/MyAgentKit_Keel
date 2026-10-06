@@ -215,7 +215,11 @@ EOF
   # after the clean-tree check. The marker is that blob's id. HEAD is resolved once, and must
   # still be that commit after the clean-tree check: else entry and check saw different commits.
   head=$(git -C "$d" rev-parse -q --verify HEAD 2>/dev/null) || return 1
-  entry=$(git -C "$d" ls-tree "$head" -- "./${f##*/}" 2>/dev/null) || return 1
+  # A lookup that fails is an observation failure (exit 3), not an absent entry.
+  if ! entry=$(git -C "$d" ls-tree "$head" -- "./${f##*/}" 2>"$err"); then
+    say "watch_workers: $1: could not read the tree of $head for $f: $(tr '\n' ' ' <"$err")" >&2
+    failed=1; return 1
+  fi
   [ -n "$entry" ] || return 1
   mode=${entry%% *}; blob=${entry#* }; blob=${blob#* }; blob=${blob%%"	"*}
   dirty=$(git -C "$d" status --porcelain 2>/dev/null) || return 1

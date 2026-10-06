@@ -516,6 +516,16 @@ class ResultTests(Base):
         self.assertEqual((result.returncode, result.stdout), (3, ''), 'a failed read was reported')
         self.assertIn('DONE: w1', self.watch(path_first=first).stdout)
 
+    def test_a_tree_that_cannot_be_read_ends_the_run_like_a_failed_capture(self):
+        self.commit(HEAD % ('completed', 'none'))
+        always = self.git_wrapper('case " $* " in *" ls-tree "*) echo "fatal: bad tree" >&2; exit 128 ;; esac')
+        for _ in range(2):
+            result = self.watch(path_first=always)
+            self.assertEqual((result.returncode, result.stdout), (3, ''))
+            self.assertIn('could not read the tree of', result.stderr)
+            self.assertIn('fatal: bad tree', result.stderr)
+        self.assertIn('DONE: w1', self.watch().stdout)
+
     def test_a_blob_that_cannot_be_read_ends_the_run_like_a_failed_capture(self):
         self.commit(HEAD % ('completed', 'none'))
         blob = subprocess.run(['git', 'rev-parse', 'HEAD:docs/w1.md'], cwd=self.cwd, capture_output=True,
@@ -712,6 +722,13 @@ class ResultTests(Base):
         gate = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(gate)
         self.assertEqual(gate.case_in_substitution('x=$(f()case a in a) :;; esac)\n'), [1])
+
+    def test_a_word_that_contains_case_is_not_a_case(self):
+        spec = importlib.util.spec_from_file_location('kit_check', ROOT / 'scripts/check_kit.py')
+        gate = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(gate)
+        for text in ("x=$(echo test-case value)\n", "x=$(cat dir/case a)\n", "x=$(echo a.case b)\n"):
+            self.assertEqual(gate.case_in_substitution(text), [], text)
 
     def test_a_case_on_the_line_after_a_command_is_a_finding(self):
         spec = importlib.util.spec_from_file_location('kit_check', ROOT / 'scripts/check_kit.py')
