@@ -525,7 +525,8 @@ class CheckGateTests(unittest.TestCase):
             env['PATH'] = str(bin_dir)
             doctor = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=project, env=env, capture_output=True, text=True)
             self.assertNotIn('Python 3.10', doctor.stdout + doctor.stderr)
-            self.assertEqual(subprocess.run(['sh', '-c', 'command -v python3'], env=env, capture_output=True).returncode, 1)
+            # dash answers 127 to `command -v` of a missing name, bash 1: only nonzero is asserted.
+            self.assertNotEqual(subprocess.run(['sh', '-c', 'command -v python3'], env=env, capture_output=True).returncode, 0)
 
     def test_every_cd_ignores_cdpath(self):
         # An exported CDPATH turned `cd scripts` into another directory (and printed it):
