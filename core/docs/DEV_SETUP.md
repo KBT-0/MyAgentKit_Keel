@@ -36,9 +36,9 @@ fails for a reason that has nothing to do with the code.
 
 If the gate fails with "command not found", that is this — not a broken build.
 
-The gate runs one at a time per checkout and needs `python3` with the `fcntl` module for its
-lock: native Windows Python has none, so a hook started from a Windows-side client fails
-`FAIL [lock]` by name; run the gate from WSL or a POSIX shell with its own Python. Every
+The gate runs one at a time per checkout and needs `python3` for its lock: `fcntl.flock` on
+Linux, macOS, WSL and a POSIX Python under MSYS2 or Cygwin; on native Windows (Git for
+Windows' `sh` with a Windows Python) a lock file held open without write sharing. Every
 process the build command starts holds the lock, so a build server it leaves running (a
 compiler server, a build daemon) makes the next gate, and the commit hook, wait until that
 server exits. Turn such servers off in the build command (`docs/GOTCHAS.md`); the waiting

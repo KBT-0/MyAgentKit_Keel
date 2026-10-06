@@ -77,7 +77,12 @@ esac
 # GATE_LOCK_WAIT, GATE_LOCK_HELD and GATE_LOCK_FD are not seams: they change when a run
 # starts, not what it checks.
 lock_path=$(git rev-parse --git-path check.lock 2>/dev/null) || lock_path=.check.lock
-case "$lock_path" in /*) ;; *) lock_path="$(pwd -P)/$lock_path" ;; esac
+# Git for Windows prints a linked worktree's git path as C:/...; that is absolute too.
+case "$lock_path" in /*|[A-Za-z]:/*) ;; *) lock_path="$(pwd -P)/$lock_path" ;; esac
+# Git for Windows, MSYS2 and Cygwin: the path in the form a native program is handed (C:/...).
+# A native python3 receives /c/... as C:/... and exports GATE_LOCK_HELD in that form, so a
+# lock path kept as /c/... never matched its own nested runs, and each one waited for itself.
+! command -v cygpath >/dev/null 2>&1 || lock_path=$(cygpath -m "$lock_path")
 # A run that claims the lock (GATE_LOCK_HELD names this checkout's) proves it: the descriptor
 # GATE_LOCK_FD it inherited is open on this lock file, the lock is held, so a fresh open of
 # the file cannot take it, and that descriptor itself holds it: flock on it succeeds at once
@@ -86,6 +91,12 @@ case "$lock_path" in /*) ;; *) lock_path="$(pwd -P)/$lock_path" ;; esac
 # it never skips the lock on a claim. The independent descriptor is open for writing: Linux's
 # NFS client refuses an exclusive flock on a read-only one, and every fresh run failed here.
 # A flock error other than "would block" is the file system, not the claim: FAIL [lock].
+# On native Windows GATE_LOCK_FD is the holder's Win32 handle (the lock below says why). It
+# must be open in this process on this lock file with write access (fsync needs it), and a
+# fresh open for writing must be refused. While the holder has the file open without write
+# sharing, no other handle with write access can be opened, so only the holder's handle and
+# the copies its descendants inherited pass all three. The number alone, copied into another
+# process, names nothing there or something else.
 inherited=""
 if [ "${GATE_LOCK_HELD:-}" = "$lock_path" ]; then
   lock_probe=0
@@ -94,8 +105,26 @@ import os, sys
 try:
     import fcntl
 except ImportError:
-    print("FAIL [lock]: python3 has no fcntl module, which the gate lock needs; native Windows Python lacks it. Run the gate with a POSIX python3 (WSL, MSYS2, Cygwin).")
-    sys.exit(3)
+    if os.name != "nt":
+        print("FAIL [lock]: python3 has no fcntl module, which the gate lock needs on this system.")
+        sys.exit(3)
+    import msvcrt
+    try:
+        handle = msvcrt.open_osfhandle(int(sys.argv[1]), os.O_RDWR)
+        held = os.fstat(handle)
+        os.fsync(handle)
+        lock = os.stat(sys.argv[2])
+    except (OSError, ValueError):
+        sys.exit(1)
+    if (held.st_dev, held.st_ino) != (lock.st_dev, lock.st_ino):
+        sys.exit(1)
+    try:
+        os.open(sys.argv[2], os.O_RDWR)
+    except PermissionError:
+        sys.exit(0)
+    except OSError:
+        pass
+    sys.exit(1)
 held, lock = os.fstat(int(sys.argv[1])), os.stat(sys.argv[2])
 if (held.st_dev, held.st_ino) != (lock.st_dev, lock.st_ino):
     sys.exit(1)
@@ -143,14 +172,24 @@ fi
 # staleness from pids, and let a third waiter, or a build left running, through. The cost:
 # a build tool that leaves a server running after the build (a compiler server, a build
 # daemon) holds the lock until that server exits, so such a build command turns it off
-# (docs/GOTCHAS.md); the waiting NOTE says how to find the holder. The lock needs Python's
-# fcntl, which native Windows Python lacks: that is FAIL [lock] by name, not a traceback.
+# (docs/GOTCHAS.md); the waiting NOTE says how to find the holder.
+# NATIVE WINDOWS (Git for Windows' sh with a Windows python3) has no fcntl, and there the lock
+# is the file opened for writing WITHOUT write sharing: Windows refuses every other open for
+# writing while any handle of that open exists. The holder makes its handle inheritable and
+# starts the gate as a child, so the gate and every process it starts that inherits handles
+# hold the lock, and Windows closes the last handle when the last of them exits: the same
+# guarantees as flock, a killed holder included (its build keeps the lock). It cannot exec
+# (os.execv on Windows starts a new process and exits, so the caller would see the gate end
+# at once): it waits for the gate and passes its exit status on. msvcrt.locking was not used:
+# its byte-range lock belongs to the one process that took it, and Windows releases it when
+# that process ends, while the build runs on. A python3 without fcntl elsewhere: FAIL [lock].
 # The self-test holds the lock for its whole run, so no other gate sees a case mid-injection.
 # Nested runs (the self-test's own `sh "$0"`, the commit hook it calls) inherit the lock:
 # GATE_LOCK_HELD names the lock path, so a gate in another checkout started from the build
 # command still takes its own lock, and GATE_LOCK_FD names the inherited descriptor, which
 # the seam block checks before it believes the claim. The holder writes its pid, which after
-# the exec is the gate's, into the lock file for the self-test marker (the seam block).
+# the exec is the gate's, into the lock file for the self-test marker (the seam block); on
+# native Windows it writes a random token, which it clears when the gate has ended.
 case "${GATE_LOCK_WAIT:-}" in
   *[!0-9]*) printf '%s\n' "FAIL [lock]: GATE_LOCK_WAIT must be a number of seconds, got '$GATE_LOCK_WAIT'."; exit 1 ;;
 esac
@@ -165,43 +204,89 @@ import os, signal, sys, time
 try:
     import fcntl
 except ImportError:
-    print("FAIL [lock]: python3 has no fcntl module, which the gate lock needs; native Windows Python lacks it. Run the gate with a POSIX python3 (WSL, MSYS2, Cygwin).", flush=True)
-    sys.exit(1)
+    if os.name != "nt":
+        print("FAIL [lock]: python3 has no fcntl module, which the gate lock needs on this system.", flush=True)
+        sys.exit(1)
+    fcntl = None
+    # A pipe gets the ANSI code page: a path outside it (a user name, the U+F03A cygpath makes of a
+    # colon) ended a NOTE or FAIL line in a UnicodeEncodeError traceback.
+    sys.stdout.reconfigure(errors="backslashreplace")
 path, gate, wait, waited = sys.argv[1], sys.argv[2], os.environ.get("GATE_LOCK_WAIT", ""), 0
 if signal.getsignal(signal.SIGINT) is signal.default_int_handler:
     signal.signal(signal.SIGINT, signal.SIG_DFL)
-signal.signal(signal.SIGPIPE, signal.SIG_DFL)
-signal.signal(signal.SIGXFSZ, signal.SIG_DFL)
-try:
-    fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o644)
-except OSError as error:
-    print("FAIL [lock]: cannot open %s as the gate lock (%s); if it is a symlink or a directory, delete it." % (path, error.strerror), flush=True)
+def cannot_open(reason):
+    print("FAIL [lock]: cannot open %s as the gate lock (%s); if it is a symlink or a directory, delete it." % (path, reason), flush=True)
     sys.exit(1)
-while True:
+if fcntl:
+    signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+    signal.signal(signal.SIGXFSZ, signal.SIG_DFL)
     try:
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        break
-    except BlockingIOError:
-        pass
+        fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o644)
     except OSError as error:
-        print("FAIL [lock]: this file system does not support the gate lock (%s); the lock file is %s." % (error.strerror or error, path), flush=True)
-        sys.exit(1)
+        cannot_open(error.strerror)
+    def take():
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return True
+        except BlockingIOError:
+            return False
+        except OSError as error:
+            print("FAIL [lock]: this file system does not support the gate lock (%s); the lock file is %s." % (error.strerror or error, path), flush=True)
+            sys.exit(1)
+    find = "fuser -v %s, or lsof %s" % (path, path)
+else:
+    import ctypes, msvcrt, secrets, subprocess
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateFileW.restype = ctypes.c_void_p
+    kernel32.CreateFileW.argtypes = (ctypes.c_wchar_p, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_void_p,
+                                     ctypes.c_ulong, ctypes.c_ulong, ctypes.c_void_p)
+    def take():
+        global fd
+        # Read and write, shared for reading only, created when absent, a link opened as itself.
+        handle = kernel32.CreateFileW(path, 0xC0000000, 1, None, 4, 0x200080, None)
+        if handle in (None, ctypes.c_void_p(-1).value):
+            error = ctypes.get_last_error()
+            if error == 32:
+                return False
+            cannot_open("Windows error %d" % error)
+        fd = msvcrt.open_osfhandle(handle, os.O_RDWR)
+        if os.fstat(fd).st_file_attributes & 0x400:
+            cannot_open("a symlink or another reparse point")
+        return True
+    find = "Resource Monitor (resmon), CPU tab, Associated Handles, search for %s" % os.path.basename(path)
+while not take():
     if wait and waited >= int(wait):
         print("NOT RUN [lock]: another gate run, or a process it started, has held %s for %ds; GATE_LOCK_WAIT=%s ran out." % (path, waited, wait), flush=True)
         sys.exit(75)
     if waited % 30 == 0:
         print("NOTE [lock]: another gate run, or a process it started, has held %s for %ds; waiting for it." % (path, waited), flush=True)
         if waited == 0:
-            print("             To see the holder: fuser -v %s, or lsof %s. A server the build left running (a compiler\n"
-                  "             server, a build daemon) holds it until that server exits: docs/GOTCHAS.md." % (path, path), flush=True)
+            print("             To see the holder: %s. A server the build left running (a compiler\n"
+                  "             server, a build daemon) holds it until that server exits: docs/GOTCHAS.md." % find, flush=True)
     time.sleep(1)
     waited += 1
+if fcntl:
+    os.ftruncate(fd, 0)
+    os.write(fd, str(os.getpid()).encode())
+    # A copy that survives exec, above the fds sh scripts redirect; nested runs prove they hold it.
+    os.environ["GATE_LOCK_FD"] = str(fcntl.fcntl(fd, fcntl.F_DUPFD, 10))
+    os.environ["GATE_LOCK_HELD"] = path
+    os.execvp("sh", ["sh", gate] + sys.argv[3:])
+# Native Windows: no exec (os.execv starts a new process and this one exits, so the caller
+# would read the gate as finished), so this process waits for the gate and passes its status on.
+# The marker is a random token: the gate cannot learn this process id as its own $$.
+token = secrets.token_hex(16)
 os.ftruncate(fd, 0)
-os.write(fd, str(os.getpid()).encode())
-# A copy that survives exec, above the fds sh scripts redirect; nested runs prove they hold it.
-os.environ["GATE_LOCK_FD"] = str(fcntl.fcntl(fd, fcntl.F_DUPFD, 10))
+os.write(fd, token.encode())
+os.set_handle_inheritable(msvcrt.get_osfhandle(fd), True)
+os.environ["GATE_LOCK_FD"] = str(msvcrt.get_osfhandle(fd))
 os.environ["GATE_LOCK_HELD"] = path
-os.execvp("sh", ["sh", gate] + sys.argv[3:])
+signal.signal(signal.SIGINT, signal.SIG_IGN)
+status = subprocess.call(["sh", gate] + sys.argv[3:], close_fds=False)
+os.ftruncate(fd, 0)
+# Git for Windows hands native Python a child killed by signal N as N << 8, and sh would read
+# only its low byte, 0: a killed gate passed. It becomes 128 + N; anything else unknown is 1.
+sys.exit(status if 0 <= status < 256 else 128 + (status >> 8) if status & 255 == 0 and status < 32768 else 1)
 ' "$lock_path" "$gate" "$@"
 fi
 
@@ -217,7 +302,7 @@ BOUNDARY_SELFTESTS_FILE="${BOUNDARY_SELFTESTS_FILE:-scripts/boundary_selftests.s
 
 work=$(mktemp -d) || { echo "FAIL [gate]: cannot create a temp dir; refusing to run blind."; exit 1; }
 # The run that took the lock clears the pid it wrote there, so the self-test marker ends with
-# it (the seam block). The file itself stays: removing a flock file lets a waiter lock the
+# it (the seam block); on native Windows the holder clears its token once the gate has ended. The file itself stays: removing a flock file lets a waiter lock the
 # removed file while the next run creates and locks a new one, and both run.
 cleanup() {
   rm -rf "$work"
