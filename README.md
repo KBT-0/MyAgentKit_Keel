@@ -1,305 +1,166 @@
 # MyAgentKit_Keel
 
-A foundation for codebases written mostly by AI agents: rules that are **enforced rather
-than requested**, memory that survives across tools and sessions, and a setup that
-**researches its own ecosystem** instead of shipping advice that was true once. It is not a
-template you copy and outgrow — installation is a conversation with an agent, and every
-project that uses it can push what it learned back into the kit.
+A foundation for codebases that AI agents write and maintain. It installs rules that a
+script enforces, one memory file that every tool and session reads, a review gate that a
+second model runs, and a way to spawn, watch and close worker sessions without losing
+work. Every project of mine is built on it, and what a project learns can flow back.
 
-> **Status: v0.7 development — extracted from a codebase in active use.** `bootstrap.sh` produces a
-> working skeleton in an empty directory, and each gate has a negative test that was
-> observed making it fail. v0.1 was reviewed by two other models and **both returned
-> Reject** — seventeen findings, then eleven more against the first round's fixes, because
-> the fix for a fail-open scanner was itself fail-open. All are fixed and the reports are in
-> [docs/reviews](docs/reviews/). Later versions carry their own review debt where it
-> applies; [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md) records exactly what was executed and
-> what was not.
+**v0.9.** The kit's own check (`./scripts/check.sh --self-test`) runs on Ubuntu and macOS
+with Python 3.10 and 3.14 in CI, and every gate in it has a negative test that was watched
+going red. Each version was reviewed by two models that did not write it, and the raw
+reports are kept in [docs/reviews](docs/reviews/). [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md)
+says what was executed and what was not.
 
-Part of my `MyFramework` line of personal foundations — this is the AI-agent one.
+## What it solves
 
-## The problem
+A codebase written by agents decays in four ways, and a better prompt fixes none of them.
 
-Codebases written by agents decay as they grow: the same system gets built twice because
-nobody could find the first one, and each new session is a little less able to navigate
-what the last one wrote. Rules written as prose erode, because nothing enforces them — an
-instruction file is a request, and requests get skimmed. Memory fragments: chat history
-does not cross sessions, and it certainly does not cross tools, so what the last session
-learned is gone. And the tooling underneath all of this moves faster than any one person
-can track, so a setup that was current in March is quietly stale by June.
+| Failure | What the kit does instead |
+|---|---|
+| A rule written as prose erodes; an instruction file is a request. | A rule lives in `scripts/check.sh` and the git hooks. Crossing it fails the commit. Every gate ships with a test that proves it can fail. |
+| Memory dies with the session and never crosses tools. | `docs/STATE.md` is the only cross-tool memory. If it is not there, it did not happen. Knowledge has three horizons and three files: `PROJECT.md` (decided), `PHASES.md` + `BACKLOG.md` (now and parked), `STATE.md` (this moment). |
+| The author reviews its own change. | Review is a gate run by a fresh session, by default a different model, in a throwaway copy where it can execute. Its output is evidence to verify, never a verdict to relay. |
+| Delegated work is invisible until it is wrong. | A spawned worker is a visible terminal tab, watched by a script that reports when it waits on a person, asks a question, or finishes; its worktree is removed after the merge only when nothing in it can be lost. |
 
-None of that is fixed by a better prompt. It is fixed by structure.
-
-## Core principles
-
-- **Rules live in the compiler and CI, not in prose.** If a boundary matters, a script
-  fails when it is crossed.
-- **A gate is not finished until it has been proven to go RED**, and it ships with an
-  automated negative test. A gate that has only ever been seen passing is an untested
-  branch running on every commit.
-- **One canonical instruction file.** Tool-specific files (`CLAUDE.md` and friends) are
-  one-line pointers to it, never a second copy.
-- **If it is not in the state file, it did not happen.** That file is the only cross-tool
-  memory — and it is transient: permanent knowledge passes THROUGH it into a real home.
-- **Knowledge has three horizons, so it has three files.** What the project IS and has
-  decided (permanent), what we are building now and deliberately NOT building yet
-  (episodic), and what is happening right now (momentary). Collapsing them is how a state
-  file becomes a diary and a design document stops being true.
-- **The author of a change never reviews it.** Review happens in a fresh session,
-  preferably a different model, because the value of a second opinion is that it is
-  decorrelated.
-- **Small tasks, one module, a verifiable definition of done.** Validation is a gate you
-  can run, never the implementer's self-report.
-- **Every tool must earn its permanent context cost.** The default verdict on a new tool,
-  server or dependency is *no*.
-- **What a project learns flows back, if you want it to.** A foundation improves fastest
-  from the projects that hit its edges — so one command sends a finding upstream, after
-  showing you exactly what it would say. Opt-in, asked once at setup, never on the agent's
-  own initiative.
-
-## Quick start
+## Install
 
 ```sh
 git clone https://github.com/KBT-0/MyAgentKit_Keel.git
 cd /path/to/your-project
-/path/to/MyAgentKit_Keel/bootstrap.sh .                        # rules and gates
-/path/to/MyAgentKit_Keel/bootstrap.sh . --overlay claude-code  # + hooks (recommended)
-/path/to/MyAgentKit_Keel/bootstrap.sh . --overlay unity        # + engine layer, if it applies
+/path/to/MyAgentKit_Keel/bootstrap.sh .                        # rules, gates, hooks
+/path/to/MyAgentKit_Keel/bootstrap.sh . --overlay claude-code  # + worker and review tooling for Claude Code
+/path/to/MyAgentKit_Keel/bootstrap.sh . --overlay unity        # + the engine layer, if it applies
 ```
 
-Once per machine, if you use Claude Code, install the commands — **you** have to type these
-two, an agent cannot invoke slash commands:
+`bootstrap.sh` copies files, wires `.githooks`, records the kit version, and asks nothing.
+It skips a file that already exists, so it is safe inside a project under way. The
+decisions the kit needs are made in a conversation: open your agent in the project and say
+
+> Read `setup/INTERVIEW.md` and start the setup.
+
+The interview fills every `{{PLACEHOLDER}}` with an answer you gave. `scripts/check.sh`
+fails while any placeholder survives. Pass `--note "..."` to `bootstrap.sh` to leave an
+agenda the interview must address.
+
+**Once per machine.** The review gate wants a second model on the machine: with Claude
+Code as the host, install the Codex CLI; with Codex as the host, install Claude Code. The
+interview asks and can install it. With Claude Code, you type these two (an agent cannot):
 
 ```
 /plugin marketplace add KBT-0/MyAgentKit_Keel
 /plugin install myagentkit@myagentkit
 ```
 
-That adds `/myagentkit:cross-review`, `/myagentkit:handoff` and `/myagentkit:kit-feedback`,
-at roughly 150 tokens of always-on cost. Then open your agent in the project and say:
-
-> Read `setup/INTERVIEW.md` and start the setup.
-
-For the review gate you also want a SECOND model on the machine — see
-[Recommended setup](#recommended-setup-either-host-an-independent-second-opinion).
-The setup interview will ask, and can install it for you.
-
-`bootstrap.sh` copies files and configures git hooks. It does not ask you anything and it
-does not fill anything in — that is the interview's job, because the decisions it needs
-(what is risky here, which boundaries must be enforced, what the gates are) cannot be
-answered by a script. Pass `--note "..."` to leave an agenda the interview must address.
-
-## What's in the box
-
-| Path | What it does |
-|---|---|
-| `bootstrap.sh` | Mechanical install: copy, mkdir, wire the git hooks path, record the kit version |
-| `setup/INTERVIEW.md` | The real entry point — a conversational setup an agent runs with you |
-| `setup/RESEARCH_PROTOCOL.md` | How the agent researches the current tooling ecosystem before advising you |
-| `core/` | The universal layer: constitution, the three knowledge files (PROJECT / PHASES / STATE), architecture map, workflow, review gate, handoff template, gates, hooks |
-| `overlays/` | Optional layers, added and never assumed: `unity` for the engine (assembly layout, the batchmode test gate, and a default MCP server — CoplayDev's tool-agnostic `MCP for Unity` — with the scoping traps that cost real time to find), `claude-code` for that tool's project-local hooks and review subagent |
-| `plugin/` | The Claude Code plugin: the three `/myagentkit:*` commands. Installed once per machine, not copied per project |
-| `plugins/myagentkit/` | The Codex plugin: Claude review-and-fix and implementation-proposal skills, with a bundled review adapter |
-| `.agents/plugins/marketplace.json` | The local Codex marketplace catalog; install from the kit repository root |
-| `patterns/` | Optional reading — the reasoning behind specific hard-won designs. Not copied by default |
-| `docs/` | Long-form rationale: why each rule exists, and the failure mode it prevents |
-| `sync-kit.sh` | Propagate kit updates into a project that already installed it |
-| `RESEARCH_LOG.md` | Dated findings with verdicts — including rejections, so they are not re-litigated |
-| `CONTRIBUTING.md` | How a project using the kit sends what it learned back |
-
-## Recommended setup: either host, an independent second opinion
-
-The kit's central review rule is that **the author of a change never reviews it**, and that
-the value of a second opinion is that it is *decorrelated* — a different model, not the same
-one asked twice. That needs two CLIs.
-
-**Which one you put in the driver's seat matters much less than having two.** The pairing
-below is the one this was built and used on, and it is a recommendation rather than a
-requirement; swap either side and every rule and gate still works.
-
-**Keep the host that suits the work.** Claude Code was the original main agent and remains
-supported. Codex can now call Claude without leaving its session too. The previous claim
-that only one direction could do this is no longer accurate. This integration does not
-establish which model is better at managing or implementing a particular project.
-
-With Claude Code you get:
-
-- **`/myagentkit:cross-review`** (plugin) — the review gate as a command. This is the kit's
-  own, and the section below explains why it is not the same thing as a review command.
-- **`/myagentkit:handoff`** (plugin) — turns the current work into ONE self-contained prompt
-  for another tool, model or session, so nothing depends on chat history the next reader
-  cannot see.
-- **A read-only `diff-reviewer` subagent** (overlay) — the review protocol without a second
-  CLI, for when you want a fresh reviewing session rather than a fresh vendor.
-- **Three editor-side hooks** (overlay) — a boundary guard that fires the moment a forbidden
-  import is written, a refusal to run destructive git commands over uncommitted work, and
-  the gate on every turn end. None is load-bearing; they shorten the feedback loop from
-  "next commit" to "next second".
-
-**Add the Codex CLI as the second model.** `scripts/review.sh` shells out to it and needs
-only the `codex` binary — no plugin. Optionally add **OpenAI's `codex` plugin**
-(`/plugin install codex@openai-codex`), which contributes `/codex:review`,
-`/codex:adversarial-review` (challenges the design and the tradeoffs, not just the defects),
-`/codex:rescue` for handing an investigation or a stuck fix to a Codex subagent, and
-`/codex:transfer` to move the session into a resumable Codex thread.
-
-### `/myagentkit:cross-review` and `/codex:review` are not the same thing
-
-Install both. They answer different questions, and the difference is the whole point of the
-gate.
-
-**`/codex:review` is a review tool.** It runs a second model over your git state and hands
-you its findings. Fast, generic, useful, and it knows nothing about your project.
-
-**`/myagentkit:cross-review` is the review gate protocol**, which uses a second model as one input.
-Four things it does that a review command does not:
-
-1. **It makes you verify.** The reviewer's output is treated as *untrusted input*, never a
-   verdict. The calling agent has to check every finding against the code, drop what it
-   disproves, keep what it confirms, and say which is which — relaying a verdict unchecked
-   is a failed review **in either direction**, including a relayed Accept. This is the
-   load-bearing rule, and it is the one a generic review command cannot enforce, because it
-   has no opinion about what you do with its output.
-2. **It carries YOUR project's priorities.** The prompt is built from `docs/REVIEW_GATE.md`:
-   your risky areas, your design authority, your worst failure mode reviewed first. A
-   generic reviewer does not know that money paths in your codebase are more dangerous than
-   everything else in it.
-3. **It archives evidence.** Every run writes
-   `docs/reviews/<UTC-timestamp>-<random>-<reviewer>-review.md` recording which model
-   reviewed and whether that model is attested, reasoning effort, sandbox mode, limits,
-   scope, HEAD, the checkout fingerprint and the diff hash — and that file is never edited
-   afterwards. Both reviewers write the SAME format, so a project that swaps the author and
-   reviewer roles can still line its records up. Six weeks later "was this reviewed, by what, at what
-   setting?" is answerable instead of remembered.
-4. **It ends in a verdict that goes somewhere.** `Accept` / `Accept with Manual Checks` /
-   `Reject`, with any manual checks written into `docs/STATE.md` as full sentences *before*
-   the commit — so an unverifiable claim becomes a standing obligation rather than a
-   sentence in a chat log.
-
-It also refuses to fail open: the sandbox and the reviewer's throwaway copy are pinned in the
-wrapper and its adapters rather than trusted to the CLI, the three scope flags are the only arguments accepted (an agent cannot talk it into a
-write-capable run), an empty change set exits nonzero instead of reporting a passed review,
-and a report with no verdict line is a failure rather than a success.
-
-Practically: reach for `/codex:review` or `/codex:adversarial-review` whenever you want
-another pair of eyes. Use `/myagentkit:cross-review` when the gate applies — risky diffs, and every
-change to a gate.
-
-### Codex as the host
-
-Install the kit's Codex plugin from the local checkout, then start a new thread:
+That adds `/myagentkit:cross-review`, `/myagentkit:handoff` and `/myagentkit:kit-feedback`.
+With Codex as the host:
 
 ```sh
 codex plugin marketplace add /absolute/path/to/MyAgentKit_Keel
 codex plugin add myagentkit@personal
 ```
 
-Use `$myagentkit-review`, `$myagentkit-delegate`, `/skills`, or a direct request such as
-"Ask Claude to review this and fix confirmed findings." These are native Codex skills,
-not Claude-style custom slash commands. Review manages a bounded verification, repair,
-and fresh re-review loop. Delegation returns a patch for Codex to inspect and integrate,
-not a second unrestricted writer. Automatic invocation requires explicit spending
-authorization. See [Codex setup and limits](docs/CODEX.md) before installation.
+That adds the `$myagentkit-review` and `$myagentkit-delegate` skills
+([docs/CODEX.md](docs/CODEX.md) has the limits).
 
-## What is a recommendation, and what is a requirement
+## What a project gets
 
-Two different claims live in this repository, and conflating them would be the kind of
-overclaiming it tells you to avoid.
+| File | Role |
+|---|---|
+| `AGENTS.md` | The constitution. Every agent reads it first, every session. `CLAUDE.md` and friends are one-line pointers to it. |
+| `docs/PROJECT.md` | Design authority: what the project is and every decision, each DECIDED or OPEN. An agent never marks DECIDED on its own. |
+| `docs/PHASES.md`, `docs/BACKLOG.md` | What is being built now, what is out of scope, the next and parked tasks with ids. |
+| `docs/STATE.md` | Cross-session work state. A commit's `Done: <id>` trailer closes a task; the gate refuses a commit that leaves a closed task open. |
+| `docs/ARCHITECTURE.md`, `docs/GOTCHAS.md` | The module map with its boundaries; the traps the project already paid for. |
+| `docs/WORKFLOW.md` | How a task runs: the cheapest proof, when a worker is worth its cost, review rounds, the lead's steps, the worker lifecycle. |
+| `docs/REVIEW_GATE.md`, `docs/REVIEW_RUNNING.md` | What a review must attack first and how a verdict is reached; how a review is run. |
+| `docs/HANDOFF.md` | One self-contained brief for another tool, model or session, and the result file it writes back. |
+| `scripts/check.sh` | The gate. CI runs the same script. `--self-test` proves every gate goes red. A documentation-only commit skips the build. |
+| `scripts/review.sh` | The cross-model review: a second model in a throwaway copy, with archived evidence. |
+| `scripts/doctor.sh` | A machine check at session start: what is missing, and the fix for each. |
+| `scripts/boundary_checks.sh` | The import and dependency boundaries, each with a self-test. |
+| `.githooks/` | `pre-commit`, `commit-msg`, `pre-merge-commit`, `post-merge`: the gate, the trailer grammar, the full gate before a merge, the worktree clean-up after one. |
 
-**The rules are tool-agnostic.** `AGENTS.md`, the workflow, the review protocol, the state
-file, `scripts/check.sh`, the git hook and CI make no assumption about which agent you run,
-or whether you run one at all.
+The `claude-code` overlay adds `scripts/spawn_worker.sh`, `show_workers.sh`,
+`watch_workers.sh`, `close_worker.sh` and `clean_worktrees.sh`, the `diff-reviewer` and
+`worker` sub-agents, and three editor-side hooks (a boundary guard as you type, a refusal
+of destructive git over uncommitted work, the gate at every turn end). The hooks shorten
+the loop; the gate does not depend on them.
 
-**The shipped automation is not.** It was written for the pair above:
+## How work runs
 
-- Claude Code's project-local hooks and its `diff-reviewer` subagent live in
-  `overlays/claude-code/` — an overlay you take deliberately, not part of the core. The
-  three `/myagentkit:*` commands are not there; they are a plugin, installed once per
-  machine and upgraded in place.
-- `scripts/review.sh --reviewer codex|claude` runs either direction; the default is a
-  project setting, not a kit opinion. Both pin their model by name and refuse to run
-  unpinned. Neither a successful subprocess nor a confident transcript is treated as
-  approval.
+1. A session starts with `./scripts/doctor.sh`, then `AGENTS.md`, `PHASES.md`, `STATE.md`.
+2. A task is small, in one module, with a definition of done that a gate can check.
+3. The lead does a short task itself. A task that will take about an hour or more than one
+   review round goes to a worker: a fresh session with a brief, in its own worktree, in a
+   visible tab. The worker reviews its own diff with fresh reviewers before it reports, and
+   writes a result file whose first lines say `Kind`, `Task`, `Attempt`, `Remaining`.
+4. The watcher reports `DONE`, `BLOCKED`, `HANDOFF`, `PROGRESS`, a question, or a prompt
+   that waits on a person. The lead merges, folds the docs, and closes the worker.
+5. A risky diff, and every change to a gate, goes through `scripts/review.sh`. The reviewer
+   runs the suite and its reproductions in a throwaway copy and marks each finding
+   `REPRODUCED` or `REASONED`. The calling agent verifies every finding against the code and
+   writes the verdict and any manual checks into `STATE.md` before the commit.
+6. `post-merge` removes a finished worker's worktree when its commits are in the main branch,
+   nothing in it differs from the index, it has been quiet for an hour, and no process has it
+   open. A loose commit is saved under `refs/kit/saved/` first. A branch is never deleted.
 
-Using neither costs you the editor-side hooks and live CLI review automation. The rules
-remain usable with manual review; the offline acceptance and review self-tests require
-Python 3.10+, Git, and a POSIX shell, but no authenticated AI CLI.
+## The review gate
 
-Additional CLI adapters remain welcome. Preserve scoped read access, independent sessions,
-durable final evidence, fail-closed behavior, negative tests, and a real invocation proving
-the CLI contract. Supporting another binary does not mean accepting another CLI's flags.
+`scripts/review.sh --base <ref> | --commit <sha> | --uncommitted [--reviewer codex|claude]`
+runs the second model and writes
+`docs/reviews/<UTC-timestamp>-<id>-<reviewer>-review.md`: which model, whether it attested
+its identity, effort, sandbox, limits, scope, HEAD, the checkout fingerprint (working tree
+and index) and the diff hash. The file is never edited afterwards.
 
-## How updates work
+It fails closed. The reviewer works in a copy the adapter builds from the checkout's bytes
+under one deadline; a write that reaches the repository fails the review as
+`stale_checkout`; the three scope flags are the only arguments; an empty change set, a
+missing verdict line, an unpinned model, or a provider's content classifier stopping the
+run is a failure, never a pass. A reviewer's `Reject` is input to the calling agent's own
+decision, and a relayed verdict in either direction is a failed review.
 
-Files are one of two kinds. **Kit-owned** files carry a header saying so; `sync-kit.sh`
-overwrites them wholesale. **Project-owned** files — the constitution, the workflow, the
-check script, the reviewer definition — are customised per project, and neither
-`sync-kit.sh` nor a re-run of `bootstrap.sh` overwrites one (only `bootstrap.sh --force`
-does). A file of the project's own at a path the kit has since made kit-owned, a hook for
-example, is listed as `conflict:` and the sync stops before it copies anything. After
-overwriting, `sync-kit.sh` prints the `CHANGELOG.md` entries added since your recorded
-version and lists their **ACTION** items as a checklist, each version's as one ordered list,
-so you can hand-apply the rest deliberately. It records the new version only after those items are confirmed
-(`--actions-applied`); until then every run reprints them and exits 2.
+## Updates
 
-Updates also flow the other way. Every project using the kit asks one question in its
-periodic audit: *did we learn anything this cycle that belongs in the kit rather than
-here?* If yes, the kit changes first, then the project syncs. That is why
-`RESEARCH_LOG.md` exists.
+A file is kit-owned (it carries a `KIT-OWNED` header; `sync-kit.sh` overwrites it) or
+project-owned (customised at setup; never overwritten). `sync-kit.sh` refreshes the
+kit-owned files, prints the `CHANGELOG.md` entries since the project's recorded version
+with their **ACTION** items as one ordered checklist, and records the new version only after
+`--actions-applied`. A project file at a path the kit has since made kit-owned stops the
+sync as a `conflict:` before anything is copied.
 
-## The kit is supposed to outgrow me
+## Requirements
 
-A foundation written once by one person goes stale exactly where that person does not work.
-Mine is a Unity and .NET shape; if the kit only ever sees that, its advice about everything
-else decays quietly and nobody finds out.
+POSIX `sh`, git (2.36 or newer for the worktree clean-up), Python 3.10 or newer for the
+review tooling and the kit's own tests. Linux, WSL and macOS are in CI; Windows is used
+through WSL with Windows Terminal tabs (on native Windows Python the kit's tooling imports,
+but a review run, the gate lock and the worktree clean-up need a POSIX host). One AI CLI runs the project; a second one runs
+the review gate. Without either, the rules, the gate and the hooks still work.
 
-Two separate things follow from that, and it is worth not confusing them.
+## Feedback upstream
 
-**The kit keeps learning in your project, always.** The ecosystem research at install, the
-periodic audit, the traps a real session walks into and writes down — that is how the
-foundation stays current for *you*, and it runs regardless of anything below. It writes to
-your own `RESEARCH_LOG.md` and your own docs. Nothing about it points outward.
+The kit improves fastest from the projects that hit its edges. The setup interview asks
+once whether the agent may offer to send a finding upstream; `/myagentkit:kit-feedback`
+strips the project out of the text, shows the exact body, and sends nothing until you say
+yes. [CONTRIBUTING.md](CONTRIBUTING.md) is the same process by hand, and
+`RESEARCH_LOG.md` holds every dated finding with its verdict, rejections included.
 
-**Sending any of it upstream is opt-in, and the setup interview asks once.** The question is
-whether you want the agent to *offer* — "some of this looks like it belongs in the kit
-rather than here, want me to send it?" — or to stay quiet about it and leave the choice to
-you. Say no and the clause never enters your constitution, so no future session raises it
-again. `/myagentkit:kit-feedback` still works whenever you want it; declining the offer is
-not declining the door.
+## Repository map
 
-If you leave the offer on, it stays a light touch: once per research pass, once when
-something about the foundation itself misbehaved — a gate that failed open, a rule that did
-not survive real work, an ambiguous instruction. Not once per finding, and never twice for
-the same one.
+| Path | What it is |
+|---|---|
+| `bootstrap.sh`, `sync-kit.sh` | Install into a project; propagate a kit update into one. |
+| `setup/` | The interview an agent runs with you, and the research protocol it follows. |
+| `core/` | What every project receives: the constitution, the docs, the gate, the hooks, the review tooling. |
+| `overlays/` | Optional layers: `claude-code` (workers, sub-agents, hooks), `unity` (assembly layout, the batchmode test gate, an MCP server). |
+| `plugin/`, `plugins/myagentkit/` | The Claude Code plugin and the Codex plugin, installed once per machine. |
+| `patterns/` | Optional reading on specific designs. |
+| `docs/` | The rationale for each rule, the acceptance record, the review archive. |
+| `scripts/`, `tests/` | The kit's own check and its test suites. |
+| `CHANGELOG.md`, `RESEARCH_LOG.md`, `CONTRIBUTING.md` | What changed and how to upgrade; why; how to send something back. |
 
-Whichever way you answer, `/myagentkit:kit-feedback` behaves the same when you run it: it
-decides issue or PR, **strips your project out of the text**, shows you the exact body, and
-sends nothing until you say yes. Because it publishes to a public repository, three things
-it will never do are send anything you have not read, include your paths, names or code, or
-act on its own initiative.
+## Origin
 
-Doing it by hand is fine too — [CONTRIBUTING.md](CONTRIBUTING.md) is the same process
-written out, including what belongs here and what does not.
-
-Most useful thing to send, if you are looking for one: **a platform I cannot test.** These
-scripts run on Linux, native and under WSL. macOS and BSD are untested — the scripts are
-POSIX `sh`, but in places they assume GNU `grep` and `sed` behaviour, which is exactly where
-they would break first.
-
-## Where this came from
-
-Six years of shipping games, across several engines, with the depth in Unity and .NET. Long
-enough to have watched codebases rot for reasons that had nothing to do with the language,
-and to know which practices survive contact with a deadline and which ones are read once and
-never again.
-
-The last year of that went into a narrower question: how to work with CLI agents without
-paying the compounding cost they impose — the second implementation of a system nobody could
-find, the rule that erodes because nothing enforces it, the context that dies with the
-session. This kit is what came out of it. The year supplied the AI-specific parts; the six
-before it supplied the judgement about which of them were worth enforcing.
-
-Nothing here was designed in the abstract: every rule is in the kit because something broke
-without it. The founding lessons — including three gates that reported PASS while protecting
-nothing — are written up in `RESEARCH_LOG.md` with the failure each one prevents.
+Every rule here is in the kit because something broke without it; the failures are
+written up in `RESEARCH_LOG.md`.
 
 MIT licensed.
