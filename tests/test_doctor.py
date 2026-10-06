@@ -322,9 +322,17 @@ class DoctorTests(unittest.TestCase):
             # One PATH for both; the stub tmux in front again for the node case, so only node is
             # absent there.
             no_tmux_node = path_without('tmux', 'node')
+            # Native Windows has no tmux: there spawn_worker.sh needs Windows Terminal instead.
+            mingw = tmp / 'mingw-uname'
+            mingw.mkdir()
+            (mingw / 'uname').write_text('#!/bin/sh\necho MINGW64_NT-10.0-26200\n')
+            (mingw / 'uname').chmod(0o755)
+            # A WSL host's PATH holds the real wt.exe: it is dropped too.
+            no_tmux_mingw = str(mingw) + os.pathsep + path_without('tmux', 'node', 'wt.exe')
             for path, expect in ((str(older) + os.pathsep + env['PATH'],
                                   'MISSING: Python 3.10 or newer as python3'),
                                  (no_tmux_node, 'MISSING: tmux, which scripts/spawn_worker.sh needs'),
+                                 (no_tmux_mingw, 'MISSING: Windows Terminal (wt.exe), which scripts/spawn_worker.sh'),
                                  (str(bin_dir) + os.pathsep + no_tmux_node,
                                   'MISSING: node is not resolvable on the PATH a git hook inherits'),
                                  (str(fake_id) + os.pathsep + env['PATH'],
