@@ -2564,34 +2564,50 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
             os.environ['PATH'] = old_path
 
     def test_a_cancel_during_cleanup_still_reaps_the_extraction(self):
-        # With a raising cancel handler armed, a SIGTERM during the first reap skipped the
-        # second: the tar child survived. Cleanup runs with the cancel signals blocked.
+        # A raising cancel handler armed, and the cancel delivered DURING the first reap (sent
+        # by the first kill itself): without the blocked mask the raise skipped the second
+        # reap and the extraction survived. Both the archive path and the listing path.
         import claude_bridge
         import agent_process
+        from unittest.mock import patch
         bin_dir = self.root / 'slowbin3'
         bin_dir.mkdir(exist_ok=True)
-        pid_file = self.root / 'tar.pid'
+        pid_file = self.root / 'child.pid'
         (bin_dir / 'tar').write_text('#!/bin/sh\necho $$ > %s\ncat > /dev/null\nsleep 30\n' % pid_file)
         (bin_dir / 'tar').chmod(0o755)
-        head = self.git('rev-parse', 'HEAD').stdout.decode().strip()
+        real_git = shutil.which('git')
+        (bin_dir / 'git').write_text('#!/bin/sh\ncase " $* " in *" ls-files "*) echo $$ > %s; sleep 30 ;; esac\n'
+                                     'exec %s "$@"\n' % (pid_file, real_git))
+        (bin_dir / 'git').chmod(0o755)
+        head = subprocess.run([real_git, '-C', str(self.repo), 'rev-parse', 'HEAD'],
+                              capture_output=True, text=True).stdout.strip()
+        real_killpg = os.killpg
+
+        def killpg_then_cancel(pgid, sig):
+            real_killpg(pgid, sig)
+            os.kill(os.getpid(), signal.SIGTERM)  # pending while blocked, raised after the reaps
         old_path = os.environ['PATH']
         os.environ['PATH'] = str(bin_dir) + os.pathsep + old_path
-        guard = agent_process.OneShot()
-        previous = agent_process.hold(guard)
         try:
-            copy = Path(tempfile.mkdtemp(dir=self.root))
-            # The first reap raises the pending cancel once it is unblocked: send it while
-            # the copy waits on the bound.
-            import threading
-            threading.Timer(0.2, lambda: os.kill(os.getpid(), signal.SIGTERM)).start()
-            with self.assertRaises((claude_bridge.BridgeError, KeyboardInterrupt, SystemExit, Exception)):
-                claude_bridge.throwaway_copy(self.repo, head, None, copy, timeout=0.4)
-            time.sleep(0.3)
-            tar_pid = int(pid_file.read_text())
-            with self.assertRaises(ProcessLookupError, msg='the extraction outlived the cancel'):
-                os.kill(tar_pid, 0)
+            for name, diff in (('archive', None), ('listing', '')):
+                with self.subTest(name):
+                    pid_file.unlink(missing_ok=True)
+                    guard = agent_process.OneShot()
+                    previous = agent_process.hold(guard)
+                    try:
+                        copy = Path(tempfile.mkdtemp(dir=self.root))
+                        with patch.object(claude_bridge.os, 'killpg', killpg_then_cancel):
+                            with self.assertRaises(BaseException) as ctx:
+                                claude_bridge.throwaway_copy(self.repo, head, diff, copy, timeout=0.3)
+                        self.assertNotIsInstance(ctx.exception, claude_bridge.BridgeError,
+                                                 'the cancel was never raised: %s' % ctx.exception)
+                    finally:
+                        agent_process.restore(previous)
+                    time.sleep(0.2)
+                    child = int(pid_file.read_text())
+                    with self.assertRaises(ProcessLookupError, msg='a child outlived the cancel during cleanup'):
+                        os.kill(child, 0)
         finally:
-            agent_process.restore(previous)
             os.environ['PATH'] = old_path
 
     def test_a_temporary_directory_inside_the_repository_is_refused_and_git_is_fenced(self):

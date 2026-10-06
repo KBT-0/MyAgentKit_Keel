@@ -226,7 +226,12 @@ def throwaway_copy(repo: Path, head: str, diff: str | None, copy: Path,
         if listing.returncode:
             raise BridgeError("could not list the checkout: " + err.decode(errors="replace"))
     finally:
-        reap(listing, listing_pgid)
+        # As for the archive: no raising cancel between the kill and the reap.
+        mask = signal.pthread_sigmask(signal.SIG_BLOCK, agent_process.CANCEL_SIGNALS)
+        try:
+            reap(listing, listing_pgid)
+        finally:
+            signal.pthread_sigmask(signal.SIG_SETMASK, mask)
     for raw in sorted(set(listed.split(b"\0")) - {b""}):
         check_running()
         rel = Path(os.fsdecode(raw))
