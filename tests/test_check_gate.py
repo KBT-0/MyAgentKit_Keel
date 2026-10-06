@@ -237,6 +237,14 @@ class CheckGateTests(unittest.TestCase):
         self.assertEqual(index.read_bytes(), copy, 'the self-test wrote the index GIT_INDEX_FILE names')
         self.assertEqual(staged(), before)
 
+    def test_the_self_test_reads_its_own_history_under_an_exported_git_dir(self):
+        # An exported GIT_DIR sent the synthetic-history readers to the caller's repository,
+        # which has no `Done: K4`: the closed-task cases failed on a green project.
+        project = self.selftest_ready()
+        code, out = gate(project, self.build, timeout=300, args=('--self-test',),
+                         GIT_DIR=str(project / '.git'))
+        self.assertEqual(code, 0, out)
+
     def test_the_off_switch_passes_its_own_self_test(self):
         # docs_only_skip_build=0 runs the build on a documentation-only commit; the self-test
         # demanded the skipped build anyway, so a correctly configured project could not pass.

@@ -244,6 +244,20 @@ esac
 # An earlier version claimed "every gate was observed rejecting its failure case" while
 # several gates had no case at all.
 # ===========================================================================
+# The self-test's throwaway repositories are never the caller's. Inside a hook git exports
+# GIT_INDEX_FILE, and a caller may export GIT_DIR or GIT_OBJECT_DIRECTORY: inherited, a
+# fixture's `git add -A` replaced the caller's staged content, and the synthetic-history
+# readers (section 2) read the caller's history. fixture_env, called first in a subshell,
+# unsets each variable that routes git to a repository: git's own list (`git rev-parse
+# --local-env-vars`), the main ones again in case that fails, and two it leaves out.
+# GIT_CONFIG* stays, as the gate's own documentation-only check keeps it.
+fixture_env() {
+  for v in $(git rev-parse --local-env-vars 2>/dev/null) GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE \
+      GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_NAMESPACE GIT_CEILING_DIRECTORIES; do
+    case $v in GIT_CONFIG*) ;; *) unset "$v" ;; esac
+  done
+}
+
 self_test() {
   st_fail=0
   # Outside the tree, added to the scanners' input through a test switch (see the file
@@ -251,18 +265,8 @@ self_test() {
   inj="$work/injected.md"
   # The marker that lets this run's nested gates honour the seams (see the seam block).
   GATE_SELFTEST_NESTED=$(cat "$lock_path"); export GATE_SELFTEST_NESTED
-  # The throwaway repositories below are never the caller's. Inside a hook git exports
-  # GIT_INDEX_FILE, and a caller may export GIT_DIR or GIT_OBJECT_DIRECTORY: inherited, a
-  # fixture's `git add -A` replaced the caller's staged content. Every git call and hook run on
-  # a fixture runs in a subshell that calls fixture_env first, which unsets each variable that
-  # routes git to a repository: git's own list (`git rev-parse --local-env-vars`), the main ones
-  # again in case that fails, and two it leaves out. GIT_CONFIG* stays, as the gate's own
-  # documentation-only check keeps it.
-  fixture_vars="$(git rev-parse --local-env-vars 2>/dev/null) GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
-    GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_NAMESPACE GIT_CEILING_DIRECTORIES"
-  fixture_env() {
-    for v in $fixture_vars; do case $v in GIT_CONFIG*) ;; *) unset "$v" ;; esac; done
-  }
+  # The throwaway repositories below are never the caller's: every git call and hook run on a
+  # fixture runs in a subshell that calls fixture_env first (defined above self_test).
 
   # A red tree cannot prove that a gate turns red: everything would "fail correctly".
   if ! baseline=$(sh "$0" 2>&1); then
@@ -792,13 +796,18 @@ fi
 # or no commit yet: nothing has been closed, and nothing is checked. A shallow clone holds
 # part of the history: a NOTE says so, and the part it holds is checked.
 history_repo="${GATE_SELFTEST_HISTORY:-.}"
-if git -C "$history_repo" rev-parse -q --verify HEAD >/dev/null 2>&1; then
-  [ "$(git -C "$history_repo" rev-parse --is-shallow-repository)" != true ] ||
+# The self-test's synthetic history is read with no inherited GIT_DIR routing it elsewhere.
+hgit() {
+  if [ -n "${GATE_SELFTEST_HISTORY:-}" ]; then ( fixture_env; git -C "$history_repo" "$@" )
+  else git -C "$history_repo" "$@"; fi
+}
+if hgit rev-parse -q --verify HEAD >/dev/null 2>&1; then
+  [ "$(hgit rev-parse --is-shallow-repository)" != true ] ||
     echo "NOTE [state]: a shallow clone; only the Done: trailers of the commits it holds are checked."
   # One grammar with the hook: git matches the key in any case and unfolds a folded value,
   # and the value, trimmed, is exactly one id. A value that is not one (the hook bypassed, or
   # older than it) closes nothing, and a NOTE names it; every well-formed one still counts.
-  if git -C "$history_repo" log --format='@%h%n%(trailers:key=Done,unfold)' HEAD > "$work/done-trailers" &&
+  if hgit log --format='@%h%n%(trailers:key=Done,unfold)' HEAD > "$work/done-trailers" &&
      awk -v out="$work/done-ids" '
        /^@/ { commit = substr($0, 2); print > out; next }
        /./ { id = $0; sub(/^[^:]*:[ \t]*/, "", id); sub(/[ \t]+$/, "", id)
