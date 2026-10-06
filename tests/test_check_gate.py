@@ -520,11 +520,22 @@ class CheckGateTests(unittest.TestCase):
                 if found:
                     os.symlink(found, bin_dir / tool)
             os.symlink(shutil.which('python3'), bin_dir / 'python')
-            project = make_project(Path(tmp) / 'project')
+            project = Path(tmp) / 'project'
+            make_project(project)
+            shutil.copy(ROOT / 'core/scripts/doctor.sh', project / 'scripts/doctor.sh')
             env = {k: v for k, v in os.environ.items() if k not in ('PYTHON', 'PYTHONPATH')}
             env['PATH'] = str(bin_dir)
             doctor = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=project, env=env, capture_output=True, text=True)
             self.assertNotIn('Python 3.10', doctor.stdout + doctor.stderr)
+            # The gate re-executes itself through Python at once (the lock): an `exec` of a
+            # shell function fails with "exec: python3: not found", so the exec sites use the
+            # resolved command.
+            build = Path(tmp) / 'build.sh'
+            build.write_text('exit 0\n')
+            gate = subprocess.run(['sh', 'scripts/check.sh'], cwd=project, env=dict(env, GATE_TEST_BUILD=str(build)),
+                                  capture_output=True, text=True)
+            self.assertNotIn('not found', gate.stdout + gate.stderr)
+            self.assertIn('CHECK:', gate.stdout + gate.stderr)
             # dash answers 127 to `command -v` of a missing name, bash 1: only nonzero is asserted.
             self.assertNotEqual(subprocess.run(['sh', '-c', 'command -v python3'], env=env, capture_output=True).returncode, 0)
 

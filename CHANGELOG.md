@@ -515,8 +515,8 @@ from, and `5c80c36` is the kit's v0.8 commit.
    User-Agent. Then record the version with `"$KIT/sync-kit.sh" . --actions-applied`.
 
 14. **ACTION:** Commit the `.gitattributes` the sync installed, then run
-    `git add --renormalize .` and commit that too, so files already checked out with CRLF
-    on Windows go back to LF in the index.
+    `git add --renormalize -- .githooks '*.sh' '*.py'` and commit that too, so kit scripts
+    already checked out with CRLF on Windows go back to LF in the index.
 
 ## v0.8 — 2026-10-03
 

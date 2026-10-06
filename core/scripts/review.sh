@@ -50,11 +50,13 @@
 #   REVIEW_CLI_BIN   the Codex binary             (default: codex)
 #   CLAUDE_CLI_BIN   the Claude binary            (default: claude)
 set -u
-# Windows installs Python as `python` or `py`: when `python3` is absent, use the first of
-# those that is Python 3.10 or newer, under the name the scripts call.
-command -v python3 >/dev/null 2>&1 || python3() {
-  if command -v python >/dev/null 2>&1; then python "$@"; else py -3 "$@"; fi
-}
+# Windows installs Python as `python` or `py`: when `python3` is absent, the scripts call the
+# first of those under the usual name. A function is enough for a call; an `exec` cannot
+# run a function, so the exec sites use $kit_python, the resolved command.
+if command -v python3 >/dev/null 2>&1; then kit_python=python3
+elif command -v python >/dev/null 2>&1; then kit_python=python
+else kit_python=py; fi
+[ "$kit_python" = python3 ] || python3() { if [ "$kit_python" = py ]; then py -3 "$@"; else "$kit_python" "$@"; fi; }
 script_dir=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 # CDPATH cleared: exported, it sent a relative REVIEW_REPO_ROOT into another tree with that name.
 CDPATH= cd -- "${REVIEW_REPO_ROOT:-$script_dir/..}" || exit 2
@@ -142,6 +144,6 @@ set -- "$scope_flag"
 
 # Only with --fallback does the dispatcher make one failover to the other configured pin.
 # Each adapter retains its own evidence and usage; a completed Reject never triggers another call.
-exec python3 -B "$script_dir/review_dispatch.py" --repo "$PWD" --reviewer "$reviewer" $fallback \
+exec "$kit_python" -B "$script_dir/review_dispatch.py" --repo "$PWD" --reviewer "$reviewer" $fallback \
   --claude-model "${REVIEW_CLAUDE_MODEL:-$CLAUDE_MODEL}" \
   --codex-model "${REVIEW_CODEX_MODEL:-$CODEX_MODEL}" --effort "${REVIEW_EFFORT:-high}" "$@"

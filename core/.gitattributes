@@ -1,7 +1,6 @@
 # KIT-OWNED: do not edit locally; change it in the kit and re-sync.
 # The hooks and scripts run through `#!/usr/bin/env sh`: a CRLF checkout (core.autocrlf=true
 # on Windows) makes that line `sh\r`, and every hook dies before its first command.
-* text=auto
 .githooks/* text eol=lf
 *.sh text eol=lf
 *.py text eol=lf

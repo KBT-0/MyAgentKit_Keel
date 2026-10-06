@@ -38,11 +38,13 @@
 # separate paths in an earlier version of this script violated that rule and reported PASS
 # while enforcing nothing; a cross-model review found them.
 set -u
-# Windows installs Python as `python` or `py`: when `python3` is absent, use the first of
-# those that is Python 3.10 or newer, under the name the scripts call.
-command -v python3 >/dev/null 2>&1 || python3() {
-  if command -v python >/dev/null 2>&1; then python "$@"; else py -3 "$@"; fi
-}
+# Windows installs Python as `python` or `py`: when `python3` is absent, the scripts call the
+# first of those under the usual name. A function is enough for a call; an `exec` cannot
+# run a function, so the exec sites use $kit_python, the resolved command.
+if command -v python3 >/dev/null 2>&1; then kit_python=python3
+elif command -v python >/dev/null 2>&1; then kit_python=python
+else kit_python=py; fi
+[ "$kit_python" = python3 ] || python3() { if [ "$kit_python" = py ]; then py -3 "$@"; else "$kit_python" "$@"; fi; }
 # CDPATH cleared: exported, it made `cd scripts` print the directory into $gate, and the
 # lock below re-ran a two-line file name instead of the gate. The path is LOGICAL (pwd, not
 # pwd -P): the lock re-runs the gate by it, and the re-run cd's to its parent. With scripts/
@@ -165,7 +167,7 @@ if [ -z "$inherited" ]; then
   # Python ignores SIGPIPE and SIGXFSZ and catches SIGINT; the wait and the gate get back
   # what sh would have given them.
   # O_NOFOLLOW: a symlink here (the older lock's, left by a killed run) is refused by name.
-  exec python3 -c '
+  exec "$kit_python" -c '
 import os, signal, sys, time
 try:
     import fcntl
