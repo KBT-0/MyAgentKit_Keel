@@ -141,6 +141,9 @@ def _supervise(command, prompt, repo, timeout, started, guard, prior=None):
                     # throwaway_copy). A GIT_DIR from a hook would send its git to the repository.
                     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")
                            and k not in ("OLDPWD", "REVIEW_REPO_ROOT")}
+                    # The reviewer's git never discovers a repository above its working
+                    # directory: a copy made inside some checkout stays inside the copy.
+                    env["GIT_CEILING_DIRECTORIES"] = str(repo.parent)
                     child = subprocess.Popen(command, cwd=repo, stdin=inp, stdout=subprocess.PIPE,
                                              stderr=subprocess.PIPE, start_new_session=True,
                                              env=dict(env, PWD=str(repo), MYAGENTKIT_DELEGATION_DEPTH="1"),

@@ -15,7 +15,7 @@ import agent_process
 import agent_usage
 import codex_quota
 from claude_bridge import (REVIEW_ASKS, REVIEW_RUNS, BridgeError, git, prior_rounds, snapshot,
-                           throwaway_copy)
+                           throwaway_copy, review_tmpdir)
 
 
 def main(argv=None, result_sink=None):
@@ -79,6 +79,7 @@ def main(argv=None, result_sink=None):
         # The reviewer's workspace is a throwaway copy inside this directory, removed with it
         # on every way out (threat model: claude_bridge.throwaway_copy). Its sandbox confines
         # writes to the copy and the temporary directories and keeps the network off.
+        review_tmpdir(repo)
         with tempfile.TemporaryDirectory(prefix="myagentkit-codex-", ignore_cleanup_errors=True) as tmp:
             last = Path(tmp) / "final.txt"
             workdir = Path(tmp) / "copy"

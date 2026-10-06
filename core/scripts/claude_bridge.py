@@ -65,6 +65,20 @@ def git(repo: Path, *args: str, allowed=(0,), stdin: bytes | None = None) -> byt
     return result.stdout
 
 
+def review_tmpdir(repo: Path) -> None:
+    """Refuse a temporary directory inside the reviewed repository.
+
+    The copy has no git boundary of its own: made under a TMPDIR inside the checkout (an
+    ignored build folder, say), a `git reset --hard` run in it finds the REPOSITORY above and
+    resets the owner's work. Fail closed before the copy is made. The reviewer's git is also
+    fenced by GIT_CEILING_DIRECTORIES at the copy's parent (agent_process.run)."""
+    chosen = Path(os.path.realpath(tempfile.gettempdir()))
+    root = Path(os.path.realpath(repo))
+    if chosen == root or root in chosen.parents:
+        raise BridgeError("the temporary directory %s is inside the reviewed repository; "
+                          "set TMPDIR outside it" % chosen)
+
+
 def throwaway_copy(repo: Path, head: str, diff: str | None, copy: Path,
                    cancelled: list | None = None, timeout: float = 300,
                    deadline: float | None = None) -> None:
@@ -708,6 +722,7 @@ def main(argv=None, result_sink=None) -> int:
         held = agent_process.hold(lambda signum, frame: cancelled.append(signum))
         deadline = time.monotonic() + args.timeout
         # Removed when the attempt ends: a cancel is only noted here, so it reaches the cleanup.
+        review_tmpdir(repo)
         with tempfile.TemporaryDirectory(prefix="myagentkit-review-", ignore_cleanup_errors=True) as copy:
             workdir = repo
             # A preparation that uses up the deadline is a timeout like any other: it is

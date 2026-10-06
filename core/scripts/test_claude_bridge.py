@@ -24,7 +24,7 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'MYAGENTKIT_TASK_ID', 'MYAGENTKIT_R
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 106, 'test_agent_usage': 19, 'test_codex_quota': 5}
+SUITE_MINIMUMS = {'test_claude_bridge': 107, 'test_agent_usage': 19, 'test_codex_quota': 5}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -2593,6 +2593,47 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         finally:
             agent_process.restore(previous)
             os.environ['PATH'] = old_path
+
+    def test_a_temporary_directory_inside_the_repository_is_refused_and_git_is_fenced(self):
+        # A copy made under a TMPDIR inside the checkout has the repository above it: a
+        # `git reset --hard` in the copy reset the owner's work. Both adapters refuse such a
+        # TMPDIR before the copy is made, and the reviewer's git is fenced at the copy's parent.
+        import claude_bridge
+        inside = self.repo / 'build' / 'tmp'
+        inside.mkdir(parents=True)
+        with (self.repo / '.gitignore').open('a') as ignore:
+            ignore.write('build/\n')
+        self.install_wrapper()
+        self.commit_fixture('A clean HEAD')
+        (self.repo / 'file.py').write_text('uncommitted work\n')
+        old = os.environ.get('TMPDIR')
+        os.environ['TMPDIR'] = str(inside)
+        tempfile.tempdir = None
+        try:
+            with self.assertRaises(claude_bridge.BridgeError) as ctx:
+                claude_bridge.review_tmpdir(self.repo)
+            self.assertIn('inside the reviewed repository', str(ctx.exception))
+            code, result = self.run_bridge()
+            self.assertNotEqual(code, 0)
+            self.assertIn('inside the reviewed repository', json.dumps(result))
+            outcome = self.run_wrapper('--reviewer', 'codex', REVIEW_CLI_BIN=str(self.build_fake_codex()),
+                                       REVIEW_CODEX_MODEL='fixture-codex-model', TMPDIR=str(inside))
+            self.assertNotEqual(outcome.returncode, 0)
+            self.assertIn('inside the reviewed repository', outcome.stdout + outcome.stderr)
+        finally:
+            if old is None:
+                os.environ.pop('TMPDIR', None)
+            else:
+                os.environ['TMPDIR'] = old
+            tempfile.tempdir = None
+        self.assertEqual((self.repo / 'file.py').read_text(), 'uncommitted work\n')
+        # The fence: a git run by the reviewer in a copy that sits inside some checkout finds
+        # no repository (GIT_CEILING_DIRECTORIES at the copy's parent).
+        import agent_process
+        copy = self.repo / 'build' / 'copy'
+        copy.mkdir()
+        execution = agent_process.run(['git', 'rev-parse', '--show-toplevel'], '', copy, 30)
+        self.assertNotEqual(execution['exit_code'], 0, execution)
 
     def test_dispositions_are_claims_the_reviewer_verifies_not_settlements(self):
         # The author never approves its own work: a disproved finding counts only once the
