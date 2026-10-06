@@ -314,6 +314,22 @@ fixtures name their driver `fakelfs`: a host's global `filter.lfs.process` from 
 install` replaces a test's `filter.lfs.clean`, and the first run of the rendered case passed
 for that reason alone.
 
+**A second review pass** found three more gaps, each fixed with a case watched red first. A
+`.gitattributes` rule staged together with the pointer it makes, while the working tree and
+HEAD held neither, was filtered nowhere the bridge looked; the index's own attributes
+(`check-attr --cached`) are now read too. The proof's "sharing violation, not any refusal"
+condition had no case: a lock file made read-only refuses a fresh open with access denied
+while a claimed writable handle on it still writes, and accepting any refusal turned that
+claim into the lock. And several Windows guards were proven only in the kit's own test file,
+which projects never receive: `--self-test` now also fakes a file id equal to the lock's in
+its volume and first 64 bits (the proof's own code runs with GetFileInformationByHandleEx
+replaced), fakes a volume with no `FILE_ID_INFO`, kills a gate with `kill -9`, and kills the
+lock holder while its gate runs. In a bootstrapped project each guard was deleted in turn and
+only its own case went red, with one exception: the killed-holder case cannot be isolated,
+because a holder that does not hand its handle to the gate fails every gate run `FAIL [env]`
+before any case runs. The upgrade checklist now lists the exact native Windows transcript,
+`skip` lines included, so an owner can tell an expected line from a failure.
+
 **`review.sh` on native Windows: measured, not fixed.** The review asked for `agent_process.py`
 to tolerate a missing `SIGHUP` so that the self-test's review case runs on native Windows. With
 `SIGHUP` made optional, 121 of the 137 review tests still failed there (163 of the errors were

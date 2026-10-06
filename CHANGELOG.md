@@ -36,12 +36,15 @@ change is safe is in `RESEARCH_LOG.md` (2026-10-06 and 2026-10-07).
   POSIX `PATH` is never run. A linked worktree's `C:/` git path is read as absolute. The POSIX
   lock is unchanged. `python3` without `fcntl` on any other system still fails `FAIL [lock]`
   by name. `docs/DEV_SETUP.md` and `docs/GOTCHAS.md` say so.
-- **`--self-test` proves the Windows lock.** New cases: on native Windows, a nested run
-  refuses a writable handle on another file, a read-only handle on the held lock file and a
-  write handle while nothing holds the lock, and the lock refuses a reparse point at its path
-  (set with a tag any user may set, so the case never needs the symlink privilege and is
-  never skipped); on POSIX, a `cygpath` on `PATH` is never run. Each case says `skip` on the
-  other kind of host.
+- **`--self-test` proves the Windows lock.** Nine new cases on native Windows: a nested run
+  refuses a writable handle on another file, a read-only handle on the held lock file, a
+  write handle while nothing holds the lock, a fresh open refused for a reason other than the
+  lock (a read-only file), and a file id equal to the lock's in its volume and first 64 bits
+  only; a volume without `FILE_ID_INFO` fails closed; the lock refuses a reparse point at its
+  path (set with a tag any user may set, so the case never needs the symlink privilege and is
+  never skipped); a gate killed by a signal never exits 0; and a killed lock holder leaves the
+  lock with the gate it started. On POSIX, a `cygpath` on `PATH` is never run. The Windows
+  cases print one `skip` line on POSIX, and the POSIX case one on MSYS, MINGW and Cygwin.
 - **`review.sh` and Git LFS.** The v0.9 filter refusal checked every path in the checkout,
   not the paths a review changes, and `git lfs install` sets `filter.lfs.clean` globally:
   one LFS file anywhere refused every review. A filtered path the review does not change now
@@ -49,10 +52,11 @@ change is safe is in `RESEARCH_LOG.md` (2026-10-06 and 2026-10-07).
   with no filter) are that pointer or the content it names by size and sha256, and Git's own
   rendered diff of the working tree and of the index does not name it. A filtered path the
   review changes is refused, whichever side was filtered: candidates include names staged in
-  the index, deleted and renamed-away names, and the attributes are read in the working tree
-  and at each end of the reviewed range. So an index-only change to an LFS file, a commit
+  the index, deleted and renamed-away names, and the attributes are read in the working tree,
+  in the index and at each end of the reviewed range. So an index-only change to an LFS file, a commit
   that deletes one, renames it out of the filter or drops its attribute while changing it,
-  and any other clean filter or `ident` on a path are refused.
+  a filter rule staged together with the object it filters, and any other clean filter or
+  `ident` on a path are refused.
 - **Not yet on native Windows: `review.sh`.** The review adapters rely on POSIX signal masks
   and process groups (`pthread_sigmask`, `killpg`, `SIGHUP`), so `review.sh` and the review
   case of `check.sh --self-test` fail there. Run reviews, and the full self-test, from WSL or
@@ -85,11 +89,16 @@ from, and `00581dd` is the kit's v0.9 commit.
    PASS`), then `./scripts/check.sh --self-test` (expect `SELF-TEST: PASS`). On native Windows
    the self-test cannot pass yet: its review case fails because `review.sh` needs POSIX
    signals (above). There, run `./scripts/check.sh` and `./scripts/check.sh --self-test` from
-   Git for Windows' `sh` with the Windows `python3`, expect `CHECK: PASS` and every case
-   except the review adapter case `ok` (the four Windows lock cases among them), and run the
-   whole `--self-test` once more from WSL or another POSIX shell on the same commit, where it
-   must say `SELF-TEST: PASS`. A project with no POSIX shell has partial acceptance only; say
-   so in its state file.
+   Git for Windows' `sh` with the Windows `python3` and expect exactly this: `CHECK: PASS`;
+   in the self-test, `ok` for every case including the nine Windows lock cases, except
+   `FAIL — review adapter negative tests failed or did not run` with the review tests' own
+   output, the line `skip — a stray cygpath on a POSIX PATH` (a POSIX-only case), and a
+   `skip` the project's own setup prints (the commit-msg hook when `AGENTS.md` has no
+   attribution rule line); the last line is then `SELF-TEST: FAIL`. Any other `FAIL` or `skip`
+   blocks the upgrade. Then run the whole `--self-test` once more from WSL or another POSIX
+   shell on the same commit, where it must say `SELF-TEST: PASS` (there the Windows cases
+   print one `skip` line). A project with no POSIX shell has partial acceptance only; say so
+   in its state file.
 4. **ACTION:** Record the version BEFORE the upgrade commit, so the commit carries it: run
    `"$KIT/sync-kit.sh" . --actions-applied`, which writes `docs/kit/.kit-version`, then run
    `./scripts/check.sh` again and commit everything the upgrade changed together with

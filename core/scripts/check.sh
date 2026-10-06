@@ -489,15 +489,20 @@ self_test() {
         st_fail=1
       fi ;;
   esac
-  # Native Windows (no fcntl): the nested-run proof refuses a handle that fails any one of its
-  # three conditions, and the holder refuses a reparse point at the lock path. Each case runs a
-  # copy of this gate in a throwaway repository, so its lock is not the one this run holds, and
-  # asserts the refusal by its message. The reparse point carries a non-Microsoft tag, which any
-  # user may set, so the case runs without the privilege a symlink needs: a guard whose case
-  # cannot run there is a FAIL, never a skip.
+  # Native Windows (no fcntl). The nested-run proof refuses a handle that fails any one of its
+  # conditions: on another file, read-only, nothing holding the lock, a fresh open refused for a
+  # reason that is not a sharing violation (a read-only file), and a file id equal to the lock's
+  # in its volume serial and first 64 bits only; a volume with no FILE_ID_INFO fails closed.
+  # The holder refuses a reparse point at the lock path, never reports a gate killed by a
+  # signal as a pass, and a killed holder leaves the lock with the gate it started. Each case
+  # runs a copy of this gate in a throwaway repository, so its lock is not the one this run
+  # holds, and asserts the outcome by its message. Two cases need a fake: the proof's own code,
+  # cut out of this file, runs with GetFileInformationByHandleEx replaced. The reparse point
+  # carries a non-Microsoft tag, which any user may set, so no case needs the privilege a
+  # symlink does: a guard whose case cannot run there is a FAIL, never a skip.
   if python3 -c 'import os, sys; sys.exit(0 if os.name == "nt" else 1)' 2>/dev/null; then
     cat > "$work/lockcase.py" <<'LOCKCASE'
-import ctypes, os, struct, subprocess, sys
+import ctypes, os, re, struct, subprocess, sys, time
 mode, lock, gate = sys.argv[1:4]
 kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 kernel32.CreateFileW.restype = ctypes.c_void_p
@@ -505,13 +510,21 @@ kernel32.CreateFileW.argtypes = (ctypes.c_wchar_p, ctypes.c_ulong, ctypes.c_ulon
                                  ctypes.c_ulong, ctypes.c_ulong, ctypes.c_void_p)
 kernel32.DeviceIoControl.argtypes = (ctypes.c_void_p, ctypes.c_ulong, ctypes.c_char_p, ctypes.c_ulong,
                                      ctypes.c_void_p, ctypes.c_ulong, ctypes.c_void_p, ctypes.c_void_p)
+kernel32.GetFileInformationByHandleEx.argtypes = (ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p, ctypes.c_ulong)
 kernel32.CloseHandle.argtypes = (ctypes.c_void_p,)
+kernel32.CreateToolhelp32Snapshot.restype = ctypes.c_void_p
+RW, R = 0xC0000000, 0x80000000
 def handle(path, access, share, disposition=4, flags=0x80):
     opened = kernel32.CreateFileW(path, access, share, None, disposition, flags, None)
     if opened in (None, ctypes.c_void_p(-1).value):
         print("lockcase: cannot open %s (Windows error %d)" % (path, ctypes.get_last_error()))
         sys.exit(2)
     return opened
+def run(environment=None, wait=None):
+    return subprocess.call(["sh", gate], env=environment, close_fds=False, timeout=wait)
+def claimed(claim):
+    os.set_handle_inheritable(claim, True)
+    return dict(os.environ, GATE_LOCK_HELD=lock, GATE_LOCK_FD=str(claim))
 if mode == "reparse":
     link = handle(lock, 0x40000000, 0, 2, 0x02200000)
     data = struct.pack("<IHH", 0x99, 8, 0) + bytes(range(1, 17)) + b"reparse!"
@@ -523,35 +536,141 @@ if mode == "reparse":
         if not done:
             print("lockcase: cannot set a reparse point on %s (Windows error %d)" % (lock, error))
             sys.exit(2)
-        sys.exit(subprocess.call(["sh", gate]))
+        sys.exit(run())
     finally:
         os.remove(lock)
-RW, R = 0xC0000000, 0x80000000
+if mode == "readonly":
+    # Writable, on the lock file, nothing else holding it; then the file is made read-only, so a
+    # fresh open for writing fails with access denied (5), not a sharing violation (32).
+    environment = claimed(handle(lock, RW, 7))
+    if not kernel32.SetFileAttributesW(lock, 1):
+        print("lockcase: cannot make %s read-only (Windows error %d)" % (lock, ctypes.get_last_error()))
+        sys.exit(2)
+    try:
+        sys.exit(run(environment))
+    finally:
+        kernel32.SetFileAttributesW(lock, 0x80)
+if mode in ("noid", "wide"):
+    # The proof's own code from the gate, run with GetFileInformationByHandleEx faked: 'noid'
+    # gives no FILE_ID_INFO at all; 'wide' reports, for a handle on another file, the lock's
+    # FILE_ID_INFO with only its last byte changed (same volume, same first 64 id bits).
+    source = re.search(r"lock_probe=0\n  python3 -c '\n(.*?)\n' \"\$\{GATE_LOCK_FD:-\}\"",
+                       open(gate, encoding="utf-8").read(), re.S)
+    if not source:
+        print("lockcase: the nested-run proof was not found in %s" % gate)
+        sys.exit(2)
+    held = handle(lock, RW, 1)
+    claim = held if mode == "noid" else handle(lock + ".other", RW, 3)
+    os.set_handle_inheritable(claim, True)
+    info = ctypes.create_string_buffer(24)
+    if not kernel32.GetFileInformationByHandleEx(held, 18, info, 24):
+        print("lockcase: this volume gives the lock file no FILE_ID_INFO (Windows error %d)" % ctypes.get_last_error())
+        sys.exit(2)
+    near = info.raw[:23] + bytes([info.raw[23] ^ 1])
+    real = ctypes.WinDLL
+    class Fake:
+        argtypes = restype = None
+        def __init__(self, function):
+            self.function = function
+        def __call__(self, target, kind, buffer, size):
+            if mode == "noid":
+                ctypes.set_last_error(87)
+                return 0
+            if target != claim:
+                return self.function(target, kind, buffer, size)
+            ctypes.memmove(buffer, near, 24)
+            return 1
+    class Kernel:
+        def __init__(self, dll):
+            object.__setattr__(self, "dll", dll)
+            object.__setattr__(self, "fake", Fake(dll.GetFileInformationByHandleEx))
+        def __getattr__(self, name):
+            return self.fake if name == "GetFileInformationByHandleEx" else getattr(self.dll, name)
+    ctypes.WinDLL = lambda *args, **kwargs: Kernel(real(*args, **kwargs))
+    sys.argv = ["-c", str(claim), lock]
+    try:
+        exec(compile(source[1], "nested-run proof", "exec"), {"__name__": "__main__"})
+        status = 0
+    except SystemExit as stop:
+        status = stop.code if isinstance(stop.code, int) else 1
+    sys.stdout.flush()
+    print("lockcase: proof exit %d" % status)
+    sys.exit(0)
+if mode == "killgate":
+    marker = lock + ".killed"
+    status = run(dict(os.environ, LOCKCASE_KILL=marker))
+    if not os.path.exists(marker):
+        print("lockcase: the copy of the gate was not killed (its LOCKCASE line is missing)")
+        sys.exit(2)
+    print("lockcase: a gate killed by a signal exited %d" % status)
+    sys.exit(0)
+if mode == "killholder":
+    class Entry(ctypes.Structure):
+        _fields_ = [("size", ctypes.c_ulong), ("usage", ctypes.c_ulong), ("pid", ctypes.c_ulong),
+                    ("heap", ctypes.c_size_t), ("module", ctypes.c_ulong), ("threads", ctypes.c_ulong),
+                    ("parent", ctypes.c_ulong), ("priority", ctypes.c_long), ("flags", ctypes.c_ulong),
+                    ("exe", ctypes.c_wchar * 260)]
+    def children(pid):
+        snapshot, entry, found = kernel32.CreateToolhelp32Snapshot(2, 0), Entry(), []
+        entry.size = ctypes.sizeof(Entry)
+        more = kernel32.Process32FirstW(ctypes.c_void_p(snapshot), ctypes.byref(entry))
+        while more:
+            if entry.parent == pid:
+                found.append((entry.pid, entry.exe.lower()))
+            more = kernel32.Process32NextW(ctypes.c_void_p(snapshot), ctypes.byref(entry))
+        kernel32.CloseHandle(snapshot)
+        return found
+    started = lock + ".started"
+    first = subprocess.Popen(["sh", gate], env=dict(os.environ, LOCKCASE_HOLD=started), close_fds=False)
+    try:
+        deadline = time.monotonic() + 60
+        while not os.path.exists(started):
+            if first.poll() is not None or time.monotonic() > deadline:
+                print("lockcase: the first gate never reached its LOCKCASE line")
+                sys.exit(2)
+            time.sleep(0.1)
+        holders = [pid for pid, exe in children(first.pid) if exe.startswith("python")]
+        if len(holders) != 1:
+            print("lockcase: expected one python holder under the first gate, found %r" % children(first.pid))
+            sys.exit(2)
+        subprocess.call(["taskkill", "/F", "/PID", str(holders[0])], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        sys.exit(run(dict(os.environ, LOCKCASE_HOLD=lock + ".second", GATE_LOCK_WAIT="2"), 60))
+    finally:
+        subprocess.call(["taskkill", "/F", "/T", "/PID", str(first.pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        first.wait()
 if mode != "unheld":
     holder = handle(lock, RW, 1)
 claim = {"other": lambda: handle(lock + ".other", RW, 3), "reader": lambda: handle(lock, R, 3),
          "unheld": lambda: handle(lock, RW, 3)}[mode]()
-os.set_handle_inheritable(claim, True)
-environment = dict(os.environ, GATE_LOCK_HELD=lock, GATE_LOCK_FD=str(claim))
-sys.exit(subprocess.call(["sh", gate], env=environment, close_fds=False))
+sys.exit(run(claimed(claim)))
 LOCKCASE
-    for lock_case in other reader unheld reparse; do
+    refused="^FAIL \\[env\\]: GATE_LOCK_HELD names this checkout's lock, but this run did not inherit"
+    for lock_case in other reader unheld readonly wide noid reparse killgate killholder; do
       case_dir="$work/lock-$lock_case"
       case $lock_case in
-        other)   label="a nested run refuses a writable handle on another file while the lock is held" ;;
-        reader)  label="a nested run refuses a read-only handle on the held lock file" ;;
-        unheld)  label="a nested run refuses a write handle on the lock file while nothing holds it" ;;
-        reparse) label="the gate lock refuses a reparse point at the lock path" ;;
+        other)      want=$refused; label="a nested run refuses a writable handle on another file while the lock is held" ;;
+        reader)     want=$refused; label="a nested run refuses a read-only handle on the held lock file" ;;
+        unheld)     want=$refused; label="a nested run refuses a write handle on the lock file while nothing holds it" ;;
+        readonly)   want=$refused; label="a nested run refuses a fresh open that failed for a reason other than the lock" ;;
+        wide)       want='^lockcase: proof exit 1$'
+                    label="a nested run refuses a file id equal to the lock's in its volume and first 64 bits only" ;;
+        noid)       want='^FAIL \[lock\]: the volume holding .* no stable file id'
+                    label="a nested run on a volume without FILE_ID_INFO fails closed" ;;
+        reparse)    want='^FAIL \[lock\]: cannot open .*reparse point'; label="the gate lock refuses a reparse point at the lock path" ;;
+        killgate)   want='^lockcase: a gate killed by a signal exited [1-9]'; label="a gate killed by a signal never exits 0" ;;
+        killholder) want='^NOT RUN \[lock\]:'; label="a killed lock holder leaves the lock with the gate it started" ;;
       esac
+      # The copy stops or kills itself right after it holds the lock, when a case asks it to.
       if ! { ( fixture_env; git init -q "$case_dir" ) && mkdir "$case_dir/scripts" &&
-             cp "$0" "$case_dir/scripts/check.sh"; }; then
+             awk '/^work=\$\(mktemp -d\)/ {
+                    print "[ -z \"${LOCKCASE_HOLD:-}\" ] || { : > \"$LOCKCASE_HOLD\"; sleep 10; exit 0; }"
+                    print "[ -z \"${LOCKCASE_KILL:-}\" ] || { : > \"$LOCKCASE_KILL\"; kill -9 $$; }" }
+                  { print }' "$0" > "$case_dir/scripts/check.sh"; }; then
         echo "  FAIL — could not build the throwaway repository for the Windows lock case: $label"
         st_fail=1; continue
       fi
       out=$(python3 "$work/lockcase.py" "$lock_case" "$(cygpath -m "$case_dir/.git/check.lock")" \
               "$(cygpath -m "$case_dir/scripts/check.sh")" 2>&1)
-      if [ "$lock_case" = reparse ]; then want='^FAIL \[lock\]: cannot open .*reparse point'
-      else want="^FAIL \\[env\\]: GATE_LOCK_HELD names this checkout's lock, but this run did not inherit"; fi
       if printf '%s\n' "$out" | grep -q "$want"; then
         echo "  ok   — $label"
       else
