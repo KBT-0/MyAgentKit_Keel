@@ -788,18 +788,22 @@ def audit(record, ctx):
                 return ['cannot read %s in its git directory (%s)' % (show(rel), error.strerror)]
             if b'\0' in data:
                 return ['its git directory holds %s, a binary file this script cannot read for ids' % show(rel)]
+            # The same holder in any listing order: a ref before its reflog, then by name.
             for oid in token.findall(data):
-                holders.setdefault(oid.lower(), rel)
+                old = holders.get(oid.lower())
+                if old is None or (rel.startswith(b'logs/'), rel) < (old.startswith(b'logs/'), old):
+                    holders[oid.lower()] = rel
         if not holders:
             return []
         # Held: what the refs of the shared repository point at (main's branch, its branch,
         # refs/kit/saved/*), read from the main worktree, as this worktree's own refs
         # (refs/worktree/*, refs/bisect/*) go with it. No reflog: `git branch -d` deletes the
         # branch's, so an amended, reset or rebased-away tip is saved like any other. No
-        # remote-tracking ref: a later `git fetch --prune` drops it.
+        # remote-tracking ref: a later `git fetch --prune` drops it. Nor main's own per-worktree
+        # refs, which `git bisect reset` or a finished rebase there deletes.
         refs = git(ctx['main_root'], 'for-each-ref', '--format=%(objectname) %(refname)').stdout.split(b'\n')
-        held = set(line.split(b' ')[0] for line in refs
-                   if line and not line.split(b' ')[1].startswith(b'refs/remotes/'))
+        held = set(line.split(b' ')[0] for line in refs if line and not line.split(b' ')[1].startswith(
+            (b'refs/remotes/', b'refs/worktree/', b'refs/bisect/', b'refs/rewritten/')))
         # Only an id git calls missing is dropped; every other goes to rev-list, which fails on
         # anything it cannot walk.
         kinds = dict(line.split(b' ', 1) for line in git(
