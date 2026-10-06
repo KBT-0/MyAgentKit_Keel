@@ -52,6 +52,17 @@ require Python 3.10+ and do not resume an author session. Claude restricts sourc
 Read/Glob/Grep and disables customizations and MCP. Codex requests its read-only sandbox
 and never-approve policy; it does not implement Claude's tool allowlist or customization
 isolation. A shared evidence format does not imply identical permission mechanisms.
+
+**Neither adapter can execute yet, although both prompts ask the reviewer to.** The prompt
+asks for runs in a throwaway copy (`docs/REVIEW_GATE.md`, "The reviewer executes, in a
+throwaway copy"). Claude's review tools are Read, Glob and Grep, so it runs nothing; adding
+Bash to `--tools` with an allow rule (`dontAsk` refuses unapproved tools) would change that.
+Codex runs commands in its `-s read-only` sandbox, but nothing can write, so `mktemp -d`
+fails and no copy or suite can run. `-s workspace-write` allows writes to the workspace and
+the temporary directory and still refuses network access. A write into the reviewed checkout
+then fails the review as `stale_checkout`. Widening either adapter is an owner decision.
+Until then, these reviewers mark findings REASONED and list the runs as NOT RUN with that
+reason. The Claude Code overlay's `diff-reviewer` sub-agent has Bash and executes.
 Reference reviews require matching clean checkout context. Both share scope collection and
 checkout fingerprint validation, so a change while the reviewer runs invalidates its
 result, and evidence is published exclusively before usage can say completed.
@@ -106,6 +117,26 @@ decisions. This is an agent instruction, not an adapter-enforced session counter
 authorization check. The adapter enforces per-invocation limits only. Automation never
 authorizes a commit, push, deployment, or an author-only approval. The host is responsible
 for choosing a different reviewing model; `--requester` is reported metadata, not attestation.
+
+## Rounds, labels and designs
+
+When the rounds start and what runs in parallel is the lead's part, in `docs/WORKFLOW.md`,
+"Review rounds — early, inside the worker, in parallel". This section says how to run them.
+
+- Review a design under its own label, such as `<feature>-design`, before any code exists.
+  Commit the design on the feature's branch, so that every code round's diff carries it.
+- In the code rounds, answer a finding inside one of the design's exclusions with that
+  exclusion as its disposition ("deferred by decision", naming the design's section). Pass
+  it in `REVIEW_DISPOSITIONS` from the second round on; the first round has no earlier round
+  to attach it to, and the reviewer reads the exclusion in the diff.
+- Start the self-test and two reviewers at once, each as its own background job: for example
+  `./scripts/check.sh --self-test`, then `MYAGENTKIT_TASK_ID=<feature> ./scripts/review.sh
+  --base <base> --reviewer codex` and the same with `--reviewer claude`. Concurrent reviews
+  write archives with unique names that lie outside the review scope. A self-test that
+  writes into the working tree fails the reviews with `stale_checkout`; such a self-test runs
+  in a second worktree of the same commit.
+- Every round of one feature uses the same `MYAGENTKIT_TASK_ID`, so that later rounds carry
+  the earlier ones. The closing review alone uses a new label.
 
 ## Unavailable reviewer
 
@@ -178,8 +209,10 @@ waiting indefinitely. Accounting details live in `docs/USAGE.md`.
 ## Template to paste (tools without a wrapper)
 
 ```
-You are the safety diff reviewer for {{PROJECT_NAME}}. You are READ-ONLY: no file edits,
-no state-changing commands.
+You are the safety diff reviewer for {{PROJECT_NAME}}. You never change the reviewed
+checkout: no file edits and no state-changing commands in it. Run the suite, the self-test
+and your own reproductions in a throwaway copy, never with network access and never with a
+paid model call; mark each finding REPRODUCED (with the command) or REASONED.
 
 Read AGENTS.md, docs/ARCHITECTURE.md and docs/REVIEW_GATE.md, then review the diff below
 in the REVIEW_GATE.md priority order. Grep the callers of every changed public member.

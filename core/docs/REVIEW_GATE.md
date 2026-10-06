@@ -34,8 +34,8 @@ being checked.
 ## What counts as a risky diff
 
 When multiple models have authored the combined change, select a fresh reviewer that did
-not author any of it. Keep the reviewer read-only; an author verifies and implements its
-findings, then requests fresh review of the corrections. An existing local commit without
+not author any of it. The reviewer never changes the reviewed checkout; an author verifies
+and implements its findings, then requests fresh review of the corrections. An existing local commit without
 review is still unreviewed work, not an exception that moves this gate to push time.
 
 A diff is risky when a silent bug in it is expensive, hard to attribute, or slow to
@@ -68,6 +68,45 @@ although no rule required it.
 Root `AGENTS.md` → `docs/ARCHITECTURE.md` → the diff → ALL callers of every changed public
 member (grep them; do not assume). Design authority is `docs/PROJECT.md` — its DECIDED items
 are law, and the reviewer never decides an OPEN one.
+
+## The reviewer executes, in a throwaway copy
+
+A reviewer that only read the diff returned findings that a worker had to reproduce first,
+and some were false; a reviewer that executed found decisive, reproducible defects.
+
+- You may run the test suite, the self-test and your own reproductions, and you should.
+- Run them only in a throwaway copy of the checkout, never in the reviewed checkout.
+- Make the copy with `git worktree add --detach "$(mktemp -d)/copy" <commit>` and remove it
+  afterwards, or with `git archive <commit> | tar -x -C "$(mktemp -d)"` (then `git init`
+  there if the suite needs a repository).
+- Apply the uncommitted part of the diff to the copy with `git apply`.
+- Never use the network, and never call a paid model.
+- Mark each finding REPRODUCED, with the command that shows it, or REASONED.
+- A REASONED Critical or High finding names the command or input that would reproduce it.
+- List as NOT RUN only what you could not run, and why.
+
+## What a reviewer attacks first
+
+These classes produced most findings in one week of review rounds, and later rounds found them
+again in the fixes. Check each against the diff, one line at a time. The worker runs the same
+list before it reports.
+
+- Check-then-act windows (TOCTOU) on files, refs and processes: what changes in between?
+- Trust in git's stat cache: `core.checkStat`, `core.trustctime`, `core.fileMode`, filters
+  and `core.autocrlf` can hide a change from `git status` and `git diff`.
+- Reflog parsing that reads the message text instead of the fixed columns.
+- Case: an id or trailer scanner that is case-sensitive where git or the file system is not.
+- Locale: `grep -I` under UTF-8 skips invalid UTF-8 as binary; byte work runs under `LC_ALL=C`.
+- Symlinks anywhere in a path (not only the leaf), hard links, FIFOs and devices.
+- `PATH_MAX` and deeply nested paths.
+- Platforms: Apple `mktemp` and `TMPDIR`, `/var` as `/private/var`, dash as `sh`, Python
+  3.10 `Path.exists` raising on `EACCES`, no `/proc` on macOS, and `lsof` exit codes.
+- `echo` with a backslash in its argument (dash interprets it); use `printf '%s\n'`.
+- Shell quoting of every interpolated value, and control bytes printed to a terminal.
+- A file ending in `.exe` that a test executes under WSL.
+- A hollow test: the fixture stops before the code the test claims to cover.
+- A guard with no killing test: remove the guard, and no test fails (mutation).
+- A fix that adds a mechanism where removing an operation would close the defect.
 
 ## Review priorities (in order)
 
@@ -137,9 +176,9 @@ Manual checks, so it rules out a plain Accept.
   anything is called accepted. "NOT RUN: <platform>" repeated across rounds is a finding,
   not a footnote. One release passed on the development machine a dozen times and failed
   all four CI jobs on its first run.
-- **A review that executed no tests is not test evidence.** The evidence that the tests ran
-  is the self-test, run by the author or the lead on the reviewed head and named in the
-  acceptance record.
+- **A reviewer's runs are evidence for its findings, not for acceptance.** The evidence that
+  the tests pass is the self-test, run by the author or the lead on the reviewed head and
+  named in the acceptance record.
 
 Running a review, an unavailable reviewer and the paste-by-hand template are for the caller,
 not the reviewer: `docs/REVIEW_RUNNING.md`.
