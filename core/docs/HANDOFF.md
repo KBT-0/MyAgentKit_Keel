@@ -53,8 +53,9 @@ finishes it carries `Done: <id>` and its line leaves `docs/STATE.md` in that sam
 (`docs/WORKFLOW.md`, "Task ids").
 
 A brief for a separate worker session (`scripts/spawn_worker.sh` in the Claude Code overlay)
-also ends with the path of its result FILE and this line: "The lead closes this session
-after reading the result file (`tmux kill-session -t NAME`); write the file last and stop."
+also ends with the path of its result FILE and this line: "The lead reuses or closes this
+session after reading the result file (`scripts/close_worker.sh NAME`); write the file last
+and stop."
 The session does not end by itself when the task is done, and its idle notice also fires
 whenever it parks on a background job, so the result file is the only end signal.
 

@@ -35,6 +35,7 @@ repository.
 | `.claude/agents/diff-reviewer.md` | Read-only review subagent carrying THIS project's risky areas and `docs/REVIEW_GATE.md` |
 | `.claude/agents/worker.md` | Implementation worker with a one-hour prompt cache and a 150-turn cap, for tasks that run jobs longer than five minutes (`docs/WORKFLOW.md`, "Worker cost") |
 | `scripts/spawn_worker.sh` | Opens a SEPARATE worker session in tmux and hands it a brief file; the lead then subscribes for its idle notice instead of polling |
+| `scripts/close_worker.sh` | Closes a finished worker: ends its tmux session and removes its worktree through the clean-up audit, never its branch |
 | `scripts/clean_worktrees.sh` (+ `.py`) | Removes the finished worktrees under `.claude/worktrees`, only what it proves safe to lose, never a branch; `.githooks/post-merge` runs it after every merge git completes itself in the main worktree |
 | `.claude/worktree-disposable` | The project's list of folders a finished worktree may lose (build output) and its quiet period; ships empty, the interview fills it; without it the hook does nothing |
 
@@ -193,8 +194,8 @@ If the project has no such jobs, delete both files instead of filling them.
 - **A spawned session does not end when its task does.** A pilot worker wrote its result
   file and then sat idle in tmux for 40 minutes until it was killed by hand, and the idle
   notice cannot tell that apart from a park on a background job (above). The LEAD closes
-  it: read the result file, then `tmux kill-session -t NAME`. The brief says so, and
-  `spawn_worker.sh` prints the line when it starts the session.
+  it: read the result file, then `scripts/close_worker.sh NAME` once the session is finished
+  (below). The brief says so, and `spawn_worker.sh` prints the line when it starts the session.
 - **A worktree-isolated agent refuses any shell command it cannot prove keeps git inside
   its worktree**, and each refusal costs a turn (a project saw about 177 across 40 worker
   transcripts). Refused: `$(...)` or a variable around a program, loops, `sh -c` or `source`
@@ -210,6 +211,42 @@ If the project has no such jobs, delete both files instead of filling them.
   (`docs/WORKFLOW.md`, "Worker cost", rule 7).
 - **Every message to an idle session is a full-context turn.** Ask the brief for a result
   FILE, subscribe once with `notify_when_idle`, and read the file.
+
+## Closing a finished worker
+
+The lead decides per task whether a finished session is reused or closed
+(`docs/WORKFLOW.md`, "Worker cost"): it closes one that no next task fits, or one idle past
+the cache lifetime. **`scripts/close_worker.sh NAME [NAME...]`** does the closing, one line per
+step and per name:
+
+1. A name outside `[A-Za-z0-9_-]`, or starting with `-`, is refused before any tmux call; the
+   next name still runs.
+2. `tmux kill-session -t =NAME` ends the session, and the terminal tab attached to it closes
+   by itself. A session that does not exist is reported, not an error. It then waits up to
+   15 seconds, and says what for, until tmux no longer finds the session and, where `/proc`
+   exists (Linux), no process works inside the worktree: the tool takes a moment to exit.
+3. `scripts/clean_worktrees.sh --apply --only=NAME --no-quiet` removes `.claude/worktrees/NAME`
+   through the audit below, every proof included and no `--assume-idle`, except the quiet
+   period. That period is a margin for "no worker is still in it", which no listing proves;
+   here the lead has just ended the session and decided the work is finished, so a worktree
+   committed a minute ago is closed at once. The post-merge hook never lifts it, and
+   `--no-quiet` is refused without `--only`. A worktree the audit keeps (a process still
+   inside, an uncommitted file) is reported with its first reason.
+4. The branch `worktree-NAME` is never deleted; the line says how to delete merged branches.
+
+It exits 0 when every named session is gone and every named worktree was removed or did not
+exist, and 1 otherwise, with the first reason on its last line. `--dry-run` prints what it
+would do, the removal's dry run included, and changes nothing. A project set up before this
+script copies `overlays/claude-code/files/scripts/close_worker.sh` into `scripts/` by hand
+(`chmod +x`, `git add --chmod=+x`), with the clean-up scripts it calls; a sync keeps it
+updated from then on.
+
+The worker scripts (`spawn_worker.sh`, `show_workers.sh`, `watch_workers.sh`,
+`waiting_patterns.txt`, `close_worker.sh`) carry the KIT-OWNED header, so a sync updates them
+where they exist. A copy from before the header is a sync conflict, and the sync copies
+nothing until it is resolved: an unedited copy is moved aside, and the rerun installs the
+kit's; an edited one is moved aside too, and its change is carried into the project's own
+files by hand (`docs/UPDATING.md`).
 
 ## Finished worktrees are removed after a merge, and only those
 

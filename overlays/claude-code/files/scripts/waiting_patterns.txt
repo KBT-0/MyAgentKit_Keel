@@ -1,3 +1,4 @@
+# KIT-OWNED: do not edit locally; change it in the kit and re-sync.
 # What a Claude Code pane looks like when it waits for a person. Kit-owned: read by
 # scripts/watch_workers.sh, and through it by scripts/spawn_worker.sh, so the folder-trust
 # dialog and every other wait are defined once, here.

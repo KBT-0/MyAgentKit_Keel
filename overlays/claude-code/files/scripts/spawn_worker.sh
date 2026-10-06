@@ -1,4 +1,5 @@
 #!/usr/bin/env sh
+# KIT-OWNED: do not edit locally; change it in the kit and re-sync.
 # Open a SEPARATE Claude Code worker session in tmux and hand it a brief file.
 #
 # Usage: spawn_worker.sh NAME BRIEF_FILE [--model M] [--settings JSON_OR_FILE]
@@ -18,7 +19,8 @@
 # The lead then subscribes once with SendMessage `notify_when_idle` and reads the result
 # FILE the brief asks the worker to write. It does not poll and it does not chat with the
 # worker: every message to an idle session is a full-context turn. After reading the file
-# the lead closes the session with `tmux kill-session -t NAME`; it does not end by itself.
+# the lead reuses the session or closes it with `scripts/close_worker.sh NAME`; it does not
+# end by itself.
 #
 # Pitfalls this script encodes (each one cost a session):
 #   - The prompt is typed AFTER the TUI is up, never passed on the command line after a
@@ -49,7 +51,7 @@ die() { { printf 'spawn_worker: %s' "$1" | LC_ALL=C tr '\001-\037\177' '?'; echo
 # The x keeps a trailing newline that $(...) would strip.
 q() { set -- "$(printf '%sx' "$1" | sed "s/'/'\\\\''/g")"; printf "'%s'" "${1%x}"; }
 
-[ $# -ge 2 ] || { sed -n '2,10p' "$0"; exit 2; }
+[ $# -ge 2 ] || { sed -n '3,11p' "$0"; exit 2; }
 name=$1; brief=$2; shift 2
 # The name and the brief path reach tmux and the TUI: `send-keys -l` types every byte, and a
 # control byte (0x01-0x1F, 0x7F) acts as a key there: a carriage return submitted the
@@ -189,10 +191,10 @@ printf '%s\n' "spawn_worker: '$name' started with $brief (tmux attach -t $name t
 # The session does not end when its task does: a pilot worker wrote its result file and sat
 # idle for 40 minutes until killed by hand, and the idle notice also fires on every park on a
 # background job. The result file is the end signal, and closing is the lead's job.
-printf '%s\n' "spawn_worker: after reading the result file, close it: tmux kill-session -t $name"
+printf '%s\n' "spawn_worker: once you decide the session is finished (no next task fits what it holds, or it is idle past the cache lifetime), close it: scripts/close_worker.sh $name"
 if [ -n "$batch" ]; then
   printf '%s\n' "spawn_worker: --batch: not shown. Once every worker of this batch is started, show them together in one window: scripts/show_workers.sh NAME1 NAME2 ..."
 else
   sh "$kit/show_workers.sh" "$name" || printf '%s\n' "spawn_worker: '$name' was not shown and runs anyway; attach by hand: tmux attach -t $name"
 fi
-printf '%s\n' "spawn_worker: watch for a dialog or an exit, as a background command: scripts/watch_workers.sh NAME..."
+printf '%s\n' "spawn_worker: watch it, as a background command: scripts/watch_workers.sh --result $name=PATH $name (PATH: the result file its brief names)"

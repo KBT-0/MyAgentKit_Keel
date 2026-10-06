@@ -657,7 +657,7 @@ def lock_held(gitdir):
 
 def too_recent(when, ctx, what):
     """A reason when WHEN lies within the quiet period (a time in the future counts)."""
-    if when is None or when + ctx['quiet'] * 60 <= ctx['now']:
+    if when is None or ctx['no_quiet'] or when + ctx['quiet'] * 60 <= ctx['now']:
         return []
     left = when + ctx['quiet'] * 60 - ctx['now']
     return ['quiet period: %s changed %d min ago; it qualifies in %d min (quiet-minutes=%d, a margin, '
@@ -1098,7 +1098,16 @@ def main():
                         help='run every check on every worktree instead of stopping at the first reason to keep')
     parser.add_argument('--quiet', action='store_true',
                         help='print the removals and one summary line, not each kept worktree (the hook)')
+    parser.add_argument('--only', metavar='NAME',
+                        help='audit .claude/worktrees/NAME alone, the same way (close_worker.sh)')
+    parser.add_argument('--no-quiet', action='store_true',
+                        help='with --only: lift the quiet period for that worktree, every other check stays '
+                             '(close_worker.sh, once the lead has ended its session)')
     args = parser.parse_args()
+    if args.no_quiet and args.only is None:
+        parser.error('--no-quiet is accepted only with --only: the post-merge hook never lifts the quiet period')
+    if args.only is not None and (args.only in ('', '.', '..') or '/' in args.only):
+        parser.error('--only takes the name of one folder under .claude/worktrees')
     # CLEAN_WORKTREES_NOW, CLEAN_WORKTREES_PROC and CLEAN_WORKTREES_MOUNTINFO are for the tests:
     # a clock they can move instead of ageing files (a ctime cannot be set back), and a /proc and
     # a mount table they can build. Each is said on every run: exported by mistake, it would end
@@ -1130,11 +1139,19 @@ def main():
            'unlogged': False,
            'now': float(clock or time.time()),
            'proc': os.fsencode(os.environ.get('CLEAN_WORKTREES_PROC', '/proc')),
-           'assume_idle': args.assume_idle, 'all': args.all_reasons,
+           'assume_idle': args.assume_idle, 'all': args.all_reasons, 'no_quiet': args.no_quiet,
            'log': os.path.join(common, b'kit-worktree-removals.log')}
     ctx['run'] = '%s-%d' % (ctx['stamp'].decode(), os.getpid())
     for line, why in refused:
         say('clean_worktrees: refused %s line %s %s' % (show(DISPOSABLE_FILE), show(line), why))
+    if args.only is not None:
+        only = os.path.join(ctx['home'], os.fsencode(args.only))
+        records = [record for record in records if os.path.realpath(record['worktree']) == only]
+        shown = show(os.path.join(b'.claude', b'worktrees', os.fsencode(args.only)))
+        if not records:
+            say('clean_worktrees: no worktree at %s' % shown)
+        elif args.no_quiet:
+            say('clean_worktrees: --no-quiet: the quiet period is not applied to %s' % shown)
     removed = kept = partly = freed = 0
     gone = []
     for record in records:
@@ -1195,8 +1212,10 @@ def main():
                 'kept by the refs under refs/kit/saved/' % sh_word(short(ctx['main_ref'])))
     else:
         say('clean_worktrees: dry run: would remove %d, keep %d, free %d bytes; to apply: '
-            'scripts/clean_worktrees.sh --apply%s'
-            % (removed, kept, freed, ' --assume-idle' if args.assume_idle else ''))
+            'scripts/clean_worktrees.sh --apply%s%s%s'
+            % (removed, kept, freed, ' --assume-idle' if args.assume_idle else '',
+               ' --only=' + sh_word(os.fsencode(args.only)) if args.only is not None else '',
+               ' --no-quiet' if args.no_quiet else ''))
     return 1 if partly or STOP or ctx['unlogged'] else 0
 
 
