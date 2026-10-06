@@ -11,6 +11,65 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ---
 
+## v0.9.1 — 2026-10-06
+
+Two fixes for a project developed on native Windows, found when one project moved there from
+WSL. Why each change is safe is in `RESEARCH_LOG.md` (2026-10-06).
+
+- **The gate lock on native Windows.** `scripts/check.sh` run by Git for Windows' `sh` with a
+  Windows `python3` failed every run with `FAIL [lock]: python3 has no fcntl module`, so every
+  commit there was blocked. On that host the lock is now the lock file opened for writing
+  without write sharing; the holder makes its handle inheritable and runs the gate as its
+  child, so the gate and every process it starts hold the lock, and Windows releases it when
+  the last of them exits. Nothing is reclaimed and no pid is trusted, as on POSIX. A second
+  run waits with the same `NOTE [lock]` line (the hint names Resource Monitor instead of
+  `fuser`) and honours `GATE_LOCK_WAIT` (`NOT RUN [lock]`, exit 75). On Windows
+  `GATE_LOCK_FD` holds the holder's Win32 handle: a nested run proves it is open in its own
+  process on this lock file with write access while a fresh open for writing is refused, so
+  variables copied out of a killed gate fail `FAIL [env]`. The self-test marker is a random
+  token the holder clears when the gate ends. A gate that dies of a signal exits 128 + N
+  there, never 0. On Git for Windows, MSYS2 and Cygwin the lock path is kept in the `C:/`
+  form a native program receives (`cygpath -m`), and a linked worktree's `C:/` git path is
+  read as absolute. The POSIX lock is unchanged. `python3` without `fcntl` on any other
+  system still fails `FAIL [lock]` by name. `docs/DEV_SETUP.md` and `docs/GOTCHAS.md` say so.
+- **`review.sh` and Git LFS.** The v0.9 filter refusal checked every path in the checkout,
+  not the paths a review changes, and `git lfs install` sets `filter.lfs.clean` globally:
+  one LFS file anywhere refused every review. A filtered path the review does not change
+  now passes when its working bytes are proven to be what HEAD records, read with no
+  filter: the blob's own bytes, or the content an LFS pointer blob names by size and sha256.
+  A filtered path the review changes is still refused: an uncommitted change to it, or a
+  `--commit` or `--base` range whose diff names it. Other clean filters and `ident` on
+  changed paths are refused as before.
+
+### Upgrading a project from v0.9
+
+<!-- Each numbered item is one checklist entry. sync-kit.sh prints an item from its marker to
+the end of the item, so an item holds no blank line and no line that starts a list. -->
+
+Work from the project's root, top to bottom. `KIT` is the kit checkout you run `sync-kit.sh`
+from, and `00581dd` is the kit's v0.9 commit.
+
+1. **ACTION:** Copy `claude_bridge.py` and `test_claude_bridge.py` whole from
+   `$KIT/core/scripts/` into `scripts/`, replacing yours (they hold no project content). If
+   v0.9's item 10 sent this project to the manual review template only because of Git LFS,
+   use `scripts/review.sh` again for every scope that changes no LFS file.
+2. **ACTION:** Merge the kit's changes since v0.9 into the three files that hold your setup
+   content, one three-way merge per file, from a committed project:
+   ```sh
+   for f in scripts/check.sh docs/DEV_SETUP.md docs/GOTCHAS.md; do
+     git -C "$KIT" show "00581dd:core/$f" > "$f.v0.9" && git merge-file "$f" "$f.v0.9" "$KIT/core/$f"
+     rm -f "$f.v0.9"
+   done
+   ```
+   Resolve every conflict the merge left (`git diff --check` names each leftover marker) so
+   that the kit's new lines and every line of yours survive, then read `git diff HEAD --
+   <file>` for each file and account for every removed line.
+3. **ACTION:** Prove the result, in this order: `./scripts/doctor.sh`, `./scripts/check.sh`
+   (expect `CHECK: PASS`), `./scripts/check.sh --self-test` from the main checkout, then
+   commit. On native Windows, also run the gate once from Git for Windows' `sh` with the
+   Windows `python3` and expect `CHECK: PASS`. Then record the version with
+   `"$KIT/sync-kit.sh" . --actions-applied`.
+
 ## v0.9 — 2026-10-03
 
 Hardening from the unreported findings of two projects using the kit, then from cross-model

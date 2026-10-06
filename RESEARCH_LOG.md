@@ -250,6 +250,104 @@ the child a complete temporary stdin file and monitors its process, not partial 
 
 ## Backflow findings
 
+### 2026-10-06 — native Windows: the gate lock, and Git LFS beside a review
+
+A project moved from WSL to native Windows (Git for Windows' `sh`, CPython from python.org).
+Every commit there was blocked, and `review.sh` refused every review. The kit's own note that
+only Linux under WSL had ever been tested marked exactly where it broke. Each fix below was
+written as a test first and watched going red against v0.9; then each guard was deleted in
+turn and its test watched going red again. `CHANGELOG.md` v0.9.1 records what changed.
+
+#### The gate lock without fcntl
+
+Windows Python has no `fcntl`, so v0.9's gate printed `FAIL [lock]` on every run. The fix
+had to keep what the POSIX lock guarantees: the operating system releases the lock when its
+holders die, nothing is reclaimed, no pid is trusted, a second run waits, and a nested run
+proves it holds the lock rather than claiming it.
+
+`msvcrt.locking` was rejected. Its byte-range lock belongs to the one process that took it,
+and Windows releases it when that process ends. A gate whose holder was killed would let the
+next gate build beside the build still running, the failure the v0.9 flock lock was built to
+stop. The lock is a share mode instead: the holder opens the file for writing and shares it
+for reading only, so Windows refuses every other open for writing while any handle of that
+open exists. The holder makes its handle inheritable and runs the gate as its child; every
+process the gate starts inherits the handle, and the lock lasts until the last of them exits.
+A test kills the holder while its build runs, and two waiters still build one at a time; with
+the handle kept from the children, both waiters failed on "File exists".
+
+Measured on the host before the design was fixed: an inheritable Win32 handle keeps its
+number through Git for Windows' `sh` and a nested `sh` into a native Python. `os.execv` on
+Windows starts a new process and exits, so the holder cannot exec as on POSIX; it waits for
+the gate and passes its status on. Git for Windows reports a child killed by signal N to
+native Python as N << 8, and a native exit status of 2304 reaches `sh` as 0. Passed on as it
+was, a gate killed with `kill -9` reported a pass; it now exits 128 + N.
+
+The nested-run proof. A descriptor number does not cross from MSYS to native Python, so a
+random token in the lock file was the first idea. A token alone has the weakness the third
+cross-model round of v0.9 found in the pid: copied out of a killed gate whose build still
+runs, it matches the file. The proof is the handle, which a copied variable cannot carry.
+`GATE_LOCK_FD` holds the holder's handle number. A nested run accepts it only when that handle
+is open in its own process on this lock file (volume and file id), can write (`fsync` needs
+write access), and a fresh open for writing is refused. While the holder has the file open
+without write sharing, no other handle with write access can be opened, so only the holder's
+handle and its inherited copies pass all three. Three tests hand the gate a handle that fails
+exactly one condition: one on another file, a read-only one on the lock file, and a write
+handle that shares writing while nothing holds the lock. With its condition deleted, each
+turned a red build green. The token stays as the self-test marker, the role the pid has on
+POSIX: the gate cannot learn the holder's process id as its own `$$`.
+
+Three smaller traps on the same host. A native program receives `/d/x` as `D:/x`, so
+`GATE_LOCK_HELD` came back from Python in another form; the nested run did not know its own
+lock and waited for itself. The lock path is now kept in the `C:/` form (`cygpath -m`, where
+it exists). Git for Windows prints a linked worktree's git path as `C:/...`, which the gate
+read as relative. Output to a pipe is in the ANSI code page, and a path outside it (a user
+name, or the U+F03A that cygpath makes of a colon) ended the waiting NOTE in a traceback.
+
+Not proven here: the refusal of a symlink at the lock path (creating one needs a privilege
+the host lacks, and the test says NOT RUN), and the lock on macOS.
+
+#### Git LFS and the filter refusal
+
+v0.9 refused a review scope "with an effective clean or process filter". The check ran
+`git check-attr filter` over every tracked and untracked file in the checkout, not over the
+paths the review changes. It counted a driver as effective when any `filter.<driver>.clean`
+or `.process` key is configured, and `git lfs install` writes both into the global
+configuration. So in a repository with one LFS path anywhere, every review was refused, a
+two-line code fix included.
+
+Why the refusal exists (v0.9, #12): Git runs a clean filter on working-tree bytes before it
+diffs them, so a filter can drop lines or a whole file from the reviewer's payload while the
+fingerprint still hashes the raw bytes. That can only happen to a path whose raw bytes differ
+from what HEAD records. A filtered path therefore passes only with a proof, taken without
+running any filter, that its working bytes are exactly what HEAD records: they equal the
+blob's bytes (an unsmudged checkout), or the blob is a Git LFS pointer and the file has the
+pointer's size and sha256. With that proof the working-tree diff has no change of that path
+to omit, and the fingerprint, which hashes the same raw bytes, attests the state the reviewer
+saw. The proof does not trust the filter's name or command: a driver called `lfs` that does
+something else gains nothing, because only the raw file's sha256 is compared.
+
+A filtered path the review changes stays refused. Uncommitted, its bytes differ from HEAD and
+the proof fails. In a `--commit` or `--base` range the checkout matches HEAD, but the commit
+diff names the path and would show its pointer, not its content. Excluding such paths and
+naming them in the evidence was the alternative; code-only reviews did not need it, and it
+would add a second kind of scope.
+
+Proof: the new test is red on v0.9 (refused on an unchanged LFS file beside a code change).
+Deleting the proof, the sha256 comparison, the blob-bytes case or the commit-range check each
+turned it red. Against real git-lfs 3.7 under WSL: a code-only change beside a 200 KB `.tif`
+was reviewable, a changed `.tif` was refused, a `--commit HEAD` that changed the `.tif` was
+refused, and the next code-only commit was reviewable. Cost: each filtered path is read and
+hashed once more per review.
+
+#### What native Windows still breaks
+
+Found while running the kit's own tests and acceptance on native Windows, and left for
+separate work. The kit check imports `fcntl` at the top and cannot start. `agent_process.py`
+reads `signal.SIGHUP`, so the review adapters fail on import, and with them the review case
+of the gate's `--self-test`. Git for Windows' default `core.autocrlf=true` checks the kit's
+scripts out with CRLF, which `sh` cannot run, and the kit ships no `.gitattributes` that
+pins them to LF.
+
 ### 2026-10-03 — kit hardening from two projects' unreported findings
 
 Two projects using the kit were mined for failures nobody had filed (their session
