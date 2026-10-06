@@ -186,6 +186,13 @@ budget, so the full review was split into two consistent commit ranges, each its
   reviewed in increments.
 - NOT RUN in range D, by anyone: macOS or BSD, dash as `sh`, Python 3.10, a real Windows
   Python, a live tmux and Claude session.
+- CI on branch `v0.9-rc` (draft PR #38), ubuntu-latest and macos-latest, Python 3.10 and
+  3.14: run 37387063539 (tree 2b99838) FAILED on all four jobs; run 37393588722 (87f4bd9)
+  SUCCESS on all four; run 37411146502 (497adf5) FAILED on three; run 37412819517
+  (7b3666f) SUCCESS on all four. The failures and their causes are in `RESEARCH_LOG.md`
+  ("The first CI runs of v0.9"). What CI does not cover: a live tmux and Claude session, a
+  real terminal tab, the worktree clean-up's `lsof` path with a process present, and the
+  kit run as root.
 - NOT RUN by the reviewer in range D: any test. The kit self-test was executed by the lead
   on each reviewed head (`KIT CHECK: PASS` on 31c8f7a, 1afba49, 62d2988, d826ccd, ed29079,
   4baf4e0, 3d4f45c, 42e5a19, 68e9ae5, 2f2ef6b and 1a13854).
