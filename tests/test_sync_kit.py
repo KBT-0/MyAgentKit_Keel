@@ -113,6 +113,26 @@ class SyncKitTests(unittest.TestCase):
             self.assertEqual((project / 'scripts/agent_cost.py').read_bytes(),
                              (ROOT / 'core/scripts/agent_cost.py').read_bytes())
 
+    def test_a_header_less_overlay_copy_is_told_to_take_the_kits_copy(self):
+        # A v0.8 project's overlay script had no KIT-OWNED header. The stop message said to
+        # rerun the sync to install the kit's file, which the sync never does for an overlay
+        # file that is absent, and to carry what "yours" did into the project (RETROFIT).
+        with tempfile.TemporaryDirectory() as tmp:
+            kit, project = Path(tmp) / 'kit', Path(tmp) / 'project'
+            self.sync(tmp, '- A kit-owned file changed.\n', '--dry-run')
+            src = kit / 'overlays/o/files/scripts/tool.sh'
+            src.parent.mkdir(parents=True)
+            src.write_text('#!/bin/sh\n# KIT-OWNED: fixture\n')
+            (project / 'scripts').mkdir()
+            (project / 'scripts/tool.sh').write_text('#!/bin/sh\n# an earlier kit copy\n')
+            result, stamp = self.sync(tmp, '- A kit-owned file changed.\n')
+            self.assertEqual((result.returncode, stamp), (1, '0.1'), result.stdout + result.stderr)
+            self.assertIn('conflict: scripts/tool.sh', result.stdout)
+            self.assertIn("the kit's own file from an earlier version", result.stdout)
+            self.assertIn(str(src), result.stdout)
+            self.assertNotIn('rerun the sync to install', result.stdout)
+            self.assertNotIn('RETROFIT', result.stdout)
+
     def test_a_kit_owned_path_that_is_not_a_regular_file_is_a_conflict_unread(self):
         # `cmp` on a FIFO at a kit-owned path blocked forever, and a symlink to an identical
         # copy read as "same": anything but a regular file is a conflict, never read.

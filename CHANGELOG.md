@@ -352,11 +352,16 @@ from, and `5c80c36` is the kit's v0.8 commit.
    applied, set `docs/kit/.kit-version` back to the last version really applied and sync
    again, so those versions' items are listed too. A script of yours that runs
    `sync-kit.sh` must expect exit 2 while items are pending.
-2. **ACTION:** Let the sync install the kit-owned files: `.githooks/commit-msg` and
-   `.githooks/pre-merge-commit` (both new), `.githooks/pre-commit`, `scripts/doctor.sh`
-   (new) and `setup/INTERVIEW.md`. If it stops with `conflict:` lines, the project has a
-   file of its own at one of those paths: move yours aside, run the sync again, then carry
-   what your file did into the project by hand (the kit's `docs/RETROFIT.md`). A symlink
+2. **ACTION:** With the Claude Code overlay, do this before the sync: copy
+   `scripts/spawn_worker.sh` from `$KIT/overlays/claude-code/files/scripts/` over yours,
+   along with any other script of that folder the project already has. The v0.8 copies
+   have no KIT-OWNED header, so the sync stops on them as `conflict:`. Then let the sync
+   install the kit-owned files: `.githooks/commit-msg`, `.githooks/pre-merge-commit` and
+   `.githooks/post-merge` (all new), `.githooks/pre-commit`, `scripts/doctor.sh` (new) and
+   `setup/INTERVIEW.md`. If it stops with `conflict:` lines on any of those, the project has
+   a file of its own at that path: move yours aside, run the sync again, then carry what
+   your file did into the project by hand (the kit's `docs/RETROFIT.md`). If it stops on an
+   overlay file, replace it with the kit's copy the message names and sync again. A symlink
    or special file at one of those paths, or a symlinked folder on the way to it, is a
    conflict too: replace it with a real file or folder first.
 3. **ACTION:** Copy these files whole from `$KIT/core/scripts/` into `scripts/`, replacing
