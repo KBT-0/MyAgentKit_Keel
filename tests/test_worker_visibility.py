@@ -247,12 +247,19 @@ class WatchTests(Base):
                 self.assertNotIn('w1', result.stdout.replace('GONE: gone', ''))
 
     def test_every_real_dialog_capture_is_waiting_with_the_session_named(self):
+        # LC_ALL=C too: there `cut -c` counts bytes (and in every locale on coreutils before
+        # 9.8), and a cut through a box-drawing character printed bytes that are not UTF-8.
+        # text=True decodes strictly: the pane lines must come back cut on a character boundary.
         for pane, what in DIALOGS.items():
-            with self.subTest(pane=pane):
-                result = self.watch('w1', pane=pane)
-                self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertIn('WAITING: w1, on %s (rule VERIFIED, Claude Code 2.1.285)' % what, result.stdout)
-                self.assertIn('  | ', result.stdout)
+            for locale in ({}, {'LC_ALL': 'C', 'LANG': 'C'}):
+                with self.subTest(pane=pane, locale=locale):
+                    result = self.watch('w1', pane=pane, **locale)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertIn('WAITING: w1, on %s (rule VERIFIED, Claude Code 2.1.285)' % what,
+                                  result.stdout)
+                    self.assertIn('  | ', result.stdout)
+                    longest = max(len(line.encode()) for line in result.stdout.splitlines())
+                    self.assertLessEqual(longest, len('  | ') + 200)
 
     def test_working_and_idle_panes_give_nothing(self):
         # quoted-output.txt: the worker's OUTPUT quotes a permission prompt and a question's

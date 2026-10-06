@@ -466,6 +466,74 @@ A worker whose worktree directory is missing STOPS and reports. It never recreat
 directory and never runs a git command from where it used to be: that folder lies inside the
 main checkout, so git there acts on the owner's main worktree.
 
+## Review rounds — early, inside the worker, in parallel
+
+In one project a feature took five fix rounds in about seven hours. Each round cost a fresh
+worker re-reading 100k to 300k tokens (20 to 60 minutes), a ten-minute self-test, reviews of
+5 to 15 minutes and a merge with another self-test. Most findings of rounds 2 to 5 sat in code
+the previous fix had added, in classes the reviewers had already shown once. The rules below
+move the review into the worker's warm context and run together what can run together. They
+remove no review.
+
+### Design before code
+
+- A new mechanism gets a one-page design before any code. A new mechanism is anything that
+  deletes or moves files, rewrites history, or changes a gate.
+- The design names what the mechanism protects, what it excludes by decision, its rules, and
+  the cases in which it still loses data or fails. It is the threat model of
+  `docs/REVIEW_GATE.md`, "A review loop: threat model, stopping rule, evidence".
+- The design is reviewed under its own review label (`docs/REVIEW_RUNNING.md`, "Rounds,
+  labels and designs"). Code starts after that review.
+- The design's exclusions are the dispositions for later code rounds. A finding inside an
+  exclusion is answered with the exclusion, not with a fix.
+- The kit repository's `docs/worker-lifecycle-options.md` shows the shape: the facts, the
+  options with their costs, and what a second model should attack.
+
+A design round on one page takes about fifteen minutes, and the same flaw found in code
+costs a fix round.
+
+### Review inside the worker
+
+- A worker that can start a sub-agent (a separate session) reviews its own diff before it
+  reports. It starts a fresh diff reviewer as a sub-agent (the Claude Code overlay's
+  `diff-reviewer`), fixes what the review finds, and starts a new fresh reviewer on the
+  result.
+- Each inner round's prompt carries the earlier inner rounds' findings and the worker's
+  dispositions (`docs/REVIEW_GATE.md`, "Findings, earlier rounds and dispositions").
+- The reviewer is a new sub-agent in every inner round, because the author never reviews its
+  own change.
+- The worker reports when a review returns no Critical, High or Medium finding, or when it
+  has argued a disposition for each one that remains.
+- The report lists the inner rounds: their count, the findings fixed and each disposition.
+- A worker that cannot start a sub-agent (a sub-agent itself) says so in its report. The lead
+  then starts the review the moment the worker's branch exists, in parallel with the
+  self-test, never after it.
+- The inner rounds do not replace the lead's review. A risky diff still passes
+  `docs/REVIEW_GATE.md` before the merge, and the inner rounds make that review shorter.
+
+A fix in the worker's warm context costs minutes; the same fix in a later round costs a fresh
+worker's whole re-read. The brief states which of the two cases it expects (`docs/HANDOFF.md`,
+"The brief").
+
+### Before you report
+
+A worker goes through `docs/REVIEW_GATE.md`, "What a reviewer attacks first", against its own
+diff before it reports. It fixes each hit or names it in the report. A class the reviewer has
+already shown once costs a whole round when the worker leaves it for the reviewer to find again.
+
+### The lead's steps when a branch is ready
+
+1. Start the self-test and the review together, on the same commit, never one after the other.
+2. Run two reviewers at the same time, never one after the other.
+3. Keep one review label for the whole feature, so that each round carries the earlier ones.
+   Only the closing review takes a label never used before (`docs/REVIEW_RUNNING.md`,
+   "Rounds, labels and designs").
+4. Start the next worker while the self-test after a merge still runs. If that self-test
+   fails, tell the next worker to rebase onto the fix.
+
+Each step that waits on another adds its whole duration to the round, and nothing in a round
+needs another step's result before it starts.
+
 ## Token economics — the always-loaded prefix is money
 
 Cached input tokens are discounted heavily, so a STABLE prompt prefix — the documents loaded

@@ -1,5 +1,6 @@
 """doctor.sh must go red on a machine trap and stay green on a ready synthetic machine."""
 import ast
+import importlib.util
 import os
 from pathlib import Path
 import re
@@ -13,6 +14,9 @@ import time
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
+spec = importlib.util.spec_from_file_location('check_kit', ROOT / 'scripts/check_kit.py')
+check_kit = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(check_kit)
 
 
 def review_runtime():
@@ -119,18 +123,11 @@ class DoctorTests(unittest.TestCase):
             dangling.mkdir()
             (dangling / 'tmux').symlink_to(tmp / 'absent')
 
-            # os.path.exists, not Path.exists: on Python before 3.12 the latter raised on an entry
-            # it may not stat (macOS /usr/sbin/weakpass_edit); one nobody may stat runs for nobody.
+            # The dangling tmux stays in front: kept as it is, sh skips it; walked, it is left out.
             def path_without(*tools):
-                links = tmp / ('no-%s-bin' % '-'.join(tools))
-                links.mkdir()
-                for directory in [str(dangling), *env['PATH'].split(os.pathsep) * 2]:
-                    if os.path.isdir(directory):
-                        for name in os.listdir(directory):
-                            source = Path(directory) / name
-                            if name not in tools and os.path.exists(source) and not os.path.lexists(links / name):
-                                (links / name).symlink_to(source.resolve())
-                return str(links)
+                return check_kit.path_without(str(dangling) + os.pathsep + env['PATH'],
+                                              lambda name: name in tools,
+                                              tmp / ('no-%s-bin' % '-'.join(tools)))
             no_timeout = path_without('timeout')
             shell.write_text('#!/bin/sh\nsleep 60\n')
             try:
@@ -322,8 +319,8 @@ class DoctorTests(unittest.TestCase):
                 stand_in.chmod(0o755)
             (home / '.npm/_cacache/index').mkdir(parents=True)
             (home / '.npm/_cacache/index/entry').write_text('cached\n')
-            # One scan of PATH for both (each scan is slow where PATH holds large directories);
-            # the stub tmux in front again for the node case, so only node is absent there.
+            # One PATH for both; the stub tmux in front again for the node case, so only node is
+            # absent there.
             no_tmux_node = path_without('tmux', 'node')
             for path, expect in ((str(older) + os.pathsep + env['PATH'],
                                   'MISSING: Python 3.10 or newer as python3'),
