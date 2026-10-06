@@ -1885,6 +1885,17 @@ class CleanWorktreesTests(unittest.TestCase):
         self.git('add', 'notes.txt', cwd=path)
         self.assertRemoved(path, self.run_script('--apply'))
 
+    def test_an_ident_expansion_is_compared_by_its_bytes(self):
+        # `ident` is not trusted either: the checkout's $Id: <blob> $ is not the blob's $Id$.
+        (self.main / '.gitattributes').write_text('id.txt ident\n')
+        (self.main / 'id.txt').write_text('$Id$\n')
+        self.git('add', '-A')
+        self.git('commit', '-q', '-m', 'ident')
+        path = self.worktree('done')
+        self.assertIn('$Id: ', (path / 'id.txt').read_text())
+        self.assertKept(path, self.run_script('--apply'), 'not byte for byte what its index records (an edit '
+                        'git\'s stat cache, a filter or a line-ending conversion hides, or its executable bit): id.txt')
+
     def test_a_tracked_symlink_is_compared_by_its_text(self):
         (self.main / 'link').symlink_to('a')
         self.git('add', 'link')
