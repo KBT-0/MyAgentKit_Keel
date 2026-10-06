@@ -411,17 +411,18 @@ def snapshot(repo: Path, scope: str, reference: str | None) -> tuple[str, str, s
             drivers.add(key[len(b'filter.'):key.rindex(b'.')])
 
     def names_of(*args):
-        return set(git(repo, *args).split(b'\0')) - {b''}
+        # The scope's own exclusions: an excluded review archive is not reviewed, so it is not refused.
+        return set(git(repo, *args, '--', '.', *exclusions).split(b'\0')) - {b''}
     # Rendered: these run the clean filters, so a path whose filter output differs from HEAD is named.
-    changed = (names_of('diff', '--name-only', '--no-renames', '-z', 'HEAD', '--')
-               | names_of('diff', '--cached', '--name-only', '--no-renames', '-z', 'HEAD', '--'))
+    changed = (names_of('diff', '--name-only', '--no-renames', '-z', 'HEAD')
+               | names_of('diff', '--cached', '--name-only', '--no-renames', '-z', 'HEAD'))
     ends = ['index', head]
     if scope == 'base':
         ends = ['index', base, head]
-        changed |= names_of('diff', '--name-only', '--no-renames', '-z', base, head, '--')
+        changed |= names_of('diff', '--name-only', '--no-renames', '-z', base, head)
     elif scope == 'commit':
         ends = ['index'] + parents[:1] + [resolved]
-        changed |= (names_of('diff', '--name-only', '--no-renames', '-z', parents[0], resolved, '--') if parents
+        changed |= (names_of('diff', '--name-only', '--no-renames', '-z', parents[0], resolved) if parents
                     else names_of('diff-tree', '-r', '--root', '--no-commit-id', '--name-only', '-z', resolved))
     names = (set(in_scope.split(b'\0')) - {b''}) | changed
     current = filtered_names(repo, names, drivers)
@@ -431,9 +432,14 @@ def snapshot(repo: Path, scope: str, reference: str | None) -> tuple[str, str, s
     refused &= changed
     refused |= {name for name in current - refused if not committed_as_is(repo, head, name)}
     if refused:
-        raise BridgeError('review scope has a Git clean filter or ident attribute on %s, and the review '
-                          'changes it; the diff would show the converted text, not the working tree. '
-                          'Remove the attribute (or the filter config) before review' % os.fsdecode(min(refused)))
+        name = min(refused)
+        why = ('the review changes it, so its diff would show the converted text, not the working tree'
+               if name in changed else 'it is not a Git LFS file left unchanged since HEAD, the one '
+               'filtered kind whose bytes prove what the diff shows')
+        raise BridgeError('review scope has a Git clean filter or ident attribute on %s, in the checkout or at '
+                          'an end of the reviewed range, and %s. Review a scope without it, or remove the '
+                          'attribute (or the filter config) where the checkout still has it'
+                          % (os.fsdecode(name), why))
     # Explicit prefixes: an owner's diff.noprefix or mnemonicPrefix broke `git apply` in the copy.
     raw_diff = ('--no-ext-diff', '--no-textconv', '--binary', '--src-prefix=a/', '--dst-prefix=b/')
     working = git(repo, 'diff', *raw_diff, 'HEAD', '--', '.', *exclusions)

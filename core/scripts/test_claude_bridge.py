@@ -24,7 +24,7 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'MYAGENTKIT_TASK_ID', 'MYAGENTKIT_R
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 114, 'test_agent_usage': 19, 'test_codex_quota': 5}
+SUITE_MINIMUMS = {'test_claude_bridge': 115, 'test_agent_usage': 19, 'test_codex_quota': 5}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -340,7 +340,8 @@ class BridgeTests(unittest.TestCase):
         self.assertNotIn('.bin', diff)
         # Changed content of the same size: the size matches the pointer, the sha256 does not.
         asset.write_bytes(b'LARGE BINARY CONTENT\n')
-        with self.assertRaisesRegex(bridge.BridgeError, 'clean filter or ident attribute on asset.bin'):
+        with self.assertRaisesRegex(bridge.BridgeError, 'clean filter or ident attribute on asset.bin, '
+                                    '.* and the review changes it'):
             bridge.snapshot(self.repo, 'uncommitted', None)
         asset.write_bytes(b'large binary content\n')
         pointer.write_bytes(b'other binary content\n')
@@ -452,7 +453,9 @@ class BridgeTests(unittest.TestCase):
         # Untouched since then, the file is clean by Git's stat cache and no diff names it. Raw
         # bytes equal to a blob prove nothing about a filter; only an LFS pointer's sha256 does.
         self.assertNotIn(b'secret.txt', self.git('diff', '--name-only', 'HEAD').stdout)
-        with self.assertRaisesRegex(bridge.BridgeError, 'clean filter or ident attribute on secret.txt'):
+        # The review does not change it, and the refusal says why it is refused all the same.
+        with self.assertRaisesRegex(bridge.BridgeError, 'clean filter or ident attribute on secret.txt, '
+                                    '.* and it is not a Git LFS file left unchanged since HEAD'):
             bridge.snapshot(self.repo, 'uncommitted', None)
         secret.write_text('SECRET\nkeep\n')
         os.utime(secret, (time.time() + 10, time.time() + 10))
@@ -470,6 +473,24 @@ class BridgeTests(unittest.TestCase):
         self.assertIn(b'asset.bin', self.git('diff', '--name-only', 'HEAD').stdout)
         with self.assertRaisesRegex(bridge.BridgeError, 'clean filter or ident attribute on asset.bin'):
             bridge.snapshot(self.repo, 'uncommitted', None)
+
+    def test_a_filtered_review_archive_the_scope_excludes_refuses_nothing(self):
+        # The scope leaves review archives out, but the names the filter refusal checked did
+        # not: a modified, filtered archive refused a review whose scope never held it. Archives
+        # are ignored now; one an older version committed is tracked all the same.
+        archive = self.repo / 'docs/reviews/20260101T000000Z-codex-review.md'
+        archive.parent.mkdir(parents=True, exist_ok=True)
+        archive.write_text('first review\n')
+        (self.repo / '.gitattributes').write_text('docs/reviews/*.md filter=strip\n')
+        self.git('add', '-f', str(archive))
+        self.commit_fixture('Filtered archive')
+        self.assertIn(b'docs/reviews/', self.git('ls-files').stdout)
+        self.git('config', 'filter.strip.clean', 'cat')
+        archive.write_text('second review\n')
+        (self.repo / 'file.py').write_text('CODE_ONLY_CHANGE\n')
+        diff = bridge.snapshot(self.repo, 'uncommitted', None)[2]
+        self.assertIn('CODE_ONLY_CHANGE', diff)
+        self.assertNotIn('second review', diff)
 
     def test_direct_adapters_reject_a_base_ref_that_moves_during_review(self):
         from contextlib import redirect_stdout
