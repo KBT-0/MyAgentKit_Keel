@@ -42,7 +42,9 @@ sentences, one instruction per sentence, one term per thing. State each requirem
    "Not run / not verified" and "Noticed, not fixed" are always present, outside the cap.
 7. **If ambiguous: STOP and ask.** Do not assume, do not invent scope, do not widen the task
    to make an unclear part fit. An unanswered question comes back as a question, not as a
-   guess buried in the diff.
+   guess buried in the diff. A spawned session has nobody to ask in its pane: it writes the
+   question into its result file, with `Kind: blocked` if the work cannot continue, and
+   commits the file. It then goes on with what does not depend on the answer.
 
 End the prompt with: updating `docs/STATE.md` at session end is the implementer's job. When
 the task belongs to an operation with its own file, `docs/<OPERATION>.md`, the detail and
@@ -53,9 +55,10 @@ finishes it carries `Done: <id>` and its line leaves `docs/STATE.md` in that sam
 (`docs/WORKFLOW.md`, "Task ids").
 
 A brief for a separate worker session (`scripts/spawn_worker.sh` in the Claude Code overlay)
-also ends with the path of its result FILE and this line: "The lead reuses or closes this
-session after reading the result file (`scripts/close_worker.sh NAME`); write the file last
-and stop."
+also ends with the path of its result FILE and these lines: "Commit the result file and
+leave the tree clean; the watcher reads it only then; a question written there reaches the
+owner only after that commit. The lead reuses or closes this session after reading the
+result file (`scripts/close_worker.sh NAME`); write the file last and stop."
 The session does not end by itself when the task is done, and its idle notice also fires
 whenever it parks on a background job, so the result file is the only end signal.
 

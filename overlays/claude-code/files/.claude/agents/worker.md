@@ -28,6 +28,8 @@ the rules below exist).
   line. Your final report is your FINAL MESSAGE: as a sub-agent you are refused a report file ("Subagents should return
   findings as text, not write report files"), so never write a `REPORT.md`. Only when the
   brief names a result FILE for a spawned session do you write the report there, last.
+  Commit the result file and leave the tree clean; the watcher reads it only then; a
+  question written there reaches the owner only after that commit.
 - A result FILE starts with four lines, exact keys: `Kind: completed|blocked|handoff|progress`,
   `Task: <id or the brief's name>`, `Attempt: <n>`, `Remaining: <one line, or "none">`; then
   the body; then, if you have questions, `## Open questions for {{OWNER_NAME}}`, one numbered
