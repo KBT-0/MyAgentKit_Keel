@@ -62,7 +62,10 @@ nl='
 '
 { [ -f "$brief" ] && [ -r "$brief" ]; } || die "brief file not found or not readable: $brief"
 case "$brief" in */*) brief_dir=${brief%/*}/ ;; *) brief_dir=. ;; esac
-brief_dir=$(CDPATH= cd -- "$brief_dir" && pwd && echo x) || die "cannot resolve the brief's folder: $brief"
+# Every path handed on is physical (`pwd -P`): a plain `pwd` printed the logical path when the
+# caller exported a matching PWD and the physical one otherwise, so the same brief was named
+# /var/... by one caller and /private/var/... by another on macOS.
+brief_dir=$(CDPATH= cd -P -- "$brief_dir" && pwd -P && echo x) || die "cannot resolve the brief's folder: $brief"
 brief=${brief_dir%"${nl}x"}/${brief##*/}
 ctl "brief path" "$brief"
 command -v tmux >/dev/null || die "tmux is not installed"
@@ -82,7 +85,8 @@ done
 
 tmux has-session -t "=$name" 2>/dev/null && die "tmux session '$name' already exists"
 
-dir=$PWD
+here=$(pwd -P && echo x) || die "cannot resolve the current folder"
+dir=${here%"${nl}x"}
 # --settings is inline JSON or a file. The tool starts in the worktree, so a relative file is
 # made absolute here, against the caller's folder: resolved there, an untracked settings file
 # was missing and a tracked one of the same name was loaded instead. A relative value that is
@@ -97,7 +101,7 @@ case "$settings" in
   ""|"$lead{"*|/*) ;;
   *) [ -f "$settings" ] || [ -z "$worktree" ] ||
        die "--settings is neither inline JSON nor a file here, and the worktree could hold another: $settings"
-     [ ! -f "$settings" ] || settings=$PWD/$settings ;;
+     [ ! -f "$settings" ] || settings=$dir/$settings ;;
 esac
 if [ -n "$worktree" ]; then
   top=$(git rev-parse --show-toplevel) || die "--worktree needs a git repository"

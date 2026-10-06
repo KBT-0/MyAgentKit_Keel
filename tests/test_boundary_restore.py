@@ -210,8 +210,8 @@ exit 1
         return root, git
 
     def test_a_tmpdir_inside_the_checkout_is_refused(self):
-        # mktemp -d honours TMPDIR: set to the checkout, the copy went into the working tree,
-        # and a SIGKILL left it there.
+        # The copy goes into TMPDIR (GNU mktemp -d honoured it; the template now names it): set to
+        # the checkout, the copy went into the working tree, and a SIGKILL left it there.
         with tempfile.TemporaryDirectory() as tmp:
             root, git = self.fixture(tmp, '')
             status = git('status', '--porcelain', '--ignored')
@@ -778,15 +778,39 @@ exit 1
             self.assertIn('  ok   — ', result.stdout)
             self.assertEqual(list(Path(tmp, 'scratch').iterdir()), [], 'a copy was left behind')
 
+    def test_the_copies_go_into_tmpdir_where_mktemp_ignores_it(self):
+        # macOS `mktemp -d` with no template ignores TMPDIR and uses the user temp folder: both
+        # copies landed outside the folder checked against the checkout. This mktemp does the same.
+        with tempfile.TemporaryDirectory() as tmp:
+            elsewhere, shim = Path(tmp) / 'elsewhere', Path(tmp) / 'shim'
+            elsewhere.mkdir()
+            shim.mkdir()
+            (shim / 'mktemp').write_text('#!/bin/sh\ncase "$*" in ""|-d) TMPDIR="%s"; export TMPDIR ;; esac\n'
+                                         'exec "%s" "$@"\n' % (elsewhere, shutil.which('mktemp')))
+            (shim / 'mktemp').chmod(0o755)
+            root, git = self.fixture(tmp, "grep -q 'myapp.web' src/domain/existing.py || "
+                                          'pwd -P >> "$SCRATCH/where" || exit 1\n')
+            result = self.self_test(tmp, root, PATH='%s%s%s' % (shim, os.pathsep, os.environ['PATH']))
+            self.assertEqual(os.listdir(elsewhere), [], 'a copy was made outside TMPDIR')
+            where = (Path(tmp) / 'scratch/where').read_text().splitlines()
+            self.assertTrue(where)
+            for line in where:
+                self.assertTrue(line.startswith(os.path.realpath(Path(tmp, 'scratch')) + '/'), line)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('  ok   — ', result.stdout)
+
     def test_a_folder_the_baseline_hides_goes_with_its_copy(self):
         # os.walk skips a folder it cannot read: a baseline that hid an outside symlink in one
         # passed the audit run again on its copy, and the next run made it readable and wrote
         # through it. Now the next run gets a fresh copy. The example changes no mode, so a
         # mode-000 or mode-444 folder the baseline left keeps its copy, and the case fails by name.
+        # `cd -P`: dash's logical `cd` calls chdir() with the whole path, which fails past PATH_MAX
+        # (Ubuntu's sh): the baseline went red there, and a second run handed the same copy could
+        # not have reached `out` either, so the case would prove nothing on dash.
         deep = 'd' * 200
-        hide = {'too long': ('i=0; while [ $i -lt 25 ]; do mkdir %s && cd %s || exit 1; i=$((i + 1)); done; '
+        hide = {'too long': ('i=0; while [ $i -lt 25 ]; do mkdir %s && cd -P %s || exit 1; i=$((i + 1)); done; '
                              'ln -s "$OUTSIDE" out' % (deep, deep),
-                             'i=0; while [ $i -lt 25 ]; do cd %s || exit 0; i=$((i + 1)); done; '
+                             'i=0; while [ $i -lt 25 ]; do cd -P %s || exit 0; i=$((i + 1)); done; '
                              ': > out/escaped' % deep),
                 'mode 000': ('mkdir hidden && ln -s "$OUTSIDE" hidden/out && chmod 000 hidden',
                              'chmod 755 hidden && : > hidden/out/escaped'),
