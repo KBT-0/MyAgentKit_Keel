@@ -15,6 +15,7 @@ import sys
 import tempfile
 import time
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 
 ROOT = Path(__file__).resolve().parents[1]
 # The review self-test ships to projects with its own minimums; read them, never copy them.
@@ -34,8 +35,34 @@ REQUIRED_SUITES = {
               'test_check_gate': 17, 'test_boundary_restore': 39, 'test_sync_kit': 15,
               'test_doctor': 2, 'test_git_hooks': 24, 'test_stop_hook': 1, 'test_spawn_worker': 15,
               'test_worker_visibility': 19, 'test_doc_pointers': 4,
-              'test_kit_output': 1},
+              'test_kit_output': 1, 'test_kit_runner': 5},
 }
+
+
+# --timing: each phase's and each suite's seconds, and a suite's ten slowest tests.
+TIMES, SLOWEST, _mark = [], [], [time.monotonic()]
+
+
+def passed(message):
+    """Print a phase's PASS line and record the seconds since the previous one."""
+    print('PASS: ' + message)
+    mark(message)
+
+
+def mark(label):
+    now = time.monotonic()
+    TIMES.append((label[:60], now - _mark[0]))
+    _mark[0] = now
+
+
+class TimedResult(unittest.TextTestResult):
+    def startTest(self, test):
+        self._started = time.monotonic()
+        super().startTest(test)
+
+    def stopTest(self, test):
+        super().stopTest(test)
+        SLOWEST.append((time.monotonic() - self._started, test.id()))
 
 
 def discover(folder):
@@ -68,13 +95,13 @@ def run_tests(root, directory, required):
         if counts[name] < minimum:
             raise RuntimeError('required test suite is incomplete: ' + name)
     output = io.StringIO()
-    result = unittest.TextTestRunner(stream=output, verbosity=2).run(suite)
+    result = unittest.TextTestRunner(stream=output, verbosity=2, resultclass=TimedResult).run(suite)
     if not result.wasSuccessful() or result.skipped:
         raise RuntimeError('required tests failed or were skipped:\n' + output.getvalue())
     # A pass prints one line; the per-test lines were kilobytes nobody read. A failure above
     # carries the whole log, the passing tests included.
-    print('PASS: %s ran %d tests, each suite at or above its minimum (%s)'
-          % (directory, result.testsRun, ', '.join('%s %d' % item for item in sorted(required.items()))))
+    passed('%s ran %d tests, each suite at or above its minimum (%s)'
+           % (directory, result.testsRun, ', '.join('%s %d' % item for item in sorted(required.items()))))
 
 
 # A gate run that waits forever (a lock never released) must fail here, not hang the kit check.
@@ -103,6 +130,35 @@ def utf8_locale(have=None):
     return found[0][1]
 
 
+def path_without(path, drop, links):
+    """`path` with every command whose name `drop` selects removed; the rest resolve as before.
+
+    A directory holding such a command is replaced by a directory under `links` holding links
+    to its other entries; every other directory stays as it is, its entries never stat'ed.
+    Linking every entry of every directory took minutes on a WSL host whose PATH holds Windows
+    directories, each entry a slow stat. os.path.exists, not Path.exists: on Python before
+    3.12 the latter raised on an entry it may not stat (macOS /usr/sbin/weakpass_edit), and a
+    dangling link is left out.
+    """
+    kept = []
+    for number, directory in enumerate(path.split(os.pathsep)):
+        try:
+            names = os.listdir(directory)
+        except OSError:
+            continue
+        if not any(drop(name) for name in names):
+            kept.append(directory)
+            continue
+        copy = Path(links) / str(number)
+        copy.mkdir(parents=True)
+        for name in names:
+            source = os.path.join(directory, name)
+            if not drop(name) and os.path.exists(source):
+                os.symlink(os.path.realpath(source), copy / name)
+        kept.append(str(copy))
+    return os.pathsep.join(kept)
+
+
 def check_syntax(root):
     """Parse every .py file as Python 3.10, the oldest CI runs, and every .sh file with `sh -n`.
 
@@ -123,17 +179,8 @@ def check_syntax(root):
             run(["sh", "-n", str(path)])
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--self-test", action="store_true")
-    args = parser.parse_args()
-    check_syntax(ROOT)
-    manifest = json.loads((ROOT / "plugins/myagentkit/.codex-plugin/plugin.json").read_text())
-    if manifest["name"] != "myagentkit" or manifest["skills"] != "./skills/":
-        raise RuntimeError("plugin manifest does not expose the expected package")
-    print(run([sys.executable, "scripts/package_codex_plugin.py", "--check"]).strip())
-    for directory, required in REQUIRED_SUITES.items():
-        run_tests(ROOT, directory, required)
+def acceptance(self_test):
+    """Bootstrap a synthetic project, prove its gates pass, and with self_test, prove them red."""
     with tempfile.TemporaryDirectory(prefix="myagentkit-acceptance-") as tmp:
         project = Path(tmp)
         run(["sh", str(ROOT / "bootstrap.sh"), str(project)])
@@ -159,8 +206,8 @@ def main():
         # With CDPATH exported, `cd scripts` printed the directory into the gate's own path,
         # and the gate re-ran a two-line file name instead of its checks.
         run(["sh", "scripts/check.sh"], project, reason="CHECK: PASS", env=dict(os.environ, CDPATH="."))
-        print("PASS: bootstrap rejects missing setup and accepts the configured synthetic project")
-        if args.self_test:
+        passed("bootstrap rejects missing setup and accepts the configured synthetic project")
+        if self_test:
             with tempfile.TemporaryDirectory(prefix="myagentkit-side-") as side:
                 side = Path(side)
                 # A normal run refuses the self-test seams, so these cases set the build command
@@ -187,7 +234,7 @@ def main():
                 if not seen or any(s != before for s in seen) or run(status, project) != before:
                     raise RuntimeError("check.sh --self-test changed the working tree:\n"
                                        + "".join(s for s in seen if s != before))
-                print("PASS: git status of the project is unchanged at every nested gate run and after --self-test")
+                passed("git status of the project is unchanged at every nested gate run and after --self-test")
                 # Every self-test seam exported into a normal run fails it by name, including
                 # an override that would turn a red build green.
                 seams = {"GATE_BUILD_CMD_OVERRIDE": "true", "GATE_SELFTEST_STATE_FILE": "docs/STATE.md",
@@ -207,7 +254,7 @@ def main():
                     run(["sh", "scripts/check.sh"], project, expected=1, reason=refused, timeout=60,
                         env=dict(os.environ, GATE_SELFTEST_NESTED=str(os.getpid()),
                                  GATE_LOCK_HELD=own_lock, **{name: value}))
-                print("PASS: every self-test override exported into a normal run fails it by name")
+                passed("every self-test override exported into a normal run fails it by name")
                 # The marker a self-test run exports dies with that run: copied out of a finished
                 # run, it is refused like any other.
                 build.write_text(f'cat .git/check.lock > "{side}/holder"\n')
@@ -219,7 +266,7 @@ def main():
                     reason="FAIL [env]: GATE_BUILD_CMD_OVERRIDE is set",
                     env=dict(os.environ, GATE_SELFTEST_NESTED=marker,
                              GATE_LOCK_HELD=own_lock, GATE_BUILD_CMD_OVERRIDE="true"))
-                print("PASS: a self-test marker copied out of a finished run is refused")
+                passed("a self-test marker copied out of a finished run is refused")
                 # A gate killed with SIGKILL never clears its pid from the lock file. Once its
                 # build has exited too, nobody holds the lock, and variables copied out of the
                 # killed run name it exactly: refused, never honoured as a self-test's seams.
@@ -253,7 +300,7 @@ def main():
                     env=dict(os.environ, GATE_SELFTEST_NESTED=marker, GATE_LOCK_HELD=own_lock,
                              GATE_LOCK_FD=(side / "fd").read_text().strip(),
                              GATE_BUILD_CMD_OVERRIDE="true"))
-                print("PASS: variables copied out of a gate killed with SIGKILL are refused")
+                passed("variables copied out of a gate killed with SIGKILL are refused")
                 # Two gate runs sharing one build directory: the second must wait, not race.
                 build.write_text(f'mkdir "{side}/build" && sleep 2 && rmdir "{side}/build"\n')
                 pair = [subprocess.Popen(["sh", "scripts/check.sh"], cwd=project,
@@ -263,7 +310,7 @@ def main():
                 if (any(p.returncode or "CHECK: PASS" not in o for p, o in zip(pair, outputs))
                         or not any("NOTE [lock]" in o for o in outputs)):
                     raise RuntimeError("concurrent gate runs raced:\n" + "\n".join(outputs))
-                print("PASS: two concurrent gate runs sharing a build directory both pass")
+                passed("two concurrent gate runs sharing a build directory both pass")
                 # A gate killed with SIGKILL while its build runs: the build keeps the lock, and
                 # none of three waiters builds until it exits. The build directory is the proof:
                 # a waiter whose build overlapped the orphaned one fails on "File exists".
@@ -286,7 +333,7 @@ def main():
                 if any(p.returncode or "CHECK: PASS" not in o for p, o in zip(waiters, outputs)):
                     raise RuntimeError("a waiter built beside the build of a killed gate, or beside"
                                        " another waiter:\n" + "\n".join(outputs))
-                print("PASS: a gate killed with SIGKILL holds the lock until its build exits;"
+                passed("a gate killed with SIGKILL holds the lock until its build exits;"
                       " three waiters then run one at a time")
                 # A file at the lock path that is not a lock (the symlink an older check.sh left
                 # behind when killed) is refused by name, never followed or replaced.
@@ -330,7 +377,7 @@ def main():
                                      GATE_LOCK_FD=str(other.fileno()),
                                      GATE_SELFTEST_NESTED=str(os.getpid()),
                                      GATE_BUILD_CMD_OVERRIDE="true"))
-                print("PASS: a symlink at the lock path is refused; a bounded lock wait stops with"
+                passed("a symlink at the lock path is refused; a bounded lock wait stops with"
                       " NOT RUN; only the own lock path, with the descriptor holding it, is inherited, never"
                       " an independently opened one")
                 # Linux's NFS client takes an exclusive flock only on a descriptor open for
@@ -359,28 +406,23 @@ def main():
                               env=dict(os.environ, PYTHONPATH=str(fake), FAKE_FLOCK=mode))
                     if "FAIL [env]" in out:
                         raise RuntimeError("a lockless file system was reported as an environment fault:\n" + out)
-                print("PASS: a lock that needs a writable descriptor (NFS) is taken; a file system"
+                passed("a lock that needs a writable descriptor (NFS) is taken; a file system"
                       " without locks fails FAIL [lock] by name")
                 # python3 only in the configured toolchain directory, as a hook sees a Python
                 # installed per user: the lock, which is taken through python3, still finds it.
-                tc, no_python = side / "tc", side / "no-python"
-                tc.mkdir(); no_python.mkdir()
+                tc = side / "tc"
+                tc.mkdir()
                 (tc / "python3").symlink_to(sys.executable)
-                for directory in os.environ["PATH"].split(os.pathsep):
-                    if os.path.isdir(directory):
-                        for name in os.listdir(directory):
-                            source = Path(directory) / name
-                            # os.path.exists: Path.exists raises before Python 3.12 on an entry
-                            # it may not stat (macOS /usr/sbin/weakpass_edit).
-                            if (not name.startswith("python") and os.path.exists(source)
-                                    and not os.path.lexists(no_python / name)):
-                                (no_python / name).symlink_to(source.resolve())
+                no_python = path_without(os.environ["PATH"], lambda name: name.startswith("python"),
+                                         side / "no-python")
+                if shutil.which("python3", path=no_python):
+                    raise RuntimeError("the PATH without python3 still finds one")
                 if 'toolchain_path=""' not in gate.read_text():
                     raise RuntimeError("the synthetic project's toolchain_path line was not found")
                 gate.write_text(gate.read_text().replace('toolchain_path=""', f'toolchain_path="{tc}"'))
                 run(["sh", "scripts/check.sh"], project, reason="CHECK: PASS", timeout=60,
-                    env=dict(os.environ, PATH=str(no_python)))
-                print("PASS: a python3 found only through toolchain_path takes the gate lock")
+                    env=dict(os.environ, PATH=no_python))
+                passed("a python3 found only through toolchain_path takes the gate lock")
                 gate.write_text(original_gate)
             # The scanners read untracked files too (git ls-files --others), not only the index.
             marker = project / "untracked-marker.md"
@@ -389,7 +431,7 @@ def main():
                 run(["sh", "scripts/check.sh"], project, expected=1, reason="CHECK: FAIL")
             finally:
                 marker.unlink()
-            print("PASS: an untracked file with an unfilled marker turns the gate red")
+            passed("an untracked file with an unfilled marker turns the gate red")
             # A tracked file deleted without `git rm` fails the gate under its own name,
             # not as a scanner that failed to run.
             gone = project / "deleted-unstaged.md"
@@ -486,7 +528,7 @@ def main():
                     run(["sh", "scripts/check.sh"], project, reason="CHECK: PASS", env=env)
             finally:
                 gate.write_text(original_gate)
-            print("PASS: a marker on a non-UTF-8 line or link fails the gate in a UTF-8 locale; the build keeps the caller's locale")
+            passed("a marker on a non-UTF-8 line or link fails the gate in a UTF-8 locale; the build keeps the caller's locale")
             # A failed append of link text (a full disk, a lost permission) was ignored: the
             # link's marker went unscanned and the gate could pass. Here a stand-in readlink
             # puts a directory where the second link's text is appended.
@@ -522,7 +564,7 @@ def main():
                     run(["git", "rm", "-q", "--cached", "--", *links], project)
                     for name in links:
                         (project / name).unlink()
-            print("PASS: a deleted tracked file is named, a directory symlink is skipped with a note,"
+            passed("a deleted tracked file is named, a directory symlink is skipped with a note,"
                   " a symlink's link text is scanned under its own path")
             tests = project / "scripts/test_claude_bridge.py"
             original_tests = tests.read_bytes()
@@ -590,15 +632,103 @@ def main():
             checks.write_bytes(original_checks)
             selftests.write_bytes(original_selftests)
             wrapper.write_bytes(original_wrapper)
-            print("PASS: missing review tests, failed runner, absent completion evidence, an emptied "
+            passed("missing review tests, failed runner, absent completion evidence, an emptied "
                   "suite and boundary checks whose self-tests ran no case reject; the existing-file example "
                   "runs as a case; a missing attribution rule line is a visible skip")
+
+
+FAILURES = (OSError, ValueError, RuntimeError, KeyError, subprocess.TimeoutExpired)
+
+
+def unit(name, self_test, timing_file=None):
+    """Run one unit in this process; 0 on a pass, 1 with the error printed on a failure."""
+    try:
+        if name == "acceptance":
+            acceptance(self_test)
+        else:
+            run_tests(ROOT, name, REQUIRED_SUITES[name])
+        return 0
+    except FAILURES as error:
+        print(f"KIT CHECK: FAIL — {error}", file=sys.stderr)
+        return 1
+    finally:
+        if timing_file:
+            rows = ["%7.1f s    %s" % (seconds, label) for label, seconds in TIMES]
+            rows += ["%7.1f s    test %s" % item for item in sorted(SLOWEST, reverse=True)[:10]]
+            Path(timing_file).write_text("".join(row + "\n" for row in rows))
+
+
+def run_units(units, timing=False):
+    """Run each (name, command) at once; print each unit's whole output in the given order.
+
+    The units share no state: every suite and the acceptance phases work in temporary
+    directories of their own, and each synthetic project has its own .git and so its own
+    gate lock. A unit's output is printed only when it and every unit before it have ended,
+    so the order does not depend on which finishes first. True when every unit passed.
+    """
+    def one(name, command, timing_file):
+        started = time.monotonic()
+        if timing_file:
+            command = command + ["--timing-file", timing_file]
+        result = subprocess.run(command, cwd=ROOT, stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, text=True, errors="replace")
+        return result.returncode, result.stdout, time.monotonic() - started
+
+    with tempfile.TemporaryDirectory(prefix="myagentkit-timing-") as times, \
+            ThreadPoolExecutor(max_workers=len(units)) as pool:
+        files = [os.path.join(times, str(number)) if timing else None for number in range(len(units))]
+        futures = [pool.submit(one, name, command, timing_file)
+                   for (name, command), timing_file in zip(units, files)]
+        summary, failed = [], []
+        for (name, _), future, timing_file in zip(units, futures, files):
+            code, output, seconds = future.result()
+            sys.stdout.write(output)
+            sys.stdout.flush()
+            if code:
+                failed.append(name)
+            summary.append("%7.1f s  %s%s" % (seconds, name, " (FAILED)" if code else ""))
+            if timing_file and os.path.exists(timing_file):
+                summary += Path(timing_file).read_text().splitlines()
+    if timing:
+        print("TIMING (each unit's wall clock; under it, its phases and ten slowest tests):")
+        print("\n".join(summary))
+    else:
+        print("\n".join("TIME: " + row.strip() for row in summary))
+    if failed:
+        print("KIT CHECK: FAIL — %d of %d units failed: %s" % (len(failed), len(units), ", ".join(failed)),
+              file=sys.stderr)
+    return not failed
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--self-test", action="store_true")
+    parser.add_argument("--timing", action="store_true",
+                        help="print each unit's, phase's and slowest test's seconds at the end")
+    parser.add_argument("--unit", help=argparse.SUPPRESS)
+    parser.add_argument("--timing-file", help=argparse.SUPPRESS)
+    args = parser.parse_args()
+    if args.unit:
+        return unit(args.unit, args.self_test, args.timing_file)
+    started = time.monotonic()
+    check_syntax(ROOT)
+    manifest = json.loads((ROOT / "plugins/myagentkit/.codex-plugin/plugin.json").read_text())
+    if manifest["name"] != "myagentkit" or manifest["skills"] != "./skills/":
+        raise RuntimeError("plugin manifest does not expose the expected package")
+    print(run([sys.executable, "scripts/package_codex_plugin.py", "--check"]).strip())
+    # -u: a unit's error, on stderr, lands after what it printed before failing.
+    command = [sys.executable, "-B", "-u", str(Path(__file__).resolve())] + ["--self-test"] * args.self_test
+    if not run_units([(name, command + ["--unit", name]) for name in [*REQUIRED_SUITES, "acceptance"]],
+                     args.timing):
+        return 1
+    print("TIME: %.1f s in all" % (time.monotonic() - started))
     print("KIT CHECK: PASS")
+    return 0
 
 
 if __name__ == "__main__":
     try:
-        main()
-    except (OSError, ValueError, RuntimeError, KeyError, subprocess.TimeoutExpired) as error:
+        raise SystemExit(main())
+    except FAILURES as error:
         print(f"KIT CHECK: FAIL — {error}", file=sys.stderr)
         raise SystemExit(1)
