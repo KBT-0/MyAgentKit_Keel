@@ -330,6 +330,16 @@ because a holder that does not hand its handle to the gate fails every gate run 
 before any case runs. The upgrade checklist now lists the exact native Windows transcript,
 `skip` lines included, so an owner can tell an expected line from a failure.
 
+**A third review pass** found two cases that asserted less than their names. The killed-gate
+case covered only the holder's signal branch: a holder that turned every ordinary status
+below 256 into 0 still passed it, and a failing build then reached git as a pass. A new case
+makes the gate copy exit 3 right after it takes the lock and requires the holder to exit 3;
+with that branch broken it went red (and the broken holder also turned the whole self-test's
+own exit status into 0 while it printed `SELF-TEST: FAIL`, which is why the case exists). The
+no-`FILE_ID_INFO` case matched the diagnostic only, so a proof that printed it and then
+trusted the claim anyway passed; it now also requires the proof to exit 3, and deleting that
+`sys.exit(3)` turned it red.
+
 **`review.sh` on native Windows: measured, not fixed.** The review asked for `agent_process.py`
 to tolerate a missing `SIGHUP` so that the self-test's review case runs on native Windows. With
 `SIGHUP` made optional, 121 of the 137 review tests still failed there (163 of the errors were

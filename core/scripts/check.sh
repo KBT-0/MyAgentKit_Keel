@@ -494,7 +494,8 @@ self_test() {
   # reason that is not a sharing violation (a read-only file), and a file id equal to the lock's
   # in its volume serial and first 64 bits only; a volume with no FILE_ID_INFO fails closed.
   # The holder refuses a reparse point at the lock path, never reports a gate killed by a
-  # signal as a pass, and a killed holder leaves the lock with the gate it started. Each case
+  # signal as a pass, passes a failing gate's status on, and a killed holder leaves the lock
+  # with the gate it started. Each case
   # runs a copy of this gate in a throwaway repository, so its lock is not the one this run
   # holds, and asserts the outcome by its message. Two cases need a fake: the proof's own code,
   # cut out of this file, runs with GetFileInformationByHandleEx replaced. The reparse point
@@ -596,13 +597,13 @@ if mode in ("noid", "wide"):
     sys.stdout.flush()
     print("lockcase: proof exit %d" % status)
     sys.exit(0)
-if mode == "killgate":
-    marker = lock + ".killed"
-    status = run(dict(os.environ, LOCKCASE_KILL=marker))
+if mode in ("killgate", "failgate"):
+    marker = lock + "." + mode
+    status = run(dict(os.environ, **{"LOCKCASE_KILL" if mode == "killgate" else "LOCKCASE_FAIL": marker}))
     if not os.path.exists(marker):
-        print("lockcase: the copy of the gate was not killed (its LOCKCASE line is missing)")
+        print("lockcase: the copy of the gate never reached its LOCKCASE line")
         sys.exit(2)
-    print("lockcase: a gate killed by a signal exited %d" % status)
+    print("lockcase: a gate %s exited %d" % ("killed by a signal" if mode == "killgate" else "that failed with 3", status))
     sys.exit(0)
 if mode == "killholder":
     class Entry(ctypes.Structure):
@@ -645,8 +646,9 @@ claim = {"other": lambda: handle(lock + ".other", RW, 3), "reader": lambda: hand
 sys.exit(run(claimed(claim)))
 LOCKCASE
     refused="^FAIL \\[env\\]: GATE_LOCK_HELD names this checkout's lock, but this run did not inherit"
-    for lock_case in other reader unheld readonly wide noid reparse killgate killholder; do
+    for lock_case in other reader unheld readonly wide noid reparse killgate failgate killholder; do
       case_dir="$work/lock-$lock_case"
+      also=""
       case $lock_case in
         other)      want=$refused; label="a nested run refuses a writable handle on another file while the lock is held" ;;
         reader)     want=$refused; label="a nested run refuses a read-only handle on the held lock file" ;;
@@ -654,24 +656,26 @@ LOCKCASE
         readonly)   want=$refused; label="a nested run refuses a fresh open that failed for a reason other than the lock" ;;
         wide)       want='^lockcase: proof exit 1$'
                     label="a nested run refuses a file id equal to the lock's in its volume and first 64 bits only" ;;
-        noid)       want='^FAIL \[lock\]: the volume holding .* no stable file id'
+        noid)       want='^FAIL \[lock\]: the volume holding .* no stable file id'; also='^lockcase: proof exit 3$'
                     label="a nested run on a volume without FILE_ID_INFO fails closed" ;;
         reparse)    want='^FAIL \[lock\]: cannot open .*reparse point'; label="the gate lock refuses a reparse point at the lock path" ;;
         killgate)   want='^lockcase: a gate killed by a signal exited [1-9]'; label="a gate killed by a signal never exits 0" ;;
+        failgate)   want='^lockcase: a gate that failed with 3 exited 3$'; label="the lock holder passes a failing gate's exit status on" ;;
         killholder) want='^NOT RUN \[lock\]:'; label="a killed lock holder leaves the lock with the gate it started" ;;
       esac
       # The copy stops or kills itself right after it holds the lock, when a case asks it to.
       if ! { ( fixture_env; git init -q "$case_dir" ) && mkdir "$case_dir/scripts" &&
              awk '/^work=\$\(mktemp -d\)/ {
                     print "[ -z \"${LOCKCASE_HOLD:-}\" ] || { : > \"$LOCKCASE_HOLD\"; sleep 10; exit 0; }"
-                    print "[ -z \"${LOCKCASE_KILL:-}\" ] || { : > \"$LOCKCASE_KILL\"; kill -9 $$; }" }
+                    print "[ -z \"${LOCKCASE_KILL:-}\" ] || { : > \"$LOCKCASE_KILL\"; kill -9 $$; }"
+                    print "[ -z \"${LOCKCASE_FAIL:-}\" ] || { : > \"$LOCKCASE_FAIL\"; exit 3; }" }
                   { print }' "$0" > "$case_dir/scripts/check.sh"; }; then
         echo "  FAIL — could not build the throwaway repository for the Windows lock case: $label"
         st_fail=1; continue
       fi
       out=$(python3 "$work/lockcase.py" "$lock_case" "$(cygpath -m "$case_dir/.git/check.lock")" \
               "$(cygpath -m "$case_dir/scripts/check.sh")" 2>&1)
-      if printf '%s\n' "$out" | grep -q "$want"; then
+      if printf '%s\n' "$out" | grep -q "$want" && { [ -z "$also" ] || printf '%s\n' "$out" | grep -q "$also"; }; then
         echo "  ok   — $label"
       else
         echo "  FAIL — $label: not refused, or the case could not run:"

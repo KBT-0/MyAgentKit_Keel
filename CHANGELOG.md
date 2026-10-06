@@ -36,14 +36,14 @@ change is safe is in `RESEARCH_LOG.md` (2026-10-06 and 2026-10-07).
   POSIX `PATH` is never run. A linked worktree's `C:/` git path is read as absolute. The POSIX
   lock is unchanged. `python3` without `fcntl` on any other system still fails `FAIL [lock]`
   by name. `docs/DEV_SETUP.md` and `docs/GOTCHAS.md` say so.
-- **`--self-test` proves the Windows lock.** Nine new cases on native Windows: a nested run
+- **`--self-test` proves the Windows lock.** Ten new cases on native Windows: a nested run
   refuses a writable handle on another file, a read-only handle on the held lock file, a
   write handle while nothing holds the lock, a fresh open refused for a reason other than the
   lock (a read-only file), and a file id equal to the lock's in its volume and first 64 bits
   only; a volume without `FILE_ID_INFO` fails closed; the lock refuses a reparse point at its
   path (set with a tag any user may set, so the case never needs the symlink privilege and is
-  never skipped); a gate killed by a signal never exits 0; and a killed lock holder leaves the
-  lock with the gate it started. On POSIX, a `cygpath` on `PATH` is never run. The Windows
+  never skipped); a gate killed by a signal never exits 0; the holder passes a failing gate's
+  exit status on; and a killed lock holder leaves the lock with the gate it started. On POSIX, a `cygpath` on `PATH` is never run. The Windows
   cases print one `skip` line on POSIX, and the POSIX case one on MSYS, MINGW and Cygwin.
 - **`review.sh` and Git LFS.** The v0.9 filter refusal checked every path in the checkout,
   not the paths a review changes, and `git lfs install` sets `filter.lfs.clean` globally:
@@ -90,7 +90,7 @@ from, and `00581dd` is the kit's v0.9 commit.
    the self-test cannot pass yet: its review case fails because `review.sh` needs POSIX
    signals (above). There, run `./scripts/check.sh` and `./scripts/check.sh --self-test` from
    Git for Windows' `sh` with the Windows `python3` and expect exactly this: `CHECK: PASS`;
-   in the self-test, `ok` for every case including the nine Windows lock cases, except
+   in the self-test, `ok` for every case including the ten Windows lock cases, except
    `FAIL — review adapter negative tests failed or did not run` with the review tests' own
    output, the line `skip — a stray cygpath on a POSIX PATH` (a POSIX-only case), and a
    `skip` the project's own setup prints (the commit-msg hook when `AGENTS.md` has no
