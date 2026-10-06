@@ -14,9 +14,12 @@ import os
 from pathlib import Path
 import re
 import shlex
+import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 import uuid
 from datetime import datetime, timezone
 import agent_process
@@ -61,8 +64,10 @@ def git(repo: Path, *args: str, allowed=(0,), stdin: bytes | None = None) -> byt
     return result.stdout
 
 
-def throwaway_copy(repo: Path, head: str, diff: str | None, copy: Path) -> None:
-    """Fill the empty directory `copy` with `head`, plus the uncommitted `diff`, for a reviewer.
+def throwaway_copy(repo: Path, head: str, diff: str | None, copy: Path,
+                   cancelled: list | None = None, timeout: float = 300) -> None:
+    """Fill the empty directory `copy` with `head`, plus the checkout's own bytes when the
+    review is of uncommitted work, for a reviewer.
 
     THREAT MODEL. A reviewer may run anything: the suite, a reproduction, a destructive command.
     - Defended: it runs with this copy as its working directory, never in the reviewed
@@ -72,6 +77,14 @@ def throwaway_copy(repo: Path, head: str, diff: str | None, copy: Path) -> None:
     - Defended: the repository's path is not given to it. The prompt names relative paths only,
       and agent_process.run() sets PWD to the copy and drops OLDPWD, REVIEW_REPO_ROOT and every
       GIT_* variable (a GIT_DIR from a hook would point its git commands at the repository).
+    - Defended: the copy holds the checkout's BYTES, not a patch of them. An uncommitted review
+      overlays every tracked and untracked file of the working tree onto the archive byte for
+      byte and removes what the working tree deleted, so neither git's stat cache
+      (core.trustctime, core.checkStat) nor an apply setting (apply.whitespace=fix) can give the
+      reviewer other source than the one the owner sees. The overlay is checked afterwards.
+    - Defended: the copy is made under the same cancel and wall-clock bound as the review: a
+      cancel noted while `git archive`, `tar` or the overlay runs stops them, and the bound
+      ends a stalled extraction.
     - Detected: a write that reaches the repository anyway changes the fingerprint, and the
       review fails as stale_checkout.
     - Accepted limit: a reviewer that finds the repository by its absolute path can still read
@@ -83,23 +96,70 @@ def throwaway_copy(repo: Path, head: str, diff: str | None, copy: Path) -> None:
     - Accepted limit: `git archive` honours export-ignore and export-subst, and ignored files
       (installed dependencies, build output) are absent, so a run may need setup first.
     """
+    deadline = time.monotonic() + timeout
+
+    def stopped() -> bool:
+        return bool(cancelled) or time.monotonic() > deadline
+
+    # Each in its own process group: a stop kills what they started too.
     archive = subprocess.Popen(["git", "-C", str(repo), "archive", "--format=tar", head],
-                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-    unpacked = subprocess.run(["tar", "-x", "-f", "-", "-C", str(copy)], stdin=archive.stdout,
-                              capture_output=True)
+                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, start_new_session=True)
+    unpacked = subprocess.Popen(["tar", "-x", "-f", "-", "-C", str(copy)], stdin=archive.stdout,
+                                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, start_new_session=True)
     archive.stdout.close()
+    try:
+        while unpacked.poll() is None:
+            if stopped():
+                raise BridgeError("the copy for the reviewer was stopped: "
+                                  + ("cancelled" if cancelled else "the wall-clock limit passed"))
+            time.sleep(0.05)
+        err = unpacked.stderr.read().decode(errors="replace")
+    finally:
+        # A cancel that raises (the Codex adapter's one-shot guard) or the bound: no child
+        # outlives this function.
+        for child in (archive, unpacked):
+            if child.poll() is None:
+                try:
+                    os.killpg(child.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            child.wait()
+        unpacked.stderr.close()
     if archive.wait() or unpacked.returncode:
-        raise BridgeError("could not copy HEAD for the reviewer: "
-                          + unpacked.stderr.decode(errors="replace"))
-    if diff:
-        # Outside any repository, so `git apply` patches the copy and nothing else.
-        env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-        env["GIT_CEILING_DIRECTORIES"] = str(copy.parent)
-        applied = subprocess.run(["git", "apply", "-"], cwd=copy, input=diff.encode(), env=env,
-                                 capture_output=True)
-        if applied.returncode:
-            raise BridgeError("the uncommitted diff does not apply to a copy of HEAD: "
-                              + applied.stderr.decode(errors="replace"))
+        raise BridgeError("could not copy HEAD for the reviewer: " + err)
+    if diff is None:
+        return
+    # The working tree's own bytes, file by file: tracked and untracked (not ignored), and
+    # what the working tree deleted is deleted. No patch, no git setting in between.
+    listed = git(repo, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
+    deleted = set(git(repo, "ls-files", "-z", "--deleted").split(b"\0")) - {b""}
+    for raw in listed.split(b"\0"):
+        if not raw:
+            continue
+        if stopped():
+            raise BridgeError("the copy for the reviewer was stopped")
+        rel = os.fsdecode(raw)
+        target = copy / rel
+        if raw in deleted:
+            if target.is_symlink() or target.exists():
+                target.unlink()
+            continue
+        source = repo / rel
+        if source.is_symlink():
+            if target.is_symlink() or target.exists():
+                target.unlink()
+            target.parent.mkdir(parents=True, exist_ok=True)
+            os.symlink(os.readlink(source), target)
+            continue
+        if not source.is_file():
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if target.is_symlink():
+            target.unlink()
+        shutil.copyfile(source, target)
+        shutil.copymode(source, target)
+        if target.read_bytes() != source.read_bytes():
+            raise BridgeError("the copy for the reviewer differs from the checkout at " + rel)
 
 
 def resolve(repo: Path, scope: str, reference: str | None) -> str | None:
@@ -559,7 +619,8 @@ def main(argv=None, result_sink=None) -> int:
             workdir = repo
             if args.mode == "review":
                 workdir = Path(copy)
-                throwaway_copy(repo, head, diff if scope == "uncommitted" else None, workdir)
+                throwaway_copy(repo, head, diff if scope == "uncommitted" else None, workdir,
+                               cancelled=cancelled, timeout=args.timeout)
             execution = agent_process.run(command, prompt, workdir, args.timeout, noted=cancelled)
         if execution.pop("cancelled", False):
             cancelled.append(True)

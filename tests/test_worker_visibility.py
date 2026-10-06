@@ -713,6 +713,14 @@ class ResultTests(Base):
         spec.loader.exec_module(gate)
         self.assertEqual(gate.case_in_substitution('x=$(f()case a in a) :;; esac)\n'), [1])
 
+    def test_a_case_on_the_line_after_a_command_is_a_finding(self):
+        spec = importlib.util.spec_from_file_location('kit_check', ROOT / 'scripts/check_kit.py')
+        gate = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(gate)
+        # A newline ends the command before it: `$(echo before\ncase ...)` is flagged.
+        self.assertEqual(gate.case_in_substitution("x=$(echo before\ncase x in x) echo after;; esac)\n"), [2])
+        self.assertEqual(gate.case_in_substitution("x=$(echo before \\\ncase x in x) :;; esac)\n"), [])
+
     def test_the_kit_check_rejects_a_case_inside_a_substitution(self):
         # The scan alone is not the gate: check_syntax must run it and stop on it.
         spec = importlib.util.spec_from_file_location('kit_check', ROOT / 'scripts/check_kit.py')

@@ -11,6 +11,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -23,7 +24,7 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'MYAGENTKIT_TASK_ID', 'MYAGENTKIT_R
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 91, 'test_agent_usage': 19, 'test_codex_quota': 5}
+SUITE_MINIMUMS = {'test_claude_bridge': 93, 'test_agent_usage': 19, 'test_codex_quota': 5}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -2179,6 +2180,65 @@ if case == 'archive_failure':
                 seen = json.loads(log.read_text())
                 self.assertEqual((seen['file'], seen['new']), (head_file, None))
                 self.assertFalse(Path(seen['cwd']).exists())
+
+    def test_the_copy_holds_the_checkout_bytes_whatever_git_would_hide(self):
+        import claude_bridge
+        # The copy is built from the working tree's bytes, not from a patch: git's stat cache
+        # (core.trustctime=false, core.checkStat=minimal, a same-size edit with its mtime put
+        # back) and apply.whitespace=fix would otherwise give the reviewer other source.
+        self.git('config', 'core.trustctime', 'false')
+        self.git('config', 'core.checkStat', 'minimal')
+        self.git('config', 'apply.whitespace', 'fix')
+        target = self.repo / 'file.py'
+        stat = target.stat()
+        self.git('status')  # refresh the index's stat data
+        tampered = target.read_bytes().replace(b'changed', b'TAMPERD')
+        self.assertEqual(len(tampered), len(target.read_bytes()))
+        target.write_bytes(tampered)
+        os.utime(target, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+        (self.repo / 'spaces.py').write_bytes(b'S = """a line with trailing spaces   \nx"""\n')
+        copy = Path(tempfile.mkdtemp(dir=self.root))
+        head = self.git('rev-parse', 'HEAD').stdout.decode().strip()
+        claude_bridge.throwaway_copy(self.repo, head, '', copy)
+        self.assertEqual((copy / 'file.py').read_bytes(), tampered)
+        self.assertEqual((copy / 'spaces.py').read_bytes(), (self.repo / 'spaces.py').read_bytes())
+        # What the working tree deleted is gone from the copy.
+        (self.repo / 'spaces.py').unlink()
+        (self.repo / 'file.py').unlink()
+        copy2 = Path(tempfile.mkdtemp(dir=self.root))
+        claude_bridge.throwaway_copy(self.repo, head, '', copy2)
+        self.assertFalse((copy2 / 'file.py').exists())
+        self.assertFalse((copy2 / 'spaces.py').exists())
+
+    def test_the_copy_is_bounded_and_cancellable(self):
+        import claude_bridge
+        # A stalled extraction ends at the wall-clock bound or at a noted cancel, and no child
+        # of the copy outlives it.
+        bin_dir = self.root / 'slowbin'
+        bin_dir.mkdir(exist_ok=True)
+        pid_file = self.root / 'sleeper.pid'
+        (bin_dir / 'tar').write_text('#!/bin/sh\ncat > /dev/null\nsleep 30 &\necho $! > %s\nwait\n'
+                                     % pid_file)
+        (bin_dir / 'tar').chmod(0o755)
+        head = self.git('rev-parse', 'HEAD').stdout.decode().strip()
+        old_path = os.environ['PATH']
+        os.environ['PATH'] = str(bin_dir) + os.pathsep + old_path
+        try:
+            for name, cancelled, timeout in (('bound', [], 0.3), ('cancel', [15], 30)):
+                with self.subTest(name):
+                    copy = Path(tempfile.mkdtemp(dir=self.root))
+                    started = time.monotonic()
+                    with self.assertRaises(claude_bridge.BridgeError) as ctx:
+                        claude_bridge.throwaway_copy(self.repo, head, None, copy,
+                                                     cancelled=cancelled, timeout=timeout)
+                    self.assertLess(time.monotonic() - started, 5)
+                    self.assertIn('stopped', str(ctx.exception))
+                    sleeper = int(pid_file.read_text())
+                    time.sleep(0.1)
+                    with self.assertRaises(ProcessLookupError, msg='a child of the copy outlived it'):
+                        os.kill(sleeper, 0)
+        finally:
+            os.environ['PATH'] = old_path
 
     def test_dispositions_are_claims_the_reviewer_verifies_not_settlements(self):
         # The author never approves its own work: a disproved finding counts only once the

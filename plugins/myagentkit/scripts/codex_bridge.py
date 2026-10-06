@@ -81,7 +81,8 @@ def main(argv=None, result_sink=None):
             last = Path(tmp) / "final.txt"
             workdir = Path(tmp) / "copy"
             workdir.mkdir()
-            throwaway_copy(repo, head, diff if scope == "uncommitted" else None, workdir)
+            throwaway_copy(repo, head, diff if scope == "uncommitted" else None, workdir,
+                           timeout=timeout)
             command = [os.environ.get("REVIEW_CLI_BIN", "codex"), "exec", "--json", "--ephemeral",
                        "-s", "workspace-write", "-c", "sandbox_workspace_write.network_access=false",
                        "--skip-git-repo-check", "-c", "model_reasoning_effort=" + args.effort,
