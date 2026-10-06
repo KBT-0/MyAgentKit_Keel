@@ -213,20 +213,22 @@ def check_syntax(root):
                 raise RuntimeError("%s is not Python 3.10 syntax: %s" % (path, error)) from error
     for path in root.rglob("*.sh"):
         if ".git" not in path.parts:
-            run(["sh", "-n", str(path)])
+            # The lint first: macOS's sh rejects the form too, and the reason must name it there.
             lines = case_in_substitution(path.read_text())
             if lines:
                 raise RuntimeError("%s: `case` inside $( ) on line %s: bash 3.2, macOS's sh, reads its "
                                    "pattern's `)` as the end of the $( ); move it out" % (path, lines[0]))
+            run(["sh", "-n", str(path)])
 
 
 def case_in_substitution(text):
     """The lines where a `case` starts inside $( ). bash 3.2, macOS's sh, does not parse it, and
     the `sh -n` of a host with a newer shell passes it: one did, and only macOS CI failed.
 
-    A sketch of the shell's grammar, not a parser: quotes, backslashes, comments, here-documents
-    and $(( )) are skipped, every other parenthesis is counted; `case` counts only where a
-    command starts (`echo case` is an argument)."""
+    A sketch of the shell's grammar, not a parser: quotes, backslashes, comments and
+    here-documents are skipped, every parenthesis is counted; inside $(( )) a `<<` is a shift and
+    only a nested $( ) is read for commands; `case` counts only where a command starts (`echo
+    case` is an argument)."""
     found, stack, heredocs, i, line = [], [], [], 0, 1
     while i < len(text):
         c = text[i]
@@ -244,13 +246,9 @@ def case_in_substitution(text):
         elif c == "\\":
             line += text[i + 1:i + 2] == "\n"
             i += 2
-        elif text.startswith("$((", i):  # arithmetic: its `1 << 2` is a shift, not a here-document
-            depth, j = 2, i + 3
-            while j < len(text) and depth:
-                depth += {"(": 1, ")": -1}.get(text[j], 0)
-                j += 1
-            line += text.count("\n", i, j)
-            i = j
+        elif text.startswith("$((", i):  # arithmetic: one entry per parenthesis, so `))` closes it
+            stack += ["A", "A"]
+            i += 3
         elif stack and stack[-1] == '"':
             if c == '"':
                 stack.pop()
@@ -267,17 +265,19 @@ def case_in_substitution(text):
             end = text.find("\n", i)
             i = len(text) if end < 0 else end
         else:
-            here = re.match(r"<<(-?)[ \t]*['\"]?([A-Za-z0-9_]+)['\"]?", text[i:i + 80])
-            word = text.startswith(("case ", "case\t"), i) and (i == 0 or text[i - 1] in " \t\n;(|&")
-            if word:  # Where a command starts: after a separator, an opening or then/do/else/elif.
+            # The innermost $( or $(( : in arithmetic, `<<` is a shift and no command starts.
+            arithmetic = next((s for s in reversed(stack) if s in "$A"), "") == "A"
+            here = not arithmetic and re.match(r"<<(-?)[ \t]*['\"]?([A-Za-z0-9_]+)['\"]?", text[i:i + 80])
+            word = text.startswith(("case ", "case\t"), i) and (i == 0 or text[i - 1] in " \t\n;(|&!")
+            if word:  # Where a command starts: after a separator, an opening or a keyword.
                 before = text[:i].rstrip(" \t")
                 word = (not before or before[-1] in "\n;(|&{"
-                        or re.search(r"(^|[\s;&|(])(then|do|else|elif)$", before))
+                        or re.search(r"(^|[\s;&|(])(then|do|else|elif|if|while|until|time|!)$", before))
             if here:
                 heredocs.append((here.group(1) == "-", here.group(2)))
                 i += here.end()
                 continue
-            if word and "$" in stack:
+            if word and not arithmetic and "$" in stack:
                 found.append(line)
             if c == '"':
                 stack.append('"')

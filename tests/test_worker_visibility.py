@@ -495,6 +495,14 @@ class ResultTests(Base):
         self.assertEqual(gate.case_in_substitution('x=$(echo case value)\ny=$(f; then case)\n'), [])
         self.assertEqual(gate.case_in_substitution('x=$(true && case a in a) :;; esac)\n'), [1])
         self.assertEqual(gate.case_in_substitution('x=$(if :; then case a in a) :;; esac; fi)\n'), [1])
+        # Every keyword after which a command starts.
+        for start in ('if', 'while', 'until', '!', 'time', 'elif', 'then', 'do', 'else'):
+            with self.subTest(start=start):
+                self.assertEqual(gate.case_in_substitution('x=$(%s case a in a) :;; esac)\n' % start), [1])
+        # A $( ) inside $(( )) is still a substitution, and its `case` still counts.
+        self.assertEqual(gate.case_in_substitution('n=$(( $(case a in a) echo 1;; esac) + 1 ))\n'), [1])
+        self.assertEqual(gate.case_in_substitution('n=$(( (1 << 2) + $(echo 1) ))\nf=$(case x in x) :;; esac)\n'),
+                         [2])
         # A shift in $(( )) is not a here-document: the next line is still read.
         self.assertEqual(gate.case_in_substitution('n=$((1 << 2)) m="$((n << 1))"\n'
                                                    'f=$(case x in x) echo ok;; esac)\n'), [2])
@@ -505,8 +513,19 @@ class ResultTests(Base):
         gate = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(gate)
         (self.tmp / 'bad.sh').write_text('#!/bin/sh\nn=$((1 << 2))\nf=$(case x in x) echo ok;; esac)\n')
-        with self.assertRaisesRegex(RuntimeError, r'bad\.sh: `case` inside \$\( \) on line 3: bash 3\.2'):
-            gate.check_syntax(self.tmp)
+        # macOS's sh rejects the file itself; the named reason must still be the lint's. An `sh`
+        # that fails every `-n` stands in for it, so every host sees what macOS sees.
+        stub = self.tmp / 'stub-sh'
+        stub.mkdir()
+        (stub / 'sh').write_text('#!/bin/sh\necho "syntax error near unexpected token" >&2\nexit 2\n')
+        (stub / 'sh').chmod(0o755)
+        path = os.environ['PATH']
+        os.environ['PATH'] = '%s%s%s' % (stub, os.pathsep, path)
+        try:
+            with self.assertRaisesRegex(RuntimeError, r'bad\.sh: `case` inside \$\( \) on line 3: bash 3\.2'):
+                gate.check_syntax(self.tmp)
+        finally:
+            os.environ['PATH'] = path
 
 
 class ContextTests(Base):
