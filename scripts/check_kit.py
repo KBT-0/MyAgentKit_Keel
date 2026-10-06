@@ -33,7 +33,7 @@ REQUIRED_SUITES = {
               'test_review_upgrade': 2, 'test_boundary_example': 3, 'test_scan_gate': 1,
               'test_check_gate': 17, 'test_boundary_restore': 39, 'test_sync_kit': 15,
               'test_doctor': 2, 'test_git_hooks': 24, 'test_stop_hook': 1, 'test_spawn_worker': 15,
-              'test_worker_visibility': 19},
+              'test_worker_visibility': 19, 'test_doc_pointers': 3},
 }
 
 

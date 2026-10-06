@@ -52,7 +52,7 @@ session. `scripts/review.sh` automates that, and it needs a second CLI on this m
 **Ask your agent to set this up for you.** It can install the CLI and check the wiring; the
 parts it cannot do are called out below. Nothing here is required to write code — the gate,
 the hooks and CI all work without it. Skip it and the review protocol becomes the
-paste-the-template-by-hand version in `docs/REVIEW_GATE.md`, which is a real fallback, not a
+paste-the-template-by-hand version in `docs/REVIEW_RUNNING.md`, which is a real fallback, not a
 consolation prize.
 
 **Required: the reviewing CLI itself.**

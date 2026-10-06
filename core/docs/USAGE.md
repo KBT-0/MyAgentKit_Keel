@@ -20,7 +20,7 @@ For Claude-host Codex reviews, set `MYAGENTKIT_REQUESTER=claude/ACTUAL_MODEL` an
 reported metadata, never an attestation. If absent, it stays unknown. For Codex-host Claude
 calls, pass `--requester codex/ACTUAL_MODEL --task-id STABLE_TASK_LABEL` to the bundled
 `claude_bridge.py`. Reuse the task label across review rounds: the next round's prompt carries
-the earlier completed reviews with that label (`docs/REVIEW_GATE.md`).
+the earlier completed reviews with that label (`docs/REVIEW_RUNNING.md`).
 
 ```sh
 python3 scripts/agent_usage.py --repo .

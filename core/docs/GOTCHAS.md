@@ -11,6 +11,22 @@ Delete one when the cause is gone for good — not when it merely feels old.
 This is one of the permanent homes a `[GOTCHA]` line in `docs/STATE.md` gets moved into
 before that line is deleted.
 
+## Contents
+
+A new entry adds its heading to this list.
+
+- Uncommitted work is NOT in the reflog
+- `.gitignore` — the LAST matching rule wins
+- The executable bit has to be put in the git index by hand
+- A fake-CLI test harness cannot catch what the real CLI rejects
+- A tool's relative output path resolves against ITS working directory, not yours
+- Waiting on your own process: `pgrep -f` and shell wait loops match themselves
+- An agent puts the user's e-mail into a web request
+- A red gate that passes on re-run is a finding, not a pass
+- A checkout under `/mnt/<drive>` in WSL
+- Under WSL, a file named `*.exe` runs on Windows
+- A build server the gate started keeps the gate lock
+
 ---
 
 The entries below ship with the kit. They are not hypothetical: each cost a real day
