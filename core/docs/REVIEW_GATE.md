@@ -76,14 +76,16 @@ and some were false; a reviewer that executed found decisive, reproducible defec
 
 - You may run the test suite, the self-test and your own reproductions, and you should.
 - Run them only in a throwaway copy of the checkout, never in the reviewed checkout.
-- Make the copy with `git worktree add --detach "$(mktemp -d)/copy" <commit>` and remove it
-  afterwards, or with `git archive <commit> | tar -x -C "$(mktemp -d)"` (then `git init`
-  there if the suite needs a repository).
+- Make the copy with `git archive <commit> | tar -x -C "$(mktemp -d)"`, then run `git init`
+  there if the suite needs a repository.
+- Never make it with `git worktree add`, which writes into the reviewed repository.
 - Apply the uncommitted part of the diff to the copy with `git apply`.
 - Never use the network, and never call a paid model.
 - Mark each finding REPRODUCED, with the command that shows it, or REASONED.
 - A REASONED Critical or High finding names the command or input that would reproduce it.
-- List as NOT RUN only what you could not run, and why.
+- A reviewer whose tools cannot execute marks each finding REASONED and names the command
+  that would reproduce it.
+- List as NOT RUN what you could not run, and why.
 
 ## What a reviewer attacks first
 
