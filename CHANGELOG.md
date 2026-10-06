@@ -297,7 +297,11 @@ in `RESEARCH_LOG.md` (2026-10-03). Most of the files below are project-owned, so
   project's own (husky, lefthook) instead of replacing it in silence; the scripts find
   Python as `python` or `py` where `python3` is absent; a sparse checkout is reviewable (a
   skip-worktree entry whose file is absent hides nothing; a present one is still refused);
-  the review tooling and the worktree clean-up IMPORT on native Windows Python through one
+  a project that already runs its own hooks (husky, lefthook) keeps them beside the kit's
+  as `.githooks/<name>.project`, project-owned, run first by the kit's hook with git's
+  arguments (its failure is the commit's; the kit's hook runs after it); `bootstrap.sh`
+  stops on any other `core.hooksPath` from any scope and verifies the wiring as git sees
+  it; the review tooling and the worktree clean-up IMPORT on native Windows Python through one
   platform seam in `agent_process.py`, and no more than that: a review run (pipes are not
   selectable there), the gate lock and the clean-up need a POSIX host, and `doctor.sh` says
   so and sends the owner to WSL; the clean-up keeps every worktree there and says why. **ACTION:** `.gitattributes` is
@@ -515,13 +519,16 @@ from, and `5c80c36` is the kit's v0.8 commit.
    until the worker has read it; a brief that sends an agent to the web names a generic
    User-Agent. Then record the version with `"$KIT/sync-kit.sh" . --actions-applied`.
 
-14. **ACTION:** First commit or stash edits under `.githooks/` and `scripts/`.
-    Add the kit's `.gitattributes` rules (the bullet above) and commit.
-    A checkout holding CRLF hooks and scripts (`core.autocrlf=true`) needs both the index
-    and working tree repaired. Run `git add --renormalize .githooks scripts` to put LF in
-    the index, then `rm -r .githooks scripts && git checkout -- .githooks scripts` to
-    re-check out the working tree under `eol=lf`, then commit the renormalised index.
-    A hook that still starts with `sh\r` is one this step missed.
+14. **ACTION:** A checkout holding the kit's hooks and scripts with CRLF (Windows,
+    `core.autocrlf=true`) cannot even run its pre-commit (`sh\r`), so the repair comes
+    before any commit. First commit or stash your edits under `.githooks/` and `scripts/`.
+    Add the kit's `.gitattributes` rules (the bullet above) and stage them:
+    `git add .gitattributes`. Then `git add --renormalize .githooks scripts` (LF in the
+    index), then re-check out ONLY the tracked files there:
+    `git ls-files -z -- .githooks scripts | xargs -0 rm -f && git checkout -- .githooks scripts`
+    (untracked and ignored files under those folders stay), then
+    `git commit -qm "Renormalise the kit scripts"`. A hook that still starts with `sh\r`
+    is one this step missed.
 
 ## v0.8 — 2026-10-03
 

@@ -7,8 +7,8 @@
 # It checks the MACHINE, not the code, so it is not part of the gate and CI does not run it.
 # Each trap it finds prints one line, "MISSING: <what> — fix: <command>", and the run exits
 # 1. The fixes are printed for the owner to run, never run here. The readiness probes
-# execute the owner's chained hooks with a KIT_HOOK_PROBE nonce and the interactive shell
-# rc files ($SHELL -ic) under a 5 s timeout, and the latter only where `timeout` exists.
+# exception to "read-only" is the grep probe below, which runs the owner's interactive shell
+# rc files ($SHELL -ic) under a 5 s timeout, and only where `timeout` exists.
 #
 # Why it exists: every trap below made a gate fail on a machine for a reason unrelated to
 # the change being tested, and each one looked like a code failure and cost a session to
@@ -141,25 +141,7 @@ fi
 # --- git wiring and identity ---------------------------------------------------------
 hooks_path=$(git config core.hooksPath 2>/dev/null) || hooks_path=""
 if [ "$hooks_path" != .githooks ]; then
-  chained=""
-  if [ -n "$hooks_path" ]; then
-    case "$hooks_path" in /*) hooks_dir=$hooks_path ;; *) hooks_dir=./$hooks_path ;; esac
-    chained=1
-    nonce=$(od -An -N8 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n'); [ -n "$nonce" ] || nonce=$$-$(date +%s)
-    probe_file=$(git rev-parse --git-dir)/kit-hook-probe
-    printf '%s' "$nonce" > "$probe_file"
-    for name in pre-commit pre-merge-commit commit-msg post-merge; do
-      status=0
-      KIT_HOOK_PROBE=$nonce "$hooks_dir/$name" </dev/null >/dev/null 2>&1 || status=$?
-      [ "$status" -eq 97 ] || { chained=""; break; }
-    done
-    rm -f "$probe_file"
-  fi
-  if [ -n "$chained" ]; then
-    printf '%s\n' "NOTE: the commit gate is chained through $hooks_path"
-  else
-    miss "the commit gate is not wired (core.hooksPath)" "git config core.hooksPath .githooks"
-  fi
+  miss "the commit gate is not wired (core.hooksPath is '${hooks_path:-unset}'; a hook of the project's own belongs beside the kit's as .githooks/<name>.project)" "git config core.hooksPath .githooks"
 fi
 [ -n "$(git config user.name 2>/dev/null)" ] && [ -n "$(git config user.email 2>/dev/null)" ] ||
   miss "git identity (user.name / user.email)" "git config user.name '<name>' && git config user.email '<email>'"

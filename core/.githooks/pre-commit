@@ -13,10 +13,11 @@
 #
 # A gate wired into git is the only kind that survives: one that depends on discipline
 # erodes the first time someone is in a hurry.
-# Probe seam for a chained hooks path (bootstrap, doctor): the prober writes a nonce into
-# .git/kit-hook-probe and exports it; the hook exits 97 only for that nonce, so an exported
-# variable alone (the committer's, an agent's) cannot turn the hook off.
-[ -n "${KIT_HOOK_PROBE:-}" ] && [ "$(cat "$(git rev-parse --git-dir 2>/dev/null)/kit-hook-probe" 2>/dev/null)" = "$KIT_HOOK_PROBE" ] && exit 97
+# A hook of the project's own (husky, lefthook, a script of its own) lives beside this
+# one as pre-commit.project, project-owned, and runs FIRST with git's arguments: its failure
+# is the commit's failure, and this hook still runs after it. No other hooks path.
+project_hook="$(dirname -- "$0")/pre-commit.project"
+if [ -x "$project_hook" ]; then "$project_hook" "$@" || exit $?; fi
 set -u
 
 root=$(git rev-parse --show-toplevel) || exit 1

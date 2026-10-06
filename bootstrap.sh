@@ -322,52 +322,31 @@ if git -C "$target" rev-parse --git-dir >/dev/null 2>&1; then
   hooks_was=$(git -C "$target" config --local --get core.hooksPath) && had=1 || had=""
   # The EFFECTIVE hooks path, from every scope (worktree, local, global, system): git runs
   # that one. A hooks path of the project's own (husky, lefthook, a folder of its own) is
-  # never replaced in silence: the project's hooks would stop running. It is accepted when
-  # each of its hooks calls the kit's (chained), else the install stops and names it.
+  # never replaced in silence: the project's hooks would stop running. The install stops
+  # and names the one migration: each of its hooks moves beside the kit's as
+  # .githooks/<name>.project, which the kit's hook runs first.
   effective=$(git -C "$target" config --get core.hooksPath) || effective=""
-  chained=""
   if [ -n "$effective" ] && [ "$effective" != ".githooks" ]; then
-    case "$effective" in /*) hooks_dir=$effective ;; *) hooks_dir=$target/$effective ;; esac
-    chained=1
-    # The probe is a nonce in .git, not a bare variable: see the seam in the hooks.
-    nonce=$(od -An -N8 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n'); [ -n "$nonce" ] || nonce=$$-$(date +%s)
-    probe_file=$(git -C "$target" rev-parse --git-dir)/kit-hook-probe
-    case "$probe_file" in /*) ;; *) probe_file=$target/$probe_file ;; esac
-    printf '%s' "$nonce" > "$probe_file"
-    for hook in "$kit"/core/.githooks/*; do
-      [ -f "$hook" ] || continue
-      name=${hook##*/}
-      status=0
-      (CDPATH= cd -- "$target" && KIT_HOOK_PROBE=$nonce "$hooks_dir/$name") </dev/null >/dev/null 2>&1 || status=$?
-      [ "$status" -eq 97 ] || { chained=""; break; }
-    done
-    rm -f "$probe_file"
-    if [ -z "$chained" ]; then
-      rm -f "$part"; part=""
-      printf '%s\n' "bootstrap: STOP: core.hooksPath is '$effective', a hooks path of this project's own; the kit's hooks live in .githooks." >&2
-      printf '%s\n' "  Either make each executable hook in '$effective' call .githooks/<same name> and propagate its exit status," >&2
-      printf '%s\n' "  or move its hooks into .githooks and run: git config core.hooksPath .githooks. Then rerun bootstrap.sh; the kit's files are installed." >&2
-      exit 1
-    fi
+    rm -f "$part"; part=""
+    printf '%s\n' "bootstrap: STOP: core.hooksPath is '$effective', a hooks path of this project's own; the kit's hooks live in .githooks." >&2
+    printf '%s\n' "  Move each hook of '$effective' to .githooks/<same name>.project (executable; the kit's hook runs it first, with git's arguments)," >&2
+    printf '%s\n' "  then run: git config core.hooksPath .githooks (unset it in any other scope), and rerun bootstrap.sh; the kit's files are installed." >&2
+    exit 1
   fi
-  if [ -z "$chained" ]; then
-    wiring=1
-    git -C "$target" config core.hooksPath .githooks
-    # Verified as git sees it: a scope above the local one (worktree config, global) wins.
-    now=$(git -C "$target" config --get core.hooksPath) || now=""
-    if [ "$now" != ".githooks" ]; then
-      rm -f "$part"; part=""
-      printf '%s\n' "bootstrap: STOP: core.hooksPath reads '$now' after the local setting: a worktree, global or system scope sets it. Unset it there (git config --unset core.hooksPath --global, or --worktree), then rerun." >&2
-      exit 1
-    fi
+  wiring=1
+  git -C "$target" config core.hooksPath .githooks
+  # Verified as git sees it: a scope above the local one (worktree config, global) wins.
+  now=$(git -C "$target" config --get core.hooksPath) || now=""
+  if [ "$now" != ".githooks" ]; then
+    rm -f "$part"; part=""
+    printf '%s\n' "bootstrap: STOP: core.hooksPath reads '$now' after the local setting: a worktree, global or system scope sets it. Unset it there (git config --unset core.hooksPath --global, or --worktree), then rerun." >&2
+    exit 1
   fi
 fi
 mv -f "$part" "$target/docs/kit/.kit-version"
 part=""
 
-if [ -n "$repo" ] && [ -n "$chained" ]; then
-  printf '%s\n' "bootstrap: core.hooksPath stays '$effective': each of its hooks calls the kit's"
-elif [ -n "$repo" ]; then
+if [ -n "$repo" ]; then
   echo "bootstrap: wired core.hooksPath -> .githooks"
 else
   echo "bootstrap: NOT a git repository yet. After 'git init', run:"

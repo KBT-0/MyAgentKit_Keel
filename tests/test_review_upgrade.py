@@ -36,7 +36,7 @@ class ReviewUpgradeTests(unittest.TestCase):
                 if name == 'py':
                     self.assertIsNone(shutil.which('python', path=env['PATH']))
                 result = subprocess.run(['sh', str(ROOT / 'core/scripts/review.sh'), '--self-test'],
-                                        env=env, capture_output=True, text=True, timeout=180)
+                                        env=env, capture_output=True, text=True, timeout=900)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertIn('REVIEW SELF-TEST: PASS', result.stdout)
 

@@ -17,10 +17,11 @@
 # exits 0 anyway. It changes nothing itself: the script writes its log, then removes only a
 # worktree that passed every check, and keeps every one it could not prove. It prints the
 # removals and the summary lines; the dry run (the script without options) gives the reasons.
-# Probe seam for a chained hooks path (bootstrap, doctor): the prober writes a nonce into
-# .git/kit-hook-probe and exports it; the hook exits 97 only for that nonce, so an exported
-# variable alone (the committer's, an agent's) cannot turn the hook off.
-[ -n "${KIT_HOOK_PROBE:-}" ] && [ "$(cat "$(git rev-parse --git-dir 2>/dev/null)/kit-hook-probe" 2>/dev/null)" = "$KIT_HOOK_PROBE" ] && exit 97
+# A hook of the project's own (husky, lefthook, a script of its own) lives beside this
+# one as post-merge.project, project-owned, and runs FIRST with git's arguments: its failure
+# is the commit's failure, and this hook still runs after it. No other hooks path.
+project_hook="$(dirname -- "$0")/post-merge.project"
+if [ -x "$project_hook" ]; then "$project_hook" "$@" || exit $?; fi
 set -u
 [ -z "${KIT_NO_WORKTREE_CLEANUP:-}" ] || exit 0
 # The main worktree's git directory is the common one; a linked worktree's is below it.
