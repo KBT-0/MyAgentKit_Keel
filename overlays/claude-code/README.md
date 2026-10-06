@@ -253,15 +253,28 @@ then stays quiet.
   change `git status` reports with the stat settings forced to their defaults, the index equal
   to HEAD's tree, and every tracked path in the worktree byte for byte the blob the index
   records, with the same executable bit (a symlink: the same text), so no stat cache, filter or
-  line-ending conversion is trusted; no unresolved entry, no submodule; every file git does not
+  line-ending conversion is trusted; no unresolved entry, no submodule; **no mount point
+  anywhere in it**, disposable folders included: `git worktree remove` would delete what is
+  under one, which is not the worktree's; every file git does not
   track inside a folder `.claude/worktree-disposable` lists or byte-identical to the regular
   file at the same path in main, outside main's `.claude/worktrees` under any spelling (what is
-  there is a worktree's, which may go too), on main's device (a mount inside main is not main),
+  there is a worktree's, which may go too), **not at or below a mount point in main** (a
+  mount inside main is not main),
   not the worktree's own file seen from main (a hard link, a worktree folder mounted into
   main: the same device and inode), and not a tracked file under another name (a
   case-only rename on macOS, a hard link: the same file on disk); no file at all under the
   worktree's own `.claude/worktrees` (a worktree inside a worktree is not judged);
   nothing anywhere in it, those folders included, changed within the quiet period.
+- **Mount points are out of what it reasons about.** A mount point is an entry on another
+  device than the worktree's root (or main's), or, on Linux, one `/proc/self/mountinfo` lists:
+  only that table shows a bind mount on the same device. On macOS and other systems a bind
+  mount on the same device cannot be seen; a mount on another device is seen everywhere. On
+  Linux without a readable mount table every worktree is kept.
+- **Case.** Where a probe finds the file system ignores case (macOS by default: a file made
+  in the git directory is found under its name in upper case), the places that hold work
+  (`docs`, `.claude`, `.myagentkit`, `scripts`, `.git`), the worktree's own
+  `.claude/worktrees` and the disposable entries are compared case-folded, as that file system
+  compares names: `Docs/build` is under `docs`, never disposable. Elsewhere byte for byte.
 - **What only its git directory holds is saved, then it is removed.** A commit no ref holds
   (an amended, reset or rebased-away tip, a squash's intermediate commits, a `FETCH_HEAD`, a
   `refs/worktree/*` ref) is pinned before anything is deleted, in one `git update-ref --stdin`
@@ -337,7 +350,8 @@ then stays quiet.
   worktree's git directory even after a failure): the report says **POSSIBLY MODIFIED**, what
   is left, and how each kind of file comes back (tracked: the printed `git restore` or `git
   worktree add`; untracked: its copy in the main worktree; disposable: the build), and the
-  script exits 1. A re-run is safe; each deletion changed its folder, so it finishes after the
+  script exits 1. When copies were deleted and then `git worktree remove` failed, the log says
+  `possibly-modified` (git may have deleted more) and the report lists both. A re-run is safe; each deletion changed its folder, so it finishes after the
   quiet period.
 - **A worktree comes back** with the command each removal prints on a line of its own, `git
   worktree add '<path>' '<branch>'`, quoted for a POSIX shell: its tracked files at the

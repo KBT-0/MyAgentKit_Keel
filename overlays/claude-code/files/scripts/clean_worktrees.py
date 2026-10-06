@@ -40,15 +40,22 @@ all):
      their defaults; the index equals HEAD's tree; every tracked path is, in the worktree,
      exactly the blob the index records (raw bytes, no filter or line-ending conversion, the
      same executable bit; a symlink's text); no unresolved entry, no submodule;
-  h. no file under its own .claude/worktrees (a worktree inside a worktree, which this script
-     does not judge); every other file git does not track is inside a directory
-     .claude/worktree-disposable lists, or a regular file whose byte-identical copy is at the
-     same path in the main worktree, outside its .claude/worktrees under any spelling (what is
-     there is a worktree's, which may go too), on main's device (a mount inside main is not
-     main) and not the worktree's file itself (a hard link, a mounted worktree folder: the same
-     device and inode), and that is not a tracked file under another name (a case alias, a
-     link: the same device and inode); nothing anywhere in it, disposable folders included,
-     changed within quiet-minutes.
+  h. no mount point anywhere in it, disposable folders included (git's recursive remove would
+     delete what is under one, which is not the worktree's): no entry on another device than its
+     root, none the mount table lists (Linux: /proc/self/mountinfo, which alone shows a bind
+     mount on the same device; elsewhere such a bind mount cannot be seen); no file under its
+     own .claude/worktrees (a worktree inside a worktree, which this script does not judge);
+     every other file git does not track is inside a directory .claude/worktree-disposable
+     lists, or a regular file whose byte-identical copy is at the same path in the main
+     worktree, outside its .claude/worktrees under any spelling (what is there is a worktree's,
+     which may go too), not at or below a mount point in main (a mount inside main is not main:
+     another device than main's root, or listed in the mount table) and not the worktree's file
+     itself (a hard link, a mounted worktree folder: the same device and inode), and that is not
+     a tracked file under another name (a case alias, a link: the same device and inode);
+     nothing anywhere in it, disposable folders included, changed within quiet-minutes. Where a
+     probe finds the file system ignores case (a file made in the git directory is found under
+     its name in upper case), the places that hold work (REFUSED), its .claude/worktrees and the
+     disposable entries are compared case-folded, as that file system compares names.
 
 Proven: a, b, d, f, g, h's accounting. The quiet period (c, h) is a margin, not a proof: it
 covers a worker whose process the scan in e cannot see. e is read afresh for every worktree
@@ -66,8 +73,10 @@ every ignored file without asking.
 Removal order: the log's intent line (on disk; it names every ref to save and every file to
 delete), the saved refs, f and e again, the identical copies git does not track, e again, `git
 worktree remove` without --force (git's own check, independent of this one), the log's outcome
-line (removed when git removed it, whatever was deleted before; else partly-modified,
-possibly-modified or kept; why; each file deleted). Both lines carry the run's id, which pairs
+line (removed when git removed it, whatever was deleted before; else possibly-modified when
+`git worktree remove` failed, even after a copy was deleted, as git may have deleted more;
+partly-modified when a step stopped it after a copy was deleted; or kept; why; each file
+deleted). Both lines carry the run's id, which pairs
 them; an intent with no outcome is a run that did not finish. An outcome that cannot be
 written leaves the removal as it is, stops the run and exits 1. Each line about the removal is
 printed after the log line it reports; a print never raises (what stdout cannot encode is
@@ -95,6 +104,7 @@ import signal
 import stat
 import subprocess
 import sys
+import tempfile
 import time
 import unicodedata
 
@@ -176,7 +186,11 @@ def say(text):
     except (OSError, AttributeError, ValueError):
         try:
             fd = sys.stdout.fileno()
-            os.dup2(os.open(os.devnull, os.O_WRONLY), fd)
+            null = os.open(os.devnull, os.O_WRONLY)
+            try:
+                os.dup2(null, fd)
+            finally:
+                os.close(null)
         except (OSError, AttributeError, ValueError):
             pass
 
@@ -253,9 +267,11 @@ def worktrees(cwd):
     return records
 
 
-def read_disposable(main_root):
+def read_disposable(main_root, folded):
     """The project's disposable entries, the lines refused, and the quiet period in minutes. A
-    quiet-minutes line given twice or not valid refuses the whole list (fail closed)."""
+    quiet-minutes line given twice or not valid refuses the whole list (fail closed). FOLDED: the
+    file system ignores case, and a place that holds work is refused under any spelling."""
+    same = fold if folded else (lambda name: name)
     try:
         with open(os.path.join(main_root, DISPOSABLE_FILE), 'rb') as handle:
             data = handle.read()
@@ -278,7 +294,7 @@ def read_disposable(main_root):
         parts = entry.split(b'/')
         # An absolute path has an empty first part.
         if (b'' in parts or b'.' in parts or b'..' in parts
-                or REFUSED.intersection(parts)):
+                or {same(r) for r in REFUSED}.intersection(same(p) for p in parts)):
             refused.append((line, '(empty, absolute, "..", or a place that holds work: %s)'
                             % ', '.join(sorted(r.decode() for r in REFUSED))))
         else:
@@ -286,29 +302,82 @@ def read_disposable(main_root):
     return entries, refused, quiet or QUIET_DEFAULT
 
 
-def disposable(rel, entries):
+def disposable(rel, entries, folded=False):
     """Whether REL lies inside a disposable directory, compared folder by folder: a NAME entry
     matches a folder of that name with no place that holds work (REFUSED) above it; a PATH
-    entry matches its own subtree from the root."""
-    folders = rel.split(b'/')[:-1]
+    entry matches its own subtree from the root. FOLDED (the file system ignores case): every
+    name compared case-folded, as that file system compares them."""
+    same = fold if folded else (lambda name: name)
+    folders = [same(folder) for folder in rel.split(b'/')[:-1]]
+    refused = {same(r) for r in REFUSED}
     for entry in entries:
-        if b'/' in entry:
-            parts = entry.split(b'/')
+        parts = [same(part) for part in entry.split(b'/')]
+        if len(parts) > 1:
             if folders[:len(parts)] == parts:
                 return True
             continue
         for folder in folders:
-            if folder in REFUSED:
+            if folder in refused:
                 break
-            if folder == entry:
+            if folder == parts[0]:
                 return True
     return False
 
 
-def entry(root, rel, avoid=None, device=None):
+def ignores_case(folder):
+    """Whether the file system of FOLDER ignores case: a file made there is found under its
+    name in upper case."""
+    handle, path = tempfile.mkstemp(prefix=b'kit-case-probe-', dir=folder)
+    os.close(handle)
+    try:
+        return os.path.lexists(os.path.join(folder, os.path.basename(path).upper()))
+    finally:
+        os.unlink(path)
+
+
+def mount_points(path):
+    """The mount points the mount table PATH lists (Linux: /proc/self/mountinfo, its fifth field
+    with its octal escapes read back); none where there is no such file outside Linux, where a
+    bind mount on the same device cannot be seen."""
+    try:
+        with open(path, 'rb') as handle:
+            data = handle.read()
+    except FileNotFoundError:
+        if sys.platform.startswith('linux'):
+            raise Unproven('no mount table %s: a bind mount could not be seen' % show(path))
+        return set()
+    points = set()
+    for line in data.split(b'\n'):
+        if not line:
+            continue
+        fields = line.split(b' ')
+        if len(fields) < 5 or not fields[4].startswith(b'/'):
+            raise Unproven('the mount table %s holds a line this script does not know: %s' % (show(path), show(line[:60])))
+        points.add(re.sub(rb'\\([0-7]{3})', lambda m: bytes([int(m.group(1), 8)]), fields[4]))
+    return points
+
+
+def below_mount(ctx, rel):
+    """Whether REL in the main worktree is, or lies below, a mount point: a folder on its way, or
+    the file, on another device than main's root, or listed in the mount table (a bind mount on
+    the same device). A mount inside main is not main."""
+    device = os.lstat(ctx['main_root']).st_dev
+    path = ctx['main_root']
+    for part in rel.split(b'/'):
+        path = os.path.join(path, part)
+        if path in ctx['mounts']:
+            return True
+        info = os.lstat(path)
+        if info.st_dev != device:
+            return True
+        if not stat.S_ISDIR(info.st_mode):
+            return False
+    return False
+
+
+def entry(root, rel, avoid=None):
     """The lstat of ROOT/REL reached through folders only (no symlink on the way, nor the folder
-    whose (device, inode) is AVOID, nor, given DEVICE, a folder or file on another device), or
-    None."""
+    whose (device, inode) is AVOID), or None."""
     path = root
     parts = rel.split(b'/')
     for part in parts[:-1]:
@@ -317,24 +386,22 @@ def entry(root, rel, avoid=None, device=None):
             info = os.lstat(path)
         except OSError:
             return None
-        if (not stat.S_ISDIR(info.st_mode) or (info.st_dev, info.st_ino) == avoid
-                or device not in (None, info.st_dev)):
+        if not stat.S_ISDIR(info.st_mode) or (info.st_dev, info.st_ino) == avoid:
             return None
     try:
-        info = os.lstat(os.path.join(path, parts[-1]))
+        return os.lstat(os.path.join(path, parts[-1]))
     except OSError:
         return None
-    return info if device in (None, info.st_dev) else None
 
 
 def copy_in(ctx, real, rel):
     """Whether the main worktree holds a regular file at REL with the bytes of REAL/REL, reached
     without a symlink and not through its .claude/worktrees, under any spelling: what is there is
     a worktree's, which this run may remove too. Not a copy: REAL/REL itself (a hard link, a
-    worktree folder mounted into main: the same device and inode), nor a file on another device
-    than main's root (a mount inside main is not main)."""
+    worktree folder mounted into main: the same device and inode). Whether it is below a mount
+    is below_mount's."""
     home = os.lstat(ctx['home'])
-    info = entry(ctx['main_root'], rel, avoid=(home.st_dev, home.st_ino), device=os.lstat(ctx['main_root']).st_dev)
+    info = entry(ctx['main_root'], rel, avoid=(home.st_dev, home.st_ino))
     return (info is not None and stat.S_ISREG(info.st_mode)
             and not os.path.samestat(info, os.lstat(os.path.join(real, rel)))
             and filecmp.cmp(os.path.join(real, rel), os.path.join(ctx['main_root'], rel), shallow=False))
@@ -352,7 +419,7 @@ def walk(root):
                 rel = folder + b'/' + item.name if folder else item.name
                 if rel == b'.git':
                     continue
-                info = item.stat(follow_symlinks=False)
+                info = os.lstat(os.path.join(root, rel))
                 is_dir = stat.S_ISDIR(info.st_mode)
                 if is_dir:
                     stack.append(rel)
@@ -804,21 +871,29 @@ def audit(record, ctx):
     def files():
         out = []
         untracked, ignored, _ = seen.get('status') or status(real)
-        loose = [rel for rel in untracked if disposable(rel, ctx['disposable'])]
+        loose = [rel for rel in untracked if disposable(rel, ctx['disposable'], ctx['folded'])]
         if loose:
             out.append('untracked and not ignored inside a disposable folder (`git worktree remove` refuses '
                        'them; ignore that folder in .gitignore): %s' % names(loose))
-        unique, odd, alias, nested, suggest, recent = [], [], [], [], set(), None
+        unique, odd, alias, nested, mounted, suggest, recent = [], [], [], [], [], set(), None
+        # A mount point inside it: `git worktree remove` deletes what is under it, which is not
+        # the worktree's (another device, or a folder bound there from elsewhere).
+        mounts = ctx['mounts'] = mount_points(ctx['mountinfo'])
+        foreign = set(m[len(real) + 1:] for m in mounts if m.startswith(real + b'/'))
+        device = os.lstat(real).st_dev
+        same = fold if ctx['folded'] else (lambda name: name)
         # What each tracked path IS on disk: on a file system that ignores case or Unicode form
         # (macOS), a tracked `a` renamed `A` passes every check by its old name, and the walk
         # meets it under a name the index does not hold.
         ids = set((i.st_dev, i.st_ino) for i in (entry(real, rel) for rel in tracked) if i is not None)
         for rel, info, is_dir in walk(real):
             recent = max(recent or 0, changed(info))
-            if not is_dir and rel.startswith(b'.claude/worktrees/'):
+            if info.st_dev != device:
+                foreign.add(rel)
+            if not is_dir and same(rel).startswith(same(b'.claude/worktrees/')):
                 nested.append(rel)
                 continue
-            if disposable(rel + b'/x' if is_dir else rel, ctx['disposable']):
+            if disposable(rel + b'/x' if is_dir else rel, ctx['disposable'], ctx['folded']):
                 if not is_dir:
                     facts['bytes'] += info.st_size
                     facts['disposable'] += info.st_size
@@ -832,13 +907,19 @@ def audit(record, ctx):
                 alias.append(rel)
             elif not stat.S_ISREG(info.st_mode):
                 odd.append(rel)
-            elif copy_in(ctx, real, rel):
-                facts['identical'] += 1
-                facts['delete'].append(rel)
-            else:
+            elif not copy_in(ctx, real, rel):
                 unique.append(rel)
                 if rel in ignored and b'/' in rel:
                     suggest.add(rel.split(b'/')[0])
+            elif below_mount(ctx, rel):
+                mounted.append(rel)
+            else:
+                facts['identical'] += 1
+                facts['delete'].append(rel)
+        # Only the mount points, not every entry under one.
+        foreign = [rel for rel in foreign if rel.rpartition(b'/')[0] not in foreign]
+        if foreign:
+            out.append('holds a mount point: what git would delete under it is not the worktree\'s: %s' % names(foreign))
         if nested:
             out.append('inside .claude/worktrees of it, which this script does not judge: %s' % names(nested))
         if alias:
@@ -849,6 +930,8 @@ def audit(record, ctx):
                        'a disposable folder: %s' % names(odd))
         if unique:
             out.append('files with no identical copy in main, outside a disposable folder: %s' % names(unique))
+        if mounted:
+            out.append('its copy in main is below a mount point: a mount inside main is not main: %s' % names(mounted))
         if suggest:
             out.append('if these folders hold only build output, consider listing them in %s: %s'
                        % (show(DISPOSABLE_FILE), names(suggest)))
@@ -1017,8 +1100,9 @@ def main():
     parser.add_argument('--quiet', action='store_true',
                         help='print the removals and one summary line, not each kept worktree (the hook)')
     args = parser.parse_args()
-    # CLEAN_WORKTREES_NOW and CLEAN_WORKTREES_PROC are for the tests: a clock they can move
-    # instead of ageing files (a ctime cannot be set back), and a /proc they can build. The
+    # CLEAN_WORKTREES_NOW, CLEAN_WORKTREES_PROC and CLEAN_WORKTREES_MOUNTINFO are for the tests:
+    # a clock they can move instead of ageing files (a ctime cannot be set back), and a /proc and
+    # a mount table they can build. The
     # clock is said on every run: exported by mistake, it would end the quiet period unseen.
     clock = os.environ.get('CLEAN_WORKTREES_NOW')
     if clock:
@@ -1034,12 +1118,14 @@ def main():
             'finished only once its branch is in the main worktree\'s branch')
         return
     main_root = os.path.realpath(records[0]['worktree'])
-    entries, refused, quiet = read_disposable(main_root)
     common = os.path.realpath(git(here, 'rev-parse', '--git-common-dir').stdout.rstrip(b'\n'))
+    folded = ignores_case(common)
+    entries, refused, quiet = read_disposable(main_root, folded)
     ctx = {'main_root': main_root, 'home': os.path.join(main_root, b'.claude', b'worktrees'),
            'main_head': records[0].get('HEAD', b''), 'main_ref': records[0]['branch'], 'common': common,
            'own': os.path.realpath(git(here, 'rev-parse', '--show-toplevel').stdout.rstrip(b'\n')),
-           'disposable': entries, 'quiet': quiet, 'unseen': None, 'source': None,
+           'disposable': entries, 'quiet': quiet, 'unseen': None, 'source': None, 'folded': folded,
+           'mountinfo': os.fsencode(os.environ.get('CLEAN_WORKTREES_MOUNTINFO', '/proc/self/mountinfo')),
            'stamp': datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%SZ').encode(),
            'unlogged': False,
            'now': float(clock or time.time()),

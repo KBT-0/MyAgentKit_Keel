@@ -38,7 +38,9 @@
 # it, as reachability is checked for commits only; every tracked file is byte for byte what the
 # index records (no stat cache, filter or line-ending conversion trusted); every file git does
 # not track is in a disposable folder or has a byte-identical copy at the same path in the main
-# worktree, outside .claude/worktrees. What is a margin, not a proof: that no worker is still in it. A sub-agent worker holds
+# worktree, outside .claude/worktrees and below no mount point; no mount point is inside it (on
+# Linux /proc/self/mountinfo shows a bind mount on the same device; elsewhere one cannot be
+# seen); where the file system ignores case, protected names compare case-folded. What is a margin, not a proof: that no worker is still in it. A sub-agent worker holds
 # no process inside it between commands, and some processes cannot be inspected (Linux: another
 # user's or a non-dumpable one, counted in the report; macOS: lsof does not list another user's
 # at all, so they are not counted), so nothing in it, its git directory and its disposable
