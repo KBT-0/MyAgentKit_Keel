@@ -438,8 +438,13 @@ thin.
 The lead subscribes once for its idle notice and does not message it: every message to an
 idle session is a full-context turn. The idle notice also fires on every park on a
 background job, and the session does not end with its task. The result file is therefore
-the end signal, and the lead closes the session after reading it (`tmux kill-session -t
-NAME`).
+the end signal. After reading it, the lead decides per task whether the session is reused or
+closed. It reuses a session that was active within the cache lifetime (one hour) when the
+next task is short or needs most of what the session holds. It closes the session when no
+next task fits what it holds, or when it has been idle past the cache lifetime (nothing warm
+is lost then). Closing is explicit: `scripts/close_worker.sh NAME` ends the tmux session (its
+terminal tab closes by itself) and removes the worktree through the same audit as the
+post-merge hook's, for that worktree alone. It never deletes the branch.
 
 The result file starts with a fixed head (`docs/HANDOFF.md`): `Kind:`, `Task:`, `Attempt:`
 and `Remaining:`, and only `Kind: completed` is done. The lead runs `scripts/watch_workers.sh
@@ -449,8 +454,11 @@ open questions, CONTEXT when the session's context passes the warning line (50 p
 default), WAITING on a dialog, and GONE. The lead acts on the report's first line
 ("The lead's steps when a branch is ready").
 
-Closing the session leaves the worktree. **Once a worktree's branch is merged, the worktree
-is FINISHED**: a further round on that task starts a NEW worktree, never the old one. With the
+`close_worker.sh` keeps a worktree the audit below cannot prove safe to lose, with the reason,
+and exits 1; a worktree changed within the quiet period is one, so right after a worker's last
+commit it usually stays until the hook removes it after a later merge. Closing the session
+with `tmux kill-session` alone leaves the worktree. **Once a worktree's branch is merged, the
+worktree is FINISHED**: a further round on that task starts a NEW worktree, never the old one. With the
 Claude Code overlay, `.githooks/post-merge` removes a finished worktree after the next merge
 git completes itself in the main worktree (not a conflicted merge finished with `git commit`,
 nor `pull --rebase` or `cherry-pick`), but only when `scripts/clean_worktrees.sh` finds
@@ -553,6 +561,10 @@ What the watcher reports decides the lead's next step for a spawned worker:
   remaining request.
 - **DONE:** the lead reads the result file before anything else. A `Kind: handoff` file
   starts a fresh session from the file; `blocked` and `progress` are not done.
+- **Finished session:** when the lead decides a session is finished (no next task fits what
+  it holds, or it is idle past the cache lifetime), it runs `scripts/close_worker.sh NAME`.
+  The worktree then goes through the same audit as the post-merge hook's; a kept worktree
+  is reported with its reason, and the branch is never deleted.
 
 ## Token economics — the always-loaded prefix is money
 
