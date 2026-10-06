@@ -1,5 +1,6 @@
 """Follow the documented companion list into an existing project, using fake CLIs."""
 from pathlib import Path
+import importlib.util
 import os
 import re
 import shutil
@@ -12,6 +13,33 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ReviewUpgradeTests(unittest.TestCase):
+    def test_review_self_test_without_a_python3_command(self):
+        spec = importlib.util.spec_from_file_location('check_kit', ROOT / 'scripts/check_kit.py')
+        check_kit = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(check_kit)
+        for name in ('python', 'py'):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as tmp:
+                bins = Path(tmp) / 'bin'
+                bins.mkdir()
+                filtered = check_kit.path_without(os.environ['PATH'],
+                                                  lambda n: n in ('python3', 'python', 'py'),
+                                                  Path(tmp) / 'filtered')
+                if name == 'python':
+                    (bins / name).symlink_to(sys.executable)
+                else:
+                    import shlex
+                    (bins / name).write_text('#!/bin/sh\n[ "$1" = -3 ] || exit 1\nshift\nexec '
+                                             + shlex.quote(sys.executable) + ' "$@"\n')
+                    (bins / name).chmod(0o755)
+                env = dict(os.environ, PATH=str(bins) + os.pathsep + filtered)
+                self.assertIsNone(shutil.which('python3', path=env['PATH']))
+                if name == 'py':
+                    self.assertIsNone(shutil.which('python', path=env['PATH']))
+                result = subprocess.run(['sh', str(ROOT / 'core/scripts/review.sh'), '--self-test'],
+                                        env=env, capture_output=True, text=True, timeout=180)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn('REVIEW SELF-TEST: PASS', result.stdout)
+
     def test_contract_suite_survives_project_owned_defaults(self):
         # Reproduce an installed project's Codex default and named pins. The shared
         # fixture must isolate empty-pin/template cases without rewriting this wrapper.

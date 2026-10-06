@@ -515,13 +515,13 @@ from, and `5c80c36` is the kit's v0.8 commit.
    until the worker has read it; a brief that sends an agent to the web names a generic
    User-Agent. Then record the version with `"$KIT/sync-kit.sh" . --actions-applied`.
 
-14. **ACTION:** Add the kit's `.gitattributes` rules (the bullet above) and commit. A
-    checkout that already holds the hooks and scripts with CRLF (Windows,
-    `core.autocrlf=true`) keeps them until they are checked out again: commit or stash any
-    edit under `.githooks/` and `scripts/`, then run
-    `git rm -r -q --cached .githooks scripts && git checkout -- .githooks scripts`, and
-    commit the renormalised index. A hook that still starts with `sh\r` is one this step
-    missed.
+14. **ACTION:** First commit or stash edits under `.githooks/` and `scripts/`.
+    Add the kit's `.gitattributes` rules (the bullet above) and commit.
+    A checkout holding CRLF hooks and scripts (`core.autocrlf=true`) needs both the index
+    and working tree repaired. Run `git add --renormalize .githooks scripts` to put LF in
+    the index, then `rm -r .githooks scripts && git checkout -- .githooks scripts` to
+    re-check out the working tree under `eol=lf`, then commit the renormalised index.
+    A hook that still starts with `sh\r` is one this step missed.
 
 ## v0.8 — 2026-10-03
 

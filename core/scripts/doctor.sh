@@ -6,9 +6,9 @@
 #
 # It checks the MACHINE, not the code, so it is not part of the gate and CI does not run it.
 # Each trap it finds prints one line, "MISSING: <what> — fix: <command>", and the run exits
-# 1. It changes nothing: the fixes are printed for the owner to run, never run here. The one
-# exception to "read-only" is the grep probe below, which runs the owner's interactive shell
-# rc files ($SHELL -ic) under a 5 s timeout, and only where `timeout` exists.
+# 1. The fixes are printed for the owner to run, never run here. The readiness probes
+# execute the owner's chained hooks with a KIT_HOOK_PROBE nonce and the interactive shell
+# rc files ($SHELL -ic) under a 5 s timeout, and the latter only where `timeout` exists.
 #
 # Why it exists: every trap below made a gate fail on a machine for a reason unrelated to
 # the change being tested, and each one looked like a code failure and cost a session to
@@ -94,8 +94,8 @@ case "$here" in
 esac
 
 # --- the gate's own files -------------------------------------------------------------
-# The loop below inspects the files it finds, and the wiring check reads core.hooksPath
-# only: a deleted .githooks/pre-commit left every ordinary commit ungated and doctor ready.
+# The executable-bit loop below inspects only the files it finds: a deleted pre-commit
+# once left every ordinary commit ungated and doctor ready. Check required files too.
 # The .py files are every module scripts/review.sh runs: one deleted left doctor ready and
 # the review gate unable to start. A project has no other list to read them from, so the
 # kit's tests keep this one equal to what review_dispatch.py imports.
@@ -139,8 +139,28 @@ if [ -L node_modules ] && ! git check-ignore -q node_modules 2>/dev/null; then
 fi
 
 # --- git wiring and identity ---------------------------------------------------------
-[ "$(git config core.hooksPath 2>/dev/null)" = .githooks ] ||
-  miss "the commit gate is not wired (core.hooksPath)" "git config core.hooksPath .githooks"
+hooks_path=$(git config core.hooksPath 2>/dev/null) || hooks_path=""
+if [ "$hooks_path" != .githooks ]; then
+  chained=""
+  if [ -n "$hooks_path" ]; then
+    case "$hooks_path" in /*) hooks_dir=$hooks_path ;; *) hooks_dir=./$hooks_path ;; esac
+    chained=1
+    nonce=$(od -An -N8 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n'); [ -n "$nonce" ] || nonce=$$-$(date +%s)
+    probe_file=$(git rev-parse --git-dir)/kit-hook-probe
+    printf '%s' "$nonce" > "$probe_file"
+    for name in pre-commit pre-merge-commit commit-msg post-merge; do
+      status=0
+      KIT_HOOK_PROBE=$nonce "$hooks_dir/$name" </dev/null >/dev/null 2>&1 || status=$?
+      [ "$status" -eq 97 ] || { chained=""; break; }
+    done
+    rm -f "$probe_file"
+  fi
+  if [ -n "$chained" ]; then
+    printf '%s\n' "NOTE: the commit gate is chained through $hooks_path"
+  else
+    miss "the commit gate is not wired (core.hooksPath)" "git config core.hooksPath .githooks"
+  fi
+fi
 [ -n "$(git config user.name 2>/dev/null)" ] && [ -n "$(git config user.email 2>/dev/null)" ] ||
   miss "git identity (user.name / user.email)" "git config user.name '<name>' && git config user.email '<email>'"
 

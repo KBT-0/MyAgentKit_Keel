@@ -329,15 +329,23 @@ if git -C "$target" rev-parse --git-dir >/dev/null 2>&1; then
   if [ -n "$effective" ] && [ "$effective" != ".githooks" ]; then
     case "$effective" in /*) hooks_dir=$effective ;; *) hooks_dir=$target/$effective ;; esac
     chained=1
-    for hook in "$target"/.githooks/*; do
+    # The probe is a nonce in .git, not a bare variable: see the seam in the hooks.
+    nonce=$(od -An -N8 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n'); [ -n "$nonce" ] || nonce=$$-$(date +%s)
+    probe_file=$(git -C "$target" rev-parse --git-dir)/kit-hook-probe
+    case "$probe_file" in /*) ;; *) probe_file=$target/$probe_file ;; esac
+    printf '%s' "$nonce" > "$probe_file"
+    for hook in "$kit"/core/.githooks/*; do
       [ -f "$hook" ] || continue
       name=${hook##*/}
-      grep -q "\.githooks/$name" "$hooks_dir/$name" 2>/dev/null || { chained=""; break; }
+      status=0
+      (CDPATH= cd -- "$target" && KIT_HOOK_PROBE=$nonce "$hooks_dir/$name") </dev/null >/dev/null 2>&1 || status=$?
+      [ "$status" -eq 97 ] || { chained=""; break; }
     done
+    rm -f "$probe_file"
     if [ -z "$chained" ]; then
       rm -f "$part"; part=""
       printf '%s\n' "bootstrap: STOP: core.hooksPath is '$effective', a hooks path of this project's own; the kit's hooks live in .githooks." >&2
-      printf '%s\n' "  Either make each hook in '$effective' call .githooks/<same name> (bootstrap then accepts the path as chained)," >&2
+      printf '%s\n' "  Either make each executable hook in '$effective' call .githooks/<same name> and propagate its exit status," >&2
       printf '%s\n' "  or move its hooks into .githooks and run: git config core.hooksPath .githooks. Then rerun bootstrap.sh; the kit's files are installed." >&2
       exit 1
     fi

@@ -1,12 +1,12 @@
 """Quota reads are optional, bounded, non-billing, and never a per-call debit estimate."""
 import json
 from pathlib import Path
+import sys
 import tempfile
 import unittest
 import codex_quota
 
-SERVER = '''#!/usr/bin/env python3
-import json, pathlib, sys, time
+SERVER = '#!' + sys.executable + '\n' + '''import json, pathlib, sys, time
 for line in sys.stdin:
     message = json.loads(line)
     method = message['method']
