@@ -441,6 +441,14 @@ background job, and the session does not end with its task. The result file is t
 the end signal, and the lead closes the session after reading it (`tmux kill-session -t
 NAME`).
 
+## Review rounds — early, inside the worker, in parallel
+
+### Before you report
+
+A worker goes through `docs/REVIEW_GATE.md`, "What a reviewer attacks first", against its own
+diff before it reports. It fixes each hit or names it in the report. A class the reviewer has
+already shown once costs a whole round when the worker leaves it for the reviewer to find again.
+
 ## Token economics — the always-loaded prefix is money
 
 Cached input tokens are discounted heavily, so a STABLE prompt prefix — the documents loaded

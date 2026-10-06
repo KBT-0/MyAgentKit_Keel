@@ -77,6 +77,20 @@ class SectionPointerTests(unittest.TestCase):
                     checked += 1
         self.assertGreater(checked, 10)
 
+    def test_the_attack_list_lives_once_and_both_checklists_point_at_it(self):
+        # A reviewer attacks the list and a worker checks it before reporting. Two copies drift,
+        # and a worker then reports clean against a list the reviewer no longer uses.
+        section = 'What a reviewer attacks first'
+        self.assertIn(section, headings(ROOT / 'core/docs/REVIEW_GATE.md'))
+        pointer = '`docs/REVIEW_GATE.md`, "%s"' % section
+        for path in (ROOT / 'core/docs/WORKFLOW.md',
+                     ROOT / 'overlays/claude-code/files/.claude/agents/worker.md'):
+            with self.subTest(checklist=path.name):
+                text = re.sub(r'\s+', ' ', path.read_text())
+                self.assertIn('Before you report', text)
+                self.assertIn(pointer, text)
+                self.assertFalse('core.checkStat' in text, 'the list is copied, not pointed at')
+
     def test_the_gotchas_contents_lists_every_entry(self):
         text = (ROOT / 'core/docs/GOTCHAS.md').read_text()
         contents = text[text.index('## Contents'):text.index('---')]

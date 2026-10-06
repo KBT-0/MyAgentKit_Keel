@@ -85,6 +85,29 @@ and some were false; a reviewer that executed found decisive, reproducible defec
 - A REASONED Critical or High finding names the command or input that would reproduce it.
 - List as NOT RUN only what you could not run, and why.
 
+## What a reviewer attacks first
+
+These classes produced most findings in one week of review rounds, and later rounds found them
+again in the fixes. Check each against the diff, one line at a time. The worker runs the same
+list before it reports.
+
+- Check-then-act windows (TOCTOU) on files, refs and processes: what changes in between?
+- Trust in git's stat cache: `core.checkStat`, `core.trustctime`, `core.fileMode`, filters
+  and `core.autocrlf` can hide a change from `git status` and `git diff`.
+- Reflog parsing that reads the message text instead of the fixed columns.
+- Case: an id or trailer scanner that is case-sensitive where git or the file system is not.
+- Locale: `grep -I` under UTF-8 skips invalid UTF-8 as binary; byte work runs under `LC_ALL=C`.
+- Symlinks anywhere in a path (not only the leaf), hard links, FIFOs and devices.
+- `PATH_MAX` and deeply nested paths.
+- Platforms: Apple `mktemp` and `TMPDIR`, `/var` as `/private/var`, dash as `sh`, Python
+  3.10 `Path.exists` raising on `EACCES`, no `/proc` on macOS, and `lsof` exit codes.
+- `echo` with a backslash in its argument (dash interprets it); use `printf '%s\n'`.
+- Shell quoting of every interpolated value, and control bytes printed to a terminal.
+- A file ending in `.exe` that a test executes under WSL.
+- A hollow test: the fixture stops before the code the test claims to cover.
+- A guard with no killing test: remove the guard, and no test fails (mutation).
+- A fix that adds a mechanism where removing an operation would close the defect.
+
 ## Review priorities (in order)
 
 1. **{{TOP_RISK_PRIORITY}}** — the project's own worst failure mode goes first. Any doubt

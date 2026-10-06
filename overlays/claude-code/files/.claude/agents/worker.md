@@ -45,3 +45,5 @@ the rules below exist).
 <!-- END attribution rule -->
 - Run the proof your brief names; if it names none, run the gate (`./scripts/check.sh`).
   Report "not run" for any check you did not run.
+- Before you report, go through `docs/REVIEW_GATE.md`, "What a reviewer attacks first",
+  against your own diff. Fix each hit, or name it in the report.
