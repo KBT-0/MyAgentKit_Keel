@@ -119,6 +119,8 @@ class DoctorTests(unittest.TestCase):
             dangling.mkdir()
             (dangling / 'tmux').symlink_to(tmp / 'absent')
 
+            # os.path.exists, not Path.exists: on Python before 3.12 the latter raised on an entry
+            # it may not stat (macOS /usr/sbin/weakpass_edit); one nobody may stat runs for nobody.
             def path_without(*tools):
                 links = tmp / ('no-%s-bin' % '-'.join(tools))
                 links.mkdir()
@@ -126,7 +128,7 @@ class DoctorTests(unittest.TestCase):
                     if os.path.isdir(directory):
                         for name in os.listdir(directory):
                             source = Path(directory) / name
-                            if name not in tools and source.exists() and not os.path.lexists(links / name):
+                            if name not in tools and os.path.exists(source) and not os.path.lexists(links / name):
                                 (links / name).symlink_to(source.resolve())
                 return str(links)
             no_timeout = path_without('timeout')
@@ -394,7 +396,7 @@ class DoctorTests(unittest.TestCase):
             full_path = env['PATH']
             (bin_dir / 'claude').unlink()
             env['PATH'] = os.pathsep.join(d for d in full_path.split(os.pathsep)
-                                          if d and not (Path(d) / 'claude').exists())
+                                          if d and not os.path.exists(os.path.join(d, 'claude')))
             red = doctor()
             self.assertEqual(red.returncode, 1, red.stdout)
             self.assertIn("MISSING: the second CLI 'claude'", red.stdout)
@@ -409,7 +411,7 @@ class DoctorTests(unittest.TestCase):
             review.write_text(review_before.replace('DEFAULT_REVIEWER="claude"', 'DEFAULT_REVIEWER="codex"'))
             (bin_dir / 'codex').rename(tmp / 'codex')
             env['PATH'] = os.pathsep.join(d for d in full_path.split(os.pathsep)
-                                          if d and not (Path(d) / 'codex').exists())
+                                          if d and not os.path.exists(os.path.join(d, 'codex')))
             red = doctor()
             self.assertIn("MISSING: the second CLI 'codex'", red.stdout)
             (home / '.local/bin').mkdir(parents=True)
@@ -425,7 +427,7 @@ class DoctorTests(unittest.TestCase):
             stub = tmp / 'stub-cli'
             (home / '.local/bin/codex').rename(stub)
             env['PATH'] = os.pathsep.join(d for d in full_path.split(os.pathsep) if d and not
-                                          ((Path(d) / 'claude').exists() or (Path(d) / 'codex').exists()))
+                                          (os.path.exists(os.path.join(d, 'claude')) or os.path.exists(os.path.join(d, 'codex'))))
             for extra, missing in (({'REVIEW_REVIEWER': 'codex', 'REVIEW_CLI_BIN': str(stub)}, None),
                                    ({'CLAUDE_CLI_BIN': str(stub)}, None),
                                    ({'REVIEW_REVIEWER': 'codex', 'REVIEW_CLI_BIN': str(tmp / 'absent')},

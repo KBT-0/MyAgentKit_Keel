@@ -76,7 +76,11 @@ class SpawnWorkerTests(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.tmp = Path(self._tmp.name)
-        self.state, self.bin, self.cwd = self.tmp / 'state', self.tmp / 'bin', self.tmp / "lead's dir"
+        # The caller's folder is named through a symlink, as macOS names every temp folder
+        # (/var -> /private/var): every path handed on must be the physical one, by construction.
+        (self.tmp / 'real').mkdir()
+        (self.tmp / 'via').symlink_to(self.tmp / 'real')
+        self.state, self.bin, self.cwd = self.tmp / 'state', self.tmp / 'bin', self.tmp / 'via' / "lead's dir"
         for folder in (self.state, self.bin, self.cwd):
             folder.mkdir()
         for name, body in (('tmux', TMUX), ('claude', CLAUDE), ('sleep', '#!/bin/sh\nexit 0\n')):
@@ -88,9 +92,15 @@ class SpawnWorkerTests(unittest.TestCase):
     def tearDown(self):
         self._tmp.cleanup()
 
+    @staticmethod
+    def physical(path):
+        # What the script hands on: the folder resolved (`pwd -P`), the file name as given.
+        return os.path.join(os.path.realpath(path.parent), path.name)
+
     def spawn(self, *args, **extra):
+        # PWD as a lead's shell exports it: with it, a plain `pwd` printed the symlinked spelling.
         env = dict(os.environ, PATH=f'{self.bin}{os.pathsep}{os.environ["PATH"]}',
-                   SPAWN_STATE=str(self.state), **extra)
+                   SPAWN_STATE=str(self.state), PWD=str(self.cwd), **extra)
         return subprocess.run(['sh', str(SCRIPT), *args], cwd=self.cwd, env=env,
                               capture_output=True, text=True, timeout=60)
 
@@ -124,7 +134,7 @@ class SpawnWorkerTests(unittest.TestCase):
         result = self.spawn('w1', str(self.brief))
         self.assertEqual(result.returncode, 0, result.stderr)
         submitted = (self.state / 'submitted').read_text().splitlines()
-        self.assertEqual(submitted[0], f'Read {shq(str(self.brief))} and follow it.')
+        self.assertEqual(submitted[0], f'Read {shq(self.physical(self.brief))} and follow it.')
         self.assertNotIn('Line one of the brief', (self.state / 'submitted').read_text())
 
     def assert_refused(self, brief):
@@ -158,7 +168,7 @@ class SpawnWorkerTests(unittest.TestCase):
         result = self.spawn('w4', 'briefs/task.md', CDPATH=str(self.tmp / 'elsewhere'))
         self.assertEqual(result.returncode, 0, result.stderr)
         submitted = (self.state / 'submitted').read_text().splitlines()
-        self.assertEqual(submitted[0], 'Read %s and follow it.' % shq(str(self.cwd / 'briefs/task.md')))
+        self.assertEqual(submitted[0], 'Read %s and follow it.' % shq(self.physical(self.cwd / 'briefs/task.md')))
 
     def test_a_brief_name_ending_in_a_newline_is_refused(self):
         # $(basename ...) stripped the trailing newline: "task.md<newline>" was checked and
@@ -227,7 +237,7 @@ class SpawnWorkerTests(unittest.TestCase):
         result = subprocess.run(['bash', '-O', 'xpg_echo', str(SCRIPT), 'w\\033[2J', str(brief)], cwd=self.cwd,
                                 env=env, capture_output=True, text=True, timeout=60)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn(str(brief), result.stdout)
+        self.assertIn(self.physical(brief), result.stdout)
         self.assertNotIn('\x1b', result.stdout + result.stderr)
         # The same holds in every shell only if no echo prints a value: none in these scripts.
         for script in (SCRIPT, ROOT / 'bootstrap.sh', ROOT / 'sync-kit.sh'):
@@ -243,7 +253,7 @@ class SpawnWorkerTests(unittest.TestCase):
         git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'a')
         (self.cwd / 'local.json').write_text('{}\n')
         inline = '{"model": "x"}'
-        for name, value, expect in (('w6', 'local.json', str(self.cwd / 'local.json')),
+        for name, value, expect in (('w6', 'local.json', self.physical(self.cwd / 'local.json')),
                                     ('w7', inline, inline)):
             with self.subTest(settings=value):
                 result = self.spawn(name, str(self.brief), '--worktree', '--settings', value)

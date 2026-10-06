@@ -31,7 +31,7 @@ REQUIRED_SUITES = {
     # every test with the kit check green. A new test raises its suite's number here.
     'tests': {'test_packaging': 1, 'test_bootstrap': 16, 'test_acceptance': 6,
               'test_review_upgrade': 2, 'test_boundary_example': 3, 'test_scan_gate': 1,
-              'test_check_gate': 14, 'test_boundary_restore': 38, 'test_sync_kit': 15,
+              'test_check_gate': 14, 'test_boundary_restore': 39, 'test_sync_kit': 15,
               'test_doctor': 2, 'test_git_hooks': 23, 'test_stop_hook': 1, 'test_spawn_worker': 12},
 }
 
@@ -365,7 +365,9 @@ def main():
                     if os.path.isdir(directory):
                         for name in os.listdir(directory):
                             source = Path(directory) / name
-                            if (not name.startswith("python") and source.exists()
+                            # os.path.exists: Path.exists raises before Python 3.12 on an entry
+                            # it may not stat (macOS /usr/sbin/weakpass_edit).
+                            if (not name.startswith("python") and os.path.exists(source)
                                     and not os.path.lexists(no_python / name)):
                                 (no_python / name).symlink_to(source.resolve())
                 if 'toolchain_path=""' not in gate.read_text():
@@ -484,14 +486,23 @@ def main():
             # link's marker went unscanned and the gate could pass. Here a stand-in readlink
             # puts a directory where the second link's text is appended.
             with tempfile.TemporaryDirectory(prefix="myagentkit-side-") as side:
-                shim, scratch = Path(side) / "bin", Path(side) / "tmp"
+                shim = Path(side) / "bin"
                 shim.mkdir()
-                scratch.mkdir()
+                # The gate's folders are found through the mktemp that made them, never by where
+                # TMPDIR points: macOS mktemp without a template ignores TMPDIR (it takes the user
+                # temp folder), so a search of TMPDIR found nothing there. This mktemp does the same.
+                made = shlex.quote(str(Path(side) / "made"))
+                (Path(side) / "elsewhere").mkdir()
+                (shim / "mktemp").write_text(
+                    "#!/bin/sh\n"
+                    "case \"$*\" in \"\"|-d) TMPDIR=" + shlex.quote(str(Path(side) / "elsewhere")) + "; export TMPDIR ;; esac\n"
+                    "d=$(" + shutil.which("mktemp") + " \"$@\") && printf '%s\\n' \"$d\" >> " + made + " && printf '%s\\n' \"$d\"\n")
+                (shim / "mktemp").chmod(0o755)
                 (shim / "readlink").write_text(
                     "#!/bin/sh\n"
-                    "for d in \"$TMPDIR\"/*/; do\n"
+                    "while IFS= read -r d; do\n"
                     "  if [ -f \"$d/symlink-text\" ]; then rm -f \"$d/symlink-text\" && mkdir \"$d/symlink-text\"; fi\n"
-                    "done\n"
+                    "done < " + made + "\n"
                     "exec " + shutil.which("readlink") + " \"$@\"\n")
                 (shim / "readlink").chmod(0o755)
                 links = ("a-link", "b-link")
@@ -501,8 +512,7 @@ def main():
                 try:
                     run(["sh", "scripts/check.sh"], project, expected=1,
                         reason="could not sort the file list; refusing to scan blind",
-                        env=dict(os.environ, TMPDIR=str(scratch),
-                                 PATH=str(shim) + os.pathsep + os.environ["PATH"]))
+                        env=dict(os.environ, PATH=str(shim) + os.pathsep + os.environ["PATH"]))
                 finally:
                     run(["git", "rm", "-q", "--cached", "--", *links], project)
                     for name in links:

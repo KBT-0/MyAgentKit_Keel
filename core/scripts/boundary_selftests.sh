@@ -51,7 +51,9 @@
 # itself must lie outside the checkout (a TMPDIR set to the checkout put it, and a SIGKILL's
 # leftovers, in the working tree). TMPDIR is resolved to one physical folder before any `cd`
 # and both copies are made there: the second copy, made after `cd /`, found a relative
-# TMPDIR naming another folder. Every command that touches the copy, git and the copied
+# TMPDIR naming another folder. mktemp gets that folder in its template, since macOS
+# `mktemp -d` without one ignores TMPDIR and put both copies in the user temp folder.
+# Every command that touches the copy, git and the copied
 # gate alike, runs under probe_env, which passes ONLY the variables it names: removing
 # variables one at a time missed each next one (an exported GIT_DIR built in the checkout;
 # an exported GIT_OBJECT_DIRECTORY took the copy's `git add` into the original's object
@@ -279,7 +281,8 @@
 # |   # Each run gets a copy of its own, made by this one function: the checkout's bytes in a fresh
 # |   # directory, audited, with empty hooks and only the allowlisted settings.
 # |   probe_fresh_copy() {
-# |     probe_copy=$(TMPDIR=$probe_base mktemp -d) || exit 1
+# |     # The folder goes in the template: macOS `mktemp -d` alone ignores TMPDIR and used the user temp folder.
+# |     probe_copy=$(mktemp -d "$probe_base/tmp.XXXXXXXXXX") || exit 1
 # |     probe_id=$(python3 -I -c 'import os, sys; made = os.lstat(sys.argv[1]); print(made.st_dev, made.st_ino)' \
 # |       "$probe_copy") || exit 1
 # |     mkdir "$probe_copy/home" "$probe_copy/tmp" || exit 1
