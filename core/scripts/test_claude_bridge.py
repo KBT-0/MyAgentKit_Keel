@@ -24,7 +24,7 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'MYAGENTKIT_TASK_ID', 'MYAGENTKIT_R
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 104, 'test_agent_usage': 19, 'test_codex_quota': 5}
+SUITE_MINIMUMS = {'test_claude_bridge': 105, 'test_agent_usage': 19, 'test_codex_quota': 5}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -2531,9 +2531,37 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         values = [{"type": "turn.failed", "error": {"message": "This content was flagged for possible "
                    "cybersecurity risk. If you're doing authorized security work, apply for access."}}]
         self.assertEqual(agent_usage.failure("codex", {"exit_code": 0, "stderr": ""}, values), "content_flagged")
+        # A connection or login "refused" is not a content flag.
+        for text in ("Connection refused (os error 111)", "Login refused: authentication failed (401)"):
+            bad = [{"type": "turn.failed", "error": {"message": text}}]
+            self.assertNotEqual(agent_usage.failure("codex", {"exit_code": 1, "stderr": ""}, bad), "content_flagged")
         # And it is an availability failure: --fallback may try the other reviewer.
         import review_dispatch
         self.assertIn("content_flagged", review_dispatch.UNAVAILABLE)
+
+    def test_a_preparation_that_uses_up_the_deadline_is_recorded_as_a_timeout(self):
+        # The copy's time counts against the review's bound; running out there is a timeout
+        # failure with a record, not an adapter error without one.
+        bin_dir = self.root / 'slowbin2'
+        bin_dir.mkdir(exist_ok=True)
+        (bin_dir / 'tar').write_text('#!/bin/sh\ncat > /dev/null\nsleep 5\n')
+        (bin_dir / 'tar').chmod(0o755)
+        self.install_wrapper()
+        self.commit_fixture('A clean HEAD')
+        old_path = os.environ['PATH']
+        os.environ['PATH'] = str(bin_dir) + os.pathsep + old_path
+        try:
+            code, result = self.run_bridge(extra=['--commit', 'HEAD', '--timeout', '1'])
+            self.assertNotEqual(code, 0)
+            self.assertEqual(result['failure_kind'], 'timeout', result)
+            self.assertTrue(result.get('usage_record'), result)
+            outcome = self.run_wrapper('--commit', 'HEAD', '--reviewer', 'codex',
+                                       REVIEW_CLI_BIN=str(self.build_fake_codex()),
+                                       REVIEW_CODEX_MODEL='fixture-codex-model', REVIEW_TIMEOUT_SECONDS='1')
+            self.assertNotEqual(outcome.returncode, 0)
+            self.assertIn('"failure_kind": "timeout"', outcome.stdout + outcome.stderr)
+        finally:
+            os.environ['PATH'] = old_path
 
     def test_dispositions_are_claims_the_reviewer_verifies_not_settlements(self):
         # The author never approves its own work: a disproved finding counts only once the

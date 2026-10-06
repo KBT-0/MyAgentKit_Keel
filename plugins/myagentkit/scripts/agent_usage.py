@@ -185,7 +185,7 @@ def failure(provider: str, execution: dict, values: list[dict]) -> str | None:
     # A provider's content classifier stopping the turn is its own kind: the wording
     # ("authorized security work") would otherwise read as an authentication fault. A retry
     # with the same content may pass; a smaller scope usually does.
-    if any(word in text for word in ("flagged", "content policy", "safety system", "refused")):
+    if any(word in text for word in ("flagged for", "content policy", "safety system", "usage policies")):
         return "content_flagged"
     if any(word in text for word in ("auth", "login", "401", "403")):
         return "authentication"

@@ -703,14 +703,22 @@ def main(argv=None, result_sink=None) -> int:
         # Removed when the attempt ends: a cancel is only noted here, so it reaches the cleanup.
         with tempfile.TemporaryDirectory(prefix="myagentkit-review-", ignore_cleanup_errors=True) as copy:
             workdir = repo
-            if args.mode == "review":
-                workdir = Path(copy)
-                throwaway_copy(repo, head, diff if scope == "uncommitted" else None, workdir,
-                               cancelled=cancelled, deadline=deadline)
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise BridgeError("the review wall-clock limit passed during preparation")
-            execution = agent_process.run(command, prompt, workdir, remaining, noted=cancelled)
+            # A preparation that uses up the deadline is a timeout like any other: it is
+            # recorded as one, so --fallback may try the other reviewer.
+            try:
+                if args.mode == "review":
+                    workdir = Path(copy)
+                    throwaway_copy(repo, head, diff if scope == "uncommitted" else None, workdir,
+                                   cancelled=cancelled, deadline=deadline)
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise BridgeError("the review wall-clock limit passed during preparation")
+                execution = agent_process.run(command, prompt, workdir, remaining, noted=cancelled)
+            except BridgeError as error:
+                if cancelled or time.monotonic() < deadline:
+                    raise
+                execution = {"exit_code": None, "stdout": "", "stderr": str(error), "termination": "timeout",
+                             "cancelled": False, "duration_ms": 0}
         if execution.pop("cancelled", False):
             cancelled.append(True)
         evidence.update(execution)

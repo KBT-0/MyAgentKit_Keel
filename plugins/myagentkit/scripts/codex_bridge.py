@@ -83,8 +83,16 @@ def main(argv=None, result_sink=None):
             last = Path(tmp) / "final.txt"
             workdir = Path(tmp) / "copy"
             workdir.mkdir()
-            throwaway_copy(repo, head, diff if scope == "uncommitted" else None, workdir,
-                           deadline=deadline)
+            prepared = None
+            try:
+                throwaway_copy(repo, head, diff if scope == "uncommitted" else None, workdir,
+                               deadline=deadline)
+            except BridgeError as error:
+                if time.monotonic() < deadline:
+                    raise
+                # A preparation that used up the deadline is recorded as a timeout.
+                prepared = {"exit_code": None, "stdout": "", "stderr": str(error), "termination": "timeout",
+                             "cancelled": False, "duration_ms": 0}
             command = [os.environ.get("REVIEW_CLI_BIN", "codex"), "exec", "--json", "--ephemeral",
                        "-s", "workspace-write", "-c", "sandbox_workspace_write.network_access=false",
                        "--skip-git-repo-check", "-c", "model_reasoning_effort=" + args.effort,
@@ -109,9 +117,10 @@ def main(argv=None, result_sink=None):
             handed = {}
             try:
                 remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    raise BridgeError("the review wall-clock limit passed during preparation")
-                execution = agent_process.run(command, prompt, workdir, remaining, into=handed)
+                if prepared is None and remaining <= 0:
+                    prepared = {"exit_code": None, "stdout": "", "stderr": "the review wall-clock limit passed during preparation", "termination": "timeout",
+                             "cancelled": False, "duration_ms": 0}
+                execution = prepared or agent_process.run(command, prompt, workdir, remaining, into=handed)
                 if execution.pop("cancelled", False):
                     cancelled.append(True)
                 # A cancelled review must stop now, not start another CLI process to read quota.
