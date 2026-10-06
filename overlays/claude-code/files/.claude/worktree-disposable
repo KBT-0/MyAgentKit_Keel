@@ -13,6 +13,7 @@
 # .git, docs, .claude, .myagentkit, scripts. The content of these folders must also be
 # git-ignored: `git worktree remove` refuses untracked files, and the worktree is then kept.
 #
-# One optional setting: `quiet-minutes=<n>` (default 60, at least 10). A worktree in which
+# One optional setting, once: `quiet-minutes=<n>` (default 60, at least 10); a second one or an
+# invalid one refuses this whole list (nothing disposable, 60 applies). A worktree in which
 # anything changed less than n minutes ago (its files, these folders and its git directory;
 # mtime or ctime) is kept. It is a margin for a worker the process scan cannot see, not a proof.

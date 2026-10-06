@@ -2,8 +2,8 @@
 # KIT-OWNED: do not edit locally; change it in the kit and re-sync.
 """Remove the finished worktrees under .claude/worktrees, and only what is proven safe to lose.
 
-Run through scripts/clean_worktrees.sh, which says why this exists. With no option it is a dry
-run; --apply removes. It never deletes a branch: the branch keeps every commit it had whatever
+Run through scripts/clean_worktrees.sh, which says why this exists. It needs git 2.36 or newer
+(`git worktree list --porcelain -z`). With no option it is a dry run; --apply removes. It never deletes a branch: the branch keeps every commit it had whatever
 happens to main later (a merge undone, a reset), and the disk is in the worktree, not in the
 branch. Nothing is removed while the main worktree's HEAD is detached: "merged" is tested
 against its branch. A worktree is removed only when every check below holds; a check that
@@ -25,9 +25,13 @@ all):
      gate's lock is free;
   f. nothing only its git directory holds: removal destroys that directory, so every object id
      in every file of it (both columns of every reflog line, every ref, every pseudo-ref, any
-     file this script does not know), NO_HISTORY excepted, names an object reachable from the
-     main branch (which holds its branch, by b), or no object at all; the files ref backend; no per-worktree
-     config;
+     file this script does not know, in either case), NO_HISTORY excepted, names no object, or
+     a commit or tag reachable from what removal leaves (every ref of the repository, its
+     branch's own reflog, which keeps an amended, reset or rebased-away tip), or a commit this
+     saves: before removing, one `git update-ref --stdin` transaction pins every commit only
+     its git directory holds as refs/kit/saved/<its git directory name>-<UTC time>/<n>, and
+     the check runs again with those refs. A tree or blob id keeps it: rev-list cannot tell
+     whether one is held. The files ref backend; no per-worktree config;
   g. tracked content, by bytes: no change `git status` reports with the stat settings forced to
      their defaults; the index equals HEAD's tree; every tracked path is, in the worktree,
      exactly the blob the index records (raw bytes, no filter or line-ending conversion, the
@@ -37,18 +41,23 @@ all):
      anywhere in it, disposable folders included, changed within quiet-minutes.
 
 Proven: a, b, d, f, g, h's accounting. The quiet period (c, h) is a margin, not a proof: it
-covers a worker whose process the scan in e cannot see. Not guarded, by the owner's decision:
-a process that changes a worktree between its audit and its removal, files planted to attack
-this script, and a SIGKILL between two removal steps. Lost with a removal and never restored:
-the ignored files in disposable folders, and the worktree's own reflogs (every commit they name
-is in its branch or main, by f).
+covers a worker whose process the scan in e cannot see. e is read afresh for every worktree
+and twice more right before removal. Not guarded, by the owner's decision: a process that
+changes a worktree's files between its audit and its removal, files planted to attack this
+script, and a SIGKILL between two removal steps. Lost with a removal and never restored: the
+ignored files in disposable folders, and the worktree's own reflogs (every commit they name is
+held or saved, by f).
 
 The filesystem is walked on its own, never through a symlink, and every entry that is not
 tracked must be accounted for: `git status` does not list a FIFO, a socket or a device, and
 `git worktree remove` deletes them and every ignored file without asking.
 
-Removal order: the log record (flushed), the identical copies git does not track, `git worktree
-remove` without --force (git's own check, independent of this one).
+Removal order: the saved refs, the log record (flushed; it names every ref saved and every
+file about to be deleted), f and e again, the identical copies git does not track, e again,
+`git worktree remove` without --force (git's own check, independent of this one). A step
+that fails after a copy was deleted reports the worktree PARTLY MODIFIED, lists each file
+deleted (its identical copy is at the same path in the main worktree) and exits 1; a re-run
+is safe, as what is left still holds.
 """
 import argparse
 import datetime
@@ -69,15 +78,17 @@ REFUSED = {b'.git', b'docs', b'.claude', b'.myagentkit', b'scripts'}
 OPERATIONS = (b'MERGE_HEAD', b'CHERRY_PICK_HEAD', b'REVERT_HEAD', b'BISECT_START',
               b'rebase-merge', b'rebase-apply', b'sequencer')
 # HEAD reflog subjects git writes when it made a NEW commit in that worktree: commit (also
-# amend, initial, and merge: a conflicted merge concluded by `git commit`), cherry-pick,
+# amend, initial, merge and cherry-pick: a conflicted one concluded by `git commit`), cherry-pick,
 # revert, am, and a rebase step that wrote a commit. Not counted: a fast-forward (checkout,
 # reset, `merge: Fast-forward`, `cherry-pick: fast-forward`, a rebase that only moved), and a
 # merge made by `git merge` or `git pull` alone, which joins work made elsewhere.
-WORK = re.compile(rb'(commit( \([a-z]+\))?|cherry-pick|revert|am|rebase \((pick|reword|squash|fixup|continue)\)): ')
+WORK = re.compile(rb'(commit( \([a-z-]+\))?|cherry-pick|revert|am|rebase \((pick|reword|squash|fixup|continue)\)): ')
 # Top-level files of a worktree's git directory that hold no history (f): index, the tracked
 # state g verifies by bytes (and binary); check-build.log, the gate's build output, which may
-# print any id. Every other file is scanned, the ones that hold no id at all included.
-NO_HISTORY = {b'index', b'check-build.log'}
+# print any id; AUTO_MERGE, the tree git writes for a merge or rebase step and leaves behind
+# when it ends (d proves none is under way): a pseudo-ref, which gc does not keep either, and
+# a tree, not a commit. Every other file is scanned, the ones that hold no id at all included.
+NO_HISTORY = {b'index', b'check-build.log', b'AUTO_MERGE'}
 # The warnings lsof prints on stderr when one file system cannot be read; its listing of the
 # rest stands (lsof(8), "can't stat()"). Any other stderr line makes a non-zero exit a failure.
 LSOF_WARNINGS = re.compile(rb"lsof: WARNING: can't stat\(\) [^\n]*|\s*Output information may be incomplete\.")
@@ -158,35 +169,36 @@ def worktrees(cwd):
 
 
 def read_disposable(main_root):
-    """The project's disposable entries, the lines refused, and the quiet period in minutes."""
+    """The project's disposable entries, the lines refused, and the quiet period in minutes. A
+    quiet-minutes line given twice or not valid refuses the whole list (fail closed)."""
     try:
         with open(os.path.join(main_root, DISPOSABLE_FILE), 'rb') as handle:
             data = handle.read()
     except FileNotFoundError:
         return [], [], QUIET_DEFAULT
-    entries, refused, quiet = [], [], QUIET_DEFAULT
+    entries, refused, quiet = [], [], None
     for line in data.split(b'\n'):
         line = line.strip()
         if not line or line.startswith(b'#'):
             continue
         if line.startswith(b'quiet-minutes'):
             value = re.fullmatch(rb'quiet-minutes=(\d{1,6})', line)
-            if value and int(value.group(1)) >= QUIET_MIN:
-                quiet = int(value.group(1))
-            else:
-                refused.append((line, 'quiet-minutes takes a whole number of at least %d; %d applies'
-                                % (QUIET_MIN, QUIET_DEFAULT)))
+            if quiet is not None or not value or int(value.group(1)) < QUIET_MIN:
+                return [], [(line, '(a quiet-minutes line twice, or not a whole number of at least %d): the whole '
+                             'list is refused, nothing is disposable and quiet-minutes=%d applies'
+                             % (QUIET_MIN, QUIET_DEFAULT))], QUIET_DEFAULT
+            quiet = int(value.group(1))
             continue
         entry = line.rstrip(b'/')
         parts = entry.split(b'/')
         # An absolute path has an empty first part.
         if (b'' in parts or b'.' in parts or b'..' in parts
                 or REFUSED.intersection(parts)):
-            refused.append((line, 'empty, absolute, "..", or a place that holds work: %s'
+            refused.append((line, '(empty, absolute, "..", or a place that holds work: %s)'
                             % ', '.join(sorted(r.decode() for r in REFUSED))))
         else:
             entries.append(entry)
-    return entries, refused, quiet
+    return entries, refused, quiet or QUIET_DEFAULT
 
 
 def disposable(rel, entries):
@@ -445,19 +457,6 @@ def lock_held(gitdir):
     return False
 
 
-def cached(ctx, key, compute):
-    """COMPUTE() once per run; an Unproven result is kept and raised again for every worktree."""
-    if key not in ctx['cache']:
-        try:
-            ctx['cache'][key] = (compute(), None)
-        except Unproven as error:
-            ctx['cache'][key] = (None, error)
-    value, error = ctx['cache'][key]
-    if error:
-        raise error
-    return value
-
-
 def too_recent(when, ctx, what):
     """A reason when WHEN lies within the quiet period (a time in the future counts)."""
     if when is None or when + ctx['quiet'] * 60 <= ctx['now']:
@@ -516,7 +515,8 @@ def audit(record, ctx):
         return reasons + ['its path or branch name is not printable UTF-8: the command that brings it back '
                           'could not be printed'], None
     facts = {'real': real, 'name': os.path.basename(real), 'head': record.get('HEAD', b''),
-             'branch': branch, 'delete': [], 'identical': 0, 'disposable': 0, 'bytes': 0}
+             'branch': branch, 'delete': [], 'identical': 0, 'disposable': 0, 'bytes': 0,
+             'pin': [], 'saved': None, 'holders': {}}
     gitdir = git(real, 'rev-parse', '--absolute-git-dir').stdout.rstrip(b'\n')
     tracked, seen = set(), {}
 
@@ -541,14 +541,16 @@ def audit(record, ctx):
         return ['an operation is in progress: %s' % names(found)] if found else []
 
     def idle():
+        # Read afresh every time, never cached: a run audits worktree after worktree for minutes,
+        # and remove() asks again right before it deletes.
         out = []
         if lock_held(gitdir):
             out.append('in use: the gate holds its lock (%s)' % show(os.path.join(gitdir, b'check.lock')))
-        if facts['name'] in cached(ctx, 'tmux', tmux_sessions):
+        if facts['name'] in tmux_sessions():
             out.append('in use: a tmux session is named %s' % show(facts['name']))
         if not ctx['assume_idle']:
             try:
-                cwds, ctx['unseen'], ctx['source'] = cached(ctx, 'proc', lambda: process_cwds(ctx['proc']))
+                cwds, ctx['unseen'], ctx['source'] = process_cwds(ctx['proc'])
             except Unproven as error:
                 return out + ['cannot see which processes work in it (%s); if none does, run by hand: '
                               'scripts/clean_worktrees.sh --apply --assume-idle' % error]
@@ -567,8 +569,10 @@ def audit(record, ctx):
             return ['it has its own config (%s)' % show(config)]
         # Another object format is a KeyError: not proven, kept.
         hexlen = {b'sha1': 40, b'sha256': 64}[git(real, 'rev-parse', '--show-object-format').stdout.strip()]
-        token = re.compile(rb'(?<![0-9a-fA-F])[0-9a-f]{%d}(?![0-9a-fA-F])' % hexlen)
-        holders = {}
+        # Either case: git reads an id written in upper case too.
+        token = re.compile(rb'(?<![0-9a-fA-F])[0-9a-fA-F]{%d}(?![0-9a-fA-F])' % hexlen)
+        holders = facts['holders'] = {}
+        facts['pin'] = []
         for rel, info, is_dir in walk(gitdir):
             if is_dir or rel in NO_HISTORY:
                 continue
@@ -582,21 +586,46 @@ def audit(record, ctx):
             if b'\0' in data:
                 return ['its git directory holds %s, a binary file this script cannot read for ids' % show(rel)]
             for oid in token.findall(data):
-                holders.setdefault(oid, rel)
+                holders.setdefault(oid.lower(), rel)
         if not holders:
             return []
+        # Held, as removal destroys none of them: every ref of the shared repository (main's
+        # branch, its branch, refs/kit/saved/*) and its branch's own reflog, where an amended,
+        # reset or rebased-away tip stays. Read from the main worktree: this worktree's own
+        # refs (refs/worktree/*, refs/bisect/*) go with it.
+        held = set(git(ctx['main_root'], 'for-each-ref', '--format=%(objectname)').stdout.split())
+        try:
+            with open(os.path.join(ctx['common'], b'logs', facts['branch']), 'rb') as handle:
+                held.update(oid.lower() for oid in token.findall(handle.read()))
+        except FileNotFoundError:
+            pass
         # Only an id git calls missing is dropped; every other goes to rev-list, which fails on
         # anything it cannot walk.
-        missing = set(git(real, 'cat-file', '--batch-check=%(objectname) %(objecttype)',
-                          stdin=b''.join(oid + b'\n' for oid in sorted(holders))).stdout.split(b'\n'))
-        present = [oid for oid in sorted(holders) if oid + b' missing' not in missing]
-        # Its branch is in the main branch (b), so what main holds covers both.
-        loose = git(real, 'rev-list', '--objects', '--stdin', stdin=b''.join(
-            oid + b'\n' for oid in present) + b'^' + ctx['main_ref'] + b'\n').stdout.split()
-        if loose:
-            return ['%s is held only by its git directory (%s): it is not in %s; check and remove it by '
-                    'hand' % (show(loose[0][:12]), show(holders.get(loose[0], b'an object it names')),
-                              show(short(ctx['main_ref'])))]
+        kinds = dict(line.split(b' ', 1) for line in git(
+            real, 'cat-file', '--batch-check=%(objectname) %(objecttype)',
+            stdin=b''.join(oid + b'\n' for oid in sorted(held.union(holders)))).stdout.split(b'\n') if line)
+        # `rev-list --objects <tree> ^<commit>` lists a tree the commit holds too: for a tree or a
+        # blob, held cannot be told from not held.
+        plain = [oid for oid in sorted(holders) if kinds.get(oid) in (b'tree', b'blob')]
+        if plain:
+            return ['%s is a tree or blob id (%s): reachability is checked for commits only; check and remove it '
+                    'by hand' % (show(plain[0][:12]), show(holders[plain[0]]))]
+        present = [oid for oid in sorted(holders) if kinds.get(oid) != b'missing']
+        loose = set(line.split(b' ')[0] for line in git(real, 'rev-list', '--objects', '--stdin', stdin=b''.join(
+            oid + b'\n' for oid in present) + b''.join(b'^' + oid + b'\n' for oid in sorted(held)
+                                                     if kinds.get(oid) != b'missing')).stdout.split(b'\n'))
+        # A commit nothing else holds is saved (remove() pins it to a ref) and covers what it
+        # reaches; anything else not held keeps the worktree.
+        facts['pin'] = [oid for oid in present if oid in loose and kinds.get(oid) == b'commit']
+        other = [oid for oid in present if oid in loose and kinds.get(oid) != b'commit']
+        if other:
+            return ['%s, a %s, is held only by its git directory (%s); check and remove it by hand'
+                    % (show(other[0][:12]), show(kinds.get(other[0], b'?')), show(holders[other[0]]))]
+        if facts['pin']:
+            facts['saved'] = b'refs/kit/saved/%s-%s' % (os.path.basename(gitdir), ctx['stamp'])
+            if git(real, 'check-ref-format', facts['saved'] + b'/1', codes=(0, 1)).returncode:
+                return ['what only its git directory holds cannot be saved: %s is not a valid ref name'
+                        % show(facts['saved'])]
         return []
 
     def contents():
@@ -677,40 +706,88 @@ def audit(record, ctx):
         reasons.extend(check())  # an error is a keep: main() catches it
         if reasons and not ctx['all']:
             break
+    facts['history'], facts['idle'] = history, idle  # remove() asks both again
     return reasons, facts
 
 
+def saves(facts):
+    """The report line naming the commits a removal saves (every one is in the log)."""
+    pins = ['%d=%s (%s)' % (n, show(oid[:12]), show(facts['holders'][oid])) for n, oid in enumerate(facts['pin'], 1)]
+    more = len(pins) - CAP
+    return '         saves what only its git directory holds, as %s/<n>: %s%s' % (
+        show(facts['saved']), ', '.join(pins[:CAP]), ' and %d more' % more if more > 0 else '')
+
+
 def remove(record, facts, ctx):
-    """Log, delete the identical copies git does not track, then let git remove it. True when removed."""
+    """'removed', 'kept' (nothing changed but saved refs), or 'partly' (identical copies deleted,
+    then a step failed)."""
+    deleted = []
+    try:
+        why = removal(record, facts, ctx, deleted)
+    except Exception as error:  # a keep, like an error in the audit
+        why = 'not proven: %s' % (error or type(error).__name__)
+    if why is None:
+        return 'removed'
+    if not deleted:
+        print('         stopped: %s; nothing deleted, the worktree stays' % why)
+        return 'kept'
+    print('         stopped: %s' % why)
+    print('         PARTLY MODIFIED: %d files git does not track were deleted from it, each with a byte-identical '
+          'copy at the same path in the main worktree, which brings it back:' % len(deleted))
+    for rel in deleted:
+        print('           %s' % show(rel))
+    return 'partly'
+
+
+def removal(record, facts, ctx, deleted):
+    """Save, log, check again, delete the identical copies git does not track, then let git
+    remove it. None when removed, else why it stopped; DELETED lists what was deleted."""
     path, branch = record['worktree'], facts['branch']
+    saved = [b'%s/%d' % (facts['saved'], n) for n in range(1, len(facts['pin']) + 1)]
+    if saved:
+        result = subprocess.run(['git', 'update-ref', '--stdin'], cwd=ctx['main_root'], env=ENV, capture_output=True,
+                                input=b''.join(b'create %s %s\n' % pair for pair in zip(saved, facts['pin'])))
+        if result.returncode != 0:  # one transaction: all of them or none
+            return ('cannot save what only its git directory holds: `git update-ref --stdin` failed: %s'
+                    % (show(result.stderr.strip()) or 'exit %d' % result.returncode))
+        print('         to delete the saved refs once you no longer want them, run in the main worktree:')
+        print("           git for-each-ref --format='delete %%(refname)' %s | git update-ref --stdin"
+              % sh_quote(show(facts['saved'] + b'/')))
     line = '\t'.join([datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
                       show(facts['real']), show(branch), show(facts['head']),
                       show(ctx['main_head']), 'identical_files=%d' % facts['identical'],
-                      'disposable_bytes=%d' % facts['disposable']]) + '\n'
+                      'disposable_bytes=%d' % facts['disposable']]
+                     + ['saved=%s=%s' % (show(ref), show(oid)) for ref, oid in zip(saved, facts['pin'])]
+                     + ['delete=%s' % show(rel) for rel in facts['delete']]) + '\n'
     try:
         with open(ctx['log'], 'ab') as log:
             log.write(line.encode())
             log.flush()
             os.fsync(log.fileno())
     except OSError as error:
-        print('         stopped: cannot write the removal log %s (%s); nothing deleted' % (show(ctx['log']), error))
-        return False
+        return 'cannot write the removal log %s (%s)' % (show(ctx['log']), error)
+    # Again, now: what it holds with the saved refs counted, and whether a process came in.
+    again = facts['history']() + facts['idle']()
+    if again or facts['pin']:
+        return 'changed since its audit: %s' % '; '.join(again or ['it holds commits not saved'])
     for rel in facts['delete']:
         try:
             os.unlink(os.path.join(facts['real'], rel))
         except OSError as error:
-            print('         stopped: cannot delete the identical copy %s (%s); the worktree stays' % (show(rel), error))
-            return False
+            return 'cannot delete the identical copy %s (%s)' % (show(rel), error)
+        deleted.append(rel)
+    again = facts['idle']()
+    if again:
+        return 'changed since its audit: %s' % '; '.join(again)
     result = subprocess.run(['git', 'worktree', 'remove', path], cwd=ctx['main_root'], env=ENV,
                             stdin=subprocess.DEVNULL, capture_output=True)
     if result.returncode != 0:
-        print('         stopped: git refused to remove it: %s' % show(result.stderr.strip()))
-        return False
+        return 'git refused to remove it: %s' % show(result.stderr.strip())
     # The branch stays, so this brings back its files at their last commit; not the worktree's
     # ignored files, nor its reflogs.
     print('         this command, run in the main worktree, brings the worktree back:')
     print('           git worktree add %s %s' % (sh_quote(printable(facts['real'])), sh_quote(printable(short(branch)))))
-    return True
+    return None
 
 
 def main():
@@ -725,6 +802,13 @@ def main():
     parser.add_argument('--quiet', action='store_true',
                         help='print the removals and one summary line, not each kept worktree (the hook)')
     args = parser.parse_args()
+    # CLEAN_WORKTREES_NOW and CLEAN_WORKTREES_PROC are for the tests: a clock they can move
+    # instead of ageing files (a ctime cannot be set back), and a /proc they can build. The
+    # clock is said on every run: exported by mistake, it would end the quiet period unseen.
+    clock = os.environ.get('CLEAN_WORKTREES_NOW')
+    if clock:
+        print('clean_worktrees: CLEAN_WORKTREES_NOW is set: the quiet period is measured against %s, not the clock'
+              % clock)
     ENV = git_env()
     here = os.getcwdb()
     records = worktrees(here)
@@ -737,19 +821,18 @@ def main():
     main_root = os.path.realpath(records[0]['worktree'])
     entries, refused, quiet = read_disposable(main_root)
     common = os.path.realpath(git(here, 'rev-parse', '--git-common-dir').stdout.rstrip(b'\n'))
-    # CLEAN_WORKTREES_NOW and CLEAN_WORKTREES_PROC are for the tests: a clock they can move
-    # instead of ageing files (a ctime cannot be set back), and a /proc they can build.
     ctx = {'main_root': main_root, 'home': os.path.join(main_root, b'.claude', b'worktrees'),
            'main_head': records[0].get('HEAD', b''), 'main_ref': records[0]['branch'], 'common': common,
            'own': os.path.realpath(git(here, 'rev-parse', '--show-toplevel').stdout.rstrip(b'\n')),
-           'disposable': entries, 'quiet': quiet, 'cache': {}, 'unseen': None, 'source': None,
-           'now': float(os.environ.get('CLEAN_WORKTREES_NOW') or time.time()),
+           'disposable': entries, 'quiet': quiet, 'unseen': None, 'source': None,
+           'stamp': datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%SZ').encode(),
+           'now': float(clock or time.time()),
            'proc': os.fsencode(os.environ.get('CLEAN_WORKTREES_PROC', '/proc')),
            'assume_idle': args.assume_idle, 'all': args.all_reasons,
            'log': os.path.join(common, b'kit-worktree-removals.log')}
     for line, why in refused:
-        print('clean_worktrees: refused %s line %s (%s)' % (show(DISPOSABLE_FILE), show(line), why))
-    removed = kept = freed = 0
+        print('clean_worktrees: refused %s line %s %s' % (show(DISPOSABLE_FILE), show(line), why))
+    removed = kept = partly = freed = 0
     gone = []
     for record in records:
         shown = os.path.realpath(record['worktree'])
@@ -768,13 +851,15 @@ def main():
             continue
         print('remove %s (branch %s, %d identical files, %d disposable bytes, %d bytes)'
               % (show(shown), show(short(facts['branch'])), facts['identical'], facts['disposable'], facts['bytes']))
-        if not args.apply:
-            removed += 1
-            freed += facts['bytes']
-        elif remove(record, facts, ctx):
+        if facts['pin']:
+            print(saves(facts))
+        outcome = remove(record, facts, ctx) if args.apply else 'removed'
+        if outcome == 'removed':
             removed += 1
             freed += facts['bytes']
             gone.append(short(facts['branch']))
+        elif outcome == 'partly':
+            partly += 1
         else:
             kept += 1
     if ctx['source'] and not args.quiet:
@@ -785,22 +870,24 @@ def main():
         print('clean_worktrees: %d processes could not be inspected; the quiet period covers a worker this '
               'scan cannot see' % ctx['unseen'])
     if args.apply:
-        print('clean_worktrees: removed %d, kept %d, freed %d bytes; log: %s%s'
-              % (removed, kept, freed, show(ctx['log']),
+        print('clean_worktrees: removed %d, kept %d, %sfreed %d bytes; log: %s%s'
+              % (removed, kept, 'PARTLY MODIFIED %d (above: what was deleted, and its copy in the main worktree), '
+                 % partly if partly else '', freed, show(ctx['log']),
                  '; the reasons: scripts/clean_worktrees.sh' if args.quiet and kept else ''))
         if gone:
             print('clean_worktrees: branches kept, their worktrees removed: %s' % names(gone))
             print('clean_worktrees: to delete merged branches yourself: `git branch --merged %s` lists them, '
-                  '`git branch -d <name>` deletes one' % show(short(ctx['main_ref'])))
+                  '`git branch -d <name>` deletes one' % sh_quote(show(short(ctx['main_ref']))))
     else:
         print('clean_worktrees: dry run: would remove %d, keep %d, free %d bytes; to apply: '
               'scripts/clean_worktrees.sh --apply%s'
               % (removed, kept, freed, ' --assume-idle' if args.assume_idle else ''))
+    return 1 if partly else 0
 
 
 if __name__ == '__main__':
     try:
-        main()
+        sys.exit(main())
     except (Unproven, OSError, ValueError) as error:
         print('clean_worktrees: stopped, nothing further removed: %s' % error)
         sys.exit(1)

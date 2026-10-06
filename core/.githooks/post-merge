@@ -33,6 +33,24 @@ if ! { [ -x scripts/clean_worktrees.sh ] && [ -f scripts/clean_worktrees.py ] &&
       : > "$common/kit-worktree-cleanup-absent"; }
   exit 0
 fi
+# The script reads `git worktree list --porcelain -z`, which came with git 2.36. An older git
+# made it stop with an error after every merge; now this says so once (a marker) instead.
+version=$(git --version 2>/dev/null) || exit 0
+version=${version#git version }
+major=${version%%.*}
+minor=${version#*.}
+minor=${minor%%.*}
+# A version this cannot read is left to the script.
+case "$version/$major$minor" in
+  [0-9]*.[0-9]*/*[!0-9]*) ;;
+  [0-9]*.[0-9]*/*)
+    if [ "$major" -lt 2 ] || { [ "$major" -eq 2 ] && [ "$minor" -lt 36 ]; }; then
+      [ -e "$common/kit-worktree-cleanup-old-git" ] ||
+        { echo "post-merge: worktree clean-up needs git 2.36 or newer, and this is git $version; finished worktrees stay. Said once." >&2
+          : > "$common/kit-worktree-cleanup-old-git"; }
+      exit 0
+    fi ;;
+esac
 ./scripts/clean_worktrees.sh --apply --quiet </dev/null ||
-  echo "post-merge: scripts/clean_worktrees.sh stopped with an error; the merge is complete and every worktree it did not remove is as it was." >&2
+  echo "post-merge: scripts/clean_worktrees.sh stopped with an error; the merge is complete, and the lines above say what it did." >&2
 exit 0

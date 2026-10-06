@@ -12,6 +12,7 @@
 #   --assume-idle  only where processes cannot be inspected at all (no /proc, and lsof missing,
 #                  failing, or not showing this script itself): take it that none works inside
 #   --quiet        prints the removals and the summary lines (the hook)
+# Needs git 2.36 or newer (`git worktree list --porcelain -z`); the hook says so once otherwise.
 #
 # Why: a project using the kit piled up 39 merged worker worktrees, 34 GB, and a session
 # audited each one by hand before removing it: merged into main, no uncommitted change, and in
@@ -28,20 +29,27 @@
 #
 # What is proven: a commit was made in the worktree itself (its own HEAD reflog) and its HEAD
 # is in the main branch; every object id in any file of its git directory, which removal
-# destroys, names an object its branch or the main branch holds; every tracked file is byte for
-# byte what the index records (no stat cache, filter or line-ending conversion trusted); nothing
-# untracked is lost. What is a margin, not a proof: that no worker is still in it. A sub-agent
-# worker holds no process inside it between commands, and some processes cannot be inspected
-# (Linux: another user's or a non-dumpable one, counted in the report; macOS: lsof does not list
-# another user's at all, so they are not counted), so nothing in it, its git directory and its
-# disposable folders included, may have changed (mtime or ctime) for the quiet period
-# (quiet-minutes in .claude/worktree-disposable, default 60). Not guarded, by the owner's
-# decision: a process changing a worktree between its audit and its removal, files planted to
-# attack this script, and a SIGKILL between two removal steps. Lost for good with a removal:
-# the ignored files in disposable folders, and the worktree's own reflogs. `git worktree remove`
-# without --force checks again on its own. It never runs `rm -rf`, --force, `git worktree
-# prune`, `git clean` or `git branch -d`/`-D`, and never touches a stash, a tag or a remote.
-# `git worktree lock <path>` keeps a worktree out of its reach.
+# destroys, names a commit that a ref or its branch's reflog holds (an amended, reset or
+# rebased-away tip stays in that reflog), or one it saves first: every commit only its git
+# directory holds (a squash's intermediate commits, FETCH_HEAD) is pinned under
+# refs/kit/saved/<its git directory name>-<UTC time>/, in one transaction, before anything is
+# deleted, and the report prints the command that deletes those refs; a tree or blob id keeps
+# it, as reachability is checked for commits only; every tracked file is byte for byte what the
+# index records (no stat cache, filter or line-ending conversion trusted); nothing untracked is
+# lost. What is a margin, not a proof: that no worker is still in it. A sub-agent worker holds
+# no process inside it between commands, and some processes cannot be inspected (Linux: another
+# user's or a non-dumpable one, counted in the report; macOS: lsof does not list another user's
+# at all, so they are not counted), so nothing in it, its git directory and its disposable
+# folders included, may have changed (mtime or ctime) for the quiet period (quiet-minutes in
+# .claude/worktree-disposable, default 60). Not guarded, by the owner's decision: a process
+# changing a worktree's files between its audit and its removal (the process listing is read
+# again right before), files planted to attack this script, and a SIGKILL between two removal
+# steps. A step that fails after an identical copy was deleted reports the worktree PARTLY
+# MODIFIED with each file deleted, and exits 1. Lost for good with a removal: the ignored files
+# in disposable folders, and the worktree's own reflogs. `git worktree remove` without --force
+# checks again on its own. It never runs `rm -rf`, --force, `git worktree prune`, `git clean`
+# or `git branch -d`/`-D`, and never touches a stash, a tag or a remote. `git worktree lock
+# <path>` keeps a worktree out of its reach.
 #
 # The audit is Python because it reads git's NUL-separated output and compares bytes: a file
 # name may hold a newline or a byte that is not UTF-8, and sh cannot hold a NUL.
