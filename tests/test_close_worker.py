@@ -243,6 +243,9 @@ class CloseWorkerTests(unittest.TestCase):
         denied = 'error connecting to /tmp/tmux-1000/default (Permission denied)'
         with open(self.tmp / 'sessions', 'a') as f:
             f.write('w1\n')
+        # The 15 one-second waits pass at once: a `sleep` that returns, first on PATH.
+        (self.tmp / 'bin/sleep').write_text('#!/bin/sh\nexit 0\n')
+        (self.tmp / 'bin/sleep').chmod(0o755)
         out = self.close('w1', code=1, CLOSE_ERROR_AFTER_KILL=denied)
         self.assertIn('close_worker: w1: no worktree at .claude/worktrees/w1; nothing to remove', out)
         self.assertEqual(out.rstrip('\n').split('\n')[-1], 'close_worker: FAILED: w1: could not establish that '
