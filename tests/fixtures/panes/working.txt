@@ -1,0 +1,20 @@
+ ▐▛███▛█   Claude Code v2.1.285
+▝▜██████▀  Haiku 4.5 · Claude Max
+ ▝▝   ▝▝   /tmp/tmp.XIzO8PExfN
+
+❯ Run exactly this shell command with the Bash tool and nothing else: touch probe.txt
+  Ran 1 shell command
+  ⎿  Interrupted · What should Claude do instead?
+
+✻ Crunched for 1s · done 3:53 AM
+
+❯ Use the AskUserQuestion tool to ask me one multiple-choice question: red or blue. Nothing else.
+
+✢ Polishing… (1s · ↓ 107 tokens · thinking)
+  ⎿  Tip: Use /feedback to help us improve!
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  📁tmp.XIzO8PExfN │ 💰$0.03 │ 5h ██░░░░░░░░22% ⏰2h36m │ 7d ███░░░░░░░34% ⏰5d04h │ Haiku 4.5 36k/200k
+  ⏸ manual mode on · ← for agents

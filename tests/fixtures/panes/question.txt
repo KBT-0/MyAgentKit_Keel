@@ -1,0 +1,50 @@
+
+ ▐▛███▛█   Claude Code v2.1.285
+▝▜██████▀  Haiku 4.5 · Claude Max
+ ▝▝   ▝▝   /tmp/tmp.XIzO8PExfN
+
+
+❯ Run exactly this shell command with the Bash tool and nothing else: touch probe.txt                                                                                                                   
+
+  Ran 1 shell command                                                                                                                                                                                   
+  ⎿  Interrupted · What should Claude do instead?
+
+✻ Crunched for 1s · done 3:53 AM
+
+❯ Use the AskUserQuestion tool to ask me one multiple-choice question: red or blue. Nothing else.                                                                                                       
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ☐ Colour                                
+                                                                           
+Red or blue?
+         
+❯ 1. Red                                                               
+     The colour red
+  2. Blue
+     The colour blue               
+  3. Type something.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  4. Chat about this
+
+Enter to select · ↑/↓ to navigate · Esc to cancel
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                                                                                                                                                                                      
+
+
+
+                                                                                                       
+                                 
