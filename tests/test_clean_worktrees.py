@@ -101,8 +101,6 @@ FOREIGN = ('real_lstat = os.lstat\n'
            '    info = real_lstat(path, *a, **k)\n'
            '    return Other(info) if os.fsencode(path) in set(map(os.fsencode, values)) else info\n'
            'os.lstat = lstat\n')
-# The case probe's answer: values[0] is "folded" or not.
-CASE = 'c.ignores_case = lambda folder: values[0] == "folded"\n'
 
 # lsof stubs: $PPID is the script, which runs lsof in its own working directory.
 LSOF_ME = 'printf "p%s\\nn%s\\n" "$PPID" "$(pwd -P)"\n'
@@ -1073,6 +1071,13 @@ class CleanWorktreesTests(unittest.TestCase):
         self.assertIn(line + '\n', self.run_script('--apply', '--quiet'))
         self.env.pop('CLEAN_WORKTREES_NOW')
         self.assertNotIn('CLEAN_WORKTREES_NOW', self.run_script('--apply', '--quiet'))
+        # So are the /proc and the mount table: by mistake, they would hide a process or a mount.
+        table, proc = self.mountinfo(), str(self.tmp / 'no-proc')
+        out = self.run_script('--apply', '--quiet', idle=True, CLEAN_WORKTREES_MOUNTINFO=table, CLEAN_WORKTREES_PROC=proc)
+        self.assertIn('clean_worktrees: CLEAN_WORKTREES_PROC is set: processes are read from %s, not /proc\n' % proc, out)
+        self.assertIn('clean_worktrees: CLEAN_WORKTREES_MOUNTINFO is set: the mount table is read from %s, not '
+                      '/proc/self/mountinfo\n' % table, out)
+        self.assertNotIn(' is set: ', self.run_script('--apply', '--quiet'))
 
     def test_a_future_time_counts_as_recent(self):
         path = self.worktree('done')
@@ -1111,7 +1116,7 @@ class CleanWorktreesTests(unittest.TestCase):
         def times():
             return {(root, rel): (info.st_mtime_ns, info.st_ctime_ns)
                     for root in (bytes(path), bytes(self.gitdir(path)))
-                    for rel, info, _ in clean_worktrees.walk(root)}
+                    for rel, info, _, _ in clean_worktrees.walk(root)}
         before = times()
         first = self.run_script('--all-reasons', idle=False)
         self.assertEqual(times(), before)
@@ -1165,8 +1170,10 @@ class CleanWorktreesTests(unittest.TestCase):
                                                  % ('/proc' if PROC else 'lsof (exit ')), out)
             if PROC and shutil.which('lsof'):  # the lsof path, as on macOS
                 out = self.run_script('--apply', idle=False, CLEAN_WORKTREES_PROC=str(self.tmp / 'no-proc'))
-                self.assertKept(path, out, 'in use: process %d works inside it' % sleeper.pid,
-                                'clean_worktrees: processes listed by lsof (exit 0)')
+                # Exit 1 is accepted only with lsof's own warnings on stderr; either way the
+                # worker must be seen.
+                self.assertKept(path, out, 'in use: process %d works inside it' % sleeper.pid)
+                self.assertRegex(out, r'clean_worktrees: processes listed by lsof \(exit [01]\)')
         finally:
             sleeper.kill()
             sleeper.wait()
@@ -1191,6 +1198,10 @@ class CleanWorktreesTests(unittest.TestCase):
                 (LSOF_ME + inside + 'exit 1\n', 'in use: process 99999 works inside it'),
                 (LSOF_ME + inside + WARNING + 'echo "lsof: something else" >&2\nexit 1\n',
                  '`lsof -a -d cwd -F pn` failed (exit 1): lsof: something else'),
+                # Codex: a listing cut short by a signal, or any status but 0 and 1, after it
+                # printed this script and nothing on stderr, is no listing.
+                (LSOF_ME + 'kill -KILL $$\n' + inside, '`lsof -a -d cwd -F pn` failed (exit -9): nothing on stderr'),
+                (LSOF_ME + WARNING + 'exit 2\n', '`lsof -a -d cwd -F pn` failed (exit 2): nothing on stderr'),
                 ('printf "p1\\nn/\\n"\n' + inside, '`lsof -a -d cwd -F pn` (exit 0) does not show this process'),
                 ('printf "p%s\\nn/elsewhere\\n" "$PPID"\n', '(exit 0) does not show this process'),
                 (LSOF_ME + 'printf "tREG\\n"\n', '`lsof` printed a record this script does not know: tREG')):
@@ -1899,6 +1910,65 @@ class CleanWorktreesTests(unittest.TestCase):
         self.assertEqual((external / 'precious').read_text(), 'precious\n')
         self.assertRemoved(path, self.run_script('--apply'))
 
+    def test_a_worktree_mounted_at_its_own_folder_is_kept(self):
+        # Codex and a reviewer, reproduced: a tmpfs on the worktree's folder itself; git deleted
+        # what was on it, then failed. Its folder in the mount table, or on another device than
+        # .claude/worktrees, keeps it.
+        path = self.worktree('done')
+        real = os.path.realpath(path)
+        reason = "holds a mount point: what git would delete under it is not the worktree's: . (the folder itself)\n"
+        self.assertKept(path, self.run_script('--apply', CLEAN_WORKTREES_MOUNTINFO=self.mountinfo(os.fsencode(real))), reason)
+        self.assertKept(path, self.drive(FOREIGN, real), reason)
+        self.assertRemoved(path, self.run_script('--apply'))
+
+    def test_a_mount_point_in_its_git_directory_keeps_it(self):
+        # Codex: git removes the worktree's git directory recursively too; an outside folder bound
+        # at <git dir>/archive, holding text with no object id, passed and was deleted.
+        path = self.worktree('done')
+        gitdir = self.gitdir(path)
+        (gitdir / 'archive').mkdir()
+        (gitdir / 'archive/precious.txt').write_text('precious\n')
+        reason = "its git directory holds a mount point: what git would delete under it is not the worktree's: "
+        for where, table in (('archive\n', os.fsencode(gitdir / 'archive')), ('. (the folder itself)\n', os.fsencode(gitdir))):
+            with self.subTest(table=table):
+                self.assertKept(path, self.run_script('--apply', CLEAN_WORKTREES_MOUNTINFO=self.mountinfo(table)),
+                                reason + where)
+        for where, foreign in (('archive\n', gitdir / 'archive'), ('. (the folder itself)\n', gitdir)):
+            with self.subTest(device=foreign):
+                self.assertKept(path, self.drive(FOREIGN, str(foreign)), reason + where)
+        external = self.tmp / 'external'
+        external.mkdir()
+        (external / 'precious.txt').write_text('precious\n')
+        out = self.in_namespace('mount --bind "$1" "$2/archive"', external, gitdir)
+        if out is not None:
+            self.assertKept(path, out, reason + 'archive\n')
+        self.assertEqual((external / 'precious.txt').read_text(), 'precious\n')
+        # Without a mount, plain text in its git directory holds nothing, and goes with it.
+        self.assertRemoved(path, self.run_script('--apply'))
+
+    def test_the_walk_does_not_go_into_a_mount_point(self):
+        # A reviewer: a mount is counted, never walked; a whole disk under one is not read.
+        root = self.tmp / 'root'
+        (root / 'disk/deep').mkdir(parents=True)
+        (root / 'disk/deep/f').write_text('f\n')
+        (root / 'keep').write_text('k\n')
+        expected = {b'': False, b'disk': True, b'keep': False}
+        seen = {rel: mount for rel, _, _, mount in clean_worktrees.walk(os.fsencode(root), {os.fsencode(root / 'disk')})}
+        self.assertEqual(seen, expected)
+        real = os.lstat
+
+        def lstat(path, *a, **k):
+            info = real(path, *a, **k)
+            if os.fsencode(path) != os.fsencode(root / 'disk'):
+                return info
+            return os.stat_result(tuple(info[:2]) + (info.st_dev + 1,) + tuple(info[3:10]))
+        clean_worktrees.os.lstat = lstat
+        try:
+            seen = {rel: mount for rel, _, _, mount in clean_worktrees.walk(os.fsencode(root))}
+        finally:
+            clean_worktrees.os.lstat = real
+        self.assertEqual(seen, expected)
+
     def test_a_copy_in_main_below_a_mount_point_is_no_archive(self):
         # Codex: a sibling's disposable folder bound onto main's docs/reviews passed for the
         # archive, and both copies went. A copy at or below a mount point in main is no archive.
@@ -2008,18 +2078,18 @@ class CleanWorktreesTests(unittest.TestCase):
                 (b'a/b/c', [b'b', b'x/y'], True), (b'a/b/c', [], False)):
             with self.subTest(rel=rel, entries=entries):
                 self.assertIs(clean_worktrees.disposable(rel, entries), expected)
-        # Where the file system ignores case, as it compares names; else byte for byte.
-        for rel, entries, folded, exact in (
-                (b'Docs/build/x', [b'build'], False, True), (b'a/BUILD/x', [b'build'], True, False),
-                (b'App/Build/x', [b'app/build'], True, False), (b'.GIT/build/x', [b'build'], False, True)):
+        # Case: a place that holds work under any spelling, an entry byte for byte (either only
+        # ever keeps more).
+        for rel, entries in ((b'Docs/build/x', [b'build']), (b'a/BUILD/x', [b'build']), (b'a/Build/x', [b'build']),
+                             (b'App/Build/x', [b'app/build']), (b'.GIT/build/x', [b'build'])):
             with self.subTest(rel=rel, entries=entries):
-                self.assertIs(clean_worktrees.disposable(rel, entries, True), folded)
-                self.assertIs(clean_worktrees.disposable(rel, entries, False), exact)
+                self.assertIs(clean_worktrees.disposable(rel, entries), False)
 
-    def test_names_are_compared_case_folded_where_the_file_system_ignores_case(self):
-        # Codex: on macOS `Docs` is the protected `docs`, but `Docs/build/report.md` matched the
-        # disposable `build`, and a unique report would have gone. The probe's answer is
-        # injected, so both branches run on every host.
+    def test_places_that_hold_work_are_folded_and_entries_exact_on_every_file_system(self):
+        # Codex and a reviewer, reproduced: with a case-sensitive git directory and a checkout
+        # that ignores case, a probe of the git directory compared exactly, `Docs` passed for
+        # another folder than the protected `docs`, and the unique `Docs/build/report.md` went
+        # as disposable `build`. No probe now: the same answer on every file system.
         self.disposable('build\ncache\n.CLAUDE/x\nDOCS\n')
         path = self.worktree('done')
         (path / 'Docs').mkdir()
@@ -2027,47 +2097,17 @@ class CleanWorktreesTests(unittest.TestCase):
         self.git('add', 'Docs/readme', cwd=path)
         self.git('commit', '-q', '-m', 'docs', cwd=path)
         self.git('merge', '-q', '--no-edit', 'worktree-done', KIT_NO_WORKTREE_CLEANUP='1')
-        (path / 'Docs/build').mkdir()
-        (path / 'Docs/build/report.md').write_text('unique\n')
-        (path / '.Claude/Worktrees/x').mkdir(parents=True)
-        (path / '.Claude/Worktrees/x/f').write_text('f\n')
-        (path / 'CACHE').mkdir()
-        (path / 'CACHE/f').write_text('f\n')  # no .gitignore line: untracked
-        out = self.drive(CASE, 'folded')
+        for rel in ('Docs/build/report.md', '.Claude/Worktrees/x/f', 'CACHE/f', 'x/Build/o'):
+            (path / rel).parent.mkdir(parents=True, exist_ok=True)
+            (path / rel).write_text('unique\n')
+        out = self.run_script('--apply')
         self.assertKept(path, out, 'refused .claude/worktree-disposable line .CLAUDE/x (empty',
                         'refused .claude/worktree-disposable line DOCS (empty',
                         'inside .claude/worktrees of it, which this script does not judge: .Claude/Worktrees/x/f\n',
-                        'files with no identical copy in main, outside a disposable folder: Docs/build/report.md\n',
-                        'untracked and not ignored inside a disposable folder (`git worktree remove` refuses them; ignore '
-                        'that folder in .gitignore): CACHE/f\n')
-        out = self.drive(CASE, 'exact')
-        self.assertKept(path, out, 'files with no identical copy in main, outside a disposable folder: '
-                        '.Claude/Worktrees/x/f, CACHE/f\n')
-        self.assertNotIn('refused', out)
-        self.assertNotIn('Docs/build', out)
-        # The real probe: it finds what this file system does, and leaves nothing behind.
-        (self.tmp / 'probe').write_text('')
-        before = sorted(os.listdir(self.tmp))
-        self.assertIs(clean_worktrees.ignores_case(os.fsencode(self.tmp)), (self.tmp / 'PROBE').exists())
-        self.assertEqual(sorted(os.listdir(self.tmp)), before)
-        # Where the name in upper case is there too, it ignores case.
-        def mkstemp(prefix, dir):
-            name = os.path.join(dir, prefix + b'x1')
-            for path in (name, name[:-len(prefix) - 2] + (prefix + b'x1').upper()):
-                open(path, 'wb').close()
-            return os.open(name, os.O_RDONLY), name
-        real = clean_worktrees.tempfile.mkstemp
-        clean_worktrees.tempfile.mkstemp = mkstemp
-        try:
-            self.assertIs(clean_worktrees.ignores_case(os.fsencode(self.tmp)), True)
-        finally:
-            clean_worktrees.tempfile.mkstemp = real
-        (self.tmp / 'KIT-CASE-PROBE-X1').unlink(missing_ok=True)  # the probe deletes its own name
-        self.assertEqual(sorted(os.listdir(self.tmp)), before)
-        sys.stderr.write('\n[case probe on %s] this file system %s case\n'
-                         % (sys.platform, 'ignores' if (self.tmp / 'PROBE').exists() else 'keeps'))
-        out = self.run_script('--apply')
-        self.assertIs('Docs/build/report.md' in out, (self.tmp / 'PROBE').exists(), out)
+                        'files with no identical copy in main, outside a disposable folder: CACHE/f, '
+                        'Docs/build/report.md, x/Build/o\n')
+        self.assertNotIn('untracked and not ignored inside a disposable folder', out)
+        self.assertEqual((path / 'Docs/build/report.md').read_text(), 'unique\n')
 
     def test_untracked_unignored_content_in_a_disposable_folder_is_kept(self):
         self.disposable('cache\n')

@@ -40,11 +40,13 @@ all):
      their defaults; the index equals HEAD's tree; every tracked path is, in the worktree,
      exactly the blob the index records (raw bytes, no filter or line-ending conversion, the
      same executable bit; a symlink's text); no unresolved entry, no submodule;
-  h. no mount point anywhere in it, disposable folders included (git's recursive remove would
-     delete what is under one, which is not the worktree's): no entry on another device than its
-     root, none the mount table lists (Linux: /proc/self/mountinfo, which alone shows a bind
-     mount on the same device; elsewhere such a bind mount cannot be seen); no file under its
-     own .claude/worktrees (a worktree inside a worktree, which this script does not judge);
+  h. no mount point in it or in its git directory, its folder itself and disposable folders
+     included (git's recursive remove of both would delete what is under one, which is not the
+     worktree's): no entry on another device than its root, no root on another device than
+     its parent folder, none the mount table lists (Linux: /proc/self/mountinfo, which alone
+     shows a bind mount on the same device; elsewhere such a bind mount cannot be seen); the
+     walk does not go into a mount point; no file under its own .claude/worktrees under any
+     spelling (a worktree inside a worktree, which this script does not judge);
      every other file git does not track is inside a directory .claude/worktree-disposable
      lists, or a regular file whose byte-identical copy is at the same path in the main
      worktree, outside its .claude/worktrees under any spelling (what is there is a worktree's,
@@ -52,10 +54,9 @@ all):
      another device than main's root, or listed in the mount table) and not the worktree's file
      itself (a hard link, a mounted worktree folder: the same device and inode), and that is not
      a tracked file under another name (a case alias, a link: the same device and inode);
-     nothing anywhere in it, disposable folders included, changed within quiet-minutes. Where a
-     probe finds the file system ignores case (a file made in the git directory is found under
-     its name in upper case), the places that hold work (REFUSED), its .claude/worktrees and the
-     disposable entries are compared case-folded, as that file system compares names.
+     nothing anywhere in it, disposable folders included, changed within quiet-minutes. Case: a
+     place that holds work (REFUSED) is compared case-folded on every file system, as macOS
+     compares names, and a disposable entry byte for byte: either only ever keeps more.
 
 Proven: a, b, d, f, g, h's accounting. The quiet period (c, h) is a margin, not a proof: it
 covers a worker whose process the scan in e cannot see. e is read afresh for every worktree
@@ -104,7 +105,6 @@ import signal
 import stat
 import subprocess
 import sys
-import tempfile
 import time
 import unicodedata
 
@@ -267,11 +267,10 @@ def worktrees(cwd):
     return records
 
 
-def read_disposable(main_root, folded):
+def read_disposable(main_root):
     """The project's disposable entries, the lines refused, and the quiet period in minutes. A
-    quiet-minutes line given twice or not valid refuses the whole list (fail closed). FOLDED: the
-    file system ignores case, and a place that holds work is refused under any spelling."""
-    same = fold if folded else (lambda name: name)
+    quiet-minutes line given twice or not valid refuses the whole list (fail closed). A place that
+    holds work is refused under any spelling (fold)."""
     try:
         with open(os.path.join(main_root, DISPOSABLE_FILE), 'rb') as handle:
             data = handle.read()
@@ -294,7 +293,7 @@ def read_disposable(main_root, folded):
         parts = entry.split(b'/')
         # An absolute path has an empty first part.
         if (b'' in parts or b'.' in parts or b'..' in parts
-                or {same(r) for r in REFUSED}.intersection(same(p) for p in parts)):
+                or {fold(r) for r in REFUSED}.intersection(fold(p) for p in parts)):
             refused.append((line, '(empty, absolute, "..", or a place that holds work: %s)'
                             % ', '.join(sorted(r.decode() for r in REFUSED))))
         else:
@@ -302,43 +301,31 @@ def read_disposable(main_root, folded):
     return entries, refused, quiet or QUIET_DEFAULT
 
 
-def disposable(rel, entries, folded=False):
+def disposable(rel, entries):
     """Whether REL lies inside a disposable directory, compared folder by folder: a NAME entry
-    matches a folder of that name with no place that holds work (REFUSED) above it; a PATH
-    entry matches its own subtree from the root. FOLDED (the file system ignores case): every
-    name compared case-folded, as that file system compares them."""
-    same = fold if folded else (lambda name: name)
-    folders = [same(folder) for folder in rel.split(b'/')[:-1]]
-    refused = {same(r) for r in REFUSED}
+    matches a folder of that name with no place that holds work (REFUSED, under any spelling)
+    above it; a PATH entry matches its own subtree from the root. Entries match byte for byte."""
+    folders = rel.split(b'/')[:-1]
+    refused = {fold(r) for r in REFUSED}
     for entry in entries:
-        parts = [same(part) for part in entry.split(b'/')]
+        parts = entry.split(b'/')
         if len(parts) > 1:
             if folders[:len(parts)] == parts:
                 return True
             continue
         for folder in folders:
-            if folder in refused:
+            if fold(folder) in refused:
                 break
             if folder == parts[0]:
                 return True
     return False
 
 
-def ignores_case(folder):
-    """Whether the file system of FOLDER ignores case: a file made there is found under its
-    name in upper case."""
-    handle, path = tempfile.mkstemp(prefix=b'kit-case-probe-', dir=folder)
-    os.close(handle)
-    try:
-        return os.path.lexists(os.path.join(folder, os.path.basename(path).upper()))
-    finally:
-        os.unlink(path)
-
-
 def mount_points(path):
     """The mount points the mount table PATH lists (Linux: /proc/self/mountinfo, its fifth field
     with its octal escapes read back); none where there is no such file outside Linux, where a
-    bind mount on the same device cannot be seen."""
+    bind mount on the same device cannot be seen. Compared with paths as the bytes the kernel
+    gives, never folded: the table holds each path as it resolved it."""
     try:
         with open(path, 'rb') as handle:
             data = handle.read()
@@ -407,11 +394,15 @@ def copy_in(ctx, real, rel):
             and filecmp.cmp(os.path.join(real, rel), os.path.join(ctx['main_root'], rel), shallow=False))
 
 
-def walk(root):
-    """(rel, lstat, is a folder) for every entry under ROOT, the root itself as b'', never
-    through a symlink. The worktree's own `.git` file is git's, not content."""
-    yield b'', os.lstat(root), True
-    stack = [b'']
+def walk(root, mounts=frozenset()):
+    """(rel, lstat, is a folder, is a mount point) for every entry under ROOT, the root itself as
+    b'', never through a symlink nor into a mount point: an entry MOUNTS lists, or on another
+    device than ROOT (the root: than its parent folder). The worktree's own `.git` file is git's,
+    not content."""
+    top = os.lstat(root)
+    mount = root in mounts or top.st_dev != os.lstat(os.path.dirname(root)).st_dev
+    yield b'', top, True, mount
+    stack = [] if mount else [b'']
     while stack:
         folder = stack.pop()
         with os.scandir(os.path.join(root, folder) if folder else root) as entries:
@@ -419,11 +410,13 @@ def walk(root):
                 rel = folder + b'/' + item.name if folder else item.name
                 if rel == b'.git':
                     continue
-                info = os.lstat(os.path.join(root, rel))
+                path = os.path.join(root, rel)
+                info = os.lstat(path)
                 is_dir = stat.S_ISDIR(info.st_mode)
-                if is_dir:
+                mount = path in mounts or info.st_dev != top.st_dev
+                if is_dir and not mount:
                     stack.append(rel)
-                yield rel, info, is_dir
+                yield rel, info, is_dir, mount
 
 
 def changed(info):
@@ -606,9 +599,11 @@ def process_cwds(proc):
     result = subprocess.run([exe, '-a', '-d', 'cwd', '-F', 'pn'], capture_output=True,
                             stdin=subprocess.DEVNULL, env=dict(os.environ, LC_ALL='C'))
     errors = [line for line in result.stderr.split(b'\n') if line and not LSOF_WARNINGS.fullmatch(line)]
-    if result.returncode != 0 and errors:
+    # Exit 1 is lsof's "some of it could not be read"; any other status, or a signal (negative),
+    # is a listing cut short, whatever it printed.
+    if result.returncode not in (0, 1) or result.returncode and errors:
         raise Unproven('%s; `lsof -a -d cwd -F pn` failed (exit %d): %s'
-                       % ('; '.join(tried), result.returncode, show(errors[0])))
+                       % ('; '.join(tried), result.returncode, show(errors[0]) if errors else 'nothing on stderr'))
     cwds, unseen = parse_lsof(result.stdout)
     if not sees_me(cwds):
         raise Unproven('%s; `lsof -a -d cwd -F pn` (exit %d) does not show this process with its working directory'
@@ -738,7 +733,7 @@ def audit(record, ctx):
         return []
 
     def quiet_gitdir():
-        return too_recent(max(changed(info) for _, info, _ in walk(gitdir)), ctx, 'its git directory')
+        return too_recent(max(changed(info) for _, info, _, _ in walk(gitdir)), ctx, 'its git directory')
 
     def operations():
         found = [op for op in OPERATIONS if os.path.lexists(os.path.join(gitdir, op))]
@@ -777,7 +772,11 @@ def audit(record, ctx):
         token = re.compile(rb'(?<![0-9a-fA-F])[0-9a-fA-F]{%d}(?![0-9a-fA-F])' % hexlen)
         holders = facts['holders'] = {}
         facts['pin'] = []
-        for rel, info, is_dir in walk(gitdir):
+        for rel, info, is_dir, mount in walk(gitdir, mount_points(ctx['mountinfo'])):
+            # git removes its git directory recursively too.
+            if mount:
+                return ['its git directory holds a mount point: what git would delete under it is not the '
+                        'worktree\'s: %s' % show(rel or b'. (the folder itself)')]
             if is_dir or rel in NO_HISTORY:
                 continue
             if not stat.S_ISREG(info.st_mode):
@@ -871,29 +870,27 @@ def audit(record, ctx):
     def files():
         out = []
         untracked, ignored, _ = seen.get('status') or status(real)
-        loose = [rel for rel in untracked if disposable(rel, ctx['disposable'], ctx['folded'])]
+        loose = [rel for rel in untracked if disposable(rel, ctx['disposable'])]
         if loose:
             out.append('untracked and not ignored inside a disposable folder (`git worktree remove` refuses '
                        'them; ignore that folder in .gitignore): %s' % names(loose))
-        unique, odd, alias, nested, mounted, suggest, recent = [], [], [], [], [], set(), None
-        # A mount point inside it: `git worktree remove` deletes what is under it, which is not
-        # the worktree's (another device, or a folder bound there from elsewhere).
-        mounts = ctx['mounts'] = mount_points(ctx['mountinfo'])
-        foreign = set(m[len(real) + 1:] for m in mounts if m.startswith(real + b'/'))
-        device = os.lstat(real).st_dev
-        same = fold if ctx['folded'] else (lambda name: name)
+        unique, odd, alias, nested, mounted, foreign, suggest, recent = [], [], [], [], [], [], set(), None
+        # A mount point in it, or the folder itself: `git worktree remove` deletes what is under
+        # it, which is not the worktree's (another device, or a folder bound there from elsewhere).
+        ctx['mounts'] = mount_points(ctx['mountinfo'])
         # What each tracked path IS on disk: on a file system that ignores case or Unicode form
         # (macOS), a tracked `a` renamed `A` passes every check by its old name, and the walk
         # meets it under a name the index does not hold.
         ids = set((i.st_dev, i.st_ino) for i in (entry(real, rel) for rel in tracked) if i is not None)
-        for rel, info, is_dir in walk(real):
+        for rel, info, is_dir, mount in walk(real, ctx['mounts']):
             recent = max(recent or 0, changed(info))
-            if info.st_dev != device:
-                foreign.add(rel)
-            if not is_dir and same(rel).startswith(same(b'.claude/worktrees/')):
+            if mount:
+                foreign.append(rel or b'. (the folder itself)')
+                continue
+            if not is_dir and fold(rel).startswith(fold(b'.claude/worktrees/')):
                 nested.append(rel)
                 continue
-            if disposable(rel + b'/x' if is_dir else rel, ctx['disposable'], ctx['folded']):
+            if disposable(rel + b'/x' if is_dir else rel, ctx['disposable']):
                 if not is_dir:
                     facts['bytes'] += info.st_size
                     facts['disposable'] += info.st_size
@@ -916,8 +913,6 @@ def audit(record, ctx):
             else:
                 facts['identical'] += 1
                 facts['delete'].append(rel)
-        # Only the mount points, not every entry under one.
-        foreign = [rel for rel in foreign if rel.rpartition(b'/')[0] not in foreign]
         if foreign:
             out.append('holds a mount point: what git would delete under it is not the worktree\'s: %s' % names(foreign))
         if nested:
@@ -1102,12 +1097,14 @@ def main():
     args = parser.parse_args()
     # CLEAN_WORKTREES_NOW, CLEAN_WORKTREES_PROC and CLEAN_WORKTREES_MOUNTINFO are for the tests:
     # a clock they can move instead of ageing files (a ctime cannot be set back), and a /proc and
-    # a mount table they can build. The
-    # clock is said on every run: exported by mistake, it would end the quiet period unseen.
+    # a mount table they can build. Each is said on every run: exported by mistake, it would end
+    # the quiet period, or hide a process or a mount, unseen.
     clock = os.environ.get('CLEAN_WORKTREES_NOW')
-    if clock:
-        say('clean_worktrees: CLEAN_WORKTREES_NOW is set: the quiet period is measured against %s, not the clock'
-            % clock)
+    for name, what in (('CLEAN_WORKTREES_NOW', 'the quiet period is measured against %s, not the clock'),
+                       ('CLEAN_WORKTREES_PROC', 'processes are read from %s, not /proc'),
+                       ('CLEAN_WORKTREES_MOUNTINFO', 'the mount table is read from %s, not /proc/self/mountinfo')):
+        if os.environ.get(name):
+            say('clean_worktrees: %s is set: %s' % (name, what % os.environ[name]))
     ENV = git_env()
     here = os.getcwdb()
     records = worktrees(here)
@@ -1119,12 +1116,11 @@ def main():
         return
     main_root = os.path.realpath(records[0]['worktree'])
     common = os.path.realpath(git(here, 'rev-parse', '--git-common-dir').stdout.rstrip(b'\n'))
-    folded = ignores_case(common)
-    entries, refused, quiet = read_disposable(main_root, folded)
+    entries, refused, quiet = read_disposable(main_root)
     ctx = {'main_root': main_root, 'home': os.path.join(main_root, b'.claude', b'worktrees'),
            'main_head': records[0].get('HEAD', b''), 'main_ref': records[0]['branch'], 'common': common,
            'own': os.path.realpath(git(here, 'rev-parse', '--show-toplevel').stdout.rstrip(b'\n')),
-           'disposable': entries, 'quiet': quiet, 'unseen': None, 'source': None, 'folded': folded,
+           'disposable': entries, 'quiet': quiet, 'unseen': None, 'source': None,
            'mountinfo': os.fsencode(os.environ.get('CLEAN_WORKTREES_MOUNTINFO', '/proc/self/mountinfo')),
            'stamp': datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%SZ').encode(),
            'unlogged': False,

@@ -254,8 +254,9 @@ then stays quiet.
   to HEAD's tree, and every tracked path in the worktree byte for byte the blob the index
   records, with the same executable bit (a symlink: the same text), so no stat cache, filter or
   line-ending conversion is trusted; no unresolved entry, no submodule; **no mount point
-  anywhere in it**, disposable folders included: `git worktree remove` would delete what is
-  under one, which is not the worktree's; every file git does not
+  anywhere in it or in its git directory**, its folder itself and disposable folders included:
+  `git worktree remove` would delete what is under one, which is not the worktree's (the walk
+  does not go into one); every file git does not
   track inside a folder `.claude/worktree-disposable` lists or byte-identical to the regular
   file at the same path in main, outside main's `.claude/worktrees` under any spelling (what is
   there is a worktree's, which may go too), **not at or below a mount point in main** (a
@@ -266,15 +267,16 @@ then stays quiet.
   worktree's own `.claude/worktrees` (a worktree inside a worktree is not judged);
   nothing anywhere in it, those folders included, changed within the quiet period.
 - **Mount points are out of what it reasons about.** A mount point is an entry on another
-  device than the worktree's root (or main's), or, on Linux, one `/proc/self/mountinfo` lists:
-  only that table shows a bind mount on the same device. On macOS and other systems a bind
+  device than the worktree's root, its git directory's root or main's (a root: on another
+  device than its parent folder), or, on Linux, one `/proc/self/mountinfo` lists, its paths
+  compared as the bytes the kernel gives: only that table shows a bind mount on the same device. On macOS and other systems a bind
   mount on the same device cannot be seen; a mount on another device is seen everywhere. On
   Linux without a readable mount table every worktree is kept.
-- **Case.** Where a probe finds the file system ignores case (macOS by default: a file made
-  in the git directory is found under its name in upper case), the places that hold work
-  (`docs`, `.claude`, `.myagentkit`, `scripts`, `.git`), the worktree's own
-  `.claude/worktrees` and the disposable entries are compared case-folded, as that file system
-  compares names: `Docs/build` is under `docs`, never disposable. Elsewhere byte for byte.
+- **Case.** On every file system, whatever it does with case, the places that hold work
+  (`docs`, `.claude`, `.myagentkit`, `scripts`, `.git`) and the worktree's own
+  `.claude/worktrees` are compared case-folded, as macOS compares names: `Docs/build` is under
+  `docs`, never disposable. The disposable entries are compared byte for byte: `build` does
+  not match `Build`. Each choice only ever keeps more, so no probe of the file system is needed.
 - **What only its git directory holds is saved, then it is removed.** A commit no ref holds
   (an amended, reset or rebased-away tip, a squash's intermediate commits, a `FETCH_HEAD`, a
   `refs/worktree/*` ref) is pinned before anything is deleted, in one `git update-ref --stdin`
@@ -302,8 +304,8 @@ then stays quiet.
   finds ITSELF in it with its own working directory; a listing that does not show it is not
   proven, and every worktree is kept. Linux reads `/proc`: another user's process, or one of
   ours made non-dumpable, is listed but unreadable, and the report counts it. Elsewhere (macOS)
-  it runs `lsof`; a non-zero exit is accepted only when the listing shows the script and every
-  line on stderr is lsof's "can't stat()" warning. lsof escapes a name it cannot print (`café`
+  it runs `lsof`; exit 1 is accepted only when the listing shows the script and every line on
+  stderr is lsof's "can't stat()" warning, and any other non-zero status or a signal never is. lsof escapes a name it cannot print (`café`
   as `caf\xc3\xa9`); the script reads each escape back to its bytes, and a name it cannot read
   back exactly (lsof writes a control byte and a `^` in a name the same way) leaves the listing
   unproven. A working directory is compared case-folded and Unicode-normalised, as macOS
