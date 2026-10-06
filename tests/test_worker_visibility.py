@@ -114,11 +114,14 @@ class Base(unittest.TestCase):
     def tearDown(self):
         self._tmp.cleanup()
 
-    def run_script(self, script, *args, path_first=(), **extra):
+    def run_script(self, script, *args, path_first=(), stdout=None, **extra):
         env = {k: v for k, v in os.environ.items()
                if k not in ('WSL_DISTRO_NAME', 'TERM_PROGRAM', 'TMUX', 'TMUX_PANE', 'KIT_WT')}
         path = os.pathsep.join([*map(str, path_first), str(self.bin), os.environ['PATH']])
         env.update(PATH=path, VIS_STATE=str(self.state), KIT_WT=str(self.bin / 'wt-stub'), **extra)
+        if stdout is not None:
+            return subprocess.run(['sh', str(script), *args], cwd=self.cwd, env=env, stdout=stdout,
+                                  stderr=subprocess.PIPE, text=True, timeout=60)
         return subprocess.run(['sh', str(script), *args], cwd=self.cwd, env=env, capture_output=True,
                               text=True, timeout=60)
 
@@ -133,6 +136,18 @@ class Base(unittest.TestCase):
         folder.mkdir(exist_ok=True)
         (folder / 'tr').write_text('#!/bin/sh\nif [ -f /dev/stdout ]; then echo "tr: write error: No space left '
                                    'on device" >&2; exit 1; fi\nexec %s "$@"\n' % shq(shutil.which('tr')))
+        (folder / 'tr').chmod(0o755)
+        return [folder]
+
+    def failing_tr(self, when):
+        # A `tr` first on PATH that fails only one write into a regular file: the one for which
+        # the shell test `when` holds; $in is its input.
+        folder = self.tmp / 'failing'
+        folder.mkdir(exist_ok=True)
+        (folder / 'tr').write_text('#!/bin/sh\nreal=%s\n[ -f /dev/stdout ] || exec "$real" "$@"\n'
+                                   'in=$(cat; echo .); in=${in%%.}\nif %s; then echo "tr: write error" >&2; '
+                                   'exit 1; fi\nprintf %%s "$in" | "$real" "$@"\n'
+                                   % (shq(shutil.which('tr')), when))
         (folder / 'tr').chmod(0o755)
         return [folder]
 
@@ -552,6 +567,45 @@ class ResultTests(Base):
         self.assertIn('watch_workers: w1: could not write its report: ', result.stderr)
         self.assertIn('DONE: w1', self.watch().stdout)
 
+    def test_a_failed_write_of_the_questions_buffer_is_rerun(self):
+        # The questions' buffer failed unseen: the run reported DONE, stored the marker, and
+        # the questions were never asked.
+        self.commit(HEAD % ('completed', 'none') + '\n## Open questions for Ada\n1. Approve?\n')
+        result = self.watch(path_first=self.failing_tr('[ "$1" = -d ]'))
+        self.assertEqual((result.returncode, result.stdout), (3, ''), result.stderr)
+        self.assertIn('watch_workers: w1: could not write its report: ', result.stderr)
+        self.assertIn('QUESTIONS: w1, 1 question for Ada', self.watch().stdout)
+
+    def test_a_failed_write_of_the_question_lines_is_rerun(self):
+        self.commit(HEAD % ('completed', 'none') + '\n## Open questions for Ada\n1. Approve?\n')
+        result = self.watch(path_first=self.failing_tr('case $in in "  | "*) true ;; *) false ;; esac'))
+        self.assertEqual((result.returncode, result.stdout), (3, ''), result.stderr)
+        self.assertIn('watch_workers: w1: could not write its report: ', result.stderr)
+        self.assertIn('  | 1. Approve?', self.watch().stdout)
+
+    def test_a_report_that_stdout_refuses_exits_3(self):
+        if not os.path.exists('/dev/full'):
+            print('NOT RUN: no /dev/full on this host: a report refused by stdout is not tested')
+            return
+        self.commit(HEAD % ('completed', 'none'))
+        for sessions, pane, word in (('w1', 'working-auto.txt', 'DONE'), ('', 'working-auto.txt', 'GONE'),
+                                     ('w1', 'permission.txt', 'WAITING')):
+            with self.subTest(word=word), open('/dev/full', 'w') as full:
+                result = self.run_script(WATCH, '--once', '--result', 'w1=docs/w1.md', 'w1', stdout=full,
+                                         VIS_SESSIONS=sessions, VIS_PANE=str(PANES / pane))
+                self.assertEqual(result.returncode, 3, result.stderr)
+                self.assertIn('could not write its report', result.stderr)
+        self.assertIn('DONE: w1', self.watch().stdout, 'the refused report was marked as said')
+
+    def test_a_failed_write_of_the_waiting_pane_lines_exits_3(self):
+        # Only the pane lines fail: the lines around them were written.
+        with open(self.tmp / 'stdout', 'w') as out:
+            result = self.run_script(WATCH, '--once', 'w1', stdout=out, VIS_SESSIONS='w1',
+                                     VIS_PANE=str(PANES / 'permission.txt'),
+                                     path_first=self.failing_tr('case $in in "  | "*) true ;; *) false ;; esac'))
+        self.assertEqual(result.returncode, 3, result.stderr)
+        self.assertIn('watch_workers: w1: could not write its report', result.stderr)
+
     def test_the_watcher_restarted_after_progress_reaches_done(self):
         # The lead restarts the watcher after every report but DONE and GONE while work
         # remains: the second run, after a PROGRESS report, still reports the completion.
@@ -614,9 +668,13 @@ class ResultTests(Base):
         self.assertEqual(gate.case_in_substitution('x=$(echo case value)\ny=$(f; then case)\n'), [])
         self.assertEqual(gate.case_in_substitution('x=$(true && case a in a) :;; esac)\n'), [1])
         self.assertEqual(gate.case_in_substitution('x=$(if :; then case a in a) :;; esac; fi)\n'), [1])
-        # A keyword opens a command only where it is itself a command: as an argument it is a word.
+        # A reserved word or a symbol before `case` is flagged even in an argument: the lint fails
+        # loudly rather than read the grammar. Rename or quote such a word.
         for text in ('x=$(echo if case value)\n', 'x=$(echo time case a)\n', 'x=$(echo ! case a)\n',
-                     'x=$(echo then do case a)\n'):
+                     'x=$(echo then do case a)\n', 'x=$(echo $(x) case a)\n'):
+            with self.subTest(text=text):
+                self.assertEqual(gate.case_in_substitution(text), [1])
+        for text in ('x=$(echo case value)\n', 'x=$(printf case)\n', 'x=$(printf \\\n  case a)\n'):
             with self.subTest(text=text):
                 self.assertEqual(gate.case_in_substitution(text), [])
         self.assertEqual(gate.case_in_substitution('x=$(if ! case a in a) :;; esac; then :; fi)\n'), [1])
@@ -643,9 +701,17 @@ class ResultTests(Base):
                       'for i in a b; do', 'for i in a b do', 'select i in a; do', 'select i do'):
             with self.subTest(start=start):
                 self.assertEqual(gate.case_in_substitution('x=$(%s case a in a) :;; esac)\n' % start), [1])
-        for text in ('x=$(echo if case value)\n', 'x=$(echo time case a)\n', 'x=$(echo ! case a)\n'):
-            with self.subTest(text=text):
-                self.assertEqual(gate.case_in_substitution(text), [])
+        # Every form a grammar walk missed in review; the flat rule flags each.
+        for start in ('if (:)then', 'if if :; then :; fi then', 'while for i in a; do :; done do', 'f()',
+                      'time -p', 'coproc', '{ :; }then', 'f() {', 'echo -n'):
+            with self.subTest(start=start):
+                self.assertEqual(gate.case_in_substitution('x=$(%s case a in a) :;; esac)\n' % start), [1])
+
+    def test_a_case_right_after_a_function_header_is_flagged(self):
+        spec = importlib.util.spec_from_file_location('kit_check', ROOT / 'scripts/check_kit.py')
+        gate = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(gate)
+        self.assertEqual(gate.case_in_substitution('x=$(f()case a in a) :;; esac)\n'), [1])
 
     def test_the_kit_check_rejects_a_case_inside_a_substitution(self):
         # The scan alone is not the gate: check_syntax must run it and stop on it.

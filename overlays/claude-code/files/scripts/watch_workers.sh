@@ -113,16 +113,8 @@ cutb() {
 }
 # A once-marker: a user option of the tmux session. setmark only queues it: the queue is
 # stored after the run's reports are printed, and dropped with them by a run that exits 3.
-# mark reads the queue first, then the stored option.
-mark() {
-  m=""
-  while IFS='	' read -r pn pk pv; do
-    if [ "$pn" = "$1" ] && [ "$pk" = "$2" ]; then m=$pv; fi
-  done <<EOF
-$pending
-EOF
-  if [ -n "$m" ]; then printf '%s\n' "$m"; else tmux show-options -qv -t "=$1:" "@kit_watch_$2" 2>/dev/null || true; fi
-}
+# mark reads only the stored option: a name is watched once per run, so its queue is never read.
+mark() { tmux show-options -qv -t "=$1:" "@kit_watch_$2" 2>/dev/null || true; }
 setmark() { pending="$pending$1	$2	$3$nl"; }
 
 # has NAME: 0 the session exists, 1 tmux says it or its server does not, 2 tmux could not
@@ -172,6 +164,7 @@ classify() {
   done
 }
 
+# Return 2 when the report could not be written.
 report() {
   name=$1; shift
   if [ "$1" = FAILED ]; then
@@ -179,7 +172,7 @@ report() {
     return 0
   fi
   if [ "$1" = GONE ]; then
-    say "watch_workers: GONE: $name (the tmux session no longer exists: read its result file)"
+    say "watch_workers: GONE: $name (the tmux session no longer exists: read its result file)" || return 2
     return 0
   fi
   case $2 in
@@ -188,10 +181,11 @@ report() {
     question) what="a question" ;;
     *) what="a choice ($2)" ;;
   esac
-  say "watch_workers: WAITING: $name, on $what (rule $3, Claude Code $4)"
-  say "  the last lines of its pane:"
-  tail -n 12 "$win" | cutb | while IFS= read -r line; do say "  | $line"; done
-  say "  look at it: scripts/show_workers.sh $name   (or: tmux attach -t $name)"
+  say "watch_workers: WAITING: $name, on $what (rule $3, Claude Code $4)" || return 2
+  say "  the last lines of its pane:" || return 2
+  # The writing command last, so the pipeline's status is the write's.
+  tail -n 12 "$win" | cutb | sed 's/^/  | /' | LC_ALL=C tr '\001-\011\013-\037\177' '?' || return 2
+  say "  look at it: scripts/show_workers.sh $name   (or: tmux attach -t $name)" || return 2
 }
 
 # Line $1 of file $2, control bytes and trailing blanks removed.
@@ -258,13 +252,13 @@ EOF
     !inq || !NF { next }
     /^[0-9]+[.)] / { q++; n = 0; print "Q" $0; next }
     q { if (++n <= 6) print "L" $0; else if (n == 7) print "L   [more in the result file]" }
-  ' "$body" | LC_ALL=C tr -d '\001-\011\013-\037\177' >"$qs"
+  ' "$body" | LC_ALL=C tr -d '\001-\011\013-\037\177' >"$qs" || return 2
   nq=$(grep -c '^Q' "$qs" || true)
   if [ "$nq" -gt 0 ]; then
     owner=$(sed -n 's/^O//p' "$qs" | cutb)
     qw=questions; [ "$nq" -gt 1 ] || qw=question
     say "watch_workers: QUESTIONS: $1, $nq $qw for $owner (Kind: $k, $what)" || return 2
-    sed -n 's/^[QL]//p' "$qs" | cutb | while IFS= read -r line; do say "  | $line" || exit 1; done || return 2
+    sed -n 's/^[QL]//p' "$qs" | cutb | sed 's/^/  | /' | LC_ALL=C tr '\001-\011\013-\037\177' '?' || return 2
     say "  ask them now, one at a time; each line is cut at 200 bytes, the full text is in $f" || return 2
     return
   fi
@@ -306,7 +300,9 @@ while :; do
   for n in "$@"; do
     st=$(classify "$n")
     if [ "$st" = FAILED ]; then report "$n" FAILED; failed=1
-    elif [ -n "$st" ]; then report "$n" $st; found=1
+    elif [ -n "$st" ]; then
+      found=1
+      report "$n" $st || { say "watch_workers: $n: could not write its report to stdout" >&2; failed=1; }
     else
       # A report that could not be written ends the run like a failed capture; w stays x
       # when the buffer cannot even be opened.
@@ -322,7 +318,7 @@ while :; do
   # A run that failed (exit 3) is rerun: its result and context reports are not printed and
   # their once-markers not stored, so the rerun reports them.
   [ -z "$failed" ] || exit 3
-  cat "$out"
+  cat "$out" || { say "watch_workers: could not write its report to stdout" >&2; exit 3; }
   printf '%s' "$pending" | while IFS='	' read -r n k v; do
     tmux set-option -t "=$n:" "@kit_watch_$k" "$v" >/dev/null 2>&1 || true
   done
