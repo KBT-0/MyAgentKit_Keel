@@ -2698,11 +2698,14 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         # CLAUDE_PROJECT_DIR included.
         import agent_process
         os.environ['CLAUDE_PROJECT_DIR'] = str(self.repo)
+        os.environ['REVIEW_DISPOSITIONS'] = str(self.repo / 'docs/dispositions.md')
         try:
             execution = agent_process.run(['sh', '-c', 'env'], '', self.root, 30)
         finally:
             del os.environ['CLAUDE_PROJECT_DIR']
+            del os.environ['REVIEW_DISPOSITIONS']
         self.assertNotIn('CLAUDE_PROJECT_DIR', execution['stdout'])
+        self.assertNotIn('REVIEW_DISPOSITIONS', execution['stdout'])
 
     def test_dispositions_are_claims_the_reviewer_verifies_not_settlements(self):
         # The author never approves its own work: a disproved finding counts only once the
