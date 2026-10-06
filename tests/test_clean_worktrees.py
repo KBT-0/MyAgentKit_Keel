@@ -287,11 +287,11 @@ class CleanWorktreesTests(unittest.TestCase):
         # What is left holds: a re-run removes it.
         self.assertRemoved(path, self.run_script('--apply'))
 
-    def trigger(self, proc, at, *paths):
+    def trigger(self, proc, at, *paths, then=''):
         """A tmux that, from its AT-th call on, puts a process working in each of PATHS into
-        PROC: the script asks tmux right before it reads the process listing."""
+        PROC and runs THEN: the script asks tmux right before it reads the process listing."""
         count = self.tmp / 'tmux-calls'
-        starts = ''.join('  mkdir -p %s/990%d; [ -L %s/990%d/cwd ] || ln -s %s %s/990%d/cwd\n'
+        starts = then + ''.join('  mkdir -p %s/990%d; [ -L %s/990%d/cwd ] || ln -s %s %s/990%d/cwd\n'
                          % (proc, i, proc, i, os.path.realpath(p), proc, i) for i, p in enumerate(paths))
         self.stub('tmux', '#!/bin/sh\nn=$(($(cat %s 2>/dev/null || echo 0) + 1))\necho $n > %s\n'
                   'if [ $n -ge %d ]; then\n%sfi\necho "no server running on /tmp/x" >&2\nexit 1\n'
@@ -322,6 +322,14 @@ class CleanWorktreesTests(unittest.TestCase):
                 self.assertIs((path / 'r.md').exists(), at == 2, out)
                 self.assertIs('PARTLY MODIFIED: 1 files' in out, at == 3, out)
                 self.git('worktree', 'lock', str(path))  # out of the next run before it asks tmux
+
+    def test_a_commit_named_after_the_audit_stops_the_removal(self):
+        path = self.worktree('done')
+        late = self.loose(path)
+        self.trigger(self.tmp / 'proc', 2, then='  echo %s > %s/LATE\n' % (late, self.gitdir(path)))
+        out = self.run_script('--apply', idle=False, proc=self.tmp / 'proc')
+        self.assertIn('stopped: changed since its audit: it holds commits not saved; nothing deleted', out)
+        self.assertTrue(path.is_dir(), out)
 
     def test_no_removal_without_its_log_record(self):
         path = self.worktree('done')
@@ -1013,6 +1021,25 @@ class CleanWorktreesTests(unittest.TestCase):
         out = self.run_script('--apply')
         self.assertRemoved(path, out)
         self.assertNotIn('saves what', out)
+
+    def test_a_tag_only_its_git_directory_holds_keeps_it(self):
+        path = self.worktree('done')
+        tag = subprocess.run(['git', 'hash-object', '-t', 'tag', '-w', '--stdin'], cwd=path, env=self.env,
+                             input=('object %s\ntype commit\ntag t\ntagger t <t@example.invalid> 0 +0000\n\nt\n'
+                                    % self.loose(path)).encode(), capture_output=True).stdout.decode().strip()
+        (self.gitdir(path) / 'TAGGED').write_text(tag + '\n')
+        self.assertKept(path, self.run_script('--apply'), '%s, a tag, is held only by its git directory (TAGGED)'
+                        % tag[:12])
+
+    def test_an_id_its_branch_reflog_names_that_is_gone_is_passed_over(self):
+        # gc prunes what an expired reflog entry named; the entry may still be there.
+        path = self.worktree('done')
+        (self.main / '.git/logs/refs/heads/worktree-done').open('a').write(
+            '%s %s t <t@example.invalid> 0 +0000\tgone\n' % ('2' * 40, self.git('rev-parse', 'HEAD')))
+        self.git('update-ref', 'refs/worktree/keep', self.loose(path), cwd=path)
+        out = self.run_script('--apply')
+        self.assertRemoved(path, out)
+        self.assertIn('(refs/worktree/keep)', out)
 
     def test_a_tree_or_blob_id_keeps_it_with_the_honest_reason(self):
         # `rev-list --objects <tree> ^main` lists a tree main holds too: for a tree or a blob it

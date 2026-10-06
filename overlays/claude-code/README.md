@@ -235,7 +235,8 @@ then stays quiet.
 - **What only its git directory holds is saved, then it is removed.** An amended, reset or
   rebased-away commit needs nothing: its branch's reflog, which stays in the shared git
   directory, still names it, for as long as git keeps that entry (`gc.reflogExpireUnreachable`,
-  30 days by default), exactly as long as the worktree's own reflog would have. A commit
+  30 days by default), exactly as long as the worktree's own reflog would have; `git branch -d`
+  deletes that reflog with the branch. A commit
   nothing else holds (a squash's intermediate commits, a `FETCH_HEAD`, a `refs/worktree/*` ref)
   is pinned before anything is deleted, in one `git update-ref --stdin` transaction, as
   `refs/kit/saved/<git directory name>-<UTC time>/<n>`, never under the branch name; the audit

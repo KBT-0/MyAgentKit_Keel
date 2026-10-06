@@ -596,7 +596,7 @@ def audit(record, ctx):
         held = set(git(ctx['main_root'], 'for-each-ref', '--format=%(objectname)').stdout.split())
         try:
             with open(os.path.join(ctx['common'], b'logs', facts['branch']), 'rb') as handle:
-                held.update(oid.lower() for oid in token.findall(handle.read()))
+                held.update(token.findall(handle.read()))
         except FileNotFoundError:
             pass
         # Only an id git calls missing is dropped; every other goes to rev-list, which fails on
@@ -621,11 +621,9 @@ def audit(record, ctx):
         if other:
             return ['%s, a %s, is held only by its git directory (%s); check and remove it by hand'
                     % (show(other[0][:12]), show(kinds.get(other[0], b'?')), show(holders[other[0]]))]
-        if facts['pin']:
-            facts['saved'] = b'refs/kit/saved/%s-%s' % (os.path.basename(gitdir), ctx['stamp'])
-            if git(real, 'check-ref-format', facts['saved'] + b'/1', codes=(0, 1)).returncode:
-                return ['what only its git directory holds cannot be saved: %s is not a valid ref name'
-                        % show(facts['saved'])]
+        # Not the branch name, which another worktree may reuse; a name git refuses as a ref
+        # fails the save, which keeps the worktree.
+        facts['saved'] = b'refs/kit/saved/%s-%s' % (os.path.basename(gitdir), ctx['stamp'])
         return []
 
     def contents():
@@ -766,8 +764,8 @@ def removal(record, facts, ctx, deleted):
             os.fsync(log.fileno())
     except OSError as error:
         return 'cannot write the removal log %s (%s)' % (show(ctx['log']), error)
-    # Again, now: what it holds with the saved refs counted, and whether a process came in.
-    again = facts['history']() + facts['idle']()
+    # Again, now: whether a process came in, and what it holds with the saved refs counted.
+    again = facts['idle']() + facts['history']()
     if again or facts['pin']:
         return 'changed since its audit: %s' % '; '.join(again or ['it holds commits not saved'])
     for rel in facts['delete']:
