@@ -278,6 +278,19 @@ in `RESEARCH_LOG.md` (2026-10-03). Most of the files below are project-owned, so
   mechanism gets a one-page design review first; `REVIEW_GATE.md` gains "What a reviewer
   attacks first" and the worker a pre-report checklist pointing at it; the lead starts the
   self-test and two reviewers together under one label per feature.
+- **The bridged reviewers execute, in a throwaway copy the adapter makes.** Codex runs
+  `workspace-write` with the network off and Claude gets Bash, each with a copy of the
+  checkout as its working directory, never the repository: the copy is built from the
+  checkout's bytes (not a patch: git's stat cache and `apply.whitespace` cannot change what
+  the reviewer reads), into a fresh tree that follows no symlink, under the review's one
+  deadline, with its preparation processes killed as groups on a cancel; a temporary
+  directory inside the repository is refused; the reviewer's environment names the
+  repository through no variable and its git cannot discover a repository above the copy;
+  the fingerprint covers the index as well as the working tree, so a reviewer's `git reset`
+  fails the review as `stale_checkout`. Ten batched Codex rounds with the executing
+  reviewer found and fixed the holes in this list (`docs/reviews/20261006T12*` to `16*`).
+  A provider's content classifier stopping a run is `content_flagged`, an availability
+  failure `--fallback` may route around.
 - **A faster kit check.** The kit's own check runs its suites and acceptance phases at
   once where the CPUs allow (sequential under four), rebuilds only the PATH directories a
   fixture must change, scales its child timeouts with the degree of parallelism, and prints
