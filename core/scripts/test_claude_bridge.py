@@ -24,7 +24,7 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'MYAGENTKIT_TASK_ID', 'MYAGENTKIT_R
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 109, 'test_agent_usage': 19, 'test_codex_quota': 5}
+SUITE_MINIMUMS = {'test_claude_bridge': 110, 'test_agent_usage': 19, 'test_codex_quota': 5}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -313,6 +313,47 @@ class BridgeTests(unittest.TestCase):
         (self.repo / '.gitattributes').write_text('file.py ident\n')
         with self.assertRaisesRegex(bridge.BridgeError, 'clean filter or ident attribute on file.py'):
             bridge.snapshot(self.repo, 'uncommitted', None)
+
+    def test_an_lfs_file_the_review_does_not_change_is_no_refusal(self):
+        # Git LFS sets filter.lfs.clean in the global config, and every LFS file in the
+        # checkout refused every review, a code-only one included. A file whose raw bytes are
+        # proven to be what HEAD records gives a filter nothing to hide; a changed one does.
+        clean = self.root / 'lfs-clean.py'
+        clean.write_text(  # git-lfs clean: content to a pointer; a pointer passes through
+            'import hashlib, sys\ndata = sys.stdin.buffer.read()\n'
+            'if not data.startswith(b"version https://git-lfs"):\n'
+            '    data = b"version https://git-lfs.github.com/spec/v1\\noid sha256:%s\\nsize %d\\n" % (\n'
+            '        hashlib.sha256(data).hexdigest().encode(), len(data))\n'
+            'sys.stdout.buffer.write(data)\n')
+        self.git('config', 'filter.lfs.clean', '"%s" "%s"' % (sys.executable, clean))
+        (self.repo / '.gitattributes').write_text('*.bin filter=lfs\n')
+        asset, pointer = self.repo / 'asset.bin', self.repo / 'unsmudged.bin'
+        asset.write_bytes(b'large binary content\n')
+        pointer.write_bytes(b'other binary content\n')
+        self.commit_fixture('LFS fixture')
+        self.assertTrue(self.git('cat-file', 'blob', 'HEAD:asset.bin').stdout.startswith(b'version https://'))
+        # A checkout made with GIT_LFS_SKIP_SMUDGE holds the pointer itself: the blob's bytes.
+        pointer.write_bytes(self.git('cat-file', 'blob', 'HEAD:unsmudged.bin').stdout)
+        (self.repo / 'file.py').write_text('CODE_ONLY_CHANGE\n')
+        diff = bridge.snapshot(self.repo, 'uncommitted', None)[2]
+        self.assertIn('CODE_ONLY_CHANGE', diff)
+        self.assertNotIn('.bin', diff)
+        # Changed content of the same size: the size matches the pointer, the sha256 does not.
+        asset.write_bytes(b'LARGE BINARY CONTENT\n')
+        with self.assertRaisesRegex(bridge.BridgeError, 'clean filter or ident attribute on asset.bin'):
+            bridge.snapshot(self.repo, 'uncommitted', None)
+        asset.write_bytes(b'large binary content\n')
+        pointer.write_bytes(b'other binary content\n')
+        self.commit_fixture('Code only')
+        self.assertIn('CODE_ONLY_CHANGE', bridge.snapshot(self.repo, 'commit', 'HEAD')[2])
+        # A commit that changes the LFS file shows its pointer, not its content: refused, though
+        # the checkout matches HEAD.
+        asset.write_bytes(b'new binary content\n')
+        self.commit_fixture('Asset change')
+        for scope, reference in (('commit', 'HEAD'), ('base', 'HEAD~1')):
+            with self.subTest(scope=scope):
+                with self.assertRaisesRegex(bridge.BridgeError, 'clean filter or ident attribute on asset.bin'):
+                    bridge.snapshot(self.repo, scope, reference)
 
     def test_direct_adapters_reject_a_base_ref_that_moves_during_review(self):
         from contextlib import redirect_stdout

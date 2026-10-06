@@ -293,6 +293,37 @@ def resolve(repo: Path, scope: str, reference: str | None) -> str | None:
     return git(repo, 'rev-parse', '--verify', reference + '^{commit}').decode().strip()
 
 
+LFS_POINTER = re.compile(rb'version https://git-lfs\.github\.com/spec/v1\noid sha256:([0-9a-f]{64})\nsize ([0-9]+)\n')
+
+
+def committed_as_is(repo: Path, head: str, name: bytes) -> bool:
+    """True when the working file `name` holds exactly what `head` records, read with no filter:
+    the blob's own bytes, or the content a Git LFS pointer blob names by size and sha256.
+
+    The pointer's sha256 is a proof that holds whatever the configured filter does; the filter
+    is never run. A symlink, a missing file or a path absent from `head` is not proven.
+    """
+    path = repo / os.fsdecode(name)
+    if path.is_symlink() or not path.is_file():
+        return False
+    try:
+        blob = git(repo, 'cat-file', 'blob', head + ':' + os.fsdecode(name))
+    except BridgeError:
+        return False
+    # ponytail: one git call per filtered path; batch through `cat-file --batch` if thousands.
+    size = path.stat().st_size
+    if size == len(blob) and path.read_bytes() == blob:
+        return True
+    pointer = LFS_POINTER.fullmatch(blob)
+    if not pointer or int(pointer[2]) != size:
+        return False
+    digest = hashlib.sha256()
+    with path.open('rb') as stream:
+        for chunk in iter(lambda: stream.read(65536), b''):
+            digest.update(chunk)
+    return digest.hexdigest().encode() == pointer[1]
+
+
 def snapshot(repo: Path, scope: str, reference: str | None) -> tuple[str, str, str, str | None]:
     """Capture review scope plus a fingerprint of the actual readable checkout.
 
@@ -329,6 +360,12 @@ def snapshot(repo: Path, scope: str, reference: str | None) -> tuple[str, str, s
     # the conversion off for diff, and the payload must be what the working tree contains.
     # Any configured clean or process key is a filter, whatever its value: a whitespace-only
     # command is a valid shell no-op that empties the file for the diff.
+    # A filtered path the review does not change passes when its raw bytes are proven to be
+    # exactly what HEAD records (committed_as_is): then a filter has nothing in it to hide.
+    # Git LFS configures filter.lfs.clean globally, and before this every LFS file anywhere in
+    # the checkout refused every review, code-only ones included. A filtered path the review
+    # changes stays refused: uncommitted, its raw bytes differ from HEAD's; in a commit range,
+    # the diff names it.
     in_scope = git(repo, 'ls-files', '-z', '--cached', '--others', '--exclude-standard',
                    '--', '.', *exclusions)
     drivers = set()
@@ -338,11 +375,20 @@ def snapshot(repo: Path, scope: str, reference: str | None) -> tuple[str, str, s
             key = entry.partition(b'\n')[0]
             drivers.add(key[len(b'filter.'):key.rindex(b'.')])
     fields = git(repo, 'check-attr', '-z', '--stdin', 'filter', 'ident', stdin=in_scope).split(b'\0')
-    for name, attribute, value in zip(fields[0::3], fields[1::3], fields[2::3]):
-        if (attribute == b'filter' and value in drivers) or (attribute == b'ident' and value == b'set'):
-            raise BridgeError('review scope has a Git clean filter or ident attribute on %s; the diff '
-                              'would show the converted text, not the working tree. Remove the '
-                              'attribute (or the filter config) before review' % os.fsdecode(name))
+    filtered = sorted({name for name, attribute, value in zip(fields[0::3], fields[1::3], fields[2::3])
+                       if (attribute == b'filter' and value in drivers) or (attribute == b'ident' and value == b'set')})
+    changed = set()
+    if filtered and scope == 'base':
+        changed = set(git(repo, 'diff', '--name-only', '--no-renames', '-z', resolved + '...HEAD', '--').split(b'\0'))
+    elif filtered and scope == 'commit':
+        changed = set((git(repo, 'diff', '--name-only', '--no-renames', '-z', parents[0], resolved, '--') if parents
+                       else git(repo, 'diff-tree', '-r', '--root', '--no-commit-id', '--name-only', '-z', resolved)
+                       ).split(b'\0'))
+    for name in filtered:
+        if name in changed or not committed_as_is(repo, head, name):
+            raise BridgeError('review scope has a Git clean filter or ident attribute on %s, and the review '
+                              'changes it; the diff would show the converted text, not the working tree. '
+                              'Remove the attribute (or the filter config) before review' % os.fsdecode(name))
     # Explicit prefixes: an owner's diff.noprefix or mnemonicPrefix broke `git apply` in the copy.
     raw_diff = ('--no-ext-diff', '--no-textconv', '--binary', '--src-prefix=a/', '--dst-prefix=b/')
     working = git(repo, 'diff', *raw_diff, 'HEAD', '--', '.', *exclusions)
