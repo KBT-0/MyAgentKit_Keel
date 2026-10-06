@@ -361,6 +361,9 @@ class SpawnWorkerTests(unittest.TestCase):
         self.assertIn("'new-tab'", (self.state / 'wt.log').read_text())
         self.assertIn("'=w1'", (self.state / 'wt.log').read_text())
         self.assertIn('show_workers: shown: w1', result.stdout)
+        # The two hints name the scripts that watch and close this worker, by its name.
+        self.assertIn('close it: scripts/close_worker.sh w1\n', result.stdout)
+        self.assertIn('scripts/watch_workers.sh --result w1=PATH w1 ', result.stdout)
         (self.state / 'wt.log').unlink()
         result = self.spawn('w2', str(self.brief), '--batch')
         self.assertEqual(result.returncode, 0, result.stderr)

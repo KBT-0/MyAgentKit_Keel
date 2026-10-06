@@ -454,10 +454,12 @@ open questions, CONTEXT when the session's context passes the warning line (50 p
 default), WAITING on a dialog, and GONE. The lead acts on the report's first line
 ("The lead's steps when a branch is ready").
 
-`close_worker.sh` keeps a worktree the audit below cannot prove safe to lose, with the reason,
-and exits 1; a worktree changed within the quiet period is one, so right after a worker's last
-commit it usually stays until the hook removes it after a later merge. Closing the session
-with `tmux kill-session` alone leaves the worktree. **Once a worktree's branch is merged, the
+`close_worker.sh` waits up to 15 seconds for the session and the processes inside the worktree
+to be gone, then runs the audit below with one change: it lifts the quiet period
+(`--no-quiet`). The quiet period stands in for "no worker is still in it"; here the lead has
+just ended the session and decided the work is finished, so it is not needed. The post-merge
+hook never lifts it. A worktree any other proof cannot clear is kept, with the reason, and
+the script exits 1. Closing the session with `tmux kill-session` alone leaves the worktree. **Once a worktree's branch is merged, the
 worktree is FINISHED**: a further round on that task starts a NEW worktree, never the old one. With the
 Claude Code overlay, `.githooks/post-merge` removes a finished worktree after the next merge
 git completes itself in the main worktree (not a conflicted merge finished with `git commit`,

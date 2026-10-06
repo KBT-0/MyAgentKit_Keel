@@ -1,4 +1,5 @@
 #!/usr/bin/env sh
+# KIT-OWNED: do not edit locally; change it in the kit and re-sync.
 # Show worker sessions: ONE terminal window, one tab per named tmux session.
 #
 # Usage: show_workers.sh [--print] NAME [NAME...]
@@ -41,7 +42,7 @@ q() { set -- "$(printf '%sx' "$1" | sed "s/'/'\\\\''/g")"; printf "'%s'" "${1%x}
 
 print=""
 [ "${1-}" != --print ] || { print=1; shift; }
-[ $# -ge 1 ] || { sed -n '2,5p' "$0"; exit 2; }
+[ $# -ge 1 ] || { sed -n '3,6p' "$0"; exit 2; }
 for n in "$@"; do
   case $n in
     ""|*[!A-Za-z0-9_-]*) die "refused session name '$n': only letters, digits, - and _ are opened here (it would cross into a Windows command line or an AppleScript string); attach by hand" ;;

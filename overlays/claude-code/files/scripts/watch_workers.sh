@@ -1,4 +1,5 @@
 #!/usr/bin/env sh
+# KIT-OWNED: do not edit locally; change it in the kit and re-sync.
 # Watch worker sessions; return as soon as one is GONE, WAITING on a person, has a result.
 #
 # Usage: watch_workers.sh [--interval S] [--max-minutes M] [--context-warn P]
@@ -70,7 +71,7 @@ while [ $# -gt 0 ]; do
     *) break ;;
   esac
 done
-[ $# -ge 1 ] || { sed -n '2,7p' "$0"; exit 2; }
+[ $# -ge 1 ] || { sed -n '3,8p' "$0"; exit 2; }
 [ "$interval" -ge 10 ] || die "--interval $interval is below the floor of 10 seconds"
 for n in "$@" "$results"; do
   [ "$(printf '%sx' "$n" | LC_ALL=C tr -d '\001-\011\013-\037\177')" = "${n}x" ] ||

@@ -222,12 +222,16 @@ step and per name:
 1. A name outside `[A-Za-z0-9_-]`, or starting with `-`, is refused before any tmux call; the
    next name still runs.
 2. `tmux kill-session -t =NAME` ends the session, and the terminal tab attached to it closes
-   by itself. A session that does not exist is reported, not an error.
-3. `scripts/clean_worktrees.sh --apply --only=NAME` removes `.claude/worktrees/NAME` through
-   the audit below, every proof included and no `--assume-idle`. A worktree the audit keeps
-   is reported with its first reason. One changed within the quiet period is kept, so right
-   after a worker's last commit the worktree usually stays until the hook removes it after a
-   later merge, or this script runs again.
+   by itself. A session that does not exist is reported, not an error. It then waits up to
+   15 seconds, and says what for, until tmux no longer finds the session and, where `/proc`
+   exists (Linux), no process works inside the worktree: the tool takes a moment to exit.
+3. `scripts/clean_worktrees.sh --apply --only=NAME --no-quiet` removes `.claude/worktrees/NAME`
+   through the audit below, every proof included and no `--assume-idle`, except the quiet
+   period. That period is a margin for "no worker is still in it", which no listing proves;
+   here the lead has just ended the session and decided the work is finished, so a worktree
+   committed a minute ago is closed at once. The post-merge hook never lifts it, and
+   `--no-quiet` is refused without `--only`. A worktree the audit keeps (a process still
+   inside, an uncommitted file) is reported with its first reason.
 4. The branch `worktree-NAME` is never deleted; the line says how to delete merged branches.
 
 It exits 0 when every named session is gone and every named worktree was removed or did not
@@ -236,6 +240,13 @@ would do, the removal's dry run included, and changes nothing. A project set up 
 script copies `overlays/claude-code/files/scripts/close_worker.sh` into `scripts/` by hand
 (`chmod +x`, `git add --chmod=+x`), with the clean-up scripts it calls; a sync keeps it
 updated from then on.
+
+The worker scripts (`spawn_worker.sh`, `show_workers.sh`, `watch_workers.sh`,
+`waiting_patterns.txt`, `close_worker.sh`) carry the KIT-OWNED header, so a sync updates them
+where they exist. A copy from before the header is a sync conflict, and the sync copies
+nothing until it is resolved: an unedited copy is moved aside, and the rerun installs the
+kit's; an edited one is moved aside too, and its change is carried into the project's own
+files by hand (`docs/UPDATING.md`).
 
 ## Finished worktrees are removed after a merge, and only those
 
