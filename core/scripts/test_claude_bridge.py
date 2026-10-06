@@ -24,7 +24,7 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'MYAGENTKIT_TASK_ID', 'MYAGENTKIT_R
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 109, 'test_agent_usage': 19, 'test_codex_quota': 5}
+SUITE_MINIMUMS = {'test_claude_bridge': 110, 'test_agent_usage': 19, 'test_codex_quota': 5}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -2713,6 +2713,27 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
             del os.environ['REVIEW_DISPOSITIONS']
         self.assertNotIn('CLAUDE_PROJECT_DIR', execution['stdout'])
         self.assertNotIn('REVIEW_DISPOSITIONS', execution['stdout'])
+
+    def test_a_sparse_checkout_is_reviewable_and_a_present_skip_worktree_file_is_not(self):
+        # A sparse checkout marks every path outside its cone skip-worktree, so every such
+        # repository was refused. An ABSENT skip-worktree file can hide no change; a PRESENT
+        # one still can and is still refused.
+        import claude_bridge
+        (self.repo / 'src').mkdir(exist_ok=True)
+        (self.repo / 'src/a.txt').write_text('a\n')
+        self.commit_fixture('A tree with two folders')
+        self.git('sparse-checkout', 'set', 'docs')
+        self.assertFalse((self.repo / 'src/a.txt').exists())
+        (self.repo / 'docs').mkdir(exist_ok=True)
+        (self.repo / 'docs/new.md').write_text('new\n')
+        head, fingerprint, diff, _ = claude_bridge.snapshot(self.repo, 'uncommitted', None)
+        self.assertIn('docs/new.md', diff)
+        self.assertNotIn('src/a.txt', diff)
+        self.git('sparse-checkout', 'disable')
+        self.git('update-index', '--skip-worktree', 'src/a.txt')
+        (self.repo / 'src/a.txt').write_text('HIDDEN\n')
+        with self.assertRaises(claude_bridge.BridgeError):
+            claude_bridge.snapshot(self.repo, 'uncommitted', None)
 
     def test_dispositions_are_claims_the_reviewer_verifies_not_settlements(self):
         # The author never approves its own work: a disproved finding counts only once the

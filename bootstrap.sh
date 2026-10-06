@@ -320,6 +320,15 @@ repo=""
 if git -C "$target" rev-parse --git-dir >/dev/null 2>&1; then
   repo=1
   hooks_was=$(git -C "$target" config --local --get core.hooksPath) && had=1 || had=""
+  # A hooks path of the project's own (husky, lefthook, a folder of its own) is never
+  # replaced in silence: the project's hooks would stop running. Stop and name it.
+  if [ -n "$had" ] && [ "$hooks_was" != ".githooks" ]; then
+    rm -f "$part"; part=""
+    printf '%s\n' "bootstrap: STOP: core.hooksPath is '$hooks_was', a hooks path of this project's own; the kit's hooks live in .githooks." >&2
+    printf '%s\n' "  Either make '$hooks_was' call .githooks/<hook> at the end of each of its hooks and run: git config core.hooksPath '$hooks_was' (the kit's files are installed)," >&2
+    printf '%s\n' "  or move its hooks into .githooks and run: git config core.hooksPath .githooks. Then rerun bootstrap.sh to record the version." >&2
+    exit 1
+  fi
   wiring=1
   git -C "$target" config core.hooksPath .githooks
 fi

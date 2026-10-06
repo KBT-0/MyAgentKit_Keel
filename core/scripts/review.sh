@@ -50,6 +50,11 @@
 #   REVIEW_CLI_BIN   the Codex binary             (default: codex)
 #   CLAUDE_CLI_BIN   the Claude binary            (default: claude)
 set -u
+# Windows installs Python as `python` or `py`: when `python3` is absent, use the first of
+# those that is Python 3.10 or newer, under the name the scripts call.
+command -v python3 >/dev/null 2>&1 || python3() {
+  if command -v python >/dev/null 2>&1; then python "$@"; else py -3 "$@"; fi
+}
 script_dir=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 # CDPATH cleared: exported, it sent a relative REVIEW_REPO_ROOT into another tree with that name.
 CDPATH= cd -- "${REVIEW_REPO_ROOT:-$script_dir/..}" || exit 2

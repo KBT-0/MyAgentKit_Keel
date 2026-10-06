@@ -319,10 +319,18 @@ def snapshot(repo: Path, scope: str, reference: str | None) -> tuple[str, str, s
     exclusions = sorted(archives)
     # These index flags suppress real working-tree changes from Git's diff. Refuse
     # the scope before launch rather than attest to files that the diff cannot see.
+    # A skip-worktree entry whose file is NOT in the working tree (a sparse checkout leaves
+    # every path outside its cone like that) can hide no change: it is tolerated. One whose
+    # file is present can, and is refused like assume-unchanged.
     entries = git(repo, 'ls-files', '-v', '-z', '--', '.', *exclusions).split(b'\0')
-    if any(entry and (entry[:1].islower() or entry[:1] == b'S') for entry in entries):
-        raise BridgeError('review scope has assume-unchanged or skip-worktree index flags; '
-                          'clear those flags and use a complete checkout before review')
+    for entry in entries:
+        if not entry:
+            continue
+        hidden = entry[:1].islower() or (
+            entry[:1] == b'S' and os.path.lexists(os.path.join(os.fsencode(repo), entry[2:])))
+        if hidden:
+            raise BridgeError('review scope has assume-unchanged or skip-worktree index flags; '
+                              'clear those flags and use a complete checkout before review')
     # Git runs clean filters and ident collapsing on working-tree bytes BEFORE it diffs
     # them, so a filter can drop a whole file or single lines from the reviewer's payload
     # while the raw bytes still hash into the fingerprint. Refuse such paths: no flag turns

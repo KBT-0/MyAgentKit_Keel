@@ -67,6 +67,9 @@ What opens where:
   Terminal.app): a new window, a tab per session, through `osascript`.
 - **macOS, Terminal.app**: one window per session. Adding a tab there needs the
   accessibility permission, which a script must not ask for; the output says so.
+- **Native Windows**: no tmux, so no worker session. Spawn workers from WSL, in a checkout
+  on the WSL file system (`doctor.sh` warns about a checkout under `/mnt/<drive>`); the
+  tabs open in Windows Terminal as above.
 - **Anything else**: nothing opens; the script prints `attach by hand: tmux attach -t NAME`
   for each session and exits 0.
 
@@ -461,7 +464,7 @@ review TOOL — a second model over your git state, generic and fast. `/myagentk
 is the review GATE: it carries this project's own priority order, requires the caller to
 verify each finding instead of relaying it, archives the report as evidence under
 `docs/reviews/`, and ends in a verdict whose manual checks land in `docs/STATE.md` before the
-commit. Different jobs. The kit README's "Recommended setup" section spells the difference
+commit. Different jobs. The kit README's "The review gate" section spells the difference
 out.
 
 ## The hooks are not the gate

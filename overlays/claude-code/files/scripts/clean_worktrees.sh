@@ -62,4 +62,9 @@
 # The audit is Python because it reads git's NUL-separated output and compares bytes: a file
 # name may hold a newline or a byte that is not UTF-8, and sh cannot hold a NUL.
 set -eu
+# Windows installs Python as `python` or `py`: when `python3` is absent, use the first of
+# those that is Python 3.10 or newer, under the name the scripts call.
+command -v python3 >/dev/null 2>&1 || python3() {
+  if command -v python >/dev/null 2>&1; then python "$@"; else py -3 "$@"; fi
+}
 exec python3 "$(dirname -- "$0")/clean_worktrees.py" "$@"

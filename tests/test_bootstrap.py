@@ -394,6 +394,41 @@ class BootstrapTests(unittest.TestCase):
         return {line.strip() for line in stdout.splitlines() if line.startswith(' ' * 13)
                 and line.strip() and ' ' not in line.strip()}
 
+    def test_a_hooks_path_of_the_project_s_own_stops_the_install(self):
+        # core.hooksPath=.husky was replaced by .githooks in silence: the project's hooks
+        # stopped running. The install stops, names the path, and records no version.
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / 'project'
+            project.mkdir()
+            subprocess.run(['git', 'init', '-q', str(project)], check=True)
+            subprocess.run(['git', '-C', str(project), 'config', 'core.hooksPath', '.husky'], check=True)
+            result = subprocess.run(['sh', str(root / 'bootstrap.sh'), str(project)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn("core.hooksPath is '.husky'", result.stderr)
+            self.assertEqual(subprocess.run(['git', '-C', str(project), 'config', 'core.hooksPath'],
+                                            capture_output=True, text=True).stdout.strip(), '.husky')
+            self.assertFalse((project / 'docs/kit/.kit-version').exists())
+
+    def test_the_hooks_and_scripts_stay_lf_under_autocrlf(self):
+        # core.autocrlf=true gave a fresh checkout CRLF hooks (`#!/usr/bin/env sh\r`), and every
+        # hook died before its first command: the kit ships a .gitattributes that pins them.
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / 'project'
+            project.mkdir()
+            git = lambda *a: subprocess.run(['git', '-C', str(project), *a], capture_output=True, text=True, check=True)
+            git('init', '-q')
+            git('config', 'core.autocrlf', 'true')
+            subprocess.run(['sh', str(root / 'bootstrap.sh'), str(project)], capture_output=True, text=True, check=True)
+            self.assertTrue((project / '.gitattributes').exists())
+            git('add', '-A')
+            git('-c', 'user.name=a', '-c', 'user.email=a@b', 'commit', '-q', '--no-verify', '-m', 'kit')
+            shutil.rmtree(project / '.githooks')
+            git('checkout', '-q', '--', '.githooks', 'scripts')
+            for name in ('.githooks/pre-commit', 'scripts/check.sh', 'scripts/claude_bridge.py'):
+                self.assertNotIn(b'\r', (project / name).read_bytes(), name)
+
     def test_a_rerun_after_a_stop_names_only_the_differing_file(self):
         # The first run copies every other file before it stops, so a rerun that counted those
         # as conflicts stopped again on files the kit itself had put there: only --force got

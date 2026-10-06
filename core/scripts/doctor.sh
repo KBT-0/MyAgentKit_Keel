@@ -16,6 +16,11 @@
 # missing second CLI, a commit with no author, a cache npm could not write to, a checkout
 # on a Windows drive under WSL, CRLF in a script, a node_modules symlink git does not ignore.
 set -u
+# Windows installs Python as `python` or `py`: when `python3` is absent, use the first of
+# those that is Python 3.10 or newer, under the name the scripts call.
+command -v python3 >/dev/null 2>&1 || python3() {
+  if command -v python >/dev/null 2>&1; then python "$@"; else py -3 "$@"; fi
+}
 # CDPATH cleared: exported, it sent this cd into another tree with a scripts/ in it.
 CDPATH= cd -- "$(dirname "$0")/.." || exit 1
 missing=0
@@ -138,7 +143,7 @@ fi
 
 # --- tools the kit's own scripts need ------------------------------------------------
 python3 -c 'import sys; sys.exit(sys.version_info < (3, 10))' 2>/dev/null ||
-  miss "Python 3.10 or newer as python3 (the review tooling needs it)" "install Python 3.10+"
+  miss "Python 3.10 or newer as python3, python or py (the review tooling needs it)" "install Python 3.10+"
 # Resolved as review.sh and its adapters resolve it: REVIEW_REVIEWER over the configured
 # reviewer, REVIEW_CLI_BIN (codex) or CLAUDE_CLI_BIN (claude) over the command name, and
 # PATH first, then ~/.local/bin when codex is there. A configured reviewer doctor cannot read
@@ -162,7 +167,7 @@ elif [ -n "$reviewer" ] && ! ( [ -x "$HOME/.local/bin/codex" ] && PATH="$PATH:$H
   miss "the second CLI '$reviewer_cli' that scripts/review.sh calls" "install and log in to $reviewer (docs/DEV_SETUP.md §3)"
 fi
 if [ -f scripts/spawn_worker.sh ] && ! command -v tmux >/dev/null 2>&1; then
-  miss "tmux, which scripts/spawn_worker.sh needs for worker sessions" "install tmux"
+  miss "tmux, which scripts/spawn_worker.sh needs for worker sessions (native Windows has none: spawn workers from WSL, in a checkout on the WSL file system)" "install tmux"
 fi
 
 # --- Node as a hook sees it ----------------------------------------------------------

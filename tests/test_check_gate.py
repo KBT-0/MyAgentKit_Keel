@@ -505,6 +505,28 @@ class CheckGateTests(unittest.TestCase):
         self.assertTrue(built, out)
         self.assertEqual(code, 1, out)
 
+    def test_doctor_and_the_gate_accept_python_without_the_python3_name(self):
+        # Windows installs Python as `python` or `py`: every script called `python3` by name
+        # and doctor reported Python missing although it was installed.
+        with tempfile.TemporaryDirectory() as tmp:
+            bin_dir = Path(tmp) / 'bin'
+            bin_dir.mkdir()
+            for tool in ('sh', 'git', 'grep', 'sed', 'awk', 'cat', 'ls', 'mkdir', 'rm', 'cp', 'mv', 'tr',
+                         'cut', 'sort', 'uniq', 'head', 'tail', 'wc', 'date', 'mktemp', 'find', 'env',
+                         'printf', 'dirname', 'basename', 'readlink', 'chmod', 'touch', 'diff', 'stat',
+                         'cmp', 'xargs', 'tar', 'tee', 'od', 'id', 'uname', 'hostname', 'true', 'false',
+                         'test', 'expr', 'wait', 'sleep', 'kill', 'lsof', 'ps', 'node', 'npm'):
+                found = shutil.which(tool)
+                if found:
+                    os.symlink(found, bin_dir / tool)
+            os.symlink(shutil.which('python3'), bin_dir / 'python')
+            project = make_project(Path(tmp) / 'project')
+            env = {k: v for k, v in os.environ.items() if k not in ('PYTHON', 'PYTHONPATH')}
+            env['PATH'] = str(bin_dir)
+            doctor = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=project, env=env, capture_output=True, text=True)
+            self.assertNotIn('Python 3.10', doctor.stdout + doctor.stderr)
+            self.assertEqual(subprocess.run(['sh', '-c', 'command -v python3'], env=env, capture_output=True).returncode, 1)
+
     def test_every_cd_ignores_cdpath(self):
         # An exported CDPATH turned `cd scripts` into another directory (and printed it):
         # doctor.sh then checked another tree, and review.sh could review one. Every cd in a

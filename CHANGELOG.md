@@ -291,6 +291,18 @@ in `RESEARCH_LOG.md` (2026-10-03). Most of the files below are project-owned, so
   reviewer found and fixed the holes in this list (`docs/reviews/20261006T12*` to `16*`).
   A provider's content classifier stopping a run is `content_flagged`, an availability
   failure `--fallback` may route around.
+- **A project that is not a plain POSIX checkout.** The kit ships a `.gitattributes` that
+  keeps the hooks and scripts LF under `core.autocrlf=true` (a CRLF `#!/usr/bin/env sh`
+  killed every hook); `bootstrap.sh` stops, and names it, on a `core.hooksPath` of the
+  project's own (husky, lefthook) instead of replacing it in silence; the scripts find
+  Python as `python` or `py` where `python3` is absent; a sparse checkout is reviewable (a
+  skip-worktree entry whose file is absent hides nothing; a present one is still refused);
+  the review tooling and the worktree clean-up import and run on native Windows Python
+  through one platform seam in `agent_process.py` (the clean-up keeps every worktree there,
+  and says so: liveness cannot be proven without `/proc` or `lsof`); `doctor.sh` says what
+  needs WSL. **ACTION:** the sync installs `.gitattributes` (`new:`); commit it. A project
+  that had its own `.gitattributes` sees it as a `conflict:`: merge the kit's four lines
+  into it under the KIT-OWNED header, then sync again.
 - **A faster kit check.** The kit's own check runs its suites and acceptance phases at
   once where the CPUs allow (sequential under four), rebuilds only the PATH directories a
   fixture must change, scales its child timeouts with the degree of parallelism, and prints
@@ -501,6 +513,10 @@ from, and `5c80c36` is the kit's v0.8 commit.
    its result file (`spawn_worker.sh` prints the command); a brief file stays in place
    until the worker has read it; a brief that sends an agent to the web names a generic
    User-Agent. Then record the version with `"$KIT/sync-kit.sh" . --actions-applied`.
+
+14. **ACTION:** Commit the `.gitattributes` the sync installed, then run
+    `git add --renormalize .` and commit that too, so files already checked out with CRLF
+    on Windows go back to LF in the index.
 
 ## v0.8 — 2026-10-03
 

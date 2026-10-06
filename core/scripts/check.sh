@@ -38,6 +38,11 @@
 # separate paths in an earlier version of this script violated that rule and reported PASS
 # while enforcing nothing; a cross-model review found them.
 set -u
+# Windows installs Python as `python` or `py`: when `python3` is absent, use the first of
+# those that is Python 3.10 or newer, under the name the scripts call.
+command -v python3 >/dev/null 2>&1 || python3() {
+  if command -v python >/dev/null 2>&1; then python "$@"; else py -3 "$@"; fi
+}
 # CDPATH cleared: exported, it made `cd scripts` print the directory into $gate, and the
 # lock below re-ran a two-line file name instead of the gate. The path is LOGICAL (pwd, not
 # pwd -P): the lock re-runs the gate by it, and the re-run cd's to its parent. With scripts/
