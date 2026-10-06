@@ -13,7 +13,9 @@
 #   1. A name outside [A-Za-z0-9_-], a control character included, or one starting with `-`,
 #      is refused before any tmux call; the next name still runs.
 #   2. `tmux kill-session -t =NAME`; the terminal tab attached to it closes by itself. A
-#      session that does not exist is reported, not an error. Then it waits, up to 15 s, until
+#      session that does not exist is reported, not an error, when tmux says so (no such session,
+#      no server); any other failure of `tmux has-session` (a socket it cannot read) fails the
+#      close with tmux's words, as the session may still run. Then it waits, up to 15 s, until
 #      `tmux has-session` no longer finds it and, where /proc exists, no process works inside
 #      the worktree: the tool inside takes a moment to exit, and the audit would see it.
 #   3. `clean_worktrees.sh --apply --only=NAME --no-quiet`: the post-merge hook's audit, every
@@ -24,8 +26,10 @@
 #      merge, or this script again, removes it then.
 #   4. The branch worktree-NAME is never deleted; the line says how to delete merged branches.
 # Exit 0 when every named session is gone and every named worktree was removed or did not
-# exist; 1 otherwise, with the first reason on the last line; 2 on a usage error. A dry run
-# exits 1 only for a refused name or a removal that could not run.
+# exist; 1 otherwise, with the first reason on the last line: a nonzero exit of
+# clean_worktrees.sh is one whatever its summary says (after a removal, an outcome line its log
+# could not take); 2 on a usage error. A dry run exits 1 only for a refused name, a tmux that
+# could not answer, or a removal that could not run.
 set -u
 
 # Every line of this script is printed with its control bytes as `?` (a name is an argument).
@@ -46,6 +50,16 @@ inside() {
   done
   return 1
 }
+# has NAME: 0 the session exists, 1 tmux says it or its server does not, 2 tmux could not
+# tell (its words in $err): only the second is proof of absence.
+has() {
+  err=$(tmux has-session -t "=$1" 2>&1) && return 0
+  case $err in
+    *"can't find session"*|*"session not found"*|*"no server running"*|*"no sessions"*) return 1 ;;
+    *"error connecting to "*"(No such file or directory)"*) return 1 ;;
+  esac
+  return 2
+}
 dry=""
 [ "${1-}" = --dry-run ] && { dry=1; shift; }
 [ $# -ge 1 ] || { sed -n '6,7p' "$0"; exit 2; }
@@ -59,8 +73,10 @@ for name; do
 
   if ! command -v tmux >/dev/null 2>&1; then
     say "$name: no tmux session (tmux is not installed); nothing to end"
-  elif ! tmux has-session -t "=$name" 2>/dev/null; then
+  elif has "$name"; st=$?; [ "$st" -eq 1 ]; then
     say "$name: no tmux session named $name; nothing to end"
+  elif [ "$st" -eq 2 ]; then
+    fail "$name: tmux could not say whether session $name exists, so it may still run: $err"
   elif [ -n "$dry" ]; then
     say "$name: dry run: would end tmux session $name (tmux kill-session -t =$name) and wait up to 15 s for it; while it runs, the audit below keeps its worktree"
   elif tmux kill-session -t "=$name" 2>/dev/null; then
@@ -68,7 +84,8 @@ for name; do
     wt=""; [ -z "$top" ] || wt=$(CDPATH= cd -P -- "$top/.claude/worktrees/$name" 2>/dev/null && pwd -P) || wt=""
     i=0; on=""
     while :; do
-      if tmux has-session -t "=$name" 2>/dev/null; then w="the tmux session to end"
+      has "$name"; st=$?
+      if [ "$st" -ne 1 ]; then w="the tmux session to end"
       elif pid=$(inside "$wt"); then w="process $pid inside its worktree to exit"
       else break; fi
       case " $on " in *" $w; "*) ;; *) on="$on$w; " ;; esac
@@ -83,6 +100,7 @@ for name; do
   apply=--apply; [ -z "$dry" ] || { apply=""; say "$name: dry run: the removal would lift the quiet period for this worktree alone (--no-quiet), every other proof stays"; }
   out=$(sh "$kit/clean_worktrees.sh" $apply "--only=$name" --no-quiet 2>&1); rc=$?
   printf '%s\n' "$out" | LC_ALL=C tr '\001-\011\013-\037\177' '?'
+  kept=""
   case $nl$out in
     *"${nl}clean_worktrees: no worktree at "*)
       say "$name: no worktree at .claude/worktrees/$name; nothing to remove" ;;
@@ -97,9 +115,13 @@ for name; do
       if [ -n "$dry" ] && [ "$rc" -eq 0 ]; then
         say "$name: dry run: the audit would keep the worktree: $why"
       else
-        fail "$name: worktree kept: $why"
+        fail "$name: worktree kept: $why"; kept=1
       fi ;;
   esac
+  # A nonzero exit is a failed close whatever the summary says: a removal whose outcome line
+  # the log could not take still prints `removed 1`, and its audit record is missing.
+  [ "$rc" -eq 0 ] || [ -n "$kept" ] ||
+    fail "$name: clean_worktrees.sh exited $rc: $(printf '%s\n' "$out" | sed -n '$p')"
   if git show-ref --verify --quiet "refs/heads/worktree-$name" 2>/dev/null; then
     say "$name: branch worktree-$name is kept, never deleted here; \`git branch --merged\` lists the merged branches, \`git branch -d <name>\` deletes one"
   else
