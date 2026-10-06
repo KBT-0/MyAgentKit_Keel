@@ -58,7 +58,7 @@ consolation prize.
 **Required: the reviewing CLI itself.**
 
 `scripts/review.sh` uses the project's configured default reviewer and pinned models.
-For the Codex direction (`codex exec -s read-only …`), check:
+For the Codex direction (`codex exec -s workspace-write …`), check:
 
 ```sh
 command -v codex          # already there?

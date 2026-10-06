@@ -16,7 +16,7 @@ authentication, and when the CLI changes underneath, fixing it is their problem.
 and what happens to the output: that is yours. It is fifty lines of shell plus a document.
 Do not reimplement the plumbing's review command; CALL it and layer your protocol over it.
 
-Concretely, that is `scripts/review.sh` (collect the diff, pin read-only, archive the report
+Concretely, that is `scripts/review.sh` (collect the diff, pin the sandbox, archive the report
 with its configuration) plus `docs/REVIEW_GATE.md` (the priority order and the verdicts).
 Neither knows anything about transport.
 

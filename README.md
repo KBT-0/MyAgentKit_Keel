@@ -98,7 +98,7 @@ answered by a script. Pass `--note "..."` to leave an agenda the interview must 
 | `core/` | The universal layer: constitution, the three knowledge files (PROJECT / PHASES / STATE), architecture map, workflow, review gate, handoff template, gates, hooks |
 | `overlays/` | Optional layers, added and never assumed: `unity` for the engine (assembly layout, the batchmode test gate, and a default MCP server — CoplayDev's tool-agnostic `MCP for Unity` — with the scoping traps that cost real time to find), `claude-code` for that tool's project-local hooks and review subagent |
 | `plugin/` | The Claude Code plugin: the three `/myagentkit:*` commands. Installed once per machine, not copied per project |
-| `plugins/myagentkit/` | The Codex plugin: Claude review-and-fix and implementation-proposal skills, with a bundled read-only adapter |
+| `plugins/myagentkit/` | The Codex plugin: Claude review-and-fix and implementation-proposal skills, with a bundled review adapter |
 | `.agents/plugins/marketplace.json` | The local Codex marketplace catalog; install from the kit repository root |
 | `patterns/` | Optional reading — the reasoning behind specific hard-won designs. Not copied by default |
 | `docs/` | Long-form rationale: why each rule exists, and the failure mode it prevents |
@@ -175,8 +175,8 @@ Four things it does that a review command does not:
    the commit — so an unverifiable claim becomes a standing obligation rather than a
    sentence in a chat log.
 
-It also refuses to fail open: read-only is pinned in the wrapper rather than trusted to the
-CLI, the three scope flags are the only arguments accepted (an agent cannot talk it into a
+It also refuses to fail open: the sandbox and the reviewer's throwaway copy are pinned in the
+wrapper and its adapters rather than trusted to the CLI, the three scope flags are the only arguments accepted (an agent cannot talk it into a
 write-capable run), an empty change set exits nonzero instead of reporting a passed review,
 and a report with no verdict line is a failure rather than a success.
 

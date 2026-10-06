@@ -1,5 +1,5 @@
 ---
-description: The review GATE (not a review command) — a second model reviews the change set read-only, then YOU verify every finding instead of relaying it
+description: The review GATE (not a review command) — a second model reviews the change set in a throwaway copy, then YOU verify every finding instead of relaying it
 argument-hint: "[--uncommitted | --base <ref> | --commit <sha>] [--reviewer codex|claude]"
 disable-model-invocation: true
 allowed-tools: Read, Glob, Grep, Bash(git:*), Bash(./scripts/review.sh:*), AskUserQuestion

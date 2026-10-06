@@ -69,9 +69,11 @@ turn limit, timeout, evidence validation, and tool configuration are enforced by
 
 ## Reviewer and implementation permissions
 
-`review` and `propose` both pin `Read,Glob,Grep`, `dontAsk`, safe mode, restricted mode,
-empty MCP configuration, and no session persistence. No Bash/Edit/Write tool is offered.
-The child cannot run tests, commit, or launch another agent. Safe mode disables automatic
+`review` and `propose` both pin `dontAsk`, safe mode, restricted mode, empty MCP
+configuration, and no session persistence. `propose` offers only `Read,Glob,Grep` in the
+checkout. `review` adds Bash and runs in a throwaway copy the adapter makes and removes
+(`core/docs/REVIEW_RUNNING.md`); its Bash has no OS sandbox. Neither can commit to the
+checkout or launch another agent. Safe mode disables automatic
 customization loading; the prompt explicitly identifies the canonical project documents.
 Claude's normal CLI authentication is retained; `--bare` is intentionally not used because
 it bypasses subscription login. The machine must still authorize launching the CLI.

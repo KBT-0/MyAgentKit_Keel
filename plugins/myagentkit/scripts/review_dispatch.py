@@ -141,7 +141,7 @@ def main(argv=None):
               % (args.reviewer, chain["failure_kind"], "; " + chain["fallback_blocked"]
                  if chain.get("fallback_blocked") else ""))
         if chain["failure_kind"] == "cli_unsupported":
-            print("FAIL [review]: the installed CLI rejected a flag the read-only review requires; "
+            print("FAIL [review]: the installed CLI rejected a flag the review requires; "
                   "upgrade the CLI. The review never drops a sandbox flag to make a run start.")
         if chain["failure_kind"] == "stale_checkout":
             # Correct to fail: the reviewer reads files while it runs, so its findings may
