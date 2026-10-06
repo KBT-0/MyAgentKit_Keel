@@ -2,7 +2,12 @@
 # Open a SEPARATE Claude Code worker session in tmux and hand it a brief file.
 #
 # Usage: spawn_worker.sh NAME BRIEF_FILE [--model M] [--settings JSON_OR_FILE]
-#                        [--allowed-tools LIST] [--worktree] [--effort LEVEL]
+#                        [--allowed-tools LIST] [--worktree] [--effort LEVEL] [--batch]
+#
+# Once the worker has its brief, its session is SHOWN: show_workers.sh opens a terminal tab
+# attached to it, because a session nobody sees can wait on a dialog for hours. --batch skips
+# that, for a lead that starts several and then shows them together in one call:
+# `scripts/show_workers.sh NAME1 NAME2 ...`. A failure to show never fails the spawn.
 #
 # Why a separate session and not a sub-agent: a sub-agent's prompt cache lives 5 minutes and
 # a separate session's lives an hour, so a worker that waits on a long job re-writes its
@@ -19,9 +24,10 @@
 #   - The prompt is typed AFTER the TUI is up, never passed on the command line after a
 #     variadic flag such as --allowedTools, which would swallow it as one more value and
 #     leave the session idle at an empty input line.
-#   - The prompt is ONE typed sentence, "Read '<brief path>' and follow it.", not the brief
-#     pasted as a block: one model took a pasted brief with no typed sentence of the user's
-#     own for mere content and sat idle for 35 minutes asking for confirmation.
+#   - The prompt is ONE typed line, "Read '<brief path>' and follow it." and a second sentence
+#     telling it to write questions into its result file instead of asking in the pane, not
+#     the brief pasted as a block: one model took a pasted brief with no typed sentence of the
+#     user's own for mere content and sat idle for 35 minutes asking for confirmation.
 #   - Every value that goes into the session's shell command, and the brief path, passes
 #     through `q`: a value with an apostrophe (a --settings JSON string, a name) otherwise
 #     ends its quoting and the rest runs as shell in the new pane.
@@ -31,7 +37,9 @@
 #   - Readiness is detected from the pane text, not from `pgrep -f`, which matches its own
 #     command line.
 #   - The folder must already be trusted by Claude Code; an untrusted folder blocks the
-#     session in the trust dialog, which this script reports instead of waiting forever.
+#     session in the trust dialog, which this script reports instead of waiting forever. The
+#     dialog is recognised by watch_workers.sh --once from waiting_patterns.txt, the same
+#     definition the lead's watcher uses, and so is a session that exited during start-up.
 set -eu
 
 # Every message is printed with its control bytes as `?`: a value echoed raw (an unknown
@@ -41,7 +49,7 @@ die() { { printf 'spawn_worker: %s' "$1" | LC_ALL=C tr '\001-\037\177' '?'; echo
 # The x keeps a trailing newline that $(...) would strip.
 q() { set -- "$(printf '%sx' "$1" | sed "s/'/'\\\\''/g")"; printf "'%s'" "${1%x}"; }
 
-[ $# -ge 2 ] || { sed -n '2,8p' "$0"; exit 2; }
+[ $# -ge 2 ] || { sed -n '2,10p' "$0"; exit 2; }
 name=$1; brief=$2; shift 2
 # The name and the brief path reach tmux and the TUI: `send-keys -l` types every byte, and a
 # control byte (0x01-0x1F, 0x7F) acts as a key there: a carriage return submitted the
@@ -71,7 +79,8 @@ ctl "brief path" "$brief"
 command -v tmux >/dev/null || die "tmux is not installed"
 command -v claude >/dev/null || die "claude is not on PATH"
 
-model=""; settings=""; tools=""; worktree=""; effort=""
+model=""; settings=""; tools=""; worktree=""; effort=""; batch=""
+case $0 in */*) kit=${0%/*} ;; *) kit=. ;; esac
 while [ $# -gt 0 ]; do
   case "$1" in
     --model)         model=$2; shift 2 ;;
@@ -79,6 +88,7 @@ while [ $# -gt 0 ]; do
     --allowed-tools) tools=$2; shift 2 ;;
     --worktree)      worktree=1; shift ;;
     --effort)        effort=$2; shift 2 ;;
+    --batch)         batch=1; shift ;;
     *) die "unknown option: $1" ;;
   esac
 done
@@ -126,14 +136,24 @@ tmux new-session -d -s "$name" -c "$dir" -x 200 -y 50 "cd $(q "$dir") && exec $c
 
 # Wait for the input line: the TUI shows its prompt arrow at the start of a line once ready
 # (v2.1.285 follows the arrow with a NO-BREAK space, so the match is on the arrow alone)
-# or its mode hint in the status bar; the trust dialog prints a question instead.
+# or its mode hint in the status bar. A dialog (the trust dialog) or an exit is checked
+# FIRST, by the watcher's own rules: the trust dialog's option line also starts with the arrow.
 # Bounded: 60 seconds, then report.
 i=0
 while :; do
+  state=$(sh "$kit/watch_workers.sh" --once "$name" 2>&1 || true)
+  case ${state%%"$nl"*} in
+    *"WAITING: "*"folder-trust"*)
+      printf '%s\n' "$state" >&2
+      die "session '$name' is waiting in the trust dialog; open the folder once by hand (tmux attach -t $name)" ;;
+    *"WAITING: "*)
+      printf '%s\n' "$state" >&2
+      die "session '$name' is waiting on a person before its brief was typed (tmux attach -t $name)" ;;
+    *"GONE: "*) die "session '$name' exited before its input line showed" ;;
+    *watch_workers:*) die "cannot check session '$name': $state" ;;
+  esac
   pane=$(tmux capture-pane -p -t "$name" 2>/dev/null || true)
   case "$pane" in
-    *"trust"*"folder"*|*"Do you trust"*)
-      die "session '$name' is waiting in the trust dialog; open the folder once by hand (tmux attach -t $name)" ;;
     *"
 ❯"*|*"shift+tab to cycle"*|*"for shortcuts"*) break ;;
   esac
@@ -142,15 +162,18 @@ while :; do
   sleep 1
 done
 
-# One typed sentence naming the brief by its absolute path, quoted by the same helper so a
-# path with a space or an apostrophe still reads as one path.
-tmux send-keys -t "$name" -l "Read $(q "$brief") and follow it."
+# One typed line naming the brief by its absolute path, quoted by the same helper so a path
+# with a space or an apostrophe still reads as one path. Its second sentence keeps questions
+# out of the pane, where nobody may be looking.
+tmux send-keys -t "$name" -l "Read $(q "$brief") and follow it. Do not ask questions in this pane: write a question into your result file and go on with what does not depend on it."
 
 # Submit only once the line has landed: an Enter sent while the TUI is still receiving
 # input is swallowed and the line sits unsent at the prompt (seen on the first run of this
-# script). Fast input may show as the placeholder "[Pasted text", so both count.
+# script). Fast input may show as the placeholder "[Pasted text", so both count. The END of
+# the line is what must have landed, and the TUI wraps a long line at a blank: blanks and
+# line ends are squeezed to one space before the match.
 # Then confirm the prompt line emptied; if not, press Enter once more.
-landed() { tmux capture-pane -p -t "$name" -J | grep -qF -e "and follow it." -e "[Pasted text"; }
+landed() { tmux capture-pane -p -t "$name" -J | tr -s ' \n' '  ' | grep -qF -e "does not depend on it." -e "[Pasted text"; }
 i=0
 until landed; do
   i=$((i + 1)); [ "$i" -lt 30 ] || die "the instruction did not appear in session '$name' (tmux attach -t $name)"
@@ -167,3 +190,9 @@ printf '%s\n' "spawn_worker: '$name' started with $brief (tmux attach -t $name t
 # idle for 40 minutes until killed by hand, and the idle notice also fires on every park on a
 # background job. The result file is the end signal, and closing is the lead's job.
 printf '%s\n' "spawn_worker: after reading the result file, close it: tmux kill-session -t $name"
+if [ -n "$batch" ]; then
+  printf '%s\n' "spawn_worker: --batch: not shown. Once every worker of this batch is started, show them together in one window: scripts/show_workers.sh NAME1 NAME2 ..."
+else
+  sh "$kit/show_workers.sh" "$name" || printf '%s\n' "spawn_worker: '$name' was not shown and runs anyway; attach by hand: tmux attach -t $name"
+fi
+printf '%s\n' "spawn_worker: watch for a dialog or an exit, as a background command: scripts/watch_workers.sh NAME..."

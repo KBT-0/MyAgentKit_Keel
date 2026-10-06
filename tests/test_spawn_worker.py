@@ -3,6 +3,8 @@ build its worktree from the lead's current commit.
 
 No live `claude` and no tmux server: both are stubs on PATH. The tmux stub runs the session
 command with `sh -c`, the way tmux does, so a value that escapes its quoting runs here too.
+No real terminal either: the launcher (KIT_WT), `osascript` and `uname` are stubs, and the
+environment says WSL, so showing a session goes to the launcher stub, which marks it attached.
 """
 import json
 import os
@@ -13,6 +15,9 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / 'overlays/claude-code/files/scripts/spawn_worker.sh'
+PANES = ROOT / 'tests/fixtures/panes'
+INSTRUCTION = ("Read %s and follow it. Do not ask questions in this pane: write a question into your "
+               "result file and go on with what does not depend on it.")
 
 TMUX = r'''#!/usr/bin/env python3
 import os, subprocess, sys
@@ -31,12 +36,23 @@ def append(text):
     with open(typed, 'a') as f:
         f.write(text)
 cmd = args[0]
+started = os.path.join(state, 'started')
+target = args[args.index('-t') + 1].lstrip('=').rstrip(':') if '-t' in args else ''
 if cmd == 'has-session':
-    sys.exit(1)
+    sys.exit(0 if target in read(started).split('\n') and 'SPAWN_GONE' not in os.environ else 1)
+if cmd == 'list-clients':
+    if os.path.exists(os.path.join(state, 'attached')):
+        print('/dev/pts/9: w [120x30 xterm-256color] (attached,UTF-8)')
+    sys.exit(0)
 if cmd == 'new-session':
+    with open(started, 'a') as f:
+        f.write(args[args.index('-s') + 1] + '\n')
     sys.exit(subprocess.run(['sh', '-c', args[-1]]).returncode)
 if cmd == 'capture-pane':
-    print('\n❯ ' + read(typed))
+    if 'SPAWN_PANE' in os.environ:
+        sys.stdout.write(read(os.environ['SPAWN_PANE']))
+    else:
+        print('\n❯ ' + read(typed))
 elif cmd == 'load-buffer':
     with open(os.path.join(state, 'buffer'), 'w') as f:
         f.write(read(args[-1]))
@@ -68,6 +84,23 @@ with open(os.path.join(os.environ['SPAWN_STATE'], 'claude.json'), 'w') as f:
 '''
 
 
+# The terminal launcher, named by KIT_WT and never *.exe: under WSL any file of that name is
+# handed to Windows. It logs what it was asked to open; SPAWN_WT=fail is WSL interop down.
+WT = r'''#!/usr/bin/env python3
+import os, sys
+state = os.environ['SPAWN_STATE']
+with open(os.path.join(state, 'wt.log'), 'a') as log:
+    log.write(repr(sys.argv[1:]) + '\n')
+if os.environ.get('SPAWN_WT') == 'fail':
+    sys.stderr.write('wt.exe: cannot execute binary file: Exec format error\n')
+    sys.exit(126)
+open(os.path.join(state, 'attached'), 'w').close()
+'''
+
+# Steps of the spawn are instant; show_workers.sh's 5-second launch bound is a real wait.
+SLEEP = '#!/bin/sh\n[ "$1" != 5 ] || exec /bin/sleep 5\nexit 0\n'
+
+
 def shq(value):
     return "'" + value.replace("'", "'\\''") + "'"
 
@@ -83,7 +116,8 @@ class SpawnWorkerTests(unittest.TestCase):
         self.state, self.bin, self.cwd = self.tmp / 'state', self.tmp / 'bin', self.tmp / 'via' / "lead's dir"
         for folder in (self.state, self.bin, self.cwd):
             folder.mkdir()
-        for name, body in (('tmux', TMUX), ('claude', CLAUDE), ('sleep', '#!/bin/sh\nexit 0\n')):
+        for name, body in (('tmux', TMUX), ('claude', CLAUDE), ('sleep', SLEEP), ('wt-stub', WT),
+                           ('osascript', '#!/bin/sh\nexit 1\n'), ('uname', '#!/bin/sh\necho Linux\n')):
             (self.bin / name).write_text(body)
             (self.bin / name).chmod(0o755)
         self.brief = self.cwd / "it's the brief.md"
@@ -99,10 +133,15 @@ class SpawnWorkerTests(unittest.TestCase):
 
     def spawn(self, *args, **extra):
         # PWD as a lead's shell exports it: with it, a plain `pwd` printed the symlinked spelling.
-        env = dict(os.environ, PATH=f'{self.bin}{os.pathsep}{os.environ["PATH"]}',
-                   SPAWN_STATE=str(self.state), PWD=str(self.cwd), **extra)
+        env = dict(self.base_env(), PWD=str(self.cwd), **extra)
         return subprocess.run(['sh', str(SCRIPT), *args], cwd=self.cwd, env=env,
                               capture_output=True, text=True, timeout=60)
+
+    def base_env(self):
+        # Never the host's terminal: the WSL name is the test's own, so wt.exe is the stub.
+        env = {k: v for k, v in os.environ.items() if k not in ('TERM_PROGRAM', 'TMUX', 'TMUX_PANE')}
+        return dict(env, PATH=f'{self.bin}{os.pathsep}{os.environ["PATH"]}', SPAWN_STATE=str(self.state),
+                    WSL_DISTRO_NAME='Test-1', KIT_WT=str(self.bin / 'wt-stub'))
 
     def launched(self):
         path = self.state / 'claude.json'
@@ -133,8 +172,9 @@ class SpawnWorkerTests(unittest.TestCase):
     def test_brief_is_delivered_by_path_as_one_typed_instruction(self):
         result = self.spawn('w1', str(self.brief))
         self.assertEqual(result.returncode, 0, result.stderr)
+        # Two sentences, ONE submitted line: the second keeps questions out of the pane.
         submitted = (self.state / 'submitted').read_text().splitlines()
-        self.assertEqual(submitted[0], f'Read {shq(self.physical(self.brief))} and follow it.')
+        self.assertEqual(submitted, [INSTRUCTION % shq(self.physical(self.brief))])
         self.assertNotIn('Line one of the brief', (self.state / 'submitted').read_text())
 
     def assert_refused(self, brief):
@@ -168,7 +208,7 @@ class SpawnWorkerTests(unittest.TestCase):
         result = self.spawn('w4', 'briefs/task.md', CDPATH=str(self.tmp / 'elsewhere'))
         self.assertEqual(result.returncode, 0, result.stderr)
         submitted = (self.state / 'submitted').read_text().splitlines()
-        self.assertEqual(submitted[0], 'Read %s and follow it.' % shq(self.physical(self.cwd / 'briefs/task.md')))
+        self.assertEqual(submitted[0], INSTRUCTION % shq(self.physical(self.cwd / 'briefs/task.md')))
 
     def test_a_brief_name_ending_in_a_newline_is_refused(self):
         # $(basename ...) stripped the trailing newline: "task.md<newline>" was checked and
@@ -205,8 +245,7 @@ class SpawnWorkerTests(unittest.TestCase):
         cwd = self.tmp / 'lead\rdir'
         cwd.mkdir()
         (cwd / 'task.md').write_text('a brief\n')
-        env = dict(os.environ, PATH=f'{self.bin}{os.pathsep}{os.environ["PATH"]}', SPAWN_STATE=str(self.state))
-        result = subprocess.run(['sh', str(SCRIPT), 'w9', 'task.md'], cwd=cwd, env=env,
+        result = subprocess.run(['sh', str(SCRIPT), 'w9', 'task.md'], cwd=cwd, env=self.base_env(),
                                 capture_output=True, text=True, timeout=60)
         self.assertNotEqual(result.returncode, 0, result.stderr)
         self.assertIn('control character', result.stderr)
@@ -233,9 +272,8 @@ class SpawnWorkerTests(unittest.TestCase):
         # message put an ESC sequence on the lead's terminal. bash with xpg_echo behaves so.
         brief = self.cwd / 'task\\033[2J.md'
         brief.write_text('a brief\n')
-        env = dict(os.environ, PATH=f'{self.bin}{os.pathsep}{os.environ["PATH"]}', SPAWN_STATE=str(self.state))
         result = subprocess.run(['bash', '-O', 'xpg_echo', str(SCRIPT), 'w\\033[2J', str(brief)], cwd=self.cwd,
-                                env=env, capture_output=True, text=True, timeout=60)
+                                env=self.base_env(), capture_output=True, text=True, timeout=60)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(self.physical(brief), result.stdout)
         self.assertNotIn('\x1b', result.stdout + result.stderr)
@@ -305,12 +343,48 @@ class SpawnWorkerTests(unittest.TestCase):
         self.assertEqual(Path(launched['cwd']).resolve(), tree.resolve())
         self.assertEqual(git('-C', str(tree), 'rev-parse', 'HEAD'), head)
         self.assertEqual(git('-C', str(tree), 'branch', '--show-current'), 'worktree-w3')
-        # A second spawn under the same name would reuse a stale branch: refused by name.
+        # A second spawn under the same name, once the session is closed, would reuse a stale
+        # branch: refused by name.
         (self.state / 'tmux.log').unlink()
+        (self.state / 'started').unlink()
         again = self.spawn('w3', str(self.brief), '--worktree')
         self.assertNotEqual(again.returncode, 0)
         self.assertIn('worktree-w3', again.stderr)
         self.assertNotIn('new-session', self.tmux_log())
+
+    def test_a_started_worker_is_shown_unless_batch(self):
+        # A session nobody sees can wait on a dialog for hours: it opens in a terminal tab
+        # by default, after its brief landed; --batch leaves that to one show of the batch.
+        result = self.spawn('w1', str(self.brief))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((self.state / 'submitted').exists())
+        self.assertIn("'new-tab'", (self.state / 'wt.log').read_text())
+        self.assertIn("'=w1'", (self.state / 'wt.log').read_text())
+        self.assertIn('show_workers: shown: w1', result.stdout)
+        (self.state / 'wt.log').unlink()
+        result = self.spawn('w2', str(self.brief), '--batch')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.state / 'wt.log').exists(), 'a --batch worker was shown on its own')
+        self.assertIn('show_workers.sh NAME1 NAME2', result.stdout)
+
+    def test_a_failing_show_does_not_fail_the_spawn(self):
+        # The worker is running: a terminal that cannot open (WSL interop down) costs a line.
+        result = self.spawn('w1', str(self.brief), SPAWN_WT='fail')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((self.state / 'submitted').exists())
+        self.assertIn('attach by hand: tmux attach -t w1', result.stdout)
+
+    def test_a_dialog_or_an_exit_at_start_up_stops_the_spawn_by_the_shared_rules(self):
+        # The trust dialog is recognised by the watcher's rules, from a real capture; its
+        # option line starts with the same arrow as the input line, so it is checked first.
+        result = self.spawn('w1', str(self.brief), SPAWN_PANE=str(PANES / 'trust.txt'))
+        self.assertNotEqual(result.returncode, 0, result.stderr)
+        self.assertIn('trust dialog', result.stderr)
+        self.assertNotIn("'-l'", self.tmux_log())
+        # A session that exited during start-up is reported at once, not after 60 seconds.
+        result = self.spawn('w2', str(self.brief), SPAWN_GONE='1')
+        self.assertNotEqual(result.returncode, 0, result.stderr)
+        self.assertIn('exited before its input line showed', result.stderr)
 
 
 if __name__ == '__main__':

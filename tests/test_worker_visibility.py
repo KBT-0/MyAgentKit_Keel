@@ -1,4 +1,5 @@
-"""watch_workers.sh must return when a session is gone or waits on a person, and only then.
+"""show_workers.sh must open every named session in one window or say how to attach by hand,
+and watch_workers.sh must return when a session is gone or waits on a person, and only then.
 
 No real terminal, no tmux server, no `claude`: tmux, the Windows Terminal launcher (KIT_WT,
 never a file named *.exe: under WSL such a file is handed to Windows), osascript and uname
@@ -99,6 +100,137 @@ class Base(unittest.TestCase):
     def log(self, name):
         path = self.state / (name + '.log')
         return path.read_text() if path.exists() else ''
+
+
+class ShowTests(Base):
+    WSL = dict(WSL_DISTRO_NAME='Test-1', VIS_SESSIONS='a b-2 c_3')
+
+    def wt_line(self, window, *names):
+        args = [str(self.bin / 'wt-stub'), '-w', window]
+        for i, n in enumerate(names):
+            args += [';'] if i else []
+            args += ['new-tab', '--title', n, 'wsl.exe', '-d', 'Test-1', '--exec', str(self.bin / 'tmux'),
+                     'attach', '-t', '=' + n]
+        return 'cd %s && %s' % (shq(str(self.bin)), ' '.join(map(shq, args)))
+
+    def osa_line(self, app, *names):
+        cmd = lambda n: '"exec %s attach -t %s"' % (shq(str(self.bin / 'tmux')), shq('=' + n))
+        if app == 'iTerm':
+            lines = ['tell application "iTerm"', 'activate', 'set w to (create window with default profile)']
+            for i, n in enumerate(names):
+                lines += ['tell w to create tab with default profile'] if i else []
+                lines += ['tell current session of w to write text ' + cmd(n)]
+        else:
+            lines = ['tell application "Terminal"', 'activate'] + ['do script ' + cmd(n) for n in names]
+        args = ['osascript']
+        for line in lines + ['end tell']:
+            args += ['-e', line]
+        return "cd '/' && " + ' '.join(map(shq, args))
+
+    def test_wsl_print_opens_one_window_with_a_tab_per_session(self):
+        for names in (('a',), ('a', 'b-2', 'c_3')):
+            with self.subTest(names=names):
+                result = self.run_script(SHOW, '--print', *names, **self.WSL)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, self.wt_line('kit-my_proj_', *names) + '\n')
+                self.assertEqual(self.log('wt-stub'), '', '--print ran the launcher')
+
+    def test_the_window_is_named_after_the_project_from_anywhere_in_it(self):
+        # One fixed name per project, so a later call adds its tabs to the same window: from a
+        # subfolder and from a worktree it is still the main checkout's folder.
+        git = lambda *a: subprocess.run(['git', *a], cwd=self.cwd, check=True, capture_output=True)
+        git('init', '-q')
+        git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'a')
+        git('worktree', 'add', '-q', '.claude/worktrees/w', '-b', 'worktree-w')
+        (self.cwd / 'sub').mkdir()
+        for where in ('.', 'sub', '.claude/worktrees/w'):
+            with self.subTest(where=where):
+                env = dict(os.environ, PATH=os.pathsep.join([str(self.bin), os.environ['PATH']]),
+                           VIS_STATE=str(self.state), KIT_WT=str(self.bin / 'wt-stub'), **self.WSL)
+                result = subprocess.run(['sh', str(SHOW), '--print', 'a'], cwd=self.cwd / where, env=env,
+                                        capture_output=True, text=True, timeout=60)
+                self.assertIn("'-w' 'kit-my_proj_'", result.stdout, result.stderr)
+
+    def test_macos_print_uses_iterm_tabs_or_terminal_windows(self):
+        for app, term in (('iTerm', 'iTerm.app'), ('Terminal', 'Apple_Terminal')):
+            for names in (('a',), ('a', 'b-2', 'c_3')):
+                with self.subTest(app=app, names=names):
+                    result = self.run_script(SHOW, '--print', *names, VIS_UNAME='Darwin', TERM_PROGRAM=term,
+                                             VIS_SESSIONS='a b-2 c_3')
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(result.stdout.splitlines()[-1], self.osa_line(app, *names))
+                    self.assertEqual(self.log('osascript'), '')
+        self.assertIn('one window per session', result.stdout)
+
+    def test_elsewhere_it_opens_nothing_and_prints_the_attach_lines(self):
+        for extra in ({}, {'--print': 1}):
+            with self.subTest(print=bool(extra)):
+                result = self.run_script(SHOW, *extra, 'a', 'b-2', VIS_SESSIONS='a b-2')
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn('attach by hand: tmux attach -t a\n', result.stdout)
+                self.assertIn('attach by hand: tmux attach -t b-2\n', result.stdout)
+                self.assertEqual(self.log('wt-stub') + self.log('osascript'), '')
+
+    def test_a_missing_session_is_refused_by_name_and_nothing_opens(self):
+        result = self.run_script(SHOW, 'a', 'nosuch', **self.WSL)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('nosuch', result.stderr)
+        self.assertEqual(self.log('wt-stub'), '')
+
+    def test_an_odd_session_name_is_refused_before_anything(self):
+        # `;` would start a second Windows Terminal subcommand; quotes end an AppleScript string.
+        for name in ('a;b', "a'b", 'a"b', 'a b', 'a.b', '', 'a\x1b[2J'):
+            with self.subTest(name=name):
+                result = self.run_script(SHOW, name, **self.WSL)
+                self.assertEqual(result.returncode, 1, result.stdout)
+                self.assertIn('refused session name', result.stderr)
+                self.assertNotIn('\x1b', result.stderr)
+                self.assertEqual(self.log('wt-stub') + self.log('tmux'), '')
+
+    def test_an_attached_session_is_skipped_so_repeating_opens_no_second_tab(self):
+        result = self.run_script(SHOW, 'a', 'b-2', VIS_ATTACHED='a', **self.WSL)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('a already has a terminal attached', result.stdout)
+        self.assertNotIn("'=a'", self.log('wt-stub'))
+        self.assertIn("'=b-2'", self.log('wt-stub'))
+        self.assertIn('shown: b-2', result.stdout)
+        launches = self.log('wt-stub')
+        result = self.run_script(SHOW, 'a', 'b-2', VIS_ATTACHED='a', **self.WSL)
+        self.assertEqual(self.log('wt-stub'), launches, 'a second call opened another tab')
+        self.assertIn('b-2 already has a terminal attached', result.stdout)
+
+    def test_a_session_counts_as_shown_only_once_a_client_attached(self):
+        result = self.run_script(SHOW, 'a', 'b-2', 'c_3', **self.WSL)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.log('wt-stub').count('\n'), 1, 'one launch for the whole batch')
+        for n in ('a', 'b-2', 'c_3'):
+            self.assertIn('shown: %s\n' % n, result.stdout)
+        # The launcher returned but only the first tab attached: the others get their line.
+        for f in self.state.glob('attached-*'):
+            f.unlink()
+        result = self.run_script(SHOW, 'a', 'b-2', **self.WSL, VIS_MODE='partial')
+        self.assertIn('shown: a\n', result.stdout)
+        self.assertIn('no terminal attached to b-2 within 8 s; attach by hand: tmux attach -t b-2', result.stdout)
+
+    def test_macos_launch_is_proved_the_same_way(self):
+        result = self.run_script(SHOW, 'a', VIS_UNAME='Darwin', TERM_PROGRAM='iTerm.app', VIS_SESSIONS='a')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('shown: a', result.stdout)
+        self.assertIn("'tell application \"iTerm\"'", self.log('osascript'))
+
+    def test_wsl_interop_down_is_one_line_and_the_attach_lines(self):
+        result = self.run_script(SHOW, 'a', 'b-2', VIS_MODE='enoexec', **self.WSL)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('WSL interop is down', result.stdout)
+        self.assertIn('attach by hand: tmux attach -t b-2', result.stdout)
+
+    def test_a_launcher_that_hangs_is_bounded(self):
+        start = time.monotonic()
+        result = self.run_script(SHOW, 'a', VIS_MODE='hang', **self.WSL)
+        self.assertLess(time.monotonic() - start, 20)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('did not return within 5 s', result.stdout)
+        self.assertIn('attach by hand: tmux attach -t a', result.stdout)
 
 
 class WatchTests(Base):
