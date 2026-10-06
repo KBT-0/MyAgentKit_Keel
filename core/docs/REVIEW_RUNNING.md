@@ -10,7 +10,7 @@ nothing in this file is part of its prompt.
 ./scripts/review.sh [--uncommitted | --base <ref> | --commit <sha>] [--reviewer codex|claude] [--fallback]
 ```
 
-It collects the change set with git, hands it to a read-only REVIEWER carrying the
+It collects the change set with git, hands it to a REVIEWER in a throwaway copy, carrying the
 priority order of `docs/REVIEW_GATE.md`, archives the report as evidence under
 `docs/reviews/<UTC-timestamp>-<random>-<reviewer>-review.md` and prints it. Omitting
 `--reviewer` uses the one configured during setup at the top of `scripts/review.sh`.
@@ -48,22 +48,26 @@ evidence says which of the two it is instead of implying a check that did not ha
 
 The script accepts no flags beyond those above: the reviewer is matched against a closed
 list and arbitrary user flags are not passed through to the underlying CLI. Both adapters
-require Python 3.10+ and do not resume an author session. Claude restricts source tools to
-Read/Glob/Grep and disables customizations and MCP. Codex requests its read-only sandbox
-and never-approve policy; it does not implement Claude's tool allowlist or customization
+require Python 3.10+ and do not resume an author session. Claude gets Read, Glob, Grep and
+Bash, with Bash allowed by name (`dontAsk` refuses unapproved tools), and disables
+customizations and MCP. Codex requests its `workspace-write` sandbox with the network off and
+the never-approve policy; it does not implement Claude's tool allowlist or customization
 isolation. A shared evidence format does not imply identical permission mechanisms.
 
-**The bridged reviewers are reason-only until the sandbox is widened, an owner decision.**
-The prompt asks for runs in a throwaway copy only if the reviewer's tools can execute
-(`docs/REVIEW_GATE.md`, "The reviewer executes, in a throwaway copy"). Claude's review tools are Read, Glob and Grep, so it runs nothing; adding
-Bash to `--tools` with an allow rule (`dontAsk` refuses unapproved tools) would change that.
-Codex runs commands in its `-s read-only` sandbox, but nothing can write, so `mktemp -d`
-fails and no copy or suite can run. `-s workspace-write` allows writes to the workspace and
-the temporary directory and still refuses network access. A write into the reviewed checkout
-then fails the review as `stale_checkout`. Widening either adapter is an owner decision.
-Until then, these reviewers mark findings REASONED, name the command that would reproduce
-each, and list the runs as NOT RUN with that reason. The Claude Code overlay's
-`diff-reviewer` sub-agent has Bash and can execute.
+**The bridged reviewers execute in a throwaway copy made by the adapter `scripts/review.sh`
+starts** (`docs/REVIEW_GATE.md`, "The reviewer executes, in a throwaway copy"). Each attempt
+gets its own copy: `git archive` of HEAD in a new temporary directory, with the uncommitted
+part of the diff applied. The reviewer runs with the copy as its working directory, and the
+prompt tells it to run anything there. The copy is removed when the attempt ends, on a cancel
+too, and a `--fallback` attempt gets a fresh one. The reviewer is not told the repository's
+path: the prompt names relative paths only, and its environment sets `PWD` to the copy and
+drops `OLDPWD`, `REVIEW_REPO_ROOT` and every `GIT_*` variable. A reviewer that finds the
+repository anyway can still read it. Codex's sandbox blocks its writes outside the copy and the
+temporary directories; Claude's Bash has no OS sandbox and can write there. A write that
+reaches the checkout fails the review as `stale_checkout`. The evidence's sandbox field
+records `workspace-write (throwaway copy)` for Codex and `throwaway copy, no OS sandbox` for
+Claude. A `propose` run stays read-only in the checkout. The threat model is in
+`scripts/claude_bridge.py`, `throwaway_copy`.
 Reference reviews require matching clean checkout context. Both share scope collection and
 checkout fingerprint validation, so a change while the reviewer runs invalidates its
 result, and evidence is published exclusively before usage can say completed.
@@ -167,7 +171,7 @@ operational failure: quota, authentication, timeout, missing CLI, CLI error, con
 exhaustion, turn/budget exhaustion, or output limit. The substitute's archived evidence
 then opens with a `FALLBACK REVIEWER:` line naming the requested reviewer and its failure,
 its usage record carries `review_fallback_from`, and the run prints a `FALLBACK [review]`
-line. A CLI that rejects a flag the read-only run requires (`cli_unsupported`, typically an
+line. A CLI that rejects a flag the review requires (`cli_unsupported`, typically an
 outdated CLI) fails every run the same way; it is a setup fault, never routed to the other
 reviewer even with `--fallback`, and the fix is upgrading the CLI, not dropping the flag. Both model pins remain owned
 by project setup (`REVIEW_CLAUDE_MODEL` / `REVIEW_CODEX_MODEL` override them). An absent or

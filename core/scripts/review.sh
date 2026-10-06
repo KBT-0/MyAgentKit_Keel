@@ -1,9 +1,9 @@
 #!/usr/bin/env sh
 # {{PROJECT_NAME}} cross-model review wrapper.
 #
-# Runs a SECOND model over the current change set in a read-only sandbox, archives the raw
-# output under docs/reviews/ together with the configuration that produced it, and prints
-# it. The gate itself is docs/REVIEW_GATE.md; this script only collects the evidence.
+# Runs a SECOND model over the current change set in a throwaway copy of the checkout, archives
+# the raw output under docs/reviews/ together with the configuration that produced it, and
+# prints it. The gate itself is docs/REVIEW_GATE.md; this script only collects the evidence.
 #
 # Usage: review.sh [--uncommitted | --base <ref> | --commit <sha>] [--reviewer codex|claude]
 #                  [--fallback]
@@ -20,10 +20,25 @@
 # particular vendor holds a particular role. Both directions run through this one script and
 # publish the SAME evidence format, so records stay comparable when the roles swap.
 #
-# Read-only is enforced HERE, not assumed of the CLI: the scope forms above, --reviewer and
-# --fallback are the ONLY accepted arguments and the sandbox is pinned. There is deliberately no
-# pass-through for further flags — an agent must not be able to talk this script into a
-# write-capable run. "Please be careful" is not a guarantee when the caller is a model.
+# THE REVIEWER EXECUTES, NEVER IN THIS REPOSITORY. The adapter this script starts gives each
+# reviewer attempt its own throwaway copy (`git archive` of HEAD plus the uncommitted diff) as
+# its working directory, tells it to run anything there, and removes the copy when the attempt
+# ends, on a cancel too. The copy is made in the adapter, not here: this script `exec`s the
+# adapter, whose signal handling owns a cancel, and the adapters are also called directly.
+# Threat model, in short (in full: claude_bridge.py, throwaway_copy):
+#   - Defended: what the reviewer runs in its working directory changes only the copy.
+#   - Defended: the repository's path is not in the prompt or the reviewer's environment.
+#   - Detected: a write that reaches the repository anyway fails the review (stale_checkout).
+#   - ACCEPTED LIMIT: a reviewer that finds the repository by its absolute path can read it,
+#     and Claude's Bash can write to it. Codex's workspace-write sandbox blocks writes outside
+#     the copy and the temporary directories and keeps the network off; Claude has no OS
+#     sandbox here and is only asked to stay off the network.
+#
+# The sandbox is pinned HERE and in the adapters, not assumed of the CLI: the scope forms
+# above, --reviewer and --fallback are the ONLY accepted arguments. There is deliberately no
+# pass-through for further flags — an agent must not be able to talk this script into a run
+# outside the copy or with the sandbox off. "Please be careful" is not a guarantee when the
+# caller is a model.
 #
 # The result is INPUT to a review decision the CALLING agent owns, never a verdict to relay
 # verbatim (docs/REVIEW_RUNNING.md).

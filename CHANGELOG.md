@@ -284,10 +284,13 @@ in `RESEARCH_LOG.md` (2026-10-03). Most of the files below are project-owned, so
   one line per unit with its seconds (`--timing` for a table). About eight minutes down to
   under two on a twenty-CPU host. The kit check reads bytecode only from a private folder
   (a stale `.pyc` of the same size and second was read even under `-B`), the bridged review
-  prompt asks for runs only where the reviewer's tools can execute (in a `git archive`
-  copy; the bridged reviewers stay reason-only until the sandbox is widened), a `Done:` id
+  prompt asks the reviewer to run the suite and reproductions, a `Done:` id
   matches the state files in any case, and the kit check prints a `NOT RUN:` line for each
   test that could not run on that host.
+- **The bridged reviewers execute.** Each review attempt runs in its own throwaway
+  `git archive` copy of HEAD with the uncommitted diff applied, made and removed by the
+  adapter, with Codex in `-s workspace-write` and Claude given Bash, and the evidence's
+  sandbox field says so (`core/docs/REVIEW_RUNNING.md`).
 - **Rules (issues #26, #27, #28, #31).** A web request carries no personal data
   (`docs/WORKFLOW.md` "Web requests carry no personal data", HANDOFF brief item 3,
   `docs/GOTCHAS.md`). A sub-agent returns its report as its final message; only a spawned

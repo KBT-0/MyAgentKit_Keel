@@ -136,9 +136,14 @@ def _supervise(command, prompt, repo, timeout, started, guard, prior=None):
                     # after that met the guard, or is pending here and raised on unblock.
                     if prior:
                         raise KeyboardInterrupt
+                    # PWD names the working directory, never the caller's: a reviewer in a
+                    # throwaway copy is not told the repository's path (claude_bridge.
+                    # throwaway_copy). A GIT_DIR from a hook would send its git to the repository.
+                    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")
+                           and k not in ("OLDPWD", "REVIEW_REPO_ROOT")}
                     child = subprocess.Popen(command, cwd=repo, stdin=inp, stdout=subprocess.PIPE,
                                              stderr=subprocess.PIPE, start_new_session=True,
-                                             env=dict(os.environ, MYAGENTKIT_DELEGATION_DEPTH="1"),
+                                             env=dict(env, PWD=str(repo), MYAGENTKIT_DELEGATION_DEPTH="1"),
                                              preexec_fn=lambda: signal.pthread_sigmask(signal.SIG_SETMASK, mask))
                 finally:
                     signal.pthread_sigmask(signal.SIG_SETMASK, mask)

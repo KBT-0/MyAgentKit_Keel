@@ -9,7 +9,7 @@
   "interface": {
     "displayName": "MyAgentKit",
     "shortDescription": "Claude review and delegation from Codex.",
-    "longDescription": "Run fresh read-only Claude sessions, archive structured evidence, and let Codex verify findings and implement scoped fixes.",
+    "longDescription": "Run fresh Claude sessions (a review executes in a throwaway copy, a proposal is read-only), archive structured evidence, and let Codex verify findings and implement scoped fixes.",
     "developerName": "Kemal Berhan TAN",
     "category": "Productivity",
     "capabilities": [],

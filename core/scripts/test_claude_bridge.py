@@ -23,7 +23,7 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'MYAGENTKIT_TASK_ID', 'MYAGENTKIT_R
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 90, 'test_agent_usage': 19, 'test_codex_quota': 5}
+SUITE_MINIMUMS = {'test_claude_bridge': 91, 'test_agent_usage': 19, 'test_codex_quota': 5}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -32,7 +32,10 @@ spec.loader.exec_module(bridge)
 FIXTURE = '''#!/usr/bin/env python3
 import json, os, pathlib, sys, time
 args = sys.argv[1:]
-assert args[args.index('--tools') + 1] == 'Read,Glob,Grep'
+# A review executes in the throwaway copy; a proposal stays read-only.
+review = 'verdict' in args[args.index('--json-schema') + 1]
+assert args[args.index('--tools') + 1] == ('Read,Glob,Grep,Bash' if review else 'Read,Glob,Grep')
+assert (args[args.index('--allowed-tools') + 1] == 'Bash') if review else '--allowed-tools' not in args
 assert args[args.index('--permission-mode') + 1] == 'dontAsk'
 assert '--safe-mode' in args and '--restricted' in args
 assert '--strict-mcp-config' in args and '--no-session-persistence' in args
@@ -42,6 +45,14 @@ assert os.environ['MYAGENTKIT_DELEGATION_DEPTH'] == '1'
 prompt = sys.stdin.read()
 if os.environ.get('PROMPT_LOG'): pathlib.Path(os.environ['PROMPT_LOG']).write_text(prompt)
 case = os.environ.get('FIXTURE_CASE', 'accept')
+# The real repository, reached by its absolute path: what a reviewer escaping its copy does.
+repo = pathlib.Path(os.environ.get('FIXTURE_REPO', '.'))
+if os.environ.get('CWD_LOG'):
+    pathlib.Path('reviewer-wrote.txt').write_text('written by the reviewer')
+    pathlib.Path(os.environ['CWD_LOG']).write_text(json.dumps(
+        {'cwd': os.getcwd(), 'file': pathlib.Path('file.py').read_text(),
+         'new': pathlib.Path('new file.txt').read_text() if pathlib.Path('new file.txt').exists() else None,
+         'leaks': sorted(k for k, v in os.environ.items() if k != 'FIXTURE_REPO' and str(repo) in v)}))
 model = args[args.index('--model') + 1]
 if case == 'unknown_flag': sys.stderr.write("error: unknown option '--restricted'\\n"); sys.exit(1)
 if case == 'no_budget': assert '--max-budget-usd' not in args
@@ -64,11 +75,11 @@ if case == 'error': result['is_error'] = True
 # A valid review in an envelope that also names an API error status on its final result.
 if case.startswith('api_'): result['api_error_status'] = int(case[4:])
 if case == 'exit': print(json.dumps(result)); sys.exit(9)
-if case == 'mutation': pathlib.Path('file.py').write_text('changed during review')
+if case == 'mutation': (repo / 'file.py').write_text('changed during review')
 if case == 'kit_docs': assert 'core/docs/ARCHITECTURE.md' in prompt
 if case == 'archive_failure':
-    pathlib.Path('docs/reviews').rmdir()
-    pathlib.Path('docs/reviews').write_text('blocked archive')
+    (repo / 'docs/reviews').rmdir()
+    (repo / 'docs/reviews').write_text('blocked archive')
 if case == 'timeout': time.sleep(20)
 if case == 'partial_timeout': print(json.dumps(result), flush=True); time.sleep(20)
 if case == 'quota':
@@ -78,13 +89,13 @@ if case in ('auth', 'context'):
     result.update(is_error=True, result='authentication failed' if case == 'auth' else 'context exhausted')
     print(json.dumps(result)); sys.exit(1)
 if case == 'quota_mutation':
-    pathlib.Path('file.py').write_text('changed while failing')
+    (repo / 'file.py').write_text('changed while failing')
     result.update(is_error=True, api_error_status=429)
     print(json.dumps(result)); sys.exit(1)
 if case == 'chain_failure':
     import shutil
-    shutil.rmtree('.myagentkit/usage/chains')
-    pathlib.Path('.myagentkit/usage/chains').write_text('blocked chain')
+    shutil.rmtree(repo / '.myagentkit/usage/chains')
+    (repo / '.myagentkit/usage/chains').write_text('blocked chain')
     result.update(is_error=True, api_error_status=429)
     print(json.dumps(result)); sys.exit(1)
 if case == 'proposal':
@@ -97,8 +108,9 @@ print(json.dumps(result))
 '''
 
 HANGING_CLI = '''#!/usr/bin/env python3
-import os, subprocess, sys, time
+import os, pathlib, subprocess, sys, time
 sys.stdin.read()
+if os.environ.get('CWD_LOG'): pathlib.Path(os.environ['CWD_LOG']).write_text(os.getcwd())
 alive = os.open(os.environ['ALIVE_FIFO'], os.O_WRONLY)
 subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'], pass_fds=(alive,))
 os.write(alive, b'started\\n')
@@ -222,6 +234,7 @@ class BridgeTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.repo = self.root / "project"
         self.repo.mkdir()
+        os.environ['FIXTURE_REPO'] = str(self.repo)
         self.fixture = self.root / "claude"
         self.fixture.write_text(FIXTURE)
         self.fixture.chmod(0o755)
@@ -1455,7 +1468,8 @@ class BridgeTests(unittest.TestCase):
                 self.assertTrue(result["evidence"].endswith("-claude-review.md"), result)
                 record = header_of(result["evidence"])
                 self.assertEqual(record["status"], "completed")
-                self.assertIn("Read,Glob,Grep", record["sandbox"])
+                self.assertIn("throwaway copy", record["sandbox"])
+                self.assertIn("Read,Glob,Grep,Bash", record["sandbox"])
                 self.assertEqual(len(record["diff_sha256"]), 64)
                 self.assertEqual(verdicts_of(result["evidence"]), ["VERDICT: " + verdict])
 
@@ -1628,7 +1642,7 @@ class BridgeTests(unittest.TestCase):
                 self.repo = repo = self.root / 'repos' / (adapter + '-' + case)
                 shutil.copytree(pristine, repo, symlinks=True)
                 if adapter == 'dispatch':
-                    run, chain = self.dispatch_result(FIXTURE_CASE=case)
+                    run, chain = self.dispatch_result(FIXTURE_CASE=case, FIXTURE_REPO=str(repo))
                     records = list(repo.glob('.myagentkit/usage/*.json'))
                     self.assertEqual(len(records), 1, run.stdout + run.stderr)
                     usage = json.loads(records[0].read_text())
@@ -1652,7 +1666,8 @@ class BridgeTests(unittest.TestCase):
                     for name in ('CONTRIBUTING.md', 'core/AGENTS.md', 'core/docs/REVIEW_GATE.md',
                                  'core/docs/ARCHITECTURE.md'):
                         (repo / name).write_text('Synthetic kit guidance.\n')
-                run = subprocess.run(command, env=dict(env, **extra), capture_output=True, text=True)
+                run = subprocess.run(command, env=dict(env, FIXTURE_REPO=str(repo), **extra),
+                                     capture_output=True, text=True)
                 lines = [line.removeprefix('review invocation: ') for line in run.stdout.splitlines()
                          if line.startswith(('{', 'review invocation: {'))]
                 result = json.loads(lines[-1])
@@ -1870,7 +1885,9 @@ assert 'PRIVATE_PREVIOUS_REVIEW' not in prompt
 last = pathlib.Path(sys.argv[sys.argv.index('-o') + 1])
 case = os.environ['FIXTURE_CASE']
 assert '--json' in sys.argv and '--ephemeral' in sys.argv
-assert sys.argv[sys.argv.index('-s') + 1] == 'read-only'
+assert sys.argv[sys.argv.index('-s') + 1] == 'workspace-write'
+assert '--skip-git-repo-check' in sys.argv and 'sandbox_workspace_write.network_access=false' in sys.argv
+repo = pathlib.Path(os.environ['FIXTURE_REPO'])
 if case == 'quota':
     print(json.dumps({'type': 'turn.failed', 'error': {'message': 'usage limit reached'}})); sys.exit(1)
 print(json.dumps({'type': 'turn.completed', 'usage': {'input_tokens': 100, 'cached_input_tokens': 90, 'output_tokens': 4}}), flush=True)
@@ -1881,12 +1898,12 @@ if case == 'garbage': last.write_text('Looks good to me, ship it.\\n')
 if case == 'accept': last.write_text('VERDICT: Accept\\n')
 if case == 'reject': last.write_text('## Findings\\n\\n- money.py:7 divides in floats.\\n\\nVERDICT: Reject\\n')
 if case == 'mutation':
-    pathlib.Path('file.py').write_text('mutated')
+    (repo / 'file.py').write_text('mutated')
     last.write_text('VERDICT: Accept\\n')
 if case == 'archive_failure':
     import shutil
-    shutil.rmtree('docs/reviews')
-    pathlib.Path('docs/reviews').write_text('blocked archive')
+    shutil.rmtree(repo / 'docs/reviews')
+    (repo / 'docs/reviews').write_text('blocked archive')
     last.write_text('VERDICT: Accept\\n')
 ''')
         fake.chmod(0o755)
@@ -1947,6 +1964,13 @@ if case == 'archive_failure':
                         "if os.environ.get('PROMPT_LOG'): pathlib.Path(os.environ['PROMPT_LOG']).write_text(prompt)\n"
                         "case = os.environ.get('CODEX_FIXTURE_CASE', 'accept')\n"
                         "assert os.environ['MYAGENTKIT_DELEGATION_DEPTH'] == '1'\n"
+                        "if os.environ.get('CWD_LOG'):\n"
+                        "    pathlib.Path('reviewer-wrote.txt').write_text('written by the reviewer')\n"
+                        "    new = pathlib.Path('new file.txt')\n"
+                        "    pathlib.Path(os.environ['CWD_LOG']).write_text(json.dumps({'cwd': os.getcwd(), "
+                        "'file': pathlib.Path('file.py').read_text(), "
+                        "'new': new.read_text() if new.exists() else None, 'leaks': sorted(k for k, v in "
+                        "os.environ.items() if k != 'FIXTURE_REPO' and os.environ['FIXTURE_REPO'] in v)}))\n"
                         "if case == 'unknown_flag':\n"
                         "    sys.stderr.write(\"error: unexpected argument '--ephemeral' found\\n\"); sys.exit(2)\n"
                         "if case == 'quota':\n"
@@ -2038,13 +2062,15 @@ if case == 'archive_failure':
         log = self.root / 'prompt.txt'
         # A reviewer told not to run tests sent every finding back unreproduced, and a worker then
         # spent a round reproducing it; one that executed in a throwaway copy found decisive defects.
-        # The bridged reviewers cannot execute (Read/Glob/Grep, `-s read-only`): the ask is
-        # conditional, and `git worktree add` would write into the reviewed repository.
+        # The bridged reviewers now execute, in a throwaway copy the adapter made: the ask is
+        # unconditional, and the prompt never names the reviewed repository's path.
         asks = ('EVERY finding', 'Critical, High, Medium or Low', 'Fix sketch:',
-                'If your tools can execute', 'throwaway copy made with `git archive',
-                'never `git worktree add`', 'REPRODUCED', 'if they cannot, mark findings REASONED',
-                'NOT RUN', 'Never use the network')
-        forbidden = ('Do not run tests', 'run code', 'SHOULD run', 'worktree add --detach')
+                'You are in a throwaway copy', 'run anything', 'nothing you do here reaches the '
+                'repository', 'Run the suite and reproductions', 'REPRODUCED',
+                'if a run is impossible, mark it REASONED', 'NOT RUN', 'Never use the network')
+        forbidden = ('Do not run tests', 'run code', 'SHOULD run', 'worktree add --detach',
+                     'If your tools can execute', 'edit files in this checkout',
+                     'never change the reviewed checkout', str(self.repo))
         task = {'PROMPT_LOG': str(log), 'MYAGENTKIT_TASK_ID': 'rounds-task'}
         code, first = self.run_bridge('reject', env_extra=task)
         self.assertEqual(code, 0, first)
@@ -2100,6 +2126,59 @@ if case == 'archive_failure':
                                           REVIEW_CODEX_MODEL='fixture-codex-model', **task)
                 self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
                 self.assertIn('FAIL [review]: earlier review evidence', result.stdout)
+
+    def test_the_reviewer_executes_in_a_throwaway_copy_removed_afterwards(self):
+        # The reviewers may now run anything, so they never run in the reviewed repository: each
+        # attempt gets a copy of HEAD plus the uncommitted diff, removed when the attempt ends.
+        (self.repo / 'new file.txt').write_text('an untracked file\n')
+        # An owner's diff.noprefix must not break the diff applied to the copy.
+        self.git('config', 'diff.noprefix', 'true')
+        log = self.root / 'cwd.json'
+        self.install_wrapper()
+        status = self.git('status', '--porcelain').stdout
+        runs = {'claude': lambda: self.run_bridge(env_extra={'CWD_LOG': str(log)}),
+                'codex': lambda: self.run_wrapper('--reviewer', 'codex', CWD_LOG=str(log),
+                                                  REVIEW_CLI_BIN=str(self.build_fake_codex()),
+                                                  REVIEW_CODEX_MODEL='fixture-codex-model')}
+        for reviewer, run in runs.items():
+            with self.subTest(reviewer=reviewer, scope='uncommitted'):
+                outcome = run()
+                ok = outcome[0] == 0 if reviewer == 'claude' else outcome.returncode == 0
+                self.assertTrue(ok, outcome)
+                seen = json.loads(log.read_text())
+                copy = Path(seen['cwd'])
+                self.assertFalse(copy.resolve().is_relative_to(self.repo.resolve()), copy)
+                self.assertFalse(copy.exists(), 'the copy outlived the review')
+                # HEAD with the uncommitted diff applied, the untracked file included.
+                self.assertEqual((seen['file'], seen['new']), ('changed\n', 'an untracked file\n'))
+                # Nor does its environment name the repository (PWD, REVIEW_REPO_ROOT, GIT_*).
+                self.assertEqual(seen['leaks'], [])
+                # What the reviewer wrote stayed in its copy.
+                self.assertFalse((self.repo / 'reviewer-wrote.txt').exists())
+                self.assertEqual(self.git('status', '--porcelain').stdout, status)
+                evidence = (outcome[1]['evidence'] if reviewer == 'claude' else
+                            max((self.repo / 'docs/reviews').glob('*-codex-review.md'),
+                                key=lambda path: path.stat().st_mtime))
+                self.assertIn('throwaway copy', header_of(evidence)['sandbox'])
+                if reviewer == 'codex':
+                    self.assertEqual(header_of(evidence)['sandbox'], 'workspace-write (throwaway copy)')
+        # A clean --commit review gets the archive of HEAD itself: one file compared.
+        (self.repo / 'new file.txt').unlink()
+        self.commit_fixture('Commit the change')
+        head_file = self.git('show', 'HEAD:file.py').stdout.decode()
+        for reviewer in ('claude', 'codex'):
+            with self.subTest(reviewer=reviewer, scope='commit'):
+                if reviewer == 'claude':
+                    code, result = self.run_bridge(extra=['--commit', 'HEAD'], env_extra={'CWD_LOG': str(log)})
+                    self.assertEqual(code, 0, result)
+                else:
+                    result = self.run_wrapper('--commit', 'HEAD', '--reviewer', 'codex', CWD_LOG=str(log),
+                                              REVIEW_CLI_BIN=str(self.build_fake_codex()),
+                                              REVIEW_CODEX_MODEL='fixture-codex-model')
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                seen = json.loads(log.read_text())
+                self.assertEqual((seen['file'], seen['new']), (head_file, None))
+                self.assertFalse(Path(seen['cwd']).exists())
 
     def test_dispositions_are_claims_the_reviewer_verifies_not_settlements(self):
         # The author never approves its own work: a disproved finding counts only once the
@@ -2503,8 +2582,10 @@ if case == 'archive_failure':
                 scripts = self.install_wrapper()
                 clis = dict(CLAUDE_CLI_BIN=str(self.fixture), REVIEW_CLI_BIN=str(self.build_fake_codex()))
                 clis['CLAUDE_CLI_BIN' if provider == 'claude' else 'REVIEW_CLI_BIN'] = str(hanging)
+                cwd_log = self.root / ('cwd-%s-%s' % (provider, sig.name))
                 env = self.review_env(ALIVE_FIFO=str(fifo), REVIEW_CLAUDE_MODEL='claude-opus-5',
-                                      REVIEW_CODEX_MODEL='fixture-codex-model', **clis)
+                                      REVIEW_CODEX_MODEL='fixture-codex-model',
+                                      CWD_LOG=str(cwd_log), **clis)
                 review = subprocess.Popen(['sh', str(scripts / 'review.sh'), '--reviewer', provider, '--fallback'],
                                           env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
                 self.addCleanup(lambda p=review: p.poll() is None and p.kill())
@@ -2532,6 +2613,10 @@ if case == 'archive_failure':
                 # EOF on the FIFO means no process still holds it: the CLI and its child are gone.
                 self.assertTrue(read_until(lambda seen, chunk: chunk == b''),
                                 'the reviewer process group outlived the cancelled review')
+                # The cancelled reviewer ran in a throwaway copy, and the cancel removed it.
+                copy = Path(cwd_log.read_text())
+                self.assertNotEqual(copy.resolve(), self.repo.resolve())
+                self.assertFalse(copy.exists(), 'a cancelled review left its copy behind')
                 self.assertNotEqual(review.returncode, 0, output)
                 chain = json.loads(next(line.removeprefix('review dispatch: ') for line in output.splitlines()
                                         if line.startswith('review dispatch: ')))
