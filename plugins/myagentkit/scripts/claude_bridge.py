@@ -85,13 +85,16 @@ def throwaway_copy(repo: Path, head: str, diff: str | None, copy: Path,
       staged and unstaged deletions and preserving file/symlink type changes. Neither git's stat cache
       (core.trustctime, core.checkStat) nor an apply setting (apply.whitespace=fix) can give the
       reviewer other source than the one the owner sees. Copies are verified with bounded buffers.
-    - Defended: construction never traverses a destination symlink, including in the copy's
-      ancestors. Symlinks are installed only as leaves; obsolete index paths below a changed
+    - Defended: the trusted temporary parent is resolved before checking destination ancestors,
+      allowing a symlinked TMPDIR. The copy itself and its destination directories must be real
+      directories. Symlinks are installed only as leaves; obsolete index paths below a changed
       source symlink are skipped. An archived symlink cannot redirect checkout file writes.
     - Defended: the copy is made under the same cancel and wall-clock bound as the review: a
       cancel noted during listing, archiving, extraction or buffered copying stops that work.
       The caller passes one deadline and gives the reviewer only the remaining time. Archive
-      cleanup covers partial launches too, including a missing tar executable.
+      cleanup covers partial launches too, including a missing tar executable. Cancel signals
+      are blocked until each child handle and group id are recorded. Cleanup kills preparation
+      groups even after their leaders exit, then reaps the leaders and closes their streams.
     - Detected: a write that reaches the repository anyway changes the fingerprint, and the
       review fails as stale_checkout.
     - Accepted limit: a reviewer that finds the repository by its absolute path can still read
@@ -99,7 +102,7 @@ def throwaway_copy(repo: Path, head: str, diff: str | None, copy: Path,
       workspace-write sandbox blocks writes outside the copy and the temporary directories,
       and keeps the network off; Claude is only asked to stay off the network.
     - Accepted limit: a SIGKILL leaves the copy in the temporary directory, and a process the
-      reviewer detached from its group survives the group kill.
+      reviewer or preparation command detached from its group survives the group kill.
     - Accepted limit: committed snapshots use `git archive`, which honours export-ignore and
       export-subst. Uncommitted snapshots use checkout bytes instead. Untracked ignored files
       (installed dependencies, build output) and submodule contents are absent.
@@ -114,13 +117,13 @@ def throwaway_copy(repo: Path, head: str, diff: str | None, copy: Path,
             raise BridgeError("the copy for the reviewer was stopped: "
                               + ("cancelled" if cancelled else "the wall-clock limit passed"))
 
-    def reap(child) -> None:
+    def reap(child, pgid) -> None:
         if child is not None:
-            if child.poll() is None:
-                try:
-                    os.killpg(child.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
+            # The leader may have exited while a descendant still holds a pipe open.
+            try:
+                os.killpg(pgid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
             child.wait()
             for stream in (child.stdin, child.stdout, child.stderr):
                 if stream is not None:
@@ -134,8 +137,10 @@ def throwaway_copy(repo: Path, head: str, diff: str | None, copy: Path,
             except subprocess.TimeoutExpired:
                 pass
 
-    # Reject reused trees and symlink ancestors before either tar or our copier can write.
+    # Resolve only the trusted parent: resolving the copy would conceal its own symlink.
     copy = copy.absolute()
+    copy = Path(os.path.realpath(copy.parent)) / copy.name
+    # Reject reused trees and symlink ancestors before either tar or our copier can write.
     for directory in reversed((copy, *copy.parents)):
         if not stat.S_ISDIR(directory.lstat().st_mode):
             raise BridgeError("the copy destination must contain only real directories")
@@ -144,14 +149,29 @@ def throwaway_copy(repo: Path, head: str, diff: str | None, copy: Path,
 
     if diff is None:
         archive = unpacked = None
+        archive_pgid = unpacked_pgid = None
         # Cleanup is active from the first launch, including a partial launch failure.
         try:
-            archive = subprocess.Popen(["git", "-C", str(repo), "archive", "--format=tar", head],
-                                       stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                                       start_new_session=True)
-            unpacked = subprocess.Popen(["tar", "-x", "-f", "-", "-C", str(copy)],
-                                        stdin=archive.stdout, stdout=subprocess.DEVNULL,
-                                        stderr=subprocess.PIPE, start_new_session=True)
+            # Pending raising handlers run only after the handle and pgid are retained.
+            # Children restore the previous mask before exec, as in agent_process.run().
+            mask = signal.pthread_sigmask(signal.SIG_BLOCK, agent_process.CANCEL_SIGNALS)
+            try:
+                archive = subprocess.Popen(["git", "-C", str(repo), "archive", "--format=tar", head],
+                                           stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                           start_new_session=True,
+                                           preexec_fn=lambda: signal.pthread_sigmask(signal.SIG_SETMASK, mask))
+                archive_pgid = archive.pid
+            finally:
+                signal.pthread_sigmask(signal.SIG_SETMASK, mask)
+            mask = signal.pthread_sigmask(signal.SIG_BLOCK, agent_process.CANCEL_SIGNALS)
+            try:
+                unpacked = subprocess.Popen(["tar", "-x", "-f", "-", "-C", str(copy)],
+                                            stdin=archive.stdout, stdout=subprocess.DEVNULL,
+                                            stderr=subprocess.PIPE, start_new_session=True,
+                                            preexec_fn=lambda: signal.pthread_sigmask(signal.SIG_SETMASK, mask))
+                unpacked_pgid = unpacked.pid
+            finally:
+                signal.pthread_sigmask(signal.SIG_SETMASK, mask)
             archive.stdout.close()
             _, err = collect(unpacked)
             while archive.poll() is None:
@@ -161,22 +181,28 @@ def throwaway_copy(repo: Path, head: str, diff: str | None, copy: Path,
                 raise BridgeError("could not copy HEAD for the reviewer: " + err.decode(errors="replace"))
             check_running()
         finally:
-            reap(archive)
-            reap(unpacked)
+            reap(archive, archive_pgid)
+            reap(unpacked, unpacked_pgid)
         return
 
     # No archive overlay: paths absent from the index and checkout never enter this tree.
-    listing = None
+    listing = listing_pgid = None
     try:
         check_running()
-        listing = subprocess.Popen(["git", "-C", str(repo), "ls-files", "-z", "--cached",
-                                    "--others", "--exclude-standard"], stdout=subprocess.PIPE,
-                                   stderr=subprocess.PIPE, start_new_session=True)
+        mask = signal.pthread_sigmask(signal.SIG_BLOCK, agent_process.CANCEL_SIGNALS)
+        try:
+            listing = subprocess.Popen(["git", "-C", str(repo), "ls-files", "-z", "--cached",
+                                        "--others", "--exclude-standard"], stdout=subprocess.PIPE,
+                                       stderr=subprocess.PIPE, start_new_session=True,
+                                       preexec_fn=lambda: signal.pthread_sigmask(signal.SIG_SETMASK, mask))
+            listing_pgid = listing.pid
+        finally:
+            signal.pthread_sigmask(signal.SIG_SETMASK, mask)
         listed, err = collect(listing)
         if listing.returncode:
             raise BridgeError("could not list the checkout: " + err.decode(errors="replace"))
     finally:
-        reap(listing)
+        reap(listing, listing_pgid)
     for raw in sorted(set(listed.split(b"\0")) - {b""}):
         check_running()
         rel = Path(os.fsdecode(raw))
