@@ -2399,6 +2399,9 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         values = [{"type": "turn.failed", "error": {"message": "This content was flagged for possible "
                    "cybersecurity risk. If you're doing authorized security work, apply for access."}}]
         self.assertEqual(agent_usage.failure("codex", {"exit_code": 0, "stderr": ""}, values), "content_flagged")
+        # And it is an availability failure: --fallback may try the other reviewer.
+        import review_dispatch
+        self.assertIn("content_flagged", review_dispatch.UNAVAILABLE)
 
     def test_dispositions_are_claims_the_reviewer_verifies_not_settlements(self):
         # The author never approves its own work: a disproved finding counts only once the

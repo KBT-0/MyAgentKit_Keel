@@ -15,7 +15,7 @@ import codex_bridge
 # Operational failures only. Invalid evidence, configuration, changed scope and storage
 # failures must not be laundered into success by trying another reviewer.
 UNAVAILABLE = frozenset({"quota", "authentication", "timeout", "unavailable", "cli_error",
-                         "context_limit", "budget_or_turn_limit", "output_limit"})
+                         "context_limit", "budget_or_turn_limit", "output_limit", "content_flagged"})
 # Set only while a substitute reviewer runs, so its archived evidence says so in its body.
 FALLBACK_ENV = "MYAGENTKIT_REVIEW_FALLBACK_FROM"
 
