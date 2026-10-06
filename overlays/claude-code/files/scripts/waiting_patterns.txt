@@ -1,0 +1,40 @@
+# What a Claude Code pane looks like when it waits for a person. Kit-owned: read by
+# scripts/watch_workers.sh, and through it by scripts/spawn_worker.sh, so the folder-trust
+# dialog and every other wait are defined once, here.
+#
+# One rule per line: KIND STATUS VERSION WHERE ERE (the ERE is the rest of the line).
+#   KIND     what waits; a session is WAITING on KIND when one `last` rule of KIND matches the
+#            last non-empty line of the pane AND one `near` rule of KIND matches one of the
+#            last 15 non-empty lines.
+#   STATUS   VERIFIED: written from a real pane captured on VERSION (the capture is a test
+#            fixture under tests/fixtures/panes/ in the kit). UNVERIFIED: a guess nobody has
+#            seen on a real pane; it ships because a missed wait costs more than a false one.
+#   WHERE    last | near (above).
+#   ERE      grep -E, matched byte by byte (LC_ALL=C) on the line with control bytes removed
+#            and trailing blanks stripped.
+#
+# Why the bottom of the pane and not a phrase anywhere: a worker's OUTPUT can quote "Do you
+# want to proceed?" (a diff of a document about prompts). While the TUI works, its last lines
+# are the input box and the mode line; only a dialog puts its own key hint on the last line.
+# A rule never matches on a phrase alone, and the key hint is required on the LAST line.
+#
+# A new Claude Code version can change any of this. When a session blocked and the watcher
+# said nothing, capture its pane (`tmux capture-pane -p -J -t =NAME:`), add it as a fixture,
+# and add or correct the rule here with that version.
+
+# The folder-trust dialog (also what spawn_worker.sh stops on).
+trust       VERIFIED    2.1.285  last  ^ *Enter to confirm · Esc to cancel$
+trust       VERIFIED    2.1.285  near  ^ *(❯ )?(No, exit|Yes, I trust this folder)$
+# An older wording of the same dialog, from the text spawn_worker.sh matched before.
+trust       UNVERIFIED  -        last  Esc to (cancel|exit)$
+trust       UNVERIFIED  -        near  Do you trust the files in this folder
+
+# A tool permission prompt ("Do you want to proceed?" over numbered Yes/No options).
+permission  VERIFIED    2.1.285  last  ^ *Esc to cancel · Tab to amend$
+permission  VERIFIED    2.1.285  near  ^ *(❯ )?[0-9]+\. (Yes|No)
+# A question the model asks with its question tool (numbered options, free-text option).
+question    VERIFIED    2.1.285  last  ^ *Enter to select · ↑/↓ to navigate · Esc to cancel$
+question    VERIFIED    2.1.285  near  ^ *(❯ )?[0-9]+\. [^ ]
+# Any other numbered choice that ends in a cancel hint (an edit prompt, a plan approval).
+dialog      UNVERIFIED  -        last  Esc to cancel
+dialog      UNVERIFIED  -        near  ^ *❯ [0-9]+\. [^ ]
