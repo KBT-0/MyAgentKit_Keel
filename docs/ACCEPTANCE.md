@@ -193,6 +193,14 @@ budget, so the full review was split into two consistent commit ranges, each its
   ("The first CI runs of v0.9"). What CI does not cover: a live tmux and Claude session, a
   real terminal tab, the worktree clean-up's `lsof` path with a process present, and the
   kit run as root.
+- Worktree clean-up (merge G70, branch `worktree-wt-clean`): eleven fix rounds, each
+  reviewed by Codex (labels `v09-wtclean-1` to `-11`, evidence under `docs/reviews/`) and
+  by a fresh Opus reviewer that reproduced its findings in throwaway repositories (reports
+  in the session only). Closing round on c425a81: Codex Reject with one Medium (the
+  upgrade path, written at merge), Opus "approve with nits" (none a loss). Per the author,
+  130 tests and 79 guards each with a killing test; the kit self-test passed on every
+  round's head. NOT RUN: macOS (`lsof`, APFS case folding), Python 3.10, dash, the kit as
+  real root (emulated with `unshare -r`), a real bind mount at `<worktree>/.git`.
 - NOT RUN by the reviewer in range D: any test. The kit self-test was executed by the lead
   on each reviewed head (`KIT CHECK: PASS` on 31c8f7a, 1afba49, 62d2988, d826ccd, ed29079,
   4baf4e0, 3d4f45c, 42e5a19, 68e9ae5, 2f2ef6b and 1a13854).

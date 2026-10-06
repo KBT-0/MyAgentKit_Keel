@@ -1075,6 +1075,28 @@ its fixed 300-second timeout. Run four, green. Each red was a platform fact the 
 machine could not show; none was a logic error. The rule "a claimed platform is run before
 acceptance" now stands in the kit because of these four runs.
 
+#### Worktree clean-up: eleven rounds, two reviewers, and what each round taught
+
+A project had 39 merged worktrees and 34 GB behind it; the owner wanted them removed
+automatically, "with no loss". The feature went through eleven fix rounds, each reviewed by
+Codex and by a fresh Opus reviewer that reproduced its findings in throwaway repositories.
+The design moved under review: "finished" stopped meaning the absence of a liveness signal
+and became a commit made in the worktree plus a merge into main's BRANCH (a merge on a
+detached main, later undone, had left a worker's commits in no ref); the script stopped
+deleting branches at all (the branch keeps the commits whatever happens to main); "nothing
+reachable only from here" became a scan of every file of the private git directory, both
+reflog columns, with every loose commit saved under `refs/kit/saved/` before removal (the
+owner's choice over "keep forever" and over "ignore reflog leftovers"); tracked content
+stopped trusting git's stat cache and is compared by bytes; mount points anywhere in the
+worktree, its git directory or on an archive copy's path keep the worktree; a case probe was
+deleted in favour of always folding the protected names; `lsof` output is trusted only when
+it shows the script itself and is read back exactly. Three rounds were spent on list-shaped
+rules that the next reviewer extended (ref namespaces, four files of the git dir, device
+checks); each was replaced by a rule over the whole class. One reviewer's experiment ran in
+the real repository after a failed `cd`; it undid its refs, and every later brief says
+`cd ... || exit 1`. The closing round: Codex with no code finding, Opus "approve with nits",
+130 tests, 79 guards each with a killing test.
+
 #### The review gate held on the kit's own hardening
 
 Five of the nine work packages (the gate lock, both review-tooling packages, the commit gates

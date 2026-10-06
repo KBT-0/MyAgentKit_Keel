@@ -228,6 +228,31 @@ in `RESEARCH_LOG.md` (2026-10-03). Most of the files below are project-owned, so
   percent of the window used (the lead decides: finish, compact or hand off). The lead
   decides per task whether a finished session is reused or closed, from that figure, the
   idle time and the next task's length (`docs/worker-lifecycle-options.md` has the costs).
+- **Finished worker worktrees are removed after a merge, and only when nothing in them can
+  be lost.** The new kit-owned `.githooks/post-merge` runs `scripts/clean_worktrees.sh
+  --apply` (Claude Code overlay) after every merge that git completes in the main worktree.
+  A worktree under `.claude/worktrees/` is removed only when every proof holds: registered,
+  its own, not locked, no operation in progress, main on a branch; finished (a commit made
+  in that worktree, its branch tip merged into main's branch); nothing reachable only from
+  it (every object id the private git directory names is held by a ref, or is first saved
+  under `refs/kit/saved/<name>-<time>/` by one atomic `update-ref`); every tracked file byte
+  for byte what the index records and the index equal to HEAD; every untracked or ignored
+  entry either in a disposable folder the project lists in `.claude/worktree-disposable`
+  (matched exactly; never under `docs`, `.claude`, `.myagentkit`, `scripts` or `.git`,
+  compared case-folded) or a regular file byte-identical to main's file outside every
+  worktree and below no mount point; no mount point in the worktree or its git directory;
+  quiet for 60 minutes (`quiet-minutes=` in the list); not in use (no process with its
+  working directory inside, read fresh before each step through `/proc` or, elsewhere,
+  `lsof`, which must show the script itself; no tmux session of its name; the gate lock not
+  held); no git filter or `ident` in the repository. A branch is never deleted. The log
+  `<git dir>/kit-worktree-removals.log` gets an `intent` line before anything is deleted and
+  an `outcome` line after; the report prints the restore command. A failed `git worktree
+  remove` is POSSIBLY MODIFIED and SIGINT, SIGTERM or SIGHUP during a removal is reported;
+  both exit 1. Everything unproven keeps the worktree with its reason (`scripts/
+  clean_worktrees.sh` is the dry run, `--all-reasons` prints every reason). Excluded by
+  decision: a process changing a worktree's files, or main's copies of them, between the
+  audit and the removal; files planted to attack the script; SIGKILL between two steps (a
+  re-run is safe). Needs git 2.36. `KIT_NO_WORKTREE_CLEANUP=1` turns the hook off.
 - **Six lessons become rules.** Before a review loop: write the threat model and agree the
   stopping rule; a stopping rule ends the hunt, not the reviewing of what is merged after
   it; a platform the kit claims is run before anything is called accepted; a review that
@@ -332,9 +357,13 @@ from, and `5c80c36` is the kit's v0.8 commit.
    `claude_bridge.py`, `codex_bridge.py`, `codex_quota.py`, `review_dispatch.py`,
    `test_agent_usage.py`, `test_claude_bridge.py`, `test_codex_quota.py`. With the Claude
    Code overlay also copy `scripts/spawn_worker.sh`, `scripts/show_workers.sh`,
-   `scripts/watch_workers.sh` and `scripts/waiting_patterns.txt` from
-   `$KIT/overlays/claude-code/files/scripts/` (the sync never adds an overlay file that is
-   missing); with the Unity overlay, `scripts/unity_gate.sh` from
+   `scripts/watch_workers.sh`, `scripts/waiting_patterns.txt`,
+   `scripts/clean_worktrees.sh` and `scripts/clean_worktrees.py` from
+   `$KIT/overlays/claude-code/files/scripts/`, and `.claude/worktree-disposable` from
+   `$KIT/overlays/claude-code/files/.claude/` (the sync never adds an overlay file that is
+   missing; `chmod +x` the `.sh` files and `git add --chmod=+x` them); list your
+   build-output folders in `.claude/worktree-disposable` and run `scripts/clean_worktrees.sh`
+   once as a dry run; with the Unity overlay, `scripts/unity_gate.sh` from
    `$KIT/overlays/unity/files/scripts/`. Copy `$KIT/core/docs/REVIEW_RUNNING.md` to
    `docs/REVIEW_RUNNING.md` (new) and fill its `{{PROJECT_NAME}}` and `{{OWNER_NAME}}`.
 4. **ACTION:** Before the merge of the next item, split `docs/STATE.md` by hand: copy
