@@ -11,8 +11,74 @@ import time
 DEFAULT_REVIEW_TIMEOUT = 1800
 # Ctrl-C, kill and a closed terminal or restarted host session. The reviewer runs in its own
 # session so none of these reach it; left at their defaults, SIGTERM and SIGHUP end this
-# process without its cleanup and the paid reviewer keeps running, unaccounted.
-CANCEL_SIGNALS = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
+# process without its cleanup and the paid reviewer keeps running, unaccounted. Native Windows
+# Python has no SIGHUP: the tuple holds the ones that exist, and the import never fails there.
+CANCEL_SIGNALS = tuple(getattr(signal, name) for name in ("SIGINT", "SIGTERM", "SIGHUP")
+                       if hasattr(signal, name))
+# The platform seam: every launch, signal block and group kill of the review tooling goes
+# through the five functions below (test_claude_bridge checks that no other place makes one).
+# Off POSIX (native Windows Python) there is no signal mask, no session and no killpg: the
+# blocks are no-ops, a child gets a process group of its own, and taskkill stops its tree.
+POSIX = os.name == "posix"
+
+
+def block_cancels():
+    """Block the cancel signals; return the previous mask for restore_mask(). None off POSIX."""
+    return signal.pthread_sigmask(signal.SIG_BLOCK, CANCEL_SIGNALS) if POSIX else None
+
+
+def restore_mask(mask) -> None:
+    if POSIX:
+        signal.pthread_sigmask(signal.SIG_SETMASK, mask)
+
+
+def pending() -> set:
+    """The signals pending while blocked; none off POSIX, where nothing is blocked."""
+    return signal.sigpending() if POSIX else set()
+
+
+def launch(command, mask, **popen_kw) -> subprocess.Popen:
+    """Popen in a group of its own. Called with the cancels blocked (`mask` is what
+    block_cancels() returned): on POSIX the child restores `mask` before exec."""
+    if POSIX:
+        return subprocess.Popen(command, start_new_session=True,
+                                preexec_fn=lambda: restore_mask(mask), **popen_kw)
+    return subprocess.Popen(command, **popen_kw,
+                            creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x200))
+
+
+def stop_group(child, pgid) -> None:
+    """Kill `child`'s group (or, off POSIX, its process tree) and reap the leader.
+
+    POSIX: the leader may have exited while a descendant still holds a pipe open. On macOS a
+    group whose leader is a zombie answers EPERM: the leader is then signalled by its pid, and
+    the group again once it is reaped. Windows: `taskkill /T /F` stops the tree it can still
+    find from the leader; child.kill() when taskkill is missing or fails.
+    """
+    if POSIX:
+        for target, group in ((pgid, True), (child.pid, False), (pgid, True)):
+            try:
+                if group:
+                    os.killpg(target, signal.SIGKILL)
+                else:
+                    os.kill(target, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+            if not group:
+                child.wait()
+    else:
+        try:
+            done = subprocess.run(["taskkill", "/T", "/F", "/PID", str(child.pid)],
+                                  stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                  stderr=subprocess.DEVNULL).returncode == 0
+        except OSError:
+            done = False
+        if not done:
+            try:
+                child.kill()
+            except OSError:
+                pass
+    child.wait()
 
 
 def hold(handler) -> dict:
@@ -40,18 +106,18 @@ def handing_back(previous: dict, settle) -> None:
     cancel that is new since the last sample, and the block is lifted right after a sample
     that found none, with nothing in between.
     """
-    mask = signal.pthread_sigmask(signal.SIG_BLOCK, CANCEL_SIGNALS)
+    mask = block_cancels()
     try:
         restore(previous)
         seen = None
         while True:
-            pending = signal.sigpending() & set(previous)
-            if seen is not None and pending <= seen:
+            held = pending() & set(previous)
+            if seen is not None and held <= seen:
                 break
-            seen = pending
-            settle(pending)
+            seen = held
+            settle(held)
     finally:
-        signal.pthread_sigmask(signal.SIG_SETMASK, mask)
+        restore_mask(mask)
 
 
 class OneShot:
@@ -83,13 +149,13 @@ class OneShot:
         # restore met the caller's raising handler there and left the other signals routed to
         # this guard, whose notes nobody read afterwards. A cancel held while they went back is
         # this guard's: taken off the pending set and noted, so run() returns it as a cancel.
-        mask = signal.pthread_sigmask(signal.SIG_BLOCK, CANCEL_SIGNALS)
+        mask = block_cancels()
         try:
             restore(self.previous)
-            for sig in sorted(signal.sigpending() & set(self.previous)):
+            for sig in sorted(pending() & set(self.previous)):
                 self.noted.append(signal.sigwait({sig}))
         finally:
-            signal.pthread_sigmask(signal.SIG_SETMASK, mask)
+            restore_mask(mask)
 
 
 def run(command: list[str], prompt: str, repo: Path, timeout: float, into: dict | None = None,
@@ -130,7 +196,7 @@ def _supervise(command, prompt, repo, timeout, started, guard, prior=None):
                 # Blocked across Popen: a cancel after the child existed but before Popen
                 # returned left no handle, and the group ran on. The child unblocks before
                 # exec; here a pending cancel is raised on unblock, with the handle kept.
-                mask = signal.pthread_sigmask(signal.SIG_BLOCK, CANCEL_SIGNALS)
+                mask = block_cancels()
                 try:
                     # A cancel the caller noted before this guard was up: never launched. One
                     # after that met the guard, or is pending here and raised on unblock.
@@ -145,12 +211,11 @@ def _supervise(command, prompt, repo, timeout, started, guard, prior=None):
                     # The reviewer's git never discovers a repository above its working
                     # directory: a copy made inside some checkout stays inside the copy.
                     env["GIT_CEILING_DIRECTORIES"] = str(repo.parent)
-                    child = subprocess.Popen(command, cwd=repo, stdin=inp, stdout=subprocess.PIPE,
-                                             stderr=subprocess.PIPE, start_new_session=True,
-                                             env=dict(env, PWD=str(repo), MYAGENTKIT_DELEGATION_DEPTH="1"),
-                                             preexec_fn=lambda: signal.pthread_sigmask(signal.SIG_SETMASK, mask))
+                    child = launch(command, mask, cwd=repo, stdin=inp, stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE,
+                                   env=dict(env, PWD=str(repo), MYAGENTKIT_DELEGATION_DEPTH="1"))
                 finally:
-                    signal.pthread_sigmask(signal.SIG_SETMASK, mask)
+                    restore_mask(mask)
             except OSError as error:
                 # Not returned here: the result is built after cleanup, which can note a cancel.
                 termination, launch_failed = "unavailable", True
@@ -185,8 +250,8 @@ def _supervise(command, prompt, repo, timeout, started, guard, prior=None):
             # Leaving supervision: the guard turns to noting INSIDE the try. Armed into the
             # `finally`, a cancel at a signal check there raised past the group kill, the reap
             # and the result. A cancel before this store raises here and is caught below; one
-            # after it is noted. No signal block around it: a cancel raised just after
-            # pthread_sigmask returned left the signals blocked for good.
+            # after it is noted. No signal block around it: a cancel raised just after the
+            # block returned left the signals blocked for good.
             guard.armed = False
         except KeyboardInterrupt:
             # Cancelled: stop the group below and return what was captured, so the adapter
@@ -201,11 +266,7 @@ def _supervise(command, prompt, repo, timeout, started, guard, prior=None):
             noted = guard.noted
             # Also stop descendants left behind by a parent that already exited.
             if child is not None:
-                try:
-                    os.killpg(child.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-                child.wait()
+                stop_group(child, child.pid)
                 child.stdout.close()
                 child.stderr.close()
     # Built after the with block: closing the prompt file and the selector runs with the

@@ -340,7 +340,8 @@ class UsageTests(unittest.TestCase):
                     self.fail('a cancel at line %d after the wait escaped run()' % seen[-1])
                 finally:
                     sys.settrace(None)
-                self.assertEqual(killed and len(killed), 1, 'the group kill was skipped')
+                # agent_process.stop_group: the group, then again once the leader is reaped.
+                self.assertEqual(killed and len(killed), 2, 'the group kill was skipped')
                 self.assertEqual((result['exit_code'], result['termination']), (0, None), result)
                 self.assertEqual(result['cancelled'], bool(target), result)
             total = len(seen) if total is None else total

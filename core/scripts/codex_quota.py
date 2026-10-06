@@ -5,10 +5,9 @@ import math
 import os
 from pathlib import Path
 import selectors
-import signal
 import subprocess
 import time
-from agent_process import CANCEL_SIGNALS
+from agent_process import block_cancels, launch, restore_mask, stop_group
 
 
 def sanitize(result):
@@ -47,14 +46,12 @@ def snapshot(cli: str, repo: Path, timeout: float = 5) -> dict:
         # Blocked across Popen, as the reviewer's launch is: the closing read runs under a
         # raising cancel handler, and a cancel after the app-server existed but before Popen
         # returned left no handle to kill. A pending cancel is raised on unblock, handle kept.
-        mask = signal.pthread_sigmask(signal.SIG_BLOCK, CANCEL_SIGNALS)
+        mask = block_cancels()
         try:
-            proc = subprocess.Popen([cli, "app-server", "--stdio"], cwd=repo,
-                                    stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                    stderr=subprocess.DEVNULL, start_new_session=True,
-                                    preexec_fn=lambda: signal.pthread_sigmask(signal.SIG_SETMASK, mask))
+            proc = launch([cli, "app-server", "--stdio"], mask, cwd=repo,
+                          stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         finally:
-            signal.pthread_sigmask(signal.SIG_SETMASK, mask)
+            restore_mask(mask)
         def send(value):
             proc.stdin.write((json.dumps(value) + "\n").encode())
             proc.stdin.flush()
@@ -97,13 +94,9 @@ def snapshot(cli: str, repo: Path, timeout: float = 5) -> dict:
     finally:
         if proc is not None:
             # Blocked here too: a cancel raised before the kill left the group running.
-            mask = signal.pthread_sigmask(signal.SIG_BLOCK, CANCEL_SIGNALS)
+            mask = block_cancels()
             try:
-                try:
-                    os.killpg(proc.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-                proc.wait()
+                stop_group(proc, proc.pid)
                 # Never raising: a write that met the exited reader left its bytes buffered,
                 # and close() flushed them again and raised BrokenPipeError out of here.
                 for stream in (proc.stdin, proc.stdout):
@@ -112,7 +105,7 @@ def snapshot(cli: str, repo: Path, timeout: float = 5) -> dict:
                     except OSError:
                         pass
             finally:
-                signal.pthread_sigmask(signal.SIG_SETMASK, mask)
+                restore_mask(mask)
 
 
 if __name__ == "__main__":
