@@ -15,6 +15,7 @@ import sys
 import tempfile
 import time
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 
 ROOT = Path(__file__).resolve().parents[1]
 # The review self-test ships to projects with its own minimums; read them, never copy them.
@@ -34,7 +35,7 @@ REQUIRED_SUITES = {
               'test_check_gate': 17, 'test_boundary_restore': 39, 'test_sync_kit': 15,
               'test_doctor': 2, 'test_git_hooks': 24, 'test_stop_hook': 1, 'test_spawn_worker': 15,
               'test_worker_visibility': 19, 'test_doc_pointers': 3,
-              'test_kit_output': 1, 'test_kit_runner': 1},
+              'test_kit_output': 1, 'test_kit_runner': 5},
 }
 
 
@@ -178,19 +179,8 @@ def check_syntax(root):
             run(["sh", "-n", str(path)])
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--self-test", action="store_true")
-    parser.add_argument("--timing", action="store_true", help="print each phase's seconds at the end")
-    args = parser.parse_args()
-    check_syntax(ROOT)
-    manifest = json.loads((ROOT / "plugins/myagentkit/.codex-plugin/plugin.json").read_text())
-    if manifest["name"] != "myagentkit" or manifest["skills"] != "./skills/":
-        raise RuntimeError("plugin manifest does not expose the expected package")
-    print(run([sys.executable, "scripts/package_codex_plugin.py", "--check"]).strip())
-    mark("syntax and package check")
-    for directory, required in REQUIRED_SUITES.items():
-        run_tests(ROOT, directory, required)
+def acceptance(self_test):
+    """Bootstrap a synthetic project, prove its gates pass, and with self_test, prove them red."""
     with tempfile.TemporaryDirectory(prefix="myagentkit-acceptance-") as tmp:
         project = Path(tmp)
         run(["sh", str(ROOT / "bootstrap.sh"), str(project)])
@@ -217,7 +207,7 @@ def main():
         # and the gate re-ran a two-line file name instead of its checks.
         run(["sh", "scripts/check.sh"], project, reason="CHECK: PASS", env=dict(os.environ, CDPATH="."))
         passed("bootstrap rejects missing setup and accepts the configured synthetic project")
-        if args.self_test:
+        if self_test:
             with tempfile.TemporaryDirectory(prefix="myagentkit-side-") as side:
                 side = Path(side)
                 # A normal run refuses the self-test seams, so these cases set the build command
@@ -645,17 +635,100 @@ def main():
             passed("missing review tests, failed runner, absent completion evidence, an emptied "
                   "suite and boundary checks whose self-tests ran no case reject; the existing-file example "
                   "runs as a case; a missing attribution rule line is a visible skip")
-    if args.timing:
-        for label, seconds in TIMES:
-            print("%7.1f s  %s" % (seconds, label))
-        for seconds, test in sorted(SLOWEST, reverse=True)[:20]:
-            print("%7.1f s  test %s" % (seconds, test))
+
+
+FAILURES = (OSError, ValueError, RuntimeError, KeyError, subprocess.TimeoutExpired)
+
+
+def unit(name, self_test, timing_file=None):
+    """Run one unit in this process; 0 on a pass, 1 with the error printed on a failure."""
+    try:
+        if name == "acceptance":
+            acceptance(self_test)
+        else:
+            run_tests(ROOT, name, REQUIRED_SUITES[name])
+        return 0
+    except FAILURES as error:
+        print(f"KIT CHECK: FAIL — {error}", file=sys.stderr)
+        return 1
+    finally:
+        if timing_file:
+            rows = ["%7.1f s    %s" % (seconds, label) for label, seconds in TIMES]
+            rows += ["%7.1f s    test %s" % item for item in sorted(SLOWEST, reverse=True)[:10]]
+            Path(timing_file).write_text("".join(row + "\n" for row in rows))
+
+
+def run_units(units, timing=False):
+    """Run each (name, command) at once; print each unit's whole output in the given order.
+
+    The units share no state: every suite and the acceptance phases work in temporary
+    directories of their own, and each synthetic project has its own .git and so its own
+    gate lock. A unit's output is printed only when it and every unit before it have ended,
+    so the order does not depend on which finishes first. True when every unit passed.
+    """
+    def one(name, command, timing_file):
+        started = time.monotonic()
+        if timing_file:
+            command = command + ["--timing-file", timing_file]
+        result = subprocess.run(command, cwd=ROOT, stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, text=True, errors="replace")
+        return result.returncode, result.stdout, time.monotonic() - started
+
+    with tempfile.TemporaryDirectory(prefix="myagentkit-timing-") as times, \
+            ThreadPoolExecutor(max_workers=len(units)) as pool:
+        files = [os.path.join(times, str(number)) if timing else None for number in range(len(units))]
+        futures = [pool.submit(one, name, command, timing_file)
+                   for (name, command), timing_file in zip(units, files)]
+        summary, failed = [], []
+        for (name, _), future, timing_file in zip(units, futures, files):
+            code, output, seconds = future.result()
+            sys.stdout.write(output)
+            sys.stdout.flush()
+            if code:
+                failed.append(name)
+            summary.append("%7.1f s  %s%s" % (seconds, name, " (FAILED)" if code else ""))
+            if timing_file and os.path.exists(timing_file):
+                summary += Path(timing_file).read_text().splitlines()
+    if timing:
+        print("TIMING (each unit's wall clock; under it, its phases and ten slowest tests):")
+        print("\n".join(summary))
+    else:
+        print("\n".join("TIME: " + row.strip() for row in summary))
+    if failed:
+        print("KIT CHECK: FAIL — %d of %d units failed: %s" % (len(failed), len(units), ", ".join(failed)),
+              file=sys.stderr)
+    return not failed
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--self-test", action="store_true")
+    parser.add_argument("--timing", action="store_true",
+                        help="print each unit's, phase's and slowest test's seconds at the end")
+    parser.add_argument("--unit", help=argparse.SUPPRESS)
+    parser.add_argument("--timing-file", help=argparse.SUPPRESS)
+    args = parser.parse_args()
+    if args.unit:
+        return unit(args.unit, args.self_test, args.timing_file)
+    started = time.monotonic()
+    check_syntax(ROOT)
+    manifest = json.loads((ROOT / "plugins/myagentkit/.codex-plugin/plugin.json").read_text())
+    if manifest["name"] != "myagentkit" or manifest["skills"] != "./skills/":
+        raise RuntimeError("plugin manifest does not expose the expected package")
+    print(run([sys.executable, "scripts/package_codex_plugin.py", "--check"]).strip())
+    # -u: a unit's error, on stderr, lands after what it printed before failing.
+    command = [sys.executable, "-B", "-u", str(Path(__file__).resolve())] + ["--self-test"] * args.self_test
+    if not run_units([(name, command + ["--unit", name]) for name in [*REQUIRED_SUITES, "acceptance"]],
+                     args.timing):
+        return 1
+    print("TIME: %.1f s in all" % (time.monotonic() - started))
     print("KIT CHECK: PASS")
+    return 0
 
 
 if __name__ == "__main__":
     try:
-        main()
-    except (OSError, ValueError, RuntimeError, KeyError, subprocess.TimeoutExpired) as error:
+        raise SystemExit(main())
+    except FAILURES as error:
         print(f"KIT CHECK: FAIL — {error}", file=sys.stderr)
         raise SystemExit(1)
