@@ -2,7 +2,7 @@
 # KIT-OWNED: do not edit locally; change it in the kit and re-sync.
 # Remove the finished worker worktrees under .claude/worktrees, and nothing else.
 #
-# Usage: clean_worktrees.sh [--apply] [--all-reasons] [--assume-idle] [--quiet]
+# Usage: clean_worktrees.sh [--apply] [--all-reasons] [--assume-idle] [--quiet] [--only=NAME]
 #   no option      a dry run: prints `remove` or `keep` per worktree, with the first reason
 #   --apply        removes what the dry run would; .githooks/post-merge runs this after every
 #                  merge git completes itself in the main worktree (not after a conflicted merge
@@ -12,6 +12,7 @@
 #   --assume-idle  only where processes cannot be inspected at all (no /proc, and lsof missing,
 #                  failing, or not showing this script itself): take it that none works inside
 #   --quiet        prints the removals and the summary lines (the hook)
+#   --only=NAME    audits .claude/worktrees/NAME alone, the same way (scripts/close_worker.sh)
 # Needs git 2.36 or newer (`git worktree list --porcelain -z`); the hook says so once otherwise.
 #
 # Why: a project using the kit piled up 39 merged worker worktrees, 34 GB, and a session

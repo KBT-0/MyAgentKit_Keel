@@ -339,6 +339,31 @@ class CleanWorktreesTests(unittest.TestCase):
         self.assertIn('to apply: scripts/clean_worktrees.sh --apply', out)
         self.assertFalse((self.main / '.git/kit-worktree-removals.log').exists())
 
+    def test_only_audits_and_removes_the_one_named_worktree(self):
+        # close_worker.sh closes one worker: the audit is the same, the others are not looked at.
+        one, other = self.worktree('one'), self.worktree('other')
+        out = self.run_script('--only=one')
+        self.assertIn('remove .claude/worktrees/one', out)
+        self.assertNotIn('worktrees/other', out)
+        self.assertIn("to apply: scripts/clean_worktrees.sh --apply --only='one'", out)
+        out = self.run_script('--apply', '--only=one')
+        self.assertRemoved(one, out)
+        self.assertTrue(other.is_dir(), out)
+        self.assertNotIn('worktrees/other', out)
+        self.assertIn('clean_worktrees: removed 1, kept 0', out)
+        self.git('rev-parse', '--verify', 'worktree-one')
+        (other / 'dirty.txt').write_text('not committed\n')
+        out = self.run_script('--apply', '--only=other')
+        self.assertKept(other, out, 'dirty.txt')
+        out = self.run_script('--apply', '--only=gone')
+        self.assertIn('clean_worktrees: no worktree at .claude/worktrees/gone\n', out)
+        self.assertIn('clean_worktrees: removed 0, kept 0', out)
+        for bad in ('', '.', '..', '../main', 'a/b'):
+            with self.subTest(name=bad):
+                out = self.run_script('--apply', '--only=' + bad, code=2)
+                self.assertIn('--only takes the name of one folder under .claude/worktrees', out)
+        self.assertTrue(other.is_dir())
+
     def test_the_log_record_is_written_before_anything_is_deleted_and_a_rerun_finishes(self):
         (self.main / 'sub').mkdir()
         (self.main / 'sub/report.md').write_text('archived\n')

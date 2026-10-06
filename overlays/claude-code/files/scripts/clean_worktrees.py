@@ -1094,7 +1094,11 @@ def main():
                         help='run every check on every worktree instead of stopping at the first reason to keep')
     parser.add_argument('--quiet', action='store_true',
                         help='print the removals and one summary line, not each kept worktree (the hook)')
+    parser.add_argument('--only', metavar='NAME',
+                        help='audit .claude/worktrees/NAME alone, the same way (close_worker.sh)')
     args = parser.parse_args()
+    if args.only is not None and (args.only in ('', '.', '..') or '/' in args.only):
+        parser.error('--only takes the name of one folder under .claude/worktrees')
     # CLEAN_WORKTREES_NOW, CLEAN_WORKTREES_PROC and CLEAN_WORKTREES_MOUNTINFO are for the tests:
     # a clock they can move instead of ageing files (a ctime cannot be set back), and a /proc and
     # a mount table they can build. Each is said on every run: exported by mistake, it would end
@@ -1131,6 +1135,11 @@ def main():
     ctx['run'] = '%s-%d' % (ctx['stamp'].decode(), os.getpid())
     for line, why in refused:
         say('clean_worktrees: refused %s line %s %s' % (show(DISPOSABLE_FILE), show(line), why))
+    if args.only is not None:
+        only = os.path.join(ctx['home'], os.fsencode(args.only))
+        records = [record for record in records if os.path.realpath(record['worktree']) == only]
+        if not records:
+            say('clean_worktrees: no worktree at %s' % show(os.path.join(b'.claude', b'worktrees', os.fsencode(args.only))))
     removed = kept = partly = freed = 0
     gone = []
     for record in records:
@@ -1191,8 +1200,9 @@ def main():
                 'kept by the refs under refs/kit/saved/' % sh_word(short(ctx['main_ref'])))
     else:
         say('clean_worktrees: dry run: would remove %d, keep %d, free %d bytes; to apply: '
-            'scripts/clean_worktrees.sh --apply%s'
-            % (removed, kept, freed, ' --assume-idle' if args.assume_idle else ''))
+            'scripts/clean_worktrees.sh --apply%s%s'
+            % (removed, kept, freed, ' --assume-idle' if args.assume_idle else '',
+               ' --only=' + sh_word(os.fsencode(args.only)) if args.only is not None else ''))
     return 1 if partly or STOP or ctx['unlogged'] else 0
 
 
