@@ -887,6 +887,19 @@ class CleanWorktreesTests(unittest.TestCase):
             (path / 'sub').symlink_to(self.tmp / 'sub')
         self.tracked(change, 'its executable bit): sub/f')
 
+    def test_an_executable_swapped_for_a_symlink_to_the_same_bytes_is_kept(self):
+        # A symlink carries every permission bit, so only "not a regular file" tells it apart.
+        (self.main / 'run.sh').write_text('#!/bin/sh\n')
+        (self.main / 'run.sh').chmod(0o755)
+        self.git('add', 'run.sh')
+        self.git('commit', '-q', '-m', 'run')
+
+        def change(path):
+            (path / 'run.sh').unlink()
+            (self.tmp / 'run.sh').write_text('#!/bin/sh\n')
+            (path / 'run.sh').symlink_to(self.tmp / 'run.sh')
+        self.tracked(change, 'its executable bit): run.sh')
+
     def test_an_intent_to_add_is_kept(self):
         def change(path):
             (path / 'n').write_text('')
