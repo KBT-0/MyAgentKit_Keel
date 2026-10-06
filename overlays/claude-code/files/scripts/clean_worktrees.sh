@@ -30,7 +30,7 @@
 # What is proven: a commit was made in the worktree itself (its own HEAD reflog) and its HEAD
 # is in the main branch; every object id in any file of its git directory, which removal
 # destroys, names a commit that a ref holds (no reflog counts: `git branch -d` deletes the
-# branch's), or one it saves first: every commit only its git directory holds (an amended,
+# branch's; nor a remote-tracking ref, which `git fetch --prune` drops), or one it saves first: every commit only its git directory holds (an amended,
 # reset or rebased-away tip, a squash's intermediate commits, FETCH_HEAD) is pinned under
 # refs/kit/saved/<its git directory name>-<UTC time>/, in one transaction, before anything is
 # deleted, and the report prints the command that deletes those refs; a tree or blob id keeps

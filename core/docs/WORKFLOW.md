@@ -448,7 +448,8 @@ git completes itself in the main worktree (not a conflicted merge finished with 
 nor `pull --rebase` or `cherry-pick`), but only when `scripts/clean_worktrees.sh` finds
 nothing in it that would be lost: a commit was made in that worktree (its own HEAD reflog) and
 its HEAD is in the main branch; every commit a file of its git directory names is held by a
-ref or its branch's reflog, or saved first under `refs/kit/saved/`; every tracked file is byte
+ref of the repository (no reflog, no remote-tracking ref counts), or saved first under
+`refs/kit/saved/`; every tracked file is byte
 for byte what the index
 records; no operation under way; and every file git does not track either in a folder
 `.claude/worktree-disposable` lists or byte-identical to main's copy. It never deletes a

@@ -18,6 +18,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import unicodedata
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -40,7 +41,7 @@ exit 1
 # Wraps the real git: prints what this git never does, or fails one subcommand. The script
 # must keep, not guess.
 SHIM = '''#!%s
-import os, subprocess, sys
+import os, shutil, subprocess, sys
 args, mode = sys.argv[1:], os.environ.get('SHIM', '')
 if mode.startswith('fail:') and mode[5:] in args:
     sys.stderr.write('fatal: refused by the shim\\n')
@@ -51,6 +52,14 @@ if mode == 'format' and '--show-object-format' in args:
 if mode == 'version' and args == ['--version']:
     sys.stdout.write('git version 2.35.8\\n')
     sys.exit(0)
+if mode == 'halfremove' and args[:2] == ['worktree', 'remove']:
+    # What git does when it cannot delete a file: some files gone, its git directory gone anyway.
+    gitdir = subprocess.run([os.environ['REAL_GIT'], 'rev-parse', '--absolute-git-dir'], cwd=args[-1],
+                            stdout=subprocess.PIPE).stdout.strip()
+    os.unlink(os.path.join(args[-1], 'done.txt'))
+    shutil.rmtree(gitdir)
+    sys.stderr.write('error: failed to delete a file of the shim\\n')
+    sys.exit(1)
 if mode == 'reftable' and 'extensions.refStorage' in args:
     sys.stdout.write('reftable\\n')
     sys.exit(0)
@@ -207,7 +216,10 @@ class CleanWorktreesTests(unittest.TestCase):
             'clean_worktrees: to delete merged branches yourself: `git branch --merged \'main\'` lists them, '
             '`git branch -d <name>` deletes one, and its reflog with it: the old tips a removal saved are kept by '
             'the refs under refs/kit/saved/'), out)
-        record = (self.main / '.git/kit-worktree-removals.log').read_text().split('\t')
+        lines = (self.main / '.git/kit-worktree-removals.log').read_text().split('\n')
+        self.assertEqual(lines[0], '# one line per removal, tab-separated; in every name ' + clean_worktrees.ESCAPING)
+        record = lines[1].split('\t')
+        self.assertEqual(lines[2:], [''])
         self.assertEqual(record[1:5], [os.path.realpath(path), 'refs/heads/worktree-done', tip, self.git('rev-parse', 'HEAD')])
         self.assertTrue(record[0].endswith('Z'))
 
@@ -259,11 +271,12 @@ class CleanWorktreesTests(unittest.TestCase):
         self.assertNotIn('git refused', out)
         self.assertTrue((path / 'sub/report.md').is_file(), out)
         log = self.main / '.git/kit-worktree-removals.log'
-        self.assertEqual(log.read_text().count('\n'), 1, 'no record before the first deletion')
+        self.assertEqual(log.read_text().count('\n'), 2, 'no record before the first deletion')
         # The state an interrupt after the record leaves: the re-run removes it, logged again.
         out = self.run_script('--apply')
         self.assertRemoved(path, out)
-        self.assertEqual(log.read_text().count('\n'), 2)
+        self.assertEqual(log.read_text().count('\n'), 3)
+        self.assertEqual(log.read_text().count('# one line per removal'), 1)
 
     def test_a_failure_after_a_deletion_says_what_was_deleted_and_fails(self):
         path = self.worktree('done')
@@ -291,27 +304,78 @@ class CleanWorktreesTests(unittest.TestCase):
 
     def test_a_git_worktree_remove_that_fails_halfway_is_reported_possibly_modified(self):
         # git deletes the folder's files until one fails, then its git directory anyway, and
-        # exits non-zero. Reproduced: a read-only folder in a disposable one.
-        if os.geteuid() == 0:
-            self.skipTest('root deletes from a read-only folder')
-        self.disposable('build\n')
+        # exits non-zero; the shim does that for any user (root deletes from a read-only folder).
         path = self.worktree('done')
-        (path / 'build/sub').mkdir(parents=True)
-        (path / 'build/sub/x.o').write_text('x\n')
-        (path / 'build/y.o').write_text('y\n')
-        (path / 'build/sub').chmod(0o555)
-        try:
-            out = self.run_script('--apply', code=1)
-        finally:
-            (path / 'build/sub').chmod(0o755)
-        self.assertIn('stopped: git refused to remove it: ', out)
+        out = self.run_script('--apply', code=1, SHIM='halfremove', **self.shim())
+        self.assertIn('stopped: git refused to remove it: error: failed to delete a file of the shim\n', out)
         self.assertNotIn('nothing deleted', out)
         self.assertIn('         POSSIBLY MODIFIED: `git worktree remove` failed and may have deleted part of it first. '
-                      'Now its folder is still there', out)
-        self.assertIn('it is no longer a registered worktree, its git directory is gone', out)
-        self.assertIn("git worktree add '%s' 'worktree-done'" % os.path.realpath(path), out)
+                      'Now its folder is still there, 1 of its 3 tracked files gone; it is no longer a registered '
+                      'worktree, its git directory is gone.', out)
+        self.assertIn('writes back once what is left of the folder is moved aside:\n'
+                      "           git worktree add '%s' 'worktree-done'\n" % os.path.realpath(path), out)
         self.assertIn('clean_worktrees: removed 0, kept 1, PARTLY MODIFIED 1', out)
         self.assertEqual(self.branch('done'), 'worktree-done')
+        # The printed recovery works.
+        path.rename(self.tmp / 'aside')
+        self.git('worktree', 'add', '-q', os.path.realpath(path), 'worktree-done')
+        self.assertEqual((path / 'done.txt').read_text(), 'done\n')
+
+    def run_closed(self, code):
+        """The script with its stdout a pipe nobody reads any more, as after a hang-up."""
+        read, write = os.pipe()
+        os.close(read)
+        try:
+            result = subprocess.run(['sh', str(SCRIPT), '--apply', '--assume-idle'], cwd=self.main, env=self.env,
+                                    stdout=write, stderr=subprocess.PIPE)
+        finally:
+            os.close(write)
+        self.assertEqual(result.returncode, code, result.stderr)
+        self.assertEqual(result.stderr, b'')
+
+    def test_a_closed_stdout_stops_neither_the_removal_nor_its_exit_status(self):
+        # Reproduced by a reviewer: SIGHUP left the PARTLY MODIFIED report raising
+        # BrokenPipeError, and the script exited 120 after deleting a file.
+        path = self.worktree('done')
+        self.git('update-ref', 'refs/worktree/keep', self.loose(path), cwd=path)
+        for root in (self.main, path):
+            (root / 'sub').mkdir()
+            (root / 'sub/report.md').write_text('archived\n')
+            (root / 'report.md').write_text('top\n')
+        (path / 'sub').chmod(0o555)
+        try:
+            self.run_closed(1)
+        finally:
+            (path / 'sub').chmod(0o755)
+        self.assertFalse((path / 'report.md').exists())
+        log = self.main / '.git/kit-worktree-removals.log'
+        self.assertIn('\tdelete=report.md\tdelete=sub/report.md\n', log.read_text())
+        self.assertEqual(log.read_text().count('\tsaved=refs/kit/saved/done-'), 1)
+        self.run_closed(0)
+        self.assertFalse(path.exists())
+        self.assertEqual(log.read_text().count('\n'), 3)
+
+    def test_the_log_record_comes_before_any_line_about_the_removal(self):
+        # Each line is checked against the log as it is printed: a hung-up terminal must never
+        # leave saved refs, or a deletion, with no record.
+        path = self.worktree('done')
+        self.git('update-ref', 'refs/worktree/keep', self.loose(path), cwd=path)
+        log = self.main / '.git/kit-worktree-removals.log'
+        driver = ('import sys\nsys.path.insert(0, sys.argv[1])\nimport clean_worktrees as c\nsay, log = c.say, sys.argv[2]\n'
+                  'def check(text):\n'
+                  '    try:\n        logged = "saved=" in open(log).read()\n'
+                  '    except OSError:\n        logged = False\n'
+                  '    say(("LOGGED " if logged else "NOT LOGGED ") + text)\n'
+                  'c.say = check\nsys.argv = ["clean_worktrees", "--apply", "--assume-idle"]\nsys.exit(c.main())\n')
+        result = subprocess.run([sys.executable, '-c', driver, str(SCRIPTS), str(log)], cwd=self.main, env=self.env,
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse(path.exists(), result.stdout)
+        lines = result.stdout.split('\n')
+        for text in ('         to delete the saved refs once you no longer want them, run in the main worktree:',
+                     '         this command, run in the main worktree, brings the worktree back:'):
+            self.assertIn('LOGGED ' + text, lines, result.stdout)
+            self.assertNotIn('NOT LOGGED ' + text, lines, result.stdout)
 
     def test_a_signal_during_the_removal_is_reported_and_a_rerun_finishes(self):
         # tmux is asked a second time right before the first deletion, a third time after the
@@ -389,10 +453,13 @@ class CleanWorktreesTests(unittest.TestCase):
 
     def test_no_removal_without_its_log_record(self):
         path = self.worktree('done')
+        self.git('update-ref', 'refs/worktree/keep', self.loose(path), cwd=path)
         (self.main / '.git/kit-worktree-removals.log').mkdir()
         out = self.run_script('--apply')
         self.assertIn('stopped: cannot write the removal log', out)
         self.assertTrue(path.is_dir(), out)
+        # The refs were saved before the log failed: the command that deletes them is printed.
+        self.assertIn("git for-each-ref --format='delete %(refname)' 'refs/kit/saved/done-", out)
 
     def test_a_bare_main_repository_is_refused(self):
         bare = self.tmp / 'bare.git'
@@ -917,6 +984,52 @@ class CleanWorktreesTests(unittest.TestCase):
                 with self.assertRaises(clean_worktrees.Unproven):
                     clean_worktrees.parse_lsof(bad)
 
+    def test_lsof_names_are_read_back_to_their_bytes_or_the_listing_is_not_proven(self):
+        # Under LC_ALL=C, lsof 4.98 here wrote café as caf\xc3\xa9, a backslash as \\, a tab as
+        # \t, and the byte 0x01 as ^A, which a name holding "^A" reads as too.
+        cafe = 'café'.encode()
+        for raw, name in ((b'/w/caf\\xc3\\xa9', b'/w/' + cafe), (b'/w/caf\\303\\251', b'/w/' + cafe),
+                          (b'/w/' + cafe, b'/w/' + cafe), (b'/w/a\\\\b', b'/w/a\\b'), (b'/w/a\\\\x41', b'/w/a\\x41'),
+                          (b'/w/a\\\\\\\\', b'/w/a\\\\'), (b'/w/n\\nl\\tt\\r\\b\\f', b'/w/n\nl\tt\r\b\f'),
+                          (b'/w/s p\\x20', b'/w/s p ')):
+            with self.subTest(raw=raw):
+                self.assertEqual(clean_worktrees.parse_lsof(b'p1\nn' + raw + b'\n'), ({b'1': name}, 0))
+        for bad in (b'/w/x^Ay', b'/w/^', b'/w/a\\qb', b'/w/end\\', b'/w/\\x4', b'/w/\\400', b'/w/\\\\\\'):
+            with self.subTest(bad=bad):
+                with self.assertRaisesRegex(clean_worktrees.Unproven, 'a name this script cannot read back exactly'):
+                    clean_worktrees.parse_lsof(b'p1\nn' + bad + b'\n')
+
+    def test_a_process_in_a_worktree_with_a_non_ascii_name_is_found(self):
+        # Reproduced by a reviewer: lsof escaped café, the listing still found the script in its
+        # ASCII folder, and a worktree in use was removed. Both listings here, as on macOS.
+        path = self.worktree('café')
+        sleeper = subprocess.Popen(['sleep', '60'], cwd=path)
+        try:
+            if shutil.which('lsof'):  # what this host's lsof prints, for the CI log
+                raw = subprocess.run(['lsof', '-a', '-d', 'cwd', '-F', 'pn', '-p', str(sleeper.pid)],
+                                     env=self.env, capture_output=True).stdout
+                sys.stderr.write('\n[lsof on %s, LC_ALL=C, a cwd named café] %r\n' % (sys.platform, raw))
+            for extra in [{}] + ([{'CLEAN_WORKTREES_PROC': str(self.tmp / 'no-proc')}]
+                                 if PROC and shutil.which('lsof') else []):
+                with self.subTest(**extra):
+                    out = self.run_script('--apply', idle=False, **extra)
+                    self.assertKept(path, out, 'in use: process %d works inside it' % sleeper.pid)
+        finally:
+            sleeper.kill()
+            sleeper.wait()
+        self.assertRemoved(path, self.run_script('--apply', idle=False))
+
+    def test_a_working_directory_is_matched_as_macos_matches_names(self):
+        # macOS ignores case, and HFS+ stores é decomposed while git keeps it composed.
+        path = self.worktree('café')
+        proc = self.tmp / 'proc'
+        real = os.path.realpath(path)
+        for pid, cwd in (('9901', real.upper()), ('9902', unicodedata.normalize('NFD', real) + '/sub'),
+                         ('9903', real + 'x')):
+            (proc / pid).mkdir(parents=True)
+            (proc / pid / 'cwd').symlink_to(cwd)
+        self.assertKept(path, self.run_script('--apply', idle=False, proc=proc), 'in use: process 9901, 9902 works inside it\n')
+
     def test_a_tmux_session_of_its_name_is_kept_and_only_no_server_proves_none(self):
         path = self.worktree('done')
         (self.tmp / 'sessions').write_text('lead\ndone\n')
@@ -1118,6 +1231,44 @@ class CleanWorktreesTests(unittest.TestCase):
         self.assertRemoved(path, out)
         self.assertIn('=%s (FETCH_HEAD)' % fetched[:12], out)
         self.assertIn(fetched, self.git('rev-list', '--glob=' + self.saved(out) + '/*'))
+
+    def test_a_commit_only_a_remote_tracking_ref_holds_is_saved(self):
+        # A later `git fetch --prune` drops a remote-tracking ref: it holds nothing.
+        path = self.worktree('done')
+        loose = self.loose(path)
+        self.git('update-ref', 'refs/remotes/origin/gone', loose)
+        self.git('update-ref', 'refs/worktree/keep', loose, cwd=path)
+        out = self.run_script('--apply')
+        self.assertRemoved(path, out)
+        self.assertIn(loose, self.git('rev-list', '--glob=' + self.saved(out) + '/*'))
+
+    def test_only_the_commits_no_other_saved_one_reaches_are_pinned(self):
+        path = self.worktree('done')
+        one = self.loose(path)
+        two = self.git('commit-tree', self.git('rev-parse', 'HEAD^{tree}', cwd=path), '-p', one, '-m', 'two', cwd=path)
+        self.git('update-ref', 'refs/worktree/one', one, cwd=path)
+        self.git('update-ref', 'refs/worktree/two', two, cwd=path)
+        out = self.run_script('--apply')
+        self.assertRemoved(path, out)
+        prefix = self.saved(out)
+        self.assertEqual(self.git('for-each-ref', '--format=%(refname) %(objectname)', prefix + '/'),
+                         '%s/1 %s' % (prefix, two))
+        self.assertIn(one, self.git('rev-list', '--glob=' + prefix + '/*'))
+
+    def test_a_git_directory_name_git_refuses_as_a_ref_is_percent_encoded(self):
+        # git names a worktree's git directory after its folder; an older git, or a hand, can
+        # leave a name with a space or "..", which `update-ref` refuses: kept for ever.
+        path = self.worktree('done')
+        odd = self.gitdir(path).parent / 'a b..c%'
+        self.gitdir(path).rename(odd)
+        (path / '.git').write_text('gitdir: %s\n' % odd)
+        loose = self.loose(path)
+        self.git('update-ref', 'refs/worktree/keep', loose, cwd=path)
+        out = self.run_script('--apply')
+        self.assertRemoved(path, out)
+        prefix = self.saved(out)
+        self.assertTrue(prefix.startswith('refs/kit/saved/a%20b%2E%2Ec%25-'), out)
+        self.assertIn(loose, self.git('rev-list', '--glob=' + prefix + '/*'))
 
     def test_a_tree_or_blob_id_keeps_it_with_the_honest_reason(self):
         # `rev-list --objects <tree> ^main` lists a tree main holds too: for a tree or a blob it
@@ -1400,6 +1551,41 @@ class CleanWorktreesTests(unittest.TestCase):
         self.assertKept(path, out, 'disposable folder: docs/notes.md')
         for entry in ('docs', '/abs', '../up', 'ok/../docs', '.claude', 'scripts/', 'a//b', './c'):
             self.assertIn('refused .claude/worktree-disposable line %s (empty, absolute' % entry, out)
+
+    def test_a_tracked_file_under_another_name_is_kept_and_never_deleted(self):
+        # Reproduced by a reviewer on a case-insensitive file system (macOS): tracked `a` renamed
+        # `A` passed every check by its old name; `A` was then deleted as main's identical copy,
+        # and git refused the removal of a worktree now missing a tracked file.
+        path = self.worktree('done')
+        (self.tmp / 'probe').write_text('')
+        if (self.tmp / 'PROBE').exists():
+            os.rename(path / 'a', path / 'A')
+            how = 'real: a case-only rename, this file system ignores case'
+        else:
+            os.link(path / 'a', path / 'A')
+            (self.main / 'A').write_text('a\n')
+            how = 'emulated: a hard link to the tracked file, this file system is case-sensitive'
+        sys.stderr.write('\n[case alias on %s] %s\n' % (sys.platform, how))
+        out = self.run_script('--apply', '--all-reasons')
+        self.assertKept(path, out, 'a case alias of a tracked file, or another link to one (the same file on disk), '
+                        'under a name the index does not hold: A\n')
+        self.assertNotIn('identical files', out)
+        self.assertTrue((path / 'A').is_file())
+
+    def test_every_printed_name_reads_back_to_its_bytes(self):
+        def back(text):
+            parts = re.split(r'(\\\\|\\n|\\x[0-9a-f]{2})', text)
+            return b''.join((b'\\' if p == '\\\\' else b'\n' if p == '\\n' else bytes([int(p[2:], 16)]))
+                            if i % 2 else p.encode() for i, p in enumerate(parts))
+        names = ([bytes([b]) for b in range(256)] + ['café \u0085x\t'.encode(), b'a\\nb', b'\\\\x41',
+                 b'new\nline', b'new\\nline', b'bad\xffbyte', b'bad\\xffbyte', b'caf\xc3\xa9\xe9'])
+        shown = [clean_worktrees.show(name) for name in names]
+        for name, text in zip(names, shown):
+            with self.subTest(name=name):
+                self.assertEqual(back(text), name)
+                self.assertNotIn('\n', text)
+                self.assertTrue(text.isprintable(), text)
+        self.assertEqual(len(set(shown)), len(names))
 
     def test_a_symlink_is_kept(self):
         path = self.worktree('done')

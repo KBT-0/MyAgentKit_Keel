@@ -223,25 +223,32 @@ then stays quiet.
   such as `refs/worktree/*`, `refs/bisect/*`, `refs/rewritten/*`, every pseudo-ref such as
   `ORIG_HEAD` or `FETCH_HEAD`, and any file the script does not know; only the index, the
   gate's build log and `AUTO_MERGE`, a tree git leaves after a merge or rebase step, are
-  skipped) names no object, or a commit a ref of the repository holds (no reflog counts), or a
-  commit it saves first (below); the files ref
+  skipped) names no object, or a commit a ref of the repository holds (no reflog counts, nor a
+  remote-tracking ref, which a later `git fetch --prune` drops), or a commit it saves first
+  (below); the files ref
   backend (another one is kept); no per-worktree config; **tracked content by bytes**: no
   change `git status` reports with the stat settings forced to their defaults, the index equal
   to HEAD's tree, and every tracked path in the worktree byte for byte the blob the index
   records, with the same executable bit (a symlink: the same text), so no stat cache, filter or
   line-ending conversion is trusted; no unresolved entry, no submodule; every file git does not
   track inside a folder `.claude/worktree-disposable` lists or byte-identical to the regular
-  file at the same path in main; nothing anywhere in it, those folders included, changed within
+  file at the same path in main, and not a tracked file under another name (a case-only rename
+  on macOS, a hard link: the same file on disk); nothing anywhere in it, those folders included, changed within
   the quiet period.
 - **What only its git directory holds is saved, then it is removed.** A commit no ref holds
   (an amended, reset or rebased-away tip, a squash's intermediate commits, a `FETCH_HEAD`, a
-  `refs/worktree/*` ref) is pinned before anything is deleted, in one `git update-ref --stdin` transaction, as
-  `refs/kit/saved/<git directory name>-<UTC time>/<n>`, never under the branch name; the audit
-  then runs again with those refs counted. A failed save keeps the worktree. The report names
+  `refs/worktree/*` ref) is pinned before anything is deleted, in one `git update-ref --stdin`
+  transaction, as `refs/kit/saved/<git directory name>-<UTC time>/<n>`, never under the branch
+  name; only the commits no other saved one reaches get a ref, and every byte of the name but a
+  letter, a digit, `-` and `_` is percent-encoded. The audit then runs again with those refs
+  counted. A failed save keeps the worktree. The report names
   each saved commit and prints one command that deletes all of that removal's saved refs: `git
   for-each-ref --format='delete %(refname)' 'refs/kit/saved/<name>-<time>/' | git update-ref
   --stdin`. **These refs never expire on their own**: they are gc roots, they appear in `git
-  log --all`, and `git push --mirror` would publish them.
+  log --all`, and `git push --mirror` would publish them. They pile up, one
+  `<git directory name>-<UTC time>/` folder per removal that saved something: `git
+  for-each-ref refs/kit/saved/` lists them all, and `git for-each-ref --format='delete
+  %(refname)' refs/kit/saved/ | git update-ref --stdin` deletes them all.
 - **Kept**, with the reason, otherwise; each of these is the owner's to remove by hand: check
   what the reason names, then `git worktree remove <path>` without `--force` (git refuses a
   worktree with changes of its own; the branch stays). A squash-merged branch, or one whose
@@ -255,7 +262,11 @@ then stays quiet.
   proven, and every worktree is kept. Linux reads `/proc`: another user's process, or one of
   ours made non-dumpable, is listed but unreadable, and the report counts it. Elsewhere (macOS)
   it runs `lsof`; a non-zero exit is accepted only when the listing shows the script and every
-  line on stderr is lsof's "can't stat()" warning. macOS `lsof` does not list another user's
+  line on stderr is lsof's "can't stat()" warning. lsof escapes a name it cannot print (`café`
+  as `caf\xc3\xa9`); the script reads each escape back to its bytes, and a name it cannot read
+  back exactly (lsof writes a control byte and a `^` in a name the same way) leaves the listing
+  unproven. A working directory is compared case-folded and Unicode-normalised, as macOS
+  compares names. macOS `lsof` does not list another user's
   processes at all, so the count there does not include them. Where no listing is proven (no
   `/proc`, `lsof` missing or failing), every worktree is kept and the report gives
   `scripts/clean_worktrees.sh --apply --assume-idle` to run by hand.
@@ -276,7 +287,10 @@ then stays quiet.
 - **The log** comes right after the saved refs: `<git dir>/kit-worktree-removals.log` gets one
   line per removal (time, path, branch, tip commit, main HEAD, identical files, disposable
   bytes, each saved ref with its commit, each file about to be deleted) before anything is
-  deleted. Then the identical copies git does not track go, then `git worktree remove` without
+  deleted, and before any line about the removal is printed: a closed or hung-up terminal does
+  not stop the removal or change its exit status. Every name the script prints or logs is
+  escaped reversibly, as the log's first line says: a backslash as `\\`, a newline as `\n`, any
+  other byte that is not printable UTF-8 as `\xNN`. Then the identical copies git does not track go, then `git worktree remove` without
   `--force` checks again on its own. SIGINT, SIGTERM and SIGHUP are caught from the saved refs
   to the end of `git worktree remove` and stop it at the next step. If a step fails or is
   stopped after a copy was deleted, the report says **PARTLY MODIFIED**, lists each deleted file
