@@ -127,6 +127,14 @@ Windows-native binaries into `node_modules`, and runs its gate many times slower
 Linux filesystem. Clone into the WSL home instead. `scripts/doctor.sh` names the path and
 flags a CR in a script.
 
+## Under WSL, a file named `*.exe` runs on Windows
+
+WSL hands any executed file whose name ends in `.exe` to Windows, whatever its contents. A
+test stub named like a Windows launcher therefore starts on the Windows side, and Windows
+may show the owner a GUI error dialog in the middle of a test run. A test or an experiment
+never executes a `*.exe` file. Name a stub for a Windows launcher without `.exe`, and reach
+it through an overridable variable (`docs/WORKFLOW.md`, "Writing a gate").
+
 ## A build server the gate started keeps the gate lock
 
 `scripts/check.sh` runs one gate per checkout at a time, through a kernel lock that every

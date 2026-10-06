@@ -104,6 +104,10 @@ breaks, everything keeps looking green.
   variables the example names, the copy's own empty HOME and TMPDIR, no system or global git
   configuration, and an allowlist of the repository's own settings. Prove it by interrupting the injected test, SIGKILL included: the checkout's bytes
   and `git status` stay as they were.
+- **A test or an experiment never executes a file whose name ends in `.exe`.** Under WSL
+  such a file runs on Windows, which may show {{OWNER_NAME}} a GUI error dialog. Name a stub
+  for a Windows launcher without `.exe`, and reach it through an overridable variable
+  (`docs/GOTCHAS.md`).
 - **Test both directions** where a gate can produce false positives. A gate that always
   fails is as useless as one that never does, and it gets deleted by the first person it
   blocks unfairly.
@@ -192,6 +196,9 @@ loop. **The audit is itself a task; skip it and decay advances invisibly.**
 - **A second agent's output is untrusted INPUT to a decision the calling agent owns**, never
   a verdict to relay verbatim. Verify each finding against the code: drop what is disproved,
   keep what is confirmed, and treat a confirmed critical finding as a stop signal.
+- **A worker's "not done" or "noticed, not fixed" line about something the brief asked for
+  is a finding.** The lead has it fixed before the merge. A worker's list of new ideas is a
+  question for {{OWNER_NAME}}, never an automatic next round.
 - Agents do not spend another tool's budget on their own initiative. {{OWNER_NAME}} asks for
   it in the session, or it does not happen.
 

@@ -108,6 +108,23 @@ For the same reason, **"enforced by construction" is a claim that needs a negati
 exactly like any other. Where a construction genuinely cannot be tested, say so in the
 acceptance record instead of asserting the guarantee.
 
+## A review loop: threat model, stopping rule, evidence
+
+- **Write the threat model before a hardening or review loop starts.** It names what the
+  change protects and what is excluded by decision. Agree the stopping rule with
+  {{OWNER_NAME}} before the first round. Answer a finding outside the threat model with a
+  disposition, not with a fix. Without a threat model, a loop over an adversarial reviewer
+  has no edge: one project ran twelve rounds in one day.
+- **A stopping rule ends the hunt for new classes of finding.** It does not excuse
+  unreviewed code: every fix merged after a loop ends is still reviewed.
+- **A platform the project claims is a platform it is run on** (in CI or by hand) before
+  anything is called accepted. "NOT RUN: <platform>" repeated across rounds is a finding,
+  not a footnote. One release passed on the development machine a dozen times and failed
+  all four CI jobs on its first run.
+- **A review that executed no tests is not test evidence.** The evidence that the tests ran
+  is the self-test, run by the author or the lead on the reviewed head and named in the
+  acceptance record.
+
 ## Running it
 
 ```
