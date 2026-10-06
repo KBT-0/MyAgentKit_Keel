@@ -39,6 +39,16 @@ if args[0] == 'list-clients':
     if name in os.environ.get('VIS_ATTACHED', '').split() or os.path.exists(os.path.join(st, 'attached-' + name)):
         print('/dev/pts/9: %s [120x30 xterm-256color] (attached,UTF-8)' % name)
     sys.exit(0 if name in sessions else 1)
+# The watcher's once-markers are user options of the session.
+if args[0] in ('set-option', 'show-options'):
+    opt = os.path.join(st, 'opt-%s-%s' % (name, args[-2] if args[0] == 'set-option' else args[-1]))
+    if args[0] == 'set-option':
+        with open(opt, 'w') as f:
+            f.write(args[-1])
+    elif os.path.exists(opt):
+        with open(opt) as f:
+            print(f.read())
+    sys.exit(0)
 if args[0] == 'capture-pane':
     pane = os.environ['VIS_PANE']
     if os.path.exists(os.path.join(st, 'slept')):
@@ -314,8 +324,143 @@ class WatchTests(Base):
             self.assertIn(rule, result.stdout)
         # A VERIFIED rule names the version its capture came from, and that capture is here.
         verified = [rule.split() for rule in rules if rule.split()[1] == 'VERIFIED']
-        self.assertEqual({r[0] for r in verified}, {'trust', 'permission', 'question'})
+        self.assertEqual({r[0] for r in verified}, {'trust', 'permission', 'question', 'context'})
         self.assertTrue(all(r[2] == '2.1.285' for r in verified))
+
+
+HEAD = 'Kind: %s\nTask: T-7\nAttempt: 2\nRemaining: %s\n'
+STATUS = '58k/1.0M'  # in the real status line of working-auto.txt
+
+
+class ResultTests(Base):
+    """The result file's head (docs/HANDOFF.md) is read once it is committed on a clean tree."""
+
+    def setUp(self):
+        super().setUp()
+        self.git('init', '-q')
+        self.git('commit', '-q', '--allow-empty', '-m', 'a')
+        self.file = self.cwd / 'docs' / 'w1.md'
+        self.file.parent.mkdir()
+
+    def git(self, *args):
+        subprocess.run(['git', '-c', 'user.name=t', '-c', 'user.email=t@t', *args], cwd=self.cwd,
+                       check=True, capture_output=True)
+
+    def commit(self, data):
+        self.file.write_bytes(data if isinstance(data, bytes) else data.encode())
+        self.git('add', '-A')
+        self.git('commit', '-q', '-m', 'r')
+
+    def watch(self, *args, **extra):
+        return self.run_script(WATCH, '--once', '--result', 'w1=docs/w1.md', *args, 'w1',
+                               VIS_SESSIONS='w1', VIS_PANE=str(PANES / 'working-auto.txt'), **extra)
+
+    def test_each_kind_is_reported_and_only_completed_is_done(self):
+        for kind, word in (('completed', 'DONE'), ('blocked', 'BLOCKED'), ('handoff', 'HANDOFF'),
+                           ('progress', 'PROGRESS')):
+            with self.subTest(kind=kind):
+                self.commit(HEAD % (kind, 'none') + '\nbody\n')
+                result = self.watch()
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, 'watch_workers: %s: w1, task T-7, attempt 2, remaining: '
+                                 'none (result file docs/w1.md)\n' % word)
+
+    def test_a_result_counts_only_committed_on_a_clean_tree_and_once(self):
+        self.file.write_text(HEAD % ('completed', 'none'))
+        self.assertEqual(self.watch().stdout, '', 'an uncommitted file was read')
+        self.commit(HEAD % ('completed', 'none'))
+        (self.cwd / 'stray').write_text('x')
+        self.assertEqual(self.watch().stdout, '', 'a dirty tree was read')
+        (self.cwd / 'stray').unlink()
+        self.assertIn('DONE: w1', self.watch().stdout)
+        self.assertEqual(self.watch().stdout, '', 'the same version was reported twice')
+        self.commit(HEAD % ('completed', 'none') + 'more\n')
+        self.assertIn('DONE: w1', self.watch().stdout)
+
+    def test_a_malformed_head_is_never_done(self):
+        for head, why in (('', 'line 1'), ('Kind: finished\nTask: T\nAttempt: 1\nRemaining: none\n', 'line 1'),
+                          ('# Result\n' + HEAD % ('completed', 'none'), 'line 1'),
+                          ('Kind: completed\nTask: \nAttempt: 1\nRemaining: none\n', 'line 2'),
+                          ('Kind: completed\nTask: T\nAttempt: two\nRemaining: none\n', 'line 3'),
+                          ('Kind: completed\nTask: T\nAttempt: 1\n\nbody\n', 'line 4')):
+            with self.subTest(head=head):
+                self.commit(head + 'x\n')
+                out = self.watch().stdout
+                self.assertTrue(out.startswith('watch_workers: MALFORMED: w1, result file docs/w1.md: ' + why), out)
+                self.assertIn('not done', out)
+                self.assertNotIn('DONE', out)
+
+    def test_open_questions_are_reported_first_with_their_text(self):
+        long = 'Qq' + 'ü' * 300 + '?'
+        body = (HEAD % ('progress', 'two steps') + '\nbody\n\n## Open questions for Ada\n\n'
+                '1. Keep the old name?\n   a) yes\n   b) no, rename it\n'
+                '2. Which default?\n   a) über-safe \u2014 slower\n   b) fast\n'
+                '3. ' + long + '\n   a) yes\x1b[2J\n\n## Not run / not verified\n\nnone\n')
+        for locale in ({}, {'LC_ALL': 'C', 'LANG': 'C'}):
+            with self.subTest(locale=locale):
+                self.commit(body + str(locale))
+                result = self.watch(**locale)
+                lines = result.stdout.splitlines()
+                self.assertEqual(lines[0], 'watch_workers: QUESTIONS: w1, 3 questions for Ada (Kind: progress, '
+                                 'task T-7, attempt 2, remaining: two steps)')
+                for text in ('  | 1. Keep the old name?', '  |    b) no, rename it', '  | 2. Which default?',
+                             '  |    a) über-safe \u2014 slower', '  |    a) yes[2J'):
+                    self.assertIn(text, lines)
+                third = [line for line in lines if line.startswith('  | 3. ')][0]
+                self.assertTrue(long.startswith(third[len('  | 3. '):]), third)
+                self.assertLessEqual(len(third.encode()), len('  | ') + 200)
+                self.assertNotIn('none', result.stdout.replace('Not run', ''))
+                self.assertIsNone(re.search(r'[\x00-\x09\x0b-\x1f\x7f]', result.stdout))
+
+
+class ContextTests(Base):
+    """The context figure is read from the status line, past a warning line, once per session."""
+
+    def watch(self, status, *args, drop=False):
+        text = (PANES / 'working-auto.txt').read_text()
+        self.assertIn(STATUS, text)
+        lines = [line for line in text.replace(STATUS, status).splitlines() if not (drop and '│' in line)]
+        pane = self.tmp / 'pane.txt'
+        pane.write_text('\n'.join(lines) + '\n')
+        return self.run_script(WATCH, *args, 'w1', VIS_SESSIONS='w1', VIS_PANE=str(pane), LC_ALL='C')
+
+    def test_the_figure_is_reported_past_the_warning_line(self):
+        for status, warn, out in (('58k/1.0M', '50', ''), ('58k/1.0M', '5', '58k/1.0M is 5%'),
+                                  ('113k/1.0M', '50', ''), ('113k/1.0M', '10', '113k/1.0M is 11%'),
+                                  ('1.2M/1.0M', '50', '1.2M/1.0M is 120%'), ('36k/200k', '17', '36k/200k is 18%')):
+            with self.subTest(status=status, warn=warn):
+                for f in self.state.glob('opt-*'):
+                    f.unlink()
+                result = self.watch(status, '--once', '--context-warn', warn)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                if out:
+                    self.assertEqual(result.stdout, 'watch_workers: CONTEXT: w1, %s of its context window, past the '
+                                     '%s%% warning line (finish, compact or hand off: read its Remaining: line)\n'
+                                     % (out, warn))
+                else:
+                    self.assertEqual(result.stdout, '')
+
+    def test_the_warning_fires_once_per_session(self):
+        self.assertIn('CONTEXT: w1, 1.2M/1.0M', self.watch('1.2M/1.0M', '--once').stdout)
+        self.assertEqual(self.watch('1.2M/1.0M', '--once').stdout, '')
+        result = self.watch('1.2M/1.0M', '--max-minutes', '0')
+        self.assertTrue(result.stdout.startswith('watch_workers: nothing was waiting'), result.stdout)
+
+    def test_a_missing_or_unparsable_status_line_is_said_once_and_never_guessed(self):
+        for status, drop, what in (('', True, 'absent'), ('58/1.0M', False, 'unparsable'),
+                                   ('58k/0k', False, 'unparsable')):
+            with self.subTest(status=status, drop=drop):
+                for f in self.state.glob('opt-*'):
+                    f.unlink()
+                # --once is spawn_worker.sh's start-up check, before the status line is drawn.
+                self.assertEqual(self.watch(status or STATUS, '--once', drop=drop).stdout, '')
+                result = self.watch(status or STATUS, '--max-minutes', '0', drop=drop)
+                self.assertEqual(result.stdout, 'watch_workers: CONTEXT: w1, no context figure: its status line '
+                                 'is %s (said once; nothing is guessed)\n' % what)
+                result = self.watch(status or STATUS, '--max-minutes', '0', drop=drop)
+                self.assertTrue(result.stdout.startswith('watch_workers: nothing was waiting'), result.stdout)
+                # A figure that appears later past the line is still reported.
+                self.assertIn('CONTEXT: w1, 1.2M/1.0M', self.watch('1.2M/1.0M', '--once').stdout)
 
 
 if __name__ == '__main__':
