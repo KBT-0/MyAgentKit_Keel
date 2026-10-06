@@ -43,8 +43,27 @@ change is safe is in `RESEARCH_LOG.md` (2026-10-06 and 2026-10-07).
   only; a volume without `FILE_ID_INFO` fails closed; the lock refuses a reparse point at its
   path (set with a tag any user may set, so the case never needs the symlink privilege and is
   never skipped); a gate killed by a signal never exits 0; the holder passes a failing gate's
-  exit status on; and a killed lock holder leaves the lock with the gate it started. On POSIX, a `cygpath` on `PATH` is never run. The Windows
-  cases print one `skip` line on POSIX, and the POSIX case one on MSYS, MINGW and Cygwin.
+  exit status on; and a killed lock holder leaves the lock with the gate it started. Each case
+  asserts its exit status as well as its message, and the gate's throwaway copy passes right
+  after it holds the lock, so a guard that prints its refusal and then carries on fails its
+  case. On POSIX, a `cygpath` on `PATH` is never run. The Windows cases print one `skip` line
+  on POSIX, and the POSIX case one on MSYS, MINGW and Cygwin.
+- **Shell scripts and hooks check out with LF everywhere.** Git for Windows' default
+  `core.autocrlf=true` checked them out with CRLF, which `sh` cannot run, so on such a clone
+  the gate, the hooks and `doctor.sh` could not start. Bootstrap now installs a
+  `.gitattributes` with `*.sh text eol=lf` and `.githooks/* text eol=lf`, and the kit's own
+  clone carries the same rule for its scripts. An existing project adds it by hand (item 1
+  below); `docs/DEV_SETUP.md` section 1 says why.
+- **`spawn_worker.sh` on native Windows.** There is no tmux there, and the script stopped
+  with `tmux is not installed`. On Git for Windows' `sh`, MSYS2 and Cygwin the worker now opens
+  as a Windows Terminal tab (`wt.exe`, or the launcher `KIT_WT` names), not a tmux session,
+  with the brief's instruction as its first prompt. The tab runs Git Bash by its full Windows
+  path, because a bare `bash` in a new tab is WSL's launcher, and every `;` handed to `wt.exe`
+  is escaped as `\;`, because `wt.exe` splits its command line there even inside quotes and
+  cut the instruction in two. Nothing can read the tab, so the start-up dialog check, `--batch`,
+  `show_workers.sh`, `watch_workers.sh` and `close_worker.sh` do not apply there: watch the
+  tab, wait for the result file, and close the tab by hand. `doctor.sh` asks for `wt.exe`
+  there instead of tmux.
 - **`review.sh` and Git LFS.** The v0.9 filter refusal checked every path in the checkout,
   not the paths a review changes, and `git lfs install` sets `filter.lfs.clean` globally:
   one LFS file anywhere refused every review. A filtered path the review does not change now
@@ -56,11 +75,13 @@ change is safe is in `RESEARCH_LOG.md` (2026-10-06 and 2026-10-07).
   in the index and at each end of the reviewed range. So an index-only change to an LFS file, a commit
   that deletes one, renames it out of the filter or drops its attribute while changing it,
   a filter rule staged together with the object it filters, and any other clean filter or
-  `ident` on a path are refused.
+  `ident` on a path are refused. A path the review excludes (its own archives) is never
+  refused, and the refusal says whether the review changes the path or the path is not an
+  unchanged LFS file.
 - **Not yet on native Windows: `review.sh`.** The review adapters rely on POSIX signal masks
   and process groups (`pthread_sigmask`, `killpg`, `SIGHUP`), so `review.sh` and the review
   case of `check.sh --self-test` fail there. Run reviews, and the full self-test, from WSL or
-  another POSIX shell (item 3 below).
+  another POSIX shell (item 4 below).
 
 ### Upgrading a project from v0.9
 
@@ -70,11 +91,26 @@ the end of the item, so an item holds no blank line and no line that starts a li
 Work from the project's root, top to bottom. `KIT` is the kit checkout you run `sync-kit.sh`
 from, and `00581dd` is the kit's v0.9 commit.
 
-1. **ACTION:** Copy `claude_bridge.py` and `test_claude_bridge.py` whole from
+1. **ACTION:** Line endings first, before any script of the project runs: add the kit's
+   rules to the project's `.gitattributes` (created if absent), rewrite each shell script and
+   hook that this clone checked out with CRLF, then renormalize the index, from a committed
+   project:
+   ```sh
+   { echo; cat "$KIT/core/.gitattributes"; } >> .gitattributes
+   git ls-files -- '*.sh' '.githooks/*' | while IFS= read -r f; do
+     tr -d '\r' < "$f" > "$f.lf" && cat "$f.lf" > "$f" && rm -f "$f.lf"
+   done
+   git add --renormalize . && git add .gitattributes
+   ```
+   `git status` then lists `.gitattributes`, and any script the index held with CRLF as
+   modified; both go into the upgrade commit (item 5). Every other clone on Windows runs the
+   loop in `docs/DEV_SETUP.md` section 1 once after it pulls that commit: a pull does not
+   check out again a file it did not change, so its scripts stay CRLF until then.
+2. **ACTION:** Copy `claude_bridge.py` and `test_claude_bridge.py` whole from
    `$KIT/core/scripts/` into `scripts/`, replacing yours (they hold no project content). If
    v0.9's item 10 sent this project to the manual review template only because of Git LFS,
    use `scripts/review.sh` again for every scope that changes no LFS file.
-2. **ACTION:** Merge the kit's changes since v0.9 into the three files that hold your setup
+3. **ACTION:** Merge the kit's changes since v0.9 into the three files that hold your setup
    content, one three-way merge per file, from a committed project:
    ```sh
    for f in scripts/check.sh docs/DEV_SETUP.md docs/GOTCHAS.md; do
@@ -85,7 +121,7 @@ from, and `00581dd` is the kit's v0.9 commit.
    Resolve every conflict the merge left (`git diff --check` names each leftover marker) so
    that the kit's new lines and every line of yours survive, then read `git diff HEAD --
    <file>` for each file and account for every removed line.
-3. **ACTION:** Prove the result: `./scripts/doctor.sh`, `./scripts/check.sh` (expect `CHECK:
+4. **ACTION:** Prove the result: `./scripts/doctor.sh`, `./scripts/check.sh` (expect `CHECK:
    PASS`), then `./scripts/check.sh --self-test` (expect `SELF-TEST: PASS`). On native Windows
    the self-test cannot pass yet: its review case fails because `review.sh` needs POSIX
    signals (above). There, run `./scripts/check.sh` and `./scripts/check.sh --self-test` from
@@ -99,7 +135,7 @@ from, and `00581dd` is the kit's v0.9 commit.
    shell on the same commit, where it must say `SELF-TEST: PASS` (there the Windows cases
    print one `skip` line). A project with no POSIX shell has partial acceptance only; say so
    in its state file.
-4. **ACTION:** Record the version BEFORE the upgrade commit, so the commit carries it: run
+5. **ACTION:** Record the version BEFORE the upgrade commit, so the commit carries it: run
    `"$KIT/sync-kit.sh" . --actions-applied`, which writes `docs/kit/.kit-version`, then run
    `./scripts/check.sh` again and commit everything the upgrade changed together with
    `docs/kit/.kit-version` in one commit. Stamped after the commit, the version file was left

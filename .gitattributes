@@ -1,0 +1,4 @@
+# The kit's own shell scripts check out with LF on every platform: sh cannot run CRLF, and
+# Git for Windows' default core.autocrlf=true gave a kit clone a sync-kit.sh that could not
+# start. core/.gitattributes, which bootstrap installs, covers core/ and its hooks.
+*.sh text eol=lf

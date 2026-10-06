@@ -1,0 +1,6 @@
+# Line endings the gate needs. sh cannot run a script with CRLF line endings, and Git for
+# Windows' default core.autocrlf=true checks text files out with CRLF, so a clone there had
+# a gate, hooks and doctor.sh that could not start. Every shell script and git hook checks out
+# with LF on every platform, whatever a clone's autocrlf says (docs/DEV_SETUP.md, section 1).
+*.sh text eol=lf
+.githooks/* text eol=lf

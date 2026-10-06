@@ -356,6 +356,58 @@ was left uncommitted and every other clone read v0.9. The stamp now comes before
 upgrade commit. The release is v0.10, not v0.9.1: the changelog defines versions as
 `MAJOR.MINOR`.
 
+**A fourth review pass: a message is not an outcome.** Six of the Windows lock cases (another
+file, read-only handle, nothing holding, read-only lock file, reparse point, killed holder)
+matched their message and ignored the exit status. A guard that printed its refusal and then
+carried on still passed: `cannot_open()` without its `sys.exit(1)` printed `FAIL [lock]` for
+the reparse point and then ran the gate, and the wait without its `sys.exit(75)` printed
+`NOT RUN [lock]` and then took the lock once the first gate ended. In the throwaway repository
+the carried-on gate then failed on project files it lacked, so its status looked like a
+refusal too. Each case now asserts its exit status (1, or 75 for the killed holder), the
+gate's copy exits 0 right after it holds the lock, so carrying on past a guard is a pass that
+fails the case, and a claimed run waits 2 s at most, so a lost claim refusal ends instead of
+waiting forever. Proof, in a project bootstrapped on native Windows, each mutation on its own:
+against v0.10's earlier self-test both mutations left every lock case `ok`; against this one
+each turned exactly its own case red, and deleting the claim refusal's `fail=1` turned three
+of the four claim cases red (the fourth, the read-only lock file, is refused by the lock open
+itself).
+
+**CRLF on a Windows clone.** Git for Windows installs with `core.autocrlf=true`, which checks
+every text file out with CRLF; `sh` reads `#!/bin/sh<CR>` as a bad interpreter and
+`set -eu<CR>` as an invalid option, so on such a clone the gate, the hooks, `doctor.sh` and
+the kit's own `sync-kit.sh` could not start, and the upgrade checklist sent the owner to run
+them. A `.gitattributes` rule `*.sh text eol=lf` and `.githooks/* text eol=lf` overrides
+autocrlf per path, so bootstrap installs one and the kit carries one. Proof: a bootstrapped
+project and the kit itself, each committed and cloned with `core.autocrlf=true`, checked
+their scripts and hooks out with CRLF without the rule and with LF with it (a Markdown file in
+the same clone proves the conversion was in force). An existing clone does not heal on pull:
+git does not check out again a file the pull did not change. So the upgrade's first item adds
+the rule, rewrites each script and hook without CR, and then renormalizes the index. The order
+matters: renormalized first, the rewritten files kept their CRLF size in the index's stat
+data, and `git status` listed every one of them as modified with an empty diff (git treats a
+size change as a change without reading the content). The test runs the checklist's own
+snippet on a CRLF clone of a v0.9 project and was red without the rewrite, without the
+renormalize, and with the first draft's order.
+
+**`spawn_worker.sh` on native Windows.** The kit's copy knew only tmux and stopped with `tmux
+is not installed`. A project that moved to Windows wrote its own Windows Terminal branch and
+found two faults on its first run, each of which left the tab with an error and no worker: a
+bare `bash` in a new tab is WSL's launcher (`WindowsApps\bash.exe`), and `wt.exe` splits its
+command line at every `;`, quoted or not, which cut the instruction in two (`error
+0x80070002`). The kit's branch runs Git Bash by its full Windows path and escapes every `;`
+as `\;`. The test drives the branch through a launcher stub that splits and resolves the way
+`wt.exe` does, with a `;` in the brief path and in a value: it was red against the tmux-only
+script, with a bare `bash`, and with the escape removed. `doctor.sh` asked for tmux there,
+which that host cannot run; it asks for `wt.exe` instead.
+
+**The two Low findings, fixed.** The filter refusal's changed-name queries did not carry the
+scope's exclusions, so a modified, filtered review archive refused a review whose scope never
+held it; the queries now carry them (the new test errored on the earlier code). The refusal
+said "the review changes it" also for a path the review does not change but that is not a
+proven unchanged LFS file, and told the owner to remove an attribute a historical path no
+longer had; it now says which of the two applies, and that the attribute is to be removed
+only where the checkout still has it.
+
 ### 2026-10-06 — native Windows: the gate lock, and Git LFS beside a review
 
 A project moved from WSL to native Windows (Git for Windows' `sh`, CPython from python.org).
@@ -458,7 +510,7 @@ separate work. The kit check imports `fcntl` at the top and cannot start. `agent
 reads `signal.SIGHUP`, so the review adapters fail on import, and with them the review case
 of the gate's `--self-test`. Git for Windows' default `core.autocrlf=true` checks the kit's
 scripts out with CRLF, which `sh` cannot run, and the kit ships no `.gitattributes` that
-pins them to LF.
+pins them to LF. (2026-10-07: v0.10 ships one; see the entry above.)
 
 ### 2026-10-03 — kit hardening from two projects' unreported findings
 

@@ -431,3 +431,33 @@ class BootstrapTests(unittest.TestCase):
             self.assertEqual((project / '.githooks/commit-msg').read_bytes(),
                              (root / 'core/.githooks/commit-msg').read_bytes())
             self.assertEqual(self._listed(second.stdout), {'AGENTS.md'}, second.stdout)
+
+    def test_scripts_and_hooks_check_out_with_lf_under_autocrlf(self):
+        # Git for Windows' default core.autocrlf=true checked every text file out with CRLF,
+        # and sh cannot run a CRLF script: a project's gate, hooks and doctor.sh, and the kit's
+        # own sync-kit.sh, could not start. Both a bootstrapped project and the kit are cloned
+        # that way here; a Markdown file proves the conversion was in force.
+        root = Path(__file__).resolve().parents[1]
+        env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1')
+        with tempfile.TemporaryDirectory() as tmp:
+            project, kit = Path(tmp) / 'project', Path(tmp) / 'kit'
+            result = subprocess.run(['sh', str(root / 'bootstrap.sh'), str(project)],
+                                    capture_output=True, text=True, env=env)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            shutil.copytree(root, kit, ignore=shutil.ignore_patterns('.git', '__pycache__'))
+            for repo, prose in ((project, 'AGENTS.md'), (kit, 'README.md')):
+                with self.subTest(repo=repo.name):
+                    for args in (['init', '-q'], ['add', '-A'],
+                                 ['-c', 'user.name=F', '-c', 'user.email=f@example.invalid',
+                                  '-c', 'core.hooksPath=/dev/null', 'commit', '-qm', 'base']):
+                        subprocess.run(['git', *args], cwd=repo, check=True, capture_output=True, env=env)
+                    clone = Path(tmp) / (repo.name + '-crlf')
+                    subprocess.run(['git', '-c', 'core.autocrlf=true', 'clone', '-q', str(repo), str(clone)],
+                                   check=True, capture_output=True, env=env)
+                    self.assertIn(b'\r\n', (clone / prose).read_bytes())
+                    scripts = [p for p in clone.rglob('*') if p.is_file()
+                               and p.relative_to(clone).parts[0] != '.git'
+                               and (p.suffix == '.sh' or p.parent.name == '.githooks')]
+                    self.assertGreater(len(scripts), 3)
+                    crlf = sorted(str(p.relative_to(clone)) for p in scripts if b'\r' in p.read_bytes())
+                    self.assertEqual(crlf, [])
