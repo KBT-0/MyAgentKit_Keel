@@ -279,10 +279,10 @@ class CleanWorktreesTests(unittest.TestCase):
 
     def in_namespace(self, mount, *args):
         """The script (--apply --assume-idle) after the shell command MOUNT ($1, $2...: ARGS) in a
-        mount namespace of its own; None, with one line said, where this host lets no user make
+        mount namespace of its own; None, with one NOT RUN line said, where this host lets no user make
         one: the cases that inject the device or the mount table are the ones that run everywhere."""
         if subprocess.run(['unshare', '-rm', 'true'], capture_output=True).returncode if shutil.which('unshare') else 1:
-            sys.stderr.write('\n[mount namespace] not run: no unprivileged mount namespace here\n')
+            sys.stderr.write('\nNOT RUN: %s (no unprivileged mount namespace on this host)\n' % self.id())
             return None
         ran = subprocess.run(['unshare', '-rm', 'sh', '-c', mount + ' && exec sh "$0" --apply --assume-idle', str(SCRIPT),
                               *map(str, args)], cwd=self.main, env=self.env, capture_output=True, text=True)

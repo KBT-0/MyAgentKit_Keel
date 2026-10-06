@@ -45,7 +45,7 @@ REQUIRED_SUITES = {
               'test_check_gate': 18, 'test_boundary_restore': 39, 'test_sync_kit': 16,
               'test_doctor': 2, 'test_git_hooks': 25, 'test_stop_hook': 1, 'test_spawn_worker': 15,
               'test_worker_visibility': 27, 'test_doc_pointers': 4,
-              'test_kit_output': 1, 'test_kit_runner': 7, 'test_clean_worktrees': 134,
+              'test_kit_output': 1, 'test_kit_runner': 8, 'test_clean_worktrees': 134,
               'test_close_worker': 8},
 }
 
@@ -772,11 +772,14 @@ def run_units(units, timing=False, parallel=None):
         files = [os.path.join(times, str(number)) if timing else None for number in range(len(units))]
         futures = [pool.submit(one, name, command, timing_file)
                    for (name, command), timing_file in zip(units, files)]
-        summary, failed = [], []
+        summary, failed, not_run = [], [], []
         for (name, _), future, timing_file in zip(units, futures, files):
             code, output, seconds = future.result()
             sys.stdout.write(output)
             sys.stdout.flush()
+            # A test that cannot run on this host says so in one "NOT RUN:" line and passes;
+            # repeated under the summary, the end of the output names what this host did not run.
+            not_run += [line for line in output.splitlines() if line.startswith("NOT RUN:")]
             if code:
                 failed.append(name)
             summary.append("%7.1f s  %s%s" % (seconds, name, " (FAILED)" if code else ""))
@@ -787,6 +790,8 @@ def run_units(units, timing=False, parallel=None):
         print("\n".join(summary))
     else:
         print("\n".join("TIME: " + row.strip() for row in summary))
+    if not_run:
+        print("\n".join(not_run))
     if failed:
         print("KIT CHECK: FAIL — %d of %d units failed: %s" % (len(failed), len(units), ", ".join(failed)),
               file=sys.stderr)
