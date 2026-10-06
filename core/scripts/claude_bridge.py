@@ -15,7 +15,6 @@ from pathlib import Path
 import re
 import shlex
 import shutil
-import signal
 import stat
 import subprocess
 import sys
@@ -133,20 +132,7 @@ def throwaway_copy(repo: Path, head: str, diff: str | None, copy: Path,
 
     def reap(child, pgid) -> None:
         if child is not None:
-            # The leader may have exited while a descendant still holds a pipe open. On
-            # macOS a group whose leader is a zombie answers EPERM: the leader is then
-            # signalled by its pid, and the group again once it is reaped.
-            for target in ((pgid, True), (child.pid, False), (pgid, True)):
-                try:
-                    if target[1]:
-                        os.killpg(target[0], signal.SIGKILL)
-                    else:
-                        os.kill(target[0], signal.SIGKILL)
-                except (ProcessLookupError, PermissionError):
-                    pass
-                if not target[1]:
-                    child.wait()
-            child.wait()
+            agent_process.stop_group(child, pgid)
             for stream in (child.stdin, child.stdout, child.stderr):
                 if stream is not None:
                     stream.close()
@@ -176,27 +162,24 @@ def throwaway_copy(repo: Path, head: str, diff: str | None, copy: Path,
         try:
             # Pending raising handlers run only after the handle and pgid are retained.
             # Children restore the previous mask before exec, as in agent_process.run().
-            mask = signal.pthread_sigmask(signal.SIG_BLOCK, agent_process.CANCEL_SIGNALS)
+            mask = agent_process.block_cancels()
             try:
-                archive = subprocess.Popen(["git", "-C", str(repo), "archive", "--format=tar", head],
-                                           stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                                           start_new_session=True,
-                                           preexec_fn=lambda: signal.pthread_sigmask(signal.SIG_SETMASK, mask))
+                archive = agent_process.launch(["git", "-C", str(repo), "archive", "--format=tar", head],
+                                               mask, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
                 archive_pgid = archive.pid
             finally:
-                signal.pthread_sigmask(signal.SIG_SETMASK, mask)
-            mask = signal.pthread_sigmask(signal.SIG_BLOCK, agent_process.CANCEL_SIGNALS)
+                agent_process.restore_mask(mask)
+            mask = agent_process.block_cancels()
             try:
                 # tar reads no option from the environment (TAR_OPTIONS=--exclude=... dropped
                 # a source file from the copy): the only variables it gets are these.
                 tar_env = {k: os.environ[k] for k in ("PATH", "HOME", "LANG", "LC_ALL") if k in os.environ}
-                unpacked = subprocess.Popen(["tar", "-x", "-f", "-", "-C", str(copy)],
-                                            stdin=archive.stdout, stdout=subprocess.DEVNULL,
-                                            stderr=subprocess.PIPE, start_new_session=True, env=tar_env,
-                                            preexec_fn=lambda: signal.pthread_sigmask(signal.SIG_SETMASK, mask))
+                unpacked = agent_process.launch(["tar", "-x", "-f", "-", "-C", str(copy)], mask,
+                                                stdin=archive.stdout, stdout=subprocess.DEVNULL,
+                                                stderr=subprocess.PIPE, env=tar_env)
                 unpacked_pgid = unpacked.pid
             finally:
-                signal.pthread_sigmask(signal.SIG_SETMASK, mask)
+                agent_process.restore_mask(mask)
             archive.stdout.close()
             _, err = collect(unpacked)
             while archive.poll() is None:
@@ -209,37 +192,36 @@ def throwaway_copy(repo: Path, head: str, diff: str | None, copy: Path,
             # A raising cancel handler (the Codex adapter's) must not run between the two
             # reaps: the signals are blocked until both groups are gone and their streams
             # closed, then the pending cancel is delivered.
-            mask = signal.pthread_sigmask(signal.SIG_BLOCK, agent_process.CANCEL_SIGNALS)
+            mask = agent_process.block_cancels()
             try:
                 reap(archive, archive_pgid)
                 reap(unpacked, unpacked_pgid)
             finally:
-                signal.pthread_sigmask(signal.SIG_SETMASK, mask)
+                agent_process.restore_mask(mask)
         return
 
     # No archive overlay: paths absent from the index and checkout never enter this tree.
     listing = listing_pgid = None
     try:
         check_running()
-        mask = signal.pthread_sigmask(signal.SIG_BLOCK, agent_process.CANCEL_SIGNALS)
+        mask = agent_process.block_cancels()
         try:
-            listing = subprocess.Popen(["git", "-C", str(repo), "ls-files", "-z", "--cached",
-                                        "--others", "--exclude-standard"], stdout=subprocess.PIPE,
-                                       stderr=subprocess.PIPE, start_new_session=True,
-                                       preexec_fn=lambda: signal.pthread_sigmask(signal.SIG_SETMASK, mask))
+            listing = agent_process.launch(["git", "-C", str(repo), "ls-files", "-z", "--cached",
+                                            "--others", "--exclude-standard"], mask,
+                                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             listing_pgid = listing.pid
         finally:
-            signal.pthread_sigmask(signal.SIG_SETMASK, mask)
+            agent_process.restore_mask(mask)
         listed, err = collect(listing)
         if listing.returncode:
             raise BridgeError("could not list the checkout: " + err.decode(errors="replace"))
     finally:
         # As for the archive: no raising cancel between the kill and the reap.
-        mask = signal.pthread_sigmask(signal.SIG_BLOCK, agent_process.CANCEL_SIGNALS)
+        mask = agent_process.block_cancels()
         try:
             reap(listing, listing_pgid)
         finally:
-            signal.pthread_sigmask(signal.SIG_SETMASK, mask)
+            agent_process.restore_mask(mask)
     for raw in sorted(set(listed.split(b"\0")) - {b""}):
         check_running()
         rel = Path(os.fsdecode(raw))

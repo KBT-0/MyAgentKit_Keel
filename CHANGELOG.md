@@ -297,10 +297,10 @@ in `RESEARCH_LOG.md` (2026-10-03). Most of the files below are project-owned, so
   project's own (husky, lefthook) instead of replacing it in silence; the scripts find
   Python as `python` or `py` where `python3` is absent; a sparse checkout is reviewable (a
   skip-worktree entry whose file is absent hides nothing; a present one is still refused);
-  the review tooling and the worktree clean-up import and run on native Windows Python
-  through one platform seam in `agent_process.py` (the clean-up keeps every worktree there,
-  and says so: liveness cannot be proven without `/proc` or `lsof`); `doctor.sh` says what
-  needs WSL. **ACTION:** the sync installs `.gitattributes` (`new:`); commit it. A project
+  the review tooling and the worktree clean-up IMPORT on native Windows Python through one
+  platform seam in `agent_process.py`, and no more than that: a review run (pipes are not
+  selectable there), the gate lock and the clean-up need a POSIX host, and `doctor.sh` says
+  so and sends the owner to WSL; the clean-up keeps every worktree there and says why. **ACTION:** the sync installs `.gitattributes` (`new:`); commit it. A project
   that had its own `.gitattributes` sees it as a `conflict:`: merge the kit's four lines
   into it under the KIT-OWNED header, then sync again.
 - **A faster kit check.** The kit's own check runs its suites and acceptance phases at

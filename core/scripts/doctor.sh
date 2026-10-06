@@ -144,6 +144,13 @@ fi
 # --- tools the kit's own scripts need ------------------------------------------------
 python3 -c 'import sys; sys.exit(sys.version_info < (3, 10))' 2>/dev/null ||
   miss "Python 3.10 or newer as python3, python or py (the review tooling needs it)" "install Python 3.10+"
+# Native Windows Python (os.name is not posix): no fcntl, /proc, lsof, killpg, nor select()
+# on a pipe. The kit's Python imports there, and that is all: a review run, the gate lock
+# and the worktree clean-up need a POSIX host. Only where python3 runs at all; a missing one
+# is the line above.
+if python3 -c 'import sys' 2>/dev/null && ! python3 -c "import os,sys; sys.exit(os.name!='posix')" 2>/dev/null; then
+  echo "NOTE: native Windows Python: the review run, the gate lock and the worktree clean-up need a POSIX host (WSL); run the kit from WSL"
+fi
 # Resolved as review.sh and its adapters resolve it: REVIEW_REVIEWER over the configured
 # reviewer, REVIEW_CLI_BIN (codex) or CLAUDE_CLI_BIN (claude) over the command name, and
 # PATH first, then ~/.local/bin when codex is there. A configured reviewer doctor cannot read

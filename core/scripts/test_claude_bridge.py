@@ -24,7 +24,7 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'MYAGENTKIT_TASK_ID', 'MYAGENTKIT_R
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 110, 'test_agent_usage': 19, 'test_codex_quota': 5}
+SUITE_MINIMUMS = {'test_claude_bridge': 114, 'test_agent_usage': 19, 'test_codex_quota': 5}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -3408,6 +3408,123 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
             agent_usage.report("S", dict(good, status="failed"), "Accept", "body")
         with self.assertRaises(ValueError):
             agent_usage.report("S", good, "Looks fine to me", "body")
+
+    # --- native Windows Python: one platform seam in agent_process ----------------------------
+
+    def test_off_posix_every_launch_takes_a_new_process_group_and_no_posix_keyword(self):
+        # Windows rejects preexec_fn and start_new_session; each launch of the review tooling goes
+        # through agent_process.launch, which passes CREATE_NEW_PROCESS_GROUP there instead.
+        from unittest.mock import patch
+        import agent_process
+        import codex_quota
+        seen = []
+
+        def fake(command, **kw):
+            seen.append(kw)
+            raise OSError(2, 'fixture: no such program')
+
+        def absent(*args, **kw):
+            raise AssertionError('a POSIX-only call was made off POSIX')
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            for posix in (True, False):
+                del seen[:]
+                with patch.object(agent_process, 'POSIX', posix), patch('subprocess.Popen', fake), \
+                        patch('os.killpg', absent), \
+                        patch('signal.pthread_sigmask', absent if not posix else signal.pthread_sigmask):
+                    self.assertEqual(agent_process.run(['fixture'], 'p', tmp, 5)['termination'], 'unavailable')
+                    self.assertEqual(codex_quota.snapshot('fixture', tmp)['status'], 'unavailable')
+                    for diff in (None, ''):
+                        copy = tmp / ('copy-%s-%s' % (posix, diff is None))
+                        copy.mkdir()
+                        with self.assertRaises(OSError):
+                            bridge.throwaway_copy(tmp, 'HEAD', diff, copy)
+                self.assertEqual(len(seen), 4, seen)
+                for kw in seen:
+                    with self.subTest(posix=posix, kw=sorted(kw)):
+                        if posix:
+                            self.assertIs(kw['start_new_session'], True)
+                            self.assertTrue(callable(kw['preexec_fn']))
+                            self.assertNotIn('creationflags', kw)
+                        else:
+                            self.assertNotIn('preexec_fn', kw)
+                            self.assertNotIn('start_new_session', kw)
+                            self.assertEqual(kw['creationflags'], 0x200)  # CREATE_NEW_PROCESS_GROUP
+
+    def test_off_posix_stop_group_runs_taskkill_on_the_tree_and_never_killpg(self):
+        from unittest.mock import patch
+        import agent_process
+
+        def absent(*args, **kw):
+            raise AssertionError('os.killpg was called off POSIX')
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            log = tmp / 'taskkill.log'
+            # A stand-in taskkill: records its arguments, then kills /PID's process (or fails).
+            (tmp / 'taskkill').write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$TASKKILL_LOG"\n'
+                                          '[ -z "${TASKKILL_FAIL:-}" ] || exit 128\nkill -9 "$4"\n')
+            (tmp / 'taskkill').chmod(0o755)
+            for fail in ('', '1'):
+                with self.subTest(taskkill_fails=bool(fail)):
+                    log.write_text('')
+                    child = subprocess.Popen(['sleep', '30'])
+                    try:
+                        with patch.object(agent_process, 'POSIX', False), patch('os.killpg', absent), \
+                                patch.dict(os.environ, PATH=str(tmp) + os.pathsep + os.environ['PATH'],
+                                           TASKKILL_LOG=str(log), TASKKILL_FAIL=fail):
+                            agent_process.stop_group(child, child.pid)
+                        # Stopped and reaped: by taskkill, or by child.kill() when taskkill failed.
+                        self.assertEqual(child.returncode, -signal.SIGKILL)
+                        self.assertEqual(log.read_text(), '/T /F /PID %d\n' % child.pid)
+                    finally:
+                        if child.returncode is None:
+                            child.kill()
+                            child.wait()
+
+    def test_the_review_modules_import_where_posix_only_signals_do_not_exist(self):
+        # Native Windows Python has no SIGHUP, SIGKILL, pthread_sigmask, sigpending, os.killpg or
+        # fcntl: CANCEL_SIGNALS once named SIGHUP at module level, and the import raised.
+        simulated = ('import os, signal, sys, selectors, shutil, subprocess, tempfile, threading\n'
+                     'for name in ("SIGHUP", "SIGKILL", "pthread_sigmask", "sigpending", "sigwait"):\n'
+                     '    delattr(signal, name)\n'
+                     'del os.killpg\n'
+                     'sys.modules["fcntl"] = None\n'
+                     'os.name = "nt"\n'
+                     'sys.path.insert(0, sys.argv[1])\n'
+                     'import agent_process, claude_bridge, codex_bridge, codex_quota, review_dispatch\n'
+                     'print(agent_process.POSIX, [s.name for s in agent_process.CANCEL_SIGNALS])\n'
+                     'print(agent_process.block_cancels())\n')
+        result = subprocess.run([sys.executable, '-c', simulated, str(ROOT)], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "False ['SIGINT', 'SIGTERM']\nNone\n", result.stderr)
+
+    def test_posix_only_process_calls_are_made_only_in_the_agent_process_seam(self):
+        # Every launch, block and group kill of the review tooling goes through agent_process's
+        # seam, which alone knows the platform; a direct call elsewhere breaks native Windows.
+        import ast
+        seam = {'block_cancels', 'restore_mask', 'pending', 'launch', 'stop_group'}
+        attributes = {'killpg', 'pthread_sigmask', 'sigpending', 'SIGHUP', 'SIGKILL'}
+        keywords = {'preexec_fn', 'start_new_session'}
+        offenders = []
+        for name in ('agent_process', 'claude_bridge', 'codex_bridge', 'codex_quota', 'review_dispatch'):
+            tree = ast.parse((ROOT / (name + '.py')).read_text())
+            allowed = set()
+            if name == 'agent_process':
+                defined = {node.name for node in tree.body if isinstance(node, ast.FunctionDef)}
+                for node in tree.body:
+                    if isinstance(node, ast.FunctionDef) and node.name in seam:
+                        allowed.update(range(node.lineno, node.end_lineno + 1))
+            for node in ast.walk(tree):
+                hit = (isinstance(node, ast.Attribute) and node.attr in attributes
+                       or isinstance(node, ast.keyword) and node.arg in keywords
+                       or isinstance(node, ast.Import) and any(a.name == 'fcntl' for a in node.names)
+                       or isinstance(node, ast.ImportFrom) and node.module == 'fcntl')
+                if hit and node.lineno not in allowed:
+                    offenders.append('%s.py:%d' % (name, node.lineno))
+        self.assertEqual(offenders, [])
+        self.assertEqual(seam - defined, set())
 
 
 if __name__ == "__main__":
