@@ -11,8 +11,10 @@ model, and only then decided. The facts used are the kit's own measurements
 
 - A request re-reads the session's whole context. With the one-hour cache it is a cache
   read (list price about one tenth of a fresh input token); after a gap longer than the
-  cache lifetime the next request writes the whole context again (about 1.25 times input).
-  `docs/worker-cost-setups.md` measured the setups; the rule in WORKFLOW follows from it.
+  cache lifetime the next request writes the whole context again, at about 2 times input
+  for the one-hour cache (1.25 times for the five-minute cache). The figures are
+  `docs/worker-cost-setups.md`'s, measured on Claude Code with the Claude plan it names; the
+  rule in WORKFLOW follows from them.
 - The always-loaded prefix of a session is about 6,400 tokens today (AGENTS.md, PHASES,
   STATE, ARCHITECTURE; measured 2026-10-06, bytes divided by four); a brief and the files a
   task reads add tens of thousands. Call the context a fresh session must build before it is
@@ -23,11 +25,16 @@ model, and only then decided. The facts used are the kit's own measurements
 
 ## Question 1: close a finished worker, or reuse it for the next task?
 
-Per request, a reused session costs C and a fresh one costs P plus what the new task reads.
-Reuse is cheaper only when the new task would have to rebuild most of C anyway: the same
-files, the same branch area, the same unfinished thread. When the next task is elsewhere,
-every one of its requests drags C along for nothing; at the example figures that is four
-times the cost of a fresh start from the second request on.
+The comparison is over the WHOLE next task, not per request. Let the next task take n
+requests. A reused warm session pays about 0.1 C per request (plus its own growth): about
+0.1 C n. A fresh session pays one cold write of P at 2 P, then about 0.1 P per request:
+about 2 P + 0.1 P (n - 1), plus whatever of C it has to read again because the task needs it.
+At the example figures (C 113k, P 30k) the two cross at about seven requests: a SHORT
+follow-up is cheaper in the old session even when most of C is irrelevant, because the cold
+write of a fresh start outweighs a few requests of dead weight; a LONG task is cheaper fresh
+unless it needs most of C. When the task needs most of C anyway, reuse wins at any length.
+This is arithmetic on list prices, not a measurement; the kit has not measured a follow-up
+task both ways.
 
 The cache lifetime changes the answer again. A session that has sat idle for more than the
 cache lifetime (one hour) has lost its warmth: its next request writes all of C again. After
@@ -40,10 +47,12 @@ the ones the worker already holds.
 Options:
 - 1a. Close at merge, always (automatic). Simplest; pays P again for every follow-up,
   including a revision of the same change that arrives an hour later.
-- 1b. Reuse when the next task is the same thread, else close (the lead decides per task,
-  with the three observables above; a default rule: reuse if C is under about three times P
-  and the session was active within the cache lifetime and the next task names the same
-  files; otherwise close). Closing is explicit: `close_worker.sh NAME` ends the tmux session
+- 1b. Reuse or close per task, decided by the lead from the three observables above and
+  the expected length of the next task. Unvalidated heuristic to start from, to be replaced
+  by the measurement in passing that WORKFLOW already announces: reuse when the session was
+  active within the cache lifetime AND (the next task is short, a handful of requests, OR it
+  needs most of what the session holds); close when the session is cold (idle past the
+  lifetime: nothing warm is lost) or the next task is long and elsewhere. Closing is explicit: `close_worker.sh NAME` ends the tmux session
   (its terminal tab closes by itself) and removes the worktree through the audited path;
   the branch is never deleted automatically (see the worktree clean-up note).
 - 1c. Never close automatically; the owner closes by hand. What happens today; it is what
@@ -81,9 +90,14 @@ secret).
 ## Question 3: what "done" is
 
 An idle notice fires when a session waits on its own background job, not only when its work
-is finished; re-subscribing while it is idle fires again at once. The done signal must be the
-committed result file: the file exists, the tree is clean, and the file is in the last commit.
-The idle notice stays as a hint. This is not grey; it is proposed as a rule.
+is finished; re-subscribing while it is idle fires again at once. The done signal must be a
+committed result file, but a result file is also where a worker writes progress, a blocked
+state, a handoff (question 2) and open questions (question 4): a committed report with a
+clean tree is not by itself "done". So the result file carries one KIND line, fixed
+vocabulary: `completed`, `blocked`, `handoff`, `progress`; the watcher and the lead treat only
+`completed` as done; the file names the task id and the attempt it reports on, so a result
+left by an earlier task of a reused session is never taken for the current one. The idle
+notice stays as a hint. Proposed as a rule.
 
 ## Question 4: questions a worker leaves for the owner
 
@@ -98,7 +112,8 @@ rule.
 
 The kit now says a worker runs the cheapest proof that shows its change and the integrating
 session runs the expensive step once. But the commit hook runs `check.sh`, which runs the
-project's build command, on every commit a worker makes. The rule therefore holds only when
+project's build command, on every commit a worker makes that touches more than
+documentation (a documentation-only commit skips the build since today). The rule therefore holds only when
 the gate's build command IS the cheap proof and the expensive step (a package, a pipeline, a
 full rebuild) is an integration step outside the gate. A project whose `build_test_cmd` is
 itself the forty-minute step gets no benefit until it moves that step out. The kit should say
