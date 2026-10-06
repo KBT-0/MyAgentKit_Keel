@@ -19,6 +19,10 @@ sentences, one instruction per sentence, one term per thing. State each requirem
 4. **Acceptance:** what the diff must and must NOT contain, and which gate follows (a risky
    area means `docs/REVIEW_GATE.md`, fresh session). Any other change needs no review;
    {{OWNER_NAME}}'s check or the manual check named here accepts it.
+   **Review:** the brief says which of two cases it expects. A worker in a separate session
+   reviews its own diff with fresh sub-agents before it reports; a sub-agent worker says it
+   could not, and the lead starts the review when the branch exists (`docs/WORKFLOW.md`,
+   "Review rounds — early, inside the worker, in parallel").
 5. **Routing check:** does this task belong on the model it is being sent to? Judgement work
    — architecture, contracts, risky diffs — goes to the strongest model; bulk, mechanical,
    well-specified work goes to the cheaper one. If the requested route violates that, say so
@@ -85,6 +89,8 @@ DO NOT: <explicit non-goals — and everything docs/PHASES.md puts out of scope>
 PROOF:  <the cheapest check that proves this change; none named means ./scripts/check.sh>
         — never report a check you did not run
 DONE:   <the command or observation that proves it>
+REVIEW: <inner: you review your diff with fresh sub-agents before reporting | lead: you
+        cannot start sub-agents; say so, and the lead reviews your branch>
 
 If this task touches {{RISKY_AREAS}}, or any gate/CI/check script: before commit, run the
 review gate per docs/REVIEW_RUNNING.md in a FRESH session, preferably a different tool.

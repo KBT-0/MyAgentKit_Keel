@@ -443,6 +443,36 @@ NAME`).
 
 ## Review rounds — early, inside the worker, in parallel
 
+In one project a feature took five fix rounds in about seven hours. Each round cost a fresh
+worker re-reading 100k to 300k tokens (20 to 60 minutes), a ten-minute self-test, reviews of
+5 to 15 minutes and a merge with another self-test. Most findings of rounds 2 to 5 sat in code
+the previous fix had added, in classes the reviewers had already shown once. The rules below
+move the review into the worker's warm context and run together what can run together. They
+remove no review.
+
+### Review inside the worker
+
+- A worker that can start a sub-agent (a separate session) reviews its own diff before it
+  reports. It starts a fresh diff reviewer as a sub-agent (the Claude Code overlay's
+  `diff-reviewer`), fixes what the review finds, and starts a new fresh reviewer on the
+  result.
+- Each inner round's prompt carries the earlier inner rounds' findings and the worker's
+  dispositions (`docs/REVIEW_GATE.md`, "Findings, earlier rounds and dispositions").
+- The reviewer is a new sub-agent in every inner round, because the author never reviews its
+  own change.
+- The worker reports when a review returns no Critical, High or Medium finding, or when it
+  has argued a disposition for each one that remains.
+- The report lists the inner rounds: their count, the findings fixed and each disposition.
+- A worker that cannot start a sub-agent (a sub-agent itself) says so in its report. The lead
+  then starts the review the moment the worker's branch exists, in parallel with the
+  self-test, never after it.
+- The inner rounds do not replace the lead's review. A risky diff still passes
+  `docs/REVIEW_GATE.md` before the merge, and the inner rounds make that review shorter.
+
+A fix in the worker's warm context costs minutes; the same fix in a later round costs a fresh
+worker's whole re-read. The brief states which of the two cases it expects (`docs/HANDOFF.md`,
+"The brief").
+
 ### Before you report
 
 A worker goes through `docs/REVIEW_GATE.md`, "What a reviewer attacks first", against its own

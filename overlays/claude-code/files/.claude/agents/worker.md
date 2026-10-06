@@ -45,5 +45,11 @@ the rules below exist).
 <!-- END attribution rule -->
 - Run the proof your brief names; if it names none, run the gate (`./scripts/check.sh`).
   Report "not run" for any check you did not run.
+- If you can start a sub-agent, review your own diff before you report: a fresh
+  `diff-reviewer` in every inner round, then fix what it finds, until no Critical, High or
+  Medium finding remains without an argued disposition. List the inner rounds in the report
+  (count, findings fixed, dispositions). If you cannot start a sub-agent, say so in the
+  report; the lead then starts the review (`docs/WORKFLOW.md`, "Review rounds — early,
+  inside the worker, in parallel").
 - Before you report, go through `docs/REVIEW_GATE.md`, "What a reviewer attacks first",
   against your own diff. Fix each hit, or name it in the report.
