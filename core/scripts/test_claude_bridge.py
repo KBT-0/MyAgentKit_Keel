@@ -25,7 +25,7 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'MYAGENTKIT_TASK_ID', 'MYAGENTKIT_R
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 116, 'test_agent_usage': 20, 'test_codex_quota': 5}
+SUITE_MINIMUMS = {'test_claude_bridge': 117, 'test_agent_usage': 20, 'test_codex_quota': 5}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -2346,7 +2346,9 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                 self.assertEqual(len(budgets), 1, received)
                 self.assertGreater(budgets[0], 0)
                 self.assertLess(budgets[0], 0.8)
-                self.assertLess(elapsed, 2.6)
+                # The budget above is the proof of the shared deadline; the wall time only
+                # rules out two full timeouts in a row (3.3 s), with room for a slow runner.
+                self.assertLess(elapsed, 3.2)
                 self.assertEqual(received[0]['failure_kind'], 'timeout', received)
 
     def test_copy_accepts_a_symlinked_tmpdir_but_refuses_destination_symlinks(self):
@@ -2763,6 +2765,53 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn('ran under', result.stdout)
             self.assertTrue(PYTHON_SHEBANG.startswith('#!/bin/sh\n'), PYTHON_SHEBANG)
+
+    def test_sparse_mode_is_read_through_git_s_boolean_and_a_cancel_during_reap_orphans_nothing(self):
+        import claude_bridge
+        import agent_process
+        from unittest.mock import patch
+        (self.repo / 'src').mkdir(exist_ok=True)
+        (self.repo / 'src/a.txt').write_text('a\n')
+        self.commit_fixture('Two folders')
+        self.git('sparse-checkout', 'set', 'docs')
+        self.git('config', 'core.sparseCheckout', 'yes')  # git reads yes/on/1 as true
+        (self.repo / 'docs').mkdir(exist_ok=True)
+        (self.repo / 'docs/new.md').write_text('new\n')
+        head, _, diff, _ = claude_bridge.snapshot(self.repo, 'uncommitted', None)
+        self.assertIn('docs/new.md', diff)
+        self.git('sparse-checkout', 'disable')
+        # A cancel SENT during the first helper's stop (a raising guard armed, as the Codex
+        # adapter's) is delivered only once both helpers are stopped and reaped: the two
+        # reaps run under one blocked mask, and the mark is set after the stop.
+        pid_file = self.root / 'desc.pid'
+        bin_dir = self.root / 'bin-reap'
+        bin_dir.mkdir()
+        (bin_dir / 'tar').write_text('#!/bin/sh\ncat > /dev/null\n(sleep 30 & echo $! > %s; wait)\n' % pid_file)
+        (bin_dir / 'tar').chmod(0o755)
+        real_stop = agent_process.stop_group
+        state = {'sent': False}
+
+        def stop_then_cancel(child, pgid):
+            real_stop(child, pgid)
+            if not state['sent']:
+                state['sent'] = True
+                os.kill(os.getpid(), signal.SIGTERM)  # pending while blocked
+        old_path = os.environ['PATH']
+        os.environ['PATH'] = str(bin_dir) + os.pathsep + old_path
+        guard = agent_process.OneShot()
+        previous = agent_process.hold(guard)
+        try:
+            copy = Path(tempfile.mkdtemp(dir=self.root))
+            with patch.object(agent_process, 'stop_group', side_effect=stop_then_cancel):
+                with self.assertRaises(KeyboardInterrupt):
+                    claude_bridge.throwaway_copy(self.repo, head, None, copy, timeout=5)
+            time.sleep(0.2)
+            descendant = int(pid_file.read_text())
+            with self.assertRaises(ProcessLookupError, msg='a descendant outlived the cancelled reap'):
+                os.kill(descendant, 0)
+        finally:
+            agent_process.restore(previous)
+            os.environ['PATH'] = old_path
 
     def test_dispositions_are_claims_the_reviewer_verifies_not_settlements(self):
         # The author never approves its own work: a disproved finding counts only once the

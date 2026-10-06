@@ -555,6 +555,23 @@ class BootstrapTests(unittest.TestCase):
             self.assertEqual(wrapped.returncode, 1, wrapped.stdout + wrapped.stderr)
             (project / '.githooks/pre-commit.project').unlink()
             self.assertIn("exec '", '\n'.join(line for line in (root / 'bootstrap.sh').read_text().splitlines() if 'its own path' in line))
+            # The printed wrapper line is shell-quoted: a hooks path with an apostrophe runs.
+            git('config', 'core.hooksPath', "owner's-hooks")
+            (project / "owner's-hooks").mkdir()
+            shutil.rmtree(project / 'docs/kit')
+            stub = (project / 'scripts/check.sh').read_text()
+            shutil.copyfile(root / 'core/scripts/check.sh', project / 'scripts/check.sh')  # no gate conflict
+            stopped = subprocess.run(['sh', str(root / 'bootstrap.sh'), str(project)], capture_output=True, text=True)
+            (project / 'scripts/check.sh').write_text(stub)
+            lines = [l for l in stopped.stderr.splitlines() if 'its own path' in l]
+            self.assertTrue(lines, stopped.stdout + stopped.stderr)
+            line = lines[0]
+            command = line.split('one line, ', 1)[1].rstrip('.').replace('<name>', 'pre-commit')
+            (project / "owner's-hooks/pre-commit").write_text('#!/bin/sh\nexit 7\n')
+            (project / "owner's-hooks/pre-commit").chmod(0o755)
+            probe = subprocess.run(['sh', '-c', command], cwd=project, capture_output=True, text=True)
+            self.assertEqual(probe.returncode, 7, command + '\n' + probe.stderr)
+            git('config', 'core.hooksPath', '.githooks')
             # git runs .githooks/pre-push itself, and its rejection stops the push.
             bare = Path(tmp) / 'bare.git'
             subprocess.run(['git', 'init', '-q', '--bare', str(bare)], check=True)

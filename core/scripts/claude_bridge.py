@@ -131,11 +131,18 @@ def throwaway_copy(repo: Path, head: str, diff: str | None, copy: Path,
                               + ("cancelled" if cancelled else "the wall-clock limit passed"))
 
     def reap(child, pgid) -> None:
+        # Idempotent, and the mark is set only once the group is stopped and the leader
+        # reaped, with cancels blocked across: a cancel raised between the mark and the
+        # stop left a descendant running and the leader unreaped.
         if child is not None and getattr(child, "_kit_reaped", False):
             return
         if child is not None:
-            child._kit_reaped = True
-            agent_process.stop_group(child, pgid)
+            mask = agent_process.block_cancels()
+            try:
+                agent_process.stop_group(child, pgid)
+                child._kit_reaped = True
+            finally:
+                agent_process.restore_mask(mask)
             for stream in (child.stdin, child.stdout, child.stderr):
                 if stream is not None:
                     stream.close()
@@ -206,8 +213,14 @@ def throwaway_copy(repo: Path, head: str, diff: str | None, copy: Path,
                 check_running()
             # Each group stopped while its leader is still unreaped, then reaped: only then
             # is an exit status read (a reap first would leave descendants their group).
-            reap(archive, archive_pgid)
-            reap(unpacked, unpacked_pgid)
+            # Both reaped under one block: a cancel delivered between them left the second
+            # group running.
+            mask = agent_process.block_cancels()
+            try:
+                reap(archive, archive_pgid)
+                reap(unpacked, unpacked_pgid)
+            finally:
+                agent_process.restore_mask(mask)
             if archive.returncode or unpacked.returncode:
                 raise BridgeError("could not copy HEAD for the reviewer: " + err.decode(errors="replace"))
             check_running()
@@ -329,7 +342,7 @@ def snapshot(repo: Path, scope: str, reference: str | None) -> tuple[str, str, s
     # leaves outside its cone: tolerated, under an active sparse checkout only. Anywhere
     # else an absent skip-marked file is a deletion the diff would not show, and a present
     # one can hide an edit: both are refused like assume-unchanged.
-    sparse = git(repo, 'config', '--get', 'core.sparseCheckout', allowed=(0, 1)).strip() == b'true'
+    sparse = git(repo, 'config', '--type=bool', '--get', 'core.sparseCheckout', allowed=(0, 1)).strip() == b'true'
     entries = git(repo, 'ls-files', '-v', '-z', '--', '.', *exclusions).split(b'\0')
     for entry in entries:
         if not entry:

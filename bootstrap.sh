@@ -331,7 +331,8 @@ if git -C "$target" rev-parse --git-dir >/dev/null 2>&1; then
     printf '%s\n' "bootstrap: STOP: core.hooksPath is '$effective', a hooks path of this project's own; the kit's hooks live in .githooks." >&2
     printf '%s\n' "  Move each hook of '$effective' into .githooks: a pre-commit, commit-msg, pre-merge-commit or post-merge as .githooks/<same name>.project" >&2
     printf '%s\n' "  (executable; the kit's hook runs it first, with git's arguments; post-merge cannot veto), any other name (pre-push, ...) as .githooks/<same name> itself." >&2
-    printf '%s\n' "  A hook that finds its checks by its own path (\$0, its folder) stays where it is: the .project file is then one line, exec '$effective/<name>' \"\$@\"." >&2
+    quoted=$(printf '%s' "$effective" | sed "s/'/'\\\\''/g")
+    printf '%s\n' "  A hook that finds its checks by its own path (\$0, its folder) stays where it is: the .project file is then one line, exec '$quoted/<name>' \"\$@\"." >&2
     printf '%s\n' "  Then run: git config core.hooksPath .githooks (unset it in any other scope), and rerun bootstrap.sh; the kit's files are installed." >&2
     exit 1
   fi
