@@ -56,7 +56,11 @@ def stop_group(child, pgid) -> None:
     find from the leader; child.kill() when taskkill is missing or fails.
     """
     if POSIX:
+        # The leader's pid is signalled only while it is ours (not yet reaped): a reaped
+        # pid may already be another process.
         for target, group in ((pgid, True), (child.pid, False), (pgid, True)):
+            if not group and child.returncode is not None:
+                continue
             try:
                 if group:
                     os.killpg(target, signal.SIGKILL)

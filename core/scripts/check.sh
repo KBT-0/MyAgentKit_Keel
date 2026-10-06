@@ -64,8 +64,8 @@ esac
 # run a function, so the exec sites use $kit_python, the resolved command.
 if command -v python3 >/dev/null 2>&1; then kit_python=python3
 elif command -v python >/dev/null 2>&1; then kit_python=python
-else kit_python=py; fi
-[ "$kit_python" = python3 ] || python3() { if [ "$kit_python" = py ]; then py -3 "$@"; else "$kit_python" "$@"; fi; }
+else kit_python="py -3"; fi   # the launcher, told which Python: unquoted at every use
+[ "$kit_python" = python3 ] || python3() { $kit_python "$@"; }
 
 # SELF-TEST SEAMS are honoured ONLY in the self-test's own nested runs. Each one exists so a
 # case can point a gate at a synthetic input, which means each one can also turn a gate green
@@ -168,7 +168,7 @@ if [ -z "$inherited" ]; then
   # Python ignores SIGPIPE and SIGXFSZ and catches SIGINT; the wait and the gate get back
   # what sh would have given them.
   # O_NOFOLLOW: a symlink here (the older lock's, left by a killed run) is refused by name.
-  exec "$kit_python" -c '
+  exec $kit_python -c '
 import os, signal, sys, time
 try:
     import fcntl

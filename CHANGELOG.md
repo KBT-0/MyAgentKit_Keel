@@ -300,9 +300,10 @@ in `RESEARCH_LOG.md` (2026-10-03). Most of the files below are project-owned, so
   the review tooling and the worktree clean-up IMPORT on native Windows Python through one
   platform seam in `agent_process.py`, and no more than that: a review run (pipes are not
   selectable there), the gate lock and the clean-up need a POSIX host, and `doctor.sh` says
-  so and sends the owner to WSL; the clean-up keeps every worktree there and says why. **ACTION:** the sync installs `.gitattributes` (`new:`); commit it. A project
-  that had its own `.gitattributes` sees it as a `conflict:`: merge the kit's four lines
-  into it under the KIT-OWNED header, then sync again.
+  so and sends the owner to WSL; the clean-up keeps every worktree there and says why. **ACTION:** `.gitattributes` is
+  project-owned (a project's own merge and LFS rules must survive a sync), so the sync
+  does not install it: copy `$KIT/core/.gitattributes` into the project, or append its
+  three rules to the project's own file, and commit.
 - **A faster kit check.** The kit's own check runs its suites and acceptance phases at
   once where the CPUs allow (sequential under four), rebuilds only the PATH directories a
   fixture must change, scales its child timeouts with the degree of parallelism, and prints
@@ -514,9 +515,13 @@ from, and `5c80c36` is the kit's v0.8 commit.
    until the worker has read it; a brief that sends an agent to the web names a generic
    User-Agent. Then record the version with `"$KIT/sync-kit.sh" . --actions-applied`.
 
-14. **ACTION:** Commit the `.gitattributes` the sync installed, then run
-    `git add --renormalize -- .githooks '*.sh' '*.py'` and commit that too, so kit scripts
-    already checked out with CRLF on Windows go back to LF in the index.
+14. **ACTION:** Add the kit's `.gitattributes` rules (the bullet above) and commit. A
+    checkout that already holds the hooks and scripts with CRLF (Windows,
+    `core.autocrlf=true`) keeps them until they are checked out again: commit or stash any
+    edit under `.githooks/` and `scripts/`, then run
+    `git rm -r -q --cached .githooks scripts && git checkout -- .githooks scripts`, and
+    commit the renormalised index. A hook that still starts with `sh\r` is one this step
+    missed.
 
 ## v0.8 — 2026-10-03
 

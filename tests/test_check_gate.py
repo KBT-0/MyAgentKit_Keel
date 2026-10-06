@@ -536,6 +536,30 @@ class CheckGateTests(unittest.TestCase):
                                   capture_output=True, text=True)
             self.assertNotIn('not found', gate.stdout + gate.stderr)
             self.assertIn('CHECK:', gate.stdout + gate.stderr)
+            # Python only in the gate's toolchain_path: doctor resolves it after that path
+            # joined PATH, as the gate does (a `py` fallback defined first shadowed it).
+            tc = Path(tmp) / 'tc'
+            tc.mkdir()
+            os.symlink(shutil.which('python3'), tc / 'python3')
+            gate_text = (project / 'scripts/check.sh').read_text()
+            self.assertIn('toolchain_path=""', gate_text)
+            (project / 'scripts/check.sh').write_text(gate_text.replace('toolchain_path=""', 'toolchain_path="%s"' % tc))
+            no_py = Path(tmp) / 'nopy'
+            no_py.mkdir()
+            for entry in bin_dir.iterdir():
+                if entry.name != 'python':
+                    os.symlink(os.readlink(entry), no_py / entry.name)
+            env_tc = dict(env, PATH=str(no_py))
+            doctor = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=project, env=env_tc, capture_output=True, text=True)
+            self.assertNotIn('Python 3.10', doctor.stdout + doctor.stderr, doctor.stdout + doctor.stderr)
+            # No python3 and no python at all: the launcher is told which Python (`py -3`).
+            (project / 'scripts/check.sh').write_text(gate_text)
+            seen = Path(tmp) / 'py-args'
+            (no_py / 'py').write_text('#!/bin/sh\nprintf "%%s\\n" "$1" > "%s"\nshift\nexec "%s" "$@"\n' % (seen, shutil.which('python3')))
+            (no_py / 'py').chmod(0o755)
+            gate = subprocess.run(['sh', 'scripts/check.sh'], cwd=project, env=dict(env_tc, GATE_TEST_BUILD=str(build)),
+                                  capture_output=True, text=True)
+            self.assertEqual(seen.read_text().strip(), '-3', gate.stdout + gate.stderr)
             # dash answers 127 to `command -v` of a missing name, bash 1: only nonzero is asserted.
             self.assertNotEqual(subprocess.run(['sh', '-c', 'command -v python3'], env=env, capture_output=True).returncode, 0)
 

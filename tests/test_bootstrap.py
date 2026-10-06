@@ -416,6 +416,47 @@ class BootstrapTests(unittest.TestCase):
                                             capture_output=True, text=True).stdout.strip(), '.husky')
             self.assertFalse((project / 'docs/kit/.kit-version').exists())
 
+    def test_a_hooks_path_set_in_another_scope_stops_the_install_and_a_chained_one_is_accepted(self):
+        # The guard read only the local scope: with extensions.worktreeConfig and a worktree
+        # core.hooksPath=.husky, the install recorded a version while git still ran .husky,
+        # and a commit with unfilled placeholders went through. And the recovery it offered
+        # (chain .husky/<hook> to .githooks/<hook>) could never complete: the rerun refused
+        # the same path. Now the effective path is read, the wiring is verified as git sees
+        # it, and a chained path is accepted and kept.
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / 'project'
+            project.mkdir()
+            git = lambda *a: subprocess.run(['git', '-C', str(project), *a], capture_output=True, text=True)
+            git('init', '-q')
+            git('config', 'extensions.worktreeConfig', 'true')
+            git('config', '--worktree', 'core.hooksPath', '.husky')
+            (project / '.husky').mkdir()
+            result = subprocess.run(['sh', str(root / 'bootstrap.sh'), str(project)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn("core.hooksPath is '.husky'", result.stderr)
+            self.assertFalse((project / 'docs/kit/.kit-version').exists())
+            self.assertEqual(git('config', '--get', 'core.hooksPath').stdout.strip(), '.husky')
+            # Chain every kit hook from .husky: accepted, the path stays, the version is recorded.
+            for hook in (project / '.githooks').iterdir():
+                (project / '.husky' / hook.name).write_text('#!/bin/sh\nexec .githooks/%s "$@"\n' % hook.name)
+            result = subprocess.run(['sh', str(root / 'bootstrap.sh'), str(project)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("stays '.husky'", result.stdout)
+            self.assertTrue((project / 'docs/kit/.kit-version').exists())
+            self.assertEqual(git('config', '--get', 'core.hooksPath').stdout.strip(), '.husky')
+            # A global scope that wins over the local setting stops the wiring too.
+            git('config', '--worktree', '--unset', 'core.hooksPath')
+            home = Path(tmp) / 'home'
+            home.mkdir()
+            (home / '.gitconfig').write_text('[core]\n\thooksPath = /elsewhere/hooks\n')
+            shutil.rmtree(project / 'docs/kit')
+            env = dict(os.environ, HOME=str(home))
+            result = subprocess.run(['sh', str(root / 'bootstrap.sh'), str(project)], capture_output=True, text=True, env=env)
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn('/elsewhere/hooks', result.stderr)
+            self.assertFalse((project / 'docs/kit/.kit-version').exists())
+
     def test_the_hooks_and_scripts_stay_lf_under_autocrlf(self):
         # core.autocrlf=true gave a fresh checkout CRLF hooks (`#!/usr/bin/env sh\r`), and every
         # hook died before its first command: the kit ships a .gitattributes that pins them.

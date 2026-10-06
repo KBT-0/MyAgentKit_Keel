@@ -16,13 +16,6 @@
 # missing second CLI, a commit with no author, a cache npm could not write to, a checkout
 # on a Windows drive under WSL, CRLF in a script, a node_modules symlink git does not ignore.
 set -u
-# Windows installs Python as `python` or `py`: when `python3` is absent, the scripts call the
-# first of those under the usual name. A function is enough for a call; an `exec` cannot
-# run a function, so the exec sites use $kit_python, the resolved command.
-if command -v python3 >/dev/null 2>&1; then kit_python=python3
-elif command -v python >/dev/null 2>&1; then kit_python=python
-else kit_python=py; fi
-[ "$kit_python" = python3 ] || python3() { if [ "$kit_python" = py ]; then py -3 "$@"; else "$kit_python" "$@"; fi; }
 # CDPATH cleared: exported, it sent this cd into another tree with a scripts/ in it.
 CDPATH= cd -- "$(dirname "$0")/.." || exit 1
 missing=0
@@ -79,6 +72,14 @@ case "$toolchain_path" in
   ""|*"{{"*) toolchain_path="" ;;
   *) PATH="$toolchain_path:$PATH"; export PATH ;;
 esac
+# Resolved AFTER toolchain_path joined PATH, as the gate does.
+# Windows installs Python as `python` or `py`: when `python3` is absent, the scripts call the
+# first of those under the usual name. A function is enough for a call; an `exec` cannot
+# run a function, so the exec sites use $kit_python, the resolved command.
+if command -v python3 >/dev/null 2>&1; then kit_python=python3
+elif command -v python >/dev/null 2>&1; then kit_python=python
+else kit_python="py -3"; fi   # the launcher, told which Python: unquoted at every use
+[ "$kit_python" = python3 ] || python3() { $kit_python "$@"; }
 
 # --- a checkout on a Windows drive under WSL -----------------------------------------
 # /mnt/<drive> is the Windows filesystem seen from WSL: git converts line endings to CRLF,

@@ -24,7 +24,7 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'MYAGENTKIT_TASK_ID', 'MYAGENTKIT_R
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 114, 'test_agent_usage': 19, 'test_codex_quota': 5}
+SUITE_MINIMUMS = {'test_claude_bridge': 115, 'test_agent_usage': 19, 'test_codex_quota': 5}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -3451,6 +3451,17 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                             self.assertNotIn('preexec_fn', kw)
                             self.assertNotIn('start_new_session', kw)
                             self.assertEqual(kw['creationflags'], 0x200)  # CREATE_NEW_PROCESS_GROUP
+
+    def test_stop_group_never_signals_a_reaped_pid(self):
+        # A reviewer that ended normally was reaped by run(); stop_group then signalled its
+        # pid anyway, which a later process may already own.
+        import agent_process
+        from unittest.mock import patch
+        child = subprocess.Popen(['sh', '-c', 'exit 0'], start_new_session=True)
+        child.wait()
+        with patch.object(agent_process.os, 'kill') as kill, patch.object(agent_process.os, 'killpg'):
+            agent_process.stop_group(child, child.pid)
+        self.assertEqual(kill.call_count, 0, 'a reaped pid was signalled')
 
     def test_off_posix_stop_group_runs_taskkill_on_the_tree_and_never_killpg(self):
         from unittest.mock import patch

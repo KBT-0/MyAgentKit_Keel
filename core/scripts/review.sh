@@ -55,8 +55,8 @@ set -u
 # run a function, so the exec sites use $kit_python, the resolved command.
 if command -v python3 >/dev/null 2>&1; then kit_python=python3
 elif command -v python >/dev/null 2>&1; then kit_python=python
-else kit_python=py; fi
-[ "$kit_python" = python3 ] || python3() { if [ "$kit_python" = py ]; then py -3 "$@"; else "$kit_python" "$@"; fi; }
+else kit_python="py -3"; fi   # the launcher, told which Python: unquoted at every use
+[ "$kit_python" = python3 ] || python3() { $kit_python "$@"; }
 script_dir=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 # CDPATH cleared: exported, it sent a relative REVIEW_REPO_ROOT into another tree with that name.
 CDPATH= cd -- "${REVIEW_REPO_ROOT:-$script_dir/..}" || exit 2
@@ -144,6 +144,6 @@ set -- "$scope_flag"
 
 # Only with --fallback does the dispatcher make one failover to the other configured pin.
 # Each adapter retains its own evidence and usage; a completed Reject never triggers another call.
-exec "$kit_python" -B "$script_dir/review_dispatch.py" --repo "$PWD" --reviewer "$reviewer" $fallback \
+exec $kit_python -B "$script_dir/review_dispatch.py" --repo "$PWD" --reviewer "$reviewer" $fallback \
   --claude-model "${REVIEW_CLAUDE_MODEL:-$CLAUDE_MODEL}" \
   --codex-model "${REVIEW_CODEX_MODEL:-$CODEX_MODEL}" --effort "${REVIEW_EFFORT:-high}" "$@"

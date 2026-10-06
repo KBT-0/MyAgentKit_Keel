@@ -80,6 +80,21 @@ class SyncKitTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn('cannot scan the changelog for ACTION items', result.stderr)
 
+    def test_the_gitattributes_is_project_owned_so_a_sync_keeps_merge_and_lfs_rules(self):
+        # With a KIT-OWNED header the sync replaced a project's .gitattributes wholesale: its
+        # Unity merge driver and LFS rules were gone. The file is project-owned now.
+        with tempfile.TemporaryDirectory() as tmp:
+            kit, project = Path(tmp) / 'kit', Path(tmp) / 'project'
+            self.sync(tmp, '- A kit-owned file changed.\n', '--dry-run')
+            (kit / 'core').mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(ROOT / 'core/.gitattributes', kit / 'core/.gitattributes')
+            own = '*.unity merge=unityyamlmerge\n*.png filter=lfs diff=lfs merge=lfs -text\n'
+            (project / '.gitattributes').write_text(own)
+            result, _ = self.sync(tmp, '', '--actions-applied')
+            self.assertEqual((project / '.gitattributes').read_text(), own, result.stdout + result.stderr)
+            self.assertNotIn('conflict: .gitattributes', result.stdout + result.stderr)
+            self.assertNotIn('KIT-OWNED', (ROOT / 'core/.gitattributes').read_text())
+
     def test_a_project_owned_file_at_a_kit_owned_path_is_a_conflict_not_overwritten(self):
         # A path that became kit-owned in a later version held the project's own hook; the
         # sync replaced it with the kit's, reported "update:", and the project's own message

@@ -320,22 +320,46 @@ repo=""
 if git -C "$target" rev-parse --git-dir >/dev/null 2>&1; then
   repo=1
   hooks_was=$(git -C "$target" config --local --get core.hooksPath) && had=1 || had=""
-  # A hooks path of the project's own (husky, lefthook, a folder of its own) is never
-  # replaced in silence: the project's hooks would stop running. Stop and name it.
-  if [ -n "$had" ] && [ "$hooks_was" != ".githooks" ]; then
-    rm -f "$part"; part=""
-    printf '%s\n' "bootstrap: STOP: core.hooksPath is '$hooks_was', a hooks path of this project's own; the kit's hooks live in .githooks." >&2
-    printf '%s\n' "  Either make '$hooks_was' call .githooks/<hook> at the end of each of its hooks and run: git config core.hooksPath '$hooks_was' (the kit's files are installed)," >&2
-    printf '%s\n' "  or move its hooks into .githooks and run: git config core.hooksPath .githooks. Then rerun bootstrap.sh to record the version." >&2
-    exit 1
+  # The EFFECTIVE hooks path, from every scope (worktree, local, global, system): git runs
+  # that one. A hooks path of the project's own (husky, lefthook, a folder of its own) is
+  # never replaced in silence: the project's hooks would stop running. It is accepted when
+  # each of its hooks calls the kit's (chained), else the install stops and names it.
+  effective=$(git -C "$target" config --get core.hooksPath) || effective=""
+  chained=""
+  if [ -n "$effective" ] && [ "$effective" != ".githooks" ]; then
+    case "$effective" in /*) hooks_dir=$effective ;; *) hooks_dir=$target/$effective ;; esac
+    chained=1
+    for hook in "$target"/.githooks/*; do
+      [ -f "$hook" ] || continue
+      name=${hook##*/}
+      grep -q "\.githooks/$name" "$hooks_dir/$name" 2>/dev/null || { chained=""; break; }
+    done
+    if [ -z "$chained" ]; then
+      rm -f "$part"; part=""
+      printf '%s\n' "bootstrap: STOP: core.hooksPath is '$effective', a hooks path of this project's own; the kit's hooks live in .githooks." >&2
+      printf '%s\n' "  Either make each hook in '$effective' call .githooks/<same name> (bootstrap then accepts the path as chained)," >&2
+      printf '%s\n' "  or move its hooks into .githooks and run: git config core.hooksPath .githooks. Then rerun bootstrap.sh; the kit's files are installed." >&2
+      exit 1
+    fi
   fi
-  wiring=1
-  git -C "$target" config core.hooksPath .githooks
+  if [ -z "$chained" ]; then
+    wiring=1
+    git -C "$target" config core.hooksPath .githooks
+    # Verified as git sees it: a scope above the local one (worktree config, global) wins.
+    now=$(git -C "$target" config --get core.hooksPath) || now=""
+    if [ "$now" != ".githooks" ]; then
+      rm -f "$part"; part=""
+      printf '%s\n' "bootstrap: STOP: core.hooksPath reads '$now' after the local setting: a worktree, global or system scope sets it. Unset it there (git config --unset core.hooksPath --global, or --worktree), then rerun." >&2
+      exit 1
+    fi
+  fi
 fi
 mv -f "$part" "$target/docs/kit/.kit-version"
 part=""
 
-if [ -n "$repo" ]; then
+if [ -n "$repo" ] && [ -n "$chained" ]; then
+  echo "bootstrap: core.hooksPath stays '$effective': each of its hooks calls the kit's"
+elif [ -n "$repo" ]; then
   echo "bootstrap: wired core.hooksPath -> .githooks"
 else
   echo "bootstrap: NOT a git repository yet. After 'git init', run:"
