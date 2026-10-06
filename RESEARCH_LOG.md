@@ -986,6 +986,36 @@ task is chosen; a task id closed by a `Done:` trailer may not be named in either
 commit time and in the gate; every length limit is gone. Scope, stated before building: a
 housekeeping aid for honest sessions, not a control against evasion.
 
+#### Writing rules: no controlled-language standard and no terse-style skill, a few rules of our own
+
+The owner asked whether the kit should make agents write to ASD-STE100 or use a
+"caveman" terse-output skill, both proposed online as cures for long answers. A sourced
+survey (sources read by a research agent, nine of them through search summaries only, none
+re-verified by the lead) said neither as a package. The standard was built for
+comprehension by non-native readers, not brevity; the one careful public test found
+shorter sentences but no reliable drop in words, and naming the standard in a prompt cost
+one model 7 of 24 facts. The terse skill's third-party measurement on coding tasks was 8.5
+percent fewer output tokens, its author's own table shows one plain sentence gets nearly
+all of that, and its rules exempt everything persistent, which is most of what this kit
+writes. Output is a small share of an agent session's cost; the lever is context. What
+carried over is structural and stated in the kit's own words: two registers (chat: answer
+first; artifacts read cold: full sentences, one instruction each, one term per thing) and
+a rule above both that failures, unrun checks, security warnings and irreversible actions
+are never shortened. The instructions are unenforced: nothing measures whether agents
+follow them.
+
+#### The first CI run of v0.9: red on all four jobs
+
+Nothing of v0.9 had been pushed, so CI last ran on v0.8. Pushed to a branch behind a draft
+pull request, the tree that passed the kit check on the development machine a dozen times
+that day failed on all four jobs: one boundary case on both Ubuntu jobs, and on macOS that
+case in another form, two path comparisons (`/var` against `/private/var`), a doctor test
+reading an unreadable tool, and a cleanup test in which the replacement directory's content
+was gone. Twelve review rounds by a reviewer that runs no tests, and a self-test run on one
+machine, had recorded "NOT RUN: macOS, dash, Python 3.10" each time and moved on. Lesson:
+a platform the kit claims is a platform it is run on before anything is called accepted;
+"not run" repeated ten times is a finding, not a footnote.
+
 #### The review gate held on the kit's own hardening
 
 Five of the nine work packages (the gate lock, both review-tooling packages, the commit gates

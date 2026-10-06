@@ -57,7 +57,8 @@ the build tool cost zero permanent context and are more reliable.
 ## The other side of the ledger
 
 Output is a bill too, paid per turn: restating the task, narrating compliance, summarising
-your own summary. Hence the terse-chat rule.
+your own summary. Hence the first writing register in `AGENTS.md` ("Language & style"):
+the answer first, then stop.
 
 But **written artifacts are the exact opposite** and the distinction is not negotiable. The
 state file, handoff prompts and review reports are always full explicit sentences, because

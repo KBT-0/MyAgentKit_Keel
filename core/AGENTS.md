@@ -164,17 +164,26 @@ FAILING for the right reason.
 - A passing compile is not a review; green tests are necessary but not sufficient;
   implementer self-reports ("0 errors") are never validation. **Never report a verification
   you did not run** — if you could not run it, say "not run".
-- STATE.md entries, handoff prompts and review verdicts are always written in full, explicit
-  sentences. User-level style plugins (compressed chat and the like) never apply to these
-  files; the next tool reading them knows nothing about your plugins.
+- STATE.md entries, handoff prompts and review verdicts follow "Language & style", rule 2.
 
 ### Language & style
 
 - **All operational docs, code, identifiers, comments, commits and STATE.md entries:
   English.** {{LANGUAGE_EXCEPTION}}
-- **Chat output is terse.** Do not restate the task, do not narrate compliance, do not
-  summarize your own summary. Answer, then stop. This is an output-token bill, paid every
-  turn. Written artifacts are the exact opposite — the review-gate rule above governs them.
+- **Two registers; rule 3 outranks both.**
+  1. **Chat and final answers** (read now): give the answer or result first. Do not restate
+     the task, narrate compliance or recap. Write no prose between routine tool calls. Put
+     listable facts in a list or table and reasoning in sentences. Then stop.
+  2. **Written artifacts** (STATE.md, BACKLOG.md, operation files, handoff prompts, review
+     verdicts, docs) are read by a session with no memory of this one. Write full sentences;
+     never drop an article, verb or connective. Write one instruction per sentence. Aim for
+     at most 20 words per instruction and 25 per description (a target, not a gate). Use
+     active voice and name the actor. Use one term per thing, always. Number steps in
+     order. User-level style plugins never apply here; the next tool cannot see them.
+  3. **Never shortened by a cap or a style:** what FAILED, what was NOT run or NOT verified,
+     any security warning, any action that cannot be undone. State each in full, on its own
+     line.
+  In chat in another language, answer first, write full sentences and use one term per thing.
 - Single responsibility; no god classes. Consider splitting files over ~300 lines.
 - No singletons or static mutable state in core logic — dependencies via constructor
   (including clock and randomness, for determinism and tests).
