@@ -389,6 +389,24 @@ class SpawnWorkerTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0, result.stderr)
         self.assertIn('exited before its input line showed', result.stderr)
 
+    def test_a_missing_or_failing_watcher_stops_the_spawn(self):
+        # The start-up check's exit status was discarded, and a missing watcher's shell error
+        # did not match `watch_workers:`: the brief was typed with no dialog check at all.
+        scripts = self.tmp / 'scripts'
+        scripts.mkdir()
+        (scripts / 'spawn_worker.sh').write_text(SCRIPT.read_text())
+        for body in (None, 'echo "it broke"; exit 1\n'):
+            with self.subTest(watcher=body):
+                if body:
+                    (scripts / 'watch_workers.sh').write_text(body)
+                env = dict(self.base_env(), PWD=str(self.cwd))
+                result = subprocess.run(['sh', str(scripts / 'spawn_worker.sh'), 'w%d' % bool(body), str(self.brief)],
+                                        cwd=self.cwd, env=env, capture_output=True, text=True, timeout=60)
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn("cannot check session 'w%d': the watcher exited " % bool(body), result.stderr)
+                self.assertEqual(len(result.stderr.strip().splitlines()), 1, result.stderr)
+                self.assertNotIn("'-l'", self.tmux_log())
+
 
 if __name__ == '__main__':
     unittest.main()
