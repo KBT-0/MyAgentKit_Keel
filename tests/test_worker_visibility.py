@@ -51,6 +51,8 @@ if args[0] in ('set-option', 'show-options'):
             print(f.read())
     sys.exit(0)
 if args[0] == 'capture-pane':
+    if os.environ.get('VIS_CAPTURE_FAIL'):
+        sys.exit("can't find pane: " + name)
     pane = os.environ['VIS_PANE']
     if os.path.exists(os.path.join(st, 'slept')):
         pane = os.environ.get('VIS_PANE_LATER', pane)
@@ -70,6 +72,10 @@ if mode == 'enoexec':
     sys.stderr.write('wt.exe: cannot execute binary file: Exec format error\n')
     sys.exit(1)
 if mode == 'hang':
+    time.sleep(60)
+if mode == 'hang-term':
+    import signal
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
     time.sleep(60)
 names = re.findall(r"=([A-Za-z0-9_-]+)", ' '.join(sys.argv[1:]))
 for n in names[:1] if mode == 'partial' else names:
@@ -235,6 +241,15 @@ class ShowTests(Base):
         self.assertIn('WSL interop is down', result.stdout)
         self.assertIn('attach by hand: tmux attach -t b-2', result.stdout)
 
+    def test_a_launcher_that_ignores_sigterm_is_killed(self):
+        # One SIGTERM and an endless wait: a launcher that ignores it hung the spawn with it.
+        start = time.monotonic()
+        result = self.run_script(SHOW, 'a', VIS_MODE='hang-term', **self.WSL)
+        self.assertLess(time.monotonic() - start, 20)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('did not return within 5 s', result.stdout)
+        self.assertIn('attach by hand: tmux attach -t a', result.stdout)
+
     def test_a_launcher_that_hangs_is_bounded(self):
         start = time.monotonic()
         result = self.run_script(SHOW, 'a', VIS_MODE='hang', **self.WSL)
@@ -279,6 +294,25 @@ class WatchTests(Base):
             with self.subTest(pane=pane):
                 result = self.watch('--once', 'w1', pane=pane)
                 self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
+
+    def test_a_failed_capture_is_an_observation_failure_never_idle(self):
+        # The session exists but its pane cannot be read: the empty capture read as idle, and
+        # a permission prompt nobody could see was reported as nothing waiting.
+        for args in (('--once', 'w1'), ('--max-minutes', '0', 'w1')):
+            with self.subTest(args=args):
+                result = self.watch(*args, VIS_CAPTURE_FAIL='1')
+                self.assertEqual(result.returncode, 3, result.stdout)
+                self.assertIn("watch_workers: w1: capture failed: can't find pane: w1", result.stderr)
+                self.assertEqual(result.stdout, '')
+
+    def test_a_newline_in_a_name_or_a_result_mapping_is_refused(self):
+        # The mappings are joined by newlines: `w1=docs/a<LF>w1=docs/b.md` announced docs/b.md.
+        for args in (('--result', 'w1=docs/a\nw1=docs/b.md', 'w1'), ('w1\nw2',)):
+            with self.subTest(args=args):
+                result = self.watch('--once', *args)
+                self.assertEqual(result.returncode, 2, result.stdout)
+                self.assertIn('contains a control character or a newline', result.stderr)
+                self.assertEqual(result.stdout, '')
 
     def test_the_watch_window_ends_quietly(self):
         result = self.watch('--max-minutes', '0', 'w1', pane='working.txt')
@@ -378,6 +412,37 @@ class ResultTests(Base):
         self.commit(HEAD % ('completed', 'none') + 'more\n')
         self.assertIn('DONE: w1', self.watch().stdout)
 
+    def test_the_committed_blob_is_read_never_the_working_file(self):
+        # A working file changed after the clean-tree check was read in place of the commit.
+        # assume-unchanged hides the change from that check the same way, deterministically.
+        self.commit(HEAD % ('progress', 'two steps'))
+        self.git('update-index', '--assume-unchanged', 'docs/w1.md')
+        self.file.write_text(HEAD % ('completed', 'none'))
+        out = self.watch().stdout
+        self.assertEqual(out, 'watch_workers: PROGRESS: w1, task T-7, attempt 2, remaining: two steps '
+                         '(result file docs/w1.md)\n')
+
+    def test_a_committed_symlink_is_never_a_result(self):
+        # A committed link to a report outside the tree passed `-f` and the clean-tree check.
+        outside = self.tmp / 'outside.md'
+        outside.write_text(HEAD % ('completed', 'none'))
+        self.file.symlink_to(outside)
+        self.git('add', '-A')
+        self.git('commit', '-q', '-m', 'r')
+        out = self.watch().stdout
+        self.assertEqual(out, 'watch_workers: MALFORMED: w1, result file docs/w1.md: it is not a regular file '
+                         'in HEAD (mode 120000); not done\n')
+
+    def test_the_watcher_restarted_after_progress_reaches_done(self):
+        # The lead restarts the watcher after every report but DONE and GONE while work
+        # remains: the second run, after a PROGRESS report, still reports the completion.
+        self.commit(HEAD % ('progress', 'two steps'))
+        self.assertIn('PROGRESS: w1', self.watch().stdout)
+        self.commit(HEAD % ('completed', 'none'))
+        result = self.run_script(WATCH, '--max-minutes', '1', '--result', 'w1=docs/w1.md', 'w1',
+                                 VIS_SESSIONS='w1', VIS_PANE=str(PANES / 'working-auto.txt'))
+        self.assertTrue(result.stdout.startswith('watch_workers: DONE: w1'), result.stdout)
+
     def test_a_malformed_head_is_never_done(self):
         for head, why in (('', 'line 1'), ('Kind: finished\nTask: T\nAttempt: 1\nRemaining: none\n', 'line 1'),
                           ('# Result\n' + HEAD % ('completed', 'none'), 'line 1'),
@@ -447,10 +512,11 @@ class ResultTests(Base):
 class ContextTests(Base):
     """The context figure is read from the status line, past a warning line, once per session."""
 
-    def watch(self, status, *args, drop=False):
+    def watch(self, status, *args, drop=False, quote=None):
         text = (PANES / 'working-auto.txt').read_text()
         self.assertIn(STATUS, text)
         lines = [line for line in text.replace(STATUS, status).splitlines() if not (drop and '│' in line)]
+        lines = ([quote] if quote else []) + lines
         pane = self.tmp / 'pane.txt'
         pane.write_text('\n'.join(lines) + '\n')
         return self.run_script(WATCH, *args, 'w1', VIS_SESSIONS='w1', VIS_PANE=str(pane), LC_ALL='C')
@@ -470,6 +536,16 @@ class ContextTests(Base):
                                      % (out, warn))
                 else:
                     self.assertEqual(result.stdout, '')
+
+    def test_a_figure_in_the_output_is_not_the_status_line(self):
+        # Output quoting `800k/1.0M` gave a false 80% warning and set the once-marker that
+        # then hid a real warning. Only the status line's figure counts.
+        quote = '  the report said 800k/1.0M of context was used'
+        self.assertEqual(self.watch(STATUS, '--once', quote=quote).stdout, '')
+        result = self.watch('', '--max-minutes', '0', quote=quote)
+        self.assertEqual(result.stdout, 'watch_workers: CONTEXT: w1, no context figure: its status line '
+                         'is unparsable (said once; nothing is guessed)\n')
+        self.assertIn('CONTEXT: w1, 1.2M/1.0M', self.watch('1.2M/1.0M', '--once', quote=quote).stdout)
 
     def test_the_warning_fires_once_per_session(self):
         self.assertIn('CONTEXT: w1, 1.2M/1.0M', self.watch('1.2M/1.0M', '--once').stdout)

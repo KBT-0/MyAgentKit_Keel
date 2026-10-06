@@ -210,7 +210,8 @@ in `RESEARCH_LOG.md` (2026-10-03). Most of the files below are project-owned, so
   throughput, the lead's cost). `pre-commit` runs `check.sh --for-commit`: when every staged
   path is a regular `.md` file the build alone is skipped and the PASS line says so
   (`docs_only_skip_build=0` beside `build_test_cmd` turns it off); merges, manual runs, the
-  Stop hook and the self-test always build.
+  Stop hook and the self-test always build. A staged submodule revision always builds, whatever
+  `diff.ignoreSubmodules` or the submodule's `ignore` says.
 - **A spawned worker is always visible, and watched.** `spawn_worker.sh` shows its session
   in a terminal tab once the worker has its brief (`--batch` defers; `scripts/show_workers.sh
   NAME...` opens a batch together in one window: Windows Terminal under WSL, iTerm2 or
@@ -340,7 +341,8 @@ in `RESEARCH_LOG.md` (2026-10-03). Most of the files below are project-owned, so
   `check.sh`, `claude_bridge.py` and `sync-kit.sh` had a negative test that stayed green with
   the guard deleted; each now has one that goes red. A case that cannot run (uid 0, an old
   git) is no longer counted as a pass, the suites no longer fail when the caller ignores
-  SIGINT, and `check_kit.py` holds every suite to its current test count. The boundary
+  SIGINT, and `check_kit.py` holds every suite to its current test count and every unit to
+  a `UNIT DONE:` line printed after its checks (an early exit 0 passed). The boundary
   suites wait 30 s per step, times `MYAGENTKIT_TEST_TIMEOUT_SCALE` on a slow host, and a
   deadline that fires ends the child's whole process group and prints its output (issue
   #29).

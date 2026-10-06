@@ -210,16 +210,48 @@ class CheckGateTests(unittest.TestCase):
         self.assertEqual(code, 1, out)
         self.assertIn('FAIL [scan]: cannot read the link text of the symlink a-link.', out)
 
-    def test_the_self_tests_hook_and_build_log_cases_go_red(self):
-        # The self-test's own cases for a missing hook, a hook that passes a red gate, a
-        # commit-msg hook that passes an AI trailer and a build log that is not kept could
-        # each be deleted, and every kit test stayed green. Here each meets its failure.
+    def selftest_ready(self):
+        """The fixture project with what --self-test needs: hooks, review stub, rule line."""
         project = self.project
         shutil.copytree(ROOT / 'core/.githooks', project / '.githooks')
         (project / 'scripts/check.sh').chmod(0o755)
         (project / 'scripts/review.sh').write_text("echo 'REVIEW SELF-TEST: PASS'\n")
         (project / 'scripts/boundary_selftests.sh').write_text('# The fixture has no boundaries.\n')
         (project / 'AGENTS.md').write_text('- **No AI attribution in git.**\n')
+        return project
+
+    def test_the_self_test_never_writes_the_callers_index(self):
+        # Inside a hook git exports GIT_INDEX_FILE. The self-test's throwaway repositories
+        # inherited it, and their `git add -A` replaced the caller's staged content.
+        project = self.selftest_ready()
+        (project / 'staged.md').write_text('staged\n')
+        subprocess.run(['git', 'add', 'staged.md'], cwd=project, check=True)
+        staged = lambda: subprocess.run(['git', 'diff', '--cached', '--name-only'], cwd=project,
+                                        capture_output=True, text=True, check=True).stdout
+        before = staged()
+        index = self.tmp / 'caller-index'
+        shutil.copyfile(project / '.git/index', index)
+        copy = index.read_bytes()
+        code, out = gate(project, self.build, timeout=300, args=('--self-test',), GIT_INDEX_FILE=str(index))
+        self.assertEqual(code, 0, out)
+        self.assertEqual(index.read_bytes(), copy, 'the self-test wrote the index GIT_INDEX_FILE names')
+        self.assertEqual(staged(), before)
+
+    def test_the_off_switch_passes_its_own_self_test(self):
+        # docs_only_skip_build=0 runs the build on a documentation-only commit; the self-test
+        # demanded the skipped build anyway, so a correctly configured project could not pass.
+        project = self.selftest_ready()
+        script = project / 'scripts/check.sh'
+        script.write_text(script.read_text().replace('\ndocs_only_skip_build=1\n', '\ndocs_only_skip_build=0\n'))
+        code, out = gate(project, self.build, timeout=300, args=('--self-test',))
+        self.assertEqual(code, 0, out)
+        self.assertIn('ok   — docs_only_skip_build=0: a commit of two documents runs the build', out)
+
+    def test_the_self_tests_hook_and_build_log_cases_go_red(self):
+        # The self-test's own cases for a missing hook, a hook that passes a red gate, a
+        # commit-msg hook that passes an AI trailer and a build log that is not kept could
+        # each be deleted, and every kit test stayed green. Here each meets its failure.
+        project = self.selftest_ready()
         code, out = gate(project, self.build, timeout=300, args=('--self-test',))
         self.assertEqual(code, 0, out)
         self.assertIn('SELF-TEST: PASS', out)
@@ -413,6 +445,44 @@ class CheckGateTests(unittest.TestCase):
         code, out, built = self.gate_built(args=())
         self.assertTrue(built, out)
         self.assertEqual(code, 1, out)
+
+    def test_a_submodule_change_hidden_by_an_ignore_setting_runs_the_build(self):
+        # `git diff` honours diff.ignoreSubmodules and a submodule's own `ignore = all`: a
+        # staged submodule revision beside a document was classified documentation-only.
+        git = self.commit_fixture()
+        inner = self.project / 'vendor/lib'
+        inner.mkdir(parents=True)
+        inner_git = lambda *args: subprocess.run(GIT + ['-c', 'core.hooksPath=/dev/null', *args],
+                                                 cwd=inner, check=True, capture_output=True)
+        inner_git('init', '-q')
+        inner_git('commit', '-q', '--allow-empty', '-m', 'one')
+        (self.project / '.gitmodules').write_text('[submodule "lib"]\n\tpath = vendor/lib\n\turl = ./lib\n')
+        git('add', '.gitmodules', 'vendor/lib')
+        git('commit', '-q', '-m', 'submodule')
+        inner_git('commit', '-q', '--allow-empty', '-m', 'two')
+        global_config = self.tmp / 'gitconfig'
+        global_config.write_text('[diff]\n\tignoreSubmodules = all\n')
+        for name, extra, gitmodules in (
+                ('diff.ignoreSubmodules=all, global', {'GIT_CONFIG_GLOBAL': str(global_config)}, ''),
+                ('ignore = all on the submodule', {}, '\tignore = all\n')):
+            with self.subTest(case=name):
+                if gitmodules:
+                    (self.project / '.gitmodules').write_text(
+                        '[submodule "lib"]\n\tpath = vendor/lib\n\turl = ./lib\n' + gitmodules)
+                    git('commit', '-q', '-am', 'ignore it')
+                (self.project / 'notes.md').write_text('notes\n')
+                # -f: `git add` itself skips a submodule whose ignore is all.
+                git('add', '-f', 'notes.md', 'vendor/lib')
+                staged = subprocess.run(['git', 'diff', '--cached', '--name-only', '--ignore-submodules=none'],
+                                        cwd=self.project, capture_output=True, text=True, check=True).stdout
+                self.assertIn('vendor/lib', staged)
+                if self.mark.exists():
+                    self.mark.unlink()
+                code, out = gate(self.project, self.build, args=('--for-commit',), **extra)
+                git('reset', '-q')
+                self.assertTrue(self.mark.exists(), out)
+                self.assertEqual(code, 1, out)
+                self.assertNotIn('build not run', out)
 
     def test_the_off_switch_runs_the_build_on_a_documentation_only_commit(self):
         # A project whose build reads markdown (a documentation site) turns the path off.

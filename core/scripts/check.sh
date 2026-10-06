@@ -251,6 +251,18 @@ self_test() {
   inj="$work/injected.md"
   # The marker that lets this run's nested gates honour the seams (see the seam block).
   GATE_SELFTEST_NESTED=$(cat "$lock_path"); export GATE_SELFTEST_NESTED
+  # The throwaway repositories below are never the caller's. Inside a hook git exports
+  # GIT_INDEX_FILE, and a caller may export GIT_DIR or GIT_OBJECT_DIRECTORY: inherited, a
+  # fixture's `git add -A` replaced the caller's staged content. Every git call and hook run on
+  # a fixture runs in a subshell that calls fixture_env first, which unsets each variable that
+  # routes git to a repository: git's own list (`git rev-parse --local-env-vars`), the main ones
+  # again in case that fails, and two it leaves out. GIT_CONFIG* stays, as the gate's own
+  # documentation-only check keeps it.
+  fixture_vars="$(git rev-parse --local-env-vars 2>/dev/null) GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
+    GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_NAMESPACE GIT_CEILING_DIRECTORIES"
+  fixture_env() {
+    for v in $fixture_vars; do case $v in GIT_CONFIG*) ;; *) unset "$v" ;; esac; done
+  }
 
   # A red tree cannot prove that a gate turns red: everything would "fail correctly".
   if ! baseline=$(sh "$0" 2>&1); then
@@ -308,9 +320,9 @@ self_test() {
   # --- a finished task still named in the state files -----------------------
   # A history of its own, outside the tree, whose one commit closed K4; and one with none.
   hist="$work/history"; fresh="$work/fresh"
-  git init -q "$hist" && git init -q "$fresh" &&
+  ( fixture_env; git init -q "$hist" && git init -q "$fresh" &&
     git -C "$hist" -c user.name=t -c user.email=t@example.invalid -c core.hooksPath=/dev/null \
-        -c commit.gpgsign=false commit -q --allow-empty -m 'close K4' -m 'Done: K4' ||
+        -c commit.gpgsign=false commit -q --allow-empty -m 'close K4' -m 'Done: K4' ) ||
     { echo "  FAIL — could not build the synthetic history for the Done: cases"; st_fail=1; }
   mkdir "$work/closed" "$work/other" "$work/backlog"
   printf '# STATE\n\n## Active work\n- K4: still listed\n' > "$work/closed/STATE.md"
@@ -428,19 +440,19 @@ self_test() {
   else
     msg_hook="$(pwd)/.githooks/commit-msg"; done_repo="$work/done-repo"
     printf 'close K4\n\nDone: K4\n' > "$work/msg_done"
-    git init -q "$done_repo" && mkdir "$done_repo/docs" ||
+    ( fixture_env; git init -q "$done_repo" ) && mkdir "$done_repo/docs" ||
       { echo "  FAIL — could not build the throwaway repository for the Done: hook cases"; st_fail=1; }
     for rule in present absent; do
       if [ "$rule" = present ]; then echo '- **No AI attribution in git.**'; else echo 'AI tools may be credited.'; fi > "$done_repo/AGENTS.md"
       printf '# STATE\n\n## Active work\n- K4: still listed\n' > "$done_repo/docs/STATE.md"
-      git -C "$done_repo" add -A
-      if (CDPATH= cd -- "$done_repo" && sh "$msg_hook" "$work/msg_done") >/dev/null 2>&1; then
+      ( fixture_env; git -C "$done_repo" add -A )
+      if (fixture_env; CDPATH= cd -- "$done_repo" && sh "$msg_hook" "$work/msg_done") >/dev/null 2>&1; then
         echo "  FAIL — commit-msg hook accepted Done: K4 while the staged STATE.md names K4 (rule line $rule)"
         st_fail=1; continue
       fi
       printf '# STATE\n\n## Active work\n' > "$done_repo/docs/STATE.md"
-      git -C "$done_repo" add -A
-      if (CDPATH= cd -- "$done_repo" && sh "$msg_hook" "$work/msg_done") >/dev/null 2>&1; then
+      ( fixture_env; git -C "$done_repo" add -A )
+      if (fixture_env; CDPATH= cd -- "$done_repo" && sh "$msg_hook" "$work/msg_done") >/dev/null 2>&1; then
         echo "  ok   — commit-msg hook refuses Done: K4 until the staged STATE.md drops it (rule line $rule)"
       else
         echo "  FAIL — commit-msg hook rejected Done: K4 after the line was deleted (rule line $rule; false positive)"
@@ -475,14 +487,24 @@ self_test() {
   # The decision reads a throwaway repository's index (GATE_SELFTEST_COMMIT_REPO), never this
   # one's. The build is `false` throughout, so a run that reached it fails.
   docs_repo="$work/docs-commit"
-  if git init -q "$docs_repo" && printf 'int x;\n' > "$docs_repo/code.c" &&
+  if ( fixture_env; git init -q "$docs_repo" && printf 'int x;\n' > "$docs_repo/code.c" &&
      git -C "$docs_repo" add code.c &&
      git -C "$docs_repo" -c user.name=t -c user.email=t@example.invalid -c core.hooksPath=/dev/null \
          -c commit.gpgsign=false commit -q -m base &&
      printf 'a\n' > "$docs_repo/a.md" && printf 'b\n' > "$docs_repo/b.md" &&
-     git -C "$docs_repo" add a.md b.md; then
+     git -C "$docs_repo" add a.md b.md ); then
     out=$(env GATE_SELFTEST_COMMIT_REPO="$docs_repo" GATE_BUILD_CMD_OVERRIDE=false sh "$0" --for-commit 2>&1)
-    if printf '%s\n' "$out" | grep -qx 'CHECK: PASS (build not run: documentation-only commit, 2 files)'; then
+    # The case asserts what the switch beside build_test_cmd selects, read from this file by
+    # the shell itself: with docs_only_skip_build=0 the skipped build was demanded anyway.
+    eval "$(grep '^docs_only_skip_build=' "$0" | head -n 1)"
+    if [ "${docs_only_skip_build:-}" != 1 ]; then
+      if printf '%s\n' "$out" | grep -q '^FAIL \[build\]' && ! printf '%s\n' "$out" | grep -q 'build not run'; then
+        echo "  ok   — docs_only_skip_build=$docs_only_skip_build: a commit of two documents runs the build"
+      else
+        echo "  FAIL — docs_only_skip_build=$docs_only_skip_build, and a commit of two documents skipped the build."
+        st_fail=1
+      fi
+    elif printf '%s\n' "$out" | grep -qx 'CHECK: PASS (build not run: documentation-only commit, 2 files)'; then
       echo "  ok   — a commit of two documents skips the build and says so in the PASS line"
     else
       echo "  FAIL — a commit of two documents ran the build, or passed without saying it skipped it."
@@ -501,7 +523,7 @@ self_test() {
     else
       echo "  ok   — a documentation-only commit still fails an unfilled placeholder"
     fi
-    printf 'int y;\n' > "$docs_repo/code.c" && git -C "$docs_repo" add code.c
+    printf 'int y;\n' > "$docs_repo/code.c" && ( fixture_env; git -C "$docs_repo" add code.c )
     if env GATE_SELFTEST_COMMIT_REPO="$docs_repo" GATE_BUILD_CMD_OVERRIDE=false sh "$0" --for-commit >/dev/null 2>&1; then
       echo "  FAIL — a commit of documents and a code file skipped the build."
       st_fail=1
@@ -901,7 +923,9 @@ case "$(printf '%s' "$build_test_cmd" | tr -d '[:space:]')" in
     # a documentation-only change; the caller cannot declare one. Documentation-only: at least
     # one change against HEAD, renames off (a code file renamed to .md is a deletion of code),
     # every path ending in .md, and each added, modified or deleted entry a regular file
-    # (mode 100644 or 100755: a symlink or a submodule is not documentation). Any doubt runs
+    # (mode 100644 or 100755: a symlink or a submodule is not documentation). Submodules are
+    # never ignored here: diff.ignoreSubmodules=all, or a submodule's own `ignore = all`, hid a
+    # staged submodule revision, and the document beside it skipped the build. Any doubt runs
     # the build: no HEAD yet, a merge in progress, a git error, an entry that does not parse.
     # The diff is against HEAD, which for an amend is the tree being amended: the build last
     # vouched for HEAD, and the commit differs from it only by these documents. A clean
@@ -919,7 +943,7 @@ if git("rev-parse", "-q", "--verify", "HEAD").returncode != 0:
     sys.exit(1)
 if git("rev-parse", "-q", "--verify", "MERGE_HEAD").returncode != 1:
     sys.exit(1)
-diff = git("diff", "--cached", "--raw", "--no-renames", "-z", "HEAD", "--")
+diff = git("diff", "--cached", "--raw", "--no-renames", "--ignore-submodules=none", "-z", "HEAD", "--")
 fields = diff.stdout.split(b"\0")
 if diff.returncode != 0 or fields.pop() != b"" or not fields or len(fields) % 2:
     sys.exit(1)

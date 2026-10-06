@@ -6,6 +6,8 @@
 #                         [--result NAME=PATH]... NAME [NAME...]
 #        watch_workers.sh --once [the same options] NAME [NAME...]
 #        watch_workers.sh --list-patterns
+# It returns at the first report: while work remains, start it again after every report but
+# DONE and GONE, and after its window ends.
 #
 # The lead runs it as a BACKGROUND command: its exit re-invokes the lead, which then tells the
 # owner what the session waits on. A spawned session can block on a permission prompt, the
@@ -18,18 +20,23 @@
 # are explained there). It prints one block per session that is GONE or WAITING, with the
 # last pane lines for a WAITING one, and exits 0. Nothing waiting after --max-minutes
 # (default 110) prints one line saying so and exits 0. --once checks once and prints nothing
-# when nothing waits (spawn_worker.sh uses it). Exit 2 is a usage error.
+# when nothing waits (spawn_worker.sh uses it). Exit 2 is a usage error. Exit 3: a pane of
+# a session that exists could not be read (`watch_workers: NAME: capture failed: ...` on
+# stderr); that is an observation failure, never "nothing waiting". Run once per spawn, the
+# watcher stopped watching at the first PROGRESS, QUESTIONS or CONTEXT report (see above).
 #
 # A session that is neither gone nor waiting is checked for two more things:
 # - --result NAME=PATH names its result file (docs/HANDOFF.md). Once the file is committed
-#   (it is in HEAD of the tree that holds it) and that tree is clean, its head is read:
+#   (it is in HEAD of the tree that holds it) and that tree is clean, its head is read from
+#   the committed blob, never the working file, and the blob must be a regular file:
 #   `Kind: completed` is DONE; blocked, handoff and progress are reported as BLOCKED, HANDOFF
 #   and PROGRESS (not done); a missing or malformed head is MALFORMED (not done). A file with
 #   questions under "## Open questions for ..." is QUESTIONS with their text, first. Each
 #   committed version of the file is reported once.
 # - The `context` rule in waiting_patterns.txt finds the context figure (<used>/<window>) in
-#   the pane's status line. Past --context-warn percent (default 50) it is CONTEXT, once per
-#   session. A status line without the figure, or none, is CONTEXT once too, and the figure is
+#   the pane's status line, the last line with two or more ` │ ` separators; a figure anywhere
+#   else in the pane is output, not the status. Past --context-warn percent (default 50) it
+#   is CONTEXT, once per session. A status line without the figure, or none, is CONTEXT once too, and the figure is
 #   never guessed; --once skips that note, as spawn_worker.sh runs it before the status line
 #   is drawn.
 # The once-markers are user options of the tmux session, so they end with it. Every report
@@ -48,6 +55,12 @@ done <"$patterns"
 [ -n "$ctx_re" ] || die "no context rule in $patterns"
 nl='
 '
+# The mappings are joined by newlines, so a newline inside one argument split it in two:
+# `w1=docs/a<LF>w1=docs/b.md` announced docs/b.md. No control byte or newline is accepted.
+plain() {
+  [ "$(printf '%sx' "$1" | LC_ALL=C tr -d '\001-\037\177')" = "${1}x" ] ||
+    die "a session name or result path contains a control character or a newline; it is not printed"
+}
 
 interval=45; max=110; warn=50; once=""; results=""
 while [ $# -gt 0 ]; do
@@ -59,6 +72,7 @@ while [ $# -gt 0 ]; do
       shift 2 ;;
     --result)
       [ $# -ge 2 ] || die "$1 needs a value"
+      plain "$2"
       case $2 in ?*=?*) ;; *) die "--result takes NAME=PATH: $2" ;; esac
       results=$results$nl$2; shift 2 ;;
     --once) once=1; shift ;;
@@ -71,16 +85,15 @@ while [ $# -gt 0 ]; do
     *) break ;;
   esac
 done
-[ $# -ge 1 ] || { sed -n '3,8p' "$0"; exit 2; }
+[ $# -ge 1 ] || { sed -n '3,10p' "$0"; exit 2; }
 [ "$interval" -ge 10 ] || die "--interval $interval is below the floor of 10 seconds"
-for n in "$@" "$results"; do
-  [ "$(printf '%sx' "$n" | LC_ALL=C tr -d '\001-\011\013-\037\177')" = "${n}x" ] ||
-    die "a session name or result path contains a control character; it is not printed"
-done
+for n in "$@"; do plain "$n"; done
 command -v tmux >/dev/null || die "tmux is not installed"
 win=$(mktemp) || die "cannot make a temporary file"
 qs=$(mktemp) || { rm -f "$win"; die "cannot make a temporary file"; }
-trap 'rm -f "$win" "$qs"' EXIT
+body=$(mktemp) || { rm -f "$win" "$qs"; die "cannot make a temporary file"; }
+err=$(mktemp) || { rm -f "$win" "$qs" "$body"; die "cannot make a temporary file"; }
+trap 'rm -f "$win" "$qs" "$body" "$err"' EXIT
 
 # Each line cut to 200 BYTES in every locale (`cut -c` counted bytes in some), then a
 # UTF-8 character the cut split is dropped whole: the output stays UTF-8 when the input was.
@@ -93,12 +106,15 @@ cutb() {
 mark() { tmux show-options -qv -t "=$1:" "@kit_watch_$2" 2>/dev/null || true; }
 setmark() { tmux set-option -t "=$1:" "@kit_watch_$2" "$3" >/dev/null 2>&1 || true; }
 
-# Print GONE, or "WAITING KIND STATUS VERSION", or nothing; leaves the pane's last 15
-# non-empty lines, control bytes removed, in $win.
+# Print GONE, FAILED (the pane could not be read; tmux's error is in $err), or
+# "WAITING KIND STATUS VERSION", or nothing; leaves the pane's last 15 non-empty lines,
+# control bytes removed, in $win.
 classify() {
   tmux has-session -t "=$1" 2>/dev/null || { echo GONE; return 0; }
-  tmux capture-pane -p -J -t "=$1:" 2>/dev/null | LC_ALL=C tr -d '\001-\011\013-\037\177' |
-    LC_ALL=C sed 's/[[:space:]]*$//' | grep -v '^$' | tail -n 15 >"$win" || true
+  tmux capture-pane -p -J -t "=$1:" >"$win" 2>"$err" || { echo FAILED; return 0; }
+  LC_ALL=C tr -d '\001-\011\013-\037\177' <"$win" | LC_ALL=C sed 's/[[:space:]]*$//' |
+    grep -v '^$' | tail -n 15 >"$qs" || true
+  cat "$qs" >"$win"
   last=$(tail -n 1 "$win")
   hits=" "
   while read -r kind status version where re; do
@@ -120,6 +136,10 @@ classify() {
 
 report() {
   name=$1; shift
+  if [ "$1" = FAILED ]; then
+    say "watch_workers: $name: capture failed: $(tr '\n' ' ' <"$err")" >&2
+    return 0
+  fi
   if [ "$1" = GONE ]; then
     say "watch_workers: GONE: $name (the tmux session no longer exists: read its result file)"
     return 0
@@ -149,14 +169,24 @@ result() {
   done <<EOF
 $results
 EOF
-  [ -n "$f" ] && [ -f "$f" ] || return 1
+  [ -n "$f" ] || return 1
   case $f in */*) d=${f%/*} ;; *) d=. ;; esac
-  blob=$(git -C "$d" rev-parse -q --verify "HEAD:./${f##*/}" 2>/dev/null) || return 1
+  # The commit is what is trusted: the head is read from the committed blob, never the working
+  # file, which a committed symlink pointed outside the tree and a later write could change
+  # after the clean-tree check. The marker is that blob's id.
+  entry=$(git -C "$d" ls-tree HEAD -- "./${f##*/}" 2>/dev/null) || return 1
+  [ -n "$entry" ] || return 1
+  mode=${entry%% *}; blob=${entry#* }; blob=${blob#* }; blob=${blob%%"	"*}
   dirty=$(git -C "$d" status --porcelain 2>/dev/null) || return 1
   [ -z "$dirty" ] || return 1
   [ "$(mark "$1" result)" != "$blob" ] || return 1
   setmark "$1" result "$blob"
-  k=$(hl 1 "$f"); t=$(hl 2 "$f"); a=$(hl 3 "$f"); r=$(hl 4 "$f")
+  case $mode in 100644|100755) ;; *)
+    say "watch_workers: MALFORMED: $1, result file $f: it is not a regular file in HEAD (mode $mode); not done"
+    return 0 ;;
+  esac
+  git -C "$d" cat-file blob "$blob" >"$body" 2>/dev/null || return 1
+  k=$(hl 1 "$body"); t=$(hl 2 "$body"); a=$(hl 3 "$body"); r=$(hl 4 "$body")
   case $a in "Attempt: "*) a=${a#Attempt: } ;; *) a=x ;; esac
   bad=""
   case $k in "Kind: completed"|"Kind: blocked"|"Kind: handoff"|"Kind: progress") ;;
@@ -178,7 +208,7 @@ EOF
     !inq || !NF { next }
     /^[0-9]+[.)] / { q++; n = 0; print "Q" $0; next }
     q { if (++n <= 6) print "L" $0; else if (n == 7) print "L   [more in the result file]" }
-  ' "$f" | LC_ALL=C tr -d '\001-\011\013-\037\177' >"$qs"
+  ' "$body" | LC_ALL=C tr -d '\001-\011\013-\037\177' >"$qs"
   nq=$(grep -c '^Q' "$qs" || true)
   if [ "$nq" -gt 0 ]; then
     owner=$(sed -n 's/^O//p' "$qs" | cutb)
@@ -197,8 +227,8 @@ EOF
 context() {
   fig=$(CTX_RE=$ctx_re LC_ALL=C awk -v warn="$warn" '
     function num(s) { return substr(s, 1, length(s) - 1) * (s ~ /M$/ ? 1000000 : 1000) }
-    { t = ""; for (i = 1; i <= NF; i++) if ($i ~ ENVIRON["CTX_RE"]) t = $i
-      if (t != "") tok = t; else if (gsub(/ │ /, "&") >= 2) bar = 1 }
+    gsub(/ │ /, "&") >= 2 {
+      bar = 1; tok = ""; for (i = 1; i <= NF; i++) if ($i ~ ENVIRON["CTX_RE"]) tok = $i }
     END { if (tok == "") { print (bar ? "unparsable" : "absent"); exit }
           split(tok, p, "/"); u = num(p[1]); w = num(p[2])
           if (w <= 0) { print "unparsable"; exit }
@@ -220,13 +250,15 @@ context() {
 
 end=$(( $(date +%s) + max * 60 ))
 while :; do
-  found=""
+  found="" failed=""
   for n in "$@"; do
     st=$(classify "$n")
-    if [ -n "$st" ]; then report "$n" $st; found=1
+    if [ "$st" = FAILED ]; then report "$n" FAILED; failed=1
+    elif [ -n "$st" ]; then report "$n" $st; found=1
     elif result "$n" || context "$n"; then found=1
     fi
   done
+  [ -z "$failed" ] || exit 3
   [ -z "$found" ] || exit 0
   [ -z "$once" ] || exit 0
   [ $(( $(date +%s) + interval )) -le "$end" ] ||

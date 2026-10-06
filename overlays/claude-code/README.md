@@ -85,7 +85,10 @@ returns, and so re-invokes the lead, as soon as a named session is GONE or WAITI
 person; for WAITING it prints what waits and the last lines of the pane, so the lead can tell
 the owner. Otherwise it ends after `--max-minutes` (110) with one line saying nothing waited.
 It reads each pane every `--interval` seconds (45, at least 10) with `tmux capture-pane`,
-which costs the worker nothing.
+which costs the worker nothing. A pane of a live session that cannot be read is exit 3 with
+`watch_workers: NAME: capture failed: ...` on stderr, never "nothing waiting". It stops at
+its first report: while work remains, the lead starts it again after every report but DONE
+and GONE, and after its window ends.
 
 What counts as waiting is in ONE file, `scripts/waiting_patterns.txt`, which
 `spawn_worker.sh` uses too (for the trust dialog at start-up). A rule needs the dialog's own
@@ -108,7 +111,8 @@ A session that is neither gone nor waiting is checked for two more things, and e
 exits 0 with its kind on the first line (`watch_workers: KIND: NAME, ...`):
 
 - **The result file**, named per session with `--result NAME=PATH`. Once the file is in HEAD
-  of the tree that holds it and that tree is clean, the watcher reads its head
+  of the tree that holds it and that tree is clean, the watcher reads its head from the
+  committed blob, never the working file (a committed symlink is MALFORMED)
   (`docs/HANDOFF.md`): `Kind: completed` is **DONE** with the task, the attempt and the
   `Remaining:` line; `blocked`, `handoff` and `progress` are **BLOCKED**, **HANDOFF** and
   **PROGRESS**, none of them done; a missing or malformed head is **MALFORMED**, not done. A
@@ -116,7 +120,9 @@ exits 0 with its kind on the first line (`watch_workers: KIND: NAME, ...`):
   for OWNER" and their text with the options, each line cut at 200 bytes. Each committed
   version of the file is reported once.
 - **The context figure** in the pane's status line, `<used>/<window>` with k or M (`Opus 5.5
-  58k/1.0M high` in the real capture; the `context` rule of `waiting_patterns.txt`). Past
+  58k/1.0M high` in the real capture; the `context` rule of `waiting_patterns.txt`). The
+  status line is the last line with two or more ` │ ` separators; a figure in the worker's
+  output is not read. Past
   `--context-warn` percent (50) it is **CONTEXT** with the figure, once per session. A status
   line without the figure, or none at all, is CONTEXT once too, and the figure is never
   guessed; `--once` skips that note, because `spawn_worker.sh` runs it before the status line

@@ -92,7 +92,8 @@ launch() {
   log=$(mktemp) || by_hand "cannot make a temporary file"
   ( CDPATH= cd -- "$dir" && exec "$@" ) >"$log" 2>&1 </dev/null &
   pid=$!
-  ( sleep 5; kill "$pid" ) >/dev/null 2>&1 </dev/null &
+  # SIGTERM, then SIGKILL 2 s later: a launcher that ignored the one SIGTERM hung the spawn.
+  ( sleep 5; kill "$pid"; sleep 2; kill -9 "$pid" ) >/dev/null 2>&1 </dev/null &
   dog=$!
   rc=0; wait "$pid" || rc=$?
   kill "$dog" 2>/dev/null || true
@@ -100,7 +101,7 @@ launch() {
   case $rc:$out in
     0:*) ;;
     *"Exec format error"*) by_hand "$1 failed with \"Exec format error\": WSL interop is down (wsl --shutdown from Windows restarts it)" ;;
-    143:*) by_hand "$1 did not return within 5 s (on macOS it may be asking to allow automation)" ;;
+    143:*|137:*) by_hand "$1 did not return within 5 s (on macOS it may be asking to allow automation)" ;;
     *) by_hand "$1 failed (exit $rc): $out" ;;
   esac
 }

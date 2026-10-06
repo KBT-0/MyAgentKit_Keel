@@ -140,10 +140,12 @@ tmux new-session -d -s "$name" -c "$dir" -x 200 -y 50 "cd $(q "$dir") && exec $c
 # (v2.1.285 follows the arrow with a NO-BREAK space, so the match is on the arrow alone)
 # or its mode hint in the status bar. A dialog (the trust dialog) or an exit is checked
 # FIRST, by the watcher's own rules: the trust dialog's option line also starts with the arrow.
-# Bounded: 60 seconds, then report.
+# Bounded: 60 seconds, then report. A watcher that is missing or fails (any exit but 0) stops
+# the spawn with one line: without it nothing checks for a dialog before the brief is typed,
+# and a missing file's shell error never matched `watch_workers:`. The session stays open.
 i=0
 while :; do
-  state=$(sh "$kit/watch_workers.sh" --once "$name" 2>&1 || true)
+  rc=0; state=$(sh "$kit/watch_workers.sh" --once "$name" 2>&1) || rc=$?
   case ${state%%"$nl"*} in
     *"WAITING: "*"folder-trust"*)
       printf '%s\n' "$state" >&2
@@ -154,6 +156,7 @@ while :; do
     *"GONE: "*) die "session '$name' exited before its input line showed" ;;
     *watch_workers:*) die "cannot check session '$name': $state" ;;
   esac
+  [ "$rc" -eq 0 ] || die "cannot check session '$name': the watcher exited $rc: $state"
   pane=$(tmux capture-pane -p -t "$name" 2>/dev/null || true)
   case "$pane" in
     *"
@@ -190,7 +193,8 @@ fi
 printf '%s\n' "spawn_worker: '$name' started with $brief (tmux attach -t $name to watch)"
 # The session does not end when its task does: a pilot worker wrote its result file and sat
 # idle for 40 minutes until killed by hand, and the idle notice also fires on every park on a
-# background job. The result file is the end signal, and closing is the lead's job.
+# background job. A committed `Kind: completed` result file is the end signal, and closing
+# is the lead's job.
 printf '%s\n' "spawn_worker: once you decide the session is finished (no next task fits what it holds, or it is idle past the cache lifetime), close it: scripts/close_worker.sh $name"
 if [ -n "$batch" ]; then
   printf '%s\n' "spawn_worker: --batch: not shown. Once every worker of this batch is started, show them together in one window: scripts/show_workers.sh NAME1 NAME2 ..."
