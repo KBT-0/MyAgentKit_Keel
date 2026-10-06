@@ -206,7 +206,7 @@ A SECOND CLI on the machine — a DIFFERENT model from the one authoring the cha
 whichever direction the project configured. `scripts/review.sh` ships adapters for two,
 selected with `--reviewer codex` or `--reviewer claude`, and both archive the same evidence.
 Install the other one and log in, or the command reports that it is missing and falls back to
-the paste-by-hand template in `docs/REVIEW_GATE.md`.
+the paste-by-hand template in `docs/REVIEW_RUNNING.md`.
 
 This overlay is for Claude Code as the HOST, not for Claude Code as the author. A project
 where Codex writes and Claude reviews still installs it if anyone opens Claude Code in the

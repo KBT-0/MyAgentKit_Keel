@@ -1,6 +1,7 @@
 """Offline end-to-end evidence and permission regressions; never calls a paid CLI."""
 import hashlib
 import importlib.util
+import io
 import json
 import os
 import re
@@ -22,7 +23,7 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'MYAGENTKIT_TASK_ID', 'MYAGENTKIT_R
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 89, 'test_agent_usage': 19, 'test_codex_quota': 5}
+SUITE_MINIMUMS = {'test_claude_bridge': 90, 'test_agent_usage': 19, 'test_codex_quota': 5}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -105,6 +106,21 @@ time.sleep(60)
 '''
 
 
+def run_quietly(suite, out=sys.stdout):
+    """Run a suite; print its whole log only on a failure or a skip, else one summary line.
+
+    The per-test lines of a passing run were about 17 KB in every gate self-test, read by the
+    agent that ran it. A failing run still prints every line, the passing ones included.
+    """
+    log = io.StringIO()
+    result = unittest.TextTestRunner(stream=log, verbosity=2).run(suite)
+    if not result.wasSuccessful() or result.skipped:
+        out.write(log.getvalue())
+        return False
+    out.write("Ran %d tests: OK\n" % result.testsRun)
+    return True
+
+
 def header_of(path):
     """Parse the shared evidence header table. Both reviewers must satisfy this reader."""
     rows = {}
@@ -122,6 +138,23 @@ def verdicts_of(path):
 
 
 class BridgeTests(unittest.TestCase):
+    def test_a_passing_run_prints_a_summary_and_a_failing_run_its_whole_log(self):
+        class Probe(unittest.TestCase):
+            def test_passes(self):
+                pass
+
+            def test_fails(self):
+                self.fail("probe failure message")
+        out = io.StringIO()
+        self.assertTrue(run_quietly(unittest.TestSuite([Probe("test_passes")]), out))
+        self.assertEqual(out.getvalue(), "Ran 1 tests: OK\n")
+        out = io.StringIO()
+        self.assertFalse(run_quietly(unittest.TestSuite([Probe("test_passes"), Probe("test_fails")]), out))
+        self.assertIn("test_passes", out.getvalue())
+        self.assertIn("... ok", out.getvalue())
+        self.assertIn("probe failure message", out.getvalue())
+        self.assertIn("FAILED (failures=1)", out.getvalue())
+
     def test_review_timeout_defaults_and_explicit_overrides(self):
         from contextlib import redirect_stdout
         from io import StringIO
@@ -2737,7 +2770,7 @@ if __name__ == "__main__":
             raise SystemExit("FAIL: %s has %d of at least %d tests; a suite that did not run is "
                              "not a pass" % (case.__name__, tests.countTestCases(), minimum))
         suite.addTests(tests)
-    result = unittest.TextTestRunner(verbosity=2).run(suite)
-    if not result.wasSuccessful() or result.skipped:
+    if not run_quietly(suite):
         raise SystemExit(1)
+    print("Suite minimums met: " + ", ".join("%s %d" % item for item in sorted(SUITE_MINIMUMS.items())))
     print("REVIEW SELF-TEST: PASS")

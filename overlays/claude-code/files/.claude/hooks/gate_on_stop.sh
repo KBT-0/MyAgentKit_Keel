@@ -4,8 +4,9 @@
 # is the gate that actually holds, for every tool.
 #
 # Costs nothing when it passes: no model tokens, a silent exit. On failure it returns the
-# last lines of the gate output (exit 2 = blocking), which is the only case where the agent
-# spends tokens on it.
+# gate's whole output (exit 2 = blocking), which is the only case where the agent spends
+# tokens on it. Only the last 20 lines once went back, and the gate prints a build failure's
+# diagnostic chain before a long tail: the agent saw the tail and not where it started.
 set -u
 
 input=$(cat)
@@ -41,7 +42,7 @@ out=$(GATE_LOCK_WAIT="${GATE_LOCK_WAIT:-500}" ./scripts/check.sh 2>&1)
 rc=$?
 [ "$rc" -eq 0 ] && exit 0
 
-printf '%s\n' "$out" | tail -20 >&2
+printf '%s\n' "$out" >&2
 echo "" >&2
 if [ "$rc" -eq 75 ]; then
   echo "GATE DID NOT RUN (Stop hook): another gate run held this checkout's lock past the wait." >&2

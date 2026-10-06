@@ -11,6 +11,22 @@ Delete one when the cause is gone for good — not when it merely feels old.
 This is one of the permanent homes a `[GOTCHA]` line in `docs/STATE.md` gets moved into
 before that line is deleted.
 
+## Contents
+
+A new entry adds its heading to this list.
+
+- Uncommitted work is NOT in the reflog
+- `.gitignore` — the LAST matching rule wins
+- The executable bit has to be put in the git index by hand
+- A fake-CLI test harness cannot catch what the real CLI rejects
+- A tool's relative output path resolves against ITS working directory, not yours
+- Waiting on your own process: `pgrep -f` and shell wait loops match themselves
+- An agent puts the user's e-mail into a web request
+- A red gate that passes on re-run is a finding, not a pass
+- A checkout under `/mnt/<drive>` in WSL
+- Under WSL, a file named `*.exe` runs on Windows
+- A build server the gate started keeps the gate lock
+
 ---
 
 The entries below ship with the kit. They are not hypothetical: each cost a real day
@@ -126,6 +142,14 @@ A repository on a Windows drive seen from WSL gets CRLF line endings from git's 
 Windows-native binaries into `node_modules`, and runs its gate many times slower than on the
 Linux filesystem. Clone into the WSL home instead. `scripts/doctor.sh` names the path and
 flags a CR in a script.
+
+## Under WSL, a file named `*.exe` runs on Windows
+
+WSL hands any executed file whose name ends in `.exe` to Windows, whatever its contents. A
+test stub named like a Windows launcher therefore starts on the Windows side, and Windows
+may show the owner a GUI error dialog in the middle of a test run. A test or an experiment
+never executes a `*.exe` file. Name a stub for a Windows launcher without `.exe`, and reach
+it through an overridable variable (`docs/WORKFLOW.md`, "Writing a gate").
 
 ## A build server the gate started keeps the gate lock
 

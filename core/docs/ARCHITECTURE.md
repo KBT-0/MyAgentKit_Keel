@@ -1,12 +1,7 @@
 # Architecture Map
 
-This file answers one question: **"where does X live?"** If an agent cannot orient itself
-with this file in two minutes, fix THIS FILE — not the code. It is read at the start of
-every session, so it stays short and stable.
-
-It is also the reason this project does not need a code-search or embedding tool: the module
-table IS the navigation. If agents start failing to find things through it, the first
-reading of that signal is architectural decay, not a missing tool.
+This file answers **"where does X live?"** It is read every session, so it stays short.
+If an agent cannot orient itself with this file in two minutes, fix THIS FILE — not the code.
 
 ## Runtime topology
 
