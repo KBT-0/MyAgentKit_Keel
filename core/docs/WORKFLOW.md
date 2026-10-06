@@ -441,6 +441,14 @@ background job, and the session does not end with its task. The result file is t
 the end signal, and the lead closes the session after reading it (`tmux kill-session -t
 NAME`).
 
+The result file starts with a fixed head (`docs/HANDOFF.md`): `Kind:`, `Task:`, `Attempt:`
+and `Remaining:`, and only `Kind: completed` is done. The lead runs `scripts/watch_workers.sh
+--result NAME=PATH NAME` as a background command once per spawn. It returns DONE, BLOCKED,
+HANDOFF or PROGRESS once the file is committed on a clean tree, QUESTIONS when the file holds
+open questions, CONTEXT when the session's context passes the warning line (50 percent by
+default), WAITING on a dialog, and GONE. The lead acts on the report's first line
+("The lead's steps when a branch is ready").
+
 ## Review rounds — early, inside the worker, in parallel
 
 In one project a feature took five fix rounds in about seven hours. Each round cost a fresh
@@ -508,6 +516,18 @@ already shown once costs a whole round when the worker leaves it for the reviewe
 
 Each step that waits on another adds its whole duration to the round, and nothing in a round
 needs another step's result before it starts.
+
+What the watcher reports decides the lead's next step for a spawned worker:
+
+- **QUESTIONS:** the lead asks them at once, one at a time, through its question tool, before
+  the merge or in the same breath. It records each answer, and the general rule the answer
+  sets, in its permanent home, not only in the chat.
+- **CONTEXT:** the lead decides from the worker's `Remaining:` line and the figure whether
+  the worker finishes, compacts or hands off. A session with two short steps left finishes;
+  one with a long operation ahead hands off or compacts, because it pays the figure on every
+  remaining request.
+- **DONE:** the lead reads the result file before anything else. A `Kind: handoff` file
+  starts a fresh session from the file; `blocked` and `progress` are not done.
 
 ## Token economics — the always-loaded prefix is money
 
