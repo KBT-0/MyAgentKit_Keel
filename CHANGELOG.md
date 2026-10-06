@@ -218,6 +218,16 @@ in `RESEARCH_LOG.md` (2026-10-03). Most of the files below are project-owned, so
   to write questions into its result file. `scripts/watch_workers.sh NAME...` returns when
   a session is gone or waits on a permission prompt, the folder-trust dialog or a question
   (`scripts/waiting_patterns.txt`, from real captures, each marked VERIFIED or UNVERIFIED).
+  A spawned worker's result file starts with `Kind:` (`completed`, `blocked`, `handoff` or
+  `progress`), `Task:`, `Attempt:` and `Remaining:`; only `completed` is done, an idle
+  notice is a hint, and a worker that notices a compaction writes `Kind: handoff` at once.
+  `watch_workers.sh --result NAME=PATH` reports DONE, BLOCKED, HANDOFF, PROGRESS or
+  MALFORMED once the file is committed on a clean tree, QUESTIONS with their text when the
+  file holds a "## Open questions" section (the lead asks them at once, one at a time), and
+  CONTEXT once per session when the pane's status line shows more than `--context-warn`
+  percent of the window used (the lead decides: finish, compact or hand off). The lead
+  decides per task whether a finished session is reused or closed, from that figure, the
+  idle time and the next task's length (`docs/worker-lifecycle-options.md` has the costs).
 - **Six lessons become rules.** Before a review loop: write the threat model and agree the
   stopping rule; a stopping rule ends the hunt, not the reviewing of what is merged after
   it; a platform the kit claims is run before anything is called accepted; a review that
