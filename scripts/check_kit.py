@@ -34,8 +34,8 @@ REQUIRED_SUITES = {
               'test_review_upgrade': 2, 'test_boundary_example': 3, 'test_scan_gate': 1,
               'test_check_gate': 17, 'test_boundary_restore': 39, 'test_sync_kit': 15,
               'test_doctor': 2, 'test_git_hooks': 24, 'test_stop_hook': 1, 'test_spawn_worker': 15,
-              'test_worker_visibility': 26, 'test_doc_pointers': 4,
-              'test_kit_output': 1, 'test_kit_runner': 7, 'test_clean_worktrees': 130},
+              'test_worker_visibility': 27, 'test_doc_pointers': 4,
+              'test_kit_output': 1, 'test_kit_runner': 7, 'test_clean_worktrees': 132},
 }
 
 
@@ -192,6 +192,70 @@ def check_syntax(root):
     for path in root.rglob("*.sh"):
         if ".git" not in path.parts:
             run(["sh", "-n", str(path)])
+            lines = case_in_substitution(path.read_text())
+            if lines:
+                raise RuntimeError("%s: `case` inside $( ) on line %s: bash 3.2, macOS's sh, reads its "
+                                   "pattern's `)` as the end of the $( ); move it out" % (path, lines[0]))
+
+
+def case_in_substitution(text):
+    """The lines where a `case` starts inside $( ). bash 3.2, macOS's sh, does not parse it, and
+    the `sh -n` of a host with a newer shell passes it: one did, and only macOS CI failed.
+
+    A sketch of the shell's grammar, not a parser: quotes, backslashes, comments and here-documents
+    are skipped, every other parenthesis is counted."""
+    found, stack, heredocs, i, line = [], [], [], 0, 1
+    while i < len(text):
+        c = text[i]
+        if c == "\n":
+            line += 1
+            i += 1
+            for strip, word in heredocs:  # Each body ends at a line that is its word alone.
+                while i < len(text):
+                    end = text.find("\n", i)
+                    end = len(text) if end < 0 else end
+                    body, i, line = text[i:end], end + 1, line + 1
+                    if (body.lstrip("\t") if strip else body) == word:
+                        break
+            heredocs = []
+        elif c == "\\":
+            line += text[i + 1:i + 2] == "\n"
+            i += 2
+        elif stack and stack[-1] == '"':
+            if c == '"':
+                stack.pop()
+            elif text.startswith("$(", i):
+                stack.append("$")
+                i += 1
+            i += 1
+        elif c == "'":
+            end = text.find("'", i + 1)
+            end = len(text) if end < 0 else end
+            line += text.count("\n", i, end)
+            i = end + 1
+        elif c == "#" and (i == 0 or text[i - 1] in " \t\n;"):
+            end = text.find("\n", i)
+            i = len(text) if end < 0 else end
+        else:
+            here = re.match(r"<<(-?)[ \t]*['\"]?([A-Za-z0-9_]+)['\"]?", text[i:i + 80])
+            word = text.startswith(("case ", "case\t"), i) and (i == 0 or text[i - 1] in " \t\n;(|&")
+            if here:
+                heredocs.append((here.group(1) == "-", here.group(2)))
+                i += here.end()
+                continue
+            if word and "$" in stack:
+                found.append(line)
+            if c == '"':
+                stack.append('"')
+            elif text.startswith("$(", i):
+                stack.append("$")
+                i += 1
+            elif c == "(":
+                stack.append("(")
+            elif c == ")" and stack:
+                stack.pop()
+            i += 1
+    return found
 
 
 def acceptance(self_test):

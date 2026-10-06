@@ -101,6 +101,17 @@ FOREIGN = ('real_lstat = os.lstat\n'
            '    info = real_lstat(path, *a, **k)\n'
            '    return Other(info) if os.fsencode(path) in set(map(os.fsencode, values)) else info\n'
            'os.lstat = lstat\n')
+# Every folder listed in name order, or with values[0] == 'reverse' in reverse: file systems differ.
+ORDERED = ('real_scandir = os.scandir\n'
+           'class Listing(list):\n'
+           '    def __enter__(self):\n'
+           '        return self\n'
+           '    def __exit__(self, *exc):\n'
+           '        pass\n'
+           'def scandir(path="."):\n'
+           '    with real_scandir(path) as entries:\n'
+           '        return Listing(sorted(entries, key=lambda e: e.name, reverse=values[0] == "reverse"))\n'
+           'os.scandir = scandir\n')
 
 # lsof stubs: $PPID is the script, which runs lsof in its own working directory.
 LSOF_ME = 'printf "p%s\\nn%s\\n" "$PPID" "$(pwd -P)"\n'
@@ -1490,6 +1501,32 @@ class CleanWorktreesTests(unittest.TestCase):
                 self.assertRemoved(path, out)
                 self.assertIn('=%s (%s)' % (loose[:12], holder), out)
                 self.assertIn(loose, self.git('rev-list', '--glob=' + self.saved(out) + '/*'))
+
+    def test_the_ref_is_named_before_its_reflog_in_any_listing_order(self):
+        # CI's file system listed logs/ before refs/: the report named the reflog, not the ref.
+        for order in ('forward', 'reverse'):
+            with self.subTest(order=order):
+                path = self.worktree(order)
+                loose = self.loose(path)
+                self.git('update-ref', '--create-reflog', 'refs/worktree/keep', loose, cwd=path)
+                out = self.drive(ORDERED, order)
+                self.assertRemoved(path, out)
+                self.assertIn('=%s (refs/worktree/keep)' % loose[:12], out)
+
+    def test_a_per_worktree_ref_of_main_does_not_hold_a_commit(self):
+        # Main's refs/bisect/*, refs/worktree/* and refs/rewritten/* are its own, not the shared
+        # repository's: `git bisect reset` there deletes them, and the commit with them.
+        for ref in ('refs/bisect/bad', 'refs/worktree/keep', 'refs/rewritten/saved'):
+            with self.subTest(ref=ref):
+                path = self.worktree(ref.split('/')[-1])
+                loose = self.loose(path)
+                self.git('update-ref', 'refs/worktree/mine', loose, cwd=path)
+                self.git('update-ref', ref, loose)
+                out = self.run_script('--apply')
+                self.assertRemoved(path, out)
+                self.assertIn('=%s (refs/worktree/mine)' % loose[:12], out)
+                self.assertIn(loose, self.git('rev-list', '--glob=' + self.saved(out) + '/*'))
+                self.git('update-ref', '-d', ref)
 
     def test_a_commit_only_in_the_old_id_column_of_a_reflog_is_saved(self):
         # Reproduced by a reviewer: `reflog delete` without --rewrite left the commit only as
