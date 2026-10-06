@@ -27,6 +27,9 @@ with open(os.path.join(st, 'tmux.log'), 'a') as log:
     log.write(repr(args) + '\n')
 if os.environ.get('CLOSE_TMUX_ERROR'):  # a server tmux cannot reach: no answer either way
     sys.exit(os.environ['CLOSE_TMUX_ERROR'])
+killed = os.path.join(st, 'killed')
+if os.environ.get('CLOSE_ERROR_AFTER_KILL') and os.path.exists(killed):  # unreachable once killed
+    sys.exit(os.environ['CLOSE_ERROR_AFTER_KILL'])
 path = os.path.join(st, 'sessions')
 sessions = open(path).read().split() if os.path.exists(path) else []
 if args[0] == 'list-sessions':
@@ -46,8 +49,10 @@ if name not in sessions:
         with open(linger, 'w') as f:
             f.write(str(left - 1))
         sys.exit(0)
-    sys.exit("can't find session: " + name)
+    # CLOSE_ABSENT: tmux's wording for an absent session, %s the name.
+    sys.exit(os.environ.get('CLOSE_ABSENT', "can't find session: %s").replace('%s', name))
 if args[0] == 'kill-session':
+    open(killed, 'w').close()
     sessions.remove(name)
     with open(path, 'w') as f:
         f.write('\n'.join(sessions))
@@ -205,6 +210,43 @@ class CloseWorkerTests(unittest.TestCase):
                 self.assertEqual(last, 'close_worker: FAILED: %s: tmux could not say whether session %s exists, so it may '
                                  'still run: %s' % (name, name, denied), out)
         self.assertTrue(path.is_dir())
+
+    def absent(self, wording):
+        # Each wording tmux gives for an absent session or server is proof of absence: before
+        # the kill (nothing to end) and after it (the wait ends at once).
+        self.worker('w1', session=False)
+        out = self.close('nobody', CLOSE_ABSENT=wording)
+        self.assertIn('close_worker: nobody: no tmux session named nobody; nothing to end\n', out)
+        with open(self.tmp / 'sessions', 'a') as f:
+            f.write('w1\n')
+        out = self.close('w1', CLOSE_ABSENT=wording)
+        self.assertIn('close_worker: w1: tmux session ended', out)
+        self.assertNotIn('waited', out)
+
+    def test_absence_cant_find_session(self):
+        self.absent("can't find session: %s")
+
+    def test_absence_session_not_found(self):
+        self.absent('session not found: %s')
+
+    def test_absence_no_server_running(self):
+        self.absent('no server running on /tmp/tmux-stub/default')
+
+    def test_absence_no_sessions(self):
+        self.absent('no sessions')
+
+    def test_absence_no_socket_file(self):
+        self.absent('error connecting to /tmp/tmux-stub/default (No such file or directory)')
+
+    def test_a_tmux_that_stops_answering_after_the_kill_fails_the_close(self):
+        # The kill succeeded, then no has-session could tell: the session was never seen to end.
+        denied = 'error connecting to /tmp/tmux-1000/default (Permission denied)'
+        with open(self.tmp / 'sessions', 'a') as f:
+            f.write('w1\n')
+        out = self.close('w1', code=1, CLOSE_ERROR_AFTER_KILL=denied)
+        self.assertIn('close_worker: w1: no worktree at .claude/worktrees/w1; nothing to remove', out)
+        self.assertEqual(out.rstrip('\n').split('\n')[-1], 'close_worker: FAILED: w1: could not establish that '
+                         'the session ended: %s' % denied, out)
 
     def test_a_cleaner_that_exits_nonzero_fails_the_close_whatever_its_summary_says(self):
         # The cleaner exits 1 after a removal whose outcome line it could not write to its log.

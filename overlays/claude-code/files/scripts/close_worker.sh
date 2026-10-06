@@ -17,7 +17,8 @@
 #      no server); any other failure of `tmux has-session` (a socket it cannot read) fails the
 #      close with tmux's words, as the session may still run. Then it waits, up to 15 s, until
 #      `tmux has-session` no longer finds it and, where /proc exists, no process works inside
-#      the worktree: the tool inside takes a moment to exit, and the audit would see it.
+#      the worktree: the tool inside takes a moment to exit, and the audit would see it. A tmux
+#      that still cannot answer at the end of the wait fails the close with its words.
 #   3. `clean_worktrees.sh --apply --only=NAME --no-quiet`: the post-merge hook's audit, every
 #      proof, for .claude/worktrees/NAME alone, without the quiet period: that margin stands in
 #      for "no worker is still in it", and here the lead has just ended the session and decided
@@ -89,7 +90,12 @@ for name; do
       elif pid=$(inside "$wt"); then w="process $pid inside its worktree to exit"
       else break; fi
       case " $on " in *" $w; "*) ;; *) on="$on$w; " ;; esac
-      [ "$i" -lt 15 ] || { say "$name: still waiting on ${on%; } after 15 s; the audit below decides"; break; }
+      if [ "$i" -ge 15 ]; then
+        # tmux never answered: nothing proves the session ended, so the close fails.
+        if [ "$st" -eq 2 ]; then fail "$name: could not establish that the session ended: $err"
+        else say "$name: still waiting on ${on%; } after 15 s; the audit below decides"; fi
+        break
+      fi
       i=$((i + 1)); sleep 1
     done
     [ "$i" -eq 0 ] || [ "$i" -ge 15 ] || say "$name: waited $i s for ${on%; }"
