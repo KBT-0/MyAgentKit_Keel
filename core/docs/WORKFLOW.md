@@ -51,7 +51,8 @@ deletion checkable.
 
 - A task id is a short token that starts with a letter and holds at least one digit:
   letters and digits, with at most one inner `-` (`K4`, `L1b`, `R12`, `K7-a`). A line in
-  `docs/STATE.md` or `docs/BACKLOG.md` MAY name its task by id; none has to.
+  `docs/STATE.md` or `docs/BACKLOG.md` MAY name its task by id; none has to. Ids are
+  case-insensitive: `k4` and `K4` are the same task.
 - The commit that finishes a task says so with a trailer, ONE per id, in the last paragraph
   of the message: `Done: K4`. The value is exactly one id: the hook rejects `Done: K4 K5`,
   `Done: K4, K5` and an empty `Done:`, and such a value already in the history closes

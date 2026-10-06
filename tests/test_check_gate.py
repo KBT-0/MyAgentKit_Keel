@@ -274,6 +274,18 @@ class CheckGateTests(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertIn('NOTE [state]: a shallow clone', out)
 
+    def test_a_done_id_closes_its_task_in_any_case(self):
+        # `Done: k4` closed nothing while STATE.md named K4: ids are case-insensitive.
+        git = lambda *args: subprocess.run(GIT + ['-c', 'core.hooksPath=/dev/null', *args], cwd=self.project,
+                                           check=True, capture_output=True, text=True).stdout
+        git('add', '-A')
+        git('commit', '-q', '-m', 'close k4', '-m', 'Done: k4')
+        closer = git('log', '-1', '--format=%h').strip()
+        (self.project / 'docs/STATE.md').write_text('# STATE\n\n## Active work\n- K4 sounds done\n')
+        code, out = gate(self.project, self.build)
+        self.assertEqual(code, 1, out)
+        self.assertIn('FAIL [state]: docs/STATE.md:4 names K4, which commit %s closed (Done: k4)' % closer, out)
+
     def test_the_hook_and_the_gate_close_the_same_ids(self):
         # One grammar: a Done: value, trimmed, is exactly one id; git unfolds a folded value
         # and matches the key in any case. The same messages go to the hook and to the gate.

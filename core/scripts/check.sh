@@ -765,7 +765,8 @@ fi
 # project may keep its backlog elsewhere). The commit-msg hook checks the closing commit;
 # this also catches a line written back later, or a commit the hook never saw. Git's own
 # trailer parser reads the history (%(trailers:key=...,unfold), git 2.22 or later). A
-# mention is the id as a whole token: closing K3 does not match K3b or K3-a. No repository,
+# mention is the id as a whole token in any case: closing K3 does not match K3b or K3-a, and
+# "Done: k3" closes K3 (it once passed while STATE.md named K3). No repository,
 # or no commit yet: nothing has been closed, and nothing is checked. A shallow clone holds
 # part of the history: a NOTE says so, and the part it holds is checked.
 history_repo="${GATE_SELFTEST_HISTORY:-.}"
@@ -786,12 +787,12 @@ if git -C "$history_repo" rev-parse -q --verify HEAD >/dev/null 2>&1; then
       [ ! -f "$f" ] || awk -v closed="$work/done-ids" '
         FILENAME == closed {
           if (sub(/^@/, "")) commit = $0
-          else if (!($0 in by)) by[$0] = commit
+          else if (!(tolower($0) in by)) { by[tolower($0)] = commit; as[tolower($0)] = $0 }
           next
         }
         { n = split($0, word, /[^A-Za-z0-9_-]+/)
-          for (i = 1; i <= n; i++) if (word[i] in by) {
-            printf "FAIL [state]: %s:%d names %s, which commit %s closed (Done: %s).\n", FILENAME, FNR, word[i], by[word[i]], word[i]
+          for (i = 1; i <= n; i++) if ((key = tolower(word[i])) in by) {
+            printf "FAIL [state]: %s:%d names %s, which commit %s closed (Done: %s).\n", FILENAME, FNR, word[i], by[key], as[key]
             found = 1
           } }
         END { if (found) print "              Delete the line (the history is in git); a task needed again gets a new id."
