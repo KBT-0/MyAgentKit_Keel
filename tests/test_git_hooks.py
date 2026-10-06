@@ -55,6 +55,53 @@ class GitHookTests(unittest.TestCase):
             self.assertGreater((root / '.git/gate-runs').read_text().count('ran'), runs)
             self.assertEqual(git('rev-list', '--count', 'HEAD').stdout.strip(), '2')
 
+    def test_a_documentation_only_commit_defers_the_build_to_the_next_code_commit(self):
+        # pre-commit asks for the documentation-only path; a clean merge (pre-merge-commit)
+        # never takes it, whatever the merge brings in.
+        spec = importlib.util.spec_from_file_location('check_gate', ROOT / 'tests/test_check_gate.py')
+        check_gate = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(check_gate)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / 'project'
+            check_gate.make_project(root)
+            shutil.copytree(ROOT / 'core/.githooks', root / '.githooks')
+            (root / 'scripts/check.sh').chmod(0o755)
+            mark, build = Path(tmp) / 'built', Path(tmp) / 'build.sh'
+            build.write_text('true\n')
+            env = dict({k: v for k, v in os.environ.items() if not k.startswith(('GATE_', 'BOUNDARY_'))},
+                       GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1', GATE_TEST_BUILD=str(build))
+            git = lambda *args, check=True: subprocess.run(
+                ['git', '-c', 'user.name=t', '-c', 'user.email=t@example.invalid',
+                 '-c', 'core.hooksPath=.githooks', *args],
+                cwd=root, env=env, capture_output=True, text=True, check=check)
+            git('checkout', '-q', '-b', 'main')
+            git('add', '-A')
+            git('-c', 'core.hooksPath=/dev/null', 'commit', '-q', '-m', 'base')
+            # From here on the build leaves a mark and fails.
+            build.write_text('echo ran > "%s"; exit 1\n' % mark)
+            (root / 'notes.md').write_text('notes\n')
+            git('add', 'notes.md')
+            result = git('commit', '-q', '-m', 'notes', check=False)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertFalse(mark.exists(), result.stdout + result.stderr)
+            self.assertIn('build not run: documentation-only commit, 1 file)', result.stdout + result.stderr)
+            (root / 'code.c').write_text('int x;\n')
+            git('add', 'code.c')
+            result = git('commit', '-q', '-m', 'code', check=False)
+            self.assertNotEqual(result.returncode, 0, 'a code commit skipped the failing build')
+            self.assertTrue(mark.exists(), result.stdout + result.stderr)
+            git('reset', '-q', '--hard', 'HEAD')
+            mark.unlink()
+            # A clean merge that brings in only a document still runs the build.
+            git('checkout', '-q', '-b', 'side', 'main~1')
+            (root / 'side.md').write_text('side\n')
+            git('add', 'side.md')
+            git('-c', 'core.hooksPath=/dev/null', 'commit', '-q', '-m', 'side')
+            git('checkout', '-q', 'main')
+            result = git('merge', '-q', '--no-edit', 'side', check=False)
+            self.assertTrue(mark.exists(), 'a clean merge skipped the build: ' + result.stdout + result.stderr)
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def commit(self, root, git, message, *opts, **extra):
         (root / 'c').write_text(message)
         git('add', 'c')

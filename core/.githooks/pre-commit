@@ -18,8 +18,8 @@ set -u
 root=$(git rev-parse --show-toplevel) || exit 1
 CDPATH= cd -- "$root" || exit 1
 
-# Fast gate only, deliberately with no flags. Everything slow stays out of the commit path:
-# --self-test invokes the whole gate a dozen times, and a project's opt-in gates (an engine
+# Fast gate only, never --self-test or an opt-in gate. Everything slow stays out of the
+# commit path: --self-test invokes the whole gate a dozen times, and a project's opt-in gates (an engine
 # running in batchmode, an integration suite) cost minutes and sometimes need a live install.
 # A commit hook people start bypassing is worse than no commit hook, and slowness is what
 # makes them start.
@@ -32,7 +32,15 @@ CDPATH= cd -- "$root" || exit 1
 # Do not assume CI covers them either: the CI this kit ships runs `./scripts/check.sh` and
 # nothing else, so an opt-in gate runs in CI only if the project added it there deliberately.
 # Check before believing it.
-./scripts/check.sh
+#
+# --for-commit lets the gate skip the build when the staged change is documentation only;
+# check.sh decides that from the index. pre-merge-commit passes --merge and gets the full
+# gate. A check.sh from before this option (a project not yet upgraded) gets no flag.
+if [ "${1:-}" != --merge ] && grep -q -- '--for-commit)' scripts/check.sh; then
+  ./scripts/check.sh --for-commit
+else
+  ./scripts/check.sh
+fi
 status=$?
 [ "$status" -ne 0 ] || exit 0
 # 75: another gate run held the lock past GATE_LOCK_WAIT. Nothing was checked, so the commit

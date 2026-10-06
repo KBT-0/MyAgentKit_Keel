@@ -154,6 +154,8 @@ FAILING for the right reason.
   must pass the review gate before commit. Canonical protocol: `docs/REVIEW_GATE.md`.
   Review happens in a FRESH session, preferably a different tool and the strongest
   available model. The session that wrote a patch never reviews or approves its own patch.
+  Any other change needs no review: {{OWNER_NAME}}'s check or the brief's manual check
+  accepts it. A lead that asks for one anyway names the doubt it is to settle.
 - **AUTHOR and REVIEWER are roles, not vendors.** Which model writes and which reviews is a
   project setting recorded in `scripts/review.sh`, and it is expected to swap when the
   budgets do. The rule is that they are DIFFERENT models, never that a given tool holds a
