@@ -24,7 +24,7 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'MYAGENTKIT_TASK_ID', 'MYAGENTKIT_R
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 101, 'test_agent_usage': 19, 'test_codex_quota': 5}
+SUITE_MINIMUMS = {'test_claude_bridge': 104, 'test_agent_usage': 19, 'test_codex_quota': 5}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -568,7 +568,10 @@ class BridgeTests(unittest.TestCase):
                      if '-o' in command else
                      {'type': 'result', 'subtype': 'success', 'is_error': True,
                       'api_error_status': 429, 'modelUsage': {'claude-opus-5': {}}})
-            return real_run([sys.executable, '-c', 'print(%r)' % json.dumps(value)], prompt, repo, timeout, into)
+            # Inject during reviewer cleanup only; preparation also kills its process groups.
+            with patch.object(agent_process.os, 'killpg', side_effect=killpg):
+                return real_run([sys.executable, '-c', 'print(%r)' % json.dumps(value)],
+                                prompt, repo, timeout, into)
 
         def killpg(pid, sig):
             os.kill(os.getpid(), signal.SIGTERM)
@@ -577,8 +580,7 @@ class BridgeTests(unittest.TestCase):
         for primary in ('claude', 'codex'):
             launched, out = [], StringIO()
             with self.subTest(primary=primary), patch.dict(os.environ, self.review_env()), \
-                    patch('agent_process.run', side_effect=quota), \
-                    patch.object(agent_process.os, 'killpg', side_effect=killpg), redirect_stdout(out):
+                    patch('agent_process.run', side_effect=quota), redirect_stdout(out):
                 code = review_dispatch.main(['--repo', str(self.repo), '--uncommitted',
                                              '--reviewer', primary, '--allow-fallback',
                                              '--claude-model', 'claude-opus-5',
@@ -2332,6 +2334,136 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                 self.assertLess(budgets[0], 0.8)
                 self.assertLess(elapsed, 2.6)
                 self.assertEqual(received[0]['failure_kind'], 'timeout', received)
+
+    def test_copy_accepts_a_symlinked_tmpdir_but_refuses_destination_symlinks(self):
+        from unittest.mock import patch
+        import claude_bridge
+        actual = self.root / 'actual-tmp'
+        actual.mkdir()
+        alias = self.root / 'linked-tmp'
+        alias.symlink_to(actual, target_is_directory=True)
+        with patch.dict(os.environ, TMPDIR=str(alias)), patch.object(tempfile, 'tempdir', None):
+            for diff in ('', None):
+                with self.subTest(diff=diff), tempfile.TemporaryDirectory() as tmp:
+                    self.assertEqual(Path(tmp).parent, alias)
+                    copy = Path(tmp) / 'copy'
+                    copy.mkdir()
+                    claude_bridge.throwaway_copy(self.repo, 'HEAD', diff, copy)
+                    expected = ((self.repo / 'file.py').read_bytes() if diff is not None
+                                else self.git('show', 'HEAD:file.py').stdout)
+                    self.assertEqual((copy / 'file.py').read_bytes(), expected)
+                    outside = Path(tmp) / 'outside'
+                    outside.mkdir()
+                    destination = Path(tmp) / 'destination'
+                    destination.symlink_to(outside, target_is_directory=True)
+                    with self.assertRaises(claude_bridge.BridgeError):
+                        claude_bridge.throwaway_copy(self.repo, 'HEAD', diff, destination)
+                    destination.unlink()
+                    destination.mkdir()
+                    (destination / 'inside').symlink_to(outside, target_is_directory=True)
+                    with self.assertRaises(claude_bridge.BridgeError):
+                        claude_bridge.throwaway_copy(self.repo, 'HEAD', diff, destination)
+                    self.assertEqual(list(outside.iterdir()), [])
+
+    def test_copy_cancel_during_each_launch_reaps_the_child(self):
+        from unittest.mock import patch
+        import claude_bridge
+
+        class Cancelled(Exception):
+            pass
+
+        def cancel(signum, frame):
+            raise Cancelled()
+
+        stub = self.root / 'tar'
+        pid_file = self.root / 'launch.pid'
+        stub.write_text('#!%s\nimport os, time\nfrom pathlib import Path\n'
+                        'Path(%r).write_text(str(os.getpid()))\ntime.sleep(60)\n'
+                        % (sys.executable, str(pid_file)))
+        stub.chmod(0o755)
+        real_popen = subprocess.Popen
+        for target in ('archive', 'tar', 'ls-files'):
+            for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+                with self.subTest(target=target, signal=sig):
+                    children = []
+                    pid_file.unlink(missing_ok=True)
+
+                    def launch(command, *args, **kwargs):
+                        inject = target in command
+                        child = real_popen([str(stub)] if inject else command, *args, **kwargs)
+                        children.append(child)
+                        if inject:
+                            until = time.monotonic() + 5
+                            while not pid_file.exists() and time.monotonic() < until:
+                                time.sleep(0.01)
+                            self.assertTrue(pid_file.exists(), 'stub did not start')
+                            # Deliver inside Popen, before its caller has assigned the handle.
+                            os.kill(os.getpid(), sig)
+                        return child
+
+                    previous = signal.signal(sig, cancel)
+                    try:
+                        copy = Path(tempfile.mkdtemp(dir=self.root))
+                        with patch('claude_bridge.subprocess.Popen', side_effect=launch):
+                            with self.assertRaises(Cancelled):
+                                claude_bridge.throwaway_copy(
+                                    self.repo, 'HEAD', '' if target == 'ls-files' else None, copy)
+                        pid = int(pid_file.read_text())
+                        with self.assertRaises(ProcessLookupError, msg='launch leaked a child'):
+                            os.kill(pid, 0)
+                        for child in children:
+                            for stream in (child.stdin, child.stdout, child.stderr):
+                                if stream is not None:
+                                    self.assertTrue(stream.closed)
+                    finally:
+                        signal.signal(sig, previous)
+                        for child in children:
+                            try:
+                                os.killpg(child.pid, signal.SIGKILL)
+                            except ProcessLookupError:
+                                pass
+                            child.wait()
+                            for stream in (child.stdin, child.stdout, child.stderr):
+                                if stream is not None:
+                                    stream.close()
+
+    def test_copy_deadline_kills_descendants_after_tar_exits(self):
+        from unittest.mock import patch
+        import claude_bridge
+        bin_dir = self.root / 'exiting-tar'
+        bin_dir.mkdir()
+        pid_file = self.root / 'grandchild.pid'
+        stub = bin_dir / 'tar'
+        stub.write_text('#!%s\nimport subprocess, sys\nfrom pathlib import Path\n'
+                        'sys.stdin.buffer.read()\n'
+                        'child = subprocess.Popen([sys.executable, "-c", '
+                        '"import time; time.sleep(60)"])\n'
+                        'Path(%r).write_text(str(child.pid))\n'
+                        % (sys.executable, str(pid_file)))
+        stub.chmod(0o755)
+        copy = Path(tempfile.mkdtemp(dir=self.root))
+        try:
+            with patch.dict(os.environ, PATH=str(bin_dir) + os.pathsep + os.environ['PATH']):
+                started = time.monotonic()
+                with self.assertRaisesRegex(claude_bridge.BridgeError, 'wall-clock limit'):
+                    claude_bridge.throwaway_copy(self.repo, 'HEAD', None, copy, timeout=0.5)
+                self.assertLess(time.monotonic() - started, 3)
+            pid = int(pid_file.read_text())
+            until = time.monotonic() + 3
+            while time.monotonic() < until:
+                try:
+                    os.kill(pid, 0)
+                except ProcessLookupError:
+                    break
+                time.sleep(0.01)
+            with self.assertRaises(ProcessLookupError, msg='tar descendant survived the deadline'):
+                os.kill(pid, 0)
+        finally:
+            if pid_file.exists():
+                try:
+                    os.kill(int(pid_file.read_text()), signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
 
     def test_missing_tar_reaps_the_already_started_archive(self):
         from unittest.mock import patch
