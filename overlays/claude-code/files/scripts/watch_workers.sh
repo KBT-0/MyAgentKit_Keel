@@ -141,9 +141,13 @@ hl() { LC_ALL=C sed -n "$1p" "$2" | LC_ALL=C tr -d '\001-\011\013-\037\177' | LC
 # Report NAME's result file and return 0 when it is committed, its tree is clean and this
 # version was not reported yet; return 1 otherwise.
 result() {
-  f=$(printf '%s\n' "$results" | while IFS= read -r r; do
-    case $r in "$1="*) printf '%s\n' "${r#"$1="}" ;; esac
-  done | tail -n 1)
+  # No `case` inside $( ): bash 3.2, macOS's sh, cannot parse its pattern's `)` there.
+  f=""
+  while IFS= read -r r; do
+    case $r in "$1="*) f=${r#"$1="} ;; esac
+  done <<EOF
+$results
+EOF
   [ -n "$f" ] && [ -f "$f" ] || return 1
   case $f in */*) d=${f%/*} ;; *) d=. ;; esac
   blob=$(git -C "$d" rev-parse -q --verify "HEAD:./${f##*/}" 2>/dev/null) || return 1

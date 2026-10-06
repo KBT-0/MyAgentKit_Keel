@@ -5,6 +5,7 @@ No real terminal, no tmux server, no `claude`: tmux, the Windows Terminal launch
 never a file named *.exe: under WSL such a file is handed to Windows), osascript and uname
 are stubs on PATH. The panes are real captures (tests/fixtures/panes/, see the README there).
 """
+import importlib.util
 import os
 from pathlib import Path
 import re
@@ -411,6 +412,20 @@ class ResultTests(Base):
                 self.assertLessEqual(len(third.encode()), len('  | ') + 200)
                 self.assertNotIn('none', result.stdout.replace('Not run', ''))
                 self.assertIsNone(re.search(r'[\x00-\x09\x0b-\x1f\x7f]', result.stdout))
+
+    def test_the_result_lookup_parses_in_bash_3_2(self):
+        # macOS's sh, bash 3.2, refused the lookup's `case` inside $( ), which every shell the
+        # kit's `sh -n` ran here accepted: the kit's own check finds that construct.
+        spec = importlib.util.spec_from_file_location('kit_check', ROOT / 'scripts/check_kit.py')
+        gate = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(gate)
+        self.assertEqual(gate.case_in_substitution(WATCH.read_text()), [])
+        before = ('result() {\n  f=$(printf \'%s\\n\' "$results" | while IFS= read -r r; do\n'
+                  '    case $r in "$1="*) printf \'%s\\n\' "${r#"$1="}" ;; esac\n  done | tail -n 1)\n}\n')
+        self.assertEqual(gate.case_in_substitution(before), [3])
+        # Quoted, commented or in a here-document, the word is not a `case`.
+        self.assertEqual(gate.case_in_substitution('x=$(echo "case a" \'case b\') # $( case\n'
+                                                   'cat <<-E\n\t$(case\n\tE\n'), [])
 
 
 class ContextTests(Base):
