@@ -19,7 +19,11 @@ class StopHookTests(unittest.TestCase):
                             .replace('{{GATED_FILE_PATTERN}}', r'\.py$'))
             (root / 'scripts').mkdir()
             gate = root / 'scripts/check.sh'
-            gate.write_text('#!/bin/sh\necho "gate output, exit $STUB_RC"\nexit "$STUB_RC"\n')
+            # A 150-line build tail before the last line: the hook once fed back only the last
+            # 20 lines, so the agent never saw where a build failure started.
+            gate.write_text('#!/bin/sh\necho "first line of the gate output"\n'
+                            'i=0; while [ $i -lt 150 ]; do echo "build line $i"; i=$((i + 1)); done\n'
+                            'echo "gate output, exit $STUB_RC"\nexit "$STUB_RC"\n')
             gate.chmod(0o755)
             subprocess.run(['git', 'init', '-q'], cwd=root, check=True)
             (root / 'src').mkdir()
@@ -35,6 +39,10 @@ class StopHookTests(unittest.TestCase):
                     if said:
                         self.assertIn(said, result.stderr)
                         self.assertIn('gate output, exit %d' % rc, result.stderr)
+                        self.assertIn('first line of the gate output', result.stderr)
+                        self.assertIn('build line 0\n', result.stderr)
+                    else:
+                        self.assertEqual(result.stdout + result.stderr, '')
                     self.assertNotIn(unsaid, result.stderr)
             # A turn the hook already continued is let go, or the session loops forever.
             result = subprocess.run(['sh', str(hook)], cwd=root, input='{"stop_hook_active": true}',

@@ -26,7 +26,7 @@
 # write-capable run. "Please be careful" is not a guarantee when the caller is a model.
 #
 # The result is INPUT to a review decision the CALLING agent owns, never a verdict to relay
-# verbatim (docs/REVIEW_GATE.md).
+# verbatim (docs/REVIEW_RUNNING.md).
 #
 #   REVIEW_REVIEWER      override the configured reviewer for one run (codex | claude)
 #   REVIEW_CODEX_MODEL   override the pinned Codex model for one run

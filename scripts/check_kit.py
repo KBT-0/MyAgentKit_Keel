@@ -33,7 +33,8 @@ REQUIRED_SUITES = {
               'test_review_upgrade': 2, 'test_boundary_example': 3, 'test_scan_gate': 1,
               'test_check_gate': 17, 'test_boundary_restore': 39, 'test_sync_kit': 15,
               'test_doctor': 2, 'test_git_hooks': 24, 'test_stop_hook': 1, 'test_spawn_worker': 15,
-              'test_worker_visibility': 19, 'test_clean_worktrees': 97},
+              'test_worker_visibility': 19, 'test_doc_pointers': 3,
+              'test_kit_output': 1, 'test_clean_worktrees': 97},
 }
 
 
@@ -70,7 +71,10 @@ def run_tests(root, directory, required):
     result = unittest.TextTestRunner(stream=output, verbosity=2).run(suite)
     if not result.wasSuccessful() or result.skipped:
         raise RuntimeError('required tests failed or were skipped:\n' + output.getvalue())
-    print(output.getvalue().strip())
+    # A pass prints one line; the per-test lines were kilobytes nobody read. A failure above
+    # carries the whole log, the passing tests included.
+    print('PASS: %s ran %d tests, each suite at or above its minimum (%s)'
+          % (directory, result.testsRun, ', '.join('%s %d' % item for item in sorted(required.items()))))
 
 
 # A gate run that waits forever (a lock never released) must fail here, not hang the kit check.

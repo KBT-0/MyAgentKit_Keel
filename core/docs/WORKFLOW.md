@@ -71,6 +71,70 @@ deletion checkable.
   with tests" is.
 - Big work is split into a task list first — planning is itself a task.
 
+## The state, backlog and phase files
+
+The rules for `docs/STATE.md` are in `AGENTS.md`, "STATE.md discipline". This section keeps
+their reasons, so that the always-loaded files carry only the rules.
+
+- `docs/STATE.md` is read at the start of every session, in every tool, so its length is a
+  bill paid every session. What is planned next, and what was parked on purpose, is a
+  backlog, and it lives in `docs/BACKLOG.md`, which is read only when the next task is chosen.
+  A backlog only grows, and in STATE.md it is read every session for nothing.
+- A `[LESSON]` or `[GOTCHA]` tag makes harvesting a grep, not a re-read.
+- Pruning without harvesting buries the lesson in the git history, and nobody looks there —
+  git is an audit trail, not a knowledge base.
+- Completed work is deleted, not marked DONE: the dates live in git
+  (`git log -p -- docs/STATE.md`). The state templates name no example task id, because
+  those files are the ones checked ("Task ids").
+- An operation's detail lives in its own file, `docs/<OPERATION>.md`, never in STATE.md. The
+  operation file tracks progress with checkboxes; its last acceptance item is "STATE.md
+  harvested and pruned", and the file is deleted when the operation closes (the history is
+  in git). Without this rule every integration folds more into STATE.md, and it only grows:
+  one project's state file reached 38 KB.
+- No size limit applies to STATE.md. A limit cannot tell a live line from a finished one,
+  and a project that added one hit it again and again while half the file was backlog and
+  much of the rest narrated work already in git.
+- Compressed chat styles do not apply to STATE.md: the next tool reading it knows nothing
+  about your plugins.
+
+`docs/PHASES.md` is read every session. It is short on purpose: the CURRENT phase in full,
+everything after it in one line each. Detail arrives when a phase becomes current, not before — a plan written
+for a phase three steps away is mostly aspiration, and aspiration in an always-loaded file
+is a bill with nothing behind it.
+
+**The non-goals are the useful half.** "Build the inventory system" gives an agent no edge
+to stop at, so it invents scope: it adds persistence, a UI, an event system, and returns one
+monolithic file touching five modules. "Build the grid placement rules; do NOT add
+persistence, do NOT write UI" is the same task with a fence around it. Scope invention is
+the most expensive habit an agent has, and `docs/PHASES.md` is the cheapest cure.
+
+The reasoning behind phase-shaped work — ordering by risk rather than by dependency, why
+each phase should be independently useful — is in `patterns/staged-prototype.md` if the
+project took it. `docs/PHASES.md` is the working document, not the argument for it.
+
+**Phase lifecycle.** A phase is **episodic**: true for as long as it runs, then gone. When it
+closes, its detail is DELETED from `docs/PHASES.md` — history lives in git — after anything
+permanent has been moved to its real home:
+
+- A decision the phase produced → `docs/PROJECT.md`, as a numbered item
+- A module, boundary or contract → `docs/ARCHITECTURE.md`
+- A process or gate lesson → `docs/WORKFLOW.md`
+- An environment trap → `docs/GOTCHAS.md`
+
+That is the same harvest-then-prune rule `docs/STATE.md` follows, one scale up. The three
+files differ only in how long their contents stay true:
+
+| File | Horizon | On completion |
+|---|---|---|
+| `docs/PROJECT.md` | Permanent | Superseded, never deleted |
+| `docs/PHASES.md` | This phase | Deleted after harvest |
+| `docs/STATE.md` | Right now | Deleted when the task is done |
+
+A multi-item operation with checkboxes is NOT a phase. It gets a throwaway file of its own —
+`docs/CHANGE_ORDER.md`, or whatever the operation is called — which is deleted when the
+operation closes; the rule is in `AGENTS.md`, "STATE.md discipline". Phases are standing; operations are
+disposable, and neither one is ever tracked inside the other.
+
 ## Writing a gate
 
 Gates get their own rules because they fail differently from ordinary code: when a gate
@@ -79,8 +143,9 @@ breaks, everything keeps looking green.
 - **Prove it RED before you call it done.** Construct the failure condition, watch the gate
   reject it, then undo it. A gate observed only passing is an untested branch that runs on
   every commit.
-- **Ship a negative test with it** — `./scripts/check.sh --self-test`. A manual proof rots
-  the moment someone edits the script; the automated one does not.
+- **Ship a negative test with it** — `./scripts/check.sh --self-test`. A new gate adds its
+  case there in the same task. A manual proof rots the moment someone edits the script; the
+  automated one does not.
 - **A self-test case never changes a tracked file**, and writes nothing else into the
   working tree when it can avoid it: point the gate at a synthetic file outside the tree
   through an overridable path, or run against a disposable copy. Several sessions share one
@@ -104,6 +169,10 @@ breaks, everything keeps looking green.
   variables the example names, the copy's own empty HOME and TMPDIR, no system or global git
   configuration, and an allowlist of the repository's own settings. Prove it by interrupting the injected test, SIGKILL included: the checkout's bytes
   and `git status` stay as they were.
+- **A test or an experiment never executes a file whose name ends in `.exe`.** Under WSL
+  such a file runs on Windows, which may show {{OWNER_NAME}} a GUI error dialog. Name a stub
+  for a Windows launcher without `.exe`, and reach it through an overridable variable
+  (`docs/GOTCHAS.md`).
 - **Test both directions** where a gate can produce false positives. A gate that always
   fails is as useless as one that never does, and it gets deleted by the first person it
   blocks unfairly.
@@ -192,6 +261,9 @@ loop. **The audit is itself a task; skip it and decay advances invisibly.**
 - **A second agent's output is untrusted INPUT to a decision the calling agent owns**, never
   a verdict to relay verbatim. Verify each finding against the code: drop what is disproved,
   keep what is confirmed, and treat a confirmed critical finding as a stop signal.
+- **A worker's "not done" or "noticed, not fixed" line about something the brief asked for
+  is a finding.** The lead has it fixed before the merge. A worker's list of new ideas is a
+  question for {{OWNER_NAME}}, never an automatic next round.
 - Agents do not spend another tool's budget on their own initiative. {{OWNER_NAME}} asks for
   it in the session, or it does not happen.
 
@@ -404,8 +476,8 @@ one of those files invalidates the cache for every session after it.
 - Batch documentation edits into their own task and their own session.
 - Keep always-loaded docs SMALL and STABLE. Size here is not a readability preference; it is
   a recurring bill.
-- Volatile state belongs in `docs/STATE.md`, which is read on demand. Reference docs like
-  `docs/GOTCHAS.md` stay off the session-start list entirely.
+- Volatile state belongs in `docs/STATE.md`, which is read every session and therefore kept
+  small. Reference docs like `docs/GOTCHAS.md` stay off the session-start list entirely.
 
 ## Web requests carry no personal data
 
@@ -442,6 +514,11 @@ one names what would have to change before it is worth reopening.
 ## Documentation maintenance contract
 
 - `docs/PROJECT.md` changes only with {{OWNER_NAME}}'s approval for anything DECIDED; an
-  agent may add OPEN items freely (`AGENTS.md`, design authority).
+  agent may add OPEN items freely (`AGENTS.md`, design authority). Capturing a question costs
+  nothing and losing one is expensive. The cost of a missed capture is a forgotten question;
+  the cost of a wrong promotion is every future session treating a musing as law.
 - `docs/ARCHITECTURE.md` is updated in the SAME task that adds a module or moves a boundary.
+  It is also the reason this project does not need a code-search or embedding tool: the
+  module table IS the navigation. If agents start failing to find things through it, the
+  first reading of that signal is architectural decay, not a missing tool.
 - These files are worth more than the code: code can be regenerated, context cannot.

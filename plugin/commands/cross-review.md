@@ -17,7 +17,7 @@ your own model, whatever the default says. The wrapper may fail over once to the
 configured model if the first provider is unavailable. If that fallback authored the patch,
 its findings are advisory, not independent gate approval. Do not install a missing CLI or
 choose an unconfigured model without authorization. The paste-by-hand template in
-`docs/REVIEW_GATE.md` remains available for a genuinely fresh non-author review.
+`docs/REVIEW_RUNNING.md` remains available for a genuinely fresh non-author review.
 
 1. Run `./scripts/review.sh` with the scope asked for: `--uncommitted` (default),
    `--base <ref>` or `--commit <sha>`, optionally with `--reviewer <name>`. Those are the
