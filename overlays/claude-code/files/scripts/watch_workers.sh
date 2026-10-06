@@ -91,7 +91,12 @@ report() {
   esac
   say "watch_workers: WAITING: $name, on $what (rule $3, Claude Code $4)"
   say "  the last lines of its pane:"
-  tail -n 12 "$win" | cut -c1-200 | while IFS= read -r line; do say "  | $line"; done
+  # Each line cut to 200 BYTES in every locale (`cut -c` counted bytes in some), then a
+  # UTF-8 character the cut split is dropped whole: the output stays UTF-8 when the pane was.
+  c=$(printf '\200-\277')
+  tail -n 12 "$win" | LC_ALL=C cut -b1-200 | LC_ALL=C sed -e "s/[$(printf '\300-\337')]\$//" \
+    -e "s/[$(printf '\340-\357')][$c]\{0,1\}\$//" -e "s/[$(printf '\360-\367')][$c]\{0,2\}\$//" |
+    while IFS= read -r line; do say "  | $line"; done
   say "  look at it: scripts/show_workers.sh $name   (or: tmux attach -t $name)"
 }
 

@@ -35,7 +35,7 @@ REQUIRED_SUITES = {
               'test_check_gate': 17, 'test_boundary_restore': 39, 'test_sync_kit': 15,
               'test_doctor': 2, 'test_git_hooks': 24, 'test_stop_hook': 1, 'test_spawn_worker': 15,
               'test_worker_visibility': 19, 'test_doc_pointers': 4,
-              'test_kit_output': 1, 'test_kit_runner': 5},
+              'test_kit_output': 1, 'test_kit_runner': 7},
 }
 
 
@@ -104,10 +104,25 @@ def run_tests(root, directory, required):
            % (directory, result.testsRun, ', '.join('%s %d' % item for item in sorted(required.items()))))
 
 
+SCALE = "MYAGENTKIT_TEST_TIMEOUT_SCALE"
+
+
+def limit(seconds):
+    """A wall-clock bound on a child, times SCALE: a slow host sets it, and run_units multiplies
+    it by the units running at once (three units on one CPU each take about three times as long)."""
+    return seconds * float(os.environ.get(SCALE, "1"))
+
+
+def degree(cpus, units):
+    """How many units run at once. On a 3-CPU runner three at once took 300 s each and timed out;
+    one after another is what passed there."""
+    return 1 if cpus < 4 else min(2, units) if cpus < 8 else units
+
+
 # A gate run that waits forever (a lock never released) must fail here, not hang the kit check.
 def run(args, cwd=ROOT, expected=0, reason=None, env=None, timeout=300, **popen):
     result = subprocess.run(args, cwd=cwd, capture_output=True, text=True, env=env,
-                            timeout=timeout, **popen)
+                            timeout=limit(timeout), **popen)
     output = result.stdout + result.stderr
     if result.returncode != expected or (reason and reason not in output):
         raise RuntimeError(f"{args}: expected exit {expected}, reason {reason!r}\n{output}")
@@ -275,7 +290,7 @@ def acceptance(self_test):
                                  'sleep 1\n')
                 killed = subprocess.Popen(["sh", "scripts/check.sh"], cwd=project,
                                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                deadline = time.monotonic() + 60
+                deadline = time.monotonic() + limit(60)
                 while not (side / "fd").exists():
                     if killed.poll() is not None or time.monotonic() > deadline:
                         raise RuntimeError("the gate to be killed never started its build")
@@ -306,7 +321,7 @@ def acceptance(self_test):
                 pair = [subprocess.Popen(["sh", "scripts/check.sh"], cwd=project,
                                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                          text=True) for _ in range(2)]
-                outputs = [p.communicate(timeout=60)[0] for p in pair]
+                outputs = [p.communicate(timeout=limit(60))[0] for p in pair]
                 if (any(p.returncode or "CHECK: PASS" not in o for p, o in zip(pair, outputs))
                         or not any("NOTE [lock]" in o for o in outputs)):
                     raise RuntimeError("concurrent gate runs raced:\n" + "\n".join(outputs))
@@ -319,7 +334,7 @@ def acceptance(self_test):
                 killed = subprocess.Popen(["sh", "scripts/check.sh"], cwd=project,
                                           env=dict(os.environ, HOLD="6"),
                                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                deadline = time.monotonic() + 60
+                deadline = time.monotonic() + limit(60)
                 while not (side / "build").is_dir():
                     if killed.poll() is not None or time.monotonic() > deadline:
                         raise RuntimeError("the gate to be killed never started its build")
@@ -329,7 +344,7 @@ def acceptance(self_test):
                 waiters = [subprocess.Popen(["sh", "scripts/check.sh"], cwd=project,
                                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                             text=True) for _ in range(3)]
-                outputs = [p.communicate(timeout=120)[0] for p in waiters]
+                outputs = [p.communicate(timeout=limit(120))[0] for p in waiters]
                 if any(p.returncode or "CHECK: PASS" not in o for p, o in zip(waiters, outputs)):
                     raise RuntimeError("a waiter built beside the build of a killed gate, or beside"
                                        " another waiter:\n" + "\n".join(outputs))
@@ -658,8 +673,9 @@ def unit(name, self_test, timing_file=None):
             Path(timing_file).write_text("".join(row + "\n" for row in rows))
 
 
-def run_units(units, timing=False):
-    """Run each (name, command) at once; print each unit's whole output in the given order.
+def run_units(units, timing=False, parallel=None):
+    """Run the (name, command) units, `parallel` at once (default all); print each unit's whole
+    output in the given order. Each unit's timeouts scale by `parallel` (see limit()).
 
     The units share no state: every suite and the acceptance phases work in temporary
     directories of their own, and each synthetic project has its own .git and so its own
@@ -670,12 +686,14 @@ def run_units(units, timing=False):
         started = time.monotonic()
         if timing_file:
             command = command + ["--timing-file", timing_file]
-        result = subprocess.run(command, cwd=ROOT, stdout=subprocess.PIPE,
+        result = subprocess.run(command, cwd=ROOT, stdout=subprocess.PIPE, env=env,
                                 stderr=subprocess.STDOUT, text=True, errors="replace")
         return result.returncode, result.stdout, time.monotonic() - started
 
+    parallel = parallel or len(units)
+    env = dict(os.environ, **{SCALE: str(float(os.environ.get(SCALE, "1")) * parallel)})
     with tempfile.TemporaryDirectory(prefix="myagentkit-timing-") as times, \
-            ThreadPoolExecutor(max_workers=len(units)) as pool:
+            ThreadPoolExecutor(max_workers=parallel) as pool:
         files = [os.path.join(times, str(number)) if timing else None for number in range(len(units))]
         futures = [pool.submit(one, name, command, timing_file)
                    for (name, command), timing_file in zip(units, files)]
@@ -711,6 +729,10 @@ def main():
     if args.unit:
         return unit(args.unit, args.self_test, args.timing_file)
     started = time.monotonic()
+    units = [*REQUIRED_SUITES, "acceptance"]
+    cpus = os.cpu_count() or 1
+    parallel = degree(cpus, len(units))
+    print("KIT CHECK: %d of %d units at once (%d CPUs)" % (parallel, len(units), cpus))
     check_syntax(ROOT)
     manifest = json.loads((ROOT / "plugins/myagentkit/.codex-plugin/plugin.json").read_text())
     if manifest["name"] != "myagentkit" or manifest["skills"] != "./skills/":
@@ -718,8 +740,7 @@ def main():
     print(run([sys.executable, "scripts/package_codex_plugin.py", "--check"]).strip())
     # -u: a unit's error, on stderr, lands after what it printed before failing.
     command = [sys.executable, "-B", "-u", str(Path(__file__).resolve())] + ["--self-test"] * args.self_test
-    if not run_units([(name, command + ["--unit", name]) for name in [*REQUIRED_SUITES, "acceptance"]],
-                     args.timing):
+    if not run_units([(name, command + ["--unit", name]) for name in units], args.timing, parallel):
         return 1
     print("TIME: %.1f s in all" % (time.monotonic() - started))
     print("KIT CHECK: PASS")

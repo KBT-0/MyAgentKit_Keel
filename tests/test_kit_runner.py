@@ -9,6 +9,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+import unittest.mock
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('check_kit', ROOT / 'scripts/check_kit.py')
@@ -34,10 +35,10 @@ sys.exit(check_kit.unit('suite', False, *sys.argv[2:3]))
 '''
 
 
-def runner(*units, timing=False):
+def runner(*units, timing=False, **parallel):
     out = io.StringIO()
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
-        passed = check_kit.run_units(list(units), timing)
+        passed = check_kit.run_units(list(units), timing, **parallel)
     return passed, out.getvalue()
 
 
@@ -96,6 +97,27 @@ class KitRunnerTests(unittest.TestCase):
         self.assertRegex(table, r'\n +[0-9.]+ s    test test_kit_probe\.Probe\.test_passes\n')
         self.assertRegex(table, r'\n +[0-9.]+ s  other\n')
         self.assertNotIn('TIME: ', out)
+
+    def test_the_units_at_once_follow_the_cpu_count(self):
+        # Three units at once on a 3-CPU runner took 300 s each and hit their timeouts.
+        self.assertEqual([check_kit.degree(cpus, 3) for cpus in (1, 2, 3, 4, 7, 8, 64)],
+                         [1, 1, 1, 2, 2, 3, 3])
+        self.assertEqual(check_kit.degree(5, 1), 1)
+        with unittest.mock.patch.dict(os.environ, {'MYAGENTKIT_TEST_TIMEOUT_SCALE': '1.5'}):
+            self.assertEqual(check_kit.limit(300), 450)
+
+    def test_units_run_that_many_at_once_with_their_timeouts_scaled_by_it(self):
+        unit = [sys.executable, '-c', 'import os, time; s = time.time(); time.sleep(0.5); '
+                'print("span", os.environ["MYAGENTKIT_TEST_TIMEOUT_SCALE"], s, time.time())']
+        for parallel, scale, overlap in ((1, 2.0, False), (2, 4.0, True)):
+            with self.subTest(parallel=parallel), \
+                    unittest.mock.patch.dict(os.environ, {'MYAGENTKIT_TEST_TIMEOUT_SCALE': '2'}):
+                passed, out = runner(('a', unit), ('b', unit), parallel=parallel)
+                self.assertTrue(passed, out)
+                spans = [line.split()[1:] for line in out.splitlines() if line.startswith('span ')]
+                self.assertEqual([float(s) for s, _, _ in spans], [scale, scale])
+                (_, a_start, a_end), (_, b_start, b_end) = [map(float, s) for s in spans]
+                self.assertEqual(b_start < a_end and a_start < b_end, overlap, out)
 
     def test_path_without_drops_only_the_named_commands(self):
         # A directory without them stays as it is; one with them becomes links to the rest.
