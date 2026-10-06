@@ -552,15 +552,19 @@ class DoctorTests(unittest.TestCase):
 
             # A required hook that does not exist: the loop below skipped what was not there,
             # and the wiring check reads only core.hooksPath, so ordinary commits went ungated.
-            pre_commit = project / '.githooks/pre-commit'
-            pre_commit_bytes = pre_commit.read_bytes()
-            pre_commit.unlink()
-            red = doctor()
-            self.assertEqual(red.returncode, 1, red.stdout)
-            self.assertIn('MISSING: .githooks/pre-commit does not exist', red.stdout)
-            self.assertEqual(red.stdout.count('MISSING:'), 1, red.stdout)
-            pre_commit.write_bytes(pre_commit_bytes)
-            pre_commit.chmod(0o755)
+            # post-merge is not the gate's, but without it finished worktrees are never cleaned.
+            for hook, why in (('pre-commit', 'the gate needs it'),
+                              ('post-merge', 'worktree clean-up after a merge needs it')):
+                with self.subTest(hook=hook):
+                    hook_path = project / '.githooks' / hook
+                    hook_bytes = hook_path.read_bytes()
+                    hook_path.unlink()
+                    red = doctor()
+                    self.assertEqual(red.returncode, 1, red.stdout)
+                    self.assertIn('MISSING: .githooks/%s does not exist (%s)' % (hook, why), red.stdout)
+                    self.assertEqual(red.stdout.count('MISSING:'), 1, red.stdout)
+                    hook_path.write_bytes(hook_bytes)
+                    hook_path.chmod(0o755)
 
             # Node as the gate resolves it: a hook inherits its caller's PATH (check.sh adds
             # only toolchain_path in front). The probe once used a login-less PATH instead and

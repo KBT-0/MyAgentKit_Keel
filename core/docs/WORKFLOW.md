@@ -449,6 +449,31 @@ open questions, CONTEXT when the session's context passes the warning line (50 p
 default), WAITING on a dialog, and GONE. The lead acts on the report's first line
 ("The lead's steps when a branch is ready").
 
+Closing the session leaves the worktree. **Once a worktree's branch is merged, the worktree
+is FINISHED**: a further round on that task starts a NEW worktree, never the old one. With the
+Claude Code overlay, `.githooks/post-merge` removes a finished worktree after the next merge
+git completes itself in the main worktree (not a conflicted merge finished with `git commit`,
+nor `pull --rebase` or `cherry-pick`), but only when `scripts/clean_worktrees.sh` finds
+nothing in it that would be lost: a commit was made in that worktree (its own HEAD reflog) and
+its HEAD is in the main branch; every commit a file of its git directory names is held by a
+ref of the repository (no reflog, no remote-tracking ref counts), or saved first under
+`refs/kit/saved/`; every tracked file is byte
+for byte what the index
+records; no operation under way; and every file git does not track either in a folder
+`.claude/worktree-disposable` lists or byte-identical to main's copy. It never deletes a
+branch, and removes nothing while the main worktree's HEAD is detached. That it is no longer in
+use is NOT proven (a sub-agent worker holds no process inside it between commands): nothing in
+it may have changed for the quiet period (60 minutes by default), a margin, not a proof.
+Anything else keeps the worktree with the reason, a squash-merged branch included (its commits
+are not in main); `git worktree lock <path>` keeps one the lead still wants. Each removal is
+logged first in `<git dir>/kit-worktree-removals.log` and prints the command that brings the
+worktree back. `KIT_NO_WORKTREE_CLEANUP=1` turns the hook off; the script without `--apply` is
+a dry run.
+
+A worker whose worktree directory is missing STOPS and reports. It never recreates the
+directory and never runs a git command from where it used to be: that folder lies inside the
+main checkout, so git there acts on the owner's main worktree.
+
 ## Review rounds — early, inside the worker, in parallel
 
 In one project a feature took five fix rounds in about seven hours. Each round cost a fresh

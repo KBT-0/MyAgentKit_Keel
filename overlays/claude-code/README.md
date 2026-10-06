@@ -35,6 +35,8 @@ repository.
 | `.claude/agents/diff-reviewer.md` | Read-only review subagent carrying THIS project's risky areas and `docs/REVIEW_GATE.md` |
 | `.claude/agents/worker.md` | Implementation worker with a one-hour prompt cache and a 150-turn cap, for tasks that run jobs longer than five minutes (`docs/WORKFLOW.md`, "Worker cost") |
 | `scripts/spawn_worker.sh` | Opens a SEPARATE worker session in tmux and hands it a brief file; the lead then subscribes for its idle notice instead of polling |
+| `scripts/clean_worktrees.sh` (+ `.py`) | Removes the finished worktrees under `.claude/worktrees`, only what it proves safe to lose, never a branch; `.githooks/post-merge` runs it after every merge git completes itself in the main worktree |
+| `.claude/worktree-disposable` | The project's list of folders a finished worktree may lose (build output) and its quiet period; ships empty, the interview fills it; without it the hook does nothing |
 
 ## A worker session is always visible
 
@@ -208,6 +210,167 @@ If the project has no such jobs, delete both files instead of filling them.
   (`docs/WORKFLOW.md`, "Worker cost", rule 7).
 - **Every message to an idle session is a full-context turn.** Ask the brief for a result
   FILE, subscribe once with `notify_when_idle`, and read the file.
+
+## Finished worktrees are removed after a merge, and only those
+
+A project using the kit piled up 39 merged worker worktrees, 34 GB, and a session removed them
+by hand after auditing each: merged into main, nothing uncommitted, and in 17 the only extra
+file a review report whose identical copy was archived on main. `scripts/clean_worktrees.sh`
+is that audit, run by `.githooks/post-merge` after every merge git completes itself in the main
+worktree (never after a merge inside a linked one). git does not run that hook after a merge
+that stopped on a conflict and was finished with `git commit`, nor after `git pull --rebase` or
+`git cherry-pick`: the next merge, or the script by hand, cleans up then. Without an option the
+script is a dry run that prints the first reason to keep each worktree (`--all-reasons` prints
+every one); `--apply` removes. The hook prints the removals and the summary lines. It needs git
+2.36 or newer (`git worktree list --porcelain -z`); with an older git the hook says so once and
+then stays quiet.
+
+- **It never deletes a branch.** The disk is in the worktree; the branch keeps the worker's
+  commits whatever happens to main later (a merge undone with `git reset`, a merge into a
+  detached HEAD). The report lists the branches whose worktrees it removed and says how to
+  delete merged branches yourself: `git branch --merged <main branch>` lists them, `git branch
+  -d <name>` deletes one, and its reflog with it; the refs under `refs/kit/saved/` keep the old
+  tips a removal saved. Nothing is removed while the main worktree's HEAD is detached:
+  "merged" is tested against its branch.
+- **Removed** only when every check holds, cheapest first: a linked worktree directly under
+  `.claude/worktrees/`, its folder its own (not missing, not prunable), not locked, its path
+  and branch printable; on a branch; **a commit made in that worktree**, which its own HEAD
+  reflog records (`commit`, an amend, a conflicted merge or cherry-pick concluded by `git
+  commit`, `cherry-pick`, `revert`, `am`, a rebase step that wrote a commit; not a
+  fast-forward, not a merge made by `git merge` alone: a worktree added on a finished branch,
+  or a worker that only fast-forwarded, is kept); its HEAD in the main branch; nothing in its
+  git directory changed within the quiet period; no merge, rebase, cherry-pick, revert, bisect
+  or sequencer under way; no process working inside it that the listing shows, no tmux session
+  of its name, the gate's lock free; **nothing only its git directory holds**: every object id,
+  in either case, in every file of that directory (both columns of every reflog line, every ref
+  such as `refs/worktree/*`, `refs/bisect/*`, `refs/rewritten/*`, every pseudo-ref such as
+  `ORIG_HEAD` or `FETCH_HEAD`, and any file the script does not know; only the index, the
+  gate's build log and `AUTO_MERGE`, a tree git leaves after a merge or rebase step, are
+  skipped) names no object, or a commit a ref of the repository holds (no reflog counts, nor a
+  remote-tracking ref, which a later `git fetch --prune` drops), or a commit it saves first
+  (below); the files ref
+  backend (another one is kept); no per-worktree config; **tracked content by bytes**: no
+  change `git status` reports with the stat settings forced to their defaults, the index equal
+  to HEAD's tree, and every tracked path in the worktree byte for byte the blob the index
+  records, with the same executable bit (a symlink: the same text), so no stat cache, filter or
+  line-ending conversion is trusted; no unresolved entry, no submodule; **no mount point
+  anywhere in it or in its git directory**, its folder itself and disposable folders included:
+  `git worktree remove` would delete what is under one, which is not the worktree's (the walk
+  does not go into one); every file git does not
+  track inside a folder `.claude/worktree-disposable` lists or byte-identical to the regular
+  file at the same path in main, outside main's `.claude/worktrees` under any spelling (what is
+  there is a worktree's, which may go too), **not at or below a mount point in main** (a
+  mount inside main is not main),
+  not the worktree's own file seen from main (a hard link, a worktree folder mounted into
+  main: the same device and inode), and not a tracked file under another name (a
+  case-only rename on macOS, a hard link: the same file on disk); no file at all under the
+  worktree's own `.claude/worktrees` (a worktree inside a worktree is not judged);
+  nothing anywhere in it, those folders included, changed within the quiet period.
+- **Mount points are out of what it reasons about.** A mount point is an entry on another
+  device than the worktree's root, its git directory's root or main's (a root: on another
+  device than its parent folder), or, on Linux, one `/proc/self/mountinfo` lists, its paths
+  compared as the bytes the kernel gives: only that table shows a bind mount on the same device. On macOS and other systems a bind
+  mount on the same device cannot be seen; a mount on another device is seen everywhere. On
+  Linux without a readable mount table every worktree is kept. A mount at the worktree's own
+  `.git` file counts too: git would delete the tracked files and its git directory first.
+- **Case.** On every file system, whatever it does with case, the places that hold work
+  (`docs`, `.claude`, `.myagentkit`, `scripts`, `.git`) and the worktree's own
+  `.claude/worktrees` are compared case-folded, as macOS compares names: `Docs/build` is under
+  `docs`, never disposable. The disposable entries are compared byte for byte: `build` does
+  not match `Build`. Each choice only ever keeps more, so no probe of the file system is needed.
+- **What only its git directory holds is saved, then it is removed.** A commit no ref holds
+  (an amended, reset or rebased-away tip, a squash's intermediate commits, a `FETCH_HEAD`, a
+  `refs/worktree/*` ref) is pinned before anything is deleted, in one `git update-ref --stdin`
+  transaction, as `refs/kit/saved/<git directory name>-<hash>-<UTC time>/<n>`, never under the
+  branch name; only the commits no other saved one reaches get a ref. Every byte of the name but
+  a letter, a digit, `-` and `_` is percent-encoded, the result is cut to 64 bytes, and 12 hex
+  digits of the whole name's SHA-256 tell two cut names apart (the log holds the whole name). The audit then runs again with those refs
+  counted. A failed save keeps the worktree. The report names
+  each saved commit and prints one command that deletes all of that removal's saved refs: `git
+  for-each-ref --format='delete %(refname)' 'refs/kit/saved/<name>-<hash>-<time>/' | git update-ref
+  --stdin`. **These refs never expire on their own**: they are gc roots, they appear in `git
+  log --all`, and `git push --mirror` would publish them. They pile up, one
+  `<git directory name>-<hash>-<UTC time>/` folder per removal that saved something: `git
+  for-each-ref refs/kit/saved/` lists them all, and `git for-each-ref --format='delete
+  %(refname)' refs/kit/saved/ | git update-ref --stdin` deletes them all.
+- **Kept**, with the reason, otherwise; each of these is the owner's to remove by hand: check
+  what the reason names, then `git worktree remove <path>` without `--force` (git refuses a
+  worktree with changes of its own; the branch stays). A squash-merged branch, or one whose
+  commits main took by rebase or cherry-pick, is kept: its own tip is not in main. A tree or
+  blob id in its git directory keeps it: reachability is checked for commits only. A repository
+  using Git LFS or any other filter, or `core.autocrlf`, is not cleaned automatically: the
+  worktree's bytes differ from the blobs. A worktree holding build output that is not listed as
+  disposable is kept, and the report names the folders to consider listing.
+- **Not in use: what each platform counts.** Before it trusts a process listing the script
+  finds ITSELF in it with its own working directory; a listing that does not show it is not
+  proven, and every worktree is kept. Linux reads `/proc`: another user's process, or one of
+  ours made non-dumpable, is listed but unreadable, and the report counts it. Elsewhere (macOS)
+  it runs `lsof`; exit 1 is accepted only when the listing shows the script and every line on
+  stderr is lsof's "can't stat()" warning, and any other non-zero status or a signal never is. lsof escapes a name it cannot print (`café`
+  as `caf\xc3\xa9`); the script reads each escape back to its bytes, and a name it cannot read
+  back exactly (lsof writes a control byte and a `^` in a name the same way) leaves the listing
+  unproven. A working directory is compared case-folded and Unicode-normalised, as macOS
+  compares names. macOS `lsof` does not list another user's
+  processes at all, so the count there does not include them. Where no listing is proven (no
+  `/proc`, `lsof` missing or failing), every worktree is kept and the report gives
+  `scripts/clean_worktrees.sh --apply --assume-idle` to run by hand.
+- **Proven, and what is a margin.** Finished, merged, unchanged and nothing only its git
+  directory holds are proven from git and the filesystem. "Not in use" is not: a sub-agent
+  worker holds no process inside its worktree between commands and has no tmux session. The
+  commit made in it and the quiet period (`quiet-minutes=<n>` in `.claude/worktree-disposable`,
+  default 60, at least 10, given once: a second or invalid line refuses the whole list, so
+  nothing is disposable and 60 applies; the newest mtime or ctime of anything in it or its git
+  directory) cover that worker; they are a margin, not a proof. The process listing is read
+  afresh for each worktree, and again right before the first deletion and right before `git
+  worktree remove`. Not guarded, by the owner's decision: a process changing a worktree's files, or main's
+  copies of them, between its audit and its removal, files planted to attack the script, and a SIGKILL between
+  two removal steps.
+- **With `core.logAllRefUpdates=false`** git writes no HEAD reflog, so every worktree is kept
+  ("no commit was made in this worktree").
+- **To keep a worktree** the lead still wants, lock it: `git worktree lock <path>`.
+- **The log**, `<git dir>/kit-worktree-removals.log`, gets two lines per removal, each after
+  the time and `run=<UTC time>-<process id>`, the run's id, which pairs them. The `intent`
+  line comes first, before any ref is saved or file deleted: path, branch, tip commit,
+  main HEAD, git directory, identical files, disposable bytes, each ref to save with its commit,
+  each file to delete. The `outcome` line comes once `git worktree remove` returns or a step
+  stops it: `removed` when git removed it, whatever was deleted before; else `partly-modified`
+  (stopped after a deletion), `possibly-modified` (`git worktree remove` failed) or `kept`;
+  why, and each file deleted. **An intent with no outcome of the same run and path is a run
+  that did not finish** (a SIGKILL, a crash): the refs and files it names may be saved or
+  deleted. Both are on disk before the script goes on, and every line the script
+  prints about a removal comes after the log line it reports. An outcome that cannot be written
+  leaves the removal as it is, stops the run there (the worktrees after it are not looked at)
+  and exits 1. A print never raises: what the terminal cannot encode is escaped, and a terminal
+  closed from the start, closed or hung up is ignored, so neither changes the removal, its
+  outcome or its exit status. Every name the script prints or logs is escaped reversibly,
+  as the log's first line says: a backslash as `\\`, a newline as `\n`, any other byte that is
+  not printable UTF-8 as `\xNN`. After the saved refs the identical copies git does not track
+  go, then `git worktree remove` without `--force` checks again on its own. SIGINT, SIGTERM and SIGHUP are caught from the saved refs
+  to the end of `git worktree remove` and stop it at the next step. If a step fails or is
+  stopped after a copy was deleted, the report says **PARTLY MODIFIED**, lists each deleted file
+  (its byte-identical copy is at the same path in the main worktree) and the script exits 1. A
+  failed `git worktree remove` may have deleted files first (git deletes file by file, then the
+  worktree's git directory even after a failure): the report says **POSSIBLY MODIFIED**, what
+  is left, and how each kind of file comes back (tracked: the printed `git restore` or `git
+  worktree add`; untracked: its copy in the main worktree; disposable: the build), and the
+  script exits 1. When copies were deleted and then `git worktree remove` failed, the log says
+  `possibly-modified` (git may have deleted more) and the report lists both. A re-run is safe; each deletion changed its folder, so it finishes after the
+  quiet period.
+- **A worktree comes back** with the command each removal prints on a line of its own, `git
+  worktree add '<path>' '<branch>'`, quoted for a POSIX shell: its tracked files at the
+  branch's last commit. A name that is not printable ASCII is printed as `"$(printf
+  '\NNN...')"`, octal escapes a POSIX shell turns back into its bytes, so the pasted command
+  reaches the same path and branch whatever the terminal can show. Lost for good: the ignored files in its disposable folders and its own
+  reflogs (every commit they named is held by a ref, or saved).
+- **Installed** by the overlay at setup: the two scripts and `.claude/worktree-disposable`
+  (the project's). The hook comes with the core. In a project set up before this feature,
+  the sync delivers the hook but never adds an overlay file that is missing: copy
+  `overlays/claude-code/files/scripts/clean_worktrees.sh` and `clean_worktrees.py` into
+  `scripts/` and `overlays/claude-code/files/.claude/worktree-disposable` into `.claude/`
+  by hand, then `chmod +x scripts/clean_worktrees.sh` and `git add --chmod=+x` it; from
+  then on a sync keeps the two scripts (kit-owned) updated. Until all three are present the
+  hook does nothing and says so once.
+- **Off:** `KIT_NO_WORKTREE_CLEANUP=1` in the merge's environment.
 
 ## Why this is an overlay and not part of the core
 

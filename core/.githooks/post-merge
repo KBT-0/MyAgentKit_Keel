@@ -1,0 +1,56 @@
+#!/usr/bin/env sh
+# KIT-OWNED: do not edit locally; change it in the kit and re-sync.
+# After a merge in the MAIN worktree, removes the finished worker worktrees under
+# .claude/worktrees that scripts/clean_worktrees.sh proves merged and holding nothing else
+# (Claude Code overlay); their branches stay. Merged worktrees piled up otherwise: 39 of them,
+# 34 GB, in a project using the kit, each audited and removed by hand.
+# git runs this hook only after a merge it completes itself (`git merge`, `git pull`): not
+# after a conflicted merge finished with `git commit`, nor `pull --rebase` or `cherry-pick`;
+# the next merge, or the script by hand, covers those. Not after a merge inside a linked
+# worktree: a worker merging main into its branch is not the moment its siblings are finished.
+#
+# Installed by the overlay: scripts/clean_worktrees.sh (+ .py) and .claude/worktree-disposable.
+# Without all three this hook does nothing, and says so once (a marker in the git directory).
+# Off switch: KIT_NO_WORKTREE_CLEANUP=1 (in the environment of the merge).
+#
+# The merge is already complete when this runs, and git ignores this hook's exit status; it
+# exits 0 anyway. It changes nothing itself: the script writes its log, then removes only a
+# worktree that passed every check, and keeps every one it could not prove. It prints the
+# removals and the summary lines; the dry run (the script without options) gives the reasons.
+set -u
+[ -z "${KIT_NO_WORKTREE_CLEANUP:-}" ] || exit 0
+# The main worktree's git directory is the common one; a linked worktree's is below it.
+here=$(git rev-parse --absolute-git-dir 2>/dev/null) || exit 0
+common=$(git rev-parse --git-common-dir 2>/dev/null) || exit 0
+here=$(CDPATH= cd -- "$here" 2>/dev/null && pwd -P) || exit 0
+common=$(CDPATH= cd -- "$common" 2>/dev/null && pwd -P) || exit 0
+[ "$here" = "$common" ] || exit 0
+root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+CDPATH= cd -- "$root" || exit 0
+if ! { [ -x scripts/clean_worktrees.sh ] && [ -f scripts/clean_worktrees.py ] && [ -f .claude/worktree-disposable ]; }; then
+  [ -e "$common/kit-worktree-cleanup-absent" ] ||
+    { echo "post-merge: worktree clean-up is not installed (scripts/clean_worktrees.sh, scripts/clean_worktrees.py and .claude/worktree-disposable, from the Claude Code overlay); finished worktrees stay. Said once." >&2
+      : > "$common/kit-worktree-cleanup-absent"; }
+  exit 0
+fi
+# The script reads `git worktree list --porcelain -z`, which came with git 2.36. An older git
+# made it stop with an error after every merge; now this says so once (a marker) instead.
+version=$(git --version 2>/dev/null) || exit 0
+version=${version#git version }
+major=${version%%.*}
+minor=${version#*.}
+minor=${minor%%.*}
+# A version this cannot read is left to the script.
+case "$version/$major$minor" in
+  [0-9]*.[0-9]*/*[!0-9]*) ;;
+  [0-9]*.[0-9]*/*)
+    if [ "$major" -lt 2 ] || { [ "$major" -eq 2 ] && [ "$minor" -lt 36 ]; }; then
+      [ -e "$common/kit-worktree-cleanup-old-git" ] ||
+        { echo "post-merge: worktree clean-up needs git 2.36 or newer, and this is git $version; finished worktrees stay. Said once." >&2
+          : > "$common/kit-worktree-cleanup-old-git"; }
+      exit 0
+    fi ;;
+esac
+./scripts/clean_worktrees.sh --apply --quiet </dev/null ||
+  echo "post-merge: scripts/clean_worktrees.sh stopped with an error; the merge is complete, and the lines above say what it did." >&2
+exit 0
