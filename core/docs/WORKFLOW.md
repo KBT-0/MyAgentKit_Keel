@@ -496,6 +496,19 @@ A worker goes through `docs/REVIEW_GATE.md`, "What a reviewer attacks first", ag
 diff before it reports. It fixes each hit or names it in the report. A class the reviewer has
 already shown once costs a whole round when the worker leaves it for the reviewer to find again.
 
+### The lead's steps when a branch is ready
+
+1. Start the self-test and the review together, on the same commit, never one after the other.
+2. Run two reviewers at the same time, never one after the other.
+3. Keep one review label for the whole feature, so that each round carries the earlier ones.
+   Only the closing review takes a label never used before (`docs/REVIEW_RUNNING.md`,
+   "Rounds, labels and designs").
+4. Start the next worker while the self-test after a merge still runs. If that self-test
+   fails, tell the next worker to rebase onto the fix.
+
+Each step that waits on another adds its whole duration to the round, and nothing in a round
+needs another step's result before it starts.
+
 ## Token economics — the always-loaded prefix is money
 
 Cached input tokens are discounted heavily, so a STABLE prompt prefix — the documents loaded
