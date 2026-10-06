@@ -126,6 +126,16 @@ class Base(unittest.TestCase):
         path = self.state / (name + '.log')
         return path.read_text() if path.exists() else ''
 
+    def full_buffer(self):
+        # A `tr` first on PATH whose write into a regular file fails: the watcher's report
+        # buffer is one, its stdout and stderr here are pipes.
+        folder = self.tmp / 'full'
+        folder.mkdir(exist_ok=True)
+        (folder / 'tr').write_text('#!/bin/sh\nif [ -f /dev/stdout ]; then echo "tr: write error: No space left '
+                                   'on device" >&2; exit 1; fi\nexec %s "$@"\n' % shq(shutil.which('tr')))
+        (folder / 'tr').chmod(0o755)
+        return [folder]
+
 
 class ShowTests(Base):
     WSL = dict(WSL_DISTRO_NAME='Test-1', VIS_SESSIONS='a b-2 c_3')
@@ -332,7 +342,9 @@ class WatchTests(Base):
                 self.assertEqual(result.returncode, 3, result.stdout)
                 self.assertNotIn('GONE', result.stdout)
                 self.assertIn('watch_workers: w1: capture failed: ', result.stderr)
-                self.assertIn(denied if before else "can't find pane: w1", result.stderr)
+                # After a failed capture the retry's words are the reason, not the capture's.
+                self.assertIn(denied, result.stderr)
+                self.assertNotIn("can't find pane", result.stderr)
 
     def test_the_absence_wordings_are_those_of_close_worker(self):
         lists = []
@@ -524,6 +536,22 @@ class ResultTests(Base):
         self.assertEqual(self.watch(path_first=first).stdout, '', 'a result of an older commit was reported')
         self.assertIn('PROGRESS: w1', self.watch(path_first=first).stdout)
 
+    def test_a_session_named_twice_is_reported_once(self):
+        # The once-marker is stored after the run: the second name read none and reported again.
+        self.commit(HEAD % ('completed', 'none'))
+        result = self.watch('w1')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.count('DONE: w1'), 1, result.stdout)
+
+    def test_a_report_that_cannot_be_written_ends_the_run_and_is_written_again(self):
+        # A failed write into the report buffer returned success and stored the once-marker
+        # of a report nobody saw; it ends the run like a failed capture.
+        self.commit(HEAD % ('completed', 'none'))
+        result = self.watch(path_first=self.full_buffer())
+        self.assertEqual((result.returncode, result.stdout), (3, ''), result.stderr)
+        self.assertIn('watch_workers: w1: could not write its report: ', result.stderr)
+        self.assertIn('DONE: w1', self.watch().stdout)
+
     def test_the_watcher_restarted_after_progress_reaches_done(self):
         # The lead restarts the watcher after every report but DONE and GONE while work
         # remains: the second run, after a PROGRESS report, still reports the completion.
@@ -605,6 +633,20 @@ class ResultTests(Base):
         self.assertEqual(gate.case_in_substitution('n=$((1 << 2)) m="$((n << 1))"\n'
                                                    'f=$(case x in x) echo ok;; esac)\n'), [2])
 
+    def test_a_keyword_after_a_closed_group_or_a_loop_name_opens_a_command(self):
+        # These `case`s are commands, and the lint missed them: a keyword after `)` or `}`, and
+        # `do` after `for NAME [in WORDS]`, are in command position.
+        spec = importlib.util.spec_from_file_location('kit_check', ROOT / 'scripts/check_kit.py')
+        gate = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(gate)
+        for start in ('if (:) then', 'if { :; } then', 'while (:) do', 'if :; then (:) else', 'for i do',
+                      'for i in a b; do', 'for i in a b do', 'select i in a; do', 'select i do'):
+            with self.subTest(start=start):
+                self.assertEqual(gate.case_in_substitution('x=$(%s case a in a) :;; esac)\n' % start), [1])
+        for text in ('x=$(echo if case value)\n', 'x=$(echo time case a)\n', 'x=$(echo ! case a)\n'):
+            with self.subTest(text=text):
+                self.assertEqual(gate.case_in_substitution(text), [])
+
     def test_the_kit_check_rejects_a_case_inside_a_substitution(self):
         # The scan alone is not the gate: check_syntax must run it and stop on it.
         spec = importlib.util.spec_from_file_location('kit_check', ROOT / 'scripts/check_kit.py')
@@ -629,14 +671,15 @@ class ResultTests(Base):
 class ContextTests(Base):
     """The context figure is read from the status line, past a warning line, once per session."""
 
-    def watch(self, status, *args, drop=False, quote=None):
+    def watch(self, status, *args, drop=False, quote=None, path_first=()):
         text = (PANES / 'working-auto.txt').read_text()
         self.assertIn(STATUS, text)
         lines = [line for line in text.replace(STATUS, status).splitlines() if not (drop and '│' in line)]
         lines = ([quote] if quote else []) + lines
         pane = self.tmp / 'pane.txt'
         pane.write_text('\n'.join(lines) + '\n')
-        return self.run_script(WATCH, *args, 'w1', VIS_SESSIONS='w1', VIS_PANE=str(pane), LC_ALL='C')
+        return self.run_script(WATCH, *args, 'w1', VIS_SESSIONS='w1', VIS_PANE=str(pane), LC_ALL='C',
+                               path_first=path_first)
 
     def test_the_figure_is_reported_past_the_warning_line(self):
         for status, warn, out in (('58k/1.0M', '50', ''), ('58k/1.0M', '5', '58k/1.0M is 5%'),
@@ -669,6 +712,21 @@ class ContextTests(Base):
         self.assertEqual(self.watch('1.2M/1.0M', '--once').stdout, '')
         result = self.watch('1.2M/1.0M', '--max-minutes', '0')
         self.assertTrue(result.stdout.startswith('watch_workers: nothing was waiting'), result.stdout)
+
+    def test_a_warning_that_cannot_be_written_ends_the_run_and_is_written_again(self):
+        for args in (('--once',), ('--max-minutes', '0')):
+            with self.subTest(args=args):
+                for f in self.state.glob('opt-*'):
+                    f.unlink()
+                status = '1.2M/1.0M' if args == ('--once',) else ''
+                result = self.watch(status or STATUS, *args, drop=not status, path_first=self.full_buffer())
+                self.assertEqual((result.returncode, result.stdout), (3, ''), result.stderr)
+                self.assertIn('watch_workers: w1: could not write its report: ', result.stderr)
+                self.assertIn('CONTEXT: w1, ', self.watch(status or STATUS, *args, drop=not status).stdout)
+
+    def test_the_same_session_twice_warns_once(self):
+        result = self.watch('1.2M/1.0M', '--once', 'w1')
+        self.assertEqual(result.stdout.count('CONTEXT: w1'), 1, result.stdout)
 
     def test_a_missing_or_unparsable_status_line_is_said_once_and_never_guessed(self):
         for status, drop, what in (('', True, 'absent'), ('58/1.0M', False, 'unparsable'),

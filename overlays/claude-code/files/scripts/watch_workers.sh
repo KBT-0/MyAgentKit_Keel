@@ -23,8 +23,10 @@
 # when nothing waits (spawn_worker.sh uses it). Exit 2 is a usage error. Exit 3: a pane of
 # a session that exists could not be read, or tmux could not say whether it exists
 # (`watch_workers: NAME: capture failed: ...` on stderr), or a committed result could not be
-# read (`... could not read the committed result ...`); that is an observation failure, never
-# "nothing waiting", and the run prints no result or context report. Run once per spawn, the
+# read (`... could not read the committed result ...`), or a report could not be written
+# (`... could not write its report ...`); that is an observation failure, never "nothing
+# waiting", and the run prints no result or context report. With several sessions, the GONE
+# and WAITING lines print first, then the result and context lines. Run once per spawn, the
 # watcher stopped watching at the first PROGRESS, QUESTIONS or CONTEXT report (see above).
 #
 # A session that is neither gone nor waiting is checked for two more things:
@@ -90,6 +92,10 @@ done
 [ $# -ge 1 ] || { sed -n '3,10p' "$0"; exit 2; }
 [ "$interval" -ge 10 ] || die "--interval $interval is below the floor of 10 seconds"
 for n in "$@"; do plain "$n"; done
+# A name given twice is watched once: its second pass reported what the first had queued.
+seen=$nl
+for n in "$@"; do case $seen in *"$nl$n$nl"*) ;; *) seen=$seen$n$nl ;; esac; done
+set -f; IFS=$nl; set -- $seen; unset IFS; set +f
 command -v tmux >/dev/null || die "tmux is not installed"
 win=$(mktemp) || die "cannot make a temporary file"
 qs=$(mktemp) || { rm -f "$win"; die "cannot make a temporary file"; }
@@ -107,7 +113,16 @@ cutb() {
 }
 # A once-marker: a user option of the tmux session. setmark only queues it: the queue is
 # stored after the run's reports are printed, and dropped with them by a run that exits 3.
-mark() { tmux show-options -qv -t "=$1:" "@kit_watch_$2" 2>/dev/null || true; }
+# mark reads the queue first, then the stored option.
+mark() {
+  m=""
+  while IFS='	' read -r pn pk pv; do
+    if [ "$pn" = "$1" ] && [ "$pk" = "$2" ]; then m=$pv; fi
+  done <<EOF
+$pending
+EOF
+  if [ -n "$m" ]; then printf '%s\n' "$m"; else tmux show-options -qv -t "=$1:" "@kit_watch_$2" 2>/dev/null || true; fi
+}
 setmark() { pending="$pending$1	$2	$3$nl"; }
 
 # has NAME: 0 the session exists, 1 tmux says it or its server does not, 2 tmux could not
@@ -132,6 +147,7 @@ classify() {
   # A session that ended during the capture is GONE, not an observation failure.
   tmux capture-pane -p -J -t "=$1:" >"$win" 2>"$err" || {
     s=0; has "$1" || s=$?
+    [ "$s" -ne 2 ] || printf '%s\n' "$why" >"$err"
     if [ "$s" -eq 1 ]; then echo GONE; else echo FAILED; fi
     return 0; }
   LC_ALL=C tr -d '\001-\011\013-\037\177' <"$win" | LC_ALL=C sed 's/[[:space:]]*$//' |
@@ -182,10 +198,11 @@ report() {
 hl() { LC_ALL=C sed -n "$1p" "$2" | LC_ALL=C tr -d '\001-\011\013-\037\177' | LC_ALL=C sed 's/[[:space:]]*$//'; }
 
 # Report NAME's result file and return 0 when it is committed, its tree is clean and this
-# version was not reported yet; return 1 otherwise. The once-marker is stored only after the
-# blob was read and reported: a failed read is read again on the next run.
+# version was not reported yet; return 1 otherwise, 2 when the report could not be written.
+# The once-marker is queued only after the blob was read and its report written: a failed
+# read or write is done again on the next run.
 result() {
-  report_result "$1" || return 1
+  report_result "$1" || return $?
   setmark "$1" result "$blob"
 }
 
@@ -212,7 +229,7 @@ EOF
   [ "$(git -C "$d" rev-parse -q --verify HEAD 2>/dev/null)" = "$head" ] || return 1
   [ "$(mark "$1" result)" != "$blob" ] || return 1
   case $mode in 100644|100755) ;; *)
-    say "watch_workers: MALFORMED: $1, result file $f: it is not a regular file in HEAD (mode $mode); not done"
+    say "watch_workers: MALFORMED: $1, result file $f: it is not a regular file in HEAD (mode $mode); not done" || return 2
     return ;;
   esac
   if ! git -C "$d" cat-file blob "$blob" >"$body" 2>"$err"; then
@@ -228,7 +245,7 @@ EOF
   case $a in ""|*[!0-9]*) bad=${bad:-"line 3 is not 'Attempt: <n>'"} ;; esac
   case $r in "Remaining: "?*) ;; *) bad=${bad:-"line 4 is not 'Remaining: <what is left>'"} ;; esac
   if [ -n "$bad" ]; then
-    say "watch_workers: MALFORMED: $1, result file $f: $bad; not done"
+    say "watch_workers: MALFORMED: $1, result file $f: $bad; not done" || return 2
     return
   fi
   k=${k#Kind: }
@@ -246,17 +263,18 @@ EOF
   if [ "$nq" -gt 0 ]; then
     owner=$(sed -n 's/^O//p' "$qs" | cutb)
     qw=questions; [ "$nq" -gt 1 ] || qw=question
-    say "watch_workers: QUESTIONS: $1, $nq $qw for $owner (Kind: $k, $what)"
-    sed -n 's/^[QL]//p' "$qs" | cutb | while IFS= read -r line; do say "  | $line"; done
-    say "  ask them now, one at a time; each line is cut at 200 bytes, the full text is in $f"
+    say "watch_workers: QUESTIONS: $1, $nq $qw for $owner (Kind: $k, $what)" || return 2
+    sed -n 's/^[QL]//p' "$qs" | cutb | while IFS= read -r line; do say "  | $line" || exit 1; done || return 2
+    say "  ask them now, one at a time; each line is cut at 200 bytes, the full text is in $f" || return 2
     return
   fi
   case $k in completed) k=DONE ;; blocked) k=BLOCKED ;; handoff) k=HANDOFF ;; *) k=PROGRESS ;; esac
-  say "watch_workers: $k: $1, $what (result file $f)"
+  say "watch_workers: $k: $1, $what (result file $f)" || return 2
 }
 
 # Report the context figure in NAME's status line ($win) when it is past the warning line,
-# or (not with --once) when there is none; once per session. Return 1 when nothing is said.
+# or (not with --once) when there is none; once per session. Return 1 when nothing is said,
+# 2 when the report could not be written (and no marker is queued).
 context() {
   fig=$(CTX_RE=$ctx_re LC_ALL=C awk -v warn="$warn" '
     function num(s) { return substr(s, 1, length(s) - 1) * (s ~ /M$/ ? 1000000 : 1000) }
@@ -272,13 +290,13 @@ context() {
   said=$(mark "$1" context)
   [ "$said" != over ] || return 1
   if [ "$2" = over ]; then
+    say "watch_workers: CONTEXT: $1, $4 is $3% of its context window, past the $warn% warning line (finish, compact or hand off: read its Remaining: line)" || return 2
     setmark "$1" context over
-    say "watch_workers: CONTEXT: $1, $4 is $3% of its context window, past the $warn% warning line (finish, compact or hand off: read its Remaining: line)"
     return 0
   fi
   [ -z "$once" ] && [ -z "$said" ] || return 1
+  say "watch_workers: CONTEXT: $1, no context figure: its status line is $2 (said once; nothing is guessed)" || return 2
   setmark "$1" context noted
-  say "watch_workers: CONTEXT: $1, no context figure: its status line is $2 (said once; nothing is guessed)"
 }
 
 end=$(( $(date +%s) + max * 60 ))
@@ -289,7 +307,16 @@ while :; do
     st=$(classify "$n")
     if [ "$st" = FAILED ]; then report "$n" FAILED; failed=1
     elif [ -n "$st" ]; then report "$n" $st; found=1
-    elif { result "$n" || context "$n"; } >>"$out"; then found=1
+    else
+      # A report that could not be written ends the run like a failed capture; w stays x
+      # when the buffer cannot even be opened.
+      w=x
+      { w=0; result "$n" || w=$?; [ "$w" -ne 1 ] || { w=0; context "$n" || w=$?; }; } >>"$out" || :
+      case $w in
+        0) found=1 ;;
+        1) ;;
+        *) say "watch_workers: $n: could not write its report: the report buffer failed" >&2; failed=1 ;;
+      esac
     fi
   done
   # A run that failed (exit 3) is rerun: its result and context reports are not printed and

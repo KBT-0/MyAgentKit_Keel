@@ -459,8 +459,13 @@ report. It returns DONE, BLOCKED,
 HANDOFF or PROGRESS once the file is committed on a clean tree, QUESTIONS when the file holds
 open questions, CONTEXT when the session's context passes the warning line (50 percent by
 default), WAITING on a dialog, and GONE. The lead acts on the report's first line
-("The lead's steps when a branch is ready"). Exit 3 means a live session's pane could not be
-read: the lead looks at that tab itself and reruns the watcher once the session answers.
+("The lead's steps when a branch is ready"). Exit 3 means the watcher could not observe:
+a pane of a session that exists could not be read, or tmux could not say whether it exists
+(`watch_workers: NAME: capture failed: ...` on stderr), or a committed result could not be
+read (`... could not read the committed result ...`), or a report could not be written
+(`... could not write its report ...`). The lead reads that stderr line, fixes what it names (or
+looks at that tab itself) and reruns the watcher. In a run with several sessions, the GONE and
+WAITING lines print first, then the result and context lines.
 
 `close_worker.sh` waits up to 15 seconds for the session and the processes inside the worktree
 to be gone, then runs the audit below with one change: it lifts the quiet period
