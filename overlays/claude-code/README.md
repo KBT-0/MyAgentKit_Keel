@@ -85,9 +85,13 @@ returns, and so re-invokes the lead, as soon as a named session is GONE or WAITI
 person; for WAITING it prints what waits and the last lines of the pane, so the lead can tell
 the owner. Otherwise it ends after `--max-minutes` (110) with one line saying nothing waited.
 It reads each pane every `--interval` seconds (45, at least 10) with `tmux capture-pane`,
-which costs the worker nothing. A pane of a live session that cannot be read is exit 3 with
-`watch_workers: NAME: capture failed: ...` on stderr, never "nothing waiting": the lead then
-looks at that tab itself and reruns the watcher once the session answers. It stops at
+which costs the worker nothing. Exit 3, never "nothing waiting", means the watcher could not
+observe: a pane of a session that exists could not be read, or tmux could not say whether it exists
+(`watch_workers: NAME: capture failed: ...` on stderr), or a committed result could not be
+read (`... could not read the committed result ...`), or a report could not be written
+(`... could not write its report ...`). The lead reads that stderr line, fixes what it names (or looks at
+that tab itself) and reruns the watcher. In a run with several sessions, the GONE and WAITING
+lines print first, then the result and context lines. It stops at
 its first report: while work remains, the lead starts it again after every report but DONE
 and GONE, and after its window ends.
 
