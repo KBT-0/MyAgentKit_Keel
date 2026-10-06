@@ -376,6 +376,7 @@ class CleanWorktreesTests(unittest.TestCase):
         self.assertRemoved(path, out)
         self.assertNotIn('nothing deleted', out)
         self.assertTrue(out.isascii(), out)
+        self.assertIn('(branch worktree-d\\xc3\\xb6, ', out)
         self.assertIn('clean_worktrees: removed 1, kept 1', out)
         self.assertRegex((self.main / '.git/kit-worktree-removals.log').read_text(), r'\toutcome\t[^\t]*\tremoved\n$')
         for command in (self.restore(out).strip(),
@@ -395,10 +396,20 @@ class CleanWorktreesTests(unittest.TestCase):
         ran = subprocess.run(['sh', '-c', command], cwd=self.main, env=self.env, capture_output=True)
         self.assertEqual(ran.returncode, 0, (command, ran.stderr))
         self.assertEqual((path / 'done.txt').read_text(), 'done\n')
+        # And when the worktree is whole: `git -C <path> restore`.
+        self.git('commit', '-q', '--allow-empty', '-m', 'again', cwd=path)
+        self.git('merge', '-q', '--no-edit', 'worktree-dö', KIT_NO_WORKTREE_CLEANUP='1')
+        out = self.run_script('--apply', code=1, SHIM='fail:remove', PYTHONIOENCODING='ascii', **self.shim())
+        command = out.split('writes back:\n')[1].split('\n')[0]
+        self.assertIn(' restore -- .', command)
+        (path / 'done.txt').unlink()
+        ran = subprocess.run(['sh', '-c', command], cwd=self.main, env=self.env, capture_output=True)
+        self.assertEqual(ran.returncode, 0, (command, ran.stderr))
+        self.assertEqual((path / 'done.txt').read_text(), 'done\n')
 
     def test_a_shell_word_reads_back_to_its_bytes(self):
         names = [b'plain', b"it's", b'a;id;#', b'-n', b'%s%%', b'back\\slash', b'caf\xc3\xa9', b'\xff\x01 x',
-                 b'$(id)', b'"q"', b'tab\tend', b'\x017\xc3\xa90', bytes(range(1, 10)) + bytes(range(11, 256))]
+                 b'$(id)', b'"q"', b'tab\tend', b'\x017\xc3\xa90', b'-\xc3\xa9', bytes(range(1, 10)) + bytes(range(11, 256))]
         for name in names:
             with self.subTest(name=name):
                 word = clean_worktrees.sh_word(name)
@@ -1731,7 +1742,9 @@ class CleanWorktreesTests(unittest.TestCase):
             return
         for mount in ('mount --bind "$1/notes" "$2/notes"', 'mount -t tmpfs none "$2/notes" && echo precious > "$2/notes/x"',
                       'mkdir "$2/t" && mount -t tmpfs none "$2/t" && echo precious > "$2/t/x" && : > "$2/notes/x" && '
-                      'mount --bind "$2/t/x" "$2/notes/x"'):
+                      'mount --bind "$2/t/x" "$2/notes/x"',
+                      'mount -t tmpfs none "$2/notes" && : > "$2/notes/x" && echo precious > "$2/u" && '
+                      'mount --bind "$2/u" "$2/notes/x"'):
             with self.subTest(mount=mount):
                 ran = subprocess.run(['unshare', '-rm', 'sh', '-c', mount + ' && exec sh "$0" --apply --assume-idle',
                                       str(SCRIPT), str(path), str(self.main)],
