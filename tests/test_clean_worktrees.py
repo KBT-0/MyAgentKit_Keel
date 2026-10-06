@@ -1,15 +1,17 @@
-"""scripts/clean_worktrees.sh removes a merged worktree only when nothing in it can be lost.
+"""scripts/clean_worktrees.sh removes a finished worktree only when nothing in it can be lost.
 
 Each check that keeps a worktree has a case here that builds the state it must catch, in a
 throwaway repository; tmux is a stub on PATH, so a live session on the machine running the
-tests changes nothing. A kept worktree must still be there, with its branch, and the report
-must name the reason. Every run first ages the repository's files by two hours, so the quiet
-period holds unless a case is about it.
+tests changes nothing. A kept worktree must still be there, and the report must name the
+reason; no branch is ever deleted. The script's clock is set two hours ahead
+(CLEAN_WORKTREES_NOW), so the quiet period holds unless a case is about it: a ctime cannot be
+set back, so the clock moves instead of the files.
 """
 import ast
 import fcntl
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -25,7 +27,7 @@ sys.path.insert(0, str(SCRIPTS))
 import clean_worktrees  # noqa: E402
 
 # Without /proc (macOS) the script asks lsof; most cases pass --assume-idle there so that they
-# test their own clause. The cases about liveness run the real scan on every host.
+# test their own clause. The cases about liveness run the real listing on every host.
 PROC = os.path.exists('/proc/self/cwd')
 
 TMUX = '''#!/bin/sh
@@ -42,19 +44,34 @@ args, mode = sys.argv[1:], os.environ.get('SHIM', '')
 if mode.startswith('fail:') and mode[5:] in args:
     sys.stderr.write('fatal: refused by the shim\\n')
     sys.exit(128)
+if mode == 'format' and '--show-object-format' in args:
+    sys.stdout.write('sha3\\n')
+    sys.exit(0)
+if mode == 'reftable' and 'extensions.refStorage' in args:
+    sys.stdout.write('reftable\\n')
+    sys.exit(0)
+if not (mode == 'status' and 'status' in args or mode in ('list', 'branch') and 'list' in args):
+    os.execv(os.environ['REAL_GIT'], ['git'] + args)  # a stream such as `cat-file --batch` passes through
 result = subprocess.run([os.environ['REAL_GIT']] + args, stdout=subprocess.PIPE)
 out = result.stdout
 if mode == 'status' and 'status' in args:
     out += b'Z something new\\0'
 if mode == 'list' and 'list' in args:
     out = out.replace(b'\\0\\0', b'\\0frobbed\\0\\0')
+if mode == 'branch' and 'list' in args:
+    out = out.replace(b'branch refs/heads/worktree-done\\0', b'branch refs/heads/worktree-\\xff\\0')
 sys.stdout.buffer.write(out)
 sys.exit(result.returncode)
 ''' % sys.executable
+# lsof stubs: $PPID is the script, which runs lsof in its own working directory.
+LSOF_ME = 'printf "p%s\\nn%s\\n" "$PPID" "$(pwd -P)"\n'
+WARNING = ('echo "lsof: WARNING: can\'t stat() fuse.gvfsd-fuse file system /run/user/1000/gvfs" >&2\n'
+           'echo "      Output information may be incomplete." >&2\n')
 
 # `lsof -a -d cwd -F pn` as recorded. Linux lsof 4.98 (no f record; an unreadable cwd is named
 # with its error); macOS lsof prints an `fcwd` record after each `p` and omits the processes of
-# other users. The macOS sample follows the documented field format; it was not recorded here.
+# other users. The macOS sample follows the documented field format; the real listing runs in
+# test_a_process_working_inside_is_kept_by_the_real_listing on every CI host.
 LSOF_LINUX = (b'p1\nn/proc/1/cwd (readlink: Permission denied)\n'
               b'p4242\nn/home/u/project/.claude/worktrees/w/src\n'
               b'p4243\nn/home/u/project\n'
@@ -72,11 +89,12 @@ class CleanWorktreesTests(unittest.TestCase):
         self.stubs = self.tmp / 'bin'
         self.stubs.mkdir()
         self.stub('tmux', TMUX)
+        self.now = time.time() + 7200
         self.env = dict(os.environ, PATH=str(self.stubs) + os.pathsep + os.environ['PATH'],
                         GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1', LC_ALL='C',
                         GIT_AUTHOR_NAME='t', GIT_AUTHOR_EMAIL='t@example.invalid',
                         GIT_COMMITTER_NAME='t', GIT_COMMITTER_EMAIL='t@example.invalid',
-                        TMUX_STUB=str(self.tmp / 'sessions'),
+                        TMUX_STUB=str(self.tmp / 'sessions'), CLEAN_WORKTREES_NOW=str(self.now),
                         # No detached auto-maintenance changing .git under a running case.
                         GIT_CONFIG_COUNT='2', GIT_CONFIG_KEY_0='gc.auto', GIT_CONFIG_VALUE_0='0',
                         GIT_CONFIG_KEY_1='maintenance.auto', GIT_CONFIG_VALUE_1='false')
@@ -113,34 +131,30 @@ class CleanWorktreesTests(unittest.TestCase):
             self.git('add', name + '.txt', cwd=path)
             self.git('commit', '-q', '-m', 'work in ' + name, cwd=path)
         if merge:
-            self.git('merge', '-q', '--no-edit', branch)
+            self.git('merge', '-q', '--no-edit', branch, KIT_NO_WORKTREE_CLEANUP='1')
         return path
 
-    def age(self, seconds=7200):
-        """Every file and folder of the repository and its worktrees, SECONDS older."""
-        stamp = time.time() - seconds
-        for folder, dirs, files in os.walk(bytes(self.main)):
-            for name in [b''] + dirs + files:
-                try:
-                    os.utime(os.path.join(folder, name) if name else folder, (stamp, stamp), follow_symlinks=False)
-                except FileNotFoundError:  # a lock file git just removed
-                    pass
+    def recent(self, path):
+        """PATH changed a minute before the script's clock."""
+        os.utime(path, (self.now - 60,) * 2, follow_symlinks=False)
 
-    def run_script(self, *args, cwd=None, idle=not PROC, age=True, **extra):
-        if age:
-            self.age()
+    def run_script(self, *args, cwd=None, idle=not PROC, proc=None, code=0, **extra):
         if idle:
             args += ('--assume-idle',)
-        result = subprocess.run(['sh', str(SCRIPT), *args], cwd=cwd or self.main,
-                                env=dict(self.env, **extra), capture_output=True)
+        command = ['sh', str(SCRIPT), *args]
+        if proc:
+            # A /proc the case builds, holding the script's own process: `exec` keeps the pid
+            # through sh and python3.
+            extra['CLEAN_WORKTREES_PROC'] = str(proc)
+            command = ['sh', '-c', 'mkdir -p "$0/$$" && ln -s "$(pwd -P)" "$0/$$/cwd" && exec "$@"', str(proc)] + command
+        result = subprocess.run(command, cwd=cwd or self.main, env=dict(self.env, **extra), capture_output=True)
         out = result.stdout.decode() + result.stderr.decode()
-        self.assertEqual(result.returncode, 0, out)
+        self.assertEqual(result.returncode, code, out)
         return out
 
-    def merge_with_hook(self, branch, cwd=None, **extra):
-        self.age()
-        merge = subprocess.run(['git', 'merge', '--no-ff', '-m', 'merge', branch], cwd=cwd or self.main,
-                               env=dict(self.env, **extra), capture_output=True, text=True)
+    def merge_with_hook(self, branch, *flags, cwd=None, **extra):
+        merge = subprocess.run(['git', 'merge', *(flags or ('--no-ff',)), '-m', 'merge', branch],
+                               cwd=cwd or self.main, env=dict(self.env, **extra), capture_output=True, text=True)
         self.assertEqual(merge.returncode, 0, merge.stderr)
         return merge.stdout + merge.stderr
 
@@ -164,44 +178,50 @@ class CleanWorktreesTests(unittest.TestCase):
     def gitdir(self, path):
         return Path(self.git('rev-parse', '--absolute-git-dir', cwd=path))
 
-    def recovery(self, out):
+    def loose(self, path):
+        """A commit on top of PATH's HEAD that no branch holds."""
+        return self.git('commit-tree', self.git('rev-parse', 'HEAD^{tree}', cwd=path), '-p', 'HEAD',
+                        '-m', 'only here', cwd=path)
+
+    def restore(self, out):
         lines = out.split('\n')
-        return lines[lines.index('         branch deleted; this command, run in the main worktree, restores '
-                                 'it at its last commit:') + 1]
+        return lines[lines.index('         this command, run in the main worktree, brings the worktree back:') + 1]
 
-    # --- removal, the log, the dry run ---------------------------------------------------
+    # --- removal, the log, the dry run, no branch deleted ------------------------------------
 
-    def test_a_merged_clean_worktree_is_removed_logged_and_recoverable(self):
+    def test_a_merged_clean_worktree_is_removed_logged_and_its_branch_kept(self):
         path = self.worktree('done')
         tip = self.git('rev-parse', 'worktree-done')
         out = self.run_script('--apply')
         self.assertRemoved(path, out)
-        self.assertEqual(self.branch('done'), '', out)
-        self.assertEqual(self.recovery(out), "           git branch 'worktree-done' %s" % tip)
+        self.assertEqual(self.git('rev-parse', 'worktree-done'), tip, out)
+        self.assertEqual(self.restore(out), "           git worktree add '%s' 'worktree-done'" % os.path.realpath(path))
         self.assertIn('clean_worktrees: removed 1, kept 1', out)
+        self.assertTrue(out.rstrip('\n').endswith(
+            'clean_worktrees: branches kept, their worktrees removed: worktree-done\n'
+            'clean_worktrees: to delete merged branches yourself: `git branch --merged main` lists them, '
+            '`git branch -d <name>` deletes one'), out)
         record = (self.main / '.git/kit-worktree-removals.log').read_text().split('\t')
         self.assertEqual(record[1:5], [os.path.realpath(path), 'refs/heads/worktree-done', tip, self.git('rev-parse', 'HEAD')])
         self.assertTrue(record[0].endswith('Z'))
 
-    def test_the_recovery_line_is_one_shell_safe_command_that_restores_the_branch(self):
-        for name, branch in (('semi', 'worktree-a;id;#'), ('quote', "worktree-it's")):
+    def test_the_restore_line_is_one_shell_safe_command_that_brings_the_worktree_back(self):
+        for name, branch in (('semi', 'worktree-a;id;#'), ("it's", "worktree-it's")):
             with self.subTest(branch=branch):
                 path = self.worktree(name, branch=branch)
-                tip = self.git('rev-parse', branch)
                 out = self.run_script('--apply')
                 self.assertRemoved(path, out)
-                command = self.recovery(out).strip()
-                self.assertTrue(command.startswith('git branch ') and command.endswith(' ' + tip), command)
+                command = self.restore(out).strip()
                 ran = subprocess.run(['sh', '-c', command], cwd=self.main, env=self.env, capture_output=True, text=True)
                 self.assertEqual(ran.returncode, 0, ran.stderr)
                 self.assertNotIn('uid=', ran.stdout + ran.stderr)
-                self.assertEqual(self.git('rev-parse', 'refs/heads/' + branch), tip)
+                self.assertEqual(self.git('symbolic-ref', 'HEAD', cwd=path), 'refs/heads/' + branch)
+                self.assertTrue((path / (name + '.txt')).is_file())
 
     def test_a_dry_run_removes_nothing_and_prints_the_apply_command(self):
         path = self.worktree('done')
         out = self.run_script()
         self.assertTrue(path.is_dir())
-        self.assertTrue(self.branch('done'))
         self.assertIn('remove .claude/worktrees/done', out)
         self.assertIn('to apply: scripts/clean_worktrees.sh --apply', out)
         self.assertFalse((self.main / '.git/kit-worktree-removals.log').exists())
@@ -212,15 +232,14 @@ class CleanWorktreesTests(unittest.TestCase):
         (self.main / 'sub/report.md').write_text('archived\n')
         (path / 'sub').mkdir()
         (path / 'sub/report.md').write_text('archived\n')
-        self.age()
         (path / 'sub').chmod(0o555)
         try:
-            out = self.run_script('--apply', age=False)
+            out = self.run_script('--apply')
         finally:
             (path / 'sub').chmod(0o755)
         self.assertIn('stopped: cannot delete the identical copy sub/report.md', out)
         self.assertNotIn('git refused', out)
-        self.assertTrue((path / 'sub/report.md').is_file() and self.branch('done'), out)
+        self.assertTrue((path / 'sub/report.md').is_file(), out)
         log = self.main / '.git/kit-worktree-removals.log'
         self.assertEqual(log.read_text().count('\n'), 1, 'no record before the first deletion')
         # The state an interrupt after the record leaves: the re-run removes it, logged again.
@@ -233,7 +252,7 @@ class CleanWorktreesTests(unittest.TestCase):
         (self.main / '.git/kit-worktree-removals.log').mkdir()
         out = self.run_script('--apply')
         self.assertIn('stopped: cannot write the removal log', out)
-        self.assertTrue(path.is_dir() and self.branch('done'), out)
+        self.assertTrue(path.is_dir(), out)
 
     def test_a_bare_main_repository_is_refused(self):
         bare = self.tmp / 'bare.git'
@@ -246,43 +265,39 @@ class CleanWorktreesTests(unittest.TestCase):
         self.assertIn('the main repository is bare', result.stdout)
         self.assertTrue(path.is_dir())
 
-    def test_a_refused_branch_delete_is_reported_and_nothing_forced(self):
-        self.git('branch', 'old')
-        path = self.worktree('done')
-        self.git('config', 'branch.worktree-done.remote', '.')
-        self.git('config', 'branch.worktree-done.merge', 'refs/heads/old')
-        out = self.run_script('--apply')
-        self.assertRemoved(path, out)
-        self.assertIn('branch worktree-done kept: git branch -d refused', out)
-        self.assertTrue(self.branch('done'), out)
-
-    def test_a_branch_checked_out_in_two_places_is_deleted_only_with_the_last(self):
-        first = self.worktree('done')
-        second = self.main / '.claude/worktrees/again'
-        self.git('worktree', 'add', '-q', '-f', str(second), 'worktree-done')
-        out = self.run_script('--apply')
-        self.assertRemoved(first, out)
-        self.assertRemoved(second, out)
-        self.assertIn('branch worktree-done kept: git branch -d refused', out)
-        self.assertEqual(self.branch('done'), '', out)
-
-    def test_the_script_runs_no_forcing_or_pruning_command(self):
+    def test_the_script_deletes_no_branch_and_runs_no_forcing_or_pruning_command(self):
         tree = ast.parse((SCRIPTS / 'clean_worktrees.py').read_text())
-        words = set()
+        words, calls = set(), []
         for call in ast.walk(tree):
             if isinstance(call, ast.Call):
-                for node in ast.walk(ast.Module(body=[ast.Expr(a) for a in call.args], type_ignores=[])):
-                    if isinstance(node, ast.Constant) and isinstance(node.value, str):
-                        words.add(node.value)
-        self.assertIn('-d', words)  # the walk sees the argument lists
-        for word in ('--force', '-f', '-D', '-ff', 'prune', 'clean', 'rm', '-rf'):
+                found = {node.value for node in ast.walk(ast.Module(body=[ast.Expr(a) for a in call.args], type_ignores=[]))
+                         if isinstance(node, ast.Constant) and isinstance(node.value, str)}
+                words |= found
+                calls.append(found)
+        self.assertIn('worktree', words)  # the walk sees the argument lists
+        self.assertIn({'git', 'worktree', 'remove'}, [c & {'git', 'worktree', 'remove'} for c in calls])
+        for found in calls:
+            self.assertFalse('branch' in found and found & {'-d', '-D', '--delete', '-m', '-M', '-f'}, found)
+            self.assertFalse('update-ref' in found or 'reflog' in found, found)
+        for word in ('--force', '-D', '-ff', 'prune', 'clean', 'rm', '-rf'):
             self.assertNotIn(word, words)
         for shell in (SCRIPT, HOOK):
             code = [line for line in shell.read_text().split('\n') if not line.lstrip().startswith('#')]
-            for word in ('rm ', '--force', 'prune', 'git clean', ' -D', 'branch -D'):
+            for word in ('rm ', '--force', 'prune', 'git clean', ' -D', 'branch -d', 'branch -D', 'branch --delete'):
                 self.assertFalse([line for line in code if word in line], (shell, word))
 
-    # --- a: which worktrees are the script's at all ---------------------------------------
+    def test_an_undone_merge_still_finds_the_worker_s_commits_in_its_branch(self):
+        # Reproduced by a reviewer: the hook removed the worktree and deleted the branch, the
+        # owner undid the merge, and no ref held the worker's commits.
+        self.hooked()
+        path = self.worktree('w', merge=False)
+        tip = self.git('rev-parse', 'worktree-w')
+        out = self.merge_with_hook('worktree-w')
+        self.assertFalse(path.exists(), out)
+        self.git('reset', '-q', '--hard', 'HEAD~1')
+        self.assertNotEqual(self.git('for-each-ref', '--contains', tip), '', out)
+
+    # --- a: which worktrees are the script's at all -------------------------------------------
 
     def test_the_main_worktree_is_untouched(self):
         out = self.run_script('--apply')
@@ -307,7 +322,7 @@ class CleanWorktreesTests(unittest.TestCase):
         self.git('worktree', 'lock', '--reason', 'kept on purpose', str(path))
         out = self.run_script('--apply')
         self.assertKept(path, out, 'locked (git worktree lock): kept on purpose')
-        self.assertNotIn('is not in main', out)
+        self.assertNotIn('not merged', out)
 
     def test_a_locked_worktree_that_lost_its_git_file_or_its_folder(self):
         # A locked worktree is never reported prunable: the checks below catch it themselves.
@@ -327,7 +342,6 @@ class CleanWorktreesTests(unittest.TestCase):
         out = self.run_script('--apply')
         self.assertIn('keep   .claude/worktrees/done\n         - missing or prunable', out)
         self.assertIn(str(path), self.git('worktree', 'list', '--porcelain'))
-        self.assertTrue(self.branch('done'))
 
     def test_a_prunable_worktree_whose_folder_remains_is_kept(self):
         # Its .git file gone, the folder resolves to MAIN: every check would judge main.
@@ -344,7 +358,49 @@ class CleanWorktreesTests(unittest.TestCase):
         self.git('init', '-q', str(path))
         self.assertKept(path, self.run_script('--apply'), 'its folder is not its own worktree')
 
-    # --- b: the worktree has ended --------------------------------------------------------------
+    def test_a_branch_or_path_that_cannot_be_printed_is_kept(self):
+        # Through a git that reports the branch with a byte that is not UTF-8, on every file
+        # system; then for real where the file system takes such a name (APFS refuses it).
+        reason = 'its path or branch name is not printable UTF-8: the command that brings it back could not be printed'
+        path = self.worktree('done')
+        out = self.run_script('--apply', SHIM='branch', **self.shim())
+        self.assertKept(path, out, reason)
+        self.git('worktree', 'add', '-q', str(self.main / '.claude/worktrees/odd'), '-b',
+                 os.fsdecode(b'worktree-\xff'), check=False)
+        odd = self.main / '.claude/worktrees/odd'
+        if odd.is_dir():
+            self.git('commit', '-q', '--allow-empty', '-m', 'work', cwd=odd)
+            self.git('merge', '-q', os.fsdecode(b'worktree-\xff'))
+            self.assertKept(odd, self.run_script('--apply'), reason)
+        line = self.main / '.claude/worktrees' / 'new\nline'
+        self.git('worktree', 'add', '-q', str(line), '-b', 'worktree-newline')
+        self.assertIn(reason, self.run_script('--apply'))
+        self.assertTrue(line.is_dir())
+
+    # --- b: finished: a commit made in it, and merged into the main branch -----------------
+
+    def test_the_main_worktree_on_a_detached_head_removes_nothing(self):
+        # Reproduced by a reviewer: merged into a detached HEAD, the hook removed the worktree
+        # and its branch; back on main, no ref held the worker's commits.
+        self.hooked()
+        path = self.worktree('w', merge=False)
+        tip = self.git('rev-parse', 'worktree-w')
+        self.git('checkout', '-q', '--detach')
+        out = self.merge_with_hook('worktree-w', '--no-edit')
+        self.git('checkout', '-q', 'main')
+        self.assertTrue(path.is_dir(), out)
+        self.assertNotEqual(self.git('for-each-ref', '--contains', tip), '', out)
+        self.assertIn("clean_worktrees: nothing removed: the main worktree's HEAD is detached", out)
+        self.git('checkout', '-q', '--detach')
+        self.assertEqual(self.run_script('--apply').strip().split('\n'),
+                         ["clean_worktrees: nothing removed: the main worktree's HEAD is detached, and a "
+                          "worktree is finished only once its branch is in the main worktree's branch"])
+
+    def test_merged_means_in_the_main_branch_not_in_its_head(self):
+        path = self.worktree('done', merge=False)
+        self.git('worktree', 'add', '-q', '--detach', str(self.tmp / 'other'))
+        self.git('merge', '-q', '--no-edit', 'worktree-done', cwd=self.tmp / 'other')
+        self.assertKept(path, self.run_script('--apply'), 'its branch is not merged')
 
     def test_a_fresh_worktree_with_no_commit_is_kept_after_a_merge(self):
         # Reproduced by a reviewer: a worker's fresh worktree was removed by the next merge.
@@ -355,157 +411,193 @@ class CleanWorktreesTests(unittest.TestCase):
         out = self.merge_with_hook('worktree-done')
         self.assertTrue(fresh.is_dir(), out)
         self.assertFalse(done.exists(), out)
-        self.assertKept(fresh, self.run_script(), 'no commits of its own')
+        self.assertKept(fresh, self.run_script(), 'no commit was made in this worktree')
+
+    def test_a_merged_branch_given_a_new_worktree_is_kept(self):
+        # Reproduced by a reviewer: the BRANCH's reflog had moved before the worktree existed.
+        first = self.worktree('feat')
+        self.git('worktree', 'remove', str(first))
+        again = self.main / '.claude/worktrees/again'
+        self.git('worktree', 'add', '-q', str(again), 'worktree-feat')
+        self.git('branch', '-c', 'worktree-feat', 'worktree-copy')
+        copy = self.main / '.claude/worktrees/copy'
+        self.git('worktree', 'add', '-q', str(copy), 'worktree-copy')
+        out = self.run_script('--apply')
+        self.assertKept(again, out, 'no commit was made in this worktree')
+        self.assertKept(copy, out)
+
+    def test_a_worker_that_only_fast_forwarded_or_merged_is_kept(self):
+        # Reproduced by a reviewer: a fast-forward moved the branch with no work done there.
+        ff = self.worktree('ff', commit=False, merge=False)
+        merged = self.worktree('merged', commit=False, merge=False)
+        self.git('commit', '-q', '--allow-empty', '-m', 'main moved')
+        self.git('merge', '-q', 'main', cwd=ff)
+        self.git('commit', '-q', '--allow-empty', '-m', 'unrelated', cwd=self.main)
+        # A commit made elsewhere, which the worker only merges.
+        self.git('branch', 'side', self.git('commit-tree', 'HEAD^{tree}', '-p', 'HEAD~1', '-m', 'side'))
+        self.git('merge', '-q', '--no-ff', '--no-edit', 'side', cwd=merged)
+        self.git('merge', '-q', '--no-edit', 'worktree-merged')
+        out = self.run_script('--apply')
+        self.assertKept(ff, out, 'no commit was made in this worktree')
+        self.assertKept(merged, out)
+
+    def test_which_reflog_subjects_count_as_a_commit_made_here(self):
+        # Every subject read from what this git really writes; one case per operation.
+        path = self.worktree('w', merge=False)
+        run = lambda *args, **extra: self.git(*args, cwd=path, check=False, **extra)  # noqa: E731
+        run('checkout', '-q', '-b', 'side')
+        for name in ('s', 't', 'u'):
+            (path / name).write_text(name + '\n')
+            run('add', name)
+            run('commit', '-q', '-m', name)
+        run('checkout', '-q', 'worktree-w')
+        run('commit', '-q', '--amend', '-m', 'amended')
+        run('cherry-pick', 'side~2')
+        run('revert', '--no-edit', 'HEAD')
+        run('reset', '-q', '--hard', 'side~3')
+        run('cherry-pick', '--ff', 'side~2')
+        run('merge', '-q', '--ff-only', 'side')
+        run('rebase', '-q', '--force-rebase', 'HEAD~2')
+        run('rebase', '-q', 'HEAD~1')
+        run('rebase', '-q', '-i', '--force-rebase', 'HEAD~3', GIT_EDITOR='true',
+            GIT_SEQUENCE_EDITOR="sed -i.bak -e '1s/^pick/reword/' -e '2s/^pick/squash/' -e '3s/^pick/fixup/'")
+        run('format-patch', '-q', '-1', 'side', '-o', str(self.tmp / 'patch'))
+        run('reset', '-q', '--hard', 'side~1')
+        run('am', '-q', *[str(p) for p in (self.tmp / 'patch').iterdir()])
+        (path / 'a').write_text('mine\n')
+        run('commit', '-q', '-am', 'mine')
+        run('checkout', '-q', '-b', 'other', 'HEAD~1')
+        (path / 'a').write_text('theirs\n')
+        run('commit', '-q', '-am', 'theirs')
+        run('merge', 'worktree-w')
+        (path / 'a').write_text('both\n')
+        run('add', 'a')
+        run('commit', '-q', '--no-edit')
+        run('checkout', '-q', 'worktree-w')
+        run('rebase', 'other^1')
+        (path / 'a').write_text('again\n')
+        run('add', 'a')
+        run('rebase', '--continue', GIT_EDITOR='true')
+        run('checkout', '-q', '-b', 'extra', 'HEAD~1')
+        (path / 'x').write_text('x\n')
+        run('add', 'x')
+        run('commit', '-q', '-m', 'x')
+        run('checkout', '-q', 'worktree-w')
+        run('merge', '-q', '--no-ff', '--no-edit', 'extra')
+        counted = ('commit:', 'commit (amend):', 'commit (merge):', 'cherry-pick: s', 'revert:', 'rebase (pick):',
+                   'rebase (reword):', 'rebase (squash):', 'rebase (fixup):', 'rebase (continue):', 'am:')
+        not_counted = ('reset:', 'checkout:', 'cherry-pick: fast-forward', 'merge side: Fast-forward', 'rebase (start):',
+                       'rebase (finish):', 'merge extra: Merge made by')
+        seen = set()
+        for line in (self.gitdir(path) / 'logs/HEAD').read_bytes().split(b'\n')[1:-1]:
+            subject = line.partition(b'\t')[2].decode()
+            kind = [p for p in counted + not_counted if subject.startswith(p)]
+            self.assertEqual(len(kind), 1, subject)
+            seen.add(kind[0])
+            with self.subTest(subject=subject):
+                self.assertIs(clean_worktrees.made_here(line), kind[0] in counted)
+        self.assertEqual(seen, set(counted + not_counted))
+        self.assertFalse(clean_worktrees.made_here(b''))
+
+    def test_a_worktree_without_its_own_head_reflog_is_kept(self):
+        path = self.worktree('done')
+        (self.gitdir(path) / 'logs/HEAD').unlink()
+        self.assertKept(path, self.run_script('--apply'), 'no commit was made in this worktree')
 
     def test_a_detached_worktree_is_kept(self):
         path = self.main / '.claude/worktrees/detached'
         self.git('worktree', 'add', '-q', '--detach', str(path))
         self.assertKept(path, self.run_script('--apply'), 'detached HEAD: remove it by hand')
 
-    def test_a_branch_without_a_reflog_from_its_creation_is_kept(self):
-        path = self.worktree('nolog')
-        (self.main / '.git/logs/refs/heads/worktree-nolog').unlink()
-        self.assertKept(path, self.run_script('--apply'), 'its branch has no reflog')
-        self.git('update-ref', '-m', 'made by hand', 'refs/heads/worktree-byhand', 'HEAD')
-        other = self.main / '.claude/worktrees/byhand'
-        self.git('worktree', 'add', '-q', str(other), 'worktree-byhand')
-        self.git('commit', '-q', '--allow-empty', '-m', 'work', cwd=other)
-        self.git('merge', '-q', 'worktree-byhand')
-        self.assertKept(other, self.run_script('--apply'), 'does not begin where the branch was created')
+    def test_an_unmerged_or_squash_merged_branch_is_kept(self):
+        path = self.worktree('done', merge=False)
+        self.assertKept(path, self.run_script('--apply'), 'its branch is not merged')
+        self.git('merge', '-q', '--squash', 'worktree-done')
+        self.git('commit', '-q', '-m', 'squashed')
+        self.assertKept(path, self.run_script('--apply'), 'its branch is not merged')
 
-    def test_a_non_utf8_branch_name_is_kept(self):
-        self.git('worktree', 'add', '-q', str(self.main / '.claude/worktrees/odd'), '-b',
-                 os.fsdecode(b'worktree-\xff'), check=False)
-        if not (self.main / '.claude/worktrees/odd').is_dir():
-            self.skipTest('this file system refuses a non-UTF-8 ref name (APFS)')
-        path = self.main / '.claude/worktrees/odd'
-        self.git('commit', '-q', '--allow-empty', '-m', 'work', cwd=path)
-        self.git('merge', '-q', os.fsdecode(b'worktree-\xff'))
-        self.assertKept(path, self.run_script('--apply'), 'its branch name is not UTF-8')
+    # --- c and h: the quiet period ----------------------------------------------------------
 
-    # --- c: the quiet period ----------------------------------------------------------------------
-
-    def test_a_recent_change_in_its_git_directory_or_its_files_keeps_it(self):
+    def test_a_recent_change_anywhere_in_its_git_directory_or_its_files_keeps_it(self):
         path = self.worktree('done')
         gitdir = self.gitdir(path)
         (path / 'build').mkdir()
         (path / 'build/o').write_text('o\n')
         self.git('reset', '-q', 'HEAD', cwd=path)  # writes ORIG_HEAD
+        for name in ('FETCH_HEAD', 'check-build.log'):
+            (gitdir / name).write_text('\n')
         self.disposable('build\n')
-        recent = [gitdir / 'HEAD', gitdir / 'index', gitdir / 'logs/HEAD', gitdir / 'ORIG_HEAD',
-                  self.main / '.git/logs/refs/heads/worktree-done', path / 'a', path]
-        for touched in recent:
+        for touched in (gitdir / 'HEAD', gitdir / 'index', gitdir / 'logs/HEAD', gitdir / 'ORIG_HEAD',
+                        gitdir / 'FETCH_HEAD', gitdir / 'check-build.log', gitdir, path / 'a', path,
+                        path / 'build/o', path / 'build'):
             with self.subTest(touched=touched):
-                self.assertTrue(touched.exists(), touched)
-                self.age()
-                os.utime(touched, None)
-                self.assertKept(path, self.run_script('--apply', age=False), 'quiet period: ',
-                                'qualifies in 60 min (quiet-minutes=60, a margin, not a proof)')
-        self.age()
-        os.utime(path / 'build/o', None)  # inside a disposable folder: not counted, nor the folder
-        (path / 'build/new.o').write_text('new\n')
-        self.assertRemoved(path, self.run_script('--apply', age=False))
+                self.recent(touched)
+                self.assertKept(path, self.run_script('--apply'), 'quiet period: ',
+                                'qualifies in 59 min (quiet-minutes=60, a margin, not a proof)')
+                os.utime(touched, (self.now - 7200,) * 2, follow_symlinks=False)
+        self.assertRemoved(path, self.run_script('--apply'))
+
+    def test_a_ctime_counts_when_the_mtime_was_kept(self):
+        path = self.worktree('done')
+        for target in (path / 'a', self.gitdir(path) / 'HEAD'):
+            with self.subTest(target=target):
+                for folder, dirs, files in os.walk(path):
+                    for name in [''] + dirs + files:
+                        os.utime(os.path.join(folder, name), (time.time() - 7200,) * 2, follow_symlinks=False)
+                for folder, dirs, files in os.walk(self.gitdir(path)):
+                    for name in [''] + dirs + files:
+                        os.utime(os.path.join(folder, name), (time.time() - 7200,) * 2, follow_symlinks=False)
+                # Every mtime two hours old, every ctime from just now: ten minutes on, the
+                # ctime is within the period.
+                out = self.run_script(CLEAN_WORKTREES_NOW=str(time.time() + 600))
+                self.assertKept(path, out, 'quiet period: ')
+        self.assertIn('remove .claude/worktrees/done', self.run_script())
 
     def test_a_future_time_counts_as_recent(self):
         path = self.worktree('done')
-        self.age()
-        os.utime(path / 'a', (time.time() + 86400,) * 2)
-        self.assertKept(path, self.run_script('--apply', age=False), 'quiet period: a file in it')
+        os.utime(path / 'a', (self.now + 86400,) * 2)
+        self.assertKept(path, self.run_script('--apply'), 'quiet period: a file in it')
 
     def test_quiet_minutes_is_read_from_the_disposable_list_and_a_low_value_refused(self):
         path = self.worktree('done')
         self.disposable('quiet-minutes=15\n')
-        self.age(60)
-        out = self.run_script(age=False)
+        out = self.run_script(CLEAN_WORKTREES_NOW=str(time.time() + 60))
         self.assertKept(path, out, 'qualifies in 14 min (quiet-minutes=15')
-        self.age(16 * 60)
-        self.assertIn('remove .claude/worktrees/done', self.run_script(age=False))
+        self.assertIn('remove .claude/worktrees/done', self.run_script(CLEAN_WORKTREES_NOW=str(time.time() + 16 * 60)))
         for line in ('quiet-minutes=5', 'quiet-minutes=x', 'quiet-minutes = 30', 'quiet-minutes=30x', 'quiet-minutes=9'):
             with self.subTest(line=line):
                 self.disposable(line + '\n')
-                self.age(16 * 60)
-                out = self.run_script(age=False)
+                out = self.run_script(CLEAN_WORKTREES_NOW=str(time.time() + 16 * 60))
                 self.assertIn('refused .claude/worktree-disposable line %s (quiet-minutes takes a whole '
                               'number of at least 10; 60 applies)' % line, out)
                 self.assertKept(path, out, 'quiet-minutes=60')
 
-    # --- d: nothing only it holds -------------------------------------------------------------
-
-    def test_an_unmerged_commit_is_kept(self):
-        path = self.worktree('done', merge=False)
-        self.assertKept(path, self.run_script('--apply'), 'is not in main')
-
-    def test_a_squash_merged_branch_is_kept(self):
-        path = self.worktree('done', merge=False)
-        self.git('merge', '-q', '--squash', 'worktree-done')
-        self.git('commit', '-q', '-m', 'squashed')
-        self.assertKept(path, self.run_script('--apply'), 'a squash-merged or rebased branch')
-
-    def test_a_commit_dropped_by_a_reset_is_kept(self):
-        # Reproduced by a reviewer: HEAD was in main, the dropped commit only in the reflogs.
+    def test_a_run_changes_no_time_it_reads_and_two_runs_agree(self):
         path = self.worktree('done')
-        (path / 'later.txt').write_text('later\n')
-        self.git('add', 'later.txt', cwd=path)
-        self.git('commit', '-q', '-m', 'dropped', cwd=path)
-        dropped = self.git('rev-parse', 'HEAD', cwd=path)
-        self.git('reset', '-q', '--hard', 'HEAD~1', cwd=path)
-        self.assertKept(path, self.run_script('--apply'), 'commit %s is not in main' % dropped[:12])
-        log = self.gitdir(path) / 'logs/HEAD'
-        log.write_text(log.read_text().split('\n')[0] + '\n')  # now only the branch's reflog names it
-        self.assertKept(path, self.run_script('--apply'), 'commit %s is not in main' % dropped[:12])
+        (path / 'mine.md').write_text('only here\n')
 
-    def test_a_detached_worktree_with_a_dropped_commit_names_it(self):
-        path = self.main / '.claude/worktrees/detached'
-        self.git('worktree', 'add', '-q', '--detach', str(path))
-        self.git('commit', '-q', '--allow-empty', '-m', 'dropped', cwd=path)
-        dropped = self.git('rev-parse', 'HEAD', cwd=path)
-        self.git('checkout', '-q', 'HEAD~1', cwd=path)
-        self.assertKept(path, self.run_script('--apply', '--all-reasons'), 'detached HEAD: remove it by hand',
-                        'commit %s is not in main' % dropped[:12])
+        def times():
+            return {(root, rel): (info.st_mtime_ns, info.st_ctime_ns)
+                    for root in (bytes(path), bytes(self.gitdir(path)))
+                    for rel, info, _ in clean_worktrees.walk(root)}
+        before = times()
+        first = self.run_script('--all-reasons', idle=False)
+        self.assertEqual(times(), before)
+        self.assertEqual(self.run_script('--all-reasons', idle=False), first)
 
-    def test_a_commit_held_only_by_a_worktree_ref_is_kept(self):
-        for ref in ('refs/worktree/keep', 'refs/bisect/bad'):
-            with self.subTest(ref=ref):
-                path = self.worktree(ref.split('/')[1])
-                tree = self.git('rev-parse', 'HEAD^{tree}', cwd=path)
-                loose = self.git('commit-tree', tree, '-p', 'HEAD', '-m', 'only in a ref', cwd=path)
-                self.git('update-ref', ref, loose, cwd=path)
-                self.assertKept(path, self.run_script('--apply'), 'commit %s is not in main' % loose[:12])
-
-    def test_a_worktree_without_a_head_reflog_is_kept(self):
-        path = self.worktree('done')
-        (self.gitdir(path) / 'logs/HEAD').unlink()
-        self.assertKept(path, self.run_script('--apply'), 'its HEAD has no reflog')
-
-    def test_a_head_no_reflog_names_is_still_checked(self):
-        path = self.main / '.claude/worktrees/detached'
-        self.git('worktree', 'add', '-q', '--detach', str(path))
-        self.git('commit', '-q', '--allow-empty', '-m', 'unmerged', cwd=path)
-        log = self.gitdir(path) / 'logs/HEAD'
-        log.write_text(log.read_text().split('\n')[0] + '\n')  # the reflog names only the start
-        self.assertKept(path, self.run_script('--apply', '--all-reasons'),
-                        'commit %s is not in main' % self.git('rev-parse', 'HEAD', cwd=path)[:12])
-
-    def test_a_worktree_config_is_kept(self):
-        path = self.worktree('done')
-        (self.gitdir(path) / 'config.worktree').write_text('[user]\n\tname = x\n')
-        self.assertKept(path, self.run_script('--apply'), 'it has its own config')
-        (self.gitdir(path) / 'config.worktree').write_text('')
-        self.assertRemoved(path, self.run_script('--apply'))
-
-    # --- e: an operation in progress ---------------------------------------------------------
+    # --- d: an operation in progress -------------------------------------------------------
 
     def test_a_rebase_or_bisect_in_progress_is_kept(self):
         rebase, bisect = self.worktree('rebase'), self.worktree('bisect')
         self.git('rebase', '--exec', 'false', 'HEAD~1', cwd=rebase, check=False)
         self.git('bisect', 'start', cwd=bisect)
-        out = self.run_script('--apply', '--all-reasons')  # a rebase detaches HEAD, a reason found first
-        self.assertKept(rebase, out, 'an operation is in progress: rebase-merge')
+        out = self.run_script('--apply')
+        self.assertKept(rebase, out, 'detached HEAD')  # a rebase detaches HEAD
         self.assertKept(bisect, out, 'an operation is in progress: BISECT_START')
 
     def test_each_operation_marker_is_kept(self):
         path = self.worktree('done')
-        for marker in ('CHERRY_PICK_HEAD', 'REVERT_HEAD', 'sequencer', 'MERGE_HEAD', 'rebase-apply'):
+        for marker in ('CHERRY_PICK_HEAD', 'REVERT_HEAD', 'sequencer', 'MERGE_HEAD', 'rebase-apply', 'rebase-merge'):
             with self.subTest(marker=marker):
                 (self.gitdir(path) / marker).write_text('x\n')
                 self.assertKept(path, self.run_script('--apply'), 'an operation is in progress: ' + marker)
@@ -519,21 +611,30 @@ class CleanWorktreesTests(unittest.TestCase):
         self.git('checkout', '-q', 'worktree-done', cwd=path)
         (path / 'a').write_text('mine\n')
         self.git('commit', '-q', '-am', 'mine', cwd=path)
-        self.git('merge', 'side', cwd=path, check=False)
+        self.git('merge', '-q', 'side', cwd=path, check=False)
         out = self.run_script('--apply', '--all-reasons')
-        self.assertKept(path, out, 'an operation is in progress: MERGE_HEAD', 'an unresolved index: a')
+        self.assertKept(path, out, 'an operation is in progress: MERGE_HEAD', 'tracked change, unmerged: a',
+                        'an unresolved index: a')
 
-    # --- f: in use -----------------------------------------------------------------------------
+    # --- e: in use -------------------------------------------------------------------------
 
-    def test_a_process_working_inside_is_kept(self):
+    def test_a_process_working_inside_is_kept_by_the_real_listing(self):
         path = self.worktree('done')
         (path / 'deep').mkdir()
         sleeper = subprocess.Popen(['sleep', '60'], cwd=path / 'deep')
         try:
-            self.assertKept(path, self.run_script('--apply', idle=False), 'in use: process %d works inside it' % sleeper.pid)
+            out = self.run_script('--apply', idle=False)
+            # What this host really did, for the CI log of each platform.
+            listed = [line for line in out.split('\n') if line.startswith('clean_worktrees: processes listed by')]
+            sys.stderr.write('\n[liveness on %s] %s\n' % (sys.platform, listed[0] if listed else out))
+            self.assertKept(path, out, 'in use: process %d works inside it' % sleeper.pid)
+            self.assertEqual(len(listed), 1, out)
+            self.assertTrue(listed[0].startswith('clean_worktrees: processes listed by %s'
+                                                 % ('/proc' if PROC else 'lsof (exit ')), out)
             if PROC and shutil.which('lsof'):  # the lsof path, as on macOS
-                self.assertKept(path, self.run_script('--apply', idle=False, CLEAN_WORKTREES_PROC=str(self.tmp / 'no-proc')),
-                                'in use: process %d works inside it' % sleeper.pid)
+                out = self.run_script('--apply', idle=False, CLEAN_WORKTREES_PROC=str(self.tmp / 'no-proc'))
+                self.assertKept(path, out, 'in use: process %d works inside it' % sleeper.pid,
+                                'clean_worktrees: processes listed by lsof (exit 0)')
         finally:
             sleeper.kill()
             sleeper.wait()
@@ -543,20 +644,41 @@ class CleanWorktreesTests(unittest.TestCase):
         path = self.worktree('done')
         self.stub('lsof', '#!/bin/sh\necho "lsof: no permission" >&2\nexit 1\n')
         out = self.run_script('--apply', idle=False, CLEAN_WORKTREES_PROC=str(self.tmp / 'no-proc'))
-        self.assertKept(path, out, 'cannot see which processes work in it (`lsof -a -d cwd -F pn` failed: lsof: no '
-                        'permission)', 'scripts/clean_worktrees.sh --apply --assume-idle')
+        self.assertKept(path, out, 'cannot see which processes work in it (no /proc (No such file or directory); '
+                        '`lsof -a -d cwd -F pn` failed (exit 1): lsof: no permission)',
+                        'scripts/clean_worktrees.sh --apply --assume-idle')
         out = self.run_script('--apply', idle=True, CLEAN_WORKTREES_PROC=str(self.tmp / 'no-proc'))
         self.assertRemoved(path, out)
 
-    def test_a_proc_that_is_not_this_process_s_is_not_read(self):
+    def test_lsof_is_trusted_only_when_it_shows_this_script_and_warns_only_as_documented(self):
+        path = self.worktree('done')
+        noproc = dict(idle=False, CLEAN_WORKTREES_PROC=str(self.tmp / 'no-proc'))
+        inside = 'printf "p99999\\nn%s\\n"\n' % os.path.realpath(path)
+        for stub, reason in (
+                (LSOF_ME + inside + WARNING + 'exit 1\n', 'in use: process 99999 works inside it'),
+                (LSOF_ME + inside + 'exit 1\n', 'in use: process 99999 works inside it'),
+                (LSOF_ME + inside + WARNING + 'echo "lsof: something else" >&2\nexit 1\n',
+                 '`lsof -a -d cwd -F pn` failed (exit 1): lsof: something else'),
+                ('printf "p1\\nn/\\n"\n' + inside, '`lsof -a -d cwd -F pn` (exit 0) does not show this process'),
+                ('printf "p%s\\nn/elsewhere\\n" "$PPID"\n', '(exit 0) does not show this process'),
+                (LSOF_ME + 'printf "tREG\\n"\n', '`lsof` printed a record this script does not know: tREG')):
+            with self.subTest(stub=stub):
+                self.stub('lsof', '#!/bin/sh\n' + stub)
+                self.assertKept(path, self.run_script('--apply', **noproc), reason)
+        self.stub('lsof', '#!/bin/sh\n' + LSOF_ME + WARNING + 'exit 1\n')
+        out = self.run_script('--apply', **noproc)
+        self.assertRemoved(path, out)
+        self.assertIn('clean_worktrees: processes listed by lsof (exit 1), 0 could not be inspected', out)
+
+    def test_a_proc_that_does_not_show_this_script_is_not_trusted(self):
         path = self.worktree('done')
         proc = self.tmp / 'proc'
-        for pid, cwd in (('self', self.tmp), ('11', path)):
-            (proc / pid).mkdir(parents=True)
-            (proc / pid / 'cwd').symlink_to(os.path.realpath(cwd))
+        (proc / '11').mkdir(parents=True)
+        (proc / '11/cwd').symlink_to(os.path.realpath(path))
         self.stub('lsof', '#!/bin/sh\nexit 1\n')
-        self.assertKept(path, self.run_script('--apply', idle=False, CLEAN_WORKTREES_PROC=str(proc)),
-                        'cannot see which processes work in it (`lsof -a -d cwd -F pn` failed: exit 1)')
+        out = self.run_script('--apply', idle=False, CLEAN_WORKTREES_PROC=str(proc))
+        self.assertKept(path, out, 'cannot see which processes work in it (/proc does not show this process; '
+                        '`lsof -a -d cwd -F pn` (exit 1) does not show this process with its working directory)')
 
     def test_without_lsof_or_tmux_installed(self):
         path = self.worktree('done')
@@ -566,27 +688,34 @@ class CleanWorktreesTests(unittest.TestCase):
         for tool in ('git', 'sh', 'dirname'):
             (bare / tool).symlink_to(shutil.which(tool, path=self.env['PATH']))
         env = dict(PATH=str(bare), CLEAN_WORKTREES_PROC=str(self.tmp / 'no-proc'))
-        self.assertKept(path, self.run_script('--apply', idle=False, **env),
-                        'cannot see which processes work in it (no /proc and no lsof here)')
+        self.assertKept(path, self.run_script('--apply', idle=False, **env), ', and no lsof here)')
         self.assertRemoved(path, self.run_script('--apply', idle=True, **env))
 
     def test_an_unreadable_process_is_counted_and_reported_not_silently_skipped(self):
         path = self.worktree('done')
         proc = self.tmp / 'proc'
         real = os.path.realpath(path)
-        for pid, cwd in (('self', os.path.realpath(self.main)), ('10', os.path.realpath(self.tmp)),
-                         ('11', real + '/sub'), ('12', None), ('13', real), ('14', real + '-sibling')):
+        for pid, cwd in (('10', os.path.realpath(self.tmp)), ('11', real + '/sub'), ('12', None), ('13', real),
+                         ('14', real + '-sibling')):
             (proc / pid).mkdir(parents=True)
             if cwd:
                 (proc / pid / 'cwd').symlink_to(cwd)
         (proc / '12').chmod(0)
         try:
-            out = self.run_script('--apply', idle=False, CLEAN_WORKTREES_PROC=str(proc))
+            out = self.run_script('--apply', idle=False, proc=proc)
+            self.assertKept(path, out, 'in use: process 11, 13 works inside it\n')
+            self.assertIn('clean_worktrees: processes listed by /proc, 1 could not be inspected', out)
+            self.assertNotIn('process 10', out)
+            shutil.rmtree(proc / '11')
+            shutil.rmtree(proc / '13')
+            for child in proc.iterdir():  # the previous run's own entry
+                if child.name not in ('10', '12', '14'):
+                    shutil.rmtree(child)
+            out = self.run_script('--apply', '--quiet', idle=False, proc=proc)
         finally:
             (proc / '12').chmod(0o755)
-        self.assertKept(path, out, 'in use: process 11, 13 works inside it\n')
+        self.assertRemoved(path, out)
         self.assertIn('clean_worktrees: 1 processes could not be inspected', out)
-        self.assertNotIn('process 10', out)
 
     def test_the_lsof_parser_reads_both_platforms_and_refuses_the_unknown(self):
         cwds, unseen = clean_worktrees.parse_lsof(LSOF_LINUX)
@@ -625,30 +754,176 @@ class CleanWorktreesTests(unittest.TestCase):
             self.assertKept(path, self.run_script('--apply'), 'in use: the gate holds its lock')
         self.assertRemoved(path, self.run_script('--apply'))
 
-    # --- g: the index and git filters ----------------------------------------------------------
+    # --- f: nothing only its git directory holds ------------------------------------------
 
-    def tracked(self, change, reason, name='done'):
+    def test_a_commit_dropped_by_a_reset_is_kept(self):
+        # Reproduced by a reviewer: HEAD was in main, the dropped commit only in the reflogs.
+        path = self.worktree('done')
+        (path / 'later.txt').write_text('later\n')
+        self.git('add', 'later.txt', cwd=path)
+        self.git('commit', '-q', '-m', 'dropped', cwd=path)
+        dropped = self.git('rev-parse', 'HEAD', cwd=path)
+        self.git('reset', '-q', '--hard', 'HEAD~1', cwd=path)
+        self.assertKept(path, self.run_script('--apply'), '%s is held only by its git directory' % dropped[:12],
+                        'it is not in main; check and remove it by hand')
+
+    def test_a_commit_held_only_by_a_worktree_ref_or_its_reflog_is_kept(self):
+        for ref, holder in (('refs/worktree/keep', 'refs/worktree/keep'), ('refs/bisect/bad', 'refs/bisect/bad'),
+                            ('refs/rewritten/saved', 'refs/rewritten/saved'),
+                            ('refs/worktree/moved', 'logs/refs/worktree/moved')):
+            with self.subTest(ref=ref):
+                path = self.worktree(ref.split('/')[-1])
+                loose = self.loose(path)
+                self.git('update-ref', '--create-reflog', ref, loose, cwd=path)
+                if holder.startswith('logs/'):
+                    self.git('update-ref', ref, 'HEAD', cwd=path)  # now only its reflog names it
+                self.assertKept(path, self.run_script('--apply'),
+                                '%s is held only by its git directory (%s)' % (loose[:12], holder))
+
+    def test_a_commit_only_in_the_old_id_column_of_a_reflog_is_kept(self):
+        # Reproduced by a reviewer: `reflog delete` without --rewrite left the commit only as
+        # the OLD id of the next entry.
+        path = self.worktree('done')
+        self.git('checkout', '-q', '--detach', cwd=path)
+        self.git('commit', '-q', '--allow-empty', '-m', 'detached work', cwd=path)
+        loose = self.git('rev-parse', 'HEAD', cwd=path)
+        self.git('checkout', '-q', 'worktree-done', cwd=path)
+        self.git('reflog', 'delete', 'HEAD@{1}', cwd=path)
+        log = self.gitdir(path) / 'logs/HEAD'
+        text = log.read_text().replace('moving from %s to' % loose, 'moving from elsewhere to')
+        log.write_text(text)
+        self.assertEqual(text.count(loose), 1)
+        self.assertTrue(re.search(r'\n%s [0-9a-f]{40} ' % loose, text), text)
+        self.assertKept(path, self.run_script('--apply'), '%s is held only by its git directory (logs/HEAD)' % loose[:12])
+
+    def test_any_file_of_its_git_directory_is_read_for_ids(self):
+        path = self.worktree('done')
+        gitdir = self.gitdir(path)
+        loose = self.loose(path)
+        blob = subprocess.run(['git', 'hash-object', '-w', '--stdin'], cwd=path, env=self.env, input=b'only here\n',
+                              capture_output=True).stdout.decode().strip()
+        for name, text, reason in (
+                ('SOMETHING_HEAD', 'x %s y\n' % loose, '%s is held only by its git directory (SOMETHING_HEAD)' % loose[:12]),
+                ('deep/state', loose.upper() + '\n' + loose + '\n', 'held only by its git directory (deep/state)'),
+                ('BLOB', blob + '\n', '%s is held only by its git directory (BLOB)' % blob[:12])):
+            with self.subTest(name=name):
+                (gitdir / name).parent.mkdir(exist_ok=True)
+                (gitdir / name).write_text(text)
+                self.assertKept(path, self.run_script('--apply'), reason)
+                (gitdir / name).unlink()
+        # An id that names no object, one embedded in a longer hex run, and the gate's build
+        # log, which may print any id: none of them keeps it.
+        (gitdir / 'NOTE').write_text('%s\n%sab\n' % ('1' * 40, loose))
+        (gitdir / 'check-build.log').write_text(loose + '\n')
+        self.assertRemoved(path, self.run_script('--apply'))
+
+    def test_a_git_directory_file_it_cannot_read_keeps_it(self):
+        path = self.worktree('done')
+        gitdir = self.gitdir(path)
+        (gitdir / 'blob').write_bytes(b'ab\0cd')
+        self.assertKept(path, self.run_script('--apply'), 'its git directory holds blob, a binary file')
+        (gitdir / 'blob').unlink()
+        os.mkfifo(gitdir / 'pipe')
+        self.assertKept(path, self.run_script('--apply'), 'its git directory holds pipe, not a regular file')
+        (gitdir / 'pipe').unlink()
+        (gitdir / 'secret').write_text('x\n')
+        (gitdir / 'secret').chmod(0)
+        try:
+            if not os.access(gitdir / 'secret', os.R_OK):  # root reads it anyway
+                self.assertKept(path, self.run_script('--apply'), 'cannot read secret in its git directory')
+        finally:
+            (gitdir / 'secret').chmod(0o644)
+
+    def test_another_ref_backend_or_a_worktree_config_is_kept(self):
+        path = self.worktree('done')
+        # Through a git that answers for it: a repository of format 0 refuses the setting.
+        self.assertKept(path, self.run_script('--apply', SHIM='reftable', **self.shim()),
+                        'its refs are stored by the reftable backend')
+        (self.gitdir(path) / 'config.worktree').write_text('[user]\n\tname = x\n')
+        self.assertKept(path, self.run_script('--apply'), 'it has its own config')
+        (self.gitdir(path) / 'config.worktree').write_text('')
+        self.assertRemoved(path, self.run_script('--apply'))
+
+    # --- g: tracked content, by bytes --------------------------------------------------------
+
+    def tracked(self, change, *reasons, name='done', flags=('--all-reasons',)):
         path = self.worktree(name)
         change(path)
-        self.assertKept(path, self.run_script('--apply'), reason)
+        self.assertKept(path, self.run_script('--apply', *flags), *reasons)
+        return path
 
     def test_a_staged_change_is_kept(self):
         def change(path):
             (path / 'a').write_text('staged\n')
             self.git('add', 'a', cwd=path)
-        self.tracked(change, 'tracked change, staged: a')
+        self.tracked(change, 'tracked change, staged: a', 'its index differs from its HEAD commit')
 
-    def test_a_modified_file_is_kept(self):
-        self.tracked(lambda path: (path / 'a').write_text('changed\n'), 'tracked change, modified: a')
+    def test_a_modified_or_deleted_file_is_kept(self):
+        self.tracked(lambda path: (path / 'a').write_text('changed\n'), 'tracked change, modified: a',
+                     'not byte for byte what its index records')
+        self.tracked(lambda path: (path / 'a').unlink(), 'tracked change, deleted: a', 'its executable bit): a',
+                     name='gone')
 
-    def test_a_deleted_file_is_kept(self):
-        self.tracked(lambda path: (path / 'a').unlink(), 'tracked change, deleted: a')
+        def folder(path):
+            (path / 'a').unlink()
+            (path / 'a').mkdir()
+        self.tracked(folder, 'its executable bit): a', name='folder')
+
+        def link(path):
+            (path / 'a').unlink()
+            (self.tmp / 'same').write_text('a\n')
+            (path / 'a').symlink_to(self.tmp / 'same')  # the same bytes, but not a regular file
+        self.tracked(link, 'its executable bit): a', name='link')
+
+
+    def test_a_tracked_file_reached_through_a_symlinked_folder_is_not_the_tracked_file(self):
+        (self.main / 'sub').mkdir()
+        (self.main / 'sub/f').write_text('f\n')
+        self.git('add', 'sub/f')
+        self.git('commit', '-q', '-m', 'sub')
+
+        def change(path):
+            os.rename(path / 'sub', self.tmp / 'sub')  # the same bytes, now behind a symlink
+            (path / 'sub').symlink_to(self.tmp / 'sub')
+        self.tracked(change, 'its executable bit): sub/f')
 
     def test_an_intent_to_add_is_kept(self):
         def change(path):
-            (path / 'n').write_text('n\n')
+            (path / 'n').write_text('')
             self.git('add', '-N', 'n', cwd=path)
-        self.tracked(change, 'tracked change, intent-to-add: n')
+        self.tracked(change, 'tracked change, intent-to-add: n', flags=())
+
+    def test_an_edit_git_s_stat_cache_hides_is_kept(self):
+        # Reproduced by a reviewer: same size, mtime put back, core.checkStat=minimal and
+        # core.trustctime=false: `git status` and `git worktree remove` both called it clean.
+        def change(path):
+            self.git('config', 'core.checkStat', 'minimal')
+            self.git('config', 'core.trustctime', 'false')
+            old = time.time() - 3600
+            os.utime(path / 'a', (old, old))
+            self.git('update-index', '--refresh', cwd=path)
+            (path / 'a').write_text('b\n')
+            os.utime(path / 'a', (old, old))
+            self.assertEqual(self.git('status', '--porcelain', cwd=path), '')
+        # `git status` with the stat settings forced back misses it too when the edit falls in
+        # the second the index was refreshed in (git compares whole seconds): the bytes catch it.
+        path = self.tracked(change, 'not byte for byte what its index records', flags=())
+        self.assertEqual((path / 'a').read_text(), 'b\n')
+
+    def test_a_mode_only_or_line_ending_only_change_is_kept(self):
+        def mode(path):
+            self.git('config', 'core.fileMode', 'false')
+            (path / 'a').chmod(0o755)
+            self.assertEqual(self.git('status', '--porcelain', cwd=path), '')
+        self.tracked(mode, 'tracked change, modified: a', 'its executable bit): a', name='mode')
+        self.git('config', '--unset', 'core.fileMode')
+
+        def crlf(path):
+            self.git('config', 'core.autocrlf', 'input')
+            (path / 'a').write_bytes(b'a\r\n')
+            self.git('add', 'a', cwd=path)  # the index takes it as unchanged: git converts to a\n
+            self.assertEqual(self.git('status', '--porcelain', cwd=path), '')
+        self.tracked(crlf, 'not byte for byte what its index records', name='crlf', flags=())
 
     def test_an_assume_unchanged_or_skip_worktree_edit_git_does_not_report_is_kept(self):
         for flag in ('--assume-unchanged', '--skip-worktree'):
@@ -656,21 +931,11 @@ class CleanWorktreesTests(unittest.TestCase):
                 def change(path):
                     self.git('update-index', flag, 'a', cwd=path)
                     (path / 'a').write_text('hidden from git status\n')
-                self.tracked(change, 'index entries git does not compare (skip-worktree or assume-unchanged): a',
-                             name=flag.strip('-'))
-
-    def test_a_submodule_is_kept(self):
-        path = self.worktree('done', merge=False)
-        head = self.git('rev-parse', 'HEAD')
-        self.git('update-index', '--add', '--cacheinfo', '160000,%s,sub' % head, cwd=path)
-        self.git('commit', '-q', '-m', 'a submodule', cwd=path)
-        self.git('merge', '-q', 'worktree-done')
-        self.assertKept(path, self.run_script('--apply'), 'a submodule, whose state this script cannot judge: sub')
+                self.tracked(change, 'not byte for byte what its index records', name=flag.strip('-'), flags=())
 
     def test_a_clean_filter_that_hides_an_edit_is_kept(self):
         (self.main / '.gitattributes').write_text('notes.txt filter=strip\n')
         (self.main / 'notes.txt').write_text('public\n')
-        (self.main / 'b').write_text('b\n')
         self.git('add', '-A')
         self.git('commit', '-q', '-m', 'attributes')
         path = self.worktree('done')
@@ -680,22 +945,33 @@ class CleanWorktreesTests(unittest.TestCase):
         (path / 'notes.txt').write_text('public\nSECRET two\n')
         # The premise: git calls the edited file unchanged, so `git worktree remove` would delete it.
         self.assertEqual(self.git('status', '--porcelain', cwd=path), '')
-        self.assertKept(path, self.run_script('--apply'), 'a tracked path has a clean or process filter or the '
-                        'ident attribute, so git may call an edited file unchanged: notes.txt')
+        self.assertKept(path, self.run_script('--apply'), 'not byte for byte what its index records (an edit '
+                        'git\'s stat cache, a filter or a line-ending conversion hides, or its executable bit): notes.txt')
         self.assertIn('SECRET two', (path / 'notes.txt').read_text())
-        self.git('config', '--unset', 'filter.strip.clean')
-        self.git('config', 'filter.strip.process', ' ')  # a blank command still filters
-        self.assertKept(path, self.run_script('--apply'), 'unchanged: notes.txt')
-        self.git('config', '--unset', 'filter.strip.process')
         (path / 'notes.txt').write_text('public\n')
-        (path / '.gitattributes').write_text('b ident\nnotes.txt filter=unconfigured\n')
-        self.git('commit', '-q', '-am', 'ident', cwd=path)
-        self.git('merge', '-q', 'worktree-done')
-        self.assertKept(path, self.run_script('--apply'), 'unchanged: b')
-        (path / '.gitattributes').write_text('notes.txt filter=unconfigured\n')
-        self.git('commit', '-q', '-am', 'only an unconfigured driver', cwd=path)
-        self.git('merge', '-q', 'worktree-done')
+        self.git('add', 'notes.txt', cwd=path)
         self.assertRemoved(path, self.run_script('--apply'))
+
+    def test_a_tracked_symlink_is_compared_by_its_text(self):
+        (self.main / 'link').symlink_to('a')
+        self.git('add', 'link')
+        self.git('commit', '-q', '-m', 'link')
+        path = self.worktree('done')
+        (path / 'link').unlink()
+        (path / 'link').symlink_to('elsewhere')
+        self.assertKept(path, self.run_script('--apply', '--all-reasons'), 'not byte for byte what its index records'
+                        ' (an edit git\'s stat cache, a filter or a line-ending conversion hides, or its executable bit): link')
+        (path / 'link').unlink()
+        (path / 'link').symlink_to('a')
+        self.assertRemoved(path, self.run_script('--apply'))
+
+    def test_a_submodule_or_an_unknown_index_mode_is_kept(self):
+        path = self.worktree('done', merge=False)
+        head = self.git('rev-parse', 'HEAD')
+        self.git('update-index', '--add', '--cacheinfo', '160000,%s,sub' % head, cwd=path)
+        self.git('commit', '-q', '-m', 'a submodule', cwd=path)
+        self.git('merge', '-q', 'worktree-done')
+        self.assertKept(path, self.run_script('--apply', '--all-reasons'), 'a submodule, whose state this script cannot judge: sub')
 
     # --- h: what git does not track ----------------------------------------------------------
 
@@ -836,34 +1112,40 @@ class CleanWorktreesTests(unittest.TestCase):
         path = self.worktree('done', merge=False)
         (path / 'mine.md').write_text('only here\n')
         out = self.run_script('--apply')
-        self.assertKept(path, out, 'is not in main')
+        self.assertKept(path, out, 'its branch is not merged')
         self.assertNotIn('mine.md', out)
-        self.assertKept(path, self.run_script('--all-reasons'), 'is not in main', 'mine.md')
+        self.assertKept(path, self.run_script('--all-reasons'), 'its branch is not merged', 'mine.md')
 
-    # --- output git never prints, and a git that fails -----------------------------------------
+    # --- output git never prints, and a git that fails --------------------------------------
+
+    def shim(self):
+        shims = self.tmp / 'shim'
+        if not shims.is_dir():
+            shims.mkdir()
+            (shims / 'git').write_text(SHIM)
+            (shims / 'git').chmod(0o755)
+        return dict(PATH=str(shims) + os.pathsep + self.env['PATH'], REAL_GIT=shutil.which('git', path=self.env['PATH']))
 
     def test_unknown_output_or_a_failing_git_keeps(self):
-        shims = self.tmp / 'shim'
-        shims.mkdir()
-        (shims / 'git').write_text(SHIM)
-        (shims / 'git').chmod(0o755)
         path = self.worktree('done')
-        env = dict(PATH=str(shims) + os.pathsep + self.env['PATH'], REAL_GIT=shutil.which('git', path=self.env['PATH']))
         for mode, reason in (('status', 'not proven: `git status` printed an entry this script does not know: Z something new'),
                              ('list', '`git worktree list` printed a field this script does not know: frobbed'),
-                             ('fail:rev-list', 'not proven: `git rev-list --stdin` failed: fatal: refused by the shim'),
-                             ('fail:reflog', 'not proven: `git reflog show --no-abbrev'),
-                             ('fail:check-attr', 'not proven: `git check-attr'),
-                             ('fail:for-each-ref', 'not proven: `git for-each-ref'),
+                             ('fail:merge-base', 'not proven: `git merge-base --is-ancestor'),
+                             ('fail:rev-list', 'not proven: `git rev-list --objects --stdin` failed: fatal: refused by the shim'),
+                             ('fail:--batch-check=%(objectname) %(objecttype)', 'not proven: `git cat-file --batch-check'),
+                             ('fail:--show-object-format', 'not proven: `git rev-parse --show-object-format` failed'),
+                             ('format', "not proven: b'sha3'"),
+                             ('fail:--batch', 'not proven: `git cat-file --batch` printed  for '),
+                             ('fail:ls-files', 'not proven: `git ls-files'),
+                             ('fail:diff-index', 'not proven: `git -c core.checkStat=default'),
                              ('fail:--absolute-git-dir', 'not proven: `git rev-parse --absolute-git-dir` failed'),
                              ('fail:remove', 'stopped: git refused to remove it: fatal: refused by the shim')):
             with self.subTest(mode=mode):
-                out = self.run_script('--apply', SHIM=mode, **env)
+                out = self.run_script('--apply', SHIM=mode, **self.shim())
                 if mode == 'fail:remove':
                     out = out.replace('remove .claude/worktrees/done', 'keep   .claude/worktrees/done')
-                    self.assertNotIn('git branch ', out)
+                    self.assertNotIn('git worktree add', out)
                 self.assertKept(path, out, reason)
-                self.assertTrue(self.branch('done'), out)
 
     def test_a_git_dir_in_the_environment_does_not_hide_a_worktrees_own_index(self):
         # A hook in a linked worktree runs with GIT_DIR set. Inherited, it made `git -C <worktree>`
@@ -900,8 +1182,12 @@ class CleanWorktreesTests(unittest.TestCase):
         self.assertIn('clean_worktrees: removed 1, kept 2, freed', out)
         self.assertIn('; the reasons: scripts/clean_worktrees.sh', out)
         out = self.merge_with_hook('worktree-kept')
-        self.assertEqual([line for line in out.split('\n') if 'clean_worktrees' in line],
-                         [line for line in out.split('\n') if line.startswith('clean_worktrees: removed 1')], out)
+        lines = [line for line in out.split('\n') if 'clean_worktrees' in line]
+        expected = ('processes could not be inspected', 'removed 1, kept 1',
+                    'branches kept, their worktrees removed: worktree-kept', 'to delete merged branches yourself')
+        self.assertEqual(len(lines), len(expected), out)
+        for line, part in zip(lines, expected):
+            self.assertIn(part, line, out)
 
     def test_the_hook_prints_one_line_when_nothing_is_removed(self):
         self.hooked()
@@ -958,6 +1244,8 @@ class CleanWorktreesTests(unittest.TestCase):
             self.assertTrue(os.access(project / rel, os.X_OK), rel)
         for rel in ('scripts/clean_worktrees.py', '.claude/worktree-disposable'):
             self.assertTrue((project / rel).is_file(), rel)
+        for rel in ('scripts/clean_worktrees.sh', 'scripts/clean_worktrees.py'):
+            self.assertRegex((project / rel).read_text().split('\n')[1], r'^# KIT-OWNED: ', rel)
 
 
 if __name__ == '__main__':
