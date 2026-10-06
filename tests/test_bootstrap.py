@@ -283,6 +283,12 @@ class BootstrapTests(unittest.TestCase):
                     self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
                     self.assertEqual(list((project / 'docs/kit').glob('*kit-tmp*')), [], 'temporary left')
                     state = (stamp.read_bytes() == (start + '\n').encode(), self._hooks_path(project))
+                    if prior:
+                        # A hooks path of the project's own stops the run before any wiring:
+                        # no fault below is reached, the stamp and the path are as they were.
+                        self.assertEqual(state, (True, prior), 'the project\'s hooks path was touched')
+                        self.assertIn("core.hooksPath is '%s'" % prior, result.stderr)
+                        continue
                     if fault == 'signal after the mv' and start == current:
                         self.assertEqual(state, (True, '.githooks'), 'recorded with the gates disconnected')
                         continue
