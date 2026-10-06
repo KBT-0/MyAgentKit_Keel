@@ -92,17 +92,17 @@ class OneShot:
             signal.pthread_sigmask(signal.SIG_SETMASK, mask)
 
 
-def run(command: list[str], prompt: str, repo: Path, timeout: int, into: dict | None = None,
+def run(command: list[str], prompt: str, repo: Path, timeout: float, into: dict | None = None,
         noted: list | None = None) -> dict:
-    """Return exit status, partial output, and termination reason without retrying.
+    """Return exit status, partial output, and termination reason within a fractional seconds budget.
 
     `into` receives the result before the caller's handlers are restored: a raising one
     restored there raised before the returned result was assigned, and the attempt was lost.
     `noted` is the caller's own list of cancels its noting handler saw before this guard was
     up: one there stops the launch, as a cancel during the run stops the reviewer.
     """
-    if not 1 <= timeout <= 3600:
-        raise ValueError("timeout must be 1..3600 seconds")
+    if not 0 < timeout <= 3600:
+        raise ValueError("timeout must be greater than zero and at most 3600 seconds")
     started = time.monotonic()
     result = {} if into is None else into
     guard = OneShot()

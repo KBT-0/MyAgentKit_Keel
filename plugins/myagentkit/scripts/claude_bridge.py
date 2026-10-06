@@ -16,6 +16,7 @@ import re
 import shlex
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -45,8 +46,8 @@ REVIEW_ASKS = (
 # reproducing them, some false; a reviewer that executed in a throwaway copy found decisive ones.
 # Both bridged reviewers now execute, in the copy throwaway_copy() makes (threat model there).
 REVIEW_RUNS = (
-    "You are in a throwaway copy of the reviewed checkout (HEAD with the uncommitted part of "
-    "the diff applied); run anything; nothing you do here reaches the repository. Run the suite "
+    "You are in a throwaway copy of the reviewed checkout (checkout bytes for uncommitted "
+    "work, an archive of HEAD otherwise); run anything inside this copy. Run the suite "
     "and reproductions here, and mark findings REPRODUCED with the command that shows each; if a "
     "run is impossible, mark it REASONED and name the command that would reproduce it; list as "
     "NOT RUN what you could not run and why. Never use the network and never call a paid model.")
@@ -65,9 +66,11 @@ def git(repo: Path, *args: str, allowed=(0,), stdin: bytes | None = None) -> byt
 
 
 def throwaway_copy(repo: Path, head: str, diff: str | None, copy: Path,
-                   cancelled: list | None = None, timeout: float = 300) -> None:
-    """Fill the empty directory `copy` with `head`, plus the checkout's own bytes when the
-    review is of uncommitted work, for a reviewer.
+                   cancelled: list | None = None, timeout: float = 300,
+                   deadline: float | None = None) -> None:
+    """Fill an empty real directory with checkout bytes for uncommitted work, else `head`.
+
+    `deadline` is the caller's shared monotonic deadline; `timeout` is the standalone default.
 
     THREAT MODEL. A reviewer may run anything: the suite, a reproduction, a destructive command.
     - Defended: it runs with this copy as its working directory, never in the reviewed
@@ -78,13 +81,17 @@ def throwaway_copy(repo: Path, head: str, diff: str | None, copy: Path,
       and agent_process.run() sets PWD to the copy and drops OLDPWD, REVIEW_REPO_ROOT and every
       GIT_* variable (a GIT_DIR from a hook would point its git commands at the repository).
     - Defended: the copy holds the checkout's BYTES, not a patch of them. An uncommitted review
-      overlays every tracked and untracked file of the working tree onto the archive byte for
-      byte and removes what the working tree deleted, so neither git's stat cache
+      copies tracked and untracked-not-ignored files directly into a fresh tree, omitting
+      staged and unstaged deletions and preserving file/symlink type changes. Neither git's stat cache
       (core.trustctime, core.checkStat) nor an apply setting (apply.whitespace=fix) can give the
-      reviewer other source than the one the owner sees. The overlay is checked afterwards.
+      reviewer other source than the one the owner sees. Copies are verified with bounded buffers.
+    - Defended: construction never traverses a destination symlink, including in the copy's
+      ancestors. Symlinks are installed only as leaves; obsolete index paths below a changed
+      source symlink are skipped. An archived symlink cannot redirect checkout file writes.
     - Defended: the copy is made under the same cancel and wall-clock bound as the review: a
-      cancel noted while `git archive`, `tar` or the overlay runs stops them, and the bound
-      ends a stalled extraction.
+      cancel noted during listing, archiving, extraction or buffered copying stops that work.
+      The caller passes one deadline and gives the reviewer only the remaining time. Archive
+      cleanup covers partial launches too, including a missing tar executable.
     - Detected: a write that reaches the repository anyway changes the fingerprint, and the
       review fails as stale_checkout.
     - Accepted limit: a reviewer that finds the repository by its absolute path can still read
@@ -93,73 +100,125 @@ def throwaway_copy(repo: Path, head: str, diff: str | None, copy: Path,
       and keeps the network off; Claude is only asked to stay off the network.
     - Accepted limit: a SIGKILL leaves the copy in the temporary directory, and a process the
       reviewer detached from its group survives the group kill.
-    - Accepted limit: `git archive` honours export-ignore and export-subst, and ignored files
-      (installed dependencies, build output) are absent, so a run may need setup first.
+    - Accepted limit: committed snapshots use `git archive`, which honours export-ignore and
+      export-subst. Uncommitted snapshots use checkout bytes instead. Untracked ignored files
+      (installed dependencies, build output) and submodule contents are absent.
+    - Accepted limit: construction assumes no concurrent hostile filesystem replacement.
+      Symlinks retained as leaves may still be followed by the reviewer after construction.
     """
-    deadline = time.monotonic() + timeout
+    if deadline is None:
+        deadline = time.monotonic() + timeout
 
-    def stopped() -> bool:
-        return bool(cancelled) or time.monotonic() > deadline
+    def check_running() -> None:
+        if cancelled or time.monotonic() >= deadline:
+            raise BridgeError("the copy for the reviewer was stopped: "
+                              + ("cancelled" if cancelled else "the wall-clock limit passed"))
 
-    # Each in its own process group: a stop kills what they started too.
-    archive = subprocess.Popen(["git", "-C", str(repo), "archive", "--format=tar", head],
-                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, start_new_session=True)
-    unpacked = subprocess.Popen(["tar", "-x", "-f", "-", "-C", str(copy)], stdin=archive.stdout,
-                                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, start_new_session=True)
-    archive.stdout.close()
-    try:
-        while unpacked.poll() is None:
-            if stopped():
-                raise BridgeError("the copy for the reviewer was stopped: "
-                                  + ("cancelled" if cancelled else "the wall-clock limit passed"))
-            time.sleep(0.05)
-        err = unpacked.stderr.read().decode(errors="replace")
-    finally:
-        # A cancel that raises (the Codex adapter's one-shot guard) or the bound: no child
-        # outlives this function.
-        for child in (archive, unpacked):
+    def reap(child) -> None:
+        if child is not None:
             if child.poll() is None:
                 try:
                     os.killpg(child.pid, signal.SIGKILL)
                 except ProcessLookupError:
                     pass
             child.wait()
-        unpacked.stderr.close()
-    if archive.wait() or unpacked.returncode:
-        raise BridgeError("could not copy HEAD for the reviewer: " + err)
+            for stream in (child.stdin, child.stdout, child.stderr):
+                if stream is not None:
+                    stream.close()
+
+    def collect(child):
+        while True:
+            check_running()
+            try:
+                return child.communicate(timeout=min(0.05, max(0, deadline - time.monotonic())))
+            except subprocess.TimeoutExpired:
+                pass
+
+    # Reject reused trees and symlink ancestors before either tar or our copier can write.
+    copy = copy.absolute()
+    for directory in reversed((copy, *copy.parents)):
+        if not stat.S_ISDIR(directory.lstat().st_mode):
+            raise BridgeError("the copy destination must contain only real directories")
+    if any(copy.iterdir()):
+        raise BridgeError("the copy destination must be empty")
+
     if diff is None:
+        archive = unpacked = None
+        # Cleanup is active from the first launch, including a partial launch failure.
+        try:
+            archive = subprocess.Popen(["git", "-C", str(repo), "archive", "--format=tar", head],
+                                       stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                       start_new_session=True)
+            unpacked = subprocess.Popen(["tar", "-x", "-f", "-", "-C", str(copy)],
+                                        stdin=archive.stdout, stdout=subprocess.DEVNULL,
+                                        stderr=subprocess.PIPE, start_new_session=True)
+            archive.stdout.close()
+            _, err = collect(unpacked)
+            while archive.poll() is None:
+                check_running()
+                time.sleep(0.01)
+            if archive.returncode or unpacked.returncode:
+                raise BridgeError("could not copy HEAD for the reviewer: " + err.decode(errors="replace"))
+            check_running()
+        finally:
+            reap(archive)
+            reap(unpacked)
         return
-    # The working tree's own bytes, file by file: tracked and untracked (not ignored), and
-    # what the working tree deleted is deleted. No patch, no git setting in between.
-    listed = git(repo, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
-    deleted = set(git(repo, "ls-files", "-z", "--deleted").split(b"\0")) - {b""}
-    for raw in listed.split(b"\0"):
-        if not raw:
+
+    # No archive overlay: paths absent from the index and checkout never enter this tree.
+    listing = None
+    try:
+        check_running()
+        listing = subprocess.Popen(["git", "-C", str(repo), "ls-files", "-z", "--cached",
+                                    "--others", "--exclude-standard"], stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE, start_new_session=True)
+        listed, err = collect(listing)
+        if listing.returncode:
+            raise BridgeError("could not list the checkout: " + err.decode(errors="replace"))
+    finally:
+        reap(listing)
+    for raw in sorted(set(listed.split(b"\0")) - {b""}):
+        check_running()
+        rel = Path(os.fsdecode(raw))
+        if rel.is_absolute() or '..' in rel.parts:
+            raise BridgeError("unsafe checkout path: " + str(rel))
+        source, target = repo / rel, copy / rel
+        try:
+            # A cached descendant can survive a directory -> symlink/file replacement.
+            if any(not stat.S_ISDIR((repo / parent).lstat().st_mode)
+                   for parent in reversed(rel.parents)):
+                continue
+            mode = source.lstat().st_mode
+        except (FileNotFoundError, NotADirectoryError):
             continue
-        if stopped():
-            raise BridgeError("the copy for the reviewer was stopped")
-        rel = os.fsdecode(raw)
-        target = copy / rel
-        if raw in deleted:
-            if target.is_symlink() or target.exists():
-                target.unlink()
+        if not (stat.S_ISLNK(mode) or stat.S_ISREG(mode)):
             continue
-        source = repo / rel
-        if source.is_symlink():
-            if target.is_symlink() or target.exists():
-                target.unlink()
-            target.parent.mkdir(parents=True, exist_ok=True)
+        for parent in reversed(rel.parents):
+            directory = copy / parent
+            directory.mkdir(exist_ok=True)
+            if not stat.S_ISDIR(directory.lstat().st_mode):
+                raise BridgeError("symlink or file in copy destination: " + str(parent))
+        if stat.S_ISLNK(mode):
             os.symlink(os.readlink(source), target)
             continue
-        if not source.is_file():
-            continue
-        target.parent.mkdir(parents=True, exist_ok=True)
-        if target.is_symlink():
-            target.unlink()
-        shutil.copyfile(source, target)
+        # Exclusive creation cannot follow a leaf symlink; parents above are real directories.
+        with source.open('rb') as original, target.open('xb') as output:
+            while True:
+                check_running()
+                chunk = original.read(64 * 1024)
+                if not chunk:
+                    break
+                output.write(chunk)
         shutil.copymode(source, target)
-        if target.read_bytes() != source.read_bytes():
-            raise BridgeError("the copy for the reviewer differs from the checkout at " + rel)
+        with source.open('rb') as original, target.open('rb') as output:
+            while True:
+                check_running()
+                chunk = original.read(64 * 1024)
+                if output.read(64 * 1024) != chunk:
+                    raise BridgeError("the copy for the reviewer differs from the checkout at " + str(rel))
+                if not chunk:
+                    break
+    check_running()
 
 
 def resolve(repo: Path, scope: str, reference: str | None) -> str | None:
@@ -614,14 +673,18 @@ def main(argv=None, result_sink=None) -> int:
         # A cancel noted between here and run()'s own guard stops the launch: run() checks the
         # list right before it starts the reviewer, with the cancel signals blocked.
         held = agent_process.hold(lambda signum, frame: cancelled.append(signum))
+        deadline = time.monotonic() + args.timeout
         # Removed when the attempt ends: a cancel is only noted here, so it reaches the cleanup.
         with tempfile.TemporaryDirectory(prefix="myagentkit-review-", ignore_cleanup_errors=True) as copy:
             workdir = repo
             if args.mode == "review":
                 workdir = Path(copy)
                 throwaway_copy(repo, head, diff if scope == "uncommitted" else None, workdir,
-                               cancelled=cancelled, timeout=args.timeout)
-            execution = agent_process.run(command, prompt, workdir, args.timeout, noted=cancelled)
+                               cancelled=cancelled, deadline=deadline)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise BridgeError("the review wall-clock limit passed during preparation")
+            execution = agent_process.run(command, prompt, workdir, remaining, noted=cancelled)
         if execution.pop("cancelled", False):
             cancelled.append(True)
         evidence.update(execution)

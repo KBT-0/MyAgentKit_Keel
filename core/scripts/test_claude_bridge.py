@@ -24,7 +24,7 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'MYAGENTKIT_TASK_ID', 'MYAGENTKIT_R
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 93, 'test_agent_usage': 19, 'test_codex_quota': 5}
+SUITE_MINIMUMS = {'test_claude_bridge': 100, 'test_agent_usage': 19, 'test_codex_quota': 5}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -200,7 +200,10 @@ class BridgeTests(unittest.TestCase):
                     os.environ.pop('REVIEW_TIMEOUT_SECONDS', None)
                     if override is not None:
                         os.environ['REVIEW_TIMEOUT_SECONDS'] = override
-                    with patch.object(agent_process, 'run', side_effect=capture), redirect_stdout(StringIO()):
+                    # Freeze preparation time here to check the exact configured budget;
+                    # the shared-deadline regression below measures real elapsed time.
+                    with patch.object(agent_process, 'run', side_effect=capture), \
+                            patch('time.monotonic', return_value=1000.0), redirect_stdout(StringIO()):
                         with self.assertRaises(CapturedLaunch):
                             main([*argv, '--repo', str(self.repo)])
                     self.assertEqual(observed[-1], expected)
@@ -2066,8 +2069,8 @@ if case == 'archive_failure':
         # The bridged reviewers now execute, in a throwaway copy the adapter made: the ask is
         # unconditional, and the prompt never names the reviewed repository's path.
         asks = ('EVERY finding', 'Critical, High, Medium or Low', 'Fix sketch:',
-                'You are in a throwaway copy', 'run anything', 'nothing you do here reaches the '
-                'repository', 'Run the suite and reproductions', 'REPRODUCED',
+                'You are in a throwaway copy', 'run anything inside this copy',
+                'Run the suite and reproductions', 'REPRODUCED',
                 'if a run is impossible, mark it REASONED', 'NOT RUN', 'Never use the network')
         forbidden = ('Do not run tests', 'run code', 'SHOULD run', 'worktree add --detach',
                      'If your tools can execute', 'edit files in this checkout',
@@ -2209,6 +2212,155 @@ if case == 'archive_failure':
         claude_bridge.throwaway_copy(self.repo, head, '', copy2)
         self.assertFalse((copy2 / 'file.py').exists())
         self.assertFalse((copy2 / 'spaces.py').exists())
+
+    def test_copy_never_writes_through_an_archived_symlink_parent(self):
+        import claude_bridge
+        outside = self.root / 'outside'
+        outside.mkdir()
+        sentinel = outside / 'sentinel'
+        sentinel.write_bytes(b'external original')
+        link = self.repo / 'parent'
+        link.symlink_to(outside, target_is_directory=True)
+        self.commit_fixture('Track a directory symlink')
+        link.unlink()
+        link.mkdir()
+        (link / 'sentinel').write_bytes(b'checkout replacement')
+        self.git('add', 'parent')
+        copy = Path(tempfile.mkdtemp(dir=self.root))
+        claude_bridge.throwaway_copy(self.repo, 'HEAD', '', copy)
+        self.assertEqual(sentinel.read_bytes(), b'external original')
+        self.assertFalse((copy / 'parent').is_symlink())
+        self.assertEqual((copy / 'parent/sentinel').read_bytes(), b'checkout replacement')
+
+    def test_copy_removes_staged_deletions(self):
+        import claude_bridge
+        self.git('rm', '-f', 'file.py')
+        copy = Path(tempfile.mkdtemp(dir=self.root))
+        claude_bridge.throwaway_copy(self.repo, 'HEAD', '', copy)
+        self.assertFalse((copy / 'file.py').exists())
+
+    def check_directory_replacement(self, symlink):
+        import claude_bridge
+        directory = self.repo / 'directory'
+        directory.mkdir()
+        (directory / 'old').write_bytes(b'old')
+        self.commit_fixture('Track a directory')
+        shutil.rmtree(directory)
+        if symlink:
+            directory.symlink_to('file.py')
+        else:
+            directory.write_bytes(b'replacement')
+        # Both unstaged and staged replacements must have exactly the checkout's types.
+        for staged in (False, True):
+            with self.subTest(staged=staged):
+                if staged:
+                    self.git('add', '-A')
+                copy = Path(tempfile.mkdtemp(dir=self.root))
+                claude_bridge.throwaway_copy(self.repo, 'HEAD', '', copy)
+                target = copy / 'directory'
+                self.assertEqual(target.is_symlink(), symlink)
+                if symlink:
+                    self.assertEqual(os.readlink(target), 'file.py')
+                else:
+                    self.assertEqual(target.read_bytes(), b'replacement')
+
+    def test_copy_handles_directory_to_file(self):
+        self.check_directory_replacement(False)
+
+    def test_copy_handles_directory_to_symlink(self):
+        self.check_directory_replacement(True)
+
+    def test_copy_compares_large_unchanged_files_with_bounded_memory(self):
+        # Only the child is constrained: the suite runner may already exceed this limit.
+        asset = self.repo / 'large.bin'
+        with asset.open('wb') as stream:
+            chunk = b'x' * (1024 * 1024)
+            for _ in range(48):
+                stream.write(chunk)
+        self.commit_fixture('Track a large unchanged asset')
+        (self.repo / 'file.py').write_bytes(b'small edit')
+        copy = Path(tempfile.mkdtemp(dir=self.root))
+        script = '''
+import resource, sys
+from pathlib import Path
+import claude_bridge
+resource.setrlimit(resource.RLIMIT_AS, (100 * 1024 * 1024, 100 * 1024 * 1024))
+claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
+'''
+        result = subprocess.run([sys.executable, '-B', '-c', script, str(self.repo), str(copy)],
+                                cwd=ROOT, capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        with asset.open('rb') as source, (copy / 'large.bin').open('rb') as target:
+            while True:
+                chunk = source.read(64 * 1024)
+                self.assertEqual(target.read(64 * 1024), chunk)
+                if not chunk:
+                    break
+
+    def test_copy_and_reviewer_share_one_total_timeout(self):
+        from contextlib import redirect_stdout
+        from unittest.mock import patch
+        import agent_process
+        import claude_bridge
+        import codex_bridge
+        real_copy, real_run = claude_bridge.throwaway_copy, agent_process.run
+        for module, args in ((claude_bridge, ['review', '--timeout', '2']),
+                             (codex_bridge, ['--model', 'fixture-codex-model'])):
+            with self.subTest(reviewer=module.__name__):
+                budgets = []
+
+                def slow_copy(*args, **kwargs):
+                    time.sleep(1.3)
+                    return real_copy(*args, **kwargs)
+
+                def slow_reviewer(command, prompt, repo, timeout, **kwargs):
+                    budgets.append(timeout)
+                    return real_run([sys.executable, '-c',
+                                     'import sys, time; sys.stdin.read(); time.sleep(1.3)'],
+                                    prompt, repo, timeout, **kwargs)
+
+                received = []
+                with patch.dict(os.environ, self.review_env(REVIEW_TIMEOUT_SECONDS='2')), \
+                        patch.object(module, 'throwaway_copy', side_effect=slow_copy), \
+                        patch('agent_process.run', side_effect=slow_reviewer), \
+                        redirect_stdout(io.StringIO()):
+                    started = time.monotonic()
+                    module.main([*args, '--repo', str(self.repo)], received.append)
+                    elapsed = time.monotonic() - started
+                self.assertEqual(len(budgets), 1, received)
+                self.assertGreater(budgets[0], 0)
+                self.assertLess(budgets[0], 0.8)
+                self.assertLess(elapsed, 2.6)
+                self.assertEqual(received[0]['failure_kind'], 'timeout', received)
+
+    def test_missing_tar_reaps_the_already_started_archive(self):
+        from unittest.mock import patch
+        import claude_bridge
+        real_popen = subprocess.Popen
+        children = []
+
+        def launch(command, *args, **kwargs):
+            if command[0] == 'tar':
+                raise FileNotFoundError('tar is unavailable')
+            child = real_popen([sys.executable, '-c', 'import time; time.sleep(60)'],
+                               *args, **kwargs)
+            children.append(child)
+            return child
+
+        copy = Path(tempfile.mkdtemp(dir=self.root))
+        try:
+            with patch('claude_bridge.subprocess.Popen', side_effect=launch):
+                with self.assertRaises(FileNotFoundError):
+                    claude_bridge.throwaway_copy(self.repo, 'HEAD', None, copy)
+            self.assertEqual(len(children), 1)
+            self.assertIsNotNone(children[0].poll(), 'archive survived the failed tar launch')
+            self.assertTrue(children[0].stdout.closed)
+        finally:
+            for child in children:
+                if child.poll() is None:
+                    os.killpg(child.pid, signal.SIGKILL)
+                child.wait()
+                child.stdout.close()
 
     def test_the_copy_is_bounded_and_cancellable(self):
         import claude_bridge

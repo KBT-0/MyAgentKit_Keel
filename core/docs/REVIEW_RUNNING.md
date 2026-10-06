@@ -56,8 +56,10 @@ isolation. A shared evidence format does not imply identical permission mechanis
 
 **The bridged reviewers execute in a throwaway copy made by the adapter `scripts/review.sh`
 starts** (`docs/REVIEW_GATE.md`, "The reviewer executes, in a throwaway copy"). Each attempt
-gets its own copy: `git archive` of HEAD in a new temporary directory, with the uncommitted
-part of the diff applied. The reviewer runs with the copy as its working directory, and the
+gets a fresh tree containing tracked and untracked-not-ignored checkout bytes for uncommitted
+reviews, including staged and unstaged deletions and file type changes. Committed reviews use
+`git archive` of HEAD. Construction rejects symlink destination ancestors and verifies files
+with bounded buffers. The reviewer runs with the copy as its working directory, and the
 prompt tells it to run anything there. The copy is removed when the attempt ends, on a cancel
 too, and a `--fallback` attempt gets a fresh one. The reviewer is not told the repository's
 path: the prompt names relative paths only, and its environment sets `PWD` to the copy and
@@ -154,7 +156,9 @@ authentication, or missing final evidence, do not treat that failure as Accept. 
 adapters return a failure with a local usage record. Codex uses `REVIEW_TIMEOUT_SECONDS`
 (1800 by default); Claude reviews use `--timeout` (1800 by default). Timeout stops the child process
 group and preserves captured partial output. Through the wrapper, `REVIEW_TIMEOUT_SECONDS`
-sets the timeout for each provider, with the same 1800-second default. This is a total
+sets the timeout for each provider, with the same 1800-second default. Copy preparation and
+reviewer execution share one deadline; execution receives only the remaining seconds, including
+fractional seconds. This is a total
 wall-clock deadline, not an idle timer: active work can continue beyond ten minutes, but
 is still stopped at thirty minutes by default. Claude's final-JSON output does not provide
 reliable startup/activity detection. With `--fallback`, two timed-out default
