@@ -1,0 +1,9 @@
+# The kit's own checkout: its installer, sync, hooks and scripts run through `#!/usr/bin/env sh`,
+# and a CRLF checkout (core.autocrlf=true on Windows) would make that `sh\r`.
+*.sh text eol=lf
+*.py text eol=lf
+core/.githooks/* text eol=lf
+overlays/*/files/.githooks/* text eol=lf
+overlays/*/files/scripts/* text eol=lf
+bootstrap.sh text eol=lf
+sync-kit.sh text eol=lf

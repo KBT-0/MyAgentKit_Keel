@@ -2,6 +2,7 @@
 import os
 from pathlib import Path
 import signal
+import select
 import selectors
 import subprocess
 import tempfile
@@ -197,27 +198,47 @@ def run(command: list[str], prompt: str, repo: Path, timeout: float, into: dict 
 
 
 def _exited_unreaped(child, timeout: float) -> bool:
-    """True once `child` has exited, leaving it unreaped on POSIX (waitid with WNOWAIT) so its
-    process group is still its own for stop_group; False at the deadline. Off POSIX the
-    ordinary wait reaps it: there is no group to keep."""
-    if not POSIX:
-        try:
-            child.wait(timeout=timeout)
-            return True
-        except subprocess.TimeoutExpired:
-            return False
+    """True once `child` has exited, leaving it unreaped on POSIX so its process group is still
+    its own for stop_group (a reaped id may be another process's); False at the deadline.
+    Linux: waitid with WNOWAIT. macOS has no waitid in CPython: a kqueue NOTE_EXIT event says
+    the same. Elsewhere the ordinary wait reaps it: there is no group to keep."""
+    if child.returncode is not None:
+        return True
     deadline = time.monotonic() + timeout
-    while True:
-        if child.returncode is not None:
-            return True
-        try:
-            if os.waitid(os.P_PID, child.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is not None:
+    if POSIX and hasattr(os, "waitid"):
+        while True:
+            try:
+                if os.waitid(os.P_PID, child.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is not None:
+                    return True
+            except ChildProcessError:
                 return True
-        except ChildProcessError:
-            return True
-        if time.monotonic() >= deadline:
-            return False
-        time.sleep(min(0.02, max(0.0, deadline - time.monotonic())))
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(min(0.02, max(0.0, deadline - time.monotonic())))
+    if POSIX and hasattr(select, "kqueue"):
+        kq = select.kqueue()
+        try:
+            try:
+                kq.control([select.kevent(child.pid, select.KQ_FILTER_PROC, select.KQ_EV_ADD | select.KQ_EV_ONESHOT,
+                                          select.KQ_NOTE_EXIT)], 0)
+            except ProcessLookupError:
+                return True  # exited before the watch: the zombie is still ours
+            return bool(kq.control(None, 1, max(0.0, timeout)))
+        finally:
+            kq.close()
+    try:
+        child.wait(timeout=timeout)
+        return True
+    except subprocess.TimeoutExpired:
+        return False
+
+
+def finish(child, pgid, timeout: float) -> bool:
+    """Wait for `child` to exit (unreaped), stop its group, then reap it. True on exit, False
+    when the deadline passed (the group is stopped either way)."""
+    exited = _exited_unreaped(child, timeout)
+    stop_group(child, pgid)
+    return exited
 
 
 def _supervise(command, prompt, repo, timeout, started, guard, prior=None):
@@ -227,7 +248,7 @@ def _supervise(command, prompt, repo, timeout, started, guard, prior=None):
         inp.write(prompt.encode())
         inp.seek(0)
         child = termination = None
-        launch_failed = False
+        launch_failed = exited = False
         buffers = {"stdout": bytearray(), "stderr": bytearray()}
         try:
             try:
@@ -284,7 +305,9 @@ def _supervise(command, prompt, repo, timeout, started, guard, prior=None):
                     # Waited for WITHOUT reaping: the leader stays a zombie until stop_group
                     # has signalled its group, so the group id is still this reviewer's when
                     # its descendants are stopped (a reaped id may be another process's).
-                    if not _exited_unreaped(child, max(0, timeout - (time.monotonic() - started))):
+                    if _exited_unreaped(child, max(0, timeout - (time.monotonic() - started))):
+                        exited = True
+                    else:
                         termination = "timeout"
             # Leaving supervision: the guard turns to noting INSIDE the try. Armed into the
             # `finally`, a cancel at a signal check there raised past the group kill, the reap
@@ -295,9 +318,14 @@ def _supervise(command, prompt, repo, timeout, started, guard, prior=None):
         except KeyboardInterrupt:
             # Cancelled: stop the group below and return what was captured, so the adapter
             # records the attempt (it may have been billed) and the dispatcher never fails over.
-            # Not when wait() had already reaped the reviewer: that review ran to its end, and
-            # the cancel is returned as noted, never as its termination.
-            if termination or child is None or child.returncode is None:
+            # Not when the reviewer had already exited (seen by the non-reaping wait): that
+            # review ran to its end, and the cancel is returned as noted, never as its
+            # termination.
+            # A cancel raised inside the wait, after the exit was seen but before it was
+            # recorded here, is the same case: a non-reaping look settles it.
+            if child is not None and not exited and not termination:
+                exited = _exited_unreaped(child, 0)
+            if termination or child is None or not exited:
                 termination = "cancelled"
         finally:
             # Already noting on every path through the try; this covers an unexpected error.

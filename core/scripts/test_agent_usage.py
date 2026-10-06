@@ -2,6 +2,7 @@
 import json
 from pathlib import Path
 import subprocess
+import signal
 import sys
 import tempfile
 import time
@@ -364,6 +365,26 @@ class UsageTests(unittest.TestCase):
                 agent_usage.record(repo, "codex", "fixture", "claude/fixture", {"id": "fixture"},
                                    {"stdout": "", "exit_code": 1}, "failed", "quota", None)
             self.assertFalse((outside / "usage").exists())
+
+    def test_a_cancel_right_after_the_reviewer_exited_keeps_the_review_completed(self):
+        # The non-reaping wait leaves returncode unset: a cancel raised in the instant after
+        # the exit was seen, before run() recorded it, read as a cancelled run (exit 0,
+        # termination cancelled), and a completed review was classified failed. The exit is
+        # what counts: run() looks again, without reaping, when a cancel arrives.
+        from unittest.mock import patch
+        real = agent_process._exited_unreaped
+        calls = []
+
+        def exit_seen_then_cancel(child, timeout):
+            calls.append(timeout)
+            if len(calls) == 1:
+                self.assertTrue(real(child, timeout))
+                raise KeyboardInterrupt  # the cancel, raised inside the wait
+            return real(child, timeout)
+        with patch.object(agent_process, '_exited_unreaped', side_effect=exit_seen_then_cancel):
+            result = agent_process.run([sys.executable, '-c', 'print("done")'], '', Path.cwd(), 5)
+        self.assertEqual((result['exit_code'], result['termination']), (0, None), result)
+        self.assertGreaterEqual(len(calls), 2, 'run() did not look again after the cancel')
 
     def test_timeout_stops_the_process_group_and_keeps_partial_output(self):
         with tempfile.TemporaryDirectory() as tmp:

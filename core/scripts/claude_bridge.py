@@ -78,6 +78,21 @@ def review_tmpdir(repo: Path) -> None:
                           "set TMPDIR outside it" % chosen)
 
 
+def _failed(child) -> bool:
+    """Whether an exited `child` failed, without reaping it where the platform allows (Linux:
+    waitid WNOWAIT); elsewhere it is reaped here, after it exited, and reap() finds it so."""
+    if child.returncode is not None:
+        return child.returncode != 0
+    if hasattr(os, "waitid"):
+        try:
+            status = os.waitid(os.P_PID, child.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+        except ChildProcessError:
+            status = None
+        if status is not None:
+            return not (status.si_code == os.CLD_EXITED and status.si_status == 0)
+    return child.wait() != 0
+
+
 def throwaway_copy(repo: Path, head: str, diff: str | None, copy: Path,
                    cancelled: list | None = None, timeout: float = 300,
                    deadline: float | None = None) -> None:
@@ -138,12 +153,25 @@ def throwaway_copy(repo: Path, head: str, diff: str | None, copy: Path,
                     stream.close()
 
     def collect(child):
-        while True:
+        """stdout and stderr of `child`, read to EOF; then the child waited for WITHOUT reaping
+        (its group is still its own when reap() stops it: a descendant that closed its pipes
+        and ran on outlived a reaped leader's group kill)."""
+        import select
+        out = {"stdout": bytearray(), "stderr": bytearray()}
+        open_fds = {getattr(child, name).fileno(): name for name in ("stdout", "stderr")
+                    if getattr(child, name) is not None}
+        while open_fds:
             check_running()
-            try:
-                return child.communicate(timeout=min(0.05, max(0, deadline - time.monotonic())))
-            except subprocess.TimeoutExpired:
-                pass
+            ready, _, _ = select.select(list(open_fds), [], [], 0.05)
+            for fd in ready:
+                data = os.read(fd, 65536)
+                if data:
+                    out[open_fds[fd]].extend(data)
+                else:
+                    del open_fds[fd]
+        while not agent_process._exited_unreaped(child, 0.05):
+            check_running()
+        return bytes(out["stdout"]), bytes(out["stderr"])
 
     # Resolve only the trusted parent: resolving the copy would conceal its own symlink.
     copy = copy.absolute()
@@ -182,10 +210,11 @@ def throwaway_copy(repo: Path, head: str, diff: str | None, copy: Path,
                 agent_process.restore_mask(mask)
             archive.stdout.close()
             _, err = collect(unpacked)
-            while archive.poll() is None:
+            while not agent_process._exited_unreaped(archive, 0.05):
                 check_running()
-                time.sleep(0.01)
-            if archive.returncode or unpacked.returncode:
+            # The exit statuses, read after each group was stopped by reap() below: here only
+            # whether either failed, through a non-reaping look.
+            if _failed(archive) or _failed(unpacked):
                 raise BridgeError("could not copy HEAD for the reviewer: " + err.decode(errors="replace"))
             check_running()
         finally:
@@ -213,7 +242,7 @@ def throwaway_copy(repo: Path, head: str, diff: str | None, copy: Path,
         finally:
             agent_process.restore_mask(mask)
         listed, err = collect(listing)
-        if listing.returncode:
+        if _failed(listing):
             raise BridgeError("could not list the checkout: " + err.decode(errors="replace"))
     finally:
         # As for the archive: no raising cancel between the kill and the reap.
