@@ -58,6 +58,30 @@ after reading the result file (`tmux kill-session -t NAME`); write the file last
 The session does not end by itself when the task is done, and its idle notice also fires
 whenever it parks on a background job, so the result file is the only end signal.
 
+The result file starts with four lines, exact keys, in this order:
+
+```
+Kind: completed|blocked|handoff|progress
+Task: <the task id, or the brief's name>
+Attempt: <n>
+Remaining: <one line: what is left, or "none">
+```
+
+Then the body (the report above). Then, when the worker has questions it could not ask, the
+section `## Open questions for {{OWNER_NAME}}`: one numbered question per item, each with its
+options on the lines after it. The sections "Not run / not verified" and "Noticed, not
+fixed" follow as always.
+
+- Only `Kind: completed` is done. `blocked`, `handoff` and `progress` are not done, and an
+  idle notice is a hint, never the done signal.
+- A worker that notices a compaction of its context writes `Kind: handoff` at once, with a
+  handoff section in the shape of this file, and commits it.
+- `Task:` and `Attempt:` name the work the file reports on, so a result left by an earlier
+  task of a reused session is never taken for the current one.
+
+The Claude Code overlay's `scripts/watch_workers.sh --result NAME=PATH` reads this head once
+the file is committed on a clean tree, and reports the open questions with their text.
+
 A handoff written at the end of a working day also carries the cost: the tool's cost screen
 (`/cost` in Claude Code) and the table from `scripts/agent_cost.py --latest`, next to the number
 of tasks done, so the next lead routes from a number (`docs/WORKFLOW.md`, "Worker cost").
