@@ -475,6 +475,31 @@ the overlay README and the script's header say what does not apply on native Win
   skipped and the import failed the self-test) and with the runner's `-I` removed; the v0.10
   head beside the same `PYTHONPATH` printed the `skip` line and no `FAIL`.
 
+**A seventh review pass** confirmed the isolated host check and left one High and two Medium
+findings, each fixed once.
+
+- *An LFS file could change between its proof and the diff.* The proof that a filtered path
+  is an unchanged LFS file ran before the diff and the fingerprint read the checkout. A file
+  replaced in between (an editor's save, a build) showed its new pointer in the diff, the
+  fingerprint hashed its new bytes, the two agreed, and the change went to review. Every path
+  let through is now proven again after both, and must still be unchanged and unnamed by the
+  rendered diff; a change after that is the fingerprint's to catch. The test replaces the file
+  right after its first proof; the earlier bridge raised nothing.
+- *The upgrade checklist verified v0.9's kit-owned files.* Item 4 ran `doctor.sh` and item 5
+  ran `sync-kit.sh` for the stamp, so a reader who followed the list from the changelog proved
+  the old doctor (on native Windows, one that asks for tmux) and installed the new one after
+  every check. The checklist now starts with the run of `sync-kit.sh` that installs the
+  kit-owned files and prints the list without stamping, and item 5 says the stamp copies
+  nothing new. A sync test drives that order: the first run installs the new `doctor.sh`,
+  exits 2 and keeps the version, and the checklist text must say so; it was red against the
+  earlier checklist.
+- *The Ctrl-C case could not see the holder.* It checked the gate, the build and the lock,
+  which a holder killed by Ctrl-C leaves the same. It now finds the holder under the gate and
+  requires it to outlive the Ctrl-C and exit 130, the status of the interrupted gate. Red with
+  the handler line removed (the holder died with `STATUS_CONTROL_C_EXIT`, 0xC000013A). It
+  still passes with `SIG_IGN` in place of the handler: on this host the two are alike (above),
+  so the case proves that the holder survives Ctrl-C, not which of the two makes it survive.
+
 ### 2026-10-06 — native Windows: the gate lock, and Git LFS beside a review
 
 A project moved from WSL to native Windows (Git for Windows' `sh`, CPython from python.org).

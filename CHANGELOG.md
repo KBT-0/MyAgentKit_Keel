@@ -49,8 +49,9 @@ change is safe is in `RESEARCH_LOG.md` (2026-10-06 and 2026-10-07).
   exit status on; a killed lock holder leaves the lock with the gate it started; the
   holder imports no stand-in `fcntl.py` or `secrets.py` from `PYTHONPATH`; and Ctrl-C (a
   `CTRL_C_EVENT` sent to a hidden console of the case's own) stops the gate and its build, the
-  gate exits nonzero, and the next gate takes the lock. The holder survives Ctrl-C through a
-  handler that does nothing, never `SIG_IGN`. The host check and the case runner run isolated
+  gate exits nonzero, the holder outlives it and exits 130, and the next gate takes the lock.
+  The holder survives Ctrl-C through a handler that does nothing, not `SIG_IGN`; the two
+  behave alike on the hosts measured, so the case proves the survival, not which one. The host check and the case runner run isolated
   (`python3 -I`) beside a `sitecustomize.py` on `PYTHONPATH` that marks its import and calls
   the host POSIX; imported, it would have skipped every Windows case, so the import fails the
   self-test there and the skip line is printed only without it. Each case
@@ -82,7 +83,9 @@ change is safe is in `RESEARCH_LOG.md` (2026-10-06 and 2026-10-07).
   one LFS file anywhere refused every review. A filtered path the review does not change now
   passes, and only when HEAD records it as a canonical LFS pointer, its working bytes (read
   with no filter) are that pointer or the content it names by size and sha256, and Git's own
-  rendered diff of the working tree and of the index does not name it. A filtered path the
+  rendered diff of the working tree and of the index does not name it, proven both before and
+  after the diff and the fingerprint read the checkout, so a file replaced in between is
+  refused (`which changed while the review was being prepared`). A filtered path the
   review changes is refused, whichever side was filtered: candidates include names staged in
   the index, deleted and renamed-away names, and the attributes are read in the working tree,
   in the index and at each end of the reviewed range. So an index-only change to an LFS file, a commit
@@ -102,7 +105,11 @@ change is safe is in `RESEARCH_LOG.md` (2026-10-06 and 2026-10-07).
 the end of the item, so an item holds no blank line and no line that starts a list. -->
 
 Work from the project's root, top to bottom. `KIT` is the kit checkout you run `sync-kit.sh`
-from, and `00581dd` is the kit's v0.9 commit.
+from, and `00581dd` is the kit's v0.9 commit. Start with `"$KIT/sync-kit.sh" .`: it
+installs the new kit-owned files (`doctor.sh`, `spawn_worker.sh` and the rest) and prints
+this list, exits 2 and records no version (item 5 does). A conflict it lists stops it before
+it copies anything: resolve that and run it again until it prints this list, so that item 4
+checks the new files and not v0.9's (on native Windows, v0.9's `doctor.sh` asks for tmux).
 
 1. **ACTION:** Line endings first, before any script of the project runs: add the kit's
    rules to the project's `.gitattributes` (created if absent), turn each CRLF into LF in
@@ -148,7 +155,8 @@ from, and `00581dd` is the kit's v0.9 commit.
    the self-test cannot pass yet: its review case fails because `review.sh` needs POSIX
    signals (above). There, run `./scripts/check.sh` and `./scripts/check.sh --self-test` from
    Git for Windows' `sh` with the Windows `python3` and expect exactly this: `CHECK: PASS`;
-   in the self-test, `ok` for every case including the twelve Windows lock cases and the `sitecustomize.py` line, except
+   in the self-test, `ok` for every case including the twelve Windows lock cases and the
+   `sitecustomize.py` line, except
    `FAIL — review adapter negative tests failed or did not run` with the review tests' own
    output, the line `skip — a stray cygpath on a POSIX PATH` (a POSIX-only case), and a
    `skip` the project's own setup prints (the commit-msg hook when `AGENTS.md` has no
@@ -158,8 +166,9 @@ from, and `00581dd` is the kit's v0.9 commit.
    print one `skip` line). A project with no POSIX shell has partial acceptance only; say so
    in its state file.
 5. **ACTION:** Record the version BEFORE the upgrade commit, so the commit carries it: run
-   `"$KIT/sync-kit.sh" . --actions-applied`, which writes `docs/kit/.kit-version`, then run
-   `./scripts/check.sh` again and commit everything the upgrade changed together with
+   `"$KIT/sync-kit.sh" . --actions-applied`, which writes `docs/kit/.kit-version` (the first
+   run already installed the kit-owned files, so it copies nothing new; if it lists a file as
+   overwritten, prove item 4 again), then run `./scripts/check.sh` again and commit everything the upgrade changed together with
    `docs/kit/.kit-version` in one commit. Stamped after the commit, the version file was left
    modified and every other clone still read v0.9.
 

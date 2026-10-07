@@ -113,6 +113,31 @@ class SyncKitTests(unittest.TestCase):
             self.assertEqual((project / 'scripts/agent_cost.py').read_bytes(),
                              (ROOT / 'core/scripts/agent_cost.py').read_bytes())
 
+    def test_the_first_run_refreshes_kit_owned_files_before_the_actions_are_verified(self):
+        # The v0.10 checklist verifies doctor.sh in item 4 and stamps in item 5. The run that
+        # prints the checklist must already have installed the new kit-owned files, or item 4
+        # proves the old doctor (on native Windows, one that asks for tmux) and item 5 installs
+        # the new one after every check.
+        with tempfile.TemporaryDirectory() as tmp:
+            kit, project = Path(tmp) / 'kit', Path(tmp) / 'project'
+            self.sync(tmp, ACTION, '--dry-run')
+            new = '#!/bin/sh\n# KIT-OWNED: fixture\necho v0.2 doctor\n'
+            (kit / 'core/scripts').mkdir(parents=True)
+            (kit / 'core/scripts/doctor.sh').write_text(new)
+            (project / 'scripts').mkdir()
+            (project / 'scripts/doctor.sh').write_text('#!/bin/sh\n# KIT-OWNED: fixture\necho v0.1 doctor\n')
+            result, stamp = self.sync(tmp, ACTION)
+            self.assertEqual((result.returncode, stamp), (2, '0.1'), result.stdout + result.stderr)
+            self.assertEqual((project / 'scripts/doctor.sh').read_text(), new)
+            result, stamp = self.sync(tmp, ACTION, '--actions-applied')
+            self.assertEqual((result.returncode, stamp), (0, '0.2'), result.stdout + result.stderr)
+            self.assertEqual((project / 'scripts/doctor.sh').read_text(), new)
+        # The checklist says so before its first item, and item 5 says the stamp copies nothing new.
+        checklist = (ROOT / 'CHANGELOG.md').read_text().split('### Upgrading a project from v0.9', 1)[1]
+        intro, items = checklist.split('\n1. ', 1)
+        self.assertIn('Start with `"$KIT/sync-kit.sh" .`', intro)
+        self.assertIn('copies nothing new', items.split('\n5. ', 1)[1].split('\n## ', 1)[0])
+
     def test_a_header_less_overlay_copy_is_told_to_take_the_kits_copy(self):
         # A v0.8 project's overlay script had no KIT-OWNED header. The stop message said to
         # rerun the sync to install the kit's file, which the sync never does for an overlay
