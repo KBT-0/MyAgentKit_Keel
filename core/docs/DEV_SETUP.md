@@ -42,7 +42,8 @@ hooks and `doctor.sh` could not start. `.gitattributes` holds `*.sh text eol=lf`
 clone's autocrlf says. Keep those lines. A clone made before they were committed keeps its
 CRLF copies, because a pull does not check out again a file it did not change, until they
 are rewritten once, with no uncommitted change to them: each CRLF becomes LF in a regular
-file (a symlink is left alone, a lone CR kept; each file is replaced whole, with its mode),
+file (a file that is, or lies below, a symlink or a junction is left alone, with a line
+saying so; a lone CR is kept; each file is replaced whole, with its mode),
 and each file is staged again so that `git status` does not list it as modified for its new
 size. A rewrite that fails stops it before anything is staged, and so does a `git ls-files`
 that fails (a corrupt index); a temporary copy a SIGKILL left (`.crlf-*`) stops the next run.
@@ -57,8 +58,19 @@ that fails (a corrupt index); a temporary copy a SIGKILL left (`.crlf-*`) stops 
   python3 -I -c 'if 1:
       import os, signal, stat, sys, tempfile
       signal.signal(signal.SIGTERM, lambda *a: sys.exit(143))
+      def plain(name):
+          # Every folder on the way and the file itself: no symlink, no junction (a reparse
+          # point), or the rewrite wrote into what the link points at, outside the project.
+          parts = name.split(b"/")
+          for i in range(1, len(parts) + 1):
+              info = os.lstat(b"/".join(parts[:i]))
+              if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400:
+                  return False
+          return stat.S_ISREG(info.st_mode)
       for name in sys.stdin.buffer.read().split(b"\0"):
-          if name and stat.S_ISREG(os.lstat(name).st_mode):
+          if name and not plain(name):
+              sys.stderr.write("left alone, a link or not a regular file on its way: %r\n" % name)
+          elif name:
               with open(name, "rb") as script:
                   data = script.read()
               if b"\r\n" in data:

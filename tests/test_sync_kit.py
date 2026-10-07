@@ -651,6 +651,30 @@ class SyncKitTests(unittest.TestCase):
                                             capture_output=True, text=True, env=env).stdout
                     self.assertEqual(staged, '')
 
+    def test_the_line_ending_repair_never_writes_below_a_linked_folder(self):
+        # Codex review: only the leaf was checked, so with scripts/ a link to a shared folder the
+        # repair rewrote the shared check.sh, outside the project, and exited 0.
+        env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1', KIT=str(ROOT))
+        for snippet, where in ((self.checklist_block('core/.gitattributes'), 'CHANGELOG'),
+                               (textwrap_dedent_dev_setup(), 'DEV_SETUP')):
+            with self.subTest(where=where), tempfile.TemporaryDirectory() as tmp:
+                project, shared = Path(tmp) / 'project', Path(tmp) / 'shared'
+                (project / 'scripts').mkdir(parents=True)
+                (project / 'scripts/check.sh').write_bytes(b'#!/bin/sh\necho check ran\n')
+                subprocess.run(['git', 'init', '-q'], cwd=project, check=True, env=env)
+                subprocess.run(['git', 'add', '-A'], cwd=project, check=True, env=env)
+                subprocess.run(['git', '-c', 'user.name=F', '-c', 'user.email=f@example.invalid', 'commit',
+                                '-qm', 'v0.9'], cwd=project, check=True, env=env)
+                shared.mkdir()
+                (shared / 'check.sh').write_bytes(b'#!/bin/sh\r\necho shared\r\n')
+                shutil.rmtree(project / 'scripts')
+                (project / 'scripts').symlink_to(shared, target_is_directory=True)
+                result = subprocess.run(['sh', '-c', snippet], cwd=project, capture_output=True, text=True,
+                                        env=env)
+                self.assertEqual((shared / 'check.sh').read_bytes(), b'#!/bin/sh\r\necho shared\r\n',
+                                 result.stdout + result.stderr)
+                self.assertIn('left alone, a link or not a regular file on its way', result.stderr)
+
     def test_the_merge_action_stops_on_a_leftover_or_a_temporary_folder_inside_the_project(self):
         # r8: a kill left `scripts/check.sh.XXXXXX` behind, which a retry ignored; with
         # TMPDIR=. the v0.9 copies and the merge result were written inside the project.

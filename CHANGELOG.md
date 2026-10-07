@@ -155,7 +155,8 @@ checks the new files and not v0.9's (on native Windows, v0.9's `doctor.sh` asks 
 1. **ACTION:** Line endings first, before any script of the project runs: add the kit's
    rules to the project's `.gitattributes` (created if absent; a symlink or anything else that
    is not a regular file there stops the step before it writes), turn each CRLF into LF in
-   the shell scripts and hooks they name (regular files only: a symlink is left alone, and a
+   the shell scripts and hooks they name (regular files only: a file that is, or lies below,
+   a symlink or a junction is left alone, with a line saying so, and a
    lone CR is kept; each file is replaced whole, with its mode, so a killed run leaves it old
    or new, and a failed rewrite stops the step before anything is staged), then renormalize
    those files alone, from a committed project. The file list is read once and checked: a
@@ -176,8 +177,19 @@ checks the new files and not v0.9's (on native Windows, v0.9's `doctor.sh` asks 
      python3 -I -c 'if 1:
          import os, signal, stat, sys, tempfile
          signal.signal(signal.SIGTERM, lambda *a: sys.exit(143))
+         def plain(name):
+             # Every folder on the way and the file itself: no symlink, no junction (a reparse
+             # point), or the rewrite wrote into what the link points at, outside the project.
+             parts = name.split(b"/")
+             for i in range(1, len(parts) + 1):
+                 info = os.lstat(b"/".join(parts[:i]))
+                 if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400:
+                     return False
+             return stat.S_ISREG(info.st_mode)
          for name in sys.stdin.buffer.read().split(b"\0"):
-             if name and stat.S_ISREG(os.lstat(name).st_mode):
+             if name and not plain(name):
+                 sys.stderr.write("left alone, a link or not a regular file on its way: %r\n" % name)
+             elif name:
                  with open(name, "rb") as script:
                      data = script.read()
                  if b"\r\n" in data:
