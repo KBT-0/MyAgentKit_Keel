@@ -628,6 +628,8 @@ class SyncKitTests(unittest.TestCase):
                     script.write_bytes(b'#!/bin/sh\r\necho check ran\r\n')
                     subprocess.run(['git', 'init', '-q'], cwd=project, check=True, env=env)
                     subprocess.run(['git', 'add', '-A'], cwd=project, check=True, env=env)
+                    subprocess.run(['git', '-c', 'user.name=F', '-c', 'user.email=f@example.invalid', 'commit',
+                                    '-qm', 'v0.9'], cwd=project, check=True, env=env)
                     run_env = env
                     if case == 'ls-files fails':
                         real = shutil.which('git')
