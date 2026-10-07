@@ -2944,6 +2944,11 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         try:
             code, result = self.run_bridge(extra=['--mode', 'propose', '--commit', 'HEAD'])
             self.assertNotIn('inside the reviewed repository', json.dumps(result))
+            # The attribute reads of a snapshot write nothing under that TMPDIR either (r8).
+            import claude_bridge
+            for scope, reference in (('uncommitted', None), ('commit', 'HEAD'), ('base', 'HEAD~1')):
+                claude_bridge.snapshot(self.repo, scope, reference)
+            self.assertEqual(list(inside.iterdir()), [])
         finally:
             if old is None:
                 os.environ.pop('TMPDIR', None)

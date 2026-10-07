@@ -371,7 +371,11 @@ def filtered_names(repo: Path, names: set, drivers: set | None, tree: str | None
     elif tree == 'index':
         fields = git(repo, 'check-attr', '--cached', *query, stdin=stdin)
     else:
-        with tempfile.TemporaryDirectory() as scratch:
+        # In the git directory, never under TMPDIR: a TMPDIR inside the checkout (refused only
+        # later, by review_tmpdir) took this index into the working tree, and a SIGKILL during
+        # read-tree left it there.
+        gitdir = git(repo, 'rev-parse', '--absolute-git-dir').decode().strip()
+        with tempfile.TemporaryDirectory(prefix='kit-attr-', dir=gitdir) as scratch:
             env = dict(os.environ, GIT_INDEX_FILE=os.path.join(scratch, 'index'))
             git(repo, 'read-tree', tree, env=env)
             fields = git(repo, 'check-attr', '--cached', *query, stdin=stdin, env=env)
