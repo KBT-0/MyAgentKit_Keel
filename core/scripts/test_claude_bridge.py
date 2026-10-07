@@ -24,7 +24,7 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'MYAGENTKIT_TASK_ID', 'MYAGENTKIT_R
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 116, 'test_agent_usage': 19, 'test_codex_quota': 5}
+SUITE_MINIMUMS = {'test_claude_bridge': 117, 'test_agent_usage': 19, 'test_codex_quota': 5}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -394,6 +394,34 @@ class BridgeTests(unittest.TestCase):
                                         'review was being prepared'):
                 bridge.snapshot(self.repo, 'uncommitted', None)
         self.assertEqual(calls[0], b'asset.bin')
+
+    def test_the_payload_never_runs_the_filter_of_a_proven_lfs_file(self):
+        # A clean driver whose answer changes between calls (here: only while the payload diff
+        # runs) said "unchanged" to every check and put its other answer in the reviewer's diff.
+        from unittest.mock import patch
+        asset = self.lfs_fixture()
+        marker = self.root / 'odd-answer'
+        clean = self.root / 'lfs-clean.py'
+        clean.write_text(clean.read_text() + 'import os\nif os.path.exists(%r):\n'
+                         '    sys.stdout.buffer.write(b"ODD_FILTER_ANSWER\\n")\n' % str(marker))
+        stamp = asset.stat().st_mtime + 10
+        os.utime(asset, (stamp, stamp))
+        (self.repo / 'file.py').write_text('CODE_ONLY_CHANGE\n')
+        real = bridge.git
+
+        def odd_during_payload(repo, *args, **kwargs):
+            payload = args[:1] == ('diff',) and '--binary' in args
+            if payload:
+                marker.touch()
+            try:
+                return real(repo, *args, **kwargs)
+            finally:
+                if payload and marker.exists():
+                    marker.unlink()
+        with patch.object(bridge, 'git', odd_during_payload):
+            diff = bridge.snapshot(self.repo, 'uncommitted', None)[2]
+        self.assertIn('CODE_ONLY_CHANGE', diff)
+        self.assertNotIn('asset.bin', diff)
 
     def test_an_lfs_change_only_the_index_holds_is_refused(self):
         # A different pointer staged for asset.bin, the working file put back to HEAD's content:

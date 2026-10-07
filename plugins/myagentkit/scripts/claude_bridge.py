@@ -442,7 +442,11 @@ def snapshot(repo: Path, scope: str, reference: str | None) -> tuple[str, str, s
                           % (os.fsdecode(name), why))
     # Explicit prefixes: an owner's diff.noprefix or mnemonicPrefix broke `git apply` in the copy.
     raw_diff = ('--no-ext-diff', '--no-textconv', '--binary', '--src-prefix=a/', '--dst-prefix=b/')
-    working = git(repo, 'diff', *raw_diff, 'HEAD', '--', '.', *exclusions)
+    # The filtered paths let through are proven unchanged, so the payload never asks their filter
+    # again: a clean driver that answered differently on a later call put its output in the diff.
+    # ponytail: one pathspec per LFS file on the command line; tens of thousands reach ARG_MAX.
+    proven = [':(exclude,literal)' + os.fsdecode(name) for name in sorted(current)]
+    working = git(repo, 'diff', *raw_diff, 'HEAD', '--', '.', *exclusions, *proven)
     for raw in git(repo, "ls-files", "--others", "--exclude-standard", "-z").split(b"\0"):
         if raw:
             name = os.fsdecode(raw)
