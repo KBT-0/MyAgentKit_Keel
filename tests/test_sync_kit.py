@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -610,6 +611,52 @@ class SyncKitTests(unittest.TestCase):
         text = (ROOT / 'CHANGELOG.md').read_text()
         block = next(part for part in text.split('```sh\n')[1:] if marker in part.split('```')[0])
         return textwrap.dedent(block.split('```')[0])
+
+    def linked_upgrade_folder(self, marker, names, folder):
+        import shlex
+        snippet = self.checklist_block(marker)
+        with tempfile.TemporaryDirectory() as tmp:
+            kit, project, shared = (Path(tmp) / name for name in ('kit', 'project', 'shared'))
+            env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1',
+                       KIT=kit.as_posix())
+            for name in names:
+                for root, body in ((kit / 'core', b'kit\n'), (project, b'owner\n')):
+                    (root / name).parent.mkdir(parents=True, exist_ok=True)
+                    (root / name).write_bytes(body)
+            for repo in (kit, project):
+                subprocess.run(['git', 'init', '-q', str(repo)], check=True, env=env)
+            subprocess.run(['git', '-C', str(kit), 'add', '.'], check=True, env=env)
+            subprocess.run(['git', '-C', str(kit), '-c', 'user.name=F', '-c', 'user.email=f@f',
+                            '-c', 'commit.gpgsign=false', 'commit', '-qm', 'base'], check=True, env=env)
+            env['KIT_BASE'] = 'HEAD'
+            for name in names:
+                (kit / 'core' / name).write_bytes(b'new kit\n')
+            (project / folder).rename(shared)
+            if os.name == 'nt':
+                subprocess.run(['cmd', '/c', 'mklink', '/J', str(project / folder), str(shared)],
+                               check=True, capture_output=True)
+                snippet = snippet.replace('python3', shlex.quote(Path(sys.executable).as_posix()))
+            else:
+                (project / folder).symlink_to(shared, target_is_directory=True)
+            before = {p.name: p.read_bytes() for p in shared.iterdir()}
+            result = subprocess.run(['sh', '-c', snippet], cwd=project, env=env,
+                                    capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('STOP:', result.stderr)
+            self.assertIn(folder, result.stderr)
+            self.assertEqual({p.name: p.read_bytes() for p in shared.iterdir()}, before)
+            for name in names:
+                self.assertEqual((project / name).read_bytes(), b'owner\n')
+
+    def test_the_bridge_copy_stops_before_writing_below_a_linked_folder(self):
+        self.linked_upgrade_folder('for f in claude_bridge.py',
+                                   ('scripts/claude_bridge.py', 'scripts/test_claude_bridge.py'), 'scripts')
+
+    def test_the_merge_stops_before_writing_below_any_linked_folder(self):
+        for folder in ('scripts', 'docs'):
+            with self.subTest(folder=folder):
+                self.linked_upgrade_folder('git merge-file',
+                                           ('scripts/check.sh', 'docs/DEV_SETUP.md', 'docs/GOTCHAS.md'), folder)
 
     def test_the_line_ending_action_stops_on_a_failed_file_list_or_a_leftover(self):
         # r8: a corrupt index failed both `git ls-files`, Python read an empty list and exited

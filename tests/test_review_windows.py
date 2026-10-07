@@ -166,6 +166,20 @@ class ReviewOnWindows(unittest.TestCase):
         self.assertIn('ran plain', result['stdout'])
 
     @windows_only
+    def test_a_batch_cli_path_is_never_expanded_by_cmd(self):
+        from unittest.mock import patch
+        launcher = self.tmp / '%REVIEW_TEST_EXPANSION%.cmd'
+        launcher.write_text('@echo literal launcher\r\n')
+        (self.tmp / 'other.cmd').write_text('@echo expanded launcher\r\n')
+        with patch.dict(os.environ, REVIEW_TEST_EXPANSION='other'):
+            for command in ([str(launcher)], [launcher.stem]):
+                with self.subTest(command=command), patch.dict(os.environ, PATH=str(self.tmp)):
+                    result = agent_process.run(command, '', self.tmp, 30)
+                    self.assertEqual(result['termination'], 'unavailable', result)
+                    self.assertIn('batch file', result['stderr'])
+                    self.assertNotIn('launcher', result['stdout'])
+
+    @windows_only
     def test_a_ctrl_c_as_the_launch_returns_stops_the_reviewer(self):
         # A Ctrl-C after the reviewer existed and before run() held its handle raised past the
         # cleanup that stops it: run() said cancelled while the reviewer ran on.
@@ -192,6 +206,32 @@ class ReviewOnWindows(unittest.TestCase):
         self.assertTrue(gone_within(int(marker.read_text())), 'the reviewer ran on after the cancel')
 
     @windows_only
+    def test_a_ctrl_c_during_settlement_is_persisted_before_handing_back(self):
+        import signal
+        record = self.tmp / 'failure.json'
+        forwarded, samples = [], []
+        previous = agent_process.hold(lambda sig, frame: forwarded.append(sig))
+        caller = {sig: signal.getsignal(sig) for sig in previous}
+
+        def settle(held):
+            samples.append(set(held))
+            record.write_text(json.dumps({'termination': 'cancelled' if held else 'quota',
+                                          'cancelled': bool(held)}))
+            self.assertEqual(forwarded, [])
+            if len(samples) == 1:
+                signal.raise_signal(signal.SIGINT)
+
+        try:
+            agent_process.handing_back(caller, settle)
+            self.assertEqual(json.loads(record.read_text()), {'termination': 'cancelled', 'cancelled': True})
+            self.assertEqual(samples, [set(), {signal.SIGINT}])
+            self.assertEqual(forwarded, [signal.SIGINT])
+            for sig, handler in caller.items():
+                self.assertIs(signal.getsignal(sig), handler)
+        finally:
+            agent_process.restore(previous)
+
+    @windows_only
     def test_a_scratch_folder_that_cannot_be_removed_never_raises(self):
         # The Codex sandbox writes under another account; a folder this user cannot remove
         # made TemporaryDirectory raise even with ignore_cleanup_errors, and the review was lost.
@@ -206,6 +246,23 @@ class ReviewOnWindows(unittest.TestCase):
             self.assertEqual(denied.returncode, 0, denied.stdout + denied.stderr)
         self.addCleanup(lambda: subprocess.run(['icacls', str(locked), '/remove:d', user], capture_output=True))
         self.addCleanup(lambda: subprocess.run(['cmd', '/c', 'rmdir', '/s', '/q', path], capture_output=True))
+
+    @windows_only
+    def test_a_guard_inside_an_outer_block_leaves_the_outer_cancel_alone(self):
+        # Lead review of the r2 fix: with pending() reading the recorder, a guard leaving inside
+        # an outer block found the outer recorder's Ctrl-C and called signal.sigwait, which
+        # Windows lacks (AttributeError). The outer cancel is the outer block's to hand on.
+        import signal
+        mask = agent_process.block_cancels()
+        try:
+            signal.raise_signal(signal.SIGINT)
+            with agent_process.OneShot() as guard:
+                pass
+            self.assertEqual(guard.noted, [])
+        finally:
+            with self.assertRaises(KeyboardInterrupt):
+                agent_process.restore_mask(mask)
+                time.sleep(0.1)  # the handed-on Ctrl-C is raised here at the latest
 
     @windows_only
     def test_a_missing_reviewer_is_unavailable(self):

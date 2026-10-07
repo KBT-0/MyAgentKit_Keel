@@ -10,6 +10,7 @@ from pathlib import Path
 import signal
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -183,7 +184,8 @@ class CloseWorkerTests(unittest.TestCase):
         env = self.windows('100 C:\\npm\\claude.exe "Read \'b.md\' and follow it." -n w1 --model opus',
                            '123 C:\\npm\\claude.exe "Read brief -n w1 notes.md and follow it." -n w2',
                            '200 C:\\npm\\claude.exe -n w10', '300 C:\\npm\\claude.exe --resume x',
-                           '400 "C:\\Program Files\\nodejs\\node.exe" C:\\other\\tool.js -n w1')
+                           '400 "C:\\Program Files\\nodejs\\node.exe" C:\\other\\tool.js -n w1',
+                           '401 node.exe C:\\projects\\claude-code-tools\\backup.js -n w1')
         out = self.close('w1', **env)
         kills = (self.tmp / 'taskkill.log').read_text().splitlines()
         self.assertEqual(kills, ["['/PID', '100', '/T', '/F']"], out)
@@ -195,6 +197,23 @@ class CloseWorkerTests(unittest.TestCase):
         self.assertEqual([c for c in self.calls() if 'list-sessions' not in c], [], 'tmux was used to end it')
         out = self.close('w1', **env)
         self.assertIn('close_worker: w1: no Claude Code session named w1 runs; nothing to end\n', out)
+
+    def test_sessions_accepts_only_the_claude_code_package_entry_point(self):
+        # Exercise both installed parsers, including separators accepted on native Windows.
+        for script in (SCRIPT, SCRIPT.with_name('spawn_worker.sh')):
+            source = script.read_text(encoding='utf-8').split('sessions() {', 1)[1]
+            source = source.split("-I -c '", 1)[1].split("' \"$1\"", 1)[0]
+            rows = [r'100 node.exe C:\projects\claude-code-tools\backup.js -n w1',
+                    r'101 node.exe C:\npm\@anthropic-ai\claude-code\backup.js -n w1',
+                    r'102 node.exe C:\npm\other\claude-code\cli.js -n w1',
+                    r'103 node.exe C:\npm\@anthropic-ai\claude-code\cli.js.bak -n w1',
+                    r'200 node.exe C:\npm\@anthropic-ai\claude-code\cli.js -n w1',
+                    '201 node.exe C:/npm/@anthropic-ai/claude-code/cli.js -n w1']
+            with self.subTest(script=script.name):
+                result = subprocess.run([sys.executable, '-I', '-c', source, 'w1'],
+                                        input='\n'.join(rows), capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, '200 201')
 
     def test_on_native_windows_an_npm_installed_claude_is_found_by_its_name(self):
         # Codex review: npm's `claude` runs as node.exe with Claude Code's cli.js, and a lister

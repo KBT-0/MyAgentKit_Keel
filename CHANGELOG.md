@@ -225,9 +225,22 @@ checks the new files and not v0.9's (on native Windows, v0.9's `doctor.sh` asks 
 2. **ACTION:** Copy `claude_bridge.py` and `test_claude_bridge.py` whole from
    `$KIT/core/scripts/` into `scripts/`, replacing yours (they hold no project content). Each
    is copied beside its destination and renamed over it, so a symlink at either name is
-   replaced by the file, never written through (a plain `cp` wrote into the link's target):
+   replaced by the file, never written through (a plain `cp` wrote into the link's target).
+   A linked parent folder (a symlink or Windows reparse point) stops the step before any copy:
    ```sh
    ( new=; trap '[ -z "$new" ] || rm -f "$new"' EXIT; trap 'exit 130' INT; trap 'exit 143' TERM
+     python3 -I -c 'if 1:
+         import os, stat, sys
+         for name in sys.argv[1:]:
+             parts = name.split("/")
+             for i in range(1, len(parts)):
+                 parent = "/".join(parts[:i])
+                 info = os.lstat(parent)
+                 if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400:
+                     sys.exit("STOP: %s is a linked folder; nothing was copied" % parent)
+                 if not stat.S_ISDIR(info.st_mode):
+                     sys.exit("STOP: %s is not a folder; nothing was copied" % parent)' \
+       scripts/claude_bridge.py scripts/test_claude_bridge.py || exit 1
      for f in claude_bridge.py test_claude_bridge.py; do
        new=$(mktemp scripts/.kit-copy-XXXXXX) && cp -p "$KIT/core/scripts/$f" "$new" && mv -f "$new" "scripts/$f" ||
          { echo "STOP: scripts/$f could not be replaced; it and the files after it are unchanged" >&2; exit 1; }
@@ -239,7 +252,8 @@ checks the new files and not v0.9's (on native Windows, v0.9's `doctor.sh` asks 
    use `scripts/review.sh` again for every scope that changes no LFS file.
 3. **ACTION:** Merge the kit's changes since v0.9 into the three files that hold your setup
    content, one three-way merge per file, from a committed project. A file that is not a
-   regular file (a symlink) stops the step before any merge. The v0.9 copies go to a private
+   regular file (a symlink), or below a linked folder, stops the step before any merge.
+   Windows reparse points count as links too. The v0.9 copies go to a private
    folder outside the project (a `TMPDIR` inside it stops the step), each merge result replaces
    its file whole, with its mode, and a failed read or merge stops the step there. A run that
    is stopped removes what it made; what a SIGKILL left (`.kit-merge-*`) stops the next run by
@@ -249,6 +263,19 @@ checks the new files and not v0.9's (on native Windows, v0.9's `doctor.sh` asks 
    ```sh
    ( from=${KIT_BASE:-620f25e}
      set -- scripts/check.sh docs/DEV_SETUP.md docs/GOTCHAS.md
+     python3 -I -c 'if 1:
+         import os, stat, sys
+         for name in sys.argv[1:]:
+             parts = name.split("/")
+             for i in range(1, len(parts) + 1):
+                 path = "/".join(parts[:i])
+                 info = os.lstat(path)
+                 if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400:
+                     sys.exit("STOP: %s is a link; nothing was merged" % path)
+                 if i < len(parts) and not stat.S_ISDIR(info.st_mode):
+                     sys.exit("STOP: %s is not a folder; nothing was merged" % path)
+             if not stat.S_ISREG(info.st_mode):
+                 sys.exit("STOP: %s is not a regular file; nothing was merged" % name)' "$@" || exit 1
      for f do
        [ -f "$f" ] && [ ! -L "$f" ] ||
          { echo "STOP: $f is not a regular file (a symlink?); nothing was merged" >&2; exit 1; }

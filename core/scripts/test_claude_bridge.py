@@ -25,7 +25,7 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'MYAGENTKIT_TASK_ID', 'MYAGENTKIT_R
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 126, 'test_agent_usage': 20, 'test_codex_quota': 5}
+SUITE_MINIMUMS = {'test_claude_bridge': 127, 'test_agent_usage': 20, 'test_codex_quota': 5}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -298,7 +298,7 @@ class BridgeTests(unittest.TestCase):
         (self.repo / 'visible.txt').write_text('visible change\n')
         # A named filter on a changed path refuses it even with no driver configured here: the
         # next machine may configure one (a fresh machine's LFS, r8). With none, nothing is hidden.
-        with self.assertRaisesRegex(bridge.BridgeError, 'clean filter or ident attribute on file.py'):
+        with self.assertRaisesRegex(bridge.BridgeError, 'clean filter or ident attribute on bypass.py'):
             bridge.snapshot(self.repo, 'uncommitted', None)
         self.git('config', 'filter.hide.clean', "sed '/UNSAFE/d'")
         with self.assertRaisesRegex(bridge.BridgeError, 'clean filter or ident attribute on bypass.py'):
@@ -315,8 +315,24 @@ class BridgeTests(unittest.TestCase):
         with self.assertRaisesRegex(bridge.BridgeError, 'clean filter or ident attribute on bypass.py'):
             bridge.snapshot(self.repo, 'uncommitted', None)
         self.git('config', '--unset', 'filter.hide.clean')
+        (self.repo / 'bypass.py').unlink()
         (self.repo / '.gitattributes').write_text('file.py ident\n')
         with self.assertRaisesRegex(bridge.BridgeError, 'clean filter or ident attribute on file.py'):
+            bridge.snapshot(self.repo, 'uncommitted', None)
+
+    def test_an_untracked_filtered_addition_is_refused_without_a_driver(self):
+        from unittest.mock import patch
+        environment = patch.dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1')
+        environment.start()
+        self.addCleanup(environment.stop)
+        (self.repo / '.gitattributes').write_text('*.bin filter=lfs\n')
+        self.commit_fixture('Named filter without a driver')
+        configured = subprocess.run(['git', '-C', str(self.repo), 'config', '--get-regexp',
+                                     r'^filter\..*\.(clean|process)$'], capture_output=True)
+        self.assertEqual(configured.returncode, 1, configured.stdout)
+        (self.repo / 'asset.bin').write_bytes(b'version https://git-lfs.github.com/spec/v1\n'
+                                             b'oid sha256:' + b'a' * 64 + b'\nsize 42\n')
+        with self.assertRaisesRegex(bridge.BridgeError, 'clean filter or ident attribute on asset.bin'):
             bridge.snapshot(self.repo, 'uncommitted', None)
 
     def test_an_lfs_file_the_review_does_not_change_is_no_refusal(self):

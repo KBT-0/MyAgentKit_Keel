@@ -748,6 +748,52 @@ class BootstrapTests(unittest.TestCase):
             self.assertEqual((project / '.gitattributes').read_bytes(), own)
             self.assertFalse((project / 'docs/kit/.kit-version').exists())
 
+    def attribute_override(self, path, nested, own_root=True):
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as tmp:
+            kit, project = Path(tmp) / 'kit', Path(tmp) / 'project'
+            source = kit / ('overlays/extra/files' if path.startswith('tools/') else 'core')
+            (source / path).parent.mkdir(parents=True)
+            (source / path).write_bytes(b'# installed file\n')
+            (kit / 'core').mkdir(exist_ok=True)
+            shutil.copyfile(root / 'core/.gitattributes', kit / 'core/.gitattributes')
+            shutil.copyfile(root / 'bootstrap.sh', kit / 'bootstrap.sh')
+            (kit / 'CHANGELOG.md').write_bytes(b'## v0.10\n')
+            (kit / 'overlays/extra/files').mkdir(parents=True, exist_ok=True)
+            project.mkdir()
+            if own_root:
+                shutil.copyfile(root / 'core/.gitattributes', project / '.gitattributes')
+            attributes = project / (str(Path(path).parent / '.gitattributes') if nested else '.gitattributes')
+            attributes.parent.mkdir(parents=True, exist_ok=True)
+            with attributes.open('ab') as stream:
+                pattern = Path(path).name if nested else path
+                stream.write(('%s text eol=crlf\n' % pattern).encode())
+            before = {p.relative_to(project): p.read_bytes() for p in project.rglob('*') if p.is_file()}
+            result = subprocess.run(['sh', str(kit / 'bootstrap.sh'), str(project), '--overlay', 'extra'],
+                                    capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('eol=lf', result.stderr)
+            self.assertIn(path, result.stderr)
+            self.assertEqual({p.relative_to(project): p.read_bytes() for p in project.rglob('*') if p.is_file()},
+                             before, result.stdout + result.stderr)
+            attributes.write_bytes(attributes.read_bytes().replace(b'eol=crlf', b'eol=lf'))
+            result = subprocess.run(['sh', str(kit / 'bootstrap.sh'), str(project), '--overlay', 'extra'],
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual((project / path).read_bytes(), b'# installed file\n')
+            self.assertEqual((project / 'docs/kit/.kit-version').read_text().strip(), '0.10')
+
+    def test_path_specific_attributes_stop_bootstrap_before_installing(self):
+        for path in ('scripts/check.sh', 'scripts/tool.py', '.githooks/pre-commit', 'tools/deep/run.sh'):
+            with self.subTest(path=path):
+                self.attribute_override(path, nested=False)
+
+    def test_nested_attributes_stop_bootstrap_before_installing(self):
+        for path in ('scripts/check.sh', 'scripts/tool.py', '.githooks/pre-commit', 'tools/deep/run.sh'):
+            for own_root in (False, True):
+                with self.subTest(path=path, own_root=own_root):
+                    self.attribute_override(path, nested=True, own_root=own_root)
+
     def test_scripts_and_hooks_check_out_with_lf_under_autocrlf(self):
         # Git for Windows' default core.autocrlf=true checked every text file out with CRLF,
         # and sh cannot run a CRLF script: a project's gate, hooks and doctor.sh, and the kit's

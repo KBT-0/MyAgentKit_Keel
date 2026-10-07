@@ -21,7 +21,7 @@ CANCEL_SIGNALS = tuple(getattr(signal, name) for name in ("SIGINT", "SIGTERM", "
 # The platform seam: every launch, signal block and group kill of the review tooling goes
 # through the five functions below (test_claude_bridge checks that no other place makes one).
 # Off POSIX (native Windows Python) there is no signal mask, no session and no killpg: the
-# blocks are no-ops, and a child starts suspended, joins a Job Object of its own and only then
+# blocks record cancels, and a child starts suspended, joins a Job Object of its own and only then
 # runs, so every process it starts is in that job and TerminateJobObject stops them all, also
 # after the child itself has exited (taskkill /T finds no tree below an exited process). The
 # job is killed when its last handle closes: a supervisor that dies takes its reviewer with it.
@@ -75,6 +75,7 @@ def block_cancels():
 
     def recorder(signum, frame):
         held.append(signum)
+    recorder.held = held
     return recorder, {sig: signal.signal(sig, recorder) for sig in CANCEL_SIGNALS}, held
 
 
@@ -94,8 +95,10 @@ def restore_mask(mask) -> None:
 
 
 def pending() -> set:
-    """The signals pending while blocked; none off POSIX, where nothing is blocked."""
-    return signal.sigpending() if POSIX else set()
+    """The signals pending while blocked, or held by the off-POSIX recorder."""
+    if POSIX:
+        return signal.sigpending()
+    return {sig for cancel in CANCEL_SIGNALS for sig in getattr(signal.getsignal(cancel), 'held', ())}
 
 
 def launch(command, mask, **popen_kw) -> subprocess.Popen:
@@ -112,9 +115,9 @@ def launch(command, mask, **popen_kw) -> subprocess.Popen:
         command = [shutil.which(command[0], path=path) or command[0], *command[1:]]
     # A .cmd or .bat runs under cmd.exe, which reads its command line as shell: Popen's quoting
     # does not escape `&` or `%` for it, and an argument `a&echo>x` ran `echo` (BatBadBut). An
-    # argument with a character cmd.exe acts on is refused, before anything starts.
+    # argument or launcher path with a character cmd.exe acts on is refused before anything starts.
     if command[0].lower().endswith((".cmd", ".bat")):
-        unsafe = [arg for arg in command[1:] if any(c in arg for c in '"%^&|<>!\r\n')]
+        unsafe = [arg for arg in command if any(c in arg for c in '"%^&|<>!\r\n')]
         if unsafe:
             raise OSError("%s is a batch file, and cmd.exe would read %r as shell; name the CLI's "
                           "executable instead (REVIEW_CLI_BIN, CLAUDE_CLI_BIN)" % (command[0], unsafe[0]))
@@ -219,7 +222,9 @@ def handing_back(previous: dict, settle) -> None:
     """
     mask = block_cancels()
     try:
-        restore(previous)
+        # Off POSIX the recorder must keep the handlers until the last settlement finishes.
+        if POSIX:
+            restore(previous)
         seen = None
         while True:
             held = pending() & set(previous)
@@ -228,6 +233,8 @@ def handing_back(previous: dict, settle) -> None:
             seen = held
             settle(held)
     finally:
+        if not POSIX:
+            restore(previous)
         restore_mask(mask)
 
 
@@ -263,8 +270,16 @@ class OneShot:
         mask = block_cancels()
         try:
             restore(self.previous)
-            for sig in sorted(pending() & set(self.previous)):
-                self.noted.append(signal.sigwait({sig}))
+            if POSIX:
+                for sig in sorted(pending() & set(self.previous)):
+                    self.noted.append(signal.sigwait({sig}))
+            elif mask is not None:
+                # Off POSIX this block's own recorder held them (there is no sigwait): noted
+                # here and not handed on. One an outer block's recorder holds stays its own:
+                # read through pending(), it reached sigwait, which Windows lacks.
+                held = mask[2]
+                self.noted.extend(sig for sig in held if sig in self.previous)
+                held[:] = [sig for sig in held if sig not in self.previous]
         finally:
             restore_mask(mask)
 

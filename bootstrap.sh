@@ -156,6 +156,69 @@ put() {
   stage "$@" && mv -f "$part" "$1" && part=""
 }
 
+# Ask git about the installed paths before any copy. A synthetic x.sh missed scripts/*.sh,
+# and attributes in a parent folder override the root file too. The probe holds the attribute
+# files the install would leave, including the owner's nested files and selected overlays.
+check_attributes() (
+  [ -f "$kit/core/.gitattributes" ] || return 0
+  [ -z "$(blocked .gitattributes)" ] || return 0
+  rules=$(cat "$kit/core/.gitattributes") || die "cannot read the kit's .gitattributes; nothing was changed"
+  attrs=""
+  if [ -f "$target/.gitattributes" ]; then
+    attrs=$(cat "$target/.gitattributes") || die "cannot read the project's own .gitattributes; nothing was changed"
+  fi
+  missing=$(printf '%s\n' "$rules" | grep -v -e '^#' -e '^$' | while IFS= read -r rule; do
+              printf '%s\n' "$attrs" | grep -qxF -e "$rule" || printf '%s\n' "$rule"; done)
+  probe=$(mktemp -d) || die "cannot create a temporary folder to check .gitattributes"
+  trap 'rm -rf "$probe"' EXIT
+  trap 'exit 129' HUP; trap 'exit 130' INT; trap 'exit 143' TERM
+  git init -q "$probe" >/dev/null 2>&1 || die "cannot check .gitattributes with git; nothing was changed"
+  printf '%s\n%s\n' "$attrs" "$missing" > "$probe/.gitattributes"
+  : > "$probe/paths"
+  attribute_tree() {
+    src=$1; prefix=${2:-}
+    [ -d "$src" ] || return 0
+    if find "$src" -name "$(printf '*\n*')" 2>/dev/null | grep -q .; then
+      die "a filename under $src contains a newline; refusing to copy blind"
+    fi
+    ( cd "$src" && find . -type f -print ) | sed 's|^\./||' > "$probe/source"
+    while IFS= read -r rel; do
+      case "$rel" in __pycache__/*|*/__pycache__/*|*.pyc|*.pyo) continue ;; esac
+      dest="${prefix:+$prefix/}$rel"
+      case "$dest" in *.sh|*.py|.githooks/*) printf '%s\n' "$dest" >> "$probe/paths" ;; esac
+      case "$dest" in */.gitattributes)
+        [ -z "$(blocked "$dest")" ] || continue
+        if [ "$force" -eq 0 ] && [ -f "$target/$dest" ]; then from="$target/$dest"
+        elif [ "$force" -eq 0 ] && [ -f "$probe/$dest" ]; then continue
+        else from="$src/$rel"; fi
+        mkdir -p "$probe/${dest%/*}"
+        cat "$from" > "$probe/$dest" || die "cannot read $from; nothing was changed"
+        ;;
+      esac
+    done < "$probe/source"
+  }
+  attribute_tree "$kit/core"
+  attribute_tree "$kit/setup" setup
+  for name in $overlays; do attribute_tree "$kit/overlays/$name/files"; done
+  while IFS= read -r dest; do
+    parent=$dest
+    while [ "${parent%/*}" != "$parent" ]; do
+      parent=${parent%/*}
+      rel="$parent/.gitattributes"
+      if [ ! -f "$probe/$rel" ] && [ -z "$(blocked "$rel")" ] && [ -f "$target/$rel" ]; then
+        mkdir -p "$probe/$parent"
+        cat "$target/$rel" > "$probe/$rel" || die "cannot read the project's own $rel; nothing was changed"
+      fi
+    done
+  done < "$probe/paths"
+  while IFS= read -r dest; do
+    eol=$(git -C "$probe" check-attr eol -- "$dest" 2>/dev/null) || eol=""
+    case "$dest" in .githooks/*) rule='.githooks/* text eol=lf' ;; *.sh) rule='*.sh text eol=lf' ;; *) rule='*.py text eol=lf' ;; esac
+    [ "${eol##*: eol: }" = lf ] ||
+      die "an attribute for $dest overrides the kit's rule '$rule' (the file would check out without eol=lf); remove that rule and run bootstrap again; nothing was changed"
+  done < "$probe/paths"
+)
+
 # copy_tree SRC [DEST_PREFIX] — copies SRC's contents into the target, optionally under a
 # subdirectory. Existing files that differ are recorded and left alone unless --force;
 # identical ones are passed over (an earlier run put them there).
@@ -194,24 +257,6 @@ copy_tree() {
       rules=$(cat "$src/$rel") || die "cannot read the kit's $rel; nothing was changed in the project's $dest"
       missing=$(printf '%s\n' "$rules" | grep -v -e '^#' -e '^$' | while IFS= read -r rule; do
                   printf '%s\n' "$attrs" | grep -qxF -e "$rule" || printf '%s\n' "$rule"; done)
-      # A rule's text in the file does not make it effective: a later line for the same files
-      # (`*.sh text eol=crlf` after `*.sh text eol=lf`) wins, and the next clone's gate had CRLF.
-      # The file as it would be written is asked of git itself, in a throwaway repository, for
-      # a path each kit rule names; one that does not resolve to eol=lf stops bootstrap before
-      # the file is written or the version recorded.
-      candidate=$attrs
-      [ -z "$missing" ] || candidate="$attrs
-$missing"
-      probe=$(mktemp -d) || die "cannot create a temporary folder to check $dest"
-      printf '%s\n' "$candidate" > "$probe/.gitattributes" && git init -q "$probe" >/dev/null 2>&1 ||
-        { rm -rf "$probe"; die "cannot check the project's $dest with git; nothing was changed in it"; }
-      overridden=$(printf '%s\n' "$rules" | grep -v -e '^#' -e '^$' | while IFS= read -r rule; do
-                     sample=$(printf '%s' "${rule%% *}" | sed 's/\*/x/g')
-                     eol=$(git -C "$probe" check-attr eol -- "$sample" 2>/dev/null) || eol=""
-                     [ "${eol##*: eol: }" = lf ] || printf '%s\n' "$rule"; done)
-      rm -rf "$probe"
-      [ -z "$overridden" ] ||
-        die "a line of the project's own $dest overrides the kit's rule '$(printf '%s' "$overridden" | head -n 1)' (the gate's scripts would check out without eol=lf); remove that line and run bootstrap again; nothing was changed"
       if [ -n "$missing" ]; then
         put "$target/$dest" <<EOF
 $attrs
@@ -243,6 +288,7 @@ left=$(cd "$target" && find . -name .git -prune -o -type f -name '.kit-tmp.*' -p
 
 printf '%s\n' "bootstrap: installing MyAgentKit_Keel v$version into $target"
 
+check_attributes
 copy_tree "$kit/core"
 copy_tree "$kit/setup" "setup"
 
