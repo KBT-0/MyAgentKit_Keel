@@ -18,9 +18,9 @@
 #   - Skips a session that already has a client attached, with a line: running it twice never
 #     opens a second tab.
 #   - Opens the rest, by the first backend that fits:
-#       WSL + Windows Terminal: `wt.exe -w kit-<repository folder> new-tab ...`, one tab per
-#         session in a window named after the project, so a later call adds its tabs to the
-#         same window. Run from the drive's root: from a WSL path wt.exe warns about a UNC
+#       WSL + Windows Terminal: `wt.exe -w 0 new-tab ...`, one tab per session in the window
+#         used last, the one the lead runs in: a window named after the project opened a
+#         second window beside it, which the owner did not want. Run from the drive's root: from a WSL path wt.exe warns about a UNC
 #         working directory. KIT_WT names the launcher instead of the wt.exe found on PATH or
 #         under /mnt/c/Users; the kit's tests point it at a stub, because under WSL any file
 #         named *.exe is handed to Windows, and a test double of that name opened dialogs.
@@ -70,10 +70,6 @@ by_hand() {
   exit 0
 }
 
-# The window is named after the project's main checkout, also from a worktree.
-top=$(git rev-parse --git-common-dir 2>/dev/null) && top=$(CDPATH= cd -P -- "$top/.." && pwd -P) ||
-  top=$(pwd -P)
-window=kit-$(printf '%s' "${top##*/}" | LC_ALL=C tr -c 'A-Za-z0-9._-' '_')
 tmux_bin=$(command -v tmux)
 case $tmux_bin in
   /*) case $tmux_bin in *[!A-Za-z0-9._/-]*) by_hand "tmux's path has characters this script does not pass on: $tmux_bin" ;; esac ;;
@@ -120,7 +116,7 @@ wsl_wt() {
     *[!A-Za-z0-9._-]*) by_hand "the WSL distribution's name has characters this script does not pass on" ;;
   esac
   case $wt in /mnt/?/*) dir=${wt%"${wt#/mnt/?}"} ;; *) dir=${wt%/*} ;; esac
-  set -- "$wt" -w "$window"
+  set -- "$wt" -w 0
   sep=""
   for n in $show; do
     [ -z "$sep" ] || set -- "$@" "$sep"
