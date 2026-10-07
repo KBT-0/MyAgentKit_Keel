@@ -91,7 +91,9 @@ exposed an "adjacent path"; a finding outside it is answered with this section, 
   Python (WSL against native Windows, a stray module on `PYTHONPATH`). A stale environment
   copied from a killed gate. Each one either works or stops with a message that names it. An
   interrupted or killed gate never reports a pass, and it leaves the lock to the next run. A
-  review whose checkout changed while it ran is discarded (`stale_checkout`).
+  Ctrl-C that comes after the gate has ended interrupted nothing, so the gate's own status
+  stands, as it does on POSIX once the gate has exited. A review whose checkout changed
+  while it ran is discarded (`stale_checkout`).
 - **Out of scope: an adversary acting while a gate or a review runs.** This is a process that
   changes the tree, the index or the Git configuration between two of a script's reads. The
   reason: the same process could edit the gate or the review script itself. Example (review

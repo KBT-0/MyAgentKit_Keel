@@ -324,6 +324,7 @@ os.environ["GATE_LOCK_FD"] = str(msvcrt.get_osfhandle(fd))
 os.environ["GATE_LOCK_HELD"] = path
 status = 130 if interrupted else subprocess.call(["sh", gate] + sys.argv[3:], close_fds=False)
 os.ftruncate(fd, 0)
+# A Ctrl-C after the check below came after the gate ended: its status stands, as on POSIX.
 if interrupted:
     sys.exit(130)
 # Git for Windows hands native Python a child killed by signal N as N << 8, and sh would read
