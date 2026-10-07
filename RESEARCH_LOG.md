@@ -445,6 +445,36 @@ Medium finding, each fixed once more:
 Two Low findings were fixed too: `doctor.sh` takes `KIT_WT` as `spawn_worker.sh` does, and
 the overlay README and the script's header say what does not apply on native Windows.
 
+**A sixth review pass** confirmed those fixes and left two findings.
+
+- *Ctrl-C, the review said, reached the gate and its build as ignored,* because the holder set
+  `SIGINT` to `SIG_IGN` before it started `sh`, and a Windows process's ignored Ctrl-C is
+  inherited. Measured on Windows 11 with CPython 3.13 and Git for Windows' `sh`, it was not:
+  CPython's `SIG_IGN` installs the C runtime's console handler, not the inherited
+  `SetConsoleCtrlHandler(NULL, TRUE)` flag, and a native grandchild under a `SIG_IGN` parent
+  was interrupted. Even that flag set in the holder did not reach the build, because `sh`
+  starts with Ctrl-C enabled again. The holder now installs a handler that does nothing
+  anyway, so the gate's behaviour no longer rests on either fact. The new self-test case gives
+  a copy of the gate a hidden console of its own, with that console as `sh`'s input as a
+  terminal window does, waits until its build (a native Python) sleeps, and sends
+  `CTRL_C_EVENT` to that console, the event Ctrl-C raises there; a signal sent by pid reaches
+  one process, not the console's. The gate must exit nonzero within 10 s, the build must have
+  ended, and the next gate must take the lock. The case passed against `SIG_IGN`, against the
+  flag set in the holder, against `trap '' INT` in the gate, and against a holder that starts
+  `sh` in a new process group. It was red when the holder starts `sh` detached from the
+  console: the gate ran on, the build ran on, and the next gate waited out its
+  `GATE_LOCK_WAIT`. The process that runs the case clears an ignored Ctrl-C it may have
+  inherited (an agent's shell had one), since a terminal's user has none.
+- *The self-test's host check imported ambient Python customization.* It ran `python3 -c`, so a
+  `sitecustomize.py` on `PYTHONPATH` that called the host POSIX, or stopped the interpreter,
+  sent native Windows to the POSIX `skip` line, and all the Windows lock cases were bypassed
+  with no `FAIL`; the case runner imported it too. Both now run `python3 -I`, and the self-test
+  runs them beside a `sitecustomize.py` that marks its import and calls the host POSIX. On
+  native Windows every case must run and the marker must not be written; where the cases are
+  skipped, a written marker is a `FAIL`. Red with the host check's `-I` removed (the cases were
+  skipped and the import failed the self-test) and with the runner's `-I` removed; the v0.10
+  head beside the same `PYTHONPATH` printed the `skip` line and no `FAIL`.
+
 ### 2026-10-06 — native Windows: the gate lock, and Git LFS beside a review
 
 A project moved from WSL to native Windows (Git for Windows' `sh`, CPython from python.org).

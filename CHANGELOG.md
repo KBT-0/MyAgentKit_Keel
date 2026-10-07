@@ -39,15 +39,21 @@ change is safe is in `RESEARCH_LOG.md` (2026-10-06 and 2026-10-07).
   lock programs run isolated (`python3 -I`), so a `fcntl.py` or another stand-in module in
   the checkout or on `PYTHONPATH` is never imported. `docs/DEV_SETUP.md` and
   `docs/GOTCHAS.md` say so.
-- **`--self-test` proves the Windows lock.** Eleven new cases on native Windows: a nested run
+- **`--self-test` proves the Windows lock.** Twelve new cases on native Windows: a nested run
   refuses a writable handle on another file, a read-only handle on the held lock file, a
   write handle while nothing holds the lock, a fresh open refused for a reason other than the
   lock (a read-only file), and a file id equal to the lock's in its volume and first 64 bits
   only; a volume without `FILE_ID_INFO` fails closed; the lock refuses a reparse point at its
   path (set with a tag any user may set, so the case never needs the symlink privilege and is
   never skipped); a gate killed by a signal never exits 0; the holder passes a failing gate's
-  exit status on; a killed lock holder leaves the lock with the gate it started; and the
-  holder imports no stand-in `fcntl.py` or `secrets.py` from `PYTHONPATH`. Each case
+  exit status on; a killed lock holder leaves the lock with the gate it started; the
+  holder imports no stand-in `fcntl.py` or `secrets.py` from `PYTHONPATH`; and Ctrl-C (a
+  `CTRL_C_EVENT` sent to a hidden console of the case's own) stops the gate and its build, the
+  gate exits nonzero, and the next gate takes the lock. The holder survives Ctrl-C through a
+  handler that does nothing, never `SIG_IGN`. The host check and the case runner run isolated
+  (`python3 -I`) beside a `sitecustomize.py` on `PYTHONPATH` that marks its import and calls
+  the host POSIX; imported, it would have skipped every Windows case, so the import fails the
+  self-test there and the skip line is printed only without it. Each case
   asserts its exit status as well as its message, and the gate's throwaway copy passes right
   after it holds the lock, so a guard that prints its refusal and then carries on fails its
   case. On POSIX, a `cygpath` on `PATH` is never run. On every host, a nested run with a
@@ -142,7 +148,7 @@ from, and `00581dd` is the kit's v0.9 commit.
    the self-test cannot pass yet: its review case fails because `review.sh` needs POSIX
    signals (above). There, run `./scripts/check.sh` and `./scripts/check.sh --self-test` from
    Git for Windows' `sh` with the Windows `python3` and expect exactly this: `CHECK: PASS`;
-   in the self-test, `ok` for every case including the eleven Windows lock cases, except
+   in the self-test, `ok` for every case including the twelve Windows lock cases and the `sitecustomize.py` line, except
    `FAIL — review adapter negative tests failed or did not run` with the review tests' own
    output, the line `skip — a stray cygpath on a POSIX PATH` (a POSIX-only case), and a
    `skip` the project's own setup prints (the commit-msg hook when `AGENTS.md` has no
