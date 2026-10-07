@@ -358,10 +358,10 @@ def committed_as_is(repo: Path, head: str, name: bytes) -> bool:
     return digest.hexdigest().encode() == pointer[1]
 
 
-def filtered_names(repo: Path, names: set, drivers: set, tree: str | None = None) -> set:
-    """The names a configured clean filter or `ident` applies to, by the attributes of the
-    working tree; of the index when `tree` is 'index'; or of the commit `tree`, read into a
-    throwaway index."""
+def filtered_names(repo: Path, names: set, drivers: set | None, tree: str | None = None) -> set:
+    """The names a configured clean filter (a driver in `drivers`; any named one when `drivers`
+    is None) or `ident` applies to, by the attributes of the working tree; of the index when
+    `tree` is 'index'; or of the commit `tree`, read into a throwaway index."""
     if not names:
         return set()
     query = ('-z', '--stdin', 'filter', 'ident')
@@ -377,7 +377,9 @@ def filtered_names(repo: Path, names: set, drivers: set, tree: str | None = None
             fields = git(repo, 'check-attr', '--cached', *query, stdin=stdin, env=env)
     fields = fields.split(b'\0')
     return {name for name, attribute, value in zip(fields[0::3], fields[1::3], fields[2::3])
-            if (attribute == b'filter' and value in drivers) or (attribute == b'ident' and value == b'set')}
+            if (attribute == b'filter' and (value in drivers if drivers is not None
+                                            else value not in (b'unspecified', b'unset', b'set')))
+            or (attribute == b'ident' and value == b'set')}
 
 
 def snapshot(repo: Path, scope: str, reference: str | None) -> tuple[str, str, str, str | None]:
@@ -439,6 +441,9 @@ def snapshot(repo: Path, scope: str, reference: str | None) -> tuple[str, str, s
     # uncommitted work): a rule staged with the object it filters is in the index alone.
     # Read only in the working tree, a commit that deleted an LFS file, renamed it out of the
     # filter or dropped its attribute while changing it was reviewed from its pointer-side diff.
+    # For a changed path a named filter counts whether or not this machine configures its
+    # driver: with none configured (a fresh machine), a staged LFS pointer behind a working file
+    # put back to HEAD's was missing from the diff, and the next commit carried it unreviewed.
     in_scope = git(repo, 'ls-files', '-z', '--cached', '--others', '--exclude-standard',
                    '--', '.', *exclusions)
     drivers = set()
@@ -464,9 +469,9 @@ def snapshot(repo: Path, scope: str, reference: str | None) -> tuple[str, str, s
                     else names_of('diff-tree', '-r', '--root', '--no-commit-id', '--name-only', '-z', resolved))
     names = (set(in_scope.split(b'\0')) - {b''}) | changed
     current = filtered_names(repo, names, drivers)
-    refused = set(current)
+    refused = filtered_names(repo, names, None)
     for end in ends:
-        refused |= filtered_names(repo, names, drivers, end)
+        refused |= filtered_names(repo, names, None, end)
     refused &= changed
     refused |= {name for name in current - refused if not committed_as_is(repo, head, name)}
     if refused:

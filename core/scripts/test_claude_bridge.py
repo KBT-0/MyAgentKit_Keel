@@ -25,7 +25,7 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'MYAGENTKIT_TASK_ID', 'MYAGENTKIT_R
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 125, 'test_agent_usage': 20, 'test_codex_quota': 5}
+SUITE_MINIMUMS = {'test_claude_bridge': 126, 'test_agent_usage': 20, 'test_codex_quota': 5}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -444,6 +444,31 @@ class BridgeTests(unittest.TestCase):
         self.git('rm', '-q', 'asset.bin')
         with self.assertRaisesRegex(bridge.BridgeError, 'clean filter or ident attribute on asset.bin'):
             bridge.snapshot(self.repo, 'uncommitted', None)
+
+    def test_an_lfs_change_is_refused_when_this_machine_configures_no_lfs_driver(self):
+        # A fresh machine: .gitattributes names the filter, no filter.<driver>.clean or .process
+        # is configured. A different pointer staged, the working file put back to HEAD's, a
+        # code change beside it: `git diff HEAD` shows the restored bytes, the next commit the
+        # staged pointer. For each side of the range, the named filter alone refuses it.
+        asset = self.lfs_fixture()
+        self.git('config', '--unset', 'filter.fakelfs.clean')
+        pointer = asset.read_bytes()
+        other = (b'version https://git-lfs.github.com/spec/v1\noid sha256:' + b'a' * 64 + b'\nsize 5\n')
+        asset.write_bytes(other)
+        self.git('add', 'asset.bin')
+        asset.write_bytes(pointer)
+        (self.repo / 'file.py').write_text('CODE_ONLY_CHANGE\n')
+        with self.assertRaisesRegex(bridge.BridgeError, 'clean filter or ident attribute on asset.bin'):
+            bridge.snapshot(self.repo, 'uncommitted', None)
+        asset.write_bytes(other)
+        self.commit_fixture('Other pointer, no driver configured')
+        for scope, reference in (('commit', 'HEAD'), ('base', 'HEAD~1')):
+            with self.subTest(scope=scope):
+                with self.assertRaisesRegex(bridge.BridgeError, 'clean filter or ident attribute on asset.bin'):
+                    bridge.snapshot(self.repo, scope, reference)
+        # An LFS file the review leaves alone still passes on its proof.
+        (self.repo / 'file.py').write_text('ANOTHER_CODE_CHANGE\n')
+        self.assertIn('ANOTHER_CODE_CHANGE', bridge.snapshot(self.repo, 'uncommitted', None)[2])
 
     def test_an_lfs_rule_and_object_only_the_index_holds_are_refused(self):
         # The attribute is staged too: a filter rule for *.bin and the pointer it makes are in
