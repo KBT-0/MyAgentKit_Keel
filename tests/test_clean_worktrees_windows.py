@@ -113,6 +113,21 @@ class CleanWorktreesOnWindows(unittest.TestCase):
         self.assertIn('worktree-done', self.git('branch', '--list', 'worktree-done'))
 
     @windows_only
+    def test_a_finished_worktree_with_an_executable_script_is_removed(self):
+        # Codex review: core.fileMode=true and the executable-bit comparison read a tracked
+        # 100755 script as modified on Windows, which keeps no such bit: the kit's own layout
+        # (scripts/*.sh) kept every finished worktree.
+        path = self.main / '.claude/worktrees/script'
+        self.git('worktree', 'add', '-q', str(path), '-b', 'worktree-script')
+        (path / 'run.sh').write_text('#!/bin/sh\necho ran\n')
+        self.git('add', '--chmod=+x', 'run.sh', cwd=path)
+        self.git('commit', '-q', '-m', 'an executable script', cwd=path)
+        self.assertIn('100755', self.git('ls-files', '-s', 'run.sh', cwd=path))
+        self.git('merge', '-q', '--no-edit', 'worktree-script')
+        out = self.run_script('--apply')
+        self.assertFalse(path.exists(), out)
+
+    @windows_only
     def test_a_native_process_working_inside_keeps_it(self):
         path = self.worktree('busy')
         child = self.start_inside([sys.executable, '-c', 'import sys; sys.stdin.read()'], path)

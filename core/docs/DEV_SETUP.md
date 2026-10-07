@@ -116,8 +116,11 @@ server exits. Turn such servers off in the build command (`docs/GOTCHAS.md`); th
 
 `docs/REVIEW_GATE.md` asks for risky diffs to be reviewed by a DIFFERENT model in a fresh
 session. `scripts/review.sh` automates that, and it needs a second CLI on this machine.
-It needs a POSIX shell and Python as well (WSL, Linux, macOS): on native Windows its signal
-handling does not run yet, so start reviews from WSL there.
+It runs from any shell the gate runs from, native Windows included (Git for Windows' `sh`
+with a Windows Python: the reviewer runs in a Job Object of its own there). A CLI installed as
+a `.cmd` (npm's) is found by its bare name; an argument `cmd.exe` would read as shell is
+refused, so name the CLI's executable in `REVIEW_CLI_BIN` or `CLAUDE_CLI_BIN` if a review says
+so. Only the review's own self-test (`scripts/review.sh --self-test`) still needs a POSIX host.
 
 **Ask your agent to set this up for you.** It can install the CLI and check the wiring; the
 parts it cannot do are called out below. Nothing here is required to write code — the gate,

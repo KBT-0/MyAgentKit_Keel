@@ -237,7 +237,12 @@ def git_env():
 
 ENV = None
 # `git status` compares by its stat cache; these make it compare every stat field and the mode.
-STAT = ('-c', 'core.checkStat=default', '-c', 'core.trustctime=true', '-c', 'core.fileMode=true')
+# Windows keeps no executable bit: a tracked 100755 script read as modified there, and every
+# worktree holding one was kept. Its mode is still proven where Windows keeps it, in the index
+# against HEAD (g); its bytes are compared on every host.
+NO_EXEC_BIT = os.name == 'nt'
+STAT = ('-c', 'core.checkStat=default', '-c', 'core.trustctime=true',
+        '-c', 'core.fileMode=%s' % ('false' if NO_EXEC_BIT else 'true'))
 
 
 def git(cwd, *args, codes=(0,), stdin=None):
@@ -481,7 +486,7 @@ def same_bytes(real, rel, mode, size, stream):
         blob = stream.read(size)
         return info is not None and stat.S_ISLNK(info.st_mode) and os.readlink(path) == blob
     same = (info is not None and stat.S_ISREG(info.st_mode)
-            and bool(info.st_mode & stat.S_IXUSR) == (mode == b'100755'))
+            and (NO_EXEC_BIT or bool(info.st_mode & stat.S_IXUSR) == (mode == b'100755')))
     handle = open(path, 'rb') if same else None
     try:
         while size:
