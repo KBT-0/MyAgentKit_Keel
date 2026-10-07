@@ -51,7 +51,10 @@ git ls-files -z -- "$@" | python3 -I -c 'if 1:
 git ls-files -z -- "$@" | xargs -0 git add --renormalize --
 ```
 
-`./scripts/doctor.sh` names any script still checked out with CRLF.
+`./scripts/doctor.sh` names any script still checked out with CRLF. The kit's own clone is no
+exception: upgrade from a fresh, full clone of the kit, never an older clone pulled forward,
+whose scripts stay CRLF and cannot start (the kit's upgrade checklist runs them), and never a
+shallow one, which lacks the older commit the checklist merges from.
 
 ## 2. Toolchain on PATH
 

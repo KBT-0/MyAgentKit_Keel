@@ -39,7 +39,7 @@ change is safe is in `RESEARCH_LOG.md` (2026-10-06 and 2026-10-07).
   lock programs run isolated (`python3 -I`), so a `fcntl.py` or another stand-in module in
   the checkout or on `PYTHONPATH` is never imported. `docs/DEV_SETUP.md` and
   `docs/GOTCHAS.md` say so.
-- **`--self-test` proves the Windows lock.** Twelve new cases on native Windows: a nested run
+- **`--self-test` proves the Windows lock.** Thirteen new cases on native Windows: a nested run
   refuses a writable handle on another file, a read-only handle on the held lock file, a
   write handle while nothing holds the lock, a fresh open refused for a reason other than the
   lock (a read-only file), and a file id equal to the lock's in its volume and first 64 bits
@@ -49,9 +49,12 @@ change is safe is in `RESEARCH_LOG.md` (2026-10-06 and 2026-10-07).
   exit status on; a killed lock holder leaves the lock with the gate it started; the
   holder imports no stand-in `fcntl.py` or `secrets.py` from `PYTHONPATH`; and Ctrl-C (a
   `CTRL_C_EVENT` sent to a hidden console of the case's own) stops the gate and its build, the
-  gate exits nonzero, the holder outlives it and exits 130, and the next gate takes the lock.
-  The holder survives Ctrl-C through a handler that does nothing, not `SIG_IGN`; the two
-  behave alike on the hosts measured, so the case proves the survival, not which one. The host check and the case runner run isolated
+  gate exits nonzero, the holder outlives it and exits 130, and the next gate takes the lock;
+  and a Ctrl-C while the holder waits for the lock, before the gate exists, starts no gate
+  and exits 130. The holder survives Ctrl-C through a handler that records it, not
+  `SIG_IGN`; the two behave alike for the gate on the hosts measured, so the first case
+  proves the survival, not which one, and the second proves the record (with a handler that
+  records nothing, the Ctrl-C reached no gate, and the gate then ran and passed). The host check and the case runner run isolated
   (`python3 -I`) beside a `sitecustomize.py` on `PYTHONPATH` that marks its import and calls
   the host POSIX; imported, it would have skipped every Windows case, so the import fails the
   self-test there and the skip line is printed only without it. Each case
@@ -104,48 +107,60 @@ change is safe is in `RESEARCH_LOG.md` (2026-10-06 and 2026-10-07).
 <!-- Each numbered item is one checklist entry. sync-kit.sh prints an item from its marker to
 the end of the item, so an item holds no blank line and no line that starts a list. -->
 
-Work from the project's root, top to bottom. `KIT` is the kit checkout you run `sync-kit.sh`
-from, and `00581dd` is the kit's v0.9 commit. Start with `"$KIT/sync-kit.sh" .`: it
+Work from the project's root, top to bottom. `KIT` is a fresh, full clone of the kit at v0.10
+or later, never a v0.9 clone pulled forward and never a shallow one: on Windows a clone made
+with `core.autocrlf=true` keeps its CRLF scripts after a pull (a pull does not rewrite a file
+it did not change), so its `sync-kit.sh` cannot start, and item 3 merges from `00581dd`, the
+kit's v0.9 commit, which a shallow clone lacks. Start with `"$KIT/sync-kit.sh" .`: it
 installs the new kit-owned files (`doctor.sh`, `spawn_worker.sh` and the rest) and prints
 this list, exits 2 and records no version (item 5 does). A conflict it lists stops it before
 it copies anything: resolve that and run it again until it prints this list, so that item 4
 checks the new files and not v0.9's (on native Windows, v0.9's `doctor.sh` asks for tmux).
 
 1. **ACTION:** Line endings first, before any script of the project runs: add the kit's
-   rules to the project's `.gitattributes` (created if absent), turn each CRLF into LF in
+   rules to the project's `.gitattributes` (created if absent; a symlink or anything else that
+   is not a regular file there stops the step before it writes), turn each CRLF into LF in
    the shell scripts and hooks they name (regular files only: a symlink is left alone, and a
    lone CR is kept), then renormalize those files alone, from a committed project:
    ```sh
-   { echo; cat "$KIT/core/.gitattributes"; } >> .gitattributes
-   set -- '*.sh' .githooks/pre-commit .githooks/pre-merge-commit .githooks/commit-msg .githooks/post-merge
-   git ls-files -z -- "$@" | python3 -I -c 'if 1:
-       import os, stat, sys
-       for name in sys.stdin.buffer.read().split(b"\0"):
-           if name and stat.S_ISREG(os.lstat(name).st_mode):
-               with open(name, "r+b") as script:
-                   data = script.read()
-                   if b"\r\n" in data:
-                       script.seek(0)
-                       script.write(data.replace(b"\r\n", b"\n"))
-                       script.truncate()'
-   git ls-files -z -- "$@" | xargs -0 git add --renormalize -- && git add .gitattributes
+   ( if [ -L .gitattributes ] || { [ -e .gitattributes ] && [ ! -f .gitattributes ]; }; then
+       echo "STOP: .gitattributes is a symlink or not a regular file; make it a regular file first" >&2; exit 1
+     fi
+     { echo; cat "$KIT/core/.gitattributes"; } >> .gitattributes || exit 1
+     set -- '*.sh' .githooks/pre-commit .githooks/pre-merge-commit .githooks/commit-msg .githooks/post-merge
+     git ls-files -z -- "$@" | python3 -I -c 'if 1:
+         import os, stat, sys
+         for name in sys.stdin.buffer.read().split(b"\0"):
+             if name and stat.S_ISREG(os.lstat(name).st_mode):
+                 with open(name, "r+b") as script:
+                     data = script.read()
+                     if b"\r\n" in data:
+                         script.seek(0)
+                         script.write(data.replace(b"\r\n", b"\n"))
+                         script.truncate()'
+     git ls-files -z -- "$@" | xargs -0 git add --renormalize -- && git add .gitattributes )
    ```
    `git status` then lists `.gitattributes`, and any script the index held with CRLF as
    modified; both go into the upgrade commit (item 5). Every other clone on Windows runs the
-   same lines but the first once after it pulls that commit (`docs/DEV_SETUP.md` section 1):
-   a pull does not check out again a file it did not change, so its scripts stay CRLF until
-   then.
+   lines of `docs/DEV_SETUP.md` section 1 once after it pulls that commit: a pull does not
+   check out again a file it did not change, so its scripts stay CRLF until then.
 2. **ACTION:** Copy `claude_bridge.py` and `test_claude_bridge.py` whole from
    `$KIT/core/scripts/` into `scripts/`, replacing yours (they hold no project content). If
    v0.9's item 10 sent this project to the manual review template only because of Git LFS,
    use `scripts/review.sh` again for every scope that changes no LFS file.
 3. **ACTION:** Merge the kit's changes since v0.9 into the three files that hold your setup
-   content, one three-way merge per file, from a committed project:
+   content, one three-way merge per file, from a committed project. The v0.9 copies go to a
+   private folder outside the project, and a failed read of one stops the step there:
    ```sh
-   for f in scripts/check.sh docs/DEV_SETUP.md docs/GOTCHAS.md; do
-     git -C "$KIT" show "00581dd:core/$f" > "$f.v0.9" && git merge-file "$f" "$f.v0.9" "$KIT/core/$f"
-     rm -f "$f.v0.9"
-   done
+   ( git -C "$KIT" cat-file -e '00581dd^{commit}' ||
+       { echo "STOP: $KIT has no commit 00581dd (a shallow clone?); clone the kit whole" >&2; exit 1; }
+     base=$(mktemp -d) || exit 1
+     trap 'rm -rf "$base"' EXIT
+     for f in scripts/check.sh docs/DEV_SETUP.md docs/GOTCHAS.md; do
+       git -C "$KIT" show "00581dd:core/$f" > "$base/v0.9" ||
+         { echo "STOP: cannot read core/$f at 00581dd; $f and the files after it are not merged" >&2; exit 1; }
+       git merge-file "$f" "$base/v0.9" "$KIT/core/$f"
+     done )
    ```
    Resolve every conflict the merge left (`git diff --check` names each leftover marker) so
    that the kit's new lines and every line of yours survive, then read `git diff HEAD --
@@ -155,7 +170,7 @@ checks the new files and not v0.9's (on native Windows, v0.9's `doctor.sh` asks 
    the self-test cannot pass yet: its review case fails because `review.sh` needs POSIX
    signals (above). There, run `./scripts/check.sh` and `./scripts/check.sh --self-test` from
    Git for Windows' `sh` with the Windows `python3` and expect exactly this: `CHECK: PASS`;
-   in the self-test, `ok` for every case including the twelve Windows lock cases and the
+   in the self-test, `ok` for every case including the thirteen Windows lock cases and the
    `sitecustomize.py` line, except
    `FAIL — review adapter negative tests failed or did not run` with the review tests' own
    output, the line `skip — a stray cygpath on a POSIX PATH` (a POSIX-only case), and a

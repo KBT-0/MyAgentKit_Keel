@@ -138,6 +138,17 @@ class SyncKitTests(unittest.TestCase):
         self.assertIn('Start with `"$KIT/sync-kit.sh" .`', intro)
         self.assertIn('copies nothing new', items.split('\n5. ', 1)[1].split('\n## ', 1)[0])
 
+    def test_the_checklist_runs_kit_scripts_only_from_a_fresh_full_clone(self):
+        # Its first command runs the kit's sync-kit.sh. A v0.9 kit clone made with
+        # core.autocrlf=true keeps that script CRLF after a pull, so it cannot start; a shallow
+        # clone lacks 00581dd, which item 3 merges from. The checklist and DEV_SETUP say so first.
+        checklist = (ROOT / 'CHANGELOG.md').read_text().split('### Upgrading a project from v0.9', 1)[1]
+        intro = ' '.join(checklist.split('\n1. ', 1)[0].split())
+        self.assertIn('`KIT` is a fresh, full clone of the kit at v0.10 or later', intro)
+        self.assertLess(intro.index('fresh, full clone'), intro.index('Start with'))
+        setup = ' '.join((ROOT / 'core/docs/DEV_SETUP.md').read_text().split())
+        self.assertIn('upgrade from a fresh, full clone of the kit', setup)
+
     def test_a_header_less_overlay_copy_is_told_to_take_the_kits_copy(self):
         # A v0.8 project's overlay script had no KIT-OWNED header. The stop message said to
         # rerun the sync to install the kit's file, which the sync never does for an overlay
@@ -477,6 +488,86 @@ class SyncKitTests(unittest.TestCase):
                                                      text=True, env=env).stdout
             self.assertEqual(git(clone, 'check-attr', 'eol', '--', 'scripts/check.sh', '.githooks/pre-commit'),
                              'scripts/check.sh: eol: lf\n.githooks/pre-commit: eol: lf\n')
+
+    def test_the_line_ending_action_stops_at_a_gitattributes_that_is_not_a_regular_file(self):
+        # Appending through a symlinked .gitattributes changed a file outside the repository,
+        # which Git does not read as the repository's attributes. A symlink or a folder there
+        # stops the step before it writes or stages anything.
+        import textwrap
+        text = (ROOT / 'CHANGELOG.md').read_text()
+        block = next(part for part in text.split('```sh\n')[1:]
+                     if 'core/.gitattributes' in part.split('```')[0])
+        snippet = textwrap.dedent(block.split('```')[0])
+        env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1', KIT=str(ROOT))
+        for kind in ('symlink', 'dangling symlink', 'folder'):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as tmp:
+                project, outside = Path(tmp) / 'project', Path(tmp) / 'outside'
+                (project / 'scripts').mkdir(parents=True)
+                (project / 'scripts/check.sh').write_bytes(b'#!/bin/sh\r\necho check ran\r\n')
+                subprocess.run(['git', 'init', '-q'], cwd=project, check=True, env=env)
+                subprocess.run(['git', 'add', '-A'], cwd=project, check=True, env=env)
+                if kind == 'folder':
+                    (project / '.gitattributes').mkdir()
+                else:
+                    if kind == 'symlink':
+                        outside.write_bytes(b'*.bin binary\n')
+                    (project / '.gitattributes').symlink_to(outside)
+                result = subprocess.run(['sh', '-c', snippet], cwd=project, capture_output=True, text=True, env=env)
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn('STOP: .gitattributes is a symlink or not a regular file', result.stderr)
+                if kind == 'symlink':
+                    self.assertEqual(outside.read_bytes(), b'*.bin binary\n')
+                else:
+                    self.assertFalse(outside.exists())
+                self.assertEqual((project / 'scripts/check.sh').read_bytes(), b'#!/bin/sh\r\necho check ran\r\n')
+
+    def test_the_merge_action_keeps_its_copies_outside_the_project_and_stops_without_the_base(self):
+        # The v0.9 copies were written at fixed names in the project: an owner's file there was
+        # truncated and deleted, a symlink there wrote outside the repository, and a kit clone
+        # without the base commit (a shallow one) went on to the next file, leaving files unmerged.
+        import textwrap
+        text = (ROOT / 'CHANGELOG.md').read_text()
+        block = next(part for part in text.split('```sh\n')[1:] if 'git merge-file' in part.split('```')[0])
+        snippet = textwrap.dedent(block.split('```')[0])
+        self.assertIn('00581dd', snippet)
+        env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1')
+        names = ('scripts/check.sh', 'docs/DEV_SETUP.md', 'docs/GOTCHAS.md')
+        for case in ('merged', 'no base commit', 'a file missing at the base'):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
+                kit, project, outside = Path(tmp) / 'kit', Path(tmp) / 'project', Path(tmp) / 'outside'
+                for name in names:
+                    if case != 'a file missing at the base' or name != 'docs/DEV_SETUP.md':
+                        (kit / 'core' / name).parent.mkdir(parents=True, exist_ok=True)
+                        (kit / 'core' / name).write_text('one\ntwo\nthree\n')
+                    (project / name).parent.mkdir(parents=True, exist_ok=True)
+                    (project / name).write_text('one\ntwo\nthree\nmine\n')
+                subprocess.run(['git', 'init', '-q'], cwd=kit, check=True, env=env)
+                subprocess.run(['git', 'add', '-A'], cwd=kit, check=True, env=env)
+                subprocess.run(['git', '-c', 'user.name=F', '-c', 'user.email=f@example.invalid', 'commit', '-qm',
+                                'v0.9'], cwd=kit, check=True, env=env)
+                base = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=kit, check=True, capture_output=True,
+                                      text=True, env=env).stdout.strip()
+                for name in names:
+                    (kit / 'core' / name).write_text('zero\none\ntwo\nthree\n')
+                # An owner's file and a symlink at the names the old step wrote and deleted.
+                (project / 'scripts/check.sh.v0.9').write_text('owner\n')
+                outside.write_text('outside\n')
+                (project / 'docs/DEV_SETUP.md.v0.9').symlink_to(outside)
+                run = snippet.replace('00581dd', 'deadbeef' if case == 'no base commit' else base)
+                result = subprocess.run(['sh', '-c', run], cwd=project, capture_output=True, text=True,
+                                        env=dict(env, KIT=str(kit)))
+                self.assertEqual((project / 'scripts/check.sh.v0.9').read_text(), 'owner\n')
+                self.assertEqual(outside.read_text(), 'outside\n')
+                self.assertTrue((project / 'docs/DEV_SETUP.md.v0.9').is_symlink())
+                merged = {name: (project / name).read_text() == 'zero\none\ntwo\nthree\nmine\n' for name in names}
+                if case == 'merged':
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(set(merged.values()), {True})
+                    continue
+                self.assertNotEqual(result.returncode, 0, result.stderr)
+                self.assertIn('STOP:', result.stderr)
+                self.assertEqual(merged, {'scripts/check.sh': case != 'no base commit',
+                                          'docs/DEV_SETUP.md': False, 'docs/GOTCHAS.md': False})
 
     def test_a_signal_while_printing_the_checklist_keeps_the_stamp(self):
         # A handler that only cleaned up let the run resume with the pending list deleted,
