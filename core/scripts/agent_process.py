@@ -270,8 +270,16 @@ class OneShot:
         mask = block_cancels()
         try:
             restore(self.previous)
-            for sig in sorted(pending() & set(self.previous)):
-                self.noted.append(signal.sigwait({sig}))
+            if POSIX:
+                for sig in sorted(pending() & set(self.previous)):
+                    self.noted.append(signal.sigwait({sig}))
+            elif mask is not None:
+                # Off POSIX this block's own recorder held them (there is no sigwait): noted
+                # here and not handed on. One an outer block's recorder holds stays its own:
+                # read through pending(), it reached sigwait, which Windows lacks.
+                held = mask[2]
+                self.noted.extend(sig for sig in held if sig in self.previous)
+                held[:] = [sig for sig in held if sig not in self.previous]
         finally:
             restore_mask(mask)
 

@@ -248,6 +248,23 @@ class ReviewOnWindows(unittest.TestCase):
         self.addCleanup(lambda: subprocess.run(['cmd', '/c', 'rmdir', '/s', '/q', path], capture_output=True))
 
     @windows_only
+    def test_a_guard_inside_an_outer_block_leaves_the_outer_cancel_alone(self):
+        # Lead review of the r2 fix: with pending() reading the recorder, a guard leaving inside
+        # an outer block found the outer recorder's Ctrl-C and called signal.sigwait, which
+        # Windows lacks (AttributeError). The outer cancel is the outer block's to hand on.
+        import signal
+        mask = agent_process.block_cancels()
+        try:
+            signal.raise_signal(signal.SIGINT)
+            with agent_process.OneShot() as guard:
+                pass
+            self.assertEqual(guard.noted, [])
+        finally:
+            with self.assertRaises(KeyboardInterrupt):
+                agent_process.restore_mask(mask)
+                time.sleep(0.1)  # the handed-on Ctrl-C is raised here at the latest
+
+    @windows_only
     def test_a_missing_reviewer_is_unavailable(self):
         result = agent_process.run([str(self.tmp / 'no-such-cli.exe')], '', self.tmp, 10)
         self.assertEqual(result['termination'], 'unavailable')
