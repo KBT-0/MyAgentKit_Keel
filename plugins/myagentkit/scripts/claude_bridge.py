@@ -153,12 +153,21 @@ def throwaway_copy(repo: Path, head: str, diff: str | None, copy: Path,
         and ran on outlived a reaped leader's group kill)."""
         import selectors
         out = {"stdout": bytearray(), "stderr": bytearray()}
+        # Native Windows: select() takes sockets only, so a thread per pipe reads it.
+        if not agent_process.POSIX:
+            streams = {name: getattr(child, name) for name in out if getattr(child, name) is not None}
+            chunks, left = agent_process.drain(streams), len(streams)
+            while left:
+                check_running()
+                for name, data in agent_process.take(chunks, 0.05):
+                    out[name].extend(data)
+                    left -= not data
         # poll, not select: select() refuses a descriptor above its ceiling (1024).
         selector = selectors.PollSelector() if hasattr(selectors, "PollSelector") else selectors.SelectSelector()
         with selector:
             for name in ("stdout", "stderr"):
                 stream = getattr(child, name)
-                if stream is not None:
+                if stream is not None and agent_process.POSIX:
                     selector.register(stream.fileno(), selectors.EVENT_READ, name)
             while selector.get_map():
                 check_running()

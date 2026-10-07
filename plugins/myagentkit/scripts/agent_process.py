@@ -1,6 +1,7 @@
 """Bounded child execution shared by both CLI adapters; preserve partial diagnostics."""
 import os
 from pathlib import Path
+import queue
 import signal
 import select
 import selectors
@@ -19,8 +20,33 @@ CANCEL_SIGNALS = tuple(getattr(signal, name) for name in ("SIGINT", "SIGTERM", "
 # The platform seam: every launch, signal block and group kill of the review tooling goes
 # through the five functions below (test_claude_bridge checks that no other place makes one).
 # Off POSIX (native Windows Python) there is no signal mask, no session and no killpg: the
-# blocks are no-ops, a child gets a process group of its own, and taskkill stops its tree.
+# blocks are no-ops, and a child starts suspended, joins a Job Object of its own and only then
+# runs, so every process it starts is in that job and TerminateJobObject stops them all, also
+# after the child itself has exited (taskkill /T finds no tree below an exited process). The
+# job is killed when its last handle closes: a supervisor that dies takes its reviewer with it.
 POSIX = os.name == "posix"
+if not POSIX:
+    import ctypes
+    from ctypes import wintypes
+    _KERNEL32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    _NTDLL = ctypes.WinDLL("ntdll")
+    _KERNEL32.CreateJobObjectW.restype = wintypes.HANDLE
+    _KERNEL32.CreateJobObjectW.argtypes = (ctypes.c_void_p, wintypes.LPCWSTR)
+    _KERNEL32.SetInformationJobObject.argtypes = (wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD)
+    _KERNEL32.AssignProcessToJobObject.argtypes = (wintypes.HANDLE, wintypes.HANDLE)
+    _KERNEL32.TerminateJobObject.argtypes = (wintypes.HANDLE, wintypes.UINT)
+    _KERNEL32.CloseHandle.argtypes = (wintypes.HANDLE,)
+    _NTDLL.NtResumeProcess.argtypes = (wintypes.HANDLE,)
+
+    class _JobLimits(ctypes.Structure):
+        """JOBOBJECT_EXTENDED_LIMIT_INFORMATION; only LimitFlags is set."""
+        _fields_ = [("PerProcessUserTimeLimit", ctypes.c_int64), ("PerJobUserTimeLimit", ctypes.c_int64),
+                    ("LimitFlags", wintypes.DWORD), ("MinimumWorkingSetSize", ctypes.c_size_t),
+                    ("MaximumWorkingSetSize", ctypes.c_size_t), ("ActiveProcessLimit", wintypes.DWORD),
+                    ("Affinity", ctypes.c_size_t), ("PriorityClass", wintypes.DWORD),
+                    ("SchedulingClass", wintypes.DWORD), ("IoInfo", ctypes.c_uint64 * 6),
+                    ("ProcessMemoryLimit", ctypes.c_size_t), ("JobMemoryLimit", ctypes.c_size_t),
+                    ("PeakProcessMemoryUsed", ctypes.c_size_t), ("PeakJobMemoryUsed", ctypes.c_size_t)]
 
 
 def block_cancels():
@@ -44,8 +70,31 @@ def launch(command, mask, **popen_kw) -> subprocess.Popen:
     if POSIX:
         return subprocess.Popen(command, start_new_session=True,
                                 preexec_fn=lambda: restore_mask(mask), **popen_kw)
-    return subprocess.Popen(command, **popen_kw,
-                            creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x200))
+    job = _KERNEL32.CreateJobObjectW(None, None)
+    if not job:
+        raise ctypes.WinError(ctypes.get_last_error())
+    child = None
+    try:
+        limits = _JobLimits(LimitFlags=0x2000)  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        if not _KERNEL32.SetInformationJobObject(job, 9, ctypes.byref(limits), ctypes.sizeof(limits)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        # Suspended until it is in the job: running, it could start a process outside it first.
+        child = subprocess.Popen(command, **popen_kw, creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | 0x4)
+        if not _KERNEL32.AssignProcessToJobObject(job, int(child._handle)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        if _NTDLL.NtResumeProcess(int(child._handle)) != 0:
+            raise OSError("cannot resume %s after it joined its job" % command[0])
+    except BaseException:
+        _KERNEL32.CloseHandle(job)  # kills the child if it joined; one that did not is killed here
+        if child is not None:
+            child.kill()
+            child.wait()
+            for stream in (child.stdin, child.stdout, child.stderr):
+                if stream is not None:
+                    stream.close()
+        raise
+    child._kit_job = job
+    return child
 
 
 def stop_group(child, pgid) -> None:
@@ -53,8 +102,9 @@ def stop_group(child, pgid) -> None:
 
     POSIX: the leader may have exited while a descendant still holds a pipe open. On macOS a
     group whose leader is a zombie answers EPERM: the leader is then signalled by its pid, and
-    the group again once it is reaped. Windows: `taskkill /T /F` stops the tree it can still
-    find from the leader; child.kill() when taskkill is missing or fails.
+    the group again once it is reaped. Windows: TerminateJobObject stops every process in the
+    child's job (launch()), once; a child launched elsewhere gets `taskkill /T /F`, and
+    child.kill() when taskkill is missing or fails.
     """
     if POSIX:
         # The leader's pid is signalled only while it is ours (not yet reaped): a reaped
@@ -73,7 +123,11 @@ def stop_group(child, pgid) -> None:
             except (ProcessLookupError, PermissionError):
                 pass
             child.wait()
-    else:
+    elif getattr(child, "_kit_job", None) is not None:
+        job, child._kit_job = child._kit_job, None
+        _KERNEL32.TerminateJobObject(job, 1)
+        _KERNEL32.CloseHandle(job)
+    elif not hasattr(child, "_kit_job"):
         try:
             done = subprocess.run(["taskkill", "/T", "/F", "/PID", str(child.pid)],
                                   stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
@@ -189,6 +243,43 @@ def run(command: list[str], prompt: str, repo: Path, timeout: float, into: dict 
             result["cancelled"] = True
 
 
+def drain(streams: dict) -> queue.SimpleQueue:
+    """Off POSIX, where select() takes sockets only: one daemon thread per pipe in `streams`
+    ({name: stream}) reads it to EOF and puts (name, bytes) on the returned queue, b"" last.
+    The threads end when the pipes close, which stop_group() makes happen."""
+    chunks = queue.SimpleQueue()
+
+    def read(name, fd):
+        try:
+            while True:
+                data = os.read(fd, 65536)
+                chunks.put((name, data))
+                if not data:
+                    return
+        except OSError:
+            chunks.put((name, b""))
+
+    for name, stream in streams.items():
+        threading.Thread(target=read, args=(name, stream.fileno()), daemon=True).start()
+    return chunks
+
+
+def take(chunks: queue.SimpleQueue, timeout: float) -> list:
+    """What drain() queued, waiting up to `timeout` for the first chunk. A sleep loop, not a
+    blocking get: Windows raises a Ctrl-C in a sleep, while a lock wait there may not see it."""
+    deadline = time.monotonic() + timeout
+    got = []
+    while True:
+        try:
+            while True:
+                got.append(chunks.get_nowait())
+        except queue.Empty:
+            pass
+        if got or time.monotonic() >= deadline:
+            return got
+        time.sleep(min(0.02, max(0.0, deadline - time.monotonic())))
+
+
 def _exited_unreaped(child, timeout: float) -> bool:
     """True once `child` has exited, leaving it unreaped on POSIX so its process group is still
     its own for stop_group (a reaped id may be another process's); False at the deadline.
@@ -272,10 +363,30 @@ def _supervise(command, prompt, repo, timeout, started, guard, prior=None):
                 termination, launch_failed = "unavailable", True
                 buffers["stderr"].extend(str(error).encode())
             else:
-                for name, stream in (("stdout", child.stdout), ("stderr", child.stderr)):
-                    os.set_blocking(stream.fileno(), False)
-                    selector.register(stream, selectors.EVENT_READ, name)
-                while selector.get_map():
+                if POSIX:
+                    for name, stream in (("stdout", child.stdout), ("stderr", child.stderr)):
+                        os.set_blocking(stream.fileno(), False)
+                        selector.register(stream, selectors.EVENT_READ, name)
+                else:
+                    chunks, open_streams = drain({"stdout": child.stdout, "stderr": child.stderr}), 2
+                while not POSIX and open_streams:
+                    remaining = timeout - (time.monotonic() - started)
+                    if remaining <= 0:
+                        termination = "timeout"
+                        break
+                    for name, data in take(chunks, min(0.2, remaining)):
+                        if not data:
+                            open_streams -= 1
+                            continue
+                        buffer = buffers[name]
+                        space = 8_000_000 - len(buffer)
+                        buffer.extend(data[:space])
+                        if len(data) > space:
+                            termination = "output_limit"
+                            break
+                    if termination:
+                        break
+                while POSIX and selector.get_map():
                     remaining = timeout - (time.monotonic() - started)
                     if remaining <= 0:
                         termination = "timeout"
