@@ -189,7 +189,10 @@ copy_tree() {
     # replaced by the kit's rules alone.
     if [ "$dest" = .gitattributes ] && [ -f "$target/$dest" ]; then
       attrs=$(cat "$target/$dest") || die "cannot read the project's own $dest; nothing was changed in it"
-      missing=$(grep -v -e '^#' -e '^$' "$src/$rel" | while IFS= read -r rule; do
+      # The kit's rules are read on their own and checked: read at the head of a pipeline, a
+      # failed read gave no rule and no error, and bootstrap recorded the version without them.
+      rules=$(cat "$src/$rel") || die "cannot read the kit's $rel; nothing was changed in the project's $dest"
+      missing=$(printf '%s\n' "$rules" | grep -v -e '^#' -e '^$' | while IFS= read -r rule; do
                   printf '%s\n' "$attrs" | grep -qxF -e "$rule" || printf '%s\n' "$rule"; done)
       if [ -n "$missing" ]; then
         put "$target/$dest" <<EOF

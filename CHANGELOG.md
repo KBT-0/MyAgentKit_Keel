@@ -111,8 +111,8 @@ the end of the item, so an item holds no blank line and no line that starts a li
 Work from the project's root, top to bottom. `KIT` is a fresh, full clone of the kit at v0.10
 or later, never a v0.9 clone pulled forward and never a shallow one: on Windows a clone made
 with `core.autocrlf=true` keeps its CRLF scripts after a pull (a pull does not rewrite a file
-it did not change), so its `sync-kit.sh` cannot start, and item 3 merges from `00581dd`, the
-kit's v0.9 commit, which a shallow clone lacks. Start with `"$KIT/sync-kit.sh" .`: it
+it did not change), so its `sync-kit.sh` cannot start, and item 3 merges from `620f25e` (or `KIT_BASE`), the
+kit's v0.9 base commit, which a shallow clone lacks. Start with `"$KIT/sync-kit.sh" .`: it
 installs the new kit-owned files (`doctor.sh`, `spawn_worker.sh` and the rest) and prints
 this list, exits 2 and records no version (item 5 does). A conflict it lists stops it before
 it copies anything: resolve that and run it again until it prints this list, so that item 4
@@ -124,58 +124,95 @@ checks the new files and not v0.9's (on native Windows, v0.9's `doctor.sh` asks 
    the shell scripts and hooks they name (regular files only: a symlink is left alone, and a
    lone CR is kept; each file is replaced whole, with its mode, so a killed run leaves it old
    or new, and a failed rewrite stops the step before anything is staged), then renormalize
-   those files alone, from a committed project:
+   those files alone, from a committed project. The file list is read once and checked: a
+   `git ls-files` that fails (a corrupt index) stops the step. A temporary copy is removed when
+   the run is stopped; one a SIGKILL left behind (`.crlf-*`) stops the next run by its name:
    ```sh
    ( if [ -L .gitattributes ] || { [ -e .gitattributes ] && [ ! -f .gitattributes ]; }; then
        echo "STOP: .gitattributes is a symlink or not a regular file; make it a regular file first" >&2; exit 1
      fi
-     { echo; cat "$KIT/core/.gitattributes"; } >> .gitattributes || exit 1
+     left=$(git ls-files --others -- ':(glob)**/.crlf-*')
+     [ -z "$left" ] || { echo "STOP: a killed run left $left; delete it, then run this again" >&2; exit 1; }
+     list=$(mktemp) || exit 1
+     trap 'rm -f "$list"' EXIT; trap 'exit 129' HUP; trap 'exit 130' INT; trap 'exit 143' TERM
      set -- '*.sh' .githooks/pre-commit .githooks/pre-merge-commit .githooks/commit-msg .githooks/post-merge
-     git ls-files -z -- "$@" | python3 -I -c 'if 1:
-         import os, stat, sys, tempfile
+     git ls-files -z -- "$@" > "$list" ||
+       { echo "STOP: git ls-files failed (above); nothing was changed" >&2; exit 1; }
+     { echo; cat "$KIT/core/.gitattributes"; } >> .gitattributes || exit 1
+     python3 -I -c 'if 1:
+         import os, signal, stat, sys, tempfile
+         signal.signal(signal.SIGTERM, lambda *a: sys.exit(143))
          for name in sys.stdin.buffer.read().split(b"\0"):
              if name and stat.S_ISREG(os.lstat(name).st_mode):
                  with open(name, "rb") as script:
                      data = script.read()
                  if b"\r\n" in data:
                      handle, new = tempfile.mkstemp(prefix=b".crlf-", dir=os.path.dirname(name) or b".")
-                     with os.fdopen(handle, "wb") as copy:
-                         copy.write(data.replace(b"\r\n", b"\n"))
-                     os.chmod(new, stat.S_IMODE(os.lstat(name).st_mode))
-                     os.replace(new, name)' ||
+                     try:
+                         with os.fdopen(handle, "wb") as copy:
+                             copy.write(data.replace(b"\r\n", b"\n"))
+                         os.chmod(new, stat.S_IMODE(os.lstat(name).st_mode))
+                         os.replace(new, name)
+                     finally:
+                         if os.path.lexists(new):
+                             os.unlink(new)' < "$list' ||
        { echo "STOP: a script could not be rewritten (above); nothing was staged" >&2; exit 1; }
-     git ls-files -z -- "$@" | xargs -0 git add --renormalize -- && git add .gitattributes )
+     if [ -s "$list" ]; then
+       xargs -0 git add --renormalize -- < "$list" || { echo "STOP: renormalizing failed (above)" >&2; exit 1; }
+     fi
+     git add .gitattributes )
    ```
    `git status` then lists `.gitattributes`, and any script the index held with CRLF as
    modified; both go into the upgrade commit (item 5). Every other clone on Windows runs the
    lines of `docs/DEV_SETUP.md` section 1 once after it pulls that commit: a pull does not
    check out again a file it did not change, so its scripts stay CRLF until then.
 2. **ACTION:** Copy `claude_bridge.py` and `test_claude_bridge.py` whole from
-   `$KIT/core/scripts/` into `scripts/`, replacing yours (they hold no project content; delete
-   a symlink at either name first, so the copy is a file and not written through the link). If
+   `$KIT/core/scripts/` into `scripts/`, replacing yours (they hold no project content). Each
+   is copied beside its destination and renamed over it, so a symlink at either name is
+   replaced by the file, never written through (a plain `cp` wrote into the link's target):
+   ```sh
+   ( new=; trap '[ -z "$new" ] || rm -f "$new"' EXIT; trap 'exit 130' INT; trap 'exit 143' TERM
+     for f in claude_bridge.py test_claude_bridge.py; do
+       new=$(mktemp scripts/.kit-copy-XXXXXX) && cp -p "$KIT/core/scripts/$f" "$new" && mv -f "$new" "scripts/$f" ||
+         { echo "STOP: scripts/$f could not be replaced; it and the files after it are unchanged" >&2; exit 1; }
+       new=
+     done )
+   ```
+   If
    v0.9's item 10 sent this project to the manual review template only because of Git LFS,
    use `scripts/review.sh` again for every scope that changes no LFS file.
 3. **ACTION:** Merge the kit's changes since v0.9 into the three files that hold your setup
    content, one three-way merge per file, from a committed project. A file that is not a
    regular file (a symlink) stops the step before any merge. The v0.9 copies go to a private
-   folder outside the project, each merge result replaces its file whole, with its mode, and a
-   failed read or merge stops the step there:
+   folder outside the project (a `TMPDIR` inside it stops the step), each merge result replaces
+   its file whole, with its mode, and a failed read or merge stops the step there. A run that
+   is stopped removes what it made; what a SIGKILL left (`.kit-merge-*`) stops the next run by
+   name. The base is the kit commit your v0.9 came from: `620f25e`, the v0.9 release, unless
+   the project synced an earlier v0.9 commit (project_leeway synced `00581dd`): then set
+   `KIT_BASE` to that commit first, or the merge reads the kit's own later v0.9 fixes as yours:
    ```sh
-   ( set -- scripts/check.sh docs/DEV_SETUP.md docs/GOTCHAS.md
+   ( from=${KIT_BASE:-620f25e}
+     set -- scripts/check.sh docs/DEV_SETUP.md docs/GOTCHAS.md
      for f do
        [ -f "$f" ] && [ ! -L "$f" ] ||
          { echo "STOP: $f is not a regular file (a symlink?); nothing was merged" >&2; exit 1; }
      done
-     git -C "$KIT" cat-file -e '00581dd^{commit}' ||
-       { echo "STOP: $KIT has no commit 00581dd (a shallow clone?); clone the kit whole" >&2; exit 1; }
+     left=$(git ls-files --others -- ':(glob)**/.kit-merge-*')
+     [ -z "$left" ] || { echo "STOP: a killed run left $left; delete it, then run this again" >&2; exit 1; }
+     git -C "$KIT" cat-file -e "$from^{commit}" ||
+       { echo "STOP: $KIT has no commit $from (a shallow clone?); clone the kit whole" >&2; exit 1; }
      base=$(mktemp -d) || exit 1
-     trap 'rm -rf "$base"' EXIT
+     new=; trap 'rm -rf "$base"; [ -z "$new" ] || rm -f "$new"' EXIT
+     trap 'exit 129' HUP; trap 'exit 130' INT; trap 'exit 143' TERM
+     case $(CDPATH= cd -- "$base" && pwd -P)/ in "$(pwd -P)"/*)
+       echo "STOP: the temporary folder $base is inside the project (TMPDIR?); set TMPDIR outside it" >&2; exit 1 ;;
+     esac
      for f do
-       git -C "$KIT" show "00581dd:core/$f" > "$base/v0.9" ||
-         { echo "STOP: cannot read core/$f at 00581dd; $f and the files after it are not merged" >&2; exit 1; }
+       git -C "$KIT" show "$from:core/$f" > "$base/v0.9" ||
+         { echo "STOP: cannot read core/$f at $from; $f and the files after it are not merged" >&2; exit 1; }
        git merge-file -p "$f" "$base/v0.9" "$KIT/core/$f" > "$base/merged"
-       [ $? -lt 128 ] && new=$(mktemp "$f.XXXXXX") && cp -p "$f" "$new" && cat "$base/merged" > "$new" &&
-         mv -f "$new" "$f" ||
+       [ $? -lt 128 ] && new=$(mktemp "${f%/*}/.kit-merge-XXXXXX") && cp -p "$f" "$new" &&
+         cat "$base/merged" > "$new" && mv -f "$new" "$f" ||
          { [ -z "${new:-}" ] || rm -f "$new"; echo "STOP: $f could not be merged; it and the files after it are unchanged" >&2; exit 1; }
        new=
      done )

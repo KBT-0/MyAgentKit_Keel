@@ -107,21 +107,27 @@ class DoctorTests(unittest.TestCase):
             self.assertEqual(moved.returncode, 0, moved.stdout + moved.stderr)
             self.assertIn('DOCTOR: ready', moved.stdout)
 
-            # Native Windows Python (os.name is not 'posix'): a trap, not a note; the kit's
-            # Python imports there and nothing more (the gate lock, a review run and the
-            # worktree clean-up need a POSIX host), so the machine is not ready.
+            # Native Windows Python (os.name is not 'posix') under a POSIX sh (WSL interop): a
+            # trap; it takes the Windows lock on POSIX paths. Under Git for Windows' sh (uname
+            # MINGW) it is the host's Python, and that line is not printed.
             windows = tmp / 'windows-python'
             windows.mkdir()
             (windows / 'python3').write_text('#!/bin/sh\ncase "$*" in *os.name*) exit 1 ;; esac\n'
                                              'exec %s "$@"\n' % shutil.which('python3', path=env['PATH']))
             (windows / 'python3').chmod(0o755)
-            note = 'MISSING: a POSIX host for python3'
+            note = 'MISSING: a POSIX python3 for this POSIX shell'
             self.assertNotIn(note, ready.stdout)
             native = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=project, capture_output=True, text=True,
                                     env=dict(env, PATH=str(windows) + os.pathsep + env['PATH']))
             self.assertNotEqual(native.returncode, 0, native.stdout + native.stderr)
             self.assertIn(note, native.stdout)
             self.assertNotIn('DOCTOR: ready', native.stdout)
+            (windows / 'uname').write_text('#!/bin/sh\necho MINGW64_NT-10.0-26200\n')
+            (windows / 'uname').chmod(0o755)
+            mingw = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=project, capture_output=True, text=True,
+                                   env=dict(env, PATH=str(windows) + os.pathsep + env['PATH'], KIT_WT='true'))
+            self.assertNotIn(note, mingw.stdout)
+            (windows / 'uname').unlink()
             # A python3 that does not run at all is the MISSING line, never this note.
             (windows / 'python3').write_text('#!/bin/sh\nexit 127\n')
             broken = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=project, capture_output=True, text=True,
@@ -411,6 +417,9 @@ class DoctorTests(unittest.TestCase):
             self.assertEqual(red.returncode, 1, red.stdout)
             self.assertIn('MISSING: scripts/check.sh has CRLF line endings', red.stdout)
             self.assertEqual(red.stdout.count('MISSING:'), 1, red.stdout)
+            # A lone CR inside a line is no CRLF: it runs, and the line-ending repair keeps it.
+            check.write_bytes(lf.replace(b'\n', b'\n# a lone \r in a comment\n', 1))
+            self.assertNotIn('CRLF', doctor().stdout)
             check.write_bytes(lf)
 
             # node_modules as a symlink: "node_modules/" matches directories only, so git

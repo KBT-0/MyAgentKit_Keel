@@ -709,6 +709,30 @@ class BootstrapTests(unittest.TestCase):
             self.assertIn("cannot read the project's own .gitattributes", result.stderr)
             self.assertEqual(attributes.read_bytes(), b'*.png binary\n')
 
+    def test_an_unreadable_kit_attributes_file_stops_bootstrap_unstamped(self):
+        # r8: the kit's rules were read at the head of a pipeline whose last command decided
+        # its status: an unreadable core/.gitattributes gave no rule and no error, and the
+        # project was stamped with the version without the line-ending rules.
+        if os.geteuid() == 0:
+            self.skipTest('root reads a file without read permission')
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as tmp:
+            kit, project = Path(tmp) / 'kit', Path(tmp) / 'project'
+            shutil.copytree(root, kit, ignore=shutil.ignore_patterns('.git', '__pycache__'))
+            project.mkdir()
+            (project / '.gitattributes').write_bytes(b'*.png binary\n')
+            source = kit / 'core/.gitattributes'
+            source.chmod(0)
+            try:
+                result = subprocess.run(['sh', str(kit / 'bootstrap.sh'), str(project)],
+                                        capture_output=True, text=True)
+            finally:
+                source.chmod(0o644)
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("cannot read the kit's .gitattributes", result.stderr)
+            self.assertEqual((project / '.gitattributes').read_bytes(), b'*.png binary\n')
+            self.assertFalse((project / 'docs/kit/.kit-version').exists())
+
     def test_scripts_and_hooks_check_out_with_lf_under_autocrlf(self):
         # Git for Windows' default core.autocrlf=true checked every text file out with CRLF,
         # and sh cannot run a CRLF script: a project's gate, hooks and doctor.sh, and the kit's

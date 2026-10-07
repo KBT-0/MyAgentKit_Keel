@@ -44,23 +44,35 @@ CRLF copies, because a pull does not check out again a file it did not change, u
 are rewritten once, with no uncommitted change to them: each CRLF becomes LF in a regular
 file (a symlink is left alone, a lone CR kept; each file is replaced whole, with its mode),
 and each file is staged again so that `git status` does not list it as modified for its new
-size. A rewrite that fails stops it before anything is staged.
+size. A rewrite that fails stops it before anything is staged, and so does a `git ls-files`
+that fails (a corrupt index); a temporary copy a SIGKILL left (`.crlf-*`) stops the next run.
 
 ```sh
-set -- '*.sh' .githooks/pre-commit .githooks/pre-merge-commit .githooks/commit-msg .githooks/post-merge
-git ls-files -z -- "$@" | python3 -I -c 'if 1:
-    import os, stat, sys, tempfile
-    for name in sys.stdin.buffer.read().split(b"\0"):
-        if name and stat.S_ISREG(os.lstat(name).st_mode):
-            with open(name, "rb") as script:
-                data = script.read()
-            if b"\r\n" in data:
-                handle, new = tempfile.mkstemp(prefix=b".crlf-", dir=os.path.dirname(name) or b".")
-                with os.fdopen(handle, "wb") as copy:
-                    copy.write(data.replace(b"\r\n", b"\n"))
-                os.chmod(new, stat.S_IMODE(os.lstat(name).st_mode))
-                os.replace(new, name)' &&
-  git ls-files -z -- "$@" | xargs -0 git add --renormalize --
+( left=$(git ls-files --others -- ':(glob)**/.crlf-*')
+  [ -z "$left" ] || { echo "STOP: a killed run left $left; delete it, then run this again" >&2; exit 1; }
+  list=$(mktemp) || exit 1
+  trap 'rm -f "$list"' EXIT; trap 'exit 129' HUP; trap 'exit 130' INT; trap 'exit 143' TERM
+  set -- '*.sh' .githooks/pre-commit .githooks/pre-merge-commit .githooks/commit-msg .githooks/post-merge
+  git ls-files -z -- "$@" > "$list" || { echo "STOP: git ls-files failed (above); nothing was changed" >&2; exit 1; }
+  python3 -I -c 'if 1:
+      import os, signal, stat, sys, tempfile
+      signal.signal(signal.SIGTERM, lambda *a: sys.exit(143))
+      for name in sys.stdin.buffer.read().split(b"\0"):
+          if name and stat.S_ISREG(os.lstat(name).st_mode):
+              with open(name, "rb") as script:
+                  data = script.read()
+              if b"\r\n" in data:
+                  handle, new = tempfile.mkstemp(prefix=b".crlf-", dir=os.path.dirname(name) or b".")
+                  try:
+                      with os.fdopen(handle, "wb") as copy:
+                          copy.write(data.replace(b"\r\n", b"\n"))
+                      os.chmod(new, stat.S_IMODE(os.lstat(name).st_mode))
+                      os.replace(new, name)
+                  finally:
+                      if os.path.lexists(new):
+                          os.unlink(new)' < "$list' ||
+    { echo "STOP: a script could not be rewritten (above); nothing was staged" >&2; exit 1; }
+  if [ -s "$list" ]; then xargs -0 git add --renormalize -- < "$list"; fi )
 ```
 
 `./scripts/doctor.sh` names any script still checked out with CRLF. The kit's own clone is no
