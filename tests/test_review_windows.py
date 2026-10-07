@@ -225,8 +225,9 @@ class ReviewOnWindows(unittest.TestCase):
         (repo / 'a.txt').write_text('committed\n')
         git('add', 'a.txt')
         git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'one')
-        copy = self.tmp / 'copy'
-        copy.mkdir()
+        # A path holding `\\tmp` and `\\new`: Git for Windows' GNU tar read them as escapes.
+        copy = self.tmp / 'tmp' / 'new'
+        copy.mkdir(parents=True)
         claude_bridge.throwaway_copy(repo, git('rev-parse', 'HEAD'), None, copy, timeout=60)
         self.assertEqual((copy / 'a.txt').read_bytes().replace(b'\r\n', b'\n'), b'committed\n')
 

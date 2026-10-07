@@ -224,7 +224,9 @@ def throwaway_copy(repo: Path, head: str, diff: str | None, copy: Path,
                 # tar reads no option from the environment (TAR_OPTIONS=--exclude=... dropped
                 # a source file from the copy): the only variables it gets are these.
                 tar_env = {k: os.environ[k] for k in ("PATH", "HOME", "LANG", "LC_ALL") if k in os.environ}
-                unpacked = agent_process.launch(["tar", "-x", "-f", "-", "-C", str(copy)], mask,
+                # Run in the copy, never handed its path: Git for Windows' GNU tar read the
+                # backslashes of a Windows path (`\tmp`) as escapes and failed every review.
+                unpacked = agent_process.launch(["tar", "-x", "-f", "-"], mask, cwd=str(copy),
                                                 stdin=archive.stdout, stdout=subprocess.DEVNULL,
                                                 stderr=subprocess.PIPE, env=tar_env)
                 unpacked_pgid = unpacked.pid

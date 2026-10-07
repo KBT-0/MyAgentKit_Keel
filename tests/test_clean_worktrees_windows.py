@@ -135,6 +135,18 @@ class CleanWorktreesOnWindows(unittest.TestCase):
         self.assertKept(path, out, 'in use: process %d works inside it' % child.pid)
 
     @windows_only
+    def test_a_process_that_entered_through_a_junction_keeps_it(self):
+        # Codex review: the PEB names the junction's path, the audit compared the resolved
+        # worktree path, and the worktree was removed while the process worked in it.
+        path = self.worktree('aliased')
+        alias = self.tmp / 'alias'
+        made = subprocess.run(['cmd', '/c', 'mklink', '/J', str(alias), str(path)], capture_output=True)
+        self.assertEqual(made.returncode, 0, made.stdout + made.stderr)
+        child = self.start_inside([sys.executable, '-c', 'import sys; sys.stdin.read()'], alias)
+        out = self.run_script('--apply')
+        self.assertKept(path, out, 'in use: process %d works inside it' % child.pid)
+
+    @windows_only
     def test_a_git_bash_shell_in_a_subfolder_keeps_it(self):
         # An MSYS process keeps its own working directory; the PEB copy follows it.
         path = self.worktree('shell')

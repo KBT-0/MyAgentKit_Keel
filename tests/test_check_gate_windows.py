@@ -442,6 +442,16 @@ class WindowsGateLockTests(unittest.TestCase):
         # passed on as the exit status, sh read its low byte: 0, a pass.
         self.write_build('kill -9 $PPID\nsleep 5\n')
         code, out = gate(self.project, self.build)
+        # The build outlives its gate by design and holds the lock: removing the fixture
+        # under it failed the clean-up (Codex review). Wait until it lets the lock go.
+        deadline = time.monotonic() + 30
+        while True:
+            try:
+                close_handle(open_handle(self.lock, GENERIC_READ | GENERIC_WRITE, SHARE_READ))
+                break
+            except OSError:
+                self.assertLess(time.monotonic(), deadline, 'the killed gate\'s build never ended')
+                time.sleep(0.2)
         self.assertIsNotNone(code, out)
         self.assertNotEqual(code, 0, out)
         self.assertNotIn('CHECK: PASS', out)

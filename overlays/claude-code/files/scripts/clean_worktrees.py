@@ -652,7 +652,10 @@ def windows_cwds():
             cwd = read(handle, text, length).decode('utf-16-le')
             if len(cwd) > 3:
                 cwd = cwd.rstrip('\\')
-            cwds[str(pid).encode()] = os.fsencode(cwd)
+            # Resolved, as the worktree's path is: a process that entered it through a junction
+            # elsewhere has that junction's path here, which matched no worktree, and the
+            # worktree it worked in was removed under it.
+            cwds[str(pid).encode()] = os.fsencode(os.path.realpath(cwd))
         except (OSError, UnicodeDecodeError):
             unseen += 1
         finally:
