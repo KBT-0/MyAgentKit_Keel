@@ -424,6 +424,19 @@ class WindowsGateLockTests(unittest.TestCase):
         self.assertEqual([code for code, _ in results], [0, 0], outputs)
 
     @windows_only
+    def test_a_ctrl_c_just_before_the_launch_starts_no_gate(self):
+        # r8: the holder read its Ctrl-C record, then launched the gate. A Ctrl-C between the
+        # two reached no gate (it did not exist yet), and the gate it then started ran its build.
+        self.write_build('echo built > "$SIDE/built"\n')
+        code, out = gate(self.project, self.build, SIDE=self.side.as_posix(), GATE_LOCK_TEST_SIGINT_AT_LAUNCH='1')
+        self.assertEqual(code, 130, out)
+        self.assertIn('GATE_LOCK_TEST_SIGINT_AT_LAUNCH is set', out)
+        self.assertFalse((self.side / 'built').exists(), 'the gate ran its build after the Ctrl-C:\n' + out)
+        self.assertNotIn('CHECK:', out)
+        code, out = gate(self.project, self.build, SIDE=self.side.as_posix())
+        self.assertEqual(code, 0, out)
+
+    @windows_only
     def test_a_gate_killed_by_a_signal_never_exits_zero(self):
         # Git for Windows reports a child that died of signal N to native Python as N << 8;
         # passed on as the exit status, sh read its low byte: 0, a pass.

@@ -330,7 +330,27 @@ os.write(fd, token.encode())
 os.set_handle_inheritable(msvcrt.get_osfhandle(fd), True)
 os.environ["GATE_LOCK_FD"] = str(msvcrt.get_osfhandle(fd))
 os.environ["GATE_LOCK_HELD"] = path
-status = 130 if interrupted else subprocess.call(["sh", gate] + sys.argv[3:], close_fds=False)
+# The gate is created suspended and the Ctrl-C record is read only once it exists: read before
+# the launch, a Ctrl-C between that read and the launch reached no gate, and the gate it then
+# started ran its build to the end. Read after, every earlier Ctrl-C is seen and the suspended
+# gate, which never ran a line, is killed; a later one reaches the gate through the console.
+# GATE_LOCK_TEST_SIGINT_AT_LAUNCH raises a Ctrl-C right before the launch (how the kit tests
+# this window); it can only stop a gate, never pass one, and says so when it is set.
+if interrupted:
+    status = 130
+else:
+    if os.environ.get("GATE_LOCK_TEST_SIGINT_AT_LAUNCH"):
+        print("NOTE [lock]: GATE_LOCK_TEST_SIGINT_AT_LAUNCH is set: a Ctrl-C is raised as the gate starts.", flush=True)
+        signal.raise_signal(signal.SIGINT)
+    child = subprocess.Popen(["sh", gate] + sys.argv[3:], close_fds=False, creationflags=0x4)
+    if interrupted or ctypes.WinDLL("ntdll").NtResumeProcess(ctypes.c_void_p(int(child._handle))) != 0:
+        child.kill()
+        child.wait()
+        if not interrupted:
+            print("FAIL [lock]: the gate was created but could not be started (NtResumeProcess).", flush=True)
+        status = 130 if interrupted else 1
+    else:
+        status = child.wait()
 os.ftruncate(fd, 0)
 # A Ctrl-C after the check below came after the gate ended: its status stands, as on POSIX.
 if interrupted:
