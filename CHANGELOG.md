@@ -13,9 +13,11 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## v0.10 — 2026-10-07
 
-Two fixes for a project developed on native Windows, found when one project moved there from
-WSL, then hardened by a cross-model review that rejected the first version of both. Why each
-change is safe is in `RESEARCH_LOG.md` (2026-10-06 and 2026-10-07).
+Native Windows (Git for Windows' `sh` with python.org CPython) becomes a host the kit runs on,
+not one it sends to WSL: the gate lock, a review run, a worker's spawn and close, and the
+worktree clean-up each work there, with tests that run on native Windows (a CI job of their
+own). It started as two fixes for a project that moved there from WSL, hardened by cross-model
+reviews. Why each change is safe is in `RESEARCH_LOG.md` (2026-10-06 and 2026-10-07).
 
 - **The gate lock on native Windows.** `scripts/check.sh` run by Git for Windows' `sh` with a
   Windows `python3` failed every run with `FAIL [lock]: python3 has no fcntl module`, so every
@@ -77,10 +79,38 @@ change is safe is in `RESEARCH_LOG.md` (2026-10-06 and 2026-10-07).
   with the brief's instruction as its first prompt. The tab runs Git Bash by its full Windows
   path, because a bare `bash` in a new tab is WSL's launcher, and every `;` handed to `wt.exe`
   is escaped as `\;`, because `wt.exe` splits its command line there even inside quotes and
-  cut the instruction in two. Nothing can read the tab, so the start-up dialog check, `--batch`,
-  `show_workers.sh`, `watch_workers.sh` and `close_worker.sh` do not apply there: watch the
-  tab, wait for the result file, and close the tab by hand. `doctor.sh` asks for `wt.exe` (or
+  cut the instruction in two. The tab opens in the window the lead runs in (`-w 0`), its
+  command ends with `exit 0` (Windows Terminal keeps a tab whose command ended nonzero open),
+  and a name a running Claude Code session already has is refused. Nothing can read the tab,
+  so the start-up dialog check, `--batch`, `show_workers.sh` and `watch_workers.sh` do not
+  apply there: watch the tab and wait for the result file. `doctor.sh` asks for `wt.exe` (or
   `KIT_WT`) there instead of tmux.
+- **`close_worker.sh` on native Windows.** It ends the `claude.exe` whose command line holds
+  `-n NAME` (`taskkill /T /F`; the tab closes), waits up to 15 s for it to be gone, then
+  removes the worktree through the audit, as on POSIX. A session that survives, or a process
+  list it cannot read (PowerShell's `Get-CimInstance`, or the lister `KIT_PS` names), leaves
+  the worktree untouched and fails the close.
+- **`clean_worktrees.sh` on native Windows, and a junction is never followed.** It said
+  `NOT RUN on this platform` there and kept everything. It now reads each process's working
+  directory from the process itself (its PEB; MSYS shells included; a process it cannot read
+  counts as unseen, as on Linux), and the gate's lock is held when its file cannot be opened
+  for writing. On every host a folder in the worktree that is a reparse point (a junction, a
+  folder symlink) counts as a mount point, which keeps the worktree: `git worktree remove` on
+  Windows went through a junction to the main checkout's virtual environment and deleted part
+  of it. Workers must not link shared folders into a worktree (`docs/WORKFLOW.md`).
+- **WSL: worker tabs open in the lead's window.** `show_workers.sh` passed `wt.exe -w
+  kit-<project>`, which opened a second window beside the lead's; it now passes `-w 0`.
+- **A review run on native Windows.** `select()` takes only sockets there, so `review.sh`
+  failed at once. Each pipe of the reviewer, of the copy's preparation and of the quota
+  reader is now read by a thread, and a reviewer starts suspended, joins a Job Object with
+  kill-on-close, then runs: stopping it ends every process it started, also one that outlived
+  it holding a pipe, and a supervisor that dies takes its reviewer with it. The review
+  self-test (`review.sh --self-test`, and with it the review case of `check.sh --self-test`)
+  still needs a POSIX host (item 4 below).
+- **`doctor.sh` and native Windows Python.** Native Windows Python under Git for Windows' `sh`
+  is no longer a MISSING line; under any other `sh` (WSL, through interop) it still is, since
+  it would take the Windows lock on POSIX paths. A CRLF is a CR before a line feed, read as
+  bytes; a lone CR is not one.
 - **`review.sh` and Git LFS.** The v0.9 filter refusal checked every path in the checkout,
   not the paths a review changes, and `git lfs install` sets `filter.lfs.clean` globally:
   one LFS file anywhere refused every review. A filtered path the review does not change now
@@ -98,10 +128,14 @@ change is safe is in `RESEARCH_LOG.md` (2026-10-06 and 2026-10-07).
   `ident` on a path are refused. A path the review excludes (its own archives) is never
   refused, and the refusal says whether the review changes the path or the path is not an
   unchanged LFS file.
-- **Not yet on native Windows: `review.sh`.** The review adapters rely on POSIX signal masks
-  and process groups (`pthread_sigmask`, `killpg`, `SIGHUP`), so `review.sh` and the review
-  case of `check.sh --self-test` fail there. Run reviews, and the full self-test, from WSL or
-  another POSIX shell (item 4 below).
+- **A changed LFS path is refused with no LFS driver configured.** A fresh machine without
+  `git lfs install` let a staged LFS pointer through (the named filter counted only with its
+  driver); a changed path with any named filter is now refused. A snapshot reads commit
+  attributes through an index in the git directory, never under `TMPDIR`.
+- **The Windows lock holder and a Ctrl-C at the launch.** The gate is created suspended and the
+  Ctrl-C record read after it exists: a Ctrl-C just before the launch starts no gate.
+- **Bootstrap** stops when it cannot read the kit's own `.gitattributes` rules, instead of
+  stamping the version without them.
 
 ### Upgrading a project from v0.9
 

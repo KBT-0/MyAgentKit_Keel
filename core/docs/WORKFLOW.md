@@ -493,6 +493,14 @@ logged first in `<git dir>/kit-worktree-removals.log` and prints the command tha
 worktree back. `KIT_NO_WORKTREE_CLEANUP=1` turns the hook off; the script without `--apply` is
 a dry run.
 
+A worker never links a shared folder into its worktree (a junction, a symlink, a bind
+mount: a virtual environment, a cache, a data set). It names the shared one by path or
+environment variable instead (the interpreter's full path, `VIRTUAL_ENV`, a cache variable).
+On Windows, `git worktree remove` went through such a junction and deleted part of the main
+checkout's virtual environment; `clean_worktrees.sh` now keeps a worktree that holds one, and
+it stays until the link is removed by hand (`rmdir <link>` removes a junction, not what it
+points at).
+
 A worker whose worktree directory is missing STOPS and reports. It never recreates the
 directory and never runs a git command from where it used to be: that folder lies inside the
 main checkout, so git there acts on the owner's main worktree.

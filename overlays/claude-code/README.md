@@ -46,11 +46,17 @@ and the idle notice does not fire for a session that waits inside a dialog: it h
 nobody looks, for as long as nobody looks. Two scripts close that, both kit-owned.
 
 **Native Windows** (Git for Windows' `sh`, MSYS2, Cygwin) has no tmux, so what this section
-says about tmux sessions, `--batch`, `show_workers.sh`, `watch_workers.sh` and
-`close_worker.sh` does not apply there. `spawn_worker.sh` opens the worker as a Windows
-Terminal tab (`wt.exe`, or the launcher `KIT_WT` names) with the brief's instruction as its
-first prompt; the tab is the only view of it. Watch the tab, wait for the result file the
-brief names, and close the tab by hand once the session is finished.
+says about tmux sessions, `--batch`, `show_workers.sh` and `watch_workers.sh` does not apply
+there. `spawn_worker.sh` opens the worker as a tab of the window the lead runs in (`wt.exe -w
+0`, or the launcher `KIT_WT` names) with the brief's instruction as its first prompt, and
+refuses a name a running Claude Code session already has. The tab is the only view of it:
+watch the tab and wait for the result file the brief names (the separate session does not
+answer `notify_when_idle`). `close_worker.sh NAME` ends it: it finds the `claude.exe` whose
+command line holds `-n NAME`, stops it with `taskkill /T /F` (the tab closes, because its
+command ends with `exit 0`), then removes the worktree through the same audit as on POSIX,
+which reads each process's working directory on Windows itself. A session that survives, or
+a process list it cannot read, leaves the worktree untouched. On WSL and macOS the tmux path
+below applies unchanged.
 
 **`scripts/show_workers.sh NAME [NAME...]`** opens ONE terminal window with a tab per named
 tmux session, each running `tmux attach -t =NAME`. `spawn_worker.sh` calls it for every
@@ -74,9 +80,8 @@ What opens where:
   Terminal.app): a new window, a tab per session, through `osascript`.
 - **macOS, Terminal.app**: one window per session. Adding a tab there needs the
   accessibility permission, which a script must not ask for; the output says so.
-- **Native Windows**: no tmux, so no worker session. Spawn workers from WSL, in a checkout
-  on the WSL file system (`doctor.sh` warns about a checkout under `/mnt/<drive>`); the
-  tabs open in Windows Terminal as above.
+- **Native Windows**: no tmux session to show; `spawn_worker.sh` opens the tab itself
+  (above).
 - **Anything else**: nothing opens; the script prints `attach by hand: tmux attach -t NAME`
   for each session and exits 0.
 

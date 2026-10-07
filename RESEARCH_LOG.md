@@ -250,6 +250,64 @@ the child a complete temporary stdin file and monitors its process, not partial 
 
 ## Backflow findings
 
+### 2026-10-07 — native Windows as the main host, and the tenth review's findings
+
+The owner moved development to native Windows (Git for Windows' `sh`, python.org CPython) and
+asked for the four parts doctor still sent to WSL to work there: the gate lock (v0.10 above),
+a review run, a worker's spawn and close without tmux, and the worktree clean-up. The branch
+of the 2026-10-06/07 entries was merged onto the kit's v0.9 line, and the tenth review's
+findings (open in the entry below) were fixed in the same round. Each fix was written with a
+test that was run against the code before it and seen red; each new Windows guard was then
+removed in turn and its test seen red again.
+
+- *A review run.* `select()` takes only sockets on Windows: `agent_process.run` failed at
+  once with WinError 10093, and so did the copy's preparation and the quota reader. Each pipe
+  is now read by a thread (`drain`, `take`). A reviewer starts suspended, joins a Job Object
+  with kill-on-close and then runs: stopping it terminates the job, which reaches a
+  descendant that outlived the reviewer and holds its pipe (`taskkill /T` finds no tree under
+  an exited process), and a supervisor that is killed takes its reviewer with it. Red with
+  the old module (four of six cases; the copy case is new), and the kill-on-close case red
+  with the flag cleared. The review self-test (`review.sh --self-test`, 126 POSIX tests) still
+  needs a POSIX host; it is an open issue, not fixed here.
+- *The worktree clean-up.* It now proves liveness on Windows from each process's PEB (the
+  working directory Windows keeps and MSYS updates), tests the gate's lock by opening its
+  file for writing, and treats a folder that is a reparse point as a mount point. That last
+  one is a data-loss fix: a worker had made `build/pipeline-venv` a junction to the main
+  checkout's virtual environment, and `git worktree remove` deleted part of it. Each case is
+  red when its guard is removed (the PEB reader reporting other directories, the sharing
+  check never true, the reparse test false). The PEB layout read is not a documented API;
+  it has been stable since XP, and a process it cannot read counts as unseen.
+- *A worker's close.* `close_worker.sh` ends the `claude.exe` whose command line holds
+  `-n NAME` (`taskkill /T /F`) and then runs the audit. Windows Terminal keeps a tab whose
+  command ended nonzero, so the spawned tab's command ends with `exit 0`. A session that
+  survives, or a process list that cannot be read, leaves the worktree untouched: a stub run
+  showed the audit removing a worktree whose session was still listed.
+- *WSL tabs.* `show_workers.sh` opened a second window named after the project; the owner
+  wants the tabs in the window the lead runs in, so it now passes `-w 0`.
+
+The tenth review's findings, each with its test:
+
+- *A changed LFS path with no LFS driver configured* (a fresh machine) was not refused: the
+  named filter counted only with its driver. A changed path is now refused whenever a named
+  filter applies to it at any side; an unchanged one still passes on its proof.
+- *A Ctrl-C between the holder's last check and the gate's creation* reached no gate. The
+  gate is now created suspended and the record is read after it exists: a Ctrl-C before that
+  kills the suspended gate, which never ran. `GATE_LOCK_TEST_SIGINT_AT_LAUNCH` raises one at
+  that point for the test; it can only stop a gate.
+- *A failed `git ls-files` in the line-ending repair* gave an empty list and exit 0; the list
+  is now one checked file. A run killed mid-way left a `.crlf-*` or merge temporary that the
+  retry ignored; a stopped run removes them, and the next run stops on one by name. Item 3
+  also stops on a `TMPDIR` inside the project, and its base is now the v0.9 release (or
+  `KIT_BASE`), not the earlier commit one project synced.
+- *Bootstrap read the kit's rules at the head of a pipeline* and lost a failed read; it now
+  reads them on their own. *Doctor called a lone CR a CRLF*; it now looks for CR LF, as bytes
+  (Git for Windows' grep does not show a CR at a line's end to a pattern).
+- *A snapshot's attribute index went under `TMPDIR`* before the review refused that `TMPDIR`;
+  it now goes in the git directory. *The bridge copy wrote through a symlink*; item 2 now
+  copies beside the destination and renames over it.
+- *This log* kept the v0.9 reasoning that the byte proof leaves the payload nothing to omit;
+  it is corrected below.
+
 ### 2026-10-07 — the cross-model review of the native Windows change
 
 The first version of the 2026-10-06 change (below) went to a cross-model review, which
@@ -548,7 +606,7 @@ scope. One fix round followed; each fix has a test that was red against the earl
 - *Bootstrap replaced an unreadable `.gitattributes`* with the kit's rules alone. It now stops.
 
 The tenth pass (the last one in this loop) rejected again, with one High, four Medium and
-four Low findings. They are open, not fixed.
+four Low findings. They were fixed in the next round (the entry above).
 
 ### 2026-10-06 — native Windows: the gate lock, and Git LFS beside a review
 
@@ -629,7 +687,9 @@ running any filter, that its working bytes are exactly what HEAD records: they e
 blob's bytes (an unsmudged checkout), or the blob is a Git LFS pointer and the file has the
 pointer's size and sha256. With that proof the working-tree diff has no change of that path
 to omit, and the fingerprint, which hashes the same raw bytes, attests the state the reviewer
-saw. The proof does not trust the filter's name or command: a driver called `lfs` that does
+saw. (Corrected 2026-10-07: a clean driver may answer differently when the payload diff runs
+it, so the proof alone does not keep a filter's output out of the payload. What does is that
+the payload diff leaves every proven path out, so its filter is never run for it.) The proof does not trust the filter's name or command: a driver called `lfs` that does
 something else gains nothing, because only the raw file's sha256 is compared.
 
 A filtered path the review changes stays refused. Uncommitted, its bytes differ from HEAD and
