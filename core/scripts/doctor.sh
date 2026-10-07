@@ -112,7 +112,7 @@ for f in scripts/*.sh .githooks/* .claude/hooks/*.sh; do
   first=""; IFS= read -r first < "$f" || true
   case "$first" in '#!'*) ;; *) continue ;; esac
   if grep -q "$(printf '\r')" "$f"; then
-    miss "$f has CRLF line endings" "tr -d '\\r' < $f > $f.lf && cat $f.lf > $f && rm $f.lf; keep *.sh and .githooks/* at eol=lf in .gitattributes (docs/DEV_SETUP.md section 1)"
+    miss "$f has CRLF line endings" "rewrite it with LF and keep the eol=lf lines of .gitattributes (docs/DEV_SETUP.md section 1)"
   fi
   mode=$(git ls-files -s -- "$f" 2>/dev/null | cut -d' ' -f1)
   if [ -z "$mode" ]; then
@@ -166,8 +166,8 @@ fi
 if [ -f scripts/spawn_worker.sh ]; then
   case $(uname -s 2>/dev/null) in
     MINGW*|MSYS*|CYGWIN*)
-      command -v wt.exe >/dev/null 2>&1 ||
-        miss "Windows Terminal (wt.exe), which scripts/spawn_worker.sh opens worker tabs in on native Windows" "install Windows Terminal" ;;
+      command -v "${KIT_WT:-wt.exe}" >/dev/null 2>&1 ||
+        miss "Windows Terminal (${KIT_WT:-wt.exe}), which scripts/spawn_worker.sh opens worker tabs in on native Windows" "install Windows Terminal, or name its launcher in KIT_WT" ;;
     *)
       command -v tmux >/dev/null 2>&1 ||
         miss "tmux, which scripts/spawn_worker.sh needs for worker sessions" "install tmux" ;;

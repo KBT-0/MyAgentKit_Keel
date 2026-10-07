@@ -2,7 +2,8 @@
 # KIT-OWNED: do not edit locally; change it in the kit and re-sync.
 # Open a SEPARATE Claude Code worker session in tmux and hand it a brief file. On native
 # Windows (Git for Windows' sh, MSYS2, Cygwin), which has no tmux, it opens as a Windows
-# Terminal tab instead (see "Native Windows" below).
+# Terminal tab instead (see "Native Windows" below), and what follows about showing,
+# watching and closing a tmux session does not apply there.
 #
 # Usage: spawn_worker.sh NAME BRIEF_FILE [--model M] [--settings JSON_OR_FILE]
 #                        [--allowed-tools LIST] [--worktree] [--effort LEVEL] [--batch]
@@ -53,7 +54,7 @@ die() { { printf 'spawn_worker: %s' "$1" | LC_ALL=C tr '\001-\037\177' '?'; echo
 # The x keeps a trailing newline that $(...) would strip.
 q() { set -- "$(printf '%sx' "$1" | sed "s/'/'\\\\''/g")"; printf "'%s'" "${1%x}"; }
 
-[ $# -ge 2 ] || { sed -n '3,11p' "$0"; exit 2; }
+[ $# -ge 2 ] || { sed -n '3,14p' "$0"; exit 2; }
 name=$1; brief=$2; shift 2
 # The name and the brief path reach tmux and the TUI: `send-keys -l` types every byte, and a
 # control byte (0x01-0x1F, 0x7F) acts as a key there: a carriage return submitted the

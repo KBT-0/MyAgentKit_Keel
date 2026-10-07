@@ -348,6 +348,10 @@ class DoctorTests(unittest.TestCase):
                     self.assertEqual(red.returncode, 1, red.stdout)
                     self.assertIn(expect, red.stdout)
                     self.assertEqual(red.stdout.count('MISSING:'), 1, red.stdout)
+            # KIT_WT names the launcher spawn_worker.sh runs in place of wt.exe: doctor takes it too.
+            shown = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=project, capture_output=True, text=True,
+                                   env=dict(env, PATH=no_tmux_mingw, KIT_WT=str(mingw / 'uname')))
+            self.assertNotIn('Windows Terminal', shown.stdout)
             shutil.rmtree(home / '.npm')
 
             # A checkout on a Windows drive under WSL. The path and /proc/version are injected
