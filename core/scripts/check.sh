@@ -308,7 +308,10 @@ os.write(fd, token.encode())
 os.set_handle_inheritable(msvcrt.get_osfhandle(fd), True)
 os.environ["GATE_LOCK_FD"] = str(msvcrt.get_osfhandle(fd))
 os.environ["GATE_LOCK_HELD"] = path
-signal.signal(signal.SIGINT, signal.SIG_IGN)
+# Ctrl-C: this process outlives it to pass on the status of the gate, through a handler that does
+# nothing, never SIG_IGN, so no ignored Ctrl-C can reach the gate or its build (the interrupt
+# case of the self-test: the build stops, the gate exits nonzero, the next gate takes the lock).
+signal.signal(signal.SIGINT, lambda *_: None)
 status = subprocess.call(["sh", gate] + sys.argv[3:], close_fds=False)
 os.ftruncate(fd, 0)
 # Git for Windows hands native Python a child killed by signal N as N << 8, and sh would read
@@ -514,6 +517,11 @@ self_test() {
   # The holder refuses a reparse point at the lock path, never reports a gate killed by a
   # signal as a pass, passes a failing gate's status on, and a killed holder leaves the lock
   # with the gate it started, and imports no stand-in fcntl.py or secrets.py from PYTHONPATH.
+  # Ctrl-C stops the gate and its build: the case gives the gate a hidden console of its own,
+  # with that console as sh's input, as a terminal window does, and sends it CTRL_C_EVENT, the
+  # event Ctrl-C raises there (a signal sent by pid reaches one process, not the console's).
+  # The host check and the case runner run isolated (-I) beside a sitecustomize.py on
+  # PYTHONPATH that marks its import and calls the host POSIX: imported, it skipped every case.
   # Each case runs a copy of this gate in a throwaway repository, so
   # its lock is not the one this run holds, and asserts the outcome by its message AND its exit
   # status. The copy exits 0 right after it holds the lock, so a guard that prints its refusal
@@ -522,7 +530,11 @@ self_test() {
   # GetFileInformationByHandleEx replaced. The reparse point carries a non-Microsoft tag, which
   # any user may set, so no case needs the privilege a symlink does: a guard whose case cannot
   # run there is a FAIL, never a skip.
-  if python3 -c 'import os, sys; sys.exit(0 if os.name == "nt" else 1)' 2>/dev/null; then
+  site=$work/site
+  mkdir "$site" && printf '%s
+' 'import os' 'open(os.path.join(os.path.dirname(__file__), "imported"), "w").close()'     'os.name = "posix"' > "$site/sitecustomize.py"
+  case "$(uname -s 2>/dev/null)" in MSYS*|MINGW*|CYGWIN*) site=$(cygpath -m "$site") ;; esac
+  if env PYTHONPATH="$site" python3 -I -c 'import os, sys; sys.exit(0 if os.name == "nt" else 1)' 2>/dev/null; then
     cat > "$work/lockcase.py" <<'LOCKCASE'
 import ctypes, os, re, struct, subprocess, sys, time
 mode, lock, gate = sys.argv[1:4]
@@ -630,6 +642,57 @@ if mode == "shadow":
     imported = sorted(name for name in os.listdir(folder) if name.endswith(".imported"))
     print("lockcase: stand-ins imported: %s; the gate exited %d" % (", ".join(imported) or "none", status))
     sys.exit(0)
+if mode == "interrupt":
+    # A console of its own, hidden, so the Ctrl-C reaches only this case's processes.
+    try:
+        inner = subprocess.run([sys.executable, "-I", __file__, "console", lock, gate], creationflags=0x10,
+                               startupinfo=subprocess.STARTUPINFO(dwFlags=1, wShowWindow=0),
+                               stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                               text=True, errors="replace", timeout=150)
+    except subprocess.TimeoutExpired:
+        print("lockcase: the interrupt case did not end in 150 s")
+        sys.exit(2)
+    sys.stdout.write(inner.stdout)
+    sys.exit(inner.returncode)
+if mode == "console":
+    # A caller (a CI runner, an agent's shell) may hand down an ignored Ctrl-C; a terminal does not.
+    kernel32.SetConsoleCtrlHandler(None, False)
+    kernel32.OpenProcess.restype = ctypes.c_void_p
+    build = lock + ".build"
+    first = subprocess.Popen(["sh", gate], stdin=open("CONIN$"), env=dict(os.environ, LOCKCASE_BUILD=build))
+    pid, status, stopped = None, None, False
+    try:
+        deadline = time.monotonic() + 60
+        while pid is None:
+            text = open(build).read() if os.path.exists(build) else ""
+            if text.isdigit():
+                pid = int(text)
+            elif first.poll() is not None or time.monotonic() > deadline:
+                print("lockcase: the gate never started its build")
+                sys.exit(2)
+            else:
+                time.sleep(0.1)
+        time.sleep(1)
+        kernel32.SetConsoleCtrlHandler(None, True)
+        kernel32.GenerateConsoleCtrlEvent(0, 0)
+        try:
+            status = first.wait(10)
+        except subprocess.TimeoutExpired:
+            pass
+        process = kernel32.OpenProcess(0x100000, False, pid)
+        stopped = not process or kernel32.WaitForSingleObject(ctypes.c_void_p(process), 10000) == 0
+        if process:
+            kernel32.CloseHandle(process)
+        after = subprocess.call(["sh", gate], env=dict(os.environ, GATE_LOCK_WAIT="5"),
+                                stdin=subprocess.DEVNULL, timeout=60)
+        print("lockcase: the interrupted gate exited %s; its build %s; the next gate exited %d"
+              % (status, "stopped" if stopped else "ran on", after))
+        sys.exit(0)
+    finally:
+        if pid and not stopped:
+            subprocess.call(["taskkill", "/F", "/PID", str(pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.call(["taskkill", "/F", "/T", "/PID", str(first.pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        first.wait()
 if mode in ("killgate", "failgate"):
     marker = lock + "." + mode
     status = run(dict(os.environ, **{"LOCKCASE_KILL" if mode == "killgate" else "LOCKCASE_FAIL": marker}))
@@ -679,7 +742,7 @@ claim = {"other": lambda: handle(lock + ".other", RW, 3), "reader": lambda: hand
 sys.exit(run(claimed(claim)))
 LOCKCASE
     refused="^FAIL \\[env\\]: GATE_LOCK_HELD names this checkout's lock, but this run did not inherit"
-    for lock_case in other reader unheld readonly wide noid reparse killgate failgate killholder shadow; do
+    for lock_case in other reader unheld readonly wide noid reparse killgate failgate killholder shadow interrupt; do
       case_dir="$work/lock-$lock_case"
       also=""; code=1
       case $lock_case in
@@ -697,6 +760,8 @@ LOCKCASE
         killholder) want='^NOT RUN \[lock\]:'; code=75; label="a killed lock holder leaves the lock with the gate it started" ;;
         shadow)     want='^lockcase: stand-ins imported: none; the gate exited 0$'; code=0
                     label="the lock holder imports no fcntl.py or secrets.py from PYTHONPATH" ;;
+        interrupt)  want='^lockcase: the interrupted gate exited [1-9][0-9]*; its build stopped; the next gate exited 0$'; code=0
+                    label="Ctrl-C stops the gate and its build, the gate exits nonzero, and the next gate takes the lock" ;;
       esac
       # The copy stops or kills itself right after it holds the lock, when a case asks it to,
       # and otherwise passes there: the success a lost refusal would reach.
@@ -705,12 +770,13 @@ LOCKCASE
                     print "[ -z \"${LOCKCASE_HOLD:-}\" ] || { : > \"$LOCKCASE_HOLD\"; sleep 10; exit 0; }"
                     print "[ -z \"${LOCKCASE_KILL:-}\" ] || { : > \"$LOCKCASE_KILL\"; kill -9 $$; }"
                     print "[ -z \"${LOCKCASE_FAIL:-}\" ] || { : > \"$LOCKCASE_FAIL\"; exit 3; }"
+                    print "[ -z \"${LOCKCASE_BUILD:-}\" ] || { python3 -I -c \"import os, sys, time; f = os.open(sys.argv[1] + chr(46) + chr(116), os.O_WRONLY | os.O_CREAT); os.write(f, str(os.getpid()).encode()); os.close(f); os.replace(sys.argv[1] + chr(46) + chr(116), sys.argv[1]); time.sleep(60)\" \"$LOCKCASE_BUILD\"; exit 0; }"
                     print "echo \"lockcase: the copy of the gate got past the lock\"; exit 0" }
                   { print }' "$0" > "$case_dir/scripts/check.sh"; }; then
         echo "  FAIL — could not build the throwaway repository for the Windows lock case: $label"
         st_fail=1; continue
       fi
-      out=$(python3 "$work/lockcase.py" "$lock_case" "$(cygpath -m "$case_dir/.git/check.lock")" \
+      out=$(env PYTHONPATH="$site" python3 -I "$work/lockcase.py" "$lock_case" "$(cygpath -m "$case_dir/.git/check.lock")" \
               "$(cygpath -m "$case_dir/scripts/check.sh")" 2>&1); status=$?
       if [ "$status" -eq "$code" ] && printf '%s\n' "$out" | grep -q "$want" &&
          { [ -z "$also" ] || printf '%s\n' "$out" | grep -q "$also"; }; then
@@ -721,6 +787,15 @@ LOCKCASE
         st_fail=1
       fi
     done
+    if [ -e "$work/site/imported" ]; then
+      echo "  FAIL — the Windows lock cases imported a sitecustomize.py from PYTHONPATH"
+      st_fail=1
+    else
+      echo "  ok   — the Windows lock cases import no sitecustomize.py from PYTHONPATH"
+    fi
+  elif [ -e "$work/site/imported" ]; then
+    echo "  FAIL — the native Windows host check imported a sitecustomize.py from PYTHONPATH, which can skip every lock case"
+    st_fail=1
   else
     echo "  skip — native Windows gate lock cases: this python3 is not native Windows"
   fi
