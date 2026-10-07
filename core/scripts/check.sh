@@ -308,9 +308,11 @@ os.write(fd, token.encode())
 os.set_handle_inheritable(msvcrt.get_osfhandle(fd), True)
 os.environ["GATE_LOCK_FD"] = str(msvcrt.get_osfhandle(fd))
 os.environ["GATE_LOCK_HELD"] = path
-# Ctrl-C: this process outlives it to pass on the status of the gate, through a handler that does
-# nothing, never SIG_IGN, so no ignored Ctrl-C can reach the gate or its build (the interrupt
-# case of the self-test: the build stops, the gate exits nonzero, the next gate takes the lock).
+# Ctrl-C: this process outlives it to pass on the status of the gate (the interrupt case of the
+# self-test: the holder exits 130, the build stops, the next gate takes the lock). A handler that
+# does nothing, not SIG_IGN: on the hosts measured the two behave alike, since SIG_IGN in CPython
+# on Windows is not the inherited ignore flag and sh starts with Ctrl-C enabled, so no case can
+# tell them apart; this one leaves nothing to inherit on a host where that differs.
 signal.signal(signal.SIGINT, lambda *_: None)
 status = subprocess.call(["sh", gate] + sys.argv[3:], close_fds=False)
 os.ftruncate(fd, 0)
@@ -519,7 +521,8 @@ self_test() {
   # with the gate it started, and imports no stand-in fcntl.py or secrets.py from PYTHONPATH.
   # Ctrl-C stops the gate and its build: the case gives the gate a hidden console of its own,
   # with that console as sh's input, as a terminal window does, and sends it CTRL_C_EVENT, the
-  # event Ctrl-C raises there (a signal sent by pid reaches one process, not the console's).
+  # event Ctrl-C raises there (a signal sent by pid reaches one process, not the console's);
+  # the holder must outlive it and pass on 130, the status of the interrupted gate.
   # The host check and the case runner run isolated (-I) beside a sitecustomize.py on
   # PYTHONPATH that marks its import and calls the host POSIX: imported, it skipped every case.
   # Each case runs a copy of this gate in a throwaway repository, so
@@ -560,6 +563,21 @@ def claimed(claim):
     os.set_handle_inheritable(claim, True)
     # A run whose refusal is lost goes on to wait for the lock the case holds: 2 s, then 75.
     return dict(os.environ, GATE_LOCK_HELD=lock, GATE_LOCK_FD=str(claim), GATE_LOCK_WAIT="2")
+class Entry(ctypes.Structure):
+    _fields_ = [("size", ctypes.c_ulong), ("usage", ctypes.c_ulong), ("pid", ctypes.c_ulong),
+                ("heap", ctypes.c_size_t), ("module", ctypes.c_ulong), ("threads", ctypes.c_ulong),
+                ("parent", ctypes.c_ulong), ("priority", ctypes.c_long), ("flags", ctypes.c_ulong),
+                ("exe", ctypes.c_wchar * 260)]
+def children(pid):
+    snapshot, entry, found = kernel32.CreateToolhelp32Snapshot(2, 0), Entry(), []
+    entry.size = ctypes.sizeof(Entry)
+    more = kernel32.Process32FirstW(ctypes.c_void_p(snapshot), ctypes.byref(entry))
+    while more:
+        if entry.parent == pid:
+            found.append((entry.pid, entry.exe.lower()))
+        more = kernel32.Process32NextW(ctypes.c_void_p(snapshot), ctypes.byref(entry))
+    kernel32.CloseHandle(snapshot)
+    return found
 if mode == "reparse":
     link = handle(lock, 0x40000000, 0, 2, 0x02200000)
     data = struct.pack("<IHH", 0x99, 8, 0) + bytes(range(1, 17)) + b"reparse!"
@@ -660,7 +678,7 @@ if mode == "console":
     kernel32.OpenProcess.restype = ctypes.c_void_p
     build = lock + ".build"
     first = subprocess.Popen(["sh", gate], stdin=open("CONIN$"), env=dict(os.environ, LOCKCASE_BUILD=build))
-    pid, status, stopped = None, None, False
+    pid, status, stopped, holder, held = None, None, False, None, None
     try:
         deadline = time.monotonic() + 60
         while pid is None:
@@ -672,6 +690,12 @@ if mode == "console":
                 sys.exit(2)
             else:
                 time.sleep(0.1)
+        # The holder, which must outlive Ctrl-C to pass on the status of the gate it waits for.
+        holders = [found for found, exe in children(first.pid) if exe.startswith("python")]
+        if len(holders) != 1:
+            print("lockcase: expected one python holder under the gate, found %r" % children(first.pid))
+            sys.exit(2)
+        holder = kernel32.OpenProcess(0x101000, False, holders[0])
         time.sleep(1)
         kernel32.SetConsoleCtrlHandler(None, True)
         kernel32.GenerateConsoleCtrlEvent(0, 0)
@@ -683,10 +707,14 @@ if mode == "console":
         stopped = not process or kernel32.WaitForSingleObject(ctypes.c_void_p(process), 10000) == 0
         if process:
             kernel32.CloseHandle(process)
+        code = ctypes.c_ulong()
+        if holder and kernel32.WaitForSingleObject(ctypes.c_void_p(holder), 10000) == 0 and \
+                kernel32.GetExitCodeProcess(ctypes.c_void_p(holder), ctypes.byref(code)):
+            held = code.value
         after = subprocess.call(["sh", gate], env=dict(os.environ, GATE_LOCK_WAIT="5"),
                                 stdin=subprocess.DEVNULL, timeout=60)
-        print("lockcase: the interrupted gate exited %s; its build %s; the next gate exited %d"
-              % (status, "stopped" if stopped else "ran on", after))
+        print("lockcase: the interrupted gate exited %s; its holder exited %s; its build %s; the next gate exited %d"
+              % (status, held, "stopped" if stopped else "ran on", after))
         sys.exit(0)
     finally:
         if pid and not stopped:
@@ -702,21 +730,6 @@ if mode in ("killgate", "failgate"):
     print("lockcase: a gate %s exited %d" % ("killed by a signal" if mode == "killgate" else "that failed with 3", status))
     sys.exit(0)
 if mode == "killholder":
-    class Entry(ctypes.Structure):
-        _fields_ = [("size", ctypes.c_ulong), ("usage", ctypes.c_ulong), ("pid", ctypes.c_ulong),
-                    ("heap", ctypes.c_size_t), ("module", ctypes.c_ulong), ("threads", ctypes.c_ulong),
-                    ("parent", ctypes.c_ulong), ("priority", ctypes.c_long), ("flags", ctypes.c_ulong),
-                    ("exe", ctypes.c_wchar * 260)]
-    def children(pid):
-        snapshot, entry, found = kernel32.CreateToolhelp32Snapshot(2, 0), Entry(), []
-        entry.size = ctypes.sizeof(Entry)
-        more = kernel32.Process32FirstW(ctypes.c_void_p(snapshot), ctypes.byref(entry))
-        while more:
-            if entry.parent == pid:
-                found.append((entry.pid, entry.exe.lower()))
-            more = kernel32.Process32NextW(ctypes.c_void_p(snapshot), ctypes.byref(entry))
-        kernel32.CloseHandle(snapshot)
-        return found
     started = lock + ".started"
     first = subprocess.Popen(["sh", gate], env=dict(os.environ, LOCKCASE_HOLD=started), close_fds=False)
     try:
@@ -760,8 +773,8 @@ LOCKCASE
         killholder) want='^NOT RUN \[lock\]:'; code=75; label="a killed lock holder leaves the lock with the gate it started" ;;
         shadow)     want='^lockcase: stand-ins imported: none; the gate exited 0$'; code=0
                     label="the lock holder imports no fcntl.py or secrets.py from PYTHONPATH" ;;
-        interrupt)  want='^lockcase: the interrupted gate exited [1-9][0-9]*; its build stopped; the next gate exited 0$'; code=0
-                    label="Ctrl-C stops the gate and its build, the gate exits nonzero, and the next gate takes the lock" ;;
+        interrupt)  want='^lockcase: the interrupted gate exited [1-9][0-9]*; its holder exited 130; its build stopped; the next gate exited 0$'; code=0
+                    label="Ctrl-C stops the gate and its build, the holder outlives it and exits 130, and the next gate takes the lock" ;;
       esac
       # The copy stops or kills itself right after it holds the lock, when a case asks it to,
       # and otherwise passes there: the success a lost refusal would reach.
