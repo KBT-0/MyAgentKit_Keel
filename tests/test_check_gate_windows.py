@@ -462,7 +462,7 @@ class WindowsGateLockTests(unittest.TestCase):
         file id that is not unique (ReFS before Python 3.12) does; 'noid' makes the volume give
         no FILE_ID_INFO; 'none' fakes nothing."""
         text = (ROOT / 'core/scripts/check.sh').read_text(encoding='utf-8')
-        source = re.search(r"lock_probe=0\n  python3 -c '\n(.*?)\n' \"\$\{GATE_LOCK_FD:-\}\"", text, re.S)
+        source = re.search(r"lock_probe=0\n  python3 -I -c '\n(.*?)\n' \"\$\{GATE_LOCK_FD:-\}\"", text, re.S)
         self.assertIsNotNone(source, 'the nested-run proof was not found in check.sh')
         program = self.tmp / 'probe.py'
         program.write_text(source[1], encoding='utf-8')

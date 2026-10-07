@@ -107,14 +107,9 @@ esac
 inherited=""
 if [ "${GATE_LOCK_HELD:-}" = "$lock_path" ]; then
   lock_probe=0
-  python3 -c '
+  python3 -I -c '
 import os, sys
-try:
-    import fcntl
-except ImportError:
-    if os.name != "nt":
-        print("FAIL [lock]: python3 has no fcntl module, which the gate lock needs on this system.")
-        sys.exit(3)
+if os.name == "nt":
     import ctypes
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel32.CreateFileW.restype = ctypes.c_void_p
@@ -148,6 +143,11 @@ except ImportError:
         kernel32.CloseHandle(fresh)
         sys.exit(1)
     sys.exit(0 if ctypes.get_last_error() == 32 else 1)
+try:
+    import fcntl
+except ImportError:
+    print("FAIL [lock]: python3 has no fcntl module, which the gate lock needs on this system.")
+    sys.exit(3)
 held, lock = os.fstat(int(sys.argv[1])), os.stat(sys.argv[2])
 if (held.st_dev, held.st_ino) != (lock.st_dev, lock.st_ino):
     sys.exit(1)
@@ -222,18 +222,22 @@ if [ -z "$inherited" ]; then
   # Python ignores SIGPIPE and SIGXFSZ and catches SIGINT; the wait and the gate get back
   # what sh would have given them.
   # O_NOFOLLOW: a symlink here (the older lock's, left by a killed run) is refused by name.
-  exec python3 -c '
+  # The host picks the lock (os.name), never whether `import fcntl` works, and both lock
+  # programs run isolated (-I): a fcntl.py, secrets.py or ctypes.py in the checkout or on
+  # PYTHONPATH was imported first, and a stand-in fcntl that always "locked" let two gates run.
+  exec python3 -I -c '
 import os, signal, sys, time
-try:
-    import fcntl
-except ImportError:
-    if os.name != "nt":
-        print("FAIL [lock]: python3 has no fcntl module, which the gate lock needs on this system.", flush=True)
-        sys.exit(1)
+if os.name == "nt":
     fcntl = None
     # A pipe gets the ANSI code page: a path outside it (a user name, the U+F03A cygpath makes of a
     # colon) ended a NOTE or FAIL line in a UnicodeEncodeError traceback.
     sys.stdout.reconfigure(errors="backslashreplace")
+else:
+    try:
+        import fcntl
+    except ImportError:
+        print("FAIL [lock]: python3 has no fcntl module, which the gate lock needs on this system.", flush=True)
+        sys.exit(1)
 path, gate, wait, waited = sys.argv[1], sys.argv[2], os.environ.get("GATE_LOCK_WAIT", ""), 0
 if signal.getsignal(signal.SIGINT) is signal.default_int_handler:
     signal.signal(signal.SIGINT, signal.SIG_DFL)
@@ -489,13 +493,28 @@ self_test() {
         st_fail=1
       fi ;;
   esac
+  # The host, not a working `import fcntl`, picks the lock, and the lock programs run isolated:
+  # a fcntl.py on PYTHONPATH (or in the checkout) was imported first, and a stand-in that always
+  # "locked" let two gates run at once. This stand-in marks that it was imported.
+  shadow=$work/shadow
+  mkdir "$shadow" &&
+    printf 'open(__file__ + ".imported", "w").close()\nraise ImportError("a stand-in fcntl")\n' > "$shadow/fcntl.py"
+  case "$(uname -s 2>/dev/null)" in MSYS*|MINGW*|CYGWIN*) shadow=$(cygpath -m "$shadow") ;; esac
+  if env PYTHONPATH="$shadow" GATE_LOCK_WAIT=5 sh "$0" >/dev/null 2>&1 && [ -f "$work/shadow/fcntl.py" ] &&
+     [ ! -e "$work/shadow/fcntl.py.imported" ]; then
+    echo "  ok   — a fcntl.py on PYTHONPATH is never imported by the gate lock, and the nested run passes"
+  else
+    echo "  FAIL — a fcntl.py on PYTHONPATH was imported by the gate lock, or the nested run beside it did not pass."
+    st_fail=1
+  fi
   # Native Windows (no fcntl). The nested-run proof refuses a handle that fails any one of its
   # conditions: on another file, read-only, nothing holding the lock, a fresh open refused for a
   # reason that is not a sharing violation (a read-only file), and a file id equal to the lock's
   # in its volume serial and first 64 bits only; a volume with no FILE_ID_INFO fails closed.
   # The holder refuses a reparse point at the lock path, never reports a gate killed by a
   # signal as a pass, passes a failing gate's status on, and a killed holder leaves the lock
-  # with the gate it started. Each case runs a copy of this gate in a throwaway repository, so
+  # with the gate it started, and imports no stand-in fcntl.py or secrets.py from PYTHONPATH.
+  # Each case runs a copy of this gate in a throwaway repository, so
   # its lock is not the one this run holds, and asserts the outcome by its message AND its exit
   # status. The copy exits 0 right after it holds the lock, so a guard that prints its refusal
   # and then carries on fails its case, instead of failing later on project files the throwaway
@@ -558,7 +577,7 @@ if mode in ("noid", "wide"):
     # The proof's own code from the gate, run with GetFileInformationByHandleEx faked: 'noid'
     # gives no FILE_ID_INFO at all; 'wide' reports, for a handle on another file, the lock's
     # FILE_ID_INFO with only its last byte changed (same volume, same first 64 id bits).
-    source = re.search(r"lock_probe=0\n  python3 -c '\n(.*?)\n' \"\$\{GATE_LOCK_FD:-\}\"",
+    source = re.search(r"lock_probe=0\n  python3 -I -c '\n(.*?)\n' \"\$\{GATE_LOCK_FD:-\}\"",
                        open(gate, encoding="utf-8").read(), re.S)
     if not source:
         print("lockcase: the nested-run proof was not found in %s" % gate)
@@ -599,6 +618,17 @@ if mode in ("noid", "wide"):
         status = stop.code if isinstance(stop.code, int) else 1
     sys.stdout.flush()
     print("lockcase: proof exit %d" % status)
+    sys.exit(0)
+if mode == "shadow":
+    # Stand-ins on PYTHONPATH for modules the holder imports; each marks that it was imported.
+    folder = lock + ".shadow"
+    os.mkdir(folder)
+    for name in ("fcntl", "secrets"):
+        with open(os.path.join(folder, name + ".py"), "w") as stand_in:
+            stand_in.write('open(__file__ + ".imported", "w").close()\nraise ImportError("a stand-in")\n')
+    status = run(dict(os.environ, PYTHONPATH=folder))
+    imported = sorted(name for name in os.listdir(folder) if name.endswith(".imported"))
+    print("lockcase: stand-ins imported: %s; the gate exited %d" % (", ".join(imported) or "none", status))
     sys.exit(0)
 if mode in ("killgate", "failgate"):
     marker = lock + "." + mode
@@ -649,7 +679,7 @@ claim = {"other": lambda: handle(lock + ".other", RW, 3), "reader": lambda: hand
 sys.exit(run(claimed(claim)))
 LOCKCASE
     refused="^FAIL \\[env\\]: GATE_LOCK_HELD names this checkout's lock, but this run did not inherit"
-    for lock_case in other reader unheld readonly wide noid reparse killgate failgate killholder; do
+    for lock_case in other reader unheld readonly wide noid reparse killgate failgate killholder shadow; do
       case_dir="$work/lock-$lock_case"
       also=""; code=1
       case $lock_case in
@@ -665,6 +695,8 @@ LOCKCASE
         killgate)   want='^lockcase: a gate killed by a signal exited [1-9]'; code=0; label="a gate killed by a signal never exits 0" ;;
         failgate)   want='^lockcase: a gate that failed with 3 exited 3$'; code=0; label="the lock holder passes a failing gate's exit status on" ;;
         killholder) want='^NOT RUN \[lock\]:'; code=75; label="a killed lock holder leaves the lock with the gate it started" ;;
+        shadow)     want='^lockcase: stand-ins imported: none; the gate exited 0$'; code=0
+                    label="the lock holder imports no fcntl.py or secrets.py from PYTHONPATH" ;;
       esac
       # The copy stops or kills itself right after it holds the lock, when a case asks it to,
       # and otherwise passes there: the success a lost refusal would reach.
