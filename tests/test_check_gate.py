@@ -6,6 +6,7 @@ import re
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -147,15 +148,24 @@ class CheckGateTests(unittest.TestCase):
     def test_python_without_fcntl_fails_the_lock_by_name(self):
         # Native Windows Python has no fcntl: the gate died with a traceback, read as a
         # failed gate. It names the cause instead, on both paths that take or probe the lock.
+        # The lock programs run isolated (python3 -I), so a sitecustomize.py on PYTHONPATH no
+        # longer reaches them: a python3 on PATH takes fcntl away inside each -c program instead.
         stub = self.tmp / 'no-fcntl'
         stub.mkdir()
-        (stub / 'sitecustomize.py').write_text("import sys\nsys.modules['fcntl'] = None\n")
+        (stub / 'python3').write_text(
+            '#!%s\nimport os, sys\nargs = sys.argv[1:]\n'
+            'if "-c" in args:\n'
+            '    at = args.index("-c") + 1\n'
+            '    args[at] = "import sys\\nsys.modules[\'fcntl\'] = None\\n" + args[at]\n'
+            'os.execv(%r, [%r] + args)\n' % (sys.executable, sys.executable, sys.executable))
+        (stub / 'python3').chmod(0o755)
         lock = subprocess.run(['git', 'rev-parse', '--git-path', 'check.lock'], cwd=self.project,
                               capture_output=True, text=True, check=True).stdout.strip()
         lock = str((self.project / lock).resolve())
         for extra in ({}, {'GATE_LOCK_HELD': lock, 'GATE_LOCK_FD': '0'}):
             with self.subTest(extra=extra):
-                code, out = gate(self.project, self.build, PYTHONPATH=str(stub), **extra)
+                code, out = gate(self.project, self.build, PATH=str(stub) + os.pathsep + os.environ['PATH'],
+                                 **extra)
                 self.assertEqual(code, 1, out)
                 self.assertIn('FAIL [lock]: python3 has no fcntl module', out)
                 self.assertNotIn('Traceback', out)
