@@ -45,6 +45,13 @@ A spawned session can stop on a permission prompt, the folder-trust dialog or a 
 and the idle notice does not fire for a session that waits inside a dialog: it hangs where
 nobody looks, for as long as nobody looks. Two scripts close that, both kit-owned.
 
+**Native Windows** (Git for Windows' `sh`, MSYS2, Cygwin) has no tmux, so what this section
+says about tmux sessions, `--batch`, `show_workers.sh`, `watch_workers.sh` and
+`close_worker.sh` does not apply there. `spawn_worker.sh` opens the worker as a Windows
+Terminal tab (`wt.exe`, or the launcher `KIT_WT` names) with the brief's instruction as its
+first prompt; the tab is the only view of it. Watch the tab, wait for the result file the
+brief names, and close the tab by hand once the session is finished.
+
 **`scripts/show_workers.sh NAME [NAME...]`** opens ONE terminal window with a tab per named
 tmux session, each running `tmux attach -t =NAME`. `spawn_worker.sh` calls it for every
 session it starts, once the brief has landed. A lead starting several passes `--batch` to each

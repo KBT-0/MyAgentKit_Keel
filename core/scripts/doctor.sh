@@ -120,7 +120,7 @@ for f in scripts/*.sh .githooks/* .claude/hooks/*.sh; do
   first=""; IFS= read -r first < "$f" || true
   case "$first" in '#!'*) ;; *) continue ;; esac
   if grep -q "$(printf '\r')" "$f"; then
-    miss "$f has CRLF line endings" "tr -d '\\r' < $f > $f.lf && cat $f.lf > $f && rm $f.lf; git config core.autocrlf input"
+    miss "$f has CRLF line endings" "rewrite it with LF and keep the eol=lf lines of .gitattributes (docs/DEV_SETUP.md section 1)"
   fi
   mode=$(git ls-files -s -- "$f" 2>/dev/null | cut -d' ' -f1)
   if [ -z "$mode" ]; then
@@ -178,8 +178,17 @@ elif [ -n "$reviewer" ] && ! ( [ -x "$HOME/.local/bin/codex" ] && PATH="$PATH:$H
                             command -v "$reviewer_cli" ) >/dev/null 2>&1; then
   miss "the second CLI '$reviewer_cli' that scripts/review.sh calls" "install and log in to $reviewer (docs/DEV_SETUP.md §3)"
 fi
-if [ -f scripts/spawn_worker.sh ] && ! command -v tmux >/dev/null 2>&1; then
-  miss "tmux, which scripts/spawn_worker.sh needs for worker sessions (native Windows has none: spawn workers from WSL, in a checkout on the WSL file system)" "install tmux"
+# On native Windows (Git for Windows' sh, MSYS2, Cygwin) spawn_worker.sh opens a Windows
+# Terminal tab instead of a tmux session, which that host cannot run.
+if [ -f scripts/spawn_worker.sh ]; then
+  case $(uname -s 2>/dev/null) in
+    MINGW*|MSYS*|CYGWIN*)
+      command -v "${KIT_WT:-wt.exe}" >/dev/null 2>&1 ||
+        miss "Windows Terminal (${KIT_WT:-wt.exe}), which scripts/spawn_worker.sh opens worker tabs in on native Windows" "install Windows Terminal, or name its launcher in KIT_WT" ;;
+    *)
+      command -v tmux >/dev/null 2>&1 ||
+        miss "tmux, which scripts/spawn_worker.sh needs for worker sessions" "install tmux" ;;
+  esac
 fi
 
 # --- Node as a hook sees it ----------------------------------------------------------

@@ -98,6 +98,35 @@ if os.environ.get('SPAWN_WT') == 'fail':
 open(os.path.join(state, 'attached'), 'w').close()
 '''
 
+# Native Windows. cygpath -w as Git for Windows has it. The tab launcher (KIT_WT, as WT above)
+# does what wt.exe does with its command line: a `;` not escaped as `\;` starts another
+# subcommand, wherever it stands, and leaves the tab with an error; a bare `bash` in the new
+# tab is WSL's launcher. Either fails here by name. Otherwise it unescapes `\;` and runs the
+# tab's command with sh, as Git Bash would.
+CYGPATH = r'''#!/usr/bin/env python3
+import sys
+assert sys.argv[1] == '-w', sys.argv
+print('C:' + sys.argv[2].replace('/', '\\'))
+'''
+
+WT_TAB = r'''#!/usr/bin/env python3
+import json, os, re, subprocess, sys
+args = sys.argv[1:]
+with open(os.path.join(os.environ['SPAWN_STATE'], 'wt.json'), 'w') as f:
+    json.dump(args, f)
+split = [a for a in args if re.search(r'(?<!\\);', a)]
+if split:
+    sys.exit('wt stub: the command line was split at a bare ; in %r' % split)
+args = [a.replace('\\;', ';') for a in args]
+i = args.index('new-tab') + 1
+while args[i].startswith('-'):
+    i += 2
+if not re.match(r'^[A-Za-z]:\\.*\\bash(\.exe)?$', args[i]):
+    sys.exit('wt stub: the tab runs %r, not Git Bash by its full path' % args[i])
+assert args[i + 1] == '-lc', args
+sys.exit(subprocess.run(['sh', '-c', args[i + 2]]).returncode)
+'''
+
 # Steps of the spawn are instant; show_workers.sh's 5-second launch bound is a real wait.
 SLEEP = '#!/bin/sh\n[ "$1" != 5 ] || exec /bin/sleep 5\nexit 0\n'
 
@@ -177,6 +206,29 @@ class SpawnWorkerTests(unittest.TestCase):
         submitted = (self.state / 'submitted').read_text().splitlines()
         self.assertEqual(submitted, [INSTRUCTION % shq(self.physical(self.brief))])
         self.assertNotIn('Line one of the brief', (self.state / 'submitted').read_text())
+
+    def test_on_native_windows_the_worker_opens_as_a_windows_terminal_tab(self):
+        # No tmux there: the instruction is the session's first prompt, ahead of the variadic
+        # --allowedTools, and the tab is the session's only view. A `;` in the brief path and
+        # in a value proves the launcher is never handed a bare one.
+        for name, body in (('uname', '#!/bin/sh\necho MINGW64_NT-10.0-26200\n'), ('cygpath', CYGPATH),
+                           ('wt-tab', WT_TAB)):
+            (self.bin / name).write_text(body)
+            (self.bin / name).chmod(0o755)
+        brief = self.cwd / 'brief; part two.md'
+        brief.write_text('A brief.\n')
+        tools = 'Read,Bash(a; b)'
+        result = self.spawn('w1', str(brief), '--model', 'm', '--allowed-tools', tools,
+                            KIT_WT=str(self.bin / 'wt-tab'))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('Windows Terminal tab', result.stdout)
+        launched = self.launched()
+        self.assertIsNotNone(launched, result.stderr)
+        self.assertEqual(launched['argv'], [INSTRUCTION % shq(self.physical(brief)), '-n', 'w1',
+                                            '--model', 'm', '--allowedTools', tools])
+        self.assertEqual(Path(launched['cwd']).resolve(), self.cwd.resolve())
+        self.assertEqual(self.tmux_log(), '')
+        self.assertFalse((self.state / 'wt.log').exists(), 'the tab was shown a second time')
 
     def assert_refused(self, brief):
         result = self.spawn('w2', str(brief))

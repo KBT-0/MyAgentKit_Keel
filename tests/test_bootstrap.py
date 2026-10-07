@@ -687,3 +687,63 @@ class BootstrapTests(unittest.TestCase):
             self.assertEqual((project / '.githooks/commit-msg').read_bytes(),
                              (root / 'core/.githooks/commit-msg').read_bytes())
             self.assertEqual(self._listed(second.stdout), {'AGENTS.md'}, second.stdout)
+
+    def test_an_unreadable_own_gitattributes_stops_bootstrap_unchanged(self):
+        # The rule check read an unreadable file as holding no rule, and the merge replaced it
+        # with the kit's rules alone, the owner's lost.
+        if os.geteuid() == 0:
+            self.skipTest('root reads a file without read permission')
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / 'project'
+            project.mkdir()
+            attributes = project / '.gitattributes'
+            attributes.write_bytes(b'*.png binary\n')
+            attributes.chmod(0)
+            try:
+                result = subprocess.run(['sh', str(root / 'bootstrap.sh'), str(project)],
+                                        capture_output=True, text=True)
+            finally:
+                attributes.chmod(0o644)
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("cannot read the project's own .gitattributes", result.stderr)
+            self.assertEqual(attributes.read_bytes(), b'*.png binary\n')
+
+    def test_scripts_and_hooks_check_out_with_lf_under_autocrlf(self):
+        # Git for Windows' default core.autocrlf=true checked every text file out with CRLF,
+        # and sh cannot run a CRLF script: a project's gate, hooks and doctor.sh, and the kit's
+        # own sync-kit.sh, could not start. A bootstrapped project, one whose own .gitattributes
+        # bootstrap found (it was left alone, and the rules never arrived; --force replaced it
+        # whole), and the kit are cloned that way here; a Markdown file proves the conversion
+        # was in force.
+        root = Path(__file__).resolve().parents[1]
+        env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1')
+        with tempfile.TemporaryDirectory() as tmp:
+            project, owned, kit = Path(tmp) / 'project', Path(tmp) / 'owned', Path(tmp) / 'kit'
+            owned.mkdir()
+            (owned / '.gitattributes').write_bytes(b'*.png binary')
+            for target, *flags in ((project,), (owned,), (owned, '--force')):
+                result = subprocess.run(['sh', str(root / 'bootstrap.sh'), str(target), *flags],
+                                        capture_output=True, text=True, env=env)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            # The owner's rule kept, the kit's added once, not again on a second run.
+            attributes = (owned / '.gitattributes').read_text()
+            self.assertTrue(attributes.startswith('*.png binary\n'), attributes)
+            self.assertEqual(attributes.count('*.sh text eol=lf'), 1, attributes)
+            shutil.copytree(root, kit, ignore=shutil.ignore_patterns('.git', '__pycache__'))
+            for repo, prose in ((project, 'AGENTS.md'), (owned, 'AGENTS.md'), (kit, 'README.md')):
+                with self.subTest(repo=repo.name):
+                    for args in (['init', '-q'], ['add', '-A'],
+                                 ['-c', 'user.name=F', '-c', 'user.email=f@example.invalid',
+                                  '-c', 'core.hooksPath=/dev/null', 'commit', '-qm', 'base']):
+                        subprocess.run(['git', *args], cwd=repo, check=True, capture_output=True, env=env)
+                    clone = Path(tmp) / (repo.name + '-crlf')
+                    subprocess.run(['git', '-c', 'core.autocrlf=true', 'clone', '-q', str(repo), str(clone)],
+                                   check=True, capture_output=True, env=env)
+                    self.assertIn(b'\r\n', (clone / prose).read_bytes())
+                    scripts = [p for p in clone.rglob('*') if p.is_file()
+                               and p.relative_to(clone).parts[0] != '.git'
+                               and (p.suffix == '.sh' or p.parent.name == '.githooks')]
+                    self.assertGreater(len(scripts), 3)
+                    crlf = sorted(str(p.relative_to(clone)) for p in scripts if b'\r' in p.read_bytes())
+                    self.assertEqual(crlf, [])

@@ -11,6 +11,200 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ---
 
+## v0.10 — 2026-10-07
+
+Two fixes for a project developed on native Windows, found when one project moved there from
+WSL, then hardened by a cross-model review that rejected the first version of both. Why each
+change is safe is in `RESEARCH_LOG.md` (2026-10-06 and 2026-10-07).
+
+- **The gate lock on native Windows.** `scripts/check.sh` run by Git for Windows' `sh` with a
+  Windows `python3` failed every run with `FAIL [lock]: python3 has no fcntl module`, so every
+  commit there was blocked. On that host the lock is now the lock file opened for writing
+  without write sharing; the holder makes its handle inheritable and runs the gate as its
+  child, so the gate and every process it starts hold the lock, and Windows releases it when
+  the last of them exits. Nothing is reclaimed and no pid is trusted, as on POSIX. A second
+  run waits with the same `NOTE [lock]` line (the hint names Resource Monitor instead of
+  `fuser`) and honours `GATE_LOCK_WAIT` (`NOT RUN [lock]`, exit 75). On Windows
+  `GATE_LOCK_FD` holds the holder's Win32 handle: a nested run proves it is open in its own
+  process on this lock file, compared by the whole `FILE_ID_INFO` (volume serial and 128-bit
+  file id), with write access, while a fresh open for writing fails with a sharing violation,
+  so variables copied out of a killed gate fail `FAIL [env]`. A volume that gives no
+  `FILE_ID_INFO` fails `FAIL [lock]` by name in a nested run. The self-test marker is a random
+  token the holder clears when the gate ends. A gate that dies of a signal exits 128 + N
+  there, never 0. On a host whose `uname -s` is MSYS, MINGW or Cygwin the lock path is kept in
+  the `C:/` form a native program receives (`cygpath -m`); a `cygpath` that is merely on a
+  POSIX `PATH` is never run. A linked worktree's `C:/` git path is read as absolute. The POSIX
+  lock is unchanged. `python3` without `fcntl` on any other system still fails `FAIL [lock]`
+  by name. The host (`os.name`) picks the lock, never whether `import fcntl` works, and both
+  lock programs run isolated (`python3 -I`), so a `fcntl.py` or another stand-in module in
+  the checkout or on `PYTHONPATH` is never imported. `docs/DEV_SETUP.md` and
+  `docs/GOTCHAS.md` say so.
+- **`--self-test` proves the Windows lock.** Thirteen new cases on native Windows: a nested run
+  refuses a writable handle on another file, a read-only handle on the held lock file, a
+  write handle while nothing holds the lock, a fresh open refused for a reason other than the
+  lock (a read-only file), and a file id equal to the lock's in its volume and first 64 bits
+  only; a volume without `FILE_ID_INFO` fails closed; the lock refuses a reparse point at its
+  path (set with a tag any user may set, so the case never needs the symlink privilege and is
+  never skipped); a gate killed by a signal never exits 0; the holder passes a failing gate's
+  exit status on; a killed lock holder leaves the lock with the gate it started; the
+  holder imports no stand-in `fcntl.py` or `secrets.py` from `PYTHONPATH`; and Ctrl-C (a
+  `CTRL_C_EVENT` sent to a hidden console of the case's own) stops the gate and its build, the
+  gate exits nonzero, the holder outlives it and exits 130, and the next gate takes the lock;
+  and a Ctrl-C while the holder waits for the lock, before the gate exists, starts no gate
+  and exits 130. The holder survives Ctrl-C through a handler that records it, not
+  `SIG_IGN`; the two behave alike for the gate on the hosts measured, so the first case
+  proves the survival, not which one, and the second proves the record (with a handler that
+  records nothing, the Ctrl-C reached no gate, and the gate then ran and passed). The host check and the case runner run isolated
+  (`python3 -I`) beside a `sitecustomize.py` on `PYTHONPATH` that marks its import and calls
+  the host POSIX; imported, it would have skipped every Windows case, so the import fails the
+  self-test there and the skip line is printed only without it. Each case
+  asserts its exit status as well as its message, and the gate's throwaway copy passes right
+  after it holds the lock, so a guard that prints its refusal and then carries on fails its
+  case. On POSIX, a `cygpath` on `PATH` is never run. On every host, a nested run with a
+  stand-in `fcntl.py` on `PYTHONPATH` passes without importing it. The Windows cases print one
+  `skip` line on POSIX, and the POSIX case one on MSYS, MINGW and Cygwin.
+- **Shell scripts and hooks check out with LF everywhere.** Git for Windows' default
+  `core.autocrlf=true` checked them out with CRLF, which `sh` cannot run, so on such a clone
+  the gate, the hooks and `doctor.sh` could not start. Bootstrap now installs a
+  `.gitattributes` with `*.sh text eol=lf` and the same for each of the gate's four hooks by
+  name, and the kit's own clone carries the rule for its scripts. A project that already has
+  a `.gitattributes` keeps it: bootstrap appends the rules it lacks, and never replaces the
+  file, `--force` included. An existing project adds them by hand (item 1 below);
+  `docs/DEV_SETUP.md` section 1 says why.
+- **`spawn_worker.sh` on native Windows.** There is no tmux there, and the script stopped
+  with `tmux is not installed`. On Git for Windows' `sh`, MSYS2 and Cygwin the worker now opens
+  as a Windows Terminal tab (`wt.exe`, or the launcher `KIT_WT` names), not a tmux session,
+  with the brief's instruction as its first prompt. The tab runs Git Bash by its full Windows
+  path, because a bare `bash` in a new tab is WSL's launcher, and every `;` handed to `wt.exe`
+  is escaped as `\;`, because `wt.exe` splits its command line there even inside quotes and
+  cut the instruction in two. Nothing can read the tab, so the start-up dialog check, `--batch`,
+  `show_workers.sh`, `watch_workers.sh` and `close_worker.sh` do not apply there: watch the
+  tab, wait for the result file, and close the tab by hand. `doctor.sh` asks for `wt.exe` (or
+  `KIT_WT`) there instead of tmux.
+- **`review.sh` and Git LFS.** The v0.9 filter refusal checked every path in the checkout,
+  not the paths a review changes, and `git lfs install` sets `filter.lfs.clean` globally:
+  one LFS file anywhere refused every review. A filtered path the review does not change now
+  passes, and only when HEAD records it as a canonical LFS pointer, its working bytes (read
+  with no filter) are that pointer or the content it names by size and sha256, and Git's own
+  rendered diff of the working tree and of the index does not name it, proven both before and
+  after the diff and the fingerprint read the checkout, so a file replaced in between is
+  refused (`which changed while the review was being prepared`). The payload diff leaves such a
+  proven path out, so its filter is never asked again. A filtered path the
+  review changes is refused, whichever side was filtered: candidates include names staged in
+  the index, deleted and renamed-away names, and the attributes are read in the working tree,
+  in the index and at each end of the reviewed range. So an index-only change to an LFS file, a commit
+  that deletes one, renames it out of the filter or drops its attribute while changing it,
+  a filter rule staged together with the object it filters, and any other clean filter or
+  `ident` on a path are refused. A path the review excludes (its own archives) is never
+  refused, and the refusal says whether the review changes the path or the path is not an
+  unchanged LFS file.
+- **Not yet on native Windows: `review.sh`.** The review adapters rely on POSIX signal masks
+  and process groups (`pthread_sigmask`, `killpg`, `SIGHUP`), so `review.sh` and the review
+  case of `check.sh --self-test` fail there. Run reviews, and the full self-test, from WSL or
+  another POSIX shell (item 4 below).
+
+### Upgrading a project from v0.9
+
+<!-- Each numbered item is one checklist entry. sync-kit.sh prints an item from its marker to
+the end of the item, so an item holds no blank line and no line that starts a list. -->
+
+Work from the project's root, top to bottom. `KIT` is a fresh, full clone of the kit at v0.10
+or later, never a v0.9 clone pulled forward and never a shallow one: on Windows a clone made
+with `core.autocrlf=true` keeps its CRLF scripts after a pull (a pull does not rewrite a file
+it did not change), so its `sync-kit.sh` cannot start, and item 3 merges from `00581dd`, the
+kit's v0.9 commit, which a shallow clone lacks. Start with `"$KIT/sync-kit.sh" .`: it
+installs the new kit-owned files (`doctor.sh`, `spawn_worker.sh` and the rest) and prints
+this list, exits 2 and records no version (item 5 does). A conflict it lists stops it before
+it copies anything: resolve that and run it again until it prints this list, so that item 4
+checks the new files and not v0.9's (on native Windows, v0.9's `doctor.sh` asks for tmux).
+
+1. **ACTION:** Line endings first, before any script of the project runs: add the kit's
+   rules to the project's `.gitattributes` (created if absent; a symlink or anything else that
+   is not a regular file there stops the step before it writes), turn each CRLF into LF in
+   the shell scripts and hooks they name (regular files only: a symlink is left alone, and a
+   lone CR is kept; each file is replaced whole, with its mode, so a killed run leaves it old
+   or new, and a failed rewrite stops the step before anything is staged), then renormalize
+   those files alone, from a committed project:
+   ```sh
+   ( if [ -L .gitattributes ] || { [ -e .gitattributes ] && [ ! -f .gitattributes ]; }; then
+       echo "STOP: .gitattributes is a symlink or not a regular file; make it a regular file first" >&2; exit 1
+     fi
+     { echo; cat "$KIT/core/.gitattributes"; } >> .gitattributes || exit 1
+     set -- '*.sh' .githooks/pre-commit .githooks/pre-merge-commit .githooks/commit-msg .githooks/post-merge
+     git ls-files -z -- "$@" | python3 -I -c 'if 1:
+         import os, stat, sys, tempfile
+         for name in sys.stdin.buffer.read().split(b"\0"):
+             if name and stat.S_ISREG(os.lstat(name).st_mode):
+                 with open(name, "rb") as script:
+                     data = script.read()
+                 if b"\r\n" in data:
+                     handle, new = tempfile.mkstemp(prefix=b".crlf-", dir=os.path.dirname(name) or b".")
+                     with os.fdopen(handle, "wb") as copy:
+                         copy.write(data.replace(b"\r\n", b"\n"))
+                     os.chmod(new, stat.S_IMODE(os.lstat(name).st_mode))
+                     os.replace(new, name)' ||
+       { echo "STOP: a script could not be rewritten (above); nothing was staged" >&2; exit 1; }
+     git ls-files -z -- "$@" | xargs -0 git add --renormalize -- && git add .gitattributes )
+   ```
+   `git status` then lists `.gitattributes`, and any script the index held with CRLF as
+   modified; both go into the upgrade commit (item 5). Every other clone on Windows runs the
+   lines of `docs/DEV_SETUP.md` section 1 once after it pulls that commit: a pull does not
+   check out again a file it did not change, so its scripts stay CRLF until then.
+2. **ACTION:** Copy `claude_bridge.py` and `test_claude_bridge.py` whole from
+   `$KIT/core/scripts/` into `scripts/`, replacing yours (they hold no project content; delete
+   a symlink at either name first, so the copy is a file and not written through the link). If
+   v0.9's item 10 sent this project to the manual review template only because of Git LFS,
+   use `scripts/review.sh` again for every scope that changes no LFS file.
+3. **ACTION:** Merge the kit's changes since v0.9 into the three files that hold your setup
+   content, one three-way merge per file, from a committed project. A file that is not a
+   regular file (a symlink) stops the step before any merge. The v0.9 copies go to a private
+   folder outside the project, each merge result replaces its file whole, with its mode, and a
+   failed read or merge stops the step there:
+   ```sh
+   ( set -- scripts/check.sh docs/DEV_SETUP.md docs/GOTCHAS.md
+     for f do
+       [ -f "$f" ] && [ ! -L "$f" ] ||
+         { echo "STOP: $f is not a regular file (a symlink?); nothing was merged" >&2; exit 1; }
+     done
+     git -C "$KIT" cat-file -e '00581dd^{commit}' ||
+       { echo "STOP: $KIT has no commit 00581dd (a shallow clone?); clone the kit whole" >&2; exit 1; }
+     base=$(mktemp -d) || exit 1
+     trap 'rm -rf "$base"' EXIT
+     for f do
+       git -C "$KIT" show "00581dd:core/$f" > "$base/v0.9" ||
+         { echo "STOP: cannot read core/$f at 00581dd; $f and the files after it are not merged" >&2; exit 1; }
+       git merge-file -p "$f" "$base/v0.9" "$KIT/core/$f" > "$base/merged"
+       [ $? -lt 128 ] && new=$(mktemp "$f.XXXXXX") && cp -p "$f" "$new" && cat "$base/merged" > "$new" &&
+         mv -f "$new" "$f" ||
+         { [ -z "${new:-}" ] || rm -f "$new"; echo "STOP: $f could not be merged; it and the files after it are unchanged" >&2; exit 1; }
+       new=
+     done )
+   ```
+   Resolve every conflict the merge left (`git diff --check` names each leftover marker) so
+   that the kit's new lines and every line of yours survive, then read `git diff HEAD --
+   <file>` for each file and account for every removed line.
+4. **ACTION:** Prove the result: `./scripts/doctor.sh`, `./scripts/check.sh` (expect `CHECK:
+   PASS`), then `./scripts/check.sh --self-test` (expect `SELF-TEST: PASS`). On native Windows
+   the self-test cannot pass yet: its review case fails because `review.sh` needs POSIX
+   signals (above). There, run `./scripts/check.sh` and `./scripts/check.sh --self-test` from
+   Git for Windows' `sh` with the Windows `python3` and expect exactly this: `CHECK: PASS`;
+   in the self-test, `ok` for every case including the thirteen Windows lock cases and the
+   `sitecustomize.py` line, except
+   `FAIL — review adapter negative tests failed or did not run` with the review tests' own
+   output, the line `skip — a stray cygpath on a POSIX PATH` (a POSIX-only case), and a
+   `skip` the project's own setup prints (the commit-msg hook when `AGENTS.md` has no
+   attribution rule line); the last line is then `SELF-TEST: FAIL`. Any other `FAIL` or `skip`
+   blocks the upgrade. Then run the whole `--self-test` once more from WSL or another POSIX
+   shell on the same commit, where it must say `SELF-TEST: PASS` (there the Windows cases
+   print one `skip` line). A project with no POSIX shell has partial acceptance only; say so
+   in its state file.
+5. **ACTION:** Record the version BEFORE the upgrade commit, so the commit carries it: run
+   `"$KIT/sync-kit.sh" . --actions-applied`, which writes `docs/kit/.kit-version` (the first
+   run already installed the kit-owned files, so it copies nothing new; if it lists a file as
+   overwritten, prove item 4 again), then run `./scripts/check.sh` again and commit everything the upgrade changed together with
+   `docs/kit/.kit-version` in one commit. Stamped after the commit, the version file was left
+   modified and every other clone still read v0.9.
+
 ## v0.9 — 2026-10-03
 
 Hardening from the unreported findings of two projects using the kit, then from cross-model

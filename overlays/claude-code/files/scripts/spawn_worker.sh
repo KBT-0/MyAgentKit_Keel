@@ -1,6 +1,9 @@
 #!/usr/bin/env sh
 # KIT-OWNED: do not edit locally; change it in the kit and re-sync.
-# Open a SEPARATE Claude Code worker session in tmux and hand it a brief file.
+# Open a SEPARATE Claude Code worker session in tmux and hand it a brief file. On native
+# Windows (Git for Windows' sh, MSYS2, Cygwin), which has no tmux, it opens as a Windows
+# Terminal tab instead (see "Native Windows" below), and what follows about showing,
+# watching and closing a tmux session does not apply there.
 #
 # Usage: spawn_worker.sh NAME BRIEF_FILE [--model M] [--settings JSON_OR_FILE]
 #                        [--allowed-tools LIST] [--worktree] [--effort LEVEL] [--batch]
@@ -51,7 +54,7 @@ die() { { printf 'spawn_worker: %s' "$1" | LC_ALL=C tr '\001-\037\177' '?'; echo
 # The x keeps a trailing newline that $(...) would strip.
 q() { set -- "$(printf '%sx' "$1" | sed "s/'/'\\\\''/g")"; printf "'%s'" "${1%x}"; }
 
-[ $# -ge 2 ] || { sed -n '3,11p' "$0"; exit 2; }
+[ $# -ge 2 ] || { sed -n '3,14p' "$0"; exit 2; }
 name=$1; brief=$2; shift 2
 # The name and the brief path reach tmux and the TUI: `send-keys -l` types every byte, and a
 # control byte (0x01-0x1F, 0x7F) acts as a key there: a carriage return submitted the
@@ -78,7 +81,8 @@ case "$brief" in */*) brief_dir=${brief%/*}/ ;; *) brief_dir=. ;; esac
 brief_dir=$(CDPATH= cd -P -- "$brief_dir" && pwd -P && echo x) || die "cannot resolve the brief's folder: $brief"
 brief=${brief_dir%"${nl}x"}/${brief##*/}
 ctl "brief path" "$brief"
-command -v tmux >/dev/null || die "tmux is not installed"
+case $(uname -s 2>/dev/null) in MINGW*|MSYS*|CYGWIN*) windows=1 ;; *) windows="" ;; esac
+[ -n "$windows" ] || command -v tmux >/dev/null || die "tmux is not installed"
 command -v claude >/dev/null || die "claude is not on PATH"
 
 model=""; settings=""; tools=""; worktree=""; effort=""; batch=""
@@ -95,7 +99,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-tmux has-session -t "=$name" 2>/dev/null && die "tmux session '$name' already exists"
+[ -n "$windows" ] || ! tmux has-session -t "=$name" 2>/dev/null || die "tmux session '$name' already exists"
 
 here=$(pwd -P && echo x) || die "cannot resolve the current folder"
 dir=${here%"${nl}x"}
@@ -130,6 +134,32 @@ cmd="claude -n $(q "$name")"
 [ -n "$effort" ]   && cmd="$cmd --effort $(q "$effort")"
 [ -n "$settings" ] && cmd="$cmd --settings $(q "$settings")"
 [ -n "$tools" ]    && cmd="$cmd --allowedTools $(q "$tools")"
+# One line naming the brief by its absolute path, quoted by the same helper so a path with a
+# space or an apostrophe still reads as one path. Its second sentence keeps questions out of
+# the pane, where nobody may be looking.
+instruction="Read $(q "$brief") and follow it. Do not ask questions in this pane: write a question into your result file and go on with what does not depend on it."
+
+# Native Windows: no tmux, so nothing can type into the session or read its pane. The worker
+# opens as a Windows Terminal tab (KIT_WT names another launcher, as for show_workers.sh) with
+# the instruction as its first prompt, BEFORE the variadic flags; it is visible from the start,
+# so it is not shown again, and the lead watches the tab and waits for the result file. Two
+# faults, each of which left the tab with an error and no worker: a bare `bash` in a new tab
+# is WSL's launcher (WindowsApps\bash.exe), so Git Bash is named by its full Windows path; and
+# wt.exe splits its command line at every `;` (a new-tab separator), even inside quotes, and
+# cut the instruction in two, so every `;` it is handed is escaped as `\;`.
+if [ -n "$windows" ]; then
+  wt=${KIT_WT:-wt.exe}
+  command -v "$wt" >/dev/null || die "Windows Terminal ($wt) is not on PATH; start the worker by hand: $cmd"
+  bash=$(command -v bash) || die "bash is not on PATH"
+  bash=$(cygpath -w "$bash") || die "cygpath cannot convert the path of bash: $bash"
+  semi() { printf '%s' "$1" | sed 's/;/\\;/g'; }
+  "$wt" -w 0 new-tab --title "$(semi "$name")" "$(semi "$bash")" -lc \
+    "$(semi "cd $(q "$dir") && exec claude $(q "$instruction") ${cmd#claude }")" ||
+    die "$wt could not open a tab for '$name'"
+  printf '%s\n' "spawn_worker: '$name' started with $brief in a Windows Terminal tab; watch it there"
+  printf '%s\n' "spawn_worker: the result file its brief names is the done signal; close the tab once you decide the session is finished"
+  exit 0
+fi
 
 # `cd` first: tmux hands new sessions the PWD of whichever client last created one, and
 # the tool exits with "the current working directory was deleted" when that folder (a
@@ -167,10 +197,8 @@ while :; do
   sleep 1
 done
 
-# One typed line naming the brief by its absolute path, quoted by the same helper so a path
-# with a space or an apostrophe still reads as one path. Its second sentence keeps questions
-# out of the pane, where nobody may be looking.
-tmux send-keys -t "$name" -l "Read $(q "$brief") and follow it. Do not ask questions in this pane: write a question into your result file and go on with what does not depend on it."
+# The instruction, typed as one line.
+tmux send-keys -t "$name" -l "$instruction"
 
 # Submit only once the line has landed: an Enter sent while the TUI is still receiving
 # input is swallowed and the line sits unsent at the prompt (seen on the first run of this

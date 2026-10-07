@@ -51,11 +51,11 @@ REQUIRED_SUITES = {
     'core/scripts': dict(BRIDGE_MINIMUMS, test_agent_cost=2),
     # Each suite's current count: a minimum far below it (1 of 30) let a suite lose almost
     # every test with the kit check green. A new test raises its suite's number here.
-    'tests': {'test_packaging': 1, 'test_bootstrap': 21, 'test_acceptance': 7,
+    'tests': {'test_packaging': 1, 'test_bootstrap': 23, 'test_acceptance': 7,
               'test_review_upgrade': 3, 'test_boundary_example': 3, 'test_scan_gate': 1,
-              'test_check_gate': 23, 'test_boundary_restore': 39, 'test_sync_kit': 17,
-              'test_doctor': 2, 'test_git_hooks': 25, 'test_stop_hook': 1, 'test_spawn_worker': 16,
-              'test_worker_visibility': 55, 'test_doc_pointers': 5,
+              'test_check_gate': 23, 'test_check_gate_windows': 17, 'test_boundary_restore': 39,
+              'test_sync_kit': 23, 'test_doctor': 2, 'test_git_hooks': 25, 'test_stop_hook': 1,
+              'test_spawn_worker': 17, 'test_worker_visibility': 55, 'test_doc_pointers': 5,
               'test_kit_output': 1, 'test_kit_runner': 10, 'test_clean_worktrees': 137,
               'test_close_worker': 16},
 }
@@ -513,28 +513,39 @@ def acceptance(self_test):
                       " an independently opened one")
                 # Linux's NFS client takes an exclusive flock only on a descriptor open for
                 # writing: the inheritance probe opened its own read-only, and every fresh run
-                # failed FAIL [env]. A sitecustomize refuses such a flock as NFS does, then
+                # failed FAIL [env]. A stand-in flock refuses such a flock as NFS does, then
                 # every flock (the probe's, then the first one) as a lockless file system does.
+                # The lock programs run isolated (python3 -I), so a sitecustomize no longer
+                # reaches them: a python3 on PATH puts the stand-in at the top of each -c program.
                 fake = side / "fake-flock"
                 fake.mkdir()
-                (fake / "sitecustomize.py").write_text(
-                    "import errno, fcntl, os\n"
-                    "real, mode = fcntl.flock, os.environ.get('FAKE_FLOCK')\n"
-                    "def flock(fd, op):\n"
-                    "    fd = fd if isinstance(fd, int) else fd.fileno()\n"
-                    "    if mode == 'nfs' and op & fcntl.LOCK_EX and (\n"
-                    "            fcntl.fcntl(fd, fcntl.F_GETFL) & os.O_ACCMODE == os.O_RDONLY):\n"
-                    "        raise OSError(errno.EBADF, os.strerror(errno.EBADF))\n"
-                    "    if mode == 'none' or (mode == 'none-held' and 'GATE_LOCK_HELD' in os.environ):\n"
-                    "        raise OSError(errno.ENOLCK, os.strerror(errno.ENOLCK))\n"
-                    "    return real(fd, op)\n"
-                    "fcntl.flock = flock\n")
+                prelude = (
+                    "def _fake_flock():\n"
+                    "    import errno, fcntl, os\n"
+                    "    real, mode = fcntl.flock, os.environ.get('FAKE_FLOCK')\n"
+                    "    def flock(fd, op):\n"
+                    "        fd = fd if isinstance(fd, int) else fd.fileno()\n"
+                    "        if mode == 'nfs' and op & fcntl.LOCK_EX and (\n"
+                    "                fcntl.fcntl(fd, fcntl.F_GETFL) & os.O_ACCMODE == os.O_RDONLY):\n"
+                    "            raise OSError(errno.EBADF, os.strerror(errno.EBADF))\n"
+                    "        if mode == 'none' or (mode == 'none-held' and 'GATE_LOCK_HELD' in os.environ):\n"
+                    "            raise OSError(errno.ENOLCK, os.strerror(errno.ENOLCK))\n"
+                    "        return real(fd, op)\n"
+                    "    fcntl.flock = flock\n"
+                    "_fake_flock()\n")
+                (fake / "python3").write_text(
+                    "#!%s\nimport os, sys\nargs = sys.argv[1:]\n"
+                    "if '-c' in args:\n"
+                    "    args[args.index('-c') + 1] = %r + args[args.index('-c') + 1]\n"
+                    "os.execv(%r, [%r] + args)\n" % (sys.executable, prelude, sys.executable, sys.executable))
+                (fake / "python3").chmod(0o755)
+                fake_path = str(fake) + os.pathsep + os.environ["PATH"]
                 run(["sh", "scripts/check.sh"], project, reason="CHECK: PASS", timeout=60,
-                    env=dict(os.environ, PYTHONPATH=str(fake), FAKE_FLOCK="nfs"))
+                    env=dict(os.environ, PATH=fake_path, FAKE_FLOCK="nfs"))
                 for mode in ("none-held", "none"):
                     out = run(["sh", "scripts/check.sh"], project, expected=1, timeout=30,
                               reason="FAIL [lock]: this file system does not support the gate lock (",
-                              env=dict(os.environ, PYTHONPATH=str(fake), FAKE_FLOCK=mode))
+                              env=dict(os.environ, PATH=fake_path, FAKE_FLOCK=mode))
                     if "FAIL [env]" in out:
                         raise RuntimeError("a lockless file system was reported as an environment fault:\n" + out)
                 passed("a lock that needs a writable descriptor (NFS) is taken; a file system"

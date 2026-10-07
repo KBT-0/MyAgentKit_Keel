@@ -35,6 +35,39 @@ git config core.hooksPath        # -> .githooks
 `git commit --no-verify` skips the gate. That hatch exists for {{OWNER_NAME}}'s WIP commits.
 Agents must not use it (`AGENTS.md`).
 
+**Line endings.** `sh` cannot run a script with CRLF line endings, and Git for Windows'
+default `core.autocrlf=true` checks text files out with CRLF: on such a clone the gate, the
+hooks and `doctor.sh` could not start. `.gitattributes` holds `*.sh text eol=lf` and one
+`text eol=lf` line for each of the gate's hooks, so they check out with LF whatever a
+clone's autocrlf says. Keep those lines. A clone made before they were committed keeps its
+CRLF copies, because a pull does not check out again a file it did not change, until they
+are rewritten once, with no uncommitted change to them: each CRLF becomes LF in a regular
+file (a symlink is left alone, a lone CR kept; each file is replaced whole, with its mode),
+and each file is staged again so that `git status` does not list it as modified for its new
+size. A rewrite that fails stops it before anything is staged.
+
+```sh
+set -- '*.sh' .githooks/pre-commit .githooks/pre-merge-commit .githooks/commit-msg .githooks/post-merge
+git ls-files -z -- "$@" | python3 -I -c 'if 1:
+    import os, stat, sys, tempfile
+    for name in sys.stdin.buffer.read().split(b"\0"):
+        if name and stat.S_ISREG(os.lstat(name).st_mode):
+            with open(name, "rb") as script:
+                data = script.read()
+            if b"\r\n" in data:
+                handle, new = tempfile.mkstemp(prefix=b".crlf-", dir=os.path.dirname(name) or b".")
+                with os.fdopen(handle, "wb") as copy:
+                    copy.write(data.replace(b"\r\n", b"\n"))
+                os.chmod(new, stat.S_IMODE(os.lstat(name).st_mode))
+                os.replace(new, name)' &&
+  git ls-files -z -- "$@" | xargs -0 git add --renormalize --
+```
+
+`./scripts/doctor.sh` names any script still checked out with CRLF. The kit's own clone is no
+exception: upgrade from a fresh, full clone of the kit, never an older clone pulled forward,
+whose scripts stay CRLF and cannot start (the kit's upgrade checklist runs them), and never a
+shallow one, which lacks the older commit the checklist merges from.
+
 ## 2. Toolchain on PATH
 
 `check.sh` needs {{TOOLCHAIN}}. Per-user installs are the usual trap here: they work in your
@@ -45,9 +78,11 @@ fails for a reason that has nothing to do with the code.
 
 If the gate fails with "command not found", that is this — not a broken build.
 
-The gate runs one at a time per checkout and needs `python3` with the `fcntl` module for its
-lock: native Windows Python has none, so a hook started from a Windows-side client fails
-`FAIL [lock]` by name; run the gate from WSL or a POSIX shell with its own Python. Every
+The gate runs one at a time per checkout and needs `python3` for its lock: `fcntl.flock` on
+Linux, macOS, WSL and a POSIX Python under MSYS2 or Cygwin; on native Windows (Git for
+Windows' `sh` with a Windows Python) a lock file held open without write sharing, which a
+nested run proves it holds by the file's `FILE_ID_INFO` (NTFS and ReFS give one; on a volume
+that gives none, nested runs fail `FAIL [lock]`). Every
 process the build command starts holds the lock, so a build server it leaves running (a
 compiler server, a build daemon) makes the next gate, and the commit hook, wait until that
 server exits. Turn such servers off in the build command (`docs/GOTCHAS.md`); the waiting
@@ -57,6 +92,8 @@ server exits. Turn such servers off in the build command (`docs/GOTCHAS.md`); th
 
 `docs/REVIEW_GATE.md` asks for risky diffs to be reviewed by a DIFFERENT model in a fresh
 session. `scripts/review.sh` automates that, and it needs a second CLI on this machine.
+It needs a POSIX shell and Python as well (WSL, Linux, macOS): on native Windows its signal
+handling does not run yet, so start reviews from WSL there.
 
 **Ask your agent to set this up for you.** It can install the CLI and check the wiring; the
 parts it cannot do are called out below. Nothing here is required to write code — the gate,

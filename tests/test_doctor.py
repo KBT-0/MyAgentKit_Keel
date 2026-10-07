@@ -351,9 +351,17 @@ class DoctorTests(unittest.TestCase):
             # One PATH for both; the stub tmux in front again for the node case, so only node is
             # absent there.
             no_tmux_node = path_without('tmux', 'node')
+            # Native Windows has no tmux: there spawn_worker.sh needs Windows Terminal instead.
+            mingw = tmp / 'mingw-uname'
+            mingw.mkdir()
+            (mingw / 'uname').write_text('#!/bin/sh\necho MINGW64_NT-10.0-26200\n')
+            (mingw / 'uname').chmod(0o755)
+            # A WSL host's PATH holds the real wt.exe: it is dropped too.
+            no_tmux_mingw = str(mingw) + os.pathsep + path_without('tmux', 'node', 'wt.exe')
             for path, expect in ((str(older) + os.pathsep + env['PATH'],
                                   'MISSING: Python 3.10 or newer as python3'),
                                  (no_tmux_node, 'MISSING: tmux, which scripts/spawn_worker.sh needs'),
+                                 (no_tmux_mingw, 'MISSING: Windows Terminal (wt.exe), which scripts/spawn_worker.sh'),
                                  (str(bin_dir) + os.pathsep + no_tmux_node,
                                   'MISSING: node is not resolvable on the PATH a git hook inherits'),
                                  (str(fake_id) + os.pathsep + env['PATH'],
@@ -369,6 +377,10 @@ class DoctorTests(unittest.TestCase):
                     self.assertEqual(red.returncode, 1, red.stdout)
                     self.assertIn(expect, red.stdout)
                     self.assertEqual(red.stdout.count('MISSING:'), 1, red.stdout)
+            # KIT_WT names the launcher spawn_worker.sh runs in place of wt.exe: doctor takes it too.
+            shown = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=project, capture_output=True, text=True,
+                                   env=dict(env, PATH=no_tmux_mingw, KIT_WT=str(mingw / 'uname')))
+            self.assertNotIn('Windows Terminal', shown.stdout)
             shutil.rmtree(home / '.npm')
 
             # A checkout on a Windows drive under WSL. The path and /proc/version are injected
