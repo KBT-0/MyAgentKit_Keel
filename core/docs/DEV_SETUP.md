@@ -70,7 +70,7 @@ that fails (a corrupt index); a temporary copy a SIGKILL left (`.crlf-*`) stops 
                       os.replace(new, name)
                   finally:
                       if os.path.lexists(new):
-                          os.unlink(new)' < "$list' ||
+                          os.unlink(new)' < "$list" ||
     { echo "STOP: a script could not be rewritten (above); nothing was staged" >&2; exit 1; }
   if [ -s "$list" ]; then xargs -0 git add --renormalize -- < "$list"; fi )
 ```
