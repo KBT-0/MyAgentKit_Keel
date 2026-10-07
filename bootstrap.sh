@@ -185,13 +185,15 @@ copy_tree() {
     # The project's own .gitattributes is merged, never left alone or replaced: one that was
     # left alone let bootstrap succeed without the line-ending rules the gate needs to start on
     # a CRLF clone, and --force replaced the owner's attributes whole. A rule it already holds
-    # is not added again.
+    # is not added again. Read once, and checked: an unreadable file read as empty was
+    # replaced by the kit's rules alone.
     if [ "$dest" = .gitattributes ] && [ -f "$target/$dest" ]; then
+      attrs=$(cat "$target/$dest") || die "cannot read the project's own $dest; nothing was changed in it"
       missing=$(grep -v -e '^#' -e '^$' "$src/$rel" | while IFS= read -r rule; do
-                  grep -qxF -e "$rule" "$target/$dest" || printf '%s\n' "$rule"; done)
+                  printf '%s\n' "$attrs" | grep -qxF -e "$rule" || printf '%s\n' "$rule"; done)
       if [ -n "$missing" ]; then
         put "$target/$dest" <<EOF
-$(cat "$target/$dest")
+$attrs
 
 # Added by MyAgentKit_Keel's bootstrap: shell scripts and the gate's hooks check out with LF
 # whatever a clone's core.autocrlf says (docs/DEV_SETUP.md, section 1).

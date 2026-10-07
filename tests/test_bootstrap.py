@@ -432,6 +432,27 @@ class BootstrapTests(unittest.TestCase):
                              (root / 'core/.githooks/commit-msg').read_bytes())
             self.assertEqual(self._listed(second.stdout), {'AGENTS.md'}, second.stdout)
 
+    def test_an_unreadable_own_gitattributes_stops_bootstrap_unchanged(self):
+        # The rule check read an unreadable file as holding no rule, and the merge replaced it
+        # with the kit's rules alone, the owner's lost.
+        if os.geteuid() == 0:
+            self.skipTest('root reads a file without read permission')
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / 'project'
+            project.mkdir()
+            attributes = project / '.gitattributes'
+            attributes.write_bytes(b'*.png binary\n')
+            attributes.chmod(0)
+            try:
+                result = subprocess.run(['sh', str(root / 'bootstrap.sh'), str(project)],
+                                        capture_output=True, text=True)
+            finally:
+                attributes.chmod(0o644)
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("cannot read the project's own .gitattributes", result.stderr)
+            self.assertEqual(attributes.read_bytes(), b'*.png binary\n')
+
     def test_scripts_and_hooks_check_out_with_lf_under_autocrlf(self):
         # Git for Windows' default core.autocrlf=true checked every text file out with CRLF,
         # and sh cannot run a CRLF script: a project's gate, hooks and doctor.sh, and the kit's
