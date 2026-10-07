@@ -3854,10 +3854,14 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                      'sys.path.insert(0, sys.argv[1])\n'
                      'import agent_process, claude_bridge, codex_bridge, codex_quota, review_dispatch\n'
                      'print(agent_process.POSIX, [s.name for s in agent_process.CANCEL_SIGNALS])\n'
-                     'print(agent_process.block_cancels())\n')
+                     # Off POSIX the cancels are held by a recorder for the block, then restored.
+                     'mask = agent_process.block_cancels()\n'
+                     'print(signal.getsignal(signal.SIGINT) is not signal.default_int_handler)\n'
+                     'agent_process.restore_mask(mask)\n'
+                     'print(signal.getsignal(signal.SIGINT) is signal.default_int_handler)\n')
         result = subprocess.run([sys.executable, '-c', simulated, str(ROOT)], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout, "False ['SIGINT', 'SIGTERM']\nNone\n", result.stderr)
+        self.assertEqual(result.stdout, "False ['SIGINT', 'SIGTERM']\nTrue\nTrue\n", result.stderr)
 
     def test_posix_only_process_calls_are_made_only_in_the_agent_process_seam(self):
         # Every launch, block and group kill of the review tooling goes through agent_process's
