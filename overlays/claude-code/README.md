@@ -65,10 +65,10 @@ scripts/show_workers.sh w1 w2
 
 What opens where:
 
-- **WSL with Windows Terminal**: one `wt.exe -w kit-<project folder> new-tab ...` call, a
-  tab per session. The window name is fixed per project, so a later call adds its tabs to
-  the window that holds the earlier ones: that is what `-w NAME` is documented to do; a
-  script on the WSL side can see that each tab attached, not which window it is in.
+- **WSL with Windows Terminal**: one `wt.exe -w 0 new-tab ...` call, a tab per session in
+  the window used last, the one the lead runs in (a window named after the project opened a
+  second window beside the lead's). A script on the WSL side can see that each tab attached,
+  not which window it is in.
   `KIT_WT` names another launcher than the `wt.exe` found on PATH or under `/mnt/c/Users`.
 - **macOS, iTerm2** (the lead runs in it, or it is installed and the lead does not run in
   Terminal.app): a new window, a tab per session, through `osascript`.
