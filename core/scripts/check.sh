@@ -37,6 +37,11 @@
 # not run, a command that was never configured: all FAIL. Silence is not success. Five
 # separate paths in an earlier version of this script violated that rule and reported PASS
 # while enforcing nothing; a cross-model review found them.
+#
+# THREAT MODEL. Defended: mistakes and accidents of the owner and the agents (a killed run,
+# Ctrl-C, a leftover file, CRLF, an owner's symlink, a stale environment from a killed gate).
+# Out of scope: a process changing the tree while the gate runs to fool it, and hostile files
+# planted by anyone but the owner; either could edit this script instead.
 set -u
 # CDPATH cleared: exported, it made `cd scripts` print the directory into $gate, and the
 # lock below re-ran a two-line file name instead of the gate. The path is LOGICAL (pwd, not
@@ -238,7 +243,7 @@ else:
     except ImportError:
         print("FAIL [lock]: python3 has no fcntl module, which the gate lock needs on this system.", flush=True)
         sys.exit(1)
-path, gate, wait, waited = sys.argv[1], sys.argv[2], os.environ.get("GATE_LOCK_WAIT", ""), 0
+path, gate, wait, waited, interrupted = sys.argv[1], sys.argv[2], os.environ.get("GATE_LOCK_WAIT", ""), 0, []
 if signal.getsignal(signal.SIGINT) is signal.default_int_handler:
     signal.signal(signal.SIGINT, signal.SIG_DFL)
 def cannot_open(reason):
@@ -281,7 +286,16 @@ else:
             cannot_open("a symlink or another reparse point")
         return True
     find = "Resource Monitor (resmon), CPU tab, Associated Handles, search for %s" % os.path.basename(path)
+    # Ctrl-C: this process outlives it to pass on the status of the gate (the interrupt case of
+    # the self-test: the holder exits 130, the build stops, the next gate takes the lock). The
+    # handler records it from here on: one that came before the gate was created reached no gate,
+    # so the gate is not started and the status is 130 (the earlyint case). A handler, not
+    # SIG_IGN: on the hosts measured the two behave alike for the gate, since SIG_IGN in CPython
+    # on Windows is not the inherited ignore flag and sh starts with Ctrl-C enabled.
+    signal.signal(signal.SIGINT, lambda *_: interrupted.append(1))
 while not take():
+    if interrupted:
+        sys.exit(130)
     if wait and waited >= int(wait):
         print("NOT RUN [lock]: another gate run, or a process it started, has held %s for %ds; GATE_LOCK_WAIT=%s ran out." % (path, waited, wait), flush=True)
         sys.exit(75)
@@ -308,14 +322,10 @@ os.write(fd, token.encode())
 os.set_handle_inheritable(msvcrt.get_osfhandle(fd), True)
 os.environ["GATE_LOCK_FD"] = str(msvcrt.get_osfhandle(fd))
 os.environ["GATE_LOCK_HELD"] = path
-# Ctrl-C: this process outlives it to pass on the status of the gate (the interrupt case of the
-# self-test: the holder exits 130, the build stops, the next gate takes the lock). A handler that
-# does nothing, not SIG_IGN: on the hosts measured the two behave alike, since SIG_IGN in CPython
-# on Windows is not the inherited ignore flag and sh starts with Ctrl-C enabled, so no case can
-# tell them apart; this one leaves nothing to inherit on a host where that differs.
-signal.signal(signal.SIGINT, lambda *_: None)
-status = subprocess.call(["sh", gate] + sys.argv[3:], close_fds=False)
+status = 130 if interrupted else subprocess.call(["sh", gate] + sys.argv[3:], close_fds=False)
 os.ftruncate(fd, 0)
+if interrupted:
+    sys.exit(130)
 # Git for Windows hands native Python a child killed by signal N as N << 8, and sh would read
 # only its low byte, 0: a killed gate passed. It becomes 128 + N; anything else unknown is 1.
 sys.exit(status if 0 <= status < 256 else 128 + (status >> 8) if status & 255 == 0 and status < 32768 else 1)
@@ -522,7 +532,8 @@ self_test() {
   # Ctrl-C stops the gate and its build: the case gives the gate a hidden console of its own,
   # with that console as sh's input, as a terminal window does, and sends it CTRL_C_EVENT, the
   # event Ctrl-C raises there (a signal sent by pid reaches one process, not the console's);
-  # the holder must outlive it and pass on 130, the status of the interrupted gate.
+  # the holder must outlive it and pass on 130, the status of the interrupted gate. A Ctrl-C
+  # that comes while the holder waits for the lock, before the gate exists, starts no gate.
   # The host check and the case runner run isolated (-I) beside a sitecustomize.py on
   # PYTHONPATH that marks its import and calls the host POSIX: imported, it skipped every case.
   # Each case runs a copy of this gate in a throwaway repository, so
@@ -660,10 +671,11 @@ if mode == "shadow":
     imported = sorted(name for name in os.listdir(folder) if name.endswith(".imported"))
     print("lockcase: stand-ins imported: %s; the gate exited %d" % (", ".join(imported) or "none", status))
     sys.exit(0)
-if mode == "interrupt":
+if mode in ("interrupt", "earlyint"):
     # A console of its own, hidden, so the Ctrl-C reaches only this case's processes.
+    inside = "console" if mode == "interrupt" else "early"
     try:
-        inner = subprocess.run([sys.executable, "-I", __file__, "console", lock, gate], creationflags=0x10,
+        inner = subprocess.run([sys.executable, "-I", __file__, inside, lock, gate], creationflags=0x10,
                                startupinfo=subprocess.STARTUPINFO(dwFlags=1, wShowWindow=0),
                                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                text=True, errors="replace", timeout=150)
@@ -672,6 +684,45 @@ if mode == "interrupt":
         sys.exit(2)
     sys.stdout.write(inner.stdout)
     sys.exit(inner.returncode)
+if mode == "early":
+    # Ctrl-C after the holder's handler is installed and before the gate exists: the holder is
+    # kept waiting for the lock this process holds, interrupted, and then given the lock.
+    kernel32.SetConsoleCtrlHandler(None, False)
+    kernel32.OpenProcess.restype = ctypes.c_void_p
+    held, started, log = handle(lock, RW, 1), lock + ".started", lock + ".log"
+    output = open(log, "w")
+    first = subprocess.Popen(["sh", gate], stdin=open("CONIN$"), stdout=output, stderr=subprocess.STDOUT,
+                             env=dict(os.environ, LOCKCASE_HOLD=started))
+    try:
+        deadline = time.monotonic() + 60
+        while "NOTE [lock]" not in open(log).read():
+            if first.poll() is not None or time.monotonic() > deadline:
+                print("lockcase: the gate never waited for the lock")
+                sys.exit(2)
+            time.sleep(0.1)
+        holders = [found for found, exe in children(first.pid) if exe.startswith("python")]
+        if len(holders) != 1:
+            print("lockcase: expected one python holder under the gate, found %r" % children(first.pid))
+            sys.exit(2)
+        holder, code = kernel32.OpenProcess(0x101000, False, holders[0]), ctypes.c_ulong()
+        kernel32.SetConsoleCtrlHandler(None, True)
+        kernel32.GenerateConsoleCtrlEvent(0, 0)
+        time.sleep(3)
+        kernel32.CloseHandle(ctypes.c_void_p(held))
+        held = None
+        if not holder or kernel32.WaitForSingleObject(ctypes.c_void_p(holder), 30000) != 0 or \
+                not kernel32.GetExitCodeProcess(ctypes.c_void_p(holder), ctypes.byref(code)):
+            print("lockcase: the holder did not end in 30 s after the lock was free")
+            sys.exit(2)
+        print("lockcase: a Ctrl-C before the gate started: its holder exited %d; the gate %s"
+              % (code.value, "ran" if os.path.exists(started) else "never ran"))
+        sys.exit(0)
+    finally:
+        if held:
+            kernel32.CloseHandle(ctypes.c_void_p(held))
+        subprocess.call(["taskkill", "/F", "/T", "/PID", str(first.pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        first.wait()
+        output.close()
 if mode == "console":
     # A caller (a CI runner, an agent's shell) may hand down an ignored Ctrl-C; a terminal does not.
     kernel32.SetConsoleCtrlHandler(None, False)
@@ -755,7 +806,7 @@ claim = {"other": lambda: handle(lock + ".other", RW, 3), "reader": lambda: hand
 sys.exit(run(claimed(claim)))
 LOCKCASE
     refused="^FAIL \\[env\\]: GATE_LOCK_HELD names this checkout's lock, but this run did not inherit"
-    for lock_case in other reader unheld readonly wide noid reparse killgate failgate killholder shadow interrupt; do
+    for lock_case in other reader unheld readonly wide noid reparse killgate failgate killholder shadow interrupt earlyint; do
       case_dir="$work/lock-$lock_case"
       also=""; code=1
       case $lock_case in
@@ -775,6 +826,8 @@ LOCKCASE
                     label="the lock holder imports no fcntl.py or secrets.py from PYTHONPATH" ;;
         interrupt)  want='^lockcase: the interrupted gate exited [1-9][0-9]*; its holder exited 130; its build stopped; the next gate exited 0$'; code=0
                     label="Ctrl-C stops the gate and its build, the holder outlives it and exits 130, and the next gate takes the lock" ;;
+        earlyint)   want='^lockcase: a Ctrl-C before the gate started: its holder exited 130; the gate never ran$'; code=0
+                    label="a Ctrl-C that comes before the gate is created stops it from starting, with 130" ;;
       esac
       # The copy stops or kills itself right after it holds the lock, when a case asks it to,
       # and otherwise passes there: the success a lost refusal would reach.
