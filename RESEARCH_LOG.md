@@ -529,6 +529,27 @@ hostile files planted by anyone but the owner; either could edit the scripts ins
   that cannot be read at it, stops the step. The test was red against the earlier snippet: an
   owner's `scripts/check.sh.v0.9` was deleted.
 
+**A ninth review pass, under the threat model.** It confirmed the fixes above and listed the
+r6 filter-attribute finding as out of scope. It found two High and four Medium findings in
+scope. One fix round followed; each fix has a test that was red against the earlier code:
+
+- *A Ctrl-C after the holder's last check* is answered by the threat model, not a fix: it came
+  after the gate ended, so the gate's status stands, as on POSIX.
+- *Item 3 merged through an owner's symlink.* It now stops before any merge unless all three
+  files are regular. Each merge result replaces its file whole, with its mode, through a
+  sibling temporary. A failed merge stops the step.
+- *A clean driver that answers differently on a later call* could put its output in the
+  payload while every check saw the canonical answer. The payload diff now leaves out each
+  proven LFS path, so its filter is never asked again. The byte proof of v0.9 (below) is
+  therefore no longer what keeps a filter's output out of the payload.
+- *Item 1 ignored a failed rewrite* and staged the rest with exit 0. It also wrote in place, so
+  a killed run left a script half new. Each script is now replaced whole, with its mode, and a
+  failed rewrite stops the step before anything is staged.
+- *Bootstrap replaced an unreadable `.gitattributes`* with the kit's rules alone. It now stops.
+
+The tenth pass (the last one in this loop) rejected again, with one High, four Medium and
+four Low findings. They are open, not fixed.
+
 ### 2026-10-06 — native Windows: the gate lock, and Git LFS beside a review
 
 A project moved from WSL to native Windows (Git for Windows' `sh`, CPython from python.org).
