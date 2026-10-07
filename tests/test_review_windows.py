@@ -150,6 +150,64 @@ class ReviewOnWindows(unittest.TestCase):
         self.assertIn("cli ran ['exec', '--json'] the prompt", result['stdout'])
 
     @windows_only
+    def test_a_batch_cli_is_never_handed_an_argument_cmd_would_run(self):
+        # cmd.exe reads a .cmd's command line as shell, and Popen does not escape `&` for it:
+        # `a&echo>injected.txt` ran echo (BatBadBut). Refused before anything starts.
+        launcher = self.tmp / 'fakecli.cmd'
+        launcher.write_text('@echo ran %*\r\n')
+        for arg in ('a&echo>injected.txt', 'x|more', '%PATH%', 'say "hi"'):
+            with self.subTest(arg=arg):
+                result = agent_process.run([str(launcher), arg], '', self.tmp, 30)
+                self.assertEqual(result['termination'], 'unavailable', result)
+                self.assertIn('batch file', result['stderr'])
+        self.assertFalse((self.tmp / 'injected.txt').exists())
+        result = agent_process.run([str(launcher), 'plain', 'C:\\with space\\x'], '', self.tmp, 30)
+        self.assertEqual(result['exit_code'], 0, result)
+        self.assertIn('ran plain', result['stdout'])
+
+    @windows_only
+    def test_a_ctrl_c_as_the_launch_returns_stops_the_reviewer(self):
+        # A Ctrl-C after the reviewer existed and before run() held its handle raised past the
+        # cleanup that stops it: run() said cancelled while the reviewer ran on.
+        import signal
+        from unittest.mock import patch
+        marker = self.tmp / 'reviewer.pid'
+        command = self.script('sleeper.py', 'import os, sys, time\n'
+                                            'open(sys.argv[1], "w").write(str(os.getpid()))\n'
+                                            'time.sleep(120)\n') + [str(marker)]
+        real = agent_process.launch
+
+        def interrupted(*args, **kwargs):
+            child = real(*args, **kwargs)
+            deadline = time.monotonic() + 20  # the reviewer is running, then the Ctrl-C comes
+            while not (marker.exists() and marker.read_text()) and time.monotonic() < deadline:
+                time.sleep(0.05)
+            signal.raise_signal(signal.SIGINT)
+            return child
+        with patch.object(agent_process, 'launch', interrupted):
+            result = agent_process.run(command, '', self.tmp, 60)
+        self.assertEqual(result['termination'], 'cancelled', result)
+        self.assertTrue(result['cancelled'])
+        self.assertTrue(marker.exists() and marker.read_text(), 'the reviewer never ran')
+        self.assertTrue(gone_within(int(marker.read_text())), 'the reviewer ran on after the cancel')
+
+    @windows_only
+    def test_a_scratch_folder_that_cannot_be_removed_never_raises(self):
+        # The Codex sandbox writes under another account; a folder this user cannot remove
+        # made TemporaryDirectory raise even with ignore_cleanup_errors, and the review was lost.
+        import claude_bridge
+        user = os.environ['USERNAME']
+        with claude_bridge.scratch('kit-scratch-') as path:
+            locked = Path(path) / 'locked'
+            (locked / 'inner').mkdir(parents=True)
+            (locked / 'inner' / 'x.pyc').write_bytes(b'x')
+            denied = subprocess.run(['icacls', str(locked), '/deny', '%s:(OI)(CI)F' % user],
+                                    capture_output=True, text=True)
+            self.assertEqual(denied.returncode, 0, denied.stdout + denied.stderr)
+        self.addCleanup(lambda: subprocess.run(['icacls', str(locked), '/remove:d', user], capture_output=True))
+        self.addCleanup(lambda: subprocess.run(['cmd', '/c', 'rmdir', '/s', '/q', path], capture_output=True))
+
+    @windows_only
     def test_a_missing_reviewer_is_unavailable(self):
         result = agent_process.run([str(self.tmp / 'no-such-cli.exe')], '', self.tmp, 10)
         self.assertEqual(result['termination'], 'unavailable')

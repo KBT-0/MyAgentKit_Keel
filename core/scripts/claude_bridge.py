@@ -8,6 +8,7 @@ the last JSON line printed is the authoritative result, and a direct consumer mu
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import json
 import os
@@ -62,6 +63,19 @@ def git(repo: Path, *args: str, allowed=(0,), stdin: bytes | None = None, env: d
     if result.returncode not in allowed:
         raise BridgeError(f"git {args[0]} failed: {result.stderr.decode(errors='replace')}")
     return result.stdout
+
+
+@contextlib.contextmanager
+def scratch(prefix: str):
+    """A private temporary folder, removed on every way out, whose removal never raises.
+    TemporaryDirectory(ignore_cleanup_errors=True) still raised PermissionError on Windows
+    for a folder it could not remove (one the Codex sandbox made under another account), and
+    a completed, paid review was lost with its verdict; what cannot be removed stays behind."""
+    path = tempfile.mkdtemp(prefix=prefix)
+    try:
+        yield path
+    finally:
+        shutil.rmtree(path, ignore_errors=True)
 
 
 def review_tmpdir(repo: Path) -> None:
@@ -904,7 +918,7 @@ def main(argv=None, result_sink=None) -> int:
         # Removed when the attempt ends: a cancel is only noted here, so it reaches the cleanup.
         if args.mode == "review":
             review_tmpdir(repo)
-        with tempfile.TemporaryDirectory(prefix="myagentkit-review-", ignore_cleanup_errors=True) as copy:
+        with scratch("myagentkit-review-") as copy:
             workdir = repo
             # A preparation that uses up the deadline is a timeout like any other: it is
             # recorded as one, so --fallback may try the other reviewer.

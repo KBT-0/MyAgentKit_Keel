@@ -60,13 +60,37 @@ def _win() -> dict:
 
 
 def block_cancels():
-    """Block the cancel signals; return the previous mask for restore_mask(). None off POSIX."""
-    return signal.pthread_sigmask(signal.SIG_BLOCK, CANCEL_SIGNALS) if POSIX else None
+    """Block the cancel signals; return what restore_mask() needs.
+
+    Off POSIX there is no signal mask: until restore_mask() the cancels go to a recorder, which
+    hands each one on to the handler then in place. Without it a Ctrl-C between the reviewer's
+    launch and the caller holding its handle met the caller's raising handler there, and the
+    reviewer ran on with nobody to stop it. Only the main thread installs handlers.
+    """
+    if POSIX:
+        return signal.pthread_sigmask(signal.SIG_BLOCK, CANCEL_SIGNALS)
+    if threading.current_thread() is not threading.main_thread():
+        return None
+    held = []
+
+    def recorder(signum, frame):
+        held.append(signum)
+    return recorder, {sig: signal.signal(sig, recorder) for sig in CANCEL_SIGNALS}, held
 
 
 def restore_mask(mask) -> None:
     if POSIX:
         signal.pthread_sigmask(signal.SIG_SETMASK, mask)
+        return
+    if mask is None:
+        return
+    recorder, saved, held = mask
+    for sig, handler in saved.items():
+        # A handler swapped in inside the block (handing_back restores the caller's) stays.
+        if signal.getsignal(sig) is recorder and handler is not None:
+            signal.signal(sig, handler)
+    for sig in held:
+        signal.raise_signal(sig)
 
 
 def pending() -> set:
@@ -86,6 +110,14 @@ def launch(command, mask, **popen_kw) -> subprocess.Popen:
     if os.path.basename(command[0]) == command[0]:
         path = (popen_kw.get("env") or os.environ).get("PATH")
         command = [shutil.which(command[0], path=path) or command[0], *command[1:]]
+    # A .cmd or .bat runs under cmd.exe, which reads its command line as shell: Popen's quoting
+    # does not escape `&` or `%` for it, and an argument `a&echo>x` ran `echo` (BatBadBut). An
+    # argument with a character cmd.exe acts on is refused, before anything starts.
+    if command[0].lower().endswith((".cmd", ".bat")):
+        unsafe = [arg for arg in command[1:] if any(c in arg for c in '"%^&|<>!\r\n')]
+        if unsafe:
+            raise OSError("%s is a batch file, and cmd.exe would read %r as shell; name the CLI's "
+                          "executable instead (REVIEW_CLI_BIN, CLAUDE_CLI_BIN)" % (command[0], unsafe[0]))
     # Suspended (0x4) until it is in the job: running, it could start a process outside it first.
     child = subprocess.Popen(command, **popen_kw, creationflags=0x200 | 0x4)  # CREATE_NEW_PROCESS_GROUP
     job = None
@@ -371,6 +403,9 @@ def _supervise(command, prompt, repo, timeout, started, guard, prior=None):
                     # The reviewer's git never discovers a repository above its working
                     # directory: a copy made inside some checkout stays inside the copy.
                     env["GIT_CEILING_DIRECTORIES"] = str(repo.parent)
+                    # No bytecode in the copy: on Windows the Codex sandbox writes __pycache__
+                    # under an account whose folders this user cannot open, read or remove.
+                    env["PYTHONDONTWRITEBYTECODE"] = "1"
                     child = launch(command, mask, cwd=repo, stdin=inp, stdout=subprocess.PIPE,
                                    stderr=subprocess.PIPE,
                                    env=dict(env, PWD=str(repo), MYAGENTKIT_DELEGATION_DEPTH="1"))

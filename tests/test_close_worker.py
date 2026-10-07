@@ -172,8 +172,12 @@ class CloseWorkerTests(unittest.TestCase):
 
     def test_on_native_windows_the_claude_session_is_ended_and_the_worktree_removed(self):
         path = self.worker('w1', session=False)
+        # Codex review: `-n w1` inside another worker's quoted prompt is that prompt, not its name;
+        # and a node.exe running some other tool with `-n w1` is not Claude Code.
         env = self.windows('100 C:\\npm\\claude.exe "Read \'b.md\' and follow it." -n w1 --model opus',
-                           '200 C:\\npm\\claude.exe -n w10', '300 C:\\npm\\claude.exe --resume x')
+                           '123 C:\\npm\\claude.exe "Read brief -n w1 notes.md and follow it." -n w2',
+                           '200 C:\\npm\\claude.exe -n w10', '300 C:\\npm\\claude.exe --resume x',
+                           '400 "C:\\Program Files\\nodejs\\node.exe" C:\\other\\tool.js -n w1')
         out = self.close('w1', **env)
         kills = (self.tmp / 'taskkill.log').read_text().splitlines()
         self.assertEqual(kills, ["['/PID', '100', '/T', '/F']"], out)
@@ -185,6 +189,16 @@ class CloseWorkerTests(unittest.TestCase):
         self.assertEqual([c for c in self.calls() if 'list-sessions' not in c], [], 'tmux was used to end it')
         out = self.close('w1', **env)
         self.assertIn('close_worker: w1: no Claude Code session named w1 runs; nothing to end\n', out)
+
+    def test_on_native_windows_an_npm_installed_claude_is_found_by_its_name(self):
+        # Codex review: npm's `claude` runs as node.exe with Claude Code's cli.js, and a lister
+        # of claude.exe alone said there was no session while it ran on.
+        self.worker('w3', session=False)
+        env = self.windows('300 "C:\\Program Files\\nodejs\\node.exe" '
+                           'C:\\npm\\node_modules\\@anthropic-ai\\claude-code\\cli.js "Read x" -n w3')
+        out = self.close('w3', **env)
+        self.assertEqual((self.tmp / 'taskkill.log').read_text().splitlines(), ["['/PID', '300', '/T', '/F']"], out)
+        self.assertIn('close_worker: w3: Claude Code session ended (process 300)', out)
 
     def test_on_native_windows_a_session_that_survives_or_a_lister_that_fails_fails_the_close(self):
         path = self.worker('w1', session=False)

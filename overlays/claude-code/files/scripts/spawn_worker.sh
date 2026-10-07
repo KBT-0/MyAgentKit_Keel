@@ -151,19 +151,73 @@ instruction="Read $(q "$brief") and follow it. Do not ask questions in this pane
 # exited with code 1]", when its command ends nonzero, as claude does when close_worker.sh ends
 # it. A name a running session already has is refused, as tmux refuses a second session.
 # Native Windows (Git for Windows' sh, MSYS2, Cygwin): no tmux; a worker is a Windows Terminal
-# tab running `claude -n NAME` (spawn_worker.sh). sessions NAME prints the process id of each
-# claude.exe whose command line holds `-n NAME` as two words, from Win32_Process, on one line; KIT_PS names
-# another lister (the kit's tests), which prints "<pid> <command line>" lines as this one does.
-# A command line Windows does not show (another user's process) names nothing. A lister that
-# fails prints its words instead and returns 2.
+# tab running `claude -n NAME` (spawn_worker.sh). sessions NAME prints, on one line, the process
+# id of each Claude Code process whose arguments hold `-n NAME`: a claude.exe, or a node.exe
+# running Claude Code's cli.js (an npm install of `claude`). The command line Win32_Process
+# gives is split as Windows splits it (CommandLineToArgvW's rules), so `-n w1` inside a quoted
+# prompt is part of the prompt, never the name: read as words, it closed the wrong worker.
+# KIT_PS names another lister (the kit's tests), printing "<pid> <command line>" lines as this
+# one does. A command line Windows does not show (another user's process) names nothing. A
+# lister that fails prints its words instead and returns 2.
+if command -v python3 >/dev/null 2>&1; then kit_python=python3
+elif command -v python >/dev/null 2>&1; then kit_python=python
+else kit_python="py -3"; fi   # unquoted at every use
 sessions() {
   out=$(${KIT_PS:-powershell.exe -NoProfile -NonInteractive -Command} \
-    "Get-CimInstance Win32_Process -Filter \"Name='claude.exe'\" | ForEach-Object { \"\$(\$_.ProcessId) \$(\$_.CommandLine)\" }" \
+    "Get-CimInstance Win32_Process -Filter \"Name='claude.exe' or Name='node.exe'\" | ForEach-Object { \"\$(\$_.ProcessId) \$(\$_.CommandLine)\" }" \
     2>&1) || { printf '%s' "$out"; return 2; }
-  printf '%s\n' "$out" | tr -d '\r' | awk -v n="$1" '{
-    for (i = 2; i < NF; i++)
-      if ($i == "-n" && ($(i + 1) == n || $(i + 1) == "\"" n "\"" || $(i + 1) == "'"'"'" n "'"'"'")) { pids = pids (pids == "" ? "" : " ") $1; break } }
-    END { printf "%s", pids }'
+  printf '%s\n' "$out" | $kit_python -I -c 'if 1:
+    import ntpath, sys
+    def split(line):
+        # CommandLineToArgvW: 2n backslashes and a quote are n and a toggle, 2n+1 are n and a
+        # literal quote, "" inside quotes is a quote; any other backslash is itself.
+        args, cur, have, quoted, i = [], [], False, False, 0
+        while i < len(line):
+            c = line[i]
+            if c == "\\":
+                n = len(line[i:]) - len(line[i:].lstrip("\\"))
+                i += n
+                if line[i:i + 1] == "\"":
+                    cur.append("\\" * (n // 2))
+                    if n % 2:
+                        cur.append("\"")
+                        i += 1
+                else:
+                    cur.append("\\" * n)
+                have = True
+            elif c == "\"":
+                if quoted and line[i + 1:i + 2] == "\"":
+                    cur.append("\"")
+                    i += 1
+                else:
+                    quoted = not quoted
+                have, i = True, i + 1
+            elif c in " \t" and not quoted:
+                if have:
+                    args.append("".join(cur))
+                cur, have, i = [], False, i + 1
+            else:
+                cur.append(c)
+                have, i = True, i + 1
+        if have:
+            args.append("".join(cur))
+        return args
+    pids = []
+    for line in sys.stdin.read().replace("\r", "").split("\n"):
+        pid, _, command = line.strip().partition(" ")
+        argv = split(command)
+        if not pid.isdigit() or not argv:
+            continue
+        exe = ntpath.basename(argv[0]).lower()
+        if exe == "claude.exe" or exe == "claude":
+            rest = argv[1:]
+        elif exe in ("node.exe", "node") and len(argv) > 1 and "claude-code" in argv[1].lower():
+            rest = argv[2:]
+        else:
+            continue
+        if any(a in ("-n", "--name") and b == sys.argv[1] for a, b in zip(rest, rest[1:])):
+            pids.append(pid)
+    sys.stdout.write(" ".join(pids))' "$1"
 }
 if [ -n "$windows" ]; then
   running=$(sessions "$name") || die "cannot list the Claude Code sessions to check the name '$name': $running"
