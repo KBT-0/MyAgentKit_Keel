@@ -146,18 +146,36 @@ instruction="Read $(q "$brief") and follow it. Do not ask questions in this pane
 # faults, each of which left the tab with an error and no worker: a bare `bash` in a new tab
 # is WSL's launcher (WindowsApps\bash.exe), so Git Bash is named by its full Windows path; and
 # wt.exe splits its command line at every `;` (a new-tab separator), even inside quotes, and
-# cut the instruction in two, so every `;` it is handed is escaped as `\;`.
+# cut the instruction in two, so every `;` it is handed is escaped as `\;`. The tab's command
+# ends with `exit 0`, not an exec of claude: Windows Terminal keeps a tab open, with "[process
+# exited with code 1]", when its command ends nonzero, as claude does when close_worker.sh ends
+# it. A name a running session already has is refused, as tmux refuses a second session.
+# Native Windows (Git for Windows' sh, MSYS2, Cygwin): no tmux; a worker is a Windows Terminal
+# tab running `claude -n NAME` (spawn_worker.sh). sessions NAME prints the process id of each
+# claude.exe whose command line holds `-n NAME` as two words, from Win32_Process; KIT_PS names
+# another lister (the kit's tests), which prints "<pid> <command line>" lines as this one does.
+# A command line Windows does not show (another user's process) names nothing.
+sessions() {
+  out=$(${KIT_PS:-powershell.exe -NoProfile -NonInteractive -Command} \
+    "Get-CimInstance Win32_Process -Filter \"Name='claude.exe'\" | ForEach-Object { \"\$(\$_.ProcessId) \$(\$_.CommandLine)\" }" \
+    2>&1) || { err=$out; return 2; }
+  printf '%s\n' "$out" | tr -d '\r' | awk -v n="$1" '{
+    for (i = 2; i < NF; i++)
+      if ($i == "-n" && ($(i + 1) == n || $(i + 1) == "\"" n "\"" || $(i + 1) == "'"'"'" n "'"'"'")) { print $1; break } }'
+}
 if [ -n "$windows" ]; then
+  running=$(sessions "$name") || die "cannot list the Claude Code sessions to check the name '$name': $err"
+  [ -z "$running" ] || die "a Claude Code session named '$name' already runs (process $(echo $running))"
   wt=${KIT_WT:-wt.exe}
   command -v "$wt" >/dev/null || die "Windows Terminal ($wt) is not on PATH; start the worker by hand: $cmd"
   bash=$(command -v bash) || die "bash is not on PATH"
   bash=$(cygpath -w "$bash") || die "cygpath cannot convert the path of bash: $bash"
   semi() { printf '%s' "$1" | sed 's/;/\\;/g'; }
   "$wt" -w 0 new-tab --title "$(semi "$name")" "$(semi "$bash")" -lc \
-    "$(semi "cd $(q "$dir") && exec claude $(q "$instruction") ${cmd#claude }")" ||
+    "$(semi "cd $(q "$dir") || exit 1; claude $(q "$instruction") ${cmd#claude }; exit 0")" ||
     die "$wt could not open a tab for '$name'"
   printf '%s\n' "spawn_worker: '$name' started with $brief in a Windows Terminal tab; watch it there"
-  printf '%s\n' "spawn_worker: the result file its brief names is the done signal; close the tab once you decide the session is finished"
+  printf '%s\n' "spawn_worker: the result file its brief names is the done signal; once you decide the session is finished, close it: scripts/close_worker.sh $name"
   exit 0
 fi
 

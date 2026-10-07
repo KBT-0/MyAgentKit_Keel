@@ -26,6 +26,11 @@
 #      keeps the worktree, as does anything else the audit cannot prove; the hook after a later
 #      merge, or this script again, removes it then.
 #   4. The branch worktree-NAME is never deleted; the line says how to delete merged branches.
+# Native Windows has no tmux: step 2 ends the Claude Code session named NAME instead, the
+# claude.exe whose command line holds `-n NAME`, with `taskkill /T /F` (its tree), and waits up
+# to 15 s until no such process is left; its Windows Terminal tab closes by itself, because the
+# tab's command ends with `exit 0` (spawn_worker.sh). A lister that cannot answer fails the
+# close with its words, as the session may still run. Steps 1, 3 and 4 are the same.
 # Exit 0 when every named session is gone and every named worktree was removed or did not
 # exist; 1 otherwise, with the first reason on the last line: a nonzero exit of
 # clean_worktrees.sh is one whatever its summary says (after a removal, an outcome line its log
@@ -61,6 +66,20 @@ has() {
   esac
   return 2
 }
+# Native Windows (Git for Windows' sh, MSYS2, Cygwin): no tmux; a worker is a Windows Terminal
+# tab running `claude -n NAME` (spawn_worker.sh). sessions NAME prints the process id of each
+# claude.exe whose command line holds `-n NAME` as two words, from Win32_Process; KIT_PS names
+# another lister (the kit's tests), which prints "<pid> <command line>" lines as this one does.
+# A command line Windows does not show (another user's process) names nothing.
+sessions() {
+  out=$(${KIT_PS:-powershell.exe -NoProfile -NonInteractive -Command} \
+    "Get-CimInstance Win32_Process -Filter \"Name='claude.exe'\" | ForEach-Object { \"\$(\$_.ProcessId) \$(\$_.CommandLine)\" }" \
+    2>&1) || { err=$out; return 2; }
+  printf '%s\n' "$out" | tr -d '\r' | awk -v n="$1" '{
+    for (i = 2; i < NF; i++)
+      if ($i == "-n" && ($(i + 1) == n || $(i + 1) == "\"" n "\"" || $(i + 1) == "'"'"'" n "'"'"'")) { print $1; break } }'
+}
+case $(uname -s 2>/dev/null) in MINGW*|MSYS*|CYGWIN*) windows=1 ;; *) windows="" ;; esac
 dry=""
 [ "${1-}" = --dry-run ] && { dry=1; shift; }
 [ $# -ge 1 ] || { sed -n '6,7p' "$0"; exit 2; }
@@ -72,7 +91,26 @@ for name; do
       continue ;;
   esac
 
-  if ! command -v tmux >/dev/null 2>&1; then
+  if [ -n "$windows" ]; then
+    if ! pids=$(sessions "$name"); then
+      fail "$name: could not list the Claude Code sessions, so $name may still run: $err"
+    elif [ -z "$pids" ]; then
+      say "$name: no Claude Code session named $name runs; nothing to end"
+    elif [ -n "$dry" ]; then
+      say "$name: dry run: would end the Claude Code session $name (process $(echo $pids), taskkill /T /F) and wait up to 15 s for it; while it runs, the audit below keeps its worktree"
+    else
+      for pid in $pids; do MSYS_NO_PATHCONV=1 taskkill /PID "$pid" /T /F >/dev/null 2>&1; done
+      i=0
+      while left=$(sessions "$name") && [ -n "$left" ] && [ "$i" -lt 15 ]; do i=$((i + 1)); sleep 1; done
+      if ! left=$(sessions "$name"); then
+        fail "$name: could not establish that the session ended: $err"
+      elif [ -n "$left" ]; then
+        fail "$name: the Claude Code session still runs after taskkill (process $(echo $left)); the audit below keeps its worktree"
+      else
+        say "$name: Claude Code session ended (process $(echo $pids)); its Windows Terminal tab closes by itself"
+      fi
+    fi
+  elif ! command -v tmux >/dev/null 2>&1; then
     say "$name: no tmux session (tmux is not installed); nothing to end"
   elif has "$name"; st=$?; [ "$st" -eq 1 ]; then
     say "$name: no tmux session named $name; nothing to end"

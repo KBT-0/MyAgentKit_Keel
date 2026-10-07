@@ -215,7 +215,8 @@ class CleanWorktreesTests(unittest.TestCase):
             command = ['sh', '-c', 'mkdir -p "$0/$$" && ln -s "$(pwd -P)" "$0/$$/cwd" && exec "$@"', str(proc)] + command
         result = subprocess.run(command, cwd=cwd or self.main, env=dict(self.env, **extra), capture_output=True)
         out = result.stdout.decode() + result.stderr.decode()
-        self.assertEqual(result.returncode, code, out)
+        if code is not None:
+            self.assertEqual(result.returncode, code, out)
         return out
 
     def merge_with_hook(self, branch, *flags, cwd=None, **extra):
@@ -2452,29 +2453,34 @@ class CleanWorktreesTests(unittest.TestCase):
             self.assertIn(part, line, out)
 
     def test_off_posix_nothing_is_removed_and_one_line_says_why(self):
-        # Native Windows Python has no fcntl for the gate's lock and no /proc or lsof for
-        # liveness: the script, the hook and close_worker.sh each say so in one line, no traceback.
+        # A host with no fcntl that is not native Windows has neither the gate's lock nor a
+        # liveness proof: the script, the hook and close_worker.sh each say so in one line, no
+        # traceback. Native Windows has its own (tests/test_clean_worktrees_windows.py); faked
+        # here on a POSIX host its Windows calls fail, and that keeps the worktree, no traceback.
         self.hooked()
         path = self.worktree('done', merge=False)
         (self.tmp / 'windows.py').write_text(WINDOWS)
-        self.stub('python3', '#!/bin/sh\nexec %s %s "$@"\n' % (sys.executable, self.tmp / 'windows.py'))
-        out = self.run_script('--apply', idle=False)
-        self.assertEqual(out, NOT_RUN + '\n')
-        self.assertTrue(path.is_dir(), out)
-        # A POSIX name with no fcntl (no lock can be taken) stops the same way.
+        self.stub('python3', '#!/bin/sh
+exec %s %s "$@"
+' % (sys.executable, self.tmp / 'windows.py'))
         out = self.run_script('--apply', idle=False, KEEP_POSIX_NAME='1')
-        self.assertEqual(out, NOT_RUN + '\n')
+        self.assertEqual(out, NOT_RUN + '
+')
         self.assertTrue(path.is_dir(), out)
-        out = self.merge_with_hook('worktree-done')
+        out = self.merge_with_hook('worktree-done', KEEP_POSIX_NAME='1')
         self.assertIn(NOT_RUN, out)
         self.assertNotIn('Traceback', out)
         self.assertTrue(path.is_dir(), out)
-        close = subprocess.run(['sh', str(SCRIPTS / 'close_worker.sh'), 'done'], cwd=self.main, env=self.env,
-                               capture_output=True, text=True)
+        close = subprocess.run(['sh', str(SCRIPTS / 'close_worker.sh'), 'done'], cwd=self.main,
+                               env=dict(self.env, KEEP_POSIX_NAME='1'), capture_output=True, text=True)
         self.assertEqual(close.returncode, 1, close.stdout + close.stderr)
-        self.assertIn('close_worker: done: worktree kept: ' + NOT_RUN + '\n', close.stdout)
+        self.assertIn('close_worker: done: worktree kept: ' + NOT_RUN + '
+', close.stdout)
         self.assertNotIn('Traceback', close.stdout + close.stderr)
         self.assertTrue(path.is_dir(), close.stdout)
+        out = self.run_script('--apply', idle=False, code=None)
+        self.assertNotIn('Traceback', out)
+        self.assertTrue(path.is_dir(), out)
 
     def test_fcntl_is_imported_only_where_the_gate_lock_is_taken(self):
         # At the top of the script it stopped the import on native Windows Python.

@@ -22,8 +22,9 @@ all):
   d. no merge, rebase, cherry-pick, revert, bisect or sequencer in progress;
   e. not in use: the process listing shows this script itself and no process with its working
      directory inside it (/proc on Linux, lsof elsewhere, its escaped names read back exactly or
-     the listing is not proven; compared case-folded and Unicode-normalised, as macOS names
-     are), no tmux session has its name, the gate's lock is free;
+     the listing is not proven; native Windows: each process's own record of it, its PEB;
+     compared case-folded and Unicode-normalised, as macOS names are), no tmux session has its
+     name, the gate's lock is free (Windows: its file can be opened for writing);
   f. nothing only its git directory holds: removal destroys that directory, so every object id
      in every file of it (both columns of every reflog line, every ref, every pseudo-ref, any
      file this script does not know, in either case), NO_HISTORY excepted, names no object, or
@@ -44,8 +45,10 @@ all):
      included (git's recursive remove of both would delete what is under one, which is not the
      worktree's): no entry on another device than its root, no root on another device than
      its parent folder, none the mount table lists (Linux: /proc/self/mountinfo, which alone
-     shows a bind mount on the same device; elsewhere such a bind mount cannot be seen); the
-     walk does not go into a mount point; no file under its own .claude/worktrees under any
+     shows a bind mount on the same device; elsewhere such a bind mount cannot be seen; on
+     Windows a folder that is a reparse point, a junction or a folder symlink, counts as one:
+     Git for Windows' recursive remove went through a junction and deleted what it pointed at);
+     the walk does not go into a mount point; no file under its own .claude/worktrees under any
      spelling (a worktree inside a worktree, which this script does not judge);
      every other file git does not track is inside a directory .claude/worktree-disposable
      lists, or a regular file whose byte-identical copy is at the same path in the main
@@ -356,7 +359,7 @@ def below_mount(ctx, rel):
         if path in ctx['mounts']:
             return True
         info = os.lstat(path)
-        if info.st_dev != device:
+        if info.st_dev != device or reparse_folder(info):
             return True
         if not stat.S_ISDIR(info.st_mode):
             return False
@@ -395,13 +398,20 @@ def copy_in(ctx, real, rel):
             and filecmp.cmp(os.path.join(real, rel), os.path.join(ctx['main_root'], rel), shallow=False))
 
 
+def reparse_folder(info):
+    """Native Windows: whether an lstat is a folder that is a reparse point (a junction, a
+    folder symlink, a volume mount point). Git for Windows' recursive remove went into a
+    junction and deleted what it pointed at, so the walk treats one as a mount point."""
+    return bool(getattr(info, 'st_file_attributes', 0) & 0x410 == 0x410)
+
+
 def walk(root, mounts=frozenset()):
     """(rel, lstat, is a folder, is a mount point) for every entry under ROOT, the root itself as
     b'', never through a symlink nor into a mount point: an entry MOUNTS lists, or on another
     device than ROOT (the root: than its parent folder). The worktree's own `.git` file is git's,
     not content, unless it is a mount point."""
     top = os.lstat(root)
-    mount = root in mounts or top.st_dev != os.lstat(os.path.dirname(root)).st_dev
+    mount = root in mounts or top.st_dev != os.lstat(os.path.dirname(root)).st_dev or reparse_folder(top)
     yield b'', top, True, mount
     stack = [] if mount else [b'']
     while stack:
@@ -412,7 +422,7 @@ def walk(root, mounts=frozenset()):
                 path = os.path.join(root, rel)
                 info = os.lstat(path)
                 is_dir = stat.S_ISDIR(info.st_mode)
-                mount = path in mounts or info.st_dev != top.st_dev
+                mount = path in mounts or info.st_dev != top.st_dev or reparse_folder(info)
                 if rel == b'.git' and not mount:
                     continue
                 if is_dir and not mount:
@@ -576,6 +586,75 @@ def read_proc(proc):
     return cwds, unseen
 
 
+def windows_cwds():
+    """{pid: cwd} from each process's PEB (its RTL_USER_PROCESS_PARAMETERS.CurrentDirectory, the
+    one Windows keeps and MSYS updates too), and how many processes could not be read: another
+    user's, an elevated or protected one, one that ended while it was read. A 32-bit process is
+    read through its 32-bit PEB. The layout read is the one every Windows since XP keeps."""
+    import ctypes
+    from ctypes import wintypes
+    kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+    ntdll = ctypes.WinDLL('ntdll')
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+    kernel32.ReadProcessMemory.argtypes = (wintypes.HANDLE, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_size_t,
+                                           ctypes.POINTER(ctypes.c_size_t))
+    kernel32.IsWow64Process.argtypes = (wintypes.HANDLE, ctypes.POINTER(wintypes.BOOL))
+    ntdll.NtQueryInformationProcess.argtypes = (wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.ULONG,
+                                                ctypes.c_void_p)
+    size = 4096
+    while True:
+        pids, used = (wintypes.DWORD * size)(), wintypes.DWORD()
+        if not kernel32.K32EnumProcesses(pids, ctypes.sizeof(pids), ctypes.byref(used)):
+            raise Unproven('EnumProcesses failed (Windows error %d)' % ctypes.get_last_error())
+        if used.value < ctypes.sizeof(pids):
+            break
+        size *= 2
+
+    def read(handle, address, length):
+        buffer, done = ctypes.create_string_buffer(length), ctypes.c_size_t()
+        if not kernel32.ReadProcessMemory(handle, ctypes.c_void_p(address), buffer, length, ctypes.byref(done)) \
+                or done.value != length:
+            raise OSError('ReadProcessMemory')
+        return buffer.raw
+
+    cwds, unseen = {}, 0
+    for pid in pids[:used.value // 4]:
+        if pid == 0:  # the idle process: no user space
+            continue
+        handle = kernel32.OpenProcess(0x0410, False, pid)  # QUERY_INFORMATION | VM_READ
+        if not handle:
+            unseen += 1
+            continue
+        try:
+            wow = wintypes.BOOL()
+            if not kernel32.IsWow64Process(handle, ctypes.byref(wow)):
+                raise OSError('IsWow64Process')
+            if wow:
+                peb = ctypes.c_ulonglong()
+                if ntdll.NtQueryInformationProcess(handle, 26, ctypes.byref(peb), 8, None):
+                    raise OSError('ProcessWow64Information')
+                params = int.from_bytes(read(handle, peb.value + 0x10, 4), 'little')
+                length = int.from_bytes(read(handle, params + 0x24, 2), 'little')
+                text = int.from_bytes(read(handle, params + 0x28, 4), 'little')
+            else:
+                basic = (ctypes.c_ulonglong * 6)()  # PROCESS_BASIC_INFORMATION: PebBaseAddress is [1]
+                if ntdll.NtQueryInformationProcess(handle, 0, basic, ctypes.sizeof(basic), None):
+                    raise OSError('ProcessBasicInformation')
+                params = int.from_bytes(read(handle, basic[1] + 0x20, 8), 'little')
+                length = int.from_bytes(read(handle, params + 0x38, 2), 'little')
+                text = int.from_bytes(read(handle, params + 0x40, 8), 'little')
+            cwd = read(handle, text, length).decode('utf-16-le')
+            if len(cwd) > 3:
+                cwd = cwd.rstrip('\\')
+            cwds[str(pid).encode()] = os.fsencode(cwd)
+        except (OSError, UnicodeDecodeError):
+            unseen += 1
+        finally:
+            kernel32.CloseHandle(handle)
+    return cwds, unseen
+
+
 def process_cwds(proc):
     """({pid: cwd}, how many processes could not be inspected, where the listing came from).
     /proc where it lists this process with its own working directory, else lsof on the same
@@ -586,6 +665,11 @@ def process_cwds(proc):
     def sees_me(cwds):
         return me in cwds and os.path.realpath(cwds[me]) == os.path.realpath(here)
 
+    if os.name == 'nt':
+        cwds, unseen = windows_cwds()
+        if not sees_me(cwds):
+            raise Unproven('the Windows process listing does not show this process with its working directory')
+        return cwds, unseen, 'the Windows process table'
     tried = []
     try:
         cwds, unseen = read_proc(proc)
@@ -615,6 +699,8 @@ def process_cwds(proc):
 def fold(path):
     """PATH (bytes) as macOS compares names: Unicode-normalised and case-folded. Where names are
     compared exactly, this matches more, never less, so it can only keep more."""
+    if os.name == 'nt':
+        path = path.replace(b'\\', b'/')
     return unicodedata.normalize('NFC', path.decode('utf-8', 'surrogateescape')).casefold()
 
 
@@ -643,7 +729,28 @@ def tmux_sessions():
 
 
 def lock_held(gitdir):
-    import fcntl  # here, not at the top: native Windows Python has none (main() stops first)
+    if os.name == 'nt':
+        # The gate's holder has its lock file open without write sharing (scripts/check.sh):
+        # a fresh open for writing, which shares everything, fails with a sharing violation.
+        import ctypes
+        from ctypes import wintypes
+        kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+        kernel32.CreateFileW.restype = wintypes.HANDLE
+        kernel32.CreateFileW.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, ctypes.c_void_p,
+                                         wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE)
+        kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+        path = os.path.join(gitdir, b'check.lock')
+        handle = kernel32.CreateFileW(os.fsdecode(path), 0x40000000, 7, None, 3, 0x00200000, None)
+        if handle in (None, wintypes.HANDLE(-1).value):
+            error = ctypes.get_last_error()
+            if error in (2, 3):  # no lock file, no folder: no gate ever ran here
+                return False
+            if error == 32:
+                return True
+            raise Unproven('cannot open the gate lock %s to test it (Windows error %d)' % (show(path), error))
+        kernel32.CloseHandle(handle)
+        return False
+    import fcntl  # here, not at the top: native Windows Python has none
     try:
         fd = os.open(os.path.join(gitdir, b'check.lock'), os.O_RDWR)
     except FileNotFoundError:
@@ -1110,9 +1217,10 @@ def main():
         parser.error('--no-quiet is accepted only with --only: the post-merge hook never lifts the quiet period')
     if args.only is not None and (args.only in ('', '.', '..') or '/' in args.only):
         parser.error('--only takes the name of one folder under .claude/worktrees')
-    # Native Windows Python: no fcntl for the gate's lock, no /proc and no lsof for liveness. A
-    # worktree is removed only on proof, and none can be had here: one line, nothing touched.
-    if os.name != 'posix' or importlib.util.find_spec('fcntl') is None:
+    # Native Windows reads the gate's lock and the processes' working directories its own way
+    # (lock_held, windows_cwds). Any other host without fcntl has neither proof: one line,
+    # nothing touched.
+    if os.name != 'nt' and (os.name != 'posix' or importlib.util.find_spec('fcntl') is None):
         say('clean_worktrees: NOT RUN on this platform: liveness cannot be proven here (no /proc, '
             'no lsof); every worktree kept')
         return 0
@@ -1164,7 +1272,7 @@ def main():
     gone = []
     for record in records:
         shown = os.path.realpath(record['worktree'])
-        if shown.startswith(main_root + b'/'):
+        if shown.startswith(main_root + os.sep.encode()):
             shown = shown[len(main_root) + 1:]
         try:
             reasons, facts = audit(record, ctx)

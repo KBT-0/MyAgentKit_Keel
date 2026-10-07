@@ -60,6 +60,30 @@ if args[0] == 'kill-session':
         f.write(os.environ.get('CLOSE_LINGER', '0'))
 '''
 
+# Native Windows: the session lister (KIT_PS) prints "<pid> <command line>" for each claude.exe,
+# from the file `claude-procs` in the state folder; taskkill removes the pid it is given (its
+# tree), and logs the call. CLOSE_PS_ERROR: a lister that cannot answer.
+PS = r"""#!/usr/bin/env python3
+import os, sys
+if os.environ.get('CLOSE_PS_ERROR'):
+    sys.exit(os.environ['CLOSE_PS_ERROR'])
+path = os.path.join(os.environ['CLOSE_STATE'], 'claude-procs')
+if os.path.exists(path):
+    sys.stdout.write(open(path).read().replace('\n', '\r\n'))
+"""
+TASKKILL = r"""#!/usr/bin/env python3
+import os, sys
+st = os.environ['CLOSE_STATE']
+with open(os.path.join(st, 'taskkill.log'), 'a') as log:
+    log.write(repr(sys.argv[1:]) + '\n')
+pid = sys.argv[sys.argv.index('/PID') + 1]
+path = os.path.join(st, 'claude-procs')
+if os.environ.get('CLOSE_TASKKILL_IGNORED'):
+    sys.exit(0)
+lines = open(path).read().splitlines() if os.path.exists(path) else []
+open(path, 'w').write(''.join(line + '\n' for line in lines if line.split(' ')[0] != pid))
+"""
+
 
 class CloseWorkerTests(unittest.TestCase):
     def setUp(self):
@@ -135,6 +159,44 @@ class CloseWorkerTests(unittest.TestCase):
         self.assertIn('close_worker: w1: branch worktree-w1 is kept, never deleted here; ', out)
         self.assertIn('`git branch --merged` lists the merged branches', out)
         self.assertNotIn('FAILED', out)
+
+    def windows(self, *procs):
+        """Native Windows as close_worker.sh sees it: uname says MINGW, no tmux, PROCS (lines of
+        "<pid> <command line>") the claude.exe processes running."""
+        for name, body in (('uname', '#!/bin/sh\necho MINGW64_NT-10.0-26200\n'), ('ps-stub', PS),
+                           ('taskkill', TASKKILL)):
+            (self.tmp / 'bin' / name).write_text(body)
+            (self.tmp / 'bin' / name).chmod(0o755)
+        (self.tmp / 'claude-procs').write_text(''.join(line + '\n' for line in procs))
+        return {'KIT_PS': str(self.tmp / 'bin/ps-stub')}
+
+    def test_on_native_windows_the_claude_session_is_ended_and_the_worktree_removed(self):
+        path = self.worker('w1', session=False)
+        env = self.windows('100 C:\\npm\\claude.exe "Read \'b.md\' and follow it." -n w1 --model opus',
+                           '200 C:\\npm\\claude.exe -n w10', '300 C:\\npm\\claude.exe --resume x')
+        out = self.close('w1', **env)
+        kills = (self.tmp / 'taskkill.log').read_text().splitlines()
+        self.assertEqual(kills, ["['/PID', '100', '/T', '/F']"], out)
+        self.assertIn('close_worker: w1: Claude Code session ended (process 100); its Windows Terminal tab '
+                      'closes by itself\n', out)
+        self.assertFalse(path.exists(), out)
+        self.assertIn('close_worker: w1: worktree removed through the audit', out)
+        self.assertEqual(self.calls(), [], 'tmux was called on native Windows')
+        out = self.close('w1', **env)
+        self.assertIn('close_worker: w1: no Claude Code session named w1 runs; nothing to end\n', out)
+
+    def test_on_native_windows_a_session_that_survives_or_a_lister_that_fails_fails_the_close(self):
+        path = self.worker('w1', session=False)
+        env = self.windows('100 claude.exe -n w1')
+        out = self.close('--dry-run', 'w1', **env)
+        self.assertIn('close_worker: w1: dry run: would end the Claude Code session w1 (process 100', out)
+        self.assertFalse((self.tmp / 'taskkill.log').exists(), out)
+        out = self.close('w1', code=1, CLOSE_TASKKILL_IGNORED='1', **env)
+        self.assertIn('close_worker: w1: the Claude Code session still runs after taskkill (process 100)', out)
+        self.assertTrue(path.is_dir(), out)
+        out = self.close('w1', code=1, CLOSE_PS_ERROR='Get-CimInstance: access denied', **env)
+        self.assertIn('close_worker: FAILED: w1: could not list the Claude Code sessions, so w1 may still run: '
+                      'Get-CimInstance: access denied', out)
 
     def test_a_missing_session_or_worktree_is_reported_not_an_error(self):
         out = self.close('nobody')

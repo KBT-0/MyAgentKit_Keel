@@ -218,10 +218,25 @@ class SpawnWorkerTests(unittest.TestCase):
         brief = self.cwd / 'brief; part two.md'
         brief.write_text('A brief.\n')
         tools = 'Read,Bash(a; b)'
+        (self.bin / 'ps-stub').write_text('#!/bin/sh\nprintf "7 claude.exe -n w2\\r\\n"\n')
+        (self.bin / 'ps-stub').chmod(0o755)
+        ps = str(self.bin / 'ps-stub')
         result = self.spawn('w1', str(brief), '--model', 'm', '--allowed-tools', tools,
-                            KIT_WT=str(self.bin / 'wt-tab'))
+                            KIT_WT=str(self.bin / 'wt-tab'), KIT_PS=ps)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn('Windows Terminal tab', result.stdout)
+        self.assertIn('scripts/close_worker.sh w1', result.stdout)
+        # The tab ends with `exit 0`, never as claude's own exit: Windows Terminal keeps a tab whose
+        # command ended nonzero open, as claude does when close_worker.sh ends it.
+        tab = json.loads((self.state / 'wt.json').read_text())[-1]
+        self.assertTrue(tab.endswith('\\; exit 0'), tab)
+        self.assertNotIn('exec claude', tab)
+        # A name a running session already has is refused before any tab opens.
+        (self.state / 'wt.json').unlink()
+        result = self.spawn('w2', str(brief), KIT_WT=str(self.bin / 'wt-tab'), KIT_PS=ps)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("a Claude Code session named 'w2' already runs (process 7)", result.stderr)
+        self.assertFalse((self.state / 'wt.json').exists(), 'a tab opened for a name already running')
         launched = self.launched()
         self.assertIsNotNone(launched, result.stderr)
         self.assertEqual(launched['argv'], [INSTRUCTION % shq(self.physical(brief)), '-n', 'w1',
