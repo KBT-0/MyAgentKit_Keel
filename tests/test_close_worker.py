@@ -193,7 +193,8 @@ class CloseWorkerTests(unittest.TestCase):
         self.assertIn('close_worker: w1: dry run: would end the Claude Code session w1 (process 100', out)
         self.assertFalse((self.tmp / 'taskkill.log').exists(), out)
         out = self.close('w1', code=1, CLOSE_TASKKILL_IGNORED='1', **env)
-        self.assertIn('close_worker: w1: the Claude Code session still runs after taskkill (process 100)', out)
+        self.assertIn('close_worker: w1: the Claude Code session still runs after taskkill (process 100); its worktree is not touched', out)
+        self.assertNotIn('clean_worktrees', out)
         self.assertTrue(path.is_dir(), out)
         out = self.close('w1', code=1, CLOSE_PS_ERROR='Get-CimInstance: access denied', **env)
         self.assertIn('close_worker: FAILED: w1: could not list the Claude Code sessions, so w1 may still run: '

@@ -106,7 +106,9 @@ for name; do
       if ! left=$(sessions "$name"); then
         fail "$name: could not establish that the session ended: $err"
       elif [ -n "$left" ]; then
-        fail "$name: the Claude Code session still runs after taskkill (process $left); the audit below keeps its worktree"
+        # Not audited: a session still running is the one thing the close exists to rule out.
+        fail "$name: the Claude Code session still runs after taskkill (process $left); its worktree is not touched"
+        continue
       else
         say "$name: Claude Code session ended (process $pids); its Windows Terminal tab closes by itself"
       fi
