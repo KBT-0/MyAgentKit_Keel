@@ -376,8 +376,8 @@ itself).
 every text file out with CRLF; `sh` reads `#!/bin/sh<CR>` as a bad interpreter and
 `set -eu<CR>` as an invalid option, so on such a clone the gate, the hooks, `doctor.sh` and
 the kit's own `sync-kit.sh` could not start, and the upgrade checklist sent the owner to run
-them. A `.gitattributes` rule `*.sh text eol=lf` and `.githooks/* text eol=lf` overrides
-autocrlf per path, so bootstrap installs one and the kit carries one. Proof: a bootstrapped
+them. A `.gitattributes` rule `*.sh text eol=lf` (and one for each of the gate's hooks)
+overrides autocrlf per path, so bootstrap installs one and the kit carries one. Proof: a bootstrapped
 project and the kit itself, each committed and cloned with `core.autocrlf=true`, checked
 their scripts and hooks out with CRLF without the rule and with LF with it (a Markdown file in
 the same clone proves the conversion was in force). An existing clone does not heal on pull:
@@ -407,6 +407,40 @@ said "the review changes it" also for a path the review does not change but that
 proven unchanged LFS file, and told the owner to remove an attribute a historical path no
 longer had; it now says which of the two applies, and that the attribute is to be removed
 only where the checkout still has it.
+
+**A fifth review pass, on all of the above.** It rejected the round with three High and one
+Medium finding, each fixed once more:
+
+- *Bootstrap left a project's own `.gitattributes` alone.* An existing repository with owner
+  rules kept them and got no line-ending rule at all, while bootstrap succeeded and stamped
+  the version; `--force` would have replaced the owner's attributes whole. Bootstrap now
+  appends the rules the file lacks, never replaces it, and adds nothing a second time; a
+  `.gitattributes` it may not write (a symlink) stops it like a gate file. The clone test now
+  also bootstraps a project with its own `.gitattributes`, twice, the second with `--force`;
+  it was red against the earlier bootstrap.
+- *The lock was picked by whether `import fcntl` worked.* Python searches the checkout and
+  `PYTHONPATH` first, so a `fcntl.py` there sent native Windows down the POSIX path, and a
+  stand-in that always "locked" let two gates run; a `secrets.py` or `ctypes.py` there ran
+  inside the holder. The host (`os.name`) now picks the lock and both lock programs run with
+  `python3 -I`. Two shipped cases: on every host a nested run with a stand-in `fcntl.py` on
+  `PYTHONPATH` must pass without importing it (red on WSL with the probe's `-I` removed, and
+  on native Windows with the earlier lock programs), and on native Windows the holder must
+  import neither a stand-in `fcntl.py` nor `secrets.py` (red with the earlier programs, and
+  with only the holder's `-I` removed).
+- *The CRLF rewrite trusted every path it was given.* The loop wrote through a temporary at
+  a fixed name (an owner's `x.sh.lf` was overwritten and deleted), followed a tracked symlink
+  out of the repository, deleted a lone CR along with the line ends, split names at a newline,
+  and treated every file in `.githooks` as text. The snippet now reads `git ls-files -z`,
+  rewrites regular files in place with Python, replacing only CRLF, and the rule names the
+  gate's four hooks. Red against the earlier snippet: the newline name stayed CRLF, the lone
+  CR was gone, and the file behind the symlink was rewritten.
+- *`git add --renormalize .` restaged unrelated files* whose blobs predate an owner's text or
+  filter rule, and they went into the upgrade commit. It now renormalizes only the files the
+  rules name; the test holds a CRLF `notes.txt` under a later `*.txt text` rule, which the
+  earlier snippet staged.
+
+Two Low findings were fixed too: `doctor.sh` takes `KIT_WT` as `spawn_worker.sh` does, and
+the overlay README and the script's header say what does not apply on native Windows.
 
 ### 2026-10-06 — native Windows: the gate lock, and Git LFS beside a review
 

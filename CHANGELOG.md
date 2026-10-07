@@ -35,25 +35,32 @@ change is safe is in `RESEARCH_LOG.md` (2026-10-06 and 2026-10-07).
   the `C:/` form a native program receives (`cygpath -m`); a `cygpath` that is merely on a
   POSIX `PATH` is never run. A linked worktree's `C:/` git path is read as absolute. The POSIX
   lock is unchanged. `python3` without `fcntl` on any other system still fails `FAIL [lock]`
-  by name. `docs/DEV_SETUP.md` and `docs/GOTCHAS.md` say so.
-- **`--self-test` proves the Windows lock.** Ten new cases on native Windows: a nested run
+  by name. The host (`os.name`) picks the lock, never whether `import fcntl` works, and both
+  lock programs run isolated (`python3 -I`), so a `fcntl.py` or another stand-in module in
+  the checkout or on `PYTHONPATH` is never imported. `docs/DEV_SETUP.md` and
+  `docs/GOTCHAS.md` say so.
+- **`--self-test` proves the Windows lock.** Eleven new cases on native Windows: a nested run
   refuses a writable handle on another file, a read-only handle on the held lock file, a
   write handle while nothing holds the lock, a fresh open refused for a reason other than the
   lock (a read-only file), and a file id equal to the lock's in its volume and first 64 bits
   only; a volume without `FILE_ID_INFO` fails closed; the lock refuses a reparse point at its
   path (set with a tag any user may set, so the case never needs the symlink privilege and is
   never skipped); a gate killed by a signal never exits 0; the holder passes a failing gate's
-  exit status on; and a killed lock holder leaves the lock with the gate it started. Each case
+  exit status on; a killed lock holder leaves the lock with the gate it started; and the
+  holder imports no stand-in `fcntl.py` or `secrets.py` from `PYTHONPATH`. Each case
   asserts its exit status as well as its message, and the gate's throwaway copy passes right
   after it holds the lock, so a guard that prints its refusal and then carries on fails its
-  case. On POSIX, a `cygpath` on `PATH` is never run. The Windows cases print one `skip` line
-  on POSIX, and the POSIX case one on MSYS, MINGW and Cygwin.
+  case. On POSIX, a `cygpath` on `PATH` is never run. On every host, a nested run with a
+  stand-in `fcntl.py` on `PYTHONPATH` passes without importing it. The Windows cases print one
+  `skip` line on POSIX, and the POSIX case one on MSYS, MINGW and Cygwin.
 - **Shell scripts and hooks check out with LF everywhere.** Git for Windows' default
   `core.autocrlf=true` checked them out with CRLF, which `sh` cannot run, so on such a clone
   the gate, the hooks and `doctor.sh` could not start. Bootstrap now installs a
-  `.gitattributes` with `*.sh text eol=lf` and `.githooks/* text eol=lf`, and the kit's own
-  clone carries the same rule for its scripts. An existing project adds it by hand (item 1
-  below); `docs/DEV_SETUP.md` section 1 says why.
+  `.gitattributes` with `*.sh text eol=lf` and the same for each of the gate's four hooks by
+  name, and the kit's own clone carries the rule for its scripts. A project that already has
+  a `.gitattributes` keeps it: bootstrap appends the rules it lacks, and never replaces the
+  file, `--force` included. An existing project adds them by hand (item 1 below);
+  `docs/DEV_SETUP.md` section 1 says why.
 - **`spawn_worker.sh` on native Windows.** There is no tmux there, and the script stopped
   with `tmux is not installed`. On Git for Windows' `sh`, MSYS2 and Cygwin the worker now opens
   as a Windows Terminal tab (`wt.exe`, or the launcher `KIT_WT` names), not a tmux session,
@@ -62,8 +69,8 @@ change is safe is in `RESEARCH_LOG.md` (2026-10-06 and 2026-10-07).
   is escaped as `\;`, because `wt.exe` splits its command line there even inside quotes and
   cut the instruction in two. Nothing can read the tab, so the start-up dialog check, `--batch`,
   `show_workers.sh`, `watch_workers.sh` and `close_worker.sh` do not apply there: watch the
-  tab, wait for the result file, and close the tab by hand. `doctor.sh` asks for `wt.exe`
-  there instead of tmux.
+  tab, wait for the result file, and close the tab by hand. `doctor.sh` asks for `wt.exe` (or
+  `KIT_WT`) there instead of tmux.
 - **`review.sh` and Git LFS.** The v0.9 filter refusal checked every path in the checkout,
   not the paths a review changes, and `git lfs install` sets `filter.lfs.clean` globally:
   one LFS file anywhere refused every review. A filtered path the review does not change now
@@ -92,20 +99,29 @@ Work from the project's root, top to bottom. `KIT` is the kit checkout you run `
 from, and `00581dd` is the kit's v0.9 commit.
 
 1. **ACTION:** Line endings first, before any script of the project runs: add the kit's
-   rules to the project's `.gitattributes` (created if absent), rewrite each shell script and
-   hook that this clone checked out with CRLF, then renormalize the index, from a committed
-   project:
+   rules to the project's `.gitattributes` (created if absent), turn each CRLF into LF in
+   the shell scripts and hooks they name (regular files only: a symlink is left alone, and a
+   lone CR is kept), then renormalize those files alone, from a committed project:
    ```sh
    { echo; cat "$KIT/core/.gitattributes"; } >> .gitattributes
-   git ls-files -- '*.sh' '.githooks/*' | while IFS= read -r f; do
-     tr -d '\r' < "$f" > "$f.lf" && cat "$f.lf" > "$f" && rm -f "$f.lf"
-   done
-   git add --renormalize . && git add .gitattributes
+   set -- '*.sh' .githooks/pre-commit .githooks/pre-merge-commit .githooks/commit-msg .githooks/post-merge
+   git ls-files -z -- "$@" | python3 -I -c 'if 1:
+       import os, stat, sys
+       for name in sys.stdin.buffer.read().split(b"\0"):
+           if name and stat.S_ISREG(os.lstat(name).st_mode):
+               with open(name, "r+b") as script:
+                   data = script.read()
+                   if b"\r\n" in data:
+                       script.seek(0)
+                       script.write(data.replace(b"\r\n", b"\n"))
+                       script.truncate()'
+   git ls-files -z -- "$@" | xargs -0 git add --renormalize -- && git add .gitattributes
    ```
    `git status` then lists `.gitattributes`, and any script the index held with CRLF as
    modified; both go into the upgrade commit (item 5). Every other clone on Windows runs the
-   loop in `docs/DEV_SETUP.md` section 1 once after it pulls that commit: a pull does not
-   check out again a file it did not change, so its scripts stay CRLF until then.
+   same lines but the first once after it pulls that commit (`docs/DEV_SETUP.md` section 1):
+   a pull does not check out again a file it did not change, so its scripts stay CRLF until
+   then.
 2. **ACTION:** Copy `claude_bridge.py` and `test_claude_bridge.py` whole from
    `$KIT/core/scripts/` into `scripts/`, replacing yours (they hold no project content). If
    v0.9's item 10 sent this project to the manual review template only because of Git LFS,
@@ -126,7 +142,7 @@ from, and `00581dd` is the kit's v0.9 commit.
    the self-test cannot pass yet: its review case fails because `review.sh` needs POSIX
    signals (above). There, run `./scripts/check.sh` and `./scripts/check.sh --self-test` from
    Git for Windows' `sh` with the Windows `python3` and expect exactly this: `CHECK: PASS`;
-   in the self-test, `ok` for every case including the ten Windows lock cases, except
+   in the self-test, `ok` for every case including the eleven Windows lock cases, except
    `FAIL — review adapter negative tests failed or did not run` with the review tests' own
    output, the line `skip — a stray cygpath on a POSIX PATH` (a POSIX-only case), and a
    `skip` the project's own setup prints (the commit-msg hook when `AGENTS.md` has no

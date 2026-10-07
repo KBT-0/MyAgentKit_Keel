@@ -28,17 +28,27 @@ Agents must not use it (`AGENTS.md`).
 
 **Line endings.** `sh` cannot run a script with CRLF line endings, and Git for Windows'
 default `core.autocrlf=true` checks text files out with CRLF: on such a clone the gate, the
-hooks and `doctor.sh` could not start. `.gitattributes` holds `*.sh text eol=lf` and
-`.githooks/* text eol=lf`, so every shell script and hook checks out with LF whatever a
-clone's autocrlf says. Keep those two lines. A clone made before they were committed keeps
-its CRLF copies, because a pull does not check out again a file it did not change, until
-they are rewritten once, with no uncommitted change to them (each is staged again, so that
-`git status` does not list it as modified for its new size):
+hooks and `doctor.sh` could not start. `.gitattributes` holds `*.sh text eol=lf` and one
+`text eol=lf` line for each of the gate's hooks, so they check out with LF whatever a
+clone's autocrlf says. Keep those lines. A clone made before they were committed keeps its
+CRLF copies, because a pull does not check out again a file it did not change, until they
+are rewritten once, with no uncommitted change to them: each CRLF becomes LF in a regular
+file (a symlink is left alone, a lone CR kept), and each file is staged again so that `git
+status` does not list it as modified for its new size.
 
 ```sh
-git ls-files -- '*.sh' '.githooks/*' | while IFS= read -r f; do
-  tr -d '\r' < "$f" > "$f.lf" && cat "$f.lf" > "$f" && rm -f "$f.lf" && git add -- "$f"
-done
+set -- '*.sh' .githooks/pre-commit .githooks/pre-merge-commit .githooks/commit-msg .githooks/post-merge
+git ls-files -z -- "$@" | python3 -I -c 'if 1:
+    import os, stat, sys
+    for name in sys.stdin.buffer.read().split(b"\0"):
+        if name and stat.S_ISREG(os.lstat(name).st_mode):
+            with open(name, "r+b") as script:
+                data = script.read()
+                if b"\r\n" in data:
+                    script.seek(0)
+                    script.write(data.replace(b"\r\n", b"\n"))
+                    script.truncate()'
+git ls-files -z -- "$@" | xargs -0 git add --renormalize --
 ```
 
 `./scripts/doctor.sh` names any script still checked out with CRLF.

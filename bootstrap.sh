@@ -182,6 +182,25 @@ copy_tree() {
       printf '%s\n' "$dest" >> "$skiplist"
       continue
     fi
+    # The project's own .gitattributes is merged, never left alone or replaced: one that was
+    # left alone let bootstrap succeed without the line-ending rules the gate needs to start on
+    # a CRLF clone, and --force replaced the owner's attributes whole. A rule it already holds
+    # is not added again.
+    if [ "$dest" = .gitattributes ] && [ -f "$target/$dest" ]; then
+      missing=$(grep -v -e '^#' -e '^$' "$src/$rel" | while IFS= read -r rule; do
+                  grep -qxF -e "$rule" "$target/$dest" || printf '%s\n' "$rule"; done)
+      if [ -n "$missing" ]; then
+        put "$target/$dest" <<EOF
+$(cat "$target/$dest")
+
+# Added by MyAgentKit_Keel's bootstrap: shell scripts and the gate's hooks check out with LF
+# whatever a clone's core.autocrlf says (docs/DEV_SETUP.md, section 1).
+$missing
+EOF
+        printf '%s\n' "bootstrap: added the kit's line-ending rules to the project's own $dest"
+      fi
+      continue
+    fi
     if [ -e "$target/$dest" ] && [ "$force" -eq 0 ]; then
       cmp -s "$src/$rel" "$target/$dest" && continue
       printf '%s\n' "$dest" >> "$skiplist"
@@ -251,7 +270,7 @@ fi
 # The stop comes BEFORE the version stamp, the note and the hooks wiring: an earlier
 # version stamped .kit-version first and then refused — after which sync-kit.sh greeted the
 # gateless project with "already current. Nothing to do."
-gates=$(grep -E '^(scripts/check\.sh|\.githooks/(pre-commit|pre-merge-commit|commit-msg))$' "$skiplist" 2>/dev/null |
+gates=$(grep -E '^(scripts/check\.sh|\.githooks/(pre-commit|pre-merge-commit|commit-msg)|\.gitattributes)$' "$skiplist" 2>/dev/null |
   while IFS= read -r g; do
     why=$(blocked "$g")
     printf '%s%s\n' "$g" "${why:+ ($why)}"; done)

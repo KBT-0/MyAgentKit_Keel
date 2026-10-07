@@ -391,41 +391,65 @@ class SyncKitTests(unittest.TestCase):
         # A v0.9 project cloned with Git for Windows' default core.autocrlf=true has CRLF
         # scripts and hooks, which sh cannot run. Run the real v0.10 snippet there: afterwards
         # each runs, the index holds LF (a script committed with CRLF is renormalized), and the
-        # only other change is .gitattributes.
+        # only other staged change is .gitattributes. It touches nothing else: not a file a
+        # tracked symlink points to, not an owner's file at a temporary's name, not a lone CR,
+        # not an unrelated file an older attribute would renormalize; and a name holding a
+        # newline is fixed like any other.
+        import textwrap
         text = (ROOT / 'CHANGELOG.md').read_text()
         block = next(part for part in text.split('```sh\n')[1:]
                      if 'core/.gitattributes' in part.split('```')[0])
-        snippet = '\n'.join(line.strip() for line in block.split('```')[0].splitlines())
+        snippet = textwrap.dedent(block.split('```')[0])
         env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1', KIT=str(ROOT))
         git = lambda repo, *args: subprocess.run(['git', *args], cwd=repo, check=True, capture_output=True,
-                                                 text=True, env=env).stdout
+                                                 env=env).stdout
+        commit = lambda message: git(project, '-c', 'user.name=F', '-c', 'user.email=f@example.invalid',
+                                     'commit', '-qm', message)
         with tempfile.TemporaryDirectory() as tmp:
-            project, clone = Path(tmp) / 'project', Path(tmp) / 'clone'
+            project, clone, outside = Path(tmp) / 'project', Path(tmp) / 'clone', Path(tmp) / 'outside.sh'
             (project / 'scripts').mkdir(parents=True)
             (project / '.githooks').mkdir()
-            (project / 'scripts/check.sh').write_bytes(b'#!/bin/sh\nset -eu\necho check ran\n')
-            (project / 'scripts/old.sh').write_bytes(b'#!/bin/sh\r\nset -eu\r\necho old ran\r\n')
-            (project / '.githooks/pre-commit').write_bytes(b'#!/bin/sh\nset -eu\necho hook ran\n')
+            scripts = {'scripts/check.sh': b'#!/bin/sh\nset -eu\necho check ran\n',
+                       'scripts/old.sh': b'#!/bin/sh\r\nset -eu\r\necho old ran\r\n',
+                       'scripts/two\nlines.sh': b'#!/bin/sh\necho two ran\n',
+                       'scripts/lone.sh': b'#!/bin/sh\n# a lone \r stays\necho lone ran\n',
+                       '.githooks/pre-commit': b'#!/bin/sh\nset -eu\necho hook ran\n'}
+            for path, body in scripts.items():
+                (project / path).write_bytes(body)
+            (project / 'scripts/link.sh').symlink_to('../../outside.sh')
+            outside.write_bytes(b'#!/bin/sh\r\necho outside\r\n')
+            (project / 'notes.txt').write_bytes(b'one\r\ntwo\r\n')
             (project / '.gitattributes').write_bytes(b'*.bin binary')
             git(project, 'init', '-q')
             git(project, 'add', '-A')
-            git(project, '-c', 'user.name=F', '-c', 'user.email=f@example.invalid', 'commit', '-qm', 'v0.9')
+            commit('v0.9')
+            # A text rule added after notes.txt was committed with CRLF: renormalizing everything
+            # would restage it.
+            (project / '.gitattributes').write_bytes(b'*.bin binary\n*.txt text')
+            git(project, 'add', '.gitattributes')
+            commit('notes are text')
+            self.assertIn(b'\r\n', git(project, 'show', 'HEAD:notes.txt'))
             git(tmp, '-c', 'core.autocrlf=true', 'clone', '-q', str(project), str(clone))
             git(clone, 'config', 'core.autocrlf', 'true')
             self.assertIn(b'\r\n', (clone / 'scripts/check.sh').read_bytes())
+            (clone / 'scripts/check.sh.lf').write_bytes(b'mine\n')
             result = subprocess.run(['sh', '-c', snippet], cwd=clone, capture_output=True, text=True, env=env)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            for path, said in (('scripts/check.sh', 'check ran'), ('scripts/old.sh', 'old ran'),
-                               ('.githooks/pre-commit', 'hook ran')):
+            for path, body in scripts.items():
                 with self.subTest(path=path):
-                    self.assertNotIn(b'\r', (clone / path).read_bytes())
-                    self.assertNotIn(b'\r', subprocess.run(['git', 'show', ':' + path], cwd=clone, check=True,
-                                                           capture_output=True, env=env).stdout)
+                    self.assertEqual((clone / path).read_bytes(), body.replace(b'\r\n', b'\n'))
+                    self.assertEqual(git(clone, 'show', ':' + path), body.replace(b'\r\n', b'\n'))
                     ran = subprocess.run(['sh', path], cwd=clone, capture_output=True, text=True)
-                    self.assertEqual((ran.returncode, ran.stdout), (0, said + '\n'), ran.stderr)
-            self.assertEqual(sorted(git(clone, 'status', '--porcelain').splitlines()),
-                             ['M  .gitattributes', 'M  scripts/old.sh'])
-            self.assertIn(b'*.bin binary\n', (clone / '.gitattributes').read_bytes())
+                    self.assertEqual(ran.returncode, 0, ran.stderr)
+                    self.assertTrue(ran.stdout.endswith(' ran\n'), ran.stdout)
+            self.assertEqual(outside.read_bytes(), b'#!/bin/sh\r\necho outside\r\n')
+            self.assertTrue((clone / 'scripts/link.sh').is_symlink())
+            self.assertEqual((clone / 'scripts/check.sh.lf').read_bytes(), b'mine\n')
+            self.assertEqual(sorted(git(clone, 'diff', '--cached', '--name-only', '-z').split(b'\0')[:-1]),
+                             [b'.gitattributes', b'scripts/old.sh'])
+            self.assertIn(b'*.txt text\n', (clone / '.gitattributes').read_bytes())
+            git = lambda repo, *args: subprocess.run(['git', *args], cwd=repo, check=True, capture_output=True,
+                                                     text=True, env=env).stdout
             self.assertEqual(git(clone, 'check-attr', 'eol', '--', 'scripts/check.sh', '.githooks/pre-commit'),
                              'scripts/check.sh: eol: lf\n.githooks/pre-commit: eol: lf\n')
 

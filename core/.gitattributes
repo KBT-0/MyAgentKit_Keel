@@ -1,6 +1,10 @@
 # Line endings the gate needs. sh cannot run a script with CRLF line endings, and Git for
 # Windows' default core.autocrlf=true checks text files out with CRLF, so a clone there had
-# a gate, hooks and doctor.sh that could not start. Every shell script and git hook checks out
-# with LF on every platform, whatever a clone's autocrlf says (docs/DEV_SETUP.md, section 1).
+# a gate, hooks and doctor.sh that could not start. Every shell script and the kit's git hooks
+# check out with LF on every platform, whatever a clone's autocrlf says (docs/DEV_SETUP.md,
+# section 1). The hooks are named one by one: another file in .githooks may not be text.
 *.sh text eol=lf
-.githooks/* text eol=lf
+.githooks/pre-commit text eol=lf
+.githooks/pre-merge-commit text eol=lf
+.githooks/commit-msg text eol=lf
+.githooks/post-merge text eol=lf

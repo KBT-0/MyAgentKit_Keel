@@ -435,17 +435,26 @@ class BootstrapTests(unittest.TestCase):
     def test_scripts_and_hooks_check_out_with_lf_under_autocrlf(self):
         # Git for Windows' default core.autocrlf=true checked every text file out with CRLF,
         # and sh cannot run a CRLF script: a project's gate, hooks and doctor.sh, and the kit's
-        # own sync-kit.sh, could not start. Both a bootstrapped project and the kit are cloned
-        # that way here; a Markdown file proves the conversion was in force.
+        # own sync-kit.sh, could not start. A bootstrapped project, one whose own .gitattributes
+        # bootstrap found (it was left alone, and the rules never arrived; --force replaced it
+        # whole), and the kit are cloned that way here; a Markdown file proves the conversion
+        # was in force.
         root = Path(__file__).resolve().parents[1]
         env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1')
         with tempfile.TemporaryDirectory() as tmp:
-            project, kit = Path(tmp) / 'project', Path(tmp) / 'kit'
-            result = subprocess.run(['sh', str(root / 'bootstrap.sh'), str(project)],
-                                    capture_output=True, text=True, env=env)
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            project, owned, kit = Path(tmp) / 'project', Path(tmp) / 'owned', Path(tmp) / 'kit'
+            owned.mkdir()
+            (owned / '.gitattributes').write_bytes(b'*.png binary')
+            for target, *flags in ((project,), (owned,), (owned, '--force')):
+                result = subprocess.run(['sh', str(root / 'bootstrap.sh'), str(target), *flags],
+                                        capture_output=True, text=True, env=env)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            # The owner's rule kept, the kit's added once, not again on a second run.
+            attributes = (owned / '.gitattributes').read_text()
+            self.assertTrue(attributes.startswith('*.png binary\n'), attributes)
+            self.assertEqual(attributes.count('*.sh text eol=lf'), 1, attributes)
             shutil.copytree(root, kit, ignore=shutil.ignore_patterns('.git', '__pycache__'))
-            for repo, prose in ((project, 'AGENTS.md'), (kit, 'README.md')):
+            for repo, prose in ((project, 'AGENTS.md'), (owned, 'AGENTS.md'), (kit, 'README.md')):
                 with self.subTest(repo=repo.name):
                     for args in (['init', '-q'], ['add', '-A'],
                                  ['-c', 'user.name=F', '-c', 'user.email=f@example.invalid',
