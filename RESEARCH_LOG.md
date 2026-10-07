@@ -500,6 +500,35 @@ findings, each fixed once.
   still passes with `SIG_IGN` in place of the handler: on this host the two are alike (above),
   so the case proves that the holder survives Ctrl-C, not which of the two makes it survive.
 
+**An eighth review pass, and the threat model it lacked.** It confirmed those three fixes and
+found two High and three Medium findings, each an "adjacent path" next to an earlier fix. That
+is the pattern this log already names: no written threat model, so the loop had no edge. The
+lead wrote one before the next round (`docs/UPDATING.md`, "The gate, `review.sh` and the
+upgrade checklists"). In scope: mistakes and accidents of the owner and the agents. Out of
+scope: a process changing the tree or the Git configuration while a gate or a review runs, and
+hostile files planted by anyone but the owner; either could edit the scripts instead.
+
+- *A filter attribute removed while `review.sh` collects its filtered paths, and restored
+  before the diff,* could hide an LFS path's raw change. This needs a concurrent, timed
+  change, so it is out of scope. It is recorded as the threat model's example, not fixed.
+- *A Ctrl-C between the holder's handler and the gate's creation was swallowed,* and the gate
+  then ran and could pass. The handler now records the interrupt and is installed before the
+  holder waits for the lock. A recorded interrupt ends the wait, starts no gate and makes the
+  status 130. A new case holds the lock, sends Ctrl-C while the holder waits, then frees the
+  lock. The holder must exit 130 and no gate may run. With a handler that records nothing, the
+  gate ran and the holder exited 0. With the earlier holder, Ctrl-C killed it while it waited
+  (0xC000013A).
+- *The checklist's first command could be a CRLF script.* A v0.9 kit clone pulled forward on
+  Windows keeps `sync-kit.sh` CRLF. The checklist and `DEV_SETUP.md` now require a fresh, full
+  clone of the kit; a text test holds that.
+- *Item 1 appended through a symlinked `.gitattributes`.* It now stops unless the file is absent
+  or regular. The test was red against the earlier snippet: the outside file was changed and
+  a folder there was not refused.
+- *Item 3 wrote its v0.9 copies at fixed names in the project, and went on after a failed
+  read.* The copies now go to a `mktemp -d` folder. A kit clone without `00581dd`, or a file
+  that cannot be read at it, stops the step. The test was red against the earlier snippet: an
+  owner's `scripts/check.sh.v0.9` was deleted.
+
 ### 2026-10-06 — native Windows: the gate lock, and Git LFS beside a review
 
 A project moved from WSL to native Windows (Git for Windows' `sh`, CPython from python.org).
