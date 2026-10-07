@@ -60,6 +60,8 @@ def gone_within(pid, seconds=10):
 
 class ReviewOnWindows(unittest.TestCase):
     def setUp(self):
+        if not WINDOWS:
+            return
         self.tmp = Path(tempfile.mkdtemp(prefix='kit-review-win-'))
         self.addCleanup(lambda: subprocess.run(['cmd', '/c', 'rmdir', '/s', '/q', str(self.tmp)],
                                                capture_output=True))

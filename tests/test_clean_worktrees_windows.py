@@ -36,6 +36,8 @@ def windows_only(test):
 
 class CleanWorktreesOnWindows(unittest.TestCase):
     def setUp(self):
+        if not WINDOWS:
+            return
         self.tmp = Path(tempfile.mkdtemp(prefix='kit-clean-win-'))
         self.addCleanup(self.remove_tree, self.tmp)
         self.env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1',
