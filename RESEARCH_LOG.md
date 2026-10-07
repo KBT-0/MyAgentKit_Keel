@@ -308,6 +308,31 @@ The tenth review's findings, each with its test:
 - *This log* kept the v0.9 reasoning that the byte proof leaves the payload nothing to omit;
   it is corrected below.
 
+The first review of that round ran on native Windows itself, and the run found three faults
+before any verdict: the evidence writer opened a folder to fsync it (Windows refuses), a bare
+`codex` was not found (CreateProcess adds only `.exe`; npm installs a `.cmd`), and the review
+then completed but was lost when its scratch folder could not be removed (the Codex sandbox
+writes `__pycache__` under another account, and `TemporaryDirectory(ignore_cleanup_errors=True)`
+still raised). Each has a native Windows test that was red before. The verdict, recovered from
+the scratch folder, was Reject with four High, three Medium and one Low finding, all fixed in
+one round, each with a test seen red against the code before it:
+
+- *A Ctrl-C as the launch returned* reached the caller's raising handler before it held the
+  child, and the reviewer ran on. Off POSIX, `block_cancels` now routes the cancels to a
+  recorder until `restore_mask`, which hands them on once the handle is held.
+- *`-n w1` inside another worker's quoted prompt* closed that worker. The session lister now
+  splits a command line by CommandLineToArgvW's rules, and finds an npm-installed `claude`
+  (node.exe running Claude Code's `cli.js`), which it missed.
+- *The line-ending repair wrote through a linked folder* (`scripts/` a junction to a shared
+  folder). Every folder on a script's way is now checked, and one below a link is left alone.
+- *A batch CLI read its arguments as shell* (`a&echo>x` ran `echo`). An argument with a
+  character `cmd.exe` acts on is refused before anything starts.
+- *Bootstrap found a rule's text but a later line overrode it.* It now asks git, in a throwaway
+  repository, whether each kit rule takes effect, and stops unchanged when one does not.
+- *A tracked `100755` script kept every finished worktree on Windows*, which keeps no
+  executable bit. Its bytes are compared there, and its mode only in the index.
+- *DEV_SETUP still sent reviews to WSL.*
+
 ### 2026-10-07 — the cross-model review of the native Windows change
 
 The first version of the 2026-10-06 change (below) went to a cross-model review, which

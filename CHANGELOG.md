@@ -85,8 +85,9 @@ reviews. Why each change is safe is in `RESEARCH_LOG.md` (2026-10-06 and 2026-10
   so the start-up dialog check, `--batch`, `show_workers.sh` and `watch_workers.sh` do not
   apply there: watch the tab and wait for the result file. `doctor.sh` asks for `wt.exe` (or
   `KIT_WT`) there instead of tmux.
-- **`close_worker.sh` on native Windows.** It ends the `claude.exe` whose command line holds
-  `-n NAME` (`taskkill /T /F`; the tab closes), waits up to 15 s for it to be gone, then
+- **`close_worker.sh` on native Windows.** It ends the Claude Code process (`claude.exe`, or
+  `node.exe` running Claude Code's `cli.js`) whose arguments, split as Windows splits a
+  command line, hold `-n NAME` (`taskkill /T /F`; the tab closes), waits up to 15 s for it to be gone, then
   removes the worktree through the audit, as on POSIX. A session that survives, or a process
   list it cannot read (PowerShell's `Get-CimInstance`, or the lister `KIT_PS` names), leaves
   the worktree untouched and fails the close.
@@ -94,7 +95,8 @@ reviews. Why each change is safe is in `RESEARCH_LOG.md` (2026-10-06 and 2026-10
   `NOT RUN on this platform` there and kept everything. It now reads each process's working
   directory from the process itself (its PEB; MSYS shells included; a process it cannot read
   counts as unseen, as on Linux), and the gate's lock is held when its file cannot be opened
-  for writing. On Windows a folder in the worktree that is a reparse point (a junction, a
+  for writing. There a tracked script's bytes are compared, and its executable bit only in the
+  index: Windows keeps none on disk. On Windows a folder in the worktree that is a reparse point (a junction, a
   folder symlink) counts as a mount point, which keeps the worktree: `git worktree remove` on
   Windows went through a junction to the main checkout's virtual environment and deleted part
   of it. Workers must not link shared folders into a worktree (`docs/WORKFLOW.md`).
@@ -135,7 +137,15 @@ reviews. Why each change is safe is in `RESEARCH_LOG.md` (2026-10-06 and 2026-10
 - **The Windows lock holder and a Ctrl-C at the launch.** The gate is created suspended and the
   Ctrl-C record read after it exists: a Ctrl-C just before the launch starts no gate.
 - **Bootstrap** stops when it cannot read the kit's own `.gitattributes` rules, instead of
-  stamping the version without them.
+  stamping the version without them, and when a later line of the project's own file overrides
+  one of them (asked of git, not read as text).
+- **A review run on native Windows, end to end.** A reviewer installed as a `.cmd` (npm's
+  `codex`, `claude`) is found by its bare name, and an argument `cmd.exe` would read as shell
+  is refused; the evidence writer no longer opens a folder to fsync it; a scratch folder that
+  cannot be removed never loses a completed review; a Ctrl-C as the reviewer's launch returns
+  is held until the reviewer is owned, then stops it.
+- **The line-ending repair** (item 1, `docs/DEV_SETUP.md`) leaves alone a script below a
+  symlinked or junction folder instead of writing into the link's target.
 
 ### Upgrading a project from v0.9
 
