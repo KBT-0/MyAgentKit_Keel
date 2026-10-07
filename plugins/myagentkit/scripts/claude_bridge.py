@@ -496,6 +496,19 @@ def snapshot(repo: Path, scope: str, reference: str | None) -> tuple[str, str, s
     # staged and nothing in the working tree or HEAD.
     checksum.update(b'\0index\0' + git(repo, 'ls-files', '-s', '-z'))
     fingerprint = checksum.hexdigest()
+    # The filtered paths let through above were proven before the diff and the fingerprint read
+    # them, and an editor's save or a build could replace one in between: the diff then showed
+    # its new pointer and the fingerprint hashed its new bytes, both consistent, and the change
+    # went to review. Proven again after both, each must still be unchanged; a change after this
+    # is the fingerprint's to catch.
+    if current:
+        moved = (current & (names_of('diff', '--name-only', '--no-renames', '-z', 'HEAD')
+                            | names_of('diff', '--cached', '--name-only', '--no-renames', '-z', 'HEAD'))
+                 | {name for name in current if not committed_as_is(repo, head, name)})
+        if moved:
+            raise BridgeError('review scope has a Git clean filter or ident attribute on %s, which changed '
+                              'while the review was being prepared; run the review again'
+                              % os.fsdecode(min(moved)))
     if len(diff) > DIFF_LIMIT:
         raise BridgeError("diff exceeds %d bytes; split the task" % DIFF_LIMIT)
     return head, fingerprint, diff.decode("utf-8", errors="strict"), resolved

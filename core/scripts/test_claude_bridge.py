@@ -375,6 +375,26 @@ class BridgeTests(unittest.TestCase):
         self.assertTrue(self.git('cat-file', 'blob', 'HEAD:asset.bin').stdout.startswith(b'version https://'))
         return asset
 
+    def test_an_lfs_file_changed_after_its_proof_is_refused(self):
+        # Proven unchanged, then replaced before the diff and the fingerprint read it (an
+        # editor's save, a build): both saw the new bytes, agreed, and the change was reviewed.
+        from unittest.mock import patch
+        asset = self.lfs_fixture()
+        (self.repo / 'file.py').write_text('CODE_ONLY_CHANGE\n')
+        real, calls = bridge.committed_as_is, []
+
+        def proven_then_replaced(repo, head, name):
+            proven = real(repo, head, name)
+            if not calls:
+                asset.write_bytes(b'replaced after the proof\n')
+            calls.append(name)
+            return proven
+        with patch.object(bridge, 'committed_as_is', proven_then_replaced):
+            with self.assertRaisesRegex(bridge.BridgeError, 'attribute on asset.bin, which changed while the '
+                                        'review was being prepared'):
+                bridge.snapshot(self.repo, 'uncommitted', None)
+        self.assertEqual(calls[0], b'asset.bin')
+
     def test_an_lfs_change_only_the_index_holds_is_refused(self):
         # A different pointer staged for asset.bin, the working file put back to HEAD's content:
         # the working tree proves nothing changed, `git diff HEAD` shows nothing, and the commit
