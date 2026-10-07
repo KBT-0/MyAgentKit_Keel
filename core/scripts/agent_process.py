@@ -5,6 +5,7 @@ import queue
 import signal
 import select
 import selectors
+import shutil
 import subprocess
 import tempfile
 import threading
@@ -79,6 +80,12 @@ def launch(command, mask, **popen_kw) -> subprocess.Popen:
     if POSIX:
         return subprocess.Popen(command, start_new_session=True,
                                 preexec_fn=lambda: restore_mask(mask), **popen_kw)
+    # A bare name is looked up as a shell would, PATHEXT included: CreateProcess adds only
+    # .exe, and an npm-installed CLI (codex, claude) is a .cmd, so every review there failed
+    # to launch. The search follows the child's PATH when the caller gives it one.
+    if os.path.basename(command[0]) == command[0]:
+        path = (popen_kw.get("env") or os.environ).get("PATH")
+        command = [shutil.which(command[0], path=path) or command[0], *command[1:]]
     # Suspended (0x4) until it is in the job: running, it could start a process outside it first.
     child = subprocess.Popen(command, **popen_kw, creationflags=0x200 | 0x4)  # CREATE_NEW_PROCESS_GROUP
     job = None

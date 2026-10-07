@@ -131,6 +131,25 @@ class ReviewOnWindows(unittest.TestCase):
         self.assertTrue(gone_within(pid), 'the reviewer outlived its killed supervisor')
 
     @windows_only
+    def test_a_cli_installed_as_a_cmd_file_is_launched_by_its_bare_name(self):
+        # npm installs codex and claude as codex.cmd and claude.cmd. CreateProcess adds only
+        # .exe to a bare name, so the first real review on native Windows exited 127.
+        bin_dir = self.tmp / 'bin'
+        bin_dir.mkdir()
+        script = self.tmp / 'cli.py'
+        script.write_text('import sys\nprint("cli ran", sys.argv[1:], sys.stdin.read())\n')
+        (bin_dir / 'fakecli.cmd').write_text('@"%s" -I "%s" %%*\r\n' % (sys.executable, script))
+        path = str(bin_dir) + os.pathsep + os.environ['PATH']
+        old = os.environ['PATH']
+        os.environ['PATH'] = path
+        try:
+            result = agent_process.run(['fakecli', 'exec', '--json'], 'the prompt', self.tmp, 30)
+        finally:
+            os.environ['PATH'] = old
+        self.assertEqual(result['exit_code'], 0, result)
+        self.assertIn("cli ran ['exec', '--json'] the prompt", result['stdout'])
+
+    @windows_only
     def test_a_missing_reviewer_is_unavailable(self):
         result = agent_process.run([str(self.tmp / 'no-such-cli.exe')], '', self.tmp, 10)
         self.assertEqual(result['termination'], 'unavailable')
