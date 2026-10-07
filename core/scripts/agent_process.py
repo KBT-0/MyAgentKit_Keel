@@ -25,28 +25,37 @@ CANCEL_SIGNALS = tuple(getattr(signal, name) for name in ("SIGINT", "SIGTERM", "
 # after the child itself has exited (taskkill /T finds no tree below an exited process). The
 # job is killed when its last handle closes: a supervisor that dies takes its reviewer with it.
 POSIX = os.name == "posix"
-if not POSIX:
-    import ctypes
-    from ctypes import wintypes
-    _KERNEL32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    _NTDLL = ctypes.WinDLL("ntdll")
-    _KERNEL32.CreateJobObjectW.restype = wintypes.HANDLE
-    _KERNEL32.CreateJobObjectW.argtypes = (ctypes.c_void_p, wintypes.LPCWSTR)
-    _KERNEL32.SetInformationJobObject.argtypes = (wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD)
-    _KERNEL32.AssignProcessToJobObject.argtypes = (wintypes.HANDLE, wintypes.HANDLE)
-    _KERNEL32.TerminateJobObject.argtypes = (wintypes.HANDLE, wintypes.UINT)
-    _KERNEL32.CloseHandle.argtypes = (wintypes.HANDLE,)
-    _NTDLL.NtResumeProcess.argtypes = (wintypes.HANDLE,)
+_WIN = {}
 
-    class _JobLimits(ctypes.Structure):
-        """JOBOBJECT_EXTENDED_LIMIT_INFORMATION; only LimitFlags is set."""
-        _fields_ = [("PerProcessUserTimeLimit", ctypes.c_int64), ("PerJobUserTimeLimit", ctypes.c_int64),
-                    ("LimitFlags", wintypes.DWORD), ("MinimumWorkingSetSize", ctypes.c_size_t),
-                    ("MaximumWorkingSetSize", ctypes.c_size_t), ("ActiveProcessLimit", wintypes.DWORD),
-                    ("Affinity", ctypes.c_size_t), ("PriorityClass", wintypes.DWORD),
-                    ("SchedulingClass", wintypes.DWORD), ("IoInfo", ctypes.c_uint64 * 6),
-                    ("ProcessMemoryLimit", ctypes.c_size_t), ("JobMemoryLimit", ctypes.c_size_t),
-                    ("PeakProcessMemoryUsed", ctypes.c_size_t), ("PeakJobMemoryUsed", ctypes.c_size_t)]
+
+def _win() -> dict:
+    """kernel32, ntdll and the job limits structure, set up on first use: at import, a module
+    run where ctypes has no Windows half (a test that names the platform nt) did not load."""
+    if not _WIN:
+        import ctypes
+        from ctypes import wintypes
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        ntdll = ctypes.WinDLL("ntdll")
+        kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+        kernel32.CreateJobObjectW.argtypes = (ctypes.c_void_p, wintypes.LPCWSTR)
+        kernel32.SetInformationJobObject.argtypes = (wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p,
+                                                     wintypes.DWORD)
+        kernel32.AssignProcessToJobObject.argtypes = (wintypes.HANDLE, wintypes.HANDLE)
+        kernel32.TerminateJobObject.argtypes = (wintypes.HANDLE, wintypes.UINT)
+        kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+        ntdll.NtResumeProcess.argtypes = (wintypes.HANDLE,)
+
+        class JobLimits(ctypes.Structure):
+            """JOBOBJECT_EXTENDED_LIMIT_INFORMATION; only LimitFlags is set."""
+            _fields_ = [("PerProcessUserTimeLimit", ctypes.c_int64), ("PerJobUserTimeLimit", ctypes.c_int64),
+                        ("LimitFlags", wintypes.DWORD), ("MinimumWorkingSetSize", ctypes.c_size_t),
+                        ("MaximumWorkingSetSize", ctypes.c_size_t), ("ActiveProcessLimit", wintypes.DWORD),
+                        ("Affinity", ctypes.c_size_t), ("PriorityClass", wintypes.DWORD),
+                        ("SchedulingClass", wintypes.DWORD), ("IoInfo", ctypes.c_uint64 * 6),
+                        ("ProcessMemoryLimit", ctypes.c_size_t), ("JobMemoryLimit", ctypes.c_size_t),
+                        ("PeakProcessMemoryUsed", ctypes.c_size_t), ("PeakJobMemoryUsed", ctypes.c_size_t)]
+        _WIN.update(ctypes=ctypes, kernel32=kernel32, ntdll=ntdll, JobLimits=JobLimits)
+    return _WIN
 
 
 def block_cancels():
@@ -70,28 +79,30 @@ def launch(command, mask, **popen_kw) -> subprocess.Popen:
     if POSIX:
         return subprocess.Popen(command, start_new_session=True,
                                 preexec_fn=lambda: restore_mask(mask), **popen_kw)
-    job = _KERNEL32.CreateJobObjectW(None, None)
-    if not job:
-        raise ctypes.WinError(ctypes.get_last_error())
-    child = None
+    # Suspended (0x4) until it is in the job: running, it could start a process outside it first.
+    child = subprocess.Popen(command, **popen_kw, creationflags=0x200 | 0x4)  # CREATE_NEW_PROCESS_GROUP
+    job = None
     try:
-        limits = _JobLimits(LimitFlags=0x2000)  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
-        if not _KERNEL32.SetInformationJobObject(job, 9, ctypes.byref(limits), ctypes.sizeof(limits)):
+        win = _win()
+        ctypes, kernel32 = win["ctypes"], win["kernel32"]
+        job = kernel32.CreateJobObjectW(None, None)
+        if not job:
             raise ctypes.WinError(ctypes.get_last_error())
-        # Suspended until it is in the job: running, it could start a process outside it first.
-        child = subprocess.Popen(command, **popen_kw, creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | 0x4)
-        if not _KERNEL32.AssignProcessToJobObject(job, int(child._handle)):
+        limits = win["JobLimits"](LimitFlags=0x2000)  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        if not kernel32.SetInformationJobObject(job, 9, ctypes.byref(limits), ctypes.sizeof(limits)):
             raise ctypes.WinError(ctypes.get_last_error())
-        if _NTDLL.NtResumeProcess(int(child._handle)) != 0:
+        if not kernel32.AssignProcessToJobObject(job, int(child._handle)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        if win["ntdll"].NtResumeProcess(int(child._handle)) != 0:
             raise OSError("cannot resume %s after it joined its job" % command[0])
     except BaseException:
-        _KERNEL32.CloseHandle(job)  # kills the child if it joined; one that did not is killed here
-        if child is not None:
-            child.kill()
-            child.wait()
-            for stream in (child.stdin, child.stdout, child.stderr):
-                if stream is not None:
-                    stream.close()
+        if job:
+            kernel32.CloseHandle(job)
+        child.kill()
+        child.wait()
+        for stream in (child.stdin, child.stdout, child.stderr):
+            if stream is not None:
+                stream.close()
         raise
     child._kit_job = job
     return child
@@ -125,8 +136,8 @@ def stop_group(child, pgid) -> None:
             child.wait()
     elif getattr(child, "_kit_job", None) is not None:
         job, child._kit_job = child._kit_job, None
-        _KERNEL32.TerminateJobObject(job, 1)
-        _KERNEL32.CloseHandle(job)
+        _win()["kernel32"].TerminateJobObject(job, 1)
+        _win()["kernel32"].CloseHandle(job)
     elif not hasattr(child, "_kit_job"):
         try:
             done = subprocess.run(["taskkill", "/T", "/F", "/PID", str(child.pid)],

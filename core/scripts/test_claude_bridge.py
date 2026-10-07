@@ -296,9 +296,10 @@ class BridgeTests(unittest.TestCase):
         (self.repo / 'file.py').write_text('SAFE\nUNSAFE_PARTIAL_HUNK\n')
         (self.repo / 'bypass.py').write_text('UNSAFE_WHOLE_FILE\n')
         (self.repo / 'visible.txt').write_text('visible change\n')
-        diff = bridge.snapshot(self.repo, 'uncommitted', None)[2]
-        self.assertIn('UNSAFE_PARTIAL_HUNK', diff)   # control: an unconfigured driver filters nothing
-        self.assertIn('UNSAFE_WHOLE_FILE', diff)
+        # A named filter on a changed path refuses it even with no driver configured here: the
+        # next machine may configure one (a fresh machine's LFS, r8). With none, nothing is hidden.
+        with self.assertRaisesRegex(bridge.BridgeError, 'clean filter or ident attribute on bypass.py'):
+            bridge.snapshot(self.repo, 'uncommitted', None)
         self.git('config', 'filter.hide.clean', "sed '/UNSAFE/d'")
         with self.assertRaisesRegex(bridge.BridgeError, 'clean filter or ident attribute on bypass.py'):
             bridge.snapshot(self.repo, 'uncommitted', None)
@@ -3779,7 +3780,8 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                         else:
                             self.assertNotIn('preexec_fn', kw)
                             self.assertNotIn('start_new_session', kw)
-                            self.assertEqual(kw['creationflags'], 0x200)  # CREATE_NEW_PROCESS_GROUP
+                            # CREATE_NEW_PROCESS_GROUP, suspended until it joins its job object
+                            self.assertEqual(kw['creationflags'], 0x200 | 0x4)
 
     def test_stop_group_never_signals_a_reaped_pid(self):
         # A reviewer that ended normally was reaped by run(); stop_group then signalled its
