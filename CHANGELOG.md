@@ -88,7 +88,8 @@ change is safe is in `RESEARCH_LOG.md` (2026-10-06 and 2026-10-07).
   with no filter) are that pointer or the content it names by size and sha256, and Git's own
   rendered diff of the working tree and of the index does not name it, proven both before and
   after the diff and the fingerprint read the checkout, so a file replaced in between is
-  refused (`which changed while the review was being prepared`). A filtered path the
+  refused (`which changed while the review was being prepared`). The payload diff leaves such a
+  proven path out, so its filter is never asked again. A filtered path the
   review changes is refused, whichever side was filtered: candidates include names staged in
   the index, deleted and renamed-away names, and the attributes are read in the working tree,
   in the index and at each end of the reviewed range. So an index-only change to an LFS file, a commit
