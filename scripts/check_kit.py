@@ -57,7 +57,7 @@ REQUIRED_SUITES = {
               'test_sync_kit': 26, 'test_doctor': 2, 'test_git_hooks': 25, 'test_stop_hook': 1,
               'test_spawn_worker': 17, 'test_worker_visibility': 55, 'test_doc_pointers': 5,
               'test_kit_output': 1, 'test_kit_runner': 10, 'test_clean_worktrees': 137, 'test_clean_worktrees_windows': 5,
-              'test_review_windows': 7,
+              'test_review_windows': 8,
               'test_close_worker': 18},
 }
 

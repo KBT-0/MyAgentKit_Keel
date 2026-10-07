@@ -73,11 +73,14 @@ def write_evidence(repo: Path, path: Path, text: str, *, private: bool = False,
                     os.unlink(pending)
         else:
             os.link(stream.name, path)
-        directory = os.open(path.parent, os.O_RDONLY)
-        try:
-            os.fsync(directory)
-        finally:
-            os.close(directory)
+        # The new name made durable. Windows opens no folder with os.open (PermissionError, which
+        # failed every review there) and NTFS journals the name itself.
+        if os.name != "nt":
+            directory = os.open(path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
 
 
 # The ONE review-evidence format, published by every reviewer in every direction.

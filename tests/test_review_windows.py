@@ -154,6 +154,21 @@ class ReviewOnWindows(unittest.TestCase):
         self.assertEqual((copy / 'a.txt').read_bytes().replace(b'\r\n', b'\n'), b'committed\n')
 
     @windows_only
+    def test_review_evidence_is_published_and_replaced(self):
+        # The first review run on native Windows stopped with PermissionError: the evidence
+        # writer opened the folder to fsync it, which Windows refuses.
+        import agent_usage
+        repo = self.tmp / 'repo'
+        subprocess.run(['git', 'init', '-q', str(repo)], check=True)
+        (repo / '.gitignore').write_text('.myagentkit/\n')
+        record = repo / '.myagentkit/usage/chains/attempt-1.json'
+        agent_usage.write_evidence(repo, record, 'first', private=True)
+        self.assertEqual(record.read_text(), 'first')
+        agent_usage.write_evidence(repo, record, 'second', private=True, replace=True)
+        self.assertEqual(record.read_text(), 'second')
+        self.assertEqual(sorted(p.name for p in record.parent.iterdir()), ['attempt-1.json'])
+
+    @windows_only
     def test_the_quota_reader_reads_its_answer_through_a_pipe(self):
         # A stand-in `codex app-server --stdio`: answers initialize, then the rate limits.
         server = self.tmp / 'codex.py'
