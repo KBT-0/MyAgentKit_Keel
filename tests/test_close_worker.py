@@ -68,8 +68,14 @@ import os, sys
 if os.environ.get('CLOSE_PS_ERROR'):
     sys.exit(os.environ['CLOSE_PS_ERROR'])
 path = os.path.join(os.environ['CLOSE_STATE'], 'claude-procs')
+query = ' '.join(sys.argv[1:])
 if os.path.exists(path):
-    sys.stdout.write(open(path).read().replace('\n', '\r\n'))
+    # As Win32_Process's filter does: only the processes whose image name the query names.
+    for line in open(path).read().splitlines():
+        command = line.split(' ', 1)[1]
+        exe = command[1:].split('"')[0] if command.startswith('"') else command.split(' ')[0]
+        if "Name='%s'" % exe.replace('\\', '/').split('/')[-1] in query:
+            sys.stdout.write(line + '\r\n')
 """
 TASKKILL = r"""#!/usr/bin/env python3
 import os, sys
