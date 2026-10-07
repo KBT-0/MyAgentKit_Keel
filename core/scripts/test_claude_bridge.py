@@ -298,7 +298,7 @@ class BridgeTests(unittest.TestCase):
         (self.repo / 'visible.txt').write_text('visible change\n')
         # A named filter on a changed path refuses it even with no driver configured here: the
         # next machine may configure one (a fresh machine's LFS, r8). With none, nothing is hidden.
-        with self.assertRaisesRegex(bridge.BridgeError, 'clean filter or ident attribute on bypass.py'):
+        with self.assertRaisesRegex(bridge.BridgeError, 'clean filter or ident attribute on file.py'):
             bridge.snapshot(self.repo, 'uncommitted', None)
         self.git('config', 'filter.hide.clean', "sed '/UNSAFE/d'")
         with self.assertRaisesRegex(bridge.BridgeError, 'clean filter or ident attribute on bypass.py'):
