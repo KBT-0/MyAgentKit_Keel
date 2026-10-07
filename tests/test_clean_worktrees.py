@@ -2460,12 +2460,9 @@ class CleanWorktreesTests(unittest.TestCase):
         self.hooked()
         path = self.worktree('done', merge=False)
         (self.tmp / 'windows.py').write_text(WINDOWS)
-        self.stub('python3', '#!/bin/sh
-exec %s %s "$@"
-' % (sys.executable, self.tmp / 'windows.py'))
+        self.stub('python3', '#!/bin/sh\nexec %s %s "$@"\n' % (sys.executable, self.tmp / 'windows.py'))
         out = self.run_script('--apply', idle=False, KEEP_POSIX_NAME='1')
-        self.assertEqual(out, NOT_RUN + '
-')
+        self.assertEqual(out, NOT_RUN + '\n')
         self.assertTrue(path.is_dir(), out)
         out = self.merge_with_hook('worktree-done', KEEP_POSIX_NAME='1')
         self.assertIn(NOT_RUN, out)
@@ -2474,8 +2471,7 @@ exec %s %s "$@"
         close = subprocess.run(['sh', str(SCRIPTS / 'close_worker.sh'), 'done'], cwd=self.main,
                                env=dict(self.env, KEEP_POSIX_NAME='1'), capture_output=True, text=True)
         self.assertEqual(close.returncode, 1, close.stdout + close.stderr)
-        self.assertIn('close_worker: done: worktree kept: ' + NOT_RUN + '
-', close.stdout)
+        self.assertIn('close_worker: done: worktree kept: ' + NOT_RUN + '\n', close.stdout)
         self.assertNotIn('Traceback', close.stdout + close.stderr)
         self.assertTrue(path.is_dir(), close.stdout)
         out = self.run_script('--apply', idle=False, code=None)
