@@ -77,6 +77,32 @@ against another process changing the tree while they run, files placed in the pr
 attack them, or SIGKILL or power loss between two steps; whoever can do the first two can
 write the same files directly.
 
+### The gate, `review.sh` and the upgrade checklists
+
+The gate (`scripts/check.sh`, its lock and `--self-test`), `scripts/review.sh` and the
+checklists in `CHANGELOG.md` share one threat model. A project has one owner, who works with
+agents. The threat model was written in v0.10 after six review rounds in which each fix
+exposed an "adjacent path"; a finding outside it is answered with this section, not a fix
+(`docs/REVIEW_GATE.md`, "A review loop").
+
+- **In scope: mistakes and accidents of the owner and the agents.** A killed process or a
+  Ctrl-C at any point. A file left behind by a killed run. A CRLF checkout. A symlink the
+  owner made where a script reads or writes. A shallow clone. A run from the wrong shell or
+  Python (WSL against native Windows, a stray module on `PYTHONPATH`). A stale environment
+  copied from a killed gate. Each one either works or stops with a message that names it. An
+  interrupted or killed gate never reports a pass, and it leaves the lock to the next run. A
+  review whose checkout changed while it ran is discarded (`stale_checkout`).
+- **Out of scope: an adversary acting while a gate or a review runs.** This is a process that
+  changes the tree, the index or the Git configuration between two of a script's reads. The
+  reason: the same process could edit the gate or the review script itself. Example (review
+  round r6 of v0.10, finding 1): an attribute that removes a path's filter while `review.sh`
+  collects its filtered paths, restored before the diff, could hide an LFS path's raw change
+  from the reviewer. It is recorded as out of scope, not fixed. An ordinary edit made while a
+  review runs is still caught, by the checkout fingerprint.
+- **Out of scope: hostile files planted in the project by anyone other than the owner.** The
+  reason: whoever can write the tree can also edit the gate, the hooks and the review script.
+  Defending those scripts against the tree they live in defends nothing.
+
 ## Backflow — the other direction
 
 Updates are supposed to flow both ways, and the direction from a project back into the kit

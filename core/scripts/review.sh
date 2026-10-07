@@ -33,6 +33,10 @@
 #     and Claude's Bash can write to it. Codex's workspace-write sandbox blocks writes outside
 #     the copy and the temporary directories and keeps the network off; Claude has no OS
 #     sandbox here and is only asked to stay off the network.
+#   - OUT OF SCOPE: a process that changes the tree, the index or the Git configuration
+#     between two of this script's reads to hide a change (a filter attribute removed and
+#     restored), and hostile files planted by anyone but the owner: either could edit this
+#     script instead. An ordinary edit during a review fails it as stale_checkout.
 #
 # The sandbox is pinned HERE and in the adapters, not assumed of the CLI: the scope forms
 # above, --reviewer and --fallback are the ONLY accepted arguments. There is deliberately no
