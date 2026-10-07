@@ -94,7 +94,7 @@ reviews. Why each change is safe is in `RESEARCH_LOG.md` (2026-10-06 and 2026-10
   `NOT RUN on this platform` there and kept everything. It now reads each process's working
   directory from the process itself (its PEB; MSYS shells included; a process it cannot read
   counts as unseen, as on Linux), and the gate's lock is held when its file cannot be opened
-  for writing. On every host a folder in the worktree that is a reparse point (a junction, a
+  for writing. On Windows a folder in the worktree that is a reparse point (a junction, a
   folder symlink) counts as a mount point, which keeps the worktree: `git worktree remove` on
   Windows went through a junction to the main checkout's virtual environment and deleted part
   of it. Workers must not link shared folders into a worktree (`docs/WORKFLOW.md`).

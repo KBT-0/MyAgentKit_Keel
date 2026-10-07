@@ -26,3 +26,23 @@ jobs:
           python-version: ${{ matrix.python }}
       - name: Run the full offline acceptance gate and negative tests
         run: ./scripts/check.sh --self-test
+
+  # Native Windows: Git for Windows' sh with a python.org CPython, the host the gate lock, a
+  # review run and the worktree clean-up are proven on. Each of these suites prints NOT RUN and
+  # passes elsewhere, so only this job proves them; the POSIX suites need the jobs above.
+  windows:
+    name: windows-latest / Python ${{ matrix.python }}
+    runs-on: windows-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.10', '3.14']
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Run the native Windows suites
+        shell: bash
+        run: python -B -m unittest -v tests.test_check_gate_windows tests.test_review_windows tests.test_clean_worktrees_windows
