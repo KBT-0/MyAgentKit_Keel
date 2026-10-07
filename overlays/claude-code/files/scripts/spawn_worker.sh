@@ -154,18 +154,19 @@ instruction="Read $(q "$brief") and follow it. Do not ask questions in this pane
 # tab running `claude -n NAME` (spawn_worker.sh). sessions NAME prints the process id of each
 # claude.exe whose command line holds `-n NAME` as two words, from Win32_Process, on one line; KIT_PS names
 # another lister (the kit's tests), which prints "<pid> <command line>" lines as this one does.
-# A command line Windows does not show (another user's process) names nothing.
+# A command line Windows does not show (another user's process) names nothing. A lister that
+# fails prints its words instead and returns 2.
 sessions() {
   out=$(${KIT_PS:-powershell.exe -NoProfile -NonInteractive -Command} \
     "Get-CimInstance Win32_Process -Filter \"Name='claude.exe'\" | ForEach-Object { \"\$(\$_.ProcessId) \$(\$_.CommandLine)\" }" \
-    2>&1) || { err=$out; return 2; }
+    2>&1) || { printf '%s' "$out"; return 2; }
   printf '%s\n' "$out" | tr -d '\r' | awk -v n="$1" '{
     for (i = 2; i < NF; i++)
       if ($i == "-n" && ($(i + 1) == n || $(i + 1) == "\"" n "\"" || $(i + 1) == "'"'"'" n "'"'"'")) { pids = pids (pids == "" ? "" : " ") $1; break } }
     END { printf "%s", pids }'
 }
 if [ -n "$windows" ]; then
-  running=$(sessions "$name") || die "cannot list the Claude Code sessions to check the name '$name': $err"
+  running=$(sessions "$name") || die "cannot list the Claude Code sessions to check the name '$name': $running"
   [ -z "$running" ] || die "a Claude Code session named '$name' already runs (process $running)"
   wt=${KIT_WT:-wt.exe}
   command -v "$wt" >/dev/null || die "Windows Terminal ($wt) is not on PATH; start the worker by hand: $cmd"

@@ -70,11 +70,12 @@ has() {
 # tab running `claude -n NAME` (spawn_worker.sh). sessions NAME prints the process id of each
 # claude.exe whose command line holds `-n NAME` as two words, from Win32_Process, on one line; KIT_PS names
 # another lister (the kit's tests), which prints "<pid> <command line>" lines as this one does.
-# A command line Windows does not show (another user's process) names nothing.
+# A command line Windows does not show (another user's process) names nothing. A lister that
+# fails prints its words instead and returns 2.
 sessions() {
   out=$(${KIT_PS:-powershell.exe -NoProfile -NonInteractive -Command} \
     "Get-CimInstance Win32_Process -Filter \"Name='claude.exe'\" | ForEach-Object { \"\$(\$_.ProcessId) \$(\$_.CommandLine)\" }" \
-    2>&1) || { err=$out; return 2; }
+    2>&1) || { printf '%s' "$out"; return 2; }
   printf '%s\n' "$out" | tr -d '\r' | awk -v n="$1" '{
     for (i = 2; i < NF; i++)
       if ($i == "-n" && ($(i + 1) == n || $(i + 1) == "\"" n "\"" || $(i + 1) == "'"'"'" n "'"'"'")) { pids = pids (pids == "" ? "" : " ") $1; break } }
@@ -94,7 +95,8 @@ for name; do
 
   if [ -n "$windows" ]; then
     if ! pids=$(sessions "$name"); then
-      fail "$name: could not list the Claude Code sessions, so $name may still run: $err"
+      fail "$name: could not list the Claude Code sessions, so $name may still run: $pids; its worktree is not touched"
+      continue
     elif [ -z "$pids" ]; then
       say "$name: no Claude Code session named $name runs; nothing to end"
     elif [ -n "$dry" ]; then
@@ -104,7 +106,8 @@ for name; do
       i=0
       while left=$(sessions "$name") && [ -n "$left" ] && [ "$i" -lt 15 ]; do i=$((i + 1)); sleep 1; done
       if ! left=$(sessions "$name"); then
-        fail "$name: could not establish that the session ended: $err"
+        fail "$name: could not establish that the session ended: $left; its worktree is not touched"
+        continue
       elif [ -n "$left" ]; then
         # Not audited: a session still running is the one thing the close exists to rule out.
         fail "$name: the Claude Code session still runs after taskkill (process $left); its worktree is not touched"

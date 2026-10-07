@@ -198,7 +198,8 @@ class CloseWorkerTests(unittest.TestCase):
         self.assertTrue(path.is_dir(), out)
         out = self.close('w1', code=1, CLOSE_PS_ERROR='Get-CimInstance: access denied', **env)
         self.assertIn('close_worker: FAILED: w1: could not list the Claude Code sessions, so w1 may still run: '
-                      'Get-CimInstance: access denied', out)
+                      'Get-CimInstance: access denied; its worktree is not touched', out)
+        self.assertTrue(path.is_dir(), out)
 
     def test_a_missing_session_or_worktree_is_reported_not_an_error(self):
         out = self.close('nobody')
