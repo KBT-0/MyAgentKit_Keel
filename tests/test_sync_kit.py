@@ -525,6 +525,7 @@ class SyncKitTests(unittest.TestCase):
         # The v0.9 copies were written at fixed names in the project: an owner's file there was
         # truncated and deleted, a symlink there wrote outside the repository, and a kit clone
         # without the base commit (a shallow one) went on to the next file, leaving files unmerged.
+        # merge-file wrote through an owner's symlink at a file it merges, and in place.
         import textwrap
         text = (ROOT / 'CHANGELOG.md').read_text()
         block = next(part for part in text.split('```sh\n')[1:] if 'git merge-file' in part.split('```')[0])
@@ -532,7 +533,7 @@ class SyncKitTests(unittest.TestCase):
         self.assertIn('00581dd', snippet)
         env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1')
         names = ('scripts/check.sh', 'docs/DEV_SETUP.md', 'docs/GOTCHAS.md')
-        for case in ('merged', 'no base commit', 'a file missing at the base'):
+        for case in ('merged', 'no base commit', 'a file missing at the base', 'a symlinked file'):
             with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
                 kit, project, outside = Path(tmp) / 'kit', Path(tmp) / 'project', Path(tmp) / 'outside'
                 for name in names:
@@ -541,6 +542,12 @@ class SyncKitTests(unittest.TestCase):
                         (kit / 'core' / name).write_text('one\ntwo\nthree\n')
                     (project / name).parent.mkdir(parents=True, exist_ok=True)
                     (project / name).write_text('one\ntwo\nthree\nmine\n')
+                (project / 'scripts/check.sh').chmod(0o755)
+                shared = Path(tmp) / 'shared'
+                if case == 'a symlinked file':
+                    shared.write_text('one\ntwo\nthree\nmine\n')
+                    (project / 'docs/GOTCHAS.md').unlink()
+                    (project / 'docs/GOTCHAS.md').symlink_to(shared)
                 subprocess.run(['git', 'init', '-q'], cwd=kit, check=True, env=env)
                 subprocess.run(['git', 'add', '-A'], cwd=kit, check=True, env=env)
                 subprocess.run(['git', '-c', 'user.name=F', '-c', 'user.email=f@example.invalid', 'commit', '-qm',
@@ -563,11 +570,60 @@ class SyncKitTests(unittest.TestCase):
                 if case == 'merged':
                     self.assertEqual(result.returncode, 0, result.stderr)
                     self.assertEqual(set(merged.values()), {True})
+                    self.assertEqual((project / 'scripts/check.sh').stat().st_mode & 0o777, 0o755)
+                    self.assertEqual(sorted(p.name for p in (project / 'scripts').iterdir()),
+                                     ['check.sh', 'check.sh.v0.9'])
                     continue
                 self.assertNotEqual(result.returncode, 0, result.stderr)
                 self.assertIn('STOP:', result.stderr)
-                self.assertEqual(merged, {'scripts/check.sh': case != 'no base commit',
+                self.assertEqual(merged, {'scripts/check.sh': case == 'a file missing at the base',
                                           'docs/DEV_SETUP.md': False, 'docs/GOTCHAS.md': False})
+                if case == 'a symlinked file':
+                    self.assertEqual(shared.read_text(), 'one\ntwo\nthree\nmine\n')
+                    self.assertTrue((project / 'docs/GOTCHAS.md').is_symlink())
+
+    def test_the_line_ending_action_keeps_modes_and_stops_on_a_failed_rewrite(self):
+        # The rewrite ignored a script Python could not rewrite, staged the rest and exited 0
+        # with that script still CRLF; and it wrote in place, so a killed run left a script
+        # half new. Each script is now replaced whole with its mode, and a failure stops the step.
+        import textwrap
+        if os.geteuid() == 0:
+            self.skipTest('root writes into a read-only folder')
+        text = (ROOT / 'CHANGELOG.md').read_text()
+        block = next(part for part in text.split('```sh\n')[1:]
+                     if 'core/.gitattributes' in part.split('```')[0])
+        snippet = textwrap.dedent(block.split('```')[0])
+        env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1', KIT=str(ROOT))
+        for case in ('rewritten', 'read-only'):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
+                project = Path(tmp) / 'project'
+                (project / 'scripts').mkdir(parents=True)
+                script = project / 'scripts/check.sh'
+                script.write_bytes(b'#!/bin/sh\r\necho check ran\r\n')
+                script.chmod(0o755)
+                subprocess.run(['git', 'init', '-q'], cwd=project, check=True, env=env)
+                subprocess.run(['git', 'add', '-A'], cwd=project, check=True, env=env)
+                if case == 'read-only':
+                    script.chmod(0o555)
+                    (project / 'scripts').chmod(0o555)
+                try:
+                    result = subprocess.run(['sh', '-c', snippet], cwd=project, capture_output=True, text=True,
+                                            env=env)
+                finally:
+                    (project / 'scripts').chmod(0o755)
+                staged = subprocess.run(['git', 'diff', '--cached', '--name-only'], cwd=project, check=True,
+                                        capture_output=True, text=True, env=env).stdout
+                self.assertIn('scripts/check.sh', staged)
+                if case == 'rewritten':
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(script.read_bytes(), b'#!/bin/sh\necho check ran\n')
+                    self.assertEqual(script.stat().st_mode & 0o777, 0o755)
+                    self.assertEqual(sorted(p.name for p in (project / 'scripts').iterdir()), ['check.sh'])
+                    continue
+                self.assertNotEqual(result.returncode, 0, result.stderr)
+                self.assertIn('STOP: a script could not be rewritten', result.stderr)
+                self.assertNotIn('.gitattributes', staged)
+                self.assertEqual(script.read_bytes(), b'#!/bin/sh\r\necho check ran\r\n')
 
     def test_a_signal_while_printing_the_checklist_keeps_the_stamp(self):
         # A handler that only cleaned up let the run resume with the pending list deleted,

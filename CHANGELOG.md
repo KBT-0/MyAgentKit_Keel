@@ -121,7 +121,9 @@ checks the new files and not v0.9's (on native Windows, v0.9's `doctor.sh` asks 
    rules to the project's `.gitattributes` (created if absent; a symlink or anything else that
    is not a regular file there stops the step before it writes), turn each CRLF into LF in
    the shell scripts and hooks they name (regular files only: a symlink is left alone, and a
-   lone CR is kept), then renormalize those files alone, from a committed project:
+   lone CR is kept; each file is replaced whole, with its mode, so a killed run leaves it old
+   or new, and a failed rewrite stops the step before anything is staged), then renormalize
+   those files alone, from a committed project:
    ```sh
    ( if [ -L .gitattributes ] || { [ -e .gitattributes ] && [ ! -f .gitattributes ]; }; then
        echo "STOP: .gitattributes is a symlink or not a regular file; make it a regular file first" >&2; exit 1
@@ -129,15 +131,18 @@ checks the new files and not v0.9's (on native Windows, v0.9's `doctor.sh` asks 
      { echo; cat "$KIT/core/.gitattributes"; } >> .gitattributes || exit 1
      set -- '*.sh' .githooks/pre-commit .githooks/pre-merge-commit .githooks/commit-msg .githooks/post-merge
      git ls-files -z -- "$@" | python3 -I -c 'if 1:
-         import os, stat, sys
+         import os, stat, sys, tempfile
          for name in sys.stdin.buffer.read().split(b"\0"):
              if name and stat.S_ISREG(os.lstat(name).st_mode):
-                 with open(name, "r+b") as script:
+                 with open(name, "rb") as script:
                      data = script.read()
-                     if b"\r\n" in data:
-                         script.seek(0)
-                         script.write(data.replace(b"\r\n", b"\n"))
-                         script.truncate()'
+                 if b"\r\n" in data:
+                     handle, new = tempfile.mkstemp(prefix=b".crlf-", dir=os.path.dirname(name) or b".")
+                     with os.fdopen(handle, "wb") as copy:
+                         copy.write(data.replace(b"\r\n", b"\n"))
+                     os.chmod(new, stat.S_IMODE(os.lstat(name).st_mode))
+                     os.replace(new, name)' ||
+       { echo "STOP: a script could not be rewritten (above); nothing was staged" >&2; exit 1; }
      git ls-files -z -- "$@" | xargs -0 git add --renormalize -- && git add .gitattributes )
    ```
    `git status` then lists `.gitattributes`, and any script the index held with CRLF as
@@ -145,21 +150,33 @@ checks the new files and not v0.9's (on native Windows, v0.9's `doctor.sh` asks 
    lines of `docs/DEV_SETUP.md` section 1 once after it pulls that commit: a pull does not
    check out again a file it did not change, so its scripts stay CRLF until then.
 2. **ACTION:** Copy `claude_bridge.py` and `test_claude_bridge.py` whole from
-   `$KIT/core/scripts/` into `scripts/`, replacing yours (they hold no project content). If
+   `$KIT/core/scripts/` into `scripts/`, replacing yours (they hold no project content; delete
+   a symlink at either name first, so the copy is a file and not written through the link). If
    v0.9's item 10 sent this project to the manual review template only because of Git LFS,
    use `scripts/review.sh` again for every scope that changes no LFS file.
 3. **ACTION:** Merge the kit's changes since v0.9 into the three files that hold your setup
-   content, one three-way merge per file, from a committed project. The v0.9 copies go to a
-   private folder outside the project, and a failed read of one stops the step there:
+   content, one three-way merge per file, from a committed project. A file that is not a
+   regular file (a symlink) stops the step before any merge. The v0.9 copies go to a private
+   folder outside the project, each merge result replaces its file whole, with its mode, and a
+   failed read or merge stops the step there:
    ```sh
-   ( git -C "$KIT" cat-file -e '00581dd^{commit}' ||
+   ( set -- scripts/check.sh docs/DEV_SETUP.md docs/GOTCHAS.md
+     for f do
+       [ -f "$f" ] && [ ! -L "$f" ] ||
+         { echo "STOP: $f is not a regular file (a symlink?); nothing was merged" >&2; exit 1; }
+     done
+     git -C "$KIT" cat-file -e '00581dd^{commit}' ||
        { echo "STOP: $KIT has no commit 00581dd (a shallow clone?); clone the kit whole" >&2; exit 1; }
      base=$(mktemp -d) || exit 1
      trap 'rm -rf "$base"' EXIT
-     for f in scripts/check.sh docs/DEV_SETUP.md docs/GOTCHAS.md; do
+     for f do
        git -C "$KIT" show "00581dd:core/$f" > "$base/v0.9" ||
          { echo "STOP: cannot read core/$f at 00581dd; $f and the files after it are not merged" >&2; exit 1; }
-       git merge-file "$f" "$base/v0.9" "$KIT/core/$f"
+       git merge-file -p "$f" "$base/v0.9" "$KIT/core/$f" > "$base/merged"
+       [ $? -lt 128 ] && new=$(mktemp "$f.XXXXXX") && cp -p "$f" "$new" && cat "$base/merged" > "$new" &&
+         mv -f "$new" "$f" ||
+         { [ -z "${new:-}" ] || rm -f "$new"; echo "STOP: $f could not be merged; it and the files after it are unchanged" >&2; exit 1; }
+       new=
      done )
    ```
    Resolve every conflict the merge left (`git diff --check` names each leftover marker) so

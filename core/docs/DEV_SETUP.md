@@ -33,22 +33,25 @@ hooks and `doctor.sh` could not start. `.gitattributes` holds `*.sh text eol=lf`
 clone's autocrlf says. Keep those lines. A clone made before they were committed keeps its
 CRLF copies, because a pull does not check out again a file it did not change, until they
 are rewritten once, with no uncommitted change to them: each CRLF becomes LF in a regular
-file (a symlink is left alone, a lone CR kept), and each file is staged again so that `git
-status` does not list it as modified for its new size.
+file (a symlink is left alone, a lone CR kept; each file is replaced whole, with its mode),
+and each file is staged again so that `git status` does not list it as modified for its new
+size. A rewrite that fails stops it before anything is staged.
 
 ```sh
 set -- '*.sh' .githooks/pre-commit .githooks/pre-merge-commit .githooks/commit-msg .githooks/post-merge
 git ls-files -z -- "$@" | python3 -I -c 'if 1:
-    import os, stat, sys
+    import os, stat, sys, tempfile
     for name in sys.stdin.buffer.read().split(b"\0"):
         if name and stat.S_ISREG(os.lstat(name).st_mode):
-            with open(name, "r+b") as script:
+            with open(name, "rb") as script:
                 data = script.read()
-                if b"\r\n" in data:
-                    script.seek(0)
-                    script.write(data.replace(b"\r\n", b"\n"))
-                    script.truncate()'
-git ls-files -z -- "$@" | xargs -0 git add --renormalize --
+            if b"\r\n" in data:
+                handle, new = tempfile.mkstemp(prefix=b".crlf-", dir=os.path.dirname(name) or b".")
+                with os.fdopen(handle, "wb") as copy:
+                    copy.write(data.replace(b"\r\n", b"\n"))
+                os.chmod(new, stat.S_IMODE(os.lstat(name).st_mode))
+                os.replace(new, name)' &&
+  git ls-files -z -- "$@" | xargs -0 git add --renormalize --
 ```
 
 `./scripts/doctor.sh` names any script still checked out with CRLF. The kit's own clone is no
