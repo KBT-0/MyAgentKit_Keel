@@ -426,7 +426,10 @@ Medium finding, each fixed once more:
   `PYTHONPATH` must pass without importing it (red on WSL with the probe's `-I` removed, and
   on native Windows with the earlier lock programs), and on native Windows the holder must
   import neither a stand-in `fcntl.py` nor `secrets.py` (red with the earlier programs, and
-  with only the holder's `-I` removed).
+  with only the holder's `-I` removed). Two kit checks had simulated a Python without `fcntl`
+  and a lockless or NFS file system with a `sitecustomize.py` on `PYTHONPATH`, which `-I` now
+  ignores; the full kit check caught both, and they now put their stand-in into each `-c`
+  program through a `python3` on `PATH`.
 - *The CRLF rewrite trusted every path it was given.* The loop wrote through a temporary at
   a fixed name (an owner's `x.sh.lf` was overwritten and deleted), followed a tracked symlink
   out of the repository, deleted a lone CR along with the line ends, split names at a newline,
