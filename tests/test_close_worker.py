@@ -181,7 +181,8 @@ class CloseWorkerTests(unittest.TestCase):
                       'closes by itself\n', out)
         self.assertFalse(path.exists(), out)
         self.assertIn('close_worker: w1: worktree removed through the audit', out)
-        self.assertEqual(self.calls(), [], 'tmux was called on native Windows')
+        # Only the audit lists tmux sessions (a tmux on PATH there would be one); no session is ended in it.
+        self.assertEqual([c for c in self.calls() if 'list-sessions' not in c], [], 'tmux was used to end it')
         out = self.close('w1', **env)
         self.assertIn('close_worker: w1: no Claude Code session named w1 runs; nothing to end\n', out)
 

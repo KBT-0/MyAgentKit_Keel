@@ -68,7 +68,7 @@ has() {
 }
 # Native Windows (Git for Windows' sh, MSYS2, Cygwin): no tmux; a worker is a Windows Terminal
 # tab running `claude -n NAME` (spawn_worker.sh). sessions NAME prints the process id of each
-# claude.exe whose command line holds `-n NAME` as two words, from Win32_Process; KIT_PS names
+# claude.exe whose command line holds `-n NAME` as two words, from Win32_Process, on one line; KIT_PS names
 # another lister (the kit's tests), which prints "<pid> <command line>" lines as this one does.
 # A command line Windows does not show (another user's process) names nothing.
 sessions() {
@@ -77,7 +77,8 @@ sessions() {
     2>&1) || { err=$out; return 2; }
   printf '%s\n' "$out" | tr -d '\r' | awk -v n="$1" '{
     for (i = 2; i < NF; i++)
-      if ($i == "-n" && ($(i + 1) == n || $(i + 1) == "\"" n "\"" || $(i + 1) == "'"'"'" n "'"'"'")) { print $1; break } }'
+      if ($i == "-n" && ($(i + 1) == n || $(i + 1) == "\"" n "\"" || $(i + 1) == "'"'"'" n "'"'"'")) { pids = pids (pids == "" ? "" : " ") $1; break } }
+    END { printf "%s", pids }'
 }
 case $(uname -s 2>/dev/null) in MINGW*|MSYS*|CYGWIN*) windows=1 ;; *) windows="" ;; esac
 dry=""
@@ -97,7 +98,7 @@ for name; do
     elif [ -z "$pids" ]; then
       say "$name: no Claude Code session named $name runs; nothing to end"
     elif [ -n "$dry" ]; then
-      say "$name: dry run: would end the Claude Code session $name (process $(echo $pids), taskkill /T /F) and wait up to 15 s for it; while it runs, the audit below keeps its worktree"
+      say "$name: dry run: would end the Claude Code session $name (process $pids, taskkill /T /F) and wait up to 15 s for it; while it runs, the audit below keeps its worktree"
     else
       for pid in $pids; do MSYS_NO_PATHCONV=1 taskkill /PID "$pid" /T /F >/dev/null 2>&1; done
       i=0
@@ -105,9 +106,9 @@ for name; do
       if ! left=$(sessions "$name"); then
         fail "$name: could not establish that the session ended: $err"
       elif [ -n "$left" ]; then
-        fail "$name: the Claude Code session still runs after taskkill (process $(echo $left)); the audit below keeps its worktree"
+        fail "$name: the Claude Code session still runs after taskkill (process $left); the audit below keeps its worktree"
       else
-        say "$name: Claude Code session ended (process $(echo $pids)); its Windows Terminal tab closes by itself"
+        say "$name: Claude Code session ended (process $pids); its Windows Terminal tab closes by itself"
       fi
     fi
   elif ! command -v tmux >/dev/null 2>&1; then
