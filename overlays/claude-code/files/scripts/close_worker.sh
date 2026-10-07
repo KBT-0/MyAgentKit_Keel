@@ -127,7 +127,8 @@ sessions() {
         exe = ntpath.basename(argv[0]).lower()
         if exe == "claude.exe" or exe == "claude":
             rest = argv[1:]
-        elif exe in ("node.exe", "node") and len(argv) > 1 and "claude-code" in argv[1].lower():
+        elif exe in ("node.exe", "node") and len(argv) > 1 and \
+                argv[1].replace("\\", "/").lower().split("/")[-3:] == ["@anthropic-ai", "claude-code", "cli.js"]:
             rest = argv[2:]
         else:
             continue

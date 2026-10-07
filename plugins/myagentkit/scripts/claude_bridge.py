@@ -478,7 +478,8 @@ def snapshot(repo: Path, scope: str, reference: str | None) -> tuple[str, str, s
         return set(git(repo, *args, '--', '.', *exclusions).split(b'\0')) - {b''}
     # Rendered: these run the clean filters, so a path whose filter output differs from HEAD is named.
     changed = (names_of('diff', '--name-only', '--no-renames', '-z', 'HEAD')
-               | names_of('diff', '--cached', '--name-only', '--no-renames', '-z', 'HEAD'))
+               | names_of('diff', '--cached', '--name-only', '--no-renames', '-z', 'HEAD')
+               | names_of('ls-files', '--others', '--exclude-standard', '-z'))
     ends = ['index', head]
     if scope == 'base':
         ends = ['index', base, head]
