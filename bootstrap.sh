@@ -194,6 +194,24 @@ copy_tree() {
       rules=$(cat "$src/$rel") || die "cannot read the kit's $rel; nothing was changed in the project's $dest"
       missing=$(printf '%s\n' "$rules" | grep -v -e '^#' -e '^$' | while IFS= read -r rule; do
                   printf '%s\n' "$attrs" | grep -qxF -e "$rule" || printf '%s\n' "$rule"; done)
+      # A rule's text in the file does not make it effective: a later line for the same files
+      # (`*.sh text eol=crlf` after `*.sh text eol=lf`) wins, and the next clone's gate had CRLF.
+      # The file as it would be written is asked of git itself, in a throwaway repository, for
+      # a path each kit rule names; one that does not resolve to eol=lf stops bootstrap before
+      # the file is written or the version recorded.
+      candidate=$attrs
+      [ -z "$missing" ] || candidate="$attrs
+$missing"
+      probe=$(mktemp -d) || die "cannot create a temporary folder to check $dest"
+      printf '%s\n' "$candidate" > "$probe/.gitattributes" && git init -q "$probe" >/dev/null 2>&1 ||
+        { rm -rf "$probe"; die "cannot check the project's $dest with git; nothing was changed in it"; }
+      overridden=$(printf '%s\n' "$rules" | grep -v -e '^#' -e '^$' | while IFS= read -r rule; do
+                     sample=$(printf '%s' "${rule%% *}" | sed 's/\*/x/g')
+                     eol=$(git -C "$probe" check-attr eol -- "$sample" 2>/dev/null) || eol=""
+                     [ "${eol##*: eol: }" = lf ] || printf '%s\n' "$rule"; done)
+      rm -rf "$probe"
+      [ -z "$overridden" ] ||
+        die "a line of the project's own $dest overrides the kit's rule '$(printf '%s' "$overridden" | head -n 1)' (the gate's scripts would check out without eol=lf); remove that line and run bootstrap again; nothing was changed"
       if [ -n "$missing" ]; then
         put "$target/$dest" <<EOF
 $attrs

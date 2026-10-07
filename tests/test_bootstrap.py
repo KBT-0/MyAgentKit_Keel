@@ -733,6 +733,21 @@ class BootstrapTests(unittest.TestCase):
             self.assertEqual((project / '.gitattributes').read_bytes(), b'*.png binary\n')
             self.assertFalse((project / 'docs/kit/.kit-version').exists())
 
+    def test_a_later_rule_that_overrides_the_kits_stops_bootstrap_unchanged(self):
+        # Codex review: the kit's rule text was found, so nothing was added, while a later
+        # `*.sh text eol=crlf` won and the gate's scripts checked out with CRLF.
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / 'project'
+            project.mkdir()
+            own = b'.githooks/* text eol=lf\n*.sh text eol=lf\n*.py text eol=lf\n*.sh text eol=crlf\n'
+            (project / '.gitattributes').write_bytes(own)
+            result = subprocess.run(['sh', str(root / 'bootstrap.sh'), str(project)], capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("overrides the kit's rule '*.sh text eol=lf'", result.stderr)
+            self.assertEqual((project / '.gitattributes').read_bytes(), own)
+            self.assertFalse((project / 'docs/kit/.kit-version').exists())
+
     def test_scripts_and_hooks_check_out_with_lf_under_autocrlf(self):
         # Git for Windows' default core.autocrlf=true checked every text file out with CRLF,
         # and sh cannot run a CRLF script: a project's gate, hooks and doctor.sh, and the kit's
