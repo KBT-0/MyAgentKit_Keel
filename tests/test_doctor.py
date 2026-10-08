@@ -150,8 +150,11 @@ class DoctorTests(unittest.TestCase):
                                        env=dict(env, PATH=str(windows) + os.pathsep + env['PATH'], KIT_WT='true'))
                 self.assertNotIn(note, mingw.stdout)
                 (windows / 'uname').unlink()
-                # A python3 that does not run at all is the MISSING line, never this note.
-                (windows / 'python3').write_text('#!/bin/sh\nexit 127\n')
+                # No Python that runs at all is the MISSING line, never this note. A python3 that
+                # does not run alone falls back to python (tests/test_python_fallback.py).
+                for name in ('python3', 'python', 'py'):
+                    (windows / name).write_text('#!/bin/sh\nexit 127\n')
+                    (windows / name).chmod(0o755)
                 broken = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=project, capture_output=True, text=True,
                                         env=dict(env, PATH=str(windows) + os.pathsep + env['PATH']))
                 self.assertIn('MISSING: Python 3.10 or newer as python3', broken.stdout)

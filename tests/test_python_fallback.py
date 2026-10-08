@@ -67,9 +67,28 @@ class PythonFallbackTests(unittest.TestCase):
         cleaned = run(['sh', str(OVERLAY / 'scripts/clean_worktrees.sh')])
         self.assertEqual(cleaned.returncode, 0, cleaned.stdout + cleaned.stderr)
         self.assertIn('dry run', cleaned.stdout)
+        # The gate, doctor and review entry points, each beside stand-ins for what they start.
+        scripts = project / 'scripts'
+        scripts.mkdir()
+        for name in ('check.sh', 'doctor.sh', 'review.sh'):
+            shutil.copy(ROOT / 'core/scripts' / name, scripts / name)
+        (scripts / 'review_dispatch.py').write_text('import sys; print("dispatched", sys.argv[1])\n')
+        (scripts / 'test_claude_bridge.py').write_text('print("REVIEW SELF-TEST: PASS")\n')
+        gate = run(['sh', 'scripts/check.sh'])  # unconfigured: it fails, but past the lock's exec
+        self.assertIn('CHECK: FAIL', gate.stdout + gate.stderr)
+        self.assertNotIn('FAIL [lock]', gate.stdout + gate.stderr)
+        doctor = run(['sh', 'scripts/doctor.sh'])
+        self.assertIn('DOCTOR:', doctor.stdout)
+        self.assertNotIn('MISSING: Python', doctor.stdout)
+        review = run(['sh', 'scripts/review.sh', '--self-test'])  # the python3 function
+        self.assertEqual(review.returncode, 0, review.stdout + review.stderr)
+        review = run(['sh', 'scripts/review.sh', '--reviewer', 'codex'])  # the exec of $kit_python
+        self.assertEqual(review.returncode, 0, review.stdout + review.stderr)
+        self.assertIn('dispatched --repo', review.stdout)
         # Every script chooses the same way: by running the candidate, never by `command -v`.
         shipped = [*ROOT.glob('core/scripts/*.sh'), *ROOT.glob('overlays/*/files/**/*.sh')]
-        chosen = [line.strip() for p in shipped for line in p.read_text(encoding='utf-8').splitlines() if 'then kit_python=' in line]
+        chosen = [line.strip() for p in shipped for line in p.read_text(encoding='utf-8').splitlines()
+                  if 'then kit_python=' in line]
         self.assertGreaterEqual(len(chosen), 12, chosen)
         self.assertEqual([line for line in chosen if 'command -v' in line], [])
 
