@@ -28,12 +28,11 @@ repository.
 | File | What it is |
 |---|---|
 | `CLAUDE.md` | One-line pointer to `AGENTS.md`. Content never goes here |
-| `.claude/settings.json` | Registers the five hooks below, and turns on the ponytail plugin (minimal-code mode) for every session and worker unless the setup interview's question 11 was answered no. The plugin comes from its author's marketplace (`ponytail@ponytail`) at the latest version, the same id a user-level install has, so it loads once |
+| `.claude/settings.json` | Registers the four hooks below, and turns on the ponytail plugin (minimal-code mode) for every session and worker unless the setup interview's question 11 was answered no. The plugin comes from its author's marketplace (`ponytail@ponytail`) at the latest version, the same id a user-level install has, so it loads once |
 | `.claude/hooks/gate_on_stop.sh` | Runs the gate if a turn left the watched paths dirty — early feedback, never the rule |
 | `.claude/hooks/guard_boundaries.py` | Flags a forbidden import the moment it is written, seconds instead of a commit |
 | `.claude/hooks/context_size.py` | Tells the agent, once per 50k step past 200k tokens of context, to recommend `/compact` or a hand-off, whichever is cheaper (`docs/WORKFLOW.md`, "Worker cost", rule 8) |
 | `.claude/hooks/guard_destructive_git.py` | Refuses `reset --hard`, `checkout --`, `clean -f`, `stash drop` and force pushes while the tree is dirty, and prints what would be lost |
-| `.claude/hooks/guard_running_work.py` | Asks the owner before a call ends a running process (`taskkill`, `Stop-Process`, `kill`, `pkill`, `tmux kill-session`) or stops a background task (TaskStop): a stopped review or a killed worker orphans what it started. `scripts/close_worker.sh` is not asked about |
 | `.claude/agents/diff-reviewer.md` | Read-only review subagent carrying THIS project's risky areas and `docs/REVIEW_GATE.md` |
 | `.claude/agents/worker.md` | Implementation worker with a one-hour prompt cache and a 150-turn cap, for tasks that run jobs longer than five minutes (`docs/WORKFLOW.md`, "Worker cost") |
 | `scripts/spawn_worker.sh` | Opens a SEPARATE worker session in tmux and hands it a brief file; the lead then subscribes for its idle notice instead of polling |

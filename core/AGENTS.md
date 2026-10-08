@@ -82,8 +82,7 @@ cost", and `docs/WORKFLOW.md`, "Review rounds".
   build that is running keeps running unless {{OWNER_NAME}} asked for it to end, or it is
   provably finished or hung. A stopped review or a killed worker orphans what it started,
   which runs on, spends quota and races the next run. A finished worker is closed with
-  `scripts/close_worker.sh`, which refuses while its gate or commit runs. With the Claude Code
-  overlay, `.claude/hooks/guard_running_work.py` asks {{OWNER_NAME}} before any such call.
+  `scripts/close_worker.sh`, which refuses while its gate or commit runs.
 - No untested code enters {{TESTED_AREA}}. Write tests with or before the code;
   `./scripts/check.sh` must PASS before you finish.
 - The gate is wired into git: `.githooks/pre-commit` runs it and aborts the commit on FAIL,
