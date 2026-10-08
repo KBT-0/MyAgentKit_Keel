@@ -48,7 +48,7 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   gate. **ACTION:** add the rule to your `AGENTS.md` under "Task discipline".
 - **Routine commands ask no one** (`.claude/settings.json`, Claude Code overlay; the list the
   owner chose with project_leeway): the gate (`scripts/check.sh` and `--self-test`, exactly)
-  and read-only commands (`git status`, `log`, `diff`, `show`, `git worktree list`, `cat`,
+  and read-only commands (`git status`, `git worktree list`, `cat`,
   `head`, `tail`, `ls`, `wc`, `grep`, `date`, `pwd`, PowerShell `Get-Content` and
   `Get-ChildItem`) run without a permission prompt; ending a process, deleting a file and every
   other command still ask. `git branch` is allowed only in exact listing forms (a `*` admitted
@@ -56,13 +56,15 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   `git -C . branch -D x`), a `*` follows a whole word (`git diff*` admitted `git difftool
   --extcmd=...`, `date*` admitted `date -s`), and `git *--output*` and `git *--ext-diff*` are
   denied (the one overwrites a file, the other runs the repository's diff driver). **ACTION:** a project with its own `.claude/settings.json` adds the
-  overlay's `permissions` block, `deny` included.
+  overlay's `permissions` block, `deny` included. Remove any `git diff`, `git show` and `git log`
+  allowances: they can run a repository-configured textconv or external diff driver, so they must prompt.
 - **A killed self-test's injection is named, not guessed at** (`scripts/boundary_selftests.sh`,
   worked example): SIGKILL and `taskkill /F` run no trap, so an injection can be left behind
   and every later self-test refuses to start. The refusal now says so and names the file to
   check and delete by hand; the self-test never deletes it itself, since a junction above it
   or an edit after the check would put the owner's content in its place. **ACTION:** add the
-  same two lines to each refusal in your `scripts/boundary_selftests.sh`.
+  same two lines to each refusal in your `scripts/boundary_selftests.sh`. Move the existing-path
+  refusal BEFORE the baseline check, since a stale injection makes the baseline fail too.
 - **A review archive written on Windows matches its record** (`scripts/agent_usage.py`): the
   archive was written in text mode, so Windows stored CRLF while the usage record hashed the
   LF text, and the next review of the same task refused the earlier archive as changed. The

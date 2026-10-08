@@ -24,13 +24,16 @@ class BoundaryExampleTests(unittest.TestCase):
         template = (ROOT / 'core/scripts/boundary_selftests.sh').read_text()
         example = '\n'.join(line[4:] for line in template.splitlines() if line.startswith('#   '))
         self.assertTrue(example.strip())
-        for case in ('intended', 'baseline_red', 'wrong_reason', 'missing_gate', 'misleading_success', 'collision'):
+        for case in ('intended', 'baseline_red', 'wrong_reason', 'missing_gate', 'misleading_success',
+                     'collision', 'stale_injection'):
             with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 injection = root / 'src/domain/.selftest.py'
-                if case == 'collision':
+                if case in ('collision', 'stale_injection'):
                     injection.parent.mkdir(parents=True)
-                    injection.write_text('Uncommitted owner content.\n')
+                    owner_bytes = (b'from myapp.web import router\n' if case == 'stale_injection'
+                                   else b'Uncommitted owner content.\n')
+                    injection.write_bytes(owner_bytes)
                 gate = root / 'check.sh'
                 gate.write_text('''#!/bin/sh
 if [ "${1:-}" = --self-test ]; then
@@ -42,7 +45,7 @@ fi
 [ "$CASE" != baseline_red ] || { echo 'FAIL: unrelated baseline'; exit 1; }
 [ -f src/domain/.selftest.py ] || exit 0
 case "$CASE" in
-  intended) echo 'FAIL [boundary]: the domain layer imports the web layer:'; exit 1 ;;
+  intended|stale_injection) echo 'FAIL [boundary]: the domain layer imports the web layer:'; exit 1 ;;
   wrong_reason) echo 'FAIL: unrelated build error'; exit 1 ;;
   misleading_success) echo 'FAIL [boundary]: the domain layer imports the web layer:'; exit 0 ;;
   missing_gate) exit 0 ;;
@@ -54,8 +57,13 @@ esac
                                                       start_new_session=True))
                 self.assertEqual(result.returncode, 0 if case == 'intended' else 1,
                                  result.stdout + result.stderr)
-                if case == 'collision':
-                    self.assertEqual(injection.read_text(), 'Uncommitted owner content.\n')
+                if case in ('collision', 'stale_injection'):
+                    self.assertEqual(injection.read_bytes(), owner_bytes)
+                    if case == 'stale_injection':
+                        self.assertIn('refusing to overwrite owner content', result.stdout)
+                        self.assertIn('A killed self-test (SIGKILL, taskkill /F: no trap runs)', result.stdout)
+                        self.assertIn('check it by hand and delete it: src/domain/.selftest.py', result.stdout)
+                        self.assertNotIn('baseline is already red', result.stdout)
                 else:
                     self.assertFalse(injection.exists())
 
