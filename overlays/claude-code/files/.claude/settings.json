@@ -20,10 +20,10 @@
       "Bash(git diff*)",
       "Bash(git show*)",
       "Bash(git branch)",
-      "Bash(git branch --list*)",
-      "Bash(git branch -a*)",
-      "Bash(git branch -v*)",
-      "Bash(git branch --merged*)",
+      "Bash(git branch -a)",
+      "Bash(git branch -v)",
+      "Bash(git branch -vv)",
+      "Bash(git branch --merged)",
       "Bash(git branch --show-current)",
       "Bash(git worktree list*)",
       "Bash(git rev-parse*)",
@@ -41,6 +41,9 @@
       "Bash(pwd)",
       "PowerShell(Get-Content *)",
       "PowerShell(Get-ChildItem *)"
+    ],
+    "deny": [
+      "Bash(git *--output*)"
     ]
   },
   "hooks": {

@@ -196,6 +196,19 @@ class CloseWorkerTests(unittest.TestCase):
         self.assertIn("['kill-session', '-t', '=w1']", self.calls())
         self.assertFalse(path.exists(), out)
 
+    def test_a_close_outside_any_repository_ends_nothing(self):
+        # No checkout to check is no proof that nothing runs in the worker's.
+        with open(self.tmp / 'sessions', 'a') as f:
+            f.write('w1\n')
+        outside = self.tmp / 'outside'
+        outside.mkdir()
+        result = subprocess.run(['sh', str(SCRIPT), 'w1'], cwd=outside, env=self.env, capture_output=True)
+        out = (result.stdout + result.stderr).decode('utf-8', 'replace')
+        self.assertEqual(result.returncode, 1, out)
+        self.assertIn("the worker's checkout cannot be established here", out)
+        self.assertEqual(self.calls(), [])
+        self.assertEqual(self.sessions(), ['w1'])
+
     def windows(self, *procs):
         """Native Windows as close_worker.sh sees it: uname says MINGW, no tmux, PROCS (lines of
         "<pid> <command line>") the claude.exe processes running."""

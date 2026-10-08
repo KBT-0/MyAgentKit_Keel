@@ -145,9 +145,12 @@ case $(uname -s 2>/dev/null) in MINGW*|MSYS*|CYGWIN*) windows=1 ;; *) windows=""
 # Windows a killed worker's check.sh ran on without its caller and raced the lead's next gate
 # in the same worktree. The gate holds check.lock in the checkout's git directory for its whole
 # run (check.sh): a lock this cannot take is held. git holds index.lock while it writes the
-# index, a commit included. A check that fails is not proof of a free checkout: it refuses too.
+# index, a commit included. A check that fails is not proof of a free checkout: it refuses too,
+# as does a checkout that cannot be named (no repository here). ponytail: a commit waiting in
+# its editor holds no index.lock; workers commit with -m, so none waits there.
 busy() {
-  [ -n "$1" ] && [ -d "$1" ] || return 1
+  [ -n "$1" ] && [ -d "$1" ] ||
+    { printf '%s' "the worker's checkout cannot be established here (no git repository), so whether a gate or a commit runs in it is unknown"; return 0; }
   for f in index.lock check.lock; do
     p=$(git -C "$1" rev-parse --path-format=absolute --git-path "$f" 2>/dev/null) ||
       { printf '%s' "git cannot name the $f of $1, so whether a gate or a commit runs there is unknown"; return 0; }
