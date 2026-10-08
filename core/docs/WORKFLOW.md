@@ -478,9 +478,21 @@ Rules, binding for whoever routes workers:
    write report files"), and a worker briefed for a `REPORT.md` spends turns working around
    the refusal. A sub-agent keeps its short report in its final message and writes only
    logs, tables and captures to files.
-8. **The lead session is handed over before it grows**, and at the end of a working day it
-   reads the tool's cost screen and runs `scripts/agent_cost.py --latest` and writes both
-   into the handoff, so the next routing decision is made from a number.
+8. **The lead session is compacted or handed over before it grows**, and at the end of a
+   working day it reads the tool's cost screen and runs `scripts/agent_cost.py --latest` and
+   writes both into the handoff, so the next routing decision is made from a number. The line
+   is 200k tokens of context: a lead measured at 52k to 449k over 248 requests re-read about
+   250k per request, and a fresh session (about 60k, its cache written at up to twice the
+   input price) pays itself back in under ten turns from 200k. The Claude Code overlay's
+   `context_size.py` hook says the size once per 50k step past the line; the lead then
+   recommends one of two, with the number and the reason. **Compact** when `docs/STATE.md`
+   and the open operation files already hold what matters and the work in flight continues:
+   one summary turn is cheaper than a handoff note plus a cold start. **Hand off** (update
+   STATE, write the handoff, start fresh) when the work changes direction, a batch has just
+   closed, or most of the context is the detail of finished work that a summary would still
+   carry. The lead keeps big output out of its own context: logs, diffs and images go to
+   files and it reads the summary line; long reads go to a worker that returns conclusions;
+   independent calls go out in one turn.
 9. **A worker runs the cheapest check that proves its change; the expensive step runs
    once.** The commit gate, `./scripts/check.sh` through pre-commit, always runs; the brief's
    **Proof:** line names what the worker runs for its claim beyond the gate, never instead of

@@ -35,6 +35,14 @@ reviews. Why each change is safe is in `RESEARCH_LOG.md` (2026-10-06 and 2026-10
   names. `check.sh` prints `NOTE [strong-review]` when the list exists and no report was
   added in ten days. **ACTION:** copy `$KIT/core/docs/STRONG_REVIEW.md` to
   `docs/STRONG_REVIEW.md` to start the cycle (the reminder stays silent without it).
+- **Lead context line** (issue #58; `docs/WORKFLOW.md`, "Worker cost", rule 8): past 200k
+  tokens of context the lead recommends `/compact` or a hand-off, whichever is cheaper at
+  that moment, never a hand-off by default. The Claude Code overlay's new UserPromptSubmit
+  hook `.claude/hooks/context_size.py` tells the agent the size once per 50k step past the
+  line. `AGENTS.md` MENTION ONCE gains "a cheaper way you can see". `scripts/agent_cost.py
+  --latest` now finds the transcripts of a project whose path holds `_` or another
+  non-alphanumeric character. **ACTION:** a project with its own `.claude/settings.json`
+  adds the UserPromptSubmit entry from the overlay's.
 - **Model routing rules** (`docs/WORKFLOW.md`, "Model routing"): work is sorted into three
   tiers; the lead chooses model and effort for every errand with equal care and writes both
   into the brief; the top models (Codex Astra, Claude Fable) are the lead's pick for one

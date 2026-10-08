@@ -1,8 +1,10 @@
 """agent_cost.py must dedupe streamed records, attribute gap re-writes and count poll turns."""
 import json
 from pathlib import Path
+import re
 import tempfile
 import unittest
+from unittest import mock
 import agent_cost
 
 
@@ -61,6 +63,19 @@ class AgentCostTests(unittest.TestCase):
             self.assertIn('TOTAL requests 4', text)
             self.assertIn('after >5 min gaps 1.1k (50%)', text)
             self.assertIn('poll-only requests 2', text)
+
+    def test_latest_finds_a_project_whose_path_has_an_underscore(self):
+        # Claude Code encodes every non-alphanumeric character as '-'; --latest once encoded
+        # only '/', and found nothing for a project folder named like project_leeway.
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / 'my_project.v2'
+            project.mkdir()
+            folder = Path(tmp) / 'home/.claude/projects' / re.sub(r'[^A-Za-z0-9]', '-', str(project.resolve()))
+            folder.mkdir(parents=True)
+            (folder / 'abc.jsonl').write_text('')
+            self.assertNotIn('_', folder.name)
+            with mock.patch.object(Path, 'home', return_value=Path(tmp) / 'home'):
+                self.assertEqual(agent_cost.latest_session(project), folder / 'abc.jsonl')
 
     def test_poll_detection_is_about_waiting_not_about_running_a_job(self):
         self.assertTrue(agent_cost.is_poll('Bash', {'command': 'while true; do sleep 20; done'}))

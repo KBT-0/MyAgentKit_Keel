@@ -28,9 +28,10 @@ repository.
 | File | What it is |
 |---|---|
 | `CLAUDE.md` | One-line pointer to `AGENTS.md`. Content never goes here |
-| `.claude/settings.json` | Registers the three hooks below |
+| `.claude/settings.json` | Registers the four hooks below |
 | `.claude/hooks/gate_on_stop.sh` | Runs the gate if a turn left the watched paths dirty — early feedback, never the rule |
 | `.claude/hooks/guard_boundaries.py` | Flags a forbidden import the moment it is written, seconds instead of a commit |
+| `.claude/hooks/context_size.py` | Tells the agent, once per 50k step past 200k tokens of context, to recommend `/compact` or a hand-off, whichever is cheaper (`docs/WORKFLOW.md`, "Worker cost", rule 8) |
 | `.claude/hooks/guard_destructive_git.py` | Refuses `reset --hard`, `checkout --`, `clean -f`, `stash drop` and force pushes while the tree is dirty, and prints what would be lost |
 | `.claude/agents/diff-reviewer.md` | Read-only review subagent carrying THIS project's risky areas and `docs/REVIEW_GATE.md` |
 | `.claude/agents/worker.md` | Implementation worker with a one-hour prompt cache and a 150-turn cap, for tasks that run jobs longer than five minutes (`docs/WORKFLOW.md`, "Worker cost") |

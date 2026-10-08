@@ -66,13 +66,13 @@ BRIDGE_MINIMUMS = next(
 if BRIDGE_MINIMUMS is None:
     sys.exit('KIT CHECK: FAIL — SUITE_MINIMUMS not found in core/scripts/test_claude_bridge.py')
 REQUIRED_SUITES = {
-    'core/scripts': dict(BRIDGE_MINIMUMS, test_agent_cost=2),
+    'core/scripts': dict(BRIDGE_MINIMUMS, test_agent_cost=3),
     # Each suite's current count: a minimum far below it (1 of 30) let a suite lose almost
     # every test with the kit check green. A new test raises its suite's number here.
     'tests': {'test_packaging': 1, 'test_bootstrap': 28, 'test_acceptance': 8,
               'test_review_upgrade': 3, 'test_boundary_example': 3, 'test_scan_gate': 1,
               'test_check_gate': 23, 'test_check_gate_windows': 18, 'test_boundary_restore': 39,
-              'test_sync_kit': 29, 'test_doctor': 2, 'test_git_hooks': 25, 'test_stop_hook': 1,
+              'test_sync_kit': 29, 'test_doctor': 2, 'test_git_hooks': 25, 'test_stop_hook': 1, 'test_context_hook': 4,
               'test_spawn_worker': 18, 'test_worker_visibility': 55, 'test_doc_pointers': 5,
               'test_kit_output': 1, 'test_kit_runner': 15, 'test_clean_worktrees': 137, 'test_clean_worktrees_windows': 9,
               'test_review_windows': 19, 'test_worker_paths_windows': 3,

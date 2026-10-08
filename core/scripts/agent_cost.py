@@ -132,7 +132,8 @@ def table(summaries: list[dict]) -> str:
 
 
 def latest_session(project_dir: Path) -> Path:
-    encoded = str(project_dir.resolve()).replace('/', '-')
+    # Claude Code turns every character but a letter or digit into '-': D:\_x and /a_b alike.
+    encoded = re.sub(r'[^A-Za-z0-9]', '-', str(project_dir.resolve()))
     folder = Path.home() / '.claude' / 'projects' / encoded
     files = sorted(folder.glob('*.jsonl'), key=lambda p: p.stat().st_mtime)
     if not files:
