@@ -19,6 +19,12 @@ worktree clean-up each work there, with tests that run on native Windows (a CI j
 own). It started as two fixes for a project that moved there from WSL, hardened by cross-model
 reviews. Why each change is safe is in `RESEARCH_LOG.md` (2026-10-06 and 2026-10-07).
 
+- **A low allowance** (`docs/WORKFLOW.md`, "Model routing", rule 7): when the owner says one
+  side's allowance is low, that side only reviews and the other side fixes; reviews run at
+  the lowest effort that fits, and the top model or highest effort needs the owner's yes
+  (rule 2 says so too). A running review is not cancelled to lower its effort; a quota
+  failure leaves its rerun command and waits. `docs/REVIEW_RUNNING.md`: test failures inside
+  Codex's sandbox are not findings until the gate fails outside it too.
 - **Model routing rules** (`docs/WORKFLOW.md`, "Model routing"): work is sorted into three
   tiers; the lead chooses model and effort for every errand with equal care and writes both
   into the brief; the top models (Codex Astra, Claude Fable) are the lead's pick for one
