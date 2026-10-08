@@ -79,6 +79,10 @@ reviews. Why each change is safe is in `RESEARCH_LOG.md` (2026-10-06 and 2026-10
   every later self-test refused to start. A path holding exactly what the case writes is that
   leftover and is written over and removed; other content there still refuses. **ACTION:**
   apply the same test to each injection path in your `scripts/boundary_selftests.sh`.
+- **A review archive written on Windows matches its record** (`scripts/agent_usage.py`): the
+  archive was written in text mode, so Windows stored CRLF while the usage record hashed the
+  LF text, and the next review of the same task refused the earlier archive as changed. The
+  archive now holds the text's own bytes.
 - **Model routing rules** (`docs/WORKFLOW.md`, "Model routing"): work is sorted into three
   tiers; the lead chooses model and effort for every errand with equal care and writes both
   into the brief; the top models (Codex Astra, Claude Fable) are the lead's pick for one

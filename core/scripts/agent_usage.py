@@ -56,7 +56,9 @@ def write_evidence(repo: Path, path: Path, text: str, *, private: bool = False,
     path.parent.mkdir(parents=True, exist_ok=True)
     staging = repo / '.myagentkit/usage' if private else path.parent
     staging.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=staging) as stream:
+    # newline="": the bytes on disk are the text's own. Text mode on Windows wrote CRLF while
+    # every record hashes the LF text, so each archive written there failed its own sha256.
+    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", newline="", dir=staging) as stream:
         stream.write(text)
         stream.flush()
         os.fsync(stream.fileno())

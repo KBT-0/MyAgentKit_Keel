@@ -19,6 +19,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'core/scripts'))
 import agent_process  # noqa: E402
+import agent_usage  # noqa: E402
 import codex_quota  # noqa: E402
 
 WINDOWS = os.name == 'nt'
@@ -72,6 +73,15 @@ class ReviewOnWindows(unittest.TestCase):
         return [sys.executable, '-I', str(path)]
 
     @windows_only
+    @windows_only
+    def test_an_archive_keeps_the_bytes_its_record_hashes(self):
+        # Text mode wrote CRLF on Windows while the record hashed the LF text: the next review
+        # of the task refused the archive as changed.
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            agent_usage.write_evidence(repo, repo / 'docs/reviews/x.md', 'a\nb\n')
+            self.assertEqual((repo / 'docs/reviews/x.md').read_bytes(), b'a\nb\n')
+
     def test_prompt_in_output_out_exit_status_kept(self):
         command = self.script('echo.py', 'import sys\ndata = sys.stdin.read()\n'
                                          'print(data.upper()); print("err", file=sys.stderr)\nsys.exit(3)\n')
