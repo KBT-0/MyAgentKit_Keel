@@ -10,6 +10,39 @@
   "enabledPlugins": {
     "ponytail@ponytail": true
   },
+  "permissions": {
+    "allow": [
+      "Bash(./scripts/check.sh*)",
+      "Bash(scripts/check.sh*)",
+      "Bash(sh scripts/check.sh*)",
+      "Bash(git status*)",
+      "Bash(git log*)",
+      "Bash(git diff*)",
+      "Bash(git show*)",
+      "Bash(git branch)",
+      "Bash(git branch --list*)",
+      "Bash(git branch -a*)",
+      "Bash(git branch -v*)",
+      "Bash(git branch --merged*)",
+      "Bash(git branch --show-current)",
+      "Bash(git worktree list*)",
+      "Bash(git rev-parse*)",
+      "Bash(git -C * status*)",
+      "Bash(git -C * log*)",
+      "Bash(git -C * diff*)",
+      "Bash(git -C * show*)",
+      "Bash(cat *)",
+      "Bash(head *)",
+      "Bash(tail *)",
+      "Bash(ls*)",
+      "Bash(wc *)",
+      "Bash(grep *)",
+      "Bash(date)",
+      "Bash(pwd)",
+      "PowerShell(Get-Content *)",
+      "PowerShell(Get-ChildItem *)"
+    ]
+  },
   "hooks": {
     "PreToolUse": [
       {

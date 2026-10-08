@@ -68,6 +68,17 @@ reviews. Why each change is safe is in `RESEARCH_LOG.md` (2026-10-06 and 2026-10
   for it to end, or it is provably finished or hung. On 2026-10-08 a stopped review left its
   `codex exec` running orphaned, and killed workers left their `check.sh` racing the lead's
   gate. **ACTION:** add the rule to your `AGENTS.md` under "Task discipline".
+- **Routine commands ask no one** (`.claude/settings.json`, Claude Code overlay): the gate
+  (`scripts/check.sh`) and read-only commands (`git status`, `log`, `diff`, `show`,
+  `rev-parse`, listing `git branch` and `git worktree list`, `cat`, `head`, `tail`, `ls`, `wc`,
+  `grep`, PowerShell `Get-Content` and `Get-ChildItem`) run without a permission prompt; ending
+  a process, deleting a file and every other command still ask. **ACTION:** a project with its
+  own `.claude/settings.json` adds the overlay's `permissions.allow` list.
+- **A killed self-test's injection no longer blocks the next one** (`scripts/boundary_selftests.sh`,
+  worked example): SIGKILL and `taskkill /F` run no trap, so an injection was left behind and
+  every later self-test refused to start. A path holding exactly what the case writes is that
+  leftover and is written over and removed; other content there still refuses. **ACTION:**
+  apply the same test to each injection path in your `scripts/boundary_selftests.sh`.
 - **Model routing rules** (`docs/WORKFLOW.md`, "Model routing"): work is sorted into three
   tiers; the lead chooses model and effort for every errand with equal care and writes both
   into the brief; the top models (Codex Astra, Claude Fable) are the lead's pick for one

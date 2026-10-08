@@ -15,12 +15,16 @@
 # Worked example, matching the example check:
 # The dot-prefixed injection is intended to avoid common build/lint include globs.
 # Verify your project's actual include rules; dotfiles are not universally excluded.
+# A run killed by SIGKILL or `taskkill /F` runs no trap and leaves its injection behind. A
+# path holding exactly what this case writes is that leftover, so the case writes over it and
+# removes it as usual; any other content there is the owner's, and the case refuses.
 #
 #   if ! sh "$0" >/dev/null 2>&1; then
 #     echo "  FAIL — domain/web baseline is already red; the injection would prove nothing."
 #     st_fail=1
-#   elif [ -e src/domain/.selftest.py ] || [ -L src/domain/.selftest.py ]; then
-#     echo "  FAIL — the injection path already exists; refusing to overwrite owner content."
+#   elif [ -L src/domain/.selftest.py ] || { [ -e src/domain/.selftest.py ] &&
+#        [ "$(cat src/domain/.selftest.py)" != 'from myapp.web import router' ]; }; then
+#     echo "  FAIL — the injection path holds other content; refusing to overwrite owner content."
 #     st_fail=1
 #   elif (
 #     # A subshell, so these traps do not replace the self-test's: interrupted, the file goes too.
