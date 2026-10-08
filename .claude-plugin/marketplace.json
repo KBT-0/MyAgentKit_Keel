@@ -12,15 +12,6 @@
       "description": "The review gate, the handoff brief, and a one-command path to send what you learned back upstream.",
       "source": "./plugin",
       "category": "workflow"
-    },
-    {
-      "name": "ponytail",
-      "description": "Minimal-code mode (DietrichGebert/ponytail, MIT), its author's latest version.",
-      "source": {
-        "source": "github",
-        "repo": "DietrichGebert/ponytail"
-      },
-      "category": "workflow"
     }
   ]
 }

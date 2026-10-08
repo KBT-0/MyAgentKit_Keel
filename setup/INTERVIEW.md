@@ -248,14 +248,14 @@ One topic per turn. Suggested order, because each answer informs the next:
     cut code by 60 to 94 percent on tasks with an over-build trap and was even on code that
     was already minimal, and an independent multi-turn run found it can cost more tool calls
     on large tasks that force completion. It saves most for workers that write code.
-    The kit's marketplace (`myagentkit`) lists it at its author's latest version, so updates
-    arrive with the plugin's own update. Yes: keep `extraKnownMarketplaces` (`myagentkit`) and `enabledPlugins`
-    (`ponytail@myagentkit`) in `.claude/settings.json` (the Claude Code overlay ships them);
+    It comes from its author's own marketplace at the latest version. Yes: keep
+    `extraKnownMarketplaces` (`ponytail`) and `enabledPlugins` (`ponytail@ponytail`) in
+    `.claude/settings.json` (the Claude Code overlay ships them);
     Claude Code offers the install when the folder is trusted, and spawned worker sessions
-    and sub-agents get the mode with it. Its hooks need `node` on PATH. If the owner already
-    has `ponytail@ponytail` enabled in their user settings, tell them to turn it off, or both
-    copies load. For Codex sessions and workers, give the owner the two commands to type,
-    then `/hooks` in Codex to trust its hooks:
+    and sub-agents get the mode with it. Its hooks need `node` on PATH. An owner who already
+    enabled `ponytail@ponytail` in their user settings gets the same plugin, loaded once.
+    For Codex sessions and workers, give the owner the two commands to type, then `/hooks`
+    in Codex to trust its hooks:
     ```text
     codex plugin marketplace add DietrichGebert/ponytail
     codex plugin add ponytail@ponytail
