@@ -4,5 +4,17 @@ set -eu
 kit=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 cd "$kit"
 # A python.org or setup-python CPython on native Windows is `python`; there may be no python3.
-if python3 -c 'import sys' >/dev/null 2>&1; then exec python3 -B scripts/check_kit.py "$@"; fi
-exec python -B scripts/check_kit.py "$@"
+if python3 -c 'import sys' >/dev/null 2>&1; then py=python3; else py=python; fi
+# A run once exited 0 without printing KIT CHECK: PASS. The check writes this file right after
+# that line, so exit 0 without it is a failure, whatever ended the run early.
+passed=$(mktemp -d)
+trap 'rm -rf "$passed"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+status=0
+KIT_CHECK_PASSED="$passed/passed" "$py" -B scripts/check_kit.py "$@" || status=$?
+if [ "$status" -eq 0 ] && [ ! -f "$passed/passed" ]; then
+  echo "KIT CHECK: FAIL — the kit check exited 0 without reaching its PASS line" >&2
+  status=1
+fi
+exit "$status"

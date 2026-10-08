@@ -55,6 +55,9 @@ for _name in ('GIT_DIR', 'GIT_WORK_TREE', 'GIT_IMPLICIT_WORK_TREE', 'GIT_INDEX_F
               'GIT_REPLACE_REF_BASE', 'GIT_PREFIX', 'GIT_SHALLOW_FILE', 'GIT_INTERNAL_SUPER_PREFIX',
               'GIT_NAMESPACE', 'GIT_CEILING_DIRECTORIES'):
     os.environ.pop(_name, None)
+# scripts/check.sh names a file to create once KIT CHECK: PASS is printed; popped here, so a
+# nested kit check (a unit, a test) never creates it in the outer run's place.
+_PASSED_FILE = os.environ.pop('KIT_CHECK_PASSED', None)
 
 ROOT = Path(__file__).resolve().parents[1]
 # The review self-test ships to projects with its own minimums; read them, never copy them.
@@ -69,7 +72,7 @@ REQUIRED_SUITES = {
     'core/scripts': dict(BRIDGE_MINIMUMS, test_agent_cost=3),
     # Each suite's current count: a minimum far below it (1 of 30) let a suite lose almost
     # every test with the kit check green. A new test raises its suite's number here.
-    'tests': {'test_packaging': 1, 'test_bootstrap': 28, 'test_acceptance': 8,
+    'tests': {'test_packaging': 1, 'test_bootstrap': 28, 'test_acceptance': 9,
               'test_review_upgrade': 3, 'test_boundary_example': 3, 'test_scan_gate': 1,
               'test_check_gate': 23, 'test_check_gate_windows': 18, 'test_boundary_restore': 39,
               'test_sync_kit': 29, 'test_doctor': 2, 'test_git_hooks': 25, 'test_stop_hook': 1, 'test_context_hook': 4, 'test_overlay_permissions': 6,
@@ -961,7 +964,9 @@ def main():
     if not run_units([(name, command + ["--unit", name]) for name in units], args.timing, parallel):
         return 1
     print("TIME: %.1f s in all" % (time.monotonic() - started))
-    print("KIT CHECK: PASS")
+    print("KIT CHECK: PASS", flush=True)
+    if _PASSED_FILE:
+        Path(_PASSED_FILE).touch()
     return 0
 
 

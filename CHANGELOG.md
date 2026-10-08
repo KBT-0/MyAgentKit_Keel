@@ -69,6 +69,10 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   archive was written in text mode, so Windows stored CRLF while the usage record hashed the
   LF text, and the next review of the same task refused the earlier archive as changed. The
   archive now holds the text's own bytes.
+- **The kit check passes only with its PASS line** (`scripts/check.sh`, the kit's own wrapper):
+  a self-test on native Windows exited 0 without printing `KIT CHECK: PASS`. The wrapper now
+  asks the check to leave a file right after that line and fails an exit 0 without it. Kit
+  only; nothing to do in a project.
 - **A low allowance ends** (`docs/WORKFLOW.md`, "Model routing", rule 7; a v0.10 rule): the
   rule said when a low allowance starts and not when it ends, so a lead kept the low side
   reviewing only after its allowance had reset. It now ends when that side's allowance resets

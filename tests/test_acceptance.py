@@ -3,6 +3,8 @@ import contextlib
 import importlib.util
 import io
 import os
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 import tempfile
@@ -145,6 +147,24 @@ class AcceptanceTests(unittest.TestCase):
                     with self.assertRaisesRegex(RuntimeError, 'SELF-TEST: FAIL'):
                         gate.acceptance(True)
                 self.assertEqual(reached, [True])
+
+    def test_the_wrapper_fails_a_run_that_exits_0_without_its_pass_line(self):
+        # A self-test once exited 0 without printing KIT CHECK: PASS, and the caller saw a pass.
+        for case, body in (('silent', 'exit 0\n'), ('passed', ': > "$KIT_CHECK_PASSED"\n'),
+                           ('failed', 'exit 3\n')):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                (root / 'scripts').mkdir()
+                shutil.copy(ROOT / 'scripts/check.sh', root / 'scripts/check.sh')
+                (root / 'bin').mkdir()
+                for name in ('python3', 'python'):
+                    (root / 'bin' / name).write_text('#!/bin/sh\n' + body)
+                    (root / 'bin' / name).chmod(0o755)
+                result = subprocess.run(['sh', 'scripts/check.sh'], cwd=root, capture_output=True, text=True,
+                                        env=dict(os.environ, PATH=str(root / 'bin') + os.pathsep + os.environ['PATH']))
+                self.assertEqual(result.returncode, {'silent': 1, 'passed': 0, 'failed': 3}[case],
+                                 result.stdout + result.stderr)
+                self.assertEqual('without reaching its PASS line' in result.stderr, case == 'silent')
 
     def test_packaging_suite_is_required_by_the_real_gate(self):
         self.assertGreaterEqual(gate.REQUIRED_SUITES['tests']['test_packaging'], 1)
