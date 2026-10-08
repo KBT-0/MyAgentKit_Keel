@@ -25,11 +25,8 @@ reviews. Why each change is safe is in `RESEARCH_LOG.md` (2026-10-06 and 2026-10
   hook `.claude/hooks/context_size.py` tells the agent the size once per 50k step past the
   line. `AGENTS.md` MENTION ONCE gains "a cheaper way you can see". `scripts/agent_cost.py
   --latest` now finds the transcripts of a project whose path holds `_` or another
-  non-alphanumeric character. The overlay's three Python hooks now run under `python` where
-  `python3` is absent (a Windows install); before, each exited 127 there and Claude Code went
-  on without it. **ACTION:** a project with its own `.claude/settings.json` adds the
-  UserPromptSubmit entry from the overlay's, and starts each Python hook command with
-  `"$(command -v python3 || command -v python)"` in place of `python3`.
+  non-alphanumeric character. **ACTION:** a project with its own `.claude/settings.json`
+  adds the UserPromptSubmit entry from the overlay's.
 - **Model routing rules** (`docs/WORKFLOW.md`, "Model routing"): work is sorted into three
   tiers; the lead chooses model and effort for every errand with equal care and writes both
   into the brief; the top models (Codex Astra, Claude Fable) are the lead's pick for one
