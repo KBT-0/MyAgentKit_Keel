@@ -23,8 +23,9 @@ reviews. Why each change is safe is in `RESEARCH_LOG.md` (2026-10-06 and 2026-10
   side's allowance is low, that side only reviews and the other side fixes; reviews run at
   the lowest effort that fits, and the top model or highest effort needs the owner's yes
   (rule 2 says so too). A running review is not cancelled to lower its effort; a quota
-  failure leaves its rerun command and waits. `docs/REVIEW_RUNNING.md`: test failures inside
-  Codex's sandbox are not findings until the gate fails outside it too.
+  failure leaves its rerun command and waits. `docs/REVIEW_RUNNING.md`: a test failure in Codex's
+  sandbox is set aside only when its diagnostic names a sandbox restriction and the same
+  test passes outside the sandbox on the same platform.
 - **Model routing rules** (`docs/WORKFLOW.md`, "Model routing"): work is sorted into three
   tiers; the lead chooses model and effort for every errand with equal care and writes both
   into the brief; the top models (Codex Astra, Claude Fable) are the lead's pick for one
