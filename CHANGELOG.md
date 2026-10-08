@@ -46,13 +46,14 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   for it to end, or it is provably finished or hung. On 2026-10-08 a stopped review left its
   `codex exec` running orphaned, and killed workers left their `check.sh` racing the lead's
   gate. **ACTION:** add the rule to your `AGENTS.md` under "Task discipline".
-- **Routine commands ask no one** (`.claude/settings.json`, Claude Code overlay): the gate
-  (`scripts/check.sh`) and read-only commands (`git status`, `log`, `diff`, `show`,
-  `rev-parse`, listing `git branch` and `git worktree list`, `cat`, `head`, `tail`, `ls`, `wc`,
-  `grep`, PowerShell `Get-Content` and `Get-ChildItem`) run without a permission prompt; ending
-  a process, deleting a file and every other command still ask. `git branch` is allowed only in
-  exact listing forms (a `*` admitted `git branch -vD`), and `git *--output*` is denied (it
-  overwrites a file). **ACTION:** a project with its own `.claude/settings.json` adds the
+- **Routine commands ask no one** (`.claude/settings.json`, Claude Code overlay; the list the
+  owner chose with project_leeway): the gate (`scripts/check.sh` and `--self-test`, exactly)
+  and read-only commands (`git status`, `log`, `diff`, `show`, `git worktree list`, `cat`,
+  `head`, `tail`, `ls`, `wc`, `grep`, `date`, `pwd`, PowerShell `Get-Content` and
+  `Get-ChildItem`) run without a permission prompt; ending a process, deleting a file and every
+  other command still ask. `git branch` is allowed only in exact listing forms (a `*` admitted
+  `git branch -vD`), no rule has a `*` before its subcommand (`git -C * diff*` admitted
+  `git -C . branch -D x`), and `git *--output*` is denied (it overwrites a file). **ACTION:** a project with its own `.claude/settings.json` adds the
   overlay's `permissions` block, `deny` included.
 - **A killed self-test's injection is named, not guessed at** (`scripts/boundary_selftests.sh`,
   worked example): SIGKILL and `taskkill /F` run no trap, so an injection can be left behind
