@@ -15,28 +15,21 @@
 # Worked example, matching the example check:
 # The dot-prefixed injection is intended to avoid common build/lint include globs.
 # Verify your project's actual include rules; dotfiles are not universally excluded.
-# A run killed by SIGKILL or `taskkill /F` runs no trap and leaves its injection behind, and
-# the next baseline is red because of it. So FIRST, before the baseline: a regular file with
-# one link (a hard link shares an owner file's bytes) whose bytes are exactly this case's is
-# that leftover and is removed. Anything else at the path is the owner's, and the case refuses.
 #
-#   inj=src/domain/.selftest.py
-#   if [ -f "$inj" ] && [ ! -L "$inj" ] && [ -z "$(find "$inj" -links +1)" ] &&
-#      printf 'from myapp.web import router\n' | cmp -s - "$inj"; then
-#     rm -f "$inj" && echo "  note — removed a killed self-test's leftover: $inj"
-#   fi
 #   if ! sh "$0" >/dev/null 2>&1; then
 #     echo "  FAIL — domain/web baseline is already red; the injection would prove nothing."
 #     st_fail=1
-#   elif [ -e "$inj" ] || [ -L "$inj" ]; then
+#   elif [ -e src/domain/.selftest.py ] || [ -L src/domain/.selftest.py ]; then
 #     echo "  FAIL — the injection path already exists; refusing to overwrite owner content."
+#     echo "         A killed self-test (SIGKILL, taskkill /F: no trap runs) leaves its injection"
+#     echo "         behind. If this is one, check it by hand and delete it: src/domain/.selftest.py"
 #     st_fail=1
 #   elif (
 #     # A subshell, so these traps do not replace the self-test's: interrupted, the file goes too.
-#     trap 'rm -f "$inj"' EXIT
+#     trap 'rm -f src/domain/.selftest.py' EXIT
 #     trap 'exit 130' INT
 #     trap 'exit 143' TERM
-#     mkdir -p src/domain && printf 'from myapp.web import router\n' > "$inj" || exit 1
+#     mkdir -p src/domain && printf 'from myapp.web import router\n' > src/domain/.selftest.py || exit 1
 #     boundary_status=0
 #     boundary_output=$(sh "$0" 2>&1) || boundary_status=$?
 #     [ "$boundary_status" -ne 0 ] && printf '%s\n' "$boundary_output" |

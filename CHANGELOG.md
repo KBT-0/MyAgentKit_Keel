@@ -76,12 +76,12 @@ reviews. Why each change is safe is in `RESEARCH_LOG.md` (2026-10-06 and 2026-10
   exact listing forms (a `*` admitted `git branch -vD`), and `git *--output*` is denied (it
   overwrites a file). **ACTION:** a project with its own `.claude/settings.json` adds the
   overlay's `permissions` block, `deny` included.
-- **A killed self-test's injection no longer blocks the next one** (`scripts/boundary_selftests.sh`,
-  worked example): SIGKILL and `taskkill /F` run no trap, so an injection was left behind and
-  every later self-test refused to start. Before its baseline, a case removes a regular,
-  singly linked file holding exactly its bytes (`cmp`) as that leftover; other content there
-  still refuses. **ACTION:**
-  apply the same test to each injection path in your `scripts/boundary_selftests.sh`.
+- **A killed self-test's injection is named, not guessed at** (`scripts/boundary_selftests.sh`,
+  worked example): SIGKILL and `taskkill /F` run no trap, so an injection can be left behind
+  and every later self-test refuses to start. The refusal now says so and names the file to
+  check and delete by hand; the self-test never deletes it itself, since a junction above it
+  or an edit after the check would put the owner's content in its place. **ACTION:** add the
+  same two lines to each refusal in your `scripts/boundary_selftests.sh`.
 - **A review archive written on Windows matches its record** (`scripts/agent_usage.py`): the
   archive was written in text mode, so Windows stored CRLF while the usage record hashed the
   LF text, and the next review of the same task refused the earlier archive as changed. The

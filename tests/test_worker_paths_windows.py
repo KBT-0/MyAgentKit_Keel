@@ -78,6 +78,8 @@ class WorkerPathsOnWindows(unittest.TestCase):
         self.stub(self.bin / 'ps-fixture', 'exit 0\n')
         self.env['KIT_PS'] = str(self.bin / 'ps-fixture')
         self.stub(self.scripts / 'clean_worktrees.sh', 'echo "clean_worktrees: no worktree at fixture"\n')
+        # A repository to close in: outside one, the close refuses before its auditor.
+        subprocess.run(['git', 'init', '-q', str(self.tmp)], check=True, capture_output=True)
         for path in paths:
             with self.subTest(path=path):
                 result = self.run_script(path, '--dry-run', 'fixture')
