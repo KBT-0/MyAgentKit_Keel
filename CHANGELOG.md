@@ -19,6 +19,14 @@ worktree clean-up each work there, with tests that run on native Windows (a CI j
 own). It started as two fixes for a project that moved there from WSL, hardened by cross-model
 reviews. Why each change is safe is in `RESEARCH_LOG.md` (2026-10-06 and 2026-10-07).
 
+- **Ponytail mode** (`setup/INTERVIEW.md`, question 11; default yes): the Claude Code
+  overlay's `.claude/settings.json` turns on the `ponytail` plugin
+  (`DietrichGebert/ponytail`), which makes sessions and workers try the smallest working
+  solution first: reuse, standard library, platform, one line, then the minimum code. About
+  1.3k tokens at each session and sub-agent start; it saves most on code-writing workers.
+  Codex gets it through `codex plugin add ponytail@ponytail`. **ACTION:** to turn it on in
+  an existing project, add the overlay's `extraKnownMarketplaces` and `enabledPlugins`
+  entries to `.claude/settings.json`.
 - **Model routing rules** (`docs/WORKFLOW.md`, "Model routing"): work is sorted into three
   tiers; the lead chooses model and effort for every errand with equal care and writes both
   into the brief; the top models (Codex Astra, Claude Fable) are the lead's pick for one

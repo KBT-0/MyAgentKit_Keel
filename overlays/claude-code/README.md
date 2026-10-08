@@ -28,7 +28,7 @@ repository.
 | File | What it is |
 |---|---|
 | `CLAUDE.md` | One-line pointer to `AGENTS.md`. Content never goes here |
-| `.claude/settings.json` | Registers the three hooks below |
+| `.claude/settings.json` | Registers the three hooks below, and turns on the ponytail plugin (minimal-code mode) for every session and worker unless the setup interview's question 11 was answered no |
 | `.claude/hooks/gate_on_stop.sh` | Runs the gate if a turn left the watched paths dirty — early feedback, never the rule |
 | `.claude/hooks/guard_boundaries.py` | Flags a forbidden import the moment it is written, seconds instead of a commit |
 | `.claude/hooks/guard_destructive_git.py` | Refuses `reset --hard`, `checkout --`, `clean -f`, `stash drop` and force pushes while the tree is dirty, and prints what would be lost |
