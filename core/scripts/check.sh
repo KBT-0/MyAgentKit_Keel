@@ -497,6 +497,46 @@ self_test() {
     GATE_SELFTEST_STATE_FILE="$work/other/STATE.md" GATE_SELFTEST_HISTORY="$hist"
   expect_pass "state gate passes a repository with no commit yet" \
     GATE_SELFTEST_STATE_FILE="$work/closed/STATE.md" GATE_SELFTEST_HISTORY="$fresh"
+  mkdir -p "$work/strong-list" "$work/strong-report/reviews"
+  printf '# STATE\n\n## Active work\n' | tee "$work/strong-list/STATE.md" > "$work/strong-report/STATE.md"
+  printf '# STRONG_REVIEW\n\n- K4: accepted\n' > "$work/strong-list/STRONG_REVIEW.md"
+  printf '# report\n\n- K4 (High): a finding\n' > "$work/strong-report/reviews/strong-2026-01-01-model.md"
+  expect_fail "state gate rejects a closed task that STRONG_REVIEW.md still names" \
+    GATE_SELFTEST_STATE_FILE="$work/strong-list/STATE.md" GATE_SELFTEST_HISTORY="$hist"
+  expect_fail "state gate rejects a closed task that a strong review report still names" \
+    GATE_SELFTEST_STATE_FILE="$work/strong-report/STATE.md" GATE_SELFTEST_HISTORY="$hist"
+
+  # --- the strong review reminder: told, never failed ---------------------------
+  # Two histories that added a report, 30 days ago and now, and one with none; the list in
+  # the docs folder is what opts the project in.
+  rm -f "$work/strong-report/reviews/strong-2026-01-01-model.md"
+  printf '# STRONG_REVIEW\n' > "$work/strong-report/STRONG_REVIEW.md"
+  for age in 30 0; do
+    ( fixture_env; repo="$work/strong-$age"; git init -q "$repo" && mkdir -p "$repo/docs/reviews" &&
+      echo report > "$repo/docs/reviews/strong-2026-01-01-model.md" && git -C "$repo" add -A &&
+      GIT_COMMITTER_DATE="@$(( $(date +%s) - age * 86400 )) +0000" git -C "$repo" -c user.name=t \
+        -c user.email=t@example.invalid -c core.hooksPath=/dev/null -c commit.gpgsign=false \
+        commit -q -m 'strong review' ) ||
+      { echo "  FAIL — could not build the synthetic history for the strong review reminder"; st_fail=1; }
+  done
+  reminder_ok=1
+  for case in "$work/strong-30|days ago" "$work/strong-0|" "$hist|no strong review report yet"; do
+    repo=${case%%|*}; want=${case#*|}
+    out=$(env GATE_SELFTEST_STATE_FILE="$work/strong-report/STATE.md" GATE_SELFTEST_HISTORY="$repo" sh "$0" 2>&1)
+    rc=$?; said=$(printf '%s\n' "$out" | grep -F 'NOTE [strong-review]')
+    if [ "$rc" -ne 0 ]; then
+      echo "  FAIL — the strong review reminder case turned the gate red ($repo)"; reminder_ok=0
+    elif [ -n "$want" ] && ! printf '%s\n' "$said" | grep -qF "$want"; then
+      echo "  FAIL — the strong review reminder did not say '$want' ($repo)"; reminder_ok=0
+    elif [ -z "$want" ] && [ -n "$said" ]; then
+      echo "  FAIL — the strong review reminder fired for a report added today"; reminder_ok=0
+    fi
+  done
+  if [ "$reminder_ok" -eq 1 ]; then
+    echo "  ok   — the strong review reminder names a report older than 10 days, or none, and is quiet otherwise"
+  else
+    st_fail=1
+  fi
 
   # --- the gates that used to be skippable ----------------------------------
   expect_fail "boundary checks missing is a FAILURE, not a skip" \
@@ -999,6 +1039,20 @@ LOCKCASE
         st_fail=1
       fi
     done
+    # The strong review cycle's list and its reports are state files too.
+    mkdir -p "$done_repo/docs/reviews"
+    # A space and a non-ASCII letter in a report's name once let it out of the hook's list.
+    for f in STRONG_REVIEW.md 'reviews/strong-2026-01-01-claude opus ü.md'; do
+      printf -- '- K4: a finding\n' > "$done_repo/docs/$f"
+      ( fixture_env; git -C "$done_repo" -c core.autocrlf=false add -A )
+      if (fixture_env; CDPATH= cd -- "$done_repo" && sh "$msg_hook" "$work/msg_done") >/dev/null 2>&1; then
+        echo "  FAIL — commit-msg hook accepted Done: K4 while the staged docs/$f names K4"
+        st_fail=1
+      else
+        echo "  ok   — commit-msg hook refuses Done: K4 while the staged docs/$f names K4"
+      fi
+      ( fixture_env; git -C "$done_repo" rm -q --cached "docs/$f" ) && rm -f "$done_repo/docs/$f"
+    done
   fi
 
   # --- build failure output -----------------------------------------------------
@@ -1324,7 +1378,8 @@ fi
 # Finished work. The commit that finishes a task says so with a "Done: <id>" trailer
 # (docs/WORKFLOW.md, "Task ids"), and every id that a commit reachable from HEAD closed must
 # be gone from the state file and from the BACKLOG.md beside it, which may be absent (a
-# project may keep its backlog elsewhere). The commit-msg hook checks the closing commit;
+# project may keep its backlog elsewhere), and from the strong review cycle's list and
+# reports (docs/WORKFLOW.md, "The strong review cycle"). The commit-msg hook checks the closing commit;
 # this also catches a line written back later, or a commit the hook never saw. Git's own
 # trailer parser reads the history (%(trailers:key=...,unfold), git 2.22 or later). A
 # mention is the id as a whole token in any case: closing K3 does not match K3b or K3-a, and
@@ -1350,7 +1405,8 @@ if hgit rev-parse -q --verify HEAD >/dev/null 2>&1; then
              if (id ~ /^[A-Za-z][A-Za-z0-9]*(-[A-Za-z0-9]+)?$/ && id ~ /[0-9]/) print id > out
              else printf "NOTE [state]: commit %s has \"Done: %s\", which is not one task id; it closes nothing.\n", commit, id }
        END { close(out) }' "$work/done-trailers"; then
-    for f in "$GATE_SELFTEST_STATE_FILE" "$(dirname "$GATE_SELFTEST_STATE_FILE")/BACKLOG.md"; do
+    docs_dir=$(dirname "$GATE_SELFTEST_STATE_FILE")
+    for f in "$GATE_SELFTEST_STATE_FILE" "$docs_dir/BACKLOG.md" "$docs_dir/STRONG_REVIEW.md" "$docs_dir"/reviews/strong-*.md; do
       [ ! -f "$f" ] || awk -v closed="$work/done-ids" '
         FILENAME == closed {
           if (sub(/^@/, "")) commit = $0
@@ -1368,6 +1424,27 @@ if hgit rev-parse -q --verify HEAD >/dev/null 2>&1; then
   else
     echo "FAIL [state]: git log could not list the Done: trailers, so finished tasks were not checked."
     fail=1
+  fi
+fi
+
+# The strong review cycle runs at least every ten days, and its reminder must not depend on
+# anyone remembering it (docs/WORKFLOW.md, "The strong review cycle"). A project that keeps
+# docs/STRONG_REVIEW.md is told, never failed, when no strong review report was added in
+# that time. The date is the commit that added the newest docs/reviews/strong-*.md, so a
+# report deleted once its last item closed still counts. A shallow clone may not hold it.
+strong_list="$(dirname "$GATE_SELFTEST_STATE_FILE")/STRONG_REVIEW.md"
+if [ -f "$strong_list" ] && hgit rev-parse -q --verify HEAD >/dev/null 2>&1; then
+  # No wildcard pathspec (GIT_LITERAL_PATHSPECS would turn it off), no rename detection (a
+  # new report beside a deleted one reads as a rename), no signature text in the output.
+  added=$(hgit -c core.quotePath=false log --no-renames --no-show-signature --diff-filter=A \
+            --format=@%ct --name-only HEAD -- docs/reviews 2>/dev/null |
+          awk '/^@/ { t = substr($0, 2); next } /^docs\/reviews\/strong-[^\/]*\.md$/ { print t; exit }')
+  if [ -z "$added" ]; then
+    echo "NOTE [strong-review]: no strong review report yet (docs/reviews/strong-*.md); the cycle runs"
+    echo "                      at least every 10 days (docs/WORKFLOW.md, \"The strong review cycle\")."
+  elif [ $(( $(date +%s) - added )) -gt $(( 10 * 86400 )) ]; then
+    echo "NOTE [strong-review]: the newest strong review report was added $(( ($(date +%s) - added) / 86400 )) days ago;"
+    echo "                      the cycle is due (docs/WORKFLOW.md, \"The strong review cycle\")."
   fi
 fi
 
