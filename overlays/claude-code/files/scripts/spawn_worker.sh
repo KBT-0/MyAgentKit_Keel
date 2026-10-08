@@ -144,7 +144,9 @@ cmd="claude -n $(q "$name")"
 [ -n "$tools" ]    && cmd="$cmd --allowedTools $(q "$tools")"
 # One line naming the brief by its absolute path, quoted by the same helper so a path with a
 # space or an apostrophe still reads as one path. Its second sentence keeps questions out of
-# the pane, where nobody may be looking.
+# the pane, where nobody may be looking. On native Windows the path is Windows' own spelling:
+# Git Bash's /tmp/... is a folder the worker's tools do not know.
+[ -z "$windows" ] || brief=$(cygpath -m "$brief") || die "cygpath cannot convert the brief's path: $brief"
 instruction="Read $(q "$brief") and follow it. Do not ask questions in this pane: write a question into your result file and go on with what does not depend on it."
 
 # Native Windows: no tmux, so nothing can type into the session or read its pane. The worker
@@ -236,9 +238,17 @@ if [ -n "$windows" ]; then
   bash=$(command -v bash) || die "bash is not on PATH"
   bash=$(cygpath -w "$bash") || die "cygpath cannot convert the path of bash: $bash"
   semi() { printf '%s' "$1" | sed 's/;/\\;/g'; }
-  "$wt" -w 0 new-tab --title "$(semi "$name")" "$(semi "$bash")" -lc \
-    "$(semi "cd $(q "$dir") || exit 1; claude $(q "$instruction") ${cmd#claude }; exit 0")" ||
-    die "$wt could not open a tab for '$name'"
+  # wt.exe also drops every double quote it is handed: inline --settings JSON reached claude
+  # as {permissions:{defaultMode:auto}}, claude refused it, and the tab closed before anyone
+  # saw why. So the tab's command goes into a script the tab runs and deletes, and only paths
+  # pass through wt.exe. A claude that ends within ten seconds failed to start: the tab then
+  # waits for Enter, so its error stays on screen.
+  tab=$(mktemp) || die "cannot write the tab's script"
+  printf '%s\n' 'rm -f -- "$0"' "cd $(q "$dir") || exit 1" \
+    "claude $(q "$instruction") ${cmd#claude } || { s=\$?; [ \"\${SECONDS:-0}\" -gt 10 ] || { echo \"claude ended at once (exit \$s); press Enter to close\"; read -r _; }; }" \
+    'exit 0' > "$tab" || die "cannot write the tab's script: $tab"
+  "$wt" -w 0 new-tab --title "$(semi "$name")" "$(semi "$bash")" -l "$(semi "$(cygpath -w "$tab")")" ||
+    { rm -f -- "$tab"; die "$wt could not open a tab for '$name'"; }
   printf '%s\n' "spawn_worker: '$name' started with $brief in a Windows Terminal tab; watch it there"
   printf '%s\n' "spawn_worker: the result file its brief names is the done signal; once you decide the session is finished, close it: scripts/close_worker.sh $name"
   exit 0

@@ -101,13 +101,13 @@ open(os.path.join(state, 'attached'), 'w').close()
 
 # Native Windows. cygpath -w as Git for Windows has it. The tab launcher (KIT_WT, as WT above)
 # does what wt.exe does with its command line: a `;` not escaped as `\;` starts another
-# subcommand, wherever it stands, and leaves the tab with an error; a bare `bash` in the new
-# tab is WSL's launcher. Either fails here by name. Otherwise it unescapes `\;` and runs the
-# tab's command with sh, as Git Bash would.
+# subcommand, wherever it stands, and leaves the tab with an error; a double quote is dropped;
+# a bare `bash` in the new tab is WSL's launcher. Each fails here by name. Otherwise it
+# unescapes `\;`, adds the tab's script to wt.json and runs it with sh, as Git Bash would.
 CYGPATH = r'''#!/usr/bin/env python3
 import sys
-assert sys.argv[1] == '-w', sys.argv
-print('C:' + sys.argv[2].replace('/', '\\'))
+assert sys.argv[1] in ('-w', '-m'), sys.argv
+print('C:' + (sys.argv[2].replace('/', '\\') if sys.argv[1] == '-w' else sys.argv[2]))
 '''
 
 WT_TAB = r'''#!/usr/bin/env python3
@@ -118,14 +118,21 @@ with open(os.path.join(os.environ['SPAWN_STATE'], 'wt.json'), 'w') as f:
 split = [a for a in args if re.search(r'(?<!\\);', a)]
 if split:
     sys.exit('wt stub: the command line was split at a bare ; in %r' % split)
+if any('"' in a for a in args):
+    sys.exit('wt stub: wt.exe drops the double quotes in %r' % args)
 args = [a.replace('\\;', ';') for a in args]
 i = args.index('new-tab') + 1
 while args[i].startswith('-'):
     i += 2
 if not re.match(r'^[A-Za-z]:\\.*\\bash(\.exe)?$', args[i]):
     sys.exit('wt stub: the tab runs %r, not Git Bash by its full path' % args[i])
-assert args[i + 1] == '-lc', args
-sys.exit(subprocess.run(['sh', '-c', args[i + 2]]).returncode)
+assert args[i + 1] == '-l', args
+script = args[i + 2] if os.name == 'nt' else args[i + 2][2:].replace('\\', '/')
+with open(script) as f:
+    args.append(f.read())
+with open(os.path.join(os.environ['SPAWN_STATE'], 'wt.json'), 'w') as f:
+    json.dump(args, f)
+sys.exit(subprocess.run(['sh', script]).returncode)
 '''
 
 # Steps of the spawn are instant; show_workers.sh's 5-second launch bound is a real wait.
@@ -265,16 +272,19 @@ class SpawnWorkerTests(unittest.TestCase):
         (self.bin / 'ps-stub').write_text('#!/bin/sh\nprintf "7 claude.exe -n w2\\r\\n"\n')
         (self.bin / 'ps-stub').chmod(0o755)
         ps = str(self.bin / 'ps-stub')
-        result = self.spawn('w1', str(brief), '--model', 'm', '--allowed-tools', tools,
+        settings = '{"permissions": {"defaultMode": "auto"}}'
+        result = self.spawn('w1', str(brief), '--model', 'm', '--settings', settings, '--allowed-tools', tools,
                             KIT_WT=str(self.bin / 'wt-tab'), KIT_PS=ps)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn('Windows Terminal tab', result.stdout)
         self.assertIn('scripts/close_worker.sh w1', result.stdout)
         # The tab ends with `exit 0`, never as claude's own exit: Windows Terminal keeps a tab whose
-        # command ended nonzero open, as claude does when close_worker.sh ends it.
-        tab = json.loads((self.state / 'wt.json').read_text())[-1]
-        self.assertTrue(tab.endswith('\\; exit 0'), tab)
-        self.assertNotIn('exec claude', tab)
+        # command ended nonzero open, as claude does when close_worker.sh ends it. The script the
+        # tab ran is deleted.
+        tab = json.loads((self.state / 'wt.json').read_text())
+        self.assertTrue(tab[-1].endswith('\nexit 0\n'), tab[-1])
+        self.assertNotIn('exec claude', tab[-1])
+        self.assertFalse(Path(tab[-2] if WINDOWS else tab[-2][2:].replace('\\', '/')).exists())
         # A name a running session already has is refused before any tab opens.
         (self.state / 'wt.json').unlink()
         result = self.spawn('w2', str(brief), KIT_WT=str(self.bin / 'wt-tab'), KIT_PS=ps)
@@ -283,8 +293,11 @@ class SpawnWorkerTests(unittest.TestCase):
         self.assertFalse((self.state / 'wt.json').exists(), 'a tab opened for a name already running')
         launched = self.launched()
         self.assertIsNotNone(launched, result.stderr)
-        self.assertEqual(launched['argv'], [INSTRUCTION % shq(self.physical(brief)), '-n', 'w1',
-                                            '--model', 'm', '--effort', 'high', '--allowedTools', tools])
+        # The brief by Windows' spelling of its path, which the worker's tools know.
+        shown = (subprocess.run(['cygpath', '-m', self.physical(brief)], capture_output=True, text=True,
+                                check=True).stdout.rstrip('\n') if WINDOWS else 'C:' + self.physical(brief))
+        self.assertEqual(launched['argv'], [INSTRUCTION % shq(shown), '-n', 'w1', '--model', 'm', '--effort',
+                                            'high', '--settings', settings, '--allowedTools', tools])
         self.assertEqual(Path(launched['cwd']).resolve(), self.cwd.resolve())
         self.assertEqual(self.tmux_log(), '')
         self.assertFalse((self.state / 'wt.log').exists(), 'the tab was shown a second time')

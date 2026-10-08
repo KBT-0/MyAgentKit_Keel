@@ -51,6 +51,11 @@ reviews. Why each change is safe is in `RESEARCH_LOG.md` (2026-10-06 and 2026-10
   most on code-writing workers. Codex installs it with `codex plugin add ponytail@ponytail`. **ACTION:** to
   turn it on in an existing project, add the overlay's `extraKnownMarketplaces` and
   `enabledPlugins` entries to `.claude/settings.json`.
+- **A worker starts on native Windows** (issue #72; `scripts/spawn_worker.sh`): wt.exe drops
+  every double quote it is handed, so inline `--settings` JSON reached claude broken and the
+  tab closed at once with no error shown. The tab now runs a script that holds its command
+  and deletes itself, a claude that ends within ten seconds keeps the tab open with its exit
+  code, and the brief is named by its Windows path (`C:/...`), not Git Bash's `/tmp/...`.
 - **Model routing rules** (`docs/WORKFLOW.md`, "Model routing"): work is sorted into three
   tiers; the lead chooses model and effort for every errand with equal care and writes both
   into the brief; the top models (Codex Astra, Claude Fable) are the lead's pick for one
