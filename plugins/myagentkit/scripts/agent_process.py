@@ -1,9 +1,11 @@
 """Bounded child execution shared by both CLI adapters; preserve partial diagnostics."""
 import os
 from pathlib import Path
+import queue
 import signal
 import select
 import selectors
+import shutil
 import subprocess
 import tempfile
 import threading
@@ -19,23 +21,84 @@ CANCEL_SIGNALS = tuple(getattr(signal, name) for name in ("SIGINT", "SIGTERM", "
 # The platform seam: every launch, signal block and group kill of the review tooling goes
 # through the five functions below (test_claude_bridge checks that no other place makes one).
 # Off POSIX (native Windows Python) there is no signal mask, no session and no killpg: the
-# blocks are no-ops, a child gets a process group of its own, and taskkill stops its tree.
+# blocks record cancels, and a child starts suspended, joins a Job Object of its own and only then
+# runs, so every process it starts is in that job and TerminateJobObject stops them all, also
+# after the child itself has exited (taskkill /T finds no tree below an exited process). The
+# job is killed when its last handle closes: a supervisor that dies takes its reviewer with it.
 POSIX = os.name == "posix"
+_WIN = {}
+
+
+def _win() -> dict:
+    """kernel32, ntdll and the job limits structure, set up on first use: at import, a module
+    run where ctypes has no Windows half (a test that names the platform nt) did not load."""
+    if not _WIN:
+        import ctypes
+        from ctypes import wintypes
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        ntdll = ctypes.WinDLL("ntdll")
+        kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+        kernel32.CreateJobObjectW.argtypes = (ctypes.c_void_p, wintypes.LPCWSTR)
+        kernel32.SetInformationJobObject.argtypes = (wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p,
+                                                     wintypes.DWORD)
+        kernel32.AssignProcessToJobObject.argtypes = (wintypes.HANDLE, wintypes.HANDLE)
+        kernel32.TerminateJobObject.argtypes = (wintypes.HANDLE, wintypes.UINT)
+        kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+        ntdll.NtResumeProcess.argtypes = (wintypes.HANDLE,)
+
+        class JobLimits(ctypes.Structure):
+            """JOBOBJECT_EXTENDED_LIMIT_INFORMATION; only LimitFlags is set."""
+            _fields_ = [("PerProcessUserTimeLimit", ctypes.c_int64), ("PerJobUserTimeLimit", ctypes.c_int64),
+                        ("LimitFlags", wintypes.DWORD), ("MinimumWorkingSetSize", ctypes.c_size_t),
+                        ("MaximumWorkingSetSize", ctypes.c_size_t), ("ActiveProcessLimit", wintypes.DWORD),
+                        ("Affinity", ctypes.c_size_t), ("PriorityClass", wintypes.DWORD),
+                        ("SchedulingClass", wintypes.DWORD), ("IoInfo", ctypes.c_uint64 * 6),
+                        ("ProcessMemoryLimit", ctypes.c_size_t), ("JobMemoryLimit", ctypes.c_size_t),
+                        ("PeakProcessMemoryUsed", ctypes.c_size_t), ("PeakJobMemoryUsed", ctypes.c_size_t)]
+        _WIN.update(ctypes=ctypes, kernel32=kernel32, ntdll=ntdll, JobLimits=JobLimits)
+    return _WIN
 
 
 def block_cancels():
-    """Block the cancel signals; return the previous mask for restore_mask(). None off POSIX."""
-    return signal.pthread_sigmask(signal.SIG_BLOCK, CANCEL_SIGNALS) if POSIX else None
+    """Block the cancel signals; return what restore_mask() needs.
+
+    Off POSIX there is no signal mask: until restore_mask() the cancels go to a recorder, which
+    hands each one on to the handler then in place. Without it a Ctrl-C between the reviewer's
+    launch and the caller holding its handle met the caller's raising handler there, and the
+    reviewer ran on with nobody to stop it. Only the main thread installs handlers.
+    """
+    if POSIX:
+        return signal.pthread_sigmask(signal.SIG_BLOCK, CANCEL_SIGNALS)
+    if threading.current_thread() is not threading.main_thread():
+        return None
+    held = []
+
+    def recorder(signum, frame):
+        held.append(signum)
+    recorder.held = held
+    return recorder, {sig: signal.signal(sig, recorder) for sig in CANCEL_SIGNALS}, held
 
 
 def restore_mask(mask) -> None:
     if POSIX:
         signal.pthread_sigmask(signal.SIG_SETMASK, mask)
+        return
+    if mask is None:
+        return
+    recorder, saved, held = mask
+    for sig, handler in saved.items():
+        # A handler swapped in inside the block (handing_back restores the caller's) stays.
+        if signal.getsignal(sig) is recorder and handler is not None:
+            signal.signal(sig, handler)
+    for sig in held:
+        signal.raise_signal(sig)
 
 
 def pending() -> set:
-    """The signals pending while blocked; none off POSIX, where nothing is blocked."""
-    return signal.sigpending() if POSIX else set()
+    """The signals pending while blocked, or held by the off-POSIX recorder."""
+    if POSIX:
+        return signal.sigpending()
+    return {sig for cancel in CANCEL_SIGNALS for sig in getattr(signal.getsignal(cancel), 'held', ())}
 
 
 def launch(command, mask, **popen_kw) -> subprocess.Popen:
@@ -44,8 +107,47 @@ def launch(command, mask, **popen_kw) -> subprocess.Popen:
     if POSIX:
         return subprocess.Popen(command, start_new_session=True,
                                 preexec_fn=lambda: restore_mask(mask), **popen_kw)
-    return subprocess.Popen(command, **popen_kw,
-                            creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x200))
+    # A bare name is looked up as a shell would, PATHEXT included: CreateProcess adds only
+    # .exe, and an npm-installed CLI (codex, claude) is a .cmd, so every review there failed
+    # to launch. The search follows the child's PATH when the caller gives it one.
+    if os.path.basename(command[0]) == command[0]:
+        path = (popen_kw.get("env") or os.environ).get("PATH")
+        command = [shutil.which(command[0], path=path) or command[0], *command[1:]]
+    # A .cmd or .bat runs under cmd.exe, which reads its command line as shell: Popen's quoting
+    # does not escape `&` or `%` for it, and an argument `a&echo>x` ran `echo` (BatBadBut). An
+    # argument or launcher path with a character cmd.exe acts on is refused before anything starts.
+    if command[0].lower().endswith((".cmd", ".bat")):
+        unsafe = [arg for arg in command if any(c in arg for c in '"%^&|<>!\r\n')]
+        if unsafe:
+            raise OSError("%s is a batch file, and cmd.exe would read %r as shell; name the CLI's "
+                          "executable instead (REVIEW_CLI_BIN, CLAUDE_CLI_BIN)" % (command[0], unsafe[0]))
+    # Suspended (0x4) until it is in the job: running, it could start a process outside it first.
+    child = subprocess.Popen(command, **popen_kw, creationflags=0x200 | 0x4)  # CREATE_NEW_PROCESS_GROUP
+    job = None
+    try:
+        win = _win()
+        ctypes, kernel32 = win["ctypes"], win["kernel32"]
+        job = kernel32.CreateJobObjectW(None, None)
+        if not job:
+            raise ctypes.WinError(ctypes.get_last_error())
+        limits = win["JobLimits"](LimitFlags=0x2000)  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        if not kernel32.SetInformationJobObject(job, 9, ctypes.byref(limits), ctypes.sizeof(limits)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        if not kernel32.AssignProcessToJobObject(job, int(child._handle)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        if win["ntdll"].NtResumeProcess(int(child._handle)) != 0:
+            raise OSError("cannot resume %s after it joined its job" % command[0])
+    except BaseException:
+        if job:
+            kernel32.CloseHandle(job)
+        child.kill()
+        child.wait()
+        for stream in (child.stdin, child.stdout, child.stderr):
+            if stream is not None:
+                stream.close()
+        raise
+    child._kit_job = job
+    return child
 
 
 def stop_group(child, pgid) -> None:
@@ -53,8 +155,9 @@ def stop_group(child, pgid) -> None:
 
     POSIX: the leader may have exited while a descendant still holds a pipe open. On macOS a
     group whose leader is a zombie answers EPERM: the leader is then signalled by its pid, and
-    the group again once it is reaped. Windows: `taskkill /T /F` stops the tree it can still
-    find from the leader; child.kill() when taskkill is missing or fails.
+    the group again once it is reaped. Windows: TerminateJobObject stops every process in the
+    child's job (launch()), once; a child launched elsewhere gets `taskkill /T /F`, and
+    child.kill() when taskkill is missing or fails.
     """
     if POSIX:
         # The leader's pid is signalled only while it is ours (not yet reaped): a reaped
@@ -73,7 +176,11 @@ def stop_group(child, pgid) -> None:
             except (ProcessLookupError, PermissionError):
                 pass
             child.wait()
-    else:
+    elif getattr(child, "_kit_job", None) is not None:
+        job, child._kit_job = child._kit_job, None
+        _win()["kernel32"].TerminateJobObject(job, 1)
+        _win()["kernel32"].CloseHandle(job)
+    elif not hasattr(child, "_kit_job"):
         try:
             done = subprocess.run(["taskkill", "/T", "/F", "/PID", str(child.pid)],
                                   stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
@@ -110,12 +217,16 @@ def handing_back(previous: dict, settle) -> None:
     waits while the adapter corrects its records and writes its last line, then reaches the
     caller's handler when the block exits. Sampled once, a cancel arriving while `settle` ran
     reached the caller with the records still saying quota: `settle` runs again for every
-    cancel that is new since the last sample, and the block is lifted right after a sample
-    that found none, with nothing in between.
+    cancel that is new since the last sample. Windows has no signal mask: finish settlement
+    with the recorder still installed, restore the caller's handlers last, then forward.
+    On Windows, cancels received after the last settlement sample through the end of
+    `restore(previous)` are excluded and may reach the caller unsettled.
     """
     mask = block_cancels()
     try:
-        restore(previous)
+        # Off POSIX the recorder must keep the handlers until the last settlement finishes.
+        if POSIX:
+            restore(previous)
         seen = None
         while True:
             held = pending() & set(previous)
@@ -124,7 +235,23 @@ def handing_back(previous: dict, settle) -> None:
             seen = held
             settle(held)
     finally:
-        restore_mask(mask)
+        try:
+            if not POSIX and mask is not None:
+                # If a restored caller raises midway, cleanup must restore the remaining
+                # caller handlers, not the adapter's abandoned handlers saved by the block.
+                mask[1].update(previous)
+                while True:
+                    # Read this block's recorder directly, including a cancel received after
+                    # the loop's last sample. A second cancel cannot interrupt persistence.
+                    held = set(mask[2]) & set(previous)
+                    # seen is None when the loop failed before its first sample.
+                    if seen is not None and held <= seen:
+                        break
+                    seen = held
+                    settle(held)
+                restore(previous)
+        finally:
+            restore_mask(mask)
 
 
 class OneShot:
@@ -159,8 +286,16 @@ class OneShot:
         mask = block_cancels()
         try:
             restore(self.previous)
-            for sig in sorted(pending() & set(self.previous)):
-                self.noted.append(signal.sigwait({sig}))
+            if POSIX:
+                for sig in sorted(pending() & set(self.previous)):
+                    self.noted.append(signal.sigwait({sig}))
+            elif mask is not None:
+                # Off POSIX this block's own recorder held them (there is no sigwait): noted
+                # here and not handed on. One an outer block's recorder holds stays its own:
+                # read through pending(), it reached sigwait, which Windows lacks.
+                held = mask[2]
+                self.noted.extend(sig for sig in held if sig in self.previous)
+                held[:] = [sig for sig in held if sig not in self.previous]
         finally:
             restore_mask(mask)
 
@@ -187,6 +322,43 @@ def run(command: list[str], prompt: str, repo: Path, timeout: float, into: dict 
         # Noted while the handlers were restored: still a cancel.
         if result and guard.noted:
             result["cancelled"] = True
+
+
+def drain(streams: dict) -> queue.SimpleQueue:
+    """Off POSIX, where select() takes sockets only: one daemon thread per pipe in `streams`
+    ({name: stream}) reads it to EOF and puts (name, bytes) on the returned queue, b"" last.
+    The threads end when the pipes close, which stop_group() makes happen."""
+    chunks = queue.SimpleQueue()
+
+    def read(name, fd):
+        try:
+            while True:
+                data = os.read(fd, 65536)
+                chunks.put((name, data))
+                if not data:
+                    return
+        except OSError:
+            chunks.put((name, b""))
+
+    for name, stream in streams.items():
+        threading.Thread(target=read, args=(name, stream.fileno()), daemon=True).start()
+    return chunks
+
+
+def take(chunks: queue.SimpleQueue, timeout: float) -> list:
+    """What drain() queued, waiting up to `timeout` for the first chunk. A sleep loop, not a
+    blocking get: Windows raises a Ctrl-C in a sleep, while a lock wait there may not see it."""
+    deadline = time.monotonic() + timeout
+    got = []
+    while True:
+        try:
+            while True:
+                got.append(chunks.get_nowait())
+        except queue.Empty:
+            pass
+        if got or time.monotonic() >= deadline:
+            return got
+        time.sleep(min(0.02, max(0.0, deadline - time.monotonic())))
 
 
 def _exited_unreaped(child, timeout: float) -> bool:
@@ -262,6 +434,9 @@ def _supervise(command, prompt, repo, timeout, started, guard, prior=None):
                     # The reviewer's git never discovers a repository above its working
                     # directory: a copy made inside some checkout stays inside the copy.
                     env["GIT_CEILING_DIRECTORIES"] = str(repo.parent)
+                    # No bytecode in the copy: on Windows the Codex sandbox writes __pycache__
+                    # under an account whose folders this user cannot open, read or remove.
+                    env["PYTHONDONTWRITEBYTECODE"] = "1"
                     child = launch(command, mask, cwd=repo, stdin=inp, stdout=subprocess.PIPE,
                                    stderr=subprocess.PIPE,
                                    env=dict(env, PWD=str(repo), MYAGENTKIT_DELEGATION_DEPTH="1"))
@@ -272,10 +447,30 @@ def _supervise(command, prompt, repo, timeout, started, guard, prior=None):
                 termination, launch_failed = "unavailable", True
                 buffers["stderr"].extend(str(error).encode())
             else:
-                for name, stream in (("stdout", child.stdout), ("stderr", child.stderr)):
-                    os.set_blocking(stream.fileno(), False)
-                    selector.register(stream, selectors.EVENT_READ, name)
-                while selector.get_map():
+                if POSIX:
+                    for name, stream in (("stdout", child.stdout), ("stderr", child.stderr)):
+                        os.set_blocking(stream.fileno(), False)
+                        selector.register(stream, selectors.EVENT_READ, name)
+                else:
+                    chunks, open_streams = drain({"stdout": child.stdout, "stderr": child.stderr}), 2
+                while not POSIX and open_streams:
+                    remaining = timeout - (time.monotonic() - started)
+                    if remaining <= 0:
+                        termination = "timeout"
+                        break
+                    for name, data in take(chunks, min(0.2, remaining)):
+                        if not data:
+                            open_streams -= 1
+                            continue
+                        buffer = buffers[name]
+                        space = 8_000_000 - len(buffer)
+                        buffer.extend(data[:space])
+                        if len(data) > space:
+                            termination = "output_limit"
+                            break
+                    if termination:
+                        break
+                while POSIX and selector.get_map():
                     remaining = timeout - (time.monotonic() - started)
                     if remaining <= 0:
                         termination = "timeout"

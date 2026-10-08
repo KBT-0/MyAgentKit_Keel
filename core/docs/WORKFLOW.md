@@ -346,6 +346,31 @@ or to the cheaper model; architecture, contract design and risky-diff review go 
 effort. Effort is chosen per task, not per session — running everything high spends the
 scarce budget on work that did not need it.
 
+Rules for whoever routes work, binding with any table:
+
+1. **Model and effort are chosen with equal care.** The table sorts work into tiers:
+   mechanical work (renames, figure fixes, data fetches, proof runs, summaries);
+   detail-bearing errands and ordinary reviews; risky and gate reviews and design
+   consultations. The lead picks the model and the effort for every errand from its tier and
+   writes both into the brief. Neither is left to a default or to inheritance.
+2. **The top models are the lead's pick, and only where the subscription has them.** A model
+   above the strongest routine one (for example Codex Astra or Claude Fable) is never a
+   default. The lead picks it for one errand when the errand needs it, without asking the
+   owner. The lead first checks that the current subscription includes that model; a basic
+   plan does not, and then the strongest routine model takes the errand.
+3. **A failed mechanical errand is rerun one tier up**, never retried at the same tier.
+4. **A review loop is broken by escalation, not by more rounds.** When three review rounds
+   in a row have not come back clean, the lead raises the effort, the model tier, or both,
+   chosen for the case and written into the next brief. The model that fixes the findings
+   is raised first; the reviewer is raised too when its findings are what keeps the loop
+   going. One stronger round costs less than several more rounds at the same level.
+5. **Model versions are kept current.** A lead that learns of a newer Codex or Claude model
+   switches to it: the reviewer pins in `scripts/review.sh` and the machine's Codex
+   configuration (`~/.codex/config.toml`). The lead then reports the switch to the kit, so
+   that the kit and every project built from it follow.
+6. **The tier boundaries are measured, not guessed.** After about ten errands in a tier, the
+   lead counts review rejects and rework per tier and moves the boundaries where they show.
+
 ## Worker cost — waits and long lives are what you pay for
 
 Measured in the kit's founding project (one lead session with background workers: 336 USD in
@@ -392,10 +417,12 @@ Rules, binding for whoever routes workers:
    a separate session; it does not check on workers or CI in a loop.
 5. **Mechanical work goes to the cheaper model at a lower effort**: doc fixes, running a
    documented proof, folding notes. Design-bearing code and reviews get the strongest model
-   at high effort. Effort is never left to inheritance: a sub-agent runs at its lead
-   session's effort unless its definition sets `effort:` (the Claude Code overlay's
-   `worker.md` and `diff-reviewer.md` do), and nothing in its output shows which one it got.
-   A separate session takes `scripts/spawn_worker.sh --effort`. The brief states model and
+   at high effort. Model and effort are never left to inheritance: a sub-agent runs at its
+   lead session's effort unless its definition sets `effort:` (the Claude Code overlay's
+   `worker.md` and `diff-reviewer.md` do, as a fallback), and nothing in its output shows
+   which one it got. The lead passes `model` and `effort` on every Agent call. A separate
+   session takes `scripts/spawn_worker.sh --model --effort`, which refuses a spawn without
+   them; a Codex errand takes the model and `-c model_reasoning_effort`. The brief states model and
    effort, and the lead verifies both in the transcript after the run, not in the report.
 6. **Parallel workers only for independent modules**; each one multiplies the bill. Workers
    whose last step waits on one exclusive resource (a heavy lock, a device, a licence) run
@@ -492,6 +519,14 @@ are not in main); `git worktree lock <path>` keeps one the lead still wants. Eac
 logged first in `<git dir>/kit-worktree-removals.log` and prints the command that brings the
 worktree back. `KIT_NO_WORKTREE_CLEANUP=1` turns the hook off; the script without `--apply` is
 a dry run.
+
+A worker never links a shared folder into its worktree (a junction, a symlink, a bind
+mount: a virtual environment, a cache, a data set). It names the shared one by path or
+environment variable instead (the interpreter's full path, `VIRTUAL_ENV`, a cache variable).
+On Windows, `git worktree remove` went through such a junction and deleted part of the main
+checkout's virtual environment; `clean_worktrees.sh` now keeps a worktree that holds one, and
+it stays until the link is removed by hand (`rmdir <link>` removes a junction, not what it
+points at).
 
 A worker whose worktree directory is missing STOPS and reports. It never recreates the
 directory and never runs a git command from where it used to be: that folder lies inside the

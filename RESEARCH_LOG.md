@@ -250,6 +250,526 @@ the child a complete temporary stdin file and monitors its process, not partial 
 
 ## Backflow findings
 
+### 2026-10-07 — native Windows as the main host, and the tenth review's findings
+
+The owner moved development to native Windows (Git for Windows' `sh`, python.org CPython) and
+asked for the four parts doctor still sent to WSL to work there: the gate lock (v0.10 above),
+a review run, a worker's spawn and close without tmux, and the worktree clean-up. The branch
+of the 2026-10-06/07 entries was merged onto the kit's v0.9 line, and the tenth review's
+findings (open in the entry below) were fixed in the same round. Each fix was written with a
+test that was run against the code before it and seen red; each new Windows guard was then
+removed in turn and its test seen red again.
+
+- *A review run.* `select()` takes only sockets on Windows: `agent_process.run` failed at
+  once with WinError 10093, and so did the copy's preparation and the quota reader. Each pipe
+  is now read by a thread (`drain`, `take`). A reviewer starts suspended, joins a Job Object
+  with kill-on-close and then runs: stopping it terminates the job, which reaches a
+  descendant that outlived the reviewer and holds its pipe (`taskkill /T` finds no tree under
+  an exited process), and a supervisor that is killed takes its reviewer with it. Red with
+  the old module (four of six cases; the copy case is new), and the kill-on-close case red
+  with the flag cleared. The review self-test (`review.sh --self-test`, 126 POSIX tests) still
+  needs a POSIX host; it is an open issue, not fixed here.
+- *The worktree clean-up.* It now proves liveness on Windows from each process's PEB (the
+  working directory Windows keeps and MSYS updates), tests the gate's lock by opening its
+  file for writing, and treats a folder that is a reparse point as a mount point. That last
+  one is a data-loss fix: a worker had made `build/pipeline-venv` a junction to the main
+  checkout's virtual environment, and `git worktree remove` deleted part of it. Each case is
+  red when its guard is removed (the PEB reader reporting other directories, the sharing
+  check never true, the reparse test false). The PEB layout read is not a documented API;
+  it has been stable since XP, and a process it cannot read counts as unseen.
+- *A worker's close.* `close_worker.sh` ends the `claude.exe` whose command line holds
+  `-n NAME` (`taskkill /T /F`) and then runs the audit. Windows Terminal keeps a tab whose
+  command ended nonzero, so the spawned tab's command ends with `exit 0`. A session that
+  survives, or a process list that cannot be read, leaves the worktree untouched: a stub run
+  showed the audit removing a worktree whose session was still listed.
+- *WSL tabs.* `show_workers.sh` opened a second window named after the project; the owner
+  wants the tabs in the window the lead runs in, so it now passes `-w 0`.
+
+The tenth review's findings, each with its test:
+
+- *A changed LFS path with no LFS driver configured* (a fresh machine) was not refused: the
+  named filter counted only with its driver. A changed path is now refused whenever a named
+  filter applies to it at any side; an unchanged one still passes on its proof.
+- *A Ctrl-C between the holder's last check and the gate's creation* reached no gate. The
+  gate is now created suspended and the record is read after it exists: a Ctrl-C before that
+  kills the suspended gate, which never ran. `GATE_LOCK_TEST_SIGINT_AT_LAUNCH` raises one at
+  that point for the test; it can only stop a gate.
+- *A failed `git ls-files` in the line-ending repair* gave an empty list and exit 0; the list
+  is now one checked file. A run killed mid-way left a `.crlf-*` or merge temporary that the
+  retry ignored; a stopped run removes them, and the next run stops on one by name. Item 3
+  also stops on a `TMPDIR` inside the project, and its base is now the v0.9 release (or
+  `KIT_BASE`), not the earlier commit one project synced.
+- *Bootstrap read the kit's rules at the head of a pipeline* and lost a failed read; it now
+  reads them on their own. *Doctor called a lone CR a CRLF*; it now looks for CR LF, as bytes
+  (Git for Windows' grep does not show a CR at a line's end to a pattern).
+- *A snapshot's attribute index went under `TMPDIR`* before the review refused that `TMPDIR`;
+  it now goes in the git directory. *The bridge copy wrote through a symlink*; item 2 now
+  copies beside the destination and renames over it.
+- *This log* kept the v0.9 reasoning that the byte proof leaves the payload nothing to omit;
+  it is corrected below.
+
+The first review of that round ran on native Windows itself, and the run found three faults
+before any verdict: the evidence writer opened a folder to fsync it (Windows refuses), a bare
+`codex` was not found (CreateProcess adds only `.exe`; npm installs a `.cmd`), and the review
+then completed but was lost when its scratch folder could not be removed (the Codex sandbox
+writes `__pycache__` under another account, and `TemporaryDirectory(ignore_cleanup_errors=True)`
+still raised). Each has a native Windows test that was red before. The verdict, recovered from
+the scratch folder, was Reject with four High, three Medium and one Low finding, all fixed in
+one round, each with a test seen red against the code before it:
+
+- *A Ctrl-C as the launch returned* reached the caller's raising handler before it held the
+  child, and the reviewer ran on. Off POSIX, `block_cancels` now routes the cancels to a
+  recorder until `restore_mask`, which hands them on once the handle is held.
+- *`-n w1` inside another worker's quoted prompt* closed that worker. The session lister now
+  splits a command line by CommandLineToArgvW's rules, and finds an npm-installed `claude`
+  (node.exe running Claude Code's `cli.js`), which it missed.
+- *The line-ending repair wrote through a linked folder* (`scripts/` a junction to a shared
+  folder). Every folder on a script's way is now checked, and one below a link is left alone.
+- *A batch CLI read its arguments as shell* (`a&echo>x` ran `echo`). An argument with a
+  character `cmd.exe` acts on is refused before anything starts.
+- *Bootstrap found a rule's text but a later line overrode it.* It now asks git, in a throwaway
+  repository, whether each kit rule takes effect, and stops unchanged when one does not.
+- *A tracked `100755` script kept every finished worktree on Windows*, which keeps no
+  executable bit. Its bytes are compared there, and its mode only in the index.
+- *DEV_SETUP still sent reviews to WSL.*
+
+#### Five Codex rounds on the branch, and the threat model that ended them (#62)
+
+The branch went through five Codex review rounds (r1 to r4 at `gpt-6.1-sol`, r5 at
+`gpt-6-astra`, all `xhigh`). r1 to r4 rejected, and the Windows signal hand-back
+(`agent_process.handing_back`) was reopened in r2, r3 and r4: each fix closed one cancel window
+and the next round found its neighbour. After r4 the owner set a threat model and a stopping
+rule (2026-10-08):
+
+- **Protected.** Every cancel the recorder received is settled before the caller's handlers
+  are back: the persisted usage record and the published result say `cancelled`. A caller
+  handler that raises must not leave a recorder installed.
+- **Excluded.** A cancel after the caller's handlers are back belongs to the caller. So does
+  the whole sequence that restores them (`restore(previous)`, one `signal.signal` call per
+  cancel signal): a cancel the recorder receives after the last settlement sample and before
+  that sequence ends may reach the caller unsettled.
+- **Stopping rule.** The loop stops at the first fresh round with no High finding inside the
+  model. A finding outside it is answered with its disposition, not with a new mechanism.
+
+r4's fix repeats the settlement with the recorder still installed and restores the caller's
+handlers last. r5 rejected with no High, so the loop stopped there:
+
+- *A first cancel during the handler restoration is forwarded unsettled* (Medium). That is the
+  excluded window by name; r4 removed the earlier test of that case because the case is
+  excluded. Disposition: accepted, no change.
+- *The nested test module refusal misses a symlinked directory* (Medium, the kit check, not
+  the hand-back). Filed as #65.
+- *The Darwin `mktemp` branch of a sync test assumes BSD `mktemp`* (Low, a test). Filed as #66.
+
+Lesson, the same as 2026-10-05's: a hardening loop on a concurrency window converges only once
+the excluded windows are written down; five rounds here, against twelve without.
+
+### 2026-10-07 — the cross-model review of the native Windows change
+
+The first version of the 2026-10-06 change (below) went to a cross-model review, which
+rejected it with three High and five Medium findings. Each fix was written as a test first and
+watched going red against that first version; then each new guard was deleted in turn and its
+test watched going red again. `CHANGELOG.md` v0.10 records what changed.
+
+**The nested-run proof compared a truncated file id.** The proof read the lock file's identity
+from `os.stat`, `(st_dev, st_ino)`. Before Python 3.12, `st_ino` on Windows held 64 bits of the
+file id, and Microsoft does not promise those are unique on ReFS. A writable handle on another
+file whose truncated id matched passed while the real lock was held, and the seams turned on.
+The proof now reads `FILE_ID_INFO` through `GetFileInformationByHandleEx` for the inherited
+handle and for the lock path, and compares all 24 bytes (the volume serial and the 128-bit
+id). When the volume gives none, the nested run fails `FAIL [lock]` by name: an identity that
+cannot be read is not proven. The fresh open for writing must also fail with a sharing
+violation (error 32), not any permission error, because a read-only lock file or an access
+rule would refuse it with nothing holding the lock. The test fakes the truncated identity by
+making `os.stat` report one `(st_dev, st_ino)` for every file and runs the gate's own proof
+code, cut out of `check.sh`: red on the first version, green now. Another fakes a volume with
+no `FILE_ID_INFO`.
+
+**`cygpath` changed POSIX behaviour by being on PATH.** The lock path was converted whenever
+`cygpath` existed. On Linux or macOS with a shim or a stray install, the converted `C:/` path
+is relative to POSIX Python, so the nested run no longer knew its own lock. Only a host whose
+`uname -s` names MSYS, MINGW or Cygwin converts it now. The new self-test case puts a fake
+`cygpath` that records its call on PATH: on WSL it went red with the first version's line and
+green with the fix.
+
+**The Windows lock had no negative test a project receives.** Its cases lived in a kit-only
+test file, and the reparse-point guard printed NOT RUN and passed on a host without the
+symlink privilege, so deleting the guard left that host green. `check.sh --self-test` now runs
+four Windows cases, each against a copy of the gate in a throwaway repository so its lock is
+not the one the self-test holds: a writable handle on another file, a read-only handle on the
+held lock file, a write handle while nothing holds the lock, and a reparse point at the lock
+path. The reparse point is not a symlink: a reparse point with a non-Microsoft tag can be set
+by any user on a file of their own (measured on Windows 11 without Developer Mode, where a
+symlink failed with WinError 1314), and the guard tests the same attribute bit. Each of the
+four guards was deleted in turn in a bootstrapped project, and only its own case went red. A
+case that cannot run is a FAIL there, never a skip.
+
+**Three ways a changed LFS file reached a review.** All three came from deciding which paths
+are filtered by the current checkout alone. (1) An uncommitted review never looked at the
+index: a different pointer staged for an LFS file, with the working file put back to HEAD's
+content, passed every check, and the commit that followed carried an object nobody reviewed.
+(2) A commit that deleted an LFS file, renamed it to a name the filter does not cover, or
+removed its attribute while changing it, left no filtered path in the checkout, and the range
+was reviewed from its pointer-side diff. (3) Raw bytes equal to HEAD's blob did not prove what
+Git renders: with a clean driver configured after the commit (one that deletes a line), `git
+diff HEAD` claimed a deletion the copied file did not show. The 2026-10-06 entry's sentence
+that hiding "can only happen to a path whose raw bytes differ from what HEAD records" was
+wrong for exactly this case. Now: the candidate names are the checkout, the index diff
+against HEAD, the working-tree diff against HEAD and the reviewed range, deleted and
+renamed-away names included; attributes are read in the working tree and, through a
+throwaway index (`read-tree` then `check-attr --cached`, so no newer git is needed), at each
+end of the range, HEAD for uncommitted work; a filtered name any of those diffs changes is
+refused. A filtered path nothing changes passes only when HEAD records a canonical LFS
+pointer, its raw bytes are that pointer or the content it names by sha256, and Git's rendered
+diffs, which run the filter, do not name it. The rendered check and the pointer restriction
+each have a case the other does not catch: a stat-clean file Git renders as unchanged, and a
+pointer whose content matches while the configured driver renders something else. The test
+fixtures name their driver `fakelfs`: a host's global `filter.lfs.process` from `git lfs
+install` replaces a test's `filter.lfs.clean`, and the first run of the rendered case passed
+for that reason alone.
+
+**A second review pass** found three more gaps, each fixed with a case watched red first. A
+`.gitattributes` rule staged together with the pointer it makes, while the working tree and
+HEAD held neither, was filtered nowhere the bridge looked; the index's own attributes
+(`check-attr --cached`) are now read too. The proof's "sharing violation, not any refusal"
+condition had no case: a lock file made read-only refuses a fresh open with access denied
+while a claimed writable handle on it still writes, and accepting any refusal turned that
+claim into the lock. And several Windows guards were proven only in the kit's own test file,
+which projects never receive: `--self-test` now also fakes a file id equal to the lock's in
+its volume and first 64 bits (the proof's own code runs with GetFileInformationByHandleEx
+replaced), fakes a volume with no `FILE_ID_INFO`, kills a gate with `kill -9`, and kills the
+lock holder while its gate runs. In a bootstrapped project each guard was deleted in turn and
+only its own case went red, with one exception: the killed-holder case cannot be isolated,
+because a holder that does not hand its handle to the gate fails every gate run `FAIL [env]`
+before any case runs. The upgrade checklist now lists the exact native Windows transcript,
+`skip` lines included, so an owner can tell an expected line from a failure.
+
+**A third review pass** found two cases that asserted less than their names. The killed-gate
+case covered only the holder's signal branch: a holder that turned every ordinary status
+below 256 into 0 still passed it, and a failing build then reached git as a pass. A new case
+makes the gate copy exit 3 right after it takes the lock and requires the holder to exit 3;
+with that branch broken it went red (and the broken holder also turned the whole self-test's
+own exit status into 0 while it printed `SELF-TEST: FAIL`, which is why the case exists). The
+no-`FILE_ID_INFO` case matched the diagnostic only, so a proof that printed it and then
+trusted the claim anyway passed; it now also requires the proof to exit 3, and deleting that
+`sys.exit(3)` turned it red.
+
+**`review.sh` on native Windows: measured, not fixed.** The review asked for `agent_process.py`
+to tolerate a missing `SIGHUP` so that the self-test's review case runs on native Windows. With
+`SIGHUP` made optional, 121 of the 137 review tests still failed there (163 of the errors were
+`pthread_sigmask`): the adapters block signals with `pthread_sigmask`, wait with `sigpending`
+and `sigwait`, start the reviewer in its own session and kill its group with `killpg`, and the
+tests create symlinks and FIFOs. The filter tests above passed there. A Windows design
+(job objects, console control events) is its own task for review tooling, so v0.10 says in its
+upgrade checklist that native Windows has partial acceptance and the full self-test runs from
+WSL or another POSIX shell.
+
+**The upgrade checklist stamped after its commit.** It said to commit and then run
+`sync-kit.sh --actions-applied`, which writes the tracked `docs/kit/.kit-version`: the stamp
+was left uncommitted and every other clone read v0.9. The stamp now comes before the one
+upgrade commit. The release is v0.10, not v0.9.1: the changelog defines versions as
+`MAJOR.MINOR`.
+
+**A fourth review pass: a message is not an outcome.** Six of the Windows lock cases (another
+file, read-only handle, nothing holding, read-only lock file, reparse point, killed holder)
+matched their message and ignored the exit status. A guard that printed its refusal and then
+carried on still passed: `cannot_open()` without its `sys.exit(1)` printed `FAIL [lock]` for
+the reparse point and then ran the gate, and the wait without its `sys.exit(75)` printed
+`NOT RUN [lock]` and then took the lock once the first gate ended. In the throwaway repository
+the carried-on gate then failed on project files it lacked, so its status looked like a
+refusal too. Each case now asserts its exit status (1, or 75 for the killed holder), the
+gate's copy exits 0 right after it holds the lock, so carrying on past a guard is a pass that
+fails the case, and a claimed run waits 2 s at most, so a lost claim refusal ends instead of
+waiting forever. Proof, in a project bootstrapped on native Windows, each mutation on its own:
+against v0.10's earlier self-test both mutations left every lock case `ok`; against this one
+each turned exactly its own case red, and deleting the claim refusal's `fail=1` turned three
+of the four claim cases red (the fourth, the read-only lock file, is refused by the lock open
+itself).
+
+**CRLF on a Windows clone.** Git for Windows installs with `core.autocrlf=true`, which checks
+every text file out with CRLF; `sh` reads `#!/bin/sh<CR>` as a bad interpreter and
+`set -eu<CR>` as an invalid option, so on such a clone the gate, the hooks, `doctor.sh` and
+the kit's own `sync-kit.sh` could not start, and the upgrade checklist sent the owner to run
+them. A `.gitattributes` rule `*.sh text eol=lf` (and one for each of the gate's hooks)
+overrides autocrlf per path, so bootstrap installs one and the kit carries one. Proof: a bootstrapped
+project and the kit itself, each committed and cloned with `core.autocrlf=true`, checked
+their scripts and hooks out with CRLF without the rule and with LF with it (a Markdown file in
+the same clone proves the conversion was in force). An existing clone does not heal on pull:
+git does not check out again a file the pull did not change. So the upgrade's first item adds
+the rule, rewrites each script and hook without CR, and then renormalizes the index. The order
+matters: renormalized first, the rewritten files kept their CRLF size in the index's stat
+data, and `git status` listed every one of them as modified with an empty diff (git treats a
+size change as a change without reading the content). The test runs the checklist's own
+snippet on a CRLF clone of a v0.9 project and was red without the rewrite, without the
+renormalize, and with the first draft's order.
+
+**`spawn_worker.sh` on native Windows.** The kit's copy knew only tmux and stopped with `tmux
+is not installed`. A project that moved to Windows wrote its own Windows Terminal branch and
+found two faults on its first run, each of which left the tab with an error and no worker: a
+bare `bash` in a new tab is WSL's launcher (`WindowsApps\bash.exe`), and `wt.exe` splits its
+command line at every `;`, quoted or not, which cut the instruction in two (`error
+0x80070002`). The kit's branch runs Git Bash by its full Windows path and escapes every `;`
+as `\;`. The test drives the branch through a launcher stub that splits and resolves the way
+`wt.exe` does, with a `;` in the brief path and in a value: it was red against the tmux-only
+script, with a bare `bash`, and with the escape removed. `doctor.sh` asked for tmux there,
+which that host cannot run; it asks for `wt.exe` instead.
+
+**The two Low findings, fixed.** The filter refusal's changed-name queries did not carry the
+scope's exclusions, so a modified, filtered review archive refused a review whose scope never
+held it; the queries now carry them (the new test errored on the earlier code). The refusal
+said "the review changes it" also for a path the review does not change but that is not a
+proven unchanged LFS file, and told the owner to remove an attribute a historical path no
+longer had; it now says which of the two applies, and that the attribute is to be removed
+only where the checkout still has it.
+
+**A fifth review pass, on all of the above.** It rejected the round with three High and one
+Medium finding, each fixed once more:
+
+- *Bootstrap left a project's own `.gitattributes` alone.* An existing repository with owner
+  rules kept them and got no line-ending rule at all, while bootstrap succeeded and stamped
+  the version; `--force` would have replaced the owner's attributes whole. Bootstrap now
+  appends the rules the file lacks, never replaces it, and adds nothing a second time; a
+  `.gitattributes` it may not write (a symlink) stops it like a gate file. The clone test now
+  also bootstraps a project with its own `.gitattributes`, twice, the second with `--force`;
+  it was red against the earlier bootstrap.
+- *The lock was picked by whether `import fcntl` worked.* Python searches the checkout and
+  `PYTHONPATH` first, so a `fcntl.py` there sent native Windows down the POSIX path, and a
+  stand-in that always "locked" let two gates run; a `secrets.py` or `ctypes.py` there ran
+  inside the holder. The host (`os.name`) now picks the lock and both lock programs run with
+  `python3 -I`. Two shipped cases: on every host a nested run with a stand-in `fcntl.py` on
+  `PYTHONPATH` must pass without importing it (red on WSL with the probe's `-I` removed, and
+  on native Windows with the earlier lock programs), and on native Windows the holder must
+  import neither a stand-in `fcntl.py` nor `secrets.py` (red with the earlier programs, and
+  with only the holder's `-I` removed). Two kit checks had simulated a Python without `fcntl`
+  and a lockless or NFS file system with a `sitecustomize.py` on `PYTHONPATH`, which `-I` now
+  ignores; the full kit check caught both, and they now put their stand-in into each `-c`
+  program through a `python3` on `PATH`.
+- *The CRLF rewrite trusted every path it was given.* The loop wrote through a temporary at
+  a fixed name (an owner's `x.sh.lf` was overwritten and deleted), followed a tracked symlink
+  out of the repository, deleted a lone CR along with the line ends, split names at a newline,
+  and treated every file in `.githooks` as text. The snippet now reads `git ls-files -z`,
+  rewrites regular files in place with Python, replacing only CRLF, and the rule names the
+  gate's four hooks. Red against the earlier snippet: the newline name stayed CRLF, the lone
+  CR was gone, and the file behind the symlink was rewritten.
+- *`git add --renormalize .` restaged unrelated files* whose blobs predate an owner's text or
+  filter rule, and they went into the upgrade commit. It now renormalizes only the files the
+  rules name; the test holds a CRLF `notes.txt` under a later `*.txt text` rule, which the
+  earlier snippet staged.
+
+Two Low findings were fixed too: `doctor.sh` takes `KIT_WT` as `spawn_worker.sh` does, and
+the overlay README and the script's header say what does not apply on native Windows.
+
+**A sixth review pass** confirmed those fixes and left two findings.
+
+- *Ctrl-C, the review said, reached the gate and its build as ignored,* because the holder set
+  `SIGINT` to `SIG_IGN` before it started `sh`, and a Windows process's ignored Ctrl-C is
+  inherited. Measured on Windows 11 with CPython 3.13 and Git for Windows' `sh`, it was not:
+  CPython's `SIG_IGN` installs the C runtime's console handler, not the inherited
+  `SetConsoleCtrlHandler(NULL, TRUE)` flag, and a native grandchild under a `SIG_IGN` parent
+  was interrupted. Even that flag set in the holder did not reach the build, because `sh`
+  starts with Ctrl-C enabled again. The holder now installs a handler that does nothing
+  anyway, so the gate's behaviour no longer rests on either fact. The new self-test case gives
+  a copy of the gate a hidden console of its own, with that console as `sh`'s input as a
+  terminal window does, waits until its build (a native Python) sleeps, and sends
+  `CTRL_C_EVENT` to that console, the event Ctrl-C raises there; a signal sent by pid reaches
+  one process, not the console's. The gate must exit nonzero within 10 s, the build must have
+  ended, and the next gate must take the lock. The case passed against `SIG_IGN`, against the
+  flag set in the holder, against `trap '' INT` in the gate, and against a holder that starts
+  `sh` in a new process group. It was red when the holder starts `sh` detached from the
+  console: the gate ran on, the build ran on, and the next gate waited out its
+  `GATE_LOCK_WAIT`. The process that runs the case clears an ignored Ctrl-C it may have
+  inherited (an agent's shell had one), since a terminal's user has none.
+- *The self-test's host check imported ambient Python customization.* It ran `python3 -c`, so a
+  `sitecustomize.py` on `PYTHONPATH` that called the host POSIX, or stopped the interpreter,
+  sent native Windows to the POSIX `skip` line, and all the Windows lock cases were bypassed
+  with no `FAIL`; the case runner imported it too. Both now run `python3 -I`, and the self-test
+  runs them beside a `sitecustomize.py` that marks its import and calls the host POSIX. On
+  native Windows every case must run and the marker must not be written; where the cases are
+  skipped, a written marker is a `FAIL`. Red with the host check's `-I` removed (the cases were
+  skipped and the import failed the self-test) and with the runner's `-I` removed; the v0.10
+  head beside the same `PYTHONPATH` printed the `skip` line and no `FAIL`.
+
+**A seventh review pass** confirmed the isolated host check and left one High and two Medium
+findings, each fixed once.
+
+- *An LFS file could change between its proof and the diff.* The proof that a filtered path
+  is an unchanged LFS file ran before the diff and the fingerprint read the checkout. A file
+  replaced in between (an editor's save, a build) showed its new pointer in the diff, the
+  fingerprint hashed its new bytes, the two agreed, and the change went to review. Every path
+  let through is now proven again after both, and must still be unchanged and unnamed by the
+  rendered diff; a change after that is the fingerprint's to catch. The test replaces the file
+  right after its first proof; the earlier bridge raised nothing.
+- *The upgrade checklist verified v0.9's kit-owned files.* Item 4 ran `doctor.sh` and item 5
+  ran `sync-kit.sh` for the stamp, so a reader who followed the list from the changelog proved
+  the old doctor (on native Windows, one that asks for tmux) and installed the new one after
+  every check. The checklist now starts with the run of `sync-kit.sh` that installs the
+  kit-owned files and prints the list without stamping, and item 5 says the stamp copies
+  nothing new. A sync test drives that order: the first run installs the new `doctor.sh`,
+  exits 2 and keeps the version, and the checklist text must say so; it was red against the
+  earlier checklist.
+- *The Ctrl-C case could not see the holder.* It checked the gate, the build and the lock,
+  which a holder killed by Ctrl-C leaves the same. It now finds the holder under the gate and
+  requires it to outlive the Ctrl-C and exit 130, the status of the interrupted gate. Red with
+  the handler line removed (the holder died with `STATUS_CONTROL_C_EXIT`, 0xC000013A). It
+  still passes with `SIG_IGN` in place of the handler: on this host the two are alike (above),
+  so the case proves that the holder survives Ctrl-C, not which of the two makes it survive.
+
+**An eighth review pass, and the threat model it lacked.** It confirmed those three fixes and
+found two High and three Medium findings, each an "adjacent path" next to an earlier fix. That
+is the pattern this log already names: no written threat model, so the loop had no edge. The
+lead wrote one before the next round (`docs/UPDATING.md`, "The gate, `review.sh` and the
+upgrade checklists"). In scope: mistakes and accidents of the owner and the agents. Out of
+scope: a process changing the tree or the Git configuration while a gate or a review runs, and
+hostile files planted by anyone but the owner; either could edit the scripts instead.
+
+- *A filter attribute removed while `review.sh` collects its filtered paths, and restored
+  before the diff,* could hide an LFS path's raw change. This needs a concurrent, timed
+  change, so it is out of scope. It is recorded as the threat model's example, not fixed.
+- *A Ctrl-C between the holder's handler and the gate's creation was swallowed,* and the gate
+  then ran and could pass. The handler now records the interrupt and is installed before the
+  holder waits for the lock. A recorded interrupt ends the wait, starts no gate and makes the
+  status 130. A new case holds the lock, sends Ctrl-C while the holder waits, then frees the
+  lock. The holder must exit 130 and no gate may run. With a handler that records nothing, the
+  gate ran and the holder exited 0. With the earlier holder, Ctrl-C killed it while it waited
+  (0xC000013A).
+- *The checklist's first command could be a CRLF script.* A v0.9 kit clone pulled forward on
+  Windows keeps `sync-kit.sh` CRLF. The checklist and `DEV_SETUP.md` now require a fresh, full
+  clone of the kit; a text test holds that.
+- *Item 1 appended through a symlinked `.gitattributes`.* It now stops unless the file is absent
+  or regular. The test was red against the earlier snippet: the outside file was changed and
+  a folder there was not refused.
+- *Item 3 wrote its v0.9 copies at fixed names in the project, and went on after a failed
+  read.* The copies now go to a `mktemp -d` folder. A kit clone without `00581dd`, or a file
+  that cannot be read at it, stops the step. The test was red against the earlier snippet: an
+  owner's `scripts/check.sh.v0.9` was deleted.
+
+**A ninth review pass, under the threat model.** It confirmed the fixes above and listed the
+r6 filter-attribute finding as out of scope. It found two High and four Medium findings in
+scope. One fix round followed; each fix has a test that was red against the earlier code:
+
+- *A Ctrl-C after the holder's last check* is answered by the threat model, not a fix: it came
+  after the gate ended, so the gate's status stands, as on POSIX.
+- *Item 3 merged through an owner's symlink.* It now stops before any merge unless all three
+  files are regular. Each merge result replaces its file whole, with its mode, through a
+  sibling temporary. A failed merge stops the step.
+- *A clean driver that answers differently on a later call* could put its output in the
+  payload while every check saw the canonical answer. The payload diff now leaves out each
+  proven LFS path, so its filter is never asked again. The byte proof of v0.9 (below) is
+  therefore no longer what keeps a filter's output out of the payload.
+- *Item 1 ignored a failed rewrite* and staged the rest with exit 0. It also wrote in place, so
+  a killed run left a script half new. Each script is now replaced whole, with its mode, and a
+  failed rewrite stops the step before anything is staged.
+- *Bootstrap replaced an unreadable `.gitattributes`* with the kit's rules alone. It now stops.
+
+The tenth pass (the last one in this loop) rejected again, with one High, four Medium and
+four Low findings. They were fixed in the next round (the entry above).
+
+### 2026-10-06 — native Windows: the gate lock, and Git LFS beside a review
+
+A project moved from WSL to native Windows (Git for Windows' `sh`, CPython from python.org).
+Every commit there was blocked, and `review.sh` refused every review. The kit's own note that
+only Linux under WSL had ever been tested marked exactly where it broke. Each fix below was
+written as a test first and watched going red against v0.9; then each guard was deleted in
+turn and its test watched going red again. `CHANGELOG.md` v0.10 records what changed; the
+cross-model review of this first version (2026-10-07, above) changed four parts of it.
+
+#### The gate lock without fcntl
+
+Windows Python has no `fcntl`, so v0.9's gate printed `FAIL [lock]` on every run. The fix
+had to keep what the POSIX lock guarantees: the operating system releases the lock when its
+holders die, nothing is reclaimed, no pid is trusted, a second run waits, and a nested run
+proves it holds the lock rather than claiming it.
+
+`msvcrt.locking` was rejected. Its byte-range lock belongs to the one process that took it,
+and Windows releases it when that process ends. A gate whose holder was killed would let the
+next gate build beside the build still running, the failure the v0.9 flock lock was built to
+stop. The lock is a share mode instead: the holder opens the file for writing and shares it
+for reading only, so Windows refuses every other open for writing while any handle of that
+open exists. The holder makes its handle inheritable and runs the gate as its child; every
+process the gate starts inherits the handle, and the lock lasts until the last of them exits.
+A test kills the holder while its build runs, and two waiters still build one at a time; with
+the handle kept from the children, both waiters failed on "File exists".
+
+Measured on the host before the design was fixed: an inheritable Win32 handle keeps its
+number through Git for Windows' `sh` and a nested `sh` into a native Python. `os.execv` on
+Windows starts a new process and exits, so the holder cannot exec as on POSIX; it waits for
+the gate and passes its status on. Git for Windows reports a child killed by signal N to
+native Python as N << 8, and a native exit status of 2304 reaches `sh` as 0. Passed on as it
+was, a gate killed with `kill -9` reported a pass; it now exits 128 + N.
+
+The nested-run proof. A descriptor number does not cross from MSYS to native Python, so a
+random token in the lock file was the first idea. A token alone has the weakness the third
+cross-model round of v0.9 found in the pid: copied out of a killed gate whose build still
+runs, it matches the file. The proof is the handle, which a copied variable cannot carry.
+`GATE_LOCK_FD` holds the holder's handle number. A nested run accepts it only when that handle
+is open in its own process on this lock file (volume and file id; since 2026-10-07 the whole
+`FILE_ID_INFO`), can write (`fsync` needs
+write access), and a fresh open for writing is refused. While the holder has the file open
+without write sharing, no other handle with write access can be opened, so only the holder's
+handle and its inherited copies pass all three. Three tests hand the gate a handle that fails
+exactly one condition: one on another file, a read-only one on the lock file, and a write
+handle that shares writing while nothing holds the lock. With its condition deleted, each
+turned a red build green. The token stays as the self-test marker, the role the pid has on
+POSIX: the gate cannot learn the holder's process id as its own `$$`.
+
+Three smaller traps on the same host. A native program receives `/d/x` as `D:/x`, so
+`GATE_LOCK_HELD` came back from Python in another form; the nested run did not know its own
+lock and waited for itself. The lock path is now kept in the `C:/` form (`cygpath -m`, on a
+host whose `uname -s` is MSYS, MINGW or Cygwin since 2026-10-07; first, wherever
+it exists). Git for Windows prints a linked worktree's git path as `C:/...`, which the gate
+read as relative. Output to a pipe is in the ANSI code page, and a path outside it (a user
+name, or the U+F03A that cygpath makes of a colon) ended the waiting NOTE in a traceback.
+
+Not proven here at first (proven since 2026-10-07 with a reparse point any user may set):
+the refusal of a symlink at the lock path (creating one needs a privilege
+the host lacks, and the test says NOT RUN), and the lock on macOS.
+
+#### Git LFS and the filter refusal
+
+v0.9 refused a review scope "with an effective clean or process filter". The check ran
+`git check-attr filter` over every tracked and untracked file in the checkout, not over the
+paths the review changes. It counted a driver as effective when any `filter.<driver>.clean`
+or `.process` key is configured, and `git lfs install` writes both into the global
+configuration. So in a repository with one LFS path anywhere, every review was refused, a
+two-line code fix included.
+
+Why the refusal exists (v0.9, #12): Git runs a clean filter on working-tree bytes before it
+diffs them, so a filter can drop lines or a whole file from the reviewer's payload while the
+fingerprint still hashes the raw bytes. (Corrected 2026-10-07: the next sentence is wrong
+for a filter configured after the commit, and the proof below is now narrower.) That can only
+happen to a path whose raw bytes differ
+from what HEAD records. A filtered path therefore passes only with a proof, taken without
+running any filter, that its working bytes are exactly what HEAD records: they equal the
+blob's bytes (an unsmudged checkout), or the blob is a Git LFS pointer and the file has the
+pointer's size and sha256. With that proof the working-tree diff has no change of that path
+to omit, and the fingerprint, which hashes the same raw bytes, attests the state the reviewer
+saw. (Corrected 2026-10-07: a clean driver may answer differently when the payload diff runs
+it, so the proof alone does not keep a filter's output out of the payload. What does is that
+the payload diff leaves every proven path out, so its filter is never run for it.) The proof does not trust the filter's name or command: a driver called `lfs` that does
+something else gains nothing, because only the raw file's sha256 is compared.
+
+A filtered path the review changes stays refused. Uncommitted, its bytes differ from HEAD and
+the proof fails. In a `--commit` or `--base` range the checkout matches HEAD, but the commit
+diff names the path and would show its pointer, not its content. Excluding such paths and
+naming them in the evidence was the alternative; code-only reviews did not need it, and it
+would add a second kind of scope.
+
+Proof: the new test is red on v0.9 (refused on an unchanged LFS file beside a code change).
+Deleting the proof, the sha256 comparison, the blob-bytes case or the commit-range check each
+turned it red. Against real git-lfs 3.7 under WSL: a code-only change beside a 200 KB `.tif`
+was reviewable, a changed `.tif` was refused, a `--commit HEAD` that changed the `.tif` was
+refused, and the next code-only commit was reviewable. Cost: each filtered path is read and
+hashed once more per review.
+
+#### What native Windows still breaks
+
+Found while running the kit's own tests and acceptance on native Windows, and left for
+separate work. The kit check imports `fcntl` at the top and cannot start. `agent_process.py`
+reads `signal.SIGHUP`, so the review adapters fail on import, and with them the review case
+of the gate's `--self-test`. Git for Windows' default `core.autocrlf=true` checks the kit's
+scripts out with CRLF, which `sh` cannot run, and the kit ships no `.gitattributes` that
+pins them to LF. (2026-10-07: v0.10 ships one; see the entry above.)
+
 ### 2026-10-03 — kit hardening from two projects' unreported findings
 
 Two projects using the kit were mined for failures nobody had filed (their session

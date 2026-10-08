@@ -96,6 +96,71 @@ class KitRunnerTests(unittest.TestCase):
         self.assertFalse(passed)
         self.assertIn('required test suite is incomplete: test_kit_probe', out)
 
+    def test_a_nested_only_failing_module_fails_the_run(self):
+        command = self.suite_unit('True', 2)
+        nested = self.tmp / 'suite/nested'
+        nested.mkdir()
+        (nested / '__init__.py').write_text('')
+        (nested / 'test_nested_failure.py').write_text(PROBE % 'False')
+        passed, out = runner(('suite', command))
+        self.assertFalse(passed, out)
+        self.assertIn('nested test modules are not supported: nested/test_nested_failure.py', out)
+
+    def test_a_passing_nested_module_is_refused_before_import(self):
+        command = self.suite_unit('True', 2)
+        nested = self.tmp / 'suite/nested'
+        nested.mkdir()
+        (nested / '__init__.py').write_text('print("nested package imported")\n')
+        (nested / 'test_extra.py').write_text(PROBE % 'True')
+        passed, out = runner(('suite', command))
+        self.assertFalse(passed, out)
+        self.assertIn('nested test modules are not supported: nested/test_extra.py', out)
+        self.assertNotIn('nested package imported', out)
+
+    def test_a_nested_module_without_a_package_is_refused(self):
+        command = self.suite_unit('True', 2)
+        nested = self.tmp / 'suite/nested/deeper'
+        nested.mkdir(parents=True)
+        (nested / 'test_extra.py').write_text(PROBE % 'True')
+        passed, out = runner(('suite', command))
+        self.assertFalse(passed, out)
+        self.assertIn('nested test modules are not supported: nested/deeper/test_extra.py', out)
+
+    def test_excluded_modules_are_not_imported(self):
+        command = self.suite_unit('True', 2)
+        (self.tmp / 'suite/test_excluded.py').write_text('raise AssertionError("excluded module imported")\n')
+        script = self.tmp / 'unit.py'
+        script.write_text(script.read_text().replace(
+            "sys.exit(check_kit.unit", "check_kit.NOT_ON_WINDOWS = {'suite': {'test_excluded': 'fixture'}}\n"
+            "check_kit.REQUIRED_SUITES['suite']['test_excluded'] = 1\nsys.exit(check_kit.unit"))
+        passed, out = runner(('suite', command))
+        self.assertTrue(passed, out)
+        self.assertIn('suite ran 2 tests', out)
+        nested = self.tmp / 'suite/nested'
+        nested.mkdir()
+        (nested / 'test_excluded.py').write_text('raise AssertionError("excluded module imported")\n')
+        passed, out = runner(('suite', command))
+        self.assertFalse(passed, out)
+        self.assertIn('nested test modules are not supported: nested/test_excluded.py', out)
+        self.assertNotIn('excluded module imported', out)
+
+    def test_the_wrapper_tries_python_when_python3_cannot_run(self):
+        import shlex
+        project = self.tmp / 'kit'
+        (project / 'scripts').mkdir(parents=True)
+        shutil.copyfile(ROOT / 'scripts/check.sh', project / 'scripts/check.sh')
+        (project / 'scripts/check_kit.py').write_text('import sys; print("gate ran", sys.argv[1:])\n')
+        shims = self.tmp / 'bin'
+        shims.mkdir()
+        (shims / 'python3').write_text('#!/bin/sh\nexit 126\n')
+        (shims / 'python').write_text('#!/bin/sh\nexec %s "$@"\n' % shlex.quote(sys.executable))
+        for path in shims.iterdir():
+            path.chmod(0o755)
+        result = subprocess.run(['sh', str(project / 'scripts/check.sh'), '--timing'], capture_output=True,
+                                text=True, env=dict(os.environ, PATH=str(shims) + os.pathsep + os.environ['PATH']))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("gate ran ['--timing']", result.stdout)
+
     def test_units_print_in_the_given_order_whichever_ends_first(self):
         slow = [sys.executable, '-c', 'import time; time.sleep(1); print("slow output\\nUNIT DONE: slow")']
         fast = [sys.executable, '-c', 'print("fast output\\nUNIT DONE: fast")']
@@ -163,6 +228,10 @@ class KitRunnerTests(unittest.TestCase):
 
     def test_path_without_drops_only_the_named_commands(self):
         # A directory without them stays as it is; one with them becomes links to the rest.
+        # path_without serves the POSIX lock cases only; Windows' which finds PATHEXT names alone.
+        if os.name == 'nt':
+            sys.stderr.write('\nNOT RUN: %s (POSIX only: commands without an extension)\n' % self.id())
+            return
         plain, mixed = self.tmp / 'plain', self.tmp / 'mixed'
         for directory in (plain, mixed):
             directory.mkdir()

@@ -35,6 +35,63 @@ git config core.hooksPath        # -> .githooks
 `git commit --no-verify` skips the gate. That hatch exists for {{OWNER_NAME}}'s WIP commits.
 Agents must not use it (`AGENTS.md`).
 
+**Line endings.** `sh` cannot run a script with CRLF line endings, and Git for Windows'
+default `core.autocrlf=true` checks text files out with CRLF: on such a clone the gate, the
+hooks and `doctor.sh` could not start. `.gitattributes` holds `*.sh text eol=lf` and one
+`text eol=lf` line for each of the gate's hooks, so they check out with LF whatever a
+clone's autocrlf says. Keep those lines. A clone made before they were committed keeps its
+CRLF copies, because a pull does not check out again a file it did not change, until they
+are rewritten once, with no uncommitted change to them: each CRLF becomes LF in a regular
+file (a file that is, or lies below, a symlink or a junction is left alone, with a line
+saying so; a lone CR is kept; each file is replaced whole, with its mode),
+and each file is staged again so that `git status` does not list it as modified for its new
+size. A rewrite that fails stops it before anything is staged, and so does a `git ls-files`
+that fails (a corrupt index); a temporary copy a SIGKILL left (`.crlf-*`) stops the next run.
+
+```sh
+( left=$(git ls-files --others -- ':(glob)**/.crlf-*')
+  [ -z "$left" ] || { echo "STOP: a killed run left $left; delete it, then run this again" >&2; exit 1; }
+  list=$(mktemp) || exit 1
+  trap 'rm -f "$list"' EXIT; trap 'exit 129' HUP; trap 'exit 130' INT; trap 'exit 143' TERM
+  set -- '*.sh' .githooks/pre-commit .githooks/pre-merge-commit .githooks/commit-msg .githooks/post-merge
+  git ls-files -z -- "$@" > "$list" || { echo "STOP: git ls-files failed (above); nothing was changed" >&2; exit 1; }
+  python3 -I -c 'if 1:
+      import os, signal, stat, sys, tempfile
+      signal.signal(signal.SIGTERM, lambda *a: sys.exit(143))
+      def plain(name):
+          # Every folder on the way and the file itself: no symlink, no junction (a reparse
+          # point), or the rewrite wrote into what the link points at, outside the project.
+          parts = name.split(b"/")
+          for i in range(1, len(parts) + 1):
+              info = os.lstat(b"/".join(parts[:i]))
+              if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400:
+                  return False
+          return stat.S_ISREG(info.st_mode)
+      for name in sys.stdin.buffer.read().split(b"\0"):
+          if name and not plain(name):
+              sys.stderr.write("left alone, a link or not a regular file on its way: %r\n" % name)
+          elif name:
+              with open(name, "rb") as script:
+                  data = script.read()
+              if b"\r\n" in data:
+                  handle, new = tempfile.mkstemp(prefix=b".crlf-", dir=os.path.dirname(name) or b".")
+                  try:
+                      with os.fdopen(handle, "wb") as copy:
+                          copy.write(data.replace(b"\r\n", b"\n"))
+                      os.chmod(new, stat.S_IMODE(os.lstat(name).st_mode))
+                      os.replace(new, name)
+                  finally:
+                      if os.path.lexists(new):
+                          os.unlink(new)' < "$list" ||
+    { echo "STOP: a script could not be rewritten (above); nothing was staged" >&2; exit 1; }
+  if [ -s "$list" ]; then xargs -0 git add --renormalize -- < "$list"; fi )
+```
+
+`./scripts/doctor.sh` names any script still checked out with CRLF. The kit's own clone is no
+exception: upgrade from a fresh, full clone of the kit, never an older clone pulled forward,
+whose scripts stay CRLF and cannot start (the kit's upgrade checklist runs them), and never a
+shallow one, which lacks the older commit the checklist merges from.
+
 ## 2. Toolchain on PATH
 
 `check.sh` needs {{TOOLCHAIN}}. Per-user installs are the usual trap here: they work in your
@@ -45,9 +102,11 @@ fails for a reason that has nothing to do with the code.
 
 If the gate fails with "command not found", that is this — not a broken build.
 
-The gate runs one at a time per checkout and needs `python3` with the `fcntl` module for its
-lock: native Windows Python has none, so a hook started from a Windows-side client fails
-`FAIL [lock]` by name; run the gate from WSL or a POSIX shell with its own Python. Every
+The gate runs one at a time per checkout and needs `python3` for its lock: `fcntl.flock` on
+Linux, macOS, WSL and a POSIX Python under MSYS2 or Cygwin; on native Windows (Git for
+Windows' `sh` with a Windows Python) a lock file held open without write sharing, which a
+nested run proves it holds by the file's `FILE_ID_INFO` (NTFS and ReFS give one; on a volume
+that gives none, nested runs fail `FAIL [lock]`). Every
 process the build command starts holds the lock, so a build server it leaves running (a
 compiler server, a build daemon) makes the next gate, and the commit hook, wait until that
 server exits. Turn such servers off in the build command (`docs/GOTCHAS.md`); the waiting
@@ -57,6 +116,11 @@ server exits. Turn such servers off in the build command (`docs/GOTCHAS.md`); th
 
 `docs/REVIEW_GATE.md` asks for risky diffs to be reviewed by a DIFFERENT model in a fresh
 session. `scripts/review.sh` automates that, and it needs a second CLI on this machine.
+It runs from any shell the gate runs from, native Windows included (Git for Windows' `sh`
+with a Windows Python: the reviewer runs in a Job Object of its own there). A CLI installed as
+a `.cmd` (npm's) is found by its bare name; an argument `cmd.exe` would read as shell is
+refused, so name the CLI's executable in `REVIEW_CLI_BIN` or `CLAUDE_CLI_BIN` if a review says
+so. Only the review's own self-test (`scripts/review.sh --self-test`) still needs a POSIX host.
 
 **Ask your agent to set this up for you.** It can install the CLI and check the wiring; the
 parts it cannot do are called out below. Nothing here is required to write code — the gate,

@@ -182,12 +182,12 @@ class ShowTests(Base):
             with self.subTest(names=names):
                 result = self.run_script(SHOW, '--print', *names, **self.WSL)
                 self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertEqual(result.stdout, self.wt_line('kit-my_proj_', *names) + '\n')
+                self.assertEqual(result.stdout, self.wt_line('0', *names) + '\n')
                 self.assertEqual(self.log('wt-stub'), '', '--print ran the launcher')
 
-    def test_the_window_is_named_after_the_project_from_anywhere_in_it(self):
-        # One fixed name per project, so a later call adds its tabs to the same window: from a
-        # subfolder and from a worktree it is still the main checkout's folder.
+    def test_the_tabs_open_in_the_window_used_last_from_anywhere_in_the_project(self):
+        # `-w 0`, the lead's own window: a window named after the project opened a second one.
+        # From a subfolder and from a worktree it is the same.
         git = lambda *a: subprocess.run(['git', *a], cwd=self.cwd, check=True, capture_output=True)
         git('init', '-q')
         git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'a')
@@ -199,7 +199,7 @@ class ShowTests(Base):
                            VIS_STATE=str(self.state), KIT_WT=str(self.bin / 'wt-stub'), **self.WSL)
                 result = subprocess.run(['sh', str(SHOW), '--print', 'a'], cwd=self.cwd / where, env=env,
                                         capture_output=True, text=True, timeout=60)
-                self.assertIn("'-w' 'kit-my_proj_'", result.stdout, result.stderr)
+                self.assertIn("'-w' '0' 'new-tab'", result.stdout, result.stderr)
 
     def test_macos_print_uses_iterm_tabs_or_terminal_windows(self):
         for app, term in (('iTerm', 'iTerm.app'), ('Terminal', 'Apple_Terminal')):

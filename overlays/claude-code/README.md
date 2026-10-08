@@ -45,31 +45,43 @@ A spawned session can stop on a permission prompt, the folder-trust dialog or a 
 and the idle notice does not fire for a session that waits inside a dialog: it hangs where
 nobody looks, for as long as nobody looks. Two scripts close that, both kit-owned.
 
+**Native Windows** (Git for Windows' `sh`, MSYS2, Cygwin) has no tmux, so what this section
+says about tmux sessions, `--batch`, `show_workers.sh` and `watch_workers.sh` does not apply
+there. `spawn_worker.sh` opens the worker as a tab of the window the lead runs in (`wt.exe -w
+0`, or the launcher `KIT_WT` names) with the brief's instruction as its first prompt, and
+refuses a name a running Claude Code session already has. The tab is the only view of it:
+watch the tab and wait for the result file the brief names (the separate session does not
+answer `notify_when_idle`). `close_worker.sh NAME` ends it: it finds the `claude.exe` whose
+command line holds `-n NAME`, stops it with `taskkill /T /F` (the tab closes, because its
+command ends with `exit 0`), then removes the worktree through the same audit as on POSIX,
+which reads each process's working directory on Windows itself. A session that survives, or
+a process list it cannot read, leaves the worktree untouched. On WSL and macOS the tmux path
+below applies unchanged.
+
 **`scripts/show_workers.sh NAME [NAME...]`** opens ONE terminal window with a tab per named
 tmux session, each running `tmux attach -t =NAME`. `spawn_worker.sh` calls it for every
 session it starts, once the brief has landed. A lead starting several passes `--batch` to each
 spawn and then shows them together, so they open as one window and not one at a time:
 
 ```sh
-scripts/spawn_worker.sh w1 briefs/w1.md --batch
-scripts/spawn_worker.sh w2 briefs/w2.md --batch
+scripts/spawn_worker.sh w1 briefs/w1.md --model sonnet --effort medium --batch
+scripts/spawn_worker.sh w2 briefs/w2.md --model opus --effort high --batch
 scripts/show_workers.sh w1 w2
 ```
 
 What opens where:
 
-- **WSL with Windows Terminal**: one `wt.exe -w kit-<project folder> new-tab ...` call, a
-  tab per session. The window name is fixed per project, so a later call adds its tabs to
-  the window that holds the earlier ones: that is what `-w NAME` is documented to do; a
-  script on the WSL side can see that each tab attached, not which window it is in.
+- **WSL with Windows Terminal**: one `wt.exe -w 0 new-tab ...` call, a tab per session in
+  the window used last, the one the lead runs in (a window named after the project opened a
+  second window beside the lead's). A script on the WSL side can see that each tab attached,
+  not which window it is in.
   `KIT_WT` names another launcher than the `wt.exe` found on PATH or under `/mnt/c/Users`.
 - **macOS, iTerm2** (the lead runs in it, or it is installed and the lead does not run in
   Terminal.app): a new window, a tab per session, through `osascript`.
 - **macOS, Terminal.app**: one window per session. Adding a tab there needs the
   accessibility permission, which a script must not ask for; the output says so.
-- **Native Windows**: no tmux, so no worker session. Spawn workers from WSL, in a checkout
-  on the WSL file system (`doctor.sh` warns about a checkout under `/mnt/<drive>`); the
-  tabs open in Windows Terminal as above.
+- **Native Windows**: no tmux session to show; `spawn_worker.sh` opens the tab itself
+  (above).
 - **Anything else**: nothing opens; the script prints `attach by hand: tmux attach -t NAME`
   for each session and exits 0.
 
@@ -202,8 +214,10 @@ If the project has no such jobs, delete both files instead of filling them.
 - **A sub-agent inherits its lead session's effort unless its definition sets `effort:`**,
   and nothing in its output says so: a side-by-side comparison ran two sub-agents at the
   lead's medium against a high-effort run of another CLI, and the skew surfaced only in the
-  transcripts. Both definitions here set it. A spawned session takes the user's default
-  effort instead; pass `--effort` to the spawn script. `scripts/agent_cost.py` does not show
+  transcripts. Both definitions here set it, as a fallback only: the lead passes `model` and
+  `effort` on every Agent call, chosen for the errand. `spawn_worker.sh` refuses a session
+  without `--model` and `--effort`, which it would otherwise start at the user's default.
+  `scripts/agent_cost.py` does not show
   effort, so verify it after the run by grepping the transcript for `"effort"`.
 - **A spawned session does not end when its task does.** A pilot worker wrote its result
   file and then sat idle in tmux for 40 minutes until it was killed by hand, and the idle

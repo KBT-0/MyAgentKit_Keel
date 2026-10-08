@@ -156,6 +156,76 @@ put() {
   stage "$@" && mv -f "$part" "$1" && part=""
 }
 
+# Ask git about the installed paths before any copy. A synthetic x.sh missed scripts/*.sh,
+# and attributes in a parent folder override the root file too. The probe holds the attribute
+# files the install would leave, including the owner's nested files and selected overlays.
+check_attributes() (
+  [ -f "$kit/core/.gitattributes" ] || return 0
+  [ -z "$(blocked .gitattributes)" ] || return 0
+  attrs=""
+  if [ -f "$target/.gitattributes" ]; then
+    attrs=$(cat "$target/.gitattributes") || die "cannot read the project's own .gitattributes; nothing was changed"
+  fi
+  probe=$(mktemp -d) || die "cannot create a temporary folder to check .gitattributes"
+  trap 'rm -rf "$probe"' EXIT
+  trap 'exit 129' HUP; trap 'exit 130' INT; trap 'exit 143' TERM
+  git init -q "$probe" >/dev/null 2>&1 || die "cannot check .gitattributes with git; nothing was changed"
+  printf '%s\n' "$attrs" > "$probe/.gitattributes"
+  : > "$probe/paths"
+  attribute_tree() {
+    src=$1; prefix=${2:-}
+    [ -d "$src" ] || return 0
+    if find "$src" -name "$(printf '*\n*')" 2>/dev/null | grep -q .; then
+      die "a filename under $src contains a newline; refusing to copy blind"
+    fi
+    ( cd "$src" && find . -type f -print ) | sed 's|^\./||' > "$probe/source"
+    while IFS= read -r rel; do
+      case "$rel" in __pycache__/*|*/__pycache__/*|*.pyc|*.pyo) continue ;; esac
+      dest="${prefix:+$prefix/}$rel"
+      case "$dest" in *.sh|*.py|.githooks/*) printf '%s\n' "$dest" >> "$probe/paths" ;; esac
+      case "$dest" in
+      .gitattributes)
+        # Installation merges each root file, core first and overlays in the given order.
+        # Simulate the same de-duplication: re-appending a present rule changes precedence.
+        rules=$(cat "$src/$rel") || die "cannot read the kit's $rel; nothing was changed"
+        attrs=$(cat "$probe/.gitattributes")
+        missing=$(printf '%s\n' "$rules" | grep -v -e '^#' -e '^$' | while IFS= read -r rule; do
+                    printf '%s\n' "$attrs" | grep -qxF -e "$rule" || printf '%s\n' "$rule"; done)
+        printf '\n%s\n' "$missing" >> "$probe/.gitattributes"
+        ;;
+      */.gitattributes)
+        [ -z "$(blocked "$dest")" ] || continue
+        if [ "$force" -eq 0 ] && [ -f "$target/$dest" ]; then from="$target/$dest"
+        elif [ "$force" -eq 0 ] && [ -f "$probe/$dest" ]; then continue
+        else from="$src/$rel"; fi
+        mkdir -p "$probe/${dest%/*}"
+        cat "$from" > "$probe/$dest" || die "cannot read $from; nothing was changed"
+        ;;
+      esac
+    done < "$probe/source"
+  }
+  attribute_tree "$kit/core"
+  attribute_tree "$kit/setup" setup
+  for name in $overlays; do attribute_tree "$kit/overlays/$name/files"; done
+  while IFS= read -r dest; do
+    parent=$dest
+    while [ "${parent%/*}" != "$parent" ]; do
+      parent=${parent%/*}
+      rel="$parent/.gitattributes"
+      if [ ! -f "$probe/$rel" ] && [ -z "$(blocked "$rel")" ] && [ -f "$target/$rel" ]; then
+        mkdir -p "$probe/$parent"
+        cat "$target/$rel" > "$probe/$rel" || die "cannot read the project's own $rel; nothing was changed"
+      fi
+    done
+  done < "$probe/paths"
+  while IFS= read -r dest; do
+    eol=$(git -C "$probe" check-attr eol -- "$dest" 2>/dev/null) || eol=""
+    case "$dest" in .githooks/*) rule='.githooks/* text eol=lf' ;; *.sh) rule='*.sh text eol=lf' ;; *) rule='*.py text eol=lf' ;; esac
+    [ "${eol##*: eol: }" = lf ] ||
+      die "an attribute for $dest overrides the kit's rule '$rule' (the file would check out without eol=lf); remove that rule and run bootstrap again; nothing was changed"
+  done < "$probe/paths"
+)
+
 # copy_tree SRC [DEST_PREFIX] — copies SRC's contents into the target, optionally under a
 # subdirectory. Existing files that differ are recorded and left alone unless --force;
 # identical ones are passed over (an earlier run put them there).
@@ -182,6 +252,30 @@ copy_tree() {
       printf '%s\n' "$dest" >> "$skiplist"
       continue
     fi
+    # The project's own .gitattributes is merged, never left alone or replaced: one that was
+    # left alone let bootstrap succeed without the line-ending rules the gate needs to start on
+    # a CRLF clone, and --force replaced the owner's attributes whole. A rule it already holds
+    # is not added again. Read once, and checked: an unreadable file read as empty was
+    # replaced by the kit's rules alone.
+    if [ "$dest" = .gitattributes ] && [ -f "$target/$dest" ]; then
+      attrs=$(cat "$target/$dest") || die "cannot read the project's own $dest; nothing was changed in it"
+      # The kit's rules are read on their own and checked: read at the head of a pipeline, a
+      # failed read gave no rule and no error, and bootstrap recorded the version without them.
+      rules=$(cat "$src/$rel") || die "cannot read the kit's $rel; nothing was changed in the project's $dest"
+      missing=$(printf '%s\n' "$rules" | grep -v -e '^#' -e '^$' | while IFS= read -r rule; do
+                  printf '%s\n' "$attrs" | grep -qxF -e "$rule" || printf '%s\n' "$rule"; done)
+      if [ -n "$missing" ]; then
+        put "$target/$dest" <<EOF
+$attrs
+
+# Added by MyAgentKit_Keel's bootstrap: shell scripts and the gate's hooks check out with LF
+# whatever a clone's core.autocrlf says (docs/DEV_SETUP.md, section 1).
+$missing
+EOF
+        printf '%s\n' "bootstrap: added the kit's line-ending rules to the project's own $dest"
+      fi
+      continue
+    fi
     if [ -e "$target/$dest" ] && [ "$force" -eq 0 ]; then
       cmp -s "$src/$rel" "$target/$dest" && continue
       printf '%s\n' "$dest" >> "$skiplist"
@@ -201,6 +295,7 @@ left=$(cd "$target" && find . -name .git -prune -o -type f -name '.kit-tmp.*' -p
 
 printf '%s\n' "bootstrap: installing MyAgentKit_Keel v$version into $target"
 
+check_attributes
 copy_tree "$kit/core"
 copy_tree "$kit/setup" "setup"
 
@@ -251,7 +346,7 @@ fi
 # The stop comes BEFORE the version stamp, the note and the hooks wiring: an earlier
 # version stamped .kit-version first and then refused — after which sync-kit.sh greeted the
 # gateless project with "already current. Nothing to do."
-gates=$(grep -E '^(scripts/check\.sh|\.githooks/(pre-commit|pre-merge-commit|commit-msg))$' "$skiplist" 2>/dev/null |
+gates=$(grep -E '^(scripts/check\.sh|\.githooks/(pre-commit|pre-merge-commit|commit-msg)|\.gitattributes)$' "$skiplist" 2>/dev/null |
   while IFS= read -r g; do
     why=$(blocked "$g")
     printf '%s%s\n' "$g" "${why:+ ($why)}"; done)

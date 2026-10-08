@@ -10,6 +10,7 @@ from pathlib import Path
 import signal
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -59,6 +60,36 @@ if args[0] == 'kill-session':
     with open(linger, 'w') as f:
         f.write(os.environ.get('CLOSE_LINGER', '0'))
 '''
+
+# Native Windows: the session lister (KIT_PS) prints "<pid> <command line>" for each claude.exe,
+# from the file `claude-procs` in the state folder; taskkill removes the pid it is given (its
+# tree), and logs the call. CLOSE_PS_ERROR: a lister that cannot answer.
+PS = r"""#!/usr/bin/env python3
+import os, sys
+if os.environ.get('CLOSE_PS_ERROR'):
+    sys.exit(os.environ['CLOSE_PS_ERROR'])
+path = os.path.join(os.environ['CLOSE_STATE'], 'claude-procs')
+query = ' '.join(sys.argv[1:])
+if os.path.exists(path):
+    # As Win32_Process's filter does: only the processes whose image name the query names.
+    for line in open(path).read().splitlines():
+        command = line.split(' ', 1)[1]
+        exe = command[1:].split('"')[0] if command.startswith('"') else command.split(' ')[0]
+        if "Name='%s'" % exe.replace('\\', '/').split('/')[-1] in query:
+            sys.stdout.write(line + '\r\n')
+"""
+TASKKILL = r"""#!/usr/bin/env python3
+import os, sys
+st = os.environ['CLOSE_STATE']
+with open(os.path.join(st, 'taskkill.log'), 'a') as log:
+    log.write(repr(sys.argv[1:]) + '\n')
+pid = sys.argv[sys.argv.index('/PID') + 1]
+path = os.path.join(st, 'claude-procs')
+if os.environ.get('CLOSE_TASKKILL_IGNORED'):
+    sys.exit(0)
+lines = open(path).read().splitlines() if os.path.exists(path) else []
+open(path, 'w').write(''.join(line + '\n' for line in lines if line.split(' ')[0] != pid))
+"""
 
 
 class CloseWorkerTests(unittest.TestCase):
@@ -135,6 +166,79 @@ class CloseWorkerTests(unittest.TestCase):
         self.assertIn('close_worker: w1: branch worktree-w1 is kept, never deleted here; ', out)
         self.assertIn('`git branch --merged` lists the merged branches', out)
         self.assertNotIn('FAILED', out)
+
+    def windows(self, *procs):
+        """Native Windows as close_worker.sh sees it: uname says MINGW, no tmux, PROCS (lines of
+        "<pid> <command line>") the claude.exe processes running."""
+        for name, body in (('uname', '#!/bin/sh\necho MINGW64_NT-10.0-26200\n'), ('ps-stub', PS),
+                           ('taskkill', TASKKILL)):
+            (self.tmp / 'bin' / name).write_text(body)
+            (self.tmp / 'bin' / name).chmod(0o755)
+        (self.tmp / 'claude-procs').write_text(''.join(line + '\n' for line in procs))
+        return {'KIT_PS': str(self.tmp / 'bin/ps-stub')}
+
+    def test_on_native_windows_the_claude_session_is_ended_and_the_worktree_removed(self):
+        path = self.worker('w1', session=False)
+        # Codex review: `-n w1` inside another worker's quoted prompt is that prompt, not its name;
+        # and a node.exe running some other tool with `-n w1` is not Claude Code.
+        env = self.windows('100 C:\\npm\\claude.exe "Read \'b.md\' and follow it." -n w1 --model opus',
+                           '123 C:\\npm\\claude.exe "Read brief -n w1 notes.md and follow it." -n w2',
+                           '200 C:\\npm\\claude.exe -n w10', '300 C:\\npm\\claude.exe --resume x',
+                           '400 "C:\\Program Files\\nodejs\\node.exe" C:\\other\\tool.js -n w1',
+                           '401 node.exe C:\\projects\\claude-code-tools\\backup.js -n w1')
+        out = self.close('w1', **env)
+        kills = (self.tmp / 'taskkill.log').read_text().splitlines()
+        self.assertEqual(kills, ["['/PID', '100', '/T', '/F']"], out)
+        self.assertIn('close_worker: w1: Claude Code session ended (process 100); its Windows Terminal tab '
+                      'closes by itself\n', out)
+        self.assertFalse(path.exists(), out)
+        self.assertIn('close_worker: w1: worktree removed through the audit', out)
+        # Only the audit lists tmux sessions (a tmux on PATH there would be one); no session is ended in it.
+        self.assertEqual([c for c in self.calls() if 'list-sessions' not in c], [], 'tmux was used to end it')
+        out = self.close('w1', **env)
+        self.assertIn('close_worker: w1: no Claude Code session named w1 runs; nothing to end\n', out)
+
+    def test_sessions_accepts_only_the_claude_code_package_entry_point(self):
+        # Exercise both installed parsers, including separators accepted on native Windows.
+        for script in (SCRIPT, SCRIPT.with_name('spawn_worker.sh')):
+            source = script.read_text(encoding='utf-8').split('sessions() {', 1)[1]
+            source = source.split("-I -c '", 1)[1].split("' \"$1\"", 1)[0]
+            rows = [r'100 node.exe C:\projects\claude-code-tools\backup.js -n w1',
+                    r'101 node.exe C:\npm\@anthropic-ai\claude-code\backup.js -n w1',
+                    r'102 node.exe C:\npm\other\claude-code\cli.js -n w1',
+                    r'103 node.exe C:\npm\@anthropic-ai\claude-code\cli.js.bak -n w1',
+                    r'200 node.exe C:\npm\@anthropic-ai\claude-code\cli.js -n w1',
+                    '201 node.exe C:/npm/@anthropic-ai/claude-code/cli.js -n w1']
+            with self.subTest(script=script.name):
+                result = subprocess.run([sys.executable, '-I', '-c', source, 'w1'],
+                                        input='\n'.join(rows), capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, '200 201')
+
+    def test_on_native_windows_an_npm_installed_claude_is_found_by_its_name(self):
+        # Codex review: npm's `claude` runs as node.exe with Claude Code's cli.js, and a lister
+        # of claude.exe alone said there was no session while it ran on.
+        self.worker('w3', session=False)
+        env = self.windows('300 "C:\\Program Files\\nodejs\\node.exe" '
+                           'C:\\npm\\node_modules\\@anthropic-ai\\claude-code\\cli.js "Read x" -n w3')
+        out = self.close('w3', **env)
+        self.assertEqual((self.tmp / 'taskkill.log').read_text().splitlines(), ["['/PID', '300', '/T', '/F']"], out)
+        self.assertIn('close_worker: w3: Claude Code session ended (process 300)', out)
+
+    def test_on_native_windows_a_session_that_survives_or_a_lister_that_fails_fails_the_close(self):
+        path = self.worker('w1', session=False)
+        env = self.windows('100 claude.exe -n w1')
+        out = self.close('--dry-run', 'w1', **env)
+        self.assertIn('close_worker: w1: dry run: would end the Claude Code session w1 (process 100', out)
+        self.assertFalse((self.tmp / 'taskkill.log').exists(), out)
+        out = self.close('w1', code=1, CLOSE_TASKKILL_IGNORED='1', **env)
+        self.assertIn('close_worker: w1: the Claude Code session still runs after taskkill (process 100); its worktree is not touched', out)
+        self.assertNotIn('clean_worktrees', out)
+        self.assertTrue(path.is_dir(), out)
+        out = self.close('w1', code=1, CLOSE_PS_ERROR='Get-CimInstance: access denied', **env)
+        self.assertIn('close_worker: FAILED: w1: could not list the Claude Code sessions, so w1 may still run: '
+                      'Get-CimInstance: access denied; its worktree is not touched', out)
+        self.assertTrue(path.is_dir(), out)
 
     def test_a_missing_session_or_worktree_is_reported_not_an_error(self):
         out = self.close('nobody')

@@ -161,4 +161,5 @@ server after `dotnet build` or `dotnet test`, the Gradle daemon, the `sccache` s
 the server off in the build command (`dotnet build -nodeReuse:false
 -p:UseSharedCompilation=false`, `gradle --no-daemon`, `sccache --stop-server` at the end).
 The gate's waiting `NOTE [lock]` line names the lock file; `fuser -v <lock file>` or
-`lsof <lock file>` shows which process holds it.
+`lsof <lock file>` shows which process holds it. On native Windows, search for `check.lock`
+under Associated Handles on the CPU tab of Resource Monitor (`resmon`).

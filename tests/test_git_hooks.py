@@ -2,6 +2,7 @@
 import importlib.util
 import os
 from pathlib import Path
+import shlex
 import shutil
 import subprocess
 import sys
@@ -69,7 +70,9 @@ class GitHookTests(unittest.TestCase):
             mark, build = Path(tmp) / 'built', Path(tmp) / 'build.sh'
             build.write_text('true\n')
             env = dict({k: v for k, v in os.environ.items() if not k.startswith(('GATE_', 'BOUNDARY_'))},
-                       GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1', GATE_TEST_BUILD=str(build))
+                       GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1',
+                       # The build command expands it unquoted: a Windows path keeps its `\` only as `/`.
+                       GATE_TEST_BUILD=build.as_posix())
             git = lambda *args, check=True: subprocess.run(
                 ['git', '-c', 'user.name=t', '-c', 'user.email=t@example.invalid',
                  '-c', 'core.hooksPath=.githooks', *args],
@@ -218,7 +221,7 @@ class GitHookTests(unittest.TestCase):
         # was set, skipped the wrong prefix and passed "x Co-Authored-By: ...". The hook runs
         # directly, with git reporting 2.45: on an older git this case returned early and
         # counted as a pass. Reading both keys in order works on any git.
-        real_git = shutil.which('git')
+        real_git = shlex.quote(shutil.which('git'))
         with tempfile.TemporaryDirectory() as tmp:
             root, git = self.repo(tmp)
             shim = Path(tmp) / 'shim'
@@ -253,7 +256,7 @@ class GitHookTests(unittest.TestCase):
         # Git before 2.45 ignores core.commentString: with commentChar=x set before
         # commentString=y it keeps "x Co-Authored-By: ..." under -m, and a hook that took the
         # last of the two skipped only "y" and passed it.
-        real_git = shutil.which('git')
+        real_git = shlex.quote(shutil.which('git'))
         with tempfile.TemporaryDirectory() as tmp:
             root, git = self.repo(tmp)
             git('config', 'core.commentChar', 'x')
@@ -292,7 +295,7 @@ class GitHookTests(unittest.TestCase):
     def test_a_failed_config_transformation_fails_closed(self):
         # The tr results were unchecked: a failed one left only ":" as a separator, and
         # "Co-Authored-By=Claude" passed; a failed comment-prefix one passed "x Co-Authored-By".
-        real_tr = shutil.which('tr')
+        real_tr = shlex.quote(shutil.which('tr'))
         with tempfile.TemporaryDirectory() as tmp:
             root, git = self.repo(tmp)
             shim = Path(tmp) / 'shim'
@@ -316,7 +319,7 @@ class GitHookTests(unittest.TestCase):
     def test_a_failed_config_read_fails_closed(self):
         # Only an absent key (git config exit 1) means the default: a failed read of
         # trailer.separators left only ":" as a separator and "Co-Authored-By=Claude" passed.
-        real_git = shutil.which('git')
+        real_git = shlex.quote(shutil.which('git'))
         with tempfile.TemporaryDirectory() as tmp:
             root, git = self.repo(tmp)
             shim = Path(tmp) / 'shim'
@@ -364,7 +367,7 @@ class GitHookTests(unittest.TestCase):
                 with self.subTest(tool=tool):
                     for stale in shim.iterdir():
                         stale.unlink()
-                    (shim / tool).write_text('#!/bin/sh\n%s\nexec %s "$@"\n' % (broken, shutil.which(tool)))
+                    (shim / tool).write_text('#!/bin/sh\n%s\nexec %s "$@"\n' % (broken, shlex.quote(shutil.which(tool))))
                     (shim / tool).chmod(0o755)
                     result = subprocess.run(['sh', '.githooks/commit-msg', 'msg'], cwd=root, text=True,
                                             capture_output=True,
@@ -499,6 +502,10 @@ class GitHookTests(unittest.TestCase):
             root, git = self.repo(tmp)
             shutil.copyfile(ROOT / 'core/scripts/check.sh', root / 'scripts/check.sh')
             # The lock is a kernel lock: hold it the way the gate does, through fcntl.flock.
+            # Native Windows takes it another way; tests/test_check_gate_windows holds it there.
+            if os.name == 'nt':
+                sys.stderr.write('\nNOT RUN: %s (POSIX only: the flock gate lock)\n' % self.id())
+                return
             holder = subprocess.Popen(
                 [sys.executable, '-c',
                  'import fcntl, sys, time; f = open(sys.argv[1], "a+"); '
@@ -527,7 +534,7 @@ class GitHookTests(unittest.TestCase):
         # A directory cannot be read by any user, root included. Mode 000 does not stop root,
         # and a case that cannot run under root is no pass there: a grep that fails to read
         # the file (exit 2, as on a permission error) stands in for it under every user.
-        real_grep = shutil.which('grep')
+        real_grep = shlex.quote(shutil.which('grep'))
         for damage in ('directory', 'grep cannot read it'):
             with self.subTest(damage=damage), tempfile.TemporaryDirectory() as tmp:
                 root, git = self.repo(tmp)

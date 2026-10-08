@@ -7,7 +7,7 @@ from pathlib import Path
 import selectors
 import subprocess
 import time
-from agent_process import block_cancels, launch, restore_mask, stop_group
+from agent_process import POSIX, block_cancels, drain, launch, restore_mask, stop_group, take
 
 
 def sanitize(result):
@@ -59,12 +59,24 @@ def snapshot(cli: str, repo: Path, timeout: float = 5) -> dict:
               "params": {"clientInfo": {"name": "myagentkit-usage", "version": "0.1.0"}}})
         buffer = b""
         total = 0
+        # Native Windows: select() takes sockets only, so a thread reads the pipe (drain()).
+        chunks = None if POSIX else drain({"stdout": proc.stdout})
         with selectors.DefaultSelector() as selector:
-            selector.register(proc.stdout, selectors.EVENT_READ)
+            if POSIX:
+                selector.register(proc.stdout, selectors.EVENT_READ)
             while time.monotonic() < deadline:
-                if not selector.select(max(0, deadline - time.monotonic())):
-                    break
-                chunk = os.read(proc.stdout.fileno(), 65536)
+                if POSIX:
+                    if not selector.select(max(0, deadline - time.monotonic())):
+                        break
+                    chunk = os.read(proc.stdout.fileno(), 65536)
+                else:
+                    got = take(chunks, max(0, deadline - time.monotonic()))
+                    if not got:
+                        break
+                    # Data read before EOF is parsed first; EOF is handed back on the next pass.
+                    if got[-1][1] == b"" and len(got) > 1:
+                        chunks.put(got.pop())
+                    chunk = b"".join(data for _, data in got)
                 if not chunk:
                     raise ValueError("quota reader exited without its response")
                 buffer += chunk

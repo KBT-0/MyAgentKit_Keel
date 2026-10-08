@@ -119,8 +119,11 @@ for f in scripts/*.sh .githooks/* .claude/hooks/*.sh; do
   [ -f "$f" ] || continue
   first=""; IFS= read -r first < "$f" || true
   case "$first" in '#!'*) ;; *) continue ;; esac
-  if grep -q "$(printf '\r')" "$f"; then
-    miss "$f has CRLF line endings" "tr -d '\\r' < $f > $f.lf && cat $f.lf > $f && rm $f.lf; git config core.autocrlf input"
+  # A CR before a line feed (CRLF), not any CR: a lone CR inside a line runs, and the
+  # line-ending repair keeps it. Read as bytes: Git for Windows' grep does not show a CR at
+  # a line's end to a pattern.
+  if python3 -c 'import sys; sys.exit(b"\r\n" not in open(sys.argv[1], "rb").read())' "$f" 2>/dev/null; then
+    miss "$f has CRLF line endings" "rewrite it with LF and keep the eol=lf lines of .gitattributes (docs/DEV_SETUP.md section 1)"
   fi
   mode=$(git ls-files -s -- "$f" 2>/dev/null | cut -d' ' -f1)
   if [ -z "$mode" ]; then
@@ -149,12 +152,14 @@ fi
 # --- tools the kit's own scripts need ------------------------------------------------
 python3 -c 'import sys; sys.exit(sys.version_info < (3, 10))' 2>/dev/null ||
   miss "Python 3.10 or newer as python3, python or py (the review tooling needs it)" "install Python 3.10+"
-# Native Windows Python (os.name is not posix): no fcntl, /proc, lsof, killpg, nor select()
-# on a pipe. The kit's Python imports there, and that is all: a review run, the gate lock
-# and the worktree clean-up need a POSIX host. Only where python3 runs at all; a missing one
-# is the line above.
-if python3 -c 'import sys' 2>/dev/null && ! python3 -c "import os,sys; sys.exit(os.name!='posix')" 2>/dev/null; then
-  miss "a POSIX host for python3 (native Windows Python has no fcntl, no select() on a pipe: the gate lock, a review run and the worktree clean-up cannot run)" "run the kit from WSL, in a checkout on the WSL file system"
+# Native Windows Python (os.name 'nt') runs the gate lock, a review and the worktree clean-up
+# its own way, under Git for Windows' sh (or MSYS2, Cygwin). Under any other sh (WSL, where a
+# Windows python.exe on PATH runs through interop) it is handed POSIX paths and takes the
+# Windows lock on them: a trap. Only where python3 runs at all; a missing one is the line above.
+case $(uname -s 2>/dev/null) in MINGW*|MSYS*|CYGWIN*) windows_sh=1 ;; *) windows_sh="" ;; esac
+if [ -z "$windows_sh" ] && python3 -c 'import sys' 2>/dev/null &&
+   ! python3 -c "import os,sys; sys.exit(os.name!='posix')" 2>/dev/null; then
+  miss "a POSIX python3 for this POSIX shell (the python3 found is native Windows Python, which runs the kit only under Git for Windows' sh)" "install python3 in this system (in WSL: sudo apt install python3), or run the kit from Git for Windows' sh"
 fi
 # Resolved as review.sh and its adapters resolve it: REVIEW_REVIEWER over the configured
 # reviewer, REVIEW_CLI_BIN (codex) or CLAUDE_CLI_BIN (claude) over the command name, and
@@ -178,8 +183,17 @@ elif [ -n "$reviewer" ] && ! ( [ -x "$HOME/.local/bin/codex" ] && PATH="$PATH:$H
                             command -v "$reviewer_cli" ) >/dev/null 2>&1; then
   miss "the second CLI '$reviewer_cli' that scripts/review.sh calls" "install and log in to $reviewer (docs/DEV_SETUP.md §3)"
 fi
-if [ -f scripts/spawn_worker.sh ] && ! command -v tmux >/dev/null 2>&1; then
-  miss "tmux, which scripts/spawn_worker.sh needs for worker sessions (native Windows has none: spawn workers from WSL, in a checkout on the WSL file system)" "install tmux"
+# On native Windows (Git for Windows' sh, MSYS2, Cygwin) spawn_worker.sh opens a Windows
+# Terminal tab instead of a tmux session, which that host cannot run.
+if [ -f scripts/spawn_worker.sh ]; then
+  case $(uname -s 2>/dev/null) in
+    MINGW*|MSYS*|CYGWIN*)
+      command -v "${KIT_WT:-wt.exe}" >/dev/null 2>&1 ||
+        miss "Windows Terminal (${KIT_WT:-wt.exe}), which scripts/spawn_worker.sh opens worker tabs in on native Windows" "install Windows Terminal, or name its launcher in KIT_WT" ;;
+    *)
+      command -v tmux >/dev/null 2>&1 ||
+        miss "tmux, which scripts/spawn_worker.sh needs for worker sessions" "install tmux" ;;
+  esac
 fi
 
 # --- Node as a hook sees it ----------------------------------------------------------

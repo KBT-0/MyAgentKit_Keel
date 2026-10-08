@@ -351,6 +351,24 @@ placeholder is either a quoted value or a whole file.
 | `{{PROJECT_SETUP_STEPS}}` | Anything else a fresh clone needs |
 | `{{MODULE}}` | Only in `MODULE_AGENTS_TEMPLATE.md` — copy that file per module and fill it there |
 
+**An example `{{MODEL_ROUTING}}`**, by the tiers of `docs/WORKFLOW.md`, "Model routing" (a
+project's own as of 2026-10-08; replace the model names with what the owner's subscriptions
+offer today):
+
+| Tier | Work | Codex | Claude |
+|---|---|---|---|
+| 1 | Mechanical: renames, figure fixes, data fetches, proof runs, summaries | `gpt-6-luna`, medium effort | Haiku 5.5 or Sonnet 5.5 |
+| 2 | Detail-bearing errands, ordinary reviews | `gpt-6.1-sol`, high effort | Opus 5.5, only for design-bearing work |
+| 3 | Risky and gate reviews, design consultations | `gpt-6.1-sol`, xhigh effort; `gpt-6-astra` when the lead picks it | Opus 5.5; Fable 5.1 when the lead picks it |
+
+The prices behind it come from third-party summaries of OpenAI's launch figures: Luna costs
+about a twentieth of Sol's token price, and Sol 6.1 about a fifth of Astra's. Neither the
+per-model Codex allowance nor the quality claims were verified. Astra and Fable are
+available only on the subscriptions that include them. **The table is provisional**: API
+token prices say nothing about how much each model draws from a subscription's five-hour and
+weekly allowance. Measure that draw (`/status` before and after a few errands per model) and
+move the tiers by it.
+
 ### Then, in this order
 
 1. **Write the boundary checks and their negative tests together.** They live in two files

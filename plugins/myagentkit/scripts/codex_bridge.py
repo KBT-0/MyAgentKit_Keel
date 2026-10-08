@@ -8,13 +8,12 @@ import os
 from pathlib import Path
 import re
 import subprocess
-import tempfile
 import time
 import uuid
 import agent_process
 import agent_usage
 import codex_quota
-from claude_bridge import (REVIEW_ASKS, REVIEW_RUNS, BridgeError, git, prior_rounds, snapshot,
+from claude_bridge import (REVIEW_ASKS, REVIEW_RUNS, BridgeError, git, prior_rounds, scratch, snapshot,
                            throwaway_copy, review_tmpdir)
 
 
@@ -80,7 +79,7 @@ def main(argv=None, result_sink=None):
         # on every way out (threat model: claude_bridge.throwaway_copy). Its sandbox confines
         # writes to the copy and the temporary directories and keeps the network off.
         review_tmpdir(repo)
-        with tempfile.TemporaryDirectory(prefix="myagentkit-codex-", ignore_cleanup_errors=True) as tmp:
+        with scratch("myagentkit-codex-") as tmp:
             last = Path(tmp) / "final.txt"
             workdir = Path(tmp) / "copy"
             workdir.mkdir()

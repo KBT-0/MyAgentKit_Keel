@@ -26,6 +26,11 @@
 #      keeps the worktree, as does anything else the audit cannot prove; the hook after a later
 #      merge, or this script again, removes it then.
 #   4. The branch worktree-NAME is never deleted; the line says how to delete merged branches.
+# Native Windows has no tmux: step 2 ends the Claude Code session named NAME instead, the
+# claude.exe whose command line holds `-n NAME`, with `taskkill /T /F` (its tree), and waits up
+# to 15 s until no such process is left; its Windows Terminal tab closes by itself, because the
+# tab's command ends with `exit 0` (spawn_worker.sh). A lister that cannot answer fails the
+# close with its words, as the session may still run. Steps 1, 3 and 4 are the same.
 # Exit 0 when every named session is gone and every named worktree was removed or did not
 # exist; 1 otherwise, with the first reason on the last line: a nonzero exit of
 # clean_worktrees.sh is one whatever its summary says (after a removal, an outcome line its log
@@ -39,7 +44,8 @@ first=""
 fail() { say "$1"; [ -n "$first" ] || first=$1; }
 nl='
 '
-case $0 in */*) kit=${0%/*} ;; *) kit=. ;; esac
+# Git for Windows' dirname handles both separators, including mixed paths such as D:/p\scripts\x.sh.
+case $0 in *'\'*) kit=$(dirname -- "$0") ;; */*) kit=${0%/*} ;; *) kit=. ;; esac
 # The physical path of the worktree, or empty; /proc/PID/cwd names physical paths.
 top=$(git rev-parse --show-toplevel 2>/dev/null) || top=""
 # inside DIR: prints one process working in DIR or below and succeeds; Linux /proc only.
@@ -61,6 +67,77 @@ has() {
   esac
   return 2
 }
+# Native Windows (Git for Windows' sh, MSYS2, Cygwin): no tmux; a worker is a Windows Terminal
+# tab running `claude -n NAME` (spawn_worker.sh). sessions NAME prints, on one line, the process
+# id of each Claude Code process whose arguments hold `-n NAME`: a claude.exe, or a node.exe
+# running Claude Code's cli.js (an npm install of `claude`). The command line Win32_Process
+# gives is split as Windows splits it (CommandLineToArgvW's rules), so `-n w1` inside a quoted
+# prompt is part of the prompt, never the name: read as words, it closed the wrong worker.
+# KIT_PS names another lister (the kit's tests), printing "<pid> <command line>" lines as this
+# one does. A command line Windows does not show (another user's process) names nothing. A
+# lister that fails prints its words instead and returns 2.
+if command -v python3 >/dev/null 2>&1; then kit_python=python3
+elif command -v python >/dev/null 2>&1; then kit_python=python
+else kit_python="py -3"; fi   # unquoted at every use
+sessions() {
+  out=$(${KIT_PS:-powershell.exe -NoProfile -NonInteractive -Command} \
+    "Get-CimInstance Win32_Process -Filter \"Name='claude.exe' or Name='node.exe'\" | ForEach-Object { \"\$(\$_.ProcessId) \$(\$_.CommandLine)\" }" \
+    2>&1) || { printf '%s' "$out"; return 2; }
+  printf '%s\n' "$out" | $kit_python -I -c 'if 1:
+    import ntpath, sys
+    def split(line):
+        # CommandLineToArgvW: 2n backslashes and a quote are n and a toggle, 2n+1 are n and a
+        # literal quote, "" inside quotes is a quote; any other backslash is itself.
+        args, cur, have, quoted, i = [], [], False, False, 0
+        while i < len(line):
+            c = line[i]
+            if c == "\\":
+                n = len(line[i:]) - len(line[i:].lstrip("\\"))
+                i += n
+                if line[i:i + 1] == "\"":
+                    cur.append("\\" * (n // 2))
+                    if n % 2:
+                        cur.append("\"")
+                        i += 1
+                else:
+                    cur.append("\\" * n)
+                have = True
+            elif c == "\"":
+                if quoted and line[i + 1:i + 2] == "\"":
+                    cur.append("\"")
+                    i += 1
+                else:
+                    quoted = not quoted
+                have, i = True, i + 1
+            elif c in " \t" and not quoted:
+                if have:
+                    args.append("".join(cur))
+                cur, have, i = [], False, i + 1
+            else:
+                cur.append(c)
+                have, i = True, i + 1
+        if have:
+            args.append("".join(cur))
+        return args
+    pids = []
+    for line in sys.stdin.read().replace("\r", "").split("\n"):
+        pid, _, command = line.strip().partition(" ")
+        argv = split(command)
+        if not pid.isdigit() or not argv:
+            continue
+        exe = ntpath.basename(argv[0]).lower()
+        if exe == "claude.exe" or exe == "claude":
+            rest = argv[1:]
+        elif exe in ("node.exe", "node") and len(argv) > 1 and \
+                argv[1].replace("\\", "/").lower().split("/")[-3:] == ["@anthropic-ai", "claude-code", "cli.js"]:
+            rest = argv[2:]
+        else:
+            continue
+        if any(a in ("-n", "--name") and b == sys.argv[1] for a, b in zip(rest, rest[1:])):
+            pids.append(pid)
+    sys.stdout.write(" ".join(pids))' "$1"
+}
+case $(uname -s 2>/dev/null) in MINGW*|MSYS*|CYGWIN*) windows=1 ;; *) windows="" ;; esac
 dry=""
 [ "${1-}" = --dry-run ] && { dry=1; shift; }
 [ $# -ge 1 ] || { sed -n '6,7p' "$0"; exit 2; }
@@ -72,7 +149,30 @@ for name; do
       continue ;;
   esac
 
-  if ! command -v tmux >/dev/null 2>&1; then
+  if [ -n "$windows" ]; then
+    if ! pids=$(sessions "$name"); then
+      fail "$name: could not list the Claude Code sessions, so $name may still run: $pids; its worktree is not touched"
+      continue
+    elif [ -z "$pids" ]; then
+      say "$name: no Claude Code session named $name runs; nothing to end"
+    elif [ -n "$dry" ]; then
+      say "$name: dry run: would end the Claude Code session $name (process $pids, taskkill /T /F) and wait up to 15 s for it; while it runs, the audit below keeps its worktree"
+    else
+      for pid in $pids; do MSYS_NO_PATHCONV=1 taskkill /PID "$pid" /T /F >/dev/null 2>&1; done
+      i=0
+      while left=$(sessions "$name") && [ -n "$left" ] && [ "$i" -lt 15 ]; do i=$((i + 1)); sleep 1; done
+      if ! left=$(sessions "$name"); then
+        fail "$name: could not establish that the session ended: $left; its worktree is not touched"
+        continue
+      elif [ -n "$left" ]; then
+        # Not audited: a session still running is the one thing the close exists to rule out.
+        fail "$name: the Claude Code session still runs after taskkill (process $left); its worktree is not touched"
+        continue
+      else
+        say "$name: Claude Code session ended (process $pids); its Windows Terminal tab closes by itself"
+      fi
+    fi
+  elif ! command -v tmux >/dev/null 2>&1; then
     say "$name: no tmux session (tmux is not installed); nothing to end"
   elif has "$name"; st=$?; [ "$st" -eq 1 ]; then
     say "$name: no tmux session named $name; nothing to end"

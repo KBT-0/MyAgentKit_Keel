@@ -63,8 +63,9 @@ class SectionPointerTests(unittest.TestCase):
         workflow = (ROOT / '.github/workflows/ci.yml').read_text()
         self.assertIn('os: [ubuntu-latest, macos-latest]', workflow)
         readme = (ROOT / 'README.md').read_text()
-        self.assertIn('Ubuntu and macOS are in CI', readme)
-        self.assertIn('developed under WSL', readme)
+        self.assertIn('windows:\n    name: windows-latest', workflow)
+        self.assertIn('Ubuntu, macOS and native Windows are in CI', readme)
+        self.assertIn('developed on native Windows', readme)
         self.assertNotIn('Linux, WSL and macOS are in CI', readme)
 
     def test_every_named_section_exists_in_the_file_named(self):

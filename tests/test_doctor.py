@@ -9,9 +9,19 @@ import shlex
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
+
+WINDOWS = os.name == 'nt'
+
+
+def not_on_windows(case, why):
+    """True on native Windows, after the NOT RUN line the kit check collects (issue #56)."""
+    if WINDOWS:
+        sys.stderr.write('\nNOT RUN: %s (POSIX only: %s)\n' % (case, why))
+    return WINDOWS
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('check_kit', ROOT / 'scripts/check_kit.py')
@@ -71,6 +81,9 @@ class DoctorTests(unittest.TestCase):
                 '    child.wait()\n'
                 '    sys.exit(124)\n')
             (bin_dir / 'timeout').chmod(0o755)
+            # A Windows python cannot start the probe's shell script; Git for Windows has the real one.
+            if WINDOWS:
+                (bin_dir / 'timeout').unlink()
             shell = bin_dir / 'fake-shell'
             # The common colour alias is harmless and must stay green.
             shell.write_text('#!/bin/sh\ncommand() { echo "grep is an alias for grep --color=auto"; }\neval "$2"\n')
@@ -84,6 +97,12 @@ class DoctorTests(unittest.TestCase):
             git('config', 'user.email', 'fixture@example.invalid')
             git('config', 'core.hooksPath', '.githooks')
             git('add', '-A')
+            # Git for Windows records no executable bit from the disk (core.fileMode=false):
+            # the ready project's owner sets it in the index, as doctor's fix line says.
+            if os.name == 'nt':
+                git('add', '--chmod=+x', '--', *(str(p.relative_to(project)) for pattern in
+                                                ('scripts/*.sh', '.githooks/*', '.claude/hooks/*')
+                                                for p in project.glob(pattern)))
             doctor = lambda: subprocess.run(['sh', 'scripts/doctor.sh'], cwd=project, env=env,
                                             capture_output=True, text=True)
 
@@ -107,34 +126,44 @@ class DoctorTests(unittest.TestCase):
             self.assertEqual(moved.returncode, 0, moved.stdout + moved.stderr)
             self.assertIn('DOCTOR: ready', moved.stdout)
 
-            # Native Windows Python (os.name is not 'posix'): a trap, not a note; the kit's
-            # Python imports there and nothing more (the gate lock, a review run and the
-            # worktree clean-up need a POSIX host), so the machine is not ready.
-            windows = tmp / 'windows-python'
-            windows.mkdir()
-            (windows / 'python3').write_text('#!/bin/sh\ncase "$*" in *os.name*) exit 1 ;; esac\n'
-                                             'exec %s "$@"\n' % shutil.which('python3', path=env['PATH']))
-            (windows / 'python3').chmod(0o755)
-            note = 'MISSING: a POSIX host for python3'
-            self.assertNotIn(note, ready.stdout)
-            native = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=project, capture_output=True, text=True,
-                                    env=dict(env, PATH=str(windows) + os.pathsep + env['PATH']))
-            self.assertNotEqual(native.returncode, 0, native.stdout + native.stderr)
-            self.assertIn(note, native.stdout)
-            self.assertNotIn('DOCTOR: ready', native.stdout)
-            # A python3 that does not run at all is the MISSING line, never this note.
-            (windows / 'python3').write_text('#!/bin/sh\nexit 127\n')
-            broken = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=project, capture_output=True, text=True,
-                                    env=dict(env, PATH=str(windows) + os.pathsep + env['PATH']))
-            self.assertIn('MISSING: Python 3.10 or newer as python3', broken.stdout)
-            self.assertNotIn(note, broken.stdout)
+            # Git for Windows' sh is the real host there: neither a POSIX sh with a Windows python3
+            # nor a script without the executable bit on disk (sh reads `#!`) can be set up.
+            if not not_on_windows(self.id() + ' (a Windows python3 under a POSIX sh)', 'a POSIX sh'):
+                # Native Windows Python (os.name is not 'posix') under a POSIX sh (WSL interop): a
+                # trap; it takes the Windows lock on POSIX paths. Under Git for Windows' sh (uname
+                # MINGW) it is the host's Python, and that line is not printed.
+                windows = tmp / 'windows-python'
+                windows.mkdir()
+                (windows / 'python3').write_text('#!/bin/sh\ncase "$*" in *os.name*) exit 1 ;; esac\n'
+                                                 'exec %s "$@"\n' % shutil.which('python3', path=env['PATH']))
+                (windows / 'python3').chmod(0o755)
+                note = 'MISSING: a POSIX python3 for this POSIX shell'
+                self.assertNotIn(note, ready.stdout)
+                native = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=project, capture_output=True, text=True,
+                                        env=dict(env, PATH=str(windows) + os.pathsep + env['PATH']))
+                self.assertNotEqual(native.returncode, 0, native.stdout + native.stderr)
+                self.assertIn(note, native.stdout)
+                self.assertNotIn('DOCTOR: ready', native.stdout)
+                (windows / 'uname').write_text('#!/bin/sh\necho MINGW64_NT-10.0-26200\n')
+                (windows / 'uname').chmod(0o755)
+                mingw = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=project, capture_output=True, text=True,
+                                       env=dict(env, PATH=str(windows) + os.pathsep + env['PATH'], KIT_WT='true'))
+                self.assertNotIn(note, mingw.stdout)
+                (windows / 'uname').unlink()
+                # A python3 that does not run at all is the MISSING line, never this note.
+                (windows / 'python3').write_text('#!/bin/sh\nexit 127\n')
+                broken = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=project, capture_output=True, text=True,
+                                        env=dict(env, PATH=str(windows) + os.pathsep + env['PATH']))
+                self.assertIn('MISSING: Python 3.10 or newer as python3', broken.stdout)
+                self.assertNotIn(note, broken.stdout)
 
-            hook = project / '.claude/hooks/gate_on_stop.sh'
-            hook.chmod(0o644)
-            red = doctor()
-            self.assertEqual(red.returncode, 1, red.stdout)
-            self.assertIn('MISSING: .claude/hooks/gate_on_stop.sh is not executable', red.stdout)
-            hook.chmod(0o755)
+            if not not_on_windows(self.id() + ' (a hook without the executable bit)', 'POSIX file modes'):
+                hook = project / '.claude/hooks/gate_on_stop.sh'
+                hook.chmod(0o644)
+                red = doctor()
+                self.assertEqual(red.returncode, 1, red.stdout)
+                self.assertIn('MISSING: .claude/hooks/gate_on_stop.sh is not executable', red.stdout)
+                hook.chmod(0o755)
 
             # Executable on disk but not in the index: the next clone does not have it at all.
             git('rm', '-q', '--cached', '.claude/hooks/gate_on_stop.sh')
@@ -142,10 +171,8 @@ class DoctorTests(unittest.TestCase):
             self.assertEqual(red.returncode, 1, red.stdout)
             self.assertIn('MISSING: .claude/hooks/gate_on_stop.sh is not in the git index', red.stdout)
             self.assertEqual(red.stdout.count('MISSING:'), 1, red.stdout)
-            git('add', '.claude/hooks/gate_on_stop.sh')
+            git('add', *(['--chmod=+x'] if WINDOWS else []), '.claude/hooks/gate_on_stop.sh')
 
-            # Without `timeout` (stock macOS) an rc file that waits on the terminal would hang
-            # the probe, and with it every session start: the probe is skipped and says so.
             # A fresh directory of links to the resolved executables: a dangling link or a
             # repeated PATH entry on the host must not break the fixture.
             dangling = tmp / 'dangling-bin'
@@ -157,6 +184,12 @@ class DoctorTests(unittest.TestCase):
                 return check_kit.path_without(str(dangling) + os.pathsep + env['PATH'],
                                               lambda name: name in tools,
                                               tmp / ('no-%s-bin' % '-'.join(tools)))
+            # From here on each case sets up a POSIX host: process groups, signals, a FIFO, a
+            # shell's rc files, tmux, the host's node and npm cache, WSL paths.
+            if not_on_windows(self.id() + ' (the grep probe and the host traps)', 'POSIX host set-ups'):
+                return
+            # Without `timeout` (stock macOS) an rc file that waits on the terminal would hang
+            # the probe, and with it every session start: the probe is skipped and says so.
             no_timeout = path_without('timeout')
             shell.write_text('#!/bin/sh\nsleep 60\n')
             try:
@@ -263,6 +296,7 @@ class DoctorTests(unittest.TestCase):
             self.assertEqual(red.returncode, 1, red.stdout)
             self.assertIn('MISSING: grep is shadowed', red.stdout)
             self.assertEqual(red.stdout.count('MISSING:'), 1, red.stdout)
+
             # Only colour options are harmless; an alias that changes what matches is not.
             shell.write_text('#!/bin/sh\ncommand() { echo "grep is an alias for grep -v"; }\neval "$2"\n')
             red = doctor()
@@ -351,9 +385,17 @@ class DoctorTests(unittest.TestCase):
             # One PATH for both; the stub tmux in front again for the node case, so only node is
             # absent there.
             no_tmux_node = path_without('tmux', 'node')
+            # Native Windows has no tmux: there spawn_worker.sh needs Windows Terminal instead.
+            mingw = tmp / 'mingw-uname'
+            mingw.mkdir()
+            (mingw / 'uname').write_text('#!/bin/sh\necho MINGW64_NT-10.0-26200\n')
+            (mingw / 'uname').chmod(0o755)
+            # A WSL host's PATH holds the real wt.exe: it is dropped too.
+            no_tmux_mingw = str(mingw) + os.pathsep + path_without('tmux', 'node', 'wt.exe')
             for path, expect in ((str(older) + os.pathsep + env['PATH'],
                                   'MISSING: Python 3.10 or newer as python3'),
                                  (no_tmux_node, 'MISSING: tmux, which scripts/spawn_worker.sh needs'),
+                                 (no_tmux_mingw, 'MISSING: Windows Terminal (wt.exe), which scripts/spawn_worker.sh'),
                                  (str(bin_dir) + os.pathsep + no_tmux_node,
                                   'MISSING: node is not resolvable on the PATH a git hook inherits'),
                                  (str(fake_id) + os.pathsep + env['PATH'],
@@ -369,6 +411,10 @@ class DoctorTests(unittest.TestCase):
                     self.assertEqual(red.returncode, 1, red.stdout)
                     self.assertIn(expect, red.stdout)
                     self.assertEqual(red.stdout.count('MISSING:'), 1, red.stdout)
+            # KIT_WT names the launcher spawn_worker.sh runs in place of wt.exe: doctor takes it too.
+            shown = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=project, capture_output=True, text=True,
+                                   env=dict(env, PATH=no_tmux_mingw, KIT_WT=str(mingw / 'uname')))
+            self.assertNotIn('Windows Terminal', shown.stdout)
             shutil.rmtree(home / '.npm')
 
             # A checkout on a Windows drive under WSL. The path and /proc/version are injected
@@ -399,6 +445,9 @@ class DoctorTests(unittest.TestCase):
             self.assertEqual(red.returncode, 1, red.stdout)
             self.assertIn('MISSING: scripts/check.sh has CRLF line endings', red.stdout)
             self.assertEqual(red.stdout.count('MISSING:'), 1, red.stdout)
+            # A lone CR inside a line is no CRLF: it runs, and the line-ending repair keeps it.
+            check.write_bytes(lf.replace(b'\n', b'\n# a lone \r in a comment\n', 1))
+            self.assertNotIn('CRLF', doctor().stdout)
             check.write_bytes(lf)
 
             # node_modules as a symlink: "node_modules/" matches directories only, so git

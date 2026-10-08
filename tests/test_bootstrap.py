@@ -4,8 +4,18 @@ import re
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
+
+WINDOWS = os.name == 'nt'
+
+
+def not_on_windows(case, why):
+    """True on native Windows, after the NOT RUN line the kit check collects (issue #56)."""
+    if WINDOWS:
+        sys.stderr.write('\nNOT RUN: %s (POSIX only: %s)\n' % (case, why))
+    return WINDOWS
 
 
 def cut_short(shims, needle):
@@ -65,6 +75,8 @@ class BootstrapTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         rel = '.githooks/commit-msg'
         for kind in ('fifo', 'identical symlink', 'dangling symlink', 'directory'):
+            if kind == 'fifo' and not_on_windows(self.id() + ' (fifo)', 'no FIFOs'):
+                continue
             for force in ((), ('--force',)):
                 with self.subTest(kind=kind, force=force), tempfile.TemporaryDirectory() as tmp:
                     project, outside = Path(tmp) / 'project', Path(tmp) / 'outside'
@@ -124,12 +136,14 @@ class BootstrapTests(unittest.TestCase):
                  'conflict: docs/kit/BOOTSTRAP_NOTE.md (not a regular file)'),
                 ('folder stamp', 'docs/kit/.kit-version', 'dir', (), 'conflict: docs/kit/.kit-version (not a regular file)'),
                 ('file for a created folder', 'docs/reviews', 'file', (), 'conflict: docs/reviews (not a folder)')):
+            if make == 'fifo' and not_on_windows('%s (%s)' % (self.id(), case), 'no FIFOs'):
+                continue
             with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
                 project = Path(tmp) / 'project'
                 project.mkdir()
                 subprocess.run(['git', 'init', '-q', str(project)], check=True)
                 (project / rel).parent.mkdir(parents=True, exist_ok=True)
-                {'file': lambda p: p.write_text('x\n'), 'fifo': os.mkfifo, 'dir': Path.mkdir}[make](project / rel)
+                {'file': lambda p: p.write_text('x\n'), 'fifo': lambda p: os.mkfifo(p), 'dir': Path.mkdir}[make](project / rel)
                 try:
                     result = subprocess.run(['sh', str(root / 'bootstrap.sh'), str(project), *flags],
                                             capture_output=True, text=True, timeout=60)
@@ -235,6 +249,8 @@ class BootstrapTests(unittest.TestCase):
     def test_a_failed_write_of_the_file_list_stops_before_anything_is_written(self):
         # The copy loop reads its file list from a temporary file; a write there that fails (a
         # file-size limit stands in for a full disk) must stop the run before it writes anything.
+        if not_on_windows(self.id(), 'no file-size limit (ulimit -f)'):
+            return
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp) / 'project'
@@ -303,6 +319,8 @@ class BootstrapTests(unittest.TestCase):
         # Each file was replaced by a sibling created under the umask: a note at 0600 became
         # 0644 on a rerun of --note, its agenda readable by every local user, and a file of the
         # project's replaced under --force lost its 0640. The mode is set before the content.
+        if not_on_windows(self.id(), 'POSIX file modes'):
+            return
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory() as tmp:
             project, shims, log = Path(tmp) / 'project', Path(tmp) / 'shims', Path(tmp) / 'log'
@@ -339,6 +357,8 @@ class BootstrapTests(unittest.TestCase):
     def test_a_new_file_takes_the_mode_the_umask_gives(self):
         # The mode a plain redirection or `cp` gives under the caller's umask, not a fixed one
         # and not the 0600 of a fresh temporary; a file executable in the kit stays executable.
+        if not_on_windows(self.id(), 'POSIX file modes and umask'):
+            return
         root = Path(__file__).resolve().parents[1]
         for mask in (0o077, 0o002):
             with self.subTest(umask=oct(mask)), tempfile.TemporaryDirectory() as tmp:
@@ -363,7 +383,9 @@ class BootstrapTests(unittest.TestCase):
             (project / '.githooks').mkdir(parents=True)
             kit_dir.mkdir(parents=True)
             (project / '.githooks/commit-msg.kit-tmp').write_text('mine\n')
-            os.mkfifo(kit_dir / 'BOOTSTRAP_NOTE.md.kit-tmp')
+            fifo = not not_on_windows(self.id() + ' (a FIFO at a temporary name)', 'no FIFOs')
+            if fifo:
+                os.mkfifo(kit_dir / 'BOOTSTRAP_NOTE.md.kit-tmp')
             (kit_dir / '.kit-version.kit-tmp').mkdir()
             (kit_dir / '.kit-tmp.Ab12Cd').write_text('left\n')
             result = subprocess.run(['sh', str(root / 'bootstrap.sh'), str(project), '--note', 'n'],
@@ -372,7 +394,8 @@ class BootstrapTests(unittest.TestCase):
             self.assertEqual((project / '.githooks/commit-msg.kit-tmp').read_text(), 'mine\n')
             self.assertEqual((project / '.githooks/commit-msg').read_bytes(),
                              (root / 'core/.githooks/commit-msg').read_bytes())
-            self.assertTrue((kit_dir / 'BOOTSTRAP_NOTE.md.kit-tmp').is_fifo())
+            if fifo:
+                self.assertTrue((kit_dir / 'BOOTSTRAP_NOTE.md.kit-tmp').is_fifo())
             self.assertTrue((kit_dir / '.kit-version.kit-tmp').is_dir())
             self.assertEqual((kit_dir / '.kit-tmp.Ab12Cd').read_text(), 'left\n')
             self.assertIn('docs/kit/.kit-tmp.Ab12Cd', result.stdout)
@@ -687,3 +710,188 @@ class BootstrapTests(unittest.TestCase):
             self.assertEqual((project / '.githooks/commit-msg').read_bytes(),
                              (root / 'core/.githooks/commit-msg').read_bytes())
             self.assertEqual(self._listed(second.stdout), {'AGENTS.md'}, second.stdout)
+
+    def test_an_unreadable_own_gitattributes_stops_bootstrap_unchanged(self):
+        # The rule check read an unreadable file as holding no rule, and the merge replaced it
+        # with the kit's rules alone, the owner's lost.
+        if not_on_windows(self.id(), 'a file without read permission'):
+            return
+        if os.geteuid() == 0:
+            self.skipTest('root reads a file without read permission')
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / 'project'
+            project.mkdir()
+            attributes = project / '.gitattributes'
+            attributes.write_bytes(b'*.png binary\n')
+            attributes.chmod(0)
+            try:
+                result = subprocess.run(['sh', str(root / 'bootstrap.sh'), str(project)],
+                                        capture_output=True, text=True)
+            finally:
+                attributes.chmod(0o644)
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("cannot read the project's own .gitattributes", result.stderr)
+            self.assertEqual(attributes.read_bytes(), b'*.png binary\n')
+
+    def test_an_unreadable_kit_attributes_file_stops_bootstrap_unstamped(self):
+        # r8: the kit's rules were read at the head of a pipeline whose last command decided
+        # its status: an unreadable core/.gitattributes gave no rule and no error, and the
+        # project was stamped with the version without the line-ending rules.
+        if not_on_windows(self.id(), 'a file without read permission'):
+            return
+        if os.geteuid() == 0:
+            self.skipTest('root reads a file without read permission')
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as tmp:
+            kit, project = Path(tmp) / 'kit', Path(tmp) / 'project'
+            shutil.copytree(root, kit, ignore=shutil.ignore_patterns('.git', '__pycache__'))
+            project.mkdir()
+            (project / '.gitattributes').write_bytes(b'*.png binary\n')
+            source = kit / 'core/.gitattributes'
+            source.chmod(0)
+            try:
+                result = subprocess.run(['sh', str(kit / 'bootstrap.sh'), str(project)],
+                                        capture_output=True, text=True)
+            finally:
+                source.chmod(0o644)
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("cannot read the kit's .gitattributes", result.stderr)
+            self.assertEqual((project / '.gitattributes').read_bytes(), b'*.png binary\n')
+            self.assertFalse((project / 'docs/kit/.kit-version').exists())
+
+    def test_a_later_rule_that_overrides_the_kits_stops_bootstrap_unchanged(self):
+        # Codex review: the kit's rule text was found, so nothing was added, while a later
+        # `*.sh text eol=crlf` won and the gate's scripts checked out with CRLF.
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / 'project'
+            project.mkdir()
+            own = b'.githooks/* text eol=lf\n*.sh text eol=lf\n*.py text eol=lf\n*.sh text eol=crlf\n'
+            (project / '.gitattributes').write_bytes(own)
+            result = subprocess.run(['sh', str(root / 'bootstrap.sh'), str(project)], capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("overrides the kit's rule '*.sh text eol=lf'", result.stderr)
+            self.assertEqual((project / '.gitattributes').read_bytes(), own)
+            self.assertFalse((project / 'docs/kit/.kit-version').exists())
+
+    def attribute_override(self, path, nested, own_root=True):
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as tmp:
+            kit, project = Path(tmp) / 'kit', Path(tmp) / 'project'
+            source = kit / ('overlays/extra/files' if path.startswith('tools/') else 'core')
+            (source / path).parent.mkdir(parents=True)
+            (source / path).write_bytes(b'# installed file\n')
+            (kit / 'core').mkdir(exist_ok=True)
+            shutil.copyfile(root / 'core/.gitattributes', kit / 'core/.gitattributes')
+            shutil.copyfile(root / 'bootstrap.sh', kit / 'bootstrap.sh')
+            (kit / 'CHANGELOG.md').write_bytes(b'## v0.10\n')
+            (kit / 'overlays/extra/files').mkdir(parents=True, exist_ok=True)
+            project.mkdir()
+            if own_root:
+                shutil.copyfile(root / 'core/.gitattributes', project / '.gitattributes')
+            attributes = project / (str(Path(path).parent / '.gitattributes') if nested else '.gitattributes')
+            attributes.parent.mkdir(parents=True, exist_ok=True)
+            with attributes.open('ab') as stream:
+                pattern = Path(path).name if nested else path
+                stream.write(('%s text eol=crlf\n' % pattern).encode())
+            before = {p.relative_to(project): p.read_bytes() for p in project.rglob('*') if p.is_file()}
+            result = subprocess.run(['sh', str(kit / 'bootstrap.sh'), str(project), '--overlay', 'extra'],
+                                    capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('eol=lf', result.stderr)
+            self.assertIn(path, result.stderr)
+            self.assertEqual({p.relative_to(project): p.read_bytes() for p in project.rglob('*') if p.is_file()},
+                             before, result.stdout + result.stderr)
+            attributes.write_bytes(attributes.read_bytes().replace(b'eol=crlf', b'eol=lf'))
+            result = subprocess.run(['sh', str(kit / 'bootstrap.sh'), str(project), '--overlay', 'extra'],
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual((project / path).read_bytes(), b'# installed file\n')
+            self.assertEqual((project / 'docs/kit/.kit-version').read_text().strip(), '0.10')
+
+    def test_path_specific_attributes_stop_bootstrap_before_installing(self):
+        for path in ('scripts/check.sh', 'scripts/tool.py', '.githooks/pre-commit', 'tools/deep/run.sh'):
+            with self.subTest(path=path):
+                self.attribute_override(path, nested=False)
+
+    def test_nested_attributes_stop_bootstrap_before_installing(self):
+        for path in ('scripts/check.sh', 'scripts/tool.py', '.githooks/pre-commit', 'tools/deep/run.sh'):
+            for own_root in (False, True):
+                with self.subTest(path=path, own_root=own_root):
+                    self.attribute_override(path, nested=True, own_root=own_root)
+
+    def test_overlay_root_attributes_are_merged_in_install_order_before_copying(self):
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as tmp:
+            kit, project = Path(tmp) / 'kit', Path(tmp) / 'project'
+            (kit / 'core/scripts').mkdir(parents=True)
+            (kit / 'core/scripts/check.sh').write_bytes(b'# fixture gate\n')
+            shutil.copyfile(root / 'core/.gitattributes', kit / 'core/.gitattributes')
+            shutil.copyfile(root / 'bootstrap.sh', kit / 'bootstrap.sh')
+            (kit / 'CHANGELOG.md').write_bytes(b'## v0.10\n')
+            for name, eol in (('bad', 'crlf'), ('good', 'lf')):
+                files = kit / 'overlays' / name / 'files'
+                files.mkdir(parents=True)
+                (files / '.gitattributes').write_bytes(('scripts/*.sh text eol=%s\n' % eol).encode())
+            project.mkdir()
+            own = b'*.png binary\n'
+            (project / '.gitattributes').write_bytes(own)
+            for force in ([], ['--force']):
+                with self.subTest(force=force):
+                    result = subprocess.run(['sh', str(kit / 'bootstrap.sh'), str(project),
+                                             '--overlay', 'good', '--overlay', 'bad', *force],
+                                            capture_output=True, text=True)
+                    self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertIn('scripts/check.sh', result.stderr)
+                    self.assertIn('eol=lf', result.stderr)
+                    self.assertEqual((project / '.gitattributes').read_bytes(), own)
+                    self.assertFalse((project / 'scripts/check.sh').exists())
+                    self.assertFalse((project / 'docs/kit/.kit-version').exists())
+            result = subprocess.run(['sh', str(kit / 'bootstrap.sh'), str(project),
+                                     '--overlay', 'bad', '--overlay', 'good'], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual((project / '.gitattributes').read_text().count('scripts/*.sh text eol=lf'), 1)
+
+    def test_scripts_and_hooks_check_out_with_lf_under_autocrlf(self):
+        # Git for Windows' default core.autocrlf=true checked every text file out with CRLF,
+        # and sh cannot run a CRLF script: a project's gate, hooks and doctor.sh, and the kit's
+        # own sync-kit.sh, could not start. A bootstrapped project, one whose own .gitattributes
+        # bootstrap found (it was left alone, and the rules never arrived; --force replaced it
+        # whole), and the kit are cloned that way here; a Markdown file proves the conversion
+        # was in force.
+        root = Path(__file__).resolve().parents[1]
+        # No background gc or maintenance: on macOS one still wrote into .git while the
+        # temporary folder was removed ("Directory not empty: '.git'").
+        env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1',
+                   GIT_CONFIG_COUNT='2', GIT_CONFIG_KEY_0='gc.auto', GIT_CONFIG_VALUE_0='0',
+                   GIT_CONFIG_KEY_1='maintenance.auto', GIT_CONFIG_VALUE_1='false')
+        with tempfile.TemporaryDirectory() as tmp:
+            project, owned, kit = Path(tmp) / 'project', Path(tmp) / 'owned', Path(tmp) / 'kit'
+            owned.mkdir()
+            (owned / '.gitattributes').write_bytes(b'*.png binary')
+            for target, *flags in ((project,), (owned,), (owned, '--force')):
+                result = subprocess.run(['sh', str(root / 'bootstrap.sh'), str(target), *flags],
+                                        capture_output=True, text=True, env=env)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            # The owner's rule kept, the kit's added once, not again on a second run.
+            attributes = (owned / '.gitattributes').read_text()
+            self.assertTrue(attributes.startswith('*.png binary\n'), attributes)
+            self.assertEqual(attributes.count('*.sh text eol=lf'), 1, attributes)
+            shutil.copytree(root, kit, ignore=shutil.ignore_patterns('.git', '__pycache__'))
+            for repo, prose in ((project, 'AGENTS.md'), (owned, 'AGENTS.md'), (kit, 'README.md')):
+                with self.subTest(repo=repo.name):
+                    for args in (['init', '-q'], ['add', '-A'],
+                                 ['-c', 'user.name=F', '-c', 'user.email=f@example.invalid',
+                                  '-c', 'core.hooksPath=/dev/null', 'commit', '-qm', 'base']):
+                        subprocess.run(['git', *args], cwd=repo, check=True, capture_output=True, env=env)
+                    clone = Path(tmp) / (repo.name + '-crlf')
+                    subprocess.run(['git', '-c', 'core.autocrlf=true', 'clone', '-q', str(repo), str(clone)],
+                                   check=True, capture_output=True, env=env)
+                    self.assertIn(b'\r\n', (clone / prose).read_bytes())
+                    scripts = [p for p in clone.rglob('*') if p.is_file()
+                               and p.relative_to(clone).parts[0] != '.git'
+                               and (p.suffix == '.sh' or p.parent.name == '.githooks')]
+                    self.assertGreater(len(scripts), 3)
+                    crlf = sorted(str(p.relative_to(clone)) for p in scripts if b'\r' in p.read_bytes())
+                    self.assertEqual(crlf, [])

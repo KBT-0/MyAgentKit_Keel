@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -98,6 +99,35 @@ if os.environ.get('SPAWN_WT') == 'fail':
 open(os.path.join(state, 'attached'), 'w').close()
 '''
 
+# Native Windows. cygpath -w as Git for Windows has it. The tab launcher (KIT_WT, as WT above)
+# does what wt.exe does with its command line: a `;` not escaped as `\;` starts another
+# subcommand, wherever it stands, and leaves the tab with an error; a bare `bash` in the new
+# tab is WSL's launcher. Either fails here by name. Otherwise it unescapes `\;` and runs the
+# tab's command with sh, as Git Bash would.
+CYGPATH = r'''#!/usr/bin/env python3
+import sys
+assert sys.argv[1] == '-w', sys.argv
+print('C:' + sys.argv[2].replace('/', '\\'))
+'''
+
+WT_TAB = r'''#!/usr/bin/env python3
+import json, os, re, subprocess, sys
+args = sys.argv[1:]
+with open(os.path.join(os.environ['SPAWN_STATE'], 'wt.json'), 'w') as f:
+    json.dump(args, f)
+split = [a for a in args if re.search(r'(?<!\\);', a)]
+if split:
+    sys.exit('wt stub: the command line was split at a bare ; in %r' % split)
+args = [a.replace('\\;', ';') for a in args]
+i = args.index('new-tab') + 1
+while args[i].startswith('-'):
+    i += 2
+if not re.match(r'^[A-Za-z]:\\.*\\bash(\.exe)?$', args[i]):
+    sys.exit('wt stub: the tab runs %r, not Git Bash by its full path' % args[i])
+assert args[i + 1] == '-lc', args
+sys.exit(subprocess.run(['sh', '-c', args[i + 2]]).returncode)
+'''
+
 # Steps of the spawn are instant; show_workers.sh's 5-second launch bound is a real wait.
 SLEEP = '#!/bin/sh\n[ "$1" != 5 ] || exec /bin/sleep 5\nexit 0\n'
 
@@ -106,6 +136,26 @@ def shq(value):
     return "'" + value.replace("'", "'\\''") + "'"
 
 
+WINDOWS = os.name == 'nt'
+# The cases that run on native Windows (issue #56). Every other case drives the tmux path,
+# which native Windows never takes, through Python stubs whose `sh -c` command line Git for
+# Windows parses again (an apostrophe is a quote there): there each prints NOT RUN.
+ON_WINDOWS = {'test_a_missing_or_failing_watcher_stops_the_spawn', 'test_a_worker_without_its_model_or_effort_is_refused',
+              'test_missing_or_unreadable_brief_is_refused_before_any_session',
+              'test_no_error_message_echoes_a_control_character',
+              'test_on_native_windows_the_worker_opens_as_a_windows_terminal_tab'}
+
+
+def tmux_path_cases(cls):
+    for name in [n for n in vars(cls) if n.startswith('test_') and n not in ON_WINDOWS and WINDOWS]:
+        def not_run(self):
+            sys.stderr.write('\nNOT RUN: %s (the tmux path, POSIX only)\n' % self.id())
+        not_run.__name__ = name
+        setattr(cls, name, not_run)
+    return cls
+
+
+@tmux_path_cases
 class SpawnWorkerTests(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -130,11 +180,21 @@ class SpawnWorkerTests(unittest.TestCase):
     @staticmethod
     def physical(path):
         # What the script hands on: the folder resolved (`pwd -P`), the file name as given.
+        # Git for Windows' `pwd -P` spells the folder its own way (/tmp/..., /c/...).
+        if WINDOWS:
+            folder = subprocess.run(['cygpath', '-u', os.path.realpath(path.parent)], capture_output=True,
+                                    text=True, check=True).stdout.rstrip('\n')
+            return folder + '/' + path.name
         return os.path.join(os.path.realpath(path.parent), path.name)
 
-    def spawn(self, *args, **extra):
+    def spawn(self, *args, choose=True, **extra):
         # PWD as a lead's shell exports it: with it, a plain `pwd` printed the symlinked spelling.
         env = dict(self.base_env(), PWD=str(self.cwd), **extra)
+        # The lead chooses model and effort for every worker; a case that is not about them
+        # passes both. choose=False sends the arguments exactly as given.
+        if choose:
+            args += tuple(a for flag, value in (('--model', 'm'), ('--effort', 'high'))
+                          if flag not in args for a in (flag, value))
         return subprocess.run(['sh', str(SCRIPT), *args], cwd=self.cwd, env=env,
                               capture_output=True, text=True, timeout=60)
 
@@ -170,6 +230,16 @@ class SpawnWorkerTests(unittest.TestCase):
         self.assertEqual(Path(launched['cwd']).resolve(), self.cwd.resolve())
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_a_worker_without_its_model_or_effort_is_refused(self):
+        # docs/WORKFLOW.md, "Model routing": neither is left to the user's default.
+        for args, missing in ((('--effort', 'high'), '--model'), (('--model', 'm'), '--effort'), ((), '--model')):
+            with self.subTest(args=args):
+                result = self.spawn('w1', str(self.brief), *args, choose=False)
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertIn('spawn_worker: %s is required' % missing, result.stderr)
+                self.assertIsNone(self.launched(), 'a worker started without its model or effort')
+                self.assertEqual(self.tmux_log(), '')
+
     def test_brief_is_delivered_by_path_as_one_typed_instruction(self):
         result = self.spawn('w1', str(self.brief))
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -177,6 +247,47 @@ class SpawnWorkerTests(unittest.TestCase):
         submitted = (self.state / 'submitted').read_text().splitlines()
         self.assertEqual(submitted, [INSTRUCTION % shq(self.physical(self.brief))])
         self.assertNotIn('Line one of the brief', (self.state / 'submitted').read_text())
+
+    def test_on_native_windows_the_worker_opens_as_a_windows_terminal_tab(self):
+        # No tmux there: the instruction is the session's first prompt, ahead of the variadic
+        # --allowedTools, and the tab is the session's only view. A `;` in the brief path and
+        # in a value proves the launcher is never handed a bare one.
+        # On native Windows the real cygpath answers.
+        for name, body in (('uname', '#!/bin/sh\necho MINGW64_NT-10.0-26200\n'), ('cygpath', CYGPATH),
+                           ('wt-tab', WT_TAB)):
+            if WINDOWS and name == 'cygpath':
+                continue
+            (self.bin / name).write_text(body)
+            (self.bin / name).chmod(0o755)
+        brief = self.cwd / 'brief; part two.md'
+        brief.write_text('A brief.\n')
+        tools = 'Read,Bash(a; b)'
+        (self.bin / 'ps-stub').write_text('#!/bin/sh\nprintf "7 claude.exe -n w2\\r\\n"\n')
+        (self.bin / 'ps-stub').chmod(0o755)
+        ps = str(self.bin / 'ps-stub')
+        result = self.spawn('w1', str(brief), '--model', 'm', '--allowed-tools', tools,
+                            KIT_WT=str(self.bin / 'wt-tab'), KIT_PS=ps)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('Windows Terminal tab', result.stdout)
+        self.assertIn('scripts/close_worker.sh w1', result.stdout)
+        # The tab ends with `exit 0`, never as claude's own exit: Windows Terminal keeps a tab whose
+        # command ended nonzero open, as claude does when close_worker.sh ends it.
+        tab = json.loads((self.state / 'wt.json').read_text())[-1]
+        self.assertTrue(tab.endswith('\\; exit 0'), tab)
+        self.assertNotIn('exec claude', tab)
+        # A name a running session already has is refused before any tab opens.
+        (self.state / 'wt.json').unlink()
+        result = self.spawn('w2', str(brief), KIT_WT=str(self.bin / 'wt-tab'), KIT_PS=ps)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("a Claude Code session named 'w2' already runs (process 7)", result.stderr)
+        self.assertFalse((self.state / 'wt.json').exists(), 'a tab opened for a name already running')
+        launched = self.launched()
+        self.assertIsNotNone(launched, result.stderr)
+        self.assertEqual(launched['argv'], [INSTRUCTION % shq(self.physical(brief)), '-n', 'w1',
+                                            '--model', 'm', '--effort', 'high', '--allowedTools', tools])
+        self.assertEqual(Path(launched['cwd']).resolve(), self.cwd.resolve())
+        self.assertEqual(self.tmux_log(), '')
+        self.assertFalse((self.state / 'wt.log').exists(), 'the tab was shown a second time')
 
     def assert_refused(self, brief):
         result = self.spawn('w2', str(brief))
@@ -273,7 +384,8 @@ class SpawnWorkerTests(unittest.TestCase):
         # message put an ESC sequence on the lead's terminal. bash with xpg_echo behaves so.
         brief = self.cwd / 'task\\033[2J.md'
         brief.write_text('a brief\n')
-        result = subprocess.run(['bash', '-O', 'xpg_echo', str(SCRIPT), 'w\\033[2J', str(brief)], cwd=self.cwd,
+        result = subprocess.run(['bash', '-O', 'xpg_echo', str(SCRIPT), 'w\\033[2J', str(brief),
+                                 '--model', 'm', '--effort', 'high'], cwd=self.cwd,
                                 env=self.base_env(), capture_output=True, text=True, timeout=60)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(self.physical(brief), result.stdout)
@@ -401,7 +513,8 @@ class SpawnWorkerTests(unittest.TestCase):
                 if body:
                     (scripts / 'watch_workers.sh').write_text(body)
                 env = dict(self.base_env(), PWD=str(self.cwd))
-                result = subprocess.run(['sh', str(scripts / 'spawn_worker.sh'), 'w%d' % bool(body), str(self.brief)],
+                result = subprocess.run(['sh', str(scripts / 'spawn_worker.sh'), 'w%d' % bool(body), str(self.brief),
+                                         '--model', 'm', '--effort', 'high'],
                                         cwd=self.cwd, env=env, capture_output=True, text=True, timeout=60)
                 self.assertNotEqual(result.returncode, 0, result.stdout)
                 self.assertIn("cannot check session 'w%d': the watcher exited " % bool(body), result.stderr)
