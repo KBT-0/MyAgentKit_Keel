@@ -238,6 +238,33 @@ One topic per turn. Suggested order, because each answer informs the next:
     (`quiet-minutes=<n>` in the same file, at least 10). The reason to ask: in a project using
     the kit, merged worktrees piled up to 34 GB before anyone removed them.
 
+11. **Should sessions and workers write code in ponytail mode? Default: yes.** Ponytail
+    (`DietrichGebert/ponytail`, MIT) makes the agent climb a ladder before writing code: does
+    it need to exist, is it already in the codebase, does the standard library or the
+    platform do it, an installed dependency, one line, and only then the minimum code. It
+    keeps input validation, error handling and security in. Cost and gain, honestly: its
+    rules add about 1.3k tokens to every session start and every sub-agent start (cached, so
+    a tenth of that on each later request); its own agentic benchmark on a real repository
+    cut code by 60 to 94 percent on tasks with an over-build trap and was even on code that
+    was already minimal, and an independent multi-turn run found it can cost more tool calls
+    on large tasks that force completion. It saves most for workers that write code.
+    It comes from its author's own marketplace at the latest version. Yes: keep
+    `extraKnownMarketplaces` (`ponytail`) and `enabledPlugins` (`ponytail@ponytail`) in
+    `.claude/settings.json` (the Claude Code overlay ships them; where bootstrap kept the
+    project's own file, add both entries to it and leave the rest as it is);
+    Claude Code offers the install when the folder is trusted, and spawned worker sessions
+    and sub-agents get the mode with it. Its hooks need `node` on PATH. An owner who already
+    enabled `ponytail@ponytail` in their user settings gets the same plugin, loaded once.
+    For Codex sessions and workers, give the owner the two commands to type, then `/hooks`
+    in Codex to trust its hooks:
+    ```text
+    codex plugin marketplace add DietrichGebert/ponytail
+    codex plugin add ponytail@ponytail
+    ```
+    No: in `.claude/settings.json`, set `"ponytail@ponytail": false` under `enabledPlugins`
+    (a project setting overrides a user-level install, so this turns it off here too) and
+    delete the `ponytail` marketplace entry; say so.
+
 ## Phase 3 — PROJECT.md and PHASES.md
 
 Both files ship as skeletons and both are LIVING documents. Do not fill them in from a
