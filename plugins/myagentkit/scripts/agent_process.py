@@ -243,7 +243,8 @@ def handing_back(previous: dict, settle) -> None:
                 finally:
                     # pending() cannot see a recorder once its handlers have been replaced.
                     held = set(mask[2]) & set(previous)
-                    if not held <= seen:
+                    # seen is None when the loop failed before its first sample.
+                    if seen is None or not held <= seen:
                         settle(held)
         finally:
             restore_mask(mask)

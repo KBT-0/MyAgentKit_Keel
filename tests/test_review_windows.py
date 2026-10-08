@@ -320,6 +320,24 @@ class ReviewOnWindows(unittest.TestCase):
             agent_process.restore(previous)
 
     @windows_only
+    def test_a_failure_before_the_first_sample_is_the_error_raised(self):
+        # The restoration's clean-up compared what it held with the last sample; with no sample
+        # taken yet it raised TypeError and hid the failure itself.
+        from unittest.mock import patch
+
+        class Unread(Exception):
+            pass
+
+        previous = agent_process.hold(lambda sig, frame: None)
+        caller_handlers = dict(previous)
+        agent_process.hold(lambda sig, frame: None)  # the adapter's handlers
+        try:
+            with patch.object(agent_process, 'pending', side_effect=Unread), self.assertRaises(Unread):
+                agent_process.handing_back(caller_handlers, lambda held: None)
+        finally:
+            agent_process.restore(previous)
+
+    @windows_only
     def test_a_scratch_folder_that_cannot_be_removed_never_raises(self):
         # The Codex sandbox writes under another account; a folder this user cannot remove
         # made TemporaryDirectory raise even with ignore_cleanup_errors, and the review was lost.
