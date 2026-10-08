@@ -56,6 +56,13 @@ reviews. Why each change is safe is in `RESEARCH_LOG.md` (2026-10-06 and 2026-10
   tab closed at once with no error shown. The tab now runs a script that holds its command
   and deletes itself, a claude that ends within ten seconds keeps the tab open with its exit
   code, and the brief is named by its Windows path (`C:/...`), not Git Bash's `/tmp/...`.
+- **A worker is never ended mid-run, and the lead knows when it cannot hear one**
+  (`scripts/close_worker.sh`, `scripts/spawn_worker.sh`, `docs/WORKFLOW.md` "Worker cost"):
+  `close_worker.sh` ends nothing while a gate (`check.sh`, by its lock) or a git operation
+  (`index.lock`) runs in the worker's worktree, since a session ended mid-run orphans the run.
+  On native Windows `spawn_worker.sh` waits up to 30 s for the worker's process, fails when
+  none starts, and warns when Claude Code did not register it as a peer session: ListAgents
+  then does not list it and no idle notice comes, so the lead watches its tab.
 - **Model routing rules** (`docs/WORKFLOW.md`, "Model routing"): work is sorted into three
   tiers; the lead chooses model and effort for every errand with equal care and writes both
   into the brief; the top models (Codex Astra, Claude Fable) are the lead's pick for one

@@ -249,7 +249,32 @@ if [ -n "$windows" ]; then
     'exit 0' > "$tab" || die "cannot write the tab's script: $tab"
   "$wt" -w 0 new-tab --title "$(semi "$name")" "$(semi "$bash")" -l "$(semi "$(cygpath -w "$tab")")" ||
     { rm -f -- "$tab"; die "$wt could not open a tab for '$name'"; }
+  # The lead can message a worker and hear when it stops (SendMessage notify_when_idle) only
+  # when Claude Code registers it as a peer: sessions/<pid>.json in its config folder. Workers
+  # in a Windows Terminal tab were not registered (2026-10-08): ListAgents never listed them,
+  # and one that stopped on a usage limit waited unseen for hours. So the spawn waits up to 30 s
+  # for the process and its registration, fails when no process starts (the tab shows why),
+  # and says so when it is not registered.
+  i=0; pids=""
+  while [ "$i" -lt 30 ]; do
+    pids=$(sessions "$name") || pids=""
+    [ -z "$pids" ] || break
+    i=$((i + 1)); sleep 1
+  done
+  [ -n "$pids" ] || die "no Claude Code session named '$name' started within 30 s; its tab shows why"
+  reg=${CLAUDE_CONFIG_DIR:-$HOME/.claude}/sessions
+  peer=""
+  while :; do
+    for pid in $pids; do [ ! -f "$reg/$pid.json" ] || peer=$pid; done
+    [ -z "$peer" ] && [ "$i" -lt 30 ] || break
+    i=$((i + 1)); sleep 1
+  done
   printf '%s\n' "spawn_worker: '$name' started with $brief in a Windows Terminal tab; watch it there"
+  if [ -n "$peer" ]; then
+    printf '%s\n' "spawn_worker: '$name' is a peer session (process $peer): ListAgents lists it; subscribe once with SendMessage notify_when_idle"
+  else
+    printf '%s\n' "spawn_worker: WARNING: '$name' (process $pids) is not registered as a peer session: ListAgents does not list it, SendMessage cannot reach it, and no notice comes when it stops on a question, a usage limit or an error. Look at its tab after every wait and every limit reset; its result file is the only other signal"
+  fi
   printf '%s\n' "spawn_worker: the result file its brief names is the done signal; once you decide the session is finished, close it: scripts/close_worker.sh $name"
   exit 0
 fi

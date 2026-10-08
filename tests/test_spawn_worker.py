@@ -269,14 +269,20 @@ class SpawnWorkerTests(unittest.TestCase):
         brief = self.cwd / 'brief; part two.md'
         brief.write_text('A brief.\n')
         tools = 'Read,Bash(a; b)'
-        (self.bin / 'ps-stub').write_text('#!/bin/sh\nprintf "7 claude.exe -n w2\\r\\n"\n')
+        # w2 always runs; w1 and w3 run once the claude stub has started.
+        (self.bin / 'ps-stub').write_text('#!/bin/sh\nprintf "7 claude.exe -n w2\\r\\n"\n[ ! -f "$SPAWN_STATE/claude.json" ] || '
+                                          'printf "8 claude.exe -n w1\\r\\n9 claude.exe -n w3\\r\\n"\n')
         (self.bin / 'ps-stub').chmod(0o755)
         ps = str(self.bin / 'ps-stub')
+        config = self.tmp / 'config'
+        (config / 'sessions').mkdir(parents=True)
         settings = '{"permissions": {"defaultMode": "auto"}}'
         result = self.spawn('w1', str(brief), '--model', 'm', '--settings', settings, '--allowed-tools', tools,
-                            KIT_WT=str(self.bin / 'wt-tab'), KIT_PS=ps)
+                            KIT_WT=str(self.bin / 'wt-tab'), KIT_PS=ps, CLAUDE_CONFIG_DIR=str(config))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn('Windows Terminal tab', result.stdout)
+        # Not registered as a peer (no sessions/8.json): the lead is told it will hear nothing.
+        self.assertIn("WARNING: 'w1' (process 8) is not registered as a peer session", result.stdout)
         self.assertIn('scripts/close_worker.sh w1', result.stdout)
         # The tab ends with `exit 0`, never as claude's own exit: Windows Terminal keeps a tab whose
         # command ended nonzero open, as claude does when close_worker.sh ends it. The script the
@@ -301,6 +307,18 @@ class SpawnWorkerTests(unittest.TestCase):
         self.assertEqual(Path(launched['cwd']).resolve(), self.cwd.resolve())
         self.assertEqual(self.tmux_log(), '')
         self.assertFalse((self.state / 'wt.log').exists(), 'the tab was shown a second time')
+        # Registered (sessions/9.json): the lead is told to subscribe, and no warning.
+        (self.state / 'claude.json').unlink()
+        (config / 'sessions' / '9.json').write_text('{}')
+        result = self.spawn('w3', str(brief), KIT_WT=str(self.bin / 'wt-tab'), KIT_PS=ps, CLAUDE_CONFIG_DIR=str(config))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("'w3' is a peer session (process 9)", result.stdout)
+        self.assertNotIn('WARNING', result.stdout)
+        # No process of that name appears: the spawn fails and says the tab shows why.
+        (self.state / 'claude.json').unlink()
+        result = self.spawn('w4', str(brief), KIT_WT=str(self.bin / 'wt-tab'), KIT_PS=ps, CLAUDE_CONFIG_DIR=str(config))
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("no Claude Code session named 'w4' started within 30 s", result.stderr)
 
     def assert_refused(self, brief):
         result = self.spawn('w2', str(brief))

@@ -531,7 +531,16 @@ next task is short or needs most of what the session holds. It closes the sessio
 next task fits what it holds, or when it has been idle past the cache lifetime (nothing warm
 is lost then). Closing is explicit: `scripts/close_worker.sh NAME` ends the tmux session (its
 terminal tab closes by itself) and removes the worktree through the same audit as the
-post-merge hook's, for that worktree alone. It never deletes the branch.
+post-merge hook's, for that worktree alone. It never deletes the branch. It ends nothing while
+a gate (`check.sh`, by its lock) or a git operation (`index.lock`) runs in the worktree: a
+session ended mid-run orphans the run, which then races the next gate there. For the same
+reason the lead never ends a worker's `claude` process by hand (Task Manager, `Stop-Process`,
+`kill`). If one was ended mid-run, wait for its `check.sh` to end, or end that process tree
+too (on Windows: Resource Monitor, CPU tab, Associated Handles, search for `check.lock`),
+before any gate runs in that worktree. On native Windows a worker in a Windows Terminal tab
+may not be registered as a peer session; `spawn_worker.sh` then says so, and no idle notice
+comes when it stops on a question, a usage limit or an error. The lead then looks at its tab
+after every wait and after every usage-limit reset.
 
 The result file starts with a fixed head (`docs/HANDOFF.md`): `Kind:`, `Task:`, `Attempt:`
 and `Remaining:`, and only `Kind: completed` is done. The lead runs `scripts/watch_workers.sh

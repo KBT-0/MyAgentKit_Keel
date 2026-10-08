@@ -11,7 +11,9 @@
 # "Worker cost"). Left to the owner, finished sessions sat idle for hours and 39 worktrees
 # piled up. For each NAME, in order, each step on its own line:
 #   1. A name outside [A-Za-z0-9_-], a control character included, or one starting with `-`,
-#      is refused before any tmux call; the next name still runs.
+#      is refused before any tmux call; the next name still runs. So is a worker whose worktree
+#      a gate (check.sh, by its lock) or a git operation (index.lock) is running in: the session
+#      is not ended, since that would orphan the run.
 #   2. `tmux kill-session -t =NAME`; the terminal tab attached to it closes by itself. A
 #      session that does not exist is reported, not an error, when tmux says so (no such session,
 #      no server); any other failure of `tmux has-session` (a socket it cannot read) fails the
@@ -138,6 +140,35 @@ sessions() {
     sys.stdout.write(" ".join(pids))' "$1"
 }
 case $(uname -s 2>/dev/null) in MINGW*|MSYS*|CYGWIN*) windows=1 ;; *) windows="" ;; esac
+# busy DIR: prints what runs in the worktree at DIR and succeeds while a gate or a git
+# operation runs there. Ending the session then orphans it: on Windows a killed worker's
+# check.sh ran on without its caller and raced the lead's next gate in the same worktree. The
+# gate holds check.lock in the worktree's git directory for its whole run (check.sh): a lock
+# this cannot take is held. git holds index.lock while it writes the index, a commit included.
+busy() {
+  [ -n "$1" ] && [ -d "$1" ] || return 1
+  for f in index.lock check.lock; do
+    p=$(git -C "$1" rev-parse --path-format=absolute --git-path "$f" 2>/dev/null) && [ -f "$p" ] || continue
+    if [ "$f" = index.lock ]; then printf '%s' "a git operation holds $p"; return 0; fi
+    [ -z "$windows" ] || p=$(cygpath -m "$p")
+    $kit_python -I -c 'if 1:
+    import os, sys
+    try:
+        if os.name == "nt":
+            open(sys.argv[1], "r+").close()   # refused while a gate holds it: no write sharing
+        else:
+            import fcntl
+            with open(sys.argv[1], "a") as f:
+                fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except (BlockingIOError, PermissionError):
+        sys.exit(0)
+    except OSError:
+        pass
+    sys.exit(1)' "$p" || continue
+    printf '%s' "a gate (check.sh) holds $p"; return 0
+  done
+  return 1
+}
 dry=""
 [ "${1-}" = --dry-run ] && { dry=1; shift; }
 [ $# -ge 1 ] || { sed -n '6,7p' "$0"; exit 2; }
@@ -148,6 +179,11 @@ for name; do
       fail "refused the name '$name' (a control character shows as ?): a worker name is letters, digits, - and _, not starting with -; nothing done for it"
       continue ;;
   esac
+  wt_dir=""; [ -z "$top" ] || wt_dir=$top/.claude/worktrees/$name
+  if why=$(busy "$wt_dir"); then
+    fail "$name: $why; ending the session now would leave it running without its caller, so nothing is done for $name: wait until it ends, then close again"
+    continue
+  fi
 
   if [ -n "$windows" ]; then
     if ! pids=$(sessions "$name"); then

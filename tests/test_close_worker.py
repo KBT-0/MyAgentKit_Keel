@@ -167,6 +167,35 @@ class CloseWorkerTests(unittest.TestCase):
         self.assertIn('`git branch --merged` lists the merged branches', out)
         self.assertNotIn('FAILED', out)
 
+    def test_a_worker_whose_gate_or_commit_runs_is_not_ended(self):
+        # Ending it would orphan the run: on Windows a killed worker's check.sh raced the lead's
+        # next gate in the same worktree. Neither the session nor the worktree is touched.
+        path = self.worker('w1')
+        index_lock = Path(self.git('rev-parse', '--path-format=absolute', '--git-path', 'index.lock', cwd=path))
+        index_lock.write_text('')
+        out = self.close('w1', code=1)
+        self.assertIn('close_worker: w1: a git operation holds ' + str(index_lock), out)
+        self.assertEqual(self.calls(), [])
+        self.assertTrue(path.exists(), out)
+        index_lock.unlink()
+        # check.lock held as check.sh holds it (flock), by another process.
+        lock = self.git('rev-parse', '--path-format=absolute', '--git-path', 'check.lock', cwd=path)
+        holder = subprocess.Popen([sys.executable, '-c', 'import fcntl, sys, time\n'
+                                   'f = open(sys.argv[1], "a"); fcntl.flock(f, fcntl.LOCK_EX)\n'
+                                   'print("held", flush=True); time.sleep(60)', lock],
+                                  stdout=subprocess.PIPE, text=True)
+        self.addCleanup(holder.kill)
+        self.assertEqual(holder.stdout.readline(), 'held\n')
+        out = self.close('w1', code=1)
+        self.assertIn('close_worker: w1: a gate (check.sh) holds ' + lock, out)
+        self.assertEqual(self.calls(), [])
+        holder.kill()
+        holder.wait()
+        # The run over, the close goes through, a lock file left behind included.
+        out = self.close('w1')
+        self.assertIn("['kill-session', '-t', '=w1']", self.calls())
+        self.assertFalse(path.exists(), out)
+
     def windows(self, *procs):
         """Native Windows as close_worker.sh sees it: uname says MINGW, no tmux, PROCS (lines of
         "<pid> <command line>") the claude.exe processes running."""
