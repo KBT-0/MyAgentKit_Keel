@@ -261,7 +261,9 @@ One topic per turn. Suggested order, because each answer informs the next:
     codex plugin marketplace add DietrichGebert/ponytail
     codex plugin add ponytail@ponytail
     ```
-    No: delete both entries from `.claude/settings.json` and say so.
+    No: in `.claude/settings.json`, set `"ponytail@ponytail": false` under `enabledPlugins`
+    (a project setting overrides a user-level install, so this turns it off here too) and
+    delete the `ponytail` marketplace entry; say so.
 
 ## Phase 3 — PROJECT.md and PHASES.md
 
