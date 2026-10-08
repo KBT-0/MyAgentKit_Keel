@@ -1041,7 +1041,8 @@ LOCKCASE
     done
     # The strong review cycle's list and its reports are state files too.
     mkdir -p "$done_repo/docs/reviews"
-    for f in STRONG_REVIEW.md reviews/strong-2026-01-01-model.md; do
+    # A space and a non-ASCII letter in a report's name once let it out of the hook's list.
+    for f in STRONG_REVIEW.md 'reviews/strong-2026-01-01-claude opus ü.md'; do
       printf -- '- K4: a finding\n' > "$done_repo/docs/$f"
       ( fixture_env; git -C "$done_repo" -c core.autocrlf=false add -A )
       if (fixture_env; CDPATH= cd -- "$done_repo" && sh "$msg_hook" "$work/msg_done") >/dev/null 2>&1; then
@@ -1433,11 +1434,15 @@ fi
 # report deleted once its last item closed still counts. A shallow clone may not hold it.
 strong_list="$(dirname "$GATE_SELFTEST_STATE_FILE")/STRONG_REVIEW.md"
 if [ -f "$strong_list" ] && hgit rev-parse -q --verify HEAD >/dev/null 2>&1; then
-  added=$(hgit log -1 --diff-filter=A --format=%ct HEAD -- 'docs/reviews/strong-*.md' 2>/dev/null)
+  # No wildcard pathspec (GIT_LITERAL_PATHSPECS would turn it off), no rename detection (a
+  # new report beside a deleted one reads as a rename), no signature text in the output.
+  added=$(hgit -c core.quotePath=false log --no-renames --no-show-signature --diff-filter=A \
+            --format=@%ct --name-only HEAD -- docs/reviews 2>/dev/null |
+          awk '/^@/ { t = substr($0, 2); next } /^docs\/reviews\/strong-[^\/]*\.md$/ { print t; exit }')
   if [ -z "$added" ]; then
     echo "NOTE [strong-review]: no strong review report yet (docs/reviews/strong-*.md); the cycle runs"
     echo "                      at least every 10 days (docs/WORKFLOW.md, \"The strong review cycle\")."
-  elif [ $(( ($(date +%s) - added) / 86400 )) -gt 10 ]; then
+  elif [ $(( $(date +%s) - added )) -gt $(( 10 * 86400 )) ]; then
     echo "NOTE [strong-review]: the newest strong review report was added $(( ($(date +%s) - added) / 86400 )) days ago;"
     echo "                      the cycle is due (docs/WORKFLOW.md, \"The strong review cycle\")."
   fi
