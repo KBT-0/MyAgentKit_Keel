@@ -19,6 +19,15 @@ worktree clean-up each work there, with tests that run on native Windows (a CI j
 own). It started as two fixes for a project that moved there from WSL, hardened by cross-model
 reviews. Why each change is safe is in `RESEARCH_LOG.md` (2026-10-06 and 2026-10-07).
 
+- **The strong review cycle** (issue #61; `docs/WORKFLOW.md`, "The strong review cycle"): at
+  least every ten days the strongest model available reviews what reached the main branch,
+  a strong model of the other family reviews that report and the triage, and the owner
+  decides after one exchange. New project-owned template `docs/STRONG_REVIEW.md` (the open
+  list); reports are `docs/reviews/strong-<date>-<model>.md`. A closed finding is deleted:
+  `.githooks/commit-msg` and `check.sh` refuse a `Done:` id that the list or a report still
+  names. `check.sh` prints `NOTE [strong-review]` when the list exists and no report was
+  added in ten days. **ACTION:** copy `$KIT/core/docs/STRONG_REVIEW.md` to
+  `docs/STRONG_REVIEW.md` to start the cycle (the reminder stays silent without it).
 - **Model routing rules** (`docs/WORKFLOW.md`, "Model routing"): work is sorted into three
   tiers; the lead chooses model and effort for every errand with equal care and writes both
   into the brief; the top models (Codex Astra, Claude Fable) are the lead's pick for one

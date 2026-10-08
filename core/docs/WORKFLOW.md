@@ -61,8 +61,9 @@ deletion checkable.
   commit carries it.
 - `.githooks/commit-msg` rejects that commit while the `docs/STATE.md` or `docs/BACKLOG.md`
   it records still names the id, and says which line; `./scripts/check.sh` fails `[state]`
-  when either file names an id that any commit in the history closed. Whole word: closing
-  `K3` says nothing about `K3b`.
+  when either file names an id that any commit in the history closed. The strong review
+  cycle's `docs/STRONG_REVIEW.md` and `docs/reviews/strong-*.md` are checked the same way.
+  Whole word: closing `K3` says nothing about `K3b`.
 - A closed id is never reused. A task needed again gets a new id.
 
 ## Task sizing
@@ -246,6 +247,37 @@ which NO code is written:
 
 Output: a short `docs/audits/YYYY-MM.md` plus a list of cleanup tasks that enter the normal
 loop. **The audit is itself a task; skip it and decay advances invisibly.**
+
+## The strong review cycle — at least every ten days
+
+The audit above looks for decay; this cycle asks the strongest models what everyone working
+day to day has stopped seeing. It runs at least every ten days, and `./scripts/check.sh`
+prints a NOTE when no strong review report was added in that time, so it does not depend on
+anyone remembering it.
+
+- **The list:** `docs/STRONG_REVIEW.md` holds the questions for the next cycle and the open
+  findings of earlier ones. Each strong model writes its own report,
+  `docs/reviews/strong-<YYYY-MM-DD>-<model>.md`, and never edits another model's report.
+- **Scope:** everything that reached the main branch since the previous cycle's report, and
+  the open questions in the list.
+- **First reviewer:** the strongest model available, read-only, in a fresh session
+  ("Model routing"). Its report has four headings: consistency with the design
+  document's decisions; the look, where the project has one; performance and cost at full
+  scale; code health (duplicate systems, test gaps). Each finding carries a task id
+  ("Task ids"), a severity and its evidence.
+- **Triage:** the lead and the owner mark each finding in the list as accepted, parked or
+  rejected. An accepted finding becomes a task under its id.
+- **Second reviewer**, a strong model of the other family when one is available: reviews the
+  first report, the triage and what was built, and adds findings of its own.
+- **One exchange:** where the second reviewer disagrees, those points go back to the first
+  reviewer in its own session for one answer; then the owner decides. One round only, which
+  keeps the cost bounded.
+- **Closing deletes.** A finding is closed when both strong models have reviewed it and the
+  change it called for has landed, or when the owner rejected it. The closing commit deletes
+  its lines from the list and from every report and carries `Done: <id>`;
+  `.githooks/commit-msg` and `./scripts/check.sh` refuse a closed id that any of them still
+  names. A report left with no finding is deleted; the history is in git, and the reminder
+  dates the cycle by the commit that added its report, not by the file.
 
 ## Multi-tool orchestration
 
