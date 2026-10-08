@@ -67,6 +67,11 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   archive was written in text mode, so Windows stored CRLF while the usage record hashed the
   LF text, and the next review of the same task refused the earlier archive as changed. The
   archive now holds the text's own bytes.
+- **A low allowance ends** (`docs/WORKFLOW.md`, "Model routing", rule 7; a v0.10 rule): the
+  rule said when a low allowance starts and not when it ends, so a lead kept the low side
+  reviewing only after its allowance had reset. It now ends when that side's allowance resets
+  or the owner says so, and the reviewer fixes its own findings again. **ACTION:** add the
+  same closing sentence to rule 7 in your `docs/WORKFLOW.md`.
 
 ## v0.10 — 2026-10-07
 
