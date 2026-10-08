@@ -19,15 +19,16 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   before, each hook failed there and Claude Code went on without it, so `git reset --hard`
   on a dirty tree was not refused. `check.sh`, `review.sh`, `doctor.sh`, `spawn_worker.sh`,
   `close_worker.sh` and `clean_worktrees.sh` choose the same way, by running the candidate
-  instead of `command -v`. **ACTION:** copy `$KIT/overlays/claude-code/files/.claude/hooks/py.sh`
-  to `.claude/hooks/py.sh`, and in `.claude/settings.json` replace `python3 ` at the start of
-  each Python hook command with `sh "$CLAUDE_PROJECT_DIR/.claude/hooks/py.sh" `. In a
-  `check.sh` or `review.sh` you customised, replace `command -v python3` and `command -v
+  instead of `command -v`. The sync updates `doctor.sh` and the three worker scripts
+  (KIT-OWNED), but none of the files below. **ACTION:** copy
+  `$KIT/overlays/claude-code/files/.claude/hooks/py.sh` to `.claude/hooks/py.sh`, and in
+  `.claude/settings.json` replace `python3 ` at the start of each Python hook command with
+  `sh "$CLAUDE_PROJECT_DIR/.claude/hooks/py.sh" `. In `scripts/check.sh` and
+  `scripts/review.sh` (the project's own), replace `command -v python3` and `command -v
   python` in the `kit_python=` lines with `python3 -I -c '' </dev/null` and `python -I -c ''
-  </dev/null`. The sync copies none of these (they carry no KIT-OWNED header). Then, with
-  an uncommitted change, `echo '{"tool_name":"Bash","tool_input":{"command":"git reset
-  --hard"}}' | sh .claude/hooks/py.sh .claude/hooks/guard_destructive_git.py` must print
-  BLOCKED.
+  </dev/null`. Then, with an uncommitted change, `echo
+  '{"tool_name":"Bash","tool_input":{"command":"git reset --hard"}}' | sh .claude/hooks/py.sh
+  .claude/hooks/guard_destructive_git.py` must print BLOCKED.
 
 ## v0.10 — 2026-10-07
 
