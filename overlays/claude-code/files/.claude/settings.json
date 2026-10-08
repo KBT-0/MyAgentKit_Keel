@@ -1,14 +1,14 @@
 {
   "extraKnownMarketplaces": {
-    "ponytail": {
+    "myagentkit": {
       "source": {
         "source": "github",
-        "repo": "DietrichGebert/ponytail"
+        "repo": "KBT-0/MyAgentKit_Keel"
       }
     }
   },
   "enabledPlugins": {
-    "ponytail@ponytail": true
+    "ponytail@myagentkit": true
   },
   "hooks": {
     "PreToolUse": [

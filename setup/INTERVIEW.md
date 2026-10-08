@@ -248,11 +248,17 @@ One topic per turn. Suggested order, because each answer informs the next:
     cut code by 60 to 94 percent on tasks with an over-build trap and was even on code that
     was already minimal, and an independent multi-turn run found it can cost more tool calls
     on large tasks that force completion. It saves most for workers that write code.
-    Yes: keep `extraKnownMarketplaces` and `enabledPlugins` for `ponytail` in
-    `.claude/settings.json` (the Claude Code overlay ships them); Claude Code offers the
-    install when the folder is trusted, and spawned worker sessions and sub-agents get the
-    mode with it. Its hooks need `node` on PATH. For Codex sessions and workers, give the
-    owner the two commands to type, then `/hooks` in Codex to trust its hooks:
+    The plugin runs its own Node.js hooks with the owner's rights at every session and
+    worker start, so the kit does not take it from its author's default branch: the kit's
+    marketplace (`myagentkit`) lists it pinned to one reviewed commit, and a kit update moves
+    that pin. Yes: keep `extraKnownMarketplaces` (`myagentkit`) and `enabledPlugins`
+    (`ponytail@myagentkit`) in `.claude/settings.json` (the Claude Code overlay ships them);
+    Claude Code offers the install when the folder is trusted, and spawned worker sessions
+    and sub-agents get the mode with it. Its hooks need `node` on PATH. If the owner already
+    has `ponytail@ponytail` enabled in their user settings, tell them to turn it off, or both
+    copies load. For Codex sessions and workers, give the owner the two commands to type,
+    then `/hooks` in Codex to trust its hooks, and say plainly that this install is NOT
+    pinned (it follows the author's latest release):
     ```text
     codex plugin marketplace add DietrichGebert/ponytail
     codex plugin add ponytail@ponytail
