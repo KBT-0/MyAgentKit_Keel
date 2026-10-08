@@ -333,6 +333,37 @@ one round, each with a test seen red against the code before it:
   executable bit. Its bytes are compared there, and its mode only in the index.
 - *DEV_SETUP still sent reviews to WSL.*
 
+#### Five Codex rounds on the branch, and the threat model that ended them (#62)
+
+The branch went through five Codex review rounds (r1 to r4 at `gpt-6.1-sol`, r5 at
+`gpt-6-astra`, all `xhigh`). r1 to r4 rejected, and the Windows signal hand-back
+(`agent_process.handing_back`) was reopened in r2, r3 and r4: each fix closed one cancel window
+and the next round found its neighbour. After r4 the owner set a threat model and a stopping
+rule (2026-10-08):
+
+- **Protected.** Every cancel the recorder received is settled before the caller's handlers
+  are back: the persisted usage record and the published result say `cancelled`. A caller
+  handler that raises must not leave a recorder installed.
+- **Excluded.** A cancel after the caller's handlers are back belongs to the caller. So does
+  the whole sequence that restores them (`restore(previous)`, one `signal.signal` call per
+  cancel signal): a cancel the recorder receives after the last settlement sample and before
+  that sequence ends may reach the caller unsettled.
+- **Stopping rule.** The loop stops at the first fresh round with no High finding inside the
+  model. A finding outside it is answered with its disposition, not with a new mechanism.
+
+r4's fix repeats the settlement with the recorder still installed and restores the caller's
+handlers last. r5 rejected with no High, so the loop stopped there:
+
+- *A first cancel during the handler restoration is forwarded unsettled* (Medium). That is the
+  excluded window by name; r4 removed the earlier test of that case because the case is
+  excluded. Disposition: accepted, no change.
+- *The nested test module refusal misses a symlinked directory* (Medium, the kit check, not
+  the hand-back). Filed as #65.
+- *The Darwin `mktemp` branch of a sync test assumes BSD `mktemp`* (Low, a test). Filed as #66.
+
+Lesson, the same as 2026-10-05's: a hardening loop on a concurrency window converges only once
+the excluded windows are written down; five rounds here, against twelve without.
+
 ### 2026-10-07 — the cross-model review of the native Windows change
 
 The first version of the 2026-10-06 change (below) went to a cross-model review, which
