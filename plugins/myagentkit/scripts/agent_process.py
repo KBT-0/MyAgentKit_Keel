@@ -217,8 +217,8 @@ def handing_back(previous: dict, settle) -> None:
     waits while the adapter corrects its records and writes its last line, then reaches the
     caller's handler when the block exits. Sampled once, a cancel arriving while `settle` ran
     reached the caller with the records still saying quota: `settle` runs again for every
-    cancel that is new since the last sample, and the block is lifted right after a sample
-    that found none, with nothing in between.
+    cancel that is new since the last sample. Windows has no signal mask: cancels held during
+    handler restoration are settled too, before the recorder forwards them.
     """
     mask = block_cancels()
     try:
@@ -233,9 +233,20 @@ def handing_back(previous: dict, settle) -> None:
             seen = held
             settle(held)
     finally:
-        if not POSIX:
-            restore(previous)
-        restore_mask(mask)
+        try:
+            if not POSIX and mask is not None:
+                # If a restored caller raises midway, cleanup must restore the remaining
+                # caller handlers, not the adapter's abandoned handlers saved by the block.
+                mask[1].update(previous)
+                try:
+                    restore(previous)
+                finally:
+                    # pending() cannot see a recorder once its handlers have been replaced.
+                    held = set(mask[2]) & set(previous)
+                    if not held <= seen:
+                        settle(held)
+        finally:
+            restore_mask(mask)
 
 
 class OneShot:

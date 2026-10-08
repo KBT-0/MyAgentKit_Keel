@@ -89,9 +89,8 @@ ctl "brief path" "$brief"
 command -v claude >/dev/null || die "claude is not on PATH"
 
 model=""; settings=""; tools=""; worktree=""; effort=""; batch=""
-# A path Git for Windows' sh was given with backslashes (D:\p\spawn_worker.sh) has no `/`:
-# dirname splits it there.
-case $0 in */*) kit=${0%/*} ;; *'\'*) kit=$(dirname -- "$0") ;; *) kit=. ;; esac
+# Git for Windows' dirname handles both separators, including mixed paths such as D:/p\scripts\x.sh.
+case $0 in *'\'*) kit=$(dirname -- "$0") ;; */*) kit=${0%/*} ;; *) kit=. ;; esac
 while [ $# -gt 0 ]; do
   case "$1" in
     --model)         model=$2; shift 2 ;;

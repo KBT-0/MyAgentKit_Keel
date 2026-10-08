@@ -592,8 +592,9 @@ def read_proc(proc):
 
 
 def windows_cwds():
-    """{pid: cwd} from each process's PEB (its RTL_USER_PROCESS_PARAMETERS.CurrentDirectory, the
-    one Windows keeps and MSYS updates too), and how many processes could not be read: another
+    """{pid: cwd} from the live directory handle in each process's PEB (its
+    RTL_USER_PROCESS_PARAMETERS.CurrentDirectory, which MSYS updates too), and how many
+    processes could not be read: another
     user's, an elevated or protected one, one that ended while it was read. A 32-bit process is
     read through its 32-bit PEB. The layout read is the one every Windows since XP keeps."""
     import ctypes
@@ -601,7 +602,13 @@ def windows_cwds():
     kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
     ntdll = ctypes.WinDLL('ntdll')
     kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.GetCurrentProcess.restype = wintypes.HANDLE
     kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+    kernel32.DuplicateHandle.argtypes = (wintypes.HANDLE, wintypes.HANDLE, wintypes.HANDLE,
+                                         ctypes.POINTER(wintypes.HANDLE), wintypes.DWORD,
+                                         wintypes.BOOL, wintypes.DWORD)
+    kernel32.GetFinalPathNameByHandleW.argtypes = (wintypes.HANDLE, wintypes.LPWSTR,
+                                                  wintypes.DWORD, wintypes.DWORD)
     kernel32.ReadProcessMemory.argtypes = (wintypes.HANDLE, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_size_t,
                                            ctypes.POINTER(ctypes.c_size_t))
     kernel32.IsWow64Process.argtypes = (wintypes.HANDLE, ctypes.POINTER(wintypes.BOOL))
@@ -627,7 +634,7 @@ def windows_cwds():
     for pid in pids[:used.value // 4]:
         if pid == 0:  # the idle process: no user space
             continue
-        handle = kernel32.OpenProcess(0x0410, False, pid)  # QUERY_INFORMATION | VM_READ
+        handle = kernel32.OpenProcess(0x0450, False, pid)  # QUERY_INFORMATION | VM_READ | DUP_HANDLE
         if not handle:
             unseen += 1
             continue
@@ -640,22 +647,32 @@ def windows_cwds():
                 if ntdll.NtQueryInformationProcess(handle, 26, ctypes.byref(peb), 8, None):
                     raise OSError('ProcessWow64Information')
                 params = int.from_bytes(read(handle, peb.value + 0x10, 4), 'little')
-                length = int.from_bytes(read(handle, params + 0x24, 2), 'little')
-                text = int.from_bytes(read(handle, params + 0x28, 4), 'little')
+                directory = int.from_bytes(read(handle, params + 0x2c, 4), 'little')
             else:
                 basic = (ctypes.c_ulonglong * 6)()  # PROCESS_BASIC_INFORMATION: PebBaseAddress is [1]
                 if ntdll.NtQueryInformationProcess(handle, 0, basic, ctypes.sizeof(basic), None):
                     raise OSError('ProcessBasicInformation')
                 params = int.from_bytes(read(handle, basic[1] + 0x20, 8), 'little')
-                length = int.from_bytes(read(handle, params + 0x38, 2), 'little')
-                text = int.from_bytes(read(handle, params + 0x40, 8), 'little')
-            cwd = read(handle, text, length).decode('utf-16-le')
-            if len(cwd) > 3:
-                cwd = cwd.rstrip('\\')
-            # Resolved, as the worktree's path is: a process that entered it through a junction
-            # elsewhere has that junction's path here, which matched no worktree, and the
-            # worktree it worked in was removed under it.
-            cwds[str(pid).encode()] = os.fsencode(os.path.realpath(cwd))
+                directory = int.from_bytes(read(handle, params + 0x48, 8), 'little')
+            # Resolving the PEB's pathname follows a junction's CURRENT target, which may
+            # have changed since the process entered it. The held handle still names its cwd.
+            duplicate = wintypes.HANDLE()
+            if not kernel32.DuplicateHandle(handle, directory, kernel32.GetCurrentProcess(),
+                                             ctypes.byref(duplicate), 0, False, 2):
+                raise OSError('DuplicateHandle')
+            try:
+                name = ctypes.create_unicode_buffer(32768)
+                length = kernel32.GetFinalPathNameByHandleW(duplicate, name, len(name), 0)
+                if not 0 < length < len(name):
+                    raise OSError('GetFinalPathNameByHandleW')
+                cwd = name.value
+            finally:
+                kernel32.CloseHandle(duplicate)
+            if cwd.startswith('\\\\?\\UNC\\'):
+                cwd = '\\\\' + cwd[8:]
+            elif cwd.startswith('\\\\?\\'):
+                cwd = cwd[4:]
+            cwds[str(pid).encode()] = os.fsencode(cwd)
         except (OSError, UnicodeDecodeError):
             unseen += 1
         finally:

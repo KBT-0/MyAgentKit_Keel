@@ -1,8 +1,13 @@
 """Acceptance must reject absent, empty, and skipped required regression suites."""
+import contextlib
 import importlib.util
+import io
+import os
+import sys
 from pathlib import Path
 import tempfile
 import unittest
+import unittest.mock
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('kit_acceptance', ROOT / 'scripts/check_kit.py')
@@ -93,15 +98,53 @@ class AcceptanceTests(unittest.TestCase):
             self.assertEqual((value, child), ('2', '2'), 'the kit check read the stale .pyc')
             self.assertFalse(os.path.exists(folder), 'the private pycache folder was left behind')
 
-    def test_a_windows_self_test_may_fail_only_its_review_case(self):
-        # Issue #54: on native Windows a project's review case fails; any other FAIL or skip
-        # must still fail the kit check, and so must a review case that suddenly passes.
-        ok, review = '  ok   — a gate case\n', '  FAIL — review adapter negative tests failed or did not run\n'
-        cygpath = '  skip — a stray cygpath on a POSIX PATH: this host is MSYS\n'
-        self.assertIn('NOT RUN', gate.windows_self_test(ok + review + cygpath + 'SELF-TEST: FAIL\n'))
-        for odd in ('  FAIL — another gate\n', '  skip — another case\n', ''):
-            with self.subTest(odd=odd), self.assertRaisesRegex(RuntimeError, 'beyond its review case'):
-                gate.windows_self_test(ok + odd + (review if odd else '') + 'SELF-TEST: FAIL\n')
+    def test_windows_self_test_rejects_failures_outside_case_lines(self):
+        if os.name != 'nt':
+            sys.stderr.write('\nNOT RUN: %s (native Windows only)\n' % self.id())
+            return
+        real_run = gate.run
+        real_read = Path.read_text
+
+        class SelfTestAccepted(AssertionError):
+            pass
+
+        for boundary in ("echo 'FAIL [boundary]: regression'; st_fail=1\n", 'st_fail=1\n', ':\n'):
+            reached = []
+
+            def read(path, *args, **kwargs):
+                if reached and path.name == 'status.log':
+                    raise SelfTestAccepted('the kit accepted the self-test exit status')
+                return real_read(path, *args, **kwargs)
+
+            def run(args, cwd=gate.ROOT, **kwargs):
+                if reached:
+                    raise SelfTestAccepted('the kit accepted the self-test exit status')
+                if args == ['sh', 'scripts/check.sh', '--self-test']:
+                    reached.append(True)
+                    # Exercise the actual self-test tail, without running the unrelated,
+                    # expensive earlier cases or the prohibited existing-file example.
+                    gate = (cwd / 'scripts/check.sh').read_text()
+                    start = gate.index('  # --- project boundary self-tests')
+                    tail = gate[start:gate.index('\n}\n', start)]
+                    script = cwd / '.git/tail.sh'
+                    script.write_text('work=$(mktemp -d)\ntrap \'rm -rf "$work"\' EXIT\n'
+                                      'BOUNDARY_CHECKS_FILE=scripts/boundary_checks.sh\n'
+                                      'BOUNDARY_SELFTESTS_FILE=scripts/boundary_selftests.sh\n'
+                                      'self_test() {\nst_fail=0\n' + tail + '\n}\nself_test\n')
+                    (cwd / 'scripts/boundary_selftests.sh').write_text(boundary)
+                    return real_run(['sh', str(script)], cwd, **kwargs)
+                return real_run(args, cwd, **kwargs)
+
+            with self.subTest(boundary=boundary), unittest.mock.patch.object(gate, 'run', side_effect=run), \
+                    unittest.mock.patch.object(Path, 'read_text', read), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                if boundary == ':\n':
+                    with self.assertRaises(SelfTestAccepted):
+                        gate.acceptance(True)
+                else:
+                    with self.assertRaisesRegex(RuntimeError, 'SELF-TEST: FAIL'):
+                        gate.acceptance(True)
+                self.assertEqual(reached, [True])
 
     def test_packaging_suite_is_required_by_the_real_gate(self):
         self.assertGreaterEqual(gate.REQUIRED_SUITES['tests']['test_packaging'], 1)

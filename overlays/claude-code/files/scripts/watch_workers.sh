@@ -49,9 +49,8 @@ set -eu
 
 say() { printf '%s\n' "$1" | LC_ALL=C tr '\001-\011\013-\037\177' '?'; }
 die() { say "watch_workers: $1" >&2; exit 2; }
-# A path Git for Windows' sh was given with backslashes (D:\p\watch_workers.sh) has no `/`:
-# dirname splits it there.
-case $0 in */*) here=${0%/*} ;; *'\'*) here=$(dirname -- "$0") ;; *) here=. ;; esac
+# Git for Windows' dirname handles both separators, including mixed paths such as D:/p\scripts\x.sh.
+case $0 in *'\'*) here=$(dirname -- "$0") ;; */*) here=${0%/*} ;; *) here=. ;; esac
 patterns=$here/waiting_patterns.txt
 [ -r "$patterns" ] || die "cannot read $patterns"
 ctx_re=""

@@ -69,13 +69,13 @@ REQUIRED_SUITES = {
     'core/scripts': dict(BRIDGE_MINIMUMS, test_agent_cost=2),
     # Each suite's current count: a minimum far below it (1 of 30) let a suite lose almost
     # every test with the kit check green. A new test raises its suite's number here.
-    'tests': {'test_packaging': 1, 'test_bootstrap': 27, 'test_acceptance': 8,
+    'tests': {'test_packaging': 1, 'test_bootstrap': 28, 'test_acceptance': 8,
               'test_review_upgrade': 3, 'test_boundary_example': 3, 'test_scan_gate': 1,
               'test_check_gate': 23, 'test_check_gate_windows': 18, 'test_boundary_restore': 39,
               'test_sync_kit': 29, 'test_doctor': 2, 'test_git_hooks': 25, 'test_stop_hook': 1,
               'test_spawn_worker': 18, 'test_worker_visibility': 55, 'test_doc_pointers': 5,
-              'test_kit_output': 1, 'test_kit_runner': 10, 'test_clean_worktrees': 137, 'test_clean_worktrees_windows': 7,
-              'test_review_windows': 15,
+              'test_kit_output': 1, 'test_kit_runner': 13, 'test_clean_worktrees': 137, 'test_clean_worktrees_windows': 9,
+              'test_review_windows': 17, 'test_worker_paths_windows': 3,
               'test_close_worker': 20},
 }
 # Suites that do not run on native Windows, each with the reason. There each one prints one
@@ -127,9 +127,9 @@ class TimedResult(unittest.TextTestResult):
 def discover(folder, leave_out=()):
     """The suite under `folder` and the number of tests in each of its modules; the modules
     named in `leave_out` are not imported."""
-    suite = unittest.TestSuite(unittest.TestLoader().discover(str(folder), pattern=path.name)
-                               for path in sorted(Path(folder).glob('test_*.py'))
-                               if path.stem not in leave_out)
+    patterns = {path.name for path in Path(folder).rglob('test_*.py') if path.stem not in leave_out}
+    suite = unittest.TestSuite(unittest.TestLoader().discover(str(folder), pattern=pattern)
+                               for pattern in sorted(patterns))
 
     def cases(node):
         for item in node:
@@ -396,8 +396,17 @@ def acceptance(self_test):
                 configured = 'build_test_cmd="test -f scripts/claude_bridge.py"'
                 if configured not in original_gate:
                     raise RuntimeError("the synthetic project's build command line was not found")
-                gate.write_text(original_gate.replace(
-                    configured, f'build_test_cmd="sh {shlex.quote(str(build))}"'))
+                fixture_gate = original_gate.replace(
+                    configured, f'build_test_cmd="sh {shlex.quote(str(build))}"')
+                if os.name == "nt":
+                    # Only this disposable acceptance copy skips the unsupported review
+                    # case. The remaining self-test must succeed, whatever its diagnostics.
+                    start = fixture_gate.index('  review_test_log=$(mktemp)')
+                    end = fixture_gate.index('  rm -f "$review_test_log"', start) + len('  rm -f "$review_test_log"')
+                    fixture_gate = (fixture_gate[:start]
+                                    + '  echo "NOT RUN: the project\'s review self-test (native Windows, issue #54)"'
+                                    + fixture_gate[end:])
+                gate.write_text(fixture_gate)
                 status = ["git", "status", "--porcelain", "--untracked-files=all"]
                 before = run(status, project)
                 # Every nested gate run records the tree through the build command, so a case
@@ -405,12 +414,8 @@ def acceptance(self_test):
                 log = side / "status.log"
                 build.write_text(f'{{ git status --porcelain --untracked-files=all; echo ==; }} >> "{log}"\n')
                 # GATE_LOCK_WAIT: a nested run that does not inherit the lock stops in seconds.
-                if os.name == "nt":
-                    print(windows_self_test(run(["sh", "scripts/check.sh", "--self-test"], project, expected=1,
-                                                env=dict(os.environ, GATE_LOCK_WAIT="5"), reason="SELF-TEST: FAIL")))
-                else:
-                    print(run(["sh", "scripts/check.sh", "--self-test"], project,
-                              env=dict(os.environ, GATE_LOCK_WAIT="5"), reason="SELF-TEST: PASS").strip())
+                print(run(["sh", "scripts/check.sh", "--self-test"], project,
+                          env=dict(os.environ, GATE_LOCK_WAIT="5"), reason="SELF-TEST: PASS").strip())
                 seen = log.read_text().split("==\n")[:-1]
                 if not seen or any(s != before for s in seen) or run(status, project) != before:
                     raise RuntimeError("check.sh --self-test changed the working tree:\n"
@@ -674,23 +679,6 @@ def acceptance(self_test):
             passed("missing review tests, failed runner, absent completion evidence, an emptied "
                   "suite and boundary checks whose self-tests ran no case reject; the existing-file example "
                   "runs as a case; a missing attribution rule line is a visible skip")
-
-
-# What a project's self-test may say on native Windows besides `ok` (CHANGELOG v0.10, the
-# upgrade's item 4): the review case fails, because review.sh needs POSIX signals (issue #54),
-# and one POSIX-only case is skipped.
-WINDOWS_SELF_TEST_EXCEPTIONS = ("  FAIL — review adapter negative tests failed or did not run",
-                                "  skip — a stray cygpath on a POSIX PATH")
-
-
-def windows_self_test(output):
-    """The output of a project's self-test on native Windows, if every case but the known
-    exceptions is `ok` and the review case did fail; a RuntimeError otherwise."""
-    cases = [line for line in output.splitlines() if re.match(r"  (ok|FAIL|skip) +— ", line)]
-    odd = [line for line in cases if not line.startswith(("  ok ",) + WINDOWS_SELF_TEST_EXCEPTIONS)]
-    if odd or not any(line.startswith(WINDOWS_SELF_TEST_EXCEPTIONS[0]) for line in cases):
-        raise RuntimeError("the project's self-test on native Windows failed beyond its review case:\n" + output)
-    return output.strip() + "\nNOT RUN: the project's review self-test (native Windows, issue #54)"
 
 
 def posix_lock_cases(project, side, build, own_lock, gate):
