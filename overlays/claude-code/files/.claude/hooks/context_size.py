@@ -3,15 +3,21 @@
 
 Every request re-sends the whole context, so a lead at 450k pays several times what a fresh
 one at 60k pays, on every turn (`docs/WORKFLOW.md`, "Worker cost", rule 8). The context is the
-last API request's input plus cache read plus cache write, read from the transcript.
+last API request's input plus cache read plus cache write, read from the transcript; a
+compaction boundary resets it until the next request.
 
 Past LINE the hook adds one line to the agent's context, once per STEP: at 200k, 250k, 300k...
-Which of /compact and a hand-off is cheaper depends on what STATE holds and where the work goes
-next, which a hook cannot see, so the agent chooses and says so. Silent on any error: a broken
-transcript must never block a prompt.
+The last step it named is kept in a temporary file per transcript, so a retried prompt or one
+that reached no request does not repeat it, and a smaller context (after /compact) arms it
+again. Which of /compact and a hand-off is cheaper depends on what STATE holds and where the
+work goes next, which a hook cannot see, so the agent chooses and says so. Silent on any
+error: a broken transcript must never block a prompt.
 """
 import json
+from pathlib import Path
+import re
 import sys
+import tempfile
 
 LINE = 200_000  # a fresh session (~60k) pays back a hand-off in under ten turns from here
 STEP = 50_000
@@ -21,50 +27,50 @@ def band(ctx: int) -> int:
     return -1 if ctx < LINE else (ctx - LINE) // STEP
 
 
-def is_prompt(rec: dict) -> bool:
-    """A prompt the person typed, not a tool result or an injected meta record."""
-    if rec.get('type') != 'user' or rec.get('isMeta') or rec.get('isSidechain'):
-        return False
-    content = (rec.get('message') or {}).get('content')
-    return isinstance(content, str) or (isinstance(content, list) and not any(
-        isinstance(c, dict) and c.get('type') == 'tool_result' for c in content))
-
-
-def sizes(path: str) -> tuple[int, int]:
-    """(context when the previous turn began, context now)."""
-    last = anchor = 0
-    pending = None
+def context(path: Path) -> int:
+    """The last request's context, or 0 when a compaction came after it."""
+    last = 0
     with open(path, encoding='utf-8', errors='replace') as stream:
         for line in stream:
             try:
                 rec = json.loads(line)
             except ValueError:
                 continue
-            if is_prompt(rec):
-                pending = last
+            if not isinstance(rec, dict):
                 continue
-            msg = rec.get('message') or {}
-            usage = msg.get('usage')
-            if rec.get('type') != 'assistant' or rec.get('isSidechain') or not usage or msg.get('model') == '<synthetic>':
+            if rec.get('type') == 'system' and rec.get('subtype') == 'compact_boundary':
+                last = 0
                 continue
-            # The current prompt may already be written; the previous turn's anchor is the one
-            # that some request followed.
-            if pending is not None:
-                anchor, pending = pending, None
-            last = (usage.get('input_tokens', 0) + usage.get('cache_read_input_tokens', 0)
-                    + usage.get('cache_creation_input_tokens', 0))
-    return anchor, last
+            msg = rec.get('message')
+            usage = msg.get('usage') if isinstance(msg, dict) else None
+            if rec.get('type') != 'assistant' or rec.get('isSidechain') or not isinstance(usage, dict) \
+                    or msg.get('model') == '<synthetic>':
+                continue
+            # The API may send null for a counter it did not use.
+            last = sum(usage.get(k) or 0 for k in
+                       ('input_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens'))
+    return last
 
 
 def main() -> None:
-    anchor, ctx = sizes(json.load(sys.stdin)['transcript_path'])
-    if band(ctx) > band(anchor):
-        print(f'Context is {ctx // 1000}k tokens (line {LINE // 1000}k); every turn re-sends it. Before this '
-              'task, recommend ONE to the owner in one line with this number and the reason: /compact '
-              'when docs/STATE.md and the open operation files already hold what matters and the work '
-              'in flight continues; a hand-off (update STATE, write the handoff, fresh session) when '
-              'the work changes direction, a batch has just closed, or most of the context is detail '
-              'of finished work. Neither is the default (docs/WORKFLOW.md, "Worker cost", rule 8).')
+    transcript = Path(json.load(sys.stdin)['transcript_path'])
+    ctx = context(transcript)
+    state = Path(tempfile.gettempdir()) / ('claude-context-' + re.sub(r'[^A-Za-z0-9]', '-', transcript.stem))
+    try:
+        said = int(state.read_text())
+    except (OSError, ValueError):
+        said = -1
+    now = band(ctx)
+    if now != said:
+        state.write_text(str(now))
+    if now > said:
+        print(f'Context is {ctx // 1000}k tokens (line {LINE // 1000}k); every turn re-sends it. In this '
+              "turn's closing summary, recommend ONE to the owner in one line with this number and the "
+              'reason: /compact when docs/STATE.md and the open operation files already hold what '
+              'matters and the work in flight continues; a hand-off (update STATE, write the handoff, '
+              'fresh session) when the work changes direction, a batch has just closed, or most of '
+              'the context is detail of finished work. Neither is the default (docs/WORKFLOW.md, '
+              '"Worker cost", rule 8).')
 
 
 if __name__ == '__main__':
