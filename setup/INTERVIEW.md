@@ -250,7 +250,8 @@ One topic per turn. Suggested order, because each answer informs the next:
     on large tasks that force completion. It saves most for workers that write code.
     It comes from its author's own marketplace at the latest version. Yes: keep
     `extraKnownMarketplaces` (`ponytail`) and `enabledPlugins` (`ponytail@ponytail`) in
-    `.claude/settings.json` (the Claude Code overlay ships them);
+    `.claude/settings.json` (the Claude Code overlay ships them; where bootstrap kept the
+    project's own file, add both entries to it and leave the rest as it is);
     Claude Code offers the install when the folder is trusted, and spawned worker sessions
     and sub-agents get the mode with it. Its hooks need `node` on PATH. An owner who already
     enabled `ponytail@ponytail` in their user settings gets the same plugin, loaded once.
