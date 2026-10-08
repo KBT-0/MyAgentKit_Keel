@@ -861,7 +861,11 @@ class BootstrapTests(unittest.TestCase):
         # whole), and the kit are cloned that way here; a Markdown file proves the conversion
         # was in force.
         root = Path(__file__).resolve().parents[1]
-        env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1')
+        # No background gc or maintenance: on macOS one still wrote into .git while the
+        # temporary folder was removed ("Directory not empty: '.git'").
+        env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1',
+                   GIT_CONFIG_COUNT='2', GIT_CONFIG_KEY_0='gc.auto', GIT_CONFIG_VALUE_0='0',
+                   GIT_CONFIG_KEY_1='maintenance.auto', GIT_CONFIG_VALUE_1='false')
         with tempfile.TemporaryDirectory() as tmp:
             project, owned, kit = Path(tmp) / 'project', Path(tmp) / 'owned', Path(tmp) / 'kit'
             owned.mkdir()

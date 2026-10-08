@@ -39,6 +39,11 @@ reviews. Why each change is safe is in `RESEARCH_LOG.md` (2026-10-06 and 2026-10
   for their sibling scripts in the current folder, and the spawn stopped at "the watcher
   exited 127". A brief named `C:\dir\brief.md` reached the worker as the caller's folder
   followed by that whole string. Both now resolve as with `/`.
+- **The gate's Windows lock self-test under a short-name TEMP.** Where TEMP is an 8.3 short
+  name (`C:\Users\RUNNER~1\...`, as on a GitHub Windows runner), four claim cases of
+  `./scripts/check.sh --self-test` waited for the lock instead of being refused, and the
+  self-test failed: the case named the lock by its short path, the gate by its long one. The
+  case now computes the path as the gate does.
 - **The kit's own check runs on native Windows** (`scripts/check.sh`, issue #56). Each suite
   or case that needs a POSIX host prints one NOT RUN line with its reason. CI's Linux and macOS
   jobs still run everything. Two Windows defects it found are filed: #59 (a project

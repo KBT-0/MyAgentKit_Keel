@@ -871,7 +871,11 @@ LOCKCASE
         echo "  FAIL — could not build the throwaway repository for the Windows lock case: $label"
         st_fail=1; continue
       fi
-      out=$(env PYTHONPATH="$site" $kit_python -I "$work/lockcase.py" "$lock_case" "$(cygpath -m "$case_dir/.git/check.lock")" \
+      # The lock path as the copy computes its own (pwd -P, then cygpath -m): a TMPDIR given as
+      # an 8.3 short name (C:/Users/RUNNER~1 on a CI runner) left GATE_LOCK_HELD short while the
+      # copy's own path was long, and every claim case waited instead of being refused.
+      case_lock=$(CDPATH= cd -- "$case_dir" && cygpath -m "$(pwd -P)/.git/check.lock")
+      out=$(env PYTHONPATH="$site" $kit_python -I "$work/lockcase.py" "$lock_case" "$case_lock" \
               "$(cygpath -m "$case_dir/scripts/check.sh")" 2>&1); status=$?
       if [ "$status" -eq "$code" ] && printf '%s\n' "$out" | grep -q "$want" &&
          { [ -z "$also" ] || printf '%s\n' "$out" | grep -q "$also"; }; then

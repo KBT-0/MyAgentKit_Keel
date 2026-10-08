@@ -164,6 +164,22 @@ def kill_tree(pid):
     subprocess.run(['taskkill', '/F', '/T', '/PID', str(pid)], capture_output=True)
 
 
+def released(lock, seconds=45):
+    """Wait until no process holds `lock` (a write open succeeds). A build the test left running
+    can outlive kill_tree, as on a CI runner, and hold the lock until its own sleep ends."""
+    deadline = time.monotonic() + seconds
+    while True:
+        try:
+            with open(lock, 'a'):
+                return
+        except FileNotFoundError:
+            return
+        except PermissionError:
+            if time.monotonic() > deadline:
+                raise
+            time.sleep(0.5)
+
+
 def make_project(path):
     """A project the gate passes: every marker filled, the build is $GATE_TEST_BUILD."""
     (path / 'scripts').mkdir(parents=True)
@@ -382,6 +398,7 @@ class WindowsGateLockTests(unittest.TestCase):
                          'echo "$GATE_LOCK_HELD" > "$SIDE/held.tmp"\nmv "$SIDE/held.tmp" "$SIDE/held"\n'
                          'sleep 30\n')
         proc = start(self.project, self.build, GATE_TEST_LOCK=self.lock.as_posix(), SIDE=self.side.as_posix())
+        self.addCleanup(released, self.lock)  # runs before the folder is removed
         deadline = time.monotonic() + 60
         while not (self.side / 'held').exists():
             self.assertIsNone(proc.poll(), 'the gate to be killed ended before its build started')
