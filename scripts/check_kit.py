@@ -74,8 +74,8 @@ REQUIRED_SUITES = {
               'test_check_gate': 23, 'test_check_gate_windows': 18, 'test_boundary_restore': 39,
               'test_sync_kit': 29, 'test_doctor': 2, 'test_git_hooks': 25, 'test_stop_hook': 1,
               'test_spawn_worker': 18, 'test_worker_visibility': 55, 'test_doc_pointers': 5,
-              'test_kit_output': 1, 'test_kit_runner': 13, 'test_clean_worktrees': 137, 'test_clean_worktrees_windows': 9,
-              'test_review_windows': 18, 'test_worker_paths_windows': 3,
+              'test_kit_output': 1, 'test_kit_runner': 15, 'test_clean_worktrees': 137, 'test_clean_worktrees_windows': 9,
+              'test_review_windows': 19, 'test_worker_paths_windows': 3,
               'test_close_worker': 20},
 }
 # Suites that do not run on native Windows, each with the reason. There each one prints one
@@ -126,8 +126,14 @@ class TimedResult(unittest.TextTestResult):
 
 def discover(folder, leave_out=()):
     """The suite under `folder` and the number of tests in each of its modules; the modules
-    named in `leave_out` are not imported."""
-    patterns = {path.name for path in Path(folder).rglob('test_*.py') if path.stem not in leave_out}
+    named in `leave_out` are not imported. Nested test modules are refused before discovery."""
+    folder = Path(folder)
+    nested = sorted(path.relative_to(folder).as_posix() for path in folder.rglob('test_*.py')
+                    if path.parent != folder)
+    if nested:
+        raise RuntimeError('nested test modules are not supported: ' + ', '.join(nested)
+                           + '; move test_*.py files to the suite folder top level')
+    patterns = {path.name for path in folder.glob('test_*.py') if path.stem not in leave_out}
     suite = unittest.TestSuite(unittest.TestLoader().discover(str(folder), pattern=pattern)
                                for pattern in sorted(patterns))
 
