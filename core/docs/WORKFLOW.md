@@ -357,7 +357,8 @@ Rules for whoever routes work, binding with any table:
    above the strongest routine one (for example Codex Astra or Claude Fable) is never a
    default. The lead picks it for one errand when the errand needs it, without asking the
    owner. The lead first checks that the current subscription includes that model; a basic
-   plan does not, and then the strongest routine model takes the errand.
+   plan does not, and then the strongest routine model takes the errand. While that side's
+   allowance is low (rule 7), the top model and the highest effort need the owner's yes.
 3. **A failed mechanical errand is rerun one tier up**, never retried at the same tier.
 4. **A review loop is broken by escalation, not by more rounds.** When three review rounds
    in a row have not come back clean, the lead raises the effort, the model tier, or both,
@@ -370,6 +371,16 @@ Rules for whoever routes work, binding with any table:
    that the kit and every project built from it follow.
 6. **The tier boundaries are measured, not guessed.** After about ten errands in a tier, the
    lead counts review rejects and rework per tier and moves the boundaries where they show.
+7. **A low allowance shrinks what that side does, never the review.** When the owner says
+   one side's allowance is low, that side only reviews: the other side writes the fixes of
+   its findings, and every fix still goes back to a review by the low side. Its reviews run
+   at the lowest effort that fits: a re-review of a small fix round at medium; high for a
+   gate, hook or review-tooling change and for a new mechanism's first round; the top model
+   or the highest effort only with the owner's yes. A running review is not cancelled to
+   lower its effort, since what it spent is gone. Independent reviews run at the same time,
+   with each other and with the self-test. A review that fails on quota leaves its rerun
+   command in the task's issue or STATE line and waits; it goes to the other side only with
+   the owner's yes, because a second model's judgement is the point of it.
 
 ## Worker cost — waits and long lives are what you pay for
 

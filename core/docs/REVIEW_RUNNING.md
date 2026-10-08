@@ -151,6 +151,13 @@ Reviews have no default monetary budget cap. Pass a supported monetary-cap optio
 when the owner explicitly specifies one. This does not remove timeout, turn, output,
 authorization, or provider-account limits; it does not authorize automatic retries.
 
+A reviewer's sandbox can make a test fail for its own reasons: Codex's can deny process
+termination (`taskkill`) and writes under the user's profile, and its `python3` may not run.
+A failure in the reviewer's run is set aside only when its diagnostic names such a
+restriction AND the same test passes in the author's run outside the sandbox on the same
+platform; the author records both. Any other failure, including one the author's platform
+skips, is a finding or a manual check, never dismissed.
+
 If a reviewing CLI cannot finish because of quota, context exhaustion, timeout,
 authentication, or missing final evidence, do not treat that failure as Accept. Both
 adapters return a failure with a local usage record. Codex uses `REVIEW_TIMEOUT_SECONDS`
