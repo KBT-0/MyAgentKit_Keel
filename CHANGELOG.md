@@ -11,6 +11,24 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ---
 
+## Unreleased
+
+- **Python that does not run** (issue #67): on Windows `python3` may be a Store alias that is
+  on PATH but exits 9009. The Claude Code overlay's three Python hooks now start through the
+  new `.claude/hooks/py.sh`, which runs the first of `python3`, `python`, `py -3` that runs;
+  before, each hook failed there and Claude Code went on without it, so `git reset --hard`
+  on a dirty tree was not refused. `check.sh`, `review.sh`, `doctor.sh`, `spawn_worker.sh`,
+  `close_worker.sh` and `clean_worktrees.sh` choose the same way, by running the candidate
+  instead of `command -v`. **ACTION:** copy `$KIT/overlays/claude-code/files/.claude/hooks/py.sh`
+  to `.claude/hooks/py.sh`, and in `.claude/settings.json` replace `python3 ` at the start of
+  each Python hook command with `sh "$CLAUDE_PROJECT_DIR/.claude/hooks/py.sh" `. In a
+  `check.sh` or `review.sh` you customised, replace `command -v python3` and `command -v
+  python` in the `kit_python=` lines with `python3 -I -c '' </dev/null` and `python -I -c ''
+  </dev/null`. The sync copies none of these (they carry no KIT-OWNED header). Then, with
+  an uncommitted change, `echo '{"tool_name":"Bash","tool_input":{"command":"git reset
+  --hard"}}' | sh .claude/hooks/py.sh .claude/hooks/guard_destructive_git.py` must print
+  BLOCKED.
+
 ## v0.10 — 2026-10-07
 
 Native Windows (Git for Windows' `sh` with python.org CPython) becomes a host the kit runs on,

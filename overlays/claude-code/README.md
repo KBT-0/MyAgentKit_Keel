@@ -33,6 +33,7 @@ repository.
 | `.claude/hooks/guard_boundaries.py` | Flags a forbidden import the moment it is written, seconds instead of a commit |
 | `.claude/hooks/context_size.py` | Tells the agent, once per 50k step past 200k tokens of context, to recommend `/compact` or a hand-off, whichever is cheaper (`docs/WORKFLOW.md`, "Worker cost", rule 8) |
 | `.claude/hooks/guard_destructive_git.py` | Refuses `reset --hard`, `checkout --`, `clean -f`, `stash drop` and force pushes while the tree is dirty, and prints what would be lost |
+| `.claude/hooks/py.sh` | Starts each Python hook with the first of `python3`, `python`, `py -3` that runs: a `python3` that is missing or a Windows Store alias would turn the hook silently off |
 | `.claude/agents/diff-reviewer.md` | Read-only review subagent carrying THIS project's risky areas and `docs/REVIEW_GATE.md` |
 | `.claude/agents/worker.md` | Implementation worker with a one-hour prompt cache and a 150-turn cap, for tasks that run jobs longer than five minutes (`docs/WORKFLOW.md`, "Worker cost") |
 | `scripts/spawn_worker.sh` | Opens a SEPARATE worker session in tmux and hands it a brief file; the lead then subscribes for its idle notice instead of polling |

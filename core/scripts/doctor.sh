@@ -73,11 +73,12 @@ case "$toolchain_path" in
   *) PATH="$toolchain_path:$PATH"; export PATH ;;
 esac
 # Resolved AFTER toolchain_path joined PATH, as the gate does.
-# Windows installs Python as `python` or `py`: when `python3` is absent, the scripts call the
-# first of those under the usual name. A function is enough for a call; an `exec` cannot
-# run a function, so the exec sites use $kit_python, the resolved command.
-if command -v python3 >/dev/null 2>&1; then kit_python=python3
-elif command -v python >/dev/null 2>&1; then kit_python=python
+# Windows installs Python as `python` or `py`: when `python3` is absent or does not run (a
+# Store alias exits 9009), the scripts call the first of those that runs under the usual
+# name. A function is enough for a call; an `exec` cannot run a function, so the exec sites
+# use $kit_python, the resolved command.
+if python3 -I -c '' </dev/null >/dev/null 2>&1; then kit_python=python3
+elif python -I -c '' </dev/null >/dev/null 2>&1; then kit_python=python
 else kit_python="py -3"; fi   # the launcher, told which Python: unquoted at every use
 [ "$kit_python" = python3 ] || python3() { $kit_python "$@"; }
 

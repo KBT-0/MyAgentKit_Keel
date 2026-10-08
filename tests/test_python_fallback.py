@@ -1,0 +1,78 @@
+"""Hooks and scripts must run where `python3` is on PATH but does not run (issue #67)."""
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import tempfile
+import unittest
+
+ROOT = Path(__file__).resolve().parents[1]
+OVERLAY = ROOT / 'overlays/claude-code/files'
+
+
+class PythonFallbackTests(unittest.TestCase):
+    def test_hooks_and_scripts_run_where_python3_does_not(self):
+        # Windows installs Python as `python`, and its `python3` may be a Store alias that is on
+        # PATH but exits 9009. A hook command naming python3 then failed, Claude Code went on
+        # without the hook, and a script that checked `command -v python3` picked it all the same.
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, True)
+        hooks = json.loads((OVERLAY / '.claude/settings.json').read_text())['hooks']
+        commands = [h['command'] for entries in hooks.values() for e in entries for h in e['hooks']]
+        python_hooks = {Path(c.split('"')[-2]).name: c for c in commands if '.py"' in c}
+        self.assertEqual(sorted(python_hooks), ['context_size.py', 'guard_boundaries.py',
+                                                'guard_destructive_git.py'], commands)
+        for command in python_hooks.values():
+            self.assertTrue(command.startswith('sh "$CLAUDE_PROJECT_DIR/.claude/hooks/py.sh" '), command)
+        bin_dir = tmp / 'bin'
+        bin_dir.mkdir()
+        for name, body in (('python3', 'exit 9009'), ('python', 'exec "%s" "$@"' % Path(sys.executable).as_posix())):
+            (bin_dir / name).write_text('#!/bin/sh\n%s\n' % body)
+            (bin_dir / name).chmod(0o755)
+        project = tmp / 'project'
+        shutil.copytree(OVERLAY / '.claude/hooks', project / '.claude/hooks')
+        # A dirty repository, so the guard has work to lose. GIT_* from a calling hook would
+        # route git elsewhere.
+        env = {k: v for k, v in os.environ.items() if not k.startswith('GIT_')}
+        subprocess.run(['git', 'init', '-q', str(project)], check=True, env=env)
+        subprocess.run(['git', '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty',
+                        '-m', 'x'], cwd=project, check=True, env=env)
+        (project / 'notes.txt').write_text('uncommitted\n')
+        env.update(PATH=os.pathsep.join([str(bin_dir), env['PATH']]), CLAUDE_PROJECT_DIR=project.as_posix())
+
+        def run(args, payload=''):
+            # A hook writes in the locale's code page under some runners: decoded leniently.
+            return subprocess.run(args, input=payload, encoding='utf-8', errors='replace',
+                                  capture_output=True, timeout=60, env=env, cwd=project)
+
+        self.assertNotEqual(run(['sh', '-c', 'python3 -c ""']).returncode, 0)  # the alias stands first
+        blocked = run(['sh', '-c', python_hooks['guard_destructive_git.py']],
+                      json.dumps({'tool_name': 'Bash', 'tool_input': {'command': 'git reset --hard'}}))
+        self.assertEqual(blocked.returncode, 2, blocked.stderr)
+        self.assertIn('BLOCKED', blocked.stderr)
+        # The overlay's boundary list is the setup placeholder, which the hook must report.
+        unconfigured = run(['sh', '-c', python_hooks['guard_boundaries.py']],
+                           json.dumps({'tool_input': {'file_path': 'a.py', 'content': 'import b'}}))
+        self.assertEqual(unconfigured.returncode, 0, unconfigured.stderr)
+        self.assertIn('UNCONFIGURED', unconfigured.stdout)
+        transcript = tmp / 'session.jsonl'
+        transcript.write_text(json.dumps({'type': 'assistant', 'message': {'usage': {
+            'input_tokens': 210_000, 'cache_read_input_tokens': 0, 'cache_creation_input_tokens': 0}}}) + '\n')
+        said = run(['sh', '-c', python_hooks['context_size.py']], json.dumps({'transcript_path': str(transcript)}))
+        self.assertEqual((said.returncode, said.stderr), (0, ''))
+        self.assertIn('Context is 210k tokens', said.stdout)
+        # A gate script that execs its resolved Python.
+        cleaned = run(['sh', str(OVERLAY / 'scripts/clean_worktrees.sh')])
+        self.assertEqual(cleaned.returncode, 0, cleaned.stdout + cleaned.stderr)
+        self.assertIn('dry run', cleaned.stdout)
+        # Every script chooses the same way: by running the candidate, never by `command -v`.
+        shipped = [*ROOT.glob('core/scripts/*.sh'), *ROOT.glob('overlays/*/files/**/*.sh')]
+        chosen = [line.strip() for p in shipped for line in p.read_text(encoding='utf-8').splitlines() if 'then kit_python=' in line]
+        self.assertGreaterEqual(len(chosen), 12, chosen)
+        self.assertEqual([line for line in chosen if 'command -v' in line], [])
+
+
+if __name__ == '__main__':
+    unittest.main()
