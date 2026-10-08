@@ -34,6 +34,16 @@ reviews. Why each change is safe is in `RESEARCH_LOG.md` (2026-10-06 and 2026-10
   routing table by tier, and update the pins in your `scripts/review.sh` and the `model` in
   `~/.codex/config.toml` to the newest models your subscriptions include. Every
   `spawn_worker.sh` call in your briefs and notes now needs `--model` and `--effort`.
+- **Worker scripts take Windows paths.** `spawn_worker.sh`, `close_worker.sh` and
+  `watch_workers.sh` called by a path with backslashes (`D:\p\scripts\spawn_worker.sh`) looked
+  for their sibling scripts in the current folder, and the spawn stopped at "the watcher
+  exited 127". A brief named `C:\dir\brief.md` reached the worker as the caller's folder
+  followed by that whole string. Both now resolve as with `/`.
+- **The kit's own check runs on native Windows** (`scripts/check.sh`, issue #56). Each suite
+  or case that needs a POSIX host prints one NOT RUN line with its reason. CI's Linux and macOS
+  jobs still run everything. Two Windows defects it found are filed: #59 (a project
+  bootstrapped on Windows commits its scripts without the executable bit) and #60 (the
+  existing-file boundary probe starts the Python install manager).
 - **The gate lock on native Windows.** `scripts/check.sh` run by Git for Windows' `sh` with a
   Windows `python3` failed every run with `FAIL [lock]: python3 has no fcntl module`, so every
   commit there was blocked. On that host the lock is now the lock file opened for writing

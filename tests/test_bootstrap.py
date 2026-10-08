@@ -4,8 +4,18 @@ import re
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
+
+WINDOWS = os.name == 'nt'
+
+
+def not_on_windows(case, why):
+    """True on native Windows, after the NOT RUN line the kit check collects (issue #56)."""
+    if WINDOWS:
+        sys.stderr.write('\nNOT RUN: %s (POSIX only: %s)\n' % (case, why))
+    return WINDOWS
 
 
 def cut_short(shims, needle):
@@ -65,6 +75,8 @@ class BootstrapTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         rel = '.githooks/commit-msg'
         for kind in ('fifo', 'identical symlink', 'dangling symlink', 'directory'):
+            if kind == 'fifo' and not_on_windows(self.id() + ' (fifo)', 'no FIFOs'):
+                continue
             for force in ((), ('--force',)):
                 with self.subTest(kind=kind, force=force), tempfile.TemporaryDirectory() as tmp:
                     project, outside = Path(tmp) / 'project', Path(tmp) / 'outside'
@@ -124,12 +136,14 @@ class BootstrapTests(unittest.TestCase):
                  'conflict: docs/kit/BOOTSTRAP_NOTE.md (not a regular file)'),
                 ('folder stamp', 'docs/kit/.kit-version', 'dir', (), 'conflict: docs/kit/.kit-version (not a regular file)'),
                 ('file for a created folder', 'docs/reviews', 'file', (), 'conflict: docs/reviews (not a folder)')):
+            if make == 'fifo' and not_on_windows('%s (%s)' % (self.id(), case), 'no FIFOs'):
+                continue
             with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
                 project = Path(tmp) / 'project'
                 project.mkdir()
                 subprocess.run(['git', 'init', '-q', str(project)], check=True)
                 (project / rel).parent.mkdir(parents=True, exist_ok=True)
-                {'file': lambda p: p.write_text('x\n'), 'fifo': os.mkfifo, 'dir': Path.mkdir}[make](project / rel)
+                {'file': lambda p: p.write_text('x\n'), 'fifo': lambda p: os.mkfifo(p), 'dir': Path.mkdir}[make](project / rel)
                 try:
                     result = subprocess.run(['sh', str(root / 'bootstrap.sh'), str(project), *flags],
                                             capture_output=True, text=True, timeout=60)
@@ -235,6 +249,8 @@ class BootstrapTests(unittest.TestCase):
     def test_a_failed_write_of_the_file_list_stops_before_anything_is_written(self):
         # The copy loop reads its file list from a temporary file; a write there that fails (a
         # file-size limit stands in for a full disk) must stop the run before it writes anything.
+        if not_on_windows(self.id(), 'no file-size limit (ulimit -f)'):
+            return
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp) / 'project'
@@ -303,6 +319,8 @@ class BootstrapTests(unittest.TestCase):
         # Each file was replaced by a sibling created under the umask: a note at 0600 became
         # 0644 on a rerun of --note, its agenda readable by every local user, and a file of the
         # project's replaced under --force lost its 0640. The mode is set before the content.
+        if not_on_windows(self.id(), 'POSIX file modes'):
+            return
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory() as tmp:
             project, shims, log = Path(tmp) / 'project', Path(tmp) / 'shims', Path(tmp) / 'log'
@@ -339,6 +357,8 @@ class BootstrapTests(unittest.TestCase):
     def test_a_new_file_takes_the_mode_the_umask_gives(self):
         # The mode a plain redirection or `cp` gives under the caller's umask, not a fixed one
         # and not the 0600 of a fresh temporary; a file executable in the kit stays executable.
+        if not_on_windows(self.id(), 'POSIX file modes and umask'):
+            return
         root = Path(__file__).resolve().parents[1]
         for mask in (0o077, 0o002):
             with self.subTest(umask=oct(mask)), tempfile.TemporaryDirectory() as tmp:
@@ -363,7 +383,9 @@ class BootstrapTests(unittest.TestCase):
             (project / '.githooks').mkdir(parents=True)
             kit_dir.mkdir(parents=True)
             (project / '.githooks/commit-msg.kit-tmp').write_text('mine\n')
-            os.mkfifo(kit_dir / 'BOOTSTRAP_NOTE.md.kit-tmp')
+            fifo = not not_on_windows(self.id() + ' (a FIFO at a temporary name)', 'no FIFOs')
+            if fifo:
+                os.mkfifo(kit_dir / 'BOOTSTRAP_NOTE.md.kit-tmp')
             (kit_dir / '.kit-version.kit-tmp').mkdir()
             (kit_dir / '.kit-tmp.Ab12Cd').write_text('left\n')
             result = subprocess.run(['sh', str(root / 'bootstrap.sh'), str(project), '--note', 'n'],
@@ -372,7 +394,8 @@ class BootstrapTests(unittest.TestCase):
             self.assertEqual((project / '.githooks/commit-msg.kit-tmp').read_text(), 'mine\n')
             self.assertEqual((project / '.githooks/commit-msg').read_bytes(),
                              (root / 'core/.githooks/commit-msg').read_bytes())
-            self.assertTrue((kit_dir / 'BOOTSTRAP_NOTE.md.kit-tmp').is_fifo())
+            if fifo:
+                self.assertTrue((kit_dir / 'BOOTSTRAP_NOTE.md.kit-tmp').is_fifo())
             self.assertTrue((kit_dir / '.kit-version.kit-tmp').is_dir())
             self.assertEqual((kit_dir / '.kit-tmp.Ab12Cd').read_text(), 'left\n')
             self.assertIn('docs/kit/.kit-tmp.Ab12Cd', result.stdout)
@@ -691,6 +714,8 @@ class BootstrapTests(unittest.TestCase):
     def test_an_unreadable_own_gitattributes_stops_bootstrap_unchanged(self):
         # The rule check read an unreadable file as holding no rule, and the merge replaced it
         # with the kit's rules alone, the owner's lost.
+        if not_on_windows(self.id(), 'a file without read permission'):
+            return
         if os.geteuid() == 0:
             self.skipTest('root reads a file without read permission')
         root = Path(__file__).resolve().parents[1]
@@ -713,6 +738,8 @@ class BootstrapTests(unittest.TestCase):
         # r8: the kit's rules were read at the head of a pipeline whose last command decided
         # its status: an unreadable core/.gitattributes gave no rule and no error, and the
         # project was stamped with the version without the line-ending rules.
+        if not_on_windows(self.id(), 'a file without read permission'):
+            return
         if os.geteuid() == 0:
             self.skipTest('root reads a file without read permission')
         root = Path(__file__).resolve().parents[1]

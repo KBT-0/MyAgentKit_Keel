@@ -9,6 +9,14 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 ACTION = '- A rule moved. **ACTION:** copy it into your project-owned workflow.\n'
+WINDOWS = os.name == 'nt'
+
+
+def not_on_windows(case, why):
+    """True on native Windows, after the NOT RUN line the kit check collects (issue #56)."""
+    if WINDOWS:
+        sys.stderr.write('\nNOT RUN: %s (POSIX only: %s)\n' % (case, why))
+    return WINDOWS
 
 
 def cut_short(shims, needle):
@@ -189,7 +197,8 @@ class SyncKitTests(unittest.TestCase):
             self.assertEqual((result.returncode, stamp), (1, '0.1'), result.stdout + result.stderr)
             self.assertIn('conflict: scripts/tool.sh', result.stdout)
             self.assertIn("the kit's own file from an earlier version", result.stdout)
-            self.assertIn(str(src), result.stdout)
+            # Named by its path; Git for Windows' sh spells the folder above the kit its own way.
+            self.assertIn(str(src) if not WINDOWS else 'kit/overlays/o/files/scripts/tool.sh', result.stdout)
             self.assertNotIn('rerun the sync to install', result.stdout)
             self.assertNotIn('RETROFIT', result.stdout)
 
@@ -198,6 +207,8 @@ class SyncKitTests(unittest.TestCase):
         # copy read as "same": anything but a regular file is a conflict, never read.
         rel = '.githooks/commit-msg'
         for kind in ('fifo', 'identical symlink'):
+            if kind == 'fifo' and not_on_windows(self.id() + ' (fifo)', 'no FIFOs'):
+                continue
             with self.subTest(kind=kind), tempfile.TemporaryDirectory() as tmp:
                 kit, project = Path(tmp) / 'kit', Path(tmp) / 'project'
                 self.sync(tmp, '- A kit-owned file changed.\n', '--dry-run')
@@ -250,6 +261,8 @@ class SyncKitTests(unittest.TestCase):
                  ('folder stamp', 'conflict: docs/kit/.kit-version (not a regular file)'),
                  ('chmod fails', 'could not write .githooks/commit-msg; version left at v0.1'))
         for case, needle in cases:
+            if case == 'fifo stamp' and not_on_windows(self.id() + ' (fifo stamp)', 'no FIFOs'):
+                continue
             with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
                 kit, project = Path(tmp) / 'kit', Path(tmp) / 'project'
                 self.sync(tmp, '- A kit-owned file changed.\n', '--dry-run')
@@ -474,6 +487,8 @@ class SyncKitTests(unittest.TestCase):
                        'scripts/two\nlines.sh': b'#!/bin/sh\necho two ran\n',
                        'scripts/lone.sh': b'#!/bin/sh\n# a lone \r stays\necho lone ran\n',
                        '.githooks/pre-commit': b'#!/bin/sh\nset -eu\necho hook ran\n'}
+            if not_on_windows(self.id() + ' (a name holding a newline)', 'Windows file names hold no newline'):
+                del scripts['scripts/two\nlines.sh']
             for path, body in scripts.items():
                 (project / path).write_bytes(body)
             (project / 'scripts/link.sh').symlink_to('../../outside.sh')
@@ -489,7 +504,8 @@ class SyncKitTests(unittest.TestCase):
             git(project, 'add', '.gitattributes')
             commit('notes are text')
             self.assertIn(b'\r\n', git(project, 'show', 'HEAD:notes.txt'))
-            git(tmp, '-c', 'core.autocrlf=true', 'clone', '-q', str(project), str(clone))
+            # core.symlinks: Git for Windows checks a tracked symlink out as a plain file without it.
+            git(tmp, '-c', 'core.autocrlf=true', '-c', 'core.symlinks=true', 'clone', '-q', str(project), str(clone))
             git(clone, 'config', 'core.autocrlf', 'true')
             self.assertIn(b'\r\n', (clone / 'scripts/check.sh').read_bytes())
             (clone / 'scripts/check.sh.lf').write_bytes(b'mine\n')
@@ -594,7 +610,8 @@ class SyncKitTests(unittest.TestCase):
                 if case == 'merged':
                     self.assertEqual(result.returncode, 0, result.stderr)
                     self.assertEqual(set(merged.values()), {True})
-                    self.assertEqual((project / 'scripts/check.sh').stat().st_mode & 0o777, 0o755)
+                    if not not_on_windows(self.id() + ' (mode kept)', 'no executable bit'):
+                        self.assertEqual((project / 'scripts/check.sh').stat().st_mode & 0o777, 0o755)
                     self.assertEqual(sorted(p.name for p in (project / 'scripts').iterdir()),
                                      ['check.sh', 'check.sh.v0.9'])
                     continue
@@ -785,6 +802,8 @@ class SyncKitTests(unittest.TestCase):
         # with that script still CRLF; and it wrote in place, so a killed run left a script
         # half new. Each script is now replaced whole with its mode, and a failure stops the step.
         import textwrap
+        if not_on_windows(self.id(), 'POSIX modes: no executable bit, no read-only folder'):
+            return
         if os.geteuid() == 0:
             self.skipTest('root writes into a read-only folder')
         text = (ROOT / 'CHANGELOG.md').read_text()

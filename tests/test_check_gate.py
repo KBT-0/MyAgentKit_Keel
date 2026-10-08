@@ -1,5 +1,8 @@
 """The shipped check.sh in a minimal configured project: scan list, lock and re-execution."""
-import fcntl
+try:
+    import fcntl
+except ImportError:  # Native Windows: test_git_hooks imports make_project from here.
+    fcntl = None
 import os
 from pathlib import Path
 import re

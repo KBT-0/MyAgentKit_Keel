@@ -163,6 +163,10 @@ class KitRunnerTests(unittest.TestCase):
 
     def test_path_without_drops_only_the_named_commands(self):
         # A directory without them stays as it is; one with them becomes links to the rest.
+        # path_without serves the POSIX lock cases only; Windows' which finds PATHEXT names alone.
+        if os.name == 'nt':
+            sys.stderr.write('\nNOT RUN: %s (POSIX only: commands without an extension)\n' % self.id())
+            return
         plain, mixed = self.tmp / 'plain', self.tmp / 'mixed'
         for directory in (plain, mixed):
             directory.mkdir()

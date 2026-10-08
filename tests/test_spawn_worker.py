@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -135,6 +136,26 @@ def shq(value):
     return "'" + value.replace("'", "'\\''") + "'"
 
 
+WINDOWS = os.name == 'nt'
+# The cases that run on native Windows (issue #56). Every other case drives the tmux path,
+# which native Windows never takes, through Python stubs whose `sh -c` command line Git for
+# Windows parses again (an apostrophe is a quote there): there each prints NOT RUN.
+ON_WINDOWS = {'test_a_missing_or_failing_watcher_stops_the_spawn', 'test_a_worker_without_its_model_or_effort_is_refused',
+              'test_missing_or_unreadable_brief_is_refused_before_any_session',
+              'test_no_error_message_echoes_a_control_character',
+              'test_on_native_windows_the_worker_opens_as_a_windows_terminal_tab'}
+
+
+def tmux_path_cases(cls):
+    for name in [n for n in vars(cls) if n.startswith('test_') and n not in ON_WINDOWS and WINDOWS]:
+        def not_run(self):
+            sys.stderr.write('\nNOT RUN: %s (the tmux path, POSIX only)\n' % self.id())
+        not_run.__name__ = name
+        setattr(cls, name, not_run)
+    return cls
+
+
+@tmux_path_cases
 class SpawnWorkerTests(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -159,11 +180,21 @@ class SpawnWorkerTests(unittest.TestCase):
     @staticmethod
     def physical(path):
         # What the script hands on: the folder resolved (`pwd -P`), the file name as given.
+        # Git for Windows' `pwd -P` spells the folder its own way (/tmp/..., /c/...).
+        if WINDOWS:
+            folder = subprocess.run(['cygpath', '-u', os.path.realpath(path.parent)], capture_output=True,
+                                    text=True, check=True).stdout.rstrip('\n')
+            return folder + '/' + path.name
         return os.path.join(os.path.realpath(path.parent), path.name)
 
     def spawn(self, *args, choose=True, **extra):
         # PWD as a lead's shell exports it: with it, a plain `pwd` printed the symlinked spelling.
         env = dict(self.base_env(), PWD=str(self.cwd), **extra)
+        # The lead chooses model and effort for every worker; a case that is not about them
+        # passes both. choose=False sends the arguments exactly as given.
+        if choose:
+            args += tuple(a for flag, value in (('--model', 'm'), ('--effort', 'high'))
+                          if flag not in args for a in (flag, value))
         return subprocess.run(['sh', str(SCRIPT), *args], cwd=self.cwd, env=env,
                               capture_output=True, text=True, timeout=60)
 
@@ -190,11 +221,6 @@ class SpawnWorkerTests(unittest.TestCase):
         model, effort = "m'x'", f"high'$(touch {marker})'"
         tools = "Bash(echo 'a b'),Read"
         result = self.spawn(name, str(self.brief), '--model', model, '--effort', effort,
-        # The lead chooses model and effort for every worker; a case that is not about them
-        # passes both. choose=False sends the arguments exactly as given.
-        if choose:
-            args += tuple(a for flag, value in (('--model', 'm'), ('--effort', 'high'))
-                          if flag not in args for a in (flag, value))
                             '--settings', settings, '--allowed-tools', tools)
         self.assertFalse(marker.exists(), 'an interpolated value ran as shell')
         launched = self.launched()
@@ -203,6 +229,16 @@ class SpawnWorkerTests(unittest.TestCase):
                                             '--settings', settings, '--allowedTools', tools])
         self.assertEqual(Path(launched['cwd']).resolve(), self.cwd.resolve())
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_a_worker_without_its_model_or_effort_is_refused(self):
+        # docs/WORKFLOW.md, "Model routing": neither is left to the user's default.
+        for args, missing in ((('--effort', 'high'), '--model'), (('--model', 'm'), '--effort'), ((), '--model')):
+            with self.subTest(args=args):
+                result = self.spawn('w1', str(self.brief), *args, choose=False)
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertIn('spawn_worker: %s is required' % missing, result.stderr)
+                self.assertIsNone(self.launched(), 'a worker started without its model or effort')
+                self.assertEqual(self.tmux_log(), '')
 
     def test_brief_is_delivered_by_path_as_one_typed_instruction(self):
         result = self.spawn('w1', str(self.brief))
@@ -216,8 +252,11 @@ class SpawnWorkerTests(unittest.TestCase):
         # No tmux there: the instruction is the session's first prompt, ahead of the variadic
         # --allowedTools, and the tab is the session's only view. A `;` in the brief path and
         # in a value proves the launcher is never handed a bare one.
+        # On native Windows the real cygpath answers.
         for name, body in (('uname', '#!/bin/sh\necho MINGW64_NT-10.0-26200\n'), ('cygpath', CYGPATH),
                            ('wt-tab', WT_TAB)):
+            if WINDOWS and name == 'cygpath':
+                continue
             (self.bin / name).write_text(body)
             (self.bin / name).chmod(0o755)
         brief = self.cwd / 'brief; part two.md'
@@ -230,16 +269,6 @@ class SpawnWorkerTests(unittest.TestCase):
                             KIT_WT=str(self.bin / 'wt-tab'), KIT_PS=ps)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn('Windows Terminal tab', result.stdout)
-    def test_a_worker_without_its_model_or_effort_is_refused(self):
-        # docs/WORKFLOW.md, "Model routing": neither is left to the user's default.
-        for args, missing in ((('--effort', 'high'), '--model'), (('--model', 'm'), '--effort'), ((), '--model')):
-            with self.subTest(args=args):
-                result = self.spawn('w1', str(self.brief), *args, choose=False)
-                self.assertEqual(result.returncode, 1, result.stderr)
-                self.assertIn('spawn_worker: %s is required' % missing, result.stderr)
-                self.assertIsNone(self.launched(), 'a worker started without its model or effort')
-                self.assertEqual(self.tmux_log(), '')
-
         self.assertIn('scripts/close_worker.sh w1', result.stdout)
         # The tab ends with `exit 0`, never as claude's own exit: Windows Terminal keeps a tab whose
         # command ended nonzero open, as claude does when close_worker.sh ends it.

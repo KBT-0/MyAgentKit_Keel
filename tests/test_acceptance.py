@@ -50,8 +50,10 @@ class AcceptanceTests(unittest.TestCase):
         # raises it in the same change.
         for directory, required in gate.REQUIRED_SUITES.items():
             with self.subTest(directory=directory):
-                found = gate.discover(ROOT / directory)[1]
-                self.assertEqual(required, found)
+                # On native Windows the suites not yet ported there are left out (issue #56).
+                leave_out = set(gate.NOT_ON_WINDOWS.get(directory, {}))
+                found = gate.discover(ROOT / directory, leave_out)[1]
+                self.assertEqual({k: v for k, v in required.items() if k not in leave_out}, found)
 
     def test_a_utf8_locale_is_picked_by_its_codeset_and_none_is_not_run(self):
         # Only four locale names counted: a host with de_DE.UTF-8 alone failed acceptance.
@@ -90,6 +92,16 @@ class AcceptanceTests(unittest.TestCase):
             value, folder = first.split(' ', 1)
             self.assertEqual((value, child), ('2', '2'), 'the kit check read the stale .pyc')
             self.assertFalse(os.path.exists(folder), 'the private pycache folder was left behind')
+
+    def test_a_windows_self_test_may_fail_only_its_review_case(self):
+        # Issue #54: on native Windows a project's review case fails; any other FAIL or skip
+        # must still fail the kit check, and so must a review case that suddenly passes.
+        ok, review = '  ok   — a gate case\n', '  FAIL — review adapter negative tests failed or did not run\n'
+        cygpath = '  skip — a stray cygpath on a POSIX PATH: this host is MSYS\n'
+        self.assertIn('NOT RUN', gate.windows_self_test(ok + review + cygpath + 'SELF-TEST: FAIL\n'))
+        for odd in ('  FAIL — another gate\n', '  skip — another case\n', ''):
+            with self.subTest(odd=odd), self.assertRaisesRegex(RuntimeError, 'beyond its review case'):
+                gate.windows_self_test(ok + odd + (review if odd else '') + 'SELF-TEST: FAIL\n')
 
     def test_packaging_suite_is_required_by_the_real_gate(self):
         self.assertGreaterEqual(gate.REQUIRED_SUITES['tests']['test_packaging'], 1)

@@ -73,6 +73,10 @@ ctl "worker name" "$name"
 ctl "brief path" "$brief"
 nl='
 '
+case $(uname -s 2>/dev/null) in MINGW*|MSYS*|CYGWIN*) windows=1 ;; *) windows="" ;; esac
+# Git for Windows' sh takes C:\dir\brief.md too, but the split below is at `/` only: there
+# every backslash is a separator, spelled `/` first. The x guard keeps a trailing newline.
+if [ -n "$windows" ]; then brief=$(printf '%sx' "$brief" | tr '\\' '/') && brief=${brief%x}; fi
 { [ -f "$brief" ] && [ -r "$brief" ]; } || die "brief file not found or not readable: $brief"
 case "$brief" in */*) brief_dir=${brief%/*}/ ;; *) brief_dir=. ;; esac
 # Every path handed on is physical (`pwd -P`): a plain `pwd` printed the logical path when the
@@ -81,12 +85,13 @@ case "$brief" in */*) brief_dir=${brief%/*}/ ;; *) brief_dir=. ;; esac
 brief_dir=$(CDPATH= cd -P -- "$brief_dir" && pwd -P && echo x) || die "cannot resolve the brief's folder: $brief"
 brief=${brief_dir%"${nl}x"}/${brief##*/}
 ctl "brief path" "$brief"
-case $(uname -s 2>/dev/null) in MINGW*|MSYS*|CYGWIN*) windows=1 ;; *) windows="" ;; esac
 [ -n "$windows" ] || command -v tmux >/dev/null || die "tmux is not installed"
 command -v claude >/dev/null || die "claude is not on PATH"
 
 model=""; settings=""; tools=""; worktree=""; effort=""; batch=""
-case $0 in */*) kit=${0%/*} ;; *) kit=. ;; esac
+# A path Git for Windows' sh was given with backslashes (D:\p\spawn_worker.sh) has no `/`:
+# dirname splits it there.
+case $0 in */*) kit=${0%/*} ;; *'\'*) kit=$(dirname -- "$0") ;; *) kit=. ;; esac
 while [ $# -gt 0 ]; do
   case "$1" in
     --model)         model=$2; shift 2 ;;
@@ -98,15 +103,15 @@ while [ $# -gt 0 ]; do
     *) die "unknown option: $1" ;;
   esac
 done
+# The lead picks both for every worker (docs/WORKFLOW.md, "Model routing"); left out, the
+# session silently took the user's default.
+[ -n "$model" ] || die "--model is required: the lead picks the model for every worker"
+[ -n "$effort" ] || die "--effort is required: the lead picks the effort for every worker"
 
 [ -n "$windows" ] || ! tmux has-session -t "=$name" 2>/dev/null || die "tmux session '$name' already exists"
 
 here=$(pwd -P && echo x) || die "cannot resolve the current folder"
 dir=${here%"${nl}x"}
-# The lead picks both for every worker (docs/WORKFLOW.md, "Model routing"); left out, the
-# session silently took the user's default.
-[ -n "$model" ] || die "--model is required: the lead picks the model for every worker"
-[ -n "$effort" ] || die "--effort is required: the lead picks the effort for every worker"
 # --settings is inline JSON or a file. The tool starts in the worktree, so a relative file is
 # made absolute here, against the caller's folder: resolved there, an untracked settings file
 # was missing and a tracked one of the same name was loaded instead. A relative value that is

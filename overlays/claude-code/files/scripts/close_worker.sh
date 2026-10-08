@@ -44,7 +44,9 @@ first=""
 fail() { say "$1"; [ -n "$first" ] || first=$1; }
 nl='
 '
-case $0 in */*) kit=${0%/*} ;; *) kit=. ;; esac
+# A path Git for Windows' sh was given with backslashes (D:\p\close_worker.sh) has no `/`:
+# dirname splits it there.
+case $0 in */*) kit=${0%/*} ;; *'\'*) kit=$(dirname -- "$0") ;; *) kit=. ;; esac
 # The physical path of the worktree, or empty; /proc/PID/cwd names physical paths.
 top=$(git rev-parse --show-toplevel 2>/dev/null) || top=""
 # inside DIR: prints one process working in DIR or below and succeeds; Linux /proc only.
