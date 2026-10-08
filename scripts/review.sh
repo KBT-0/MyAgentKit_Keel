@@ -7,6 +7,6 @@
 kit=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd) || exit 2
 export REVIEW_REPO_ROOT="$kit"
 export REVIEW_DOCS="${REVIEW_DOCS:-core/AGENTS.md, core/docs/ARCHITECTURE.md, core/docs/REVIEW_GATE.md and CONTRIBUTING.md}"
-export REVIEW_CODEX_MODEL="${REVIEW_CODEX_MODEL:-gpt-6-astra}"
-export REVIEW_CLAUDE_MODEL="${REVIEW_CLAUDE_MODEL:-claude-opus-5}"
+export REVIEW_CODEX_MODEL="${REVIEW_CODEX_MODEL:-gpt-6.1-sol}"
+export REVIEW_CLAUDE_MODEL="${REVIEW_CLAUDE_MODEL:-claude-opus-5-5}"
 exec sh "$kit/core/scripts/review.sh" "$@"

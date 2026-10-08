@@ -64,8 +64,8 @@ session it starts, once the brief has landed. A lead starting several passes `--
 spawn and then shows them together, so they open as one window and not one at a time:
 
 ```sh
-scripts/spawn_worker.sh w1 briefs/w1.md --batch
-scripts/spawn_worker.sh w2 briefs/w2.md --batch
+scripts/spawn_worker.sh w1 briefs/w1.md --model sonnet --effort medium --batch
+scripts/spawn_worker.sh w2 briefs/w2.md --model opus --effort high --batch
 scripts/show_workers.sh w1 w2
 ```
 
@@ -214,8 +214,10 @@ If the project has no such jobs, delete both files instead of filling them.
 - **A sub-agent inherits its lead session's effort unless its definition sets `effort:`**,
   and nothing in its output says so: a side-by-side comparison ran two sub-agents at the
   lead's medium against a high-effort run of another CLI, and the skew surfaced only in the
-  transcripts. Both definitions here set it. A spawned session takes the user's default
-  effort instead; pass `--effort` to the spawn script. `scripts/agent_cost.py` does not show
+  transcripts. Both definitions here set it, as a fallback only: the lead passes `model` and
+  `effort` on every Agent call, chosen for the errand. `spawn_worker.sh` refuses a session
+  without `--model` and `--effort`, which it would otherwise start at the user's default.
+  `scripts/agent_cost.py` does not show
   effort, so verify it after the run by grepping the transcript for `"effort"`.
 - **A spawned session does not end when its task does.** A pilot worker wrote its result
   file and then sat idle in tmux for 40 minutes until it was killed by hand, and the idle

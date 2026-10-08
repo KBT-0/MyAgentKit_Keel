@@ -161,7 +161,7 @@ class SpawnWorkerTests(unittest.TestCase):
         # What the script hands on: the folder resolved (`pwd -P`), the file name as given.
         return os.path.join(os.path.realpath(path.parent), path.name)
 
-    def spawn(self, *args, **extra):
+    def spawn(self, *args, choose=True, **extra):
         # PWD as a lead's shell exports it: with it, a plain `pwd` printed the symlinked spelling.
         env = dict(self.base_env(), PWD=str(self.cwd), **extra)
         return subprocess.run(['sh', str(SCRIPT), *args], cwd=self.cwd, env=env,
@@ -190,6 +190,11 @@ class SpawnWorkerTests(unittest.TestCase):
         model, effort = "m'x'", f"high'$(touch {marker})'"
         tools = "Bash(echo 'a b'),Read"
         result = self.spawn(name, str(self.brief), '--model', model, '--effort', effort,
+        # The lead chooses model and effort for every worker; a case that is not about them
+        # passes both. choose=False sends the arguments exactly as given.
+        if choose:
+            args += tuple(a for flag, value in (('--model', 'm'), ('--effort', 'high'))
+                          if flag not in args for a in (flag, value))
                             '--settings', settings, '--allowed-tools', tools)
         self.assertFalse(marker.exists(), 'an interpolated value ran as shell')
         launched = self.launched()
@@ -225,6 +230,16 @@ class SpawnWorkerTests(unittest.TestCase):
                             KIT_WT=str(self.bin / 'wt-tab'), KIT_PS=ps)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn('Windows Terminal tab', result.stdout)
+    def test_a_worker_without_its_model_or_effort_is_refused(self):
+        # docs/WORKFLOW.md, "Model routing": neither is left to the user's default.
+        for args, missing in ((('--effort', 'high'), '--model'), (('--model', 'm'), '--effort'), ((), '--model')):
+            with self.subTest(args=args):
+                result = self.spawn('w1', str(self.brief), *args, choose=False)
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertIn('spawn_worker: %s is required' % missing, result.stderr)
+                self.assertIsNone(self.launched(), 'a worker started without its model or effort')
+                self.assertEqual(self.tmux_log(), '')
+
         self.assertIn('scripts/close_worker.sh w1', result.stdout)
         # The tab ends with `exit 0`, never as claude's own exit: Windows Terminal keeps a tab whose
         # command ended nonzero open, as claude does when close_worker.sh ends it.
@@ -240,7 +255,7 @@ class SpawnWorkerTests(unittest.TestCase):
         launched = self.launched()
         self.assertIsNotNone(launched, result.stderr)
         self.assertEqual(launched['argv'], [INSTRUCTION % shq(self.physical(brief)), '-n', 'w1',
-                                            '--model', 'm', '--allowedTools', tools])
+                                            '--model', 'm', '--effort', 'high', '--allowedTools', tools])
         self.assertEqual(Path(launched['cwd']).resolve(), self.cwd.resolve())
         self.assertEqual(self.tmux_log(), '')
         self.assertFalse((self.state / 'wt.log').exists(), 'the tab was shown a second time')
@@ -340,7 +355,8 @@ class SpawnWorkerTests(unittest.TestCase):
         # message put an ESC sequence on the lead's terminal. bash with xpg_echo behaves so.
         brief = self.cwd / 'task\\033[2J.md'
         brief.write_text('a brief\n')
-        result = subprocess.run(['bash', '-O', 'xpg_echo', str(SCRIPT), 'w\\033[2J', str(brief)], cwd=self.cwd,
+        result = subprocess.run(['bash', '-O', 'xpg_echo', str(SCRIPT), 'w\\033[2J', str(brief),
+                                 '--model', 'm', '--effort', 'high'], cwd=self.cwd,
                                 env=self.base_env(), capture_output=True, text=True, timeout=60)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(self.physical(brief), result.stdout)
@@ -468,7 +484,8 @@ class SpawnWorkerTests(unittest.TestCase):
                 if body:
                     (scripts / 'watch_workers.sh').write_text(body)
                 env = dict(self.base_env(), PWD=str(self.cwd))
-                result = subprocess.run(['sh', str(scripts / 'spawn_worker.sh'), 'w%d' % bool(body), str(self.brief)],
+                result = subprocess.run(['sh', str(scripts / 'spawn_worker.sh'), 'w%d' % bool(body), str(self.brief),
+                                         '--model', 'm', '--effort', 'high'],
                                         cwd=self.cwd, env=env, capture_output=True, text=True, timeout=60)
                 self.assertNotEqual(result.returncode, 0, result.stdout)
                 self.assertIn("cannot check session 'w%d': the watcher exited " % bool(body), result.stderr)

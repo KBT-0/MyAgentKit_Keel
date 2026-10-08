@@ -5,8 +5,8 @@
 # Terminal tab instead (see "Native Windows" below), and what follows about showing,
 # watching and closing a tmux session does not apply there.
 #
-# Usage: spawn_worker.sh NAME BRIEF_FILE [--model M] [--settings JSON_OR_FILE]
-#                        [--allowed-tools LIST] [--worktree] [--effort LEVEL] [--batch]
+# Usage: spawn_worker.sh NAME BRIEF_FILE --model M --effort LEVEL [--settings JSON_OR_FILE]
+#                        [--allowed-tools LIST] [--worktree] [--batch]
 #
 # Once the worker has its brief, its session is SHOWN: show_workers.sh opens a terminal tab
 # attached to it, because a session nobody sees can wait on a dialog for hours. --batch skips
@@ -103,6 +103,10 @@ done
 
 here=$(pwd -P && echo x) || die "cannot resolve the current folder"
 dir=${here%"${nl}x"}
+# The lead picks both for every worker (docs/WORKFLOW.md, "Model routing"); left out, the
+# session silently took the user's default.
+[ -n "$model" ] || die "--model is required: the lead picks the model for every worker"
+[ -n "$effort" ] || die "--effort is required: the lead picks the effort for every worker"
 # --settings is inline JSON or a file. The tool starts in the worktree, so a relative file is
 # made absolute here, against the caller's folder: resolved there, an untracked settings file
 # was missing and a tracked one of the same name was loaded instead. A relative value that is

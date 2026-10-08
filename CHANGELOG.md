@@ -19,6 +19,21 @@ worktree clean-up each work there, with tests that run on native Windows (a CI j
 own). It started as two fixes for a project that moved there from WSL, hardened by cross-model
 reviews. Why each change is safe is in `RESEARCH_LOG.md` (2026-10-06 and 2026-10-07).
 
+- **Model routing rules** (`docs/WORKFLOW.md`, "Model routing"): work is sorted into three
+  tiers; the lead chooses model and effort for every errand with equal care and writes both
+  into the brief; the top models (Codex Astra, Claude Fable) are the lead's pick for one
+  errand and only where the subscription includes them; a failed mechanical errand is rerun
+  one tier up; after three review rounds that do not come back clean the lead raises the
+  effort or the model of the fixer, and of the reviewer when needed; model versions are kept
+  current and a switch is reported to the kit; tier boundaries are moved by measured rejects
+  and rework. `setup/INTERVIEW.md` carries an example tier table, provisional until the
+  allowance draw per model is measured. `scripts/spawn_worker.sh` now refuses a worker
+  without `--model` and `--effort`; a sub-agent gets both on every Agent call. The kit's own reviewer
+  pins move to Codex `gpt-6.1-sol` and Claude `claude-opus-5-5`.
+  **ACTION:** copy the six rules into your `docs/WORKFLOW.md` under "Model routing", fill your
+  routing table by tier, and update the pins in your `scripts/review.sh` and the `model` in
+  `~/.codex/config.toml` to the newest models your subscriptions include. Every
+  `spawn_worker.sh` call in your briefs and notes now needs `--model` and `--effort`.
 - **The gate lock on native Windows.** `scripts/check.sh` run by Git for Windows' `sh` with a
   Windows `python3` failed every run with `FAIL [lock]: python3 has no fcntl module`, so every
   commit there was blocked. On that host the lock is now the lock file opened for writing
