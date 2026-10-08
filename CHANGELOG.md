@@ -11,6 +11,60 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ---
 
+## Unreleased
+
+- **Python that does not run** (issue #67): on Windows `python3` may be a Store alias that is
+  on PATH but exits 9009. The Claude Code overlay's three Python hooks now start through the
+  new `.claude/hooks/py.sh`, which runs the first of `python3`, `python`, `py -3` that runs;
+  before, each hook failed there and Claude Code went on without it, so `git reset --hard`
+  on a dirty tree was not refused. `check.sh`, `review.sh`, `doctor.sh`, `spawn_worker.sh`,
+  `close_worker.sh` and `clean_worktrees.sh` choose the same way, by running the candidate
+  instead of `command -v`. The sync updates `doctor.sh` and the three worker scripts
+  (KIT-OWNED), but none of the files below. **ACTION:** copy
+  `$KIT/overlays/claude-code/files/.claude/hooks/py.sh` to `.claude/hooks/py.sh`, and in
+  `.claude/settings.json` replace `python3 ` at the start of each Python hook command with
+  `sh "$CLAUDE_PROJECT_DIR/.claude/hooks/py.sh" `. In `scripts/check.sh` and
+  `scripts/review.sh` (the project's own), replace `command -v python3` and `command -v
+  python` in the `kit_python=` lines with `python3 -I -c '' </dev/null` and `python -I -c ''
+  </dev/null`. Then, with an uncommitted change, `echo
+  '{"tool_name":"Bash","tool_input":{"command":"git reset --hard"}}' | sh .claude/hooks/py.sh
+  .claude/hooks/guard_destructive_git.py` must print BLOCKED.
+- **A worker starts on native Windows** (issue #72; `scripts/spawn_worker.sh`): wt.exe drops
+  every double quote it is handed, so inline `--settings` JSON reached claude broken and the
+  tab closed at once with no error shown. The tab now runs a script that holds its command
+  and deletes itself, a claude that ends within ten seconds keeps the tab open with its exit
+  code, and the brief is named by its Windows path (`C:/...`), not Git Bash's `/tmp/...`.
+- **A worker is never ended mid-run, and the lead knows when it cannot hear one**
+  (`scripts/close_worker.sh`, `scripts/spawn_worker.sh`, `docs/WORKFLOW.md` "Worker cost"):
+  `close_worker.sh` ends nothing while a gate (`check.sh`, by its lock) or a git operation
+  (`index.lock`) runs in the worker's worktree, since a session ended mid-run orphans the run.
+  On native Windows `spawn_worker.sh` waits up to 30 s for the worker's process, fails when
+  none starts, and warns when Claude Code did not register it as a peer session: ListAgents
+  then does not list it and no idle notice comes, so the lead watches its tab.
+- **Running work is never ended without a reason that holds** (`AGENTS.md`, "Task
+  discipline"): a session, a review, a gate or a build keeps running unless the owner asked
+  for it to end, or it is provably finished or hung. On 2026-10-08 a stopped review left its
+  `codex exec` running orphaned, and killed workers left their `check.sh` racing the lead's
+  gate. **ACTION:** add the rule to your `AGENTS.md` under "Task discipline".
+- **Routine commands ask no one** (`.claude/settings.json`, Claude Code overlay): the gate
+  (`scripts/check.sh`) and read-only commands (`git status`, `log`, `diff`, `show`,
+  `rev-parse`, listing `git branch` and `git worktree list`, `cat`, `head`, `tail`, `ls`, `wc`,
+  `grep`, PowerShell `Get-Content` and `Get-ChildItem`) run without a permission prompt; ending
+  a process, deleting a file and every other command still ask. `git branch` is allowed only in
+  exact listing forms (a `*` admitted `git branch -vD`), and `git *--output*` is denied (it
+  overwrites a file). **ACTION:** a project with its own `.claude/settings.json` adds the
+  overlay's `permissions` block, `deny` included.
+- **A killed self-test's injection is named, not guessed at** (`scripts/boundary_selftests.sh`,
+  worked example): SIGKILL and `taskkill /F` run no trap, so an injection can be left behind
+  and every later self-test refuses to start. The refusal now says so and names the file to
+  check and delete by hand; the self-test never deletes it itself, since a junction above it
+  or an edit after the check would put the owner's content in its place. **ACTION:** add the
+  same two lines to each refusal in your `scripts/boundary_selftests.sh`.
+- **A review archive written on Windows matches its record** (`scripts/agent_usage.py`): the
+  archive was written in text mode, so Windows stored CRLF while the usage record hashed the
+  LF text, and the next review of the same task refused the earlier archive as changed. The
+  archive now holds the text's own bytes.
+
 ## v0.10 — 2026-10-07
 
 Native Windows (Git for Windows' `sh` with python.org CPython) becomes a host the kit runs on,
@@ -51,41 +105,6 @@ reviews. Why each change is safe is in `RESEARCH_LOG.md` (2026-10-06 and 2026-10
   most on code-writing workers. Codex installs it with `codex plugin add ponytail@ponytail`. **ACTION:** to
   turn it on in an existing project, add the overlay's `extraKnownMarketplaces` and
   `enabledPlugins` entries to `.claude/settings.json`.
-- **A worker starts on native Windows** (issue #72; `scripts/spawn_worker.sh`): wt.exe drops
-  every double quote it is handed, so inline `--settings` JSON reached claude broken and the
-  tab closed at once with no error shown. The tab now runs a script that holds its command
-  and deletes itself, a claude that ends within ten seconds keeps the tab open with its exit
-  code, and the brief is named by its Windows path (`C:/...`), not Git Bash's `/tmp/...`.
-- **A worker is never ended mid-run, and the lead knows when it cannot hear one**
-  (`scripts/close_worker.sh`, `scripts/spawn_worker.sh`, `docs/WORKFLOW.md` "Worker cost"):
-  `close_worker.sh` ends nothing while a gate (`check.sh`, by its lock) or a git operation
-  (`index.lock`) runs in the worker's worktree, since a session ended mid-run orphans the run.
-  On native Windows `spawn_worker.sh` waits up to 30 s for the worker's process, fails when
-  none starts, and warns when Claude Code did not register it as a peer session: ListAgents
-  then does not list it and no idle notice comes, so the lead watches its tab.
-- **Running work is never ended without a reason that holds** (`AGENTS.md`, "Task
-  discipline"): a session, a review, a gate or a build keeps running unless the owner asked
-  for it to end, or it is provably finished or hung. On 2026-10-08 a stopped review left its
-  `codex exec` running orphaned, and killed workers left their `check.sh` racing the lead's
-  gate. **ACTION:** add the rule to your `AGENTS.md` under "Task discipline".
-- **Routine commands ask no one** (`.claude/settings.json`, Claude Code overlay): the gate
-  (`scripts/check.sh`) and read-only commands (`git status`, `log`, `diff`, `show`,
-  `rev-parse`, listing `git branch` and `git worktree list`, `cat`, `head`, `tail`, `ls`, `wc`,
-  `grep`, PowerShell `Get-Content` and `Get-ChildItem`) run without a permission prompt; ending
-  a process, deleting a file and every other command still ask. `git branch` is allowed only in
-  exact listing forms (a `*` admitted `git branch -vD`), and `git *--output*` is denied (it
-  overwrites a file). **ACTION:** a project with its own `.claude/settings.json` adds the
-  overlay's `permissions` block, `deny` included.
-- **A killed self-test's injection is named, not guessed at** (`scripts/boundary_selftests.sh`,
-  worked example): SIGKILL and `taskkill /F` run no trap, so an injection can be left behind
-  and every later self-test refuses to start. The refusal now says so and names the file to
-  check and delete by hand; the self-test never deletes it itself, since a junction above it
-  or an edit after the check would put the owner's content in its place. **ACTION:** add the
-  same two lines to each refusal in your `scripts/boundary_selftests.sh`.
-- **A review archive written on Windows matches its record** (`scripts/agent_usage.py`): the
-  archive was written in text mode, so Windows stored CRLF while the usage record hashed the
-  LF text, and the next review of the same task refused the earlier archive as changed. The
-  archive now holds the text's own bytes.
 - **Model routing rules** (`docs/WORKFLOW.md`, "Model routing"): work is sorted into three
   tiers; the lead chooses model and effort for every errand with equal care and writes both
   into the brief; the top models (Codex Astra, Claude Fable) are the lead's pick for one

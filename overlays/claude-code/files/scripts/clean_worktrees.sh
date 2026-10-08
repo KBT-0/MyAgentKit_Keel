@@ -62,11 +62,12 @@
 # The audit is Python because it reads git's NUL-separated output and compares bytes: a file
 # name may hold a newline or a byte that is not UTF-8, and sh cannot hold a NUL.
 set -eu
-# Windows installs Python as `python` or `py`: when `python3` is absent, the scripts call the
-# first of those under the usual name. A function is enough for a call; an `exec` cannot
-# run a function, so the exec sites use $kit_python, the resolved command.
-if command -v python3 >/dev/null 2>&1; then kit_python=python3
-elif command -v python >/dev/null 2>&1; then kit_python=python
+# Windows installs Python as `python` or `py`: when `python3` is absent or does not run (a
+# Store alias exits 9009), the scripts call the first of those that runs under the usual
+# name. A function is enough for a call; an `exec` cannot run a function, so the exec sites
+# use $kit_python, the resolved command.
+if python3 -I -c '' </dev/null >/dev/null 2>&1; then kit_python=python3
+elif python -I -c '' </dev/null >/dev/null 2>&1; then kit_python=python
 else kit_python="py -3"; fi   # the launcher, told which Python: unquoted at every use
 [ "$kit_python" = python3 ] || python3() { $kit_python "$@"; }
 exec $kit_python "$(dirname -- "$0")/clean_worktrees.py" "$@"

@@ -169,8 +169,8 @@ instruction="Read $(q "$brief") and follow it. Do not ask questions in this pane
 # KIT_PS names another lister (the kit's tests), printing "<pid> <command line>" lines as this
 # one does. A command line Windows does not show (another user's process) names nothing. A
 # lister that fails prints its words instead and returns 2.
-if command -v python3 >/dev/null 2>&1; then kit_python=python3
-elif command -v python >/dev/null 2>&1; then kit_python=python
+if python3 -I -c '' </dev/null >/dev/null 2>&1; then kit_python=python3
+elif python -I -c '' </dev/null >/dev/null 2>&1; then kit_python=python
 else kit_python="py -3"; fi   # unquoted at every use
 sessions() {
   out=$(${KIT_PS:-powershell.exe -NoProfile -NonInteractive -Command} \

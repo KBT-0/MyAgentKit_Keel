@@ -76,7 +76,7 @@ REQUIRED_SUITES = {
               'test_spawn_worker': 18, 'test_worker_visibility': 55, 'test_doc_pointers': 5,
               'test_kit_output': 1, 'test_kit_runner': 15, 'test_clean_worktrees': 137, 'test_clean_worktrees_windows': 9, 'test_close_worker_windows': 1,
               'test_review_windows': 20, 'test_worker_paths_windows': 3,
-              'test_close_worker': 22},
+              'test_close_worker': 22, 'test_python_fallback': 1},
 }
 # Suites that do not run on native Windows, each with the reason. There each one prints one
 # NOT RUN line and is not imported; CI's Linux and macOS jobs run every one of them. A suite

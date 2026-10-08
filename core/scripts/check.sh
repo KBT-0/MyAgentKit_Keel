@@ -64,11 +64,12 @@ case "$toolchain_path" in
   *) PATH="$toolchain_path:$PATH"; export PATH ;;
 esac
 # Resolved AFTER toolchain_path joined PATH: a python3 only there is the one a hook sees.
-# Windows installs Python as `python` or `py`: when `python3` is absent, the scripts call the
-# first of those under the usual name. A function is enough for a call; an `exec` cannot
-# run a function, so the exec sites use $kit_python, the resolved command.
-if command -v python3 >/dev/null 2>&1; then kit_python=python3
-elif command -v python >/dev/null 2>&1; then kit_python=python
+# Windows installs Python as `python` or `py`: when `python3` is absent or does not run (a
+# Store alias exits 9009), the scripts call the first of those that runs under the usual
+# name. A function is enough for a call; an `exec` cannot run a function, so the exec sites
+# use $kit_python, the resolved command.
+if python3 -I -c '' </dev/null >/dev/null 2>&1; then kit_python=python3
+elif python -I -c '' </dev/null >/dev/null 2>&1; then kit_python=python
 else kit_python="py -3"; fi   # the launcher, told which Python: unquoted at every use
 [ "$kit_python" = python3 ] || python3() { $kit_python "$@"; }
 
@@ -230,8 +231,8 @@ case "${GATE_LOCK_WAIT:-}" in
   *[!0-9]*) printf '%s\n' "FAIL [lock]: GATE_LOCK_WAIT must be a number of seconds, got '$GATE_LOCK_WAIT'."; exit 1 ;;
 esac
 if [ -z "$inherited" ]; then
-  command -v python3 >/dev/null 2>&1 ||
-    { echo "FAIL [lock]: python3 is not on PATH, and the gate lock is taken through it."; exit 1; }
+  $kit_python -I -c '' </dev/null >/dev/null 2>&1 ||
+    { echo "FAIL [lock]: no Python runs (python3, python, py -3), and the gate lock is taken through it."; exit 1; }
   # Python ignores SIGPIPE and SIGXFSZ and catches SIGINT; the wait and the gate get back
   # what sh would have given them.
   # O_NOFOLLOW: a symlink here (the older lock's, left by a killed run) is refused by name.
