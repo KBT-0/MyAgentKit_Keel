@@ -19,6 +19,14 @@ worktree clean-up each work there, with tests that run on native Windows (a CI j
 own). It started as two fixes for a project that moved there from WSL, hardened by cross-model
 reviews. Why each change is safe is in `RESEARCH_LOG.md` (2026-10-06 and 2026-10-07).
 
+- **Lead context line** (issue #58; `docs/WORKFLOW.md`, "Worker cost", rule 8): past 200k
+  tokens of context the lead recommends `/compact` or a hand-off, whichever is cheaper at
+  that moment, never a hand-off by default. The Claude Code overlay's new UserPromptSubmit
+  hook `.claude/hooks/context_size.py` tells the agent the size once per 50k step past the
+  line. `AGENTS.md` MENTION ONCE gains "a cheaper way you can see". `scripts/agent_cost.py
+  --latest` now finds the transcripts of a project whose path holds `_` or another
+  non-alphanumeric character. **ACTION:** a project with its own `.claude/settings.json`
+  adds the UserPromptSubmit entry from the overlay's.
 - **Model routing rules** (`docs/WORKFLOW.md`, "Model routing"): work is sorted into three
   tiers; the lead chooses model and effort for every errand with equal care and writes both
   into the brief; the top models (Codex Astra, Claude Fable) are the lead's pick for one
