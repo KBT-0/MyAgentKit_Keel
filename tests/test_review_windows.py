@@ -232,11 +232,19 @@ class ReviewOnWindows(unittest.TestCase):
             agent_process.restore(previous)
 
     @windows_only
-    def test_a_cancel_during_restoration_corrects_the_adapter_and_usage(self):
+    def test_a_second_cancel_during_restoration_sees_settled_records(self):
+        self.cancel_at_hand_back('restoration')
+
+    @windows_only
+    def test_a_second_cancel_during_persistence_cannot_interrupt_settlement(self):
+        self.cancel_at_hand_back('persistence')
+
+    def cancel_at_hand_back(self, second_cancel):
         import contextlib
         import io
         import signal
         from unittest.mock import patch
+        import agent_usage
         import codex_bridge
         repo = self.tmp / 'repo'
         subprocess.run(['git', 'init', '-q', str(repo)], check=True)
@@ -246,39 +254,73 @@ class ReviewOnWindows(unittest.TestCase):
         subprocess.run(['git', '-C', str(repo), '-c', 'user.name=t', '-c', 'user.email=t@t',
                         'commit', '-qm', 'base'], check=True, capture_output=True)
         (repo / 'guidance.md').write_text('Changed guidance.\n')
-        result, forwarded, fired = [], [], []
-        real_signal = signal.signal
+        result, forwarded, samples, fired = [], [], [], []
+        real_signal, real_pending = signal.signal, agent_process.pending
+        real_hand_back = agent_process.handing_back
+        real_relabel = agent_usage.relabel_cancelled
+
+        class CallerCancel(Exception):
+            pass
 
         def caller(sig, frame):
             # The caller must see the correction already persisted when the signal arrives.
             forwarded.append((sig, result[0].copy(),
                               json.loads(Path(result[0]['usage_record']).read_text())))
+            raise CallerCancel
 
         previous = agent_process.hold(caller)
 
-        def install(sig, handler):
-            old = real_signal(sig, handler)
-            if sig == signal.SIGINT and handler is caller and not fired:
-                fired.append(True)
+        def pending():
+            held = real_pending()
+            samples.append(set(held))
+            if len(samples) == 2:
+                # The recorder receives this after the loop's empty sample, before any
+                # handler swap. It must be settled before a caller can raise or terminate.
                 signal.raise_signal(signal.SIGTERM)
-            return old
+            return held
+
+        def hand_back(previous, settle):
+            with patch.object(agent_process, 'pending', side_effect=pending):
+                real_hand_back(previous, settle)
+
+        def install(sig, handler):
+            if second_cancel == 'restoration' and sig == signal.SIGTERM and handler is caller and not fired:
+                fired.append(True)
+                # SIGINT is already restored; its raising caller must see the first cancel
+                # persisted, and cleanup must still restore SIGTERM.
+                signal.raise_signal(signal.SIGINT)
+            return real_signal(sig, handler)
+
+        def relabel(*args, **kwargs):
+            if second_cancel == 'persistence' and not fired:
+                fired.append(True)
+                signal.raise_signal(signal.SIGINT)
+            return real_relabel(*args, **kwargs)
 
         quota = {'exit_code': 1, 'stdout': json.dumps({'type': 'turn.failed',
                  'error': {'message': 'usage limit reached'}}), 'stderr': '',
                  'termination': None, 'cancelled': False, 'duration_ms': 1}
         try:
+            output = io.StringIO()
             with patch.dict(os.environ, REVIEW_DOCS='guidance.md', MYAGENTKIT_CAPTURE_QUOTA='0',
                             MYAGENTKIT_DELEGATION_DEPTH='0'), \
                     patch.object(agent_process, 'run', return_value=quota), \
-                    patch.object(signal, 'signal', side_effect=install), contextlib.redirect_stdout(io.StringIO()):
+                    patch.object(agent_process, 'handing_back', side_effect=hand_back), \
+                    patch.object(agent_usage, 'relabel_cancelled', side_effect=relabel), \
+                    patch.object(signal, 'signal', side_effect=install), contextlib.redirect_stdout(output), \
+                    self.assertRaises(CallerCancel):
                 codex_bridge.main(['--repo', str(repo), '--model', 'fixture', '--uncommitted'], result.append)
+            self.assertTrue(forwarded)
+            for sig, seen_result, usage in forwarded:
+                self.assertEqual((seen_result['failure_kind'], seen_result['cancelled']), ('cancelled', True))
+                self.assertEqual(usage['failure_kind'], 'cancelled')
             self.assertEqual(fired, [True])
-            self.assertEqual(len(forwarded), 1)
-            sig, seen_result, usage = forwarded[0]
-            self.assertEqual(sig, signal.SIGTERM)
-            self.assertEqual((seen_result['failure_kind'], seen_result['cancelled']), ('cancelled', True))
-            self.assertEqual(usage['failure_kind'], 'cancelled')
+            published = [json.loads(line.removeprefix('review invocation: '))
+                         for line in output.getvalue().splitlines() if line.startswith('review invocation: ')]
+            self.assertEqual((published[-1]['failure_kind'], published[-1]['cancelled']), ('cancelled', True))
             self.assertIn('| failure_kind | cancelled |', Path(result[0]['evidence']).read_text())
+            for sig in previous:
+                self.assertIs(signal.getsignal(sig), caller)
         finally:
             agent_process.restore(previous)
 

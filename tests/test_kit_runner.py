@@ -104,24 +104,45 @@ class KitRunnerTests(unittest.TestCase):
         (nested / 'test_nested_failure.py').write_text(PROBE % 'False')
         passed, out = runner(('suite', command))
         self.assertFalse(passed, out)
-        self.assertIn('nested.test_nested_failure.Probe.test_maybe', out)
-        self.assertIn('probe failure message', out)
+        self.assertIn('nested test modules are not supported: nested/test_nested_failure.py', out)
 
-    def test_excluded_modules_are_not_imported_even_in_a_nested_package(self):
+    def test_a_passing_nested_module_is_refused_before_import(self):
         command = self.suite_unit('True', 2)
         nested = self.tmp / 'suite/nested'
         nested.mkdir()
-        (nested / '__init__.py').write_text('')
-        for directory in (self.tmp / 'suite', nested):
-            (directory / 'test_excluded.py').write_text('raise AssertionError("excluded module imported")\n')
-        (nested / 'test_nested_pass.py').write_text(PROBE % 'True')
+        (nested / '__init__.py').write_text('print("nested package imported")\n')
+        (nested / 'test_extra.py').write_text(PROBE % 'True')
+        passed, out = runner(('suite', command))
+        self.assertFalse(passed, out)
+        self.assertIn('nested test modules are not supported: nested/test_extra.py', out)
+        self.assertNotIn('nested package imported', out)
+
+    def test_a_nested_module_without_a_package_is_refused(self):
+        command = self.suite_unit('True', 2)
+        nested = self.tmp / 'suite/nested/deeper'
+        nested.mkdir(parents=True)
+        (nested / 'test_extra.py').write_text(PROBE % 'True')
+        passed, out = runner(('suite', command))
+        self.assertFalse(passed, out)
+        self.assertIn('nested test modules are not supported: nested/deeper/test_extra.py', out)
+
+    def test_excluded_modules_are_not_imported(self):
+        command = self.suite_unit('True', 2)
+        (self.tmp / 'suite/test_excluded.py').write_text('raise AssertionError("excluded module imported")\n')
         script = self.tmp / 'unit.py'
         script.write_text(script.read_text().replace(
             "sys.exit(check_kit.unit", "check_kit.NOT_ON_WINDOWS = {'suite': {'test_excluded': 'fixture'}}\n"
             "check_kit.REQUIRED_SUITES['suite']['test_excluded'] = 1\nsys.exit(check_kit.unit"))
         passed, out = runner(('suite', command))
         self.assertTrue(passed, out)
-        self.assertIn('suite ran 4 tests', out)
+        self.assertIn('suite ran 2 tests', out)
+        nested = self.tmp / 'suite/nested'
+        nested.mkdir()
+        (nested / 'test_excluded.py').write_text('raise AssertionError("excluded module imported")\n')
+        passed, out = runner(('suite', command))
+        self.assertFalse(passed, out)
+        self.assertIn('nested test modules are not supported: nested/test_excluded.py', out)
+        self.assertNotIn('excluded module imported', out)
 
     def test_the_wrapper_tries_python_when_python3_cannot_run(self):
         import shlex

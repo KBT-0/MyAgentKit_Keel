@@ -217,8 +217,10 @@ def handing_back(previous: dict, settle) -> None:
     waits while the adapter corrects its records and writes its last line, then reaches the
     caller's handler when the block exits. Sampled once, a cancel arriving while `settle` ran
     reached the caller with the records still saying quota: `settle` runs again for every
-    cancel that is new since the last sample. Windows has no signal mask: cancels held during
-    handler restoration are settled too, before the recorder forwards them.
+    cancel that is new since the last sample. Windows has no signal mask: finish settlement
+    with the recorder still installed, restore the caller's handlers last, then forward.
+    On Windows, cancels received after the last settlement sample through the end of
+    `restore(previous)` are excluded and may reach the caller unsettled.
     """
     mask = block_cancels()
     try:
@@ -238,14 +240,16 @@ def handing_back(previous: dict, settle) -> None:
                 # If a restored caller raises midway, cleanup must restore the remaining
                 # caller handlers, not the adapter's abandoned handlers saved by the block.
                 mask[1].update(previous)
-                try:
-                    restore(previous)
-                finally:
-                    # pending() cannot see a recorder once its handlers have been replaced.
+                while True:
+                    # Read this block's recorder directly, including a cancel received after
+                    # the loop's last sample. A second cancel cannot interrupt persistence.
                     held = set(mask[2]) & set(previous)
                     # seen is None when the loop failed before its first sample.
-                    if seen is None or not held <= seen:
-                        settle(held)
+                    if seen is not None and held <= seen:
+                        break
+                    seen = held
+                    settle(held)
+                restore(previous)
         finally:
             restore_mask(mask)
 
