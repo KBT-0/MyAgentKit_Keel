@@ -765,12 +765,18 @@ class SyncKitTests(unittest.TestCase):
                     run_env['TMPDIR'] = str(project)
                 result = subprocess.run(['sh', '-c', snippet], cwd=project, capture_output=True, text=True,
                                         env=run_env)
+                untracked = lambda: subprocess.run(['git', 'ls-files', '--others'], cwd=project, capture_output=True,
+                                                   text=True, env=env).stdout.split()
+                if case == 'TMPDIR inside' and sys.platform == 'darwin':
+                    # macOS mktemp without a template ignores TMPDIR: the copies go to the user's
+                    # temp folder, never into the project, and the step runs.
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertEqual(untracked(), [])
+                    continue
                 self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertIn('a killed run left scripts/.kit-merge-Ab12Cd' if case == 'a leftover'
                               else 'is inside the project (TMPDIR?)', result.stderr)
-                untracked = subprocess.run(['git', 'ls-files', '--others'], cwd=project, capture_output=True,
-                                           text=True, env=env).stdout.split()
-                self.assertEqual(untracked, ['scripts/.kit-merge-Ab12Cd'] if case == 'a leftover' else [])
+                self.assertEqual(untracked(), ['scripts/.kit-merge-Ab12Cd'] if case == 'a leftover' else [])
                 for name in names:
                     self.assertEqual((project / name).read_text(), 'one\nmine\n')
 

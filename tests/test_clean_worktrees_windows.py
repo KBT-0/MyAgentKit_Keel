@@ -170,7 +170,9 @@ class CleanWorktreesOnWindows(unittest.TestCase):
         self.assertEqual(made.returncode, 0, made.stdout + made.stderr)
         out = self.run_script('--apply')
         self.assertKept(path, out, 'works inside it')
-        self.assertIn(path.as_posix(), self.git('worktree', 'list', '--porcelain'))
+        # Git names the worktree by its long path; the temp folder may come as an 8.3 short name
+        # (C:/Users/RUNNER~1 on a CI runner).
+        self.assertIn(Path(os.path.realpath(path)).as_posix(), self.git('worktree', 'list', '--porcelain'))
         self.assertEqual({name: (path / name).read_bytes() for name in tracked}, tracked)
 
     @windows_only
