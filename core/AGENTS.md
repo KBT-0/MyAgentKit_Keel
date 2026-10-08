@@ -78,6 +78,12 @@ cost", and `docs/WORKFLOW.md`, "Review rounds".
   `restore`, `clean -f`, `stash drop`, a force push. Uncommitted work is NOT in the reflog
   (`docs/GOTCHAS.md`). Check `git status` first, every time, even when you are sure the tree
   is clean.
+- **Never end running work without a reason that holds.** A session, a review, a gate or a
+  build that is running keeps running unless {{OWNER_NAME}} asked for it to end, or it is
+  provably finished or hung. A stopped review or a killed worker orphans what it started,
+  which runs on, spends quota and races the next run. A finished worker is closed with
+  `scripts/close_worker.sh`, which refuses while its gate or commit runs. With the Claude Code
+  overlay, `.claude/hooks/guard_running_work.py` asks {{OWNER_NAME}} before any such call.
 - No untested code enters {{TESTED_AREA}}. Write tests with or before the code;
   `./scripts/check.sh` must PASS before you finish.
 - The gate is wired into git: `.githooks/pre-commit` runs it and aborts the commit on FAIL,

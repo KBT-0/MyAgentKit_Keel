@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|PowerShell|TaskStop",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/overlays/claude-code/files/.claude/hooks/guard_running_work.py\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

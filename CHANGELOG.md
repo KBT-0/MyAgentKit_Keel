@@ -63,6 +63,14 @@ reviews. Why each change is safe is in `RESEARCH_LOG.md` (2026-10-06 and 2026-10
   On native Windows `spawn_worker.sh` waits up to 30 s for the worker's process, fails when
   none starts, and warns when Claude Code did not register it as a peer session: ListAgents
   then does not list it and no idle notice comes, so the lead watches its tab.
+- **Running work is never ended without a reason that holds** (`AGENTS.md`, "Task
+  discipline"; new hook `.claude/hooks/guard_running_work.py`): a call that ends a process
+  (`taskkill`, `Stop-Process`, `kill`, `pkill`, `killall`, `tmux kill-session`) or stops a
+  background task (TaskStop) is put to the owner first. On 2026-10-08 a stopped review left
+  its `codex exec` running orphaned, and killed workers left their `check.sh` racing the
+  lead's gate. The kit's own `.claude/settings.json` runs the same hook. **ACTION:** add the
+  rule to your `AGENTS.md` under "Task discipline", and a project with its own
+  `.claude/settings.json` adds the overlay's `Bash|PowerShell|TaskStop` PreToolUse entry.
 - **Model routing rules** (`docs/WORKFLOW.md`, "Model routing"): work is sorted into three
   tiers; the lead chooses model and effort for every errand with equal care and writes both
   into the brief; the top models (Codex Astra, Claude Fable) are the lead's pick for one
