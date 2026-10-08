@@ -22,10 +22,9 @@ reviews. Why each change is safe is in `RESEARCH_LOG.md` (2026-10-06 and 2026-10
 - **Ponytail mode** (`setup/INTERVIEW.md`, question 11; default yes): the Claude Code
   overlay's `.claude/settings.json` turns on `ponytail@myagentkit`, which makes sessions and
   workers try the smallest working solution first: reuse, standard library, platform, one
-  line, then the minimum code. The kit's marketplace lists `DietrichGebert/ponytail` pinned
-  to commit `bc9ee94` (v4.8.4), so a new release reaches projects only when the kit moves the
-  pin. About 1.3k tokens at each session and sub-agent start; it saves most on code-writing
-  workers. Codex installs it unpinned (`codex plugin add ponytail@ponytail`). **ACTION:** to
+  line, then the minimum code. The kit's marketplace lists `DietrichGebert/ponytail` at its
+  author's latest version. About 1.3k tokens at each session and sub-agent start; it saves
+  most on code-writing workers. Codex installs it with `codex plugin add ponytail@ponytail`. **ACTION:** to
   turn it on in an existing project, add the overlay's `extraKnownMarketplaces` and
   `enabledPlugins` entries to `.claude/settings.json`; turn off a user-level
   `ponytail@ponytail`, or both copies load.
