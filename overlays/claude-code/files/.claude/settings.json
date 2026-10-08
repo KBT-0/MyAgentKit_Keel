@@ -18,6 +18,12 @@
       "Bash(scripts/check.sh --self-test)",
       "Bash(git status)",
       "Bash(git status *)",
+      "Bash(git log --no-textconv --no-ext-diff)",
+      "Bash(git log --no-textconv --no-ext-diff *)",
+      "Bash(git diff --no-textconv --no-ext-diff)",
+      "Bash(git diff --no-textconv --no-ext-diff *)",
+      "Bash(git show --no-textconv --no-ext-diff)",
+      "Bash(git show --no-textconv --no-ext-diff *)",
       "Bash(git branch)",
       "Bash(git branch -v)",
       "Bash(git branch -vv)",
@@ -39,7 +45,8 @@
     ],
     "deny": [
       "Bash(git *--output*)",
-      "Bash(git *--ext-diff*)"
+      "Bash(git *--ext-diff*)",
+      "Bash(git *--textconv*)"
     ]
   },
   "hooks": {

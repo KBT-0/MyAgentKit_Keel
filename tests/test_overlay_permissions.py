@@ -68,9 +68,21 @@ class OverlayPermissionsTests(unittest.TestCase):
                     git(*args)
                     self.assertTrue(marker.exists(), 'Git did not execute the textconv fixture')
                     marker.unlink()
-                    for command in ('git ' + args[0], 'git ' + ' '.join(args)):
-                        self.assertFalse(any(fnmatch.fnmatchcase('Bash(' + command + ')', rule)
-                                             for rule in self.permissions['allow']), command)
+                    for command in ('git ' + args[0], 'git ' + ' '.join(args),
+                                    'git %s --no-textconv --no-ext-diff %s --textconv' % (args[0], ' '.join(args[1:]))):
+                        self.assertFalse(self.allowed(command), command)
+            # The allowed form runs no converter, and a later --textconv cannot turn it back on.
+            for args in (('diff',), ('show', 'HEAD', '--', 'data.dat'), ('log', '-p', 'HEAD', '--', 'data.dat')):
+                with self.subTest(safe=args):
+                    command = ('git', args[0], '--no-textconv', '--no-ext-diff', *args[1:])
+                    self.assertTrue(self.allowed(' '.join(command)), command)
+                    git(*command[1:])
+                    self.assertFalse(marker.exists(), command)
+
+    def allowed(self, command):
+        matches = lambda kind: any(fnmatch.fnmatchcase('Bash(' + command + ')', rule)
+                                   for rule in self.permissions[kind])
+        return matches('allow') and not matches('deny')
 
     def test_git_branch_is_allowed_only_in_exact_listing_forms(self):
         branch = [r for r in self.permissions['allow'] if r.startswith('Bash(git branch')]

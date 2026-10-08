@@ -48,16 +48,18 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   gate. **ACTION:** add the rule to your `AGENTS.md` under "Task discipline".
 - **Routine commands ask no one** (`.claude/settings.json`, Claude Code overlay; the list the
   owner chose with project_leeway): the gate (`scripts/check.sh` and `--self-test`, exactly)
-  and read-only commands (`git status`, `git worktree list`, `cat`,
+  and read-only commands (`git status`, `git log`/`diff`/`show` only as `git <cmd>
+  --no-textconv --no-ext-diff ...`, `git worktree list`, `cat`,
   `head`, `tail`, `ls`, `wc`, `grep`, `date`, `pwd`, PowerShell `Get-Content` and
   `Get-ChildItem`) run without a permission prompt; ending a process, deleting a file and every
   other command still ask. `git branch` is allowed only in exact listing forms (a `*` admitted
   `git branch -vD`), no rule has a `*` before its subcommand (`git -C * diff*` admitted
   `git -C . branch -D x`), a `*` follows a whole word (`git diff*` admitted `git difftool
-  --extcmd=...`, `date*` admitted `date -s`), and `git *--output*` and `git *--ext-diff*` are
-  denied (the one overwrites a file, the other runs the repository's diff driver). **ACTION:** a project with its own `.claude/settings.json` adds the
-  overlay's `permissions` block, `deny` included. Remove any `git diff`, `git show` and `git log`
-  allowances: they can run a repository-configured textconv or external diff driver, so they must prompt.
+  --extcmd=...`, `date*` admitted `date -s`), and `git *--output*`, `git *--ext-diff*` and `git *--textconv*` are
+  denied (the first overwrites a file, the others run the repository's diff drivers). **ACTION:** a project with its own `.claude/settings.json` adds the
+  overlay's `permissions` block, `deny` included. Replace any plain `git diff`, `git show` and
+  `git log` allowances with the overlay's `--no-textconv --no-ext-diff` forms: a plain one runs
+  a repository-configured textconv driver, so a read could run any command.
 - **A killed self-test's injection is named, not guessed at** (`scripts/boundary_selftests.sh`,
   worked example): SIGKILL and `taskkill /F` run no trap, so an injection can be left behind
   and every later self-test refuses to start. The refusal now says so and names the file to
