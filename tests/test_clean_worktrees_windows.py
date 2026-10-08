@@ -8,6 +8,7 @@ in a throwaway repository and runs the real script under Git for Windows' sh. Ev
 runs only on native Windows; elsewhere each one prints a NOT RUN line and passes.
 """
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -104,6 +105,12 @@ class CleanWorktreesOnWindows(unittest.TestCase):
         self.assertIn('keep   .claude', out)
         self.assertIn(reason, out)
 
+    def assertProcessKept(self, path, out, pid):
+        self.assertKept(path, out, 'works inside it')
+        match = re.search(r'in use: process ([0-9, ]+) works inside it', out)
+        self.assertIsNotNone(match, out)
+        self.assertIn(pid, [int(value) for value in match[1].split(',')], out)
+
     @windows_only
     def test_a_finished_idle_worktree_is_removed(self):
         path = self.worktree('done')
@@ -132,7 +139,7 @@ class CleanWorktreesOnWindows(unittest.TestCase):
         path = self.worktree('busy')
         child = self.start_inside([sys.executable, '-c', 'import sys; sys.stdin.read()'], path)
         out = self.run_script('--apply')
-        self.assertKept(path, out, 'in use: process %d works inside it' % child.pid)
+        self.assertProcessKept(path, out, child.pid)
 
     @windows_only
     def test_a_process_that_entered_through_a_junction_keeps_it(self):
@@ -144,7 +151,36 @@ class CleanWorktreesOnWindows(unittest.TestCase):
         self.assertEqual(made.returncode, 0, made.stdout + made.stderr)
         child = self.start_inside([sys.executable, '-c', 'import sys; sys.stdin.read()'], alias)
         out = self.run_script('--apply')
-        self.assertKept(path, out, 'in use: process %d works inside it' % child.pid)
+        self.assertProcessKept(path, out, child.pid)
+
+    @windows_only
+    def test_a_retargeted_junction_keeps_the_directory_the_process_holds(self):
+        path = self.worktree('retargeted')
+        tracked = {name: (path / name).read_bytes()
+                   for name in self.git('ls-files', cwd=path).splitlines()}
+        alias = self.tmp / 'alias'
+        other = self.tmp / 'other'
+        other.mkdir()
+        made = subprocess.run(['cmd', '/c', 'mklink', '/J', str(alias), str(path)], capture_output=True)
+        self.assertEqual(made.returncode, 0, made.stdout + made.stderr)
+        self.start_inside([sys.executable, '-c', 'import sys; sys.stdin.read()'], alias)
+        # Remove only the junction, then point the same pathname somewhere else before audit.
+        alias.rmdir()
+        made = subprocess.run(['cmd', '/c', 'mklink', '/J', str(alias), str(other)], capture_output=True)
+        self.assertEqual(made.returncode, 0, made.stdout + made.stderr)
+        out = self.run_script('--apply')
+        self.assertKept(path, out, 'works inside it')
+        self.assertIn(path.as_posix(), self.git('worktree', 'list', '--porcelain'))
+        self.assertEqual({name: (path / name).read_bytes() for name in tracked}, tracked)
+
+    @windows_only
+    def test_a_junction_worker_with_a_venv_launcher_keeps_it(self):
+        import venv
+        from unittest.mock import patch
+        env = self.tmp / 'venv'
+        venv.EnvBuilder(with_pip=False).create(env)
+        with patch.object(sys, 'executable', str(env / 'Scripts/python.exe')):
+            self.test_a_process_that_entered_through_a_junction_keeps_it()
 
     @windows_only
     def test_a_git_bash_shell_in_a_subfolder_keeps_it(self):

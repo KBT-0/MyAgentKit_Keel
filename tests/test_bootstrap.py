@@ -821,6 +821,38 @@ class BootstrapTests(unittest.TestCase):
                 with self.subTest(path=path, own_root=own_root):
                     self.attribute_override(path, nested=True, own_root=own_root)
 
+    def test_overlay_root_attributes_are_merged_in_install_order_before_copying(self):
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as tmp:
+            kit, project = Path(tmp) / 'kit', Path(tmp) / 'project'
+            (kit / 'core/scripts').mkdir(parents=True)
+            (kit / 'core/scripts/check.sh').write_bytes(b'# fixture gate\n')
+            shutil.copyfile(root / 'core/.gitattributes', kit / 'core/.gitattributes')
+            shutil.copyfile(root / 'bootstrap.sh', kit / 'bootstrap.sh')
+            (kit / 'CHANGELOG.md').write_bytes(b'## v0.10\n')
+            for name, eol in (('bad', 'crlf'), ('good', 'lf')):
+                files = kit / 'overlays' / name / 'files'
+                files.mkdir(parents=True)
+                (files / '.gitattributes').write_bytes(('scripts/*.sh text eol=%s\n' % eol).encode())
+            project.mkdir()
+            own = b'*.png binary\n'
+            (project / '.gitattributes').write_bytes(own)
+            for force in ([], ['--force']):
+                with self.subTest(force=force):
+                    result = subprocess.run(['sh', str(kit / 'bootstrap.sh'), str(project),
+                                             '--overlay', 'good', '--overlay', 'bad', *force],
+                                            capture_output=True, text=True)
+                    self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertIn('scripts/check.sh', result.stderr)
+                    self.assertIn('eol=lf', result.stderr)
+                    self.assertEqual((project / '.gitattributes').read_bytes(), own)
+                    self.assertFalse((project / 'scripts/check.sh').exists())
+                    self.assertFalse((project / 'docs/kit/.kit-version').exists())
+            result = subprocess.run(['sh', str(kit / 'bootstrap.sh'), str(project),
+                                     '--overlay', 'bad', '--overlay', 'good'], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual((project / '.gitattributes').read_text().count('scripts/*.sh text eol=lf'), 1)
+
     def test_scripts_and_hooks_check_out_with_lf_under_autocrlf(self):
         # Git for Windows' default core.autocrlf=true checked every text file out with CRLF,
         # and sh cannot run a CRLF script: a project's gate, hooks and doctor.sh, and the kit's

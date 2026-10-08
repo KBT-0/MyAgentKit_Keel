@@ -162,18 +162,15 @@ put() {
 check_attributes() (
   [ -f "$kit/core/.gitattributes" ] || return 0
   [ -z "$(blocked .gitattributes)" ] || return 0
-  rules=$(cat "$kit/core/.gitattributes") || die "cannot read the kit's .gitattributes; nothing was changed"
   attrs=""
   if [ -f "$target/.gitattributes" ]; then
     attrs=$(cat "$target/.gitattributes") || die "cannot read the project's own .gitattributes; nothing was changed"
   fi
-  missing=$(printf '%s\n' "$rules" | grep -v -e '^#' -e '^$' | while IFS= read -r rule; do
-              printf '%s\n' "$attrs" | grep -qxF -e "$rule" || printf '%s\n' "$rule"; done)
   probe=$(mktemp -d) || die "cannot create a temporary folder to check .gitattributes"
   trap 'rm -rf "$probe"' EXIT
   trap 'exit 129' HUP; trap 'exit 130' INT; trap 'exit 143' TERM
   git init -q "$probe" >/dev/null 2>&1 || die "cannot check .gitattributes with git; nothing was changed"
-  printf '%s\n%s\n' "$attrs" "$missing" > "$probe/.gitattributes"
+  printf '%s\n' "$attrs" > "$probe/.gitattributes"
   : > "$probe/paths"
   attribute_tree() {
     src=$1; prefix=${2:-}
@@ -186,7 +183,17 @@ check_attributes() (
       case "$rel" in __pycache__/*|*/__pycache__/*|*.pyc|*.pyo) continue ;; esac
       dest="${prefix:+$prefix/}$rel"
       case "$dest" in *.sh|*.py|.githooks/*) printf '%s\n' "$dest" >> "$probe/paths" ;; esac
-      case "$dest" in */.gitattributes)
+      case "$dest" in
+      .gitattributes)
+        # Installation merges each root file, core first and overlays in the given order.
+        # Simulate the same de-duplication: re-appending a present rule changes precedence.
+        rules=$(cat "$src/$rel") || die "cannot read the kit's $rel; nothing was changed"
+        attrs=$(cat "$probe/.gitattributes")
+        missing=$(printf '%s\n' "$rules" | grep -v -e '^#' -e '^$' | while IFS= read -r rule; do
+                    printf '%s\n' "$attrs" | grep -qxF -e "$rule" || printf '%s\n' "$rule"; done)
+        printf '\n%s\n' "$missing" >> "$probe/.gitattributes"
+        ;;
+      */.gitattributes)
         [ -z "$(blocked "$dest")" ] || continue
         if [ "$force" -eq 0 ] && [ -f "$target/$dest" ]; then from="$target/$dest"
         elif [ "$force" -eq 0 ] && [ -f "$probe/$dest" ]; then continue

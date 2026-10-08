@@ -96,6 +96,50 @@ class KitRunnerTests(unittest.TestCase):
         self.assertFalse(passed)
         self.assertIn('required test suite is incomplete: test_kit_probe', out)
 
+    def test_a_nested_only_failing_module_fails_the_run(self):
+        command = self.suite_unit('True', 2)
+        nested = self.tmp / 'suite/nested'
+        nested.mkdir()
+        (nested / '__init__.py').write_text('')
+        (nested / 'test_nested_failure.py').write_text(PROBE % 'False')
+        passed, out = runner(('suite', command))
+        self.assertFalse(passed, out)
+        self.assertIn('nested.test_nested_failure.Probe.test_maybe', out)
+        self.assertIn('probe failure message', out)
+
+    def test_excluded_modules_are_not_imported_even_in_a_nested_package(self):
+        command = self.suite_unit('True', 2)
+        nested = self.tmp / 'suite/nested'
+        nested.mkdir()
+        (nested / '__init__.py').write_text('')
+        for directory in (self.tmp / 'suite', nested):
+            (directory / 'test_excluded.py').write_text('raise AssertionError("excluded module imported")\n')
+        (nested / 'test_nested_pass.py').write_text(PROBE % 'True')
+        script = self.tmp / 'unit.py'
+        script.write_text(script.read_text().replace(
+            "sys.exit(check_kit.unit", "check_kit.NOT_ON_WINDOWS = {'suite': {'test_excluded': 'fixture'}}\n"
+            "check_kit.REQUIRED_SUITES['suite']['test_excluded'] = 1\nsys.exit(check_kit.unit"))
+        passed, out = runner(('suite', command))
+        self.assertTrue(passed, out)
+        self.assertIn('suite ran 4 tests', out)
+
+    def test_the_wrapper_tries_python_when_python3_cannot_run(self):
+        import shlex
+        project = self.tmp / 'kit'
+        (project / 'scripts').mkdir(parents=True)
+        shutil.copyfile(ROOT / 'scripts/check.sh', project / 'scripts/check.sh')
+        (project / 'scripts/check_kit.py').write_text('import sys; print("gate ran", sys.argv[1:])\n')
+        shims = self.tmp / 'bin'
+        shims.mkdir()
+        (shims / 'python3').write_text('#!/bin/sh\nexit 126\n')
+        (shims / 'python').write_text('#!/bin/sh\nexec %s "$@"\n' % shlex.quote(sys.executable))
+        for path in shims.iterdir():
+            path.chmod(0o755)
+        result = subprocess.run(['sh', str(project / 'scripts/check.sh'), '--timing'], capture_output=True,
+                                text=True, env=dict(os.environ, PATH=str(shims) + os.pathsep + os.environ['PATH']))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("gate ran ['--timing']", result.stdout)
+
     def test_units_print_in_the_given_order_whichever_ends_first(self):
         slow = [sys.executable, '-c', 'import time; time.sleep(1); print("slow output\\nUNIT DONE: slow")']
         fast = [sys.executable, '-c', 'print("fast output\\nUNIT DONE: fast")']

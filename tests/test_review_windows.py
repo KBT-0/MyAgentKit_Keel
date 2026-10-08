@@ -232,6 +232,112 @@ class ReviewOnWindows(unittest.TestCase):
             agent_process.restore(previous)
 
     @windows_only
+    def test_a_cancel_during_restoration_corrects_the_adapter_and_usage(self):
+        import contextlib
+        import io
+        import signal
+        from unittest.mock import patch
+        import codex_bridge
+        repo = self.tmp / 'repo'
+        subprocess.run(['git', 'init', '-q', str(repo)], check=True)
+        (repo / 'guidance.md').write_text('Fixture guidance.\n')
+        (repo / '.gitignore').write_text('.myagentkit/\ndocs/reviews/\n')
+        subprocess.run(['git', '-C', str(repo), 'add', '.'], check=True)
+        subprocess.run(['git', '-C', str(repo), '-c', 'user.name=t', '-c', 'user.email=t@t',
+                        'commit', '-qm', 'base'], check=True, capture_output=True)
+        (repo / 'guidance.md').write_text('Changed guidance.\n')
+        result, forwarded, fired = [], [], []
+        real_signal = signal.signal
+
+        def caller(sig, frame):
+            # The caller must see the correction already persisted when the signal arrives.
+            forwarded.append((sig, result[0].copy(),
+                              json.loads(Path(result[0]['usage_record']).read_text())))
+
+        previous = agent_process.hold(caller)
+
+        def install(sig, handler):
+            old = real_signal(sig, handler)
+            if sig == signal.SIGINT and handler is caller and not fired:
+                fired.append(True)
+                signal.raise_signal(signal.SIGTERM)
+            return old
+
+        quota = {'exit_code': 1, 'stdout': json.dumps({'type': 'turn.failed',
+                 'error': {'message': 'usage limit reached'}}), 'stderr': '',
+                 'termination': None, 'cancelled': False, 'duration_ms': 1}
+        try:
+            with patch.dict(os.environ, REVIEW_DOCS='guidance.md', MYAGENTKIT_CAPTURE_QUOTA='0',
+                            MYAGENTKIT_DELEGATION_DEPTH='0'), \
+                    patch.object(agent_process, 'run', return_value=quota), \
+                    patch.object(signal, 'signal', side_effect=install), contextlib.redirect_stdout(io.StringIO()):
+                codex_bridge.main(['--repo', str(repo), '--model', 'fixture', '--uncommitted'], result.append)
+            self.assertEqual(fired, [True])
+            self.assertEqual(len(forwarded), 1)
+            sig, seen_result, usage = forwarded[0]
+            self.assertEqual(sig, signal.SIGTERM)
+            self.assertEqual((seen_result['failure_kind'], seen_result['cancelled']), ('cancelled', True))
+            self.assertEqual(usage['failure_kind'], 'cancelled')
+            self.assertIn('| failure_kind | cancelled |', Path(result[0]['evidence']).read_text())
+        finally:
+            agent_process.restore(previous)
+
+    @windows_only
+    def test_a_raising_caller_during_restoration_leaves_no_recorder(self):
+        import signal
+        from unittest.mock import patch
+        real_signal, seen = signal.signal, []
+
+        class CallerCancel(Exception):
+            pass
+
+        def caller(sig, frame):
+            seen.append(sig)
+            raise CallerCancel
+
+        previous = agent_process.hold(caller)
+        caller_handlers = {sig: signal.getsignal(sig) for sig in previous}
+        agent_process.hold(lambda sig, frame: None)  # the adapter's handlers
+        fired = []
+
+        def install(sig, handler):
+            old = real_signal(sig, handler)
+            if sig == signal.SIGINT and handler is caller and not fired:
+                fired.append(True)
+                signal.raise_signal(signal.SIGINT)
+            return old
+
+        try:
+            with patch.object(signal, 'signal', side_effect=install), self.assertRaises(CallerCancel):
+                agent_process.handing_back(caller_handlers, lambda held: None)
+            self.assertEqual(fired, [True])
+            with self.assertRaises(CallerCancel):
+                signal.raise_signal(signal.SIGTERM)
+            self.assertEqual(seen, [signal.SIGINT, signal.SIGTERM])
+            for sig, handler in caller_handlers.items():
+                self.assertIs(signal.getsignal(sig), handler)
+        finally:
+            agent_process.restore(previous)
+
+    @windows_only
+    def test_a_failure_before_the_first_sample_is_the_error_raised(self):
+        # The restoration's clean-up compared what it held with the last sample; with no sample
+        # taken yet it raised TypeError and hid the failure itself.
+        from unittest.mock import patch
+
+        class Unread(Exception):
+            pass
+
+        previous = agent_process.hold(lambda sig, frame: None)
+        caller_handlers = dict(previous)
+        agent_process.hold(lambda sig, frame: None)  # the adapter's handlers
+        try:
+            with patch.object(agent_process, 'pending', side_effect=Unread), self.assertRaises(Unread):
+                agent_process.handing_back(caller_handlers, lambda held: None)
+        finally:
+            agent_process.restore(previous)
+
+    @windows_only
     def test_a_scratch_folder_that_cannot_be_removed_never_raises(self):
         # The Codex sandbox writes under another account; a folder this user cannot remove
         # made TemporaryDirectory raise even with ignore_cleanup_errors, and the review was lost.
