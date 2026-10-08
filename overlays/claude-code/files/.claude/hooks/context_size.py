@@ -7,17 +7,16 @@ last API request's input plus cache read plus cache write, read from the transcr
 compaction boundary resets it until the next request.
 
 Past LINE the hook adds one line to the agent's context, once per STEP: at 200k, 250k, 300k...
-The last step it named is kept in a temporary file per transcript, so a retried prompt or one
-that reached no request does not repeat it, and a smaller context (after /compact) arms it
+The last step it named is kept beside the transcript (`<session>.context-step`, in the
+user's own Claude folder, not a shared temporary one), so a retried prompt or one that
+reached no request does not repeat it, and a smaller context (after /compact) arms it
 again. Which of /compact and a hand-off is cheaper depends on what STATE holds and where the
 work goes next, which a hook cannot see, so the agent chooses and says so. Silent on any
 error: a broken transcript must never block a prompt.
 """
 import json
 from pathlib import Path
-import re
 import sys
-import tempfile
 
 LINE = 200_000  # a fresh session (~60k) pays back a hand-off in under ten turns from here
 STEP = 50_000
@@ -55,7 +54,7 @@ def context(path: Path) -> int:
 def main() -> None:
     transcript = Path(json.load(sys.stdin)['transcript_path'])
     ctx = context(transcript)
-    state = Path(tempfile.gettempdir()) / ('claude-context-' + re.sub(r'[^A-Za-z0-9]', '-', transcript.stem))
+    state = transcript.with_suffix('.context-step')
     try:
         said = int(state.read_text())
     except (OSError, ValueError):

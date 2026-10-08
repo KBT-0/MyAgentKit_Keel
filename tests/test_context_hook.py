@@ -29,8 +29,7 @@ class ContextHookTests(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         self.tmp = Path(tmp.name)
         self.transcript = self.tmp / 'session-1.jsonl'
-        # The hook keeps the step it named in the temporary folder: one per test.
-        self.env = dict(os.environ, TMP=tmp.name, TEMP=tmp.name, TMPDIR=tmp.name)
+        self.env = dict(os.environ)
 
     def run_hook(self, records, raw=None, command=None, env=None):
         self.transcript.write_text(raw if raw is not None else ''.join(json.dumps(r) + '\n' for r in records))
@@ -72,28 +71,59 @@ class ContextHookTests(unittest.TestCase):
                                 timeout=30, env=self.env)
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
 
-    def test_every_python_hook_runs_where_only_python_exists(self):
-        # Windows installs Python as `python`; a hook command naming python3 alone exits 127
-        # there, and Claude Code treats that as a silent non-blocking error.
+    def test_same_named_transcripts_keep_their_own_step(self):
+        # Projects' transcripts share file names; the step one named must not silence another.
+        other = self.tmp / 'other'
+        other.mkdir()
+        turns = [prompt(), request(210_000)]
+        self.assertIn('Context is 210k tokens', self.run_hook(turns))
+        self.transcript = other / self.transcript.name
+        self.assertIn('Context is 210k tokens', self.run_hook(turns))
+
+    def test_every_python_hook_runs_where_python3_does_not(self):
+        # Windows installs Python as `python`, and its `python3` may be a Store alias that is on
+        # PATH but does not run (9009, or 126 where it is not accessible). A hook command that
+        # named python3, or only checked that it exists, then failed and Claude Code went on
+        # without the hook. Each registered command runs here with such a python3 first on PATH.
         hooks = json.loads((OVERLAY / '.claude/settings.json').read_text())['hooks']
         commands = [h['command'] for entries in hooks.values() for e in entries for h in e['hooks']]
-        python_hooks = [c for c in commands if '.py"' in c]
-        self.assertEqual(len(python_hooks), 3, commands)
-        for command in python_hooks:
-            self.assertTrue(command.startswith('"$(command -v python3 || command -v python)" '), command)
+        python_hooks = {Path(c.split('"')[-2]).name: c for c in commands if '.py"' in c}
+        self.assertEqual(sorted(python_hooks), ['context_size.py', 'guard_boundaries.py',
+                                                'guard_destructive_git.py'], commands)
+        for command in python_hooks.values():
+            self.assertTrue(command.startswith('sh "$CLAUDE_PROJECT_DIR/.claude/hooks/py.sh" '), command)
         bin_dir = self.tmp / 'bin'
         bin_dir.mkdir()
-        shim = bin_dir / 'python'
-        shim.write_text('#!/bin/sh\nexec "%s" "$@"\n' % Path(sys.executable).as_posix())
-        shim.chmod(0o755)
+        for name, body in (('python3', 'exit 126'), ('python', 'exec "%s" "$@"' % Path(sys.executable).as_posix())):
+            (bin_dir / name).write_text('#!/bin/sh\n%s\n' % body)
+            (bin_dir / name).chmod(0o755)
         project = self.tmp / 'project'
         shutil.copytree(OVERLAY / '.claude/hooks', project / '.claude/hooks')
-        context_command = next(c for c in python_hooks if 'context_size.py' in c)
-        env = dict(self.env, PATH=str(bin_dir), CLAUDE_PROJECT_DIR=project.as_posix())
-        said = self.run_hook([prompt(), request(210_000)], command=[shutil.which('sh'), '-c', context_command],
-                             env=env)
-        self.assertIn('Context is 210k tokens', said)
+        # The broken python3 comes first; sh's own folder follows (on Linux it holds a working
+        # python3 too, which the launcher must not need to reach).
+        # A dirty repository, so the guard blocks whether or not git is on that PATH (with no
+        # git it assumes uncommitted work). GIT_* from a calling hook would route git elsewhere.
+        clean = {k: v for k, v in os.environ.items() if not k.startswith('GIT_')}
+        subprocess.run(['git', 'init', '-q', str(project)], check=True, env=clean)
+        (project / 'notes.txt').write_text('uncommitted\n')
+        env = dict(clean, PATH=os.pathsep.join([str(bin_dir), os.path.dirname(shutil.which('sh'))]),
+                   CLAUDE_PROJECT_DIR=project.as_posix())
 
+        def run(name, payload):
+            return subprocess.run([shutil.which('sh'), '-c', python_hooks[name]], input=json.dumps(payload),
+                                  text=True, capture_output=True, timeout=30, env=env, cwd=project)
+
+        blocked = run('guard_destructive_git.py', {'tool_name': 'Bash', 'tool_input': {'command': 'git reset --hard'}})
+        self.assertEqual(blocked.returncode, 2, blocked.stderr)
+        self.assertIn('BLOCKED', blocked.stderr)
+        # The overlay's boundary list is the setup placeholder, which the hook must report.
+        unconfigured = run('guard_boundaries.py', {'tool_input': {'file_path': 'a.py', 'content': 'import b'}})
+        self.assertEqual(unconfigured.returncode, 0, unconfigured.stderr)
+        self.assertIn('UNCONFIGURED', unconfigured.stdout)
+        self.transcript.write_text(''.join(json.dumps(r) + '\n' for r in [prompt(), request(210_000)]))
+        said = run('context_size.py', {'transcript_path': str(self.transcript)})
+        self.assertEqual((said.returncode, said.stderr), (0, ''))
+        self.assertIn('Context is 210k tokens', said.stdout)
 
 if __name__ == '__main__':
     unittest.main()
