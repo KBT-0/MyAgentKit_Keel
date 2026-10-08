@@ -540,7 +540,11 @@ too (on Windows: Resource Monitor, CPU tab, Associated Handles, search for `chec
 before any gate runs in that worktree. On native Windows a worker in a Windows Terminal tab
 may not be registered as a peer session; `spawn_worker.sh` then says so, and no idle notice
 comes when it stops on a question, a usage limit or an error. The lead then looks at its tab
-after every wait and after every usage-limit reset.
+after every wait and after every usage-limit reset. What `close_worker.sh` does NOT see, so
+the lead closes only a worker whose result says it is done: a gate or a commit that starts
+in the instant between its last check and the kill; a commit waiting in a project's own
+pre-commit hook before the gate takes its lock, or in an editor; and a worker whose checkout
+is not the one the close runs in (run it from the lead's checkout).
 
 The result file starts with a fixed head (`docs/HANDOFF.md`): `Kind:`, `Task:`, `Attempt:`
 and `Remaining:`, and only `Kind: completed` is done. The lead runs `scripts/watch_workers.sh

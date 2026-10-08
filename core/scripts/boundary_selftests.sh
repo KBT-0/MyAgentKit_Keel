@@ -16,13 +16,14 @@
 # The dot-prefixed injection is intended to avoid common build/lint include globs.
 # Verify your project's actual include rules; dotfiles are not universally excluded.
 #
-#   if ! sh "$0" >/dev/null 2>&1; then
-#     echo "  FAIL — domain/web baseline is already red; the injection would prove nothing."
-#     st_fail=1
-#   elif [ -e src/domain/.selftest.py ] || [ -L src/domain/.selftest.py ]; then
+#   # The path first: a killed run's leftover also turns the baseline red, which would hide it.
+#   if [ -e src/domain/.selftest.py ] || [ -L src/domain/.selftest.py ]; then
 #     echo "  FAIL — the injection path already exists; refusing to overwrite owner content."
 #     echo "         A killed self-test (SIGKILL, taskkill /F: no trap runs) leaves its injection"
 #     echo "         behind. If this is one, check it by hand and delete it: src/domain/.selftest.py"
+#     st_fail=1
+#   elif ! sh "$0" >/dev/null 2>&1; then
+#     echo "  FAIL — domain/web baseline is already red; the injection would prove nothing."
 #     st_fail=1
 #   elif (
 #     # A subshell, so these traps do not replace the self-test's: interrupted, the file goes too.

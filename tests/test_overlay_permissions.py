@@ -27,12 +27,17 @@ class OverlayPermissionsTests(unittest.TestCase):
                 self.assertFalse(any(command == d or command.startswith(d + ' ') or command.startswith(d + '*')
                                      for d in DESTROYS), rule)
 
-    def test_a_wildcard_ends_a_rule_and_never_stands_for_its_command(self):
+    def test_a_wildcard_ends_a_rule_after_a_whole_word(self):
         # `Bash(git -C * diff*)` admitted `git -C . branch -D diff-victim`: a `*` before the
-        # subcommand stands for any subcommand.
+        # subcommand stands for any subcommand. `Bash(git diff*)` admitted `git difftool
+        # --extcmd=...`, and `Bash(date*)` admitted `date -s`: a `*` glued to a word extends it.
         for rule in self.permissions['allow']:
             with self.subTest(rule=rule):
                 self.assertNotIn('*', rule[:-2], rule)
+                self.assertTrue('*' not in rule or rule.endswith(' *)'), rule)
+
+    def test_an_external_diff_driver_is_denied(self):
+        self.assertIn('Bash(git *--ext-diff*)', self.permissions['deny'])
 
     def test_git_branch_is_allowed_only_in_exact_listing_forms(self):
         branch = [r for r in self.permissions['allow'] if r.startswith('Bash(git branch')]

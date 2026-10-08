@@ -53,7 +53,9 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   `Get-ChildItem`) run without a permission prompt; ending a process, deleting a file and every
   other command still ask. `git branch` is allowed only in exact listing forms (a `*` admitted
   `git branch -vD`), no rule has a `*` before its subcommand (`git -C * diff*` admitted
-  `git -C . branch -D x`), and `git *--output*` is denied (it overwrites a file). **ACTION:** a project with its own `.claude/settings.json` adds the
+  `git -C . branch -D x`), a `*` follows a whole word (`git diff*` admitted `git difftool
+  --extcmd=...`, `date*` admitted `date -s`), and `git *--output*` and `git *--ext-diff*` are
+  denied (the one overwrites a file, the other runs the repository's diff driver). **ACTION:** a project with its own `.claude/settings.json` adds the
   overlay's `permissions` block, `deny` included.
 - **A killed self-test's injection is named, not guessed at** (`scripts/boundary_selftests.sh`,
   worked example): SIGKILL and `taskkill /F` run no trap, so an injection can be left behind
