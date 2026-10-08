@@ -140,15 +140,18 @@ sessions() {
     sys.stdout.write(" ".join(pids))' "$1"
 }
 case $(uname -s 2>/dev/null) in MINGW*|MSYS*|CYGWIN*) windows=1 ;; *) windows="" ;; esac
-# busy DIR: prints what runs in the worktree at DIR and succeeds while a gate or a git
-# operation runs there. Ending the session then orphans it: on Windows a killed worker's
-# check.sh ran on without its caller and raced the lead's next gate in the same worktree. The
-# gate holds check.lock in the worktree's git directory for its whole run (check.sh): a lock
-# this cannot take is held. git holds index.lock while it writes the index, a commit included.
+# busy DIR: prints what runs in the checkout at DIR and succeeds while a gate or a git
+# operation runs there, or while that cannot be checked. Ending the session then orphans it: on
+# Windows a killed worker's check.sh ran on without its caller and raced the lead's next gate
+# in the same worktree. The gate holds check.lock in the checkout's git directory for its whole
+# run (check.sh): a lock this cannot take is held. git holds index.lock while it writes the
+# index, a commit included. A check that fails is not proof of a free checkout: it refuses too.
 busy() {
   [ -n "$1" ] && [ -d "$1" ] || return 1
   for f in index.lock check.lock; do
-    p=$(git -C "$1" rev-parse --path-format=absolute --git-path "$f" 2>/dev/null) && [ -f "$p" ] || continue
+    p=$(git -C "$1" rev-parse --path-format=absolute --git-path "$f" 2>/dev/null) ||
+      { printf '%s' "git cannot name the $f of $1, so whether a gate or a commit runs there is unknown"; return 0; }
+    [ -e "$p" ] || continue
     if [ "$f" = index.lock ]; then printf '%s' "a git operation holds $p"; return 0; fi
     [ -z "$windows" ] || p=$(cygpath -m "$p")
     $kit_python -I -c 'if 1:
@@ -162,10 +165,15 @@ busy() {
                 fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except (BlockingIOError, PermissionError):
         sys.exit(0)
-    except OSError:
-        pass
-    sys.exit(1)' "$p" || continue
-    printf '%s' "a gate (check.sh) holds $p"; return 0
+    except OSError as e:
+        sys.stderr.write(str(e))
+        sys.exit(2)
+    sys.exit(1)' "$p" 2>/dev/null
+    case $? in
+      0) printf '%s' "a gate (check.sh) holds $p"; return 0 ;;
+      1) ;;
+      *) printf '%s' "the lock $p could not be checked, so whether a gate runs there is unknown"; return 0 ;;
+    esac
   done
   return 1
 }
@@ -179,11 +187,13 @@ for name; do
       fail "refused the name '$name' (a control character shows as ?): a worker name is letters, digits, - and _, not starting with -; nothing done for it"
       continue ;;
   esac
-  wt_dir=""; [ -z "$top" ] || wt_dir=$top/.claude/worktrees/$name
-  if why=$(busy "$wt_dir"); then
-    fail "$name: $why; ending the session now would leave it running without its caller, so nothing is done for $name: wait until it ends, then close again"
-    continue
-  fi
+  # The worker's checkout: its worktree, or, for one spawned without --worktree, this one.
+  # Checked here, and again just before the session is ended, so a run that started while the
+  # sessions were listed is seen too. ponytail: a run started in the moment between that last
+  # check and the kill is not seen; a lock shared with spawn and the gate would close that gap.
+  wt_dir=$top; [ -z "$top" ] || [ ! -d "$top/.claude/worktrees/$name" ] || wt_dir=$top/.claude/worktrees/$name
+  refuse() { fail "$name: $why; ending the session now would leave it running without its caller, so nothing is done for $name: wait until it ends, then close again"; }
+  if why=$(busy "$wt_dir"); then refuse; continue; fi
 
   if [ -n "$windows" ]; then
     if ! pids=$(sessions "$name"); then
@@ -193,6 +203,8 @@ for name; do
       say "$name: no Claude Code session named $name runs; nothing to end"
     elif [ -n "$dry" ]; then
       say "$name: dry run: would end the Claude Code session $name (process $pids, taskkill /T /F) and wait up to 15 s for it; while it runs, the audit below keeps its worktree"
+    elif why=$(busy "$wt_dir"); then
+      refuse; continue
     else
       for pid in $pids; do MSYS_NO_PATHCONV=1 taskkill /PID "$pid" /T /F >/dev/null 2>&1; done
       i=0
@@ -216,6 +228,8 @@ for name; do
     fail "$name: tmux could not say whether session $name exists, so it may still run: $err"
   elif [ -n "$dry" ]; then
     say "$name: dry run: would end tmux session $name (tmux kill-session -t =$name) and wait up to 15 s for it; while it runs, the audit below keeps its worktree"
+  elif why=$(busy "$wt_dir"); then
+    refuse; continue
   elif tmux kill-session -t "=$name" 2>/dev/null; then
     say "$name: tmux session ended; the terminal tab attached to it closes by itself"
     wt=""; [ -z "$top" ] || wt=$(CDPATH= cd -P -- "$top/.claude/worktrees/$name" 2>/dev/null && pwd -P) || wt=""

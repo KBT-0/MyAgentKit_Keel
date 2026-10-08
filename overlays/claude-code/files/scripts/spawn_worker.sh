@@ -241,11 +241,11 @@ if [ -n "$windows" ]; then
   # wt.exe also drops every double quote it is handed: inline --settings JSON reached claude
   # as {permissions:{defaultMode:auto}}, claude refused it, and the tab closed before anyone
   # saw why. So the tab's command goes into a script the tab runs and deletes, and only paths
-  # pass through wt.exe. A claude that ends within ten seconds failed to start: the tab then
-  # waits for Enter, so its error stays on screen.
+  # pass through wt.exe. A claude that ends within ten seconds of its own start, whatever its
+  # status, failed to start: the tab then waits for Enter, so its error stays on screen.
   tab=$(mktemp) || die "cannot write the tab's script"
   printf '%s\n' 'rm -f -- "$0"' "cd $(q "$dir") || exit 1" \
-    "claude $(q "$instruction") ${cmd#claude } || { s=\$?; [ \"\${SECONDS:-0}\" -gt 10 ] || { echo \"claude ended at once (exit \$s); press Enter to close\"; read -r _; }; }" \
+    "t=\$(date +%s); claude $(q "$instruction") ${cmd#claude }; s=\$?; [ \$((\$(date +%s) - t)) -gt 10 ] || { echo \"claude ended at once (exit \$s); press Enter to close\"; read -r _; }" \
     'exit 0' > "$tab" || die "cannot write the tab's script: $tab"
   "$wt" -w 0 new-tab --title "$(semi "$name")" "$(semi "$bash")" -l "$(semi "$(cygpath -w "$tab")")" ||
     { rm -f -- "$tab"; die "$wt could not open a tab for '$name'"; }
@@ -264,7 +264,10 @@ if [ -n "$windows" ]; then
   [ -n "$pids" ] || die "no Claude Code session named '$name' started within 30 s; its tab shows why"
   reg=${CLAUDE_CONFIG_DIR:-$HOME/.claude}/sessions
   peer=""
+  # The listing is taken again on every round: a worker that ended meanwhile did not start.
   while :; do
+    pids=$(sessions "$name") || pids=""
+    [ -n "$pids" ] || die "the Claude Code session '$name' ended right after it started; its tab shows why"
     for pid in $pids; do [ ! -f "$reg/$pid.json" ] || peer=$pid; done
     [ -z "$peer" ] && [ "$i" -lt 30 ] || break
     i=$((i + 1)); sleep 1

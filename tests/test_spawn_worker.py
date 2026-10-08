@@ -132,7 +132,7 @@ with open(script) as f:
     args.append(f.read())
 with open(os.path.join(os.environ['SPAWN_STATE'], 'wt.json'), 'w') as f:
     json.dump(args, f)
-sys.exit(subprocess.run(['sh', script]).returncode)
+sys.exit(subprocess.run(['sh', script], stdin=subprocess.DEVNULL).returncode)
 '''
 
 # Steps of the spawn are instant; show_workers.sh's 5-second launch bound is a real wait.
@@ -319,6 +319,21 @@ class SpawnWorkerTests(unittest.TestCase):
         result = self.spawn('w4', str(brief), KIT_WT=str(self.bin / 'wt-tab'), KIT_PS=ps, CLAUDE_CONFIG_DIR=str(config))
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("no Claude Code session named 'w4' started within 30 s", result.stderr)
+        # A worker seen once and then gone did not start: the spawn fails, not "started".
+        (self.bin / 'ps-once').write_text('#!/bin/sh\n[ -f "$SPAWN_STATE/claude.json" ] || exit 0\n'
+                                          'n=$(cat "$SPAWN_STATE/n" 2>/dev/null || echo 0); echo $((n + 1)) > "$SPAWN_STATE/n"\n'
+                                          '[ "$n" -ne 0 ] || printf "10 claude.exe -n w5\\r\\n"\n')
+        (self.bin / 'ps-once').chmod(0o755)
+        (self.state / 'claude.json').unlink(missing_ok=True)
+        result = self.spawn('w5', str(brief), KIT_WT=str(self.bin / 'wt-tab'), KIT_PS=str(self.bin / 'ps-once'),
+                            CLAUDE_CONFIG_DIR=str(config))
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("the Claude Code session 'w5' ended right after it started", result.stderr)
+        self.assertNotIn('started with', result.stdout)
+        # The tab measures claude's own run, and waits for Enter after a quick end of any status.
+        tab = json.loads((self.state / 'wt.json').read_text())[-1]
+        self.assertIn('t=$(date +%s); claude ', tab)
+        self.assertIn('press Enter to close', tab)
 
     def assert_refused(self, brief):
         result = self.spawn('w2', str(brief))
