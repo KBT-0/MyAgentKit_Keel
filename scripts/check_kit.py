@@ -62,7 +62,7 @@ _PASSED_FILE = os.environ.pop('KIT_CHECK_PASSED', None)
 
 # The wrapper starts Python in the background, where POSIX sh ignores SIGINT.
 if __name__ == '__main__' and os.name != 'nt':
-    signal.signal(signal.SIGINT, signal.SIG_DFL)
+    signal.signal(signal.SIGINT, signal.default_int_handler)
 
 ROOT = Path(__file__).resolve().parents[1]
 # The review self-test ships to projects with its own minimums; read them, never copy them.

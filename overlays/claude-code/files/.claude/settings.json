@@ -46,7 +46,8 @@
     "deny": [
       "Bash(git *--output*)",
       "Bash(git *--ext-diff*)",
-      "Bash(git *--textconv*)"
+      "Bash(git *--textconv*)",
+      "Bash(git *--submodule*)"
     ]
   },
   "hooks": {

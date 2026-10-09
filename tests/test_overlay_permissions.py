@@ -40,8 +40,14 @@ class OverlayPermissionsTests(unittest.TestCase):
                 self.assertNotIn('*', rule[:-2], rule)
                 self.assertTrue('*' not in rule or rule.endswith(' *)'), rule)
 
-    def test_an_external_diff_driver_is_denied(self):
+    def test_diff_driver_arguments_are_denied(self):
         self.assertIn('Bash(git *--ext-diff*)', self.permissions['deny'])
+        self.assertIn('Bash(git *--submodule*)', self.permissions['deny'])
+        for cmd in ('log', 'diff', 'show'):
+            for mode in ('diff', 'log'):
+                command = 'git %s --no-textconv --no-ext-diff --submodule=%s' % (cmd, mode)
+                with self.subTest(command=command):
+                    self.assertFalse(self.allowed(command), command)
 
     def test_git_textconv_commands_are_not_allowed(self):
         # Git's display commands can execute a repository-configured converter without
