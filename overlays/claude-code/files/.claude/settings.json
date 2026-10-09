@@ -44,10 +44,10 @@
       "PowerShell(Get-ChildItem *)"
     ],
     "deny": [
-      "Bash(git *--output*)",
-      "Bash(git *--ext-diff*)",
-      "Bash(git *--textconv*)",
-      "Bash(git *--submodule*)"
+      "Bash(git *--out*)",
+      "Bash(git *--ext*)",
+      "Bash(git *--textc*)",
+      "Bash(git *--sub*)"
     ]
   },
   "hooks": {

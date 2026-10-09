@@ -41,8 +41,8 @@ class OverlayPermissionsTests(unittest.TestCase):
                 self.assertTrue('*' not in rule or rule.endswith(' *)'), rule)
 
     def test_diff_driver_arguments_are_denied(self):
-        self.assertIn('Bash(git *--ext-diff*)', self.permissions['deny'])
-        self.assertIn('Bash(git *--submodule*)', self.permissions['deny'])
+        self.assertIn('Bash(git *--ext*)', self.permissions['deny'])
+        self.assertIn('Bash(git *--sub*)', self.permissions['deny'])
         for cmd in ('log', 'diff', 'show'):
             for mode in ('diff', 'log'):
                 command = 'git %s --no-textconv --no-ext-diff --submodule=%s' % (cmd, mode)
@@ -55,10 +55,10 @@ class OverlayPermissionsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1', GIT_PAGER='cat')
-            def git(*args):
+            def git(*args, check=True):
                 return subprocess.run(['git', '-c', 'user.name=t', '-c', 'user.email=t@example.invalid',
                                        '-c', 'core.hooksPath=.git/hooks', *args], cwd=root, env=env,
-                                      capture_output=True, text=True, check=True, timeout=30)
+                                      capture_output=True, text=True, check=check, timeout=30)
             git('init', '-q')
             (root / '.gitattributes').write_bytes(b'data.dat diff=probe\n')
             (root / 'data.dat').write_bytes(b'before\n')
@@ -78,13 +78,35 @@ class OverlayPermissionsTests(unittest.TestCase):
                     for command in ('git ' + args[0], 'git ' + ' '.join(args),
                                     'git %s --no-textconv --no-ext-diff %s --textconv' % (args[0], ' '.join(args[1:]))):
                         self.assertFalse(self.allowed(command), command)
-            # The allowed form runs no converter, and a later --textconv cannot turn it back on.
+            # Prove abbreviated overrides are denied even on older Git that rejects them.
+            (root / 'external.sh').write_bytes(b': > external-ran\n')
+            git('config', 'diff.probe.command', 'sh external.sh')
+            for cmd in ('diff', 'log', 'show'):
+                for prefixes, suffix, effect in ((('out', 'output'), '=written.diff', 'written.diff'),
+                                                 (('ext', 'ext-d', 'ext-diff'), '', 'external-ran'),
+                                                 (('textc', 'textcon', 'textconv'), '', 'textconv-ran'),
+                                                 (('sub', 'submod', 'submodule'), '=diff', None)):
+                    for prefix in prefixes:
+                        flag = '--' + prefix + suffix
+                        command = ('git', cmd, '--no-textconv', '--no-ext-diff', '-p', flag)
+                        with self.subTest(command=command):
+                            result = git(*command[1:], check=prefix == prefixes[-1])
+                            self.assertFalse(self.allowed(' '.join(command)), command)
+                            if result.returncode:
+                                self.assertRegex(result.stderr, r'(invalid option|unrecognized argument):')
+                                self.assertIn(flag, result.stderr)
+                            if effect:
+                                marker = root / effect
+                                self.assertEqual(marker.exists(), result.returncode == 0, result.stderr)
+                                marker.unlink(missing_ok=True)
+            # The allowed form runs neither driver; later overrides above are denied.
             for args in (('diff',), ('show', 'HEAD', '--', 'data.dat'), ('log', '-p', 'HEAD', '--', 'data.dat')):
                 with self.subTest(safe=args):
                     command = ('git', args[0], '--no-textconv', '--no-ext-diff', *args[1:])
                     self.assertTrue(self.allowed(' '.join(command)), command)
                     git(*command[1:])
-                    self.assertFalse(marker.exists(), command)
+                    self.assertFalse((root / 'textconv-ran').exists(), command)
+                    self.assertFalse((root / 'external-ran').exists(), command)
 
     def allowed(self, command):
         matches = lambda kind: any(fnmatch.fnmatchcase('Bash(' + command + ')', rule)
@@ -100,7 +122,7 @@ class OverlayPermissionsTests(unittest.TestCase):
                 self.assertNotIn('-d', rule.lower().replace('--merged', '').replace('--show-current', ''))
 
     def test_an_output_file_option_is_denied_to_every_git_command(self):
-        self.assertIn('Bash(git *--output*)', self.permissions['deny'])
+        self.assertIn('Bash(git *--out*)', self.permissions['deny'])
 
 
 if __name__ == '__main__':

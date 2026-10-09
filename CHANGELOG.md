@@ -55,9 +55,11 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   other command still ask. `git branch` is allowed only in exact listing forms (a `*` admitted
   `git branch -vD`), no rule has a `*` before its subcommand (`git -C * diff*` admitted
   `git -C . branch -D x`), a `*` follows a whole word (`git diff*` admitted `git difftool
-  --extcmd=...`, `date*` admitted `date -s`), and `git *--output*`, `git *--ext-diff*`,
-  `git *--textconv*` and `git *--submodule*` are denied (the first overwrites a file, the
-  others run the repository's or a submodule's diff drivers).
+  --extcmd=...`, `date*` admitted `date -s`), and `git *--out*`, `git *--ext*`,
+  `git *--textc*` and `git *--sub*` are denied (the first overwrites a file, the
+  others run the repository's or a submodule's diff drivers). These prefixes cover Git
+  versions that accept unambiguous long-option abbreviations; `--out`, not `--ou`, so
+  `git checkout --ours` stays usable.
   The allow rules guard only the command's own arguments. The repository's local git
   configuration is trusted: `git status` and the gate already run what it names
   (`core.fsmonitor`). No allow rule can defend against a hostile local config.
