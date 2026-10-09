@@ -48,7 +48,8 @@ sentences, one instruction per sentence, one term per thing. State each requirem
    to make an unclear part fit. An unanswered question comes back as a question, not as a
    guess buried in the diff. A spawned session has nobody to ask in its pane: it writes the
    question into its result file, with `Kind: blocked` if the work cannot continue, and
-   commits the file. It then goes on with what does not depend on the answer.
+   commits the file. It then goes on with what does not depend on the answer. The answer
+   comes into that same session, never a fresh one (`docs/WORKFLOW.md`, "Worker cost").
 
 End the prompt with: updating `docs/STATE.md` at session end is the implementer's job. When
 the task belongs to an operation with its own file, `docs/<OPERATION>.md`, the detail and

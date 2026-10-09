@@ -59,7 +59,7 @@ gate red, or leaves a gate that can no longer fail, is not finished.
 
 Overlay files are installed once and then belong to the project: the sync updates one only
 if it is kit-owned and the project already has it. The kit-owned ones are the Claude Code
-overlay's worker scripts (`spawn_worker.sh`, `show_workers.sh`, `watch_workers.sh`,
+overlay's worker scripts (`spawn_worker.sh`, `spawn_codex.sh`, `show_workers.sh`, `watch_workers.sh`,
 `waiting_patterns.txt`, `close_worker.sh`) and its clean-up scripts (`clean_worktrees.sh`,
 `clean_worktrees.py`); the checklist names each other overlay file that changed. Re-run `bootstrap.sh --overlay <name>` if
 you want a new file from one: it adds what is missing, passes over files identical to the

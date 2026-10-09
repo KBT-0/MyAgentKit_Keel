@@ -13,6 +13,25 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## v0.11 — 2026-10-09
 
+- **Working modes, by name** (issue #57; `docs/WORKFLOW.md`, "Model routing"): the kit ships
+  the tier table and six modes, claude-first, cross-performance (the main mode),
+  cross-saving, codex-first, claude-saver and codex-saver, each with who writes, reviews and
+  fixes, worker caps, effort, when it ends and a Lessons list. The `{{MODEL_ROUTING}}`
+  placeholder is gone, and `docs/STATE.md` carries a "Working mode:" line.
+  `/myagentkit:mode` (and the Codex skill `myagentkit-mode`) shows or switches the mode.
+  **ACTION:** copy the "Model routing" section and "Working modes, by name" from the kit's
+  `core/docs/WORKFLOW.md` into yours over your own routing text, keeping your model names,
+  and add the "Working mode:" line to `docs/STATE.md`.
+- **A stopped worker is answered in its own session** (issue #57; `docs/WORKFLOW.md`,
+  "Worker cost"; `docs/HANDOFF.md`, rule 7): never by a fresh session.
+- **`scripts/spawn_codex.sh`** (issues #57 and #43; Claude Code overlay): an interactive Codex
+  worker in a Windows Terminal tab on native Windows and in tmux elsewhere, with the
+  workspace-write sandbox, no approval prompts and the repository's git directory writable.
+  It records the session id and resumes it with `--resume`. On native Windows, Codex 0.162
+  still denies writes into a linked worktree's git directory, so the lead commits a Codex
+  worktree worker's work there. **ACTION:** copy
+  `overlays/claude-code/files/scripts/spawn_codex.sh` into `scripts/` (`chmod +x`,
+  `git add --chmod=+x`); a sync keeps it updated from then on.
 - **A review no longer dies on the kit's own limits** (`agent_process.py`, the adapters,
   `review.sh`): a review attempt now gets 3600 seconds (maximum 7200) and a Claude review
   200 turns (maximum 500); three high-effort reviews had died on 1800 seconds and 12 turns.

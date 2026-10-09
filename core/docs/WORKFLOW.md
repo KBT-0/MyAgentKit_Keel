@@ -357,7 +357,22 @@ snapshot of a file another process may be editing right now.
 
 ## Model routing — by scarcity, not by capability
 
-{{MODEL_ROUTING}}
+The tiers below sort the work; the working mode in force ("Working modes, by name") says
+which side takes each tier. The model names are this kit's as of 2026-10-08: replace them
+with what the owner's subscriptions offer today (rule 5).
+
+| Tier | Work | Codex | Claude |
+|---|---|---|---|
+| 1 | Mechanical: renames, figure fixes, data fetches, proof runs, summaries | `gpt-6-luna`, medium effort | Haiku 5.5 or Sonnet 5.5 |
+| 2 | Detail-bearing errands, ordinary reviews | `gpt-6.1-sol`, high effort | Opus 5.5, only for design-bearing work |
+| 3 | Risky and gate reviews, design consultations | `gpt-6.1-sol`, xhigh effort; `gpt-6-astra` when the lead picks it | Opus 5.5; Fable 5.1 when the lead picks it |
+
+The prices behind the table come from third-party summaries of OpenAI's launch figures:
+Luna costs about a twentieth of Sol's token price, and Sol 6.1 about a fifth of Astra's.
+Neither the per-model Codex allowance nor the quality claims were verified. **The table is
+provisional**: API token prices say nothing about how much each model draws from a
+subscription's five-hour and weekly allowance. Measure that draw (`/status` before and after
+a few errands per model) and move the tiers by it (rule 6).
 
 The principle behind whatever the table says: **spend the scarce budget on judgement and the
 generous one on volume.** Cross-model review stays mandatory for risky diffs — the value of
@@ -390,7 +405,8 @@ Rules for whoever routes work, binding with any table:
    default. The lead picks it for one errand when the errand needs it, without asking the
    owner. The lead first checks that the current subscription includes that model; a basic
    plan does not, and then the strongest routine model takes the errand. While that side's
-   allowance is low (rule 7), the top model and the highest effort need the owner's yes.
+   allowance is low (a saver mode, below), the top model and the highest effort need the
+   owner's yes.
 3. **A failed mechanical errand is rerun one tier up**, never retried at the same tier.
 4. **A review loop is broken by escalation, not by more rounds.** When three review rounds
    in a row have not come back clean, the lead raises the effort, the model tier, or both,
@@ -404,18 +420,137 @@ Rules for whoever routes work, binding with any table:
 6. **The tier boundaries are measured, not guessed.** After about ten errands in a tier, the
    lead counts review rejects and rework per tier and moves the boundaries where they show.
 7. **A low allowance shrinks what that side does, never the review.** When the owner says
-   one side's allowance is low, that side only reviews: the other side writes the fixes of
-   its findings, and every fix still goes back to a review by the low side. Its reviews run
-   at the lowest effort that fits: a re-review of a small fix round at medium; high for a
-   gate, hook or review-tooling change and for a new mechanism's first round; the top model
-   or the highest effort only with the owner's yes. A running review is not cancelled to
-   lower its effort, since what it spent is gone. Independent reviews run at the same time,
-   with each other and with the self-test. A review that fails on quota leaves its rerun
-   command in the task's issue or STATE line and waits; it goes to the other side only with
-   the owner's yes, because a second model's judgement is the point of it. The low allowance
-   lasts until that side's allowance resets, or until the owner says otherwise; then the main
-   rule is back at once, unasked: the reviewing model fixes its own findings again. A decision
-   made for a moment never outlives its reason.
+   one side's allowance is low, the saver mode for that side is in force (below).
+
+### Working modes, by name
+
+The owner switches the working mode by its name, in English or Turkish. The "Working mode:"
+line of `docs/STATE.md` names the mode in force, and `/myagentkit:mode` (the kit's plugin)
+shows it or sets it. A project without the line works in **cross-performance**, the main mode.
+
+Without names, the owner explained the same situation in a long prompt at the start of every
+session ("Claude is low today, let Codex write and fix"), and a lead that was not told routed
+by habit: one Opus lead routed no implementation to Codex and spent five Opus sessions on
+review rounds. A name is one word, and a lesson one project learns improves the mode for
+every project through the kit.
+
+A mode decides who writes, who reviews, who fixes the review findings, how many workers run
+and at which effort. It never removes a review. In every mode the review loop of
+`docs/REVIEW_GATE.md` ("What counts as a risky diff") and `docs/REVIEW_RUNNING.md` ("Rounds,
+labels and designs") holds as written there, and rules 1 to 6 above hold too. The worker
+caps below never exceed the worktree ceiling ("Parallel work — worktree policy"). Every
+Claude worker spends the same Claude allowance: a sub-agent, a spawned session and a tab
+alike. The lead is the session that plans with the owner, whichever side it runs on.
+
+| Mode | Turkish name | Writes | Reviews | Fixes the findings |
+|---|---|---|---|---|
+| `claude-first` | Claude Öncelikli Mod | Claude workers | Codex | the reviewing model |
+| `cross-performance` | Çapraz Performans Modu (main mode) | both sides, by tier | the other side of the author | the reviewing model |
+| `cross-saving` | Çapraz Tasarruf Modu | both sides, at most one Opus worker at a time | the other side of the author | the reviewing model |
+| `codex-first` | Codex Öncelikli Mod | Codex workers | Claude | the reviewing model |
+| `claude-saver` | Claude Tasarruf Modu | Codex workers | Claude, on a small budget | Codex |
+| `codex-saver` | Codex Tasarruf Modu | Claude workers | Codex, on a small budget | Claude |
+
+#### claude-first (Claude Öncelikli Mod)
+
+- **Writes:** Claude workers do all the implementation, at the tier table's Claude column.
+- **Reviews and fixes:** Codex reviews every risky diff and fixes its own findings; a Claude
+  round reviews that fix.
+- **Workers:** Claude workers up to the worktree ceiling; Codex runs reviews and its fix
+  rounds only.
+- **Effort:** Claude workers at high for design-bearing work and at medium for mechanical
+  work; Codex reviews at high, and at xhigh for a gate or a risky area.
+- **Ends:** when the owner names another mode.
+- **Lessons:** none yet.
+
+#### cross-performance (Çapraz Performans Modu), the main mode
+
+- **Writes:** both sides share the work. The lead plans, briefs and verifies. Design-bearing
+  and critical parts go to Opus workers; exact, bounded, mechanical errands go to Codex
+  workers (`scripts/spawn_codex.sh` in the Claude Code overlay).
+- **Reviews and fixes:** a review always crosses to the other side of the author, and the
+  reviewing model fixes its own findings.
+- **Workers:** up to the worktree ceiling, both sides together.
+- **Effort:** the tier table as written.
+- **Ends:** this is the mode every other one returns to.
+- **Lessons:** a lead that sends every errand to its own side spends its allowance on
+  volume: one Opus lead routed no implementation to Codex and spent five Opus sessions on
+  review rounds.
+
+#### cross-saving (Çapraz Tasarruf Modu)
+
+- **Writes:** as cross-performance, with at most ONE Opus worker running at a time. Every
+  other errand that can be stated exactly goes to Codex.
+- **Reviews and fixes:** as cross-performance.
+- **Workers:** one Opus worker; Codex workers fill the rest of the worktree ceiling.
+- **Effort:** the tier table; Opus only at tier 2 and 3, never for tier-1 work.
+- **Ends:** when the owner names another mode.
+- **Lessons:** every Claude worker counts against the one: a sub-agent spends the same
+  allowance as a spawned session.
+
+#### codex-first (Codex Öncelikli Mod)
+
+The owner has not yet confirmed this definition. It is written as the mirror of claude-first.
+
+- **Writes:** Codex workers do all the implementation, at the tier table's Codex column.
+- **Reviews and fixes:** Claude reviews every risky diff and fixes its own findings; a Codex
+  round reviews that fix.
+- **Workers:** Codex workers up to the worktree ceiling; Claude runs reviews and its fix
+  rounds only.
+- **Effort:** Codex workers at high for design-bearing work and at medium for mechanical
+  work; Claude reviews at high.
+- **Ends:** when the owner names another mode.
+- **Lessons:** none yet.
+
+#### The two saver modes
+
+A saver mode is for a side whose allowance is low. That side spends only on judgement: it
+plans, briefs, verifies and reviews within a small budget, and the other side implements AND
+fixes the findings, the low side's findings included. Every such fix still goes back to a
+review by the low side, so the loop keeps both models. These rules bind both saver modes:
+
+- The low side's reviews run at the lowest effort that fits: a re-review of a small fix
+  round at medium; high for a gate, hook or review-tooling change and for a new mechanism's
+  first round. The top model or the highest effort needs the owner's yes.
+- A running review is not cancelled to lower its effort, since what it spent is gone.
+- Independent reviews run at the same time, with each other and with the self-test.
+- A review that fails on quota leaves its rerun command in the task's issue or STATE line
+  and waits. It goes to the other side only with the owner's yes, because a second model's
+  judgement is the point of it.
+- **Ends:** the low side's allowance resets, or the owner says otherwise. Then
+  cross-performance is back at once, unasked: the lead changes the STATE line, and the
+  reviewing model fixes its own findings again. A decision made for a moment never outlives
+  its reason.
+
+#### claude-saver (Claude Tasarruf Modu): Claude's allowance is low
+
+- **Writes:** Codex workers implement every errand and fix every finding.
+- **Reviews:** Claude reviews within a small budget, by the saver rules above.
+- **Workers:** no Claude worker and no implementing sub-agent; the Claude lead itself, and
+  Claude reviews. Codex workers up to the worktree ceiling.
+- **Effort:** Codex workers by the tier table's Codex column; Claude reviews by the saver
+  rules above.
+- **Lessons:** none yet.
+
+#### codex-saver (Codex Tasarruf Modu): Codex's allowance is low
+
+- **Writes:** Claude workers implement every errand and fix every finding.
+- **Reviews:** Codex reviews within a small budget, by the saver rules above.
+- **Workers:** no Codex worker; Codex reviews only. Claude workers up to the worktree
+  ceiling.
+- **Effort:** Claude workers by the tier table's Claude column; Codex reviews by the saver
+  rules above.
+- **Lessons:** none yet.
+
+#### How a mode improves
+
+Each mode's **Lessons** list is how a mode gets cheaper with use. When a mode cost more
+than it should have (a wasted round, a worker on the wrong side, an allowance that ran out
+early), the lead adds one line to that mode's list: the failure, with a number when there is
+one, and the rule that prevents it. The lead then offers it to the kit with
+`/myagentkit:kit-feedback`, so every project's copy of the mode learns it. A lesson that the
+mode's own rules come to state leaves the list, and a lesson a later one supersedes is
+deleted: the list holds only what is not yet a rule.
 
 ## Worker cost — waits and long lives are what you pay for
 
@@ -468,7 +603,8 @@ Rules, binding for whoever routes workers:
    `worker.md` and `diff-reviewer.md` do, as a fallback), and nothing in its output shows
    which one it got. The lead passes `model` and `effort` on every Agent call. A separate
    session takes `scripts/spawn_worker.sh --model --effort`, which refuses a spawn without
-   them; a Codex errand takes the model and `-c model_reasoning_effort`. The brief states model and
+   them; a Codex errand takes the model and `-c model_reasoning_effort`, and
+   `scripts/spawn_codex.sh --model --effort` refuses a Codex worker without them. The brief states model and
    effort, and the lead verifies both in the transcript after the run, not in the report.
 6. **Parallel workers only for independent modules**; each one multiplies the bill. Workers
    whose last step waits on one exclusive resource (a heavy lock, a device, a licence) run
@@ -548,6 +684,32 @@ the lead closes only a worker whose result says it is done: a gate or a commit t
 in the instant between its last check and the kill; a commit waiting in a project's own
 pre-commit hook before the gate takes its lock, or in an editor; and a worker whose checkout
 is not the one the close runs in (run it from the lead's checkout).
+
+**A stopped worker is answered in its own session, never replaced by a fresh one.** A Codex
+worker stopped at a design question; the lead had no channel into its tab, ended it and
+started a fresh session on a continuation brief, which read the whole context again and
+spent the allowance for nothing. A worker that stops for a decision writes the question into
+its result file (`Kind: blocked`, `docs/HANDOFF.md`), goes on with what does not depend on
+the answer, and then ends its turn. The lead gets the
+answer from {{OWNER_NAME}} and delivers it into the SAME session:
+
+- A Claude worker registered as a peer session gets the answer through SendMessage. One that
+  is not registered (a Windows Terminal tab, above) gets it typed into its tab by
+  {{OWNER_NAME}}, or is resumed (`claude --resume <session id>`) once its tab has closed.
+- A Codex worker (`scripts/spawn_codex.sh`) is resumed: the lead writes the answer to a file
+  and runs `scripts/spawn_codex.sh NAME ANSWER_FILE --model M --effort LEVEL [--worktree]
+  --resume`. The script recorded the session id when it started the worker, and it refuses
+  while the old session still runs in that folder, so first quit it in its tab (`/quit`).
+
+A fresh session for a stopped worker is right only when the stopped one is spent: its context
+is near the limit of "Worker cost", rule 3, or the answer turns the task into another task.
+
+**A Codex worker on native Windows cannot commit in a worktree.** Codex 0.162's sandbox denies
+every write into a linked worktree's git directory, whatever writable root it is given
+(`index.lock: Permission denied`, tried on 2026-10-09). There such a worker cannot run
+`git add`, `git commit` or the gate, whose lock lives in that directory. It leaves its work and
+its result file uncommitted; the lead reads the diff, runs the gate and commits for it. In the
+lead's own checkout (no `--worktree`), the writable git directory lets Codex commit.
 
 The result file starts with a fixed head (`docs/HANDOFF.md`): `Kind:`, `Task:`, `Attempt:`
 and `Remaining:`, and only `Kind: completed` is done. The lead runs `scripts/watch_workers.sh

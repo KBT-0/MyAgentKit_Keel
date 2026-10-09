@@ -21,6 +21,28 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-10-09 — Working modes, Codex workers and answering a stopped worker (#43, #57)
+
+The owner explained the same routing situation in a long prompt at the start of every
+session, and a lead that was not told routed by habit: one Opus lead routed no
+implementation to Codex and spent five Opus sessions on review rounds. Six named modes now
+ship in `docs/WORKFLOW.md`, each with a Lessons list that projects feed back, so a mode gets
+cheaper with use instead of being re-explained.
+
+A Codex worker that stopped at a design question had no channel back from the lead. The lead
+ended it and started a fresh session, which read the whole context again. `spawn_codex.sh`
+records the session id at spawn time and resumes that session with the answer.
+
+Issue #43 is only partly closable from the kit. `codex sandbox` (no model call) reproduced
+the failure on Codex 0.162 on native Windows: inside a linked worktree, every write into the
+worktree's git directory is denied (`index.lock: Permission denied`). Neither `--add-dir` of
+the repository's `.git`, nor `sandbox_workspace_write.writable_roots` naming the worktree's
+own git directory, nor a custom permission profile lifts it. A project's Codex worker started
+with `--add-dir .git` hit the same denial on 2026-10-09. In the main checkout the writable
+`.git` lets Codex commit. Whether the Linux and macOS sandboxes behave the same was not tried.
+So on native Windows the lead commits a Codex worktree worker's work. The gate's lock lives
+in the same directory, so the worker cannot run the gate there either.
+
 ### 2026-10-09 — Acceptance and context-hook edge cases (#42, #65, #66, #69, #70)
 
 The plugin's handoff command missed the spawned-session instructions already in the
