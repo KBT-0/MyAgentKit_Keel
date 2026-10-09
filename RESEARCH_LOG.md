@@ -21,6 +21,12 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-10-10 — Review-limit regressions
+
+The review-limit change left the suite minimum stale and its direct-entry guards untested.
+Codex-only dispatch also rejected an unused Claude turn setting, and fallback guidance
+still estimated one hour for two attempts whose defaults now total two hours.
+
 ### 2026-10-09 — Acceptance and context-hook edge cases (#42, #65, #66, #69, #70)
 
 The plugin's handoff command missed the spawned-session instructions already in the

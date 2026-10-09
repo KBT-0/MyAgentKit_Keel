@@ -108,9 +108,10 @@ def main(argv=None):
     if not 1 <= timeout <= agent_process.MAX_REVIEW_TIMEOUT:
         raise ValueError("REVIEW_TIMEOUT_SECONDS must be 1..%d" % agent_process.MAX_REVIEW_TIMEOUT)
     # Claude only: Codex has no turn limit to set.
-    turns = int(os.environ.get("REVIEW_MAX_TURNS", str(agent_process.DEFAULT_REVIEW_TURNS)))
-    if not 1 <= turns <= agent_process.MAX_REVIEW_TURNS:
-        raise ValueError("REVIEW_MAX_TURNS must be 1..%d" % agent_process.MAX_REVIEW_TURNS)
+    if args.reviewer == "claude" or args.allow_fallback:
+        turns = int(os.environ.get("REVIEW_MAX_TURNS", str(agent_process.DEFAULT_REVIEW_TURNS)))
+        if not 1 <= turns <= agent_process.MAX_REVIEW_TURNS:
+            raise ValueError("REVIEW_MAX_TURNS must be 1..%d" % agent_process.MAX_REVIEW_TURNS)
     agent_usage.require_private_storage(repo)
     chain_id = uuid.uuid4().hex
     os.environ["MYAGENTKIT_REVIEW_CHAIN_ID"] = chain_id

@@ -17,7 +17,8 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   `review.sh`): a review attempt now gets 3600 seconds (maximum 7200) and a Claude review
   200 turns (maximum 500); three high-effort reviews had died on 1800 seconds and 12 turns.
   `REVIEW_MAX_TURNS` is new and reaches the Claude CLI through `review.sh`, like
-  `REVIEW_TIMEOUT_SECONDS`. Codex has no turn limit. **ACTION:** copy the core scripts.
+  `REVIEW_TIMEOUT_SECONDS`. The turn setting is validated only when Claude is the reviewer
+  or fallback is allowed. Codex has no turn limit. **ACTION:** copy the core scripts.
 - **A spawned handoff records its question** (issue #42; the plugin's handoff command):
   item 7 now matches `docs/HANDOFF.md`; the upgrade checklist no longer copies
   `spawn_worker.sh` twice.

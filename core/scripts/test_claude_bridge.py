@@ -25,7 +25,7 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'MYAGENTKIT_TASK_ID', 'MYAGENTKIT_R
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 133, 'test_agent_usage': 20, 'test_codex_quota': 5}
+SUITE_MINIMUMS = {'test_claude_bridge': 137, 'test_agent_usage': 20, 'test_codex_quota': 5}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -420,6 +420,77 @@ class BridgeTests(unittest.TestCase):
                 with patch.dict(os.environ, self.review_env(REVIEW_CLAUDE_MODEL='claude-opus-5', REVIEW_TIMEOUT_SECONDS=bad)),                         patch.object(agent_process, 'run', side_effect=capture):
                     with self.assertRaisesRegex(ValueError, 'REVIEW_TIMEOUT_SECONDS'):
                         review_dispatch.main(['--reviewer', 'claude', '--repo', str(self.repo)])
+
+    def test_direct_entries_reject_out_of_range_limits_before_launch(self):
+        from contextlib import redirect_stdout
+        from unittest.mock import patch
+        import agent_process
+        import codex_bridge
+
+        for option, maximum in (('--timeout', agent_process.MAX_REVIEW_TIMEOUT),
+                                ('--max-turns', agent_process.MAX_REVIEW_TURNS)):
+            for bad in (-1, 0, maximum + 1):
+                with self.subTest(entry='claude', option=option, bad=bad):
+                    out = io.StringIO()
+                    with patch.dict(os.environ, self.review_env()), redirect_stdout(out), \
+                            patch.object(agent_process, 'run', side_effect=AssertionError('launch')) as run, \
+                            patch.object(agent_process, 'launch', side_effect=AssertionError('launch')) as launch:
+                        self.assertEqual(bridge.main(['review', '--repo', str(self.repo), option, str(bad)]), 2)
+                        self.assertIn('timeout must be 1..', out.getvalue())
+                        run.assert_not_called()
+                        launch.assert_not_called()
+        for bad in (-1, 0, agent_process.MAX_REVIEW_TIMEOUT + 1):
+            with self.subTest(entry='codex', bad=bad):
+                with patch.dict(os.environ, self.review_env(REVIEW_TIMEOUT_SECONDS=str(bad))), \
+                        patch.object(agent_process, 'run', side_effect=AssertionError('launch')) as run, \
+                        patch.object(agent_process, 'launch', side_effect=AssertionError('launch')) as launch:
+                    with self.assertRaisesRegex(ValueError, 'REVIEW_TIMEOUT_SECONDS'):
+                        codex_bridge.main(['--repo', str(self.repo), '--model', 'fixture-codex-model'])
+                    run.assert_not_called()
+                    launch.assert_not_called()
+        for bad in (-1, 0, agent_process.MAX_REVIEW_TIMEOUT + 1, float('inf'), float('nan')):
+            with self.subTest(entry='process', bad=bad):
+                with patch.object(agent_process, 'launch', side_effect=AssertionError('launch')) as launch:
+                    with self.assertRaisesRegex(ValueError, 'timeout must be greater than zero'):
+                        agent_process.run(['fixture'], 'prompt', self.repo, bad)
+                    launch.assert_not_called()
+
+    def test_dispatch_validates_turns_only_when_claude_is_allowed(self):
+        from contextlib import redirect_stdout
+        from unittest.mock import patch
+        import review_dispatch
+
+        def complete(argv, report):
+            report({'status': 'completed', 'failure_kind': None})
+            return 0
+
+        for reviewer, fallback in (('codex', False), ('codex', True), ('claude', False), ('claude', True)):
+            for bad in ('-1', '0', '501', 'invalid'):
+                with self.subTest(reviewer=reviewer, fallback=fallback, bad=bad):
+                    with patch.dict(os.environ, self.review_env(REVIEW_MAX_TURNS=bad)), \
+                            patch.object(review_dispatch.claude_bridge, 'main', side_effect=complete) as claude, \
+                            patch.object(review_dispatch.codex_bridge, 'main', side_effect=complete) as codex, \
+                            redirect_stdout(io.StringIO()):
+                        argv = ['--repo', str(self.repo), '--reviewer', reviewer,
+                                '--claude-model', 'claude-fixture', '--codex-model', 'fixture-codex']
+                        if fallback:
+                            argv.append('--allow-fallback')
+                        if reviewer == 'claude' or fallback:
+                            with self.assertRaises(ValueError):
+                                review_dispatch.main(argv)
+                            codex.assert_not_called()
+                        else:
+                            self.assertEqual(review_dispatch.main(argv), 0)
+                            codex.assert_called_once()
+                        claude.assert_not_called()
+
+    def test_fallback_duration_matches_default_attempt_budgets(self):
+        import agent_process
+        guide = (ROOT.parent / 'docs/REVIEW_RUNNING.md').read_text()
+        duration = re.search(r'two timed-out default\s+attempts can take about (\w+) hours?', guide)
+        self.assertIsNotNone(duration)
+        self.assertEqual({'one': 1, 'two': 2}[duration[1]] * 3600,
+                         2 * agent_process.DEFAULT_REVIEW_TIMEOUT)
 
     def test_review_has_no_default_budget_but_honors_an_explicit_limit(self):
         for case, extra, expected in [('no_budget', [], None),

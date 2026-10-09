@@ -176,7 +176,7 @@ fractional seconds. This is a total
 wall-clock deadline, not an idle timer: active work can continue beyond ten minutes, but
 is still stopped at sixty minutes by default. Claude's final-JSON output does not provide
 reliable startup/activity detection. With `--fallback`, two timed-out default
-attempts can take about one hour plus local processing and quota-observation overhead. There is no purchase
+attempts can take about two hours plus local processing and quota-observation overhead. There is no purchase
 of extra credits and no retry of the same provider.
 
 **The requested reviewer is never silently replaced.** The reviewer is usually requested
