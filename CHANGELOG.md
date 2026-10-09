@@ -136,7 +136,9 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   `scripts/claude_bridge.py`): the gate said an author fixes what a review found. The reviewer
   still never changes the checkout during its review run; afterwards it fixes its own
   findings, and the fix goes to a review by the other model, so no model approves its own
-  work. **ACTION:** replace that sentence in your `docs/REVIEW_GATE.md`; `claude_bridge.py`
+  work. Independence is judged per diff; a fix round reviews the fix against the earlier
+  findings. **ACTION:** update `docs/REVIEW_GATE.md` and the review-fix rules in
+  `docs/WORKFLOW.md`; `claude_bridge.py`
   comes with the sync.
 
 ## v0.10 — 2026-10-07

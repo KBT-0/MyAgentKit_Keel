@@ -33,9 +33,10 @@ being checked.
 
 ## What counts as a risky diff
 
-When multiple models have authored the combined change, select a fresh reviewer that did
-not author any of it. The reviewer never changes the checkout during its review run. Afterwards
-the reviewing model verifies and fixes its own findings, and its fix goes to a review by the
+Independence is judged per change: every diff, the original work and each fix, is reviewed
+in a fresh session by a model that did not write that diff. A fix round reviews the fix and
+checks it against the earlier findings. The reviewer never changes the checkout during its
+review run. Afterwards the reviewing model verifies and fixes its own findings, and its fix goes to a review by the
 other model: no model approves its own work. An existing local commit without
 review is still unreviewed work, not an exception that moves this gate to push time.
 
