@@ -69,11 +69,12 @@ unavailable observation is recorded as unknown and does not prevent the model ta
 
 ## Bounded failure, useful continuation
 
-Each review attempt has a total wall-clock limit (1800 seconds by default, maximum 3600);
+Each review attempt has a total wall-clock limit (3600 seconds by default, maximum 7200,
+`REVIEW_TIMEOUT_SECONDS`) and a Claude review a turn limit (200 by default, maximum 500, `REVIEW_MAX_TURNS`);
 Claude proposals retain their separate 600-second default. This is not an inactivity or
 connection timer: the current Claude final-JSON adapter cannot reliably distinguish silent
 active work from a stalled request. Output does not reset the deadline. A fallback attempt
-gets its own deadline, so two default review attempts can take roughly 60 minutes plus
+gets its own deadline, so two default review attempts can take roughly 120 minutes plus
 local processing and quota-observation overhead. Each invocation also has an 8 MB
 captured-output limit per stream. The parent stops its child process group and preserves
 partial diagnostics in memory through bounded pipes, not temporary output files. Codex's

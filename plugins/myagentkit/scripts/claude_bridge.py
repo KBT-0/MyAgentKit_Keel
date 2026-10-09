@@ -826,21 +826,27 @@ def main(argv=None, result_sink=None) -> int:
     parser.add_argument("--model", default="claude-opus-5")
     parser.add_argument("--effort", choices=["low", "medium", "high", "xhigh", "max"], default="high")
     parser.add_argument("--timeout", type=int,
-                        help="Total wall-clock seconds; defaults to 1800 for review, 600 for propose")
-    parser.add_argument("--max-turns", type=int, default=12)
+                        help="Total wall-clock seconds; defaults to %d for review, 600 for propose"
+                        % agent_process.DEFAULT_REVIEW_TIMEOUT)
+    parser.add_argument("--max-turns", type=int,
+                        help="Defaults to %d for review, 12 for propose" % agent_process.DEFAULT_REVIEW_TURNS)
     parser.add_argument("--max-budget-usd", type=float,
                         help="Optional API-cost cap; review has no default, propose defaults to 3 USD")
     args = parser.parse_args(argv)
     if args.timeout is None:
         args.timeout = agent_process.DEFAULT_REVIEW_TIMEOUT if args.mode == "review" else 600
+    if args.max_turns is None:
+        args.max_turns = agent_process.DEFAULT_REVIEW_TURNS if args.mode == "review" else 12
     held, result, cancelled = {}, None, []
     try:
         if os.environ.get("MYAGENTKIT_DELEGATION_DEPTH", "0") != "0":
             raise BridgeError("nested delegation is disabled")
         if not args.model.startswith("claude-") or any(c.isspace() for c in args.model):
             raise BridgeError("use an explicit Claude model id, not a moving alias")
-        if not 1 <= args.timeout <= 3600 or not 1 <= args.max_turns <= 100:
-            raise BridgeError("timeout must be 1..3600 seconds and max-turns 1..100")
+        if (not 1 <= args.timeout <= agent_process.MAX_REVIEW_TIMEOUT
+                or not 1 <= args.max_turns <= agent_process.MAX_REVIEW_TURNS):
+            raise BridgeError("timeout must be 1..%d seconds and max-turns 1..%d"
+                              % (agent_process.MAX_REVIEW_TIMEOUT, agent_process.MAX_REVIEW_TURNS))
         if args.max_budget_usd is None and args.mode == "propose":
             args.max_budget_usd = 3.0
         if args.max_budget_usd is not None and not 0 < args.max_budget_usd <= 100:

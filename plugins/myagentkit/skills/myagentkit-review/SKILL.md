@@ -19,10 +19,10 @@ when authorization is absent. A review-only request does not authorize source ed
 fix findings only when the user also asked for implementation or review-and-fix.
 
 Use the project's configured model pins and the user's explicit overrides, never infer a
-fallback model from the host's identity. Defaults are high effort, 12 Claude turns, and
-1800 seconds per attempt. This is a total wall-clock limit, not a startup or inactivity
-timer; two attempts may take about an hour plus local overhead. Use `REVIEW_TIMEOUT_SECONDS`
-to honor an explicit wrapper/dispatcher timeout. Reviews have no default monetary budget cap:
+fallback model from the host's identity. Defaults are high effort, 200 Claude turns, and
+3600 seconds per attempt. This is a total wall-clock limit, not a startup or inactivity
+timer; two attempts may take about two hours plus local overhead. Use `REVIEW_TIMEOUT_SECONDS`
+(at most 7200) and `REVIEW_MAX_TURNS` (at most 500) to honor an explicit wrapper/dispatcher limit. Reviews have no default monetary budget cap:
 omit `--max-budget-usd` unless the owner explicitly specifies a cap. An explicit dollar
 cap does not promise equivalent subscription quota accounting. Do not automatically raise
 limits or choose an unconfigured model when a run fails. With `--allow-fallback` (the wrapper's

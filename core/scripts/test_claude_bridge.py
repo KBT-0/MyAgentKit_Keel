@@ -349,12 +349,16 @@ class BridgeTests(unittest.TestCase):
             observed.append(timeout)
             raise CapturedLaunch()  # No CLI or wall-clock wait is needed.
 
-        cases = [(bridge.main, ['review'], None, 1800),
+        default = agent_process.DEFAULT_REVIEW_TIMEOUT
+        self.assertGreaterEqual(default, 3600)  # 1800 killed real high-effort reviews
+        cases = [(bridge.main, ['review'], None, default),
                  (bridge.main, ['review', '--timeout', '77'], None, 77),
-                 (codex_bridge.main, ['--model', 'fixture-codex-model'], None, 1800),
+                 (codex_bridge.main, ['--model', 'fixture-codex-model'], None, default),
                  (codex_bridge.main, ['--model', 'fixture-codex-model'], '88', 88),
-                 (review_dispatch.main, ['--reviewer', 'claude'], None, 1800),
-                 (review_dispatch.main, ['--reviewer', 'codex'], None, 1800),
+                 (codex_bridge.main, ['--model', 'fixture-codex-model'], '7200', 7200),
+                 (review_dispatch.main, ['--reviewer', 'claude'], None, default),
+                 (review_dispatch.main, ['--reviewer', 'codex'], None, default),
+                 (review_dispatch.main, ['--reviewer', 'claude'], '7200', 7200),
                  (review_dispatch.main, ['--reviewer', 'claude'], '99', 99),
                  (review_dispatch.main, ['--reviewer', 'codex'], '99', 99)]
         for main, argv, override, expected in cases:
@@ -371,6 +375,51 @@ class BridgeTests(unittest.TestCase):
                         with self.assertRaises(CapturedLaunch):
                             main([*argv, '--repo', str(self.repo)])
                     self.assertEqual(observed[-1], expected)
+
+    def test_review_turn_limit_default_override_and_bounds(self):
+        # Three high-effort reviews died on the old 12-turn cap: the review default must leave
+        # room, REVIEW_MAX_TURNS must reach the Claude CLI, and out-of-range values must fail
+        # before any model is called.
+        from contextlib import redirect_stdout
+        from io import StringIO
+        from unittest.mock import patch
+        import agent_process
+        import review_dispatch
+
+        class CapturedLaunch(RuntimeError):
+            pass
+
+        observed = []
+
+        def capture(command, prompt, repo, timeout, into=None, noted=None):
+            observed.append(command[command.index('--max-turns') + 1])
+            raise CapturedLaunch()
+
+        self.assertGreaterEqual(agent_process.DEFAULT_REVIEW_TURNS, 100)
+        for main, argv, override, expected in [
+                (bridge.main, ['review'], None, str(agent_process.DEFAULT_REVIEW_TURNS)),
+                (bridge.main, ['review', '--max-turns', '300'], None, '300'),
+                (review_dispatch.main, ['--reviewer', 'claude'], None, str(agent_process.DEFAULT_REVIEW_TURNS)),
+                (review_dispatch.main, ['--reviewer', 'claude'], '450', '450')]:
+            with self.subTest(entry=main.__module__, args=argv, override=override):
+                with patch.dict(os.environ, self.review_env(REVIEW_CLAUDE_MODEL='claude-opus-5')):
+                    os.environ.pop('REVIEW_MAX_TURNS', None)
+                    if override is not None:
+                        os.environ['REVIEW_MAX_TURNS'] = override
+                    with patch.object(agent_process, 'run', side_effect=capture), redirect_stdout(StringIO()):
+                        with self.assertRaises(CapturedLaunch):
+                            main([*argv, '--repo', str(self.repo)])
+                    self.assertEqual(observed[-1], expected)
+        for bad in ('0', str(agent_process.MAX_REVIEW_TURNS + 1)):
+            with self.subTest(bad_turns=bad):
+                with patch.dict(os.environ, self.review_env(REVIEW_CLAUDE_MODEL='claude-opus-5', REVIEW_MAX_TURNS=bad)),                         patch.object(agent_process, 'run', side_effect=capture):
+                    with self.assertRaisesRegex(ValueError, 'REVIEW_MAX_TURNS'):
+                        review_dispatch.main(['--reviewer', 'claude', '--repo', str(self.repo)])
+        for bad in ('0', str(agent_process.MAX_REVIEW_TIMEOUT + 1)):
+            with self.subTest(bad_timeout=bad):
+                with patch.dict(os.environ, self.review_env(REVIEW_CLAUDE_MODEL='claude-opus-5', REVIEW_TIMEOUT_SECONDS=bad)),                         patch.object(agent_process, 'run', side_effect=capture):
+                    with self.assertRaisesRegex(ValueError, 'REVIEW_TIMEOUT_SECONDS'):
+                        review_dispatch.main(['--reviewer', 'claude', '--repo', str(self.repo)])
 
     def test_review_has_no_default_budget_but_honors_an_explicit_limit(self):
         for case, extra, expected in [('no_budget', [], None),

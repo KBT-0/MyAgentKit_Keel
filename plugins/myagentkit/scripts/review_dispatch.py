@@ -105,8 +105,12 @@ def main(argv=None):
     claude_bridge.prior_rounds(repo, os.environ.get("MYAGENTKIT_TASK_ID"), scope, original[3],
                                original[0], original[2])
     timeout = int(os.environ.get("REVIEW_TIMEOUT_SECONDS", str(agent_process.DEFAULT_REVIEW_TIMEOUT)))
-    if not 1 <= timeout <= 3600:
-        raise ValueError("REVIEW_TIMEOUT_SECONDS must be 1..3600")
+    if not 1 <= timeout <= agent_process.MAX_REVIEW_TIMEOUT:
+        raise ValueError("REVIEW_TIMEOUT_SECONDS must be 1..%d" % agent_process.MAX_REVIEW_TIMEOUT)
+    # Claude only: Codex has no turn limit to set.
+    turns = int(os.environ.get("REVIEW_MAX_TURNS", str(agent_process.DEFAULT_REVIEW_TURNS)))
+    if not 1 <= turns <= agent_process.MAX_REVIEW_TURNS:
+        raise ValueError("REVIEW_MAX_TURNS must be 1..%d" % agent_process.MAX_REVIEW_TURNS)
     agent_usage.require_private_storage(repo)
     chain_id = uuid.uuid4().hex
     os.environ["MYAGENTKIT_REVIEW_CHAIN_ID"] = chain_id
@@ -142,7 +146,7 @@ def main(argv=None):
               flush=True)
         try:
             if provider == "claude":
-                exit_code = claude_bridge.main(["review", "--timeout", str(timeout), *command], received.append)
+                exit_code = claude_bridge.main(["review", "--timeout", str(timeout), "--max-turns", str(turns), *command], received.append)
             else:
                 exit_code = codex_bridge.main(command, received.append)
         except (OSError, ValueError, claude_bridge.BridgeError, subprocess.SubprocessError) as error:

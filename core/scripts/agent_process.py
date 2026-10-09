@@ -11,7 +11,13 @@ import tempfile
 import threading
 import time
 
-DEFAULT_REVIEW_TIMEOUT = 1800
+# A high-effort review of a large diff outran 1800 seconds and 12 turns; a review the kit's own
+# caps kill is paid for and returns nothing. The defaults leave such a review room to finish.
+# REVIEW_TIMEOUT_SECONDS and REVIEW_MAX_TURNS (review.sh) change them per run, up to the maxima.
+DEFAULT_REVIEW_TIMEOUT = 3600
+MAX_REVIEW_TIMEOUT = 7200
+DEFAULT_REVIEW_TURNS = 200
+MAX_REVIEW_TURNS = 500
 # Ctrl-C, kill and a closed terminal or restarted host session. The reviewer runs in its own
 # session so none of these reach it; left at their defaults, SIGTERM and SIGHUP end this
 # process without its cleanup and the paid reviewer keeps running, unaccounted. Native Windows
@@ -309,8 +315,8 @@ def run(command: list[str], prompt: str, repo: Path, timeout: float, into: dict 
     `noted` is the caller's own list of cancels its noting handler saw before this guard was
     up: one there stops the launch, as a cancel during the run stops the reviewer.
     """
-    if not 0 < timeout <= 3600:
-        raise ValueError("timeout must be greater than zero and at most 3600 seconds")
+    if not 0 < timeout <= MAX_REVIEW_TIMEOUT:
+        raise ValueError("timeout must be greater than zero and at most %d seconds" % MAX_REVIEW_TIMEOUT)
     started = time.monotonic()
     result = {} if into is None else into
     guard = OneShot()

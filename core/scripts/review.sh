@@ -51,6 +51,8 @@
 #   REVIEW_CODEX_MODEL   override the pinned Codex model for one run
 #   REVIEW_CLAUDE_MODEL  override the pinned Claude model for one run
 #   REVIEW_EFFORT    reasoning effort             (default: high)
+#   REVIEW_TIMEOUT_SECONDS  wall clock per attempt (default: 3600, at most 7200)
+#   REVIEW_MAX_TURNS        Claude turns per attempt (default: 200, at most 500)
 #   REVIEW_CLI_BIN   the Codex binary             (default: codex)
 #   CLAUDE_CLI_BIN   the Claude binary            (default: claude)
 set -u

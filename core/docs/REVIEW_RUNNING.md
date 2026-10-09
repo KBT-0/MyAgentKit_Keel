@@ -166,13 +166,15 @@ skips, is a finding or a manual check, never dismissed.
 If a reviewing CLI cannot finish because of quota, context exhaustion, timeout,
 authentication, or missing final evidence, do not treat that failure as Accept. Both
 adapters return a failure with a local usage record. Codex uses `REVIEW_TIMEOUT_SECONDS`
-(1800 by default); Claude reviews use `--timeout` (1800 by default). Timeout stops the child process
+(3600 by default, maximum 7200); Claude reviews use `--timeout` (3600 by default) and `--max-turns`
+(200 by default, maximum 500). Timeout stops the child process
 group and preserves captured partial output. Through the wrapper, `REVIEW_TIMEOUT_SECONDS`
-sets the timeout for each provider, with the same 1800-second default. Copy preparation and
+sets the timeout for each provider, with the same 3600-second default, and `REVIEW_MAX_TURNS`
+sets the Claude turn limit. The old 1800 seconds and 12 turns killed high-effort reviews. Copy preparation and
 reviewer execution share one deadline; execution receives only the remaining seconds, including
 fractional seconds. This is a total
 wall-clock deadline, not an idle timer: active work can continue beyond ten minutes, but
-is still stopped at thirty minutes by default. Claude's final-JSON output does not provide
+is still stopped at sixty minutes by default. Claude's final-JSON output does not provide
 reliable startup/activity detection. With `--fallback`, two timed-out default
 attempts can take about one hour plus local processing and quota-observation overhead. There is no purchase
 of extra credits and no retry of the same provider.

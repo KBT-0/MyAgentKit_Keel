@@ -34,8 +34,8 @@ def main(argv=None, result_sink=None):
     if not args.model.strip() or any(c.isspace() for c in args.model):
         raise ValueError("--model must pin one model id; Codex attests none in its output")
     timeout = int(os.environ.get("REVIEW_TIMEOUT_SECONDS", str(agent_process.DEFAULT_REVIEW_TIMEOUT)))
-    if not 1 <= timeout <= 3600:
-        raise ValueError("REVIEW_TIMEOUT_SECONDS must be 1..3600")
+    if not 1 <= timeout <= agent_process.MAX_REVIEW_TIMEOUT:
+        raise ValueError("REVIEW_TIMEOUT_SECONDS must be 1..%d" % agent_process.MAX_REVIEW_TIMEOUT)
     repo = args.repo.resolve(strict=True)
     if Path(os.fsdecode(git(repo, "rev-parse", "--show-toplevel")).strip()).resolve() != repo:
         raise ValueError("--repo must name the repository root")
