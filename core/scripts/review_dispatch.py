@@ -26,6 +26,8 @@ def pin_valid(provider, model):
 
 
 def reject_line_ending_churn(repo, scope, reference, diff):
+    if os.environ.get("REVIEW_ALLOW_EOL_ONLY") == "1":
+        return
     # Use the captured scope's paths, including its archive exclusions. Numstat's rename
     # form has an empty name followed by the old and new names, all NUL-delimited.
     entries = iter(claude_bridge.git(repo, "apply", "--numstat", "-z",
@@ -43,14 +45,29 @@ def reject_line_ending_churn(repo, scope, reference, diff):
         if not parents:
             return  # A root commit only adds files.
         refs = [os.fsdecode(parents[0]), reference]
+
+    def counts(data):
+        result = {}
+        for entry in data.split(b"\0"):
+            if entry:
+                added, deleted, name = entry.split(b"\t", 2)
+                if added != b"-":  # Binary changes have no line counts.
+                    result[name] = int(added) + int(deleted)
+        return result
+
+    # Two queries for the whole scope, independent of its file count. The captured names
+    # also exclude legacy review archives that snapshot discovered in the reference trees.
+    args = ["diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--numstat", "-z", *refs,
+            "--", ".", *claude_bridge.ARCHIVES]
+    changed = counts(claude_bridge.git(repo, *args))
+    meaningful = counts(claude_bridge.git(repo, *args[:1], "--ignore-cr-at-eol", *args[1:]))
     for name in sorted(names):
-        args = ["diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--stat", *refs,
-                "--", ":(literal)" + os.fsdecode(name)]
-        stat = claude_bridge.git(repo, *args)
-        ignored = claude_bridge.git(repo, *args[:1], "--ignore-cr-at-eol", *args[1:])
-        if stat != ignored and not ignored.strip():
-            raise ValueError("line-ending-only churn in %r; restore its line endings before review"
-                             % os.fsdecode(name))
+        total, real = changed.get(name, 0), meaningful.get(name, 0)
+        if total > 2 * real:  # Most changed lines are CR-only, even with a real edit.
+            kind = "line-ending-only churn" if real == 0 else "line-ending churn"
+            raise ValueError("%s in %r; restore its line endings before review, or set "
+                             "REVIEW_ALLOW_EOL_ONLY=1 for a deliberate normalization"
+                             % (kind, os.fsdecode(name)))
 
 
 def main(argv=None):
@@ -121,7 +138,7 @@ def main(argv=None):
         received = []
         command = ["--repo", str(repo), "--model", pins[provider], "--effort", args.effort,
                    "--" + scope] + ([ref] if ref else [])
-        print("REVIEW [spend]: %s model %s, effort %s" % (provider, pins[provider], args.effort),
+        print("REVIEW [about to run]: %s model %s, effort %s" % (provider, pins[provider], args.effort),
               flush=True)
         try:
             if provider == "claude":

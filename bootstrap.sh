@@ -64,6 +64,7 @@ version=$(sed -n 's/^## v\([0-9][0-9.]*\).*/\1/p' "$kit/CHANGELOG.md" 2>/dev/nul
 
 skiplist=$(mktemp) || die "cannot create a temp file"
 files=$(mktemp) || { rm -f "$skiplist"; die "cannot create a temp file"; }
+executables=""
 part=""
 wiring=""
 staged=""
@@ -226,6 +227,11 @@ check_attributes() (
   done < "$probe/paths"
 )
 
+executable() {
+  case "$1" in *.sh|.githooks/*|.claude/hooks/*) executables="$executables$1
+" ;; esac
+}
+
 # copy_tree SRC [DEST_PREFIX] — copies SRC's contents into the target, optionally under a
 # subdirectory. Existing files that differ are recorded and left alone unless --force;
 # identical ones are passed over (an earlier run put them there).
@@ -277,7 +283,7 @@ EOF
       continue
     fi
     if [ -e "$target/$dest" ] && [ "$force" -eq 0 ]; then
-      cmp -s "$src/$rel" "$target/$dest" && continue
+      if cmp -s "$src/$rel" "$target/$dest"; then executable "$dest"; continue; fi
       printf '%s\n' "$dest" >> "$skiplist"
       continue
     fi
@@ -285,6 +291,7 @@ EOF
     # taken by the retry for the owner's own differing file, and the version recorded over it.
     mkdir -p "$target/$(dirname "$dest")"
     put "$target/$dest" "$src/$rel"
+    executable "$dest"
   done < "$files"
 }
 
@@ -325,9 +332,12 @@ done
 # The executable bit does not survive every filesystem, and a gate that cannot run is a
 # gate that is not there. CI dies on this with exit 126 (docs/GOTCHAS.md). Only on what
 # `blocked` passes: chmod through a symlink changes the file it points to, outside the project.
-for f in "$target"/scripts/*.sh "$target"/.githooks/* "$target"/.claude/hooks/*; do
-  if [ -e "$f" ] && [ -z "$(blocked "${f#"$target"/}")" ]; then chmod +x "$f"; fi
-done
+while IFS= read -r f; do
+  [ -n "$f" ] || continue
+  chmod +x "$target/$f"
+done <<EXECUTABLES
+$executables
+EXECUTABLES
 
 if [ -s "$skiplist" ]; then
   echo
@@ -431,12 +441,20 @@ if git -C "$target" rev-parse --git-dir >/dev/null 2>&1; then
     printf '%s\n' "  Then run: git config core.hooksPath .githooks (unset it in any other scope), and rerun bootstrap.sh; the kit's files are installed." >&2
     exit 1
   fi
-  # Windows' core.fileMode=false makes chmod invisible to Git. Record the modes explicitly.
-  set --
-  for f in "$target"/scripts/*.sh "$target"/.githooks/* "$target"/.claude/hooks/*; do
-    if [ -e "$f" ] && [ -z "$(blocked "${f#"$target"/}")" ]; then set -- "$@" "$f"; fi
-  done
-  [ "$#" -eq 0 ] || git -C "$target" add --chmod=+x -- "$@"
+  # Windows' core.fileMode=false makes chmod invisible to Git. Repair only kit files;
+  # tracked content stays in the index as the owner staged it, ignored files stay out.
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    if indexed=$(git -C "$target" --literal-pathspecs ls-files -s --error-unmatch -- "$f" 2>/dev/null); then
+      blob=$(printf '%s\n' "$indexed" | awk '$3 == 0 { print $2 }')
+      [ -n "$blob" ] || die "cannot repair the executable mode of an unmerged kit file: $f"
+      git -C "$target" update-index --cacheinfo "100755,$blob,$f"
+    elif ! git -C "$target" check-ignore -q -- "$f"; then
+      git -C "$target" add --chmod=+x -- "$f"
+    fi
+  done <<EXECUTABLES
+$executables
+EXECUTABLES
   wiring=1
   git -C "$target" config core.hooksPath .githooks
   # Verified as git sees it: a scope above the local one (worktree config, global) wins.

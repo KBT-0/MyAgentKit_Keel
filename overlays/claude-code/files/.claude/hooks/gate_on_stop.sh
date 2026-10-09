@@ -21,7 +21,8 @@ root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
 CDPATH= cd -- "$root" || exit 0
 
 # Boundary self-tests inject .selftest.*; older project gates back up files in place.
-sentinel=$(find . -name .git -prune -o \( -name '.selftest.*' -o -name '*.selftest-backup' \) -print | head -1)
+sentinel=$(git -c core.quotePath=false ls-files -co --exclude-standard |
+  grep -E '(^|/)\.selftest\.[^/]*$|(^|/)[^/]*\.selftest-backup$' | head -1)
 if [ -n "$sentinel" ]; then
   printf 'NOTE [Stop hook]: skipping the gate while a self-test sentinel/injection is present: %s\n' "$sentinel" >&2
   exit 0

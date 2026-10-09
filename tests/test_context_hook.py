@@ -64,6 +64,38 @@ class ContextHookTests(unittest.TestCase):
             'model': 'claude-x', 'usage': {'input_tokens': 210_000, 'cache_read_input_tokens': None,
                                            'cache_creation_input_tokens': None}}}]))
 
+    def test_legacy_step_after_compaction_is_not_announced_again(self):
+        self.transcript.with_suffix('.context-step').write_text('1')
+        turns = [{'type': 'system', 'subtype': 'compact_boundary'}, request(260_000)]
+        self.assertEqual(self.run_hook(turns), '')
+        self.assertIn('Context is 260k tokens', self.run_hook(
+            turns + [{'type': 'system', 'subtype': 'compact_boundary'}, request(260_000)]))
+        self.assertIn('Context is 310k tokens', self.run_hook(turns + [request(310_000)]))
+
+    def test_killing_a_lock_holder_allows_the_next_prompt(self):
+        wrapper = self.tmp / 'held_hook.py'
+        wrapper.write_text('import runpy, time\n'
+                           'hook = runpy.run_path(%r)\n'
+                           'def held(path):\n'
+                           '    print("held", flush=True)\n'
+                           '    time.sleep(60)\n'
+                           'hook["main"].__globals__["context"] = held\n'
+                           'hook["main"]()\n' % str(HOOK))
+        self.transcript.write_text(json.dumps(request(260_000)) + '\n')
+        holder = subprocess.Popen([sys.executable, str(wrapper)], stdin=subprocess.PIPE,
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            holder.stdin.write(json.dumps({'transcript_path': str(self.transcript)}))
+            holder.stdin.close()
+            self.assertEqual(holder.stdout.readline().strip(), 'held')
+            self.assertEqual(self.run_hook([request(260_000)]), '')
+        finally:
+            holder.kill()
+            holder.wait(timeout=5)
+            holder.stdout.close()
+            holder.stderr.close()
+        self.assertIn('Context is 260k tokens', self.run_hook([request(260_000)]))
+
     def test_compaction_rearms_even_when_a_request_already_followed_it(self):
         turns = [request(310_000)]
         self.assertIn('Context is 310k tokens', self.run_hook(turns))

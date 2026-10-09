@@ -25,7 +25,7 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'MYAGENTKIT_TASK_ID', 'MYAGENTKIT_R
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 129, 'test_agent_usage': 20, 'test_codex_quota': 5}
+SUITE_MINIMUMS = {'test_claude_bridge': 133, 'test_agent_usage': 20, 'test_codex_quota': 5}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -197,7 +197,8 @@ except ValueError as error:
     def review(self, repo, *args, **extra):
         env = dict(os.environ, REVIEW_REPO_ROOT=str(repo), REVIEW_CODEX_MODEL='fixture-codex',
                    REVIEW_CLAUDE_MODEL='claude-fixture', REVIEW_EFFORT='medium',
-                   MYAGENTKIT_DELEGATION_DEPTH='0', MYAGENTKIT_TASK_ID='', STUB_QUOTA='')
+                   MYAGENTKIT_DELEGATION_DEPTH='0', MYAGENTKIT_TASK_ID='', STUB_QUOTA='',
+                   PATH=str(Path(sys.executable).parent) + os.pathsep + os.environ['PATH'])
         env.update(extra)
         return subprocess.run(['sh', str(repo / 'scripts/review.sh'), *args],
                               env=env, text=True, capture_output=True, timeout=30)
@@ -210,7 +211,7 @@ except ValueError as error:
                 result = self.review(repo, '--reviewer', primary, '--fallback', STUB_QUOTA=primary)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 for provider, model in (('codex', 'fixture-codex'), ('claude', 'claude-fixture')):
-                    spend = 'REVIEW [spend]: %s model %s, effort medium' % (provider, model)
+                    spend = 'REVIEW [about to run]: %s model %s, effort medium' % (provider, model)
                     self.assertIn(spend, result.stdout)
                     self.assertLess(result.stdout.index(spend), result.stdout.index('REVIEWER RAN: ' + provider))
 
@@ -242,6 +243,75 @@ except ValueError as error:
                     self.assertIn('restore its line endings before review', result.stdout)
                     self.assertNotIn('REVIEWER RAN:', result.stdout)
                     self.assertNotIn('REVIEW [spend]:', result.stdout)
+
+    def test_mixed_line_ending_churn_is_refused_in_every_scope(self):
+        for scope in ('unstaged', 'staged', 'base', 'commit'):
+            with self.subTest(scope=scope), tempfile.TemporaryDirectory() as tmp:
+                repo = self.project(tmp)
+                path = repo / 'line ends [1].txt'
+                lines = [str(i).encode() for i in range(200)]
+                path.write_bytes(b'\n'.join(lines) + b'\n')
+                self.commit(repo)
+                base = self.git(repo, 'rev-parse', 'HEAD').decode().strip()
+                lines[100] = b'edited'
+                path.write_bytes(b'\r\n'.join(lines) + b'\r\n')
+                args = []
+                if scope == 'staged':
+                    self.git(repo, 'add', '.')
+                elif scope in ('base', 'commit'):
+                    self.commit(repo)
+                    args = ['--base', base] if scope == 'base' else ['--commit', 'HEAD']
+                result = self.review(repo, *args)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn('line-ending churn', result.stdout)
+                self.assertIn('REVIEW_ALLOW_EOL_ONLY=1', result.stdout)
+                self.assertNotIn('REVIEWER RAN:', result.stdout)
+
+    def test_deliberate_normalization_requires_an_explicit_opt_in(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self.project(tmp)
+            (repo / 'line ends [1].txt').write_bytes(b'one\r\ntwo\r\n')
+            for allow, expected in (('', 2), ('0', 2), ('yes', 2), ('1', 0)):
+                with self.subTest(allow=allow):
+                    result = self.review(repo, REVIEW_ALLOW_EOL_ONLY=allow)
+                    self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
+                    if expected:
+                        self.assertIn('REVIEW_ALLOW_EOL_ONLY=1', result.stdout)
+                        self.assertNotIn('REVIEWER RAN:', result.stdout)
+                    else:
+                        self.assertIn('REVIEWER RAN:', result.stdout)
+
+    def test_line_ending_preflight_uses_two_diffs_for_many_files(self):
+        from unittest.mock import patch
+        import review_dispatch
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self.project(tmp)
+            for i in range(50):
+                (repo / ('file-%d.txt' % i)).write_bytes(b'old\n')
+            self.commit(repo)
+            for i in range(50):
+                (repo / ('file-%d.txt' % i)).write_bytes(b'changed\n')
+            diff = self.git(repo, 'diff', 'HEAD').decode()
+            with patch.object(review_dispatch.claude_bridge, 'git', wraps=bridge.git) as calls:
+                review_dispatch.reject_line_ending_churn(repo, 'uncommitted', None, diff)
+            diffs = [call for call in calls.call_args_list if call.args[1] == 'diff']
+            self.assertEqual(len(diffs), 2)
+            self.assertTrue(all('--numstat' in call.args and '-z' in call.args for call in diffs))
+
+    def test_an_adapter_preflight_failure_does_not_announce_spend(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self.project(tmp)
+            stub = repo / 'scripts/review_dispatch.py'
+            stub.write_text(stub.read_text().replace(
+                "print('REVIEWER RAN: ' + provider, flush=True)",
+                "raise ValueError('tmpdir preflight refused')"))
+            (repo / 'real.txt').write_bytes(b'changed\n')
+            result = self.review(repo)
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('tmpdir preflight refused', result.stdout)
+            self.assertIn('REVIEW [about to run]:', result.stdout)
+            self.assertNotIn('REVIEW [spend]:', result.stdout)
 
 
 class BridgeTests(unittest.TestCase):

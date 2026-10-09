@@ -36,26 +36,29 @@ trailers=$(git interpret-trailers --parse "$msg") || {
   echo "commit-msg: cannot parse the trailers; refusing to pass the message unchecked." >&2
   exit 1
 }
-# List separately: a pipeline lost git's failure and silently omitted the reports.
-paths=$(git -c core.quotePath=false ls-files) || {
-  echo "commit-msg: cannot list the index; refusing to pass the message unchecked." >&2
-  exit 1
-}
-# Git still quotes control characters, backslashes and double quotes. Refuse those paths
-# and a non-canonical directory case, so the hook, gate and reminder see the same reports.
-reviews=$(printf '%s\n' "$paths" | grep -iE '^"?docs/reviews/')
-while IFS= read -r f; do
-  [ -n "$f" ] || continue
-  case $f in
-    '"'*) echo "commit-msg: quoted paths under docs/reviews are not supported; rename $f." >&2
-          exit 1 ;;
-    docs/reviews/*) ;;
-    *) echo "commit-msg: use docs/reviews with this exact case in the index: $f." >&2
-       exit 1 ;;
-  esac
-done <<REVIEWS
+# Only task closure needs report paths; attribution-only commits need no listing.
+if printf '%s\n' "$trailers" | grep -qi '^Done:'; then
+  # List separately: a pipeline lost git's failure and silently omitted the reports.
+  paths=$(git -c core.quotePath=false ls-files) || {
+    echo "commit-msg: cannot list the index; refusing to pass the message unchecked." >&2
+    exit 1
+  }
+  # Git still quotes control characters, backslashes and double quotes. Refuse those paths
+  # and a non-canonical directory case, so the hook, gate and reminder see the same reports.
+  reviews=$(printf '%s\n' "$paths" | grep -iE '^"?docs/reviews/')
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    case $f in
+      '"'*) echo "commit-msg: quoted paths under docs/reviews are not supported; rename $f." >&2
+            exit 1 ;;
+      docs/reviews/*) ;;
+      *) echo "commit-msg: use docs/reviews with this exact case in the index: $f." >&2
+         exit 1 ;;
+    esac
+  done <<REVIEWS
 $reviews
 REVIEWS
+fi
 mentioned=0
 while IFS= read -r line; do
   case $line in [Dd][Oo][Nn][Ee]:*) ;; *) continue ;; esac

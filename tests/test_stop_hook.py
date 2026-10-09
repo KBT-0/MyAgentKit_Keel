@@ -10,6 +10,37 @@ HOOK = ROOT / 'overlays/claude-code/files/.claude/hooks/gate_on_stop.sh'
 
 
 class StopHookTests(unittest.TestCase):
+    def test_worker_and_ignored_sentinels_do_not_skip_the_leads_gate(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            subprocess.run(['git', 'init', '-q'], cwd=root, check=True)
+            (root / '.gitignore').write_text('node_modules/\n')
+            worker = root / '.claude/worktrees/w1'
+            worker.mkdir(parents=True)
+            subprocess.run(['git', 'init', '-q', str(worker)], check=True)
+            (root / 'scripts').mkdir()
+            (root / 'scripts/check.sh').write_text('#!/bin/sh\necho ran > gate-ran\nexit 1\n')
+            (root / 'scripts/check.sh').chmod(0o755)
+            hook = root / 'hook.sh'
+            hook.write_text(HOOK.read_text().replace('{{GATED_PATHS}}', 'src')
+                            .replace('{{GATED_FILE_PATTERN}}', r'\.py$'))
+            (root / 'src').mkdir()
+            (root / 'src/app.py').write_text('dirty\n')
+            subprocess.run(['git', 'add', 'src/app.py'], cwd=root, check=True)
+            for name in ('.claude/worktrees/w1/src/.selftest.py',
+                         '.claude/worktrees/w1/CMakeLists.txt.selftest-backup',
+                         'node_modules/pkg/.selftest.js'):
+                with self.subTest(sentinel=name):
+                    sentinel = root / name
+                    sentinel.parent.mkdir(parents=True, exist_ok=True)
+                    sentinel.write_text('injection\n')
+                    result = subprocess.run(['sh', str(hook)], cwd=root, input='{}', text=True,
+                                            capture_output=True, timeout=30)
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertTrue((root / 'gate-ran').exists())
+                    (root / 'gate-ran').unlink()
+                    sentinel.unlink()
+
     def test_a_self_test_sentinel_skips_the_gate_with_a_note(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

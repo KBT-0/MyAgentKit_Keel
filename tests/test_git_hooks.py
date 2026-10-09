@@ -437,7 +437,7 @@ class GitHookTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn('cannot list the index', result.stderr)
 
-    def check_report_name(self, name):
+    def check_report_name(self, name, message_text='close\n\nDone: K4\n', expected=1):
         # Index-only names also exercise characters Windows refuses in a working-tree name.
         with tempfile.TemporaryDirectory() as tmp:
             root, git = self.repo(tmp)
@@ -446,11 +446,18 @@ class GitHookTests(unittest.TestCase):
             git('-c', 'core.protectNTFS=false', 'update-index', '--add', '--cacheinfo',
                 '100644,' + blob + ',' + name)
             message = root / 'message'
-            message.write_text('close\n\nDone: K4\n')
+            message.write_text(message_text)
             result = subprocess.run(['sh', '.githooks/commit-msg', str(message)], cwd=root,
                                     capture_output=True, text=True)
-            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
             return result.stderr
+
+    def test_noncanonical_reports_do_not_block_commits_without_done(self):
+        for name in ('docs/Reviews/strong-today.md', 'docs/reviews/strong-\t.md'):
+            with self.subTest(path=name):
+                self.check_report_name(name, 'plain change\n', expected=0)
+                self.assertIn('crediting an AI tool', self.check_report_name(
+                    name, 'change\n\nCo-Authored-By: Claude <noreply@anthropic.com>\n'))
 
     def test_git_quoted_report_names_cannot_bypass_closure(self):
         for special in ('\t', '\\', '"', '\n'):

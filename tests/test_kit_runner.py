@@ -120,6 +120,35 @@ class KitRunnerTests(unittest.TestCase):
         self.assertFalse(passed, out)
         self.assertIn('linked test directories are not supported: linked', out)
 
+    def test_reparse_directories_are_refused_without_is_junction(self):
+        folder = self.tmp / 'suite'
+        folder.mkdir()
+        (folder / 'linked').mkdir()
+        original = Path.lstat
+
+        def lstat(path, *args, **kwargs):
+            if path.name == 'linked':
+                return unittest.mock.Mock(st_file_attributes=0x400)
+            return original(path, *args, **kwargs)
+
+        # Python 3.10/3.11 have lstat's Windows attributes but no Path.is_junction.
+        with unittest.mock.patch.object(Path, 'is_symlink', return_value=False), \
+                unittest.mock.patch.object(Path, 'is_junction', None, create=True), \
+                unittest.mock.patch.object(Path, 'lstat', lstat):
+            del Path.is_junction
+            with self.assertRaisesRegex(RuntimeError, 'linked test directories.*linked'):
+                check_kit.discover(folder)
+
+    def test_an_unreadable_test_directory_refuses_discovery(self):
+        def walk(folder, **kwargs):
+            if 'onerror' in kwargs:
+                kwargs['onerror'](PermissionError('unreadable test directory'))
+            return iter(())
+
+        with unittest.mock.patch.object(check_kit.os, 'walk', walk):
+            with self.assertRaisesRegex(PermissionError, 'unreadable test directory'):
+                check_kit.discover(self.tmp)
+
     def test_a_passing_nested_module_is_refused_before_import(self):
         command = self.suite_unit('True', 2)
         nested = self.tmp / 'suite/nested'

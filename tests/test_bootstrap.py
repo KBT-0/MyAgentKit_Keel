@@ -34,6 +34,49 @@ def cut_short(shims, needle):
 
 
 class BootstrapTests(unittest.TestCase):
+    def test_ignored_hooks_do_not_abort_bootstrap(self):
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            subprocess.run(['git', 'init', '-q'], cwd=project, check=True)
+            (project / '.gitignore').write_text('.claude/\n')
+            result = subprocess.run(['sh', str(root / 'bootstrap.sh'), str(project),
+                                     '--overlay', 'claude-code'], capture_output=True, text=True, timeout=90)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(self._hooks_path(project), '.githooks')
+            self.assertTrue((project / 'docs/kit/.kit-version').is_file())
+            indexed = subprocess.check_output(['git', 'ls-files', '.claude'], cwd=project)
+            self.assertEqual(indexed, b'')
+
+    def test_bootstrap_preserves_staged_content_and_project_script_modes(self):
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            subprocess.run(['git', 'init', '-q'], cwd=project, check=True)
+            subprocess.run(['git', 'config', 'core.fileMode', 'false'], cwd=project, check=True)
+            (project / 'scripts').mkdir()
+            for name in ('scripts/build.sh', 'scripts/review.sh'):
+                path = project / name
+                path.write_text('staged content\n')
+                subprocess.run(['git', 'add', name], cwd=project, check=True)
+                path.write_text('unstaged content\n')
+            # A tracked kit file is mode-repaired without staging its working content.
+            hook = project / '.githooks/commit-msg'
+            hook.parent.mkdir()
+            hook.write_text('old staged hook\n')
+            subprocess.run(['git', 'add', '.githooks/commit-msg'], cwd=project, check=True)
+            shutil.copyfile(root / 'core/.githooks/commit-msg', hook)
+            result = subprocess.run(['sh', str(root / 'bootstrap.sh'), str(project),
+                                     '--overlay', 'claude-code'], capture_output=True, text=True, timeout=90)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            for name in ('scripts/build.sh', 'scripts/review.sh', '.githooks/commit-msg'):
+                with self.subTest(path=name):
+                    content = subprocess.check_output(['git', 'show', ':' + name], cwd=project)
+                    self.assertEqual(content, b'old staged hook\n' if name.startswith('.githooks')
+                                     else b'staged content\n')
+                    mode = subprocess.check_output(['git', 'ls-files', '-s', name], cwd=project).split()[0]
+                    self.assertEqual(mode, b'100755' if name.startswith('.githooks') else b'100644')
+
     def test_bootstrap_stages_executable_modes_when_file_mode_is_disabled(self):
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory() as tmp:

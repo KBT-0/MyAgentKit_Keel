@@ -58,6 +58,7 @@ def main() -> None:
     transcript = Path(json.load(sys.stdin)['transcript_path'])
     state = transcript.with_suffix('.context-step')
     # A competing prompt stays silent. Closing the file releases the lock, even on a kill.
+    # Keep the lock file: unlinking it lets overlapping prompts lock different files.
     with open(transcript.with_suffix('.context-lock'), 'a+b') as lock:
         if os.name == 'nt':
             import msvcrt
@@ -67,16 +68,18 @@ def main() -> None:
             import fcntl
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         ctx, compactions = context(transcript)
+        legacy = False
         try:
             saved = json.loads(state.read_text())
             # Before this version the state held only an integer step.
-            said, previous = (saved, 0) if isinstance(saved, int) else (saved['step'], saved['compactions'])
+            legacy = isinstance(saved, int)
+            said, previous = (saved, compactions) if legacy else (saved['step'], saved['compactions'])
         except (OSError, ValueError, KeyError, TypeError):
             said, previous = -1, 0
         if previous != compactions:
             said = -1
         now = band(ctx)
-        if now > said or previous != compactions:
+        if now > said or previous != compactions or legacy:
             with tempfile.NamedTemporaryFile(mode='w', dir=state.parent, delete=False) as stream:
                 temporary = Path(stream.name)
                 json.dump({'step': max(now, said), 'compactions': compactions}, stream)
