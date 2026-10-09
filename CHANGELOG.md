@@ -136,10 +136,13 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   `scripts/claude_bridge.py`): the gate said an author fixes what a review found. The reviewer
   still never changes the checkout during its review run; afterwards it fixes its own
   findings, and the fix goes to a review by the other model, so no model approves its own
-  work. Independence is judged per diff; a fix round reviews the fix against the earlier
-  findings. **ACTION:** update `docs/REVIEW_GATE.md` and the review-fix rules in
-  `docs/WORKFLOW.md`; `claude_bridge.py`
-  comes with the sync.
+  work. A round may review the whole cumulative diff for context; its verdict counts only
+  for parts it did not write. Its last fix is accepted only by the other model's next round.
+  The loop ends at the first round with no High whose reviewer did not write the latest fix.
+  Inner same-model checks stay with the worker; cross-model gate findings go to the model
+  that found them. **ACTION:** update `docs/REVIEW_GATE.md`, `docs/REVIEW_RUNNING.md` and the
+  review-fix rules in `docs/WORKFLOW.md`, and copy the Claude Code overlay's
+  `.claude/agents/worker.md`; `claude_bridge.py` comes with the sync.
 
 ## v0.10 — 2026-10-07
 

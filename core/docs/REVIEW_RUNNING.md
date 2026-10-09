@@ -92,6 +92,11 @@ dispositions exceed the 400000-byte guard. A round recorded before these checks 
 carries neither the resolved reference nor the sha256 and is refused the same way. A fresh
 label starts at round 1.
 
+**The loop ends at the first round with no High whose reviewer did not write the latest fix.**
+A round may review the whole cumulative diff (`--base`) for context, but its verdict counts
+only for parts the reviewing model did not write (`docs/REVIEW_GATE.md`, "What counts as a risky diff").
+The reviewing model fixes its own findings; only the other model's next round accepts that fix.
+
 **The final Accept comes from one fresh full review under a NEW label.** Carried rounds and
 dispositions help the loop converge, but they also steer the reviewer toward what was
 already said. When the rounds under one label stop finding anything, run one more review
@@ -212,9 +217,8 @@ pending and continue independent authorized work; never restart an exhausted cha
 automatically. A review-and-fix round is separate from a provider attempt and may consume
 two calls; hosts must account for that when applying task-level authorization.
 
-If the fallback model authored any part of the patch, its findings are advisory only.
-The host must check all patch authors before treating any completed result as independent
-review; neither a new process nor automatic failover grants author-independent approval.
+The host must check authorship per part: a fallback verdict counts only for parts that model
+did not write. Neither a new process nor automatic failover grants approval of its own work.
 
 Record the affected task, evidence path, and pending review in current project state. Then
 continue independent authorized implementation, tests, or documentation. When Claude was
@@ -242,7 +246,9 @@ independently, and end it with "Fix sketch:" and a short fix direction (not a pa
 later round, paste the earlier rounds' findings and verdicts and the author's disposition of
 each as claims to verify (a disproved finding counts only once checked against the code; a
 deferred one stays open under Manual checks), and ask which are fixed before reviewing the
-whole diff again; the final Accept comes from one fresh review with no earlier rounds. Finish with a line
+whole cumulative diff for context. Your verdict counts only for parts you did not write;
+your last fix round is accepted only by the other model's next round. The loop ends at the
+first round with no High whose reviewer did not write the latest fix. Finish with a line
 "VERDICT: Accept" / "VERDICT: Accept with Manual Checks" / "VERDICT: Reject", followed by
 any manual checks written as full sentences ready to paste into docs/STATE.md.
 

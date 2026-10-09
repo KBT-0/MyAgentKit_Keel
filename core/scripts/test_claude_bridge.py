@@ -3271,6 +3271,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         prompt = ' '.join(log.read_text().split())
         for wording in ("the author's claims to verify",
                         'counts only after you have checked it against the code',
+                        'your verdict counts only for the parts you did not write',
                         'stays open: list it under Manual checks', 'never a plain Accept'):
             self.assertIn(wording, prompt)
         for wording in ("the author's disposition answers it", 'only with a new argument'):

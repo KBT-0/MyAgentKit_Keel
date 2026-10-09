@@ -33,11 +33,12 @@ being checked.
 
 ## What counts as a risky diff
 
-Independence is judged per change: every diff, the original work and each fix, is reviewed
-in a fresh session by a model that did not write that diff. A fix round reviews the fix and
-checks it against the earlier findings. The reviewer never changes the checkout during its
-review run. Afterwards the reviewing model verifies and fixes its own findings, and its fix goes to a review by the
-other model: no model approves its own work. An existing local commit without
+Independence is judged per part: a fresh round may review the whole cumulative diff (`--base`)
+for context, but each verdict counts only for the parts the reviewing model did not write.
+Afterwards the reviewing model verifies and fixes its own findings; its last fix round is
+accepted only by the other model's next round. The reviewer never changes the checkout during
+its review run. No model approves its own work. The loop ends at the first round with no High
+in which the reviewing model did not write the latest fix. An existing local commit without
 review is still unreviewed work, not an exception that moves this gate to push time.
 
 A diff is risky when a silent bug in it is expensive, hard to attribute, or slow to
@@ -163,7 +164,8 @@ Low) and ending with a `Fix sketch:` — a direction whoever fixes it verifies, 
 paste.
 
 When the prompt carries earlier rounds of the same change, the reviewer says for each earlier
-finding whether it is fixed or still present, then reviews the whole diff again. The
+finding whether it is fixed or still present, then reviews the whole diff again for context,
+with its verdict limited to parts it did not write. The
 author's dispositions (fixed in a commit, disproved with evidence, deferred to the owner) are
 claims to verify, because the author never approves its own work: a disproved finding counts
 only after the reviewer has checked it against the code, and a deferred one stays open under

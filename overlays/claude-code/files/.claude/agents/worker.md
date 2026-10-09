@@ -4,8 +4,9 @@ description: >
   Implementation worker for {{PROJECT_NAME}}: one task in one module, briefed per
   docs/HANDOFF.md. Spawn it instead of general-purpose for any task that runs a job
   longer than a few minutes ({{LONG_JOBS}}). Runs with a one-hour prompt cache and ends
-  under about 150 turns. A review-fix round comes back to the same worker while its context
-  lasts; the reviewer is always fresh.
+  under about 150 turns. Inner same-model checks stay with the worker;
+  cross-model gate findings go to the model that found them. Its fix goes to a fresh
+  review by the other model; no model approves its own work.
 model: {{WORKER_MODEL}}
 effort: {{WORKER_EFFORT}}
 maxTurns: 150

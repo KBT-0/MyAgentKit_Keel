@@ -48,6 +48,12 @@ class ReviewerDocumentTests(unittest.TestCase):
                     for heading in CALLER_HEADINGS:
                         self.assertFalse(heading in text, '%s (%s) carries the caller section %s' % (doc, where, heading))
         gate = (ROOT / 'core/docs/REVIEW_GATE.md').read_text()
+        policy = ' '.join(gate.split())
+        self.assertIn('each verdict counts only for the parts the reviewing model did not write', policy)
+        self.assertIn('first round with no High in which the reviewing model did not write the latest fix', policy)
+        worker = ' '.join((ROOT / 'overlays/claude-code/files/.claude/agents/worker.md').read_text().split())
+        self.assertIn('Inner same-model checks stay with the worker', worker)
+        self.assertIn('cross-model gate findings go to the model that found them', worker)
         for needed in ('`Accept` / `Accept with Manual Checks` / `Reject`',
                        'a disproved finding counts\nonly after the reviewer has checked it against the code',
                        'a deferred one stays open under\nManual checks, so it rules out a plain Accept',
