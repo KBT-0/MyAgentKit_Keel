@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"$CLAUDE_PROJECT_DIR/overlays/claude-code/files/.claude/hooks/py.sh\" \"$CLAUDE_PROJECT_DIR/overlays/claude-code/files/.claude/hooks/context_size.py\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
