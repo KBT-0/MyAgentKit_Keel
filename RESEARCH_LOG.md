@@ -21,6 +21,28 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-10-09 — The Claude reviewer's Bash could write the repository (#39)
+
+The bridged reviewers execute in a throwaway copy, but only Codex had an operating-system
+sandbox. Claude's Bash was merely asked to stay in the copy and off the network, so a
+reviewer that found the repository by its absolute path could change it, detected only
+afterwards as `stale_checkout`. Claude Code ships its own Bash sandbox (Seatbelt on macOS,
+bubblewrap and socat on Linux and WSL2), configurable per run with `--settings`, which
+`--restricted` keeps while it drops the user, project and local settings files. By default
+a host without the sandbox runs Bash unsandboxed, so `failIfUnavailable` is required, and
+`allowUnsandboxedCommands: false` stops the model from retrying a blocked command outside
+it. Native Windows has no sandbox (Claude Code 2.1.295 has one behind a feature gate that
+is off), and there the reviewer now gets no shell: a review that cannot reproduce is weaker
+than one that can, but one that can write the owner's checkout is not a review. The live
+probe on native Windows showed `failIfUnavailable` refusing at startup, before any model
+call; the error is classified `sandbox_unavailable`, a setup fault like `cli_unsupported`.
+
+On the same host the first `claude` on PATH was npm's `claude.cmd`, which the review cannot
+launch (cmd.exe would read its quoted JSON arguments as shell), and an older winget
+`claude.exe` lacked `--restricted`. Both failed every review with an error that looked like
+a broken adapter; doctor now asks `--help` of the claude the review would launch for every
+flag the adapter passes (`--max-turns` is accepted but hidden from `--help`).
+
 ### 2026-10-09 — Acceptance and context-hook edge cases (#42, #65, #66, #69, #70)
 
 The plugin's handoff command missed the spawned-session instructions already in the

@@ -42,6 +42,8 @@ args = sys.argv[1:]
 review = 'verdict' in args[args.index('--json-schema') + 1]
 assert args[args.index('--tools') + 1] == ('Read,Glob,Grep,Bash' if review else 'Read,Glob,Grep')
 assert (args[args.index('--allowed-tools') + 1] == 'Bash') if review else '--allowed-tools' not in args
+# The review's Bash runs only in Claude Code's sandbox, which refuses to start without one.
+assert (json.loads(args[args.index('--settings') + 1])['sandbox']['failIfUnavailable'] is True) if review else '--settings' not in args
 assert args[args.index('--permission-mode') + 1] == 'dontAsk'
 assert '--safe-mode' in args and '--restricted' in args
 assert '--strict-mcp-config' in args and '--no-session-persistence' in args

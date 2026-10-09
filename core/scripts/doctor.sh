@@ -183,6 +183,21 @@ if [ -n "$reviewer" ] && [ -z "$reviewer_cli" ]; then
 elif [ -n "$reviewer" ] && ! ( [ -x "$HOME/.local/bin/codex" ] && PATH="$PATH:$HOME/.local/bin"
                             command -v "$reviewer_cli" ) >/dev/null 2>&1; then
   miss "the second CLI '$reviewer_cli' that scripts/review.sh calls" "install and log in to $reviewer (docs/DEV_SETUP.md §3)"
+elif [ "$reviewer" = claude ] && [ -f scripts/claude_bridge.py ]; then
+  # Present is not enough: a claude too old for a flag the review passes (--restricted), or
+  # npm's claude.cmd on native Windows, failed every review. The adapter itself names the
+  # claude it would launch and the flags it needs (claude_bridge.cli_readiness).
+  cli_problem=$(python3 -B -c 'import sys; sys.path.insert(0, "scripts"); import claude_bridge
+print(claude_bridge.cli_readiness() or "")' 2>/dev/null)
+  [ -n "$cli_problem" ] && miss "${cli_problem%%|*}" "${cli_problem#*|}"
+  # The review's Bash runs only in Claude Code's sandbox, which needs these two on Linux and
+  # WSL2; without them every Claude review stops at startup (sandbox_unavailable).
+  if [ "$(uname -s 2>/dev/null)" = Linux ]; then
+    for tool in bwrap socat; do
+      command -v "$tool" >/dev/null 2>&1 ||
+        miss "$tool, which Claude Code's Bash sandbox needs for the Claude review" "sudo apt-get install bubblewrap socat (or your distribution's packages)"
+    done
+  fi
 fi
 # On native Windows (Git for Windows' sh, MSYS2, Cygwin) spawn_worker.sh opens a Windows
 # Terminal tab instead of a tmux session, which that host cannot run.

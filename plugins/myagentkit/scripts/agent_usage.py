@@ -199,6 +199,10 @@ def failure(provider: str, execution: dict, values: list[dict]) -> str | None:
     stderr = str(execution.get("stderr", "")).lower()
     if execution.get("exit_code") != 0 and ("unknown option" in stderr or "unexpected argument" in stderr):
         return "cli_unsupported"
+    # Claude Code's Bash sandbox could not start (bubblewrap or socat missing, WSL1): the same
+    # setup fault on every run, and never a reason to run unsandboxed or to switch reviewer.
+    if execution.get("exit_code") != 0 and "sandbox required but unavailable" in stderr:
+        return "sandbox_unavailable"
     return "cli_error" if errors or execution.get("exit_code") != 0 else None
 
 

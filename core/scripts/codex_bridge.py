@@ -88,11 +88,12 @@ def main(argv=None, result_sink=None):
                 throwaway_copy(repo, head, diff if scope == "uncommitted" else None, workdir,
                                deadline=deadline)
             except BridgeError as error:
-                if time.monotonic() < deadline:
-                    raise
-                # A preparation that used up the deadline is recorded as a timeout.
-                prepared = {"exit_code": None, "stdout": "", "stderr": str(error), "termination": "timeout",
-                             "cancelled": False, "duration_ms": 0}
+                # A preparation that used up the deadline is recorded as a timeout; a copy that
+                # could not be made, as copy_failed (never a fallback): it once ended the
+                # adapter with exit 2 and no record.
+                prepared = {"exit_code": None, "stdout": "", "stderr": str(error),
+                            "termination": "timeout" if time.monotonic() >= deadline else "copy_failed",
+                            "cancelled": False, "duration_ms": 0}
             command = [os.environ.get("REVIEW_CLI_BIN", "codex"), "exec", "--json", "--ephemeral",
                        "-s", "workspace-write", "-c", "sandbox_workspace_write.network_access=false",
                        "--skip-git-repo-check", "-c", "model_reasoning_effort=" + args.effort,

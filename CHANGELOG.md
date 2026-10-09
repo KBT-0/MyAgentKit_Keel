@@ -13,6 +13,25 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## v0.11 — 2026-10-09
 
+- **The Claude reviewer's shell is sandboxed, or absent** (issue #39; `claude_bridge.py`,
+  `review.sh`): on macOS, Linux and WSL2 its Bash runs in Claude Code's own sandbox, which
+  allows writes only in the throwaway copy and Claude Code's temporary directory, allows no
+  network, never retries a command outside it, and stops the review at startup where it
+  cannot start (`sandbox_unavailable`, never a fallback). On native Windows, where Claude
+  Code has no sandbox, the Claude reviewer gets no Bash: it reads the copy and marks its
+  findings REASONED. A reviewer that found the repository by its absolute path could
+  write to it before. **ACTION:** copy the core scripts; on Linux and WSL2 install
+  `bubblewrap` and `socat` (`scripts/doctor.sh` says so).
+- **Review clean-up gaps closed** (issue #39): a copy left by a killed adapter is removed
+  by a later run once it is older than the longest review; a proposal makes no temporary
+  folder; a copy that cannot be made is a recorded failure (`copy_failed`, with evidence and
+  a usage record) in both adapters, not exit 2 without one.
+- **doctor finds a claude CLI the review cannot use** (`scripts/doctor.sh`): one too old for
+  a flag the review passes (the winget claude 2.1.218 lacked `--restricted`), or npm's
+  `claude.cmd` on native Windows, first on PATH or named by `CLAUDE_CLI_BIN`, is MISSING
+  with the binary to put first or the `CLAUDE_CLI_BIN` to set. **ACTION:** copy
+  `$KIT/core/scripts/doctor.sh` to `scripts/doctor.sh` and run it.
+
 - **A review no longer dies on the kit's own limits** (`agent_process.py`, the adapters,
   `review.sh`): a review attempt now gets 3600 seconds (maximum 7200) and a Claude review
   200 turns (maximum 500); three high-effort reviews had died on 1800 seconds and 12 turns.
