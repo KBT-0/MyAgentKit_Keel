@@ -9,10 +9,21 @@ if python3 -c 'import sys' >/dev/null 2>&1; then py=python3; else py=python; fi
 # that line, so exit 0 without it is a failure, whatever ended the run early.
 passed=$(mktemp -d)
 trap 'rm -rf "$passed"' EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM
+cancel() {
+  trap '' INT TERM
+  child=${child:-${!:-}}
+  if [ -n "$child" ]; then
+    kill -s "$1" "$child" 2>/dev/null || :
+    wait "$child" 2>/dev/null || :
+  fi
+  exit "$2"
+}
+trap 'cancel INT 130' INT
+trap 'cancel TERM 143' TERM
 status=0
-KIT_CHECK_PASSED="$passed/passed" "$py" -B scripts/check_kit.py "$@" || status=$?
+KIT_CHECK_PASSED="$passed/passed" "$py" -B scripts/check_kit.py "$@" &
+child=$!
+wait "$child" || status=$?
 if [ "$status" -eq 0 ] && [ ! -f "$passed/passed" ]; then
   echo "KIT CHECK: FAIL — the kit check exited 0 without reaching its PASS line" >&2
   status=1

@@ -62,7 +62,8 @@ class OverlayPermissionsTests(unittest.TestCase):
             git('config', 'diff.probe.textconv', 'sh textconv.sh')
             (root / 'data.dat').write_bytes(b'after\n')
             marker = root / 'textconv-ran'
-            for args in (('diff',), ('show', 'HEAD', '--', 'data.dat'),
+            for args in (('diff',), ('diff', '-p'), ('show', 'HEAD'), ('log', '-p'),
+                         ('show', 'HEAD', '--', 'data.dat'),
                          ('log', '-p', '--textconv', 'HEAD', '--', 'data.dat')):
                 with self.subTest(args=args):
                     git(*args)

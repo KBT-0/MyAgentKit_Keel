@@ -413,9 +413,9 @@ Rules for whoever routes work, binding with any table:
    with each other and with the self-test. A review that fails on quota leaves its rerun
    command in the task's issue or STATE line and waits; it goes to the other side only with
    the owner's yes, because a second model's judgement is the point of it. The low allowance
-   lasts until that side's allowance resets, or until the owner says otherwise; then the main
-   rule is back at once, unasked: the reviewer fixes its own findings again. A decision made
-   for a moment never outlives its reason.
+   lasts until that side's allowance resets, or until the owner says otherwise. The normal
+   split of work is back at once, unasked. A decision made for a moment never outlives its
+   reason.
 
 ## Worker cost — waits and long lives are what you pay for
 

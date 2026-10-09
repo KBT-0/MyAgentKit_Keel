@@ -56,7 +56,11 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   `git branch -vD`), no rule has a `*` before its subcommand (`git -C * diff*` admitted
   `git -C . branch -D x`), a `*` follows a whole word (`git diff*` admitted `git difftool
   --extcmd=...`, `date*` admitted `date -s`), and `git *--output*`, `git *--ext-diff*` and `git *--textconv*` are
-  denied (the first overwrites a file, the others run the repository's diff drivers). **ACTION:** a project with its own `.claude/settings.json` adds the
+  denied (the first overwrites a file, the others run the repository's diff drivers).
+  The allow rules guard only the command's own arguments. The repository's local git
+  configuration is trusted: `git status` and the gate already run what it names
+  (`core.fsmonitor`). No allow rule can defend against a hostile local config.
+  **ACTION:** a project with its own `.claude/settings.json` adds the
   overlay's `permissions` block, `deny` included. Replace any plain `git diff`, `git show` and
   `git log` allowances with the overlay's `--no-textconv --no-ext-diff` forms: a plain one runs
   a repository-configured textconv driver, so a read could run any command.
@@ -78,8 +82,9 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 - **A low allowance ends** (`docs/WORKFLOW.md`, "Model routing", rule 7; a v0.10 rule): the
   rule said when a low allowance starts and not when it ends, so a lead kept the low side
   reviewing only after its allowance had reset. It now ends when that side's allowance resets
-  or the owner says so, and the reviewer fixes its own findings again. **ACTION:** add the
-  same closing sentence to rule 7 in your `docs/WORKFLOW.md`.
+  or the owner says otherwise. The normal split of work is back at once, unasked. A decision
+  made for a moment never outlives its reason. **ACTION:** replace rule 7's ending in your
+  `docs/WORKFLOW.md` with these closing sentences.
 
 ## v0.10 — 2026-10-07
 

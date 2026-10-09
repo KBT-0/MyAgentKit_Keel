@@ -6,9 +6,11 @@ import os
 from pathlib import Path
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 import unittest.mock
 
@@ -149,7 +151,9 @@ class KitRunnerTests(unittest.TestCase):
         project = self.tmp / 'kit'
         (project / 'scripts').mkdir(parents=True)
         shutil.copyfile(ROOT / 'scripts/check.sh', project / 'scripts/check.sh')
-        (project / 'scripts/check_kit.py').write_text('import sys; print("gate ran", sys.argv[1:])\n')
+        (project / 'scripts/check_kit.py').write_text(
+            'import os, sys\nfrom pathlib import Path\nprint("gate ran", sys.argv[1:])\n'
+            'Path(os.environ["KIT_CHECK_PASSED"]).touch()\n')
         shims = self.tmp / 'bin'
         shims.mkdir()
         (shims / 'python3').write_text('#!/bin/sh\nexit 126\n')
@@ -160,6 +164,52 @@ class KitRunnerTests(unittest.TestCase):
                                 text=True, env=dict(os.environ, PATH=str(shims) + os.pathsep + os.environ['PATH']))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("gate ran ['--timing']", result.stdout)
+
+    def test_a_signal_to_the_wrapper_stops_and_reaps_its_child(self):
+        if os.name == 'nt':
+            sys.stderr.write('\nNOT RUN: %s (POSIX only: signals to the wrapper PID)\n' % self.id())
+            return
+        # Keep the real startup code: a background Python inherits ignored SIGINT from sh.
+        startup = (ROOT / 'scripts/check_kit.py').read_text().split('\nROOT =', 1)[0]
+        for sig, status in ((signal.SIGTERM, 143), (signal.SIGINT, 130)):
+            with self.subTest(signal=sig):
+                project = self.tmp / sig.name
+                (project / 'scripts').mkdir(parents=True)
+                shutil.copyfile(ROOT / 'scripts/check.sh', project / 'scripts/check.sh')
+                (project / 'scripts/check_kit.py').write_text(startup + '''
+def stop(sig, frame):
+    Path('signal').write_text(str(sig))
+    raise SystemExit(0)
+signal.signal(signal.SIGTERM, stop)
+if signal.getsignal(signal.SIGINT) != signal.SIG_IGN:
+    signal.signal(signal.SIGINT, stop)
+try:
+    Path('ready').touch()
+    time.sleep(2)
+    Path('completed').touch()
+finally:
+    time.sleep(0.1)
+    Path('stopped').touch()
+''')
+                proc = subprocess.Popen(['sh', str(project / 'scripts/check.sh')],
+                                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                        text=True, start_new_session=True)
+                try:
+                    deadline = time.monotonic() + 10
+                    while not (project / 'ready').exists() and time.monotonic() < deadline and proc.poll() is None:
+                        time.sleep(0.01)
+                    self.assertTrue((project / 'ready').exists(), 'the child did not start')
+                    proc.send_signal(sig)
+                    proc.wait(timeout=10)
+                    self.assertTrue((project / 'stopped').exists(), 'the wrapper did not wait for its child')
+                    out = proc.communicate(timeout=10)[0]
+                    self.assertEqual(proc.returncode, status, out)
+                    self.assertFalse((project / 'completed').exists(), 'the child ran on after cancellation')
+                    self.assertEqual((project / 'signal').read_text(), str(sig))
+                finally:
+                    with contextlib.suppress(ProcessLookupError):
+                        os.killpg(proc.pid, signal.SIGKILL)
+                    proc.communicate(timeout=10)
 
     def test_units_print_in_the_given_order_whichever_ends_first(self):
         slow = [sys.executable, '-c', 'import time; time.sleep(1); print("slow output\\nUNIT DONE: slow")']
