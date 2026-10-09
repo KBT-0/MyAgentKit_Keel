@@ -26,3 +26,4 @@ __pycache__/
 # Legacy name from before every reviewer shared one Markdown format.
 /docs/reviews/*-claude-review.json
 !/docs/reviews/*-summary.md
+.claude/settings.local.json
