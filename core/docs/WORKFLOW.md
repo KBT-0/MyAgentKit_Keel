@@ -660,6 +660,9 @@ already shown once costs a whole round when the worker leaves it for the reviewe
 
 ### The lead's steps when a branch is ready
 
+The lead never changes its shell directory into a worker's worktree; use `git -C <worktree>` for its Git commands.
+The shell stays in the lead's checkout, so its Stop hook runs that checkout's gate.
+
 1. Start the self-test and the review together, on the same commit, never one after the other.
 2. Run two reviewers at the same time, never one after the other.
 3. Keep one review label for the whole feature, so that each round carries the earlier ones.

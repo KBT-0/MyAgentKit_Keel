@@ -431,6 +431,12 @@ if git -C "$target" rev-parse --git-dir >/dev/null 2>&1; then
     printf '%s\n' "  Then run: git config core.hooksPath .githooks (unset it in any other scope), and rerun bootstrap.sh; the kit's files are installed." >&2
     exit 1
   fi
+  # Windows' core.fileMode=false makes chmod invisible to Git. Record the modes explicitly.
+  set --
+  for f in "$target"/scripts/*.sh "$target"/.githooks/* "$target"/.claude/hooks/*; do
+    if [ -e "$f" ] && [ -z "$(blocked "${f#"$target"/}")" ]; then set -- "$@" "$f"; fi
+  done
+  [ "$#" -eq 0 ] || git -C "$target" add --chmod=+x -- "$@"
   wiring=1
   git -C "$target" config core.hooksPath .githooks
   # Verified as git sees it: a scope above the local one (worktree config, global) wins.

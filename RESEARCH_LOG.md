@@ -250,6 +250,21 @@ the child a complete temporary stdin file and monitors its process, not partial 
 
 ## Backflow findings
 
+### 2026-10-09 — Review spend, self-test races and Windows executable modes (#68, #59)
+
+A downstream review saw hundreds of changed lines from LF files rewritten as CRLF. The
+preflight compares each scope file's stats with and without `--ignore-cr-at-eol`, so a real
+edit elsewhere cannot hide that churn. Printing model and effort before each attempt makes
+the spend visible, including a fallback; the default working stance remains a separate decision.
+
+A lead's persistent shell directory sent its Stop hook into a worker's injected self-test.
+Keeping the shell in the lead's checkout prevents that mistake; recognizing the boundary
+example's `.selftest.*` injection and older backup sentinels avoids a misleading red gate.
+Incremental planners also missed always-run inputs and their command driver as shared dependencies.
+
+On Windows, `core.fileMode=false` hid bootstrap's chmod from the first Git index. Explicit
+`git add --chmod=+x` preserves executable modes through the owner's next `git add -A` and Linux checkout.
+
 ### 2026-10-07 — native Windows as the main host, and the tenth review's findings
 
 The owner moved development to native Windows (Git for Windows' `sh`, python.org CPython) and

@@ -34,6 +34,26 @@ def cut_short(shims, needle):
 
 
 class BootstrapTests(unittest.TestCase):
+    def test_bootstrap_stages_executable_modes_when_file_mode_is_disabled(self):
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            for args in (['init', '-q'], ['config', 'core.fileMode', 'false']):
+                subprocess.run(['git', *args], cwd=project, check=True, capture_output=True)
+            result = subprocess.run(['sh', str(root / 'bootstrap.sh'), str(project),
+                                     '--overlay', 'claude-code'], capture_output=True, text=True, timeout=90)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            expected = set(project.glob('scripts/*.sh')) | set(project.glob('.githooks/*')) | set(project.glob('.claude/hooks/*'))
+            expected = {p.relative_to(project).as_posix() for p in expected if p.is_file()}
+            # The owner's next add must preserve bootstrap's recorded modes.
+            subprocess.run(['git', 'add', '-A'], cwd=project, check=True, capture_output=True)
+            entries = subprocess.run(['git', 'ls-files', '-s', '-z'], cwd=project, check=True,
+                                     capture_output=True).stdout.split(b'\0')
+            modes = {os.fsdecode(e.split(b'\t', 1)[1]): e.split(b' ', 1)[0] for e in entries if e}
+            self.assertGreater(len(expected), 3)
+            for name in expected:
+                self.assertEqual(modes[name], b'100755', name)
+
     def test_bytecode_is_not_installed(self):
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory() as tmp:

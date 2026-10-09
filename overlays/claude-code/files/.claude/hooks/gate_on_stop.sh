@@ -20,6 +20,13 @@ esac
 root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
 CDPATH= cd -- "$root" || exit 0
 
+# Boundary self-tests inject .selftest.*; older project gates back up files in place.
+sentinel=$(find . -name .git -prune -o \( -name '.selftest.*' -o -name '*.selftest-backup' \) -print | head -1)
+if [ -n "$sentinel" ]; then
+  printf 'NOTE [Stop hook]: skipping the gate while a self-test sentinel/injection is present: %s\n' "$sentinel" >&2
+  exit 0
+fi
+
 # Only work in these paths needs the gate; documentation and tooling turns skip it, which is
 # why the hook is cheap in practice. Untracked files count — `git status` reports them where
 # `git diff` would not.

@@ -16,6 +16,8 @@ sentences, one instruction per sentence, one term per thing. State each requirem
    write "follow AGENTS.md"; the target will not weigh a pointer the same as a quoted rule.
    A task with web access also quotes the web rule: no personal data in any request, and the
    generic User-Agent to use (`docs/WORKFLOW.md`, "Web requests carry no personal data").
+   For an incremental-build planner, include inputs read by always-run steps in every stage's dependency set.
+   The driver script that holds the stage commands must invalidate every stage when it changes.
 4. **Acceptance:** what the diff must and must NOT contain, and which gate follows (a risky
    area means `docs/REVIEW_GATE.md`, fresh session). Any other change needs no review;
    {{OWNER_NAME}}'s check or the manual check named here accepts it.

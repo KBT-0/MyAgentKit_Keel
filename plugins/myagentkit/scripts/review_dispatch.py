@@ -25,6 +25,34 @@ def pin_valid(provider, model):
         provider != "claude" or model.startswith("claude-"))
 
 
+def reject_line_ending_churn(repo, scope, reference, diff):
+    # Use the captured scope's paths, including its archive exclusions. Numstat's rename
+    # form has an empty name followed by the old and new names, all NUL-delimited.
+    entries = iter(claude_bridge.git(repo, "apply", "--numstat", "-z",
+                                     stdin=diff.encode("utf-8")).split(b"\0"))
+    names = set()
+    for entry in entries:
+        if entry:
+            name = entry.split(b"\t", 2)[2]
+            names.update([name] if name else [next(entries), next(entries)])
+    refs = ["HEAD"]
+    if scope == "base":
+        refs = [reference + "...HEAD"]
+    elif scope == "commit":
+        parents = claude_bridge.git(repo, "rev-list", "--parents", "-n", "1", reference).split()[1:]
+        if not parents:
+            return  # A root commit only adds files.
+        refs = [os.fsdecode(parents[0]), reference]
+    for name in sorted(names):
+        args = ["diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--stat", *refs,
+                "--", ":(literal)" + os.fsdecode(name)]
+        stat = claude_bridge.git(repo, *args)
+        ignored = claude_bridge.git(repo, *args[:1], "--ignore-cr-at-eol", *args[1:])
+        if stat != ignored and not ignored.strip():
+            raise ValueError("line-ending-only churn in %r; restore its line endings before review"
+                             % os.fsdecode(name))
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", type=Path, required=True)
@@ -54,6 +82,7 @@ def main(argv=None):
     original = claude_bridge.snapshot(repo, scope, ref)
     if not original[2].strip():
         raise ValueError("empty diff: nothing was reviewed")
+    reject_line_ending_churn(repo, scope, original[3], original[2])
     # Once for either reviewer: a missing, foreign or oversized earlier round stops the review
     # here, exit 2 with one message, before a chain is recorded or any model is called.
     claude_bridge.prior_rounds(repo, os.environ.get("MYAGENTKIT_TASK_ID"), scope, original[3],
@@ -92,6 +121,8 @@ def main(argv=None):
         received = []
         command = ["--repo", str(repo), "--model", pins[provider], "--effort", args.effort,
                    "--" + scope] + ([ref] if ref else [])
+        print("REVIEW [spend]: %s model %s, effort %s" % (provider, pins[provider], args.effort),
+              flush=True)
         try:
             if provider == "claude":
                 exit_code = claude_bridge.main(["review", "--timeout", str(timeout), *command], received.append)

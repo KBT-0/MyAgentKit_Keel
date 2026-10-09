@@ -59,6 +59,17 @@ class ReviewerDocumentTests(unittest.TestCase):
 
 
 class SectionPointerTests(unittest.TestCase):
+    def test_the_lead_keeps_its_shell_in_its_own_checkout(self):
+        text = (ROOT / 'core/docs/WORKFLOW.md').read_text().split("### The lead's steps when a branch is ready")[1]
+        self.assertIn("The lead never changes its shell directory into a worker's worktree", text)
+        self.assertIn('use `git -C <worktree>` for its Git commands', text)
+        self.assertIn("The shell stays in the lead's checkout", text)
+
+    def test_incremental_build_briefs_name_both_shared_dependencies(self):
+        text = (ROOT / 'core/docs/HANDOFF.md').read_text().split('## The brief')[1].split('4. **Acceptance:**')[0]
+        self.assertIn("include inputs read by always-run steps in every stage's dependency set", text)
+        self.assertIn('The driver script that holds the stage commands must invalidate every stage when it changes.', text)
+
     def test_readme_ci_platforms_match_the_matrix(self):
         workflow = (ROOT / '.github/workflows/ci.yml').read_text()
         self.assertIn('os: [ubuntu-latest, macos-latest]', workflow)

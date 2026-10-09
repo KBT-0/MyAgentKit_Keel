@@ -10,6 +10,36 @@ HOOK = ROOT / 'overlays/claude-code/files/.claude/hooks/gate_on_stop.sh'
 
 
 class StopHookTests(unittest.TestCase):
+    def test_a_self_test_sentinel_skips_the_gate_with_a_note(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            subprocess.run(['git', 'init', '-q'], cwd=root, check=True)
+            (root / 'scripts').mkdir()
+            gate = root / 'scripts/check.sh'
+            gate.write_text('#!/bin/sh\necho ran > gate-ran\nexit 1\n')
+            gate.chmod(0o755)
+            hook = root / 'gate_on_stop.sh'
+            hook.write_text(HOOK.read_text().replace('{{GATED_PATHS}}', 'src')
+                            .replace('{{GATED_FILE_PATTERN}}', r'\.py$'))
+            (root / 'src/domain').mkdir(parents=True)
+            (root / 'src/app.py').write_text('dirty\n')
+            subprocess.run(['git', 'add', 'src/app.py'], cwd=root, check=True)
+            for name in ('CMakeLists.txt.selftest-backup', 'src/domain/.selftest.py'):
+                with self.subTest(sentinel=name):
+                    sentinel = root / name
+                    sentinel.write_text('injection\n')
+                    result = subprocess.run(['sh', str(hook)], cwd=root, input='{}', text=True,
+                                            capture_output=True, timeout=30)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertIn('NOTE [Stop hook]: skipping the gate', result.stderr)
+                    self.assertIn(name, result.stderr)
+                    self.assertFalse((root / 'gate-ran').exists())
+                    sentinel.unlink()
+            result = subprocess.run(['sh', str(hook)], cwd=root, input='{}', text=True,
+                                    capture_output=True, timeout=30)
+            self.assertEqual(result.returncode, 2, result.stderr)
+            self.assertTrue((root / 'gate-ran').exists())
+
     def test_pass_fail_and_not_run_each_reach_the_agent(self):
         # 75 is "the gate did not run": blocking, and never reported as a pass or a failure.
         with tempfile.TemporaryDirectory() as tmp:

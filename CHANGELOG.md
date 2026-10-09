@@ -13,6 +13,29 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## v0.11 — 2026-10-09
 
+- **A review names its spend** (issue #68, item 1; `scripts/review.sh`, `scripts/review_dispatch.py`):
+  before each reviewer runs, including a fallback, it prints the model and effort.
+  **ACTION:** copy `$KIT/core/scripts/review_dispatch.py` to `scripts/review_dispatch.py`.
+- **Line-ending-only churn stops a review** (issue #68, item 2; `scripts/review.sh`,
+  `scripts/review_dispatch.py`): before any reviewer runs, each file in the selected scope
+  whose stat disappears with `--ignore-cr-at-eol` fails with its name and a repair instruction.
+  **ACTION:** copy `$KIT/core/scripts/review_dispatch.py` to `scripts/review_dispatch.py`.
+- **The lead's Stop hook stays out of a worker's self-test** (issue #68, item 3): the lead
+  uses `git -C <worktree>` and keeps its shell in its own checkout. The Stop hook skips with
+  a NOTE while `.selftest.*` or `*.selftest-backup` is present in the tree.
+  **ACTION:** add the two sentences under "The lead's steps when a branch is ready" in
+  `$KIT/core/docs/WORKFLOW.md` to your `docs/WORKFLOW.md`, and copy
+  `$KIT/overlays/claude-code/files/.claude/hooks/gate_on_stop.sh` to `.claude/hooks/gate_on_stop.sh`,
+  keeping your gated paths and file pattern.
+- **An incremental-build brief names both shared dependencies** (issue #68, item 4;
+  `docs/HANDOFF.md`, "The brief"): always-run inputs belong to every stage's dependency
+  set, and a changed driver script invalidates every stage. **ACTION:** add the two
+  sentences in item 3 from `$KIT/core/docs/HANDOFF.md` to your `docs/HANDOFF.md`.
+- **Bootstrap records executable Git modes on Windows** (issue #59; `bootstrap.sh`): in
+  a Git repository it stages `scripts/*.sh`, `.githooks/*` and `.claude/hooks/*` with
+  `git add --chmod=+x`, even when `core.fileMode=false`. Existing projects whose index
+  already records `100755` need nothing. **ACTION:** if your index records `100644`, run
+  `git add --chmod=+x scripts/*.sh .githooks/* .claude/hooks/*` for the paths your project has.
 - **Python that does not run** (issue #67): on Windows `python3` may be a Store alias that is
   on PATH but exits 9009. The Claude Code overlay's three Python hooks now start through the
   new `.claude/hooks/py.sh`, which runs the first of `python3`, `python`, `py -3` that runs;

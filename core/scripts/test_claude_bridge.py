@@ -25,7 +25,7 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'MYAGENTKIT_TASK_ID', 'MYAGENTKIT_R
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 127, 'test_agent_usage': 20, 'test_codex_quota': 5}
+SUITE_MINIMUMS = {'test_claude_bridge': 129, 'test_agent_usage': 20, 'test_codex_quota': 5}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -152,6 +152,96 @@ def header_of(path):
 
 def verdicts_of(path):
     return [line for line in Path(path).read_text().splitlines() if line.startswith("VERDICT: ")]
+
+
+class ReviewPreflightTests(unittest.TestCase):
+    def git(self, repo, *args):
+        return subprocess.run(['git', '-C', str(repo), *args], check=True, capture_output=True).stdout
+
+    def commit(self, repo):
+        self.git(repo, 'add', '.')
+        self.git(repo, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
+                 '-c', 'core.hooksPath=/dev/null', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'fixture')
+
+    def project(self, tmp):
+        repo = Path(tmp)
+        (repo / 'scripts').mkdir()
+        shutil.copyfile(ROOT / 'review.sh', repo / 'scripts/review.sh')
+        shutil.copyfile(ROOT.parent / '.gitignore', repo / '.gitignore')
+        # Only the paid adapter boundary is replaced. The wrapper, dispatcher, snapshot,
+        # scope validation and chain storage all run their shipped implementations.
+        (repo / 'scripts/review_dispatch.py').write_text('''import os, sys
+sys.path.insert(0, %r)
+import review_dispatch as dispatch
+def adapter(provider, args, report):
+    print('REVIEWER RAN: ' + provider, flush=True)
+    quota = os.environ.get('STUB_QUOTA') == provider
+    report({'status': 'failed' if quota else 'completed',
+            'failure_kind': 'quota' if quota else None, 'evidence': 'fixture', 'usage_record': 'fixture'})
+    return 5 if quota else 0
+dispatch.claude_bridge.main = lambda args, report: adapter('claude', args, report)
+dispatch.codex_bridge.main = lambda args, report: adapter('codex', args, report)
+try:
+    raise SystemExit(dispatch.main())
+except ValueError as error:
+    print('FAIL [review]: ' + str(error))
+    raise SystemExit(2)
+''' % str(ROOT))
+        self.git(repo, 'init', '-q')
+        self.git(repo, 'config', 'core.autocrlf', 'false')
+        (repo / 'line ends [1].txt').write_bytes(b'one\ntwo\n')
+        (repo / 'real.txt').write_bytes(b'original\n')
+        self.commit(repo)
+        return repo
+
+    def review(self, repo, *args, **extra):
+        env = dict(os.environ, REVIEW_REPO_ROOT=str(repo), REVIEW_CODEX_MODEL='fixture-codex',
+                   REVIEW_CLAUDE_MODEL='claude-fixture', REVIEW_EFFORT='medium',
+                   MYAGENTKIT_DELEGATION_DEPTH='0', MYAGENTKIT_TASK_ID='', STUB_QUOTA='')
+        env.update(extra)
+        return subprocess.run(['sh', str(repo / 'scripts/review.sh'), *args],
+                              env=env, text=True, capture_output=True, timeout=30)
+
+    def test_each_reviewer_prints_model_and_effort_before_running(self):
+        for primary in ('codex', 'claude'):
+            with self.subTest(primary=primary), tempfile.TemporaryDirectory() as tmp:
+                repo = self.project(tmp)
+                (repo / 'real.txt').write_bytes(b'changed\n')
+                result = self.review(repo, '--reviewer', primary, '--fallback', STUB_QUOTA=primary)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                for provider, model in (('codex', 'fixture-codex'), ('claude', 'claude-fixture')):
+                    spend = 'REVIEW [spend]: %s model %s, effort medium' % (provider, model)
+                    self.assertIn(spend, result.stdout)
+                    self.assertLess(result.stdout.index(spend), result.stdout.index('REVIEWER RAN: ' + provider))
+
+    def test_line_ending_only_files_fail_before_any_reviewer_in_the_selected_scope(self):
+        for scope in ('unstaged', 'staged', 'base', 'commit', 'outside scope', 'real edit'):
+            with self.subTest(scope=scope), tempfile.TemporaryDirectory() as tmp:
+                repo = self.project(tmp)
+                base = self.git(repo, 'rev-parse', 'HEAD').decode().strip()
+                (repo / 'line ends [1].txt').write_bytes(b'one\ntwo\r\n')
+                (repo / 'real.txt').write_bytes(b'changed\n')
+                args = []
+                if scope == 'real edit':
+                    (repo / 'line ends [1].txt').write_bytes(b'one\nchanged\r\n')
+                if scope == 'staged':
+                    self.git(repo, 'add', '.')
+                elif scope in ('base', 'commit', 'outside scope'):
+                    self.commit(repo)
+                    args = ['--base', base] if scope == 'base' else ['--commit', 'HEAD']
+                    if scope == 'outside scope':
+                        (repo / 'real.txt').write_bytes(b'another real edit\n')
+                        self.commit(repo)
+                result = self.review(repo, '--reviewer', 'codex', '--fallback', *args)
+                if scope in ('outside scope', 'real edit'):
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertIn('REVIEWER RAN: codex', result.stdout)
+                else:
+                    self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                    self.assertIn("line-ending-only churn in 'line ends [1].txt'", result.stdout)
+                    self.assertIn('restore its line endings before review', result.stdout)
+                    self.assertNotIn('REVIEWER RAN:', result.stdout)
+                    self.assertNotIn('REVIEW [spend]:', result.stdout)
 
 
 class BridgeTests(unittest.TestCase):
@@ -3914,6 +4004,8 @@ if __name__ == "__main__":
                        (QuotaTests, 'test_codex_quota')):
         minimum = SUITE_MINIMUMS[name]
         tests = unittest.defaultTestLoader.loadTestsFromTestCase(case)
+        if name == 'test_claude_bridge':
+            tests.addTests(unittest.defaultTestLoader.loadTestsFromTestCase(ReviewPreflightTests))
         if tests.countTestCases() < minimum:
             raise SystemExit("FAIL: %s has %d of at least %d tests; a suite that did not run is "
                              "not a pass" % (case.__name__, tests.countTestCases(), minimum))
