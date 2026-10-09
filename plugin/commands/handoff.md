@@ -22,8 +22,11 @@ use the seven-part structure below rather than inventing a format:
    route violates that, say so instead of producing the prompt.
 6. **Definition of Done** — the exact command or observation that proves it is finished.
    Not "it works". Something the implementer can run and the owner can re-run.
-7. **If ambiguous: STOP and ask.** An unanswered question comes back as a question, never
-   as a guess buried in the diff.
+7. **If ambiguous: STOP and ask.** Do not assume, do not invent scope, do not widen the task
+   to make an unclear part fit. An unanswered question comes back as a question, not as a
+   guess buried in the diff. A spawned session has nobody to ask in its pane: it writes the
+   question into its result file, with `Kind: blocked` if the work cannot continue, and
+   commits the file. It then goes on with what does not depend on the answer.
 
 Verify every path and member name with grep or a read before writing it down. A path from
 memory sends the implementer to the wrong place and the diff comes back there.

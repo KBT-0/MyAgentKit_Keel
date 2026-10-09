@@ -21,6 +21,31 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-10-09 — Acceptance and context-hook edge cases (#42, #65, #66, #69, #70)
+
+The plugin's handoff command missed the spawned-session instructions already in the
+canonical template. The upgrade checklist also copied `spawn_worker.sh` twice.
+
+The kit check protects against omitted tests in its supported flat suite layout. Linked
+directories, including Windows junctions, are now refused within the test roots; following
+project-owned links or defending against concurrent replacement remains outside this fix.
+A failing linked package previously passed with only the top-level tests executed.
+
+The merge-action regression assumed macOS meant BSD `mktemp`, although PATH may select
+GNU coreutils. It now probes the command's temporary-folder placement and exercises both
+behaviors on every host.
+
+The strong review closure hook lost a failed index listing's status and missed Git-quoted
+names and differently cased review directories. Listing separately and refusing those
+names keeps the hook, working-tree gate and reminder aligned. Reports linked outside the
+checkout remain outside this fix's threat model.
+
+Concurrent context hooks read the same step and announced it more than once. A compaction
+followed immediately by a request missed its new warning, while an ordinary size drop
+re-armed one already announced. A per-session lock and atomic state replacement preserve
+the highest announced step together with the compaction count. A competing hook stays
+silent, and operating-system locks release when a process ends.
+
 ### 2026-09-06 — Review tests must survive project-owned model configuration
 
 Adopting 0.7 into an existing project preserved its configured reviewer and named model pins.

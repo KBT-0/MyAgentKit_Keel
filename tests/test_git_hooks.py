@@ -417,6 +417,56 @@ class GitHookTests(unittest.TestCase):
                     self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
                     self.assertIn('closes %s but docs/STATE.md still mentions it' % trailer, result.stderr)
 
+    def test_a_failed_report_listing_refuses_a_done_trailer(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, git = self.repo(tmp)
+            report = root / 'docs/reviews/strong-today.md'
+            report.parent.mkdir(parents=True)
+            report.write_text('- K4: open\n')
+            git('add', 'docs')
+            message = root / 'message'
+            message.write_text('close\n\nDone: K4\n')
+            shim = root / 'shim'
+            shim.mkdir()
+            (shim / 'git').write_text('#!/bin/sh\ncase " $* " in *" ls-files "*) exit 128 ;; esac\n'
+                                      'exec %s "$@"\n' % shlex.quote(shutil.which('git')))
+            (shim / 'git').chmod(0o755)
+            result = subprocess.run(['sh', '.githooks/commit-msg', str(message)], cwd=root,
+                                    capture_output=True, text=True,
+                                    env=dict(os.environ, PATH=str(shim) + os.pathsep + os.environ['PATH']))
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('cannot list the index', result.stderr)
+
+    def check_report_name(self, name):
+        # Index-only names also exercise characters Windows refuses in a working-tree name.
+        with tempfile.TemporaryDirectory() as tmp:
+            root, git = self.repo(tmp)
+            blob = subprocess.run(['git', 'hash-object', '-w', '--stdin'], cwd=root,
+                                  input='- K4: open\n', capture_output=True, text=True, check=True).stdout.strip()
+            git('-c', 'core.protectNTFS=false', 'update-index', '--add', '--cacheinfo',
+                '100644,' + blob + ',' + name)
+            message = root / 'message'
+            message.write_text('close\n\nDone: K4\n')
+            result = subprocess.run(['sh', '.githooks/commit-msg', str(message)], cwd=root,
+                                    capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            return result.stderr
+
+    def test_git_quoted_report_names_cannot_bypass_closure(self):
+        for special in ('\t', '\\', '"', '\n'):
+            with self.subTest(special=special):
+                self.assertIn('quoted paths under docs/reviews',
+                              self.check_report_name('docs/reviews/strong-' + special + '.md'))
+        for name in ('space here', 'é'):
+            with self.subTest(name=name):
+                self.assertIn('still mentions it', self.check_report_name('docs/reviews/strong-' + name + '.md'))
+
+    def test_noncanonical_review_directory_case_is_refused(self):
+        for directory in ('docs/Reviews', 'Docs/reviews', 'DOCS/REVIEWS'):
+            with self.subTest(directory=directory):
+                self.assertIn('use docs/reviews with this exact case',
+                              self.check_report_name(directory + '/strong-today.md'))
+
     def test_the_index_is_checked_not_the_working_tree(self):
         with tempfile.TemporaryDirectory() as tmp:
             root, git = self.repo(tmp)

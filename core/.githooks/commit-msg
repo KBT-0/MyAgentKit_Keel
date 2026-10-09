@@ -36,6 +36,26 @@ trailers=$(git interpret-trailers --parse "$msg") || {
   echo "commit-msg: cannot parse the trailers; refusing to pass the message unchecked." >&2
   exit 1
 }
+# List separately: a pipeline lost git's failure and silently omitted the reports.
+paths=$(git -c core.quotePath=false ls-files) || {
+  echo "commit-msg: cannot list the index; refusing to pass the message unchecked." >&2
+  exit 1
+}
+# Git still quotes control characters, backslashes and double quotes. Refuse those paths
+# and a non-canonical directory case, so the hook, gate and reminder see the same reports.
+reviews=$(printf '%s\n' "$paths" | grep -iE '^"?docs/reviews/')
+while IFS= read -r f; do
+  [ -n "$f" ] || continue
+  case $f in
+    '"'*) echo "commit-msg: quoted paths under docs/reviews are not supported; rename $f." >&2
+          exit 1 ;;
+    docs/reviews/*) ;;
+    *) echo "commit-msg: use docs/reviews with this exact case in the index: $f." >&2
+       exit 1 ;;
+  esac
+done <<REVIEWS
+$reviews
+REVIEWS
 mentioned=0
 while IFS= read -r line; do
   case $line in [Dd][Oo][Nn][Ee]:*) ;; *) continue ;; esac
@@ -50,7 +70,7 @@ while IFS= read -r line; do
   # The reports are listed whole, one per line and unquoted (a name may hold a space or a
   # non-ASCII letter), and matched here rather than by a wildcard pathspec, which an inherited
   # GIT_LITERAL_PATHSPECS turns off.
-  strong=$(git -c core.quotePath=false ls-files -- docs/reviews | grep '^docs/reviews/strong-[^/]*\.md$')
+  strong=$(printf '%s\n' "$reviews" | grep '^docs/reviews/strong-[^/]*\.md$')
   while IFS= read -r f; do
     [ -n "$f" ] || continue
     hits=$(git show ":$f" 2>/dev/null | grep -inE "(^|[^A-Za-z0-9_-])$id([^A-Za-z0-9_-]|\$)")

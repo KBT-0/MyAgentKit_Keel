@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 
 ROOT = Path(__file__).resolve().parents[1]
 OVERLAY = ROOT / 'overlays/claude-code/files'
@@ -62,6 +63,48 @@ class ContextHookTests(unittest.TestCase):
         self.assertIn('Context is 210k tokens', self.run_hook([prompt(), {'type': 'assistant', 'message': {
             'model': 'claude-x', 'usage': {'input_tokens': 210_000, 'cache_read_input_tokens': None,
                                            'cache_creation_input_tokens': None}}}]))
+
+    def test_compaction_rearms_even_when_a_request_already_followed_it(self):
+        turns = [request(310_000)]
+        self.assertIn('Context is 310k tokens', self.run_hook(turns))
+        turns += [{'type': 'system', 'subtype': 'compact_boundary'}, request(210_000)]
+        self.assertIn('Context is 210k tokens', self.run_hook(turns))
+        self.assertEqual(self.run_hook(turns), '')
+
+    def test_a_drop_without_compaction_does_not_rearm(self):
+        turns = [request(255_000)]
+        self.assertIn('Context is 255k tokens', self.run_hook(turns))
+        turns += [request(240_000)]
+        self.assertEqual(self.run_hook(turns), '')
+        turns += [request(255_000)]
+        self.assertEqual(self.run_hook(turns), '')
+
+    def test_concurrent_prompts_announce_a_step_once(self):
+        self.transcript.write_text(json.dumps(request(255_000)) + '\n')
+        state = self.transcript.with_suffix('.context-step')
+        state.write_text('-1')  # the earlier hook's state is also accepted on upgrade
+        # Slow the read after it got the old value: without a lock, every child announces.
+        wrapper = self.tmp / 'slow_hook.py'
+        wrapper.write_text('import runpy, time\nfrom pathlib import Path\n'
+                           'read = Path.read_text\n'
+                           'def slow(self, *args, **kwargs):\n'
+                           '    value = read(self, *args, **kwargs)\n'
+                           '    time.sleep(0.5)\n'
+                           '    return value\n'
+                           'Path.read_text = slow\n'
+                           'runpy.run_path(%r, run_name="__main__")\n' % str(HOOK))
+
+        def invoke(_):
+            return subprocess.run([sys.executable, str(wrapper)],
+                                  input=json.dumps({'transcript_path': str(self.transcript)}),
+                                  capture_output=True, text=True, timeout=30, env=self.env)
+
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            results = list(pool.map(invoke, range(6)))
+        for result in results:
+            self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.assertEqual(sum('Context is 255k tokens' in r.stdout for r in results), 1)
+        self.assertEqual(self.run_hook([request(255_000)]), '')
 
     def test_silent_below_the_line_and_on_a_broken_transcript(self):
         self.assertEqual(self.run_hook([prompt(), request(199_000)]), '')

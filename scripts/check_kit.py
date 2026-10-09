@@ -85,9 +85,9 @@ REQUIRED_SUITES = {
     'tests': {'test_packaging': 1, 'test_bootstrap': 29, 'test_acceptance': 9,
               'test_review_upgrade': 3, 'test_boundary_example': 3, 'test_scan_gate': 1,
               'test_check_gate': 23, 'test_check_gate_windows': 18, 'test_boundary_restore': 39,
-              'test_sync_kit': 29, 'test_doctor': 2, 'test_git_hooks': 25, 'test_stop_hook': 2, 'test_context_hook': 4, 'test_overlay_permissions': 6,
+              'test_sync_kit': 29, 'test_doctor': 2, 'test_git_hooks': 28, 'test_stop_hook': 2, 'test_context_hook': 7, 'test_overlay_permissions': 6,
               'test_spawn_worker': 18, 'test_worker_visibility': 55, 'test_doc_pointers': 7,
-              'test_kit_output': 1, 'test_kit_runner': 18, 'test_clean_worktrees': 137, 'test_clean_worktrees_windows': 9, 'test_close_worker_windows': 1,
+              'test_kit_output': 1, 'test_kit_runner': 19, 'test_clean_worktrees': 137, 'test_clean_worktrees_windows': 9, 'test_close_worker_windows': 1,
               'test_review_windows': 20, 'test_worker_paths_windows': 3,
               'test_close_worker': 22, 'test_python_fallback': 1},
 }
@@ -141,6 +141,13 @@ def discover(folder, leave_out=()):
     """The suite under `folder` and the number of tests in each of its modules; the modules
     named in `leave_out` are not imported. Nested test modules are refused before discovery."""
     folder = Path(folder)
+    # Discovery does not follow linked packages. Refuse them, rather than pass without
+    # running their tests; linked directories are outside the supported suite layout.
+    for parent, directories, _ in os.walk(folder):
+        for path in [Path(parent), *(Path(parent) / name for name in directories)]:
+            if path.is_symlink() or (hasattr(path, 'is_junction') and path.is_junction()):
+                raise RuntimeError('linked test directories are not supported: '
+                                   + path.relative_to(folder).as_posix())
     nested = sorted(path.relative_to(folder).as_posix() for path in folder.rglob('test_*.py')
                     if path.parent != folder)
     if nested:

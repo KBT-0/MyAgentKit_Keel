@@ -1,6 +1,7 @@
 """sync-kit.sh must not stamp a version whose ACTION items the owner has not confirmed."""
 import os
 from pathlib import Path
+import shlex
 import shutil
 import subprocess
 import sys
@@ -745,7 +746,7 @@ class SyncKitTests(unittest.TestCase):
         snippet = self.checklist_block('git merge-file')
         env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1')
         names = ('scripts/check.sh', 'docs/DEV_SETUP.md', 'docs/GOTCHAS.md')
-        for case in ('a leftover', 'TMPDIR inside'):
+        for case in ('a leftover', 'TMPDIR inside', 'TMPDIR honoured', 'TMPDIR ignored'):
             with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
                 kit, project = Path(tmp) / 'kit', Path(tmp) / 'project'
                 for name in names:
@@ -763,13 +764,32 @@ class SyncKitTests(unittest.TestCase):
                     (project / 'scripts/.kit-merge-Ab12Cd').write_text('half\n')
                 else:
                     run_env['TMPDIR'] = str(project)
+                if case in ('TMPDIR honoured', 'TMPDIR ignored'):
+                    shims = Path(tmp) / 'bin'
+                    shims.mkdir()
+                    outside = Path(tmp) / 'outside'
+                    outside.mkdir()
+                    # Both implementations run on every host, whatever its PATH supplies.
+                    tmpdir = '"$TMPDIR"' if case == 'TMPDIR honoured' else shlex.quote(outside.as_posix())
+                    real = shlex.quote(shutil.which('mktemp'))
+                    (shims / 'mktemp').write_text('#!/bin/sh\nif [ "$#" -eq 1 ] && [ "$1" = -d ]; then\n'
+                                                 '  exec %s -d %s/kit-probe.XXXXXX\nfi\nexec %s "$@"\n'
+                                                 % (real, tmpdir, real))
+                    (shims / 'mktemp').chmod(0o755)
+                    run_env['PATH'] = str(shims) + os.pathsep + env['PATH']
+                probe = subprocess.run(['sh', '-c', 't=$(mktemp -d) || exit 1; '
+                                        'case "$(cd "$t" && pwd -P)/" in "$(pwd -P)/"*) echo inside ;; '
+                                        '*) echo outside ;; esac; rmdir "$t"'],
+                                       cwd=project, capture_output=True, text=True, env=run_env)
+                self.assertEqual(probe.returncode, 0, probe.stdout + probe.stderr)
+                if case in ('TMPDIR honoured', 'TMPDIR ignored'):
+                    self.assertEqual(probe.stdout.strip(), 'inside' if case == 'TMPDIR honoured' else 'outside')
                 result = subprocess.run(['sh', '-c', snippet], cwd=project, capture_output=True, text=True,
                                         env=run_env)
                 untracked = lambda: subprocess.run(['git', 'ls-files', '--others'], cwd=project, capture_output=True,
                                                    text=True, env=env).stdout.split()
-                if case == 'TMPDIR inside' and sys.platform == 'darwin':
-                    # macOS mktemp without a template ignores TMPDIR: the copies go to the user's
-                    # temp folder, never into the project, and the step runs.
+                if case != 'a leftover' and probe.stdout.strip() == 'outside':
+                    # BSD and GNU mktemp differ even on one host: test the command on PATH.
                     self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                     self.assertEqual(untracked(), [])
                     continue

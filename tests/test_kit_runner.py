@@ -108,6 +108,18 @@ class KitRunnerTests(unittest.TestCase):
         self.assertFalse(passed, out)
         self.assertIn('nested test modules are not supported: nested/test_nested_failure.py', out)
 
+    def test_a_linked_package_with_failing_tests_is_refused(self):
+        command = self.suite_unit('True', 2)
+        package = self.tmp / 'package'
+        package.mkdir()
+        (package / '__init__.py').write_text('')
+        (package / 'test_linked_failure.py').write_text(PROBE % 'False')
+        link = self.tmp / 'suite/linked'
+        link.symlink_to(package, target_is_directory=True)
+        passed, out = runner(('suite', command))
+        self.assertFalse(passed, out)
+        self.assertIn('linked test directories are not supported: linked', out)
+
     def test_a_passing_nested_module_is_refused_before_import(self):
         command = self.suite_unit('True', 2)
         nested = self.tmp / 'suite/nested'

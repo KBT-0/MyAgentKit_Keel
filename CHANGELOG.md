@@ -13,6 +13,20 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## v0.11 — 2026-10-09
 
+- **A spawned handoff records its question** (issue #42; the plugin's handoff command):
+  item 7 now matches `docs/HANDOFF.md`; the upgrade checklist no longer copies
+  `spawn_worker.sh` twice.
+- **Linked test directories fail the kit check** (issue #65; `scripts/check_kit.py`):
+  a linked package can no longer leave failing tests undiscovered.
+- **The merge-action test probes mktemp** (issue #66; `tests/test_sync_kit.py`):
+  BSD and GNU temporary-folder behavior is tested on every host, including macOS.
+- **Strong review closure fails on missing or hidden index evidence** (issue #69;
+  `.githooks/commit-msg`): a failed listing refuses the commit. Quoted paths under
+  `docs/reviews` and a different case of that directory are refused before closure checks.
+- **Context warnings survive concurrent prompts and compaction** (issue #70): the hook
+  announces each step once, keeps its highest step until compaction, and re-arms even when
+  a new request already followed the boundary. **ACTION:** copy
+  `$KIT/overlays/claude-code/files/.claude/hooks/context_size.py` to `.claude/hooks/context_size.py`.
 - **A review names its spend** (issue #68, item 1; `scripts/review.sh`, `scripts/review_dispatch.py`):
   before each reviewer runs, including a fallback, it prints the model and effort.
   **ACTION:** copy `$KIT/core/scripts/review_dispatch.py` to `scripts/review_dispatch.py`.
@@ -886,7 +900,7 @@ from, and `5c80c36` is the kit's v0.8 commit.
    yours (they hold no project content): `agent_process.py`, `agent_usage.py`,
    `claude_bridge.py`, `codex_bridge.py`, `codex_quota.py`, `review_dispatch.py`,
    `test_agent_usage.py`, `test_claude_bridge.py`, `test_codex_quota.py`. With the Claude
-   Code overlay also copy `scripts/spawn_worker.sh`, `scripts/show_workers.sh`,
+   Code overlay also copy `scripts/show_workers.sh`,
    `scripts/watch_workers.sh`, `scripts/waiting_patterns.txt`,
    `scripts/clean_worktrees.sh`, `scripts/clean_worktrees.py` and `scripts/close_worker.sh` from
    `$KIT/overlays/claude-code/files/scripts/`, and `.claude/worktree-disposable` from
