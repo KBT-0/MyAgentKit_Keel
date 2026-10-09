@@ -11,7 +11,7 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ---
 
-## Unreleased
+## v0.11 — 2026-10-09
 
 - **Python that does not run** (issue #67): on Windows `python3` may be a Store alias that is
   on PATH but exits 9009. The Claude Code overlay's three Python hooks now start through the
@@ -61,7 +61,8 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   versions that accept unambiguous long-option abbreviations; `--out`, not `--ou`, so
   `git checkout --ours` stays usable.
   The allow rules guard only the command's own arguments. The repository's local git
-  configuration is trusted: `git status` and the gate already run what it names
+  configuration, including `diff.submodule` and every submodule's own configuration, is
+  trusted: `git status` and the gate already run what it names
   (`core.fsmonitor`). No allow rule can defend against a hostile local config.
   **ACTION:** a project with its own `.claude/settings.json` adds the
   overlay's `permissions` block, `deny` included. Replace any plain `git diff`, `git show` and

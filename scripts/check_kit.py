@@ -1,5 +1,14 @@
 #!/usr/bin/env python3
 """Offline kit acceptance: syntax, packaged source, regression tests, and bootstrap gates."""
+import signal
+import sys
+
+# SIGTERM must unwind the runner and run atexit, including its private cache cleanup.
+if __name__ == '__main__':
+    def terminate(sig, frame):
+        raise SystemExit(128 + sig)
+    signal.signal(signal.SIGTERM, terminate)
+
 import argparse
 import ast
 import atexit
@@ -14,13 +23,13 @@ from pathlib import Path
 import re
 import shlex
 import shutil
-import signal
 import subprocess
-import sys
 import tempfile
 import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
+from threading import Lock
 
 # Native Windows reads text in the ANSI code page, and the kit's files are UTF-8: the kit check
 # and its units run in UTF-8 mode there. Only these processes do; the scripts under test run as
@@ -60,10 +69,6 @@ for _name in ('GIT_DIR', 'GIT_WORK_TREE', 'GIT_IMPLICIT_WORK_TREE', 'GIT_INDEX_F
 # nested kit check (a unit, a test) never creates it in the outer run's place.
 _PASSED_FILE = os.environ.pop('KIT_CHECK_PASSED', None)
 
-# The wrapper starts Python in the background, where POSIX sh ignores SIGINT.
-if __name__ == '__main__' and os.name != 'nt':
-    signal.signal(signal.SIGINT, signal.default_int_handler)
-
 ROOT = Path(__file__).resolve().parents[1]
 # The review self-test ships to projects with its own minimums; read them, never copy them.
 BRIDGE_MINIMUMS = next(
@@ -82,7 +87,7 @@ REQUIRED_SUITES = {
               'test_check_gate': 23, 'test_check_gate_windows': 18, 'test_boundary_restore': 39,
               'test_sync_kit': 29, 'test_doctor': 2, 'test_git_hooks': 25, 'test_stop_hook': 1, 'test_context_hook': 4, 'test_overlay_permissions': 6,
               'test_spawn_worker': 18, 'test_worker_visibility': 55, 'test_doc_pointers': 5,
-              'test_kit_output': 1, 'test_kit_runner': 16, 'test_clean_worktrees': 137, 'test_clean_worktrees_windows': 9, 'test_close_worker_windows': 1,
+              'test_kit_output': 1, 'test_kit_runner': 18, 'test_clean_worktrees': 137, 'test_clean_worktrees_windows': 9, 'test_close_worker_windows': 1,
               'test_review_windows': 20, 'test_worker_paths_windows': 3,
               'test_close_worker': 22, 'test_python_fallback': 1},
 }
@@ -254,6 +259,14 @@ def path_without(path, drop, links):
                 os.symlink(os.path.realpath(source), copy / name)
         kept.append(str(copy))
     return os.pathsep.join(kept)
+
+
+def check_release(root):
+    """The README's bold release line must name the newest version in the changelog."""
+    readme = re.search(r'^\*\*(v\d+\.\d+)\.\*\*', (root / 'README.md').read_text(), re.M)
+    changelog = re.search(r'^## (v\d+\.\d+)(?=\s|$)', (root / 'CHANGELOG.md').read_text(), re.M)
+    if not readme or not changelog or readme.group(1) != changelog.group(1):
+        raise RuntimeError("README's bold version must match CHANGELOG's newest versioned heading")
 
 
 def check_syntax(root):
@@ -900,18 +913,44 @@ def run_units(units, timing=False, parallel=None):
     gate lock. A unit's output is printed only when it and every unit before it have ended,
     so the order does not depend on which finishes first. True when every unit passed.
     """
+    children, cancelled, lock = [], False, Lock()
+
+    @contextmanager
+    def stop_units():
+        nonlocal cancelled
+        try:
+            yield
+        finally:
+            # The wrapper signals the whole group. Stop queued units too, and a child that
+            # started just after that signal, before the executor waits for its workers.
+            with lock:
+                cancelled = True
+                for child in children:
+                    if child.poll() is None:
+                        try:
+                            child.terminate()
+                        except ProcessLookupError:
+                            pass
+            pool.shutdown(wait=True, cancel_futures=True)
+
     def one(name, command, timing_file):
         started = time.monotonic()
         if timing_file:
             command = command + ["--timing-file", timing_file]
-        result = subprocess.run(command, cwd=ROOT, stdout=subprocess.PIPE, env=env,
-                                stderr=subprocess.STDOUT, text=True, errors="replace")
-        return result.returncode, result.stdout, time.monotonic() - started
+        with lock:
+            if cancelled:
+                return 1, '', time.monotonic() - started
+            child = subprocess.Popen(command, cwd=ROOT, stdout=subprocess.PIPE, env=env,
+                                     stderr=subprocess.STDOUT, text=True, errors="replace")
+            children.append(child)
+        with child:
+            output = child.communicate()[0]
+        return child.returncode, output, time.monotonic() - started
 
     parallel = parallel or len(units)
     env = dict(os.environ, **{SCALE: str(float(os.environ.get(SCALE, "1")) * parallel)})
     with tempfile.TemporaryDirectory(prefix="myagentkit-timing-") as times, \
-            ThreadPoolExecutor(max_workers=parallel) as pool:
+            ThreadPoolExecutor(max_workers=parallel) as pool, stop_units():
         files = [os.path.join(times, str(number)) if timing else None for number in range(len(units))]
         futures = [pool.submit(one, name, command, timing_file)
                    for (name, command), timing_file in zip(units, files)]
@@ -960,6 +999,7 @@ def main():
     parallel = degree(cpus, len(units))
     print("KIT CHECK: %d of %d units at once (%d CPUs)" % (parallel, len(units), cpus))
     check_syntax(ROOT)
+    check_release(ROOT)
     manifest = json.loads((ROOT / "plugins/myagentkit/.codex-plugin/plugin.json").read_text())
     if manifest["name"] != "myagentkit" or manifest["skills"] != "./skills/":
         raise RuntimeError("plugin manifest does not expose the expected package")

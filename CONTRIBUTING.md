@@ -50,6 +50,8 @@ and you should have watched it go red before and green after.
 the failure it prevents, and a line to `CHANGELOG.md` with what changed. A rule that arrives
 without its reason is a rule the next reader deletes, and they will be right to.
 
+For a release, match README's bold version to the newest versioned heading in `CHANGELOG.md`.
+
 **Run the kit's own acceptance:**
 
 ```sh

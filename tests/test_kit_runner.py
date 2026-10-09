@@ -165,32 +165,51 @@ class KitRunnerTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("gate ran ['--timing']", result.stdout)
 
-    def test_a_signal_to_the_wrapper_stops_and_reaps_its_child(self):
+    def cancel_wrapper(self, early=False):
         if os.name == 'nt':
             sys.stderr.write('\nNOT RUN: %s (POSIX only: signals to the wrapper PID)\n' % self.id())
             return
-        # Keep the real startup code: a background Python inherits ignored SIGINT from sh.
-        startup = (ROOT / 'scripts/check_kit.py').read_text().split('\nROOT =', 1)[0]
+        # Keep the real startup, handlers, run_units and unit. Only main selects a small suite.
+        source = (ROOT / 'scripts/check_kit.py').read_text()
+        source = source.replace('ROOT = Path(__file__).resolve().parents[1]', 'ROOT = Path(%r)' % str(ROOT))
+        begin, end = source.split('\ndef main():', 1)
+        end = end[end.index('\nif __name__ == "__main__":'):]
         for sig, status in ((signal.SIGTERM, 143), (signal.SIGINT, 130)):
             with self.subTest(signal=sig):
                 project = self.tmp / sig.name
                 (project / 'scripts').mkdir(parents=True)
+                (project / 'suite').mkdir()
                 shutil.copyfile(ROOT / 'scripts/check.sh', project / 'scripts/check.sh')
-                (project / 'scripts/check_kit.py').write_text(startup + '''
-def stop(sig, frame):
-    Path('signal').write_text(str(sig))
-    raise SystemExit(0)
-signal.signal(signal.SIGTERM, stop)
-if signal.getsignal(signal.SIGINT) != signal.SIG_IGN:
-    signal.signal(signal.SIGINT, stop)
-try:
-    Path('ready').touch()
-    time.sleep(2)
-    Path('completed').touch()
-finally:
-    time.sleep(0.1)
-    Path('stopped').touch()
+                (project / 'suite/test_kit_probe.py').write_text('''import os, time, unittest
+from pathlib import Path
+class Probe(unittest.TestCase):
+    def test_wait(self):
+        Path('unit-pid').write_text(str(os.getpid()))
+        Path('ready').touch()
+        time.sleep(30)
+        Path('unit-completed').touch()
 ''')
+                startup = ("import os, sys, time\nfrom pathlib import Path\n"
+                           "if '--unit' not in sys.argv:\n    Path('pid').write_text(str(os.getpid()))\n")
+                if early:
+                    # Before check_kit even imports signal: ignored SIGINT used to vanish here.
+                    startup += "Path('ready').touch()\ntime.sleep(30)\nPath('startup-completed').touch()\n"
+                (project / 'scripts/check_kit.py').write_text(startup + begin + '''
+def main():
+    global ROOT, REQUIRED_SUITES
+    ROOT = Path(__file__).resolve().parents[1]
+    REQUIRED_SUITES = {'suite': {'test_kit_probe': 1}}
+    if '--unit' in sys.argv:
+        return unit('suite', False)
+    Path('cache').write_text(_PYCACHE)
+    atexit.register(Path('stopped').touch)
+    command = [sys.executable, '-B', '-u', __file__, '--unit', 'suite']
+    pending = [sys.executable, '-c', 'import time; from pathlib import Path; time.sleep(30); '
+               'Path("pending-completed").touch()']
+    run_units([('suite', command), ('pending', pending)], parallel=1)
+    Path('completed').touch()
+    return 0
+''' + end)
                 proc = subprocess.Popen(['sh', str(project / 'scripts/check.sh')],
                                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                         text=True, start_new_session=True)
@@ -200,16 +219,49 @@ finally:
                         time.sleep(0.01)
                     self.assertTrue((project / 'ready').exists(), 'the child did not start')
                     proc.send_signal(sig)
-                    proc.wait(timeout=10)
-                    self.assertTrue((project / 'stopped').exists(), 'the wrapper did not wait for its child')
                     out = proc.communicate(timeout=10)[0]
                     self.assertEqual(proc.returncode, status, out)
-                    self.assertFalse((project / 'completed').exists(), 'the child ran on after cancellation')
-                    self.assertEqual((project / 'signal').read_text(), str(sig))
+                    for name in ('completed', 'unit-completed', 'pending-completed', 'startup-completed'):
+                        self.assertFalse((project / name).exists(), name + ' ran on after cancellation')
+                    if not early:
+                        self.assertTrue((project / 'stopped').exists(), 'the coordinator cleanup did not run')
+                        self.assertFalse(Path((project / 'cache').read_text()).exists(), 'private cache leaked')
+                    for name in ('pid', 'unit-pid'):
+                        if (project / name).exists():
+                            with self.assertRaises(ProcessLookupError, msg=name + ' was not reaped'):
+                                os.kill(int((project / name).read_text()), 0)
                 finally:
+                    if (project / 'pid').exists():
+                        with contextlib.suppress(ProcessLookupError):
+                            os.killpg(int((project / 'pid').read_text()), signal.SIGKILL)
                     with contextlib.suppress(ProcessLookupError):
                         os.killpg(proc.pid, signal.SIGKILL)
                     proc.communicate(timeout=10)
+
+    def test_a_signal_to_the_wrapper_stops_and_reaps_its_child(self):
+        self.cancel_wrapper()
+
+    def test_a_signal_during_python_startup_is_not_lost(self):
+        self.cancel_wrapper(early=True)
+
+    def test_readme_version_matches_the_newest_changelog_heading(self):
+        check_kit.check_release(ROOT)
+        (self.tmp / 'CHANGELOG.md').write_text('## Unreleased\n\n## v0.11 — 2026-10-09\n\n## v0.10\n')
+        for version in ('v0.11', 'v0.10', 'v0.9', ''):
+            with self.subTest(version=version):
+                (self.tmp / 'README.md').write_text('**%s.** The kit.\n' % version)
+                if version == 'v0.11':
+                    check_kit.check_release(self.tmp)
+                else:
+                    with unittest.mock.patch.object(check_kit, 'ROOT', self.tmp), \
+                            unittest.mock.patch.object(check_kit, 'check_syntax'), \
+                            unittest.mock.patch.object(sys, 'argv', ['check_kit.py']), \
+                            contextlib.redirect_stdout(io.StringIO()), \
+                            self.assertRaisesRegex(RuntimeError, 'bold version.*newest versioned heading'):
+                        check_kit.main()
+        (self.tmp / 'CHANGELOG.md').write_text('## Unreleased\n')
+        with self.assertRaisesRegex(RuntimeError, 'bold version.*newest versioned heading'):
+            check_kit.check_release(self.tmp)
 
     def test_units_print_in_the_given_order_whichever_ends_first(self):
         slow = [sys.executable, '-c', 'import time; time.sleep(1); print("slow output\\nUNIT DONE: slow")']
