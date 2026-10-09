@@ -17,26 +17,32 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   item 7 now matches `docs/HANDOFF.md`; the upgrade checklist no longer copies
   `spawn_worker.sh` twice.
 - **Linked test directories fail the kit check** (issue #65; `scripts/check_kit.py`):
-  a linked package can no longer leave failing tests undiscovered.
+  a linked package can no longer leave failing tests undiscovered, including Windows
+  junctions on Python 3.10/3.11. Unreadable test directories fail discovery too.
 - **The merge-action test probes mktemp** (issue #66; `tests/test_sync_kit.py`):
   BSD and GNU temporary-folder behavior is tested on every host, including macOS.
 - **Strong review closure fails on missing or hidden index evidence** (issue #69;
-  `.githooks/commit-msg`): a failed listing refuses the commit. Quoted paths under
+  `.githooks/commit-msg`): a failed listing refuses a commit with a `Done:` trailer. Quoted paths under
   `docs/reviews` and a different case of that directory are refused before closure checks.
 - **Context warnings survive concurrent prompts and compaction** (issue #70): the hook
   announces each step once, keeps its highest step until compaction, and re-arms even when
-  a new request already followed the boundary. **ACTION:** copy
+  a new request already followed the boundary. Upgrading an integer step preserves the
+  warning already given in the current compaction. **ACTION:** copy
   `$KIT/overlays/claude-code/files/.claude/hooks/context_size.py` to `.claude/hooks/context_size.py`.
-- **A review names its spend** (issue #68, item 1; `scripts/review.sh`, `scripts/review_dispatch.py`):
-  before each reviewer runs, including a fallback, it prints the model and effort.
+- **A review names its next attempt** (issue #68, item 1; `scripts/review.sh`, `scripts/review_dispatch.py`):
+  before each adapter runs, including a fallback, it prints the model and effort as
+  "about to run"; adapter preflights may still stop the attempt before any model call.
   **ACTION:** copy `$KIT/core/scripts/review_dispatch.py` to `scripts/review_dispatch.py`.
-- **Line-ending-only churn stops a review** (issue #68, item 2; `scripts/review.sh`,
-  `scripts/review_dispatch.py`): before any reviewer runs, each file in the selected scope
-  whose stat disappears with `--ignore-cr-at-eol` fails with its name and a repair instruction.
+- **Line-ending churn stops a review** (issue #68, item 2; `scripts/review.sh`,
+  `scripts/review_dispatch.py`): two scope-wide line-count queries refuse files whose
+  changed lines are mostly CR-only, including normalization mixed with real edits.
+  The refusal names the file and repair; `REVIEW_ALLOW_EOL_ONLY=1` explicitly permits
+  a deliberate normalization.
   **ACTION:** copy `$KIT/core/scripts/review_dispatch.py` to `scripts/review_dispatch.py`.
 - **The lead's Stop hook stays out of a worker's self-test** (issue #68, item 3): the lead
   uses `git -C <worktree>` and keeps its shell in its own checkout. The Stop hook skips with
-  a NOTE while `.selftest.*` or `*.selftest-backup` is present in the tree.
+  a NOTE while `.selftest.*` or `*.selftest-backup` is tracked or untracked but not ignored
+  in this checkout. Worker worktrees and ignored folders do not disable the lead's gate.
   **ACTION:** add the two sentences under "The lead's steps when a branch is ready" in
   `$KIT/core/docs/WORKFLOW.md` to your `docs/WORKFLOW.md`, and copy
   `$KIT/overlays/claude-code/files/.claude/hooks/gate_on_stop.sh` to `.claude/hooks/gate_on_stop.sh`,
@@ -46,10 +52,10 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   set, and a changed driver script invalidates every stage. **ACTION:** add the two
   sentences in item 3 from `$KIT/core/docs/HANDOFF.md` to your `docs/HANDOFF.md`.
 - **Bootstrap records executable Git modes on Windows** (issue #59; `bootstrap.sh`): in
-  a Git repository it stages `scripts/*.sh`, `.githooks/*` and `.claude/hooks/*` with
-  `git add --chmod=+x`, even when `core.fileMode=false`. Existing projects whose index
-  already records `100755` need nothing. **ACTION:** if your index records `100644`, run
-  `git add --chmod=+x scripts/*.sh .githooks/* .claude/hooks/*` for the paths your project has.
+  a Git repository it records executable modes only for kit scripts and hooks it installs
+  or finds identical, even when `core.fileMode=false`. Tracked files keep their staged
+  content; new nonignored kit files are staged; ignored files stay out of the index.
+  Project-owned scripts are left alone. **ACTION:** rerun bootstrap to repair kit modes.
 - **Python that does not run** (issue #67): on Windows `python3` may be a Store alias that is
   on PATH but exits 9009. The Claude Code overlay's three Python hooks now start through the
   new `.claude/hooks/py.sh`, which runs the first of `python3`, `python`, `py -3` that runs;
@@ -123,9 +129,15 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 - **A low allowance ends** (`docs/WORKFLOW.md`, "Model routing", rule 7; a v0.10 rule): the
   rule said when a low allowance starts and not when it ends, so a lead kept the low side
   reviewing only after its allowance had reset. It now ends when that side's allowance resets
-  or the owner says otherwise. The normal split of work is back at once, unasked. A decision
-  made for a moment never outlives its reason. **ACTION:** replace rule 7's ending in your
-  `docs/WORKFLOW.md` with these closing sentences.
+  or the owner says otherwise; then the reviewing model fixes its own findings again. A
+  decision made for a moment never outlives its reason. **ACTION:** replace rule 7's ending in
+  your `docs/WORKFLOW.md` with these closing sentences.
+- **The reviewing model fixes its own findings** (`docs/REVIEW_GATE.md`; the review prompt in
+  `scripts/claude_bridge.py`): the gate said an author fixes what a review found. The reviewer
+  still never changes the checkout during its review run; afterwards it fixes its own
+  findings, and the fix goes to a review by the other model, so no model approves its own
+  work. **ACTION:** replace that sentence in your `docs/REVIEW_GATE.md`; `claude_bridge.py`
+  comes with the sync.
 
 ## v0.10 — 2026-10-07
 

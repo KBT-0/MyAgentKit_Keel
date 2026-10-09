@@ -41,7 +41,7 @@ REVIEW_ASKS = (
     "Report EVERY finding you can establish in this pass, not only the first few, ranked by "
     "severity. Start each finding with its severity (Critical, High, Medium or Low), then name "
     "file, line, impact and a concrete failure, and end it with 'Fix sketch:' and a short "
-    "suggested fix direction (a sketch, not a patch; the author verifies it before use).")
+    "suggested fix direction (a sketch, not a patch; whoever fixes it verifies it before use).")
 # A reviewer told not to execute sent its findings back unreproduced, and a worker spent a round
 # reproducing them, some false; a reviewer that executed in a throwaway copy found decisive ones.
 # Both bridged reviewers now execute, in the copy throwaway_copy() makes (threat model there).

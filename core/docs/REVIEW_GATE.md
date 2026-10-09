@@ -34,8 +34,9 @@ being checked.
 ## What counts as a risky diff
 
 When multiple models have authored the combined change, select a fresh reviewer that did
-not author any of it. The reviewer never changes the reviewed checkout; an author verifies
-and implements its findings, then requests fresh review of the corrections. An existing local commit without
+not author any of it. The reviewer never changes the checkout during its review run. Afterwards
+the reviewing model verifies and fixes its own findings, and its fix goes to a review by the
+other model: no model approves its own work. An existing local commit without
 review is still unreviewed work, not an exception that moves this gate to push time.
 
 A diff is risky when a silent bug in it is expensive, hard to attribute, or slow to
@@ -157,7 +158,7 @@ Asked only for "file, line, impact", a reviewer reports a different top few on e
 pass; one medium-size change took more than ten Reject rounds, each finding two or three new
 Medium problems, many in code the previous fix had added. The reviewer therefore reports
 every finding the pass can establish, each opening with a severity (Critical, High, Medium or
-Low) and ending with a `Fix sketch:` — a direction the author verifies, never a patch to
+Low) and ending with a `Fix sketch:` — a direction whoever fixes it verifies, never a patch to
 paste.
 
 When the prompt carries earlier rounds of the same change, the reviewer says for each earlier
