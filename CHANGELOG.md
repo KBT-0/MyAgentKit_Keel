@@ -13,6 +13,8 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## v0.11 — 2026-10-09
 
+- **Live Claude adapter acceptance recorded** (issue #6; `docs/ACCEPTANCE.md`): a live
+  proposal, and live permission and customization probes, passed on native Windows.
 - **The Claude reviewer's shell is sandboxed, or absent** (issue #39; `claude_bridge.py`,
   `review.sh`): on macOS, Linux and WSL2 its Bash runs in Claude Code's own sandbox, which
   allows writes only in the throwaway copy and Claude Code's temporary directory, allows no
