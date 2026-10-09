@@ -37,7 +37,7 @@ Independence is judged per part: a fresh round may review the whole cumulative d
 for context, but each verdict counts only for the parts the reviewing model did not write.
 Afterwards the reviewing model verifies and fixes its own findings; its last fix round is
 accepted only by the other model's next round. The reviewer never changes the checkout during
-its review run. No model approves its own work. The loop ends at the first round with no High
+its review run. No model approves its own work. The loop ends at the first round with no High or Medium finding
 in which the reviewing model did not write the latest fix. An existing local commit without
 review is still unreviewed work, not an exception that moves this gate to push time.
 

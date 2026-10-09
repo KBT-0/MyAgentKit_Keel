@@ -92,7 +92,7 @@ dispositions exceed the 400000-byte guard. A round recorded before these checks 
 carries neither the resolved reference nor the sha256 and is refused the same way. A fresh
 label starts at round 1.
 
-**The loop ends at the first round with no High whose reviewer did not write the latest fix.**
+**The loop ends at the first round with no High or Medium finding whose reviewer did not write the latest fix.**
 A round may review the whole cumulative diff (`--base`) for context, but its verdict counts
 only for parts the reviewing model did not write (`docs/REVIEW_GATE.md`, "What counts as a risky diff").
 The reviewing model fixes its own findings; only the other model's next round accepts that fix.
@@ -248,7 +248,7 @@ each as claims to verify (a disproved finding counts only once checked against t
 deferred one stays open under Manual checks), and ask which are fixed before reviewing the
 whole cumulative diff for context. Your verdict counts only for parts you did not write;
 your last fix round is accepted only by the other model's next round. The loop ends at the
-first round with no High whose reviewer did not write the latest fix. Finish with a line
+first round with no High or Medium finding whose reviewer did not write the latest fix. Finish with a line
 "VERDICT: Accept" / "VERDICT: Accept with Manual Checks" / "VERDICT: Reject", followed by
 any manual checks written as full sentences ready to paste into docs/STATE.md.
 

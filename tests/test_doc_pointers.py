@@ -50,7 +50,7 @@ class ReviewerDocumentTests(unittest.TestCase):
         gate = (ROOT / 'core/docs/REVIEW_GATE.md').read_text()
         policy = ' '.join(gate.split())
         self.assertIn('each verdict counts only for the parts the reviewing model did not write', policy)
-        self.assertIn('first round with no High in which the reviewing model did not write the latest fix', policy)
+        self.assertIn('first round with no High or Medium finding in which the reviewing model did not write the latest fix', policy)
         worker = ' '.join((ROOT / 'overlays/claude-code/files/.claude/agents/worker.md').read_text().split())
         self.assertIn('Inner same-model checks stay with the worker', worker)
         self.assertIn('cross-model gate findings go to the model that found them', worker)

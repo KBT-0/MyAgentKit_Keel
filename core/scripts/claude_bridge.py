@@ -701,7 +701,7 @@ def prior_rounds(repo: Path, task_id: str | None, scope: str, resolved: str | No
             "the verdict is never a plain Accept. Then review the whole diff again, including "
             "the code the fixes added, for context; your verdict counts only for the parts you "
             "did not write. Your last fix round is accepted only by the other model's next "
-            "round. The loop ends at the first round with no High in which the reviewing "
+            "round. The loop ends at the first round with no High or Medium finding in which the reviewing "
             "model did not write the latest fix; the final Accept comes from one fresh review "
             "with no earlier rounds.\n" % (len(rounds) + 1))
     for number, (_, report) in enumerate(sorted(rounds), 1):

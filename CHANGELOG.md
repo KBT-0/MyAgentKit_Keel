@@ -138,7 +138,7 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   findings, and the fix goes to a review by the other model, so no model approves its own
   work. A round may review the whole cumulative diff for context; its verdict counts only
   for parts it did not write. Its last fix is accepted only by the other model's next round.
-  The loop ends at the first round with no High whose reviewer did not write the latest fix.
+  The loop ends at the first round with no High or Medium finding whose reviewer did not write the latest fix.
   Inner same-model checks stay with the worker; cross-model gate findings go to the model
   that found them. **ACTION:** update `docs/REVIEW_GATE.md`, `docs/REVIEW_RUNNING.md` and the
   review-fix rules in `docs/WORKFLOW.md`, and copy the Claude Code overlay's
