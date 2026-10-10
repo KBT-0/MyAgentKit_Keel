@@ -15,6 +15,7 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 - **Live Claude adapter acceptance recorded** (issue #6; `docs/ACCEPTANCE.md`): a live
   proposal, and live permission and customization probes, passed on native Windows.
+  On 2026-10-10, Bash write and network containment passed on WSL2 Debian; macOS is not covered.
 - **The Claude reviewer's shell is sandboxed, or absent** (issue #39; `claude_bridge.py`,
   `review.sh`): on macOS, Linux and WSL2 its Bash runs in Claude Code's own sandbox, which
   allows writes only in the throwaway copy and Claude Code's temporary directory, allows no
@@ -25,12 +26,14 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   write to it before. **ACTION:** copy the core scripts; on Linux and WSL2 install
   `bubblewrap` and `socat` (`scripts/doctor.sh` says so).
 - **Review clean-up gaps closed** (issue #39): a copy left by a killed adapter is removed
-  by a later run once it is older than the longest review; a proposal makes no temporary
-  folder; a copy that cannot be made is a recorded failure (`copy_failed`, with evidence and
-  a usage record) in both adapters, not exit 2 without one.
+  by a later run once it is old and its lifetime lock is free. An old archive timestamp
+  cannot cause a live copy to be swept; unmarked legacy folders are kept. A proposal makes
+  no temporary folder. A copy that cannot be made, including an operating-system error,
+  is a recorded failure (`copy_failed`, with evidence and a usage record) in both adapters.
 - **doctor finds a claude CLI the review cannot use** (`scripts/doctor.sh`): one too old for
   a flag the review passes (the winget claude 2.1.218 lacked `--restricted`), or npm's
-  `claude.cmd` on native Windows, first on PATH or named by `CLAUDE_CLI_BIN`, is MISSING
+  `claude.cmd` on native Windows, or a CLI whose help probe cannot launch or times out,
+  first on PATH or named by `CLAUDE_CLI_BIN`, is MISSING
   with the binary to put first or the `CLAUDE_CLI_BIN` to set. **ACTION:** copy
   `$KIT/core/scripts/doctor.sh` to `scripts/doctor.sh` and run it.
 

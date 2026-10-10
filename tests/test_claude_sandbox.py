@@ -161,12 +161,79 @@ class ClaudeSandboxTests(unittest.TestCase):
         import review_dispatch
         self.assertNotIn('sandbox_unavailable', review_dispatch.UNAVAILABLE)
 
+    def test_copy_os_errors_are_recorded_for_both_reviewers(self):
+        never = lambda *a, **k: self.fail('the reviewer ran without its copy')
+        for error in (FileNotFoundError('tar is missing'), PermissionError('copy is denied')):
+            for bridge in (claude_bridge, codex_bridge):
+                with self.subTest(error=type(error).__name__, reviewer=bridge.__name__):
+                    results = []
+                    with patch.object(bridge, 'throwaway_copy', side_effect=error), \
+                            patch.object(bridge.agent_process, 'run', never), \
+                            contextlib.redirect_stdout(io.StringIO()):
+                        if bridge is claude_bridge:
+                            code, result, _ = self.bridge('review', run=never)
+                        else:
+                            code = bridge.main(['--repo', str(self.repo), '--model', 'fixture-codex',
+                                                '--uncommitted'], results.append)
+                            result = results[-1] if results else None
+                    self.assertEqual(code, 5, result)
+                    self.assertEqual(result['failure_kind'], 'copy_failed')
+                    evidence = Path(result['evidence']).read_text()
+                    self.assertIn('copy_failed', evidence)
+                    record = json.loads(Path(result['usage_record']).read_text())
+                    self.assertEqual((record['status'], record['failure_kind']), ('failed', 'copy_failed'))
+                    self.assertIn(str(error), record['raw_stderr'])
+                    self.assertNotIn('copy_failed', __import__('review_dispatch').UNAVAILABLE)
+
+    def test_cli_readiness_reports_help_launch_failure(self):
+        with patch.object(claude_bridge.shutil, 'which', return_value='broken-cli'), \
+                patch.object(claude_bridge.subprocess, 'run', side_effect=OSError('invalid executable')):
+            problem = claude_bridge.cli_readiness({'CLAUDE_CLI_BIN': 'broken-cli', 'PATH': ''})
+        self.assertIsNotNone(problem)
+        self.assertIn('cannot launch', problem)
+        self.assertIn('invalid executable', problem)
+        self.assertIn('|', problem)
+
+    def test_cli_readiness_reports_help_timeout(self):
+        with patch.object(claude_bridge.shutil, 'which', return_value='hung-cli'), \
+                patch.object(claude_bridge.subprocess, 'run',
+                             side_effect=subprocess.TimeoutExpired('hung-cli', 60)):
+            problem = claude_bridge.cli_readiness({'CLAUDE_CLI_BIN': 'hung-cli', 'PATH': ''})
+        self.assertIsNotNone(problem)
+        self.assertIn('timed out', problem)
+        self.assertIn('|', problem)
+
+    def test_sweep_keeps_a_live_copy_with_an_old_directory_timestamp(self):
+        old = time.time() - claude_bridge.STALE_SCRATCH_SECONDS - 60
+        for prefix in ('myagentkit-review-', 'myagentkit-codex-'):
+            with self.subTest(prefix=prefix), claude_bridge.scratch(prefix) as live:
+                (Path(live) / 'source.txt').write_text('keep\n')
+                # Archive extraction can restore this timestamp while the review runs.
+                os.utime(live, (old, old))
+                command = ('import sys, tempfile; sys.path.insert(0, sys.argv[1]); '
+                           'import claude_bridge; tempfile.tempdir = sys.argv[2]; '
+                           'claude_bridge.sweep(sys.argv[3])')
+                subprocess.run([sys.executable, '-B', '-c', command, str(ROOT / 'core/scripts'),
+                                str(self.temp), prefix], check=True, capture_output=True, timeout=10)
+                self.assertTrue(Path(live).is_dir(), 'another process swept a live review')
+                with claude_bridge.scratch(prefix):
+                    self.assertTrue((Path(live) / 'source.txt').is_file(), 'a live copy was swept')
+            self.assertFalse(Path(live).exists())
+
     def test_a_scratch_folder_a_killed_adapter_left_is_swept_and_a_live_one_kept(self):
         old = time.time() - claude_bridge.STALE_SCRATCH_SECONDS - 60
-        stale, live = self.temp / 'myagentkit-review-stale', self.temp / 'myagentkit-review-live'
-        (stale / 'src').mkdir(parents=True)
+        command = ('import os, sys, tempfile; sys.path.insert(0, sys.argv[1]); '
+                   'import claude_bridge; tempfile.tempdir = sys.argv[2]; '
+                   'context = claude_bridge.scratch("myagentkit-review-"); '
+                   'print(context.__enter__(), flush=True); os._exit(0)')
+        dead = subprocess.run([sys.executable, '-B', '-c', command, str(ROOT / 'core/scripts'),
+                               str(self.temp)], check=True, capture_output=True, text=True, timeout=10)
+        stale, live = Path(dead.stdout.strip()), self.temp / 'myagentkit-review-live'
+        (stale / 'src').mkdir()
         (stale / 'src' / 'secret.py').write_text('source\n')
         live.mkdir()
+        legacy = self.temp / 'myagentkit-review-unmarked'
+        legacy.mkdir()
         other = self.temp / 'myagentkit-codex-stale'
         other.mkdir()
         plain = self.temp / 'myagentkit-review-file'
@@ -179,13 +246,15 @@ class ClaudeSandboxTests(unittest.TestCase):
             os.symlink(outside, link, target_is_directory=True)
         except OSError:
             link = None  # Windows without the symlink privilege
-        for path in (stale, other, plain, outside):
+        for path in (stale, legacy, other, plain, outside):
             os.utime(path, (old, old))
         if link and os.utime in os.supports_follow_symlinks:
             os.utime(link, (old, old), follow_symlinks=False)
         with claude_bridge.scratch('myagentkit-review-') as made:
             self.assertTrue(Path(made).is_dir())
         self.assertFalse(stale.exists(), 'a dead adapter\'s copy stayed behind')
+        self.assertFalse(Path(str(stale) + '.lock').exists())
+        self.assertTrue(legacy.is_dir(), 'age alone cannot prove an unmarked copy is dead')
         self.assertTrue(live.is_dir(), 'a live review\'s folder was removed')
         self.assertTrue(other.is_dir(), 'another adapter\'s folder was removed')
         self.assertTrue(plain.is_file())

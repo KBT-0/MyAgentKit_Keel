@@ -89,7 +89,7 @@ REQUIRED_SUITES = {
               'test_sync_kit': 29, 'test_doctor': 2, 'test_git_hooks': 29, 'test_stop_hook': 3, 'test_context_hook': 9, 'test_overlay_permissions': 6,
               'test_spawn_worker': 18, 'test_worker_visibility': 55, 'test_doc_pointers': 7,
               'test_kit_output': 1, 'test_kit_runner': 21, 'test_clean_worktrees': 137, 'test_clean_worktrees_windows': 9, 'test_close_worker_windows': 1,
-              'test_review_windows': 20, 'test_claude_sandbox': 6, 'test_worker_paths_windows': 3,
+              'test_review_windows': 20, 'test_claude_sandbox': 10, 'test_worker_paths_windows': 3,
               'test_close_worker': 22, 'test_python_fallback': 1},
 }
 # Suites that do not run on native Windows, each with the reason. There each one prints one

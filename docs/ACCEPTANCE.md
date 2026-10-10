@@ -38,6 +38,15 @@ subtracts, the kit's `core/.gitignore`). Total live spend: about 0.12 USD.
   but unavailable ... sandbox.failIfUnavailable is set — refusing to start without a working
   sandbox`. Nothing was written. The adapter records this as `sandbox_unavailable`, a setup
   fault that never falls back (`tests/test_claude_sandbox.py`).
+- **Live Bash write and network containment** (2026-10-10, lead-run on this branch).
+  On WSL2 Debian, with Claude CLI 2.1.283, `bubblewrap` and `socat` installed, the lead ran
+  `claude_bridge.claude_command(..., sandboxed=True)` in a throwaway copy. The prompt asked
+  Bash for three commands. `echo inside > ./inside.txt` succeeded in the copy.
+  `echo pwned > <a sibling directory outside the copy>/pwned.txt` failed with
+  "read-only file system"; the file did not exist afterwards.
+  `curl -sS -m 5 https://example.com` was refused with 403 because the host was not on
+  the sandbox network allowlist. This establishes operating-system write and network
+  containment on WSL2 Debian. macOS was not covered.
 - Offline, on this host: `tests/test_claude_sandbox.py` (6 tests: the review command per
   host, no Bash on native Windows, a proposal without a scratch folder, a copy failure
   recorded as `copy_failed` by both adapters, `sandbox_unavailable`, the stale-copy sweep)
@@ -50,10 +59,7 @@ Claude reviews of v0.11 on 2026-10-09, which cover the current source.
 
 **NOT RUN**
 
-- A live write probe inside Claude Code's Bash sandbox on macOS, Linux or WSL2 (a sandboxed
-  Bash told to write the real repository by its absolute path). This host is native
-  Windows, where Claude Code has no sandbox; the kit's offline suite checks the sandbox
-  settings the adapter passes, not the operating system's enforcement.
+- Live Bash write and network containment on macOS. The 2026-10-10 probe covered WSL2 Debian.
 - `core/scripts/test_claude_bridge.py` and the POSIX-only parts of `tests/test_doctor.py`
   (the Linux `bubblewrap` and `socat` check, the old CLI earlier on PATH than a newer one):
   POSIX hosts only; CI's Linux and macOS jobs run them.

@@ -82,12 +82,12 @@ def main(argv=None, result_sink=None):
         with scratch("myagentkit-codex-") as tmp:
             last = Path(tmp) / "final.txt"
             workdir = Path(tmp) / "copy"
-            workdir.mkdir()
             prepared = None
             try:
+                workdir.mkdir()
                 throwaway_copy(repo, head, diff if scope == "uncommitted" else None, workdir,
                                deadline=deadline)
-            except BridgeError as error:
+            except (BridgeError, OSError) as error:
                 # A preparation that used up the deadline is recorded as a timeout; a copy that
                 # could not be made, as copy_failed (never a fallback): it once ended the
                 # adapter with exit 2 and no record.

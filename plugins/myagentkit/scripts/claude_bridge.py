@@ -80,10 +80,33 @@ def git(repo: Path, *args: str, allowed=(0,), stdin: bytes | None = None, env: d
     return result.stdout
 
 
-# A scratch folder untouched this long has outlived any adapter that could still be using it:
-# the review's whole wall clock is bounded by MAX_REVIEW_TIMEOUT, and the hour covers the
-# evidence and usage writes after it.
+# Dead scratch folders wait out the longest review plus an hour for evidence and usage writes.
 STALE_SCRATCH_SECONDS = agent_process.MAX_REVIEW_TIMEOUT + 3600
+
+
+@contextlib.contextmanager
+def scratch_lock(path: str, create: bool = False):
+    """Hold a nonblocking lifetime lock beside the copy, outside archive extraction."""
+    marker = path + ".lock"
+    if not create:
+        status = os.lstat(marker)
+        if (not stat.S_ISREG(status.st_mode)
+                or (hasattr(os, "getuid") and status.st_uid != os.getuid())):
+            raise OSError("scratch lock is not a regular file owned by this user")
+    flags = os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+    if create:
+        flags |= os.O_CREAT | os.O_EXCL
+    with os.fdopen(os.open(marker, flags, 0o600), "r+b", buffering=0) as lock:
+        if os.name == "nt":
+            import msvcrt
+            if create:
+                lock.write(b"0")
+                lock.seek(0)
+            msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        yield
 
 
 def sweep(prefix: str) -> None:
@@ -91,16 +114,15 @@ def sweep(prefix: str) -> None:
 
     A SIGKILL (or a power loss) skips scratch()'s cleanup, and the reviewer's copy of the
     source stayed in the temporary directory for good. Only a real directory this user owns,
-    named with this adapter's prefix and unmodified for STALE_SCRATCH_SECONDS, is removed:
-    never a symlink, never another account's folder in a shared /tmp, never a running review's.
+    named with this adapter's prefix and unmodified for STALE_SCRATCH_SECONDS, is removed
+    after its lifetime lock is acquired. Unmarked legacy folders are kept: their age cannot
+    prove inactivity. Never a symlink, another account's folder or a running review's copy.
     """
     parent = tempfile.gettempdir()
     try:
         names = [name for name in os.listdir(parent) if name.startswith(prefix)]
     except OSError:
         return
-    # ponytail: age, not an owner lock, tells a dead folder from a live one, so a dead one
-    # waits STALE_SCRATCH_SECONDS; add a lock if that wait ever matters.
     for name in names:
         path = os.path.join(parent, name)
         try:
@@ -110,7 +132,13 @@ def sweep(prefix: str) -> None:
         if (stat.S_ISDIR(status.st_mode)
                 and (not hasattr(os, "getuid") or status.st_uid == os.getuid())
                 and time.time() - status.st_mtime > STALE_SCRATCH_SECONDS):
-            shutil.rmtree(path, ignore_errors=True)
+            try:
+                with scratch_lock(path):
+                    shutil.rmtree(path, ignore_errors=True)
+                if not os.path.exists(path):
+                    os.unlink(path + ".lock")
+            except OSError:
+                continue  # live, unmarked or inaccessible: leave it alone
 
 
 @contextlib.contextmanager
@@ -123,9 +151,15 @@ def scratch(prefix: str):
     sweep(prefix)
     path = tempfile.mkdtemp(prefix=prefix)
     try:
-        yield path
+        with scratch_lock(path, create=True):
+            try:
+                yield path
+            finally:
+                shutil.rmtree(path, ignore_errors=True)
     finally:
-        shutil.rmtree(path, ignore_errors=True)
+        if not os.path.exists(path):
+            with contextlib.suppress(OSError):
+                os.unlink(path + ".lock")
 
 
 def review_tmpdir(repo: Path) -> None:
@@ -916,8 +950,10 @@ def cli_readiness(environ=os.environ) -> str | None:
         try:
             shown = subprocess.run([path, "--help"], capture_output=True, text=True, timeout=60,
                                    stdin=subprocess.DEVNULL, errors="replace").stdout
-        except (OSError, subprocess.SubprocessError):
-            return None  # not startable here: the review's own launch says so
+        except subprocess.TimeoutExpired:
+            return "--help timed out after 60 seconds"
+        except (OSError, subprocess.SubprocessError) as error:
+            return "cannot launch --help: %s" % error
         lacking = [flag for flag in flags if not re.search(r"(?<![\w-])%s(?![\w-])" % re.escape(flag), shown)]
         return "lacks %s, which the review needs" % ", ".join(lacking) if lacking else None
 
@@ -1075,7 +1111,7 @@ def main(argv=None, result_sink=None) -> int:
                 if remaining <= 0:
                     raise BridgeError("the review wall-clock limit passed during preparation")
                 execution = agent_process.run(command, prompt, workdir, remaining, noted=cancelled)
-            except BridgeError as error:
+            except (BridgeError, OSError) as error:
                 if cancelled:
                     raise
                 execution = {"exit_code": None, "stdout": "", "stderr": str(error),
