@@ -12,7 +12,7 @@ HOOK = ROOT / 'overlays/claude-code/files/.claude/hooks/gate_on_stop.sh'
 
 
 class StopHookTests(unittest.TestCase):
-    def test_stale_sentinels_block_instead_of_silently_skipping(self):
+    def test_old_sentinels_require_checking_for_a_live_self_test_before_cleanup(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             subprocess.run(['git', 'init', '-q'], cwd=root, check=True)
@@ -30,10 +30,31 @@ class StopHookTests(unittest.TestCase):
                     result = subprocess.run(['sh', str(hook)], cwd=root, input='{}', text=True,
                                             capture_output=True, timeout=30)
                     self.assertEqual(result.returncode, 2, result.stderr)
-                    self.assertIn('stale self-test sentinel', result.stderr)
+                    self.assertNotIn('stale', result.stderr)
+                    self.assertIn('first check whether a self-test is running', result.stderr)
+                    self.assertIn('wait for it', result.stderr)
                     self.assertIn(name, result.stderr)
                     self.assertIn('remove', result.stderr)
                     sentinel.unlink()
+
+    def test_a_fresh_sentinel_does_not_hide_an_older_one(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            subprocess.run(['git', 'init', '-q'], cwd=root, check=True)
+            (root / 'src').mkdir()
+            (root / 'src/app.py').write_text('dirty\n')
+            subprocess.run(['git', 'add', 'src/app.py'], cwd=root, check=True)
+            (root / 'a.selftest-backup').write_text('fresh\n')
+            older = root / 'z.selftest-backup'
+            older.write_text('old\n')
+            os.utime(older, (1, 1))
+            hook = root / 'hook.sh'
+            hook.write_text(HOOK.read_text().replace('{{GATED_PATHS}}', 'src')
+                            .replace('{{GATED_FILE_PATTERN}}', r'\.py$'))
+            result = subprocess.run(['sh', str(hook)], cwd=root, input='{}', text=True,
+                                    capture_output=True, timeout=30)
+            self.assertEqual(result.returncode, 2, result.stderr)
+            self.assertIn('z.selftest-backup', result.stderr)
 
     def test_ungated_turn_does_not_scan_the_index_for_sentinels(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -100,7 +121,7 @@ class StopHookTests(unittest.TestCase):
             (root / 'src/domain').mkdir(parents=True)
             (root / 'src/app.py').write_text('dirty\n')
             subprocess.run(['git', 'add', 'src/app.py'], cwd=root, check=True)
-            for name in ('CMakeLists.txt.selftest-backup', 'src/domain/.selftest.py'):
+            for name in ('CMakeLists.txt.selftest-backup', 'src/domain/.selftest.py', '-x.selftest-backup'):
                 with self.subTest(sentinel=name):
                     sentinel = root / name
                     sentinel.write_text('injection\n')

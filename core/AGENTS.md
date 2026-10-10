@@ -137,7 +137,12 @@ cost", and `docs/WORKFLOW.md`, "Review rounds".
   or approves its own patch; the review runs in a FRESH session. Any other change needs no review
   (`docs/REVIEW_GATE.md`, "What counts as a risky diff").
 - **AUTHOR and REVIEWER are roles, not vendors.** They are DIFFERENT models; which model
-  holds which role is a project setting recorded in `scripts/review.sh`.
+  holds which role is a project setting recorded in `scripts/review.sh`. Roles follow each
+  part: the reviewing model verifies and fixes its own findings, becoming AUTHOR of those
+  fixes; the other model reviews them. With low allowance the other side writes the fixes
+  (`docs/WORKFLOW.md`, "Model routing", rule 7). A verdict counts only for parts the reviewing
+  model did not write. The loop ends at the first round with no High or Medium finding in
+  which the reviewing model did not write the latest fix.
 - A verdict's manual checks are written to `docs/STATE.md` before commit.
 - **Never report a verification you did not run** — if you could not run it, say "not run".
 

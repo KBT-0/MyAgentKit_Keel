@@ -21,6 +21,18 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-10-10 — Round 4 bootstrap and Stop-hook findings
+
+Mode repair reused any staged blob as a regular executable, converting tracked symlinks
+under core.symlinks=false. It also missed differing older kit scripts and passed paths
+without the repository subfolder prefix to cacheinfo. Repair must keep staged bytes and
+types, changing only stage-0 100644 kit entries. A moved self-test backup keeps its original
+mtime, so age cannot prove abandonment: the Stop hook now tells the agent to check for a
+live test before cleanup, checks every sentinel, and accepts leading-dash paths. The review
+preflight assertion must reject the announcement actually printed, not its former wording;
+an injected announcement proves the assertion catches it. Review roles follow authored
+parts, including fixes, with the owner's low-allowance exception.
+
 ### 2026-10-10 — Review-limit regressions
 
 The review-limit change left the suite minimum stale and its direct-entry guards untested.

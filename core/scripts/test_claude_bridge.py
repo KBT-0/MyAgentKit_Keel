@@ -25,7 +25,7 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'MYAGENTKIT_TASK_ID', 'MYAGENTKIT_R
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 137, 'test_agent_usage': 20, 'test_codex_quota': 5}
+SUITE_MINIMUMS = {'test_claude_bridge': 138, 'test_agent_usage': 20, 'test_codex_quota': 5}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -242,7 +242,7 @@ except ValueError as error:
                     self.assertIn("line-ending-only churn in 'line ends [1].txt'", result.stdout)
                     self.assertIn('restore its line endings before review', result.stdout)
                     self.assertNotIn('REVIEWER RAN:', result.stdout)
-                    self.assertNotIn('REVIEW [spend]:', result.stdout)
+                    self.assertNotIn('REVIEW [about to run]:', result.stdout)
 
     def test_mixed_line_ending_churn_is_refused_in_every_scope(self):
         for scope in ('unstaged', 'staged', 'base', 'commit'):
@@ -266,6 +266,25 @@ except ValueError as error:
                 self.assertIn('line-ending churn', result.stdout)
                 self.assertIn('REVIEW_ALLOW_EOL_ONLY=1', result.stdout)
                 self.assertNotIn('REVIEWER RAN:', result.stdout)
+
+    def test_line_ending_refusal_assertion_detects_a_premature_announcement(self):
+        from unittest.mock import patch
+
+        case = ReviewPreflightTests('test_line_ending_only_files_fail_before_any_reviewer_in_the_selected_scope')
+        review = case.review
+
+        def premature(*args, **kwargs):
+            result = review(*args, **kwargs)
+            if result.returncode == 2:
+                result.stdout = 'REVIEW [about to run]: codex model fixture-codex, effort medium\n' + result.stdout
+            return result
+
+        observed = unittest.TestResult()
+        with patch.object(case, 'review', side_effect=premature):
+            case.run(observed)
+        self.assertFalse(observed.errors, observed.errors)
+        self.assertEqual(len(observed.failures), 4, observed.failures)
+        self.assertTrue(all('REVIEW [about to run]:' in failure for _, failure in observed.failures))
 
     def test_deliberate_normalization_requires_an_explicit_opt_in(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -311,7 +330,6 @@ except ValueError as error:
             self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn('tmpdir preflight refused', result.stdout)
             self.assertIn('REVIEW [about to run]:', result.stdout)
-            self.assertNotIn('REVIEW [spend]:', result.stdout)
 
 
 class BridgeTests(unittest.TestCase):

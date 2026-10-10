@@ -32,15 +32,18 @@ if [ -z "$(git status --porcelain -- $gated_paths 2>/dev/null | grep -E "$gated_
 fi
 
 # Boundary self-tests inject .selftest.*; older project gates back up files in place.
-sentinel=$(git -c core.quotePath=false ls-files -co --exclude-standard |
-  grep -E '(^|/)\.selftest\.[^/]*$|(^|/)[^/]*\.selftest-backup$' | head -1)
-if [ -n "$sentinel" ]; then
-  # A crashed self-test leaves its files behind. A skip expires after ten minutes.
-  if [ -z "$(find "$sentinel" -mmin -10 -print 2>/dev/null)" ]; then
-    printf 'GATE DID NOT RUN (Stop hook): stale self-test sentinel: %s; restore the original file or remove the injection, then run ./scripts/check.sh.\n' "$sentinel" >&2
+sentinels=$(git -c core.quotePath=false ls-files -co --exclude-standard |
+  grep -E '(^|/)\.selftest\.[^/]*$|(^|/)[^/]*\.selftest-backup$')
+if [ -n "$sentinels" ]; then
+  # Age limits a silent skip, but does not prove abandonment: mv keeps a backup's mtime.
+  older=$(printf '%s\n' "$sentinels" | while IFS= read -r sentinel; do
+    [ -n "$(find "./$sentinel" -mmin -10 -print 2>/dev/null)" ] || printf '%s\n' "$sentinel"
+  done)
+  if [ -n "$older" ]; then
+    printf 'GATE DID NOT RUN (Stop hook): self-test sentinel needs attention: %s; first check whether a self-test is running and wait for it; only when none is running, restore the original file or remove the injection, then run ./scripts/check.sh.\n' "$older" >&2
     exit 2
   fi
-  printf 'NOTE [Stop hook]: skipping the gate while a self-test sentinel/injection is present: %s\n' "$sentinel" >&2
+  printf 'NOTE [Stop hook]: skipping the gate while a self-test sentinel/injection is present: %s\n' "$sentinels" >&2
   exit 0
 fi
 

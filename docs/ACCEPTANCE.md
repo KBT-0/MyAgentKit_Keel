@@ -380,6 +380,7 @@ current follow-up scope and the task-specific push exception are recorded in
 
 The owner approved a thirty-minute total deadline as the alternative to reliable startup
 detection. The current final-JSON Claude adapter cannot prove inactivity from silence.
+Superseded by the owner's v0.11 decision: 3600 s default, 7200 s maximum, 200 Claude turns default, 500 maximum.
 The mocked-launch regression was run before implementation and rejected the old
 600-second default on both direct adapters and both dispatcher routes. It then passed
 with 1800 seconds, also checking that explicit overrides still reach the process runner.

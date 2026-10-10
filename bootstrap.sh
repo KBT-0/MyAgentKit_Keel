@@ -284,8 +284,8 @@ EOF
     fi
     if [ -e "$target/$dest" ] && [ "$force" -eq 0 ]; then
       if cmp -s "$src/$rel" "$target/$dest"; then executable "$dest"; continue; fi
-      # Filled-in gates still need +x, even when their content must be kept.
-      case "$dest" in scripts/check.sh|.githooks/*|.claude/hooks/*) executable "$dest" ;; esac
+      # Older or customized kit scripts still need +x, while their content is kept.
+      executable "$dest"
       printf '%s\n' "$dest" >> "$skiplist"
       continue
     fi
@@ -342,15 +342,22 @@ $executables
 EXECUTABLES
 
 if git -C "$target" rev-parse --git-dir >/dev/null 2>&1; then
+  repo_prefix=$(git -C "$target" rev-parse --show-prefix)
   # Repair modes before a customized gate stops the install. Only kit-named regular
   # files reach this list; tracked bytes stay staged as they were, differing untracked
   # files and ignored files stay out of the index.
   while IFS= read -r f; do
     [ -n "$f" ] || continue
     if indexed=$(git -C "$target" --literal-pathspecs ls-files -s --error-unmatch -- "$f" 2>/dev/null); then
-      blob=$(printf '%s\n' "$indexed" | awk '$3 == 0 { print $2 }')
-      [ -n "$blob" ] || die "cannot repair the executable mode of an unmerged kit file: $f"
-      git -C "$target" update-index --cacheinfo "100755,$blob,$f"
+      mode=$(printf '%s\n' "$indexed" | awk '$3 == 0 { print $1 }')
+      [ -n "$mode" ] || die "cannot repair the executable mode of an unmerged kit file: $f"
+      case "$mode" in
+        100644)
+          blob=$(printf '%s\n' "$indexed" | awk '$1 == "100644" && $3 == 0 { print $2 }')
+          git -C "$target" update-index --cacheinfo "100755,$blob,$repo_prefix$f" ;;
+        100755) : ;;
+        *) printf 'bootstrap: NOTE: keeping index mode %s for %s (not a regular file)\n' "$mode" "$f" ;;
+      esac
     elif ! grep -qxF -e "$f" "$skiplist" && ! git -C "$target" check-ignore -q -- "$f"; then
       git -C "$target" add --chmod=+x -- "$f"
     fi

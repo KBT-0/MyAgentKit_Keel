@@ -10,8 +10,9 @@ codebase grows.
   and `docs/ARCHITECTURE.md`.
   Produces the task brief (`docs/HANDOFF.md`). Decides model routing. Does not implement.
 - **WORKER** — implements one task in one module. Bound by `AGENTS.md`, the gates, the tests.
-- **REVIEWER** — `docs/REVIEW_GATE.md`. A fresh session, never the writer, preferably a
-  different model.
+- **REVIEWER** — `docs/REVIEW_GATE.md`. A fresh session of the other model; its verdict
+  counts only for parts it did not write. It fixes its own findings afterwards, unless
+  rule 7 under "Model routing" sends the fixes to the other side for low allowance.
 
 {{OWNER_NAME}} alone decides: OPEN design items, taste and balance calls, scope, and whether
 a risky change ships. Agents propose; {{OWNER_NAME}} decides.

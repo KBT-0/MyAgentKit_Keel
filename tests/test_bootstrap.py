@@ -40,6 +40,61 @@ def cut_short(shims, needle):
 
 
 class BootstrapTests(unittest.TestCase):
+    def test_mode_repair_preserves_nonregular_index_entries(self):
+        root = Path(__file__).resolve().parents[1]
+        for mode in ('120000', '160000'):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as tmp:
+                kit, project = Path(tmp) / 'kit', Path(tmp) / 'project'
+                (kit / 'core/scripts').mkdir(parents=True)
+                (project / 'scripts').mkdir(parents=True)
+                shutil.copyfile(root / 'bootstrap.sh', kit / 'bootstrap.sh')
+                (kit / 'CHANGELOG.md').write_text('## v0.11\n')
+                (kit / 'core/scripts/check.sh').write_text('#!/bin/sh\nexit 0\n')
+                subprocess.run(['git', 'init', '-q'], cwd=project, check=True)
+                subprocess.run(['git', 'config', 'core.symlinks', 'false'], cwd=project, check=True)
+                path = project / 'scripts/check.sh'
+                path.write_text('../shared/check.sh\n')
+                subprocess.run(['git', 'add', 'scripts/check.sh'], cwd=project, check=True)
+                subprocess.run(['git', '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid',
+                                'commit', '-qm', 'fixture'], cwd=project, check=True)
+                blob = subprocess.check_output(['git', 'rev-parse',
+                                                'HEAD' if mode == '160000' else ':scripts/check.sh'],
+                                               cwd=project).decode().strip()
+                subprocess.run(['git', 'update-index', '--cacheinfo', mode + ',' + blob + ',scripts/check.sh'],
+                               cwd=project, check=True)
+                before = subprocess.check_output(['git', 'ls-files', '-s', 'scripts/check.sh'], cwd=project)
+                result = subprocess.run(['sh', str(kit / 'bootstrap.sh'), str(project)],
+                                        capture_output=True, text=True, timeout=bootstrap_timeout(30))
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn('STOPPING', result.stdout)
+                self.assertEqual(subprocess.check_output(['git', 'ls-files', '-s', 'scripts/check.sh'],
+                                                         cwd=project), before)
+                self.assertEqual(path.read_text(), '../shared/check.sh\n')
+
+    def test_mode_repair_in_a_repository_subfolder(self):
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as tmp:
+            kit, repo = Path(tmp) / 'kit', Path(tmp) / 'repo'
+            (kit / 'core/scripts').mkdir(parents=True)
+            project = repo / 'app space'
+            (project / 'scripts').mkdir(parents=True)
+            shutil.copyfile(root / 'bootstrap.sh', kit / 'bootstrap.sh')
+            (kit / 'CHANGELOG.md').write_text('## v0.11\n')
+            content = '#!/bin/sh\nexit 0\n'
+            (kit / 'core/scripts/check.sh').write_text(content)
+            (project / 'scripts/check.sh').write_text(content)
+            subprocess.run(['git', 'init', '-q'], cwd=repo, check=True)
+            subprocess.run(['git', 'config', 'core.fileMode', 'false'], cwd=repo, check=True)
+            subprocess.run(['git', 'add', 'app space/scripts/check.sh'], cwd=repo, check=True)
+            subprocess.run(['git', 'update-index', '--chmod=-x', 'app space/scripts/check.sh'], cwd=repo, check=True)
+            before = subprocess.check_output(['git', 'show', ':app space/scripts/check.sh'], cwd=repo)
+            result = subprocess.run(['sh', str(kit / 'bootstrap.sh'), str(project)],
+                                    capture_output=True, text=True, timeout=bootstrap_timeout(30))
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertTrue((project / 'docs/kit/.kit-version').is_file())
+            self.assertEqual(subprocess.check_output(['git', 'ls-files', '-s'], cwd=repo).split()[0], b'100755')
+            self.assertEqual(subprocess.check_output(['git', 'show', ':app space/scripts/check.sh'], cwd=repo), before)
+
     def test_rerun_repairs_customized_gate_modes_before_conflict(self):
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory() as tmp:
@@ -61,12 +116,10 @@ class BootstrapTests(unittest.TestCase):
             self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
             for name in names:
                 path = project / name
-                if name != 'scripts/review.sh':
-                    path.write_text('#!/bin/sh\n# adopted project\nexit 0\n')
+                path.write_text('#!/bin/sh\n# adopted project\nexit 0\n')
                 subprocess.run(['git', 'add', name], cwd=project, check=True)
                 subprocess.run(['git', 'update-index', '--chmod=-x', name], cwd=project, check=True)
-                if name != 'scripts/review.sh':
-                    path.write_text(path.read_text() + '# unstaged work\n')
+                path.write_text(path.read_text() + '# unstaged work\n')
                 path.chmod(0o644)
             subprocess.run(['git', '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid',
                             'commit', '-qm', 'adopted project'], cwd=project, check=True)
@@ -80,8 +133,7 @@ class BootstrapTests(unittest.TestCase):
                     self.assertEqual(subprocess.check_output(['git', 'ls-files', '-s', name],
                                                             cwd=project).split()[0], b'100755')
                     self.assertEqual(subprocess.check_output(['git', 'show', ':' + name], cwd=project), before[name])
-                    if name != 'scripts/review.sh':
-                        self.assertIn('# unstaged work', (project / name).read_text())
+                    self.assertIn('# unstaged work', (project / name).read_text())
                     if not WINDOWS:
                         self.assertTrue(os.access(project / name, os.X_OK))
 
@@ -126,7 +178,7 @@ class BootstrapTests(unittest.TestCase):
                     self.assertEqual(content, b'old staged hook\n' if name.startswith('.githooks')
                                      else b'staged content\n')
                     mode = subprocess.check_output(['git', 'ls-files', '-s', name], cwd=project).split()[0]
-                    self.assertEqual(mode, b'100755' if name.startswith('.githooks') else b'100644')
+                    self.assertEqual(mode, b'100644' if name == 'scripts/build.sh' else b'100755')
 
     def test_bootstrap_stages_executable_modes_when_file_mode_is_disabled(self):
         root = Path(__file__).resolve().parents[1]

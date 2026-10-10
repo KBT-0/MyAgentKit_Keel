@@ -14,16 +14,19 @@ errors", "all tests green") are never validation.
 
 This document names two roles and never a product:
 
-- **AUTHOR** — the session that writes the patch. It owns the change and the verdict it
-  eventually acts on. It never approves its own work.
+- **AUTHOR** — the session that writes a part of the patch, including a review fix. It
+  owns that part and never approves its own work.
 - **REVIEWER** — a fresh session running a DIFFERENT model. It produces findings and one
-  verdict, which are input the AUTHOR verifies, not an approval the AUTHOR relays.
+  verdict, which are input the calling agent verifies, not an approval it relays. Afterwards
+  the reviewing model verifies and fixes its own findings, becoming AUTHOR of those fixes;
+  the other model reviews them. When its allowance is low, the other side writes the fixes
+  instead (`docs/WORKFLOW.md`, "Model routing", rule 7).
 
 Which model holds which role is a project configuration, set during setup and recorded in
 `scripts/review.sh`. It is expected to change: the roles follow the budget, and the budget
 moves. A project that runs out of the AUTHOR's quota mid-phase swaps the two and keeps
-working — the invariant is that the author and the reviewer are different models, never
-that a particular vendor sits on a particular side.
+working — the invariant is that each verdict counts only for parts the reviewing model did
+not write, never that a particular vendor sits on a particular side.
 
 Because the roles swap, **both directions publish the same evidence format** (same header
 table, same one-line verdict contract, same `docs/reviews/<stamp>-<reviewer>-review.md`
@@ -166,8 +169,8 @@ paste.
 When the prompt carries earlier rounds of the same change, the reviewer says for each earlier
 finding whether it is fixed or still present, then reviews the whole diff again for context,
 with its verdict limited to parts it did not write. The
-author's dispositions (fixed in a commit, disproved with evidence, deferred to the owner) are
-claims to verify, because the author never approves its own work: a disproved finding counts
+fixer's dispositions (fixed in a commit, disproved with evidence, deferred to the owner) are
+claims for the other model to verify, because no model approves its own work: a disproved finding counts
 only after the reviewer has checked it against the code, and a deferred one stays open under
 Manual checks, so it rules out a plain Accept.
 

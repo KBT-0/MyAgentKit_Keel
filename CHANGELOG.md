@@ -50,8 +50,10 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 - **The lead's Stop hook stays out of a worker's self-test** (issue #68, item 3): the lead
   uses `git -C <worktree>` and keeps its shell in its own checkout. After the cheap gated-paths
   check, the Stop hook skips with a NOTE for tracked or nonignored untracked `.selftest.*`
-  or `*.selftest-backup` files modified in the last ten minutes. Older leftovers block with
-  a repair message. Worker worktrees and ignored folders do not disable the lead's gate.
+  or `*.selftest-backup` files only when every match was modified in the last ten minutes.
+  Older mtimes block with a message to check for a running self-test and wait for it before
+  any cleanup: a moved backup can keep an old mtime. Leading-dash paths work too.
+  Worker worktrees and ignored folders do not disable the lead's gate.
   **ACTION:** add the two sentences under "The lead's steps when a branch is ready" in
   `$KIT/core/docs/WORKFLOW.md` to your `docs/WORKFLOW.md`, and copy
   `$KIT/overlays/claude-code/files/.claude/hooks/gate_on_stop.sh` to `.claude/hooks/gate_on_stop.sh`,
@@ -61,11 +63,12 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   set, and a changed driver script invalidates every stage. **ACTION:** add the two
   sentences in item 3 from `$KIT/core/docs/HANDOFF.md` to your `docs/HANDOFF.md`.
 - **Bootstrap records executable Git modes on Windows** (issue #59; `bootstrap.sh`): in
-  a Git repository it records executable modes only for kit scripts and hooks it installs
-  or finds identical, plus customized `scripts/check.sh` and kit hooks, even when
+  a Git repository it records executable modes for every kit-named shell script and hook,
+  including differing older or customized copies, even when
   `core.fileMode=false`. Repair runs before a gate-content conflict stops installation.
-  Tracked files keep their staged
-  content; new nonignored kit files are staged; ignored files stay out of the index.
+  Only stage-0 100644 entries are repaired; symlinks and other index types stay unchanged.
+  Tracked files keep their staged content, including in repository subfolders;
+  new nonignored kit files are staged; ignored files stay out of the index.
   Other project-owned scripts are left alone. **ACTION:** rerun bootstrap with the project's
   overlays to repair kit modes. A customized gate still returns STOPPING (exit 1), but its
   mode is repaired; merge content separately, without `--force`.
