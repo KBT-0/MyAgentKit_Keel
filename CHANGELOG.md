@@ -18,7 +18,13 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   200 turns (maximum 500); three high-effort reviews had died on 1800 seconds and 12 turns.
   `REVIEW_MAX_TURNS` is new and reaches the Claude CLI through `review.sh`, like
   `REVIEW_TIMEOUT_SECONDS`. The turn setting is validated only when Claude is the reviewer
-  or fallback is allowed. Codex has no turn limit. **ACTION:** copy the core scripts.
+  or fallback is allowed. Codex has no turn limit. Proposal ceilings stay at 3600 seconds
+  and 100 turns. **ACTION:** copy `$KIT/core/scripts/agent_process.py` to `scripts/agent_process.py`,
+  `$KIT/core/scripts/claude_bridge.py` to `scripts/claude_bridge.py`,
+  `$KIT/core/scripts/codex_bridge.py` to `scripts/codex_bridge.py`,
+  `$KIT/core/scripts/review_dispatch.py` to `scripts/review_dispatch.py`,
+  `$KIT/core/scripts/review.sh` to `scripts/review.sh`, keeping your project configuration, and
+  `$KIT/core/scripts/test_claude_bridge.py` to `scripts/test_claude_bridge.py`.
 - **A spawned handoff records its question** (issue #42; the plugin's handoff command):
   item 7 now matches `docs/HANDOFF.md`; the upgrade checklist no longer copies
   `spawn_worker.sh` twice.
@@ -68,7 +74,10 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   `core.fileMode=false`. Repair runs before a gate-content conflict stops installation.
   Only stage-0 100644 entries are repaired; symlinks and other index types stay unchanged.
   Tracked files keep their staged content, including in repository subfolders;
-  new nonignored kit files are staged; ignored files stay out of the index.
+  new nonignored kit scripts are staged only at the repository top level. Bootstrap prints
+  each staged path and notes that other kit files were not staged. Subfolder installs print
+  the exact `git add --chmod=+x -- <files>` commands to run from the target instead.
+  Ignored files stay out of the index.
   Other project-owned scripts are left alone. **ACTION:** rerun bootstrap with the project's
   overlays to repair kit modes. A customized gate still returns STOPPING (exit 1), but its
   mode is repaired; merge content separately, without `--force`.
@@ -158,7 +167,7 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   Inner same-model checks stay with the worker; cross-model gate findings go to the model
   that found them. **ACTION:** update `docs/REVIEW_GATE.md`, `docs/REVIEW_RUNNING.md` and the
   review-fix rules in `docs/WORKFLOW.md`, and copy the Claude Code overlay's
-  `.claude/agents/worker.md`; `claude_bridge.py` comes with the sync.
+  `.claude/agents/worker.md`; copy `claude_bridge.py` as listed in the first ACTION above.
 
 ## v0.10 — 2026-10-07
 

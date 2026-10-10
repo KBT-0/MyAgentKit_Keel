@@ -83,7 +83,7 @@ REQUIRED_SUITES = {
     'core/scripts': dict(BRIDGE_MINIMUMS, test_agent_cost=3),
     # Each suite's current count: a minimum far below it (1 of 30) let a suite lose almost
     # every test with the kit check green. A new test raises its suite's number here.
-    'tests': {'test_packaging': 1, 'test_bootstrap': 34, 'test_acceptance': 9,
+    'tests': {'test_packaging': 1, 'test_bootstrap': 35, 'test_acceptance': 9,
               'test_review_upgrade': 3, 'test_boundary_example': 3, 'test_scan_gate': 1,
               'test_check_gate': 23, 'test_check_gate_windows': 18, 'test_boundary_restore': 39,
               'test_sync_kit': 29, 'test_doctor': 2, 'test_git_hooks': 30, 'test_stop_hook': 6, 'test_context_hook': 9, 'test_overlay_permissions': 6,

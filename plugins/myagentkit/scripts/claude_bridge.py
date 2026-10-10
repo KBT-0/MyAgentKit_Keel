@@ -843,10 +843,11 @@ def main(argv=None, result_sink=None) -> int:
             raise BridgeError("nested delegation is disabled")
         if not args.model.startswith("claude-") or any(c.isspace() for c in args.model):
             raise BridgeError("use an explicit Claude model id, not a moving alias")
-        if (not 1 <= args.timeout <= agent_process.MAX_REVIEW_TIMEOUT
-                or not 1 <= args.max_turns <= agent_process.MAX_REVIEW_TURNS):
+        max_timeout = agent_process.MAX_REVIEW_TIMEOUT if args.mode == "review" else 3600
+        max_turns = agent_process.MAX_REVIEW_TURNS if args.mode == "review" else 100
+        if not 1 <= args.timeout <= max_timeout or not 1 <= args.max_turns <= max_turns:
             raise BridgeError("timeout must be 1..%d seconds and max-turns 1..%d"
-                              % (agent_process.MAX_REVIEW_TIMEOUT, agent_process.MAX_REVIEW_TURNS))
+                              % (max_timeout, max_turns))
         if args.max_budget_usd is None and args.mode == "propose":
             args.max_budget_usd = 3.0
         if args.max_budget_usd is not None and not 0 < args.max_budget_usd <= 100:

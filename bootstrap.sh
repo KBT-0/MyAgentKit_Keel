@@ -345,7 +345,8 @@ if git -C "$target" rev-parse --git-dir >/dev/null 2>&1; then
   repo_prefix=$(git -C "$target" rev-parse --show-prefix)
   # Repair modes before a customized gate stops the install. Only kit-named regular
   # files reach this list; tracked bytes stay staged as they were, differing untracked
-  # files and ignored files stay out of the index.
+  # files and ignored files stay out of the index. New scripts are staged only at the
+  # repository top level; a subfolder install prints the command for the owner instead.
   while IFS= read -r f; do
     [ -n "$f" ] || continue
     if indexed=$(git -C "$target" --literal-pathspecs ls-files -s --error-unmatch -- "$f" 2>/dev/null); then
@@ -354,12 +355,19 @@ if git -C "$target" rev-parse --git-dir >/dev/null 2>&1; then
       case "$mode" in
         100644)
           blob=$(printf '%s\n' "$indexed" | awk '$1 == "100644" && $3 == 0 { print $2 }')
-          git -C "$target" update-index --cacheinfo "100755,$blob,$repo_prefix$f" ;;
+          git -C "$target" update-index --cacheinfo "100755,$blob,$repo_prefix$f"
+          printf 'bootstrap: repaired staged executable mode: %s\n' "$f" ;;
         100755) : ;;
         *) printf 'bootstrap: NOTE: keeping index mode %s for %s (not a regular file)\n' "$mode" "$f" ;;
       esac
     elif ! grep -qxF -e "$f" "$skiplist" && ! git -C "$target" check-ignore -q -- "$f"; then
-      git -C "$target" add --chmod=+x -- "$f"
+      if [ -z "$repo_prefix" ]; then
+        git -C "$target" add --chmod=+x -- "$f"
+        printf 'bootstrap: staged %s (other kit files were not staged by bootstrap)\n' "$f"
+      else
+        printf 'bootstrap: NOTE: %s was not staged; from %s run:\n' "$f" "$target"
+        printf '  git add --chmod=+x -- "%s"\n' "$(printf '%s' "$f" | sed 's/[\\"$`]/\\&/g')"
+      fi
     fi
   done <<EXECUTABLES
 $executables

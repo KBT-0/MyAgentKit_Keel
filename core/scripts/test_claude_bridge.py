@@ -25,7 +25,7 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'MYAGENTKIT_TASK_ID', 'MYAGENTKIT_R
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 138, 'test_agent_usage': 20, 'test_codex_quota': 5}
+SUITE_MINIMUMS = {'test_claude_bridge': 139, 'test_agent_usage': 20, 'test_codex_quota': 5}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -318,7 +318,7 @@ except ValueError as error:
             self.assertEqual(len(diffs), 2)
             self.assertTrue(all('--numstat' in call.args and '-z' in call.args for call in diffs))
 
-    def test_an_adapter_preflight_failure_does_not_announce_spend(self):
+    def test_an_adapter_preflight_failure_follows_the_about_to_run_line(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo = self.project(tmp)
             stub = repo / 'scripts/review_dispatch.py'
@@ -333,6 +333,35 @@ except ValueError as error:
 
 
 class BridgeTests(unittest.TestCase):
+    def test_direct_claude_limits_are_validated_per_mode(self):
+        from contextlib import redirect_stdout
+        from unittest.mock import patch
+        import agent_process
+
+        class CapturedPreparation(RuntimeError):
+            pass
+
+        for mode, timeout, turns in [('propose', 3600, 100),
+                                     ('review', agent_process.MAX_REVIEW_TIMEOUT, agent_process.MAX_REVIEW_TURNS)]:
+            for option, maximum in [('--timeout', timeout), ('--max-turns', turns)]:
+                for value in (-1, 0, 1, maximum, maximum + 1):
+                    with self.subTest(mode=mode, option=option, value=value):
+                        out = io.StringIO()
+                        with patch.dict(os.environ, self.review_env()), redirect_stdout(out), \
+                                patch.object(bridge, 'git', side_effect=CapturedPreparation) as prepare, \
+                                patch.object(agent_process, 'run') as run, patch.object(agent_process, 'launch') as launch:
+                            args = [mode, '--repo', str(self.repo), option, str(value)]
+                            if 1 <= value <= maximum:
+                                with self.assertRaises(CapturedPreparation):
+                                    bridge.main(args)
+                            else:
+                                self.assertEqual(bridge.main(args), 2)
+                                self.assertIn('timeout must be 1..%d seconds and max-turns 1..%d'
+                                              % (timeout, turns), out.getvalue())
+                                prepare.assert_not_called()
+                            run.assert_not_called()
+                            launch.assert_not_called()
+
     def test_a_passing_run_prints_a_summary_and_a_failing_run_its_whole_log(self):
         class Probe(unittest.TestCase):
             def test_passes(self):

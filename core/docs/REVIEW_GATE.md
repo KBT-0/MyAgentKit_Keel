@@ -147,7 +147,8 @@ proposes, never decides.
 
 **A Reject is not closed by its fixes.** The fixes go through this gate too, in a fresh
 session, and a risky-area diff stays risky when the diff is the remediation. This is not
-ceremony: a fix is written by the party that just accepted the criticism, it lands in the
+ceremony: the reviewing model writes the fixes of its findings; with low allowance, the
+other side writes them instead (`docs/WORKFLOW.md`, "Model routing", rule 7). A fix lands in the
 code that was already subtle enough to get wrong once, and it ships beside a document
 asserting the problem is now solved — which is what the next reader trusts instead of the
 code. This kit's own first remediation replaced a fail-open scanner with a differently

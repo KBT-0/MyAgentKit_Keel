@@ -395,8 +395,8 @@ Rules for whoever routes work, binding with any table:
 3. **A failed mechanical errand is rerun one tier up**, never retried at the same tier.
 4. **A review loop is broken by escalation, not by more rounds.** When three review rounds
    in a row have not come back clean, the lead raises the effort, the model tier, or both,
-   chosen for the case and written into the next brief. The model that fixes the findings
-   is raised first; the reviewer is raised too when its findings are what keeps the loop
+   chosen for the case and written into the next brief. The model writing this round's fixes
+   is raised first; the model reviewing them is raised too when its findings keep the loop
    going. One stronger round costs less than several more rounds at the same level.
 5. **Model versions are kept current.** A lead that learns of a newer Codex or Claude model
    switches to it: the reviewer pins in `scripts/review.sh` and the machine's Codex

@@ -40,6 +40,49 @@ def cut_short(shims, needle):
 
 
 class BootstrapTests(unittest.TestCase):
+    def test_new_scripts_are_staged_only_at_the_repository_top_level_and_reported(self):
+        root = Path(__file__).resolve().parents[1]
+        for subfolder in ('', 'app space'):
+            with self.subTest(subfolder=subfolder), tempfile.TemporaryDirectory() as tmp:
+                kit, repo = Path(tmp) / 'kit', Path(tmp) / 'repo'
+                project = repo / subfolder
+                project.mkdir(parents=True)
+                kit.mkdir()
+                shutil.copyfile(root / 'bootstrap.sh', kit / 'bootstrap.sh')
+                (kit / 'CHANGELOG.md').write_text('## v0.11\n')
+                names = ('scripts/check.sh', "scripts/quoted ' $kit.sh")
+                for name in (*names, 'docs/X.md', 'scripts/module.py'):
+                    source = kit / 'core' / name
+                    source.parent.mkdir(parents=True, exist_ok=True)
+                    source.write_bytes(b'#!/bin/sh\nexit 0\n')
+                subprocess.run(['git', 'init', '-q'], cwd=repo, check=True)
+                subprocess.run(['git', 'config', 'core.fileMode', 'false'], cwd=repo, check=True)
+                (repo / 'owner.txt').write_bytes(b'staged owner work\n')
+                subprocess.run(['git', 'add', 'owner.txt'], cwd=repo, check=True)
+                before = subprocess.check_output(['git', 'ls-files', '-s'], cwd=repo)
+                result = subprocess.run(['sh', str(kit / 'bootstrap.sh'), str(project)],
+                                        capture_output=True, text=True, timeout=bootstrap_timeout(30))
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                if subfolder:
+                    self.assertEqual(subprocess.check_output(['git', 'ls-files', '-s'], cwd=repo), before)
+                    commands = [line.strip() for line in result.stdout.splitlines()
+                                if line.strip().startswith('git add --chmod=+x -- ')]
+                    self.assertEqual(commands, ['git add --chmod=+x -- "scripts/check.sh"',
+                                               'git add --chmod=+x -- "scripts/quoted \' \\$kit.sh"'])
+                    # The printed commands must work verbatim from the target, including quoting.
+                    for command in commands:
+                        subprocess.run(['sh', '-c', command], cwd=project, check=True)
+                else:
+                    for name in names:
+                        self.assertIn('bootstrap: staged ' + name, result.stdout)
+                    self.assertIn('other kit files were not staged by bootstrap', result.stdout)
+                indexed = subprocess.check_output(['git', 'ls-files', '-s'], cwd=repo).decode().splitlines()
+                prefix = subfolder + '/' if subfolder else ''
+                self.assertEqual({line.split('\t')[1] for line in indexed},
+                                 {'owner.txt', *(prefix + name for name in names)})
+                self.assertTrue(all(line.startswith('100755 ') for line in indexed if '\tscripts/' in line
+                                    or '\tapp space/scripts/' in line))
+
     def test_mode_repair_preserves_nonregular_index_entries(self):
         root = Path(__file__).resolve().parents[1]
         for mode in ('120000', '160000'):

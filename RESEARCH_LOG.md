@@ -21,7 +21,7 @@ which is the part that gets lost.
 
 ## Implementation observations
 
-### 2026-10-10 — Round 4 bootstrap and Stop-hook findings
+### 2026-10-10 — Round 3 bootstrap and Stop-hook findings
 
 Mode repair reused any staged blob as a regular executable, converting tracked symlinks
 under core.symlinks=false. It also missed differing older kit scripts and passed paths
@@ -305,8 +305,9 @@ Keeping the shell in the lead's checkout prevents that mistake; recognizing the 
 example's `.selftest.*` injection and older backup sentinels avoids a misleading red gate.
 Incremental planners also missed always-run inputs and their command driver as shared dependencies.
 
-On Windows, `core.fileMode=false` hid bootstrap's chmod from the first Git index. Explicit
-`git add --chmod=+x` preserves executable modes through the owner's next `git add -A` and Linux checkout.
+On Windows, `core.fileMode=false` hid bootstrap's chmod from the first Git index.
+`git update-index --cacheinfo` repairs tracked executable modes without replacing staged bytes.
+New scripts use `git add --chmod=+x` only at the repository top level; subfolder installs print the command.
 
 ### 2026-10-07 — native Windows as the main host, and the tenth review's findings
 
