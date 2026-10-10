@@ -20,14 +20,6 @@ esac
 root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
 CDPATH= cd -- "$root" || exit 0
 
-# Boundary self-tests inject .selftest.*; older project gates back up files in place.
-sentinel=$(git -c core.quotePath=false ls-files -co --exclude-standard |
-  grep -E '(^|/)\.selftest\.[^/]*$|(^|/)[^/]*\.selftest-backup$' | head -1)
-if [ -n "$sentinel" ]; then
-  printf 'NOTE [Stop hook]: skipping the gate while a self-test sentinel/injection is present: %s\n' "$sentinel" >&2
-  exit 0
-fi
-
 # Only work in these paths needs the gate; documentation and tooling turns skip it, which is
 # why the hook is cheap in practice. Untracked files count — `git status` reports them where
 # `git diff` would not.
@@ -36,6 +28,19 @@ gated_pattern="{{GATED_FILE_PATTERN}}"
 
 # shellcheck disable=SC2086
 if [ -z "$(git status --porcelain -- $gated_paths 2>/dev/null | grep -E "$gated_pattern" || true)" ]; then
+  exit 0
+fi
+
+# Boundary self-tests inject .selftest.*; older project gates back up files in place.
+sentinel=$(git -c core.quotePath=false ls-files -co --exclude-standard |
+  grep -E '(^|/)\.selftest\.[^/]*$|(^|/)[^/]*\.selftest-backup$' | head -1)
+if [ -n "$sentinel" ]; then
+  # A crashed self-test leaves its files behind. A skip expires after ten minutes.
+  if [ -z "$(find "$sentinel" -mmin -10 -print 2>/dev/null)" ]; then
+    printf 'GATE DID NOT RUN (Stop hook): stale self-test sentinel: %s; restore the original file or remove the injection, then run ./scripts/check.sh.\n' "$sentinel" >&2
+    exit 2
+  fi
+  printf 'NOTE [Stop hook]: skipping the gate while a self-test sentinel/injection is present: %s\n' "$sentinel" >&2
   exit 0
 fi
 

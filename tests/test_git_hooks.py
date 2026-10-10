@@ -437,6 +437,31 @@ class GitHookTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn('cannot list the index', result.stderr)
 
+    def test_done_listing_is_scoped_even_with_literal_pathspecs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, git = self.repo(tmp)
+            self.docs(root, git, '')
+            report = root / 'docs/reviews/strong-today.md'
+            report.parent.mkdir()
+            report.write_text('- K4: open\n')
+            git('add', 'docs/reviews')
+            message = root / 'message'
+            message.write_text('close\n\nDone: K4\n')
+            shim = root / 'bin'
+            shim.mkdir()
+            (shim / 'git').write_text(
+                '#!/bin/sh\ncase " $* " in *" ls-files "*)\n'
+                '  case " $* " in *" -- :(icase)docs/reviews "*) ;; *) echo unscoped-index >&2; exit 128 ;; esac ;; esac\n'
+                'exec %s "$@"\n' % shlex.quote(shutil.which('git')))
+            (shim / 'git').chmod(0o755)
+            result = subprocess.run(['sh', '.githooks/commit-msg', str(message)], cwd=root,
+                                    capture_output=True, text=True,
+                                    env=dict(os.environ, GIT_LITERAL_PATHSPECS='1',
+                                             PATH=str(shim) + os.pathsep + os.environ['PATH']))
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn('still mentions it', result.stderr)
+            self.assertNotIn('unscoped-index', result.stderr)
+
     def check_report_name(self, name, message_text='close\n\nDone: K4\n', expected=1):
         # Index-only names also exercise characters Windows refuses in a working-tree name.
         with tempfile.TemporaryDirectory() as tmp:

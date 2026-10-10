@@ -11,6 +11,12 @@ import unittest
 WINDOWS = os.name == 'nt'
 
 
+def bootstrap_timeout(seconds):
+    # A full copy takes about 145 seconds on Windows, before concurrent gate load.
+    return (max(seconds, 300) if WINDOWS else seconds) * float(
+        os.environ.get('MYAGENTKIT_TEST_TIMEOUT_SCALE', '1'))
+
+
 def not_on_windows(case, why):
     """True on native Windows, after the NOT RUN line the kit check collects (issue #56)."""
     if WINDOWS:
@@ -34,6 +40,51 @@ def cut_short(shims, needle):
 
 
 class BootstrapTests(unittest.TestCase):
+    def test_rerun_repairs_customized_gate_modes_before_conflict(self):
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as tmp:
+            kit, project = Path(tmp) / 'kit', Path(tmp) / 'project'
+            kit.mkdir()
+            project.mkdir()
+            shutil.copyfile(root / 'bootstrap.sh', kit / 'bootstrap.sh')
+            (kit / 'CHANGELOG.md').write_text('## v0.11\n')
+            names = ('scripts/check.sh', 'scripts/review.sh', '.githooks/commit-msg',
+                     '.claude/hooks/gate_on_stop.sh')
+            for name in names:
+                source = kit / ('overlays/claude-code/files' if name.startswith('.claude') else 'core') / name
+                source.parent.mkdir(parents=True, exist_ok=True)
+                source.write_text('#!/bin/sh\nexit 0\n')
+            subprocess.run(['git', 'init', '-q'], cwd=project, check=True)
+            subprocess.run(['git', 'config', 'core.fileMode', 'false'], cwd=project, check=True)
+            command = ['sh', str(kit / 'bootstrap.sh'), str(project), '--overlay', 'claude-code']
+            first = subprocess.run(command, capture_output=True, text=True, timeout=bootstrap_timeout(60))
+            self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
+            for name in names:
+                path = project / name
+                if name != 'scripts/review.sh':
+                    path.write_text('#!/bin/sh\n# adopted project\nexit 0\n')
+                subprocess.run(['git', 'add', name], cwd=project, check=True)
+                subprocess.run(['git', 'update-index', '--chmod=-x', name], cwd=project, check=True)
+                if name != 'scripts/review.sh':
+                    path.write_text(path.read_text() + '# unstaged work\n')
+                path.chmod(0o644)
+            subprocess.run(['git', '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid',
+                            'commit', '-qm', 'adopted project'], cwd=project, check=True)
+            before = {name: subprocess.check_output(['git', 'show', ':' + name], cwd=project)
+                      for name in names}
+            result = subprocess.run(command, capture_output=True, text=True, timeout=bootstrap_timeout(60))
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn('STOPPING', result.stdout)
+            for name in names:
+                with self.subTest(path=name):
+                    self.assertEqual(subprocess.check_output(['git', 'ls-files', '-s', name],
+                                                            cwd=project).split()[0], b'100755')
+                    self.assertEqual(subprocess.check_output(['git', 'show', ':' + name], cwd=project), before[name])
+                    if name != 'scripts/review.sh':
+                        self.assertIn('# unstaged work', (project / name).read_text())
+                    if not WINDOWS:
+                        self.assertTrue(os.access(project / name, os.X_OK))
+
     def test_ignored_hooks_do_not_abort_bootstrap(self):
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory() as tmp:
@@ -41,7 +92,7 @@ class BootstrapTests(unittest.TestCase):
             subprocess.run(['git', 'init', '-q'], cwd=project, check=True)
             (project / '.gitignore').write_text('.claude/\n')
             result = subprocess.run(['sh', str(root / 'bootstrap.sh'), str(project),
-                                     '--overlay', 'claude-code'], capture_output=True, text=True, timeout=90)
+                                     '--overlay', 'claude-code'], capture_output=True, text=True, timeout=bootstrap_timeout(90))
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertEqual(self._hooks_path(project), '.githooks')
             self.assertTrue((project / 'docs/kit/.kit-version').is_file())
@@ -67,7 +118,7 @@ class BootstrapTests(unittest.TestCase):
             subprocess.run(['git', 'add', '.githooks/commit-msg'], cwd=project, check=True)
             shutil.copyfile(root / 'core/.githooks/commit-msg', hook)
             result = subprocess.run(['sh', str(root / 'bootstrap.sh'), str(project),
-                                     '--overlay', 'claude-code'], capture_output=True, text=True, timeout=90)
+                                     '--overlay', 'claude-code'], capture_output=True, text=True, timeout=bootstrap_timeout(90))
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             for name in ('scripts/build.sh', 'scripts/review.sh', '.githooks/commit-msg'):
                 with self.subTest(path=name):
@@ -84,7 +135,7 @@ class BootstrapTests(unittest.TestCase):
             for args in (['init', '-q'], ['config', 'core.fileMode', 'false']):
                 subprocess.run(['git', *args], cwd=project, check=True, capture_output=True)
             result = subprocess.run(['sh', str(root / 'bootstrap.sh'), str(project),
-                                     '--overlay', 'claude-code'], capture_output=True, text=True, timeout=90)
+                                     '--overlay', 'claude-code'], capture_output=True, text=True, timeout=bootstrap_timeout(90))
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             expected = set(project.glob('scripts/*.sh')) | set(project.glob('.githooks/*')) | set(project.glob('.claude/hooks/*'))
             expected = {p.relative_to(project).as_posix() for p in expected if p.is_file()}
@@ -153,7 +204,7 @@ class BootstrapTests(unittest.TestCase):
                             shutil.copyfile(root / 'core' / rel, outside)
                         (project / rel).symlink_to(outside)
                     result = subprocess.run(['sh', str(root / 'bootstrap.sh'), str(project), *force],
-                                            capture_output=True, text=True, timeout=30)
+                                            capture_output=True, text=True, timeout=bootstrap_timeout(30))
                     self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
                     self.assertIn('conflict: ' + rel, result.stdout)
                     self.assertFalse((project / 'docs/kit/.kit-version').exists())
@@ -176,7 +227,7 @@ class BootstrapTests(unittest.TestCase):
                     outside.mkdir()
                     (project / folder).symlink_to(outside)
                     result = subprocess.run(['sh', str(root / 'bootstrap.sh'), str(project), *force],
-                                            capture_output=True, text=True, timeout=60)
+                                            capture_output=True, text=True, timeout=bootstrap_timeout(60))
                     self.assertEqual(result.returncode, 1 if stops else 0, result.stdout + result.stderr)
                     self.assertIn(needle, result.stdout)
                     self.assertEqual(list(outside.iterdir()), [], 'written through a symlinked folder')
@@ -209,7 +260,7 @@ class BootstrapTests(unittest.TestCase):
                 {'file': lambda p: p.write_text('x\n'), 'fifo': lambda p: os.mkfifo(p), 'dir': Path.mkdir}[make](project / rel)
                 try:
                     result = subprocess.run(['sh', str(root / 'bootstrap.sh'), str(project), *flags],
-                                            capture_output=True, text=True, timeout=60)
+                                            capture_output=True, text=True, timeout=bootstrap_timeout(60))
                 except subprocess.TimeoutExpired:
                     self.fail('blocked on ' + rel)
                 self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
@@ -232,7 +283,7 @@ class BootstrapTests(unittest.TestCase):
                 (shims / tool).chmod(0o755)
                 env = dict(os.environ, PATH=str(shims) + os.pathsep + os.environ['PATH'])
                 result = subprocess.run(['sh', str(root / 'bootstrap.sh'), str(project)], env=env,
-                                        capture_output=True, text=True, timeout=60)
+                                        capture_output=True, text=True, timeout=bootstrap_timeout(60))
                 self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertIn('before the version was recorded', result.stderr)
                 self.assertFalse((project / 'docs/kit/.kit-version').exists(), 'stamped')
@@ -258,11 +309,11 @@ class BootstrapTests(unittest.TestCase):
                     (shims / 'chmod').chmod(0o755)
                     env = dict(os.environ, PATH=str(shims) + os.pathsep + os.environ['PATH'])
                     result = subprocess.run(['sh', str(root / 'bootstrap.sh'), str(project)], env=env,
-                                            capture_output=True, text=True, timeout=60)
+                                            capture_output=True, text=True, timeout=bootstrap_timeout(60))
                     self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
                     self.assertFalse((project / 'docs/kit/.kit-version').exists(), 'stamped')
                 result = subprocess.run(['sh', str(root / 'bootstrap.sh'), str(project)],
-                                        capture_output=True, text=True, timeout=60)
+                                        capture_output=True, text=True, timeout=bootstrap_timeout(60))
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertTrue(os.access(hook, os.X_OK), 'installed a hook git does not run')
                 self.assertTrue((project / 'docs/kit/.kit-version').is_file())
@@ -284,7 +335,7 @@ class BootstrapTests(unittest.TestCase):
                 project, shims = Path(tmp) / 'project', Path(tmp) / 'shims'
                 dest = project / rel
                 run = lambda *flags, env=None: subprocess.run(['sh', str(root / 'bootstrap.sh'), str(project), *flags],
-                                                              env=env, capture_output=True, text=True, timeout=60)
+                                                              env=env, capture_output=True, text=True, timeout=bootstrap_timeout(60))
                 project.mkdir()
                 if case != 'copied file':
                     first = run('--note', 'old agenda')
@@ -320,7 +371,7 @@ class BootstrapTests(unittest.TestCase):
             project.mkdir()
             failed = subprocess.run(['sh', '-c', 'trap "" XFSZ; ulimit -f 0; exec sh "$0" "$@"',
                                      str(root / 'bootstrap.sh'), str(project)],
-                                    capture_output=True, text=True, timeout=60)
+                                    capture_output=True, text=True, timeout=bootstrap_timeout(60))
             self.assertNotEqual(failed.returncode, 0, failed.stdout + failed.stderr)
             self.assertIn('before the version was recorded', failed.stderr)
             self.assertEqual(list(project.iterdir()), [], 'written before the stop')
@@ -358,7 +409,7 @@ class BootstrapTests(unittest.TestCase):
                     (shims / tool).chmod(0o755)
                     env = dict(os.environ, PATH=str(shims) + os.pathsep + os.environ['PATH'])
                     result = subprocess.run(['sh', str(root / 'bootstrap.sh'), str(project)], env=env,
-                                            capture_output=True, text=True, timeout=60)
+                                            capture_output=True, text=True, timeout=bootstrap_timeout(60))
                     self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
                     self.assertEqual(list((project / 'docs/kit').glob('*kit-tmp*')), [], 'temporary left')
                     state = (stamp.read_bytes() == (start + '\n').encode(), self._hooks_path(project))
@@ -389,7 +440,7 @@ class BootstrapTests(unittest.TestCase):
             project, shims, log = Path(tmp) / 'project', Path(tmp) / 'shims', Path(tmp) / 'log'
             note, stamp = project / 'docs/kit/BOOTSTRAP_NOTE.md', project / 'docs/kit/.kit-version'
             run = lambda *flags, env=None: subprocess.run(['sh', str(root / 'bootstrap.sh'), str(project), *flags],
-                                                          env=env, capture_output=True, text=True, timeout=60)
+                                                          env=env, capture_output=True, text=True, timeout=bootstrap_timeout(60))
             project.mkdir()
             (project / 'AGENTS.md').write_text('mine\n')
             (project / 'AGENTS.md').chmod(0o640)
@@ -428,7 +479,7 @@ class BootstrapTests(unittest.TestCase):
                 project = Path(tmp) / 'project'
                 result = subprocess.run(['sh', '-c', 'umask %03o; exec sh "$0" "$@"' % mask,
                                          str(root / 'bootstrap.sh'), str(project)],
-                                        capture_output=True, text=True, timeout=60)
+                                        capture_output=True, text=True, timeout=bootstrap_timeout(60))
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 mode = lambda p: p.stat().st_mode & 0o777
                 self.assertEqual(mode(project / 'docs/kit/.kit-version'), 0o666 & ~mask)
@@ -452,7 +503,7 @@ class BootstrapTests(unittest.TestCase):
             (kit_dir / '.kit-version.kit-tmp').mkdir()
             (kit_dir / '.kit-tmp.Ab12Cd').write_text('left\n')
             result = subprocess.run(['sh', str(root / 'bootstrap.sh'), str(project), '--note', 'n'],
-                                    capture_output=True, text=True, timeout=60)
+                                    capture_output=True, text=True, timeout=bootstrap_timeout(60))
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertEqual((project / '.githooks/commit-msg.kit-tmp').read_text(), 'mine\n')
             self.assertEqual((project / '.githooks/commit-msg').read_bytes(),
@@ -474,7 +525,7 @@ class BootstrapTests(unittest.TestCase):
             outside.mkdir()
             (project / 'docs/reviews').symlink_to(outside)
             result = subprocess.run(['sh', str(root / 'bootstrap.sh'), str(project)],
-                                    capture_output=True, text=True, timeout=60)
+                                    capture_output=True, text=True, timeout=bootstrap_timeout(60))
             self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
             self.assertIn('STOPPING: these destinations could not be written', result.stdout)
             self.assertIn('conflict: docs/reviews (symlink: docs/reviews)', result.stdout)

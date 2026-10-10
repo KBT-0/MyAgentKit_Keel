@@ -24,12 +24,14 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   `spawn_worker.sh` twice.
 - **Linked test directories fail the kit check** (issue #65; `scripts/check_kit.py`):
   a linked package can no longer leave failing tests undiscovered, including Windows
-  junctions on Python 3.10/3.11. Unreadable test directories fail discovery too.
+  junctions on Python 3.10/3.11. Cloud reparse folders (including OneDrive) are accepted.
+  Unreadable test directories fail discovery too.
 - **The merge-action test probes mktemp** (issue #66; `tests/test_sync_kit.py`):
   BSD and GNU temporary-folder behavior is tested on every host, including macOS.
 - **Strong review closure fails on missing or hidden index evidence** (issue #69;
   `.githooks/commit-msg`): a failed listing refuses a commit with a `Done:` trailer. Quoted paths under
   `docs/reviews` and a different case of that directory are refused before closure checks.
+  Only review paths are listed, even when the caller exports `GIT_LITERAL_PATHSPECS`.
 - **Context warnings survive concurrent prompts and compaction** (issue #70): the hook
   announces each step once, keeps its highest step until compaction, and re-arms even when
   a new request already followed the boundary. Upgrading an integer step preserves the
@@ -46,9 +48,10 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   a deliberate normalization.
   **ACTION:** copy `$KIT/core/scripts/review_dispatch.py` to `scripts/review_dispatch.py`.
 - **The lead's Stop hook stays out of a worker's self-test** (issue #68, item 3): the lead
-  uses `git -C <worktree>` and keeps its shell in its own checkout. The Stop hook skips with
-  a NOTE while `.selftest.*` or `*.selftest-backup` is tracked or untracked but not ignored
-  in this checkout. Worker worktrees and ignored folders do not disable the lead's gate.
+  uses `git -C <worktree>` and keeps its shell in its own checkout. After the cheap gated-paths
+  check, the Stop hook skips with a NOTE for tracked or nonignored untracked `.selftest.*`
+  or `*.selftest-backup` files modified in the last ten minutes. Older leftovers block with
+  a repair message. Worker worktrees and ignored folders do not disable the lead's gate.
   **ACTION:** add the two sentences under "The lead's steps when a branch is ready" in
   `$KIT/core/docs/WORKFLOW.md` to your `docs/WORKFLOW.md`, and copy
   `$KIT/overlays/claude-code/files/.claude/hooks/gate_on_stop.sh` to `.claude/hooks/gate_on_stop.sh`,
@@ -59,9 +62,13 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   sentences in item 3 from `$KIT/core/docs/HANDOFF.md` to your `docs/HANDOFF.md`.
 - **Bootstrap records executable Git modes on Windows** (issue #59; `bootstrap.sh`): in
   a Git repository it records executable modes only for kit scripts and hooks it installs
-  or finds identical, even when `core.fileMode=false`. Tracked files keep their staged
+  or finds identical, plus customized `scripts/check.sh` and kit hooks, even when
+  `core.fileMode=false`. Repair runs before a gate-content conflict stops installation.
+  Tracked files keep their staged
   content; new nonignored kit files are staged; ignored files stay out of the index.
-  Project-owned scripts are left alone. **ACTION:** rerun bootstrap to repair kit modes.
+  Other project-owned scripts are left alone. **ACTION:** rerun bootstrap with the project's
+  overlays to repair kit modes. A customized gate still returns STOPPING (exit 1), but its
+  mode is repaired; merge content separately, without `--force`.
 - **Python that does not run** (issue #67): on Windows `python3` may be a Store alias that is
   on PATH but exits 9009. The Claude Code overlay's three Python hooks now start through the
   new `.claude/hooks/py.sh`, which runs the first of `python3`, `python`, `py -3` that runs;

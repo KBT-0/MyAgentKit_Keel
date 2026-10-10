@@ -1,5 +1,7 @@
 """The Stop hook must carry each gate outcome out as its own exit code and diagnostic."""
 import os
+import shlex
+import shutil
 from pathlib import Path
 import subprocess
 import tempfile
@@ -10,6 +12,49 @@ HOOK = ROOT / 'overlays/claude-code/files/.claude/hooks/gate_on_stop.sh'
 
 
 class StopHookTests(unittest.TestCase):
+    def test_stale_sentinels_block_instead_of_silently_skipping(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            subprocess.run(['git', 'init', '-q'], cwd=root, check=True)
+            (root / 'src').mkdir()
+            (root / 'src/app.py').write_text('dirty\n')
+            subprocess.run(['git', 'add', 'src/app.py'], cwd=root, check=True)
+            hook = root / 'hook.sh'
+            hook.write_text(HOOK.read_text().replace('{{GATED_PATHS}}', 'src')
+                            .replace('{{GATED_FILE_PATTERN}}', r'\.py$'))
+            for name in ('src/.selftest.py', 'CMakeLists.txt.selftest-backup'):
+                with self.subTest(sentinel=name):
+                    sentinel = root / name
+                    sentinel.write_text('leftover\n')
+                    os.utime(sentinel, (1, 1))
+                    result = subprocess.run(['sh', str(hook)], cwd=root, input='{}', text=True,
+                                            capture_output=True, timeout=30)
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertIn('stale self-test sentinel', result.stderr)
+                    self.assertIn(name, result.stderr)
+                    self.assertIn('remove', result.stderr)
+                    sentinel.unlink()
+
+    def test_ungated_turn_does_not_scan_the_index_for_sentinels(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            subprocess.run(['git', 'init', '-q'], cwd=root, check=True)
+            (root / 'src').mkdir()
+            (root / 'src/.selftest.py').write_text('leftover\n')
+            hook = root / 'hook.sh'
+            hook.write_text(HOOK.read_text().replace('{{GATED_PATHS}}', 'src')
+                            .replace('{{GATED_FILE_PATTERN}}', r'\.c$'))
+            shim = root / 'bin'
+            shim.mkdir()
+            (shim / 'git').write_text('#!/bin/sh\ncase " $* " in *" ls-files "*) echo scanned > scanned ;; esac\n'
+                                      'exec %s "$@"\n' % shlex.quote(shutil.which('git')))
+            (shim / 'git').chmod(0o755)
+            result = subprocess.run(['sh', str(hook)], cwd=root, input='{}', text=True,
+                                    capture_output=True, timeout=30,
+                                    env=dict(os.environ, PATH=str(shim) + os.pathsep + os.environ['PATH']))
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertFalse((root / 'scanned').exists())
+
     def test_worker_and_ignored_sentinels_do_not_skip_the_leads_gate(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

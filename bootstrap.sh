@@ -284,6 +284,8 @@ EOF
     fi
     if [ -e "$target/$dest" ] && [ "$force" -eq 0 ]; then
       if cmp -s "$src/$rel" "$target/$dest"; then executable "$dest"; continue; fi
+      # Filled-in gates still need +x, even when their content must be kept.
+      case "$dest" in scripts/check.sh|.githooks/*|.claude/hooks/*) executable "$dest" ;; esac
       printf '%s\n' "$dest" >> "$skiplist"
       continue
     fi
@@ -338,6 +340,24 @@ while IFS= read -r f; do
 done <<EXECUTABLES
 $executables
 EXECUTABLES
+
+if git -C "$target" rev-parse --git-dir >/dev/null 2>&1; then
+  # Repair modes before a customized gate stops the install. Only kit-named regular
+  # files reach this list; tracked bytes stay staged as they were, differing untracked
+  # files and ignored files stay out of the index.
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    if indexed=$(git -C "$target" --literal-pathspecs ls-files -s --error-unmatch -- "$f" 2>/dev/null); then
+      blob=$(printf '%s\n' "$indexed" | awk '$3 == 0 { print $2 }')
+      [ -n "$blob" ] || die "cannot repair the executable mode of an unmerged kit file: $f"
+      git -C "$target" update-index --cacheinfo "100755,$blob,$f"
+    elif ! grep -qxF -e "$f" "$skiplist" && ! git -C "$target" check-ignore -q -- "$f"; then
+      git -C "$target" add --chmod=+x -- "$f"
+    fi
+  done <<EXECUTABLES
+$executables
+EXECUTABLES
+fi
 
 if [ -s "$skiplist" ]; then
   echo
@@ -441,20 +461,6 @@ if git -C "$target" rev-parse --git-dir >/dev/null 2>&1; then
     printf '%s\n' "  Then run: git config core.hooksPath .githooks (unset it in any other scope), and rerun bootstrap.sh; the kit's files are installed." >&2
     exit 1
   fi
-  # Windows' core.fileMode=false makes chmod invisible to Git. Repair only kit files;
-  # tracked content stays in the index as the owner staged it, ignored files stay out.
-  while IFS= read -r f; do
-    [ -n "$f" ] || continue
-    if indexed=$(git -C "$target" --literal-pathspecs ls-files -s --error-unmatch -- "$f" 2>/dev/null); then
-      blob=$(printf '%s\n' "$indexed" | awk '$3 == 0 { print $2 }')
-      [ -n "$blob" ] || die "cannot repair the executable mode of an unmerged kit file: $f"
-      git -C "$target" update-index --cacheinfo "100755,$blob,$f"
-    elif ! git -C "$target" check-ignore -q -- "$f"; then
-      git -C "$target" add --chmod=+x -- "$f"
-    fi
-  done <<EXECUTABLES
-$executables
-EXECUTABLES
   wiring=1
   git -C "$target" config core.hooksPath .githooks
   # Verified as git sees it: a scope above the local one (worktree config, global) wins.

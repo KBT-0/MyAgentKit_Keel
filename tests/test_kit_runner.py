@@ -128,16 +128,37 @@ class KitRunnerTests(unittest.TestCase):
 
         def lstat(path, *args, **kwargs):
             if path.name == 'linked':
-                return unittest.mock.Mock(st_file_attributes=0x400)
+                return unittest.mock.Mock(st_file_attributes=0x400, st_reparse_tag=0xA0000003)
             return original(path, *args, **kwargs)
 
         # Python 3.10/3.11 have lstat's Windows attributes but no Path.is_junction.
         with unittest.mock.patch.object(Path, 'is_symlink', return_value=False), \
                 unittest.mock.patch.object(Path, 'is_junction', None, create=True), \
                 unittest.mock.patch.object(Path, 'lstat', lstat):
-            del Path.is_junction
             with self.assertRaisesRegex(RuntimeError, 'linked test directories.*linked'):
                 check_kit.discover(folder)
+
+    def test_cloud_reparse_directories_allow_discovery(self):
+        folder = self.tmp / 'suite'
+        folder.mkdir()
+        (folder / 'test_probe.py').write_text(PROBE % 'True')
+        original = Path.lstat
+
+        def lstat(path, *args, **kwargs):
+            if path == folder:
+                return unittest.mock.Mock(st_file_attributes=0x400, st_reparse_tag=0x9000001A)
+            return original(path, *args, **kwargs)
+
+        for modern in (False, True):
+            with self.subTest(is_junction=modern), \
+                    unittest.mock.patch.object(Path, 'is_symlink', return_value=False), \
+                    unittest.mock.patch.object(Path, 'is_junction', return_value=False, create=True), \
+                    unittest.mock.patch.object(Path, 'lstat', lstat):
+                if not modern:
+                    Path.is_junction = None
+                suite, counts = check_kit.discover(folder)
+                self.assertEqual(counts, {'test_probe': 2})
+                self.assertTrue(unittest.TextTestRunner(stream=io.StringIO()).run(suite).wasSuccessful())
 
     def test_an_unreadable_test_directory_refuses_discovery(self):
         def walk(folder, **kwargs):
