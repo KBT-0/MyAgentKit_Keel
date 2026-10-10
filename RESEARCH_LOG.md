@@ -21,6 +21,38 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-10-10 — Mode records and stopped-session sidecars (#43, #57)
+
+- A prose-only mode switch cannot prove that two state records stay together. The shared
+  working_mode.py helper preserves the rest of STATE.md, writes both records, detects drift,
+  and is tested against disposable project documents, including linked-path refusal. Doctor
+  requires that helper too; its exact package-list check distinguishes command helpers from
+  review imports without allowing missing or unexpected packaged modules.
+- A session record under Git metadata fails precisely where a worktree worker cannot write
+  Git. Record it beside the result instead, with a separate decision file. Publishing the
+  decision only after independent work and jobs stop lets the terminal wrapper end that
+  worker's process tree without losing its resumable context. A fresh replacement is refused.
+  The handoff template must say the same: requiring a question commit first prevents a
+  sandbox-blocked worker from asking at all, and publishing before independent work risks
+  the wrapper terminating unfinished jobs.
+- Saver modes deliberately put fixes on the side with available allowance. Their exception
+  changes fix authorship, while independent acceptance and the fresh final review remain.
+- The owner's live probe on 2026-10-10 used codex-cli 0.162 on native Windows:
+  `codex exec -s workspace-write --add-dir <main .git> --add-dir <.git/worktrees/NAME>`.
+  Adding both Git directories did not lift the sandbox's read-only Git policy: `git add`
+  failed with `Unable to create '.../.git/worktrees/probe43/index.lock': Permission denied`.
+  This is owner-supplied probe evidence, not a new probe run by this worker. The owner
+  decided the lead commits Codex worker work after the normal cross-review, with the usual
+  commit gate. Remove the ineffective roots, and make the brief and result name the exact
+  uncommitted files so the lead can stage a reviewable handoff without a sandbox bypass.
+- The owner confirmed codex-first: the Claude Opus lead plans, briefs, routes and reviews,
+  and Codex writes implementation and fixes, including Claude's review findings. Only work
+  the lead judges too heavy or too important goes to an Opus worker, reviewed by Codex.
+  This quality/cost routing is distinct from codex-saver's low Codex allowance.
+- An npm CLI shim is not its native child, and a shared Codex server cannot belong to one
+  worker's lifetime. Use --no-daemon and close the worker's Windows job or POSIX process
+  group, including descendants, after it publishes a decision.
+
 ### 2026-10-09 — Working modes, Codex workers and answering a stopped worker (#43, #57)
 
 The owner explained the same routing situation in a long prompt at the start of every
@@ -33,15 +65,15 @@ A Codex worker that stopped at a design question had no channel back from the le
 ended it and started a fresh session, which read the whole context again. `spawn_codex.sh`
 records the session id at spawn time and resumes that session with the answer.
 
-Issue #43 is only partly closable from the kit. `codex sandbox` (no model call) reproduced
+The initial issue #43 investigation used `codex sandbox` (no model call) and reproduced
 the failure on Codex 0.162 on native Windows: inside a linked worktree, every write into the
 worktree's git directory is denied (`index.lock: Permission denied`). Neither `--add-dir` of
 the repository's `.git`, nor `sandbox_workspace_write.writable_roots` naming the worktree's
 own git directory, nor a custom permission profile lifts it. A project's Codex worker started
-with `--add-dir .git` hit the same denial on 2026-10-09. In the main checkout the writable
-`.git` lets Codex commit. Whether the Linux and macOS sandboxes behave the same was not tried.
-So on native Windows the lead commits a Codex worktree worker's work. The gate's lock lives
-in the same directory, so the worker cannot run the gate there either.
+with `--add-dir .git` hit the same denial on 2026-10-09. The 2026-10-10 owner probe and
+decision above settle the kit's rule: the lead commits Codex worker work. The gate's lock
+lives in Git metadata, so a protected worker records that it cannot run that gate there.
+Linux and macOS sandbox behavior was not probed.
 
 ### 2026-10-09 — Acceptance and context-hook edge cases (#42, #65, #66, #69, #70)
 

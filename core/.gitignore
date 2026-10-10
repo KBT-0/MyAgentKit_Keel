@@ -25,6 +25,11 @@ __pycache__/
 # Working copies created by agent tools: full checkouts, never repository content.
 # Add your tools' own scratch directories here; an overlay may bring more.
 .claude/worktrees/
+# Worker decision/session sidecars; result reports remain reviewable project files.
+RESULT-*.session
+QUESTION-*.md
+*.md.session
+*.md.question.md
 /.myagentkit/
 # Raw review evidence holds the whole diff and the reviewing CLI's own output. It stays
 # local; publish a deliberately scrubbed `-summary.md` instead (re-included at the bottom).

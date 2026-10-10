@@ -57,8 +57,9 @@ class DoctorTests(unittest.TestCase):
             tmp = Path(tmp)
             project, bin_dir, home = tmp / 'project', tmp / 'bin', tmp / 'home'
             bin_dir.mkdir(); home.mkdir()
-            subprocess.run(['sh', str(ROOT / 'bootstrap.sh'), str(project), '--overlay', 'claude-code'],
-                           check=True, capture_output=True)
+            installed = subprocess.run(['sh', str(ROOT / 'bootstrap.sh'), project.as_posix(), '--overlay', 'claude-code'],
+                                       capture_output=True, text=True)
+            self.assertEqual(installed.returncode, 0, installed.stdout + installed.stderr)
             # Stubs for the tools a ready machine has; the test must not depend on this one.
             for tool in ('claude', 'codex', 'tmux'):
                 (bin_dir / tool).write_text('#!/bin/sh\nexit 0\n')
@@ -619,8 +620,8 @@ class DoctorTests(unittest.TestCase):
                 self.assertEqual(red.stdout.count('MISSING:'), 1, red.stdout)
             review.write_text(review_before)
 
-            # Every module review.sh runs: deleting one left doctor ready and review.sh broken.
-            for name in sorted(review_runtime()):
+            # Missing review modules or the mode helper must each make doctor red.
+            for name in sorted(review_runtime() | {'working_mode.py'}):
                 with self.subTest(runtime=name):
                     module = project / 'scripts' / name
                     module_bytes = module.read_bytes()
@@ -679,8 +680,8 @@ class DoctorTests(unittest.TestCase):
 
     def test_the_required_review_files_match_what_review_sh_runs(self):
         # doctor.sh is copied into projects, where neither the packaging list nor the kit's
-        # sources exist, so its list is kept by hand; this keeps it equal to the modules
-        # review.sh imports and to the runtime the plugin packages.
+        # sources exist, so its list is kept by hand; require all review imports plus the
+        # mode command's helper, with no missing or unexpected packaged modules.
         doctor = (ROOT / 'core/scripts/doctor.sh').read_text()
         listed = re.search(r'^for f in (scripts/check\.sh[^;]*);', doctor, re.M).group(1).split()
         listed = {f[len('scripts/'):] for f in listed if f.endswith('.py')}
@@ -689,5 +690,6 @@ class DoctorTests(unittest.TestCase):
             for node in ast.walk(ast.parse((ROOT / 'scripts/package_codex_plugin.py').read_text()))
             if isinstance(node, ast.List) and node.elts
             and all(isinstance(e, ast.Constant) and str(e.value).endswith('.py') for e in node.elts))
-        self.assertEqual(listed, review_runtime())
-        self.assertEqual(packaged, review_runtime())
+        expected = review_runtime() | {'working_mode.py'}
+        self.assertEqual(listed, expected)
+        self.assertEqual(packaged, expected)

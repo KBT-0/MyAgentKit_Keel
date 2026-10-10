@@ -363,9 +363,9 @@ with what the owner's subscriptions offer today (rule 5).
 
 | Tier | Work | Codex | Claude |
 |---|---|---|---|
-| 1 | Mechanical: renames, figure fixes, data fetches, proof runs, summaries | `gpt-6-luna`, medium effort | Haiku 5.5 or Sonnet 5.5 |
-| 2 | Detail-bearing errands, ordinary reviews | `gpt-6.1-sol`, high effort | Opus 5.5, only for design-bearing work |
-| 3 | Risky and gate reviews, design consultations | `gpt-6.1-sol`, xhigh effort; `gpt-6-astra` when the lead picks it | Opus 5.5; Fable 5.1 when the lead picks it |
+| 1 | Mechanical: renames, figure fixes, data fetches, proof runs, summaries | `gpt-6-luna`, medium effort | Haiku 5.5 or Sonnet 5.5, medium effort |
+| 2 | Detail-bearing errands, ordinary reviews | `gpt-6.1-sol`, high effort | Opus 5.5, high effort, only for design-bearing work |
+| 3 | Risky and gate reviews, design consultations | `gpt-6.1-sol`, xhigh effort; `gpt-6-astra` when the lead picks it | Opus 5.5, high effort; Fable 5.1 when the lead picks it |
 
 The prices behind the table come from third-party summaries of OpenAI's launch figures:
 Luna costs about a twentieth of Sol's token price, and Sol 6.1 about a fifth of Astra's.
@@ -425,8 +425,10 @@ Rules for whoever routes work, binding with any table:
 ### Working modes, by name
 
 The owner switches the working mode by its name, in English or Turkish. The "Working mode:"
-line of `docs/STATE.md` names the mode in force, and `/myagentkit:mode` (the kit's plugin)
-shows it or sets it. A project without the line works in **cross-performance**, the main mode.
+line of `docs/STATE.md` and the small `.claude/mode` file name the mode in force.
+`/myagentkit:mode` uses `scripts/working_mode.py` to show or set both records, preserving
+the rest of STATE.md. Reads refuse disagreeing records; an explicit owner choice repairs
+them. A project without either record works in **cross-performance**, the main mode.
 
 Without names, the owner explained the same situation in a long prompt at the start of every
 session ("Claude is low today, let Codex write and fix"), and a lead that was not told routed
@@ -435,7 +437,9 @@ review rounds. A name is one word, and a lesson one project learns improves the 
 every project through the kit.
 
 A mode decides who writes, who reviews, who fixes the review findings, how many workers run
-and at which effort. It never removes a review. In every mode the review loop of
+and at which effort. It never removes a review. Codex-first and saver modes change the fix author as
+explicitly defined below; they keep the independent stopping rule and fresh NEW-label final
+review. In every mode the review loop of
 `docs/REVIEW_GATE.md` ("What counts as a risky diff") and `docs/REVIEW_RUNNING.md` ("Rounds,
 labels and designs") holds as written there, and rules 1 to 6 above hold too. The worker
 caps below never exceed the worktree ceiling ("Parallel work — worktree policy"). Every
@@ -447,7 +451,7 @@ alike. The lead is the session that plans with the owner, whichever side it runs
 | `claude-first` | Claude Öncelikli Mod | Claude workers | Codex | the reviewing model |
 | `cross-performance` | Çapraz Performans Modu (main mode) | both sides, by tier | the other side of the author | the reviewing model |
 | `cross-saving` | Çapraz Tasarruf Modu | both sides, at most one Opus worker at a time | the other side of the author | the reviewing model |
-| `codex-first` | Codex Öncelikli Mod | Codex workers | Claude | the reviewing model |
+| `codex-first` | Codex Öncelikli Mod | Codex; Opus only for lead-selected heavy or important work | Claude; Codex for Opus work | Codex; Opus only for lead-selected heavy or important work |
 | `claude-saver` | Claude Tasarruf Modu | Codex workers | Claude, on a small budget | Codex |
 | `codex-saver` | Codex Tasarruf Modu | Claude workers | Codex, on a small budget | Claude |
 
@@ -490,13 +494,19 @@ alike. The lead is the session that plans with the owner, whichever side it runs
 
 #### codex-first (Codex Öncelikli Mod)
 
-The owner has not yet confirmed this definition. It is written as the mirror of claude-first.
+This mode chooses routing for quality and cost. Codex-saver is a separate mode for when
+Codex's allowance is low; it sends implementation and fixes to Claude.
 
-- **Writes:** Codex workers do all the implementation, at the tier table's Codex column.
-- **Reviews and fixes:** Claude reviews every risky diff and fixes its own findings; a Codex
-  round reviews that fix.
-- **Workers:** Codex workers up to the worktree ceiling; Claude runs reviews and its fix
-  rounds only.
+- **Lead:** the Claude Opus lead plans, briefs, routes and reviews. It writes no implementation
+  or fixes, including fixes of its own review findings. Model management aims for the
+  healthiest work at the lowest cost.
+- **Writes and fixes:** Codex workers write all implementation and all fixes,
+  including fixes of Claude's review findings. Only work the lead judges
+  too heavy or too important for Codex goes to a Claude Opus worker; Codex reviews that work.
+- **Reviews:** Claude reviews Codex work and its fixes; Codex reviews Opus worker work and
+  its fixes. Independent acceptance and the fresh NEW-label final review still apply.
+- **Workers:** Codex workers up to the worktree ceiling; Claude Opus workers only for the
+  lead's heavy or important exceptions. The lead itself only leads and reviews.
 - **Effort:** Codex workers at high for design-bearing work and at medium for mechanical
   work; Claude reviews at high.
 - **Ends:** when the owner names another mode.
@@ -518,7 +528,8 @@ review by the low side, so the loop keeps both models. These rules bind both sav
   and waits. It goes to the other side only with the owner's yes, because a second model's
   judgement is the point of it.
 - **Ends:** the low side's allowance resets, or the owner says otherwise. Then
-  cross-performance is back at once, unasked: the lead changes the STATE line, and the
+  cross-performance is back at once, unasked: the lead runs `scripts/working_mode.py
+  cross-performance` to update both records, and the
   reviewing model fixes its own findings again. A decision made for a moment never outlives
   its reason.
 
@@ -530,16 +541,19 @@ review by the low side, so the loop keeps both models. These rules bind both sav
   Claude reviews. Codex workers up to the worktree ceiling.
 - **Effort:** Codex workers by the tier table's Codex column; Claude reviews by the saver
   rules above.
+- **Ends:** on Claude's allowance reset or the owner's direction; cross-performance returns.
 - **Lessons:** none yet.
 
 #### codex-saver (Codex Tasarruf Modu): Codex's allowance is low
 
 - **Writes:** Claude workers implement every errand and fix every finding.
 - **Reviews:** Codex reviews within a small budget, by the saver rules above.
-- **Workers:** no Codex worker; Codex reviews only. Claude workers up to the worktree
+- **Workers:** no Codex implementing worker; a Codex lead plans, briefs and verifies within
+  a small budget, and Codex reviews. Claude workers up to the worktree
   ceiling.
 - **Effort:** Claude workers by the tier table's Claude column; Codex reviews by the saver
   rules above.
+- **Ends:** on Codex's allowance reset or the owner's direction; cross-performance returns.
 - **Lessons:** none yet.
 
 #### How a mode improves
@@ -591,7 +605,8 @@ Rules, binding for whoever routes workers:
    spent: a fresh worker re-reads the whole context to change a few lines. A fresh worker
    running that model, briefed with the findings, the branch and the files to read, takes
    the round when the context is spent (near rule 3's limit) or the fix is a redesign. The reviewer is fresh in
-   every round and runs the other model; the worker never reviews its own change.
+   every round and runs the other model; the worker never reviews its own change. The
+   codex-first and saver-mode fix-author exceptions above take precedence over this route.
 3. **One small task per worker**, sized to end under roughly 150 requests (`maxTurns` in the
    worker definition enforces it). Split before starting: a mechanism first, then its uses.
 4. **The lead does not poll either.** It waits for task notifications or an idle notice from
@@ -688,9 +703,11 @@ is not the one the close runs in (run it from the lead's checkout).
 **A stopped worker is answered in its own session, never replaced by a fresh one.** A Codex
 worker stopped at a design question; the lead had no channel into its tab, ended it and
 started a fresh session on a continuation brief, which read the whole context again and
-spent the allowance for nothing. A worker that stops for a decision writes the question into
-its result file (`Kind: blocked`, `docs/HANDOFF.md`), goes on with what does not depend on
-the answer, and then ends its turn. The lead gets the
+spent the allowance for nothing. A worker that stops for a decision first finishes what
+does not depend on the answer and stops all running jobs. It writes `Kind: blocked` and
+QUESTIONS in its result file (`docs/HANDOFF.md`), then publishes the question in the known
+question file named in its brief and exits its separate session. A peer worker ends its turn
+and remains available to SendMessage. The lead gets the
 answer from {{OWNER_NAME}} and delivers it into the SAME session:
 
 - A Claude worker registered as a peer session gets the answer through SendMessage. One that
@@ -698,19 +715,29 @@ answer from {{OWNER_NAME}} and delivers it into the SAME session:
   {{OWNER_NAME}}, or is resumed (`claude --resume <session id>`) once its tab has closed.
 - A Codex worker (`scripts/spawn_codex.sh`) is resumed: the lead writes the answer to a file
   and runs `scripts/spawn_codex.sh NAME ANSWER_FILE --model M --effort LEVEL [--worktree]
-  --resume`. The script recorded the session id when it started the worker, and it refuses
-  while the old session still runs in that folder, so first quit it in its tab (`/quit`).
+  --resume`. By default the script records the session id beside `RESULT-NAME.md` in
+  `RESULT-NAME.session`; the decision file is `QUESTION-NAME.md`. `--result FILE` selects
+  another result and the sidecars `FILE.session` and `FILE.question.md`; pass it again on
+  resume. `codex_worker.py` closes only that worker's process tree after the question is
+  published, using a Windows job or an interactive POSIX process group. `--no-daemon`
+  keeps the worker's runtime separate from any shared Codex server. The script refuses a
+  resume while the old session still runs, and refuses a
+  fresh replacement when its session or question record exists. On resume it consumes the
+  old question file after the process check; the result retains the question history.
 
-A fresh session for a stopped worker is right only when the stopped one is spent: its context
-is near the limit of "Worker cost", rule 3, or the answer turns the task into another task.
+A stopped worker is always answered in its own session, never replaced with a fresh one.
 
-**A Codex worker on native Windows cannot commit in a worktree.** Codex 0.162's sandbox denies
-every write into a linked worktree's git directory, whatever writable root it is given
-(`index.lock: Permission denied`, tried on 2026-10-09). There such a worker cannot run
-`git add`, `git commit` or the gate, whose lock lives in that directory. It leaves its work and
-its result file uncommitted; the lead reads the diff, runs the gate and commits for it. In the
-lead's own checkout (no `--worktree`), the writable git directory lets Codex commit.
+**The lead commits a Codex worker's work (#43).** The worker's brief instructs it to leave
+all work uncommitted and ready for the lead. Its result lists the exact changed and added
+files and their verification. The lead reviews the diff through the normal cross-review,
+then stages those files and commits in the worker's worktree; the commit gate runs as usual.
+Codex 0.162 on native Windows keeps Git metadata read-only even with `--add-dir`, so
+`spawn_codex.sh` does not add Git directories as writable roots. If the worker cannot take
+the gate's Git-directory lock, it records that limitation; the lead runs the gate when
+committing. Never bypass the gate or switch to full access for this failure.
 
+For Codex, the lead reads the uncommitted result and diff directly before committing;
+the watcher below only accepts committed results and cannot signal that handoff.
 The result file starts with a fixed head (`docs/HANDOFF.md`): `Kind:`, `Task:`, `Attempt:`
 and `Remaining:`, and only `Kind: completed` is done. The lead runs `scripts/watch_workers.sh
 --result NAME=PATH NAME` as a background command, and starts it again after every report
@@ -797,7 +824,8 @@ costs a fix round.
   reports. It starts a fresh diff reviewer as a sub-agent (the Claude Code overlay's
   `diff-reviewer`), fixes what the review finds, and starts a new fresh reviewer on the
   result. This inner pass is the same model's early check; the gate's review by the other
-  model follows `docs/REVIEW_GATE.md`: the reviewing model fixes its own findings.
+  model follows `docs/REVIEW_GATE.md` and `docs/REVIEW_RUNNING.md`, including the named
+  saver mode's exception for who fixes findings.
 - Each inner round's prompt carries the earlier inner rounds' findings and the worker's
   dispositions (`docs/REVIEW_GATE.md`, "Findings, earlier rounds and dispositions").
 - The reviewer is a new sub-agent in every inner round, because the author never reviews its

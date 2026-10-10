@@ -77,14 +77,21 @@ class SectionPointerTests(unittest.TestCase):
         for mode, turkish in rows:
             with self.subTest(mode=mode):
                 self.assertRegex(workflow, r'(?m)^#### %s \(%s\)' % (mode, turkish))
-                self.assertRegex(workflow.split('#### %s (' % mode)[1].split('####')[0],
-                                 r'\*\*(Ends|Lessons):\*\*')
+                definition = workflow.split('#### %s (' % mode)[1].split('####')[0]
+                for field in ('Ends', 'Lessons', 'Effort', 'Workers'):
+                    self.assertIn('**%s:**' % field, definition)
                 for text in (command, skill):
                     self.assertIn(mode, text)
                     self.assertIn(turkish, text)
         self.assertIn('**Working mode:** cross-performance', (ROOT / 'core/docs/STATE.md').read_text())
         for name in ('core/docs/WORKFLOW.md', 'setup/INTERVIEW.md'):
             self.assertNotIn('{{MODEL_ROUTING}}', (ROOT / name).read_text(encoding='utf-8'))
+        handoff = (ROOT / 'core/docs/HANDOFF.md').read_text(encoding='utf-8')
+        for sidecar in ('RESULT-NAME.session', 'QUESTION-NAME.md'):
+            self.assertIn(sidecar, handoff)
+        self.assertIn('before publishing the question', handoff)
+        self.assertNotIn('commits the file. It then goes on', handoff)
+        self.assertNotIn('owner only after that commit', handoff)
 
     def test_the_lead_keeps_its_shell_in_its_own_checkout(self):
         text = (ROOT / 'core/docs/WORKFLOW.md').read_text().split("### The lead's steps when a branch is ready")[1]

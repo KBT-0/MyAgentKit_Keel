@@ -380,7 +380,8 @@ placeholder is either a quoted value or a whole file.
 **Model routing ships filled.** `docs/WORKFLOW.md`, "Model routing", carries the kit's tier
 table and its working modes. Replace the table's model names with what the owner's
 subscriptions offer today, and ask which working mode starts (cross-performance unless the
-owner names another); write it on the "Working mode:" line of `docs/STATE.md`.
+owner names another). Run `scripts/working_mode.py <name>` with the host's Python to record
+the choice in both `.claude/mode` and the "Working mode:" line of `docs/STATE.md`.
 
 ### Then, in this order
 

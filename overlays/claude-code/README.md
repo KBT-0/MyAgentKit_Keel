@@ -37,7 +37,8 @@ repository.
 | `.claude/agents/diff-reviewer.md` | Read-only review subagent carrying THIS project's risky areas and `docs/REVIEW_GATE.md` |
 | `.claude/agents/worker.md` | Implementation worker with a one-hour prompt cache and a 150-turn cap, for tasks that run jobs longer than five minutes (`docs/WORKFLOW.md`, "Worker cost") |
 | `scripts/spawn_worker.sh` | Opens a SEPARATE worker session in tmux and hands it a brief file; the lead then subscribes for its idle notice instead of polling |
-| `scripts/spawn_codex.sh` | Opens a SEPARATE interactive Codex worker (a Windows Terminal tab on native Windows, tmux elsewhere) with the workspace-write sandbox, no approval prompts and the repository's git directory writable; records its session id and answers a stopped worker in that session with `--resume` |
+| `scripts/spawn_codex.sh` | Opens an interactive Codex worker in the lead's Windows Terminal window (`-w 0`) or tmux elsewhere, with workspace-write and approval never; records a result-adjacent session sidecar and resumes the same session with `--resume`. The worker leaves exact files uncommitted for the lead's cross-review and gated commit |
+| `scripts/codex_worker.py` | Keeps Codex interactive and closes its process tree when it publishes its decision sidecar; launched by spawn_codex.sh |
 | `scripts/close_worker.sh` | Closes a finished worker: ends its tmux session and removes its worktree through the clean-up audit, never its branch |
 | `scripts/clean_worktrees.sh` (+ `.py`) | Removes the finished worktrees under `.claude/worktrees`, only what it proves safe to lose, never a branch; `.githooks/post-merge` runs it after every merge git completes itself in the main worktree |
 | `.claude/worktree-disposable` | The project's list of folders a finished worktree may lose (build output) and its quiet period; ships empty, the interview fills it; without it the hook does nothing |
@@ -272,7 +273,7 @@ script copies `overlays/claude-code/files/scripts/close_worker.sh` into `scripts
 (`chmod +x`, `git add --chmod=+x`), with the clean-up scripts it calls; a sync keeps it
 updated from then on.
 
-The worker scripts (`spawn_worker.sh`, `spawn_codex.sh`, `show_workers.sh`, `watch_workers.sh`,
+The worker scripts (`spawn_worker.sh`, `spawn_codex.sh`, `codex_worker.py`, `show_workers.sh`, `watch_workers.sh`,
 `waiting_patterns.txt`, `close_worker.sh`) carry the KIT-OWNED header, so a sync updates them
 where they exist. A copy from before the header is a sync conflict, and the sync copies
 nothing until it is resolved. The sync never installs an overlay file that is absent, so

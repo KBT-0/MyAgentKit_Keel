@@ -1,5 +1,5 @@
-"""spawn_codex.sh must start Codex sandboxed with the repository's git directory writable, record
-its session id, and answer a stopped worker in that same session.
+"""spawn_codex.sh leaves sandboxed work uncommitted for the lead, records its session id,
+and answers a stopped worker in that same session.
 
 No live `codex`, tmux or terminal: each is a stub on PATH. The codex stub writes a session the
 way Codex 0.162 does ($CODEX_HOME/sessions/YYYY/MM/DD/rollout-*.jsonl, a `session_meta` first
@@ -18,8 +18,11 @@ from test_spawn_worker import WT_TAB, shq
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / 'overlays/claude-code/files/scripts/spawn_codex.sh'
 WINDOWS = os.name == 'nt'
-INSTRUCTION = ("Read %s and follow it. Do not ask questions in this pane: write a question into your "
-               "result file and go on with what does not depend on it.")
+INSTRUCTION = ("Read %s and follow it. Write your result to %s. Leave all work uncommitted and ready for the lead; "
+               "list the exact changed and added files in the result. The lead reviews the diff through the normal "
+               "cross-review, then commits with the usual commit gate. If a decision is needed, finish independent work "
+               "and stop all jobs first, then write Kind: blocked and QUESTIONS in the result and publish the question to %s. "
+               "Publishing that file closes this worker; the lead answers by resuming this same session.")
 
 CODEX = r'''#!/usr/bin/env python3
 import json, os, sys
@@ -85,7 +88,7 @@ class SpawnCodexTests(unittest.TestCase):
 
     def spawn(self, *args, tmux=False, **extra):
         env = dict(os.environ, PATH=f'{self.bin}{os.pathsep}{os.environ["PATH"]}', SPAWN_STATE=str(self.state),
-                   CODEX_HOME=str(self.home), KIT_WT=str(self.bin / 'wt-tab'), KIT_PS=str(self.bin / 'ps-stub'), **extra)
+                   CODEX_HOME=str(self.home), KIT_WT=str(self.bin / 'wt-tab'), KIT_PS=str(self.bin / 'ps-stub'), KIT_SESSION_WAIT='2', **extra)
         if tmux:
             (self.bin / 'uname').write_text('#!/bin/sh\necho Linux\n')
             (self.bin / 'uname').chmod(0o755)
@@ -96,29 +99,29 @@ class SpawnCodexTests(unittest.TestCase):
         path = self.state / 'codex.log'
         return [json.loads(l) for l in path.read_text().splitlines()] if path.exists() else []
 
-    def test_a_worker_starts_sandboxed_with_the_git_directory_writable_and_its_session_recorded(self):
+    def test_a_worker_starts_sandboxed_without_git_roots_and_its_session_recorded(self):
         result = self.spawn('w1', str(self.brief), '--model', 'gpt-x', '--effort', 'high', '--worktree')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         tree = self.repo / '.claude/worktrees/w1'
         (run,) = self.runs()
-        # The instruction first; the sandbox with no prompts; the common .git, which holds the
-        # worktree's own git directory, its objects and refs, writable (issue #43).
-        self.assertEqual(run['argv'], [INSTRUCTION % shq(self.win(self.brief, '-m')), '-m', 'gpt-x', '-c', 'model_reasoning_effort=high', '-s', 'workspace-write',
-                                       '-a', 'never', '--add-dir', self.win(self.repo / '.git'), '-C', self.win(tree)])
+        # Git metadata remains read-only even with --add-dir (issue #43); the lead commits.
+        self.assertEqual(run['argv'], [INSTRUCTION % tuple(shq(self.win(p, '-m')) for p in (self.brief, tree / 'RESULT-w1.md', tree / 'QUESTION-w1.md')), '-m', 'gpt-x', '-c', 'model_reasoning_effort=high', '-s', 'workspace-write',
+                                       '-a', 'never', '--no-daemon', '-C', self.win(tree)])
         self.assertEqual(Path(run['cwd']).resolve(), tree.resolve())
         branch = subprocess.run(['git', '-C', str(tree), 'branch', '--show-current'], capture_output=True, text=True)
         self.assertEqual(branch.stdout.strip(), 'worktree-w1')
         # The tab's script ends with `exit 0` and is deleted.
         tab = json.loads((self.state / 'wt.json').read_text())
         self.assertTrue(tab[-1].endswith('\nexit 0\n'), tab[-1])
-        # The id is recorded in the worktree's own git directory, never as a file in the worktree.
-        record = self.repo / '.git/worktrees/w1/codex-session-w1'
+        # The session sidecar is next to the known result file, available even when Git is read-only.
+        record = tree / 'RESULT-w1.session'
         self.assertEqual(record.read_text().strip(), 'sess-0')
         self.assertIn('session sess-0 recorded', result.stdout)
-        self.assertIn('--worktree --resume', result.stdout)
-        self.assertIn('the lead commits its work (issue #43)', result.stdout)
-        self.assertEqual(subprocess.run(['git', '-C', str(tree), 'status', '--porcelain'], capture_output=True,
-                                        text=True).stdout, '')
+        self.assertIn('--worktree', result.stdout)
+        self.assertIn('--resume', result.stdout)
+        self.assertIn('leave all work uncommitted', result.stdout)
+        self.assertNotIn('--add-dir', run['argv'])
+        self.assertIn(self.win(tree / 'QUESTION-w1.md', '-m'), run['argv'][0])
 
     def test_a_stopped_worker_is_answered_in_its_own_session(self):
         self.assertEqual(self.spawn('w2', str(self.brief), '--model', 'm', '--effort', 'high').returncode, 0)
@@ -153,9 +156,9 @@ class SpawnCodexTests(unittest.TestCase):
 
     def test_a_session_that_never_shows_is_reported_not_recorded(self):
         result = self.spawn('w4', str(self.brief), '--model', 'm', '--effort', 'high', CODEX_SILENT='1')
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn('WARNING: no Codex session', result.stdout)
-        self.assertFalse((self.repo / '.git/codex-session-w4').exists())
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn('no Codex session', result.stderr)
+        self.assertFalse((self.repo / 'RESULT-w4.session').exists())
 
     def test_a_worker_without_its_model_or_effort_or_brief_is_refused(self):
         for args, message in ((('--effort', 'high'), '--model is required'), (('--model', 'm'), '--effort is required'),
@@ -180,14 +183,51 @@ class SpawnCodexTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("'new-session', '-d', '-s', 'w6'", (self.state / 'tmux.log').read_text())
         run = self.runs()[0]
-        self.assertEqual(run['argv'][0], INSTRUCTION % shq(str(self.brief)))
+        self.assertEqual(run['argv'][0], INSTRUCTION % tuple(shq(str(p)) for p in (self.brief, self.repo / 'RESULT-w6.md', self.repo / 'QUESTION-w6.md')))
         self.assertEqual(run['argv'][-2:], ['-C', str(self.repo)])
-        self.assertEqual((self.repo / '.git/codex-session-w6').read_text().strip(), 'sess-0')
+        self.assertEqual((self.repo / 'RESULT-w6.session').read_text().strip(), 'sess-0')
         # A tmux session of that name still running is never resumed beside.
         (self.state / 'live').write_text('')
         result = self.spawn('w6', str(self.brief), '--model', 'm', '--effort', 'high', '--resume', tmux=True)
         self.assertEqual(result.returncode, 1, result.stdout)
         self.assertIn("tmux session 'w6' still runs", result.stderr)
+
+    def test_an_unsafe_name_or_control_byte_in_model_is_refused_before_launch(self):
+        for name, model, effort in (('../escape', 'm', 'high'), ('a/b', 'm', 'high'),
+                                    ('w7', 'm\x1b', 'high'), ('w7', 'm', 'bad\nvalue')):
+            result = self.spawn(name, str(self.brief), '--model', model, '--effort', effort)
+            self.assertNotEqual(result.returncode, 0, result.stdout)
+            self.assertEqual(self.runs(), [])
+
+    def test_a_question_file_blocks_a_fresh_replacement(self):
+        question = self.repo / 'QUESTION-w8.md'
+        question.write_text('Choose A or B.\n')
+        result = self.spawn('w8', str(self.brief), '--model', 'm', '--effort', 'high')
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn('--resume', result.stderr)
+        self.assertEqual(self.runs(), [])
+
+    def test_empty_session_record_is_refused_without_opening_a_picker(self):
+        (self.repo / 'RESULT-w9.session').write_text('')
+        result = self.spawn('w9', str(self.brief), '--resume', '--model', 'm', '--effort', 'high')
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn('session id is empty', result.stderr)
+        self.assertEqual(self.runs(), [])
+
+    def test_custom_result_sidecars_are_reused_on_resume(self):
+        result_file = self.repo / "custom; it's.md"
+        args = ('--model', 'm', '--effort', 'high', '--result', str(result_file))
+        result = self.spawn('w10', str(self.brief), *args)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        record = Path(str(result_file) + '.session')
+        question = Path(str(result_file) + '.question.md')
+        self.assertEqual(record.read_text().strip(), 'sess-0')
+        self.assertIn(shq(self.win(question, '-m')), self.runs()[0]['argv'][0])
+        question.write_text('Choose A or B.\n')
+        result = self.spawn('w10', str(self.brief), *args, '--resume')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.runs()[-1]['argv'][:2], ['resume', 'sess-0'])
+        self.assertFalse(question.exists())
 
 
 if __name__ == '__main__':

@@ -18,20 +18,36 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   cross-saving, codex-first, claude-saver and codex-saver, each with who writes, reviews and
   fixes, worker caps, effort, when it ends and a Lessons list. The `{{MODEL_ROUTING}}`
   placeholder is gone, and `docs/STATE.md` carries a "Working mode:" line.
-  `/myagentkit:mode` (and the Codex skill `myagentkit-mode`) shows or switches the mode.
+  `/myagentkit:mode` (and the Codex skill `myagentkit-mode`) uses the shared
+  `scripts/working_mode.py` to show or switch the mode, recording `.claude/mode` and the
+  STATE line together and refusing disagreement on reads; doctor checks that the helper is
+  installed. Saver modes route fixes to the
+  side with allowance while preserving independent acceptance and the fresh final review.
+  Codex-first now follows the owner's confirmed definition: the Claude Opus lead only
+  plans, briefs, routes and reviews; Codex implements and fixes all findings. Only work the
+  lead judges too heavy or too important goes to an Opus worker, reviewed by Codex.
+  Codex-saver remains the separate low-Codex-allowance mode.
   **ACTION:** copy the "Model routing" section and "Working modes, by name" from the kit's
   `core/docs/WORKFLOW.md` into yours over your own routing text, keeping your model names,
-  and add the "Working mode:" line to `docs/STATE.md`.
+  and add the "Working mode:" line to `docs/STATE.md`. Sync the core scripts to install
+  `scripts/working_mode.py` and the updated doctor check.
 - **A stopped worker is answered in its own session** (issue #57; `docs/WORKFLOW.md`,
-  "Worker cost"; `docs/HANDOFF.md`, rule 7): never by a fresh session.
+  "Worker cost"; `docs/HANDOFF.md`, rule 7): never by a fresh session. The handoff names
+  the sidecars and publishes a question after independent work, without requiring a commit.
 - **`scripts/spawn_codex.sh`** (issues #57 and #43; Claude Code overlay): an interactive Codex
   worker in a Windows Terminal tab on native Windows and in tmux elsewhere, with the
-  workspace-write sandbox, no approval prompts and the repository's git directory writable.
-  It records the session id and resumes it with `--resume`. On native Windows, Codex 0.162
-  still denies writes into a linked worktree's git directory, so the lead commits a Codex
-  worktree worker's work there. **ACTION:** copy
-  `overlays/claude-code/files/scripts/spawn_codex.sh` into `scripts/` (`chmod +x`,
-  `git add --chmod=+x`); a sync keeps it updated from then on.
+  workspace-write sandbox and no approval prompts. The lead commits all Codex worker work
+  after the normal cross-review, with the usual commit gate; the brief and result identify
+  exact uncommitted files. Git-directory writable roots are removed: the owner's native
+  Windows codex-cli 0.162 probe proved `git add` still fails on `index.lock` with both roots.
+  It records `RESULT-NAME.session` beside `RESULT-NAME.md` and resumes it with `--resume`.
+  Workers publish decisions to `QUESTION-NAME.md`; `codex_worker.py` ends their process tree,
+  and a fresh replacement is refused. `--no-daemon` keeps each runtime private, and POSIX
+  workers use their own foreground process group. `--result FILE` chooses custom result/sidecar paths.
+  **ACTION:** adopt the lead-owned commit rule from `core/docs/WORKFLOW.md` and copy
+  `overlays/claude-code/files/scripts/spawn_codex.sh` and `codex_worker.py` into `scripts/` (`chmod +x`,
+  `git add --chmod=+x`); a sync keeps them updated from then on. Copy the worker-sidecar
+  ignore rules from `core/.gitignore` into your project ignore file.
 - **A review no longer dies on the kit's own limits** (`agent_process.py`, the adapters,
   `review.sh`): a review attempt now gets 3600 seconds (maximum 7200) and a Claude review
   200 turns (maximum 500); three high-effort reviews had died on 1800 seconds and 12 turns.
