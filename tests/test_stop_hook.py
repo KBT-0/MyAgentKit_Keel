@@ -53,7 +53,8 @@ class StopHookTests(unittest.TestCase):
             hook.write_text(HOOK.read_text().replace('{{GATED_PATHS}}', 'src')
                             .replace('{{GATED_FILE_PATTERN}}', r'\.py$'), newline='\n')
             build = tmp / 'build.sh'
-            build.write_text('cat .git/check-selftest > "$READY"\n'
+            # Published whole: a redirect creates READY before it fills it.
+            build.write_text('cat .git/check-selftest > "$READY.tmp" && mv "$READY.tmp" "$READY"\n'
                              'while [ ! -f "$RELEASE" ]; do sleep 0.1; done\nexit 1\n', newline='\n')
             ready, release = tmp / 'ready', tmp / 'release'
             env = {k: v for k, v in os.environ.items() if not k.startswith(('GATE_', 'BOUNDARY_'))}
@@ -70,16 +71,20 @@ class StopHookTests(unittest.TestCase):
                 # Before the fix the Windows marker is only a token: find the self-test shell
                 # (the holder's direct child) through the same native process enumeration.
                 if os.name == 'nt':
-                    holder = next(pid for pid, image in fixture.descendants(proc.pid)
-                                  if image.lower().startswith('python'))
-                    pid = next(pid for pid, image in fixture.children(holder) if image == 'sh.exe')
                     # Kill the wrapper too: otherwise it clears the token when the shell ends.
-                    for victim in (holder, pid):
+                    for victim in fixture.lock_holder(proc.pid):
                         fixture.kill_process(victim)
+                    proc.wait(timeout=15)
                 else:
                     import signal
                     os.kill(int(marker[0]), signal.SIGKILL)
-                proc.wait(timeout=15)
+                    # Left unreaped, as under $(...) while the build holds the pipe: a zombie,
+                    # which kill -0 still finds.
+                    deadline = time.monotonic() + 15
+                    while not subprocess.run(['ps', '-o', 'stat=', '-p', marker[0]], capture_output=True,
+                                             text=True).stdout.strip().startswith('Z'):
+                        self.assertLess(time.monotonic(), deadline, 'the killed self-test never became a zombie')
+                        time.sleep(0.1)
                 result = subprocess.run(['sh', str(hook)], cwd=project, env=dict(env, GATE_LOCK_WAIT='1'),
                                         input='{}', capture_output=True, text=True, timeout=30)
                 self.assertEqual(result.returncode, 2, result.stderr)
@@ -144,6 +149,29 @@ class StopHookTests(unittest.TestCase):
                     self.assertEqual((root / 'gate-wait').read_text().strip(), wait)
                     if held:
                         (root / 'held').unlink()
+
+    def test_a_zombie_self_test_shell_does_not_skip(self):
+        # A killed self-test shell its parent has not reaped is a zombie, which kill -0 still
+        # finds; ps names that state (a stub here, answering as Linux and macOS do).
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            hook = gated_repo(root, '[ ! -f held ] || exit 75\nexit 1\n')
+            live = subprocess.Popen(['sh', '-c', 'echo $$; read answer'], stdin=subprocess.PIPE,
+                                    stdout=subprocess.PIPE, text=True)
+            self.addCleanup(live.wait)
+            self.addCleanup(live.communicate, '\n')
+            (root / '.git/check.lock').write_text('1234', newline='\n')
+            (root / '.git/check-selftest').write_text(live.stdout.readline().strip() + ' 1234\n', newline='\n')
+            (root / 'held').write_text('', newline='\n')
+            shim = root / 'bin'
+            shim.mkdir()
+            (shim / 'ps').write_text('#!/bin/sh\necho "Z+"\n', newline='\n')
+            (shim / 'ps').chmod(0o755)
+            result = subprocess.run(['sh', str(hook)], cwd=root, input='{}', text=True, capture_output=True,
+                                    timeout=60, env=dict(os.environ, GATE_LOCK_WAIT='1',
+                                                         PATH=str(shim) + os.pathsep + os.environ['PATH']))
+            self.assertEqual(result.returncode, 2, result.stderr)
+            self.assertIn('GATE DID NOT RUN', result.stderr)
 
     def test_the_gate_self_test_marks_itself_live_for_the_hook(self):
         # The real check.sh: its self-test's baseline build runs the hook, as a Stop in this

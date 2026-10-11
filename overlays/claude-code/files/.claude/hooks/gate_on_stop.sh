@@ -42,7 +42,12 @@ selftest_live() {
   IFS=' ' read -r pid marker extra 2>/dev/null < "${lock%.lock}-selftest" || return 1
   case "$pid" in ''|0*|*[!0-9]*) return 1 ;; esac
   [ -n "$marker" ] && [ -z "$extra" ] && kill -0 "$pid" 2>/dev/null &&
-    [ "$marker" = "$(cat "$lock" 2>/dev/null)" ]
+    [ "$marker" = "$(cat "$lock" 2>/dev/null)" ] || return 1
+  # kill -0 also finds a killed shell its parent has not reaped (under $(...) the build holds
+  # the pipe open): ps names that zombie. Git for Windows' ps has no -o, and there the holder
+  # clears the token when the shell ends.
+  # ponytail: a recycled pid still passes; compare the shell's start time if that ever bites.
+  case $(ps -o stat= -p "$pid" 2>/dev/null) in *Z*) return 1 ;; esac
 }
 gate_wait="${GATE_LOCK_WAIT:-500}"
 ! selftest_live || gate_wait=0

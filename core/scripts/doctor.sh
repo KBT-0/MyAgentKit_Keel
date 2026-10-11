@@ -180,15 +180,21 @@ case "$reviewer" in
 esac
 if [ -n "$reviewer" ] && [ -z "$reviewer_cli" ]; then
   miss "$override is set to empty, so scripts/review.sh would run an empty command for $reviewer" "unset $override, or set it to the $reviewer executable"
-elif [ -n "$reviewer" ] && ! ( [ -x "$HOME/.local/bin/codex" ] && PATH="$PATH:$HOME/.local/bin"
-                            command -v "$reviewer_cli" ) >/dev/null 2>&1; then
+elif [ -n "$reviewer" ] && ! reviewer_path=$( [ -x "$HOME/.local/bin/codex" ] && PATH="$PATH:$HOME/.local/bin"
+                            command -v "$reviewer_cli" 2>/dev/null ); then
   miss "the second CLI '$reviewer_cli' that scripts/review.sh calls" "install and log in to $reviewer (docs/DEV_SETUP.md §3)"
+elif [ "$reviewer" = claude ] && ! command -v timeout >/dev/null 2>&1; then
+  echo "NOTE: Claude CLI --effort probe skipped, no timeout on this machine"
 elif [ "$reviewer" = claude ]; then
-  # Resolve the same first command as the adapter: a newer installation later on PATH
-  # cannot supply --effort to an older CLI that actually runs.
-  help=$("$reviewer_cli" --help 2>/dev/null) || help=""
-  printf '%s\n' "$help" | grep -Eq -- '(^|[[:space:],])--effort([[:space:]=,]|$)' ||
+  # Probe the command the adapter runs, found as above: a newer installation later on PATH
+  # cannot supply --effort to an older CLI that actually runs. Bounded as the grep probe is
+  # (below): a --help that blocks would hang every session start.
+  help=$(timeout -k 1 5 "$reviewer_path" --help </dev/null 2>/dev/null); help_status=$?
+  if [ "$help_status" -eq 124 ] || [ "$help_status" -eq 137 ]; then
+    echo "NOTE: the Claude CLI '$reviewer_cli' did not answer --help within 5 s; --effort was not checked"
+  elif [ "$help_status" -ne 0 ] || ! printf '%s\n' "$help" | grep -Eq -- '(^|[[:space:],])--effort([[:space:]=,]|$)'; then
     miss "the Claude CLI '$reviewer_cli' does not support --effort (an old CLI earlier on PATH can shadow the current installation)" "update that CLI, reorder PATH, or set CLAUDE_CLI_BIN to the current executable"
+  fi
 fi
 # On native Windows (Git for Windows' sh, MSYS2, Cygwin) spawn_worker.sh opens a Windows
 # Terminal tab instead of a tmux session, which that host cannot run.

@@ -15,7 +15,9 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 - **Doctor catches an old Claude CLI earlier on PATH** (`scripts/doctor.sh`): the configured
   Claude reviewer must advertise `--effort`, which the adapter already requires. A newer
-  installation later on PATH cannot satisfy that check. **ACTION:** sync the kit or copy
+  installation later on PATH cannot satisfy that check. The probe finds the CLI as `review.sh`
+  does, `~/.local/bin` included, under the grep probe's 5-second bound; without `timeout` it
+  is skipped with a NOTE. **ACTION:** sync the kit or copy
   `$KIT/core/scripts/doctor.sh` to `scripts/doctor.sh`.
 - **A review no longer dies on the kit's own limits** (`agent_process.py`, the adapters,
   `review.sh`): a review attempt now gets 3600 seconds (maximum 7200) and a Claude review
@@ -63,7 +65,8 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   atomically publishes its shell pid and lock token to `check-selftest` beside the gate lock
   and removes it on exit. Linked markers are refused without changing their target data.
   After the cheap gated-paths check, the Stop hook skips with a NOTE only while that shell
-  lives, its token equals the lock file, and the lock is held. Surviving build descendants
+  lives (an unreaped zombie does not count where `ps -o stat=` works), its token equals the
+  lock file, and the lock is held. Surviving build descendants
   cannot make a killed self-test's marker skip the gate.
   File names never do: a `.selftest.*` file, tracked or not, no longer skips or blocks.
   **ACTION:** add the two sentences under "The lead's steps when a branch is ready" in

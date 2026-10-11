@@ -45,6 +45,25 @@ def review_runtime():
     return {name + '.py' for name in found}
 
 
+# A controlled timeout, so doctor's probes run whether or not this host has one. It enforces
+# its seconds and kills only the command it ran: a stand-in that only ran the command proved
+# no bound at all, and one that cleaned up the command's process group hid that doctor did
+# not (a child the rc file left running). A Windows python cannot start it as a script;
+# Git for Windows has the real one.
+TIMEOUT_STUB = ('#!/usr/bin/env python3\n'
+                'import subprocess, sys\n'
+                'args = sys.argv[1:]\n'
+                'while args[0].startswith("-"):\n'
+                '    args = args[2:] if args[0] == "-k" else args[1:]\n'
+                'child = subprocess.Popen(args[1:])\n'
+                'try:\n'
+                '    sys.exit(child.wait(timeout=float(args[0])))\n'
+                'except subprocess.TimeoutExpired:\n'
+                '    child.kill()\n'
+                '    child.wait()\n'
+                '    sys.exit(124)\n')
+
+
 def alive(pid):
     # ps, not kill -0: a killed child not yet reaped is a zombie, and kill -0 still finds it.
     state = subprocess.run(['ps', '-o', 'stat=', '-p', str(pid)], capture_output=True, text=True)
@@ -72,8 +91,13 @@ class DoctorTests(unittest.TestCase):
             for directory, help_text in ((modern, '--effort <level>'), (old, '--model <model>')):
                 (directory / 'claude').write_text('#!/bin/sh\necho "%s"\n' % help_text)
                 (directory / 'claude').chmod(0o755)
+            tools = root / 'tools'
+            tools.mkdir()
+            if not WINDOWS:
+                (tools / 'timeout').write_text(TIMEOUT_STUB)
+                (tools / 'timeout').chmod(0o755)
             env = dict(os.environ, HOME=str(root / 'home'), SHELL='',
-                       PATH=str(modern) + os.pathsep + os.environ['PATH'])
+                       PATH=os.pathsep.join((str(modern), str(tools), os.environ['PATH'])))
             for key in ('REVIEW_REVIEWER', 'CLAUDE_CLI_BIN', 'REVIEW_CLI_BIN'):
                 env.pop(key, None)
             subprocess.run(['git', 'init', '-q'], cwd=root, env=env, check=True)
@@ -89,6 +113,25 @@ class DoctorTests(unittest.TestCase):
                                             env=dict(env, PATH=path), capture_output=True, text=True)
                     self.assertEqual(result.returncode, int(old_cli), result.stdout + result.stderr)
                     self.assertIn('does not support --effort' if old_cli else 'DOCTOR: ready', result.stdout)
+            # review.sh appends ~/.local/bin when codex is there, and runs a claude found only
+            # there. Then a --help that never returns: bounded as the grep probe is, and named.
+            local = root / 'home/.local/bin'
+            local.mkdir(parents=True)
+            (local / 'codex').write_text('#!/bin/sh\n')
+            (local / 'codex').chmod(0o755)
+            (modern / 'claude').rename(local / 'claude')
+            bare = os.pathsep.join([str(tools)] + [d for d in os.environ['PATH'].split(os.pathsep) if d and not
+                                   any(os.path.exists(os.path.join(d, n)) for n in ('claude', 'claude.exe'))])
+            (old / 'claude').write_text('#!/bin/sh\nexec sleep 30\n')
+            for path, said in ((bare, 'DOCTOR: ready'), (str(old) + os.pathsep + bare, 'within 5 s')):
+                with self.subTest(said=said):
+                    try:
+                        result = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=root, env=dict(env, PATH=path),
+                                                capture_output=True, text=True, timeout=20)
+                    except subprocess.TimeoutExpired:
+                        self.fail('doctor.sh ran claude --help without a time limit')
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertIn(said, result.stdout)
 
     def test_each_injected_trap_turns_doctor_red(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -101,27 +144,9 @@ class DoctorTests(unittest.TestCase):
             for tool in ('claude', 'codex', 'tmux'):
                 (bin_dir / tool).write_text('#!/bin/sh\necho --effort\nexit 0\n')
                 (bin_dir / tool).chmod(0o755)
-            # A controlled timeout, so the grep probe runs whether or not this host has one.
-            # It enforces its seconds and kills only the command it ran: a stand-in that only
-            # ran the command proved no bound at all, and one that cleaned up the command's
-            # process group hid that doctor did not (a child the rc file left running).
-            (bin_dir / 'timeout').write_text(
-                '#!/usr/bin/env python3\n'
-                'import subprocess, sys\n'
-                'args = sys.argv[1:]\n'
-                'while args[0].startswith("-"):\n'
-                '    args = args[2:] if args[0] == "-k" else args[1:]\n'
-                'child = subprocess.Popen(args[1:])\n'
-                'try:\n'
-                '    sys.exit(child.wait(timeout=float(args[0])))\n'
-                'except subprocess.TimeoutExpired:\n'
-                '    child.kill()\n'
-                '    child.wait()\n'
-                '    sys.exit(124)\n')
-            (bin_dir / 'timeout').chmod(0o755)
-            # A Windows python cannot start the probe's shell script; Git for Windows has the real one.
-            if WINDOWS:
-                (bin_dir / 'timeout').unlink()
+            if not WINDOWS:
+                (bin_dir / 'timeout').write_text(TIMEOUT_STUB)
+                (bin_dir / 'timeout').chmod(0o755)
             shell = bin_dir / 'fake-shell'
             # The common colour alias is harmless and must stay green.
             shell.write_text('#!/bin/sh\ncommand() { echo "grep is an alias for grep --color=auto"; }\neval "$2"\n')
@@ -240,6 +265,7 @@ class DoctorTests(unittest.TestCase):
                 self.fail('doctor.sh ran the shell probe without a time limit')
             self.assertEqual(skipped.returncode, 0, skipped.stdout + skipped.stderr)
             self.assertIn('NOTE: grep probe skipped, no timeout on this machine', skipped.stdout)
+            self.assertIn('NOTE: Claude CLI --effort probe skipped, no timeout on this machine', skipped.stdout)
 
             # An rc file that leaves a child holding the probe's output, and a probe that
             # fails: doctor returns within its bound and says the probe did not complete. The

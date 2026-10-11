@@ -118,6 +118,13 @@ def descendants(pid):
     return found
 
 
+def lock_holder(pid):
+    """(holder, gate): the first python under pid whose direct child is an sh, and that sh.
+    A launcher (the WindowsApps alias, a venv redirector) can run between pid and the holder."""
+    return next((parent, child) for parent, image in descendants(pid) if image.lower().startswith('python')
+                for child, name in children(parent) if name == 'sh.exe')
+
+
 def set_reparse_point(path):
     """Make path a file carrying a reparse point with a non-Microsoft tag. Unlike a symlink,
     this needs no privilege; Python's os.remove deletes it, MSYS rm cannot."""
@@ -486,9 +493,7 @@ class WindowsGateLockTests(unittest.TestCase):
             self.assertIsNone(proc.poll(), 'the gate ended before its build started')
             self.assertLess(time.monotonic(), deadline, 'the gate never started its build')
             time.sleep(0.1)
-        holders = [pid for pid, name in descendants(proc.pid) if name.lower().startswith('python')]
-        self.assertEqual(len(holders), 1, descendants(proc.pid))
-        kill_process(holders[0])
+        kill_process(lock_holder(proc.pid)[0])
         waiters = [start(self.project, self.build, SIDE=self.side.as_posix()) for _ in range(2)]
         results = [finish(waiter, 120) for waiter in waiters]
         kill_tree(proc.pid)
