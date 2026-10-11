@@ -47,6 +47,10 @@ if WINDOWS:
                                          ctypes.POINTER(wintypes.HANDLE), wintypes.DWORD, wintypes.BOOL,
                                          wintypes.DWORD)
     KERNEL32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    KERNEL32.OpenProcess.restype = wintypes.HANDLE
+    KERNEL32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    KERNEL32.TerminateProcess.argtypes = (wintypes.HANDLE, wintypes.UINT)
+    KERNEL32.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
 
     class ProcessEntry(ctypes.Structure):
         _fields_ = [('dwSize', wintypes.DWORD), ('cntUsage', wintypes.DWORD),
@@ -160,8 +164,37 @@ elif mode == 'noid':
 exec(compile(open(source, encoding='utf-8').read(), '<probe>', 'exec'), {'__name__': '__main__'})
 '''
 
+def kill_process(pid):
+    """Force an owned fixture process to exit, without taskkill's system-wide lookup.
+
+    Restricted Windows hosts deny taskkill even for these children. TerminateProcess is
+    the same forced exit used by Popen.kill(); a denied termination must fail the test.
+    """
+    handle = KERNEL32.OpenProcess(1 | 0x00100000, False, pid)  # terminate + synchronize
+    if not handle:
+        error = ctypes.get_last_error()
+        if error == 87:  # the process already exited
+            return
+        raise ctypes.WinError(error)
+    try:
+        if not KERNEL32.TerminateProcess(handle, 1):
+            error = ctypes.get_last_error()
+            # TerminateProcess reports access denied for an already-terminated process.
+            # A signalled handle proves that race; a live denied process still fails.
+            if KERNEL32.WaitForSingleObject(handle, 0) != 0:
+                raise ctypes.WinError(error)
+    finally:
+        close_handle(handle)
+
+
 def kill_tree(pid):
-    subprocess.run(['taskkill', '/F', '/T', '/PID', str(pid)], capture_output=True)
+    # Snapshot first, then stop parents before children: killing the build first lets its
+    # live lock holder finish normally and truncate the token this regression must retain.
+    pids = [pid]
+    for parent in pids:
+        pids.extend(child for child, _ in children(parent) if child not in pids)
+    for child in pids:
+        kill_process(child)
 
 
 def released(lock, seconds=45):
@@ -432,7 +465,7 @@ class WindowsGateLockTests(unittest.TestCase):
             time.sleep(0.1)
         holders = [pid for pid, name in children(proc.pid) if name.lower().startswith('python')]
         self.assertEqual(len(holders), 1, children(proc.pid))
-        subprocess.run(['taskkill', '/F', '/PID', str(holders[0])], check=True, capture_output=True)
+        kill_process(holders[0])
         waiters = [start(self.project, self.build, SIDE=self.side.as_posix()) for _ in range(2)]
         results = [finish(waiter, 120) for waiter in waiters]
         kill_tree(proc.pid)

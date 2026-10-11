@@ -601,9 +601,11 @@ def prior_rounds(repo: Path, task_id: str | None, scope: str, resolved: str | No
         return BridgeError("usage record %s %s; an earlier round of task %s may be in it. Every "
                            "labelled round reads every record, so a new task label does not "
                            "help. Restore it, or set it aside (a record written by v0.7 or v0.8 "
-                           "with an empty task id is one of these): mkdir -p %s && mv %s %s/"
-                           % (path, what, task_id, shlex.quote(str(aside)),
-                              shlex.quote(str(path)), shlex.quote(str(aside))))
+                           "with an empty task id is one of these): cd %s && mkdir -p %s && mv %s %s/"
+                           % (path, what, task_id, shlex.quote(repo.as_posix()),
+                              shlex.quote(aside.relative_to(repo).as_posix()),
+                              shlex.quote(path.relative_to(repo).as_posix()),
+                              shlex.quote(aside.relative_to(repo).as_posix())))
     # Path.glob() swallows a listing error: a usage directory the owner could write but not
     # list read as "no earlier rounds". Only an absent directory has none.
     usage, names = repo / ".myagentkit/usage", []
@@ -1060,5 +1062,14 @@ def main(argv=None, result_sink=None) -> int:
         agent_process.handing_back(held, settle)
 
 
+def utf8_output():
+    """Write stdout and stderr as UTF-8 wherever they lead. Redirected on native Windows they
+    used the ANSI code page: a completed review whose text held one character outside it (an
+    arrow) raised while printing, failed as adapter_error, and the paid review was lost."""
+    for stream in (sys.stdout, sys.stderr):
+        stream.reconfigure(encoding="utf-8")
+
+
 if __name__ == "__main__":
+    utf8_output()
     raise SystemExit(main())

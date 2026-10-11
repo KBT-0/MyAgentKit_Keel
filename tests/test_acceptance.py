@@ -59,7 +59,12 @@ class AcceptanceTests(unittest.TestCase):
             with self.subTest(directory=directory):
                 # On native Windows the suites not yet ported there are left out (issue #56).
                 leave_out = set(gate.NOT_ON_WINDOWS.get(directory, {}))
-                found = gate.discover(ROOT / directory, leave_out)[1]
+                suite, found = gate.discover(ROOT / directory, leave_out)
+                # Minimums describe executable coverage on this platform. A declared
+                # POSIX exclusion is discovered on Windows but cannot count toward it.
+                for test in gate._cases(suite):
+                    if getattr(getattr(test, test._testMethodName), '_kit_platform_skip', False):
+                        found[test.id().split('.')[0]] -= 1
                 self.assertEqual({k: v for k, v in required.items() if k not in leave_out}, found)
 
     def test_a_utf8_locale_is_picked_by_its_codeset_and_none_is_not_run(self):
@@ -126,7 +131,10 @@ class AcceptanceTests(unittest.TestCase):
                     # Exercise the actual self-test tail, without running the unrelated,
                     # expensive earlier cases or the prohibited existing-file example.
                     gate = (cwd / 'scripts/check.sh').read_text()
-                    start = gate.index('  # --- project boundary self-tests')
+                    # The review self-test now runs natively too. This regression tests
+                    # boundary status propagation; acceptance separately runs the real
+                    # review suite, so start after that unrelated, expensive suite.
+                    start = gate.index('  if [ -f "$BOUNDARY_SELFTESTS_FILE" ]; then')
                     tail = gate[start:gate.index('\n}\n', start)]
                     script = cwd / '.git/tail.sh'
                     script.write_text('work=$(mktemp -d)\ntrap \'rm -rf "$work"\' EXIT\n'

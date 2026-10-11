@@ -9,9 +9,43 @@ import time
 import unittest
 import agent_process
 import agent_usage
+from review_test_support import posix_only, send_cancel
 
 
 class UsageTests(unittest.TestCase):
+    def test_posix_launch_markers_preserve_empty_and_nested_environments(self):
+        import os
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        seen = []
+
+        def popen(command, **kwargs):
+            seen.append(kwargs['env'])
+            return SimpleNamespace()
+        with patch.object(agent_process, 'POSIX', True), patch('subprocess.Popen', side_effect=popen), \
+                patch.dict(os.environ, {'KIT_ENV_PROBE': 'visible'}, clear=True):
+            outer = agent_process.launch(['fixture'], None, env={})
+            inner = agent_process.launch(['fixture'], None, env=seen[0])
+        self.assertEqual(seen[0], {outer._kit_marker: '1'})
+        self.assertEqual(seen[1], {outer._kit_marker: '1', inner._kit_marker: '1'})
+
+    def test_marker_scan_matches_complete_environment_entries_on_both_backends(self):
+        import io
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        marker = 'MYAGENTKIT_PROCESS_fixture'
+        with patch('os.path.isdir', return_value=True), patch('os.listdir', return_value=['12', '13', 'self']), \
+                patch('builtins.open', side_effect=[io.BytesIO((marker + '=1\0OTHER=x').encode()),
+                                                   io.BytesIO((marker + '=10\0').encode())]):
+            self.assertEqual(agent_process._marked(marker), [12])
+        listing = (' 12 python ' + marker + '=1 OTHER=x\n 13 python ' + marker + '=10\n').encode()
+        def ps(command, **kwargs):
+            # A project's PATH shim must not be able to invent the processes cleanup kills.
+            output = listing if command[0] == '/bin/ps' else ('999 shim ' + marker + '=1\n').encode()
+            return SimpleNamespace(stdout=output)
+        with patch('os.path.isdir', return_value=False), patch('subprocess.run', side_effect=ps):
+            self.assertEqual(agent_process._marked(marker), [12])
+
     def test_private_staging_and_publication_require_ignore_rules(self):
         from unittest.mock import patch
         with tempfile.TemporaryDirectory() as tmp:
@@ -179,6 +213,7 @@ class UsageTests(unittest.TestCase):
             self.assertEqual(len(rows), 1)
             self.assertNotIn("private transcript", result.stdout)
 
+    @posix_only
     def test_a_signal_the_caller_ignores_does_not_cancel_the_review(self):
         # nohup ignores SIGHUP and a background job ignores SIGINT; turning either back on
         # cancelled a nohup review the moment its terminal closed.
@@ -206,11 +241,13 @@ class UsageTests(unittest.TestCase):
                 created = []
 
                 def popen(*args, **kwargs):
+                    if args[0][0] == '/bin/ps':
+                        return real(*args, **kwargs)  # macOS cleanup scan, not the reviewer launch
                     if when == 'before':
-                        os.kill(os.getpid(), signal.SIGTERM)
+                        send_cancel(signal.SIGTERM)
                     created.append(real(*args, **kwargs))
                     if when == 'after':
-                        os.kill(os.getpid(), signal.SIGTERM)
+                        send_cancel(signal.SIGTERM)
                     return created[-1]
 
                 try:
@@ -227,11 +264,14 @@ class UsageTests(unittest.TestCase):
                 self.assertEqual(len(created), 1)
         # The cancel signals are blocked only around Popen in this process: the reviewer
         # starts with none of them blocked.
+        if not agent_process.POSIX:
+            return  # Windows recorder coverage above; only POSIX has a child signal mask.
         child = 'import signal; print(sorted(int(s) for s in signal.pthread_sigmask(signal.SIG_BLOCK, [])))'
         result = agent_process.run([sys.executable, '-c', child], '', Path.cwd(), 5)
         blocked = json.loads(result['stdout'])
         self.assertFalse({int(s) for s in agent_process.CANCEL_SIGNALS} & set(blocked), blocked)
 
+    @posix_only
     def test_a_cancel_during_cleanup_is_noted_not_raised(self):
         # Raised there, it interrupted the group kill or the reap, and run() returned nothing
         # for the adapter to record.
@@ -245,7 +285,7 @@ class UsageTests(unittest.TestCase):
                                       ('completed review', 'print("done")', None)):
             with self.subTest(case=name):
                 def killpg(pid, sig):
-                    os.kill(os.getpid(), signal.SIGTERM)
+                    send_cancel(signal.SIGTERM)
                     real(pid, sig)
                 try:
                     with patch.object(agent_process.os, 'killpg', side_effect=killpg):
@@ -257,6 +297,7 @@ class UsageTests(unittest.TestCase):
                 # A zero exit is not yet a completed review: the cancel is returned either way.
                 self.assertTrue(result['cancelled'], result)
 
+    @posix_only
     def test_a_cancel_as_cleanup_begins_is_noted_not_raised(self):
         # Cleanup swapped the raising handlers for noting ones one signal at a time: a cancel
         # before its own handler was swapped still raised, past the group kill and the reap.
@@ -271,6 +312,8 @@ class UsageTests(unittest.TestCase):
                 created, sent = [], []
 
                 def popen(*args, **kwargs):
+                    if args[0][0] == '/bin/ps':
+                        return real_popen(*args, **kwargs)  # macOS cleanup scan, not reviewer
                     created.append(real_popen(*args, **kwargs))
                     return created[-1]
 
@@ -278,7 +321,7 @@ class UsageTests(unittest.TestCase):
                     # The first handler change after the launch is where cleanup begins.
                     if created and not sent:
                         sent.append(sig)
-                        os.kill(os.getpid(), signal.SIGTERM)
+                        send_cancel(signal.SIGTERM)
                     return real_signal(sig, handler)
 
                 try:
@@ -297,6 +340,7 @@ class UsageTests(unittest.TestCase):
                 self.assertEqual(result['termination'], expected, result)
                 self.assertTrue(result['cancelled'], result)
 
+    @posix_only
     def test_a_cancel_at_any_line_after_a_completed_wait_keeps_the_review_completed(self):
         # The raising handler stayed armed into the cleanup: a cancel at a signal check before
         # the switch raised inside `finally`, past the group kill, the reap and the result,

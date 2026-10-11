@@ -66,7 +66,7 @@ for _name in ('GIT_DIR', 'GIT_WORK_TREE', 'GIT_IMPLICIT_WORK_TREE', 'GIT_INDEX_F
               'GIT_REPLACE_REF_BASE', 'GIT_PREFIX', 'GIT_SHALLOW_FILE', 'GIT_INTERNAL_SUPER_PREFIX',
               'GIT_NAMESPACE', 'GIT_CEILING_DIRECTORIES'):
     os.environ.pop(_name, None)
-# scripts/check.sh names a file to create once KIT CHECK: PASS is printed; popped here, so a
+# scripts/check.sh names a file to create once all units pass; popped here, so a
 # nested kit check (a unit, a test) never creates it in the outer run's place.
 _PASSED_FILE = os.environ.pop('KIT_CHECK_PASSED', None)
 
@@ -75,7 +75,7 @@ ROOT = Path(__file__).resolve().parents[1]
 BRIDGE_MINIMUMS = next(
     (ast.literal_eval(node.value)
      for node in ast.parse((ROOT / 'core/scripts/test_claude_bridge.py').read_text()).body
-     if isinstance(node, ast.Assign) and getattr(node.targets[0], 'id', None) == 'SUITE_MINIMUMS'),
+     if isinstance(node, ast.Assign) and getattr(node.targets[0], 'id', None) == ('WINDOWS_SUITE_MINIMUMS' if os.name == 'nt' else 'SUITE_MINIMUMS')),
     None)
 if BRIDGE_MINIMUMS is None:
     sys.exit('KIT CHECK: FAIL — SUITE_MINIMUMS not found in core/scripts/test_claude_bridge.py')
@@ -84,23 +84,22 @@ REQUIRED_SUITES = {
     # Each suite's current count: a minimum far below it (1 of 30) let a suite lose almost
     # every test with the kit check green. A new test raises its suite's number here.
     'tests': {'test_packaging': 1, 'test_bootstrap': 31, 'test_acceptance': 9,
-              'test_review_upgrade': 3, 'test_boundary_example': 3, 'test_scan_gate': 1,
+              'test_review_upgrade': 2 if os.name == 'nt' else 3,
+              'test_boundary_example': 3, 'test_scan_gate': 1,
               'test_check_gate': 23, 'test_check_gate_windows': 18, 'test_boundary_restore': 39,
               'test_sync_kit': 29, 'test_doctor': 2, 'test_git_hooks': 29, 'test_stop_hook': 3, 'test_context_hook': 9, 'test_overlay_permissions': 6,
               'test_spawn_worker': 18, 'test_worker_visibility': 55, 'test_doc_pointers': 7,
-              'test_kit_output': 1, 'test_kit_runner': 21, 'test_clean_worktrees': 137, 'test_clean_worktrees_windows': 9, 'test_close_worker_windows': 1,
-              'test_review_windows': 20, 'test_worker_paths_windows': 3,
+              'test_kit_output': 1, 'test_kit_runner': 23, 'test_clean_worktrees': 137, 'test_clean_worktrees_windows': 9, 'test_close_worker_windows': 1,
+              'test_review_windows': 22, 'test_worker_paths_windows': 3,
               'test_close_worker': 22, 'test_python_fallback': 1},
 }
 # Suites that do not run on native Windows, each with the reason. There each one prints one
 # NOT RUN line and is not imported; CI's Linux and macOS jobs run every one of them. A suite
 # ported to Windows leaves this list in the same change (issue #56).
-_REVIEW = 'the review run needs POSIX signals, issue #54'
 _PROBE = 'the existing-file probe: NOT RUN on Windows by design, and issue #60'
 NOT_ON_WINDOWS = {
-    'core/scripts': {'test_agent_usage': _REVIEW, 'test_claude_bridge': _REVIEW, 'test_codex_quota': _REVIEW},
-    'tests': {'test_review_upgrade': _REVIEW,
-              'test_boundary_example': _PROBE, 'test_boundary_restore': _PROBE,
+    'core/scripts': {},
+    'tests': {'test_boundary_example': _PROBE, 'test_boundary_restore': _PROBE,
               'test_check_gate': 'the flock gate lock; tests/test_check_gate_windows proves the Windows lock',
               'test_clean_worktrees': 'POSIX process liveness; tests/test_clean_worktrees_windows proves Windows',
               'test_close_worker': 'the tmux path and its Windows stand-ins, not yet ported (issue #56)',
@@ -176,8 +175,16 @@ def discover(folder, leave_out=()):
     return suite, counts
 
 
+def _cases(suite):
+    for item in suite:
+        if isinstance(item, unittest.TestSuite):
+            yield from _cases(item)
+        else:
+            yield item
+
+
 def run_tests(root, directory, required):
-    """Require named regression suites to execute; absence and skips are failures."""
+    """Require executed suite minimums; only declared platform exclusions may skip."""
     folder = root / directory
     for name in required:
         if not (folder / (name + '.py')).is_file():
@@ -193,14 +200,27 @@ def run_tests(root, directory, required):
     for name, minimum in required.items():
         if counts[name] < minimum:
             raise RuntimeError('required test suite is incomplete: ' + name)
+    allowed = {test.id() for test in _cases(suite)
+               if getattr(getattr(test, test._testMethodName), '_kit_platform_skip', False)}
     output = io.StringIO()
     result = unittest.TextTestRunner(stream=output, verbosity=2, resultclass=TimedResult).run(suite)
-    if not result.wasSuccessful() or result.skipped:
+    unexpected = []
+    for test, reason in result.skipped:
+        if test.id() not in allowed:
+            unexpected.append(test.id())
+        else:
+            name = test.id().split('.')[0]
+            if name in counts:
+                counts[name] -= 1
+            print('NOT RUN: %s (%s)' % (test.id(), reason))
+    insufficient = [name for name, minimum in required.items() if counts[name] < minimum]
+    if not result.wasSuccessful() or unexpected or insufficient:
         raise RuntimeError('required tests failed or were skipped:\n' + output.getvalue())
     # A pass prints one line; the per-test lines were kilobytes nobody read. A failure above
     # carries the whole log, the passing tests included.
     passed('%s ran %d tests, each suite at or above its minimum (%s)'
-           % (directory, result.testsRun, ', '.join('%s %d' % item for item in sorted(required.items()))))
+           % (directory, result.testsRun - len(result.skipped),
+              ', '.join('%s %d' % item for item in sorted(required.items()))))
 
 
 SCALE = "MYAGENTKIT_TEST_TIMEOUT_SCALE"
@@ -437,14 +457,6 @@ def acceptance(self_test):
                     raise RuntimeError("the synthetic project's build command line was not found")
                 fixture_gate = original_gate.replace(
                     configured, f'build_test_cmd="sh {shlex.quote(str(build))}"')
-                if os.name == "nt":
-                    # Only this disposable acceptance copy skips the unsupported review
-                    # case. The remaining self-test must succeed, whatever its diagnostics.
-                    start = fixture_gate.index('  review_test_log=$(mktemp)')
-                    end = fixture_gate.index('  rm -f "$review_test_log"', start) + len('  rm -f "$review_test_log"')
-                    fixture_gate = (fixture_gate[:start]
-                                    + '  echo "NOT RUN: the project\'s review self-test (native Windows, issue #54)"'
-                                    + fixture_gate[end:])
                 gate.write_text(fixture_gate)
                 status = ["git", "status", "--porcelain", "--untracked-files=all"]
                 before = run(status, project)
@@ -454,7 +466,10 @@ def acceptance(self_test):
                 build.write_text(f'{{ git status --porcelain --untracked-files=all; echo ==; }} >> "{log}"\n')
                 # GATE_LOCK_WAIT: a nested run that does not inherit the lock stops in seconds.
                 print(run(["sh", "scripts/check.sh", "--self-test"], project,
-                          env=dict(os.environ, GATE_LOCK_WAIT="5"), reason="SELF-TEST: PASS").strip())
+                          env=dict(os.environ, GATE_LOCK_WAIT="5"), reason="SELF-TEST: PASS",
+                          # Real native review fixtures and Git startup take much longer
+                          # than POSIX here. Keep a bound, scaled with concurrent units.
+                          timeout=1200 if os.name == "nt" else 300).strip())
                 seen = log.read_text().split("==\n")[:-1]
                 if not seen or any(s != before for s in seen) or run(status, project) != before:
                     raise RuntimeError("check.sh --self-test changed the working tree:\n"
@@ -1021,9 +1036,14 @@ def main():
     if not run_units([(name, command + ["--unit", name]) for name in units], args.timing, parallel):
         return 1
     print("TIME: %.1f s in all" % (time.monotonic() - started))
-    print("KIT CHECK: PASS", flush=True)
     if _PASSED_FILE:
-        Path(_PASSED_FILE).touch()
+        marker = Path(_PASSED_FILE)
+        # A long native self-test outlived its empty temporary marker directory. Recover
+        # that one directory, and write its completion evidence before printing PASS:
+        # an unwritable marker or a file in the directory's place still fails the check.
+        marker.parent.mkdir(exist_ok=True)
+        marker.touch()
+    print("KIT CHECK: PASS", flush=True)
     return 0
 
 

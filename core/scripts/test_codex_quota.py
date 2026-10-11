@@ -6,8 +6,9 @@ import sys
 import tempfile
 import unittest
 import codex_quota
+from review_test_support import python_cli, PYTHON_SHEBANG, posix_only
 
-SERVER = "#!/bin/sh\n''':'\nexec %s \"$0\" \"$@\"\n'''\n" % shlex.quote(sys.executable) + '''import json, pathlib, sys, time
+SERVER = PYTHON_SHEBANG + '''import json, pathlib, sys, time
 for line in sys.stdin:
     message = json.loads(line)
     method = message['method']
@@ -30,9 +31,7 @@ class QuotaTests(unittest.TestCase):
     def test_reads_only_quota_methods_and_sanitizes_account_fields(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)
-            cli = repo / 'codex'
-            cli.write_text(SERVER)
-            cli.chmod(0o755)
+            cli = python_cli(repo / 'codex', SERVER)
             (repo / 'case').write_text('success')
             result = codex_quota.snapshot(str(cli), repo, timeout=2)
             self.assertEqual(result['status'], 'available')
@@ -42,9 +41,7 @@ class QuotaTests(unittest.TestCase):
     def test_unavailable_and_unresponsive_quota_reads_return_unknown(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)
-            cli = repo / 'codex'
-            cli.write_text(SERVER)
-            cli.chmod(0o755)
+            cli = python_cli(repo / 'codex', SERVER)
             for case in ('error', 'timeout'):
                 (repo / 'case').write_text(case)
                 result = codex_quota.snapshot(str(cli), repo, timeout=0.3)
@@ -57,21 +54,25 @@ class QuotaTests(unittest.TestCase):
         # snapshot(). Here the app-server has exited before the first write, every time.
         import subprocess
         from unittest.mock import patch
-        real_popen = subprocess.Popen
+        real_launch = codex_quota.launch
 
         def exited(*args, **kwargs):
-            proc = real_popen(*args, **kwargs)
+            # Windows Popen starts suspended until launch() attaches the Job Object;
+            # waiting inside Popen itself would wait forever before it can be resumed.
+            proc = real_launch(*args, **kwargs)
             proc.wait()
             return proc
 
         with tempfile.TemporaryDirectory() as tmp, \
-                patch.object(codex_quota.subprocess, 'Popen', side_effect=exited):
+                patch.object(codex_quota, 'launch', side_effect=exited):
             try:
-                result = codex_quota.snapshot('false', Path(tmp), timeout=2)
+                cli = python_cli(Path(tmp) / 'exited', PYTHON_SHEBANG + 'raise SystemExit(1)\n')
+                result = codex_quota.snapshot(str(cli), Path(tmp), timeout=2)
             except OSError as error:
                 self.fail('the quota read raised %r' % error)
         self.assertEqual(result['status'], 'unavailable')
 
+    @posix_only
     def test_a_cancel_inside_the_launch_leaves_no_quota_reader_running(self):
         # The closing read runs under a raising cancel handler: a cancel after the app-server
         # existed but before Popen returned left no handle, and cleanup killed nothing.
@@ -83,6 +84,8 @@ class QuotaTests(unittest.TestCase):
         real, pids = subprocess.Popen, []
 
         def launch(*args, **kwargs):
+            if args[0][0] == '/bin/ps':
+                return real(*args, **kwargs)  # macOS cleanup scan, not the quota reader
             proc = real(*args, **kwargs)
             pids.append(proc.pid)
             os.kill(os.getpid(), signal.SIGTERM)
@@ -90,9 +93,7 @@ class QuotaTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)
-            cli = repo / 'codex'
-            cli.write_text(SERVER)
-            cli.chmod(0o755)
+            cli = python_cli(repo / 'codex', SERVER)
             (repo / 'case').write_text('timeout')
             try:
                 with agent_process.OneShot(), patch.object(codex_quota.subprocess, 'Popen', side_effect=launch):

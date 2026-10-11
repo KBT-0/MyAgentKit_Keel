@@ -14,7 +14,7 @@ import agent_process
 import agent_usage
 import codex_quota
 from claude_bridge import (REVIEW_ASKS, REVIEW_RUNS, BridgeError, git, prior_rounds, scratch, snapshot,
-                           throwaway_copy, review_tmpdir)
+                           throwaway_copy, review_tmpdir, utf8_output)
 
 
 def main(argv=None, result_sink=None):
@@ -288,6 +288,7 @@ def main(argv=None, result_sink=None):
 
 
 if __name__ == "__main__":
+    utf8_output()
     try:
         raise SystemExit(main())
     except (OSError, ValueError, BridgeError, subprocess.SubprocessError) as error:

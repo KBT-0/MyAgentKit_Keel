@@ -167,8 +167,8 @@ If a reviewing CLI cannot finish because of quota, context exhaustion, timeout,
 authentication, or missing final evidence, do not treat that failure as Accept. Both
 adapters return a failure with a local usage record. Codex uses `REVIEW_TIMEOUT_SECONDS`
 (3600 by default, maximum 7200); Claude reviews use `--timeout` (3600 by default) and `--max-turns`
-(200 by default, maximum 500). Timeout stops the child process
-group and preserves captured partial output. Through the wrapper, `REVIEW_TIMEOUT_SECONDS`
+(200 by default, maximum 500). Timeout stops the reviewer and its descendants and preserves
+captured partial output. Through the wrapper, `REVIEW_TIMEOUT_SECONDS`
 sets the timeout for each provider, with the same 3600-second default, and `REVIEW_MAX_TURNS`
 sets the Claude turn limit. The old 1800 seconds and 12 turns killed high-effort reviews. Copy preparation and
 reviewer execution share one deadline; execution receives only the remaining seconds, including
@@ -201,15 +201,25 @@ attestation, invalid scope, missing guidance, changed checkout, and evidence/usa
 failures stop the chain. The original scope is checked between attempts and at completion.
 
 **Cancelling a review stops the reviewer.** Ctrl-C, SIGTERM and SIGHUP (a closed terminal
-or a restarted host session) stop the reviewer's whole process group, record the attempt
+or a restarted host session on POSIX) stop the reviewer and its descendants, record the attempt
 as `cancelled` with its partial output in a usage record, and never fail over. That is
 cancelling an active reviewer, or an attempt that failed anyway. A signal that lands while
 an already completed review is being finalised (the closing quota read, the final snapshot,
 the records) keeps it `completed` with its verdict: the paid result exists, and discarding
-it would only buy the same review again. A SIGKILL to
+it would only buy the same review again. On POSIX, a SIGKILL to
 the review process itself cannot be handled, and the wall-clock timeout lives in that process
 (the supervisor), so it is lost with it: the reviewer then runs to its own end, bounded only
 by its own CLI.
+
+On Linux and macOS, each launched process inherits a unique environment marker. Cleanup
+stops the original process group and scans for that marker, so a descendant that calls
+`setsid` or Python's `start_new_session=True` is still stopped, even after its parent exits.
+Nested launches retain outer markers. A descendant that deliberately clears its environment
+is outside this mechanism, and SIGKILL of the POSIX supervisor still prevents cleanup.
+On native Windows, pipe readers run in threads and a Job Object contains every descendant,
+including one that detaches its console or starts a new process group; breakaway is refused.
+Closing the job also stops them if the supervisor dies. Redirected adapter output is UTF-8,
+so review text outside the Windows console code page does not lose a completed result.
 
 Each attempt retains separate evidence and usage. Immutable checkpoints under
 `.myagentkit/usage/chains/<chain-id>-<attempt-count>.json` link the attempts; these are not

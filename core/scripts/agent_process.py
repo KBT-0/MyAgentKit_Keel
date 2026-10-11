@@ -107,12 +107,46 @@ def pending() -> set:
     return {sig for cancel in CANCEL_SIGNALS for sig in getattr(signal.getsignal(cancel), 'held', ())}
 
 
+def _marked(name) -> list:
+    """The pids of the processes whose environment holds `name`=1 (Linux: /proc; else ps -E)."""
+    entry = name.encode() + b"=1"
+    if os.path.isdir("/proc/self"):
+        pids = []
+        for pid in filter(str.isdigit, os.listdir("/proc")):
+            try:
+                with open("/proc/%s/environ" % pid, "rb") as environ:
+                    if entry in environ.read().split(b"\0"):
+                        pids.append(int(pid))
+            except OSError:
+                pass  # gone, or another user's
+        return pids
+    try:
+        # A project's PATH may contain CLI fixtures or wrappers; use the host's ps.
+        listing = subprocess.run(["/bin/ps", "-A", "-E", "-ww", "-o", "pid=,command="], stdin=subprocess.DEVNULL,
+                                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL).stdout
+    except OSError:
+        return []
+    return [int(line.split()[0]) for line in listing.splitlines() if entry in line.split()[1:]]
+
+
 def launch(command, mask, **popen_kw) -> subprocess.Popen:
     """Popen in a group of its own. Called with the cancels blocked (`mask` is what
     block_cancels() returned): on POSIX the child restores `mask` before exec."""
     if POSIX:
-        return subprocess.Popen(command, start_new_session=True,
-                                preexec_fn=lambda: restore_mask(mask), **popen_kw)
+        # A descendant that calls setsid (start_new_session) leaves this group, and killpg
+        # never reached it: it ran on after a cancel or a timeout. Every descendant inherits
+        # this variable, and stop_group kills each process whose environment holds it. Chosen
+        # over PR_SET_CHILD_SUBREAPER, which is Linux only (macOS has none) and makes this
+        # supervisor the parent of every orphan of the run. A name per launch, not one shared
+        # name: a nested run adds its own and keeps the outer one, so the outer stop still
+        # finds it. Ceiling: a descendant started with a cleared environment (env -i) escapes.
+        marker = "MYAGENTKIT_PROCESS_" + os.urandom(8).hex()
+        environment = os.environ if popen_kw.get("env") is None else popen_kw["env"]
+        popen_kw["env"] = dict(environment, **{marker: "1"})
+        child = subprocess.Popen(command, start_new_session=True,
+                                 preexec_fn=lambda: restore_mask(mask), **popen_kw)
+        child._kit_marker = marker
+        return child
     # A bare name is looked up as a shell would, PATHEXT included: CreateProcess adds only
     # .exe, and an npm-installed CLI (codex, claude) is a .cmd, so every review there failed
     # to launch. The search follows the child's PATH when the caller gives it one.
@@ -182,6 +216,19 @@ def stop_group(child, pgid) -> None:
             except (ProcessLookupError, PermissionError):
                 pass
             child.wait()
+        # The descendants that left the group (launch()). Scanned again until none is left:
+        # one may have started another before it was killed. A zombie's environment reads
+        # empty, so a reaped id is never matched.
+        for _ in range(20):
+            pids = _marked(child._kit_marker) if hasattr(child, "_kit_marker") else ()
+            if not pids:
+                break
+            for pid in pids:
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except (ProcessLookupError, PermissionError):
+                    pass
+            time.sleep(0.05)
     elif getattr(child, "_kit_job", None) is not None:
         job, child._kit_job = child._kit_job, None
         _win()["kernel32"].TerminateJobObject(job, 1)

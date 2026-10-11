@@ -111,6 +111,55 @@ class ReviewOnWindows(unittest.TestCase):
         pid = int(marker.read_text())
         self.assertTrue(gone_within(pid), 'the descendant outlived the stopped review')
 
+    def detached_grandchild(self, timeout, cancel):
+        """Run a reviewer whose child leaves its group and console, as setsid does on POSIX,
+        after asking to leave the job (CREATE_BREAKAWAY_FROM_JOB), which must be refused."""
+        import signal
+        import threading
+        marker = self.tmp / 'grandchild.pid'
+        command = self.script('detacher.py', (
+            'import subprocess, sys\n'
+            'code = "import os, sys, time; open(sys.argv[1], \'w\').write(str(os.getpid())); time.sleep(120)"\n'
+            'try:\n'
+            '    subprocess.Popen([sys.executable, "-c", code, sys.argv[1] + ".escaped"], creationflags=0x01000000)\n'
+            'except OSError:\n'
+            '    print("breakaway refused", flush=True)\n'
+            'subprocess.Popen([sys.executable, "-c", code, sys.argv[1]], creationflags=0x8 | 0x200,\n'
+            '                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\n'
+            'import time; time.sleep(120)\n')) + [str(marker)]
+
+        finished = threading.Event()
+
+        def started():
+            deadline = time.monotonic() + 20
+            while not (marker.exists() and marker.read_text()) and time.monotonic() < deadline:
+                if finished.wait(0.05):
+                    return
+            if cancel and not finished.is_set() and marker.exists() and marker.read_text():
+                signal.raise_signal(signal.SIGINT)
+        watcher = threading.Thread(target=started, daemon=True)
+        watcher.start()
+        try:
+            result = agent_process.run(command, '', self.tmp, timeout)
+        finally:
+            finished.set()
+            watcher.join()
+        self.assertIn('breakaway refused', result['stdout'])
+        self.assertFalse((self.tmp / 'grandchild.pid.escaped').exists(), 'a process left the job')
+        self.assertTrue(marker.exists() and marker.read_text(), 'the grandchild never started')
+        self.assertTrue(gone_within(int(marker.read_text())), 'the detached grandchild outlived the review')
+        return result
+
+    @windows_only
+    def test_a_timeout_stops_a_descendant_that_left_its_process_group(self):
+        # POSIX lost a setsid descendant at a timeout (issue #54's sibling); the Job Object
+        # holds a detached descendant in a group of its own, and refuses it a breakaway.
+        self.assertEqual(self.detached_grandchild(4, cancel=False)['termination'], 'timeout')
+
+    @windows_only
+    def test_a_cancel_stops_a_descendant_that_left_its_process_group(self):
+        self.assertEqual(self.detached_grandchild(60, cancel=True)['termination'], 'cancelled')
+
     @windows_only
     def test_output_past_the_limit_stops_the_reviewer(self):
         command = self.script('flood.py', 'import sys\nwhile True:\n    sys.stdout.write("x" * 65536)\n')
