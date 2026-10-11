@@ -135,10 +135,12 @@ class CodexWorkerTests(unittest.TestCase):
             waiter = subprocess.Popen([sys.executable, str(SCRIPT), '--wait', str(result), '--since', since],
                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             try:
-                code = ('from pathlib import Path; import time; time.sleep(1.25); '
+                # A fresh result is published by a rename, as the protocol says.
+                code = ('from pathlib import Path; import os,time; time.sleep(1.25); '
                         'Path(%r).write_text("new turn"); Path(%r).write_text('
-                        '"Kind: completed\\nTask: new\\nAttempt: 1\\nRemaining: none\\n%s"); time.sleep(30)') % (
-                            str(flushed), str(result), READY)
+                        '"Kind: completed\\nTask: new\\nAttempt: 1\\nRemaining: none\\n%s"); '
+                        'os.replace(%r, %r); time.sleep(30)') % (
+                            str(flushed), str(result) + '.tmp', READY, str(result) + '.tmp', str(result))
                 worker = subprocess.run([sys.executable, str(SCRIPT), str(question), str(result), '--',
                                          sys.executable, '-c', code], capture_output=True, text=True, timeout=15,
                                         env=dict(os.environ, KIT_WORKER_GRACE='0.5', KIT_WORKER_STARTED=since))
@@ -151,6 +153,58 @@ class CodexWorkerTests(unittest.TestCase):
                 if waiter.poll() is None:
                     waiter.kill()
                     waiter.communicate()
+
+    def test_progress_result_leaves_the_worker_running(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            question, result, working = (Path(tmp) / n for n in ('q.md', 'result.md', 'working'))
+            code = ('from pathlib import Path; import time; Path(%r).write_text('
+                    '"Kind: progress\\nTask: t\\nAttempt: 1\\nRemaining: two steps\\n%s"); '
+                    'time.sleep(1.5); Path(%r).write_text("still working")') % (str(result), READY, str(working))
+            worker = self.run_worker(question, code, result)
+            self.assertEqual(worker.returncode, 0, worker.stderr)
+            self.assertTrue(working.exists(), 'a PROGRESS result closed a worker that was still working')
+            self.assertNotIn('result ready for the lead', worker.stdout)
+
+    def test_resumed_in_place_edit_of_an_old_result_neither_closes_nor_signals(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            question, result, flushed, record = (Path(tmp) / n for n in ('q.md', 'result.md', 'flushed', 'w.exit'))
+            result.write_text('Kind: blocked\nTask: t\nAttempt: 1\nRemaining: a decision\n' + READY)
+            os.utime(result, (time.time() - 60, time.time() - 60))
+            since = str(time.time())
+            waiter = subprocess.Popen([sys.executable, str(SCRIPT), '--wait', str(result), '--since', since,
+                                       '--exit', str(record)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            try:
+                # The resumed session edits its old result in place: not a new publication.
+                code = ('from pathlib import Path; import time; p=Path(%r); '
+                        'p.write_text(p.read_text().replace("Kind: blocked", "Kind: completed")); '
+                        'time.sleep(1.5); Path(%r).write_text("flushed")') % (str(result), str(flushed))
+                worker = subprocess.run([sys.executable, str(SCRIPT), str(question), str(result), '--',
+                                         sys.executable, '-c', code], capture_output=True, text=True, timeout=15,
+                                        env=dict(os.environ, KIT_WORKER_GRACE='0.5', KIT_WORKER_STARTED=since,
+                                                 KIT_WORKER_EXIT=str(record)))
+                self.assertEqual(worker.returncode, 0, worker.stderr)
+                self.assertTrue(flushed.exists(), 'an in-place edit of an old result closed the resumed worker')
+                out, err = waiter.communicate(timeout=5)
+                self.assertEqual(waiter.returncode, 0, err)
+                self.assertIn('EXITED (exit 0', out)
+                self.assertNotIn('DONE', out)
+            finally:
+                if waiter.poll() is None:
+                    waiter.kill()
+                    waiter.communicate()
+
+    def test_wait_reports_a_worker_that_ended_without_publishing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            question, result, record = Path(tmp) / 'q.md', Path(tmp) / 'result.md', Path(tmp) / 'workers/w.exit'
+            code = 'from pathlib import Path; Path(%r).write_text("Kind: completed\\nTask: t\\n"); raise SystemExit(3)' % str(result)
+            worker = subprocess.run([sys.executable, str(SCRIPT), str(question), str(result), '--',
+                                     sys.executable, '-c', code], capture_output=True, text=True, timeout=15,
+                                    env=dict(os.environ, KIT_WORKER_EXIT=str(record)))
+            self.assertEqual(worker.returncode, 3, worker.stderr)
+            waiter = subprocess.run([sys.executable, str(SCRIPT), '--wait', str(result), '--since', '0',
+                                     '--exit', str(record)], capture_output=True, text=True, timeout=10)
+            self.assertEqual(waiter.returncode, 0, waiter.stderr)
+            self.assertIn('EXITED (exit 3', waiter.stdout)
 
     def test_normal_exit_status_is_preserved_and_no_question_is_invented(self):
         with tempfile.TemporaryDirectory() as tmp:

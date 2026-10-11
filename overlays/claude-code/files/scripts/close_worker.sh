@@ -32,12 +32,17 @@
 # claude.exe whose command line holds `-n NAME`, with `taskkill /T /F` (its tree), and waits up
 # to 15 s until no such process is left; its Windows Terminal tab closes by itself, because the
 # tab's command ends with `exit 0` (spawn_worker.sh). A lister that cannot answer fails the
-# close with its words, as the session may still run. Steps 1, 3 and 4 are the same.
+# close with its words, as the session may still run. A Codex worker (spawn_codex.sh) is a
+# codex.exe whose command line names its folder with -C instead: while one runs in the worker's
+# folder, nothing is done for that name, since its .myagentkit/workers/NAME.session record is
+# the only id to resume it by; the lead quits it in its tab and closes again. Steps 1, 3 and 4
+# are the same. After a removal (or with no worktree), the Codex records NAME.session and
+# NAME.exit go too; a kept worktree keeps them.
 # Exit 0 when every named session is gone and every named worktree was removed or did not
 # exist; 1 otherwise, with the first reason on the last line: a nonzero exit of
 # clean_worktrees.sh is one whatever its summary says (after a removal, an outcome line its log
-# could not take); 2 on a usage error. A dry run exits 1 only for a refused name, a tmux that
-# could not answer, or a removal that could not run.
+# could not take); 2 on a usage error. A dry run exits 1 only for a refused name, a running
+# Codex session, a tmux or lister that could not answer, or a removal that could not run.
 set -u
 
 # Every line of this script is printed with its control bytes as `?` (a name is an argument).
@@ -140,6 +145,22 @@ sessions() {
     sys.stdout.write(" ".join(pids))' "$1"
 }
 case $(uname -s 2>/dev/null) in MINGW*|MSYS*|CYGWIN*) windows=1 ;; *) windows="" ;; esac
+# codex DIR: the process ids of the codex.exe programs whose command line names DIR with -C,
+# as spawn_codex.sh's running() reads them. ponytail: a text match on `-C <folder>`, not a
+# full command-line parse; a worker without --worktree shares this checkout's folder, so any
+# Codex session there holds the close of such a name.
+codex() {
+  out=$(${KIT_PS:-powershell.exe -NoProfile -NonInteractive -Command} \
+    "Get-CimInstance Win32_Process -Filter \"Name='codex.exe'\" | ForEach-Object { \"\$(\$_.ProcessId) \$(\$_.CommandLine)\" }" \
+    2>&1) || { printf '%s' "$out"; return 2; }
+  folder=$(cygpath -w "$1") || { printf '%s' "cygpath cannot convert $1"; return 2; }
+  printf '%s\n' "$out" | $kit_python -I -c 'if 1:
+    import re, sys
+    folder = re.escape(sys.argv[1].rstrip("\\/"))
+    pat = re.compile(r"\s-C\s+(\"%s[\\/]?\"|%s[\\/]?)(\s|$)" % (folder, folder), re.I)
+    print(" ".join(l.split(" ", 1)[0] for l in sys.stdin.read().replace("\r", "").split("\n")
+                   if l.split(" ", 1)[0].isdigit() and pat.search(l)))' "$folder"
+}
 # busy DIR: prints what runs in the checkout at DIR and succeeds while a gate or a git
 # operation runs there, or while that cannot be checked. Ending the session then orphans it: on
 # Windows a killed worker's check.sh ran on without its caller and raced the lead's next gate
@@ -199,6 +220,16 @@ for name; do
   wt_dir=$top; [ -z "$top" ] || [ ! -d "$top/.claude/worktrees/$name" ] || wt_dir=$top/.claude/worktrees/$name
   refuse() { fail "$name: $why; ending the session now would leave it running without its caller, so nothing is done for $name: wait until it ends, then close again"; }
   if why=$(busy "$wt_dir"); then refuse; continue; fi
+  record=$top/.myagentkit/workers/$name
+  if [ -n "$windows" ] && { [ -e "$record.session" ] || [ "$wt_dir" != "$top" ]; }; then
+    if ! pids=$(codex "$wt_dir"); then
+      fail "$name: could not list the Codex processes, so its Codex session may still run: $pids; nothing is done for $name"
+      continue
+    elif [ -n "$pids" ]; then
+      fail "$name: a Codex session still runs in $wt_dir (process $pids); its session record and worktree are kept: quit it in its tab (/quit), then close again"
+      continue
+    fi
+  fi
 
   if [ -n "$windows" ]; then
     if ! pids=$(sessions "$name"); then
@@ -284,7 +315,7 @@ for name; do
   [ "$rc" -eq 0 ] || [ -n "$kept" ] ||
     fail "$name: clean_worktrees.sh exited $rc: $(printf '%s\n' "$out" | sed -n '$p')"
   if [ -z "$dry" ] && [ "$rc" -eq 0 ] && [ -z "$kept" ] && [ -n "$top" ]; then
-    rm -f -- "$top/.myagentkit/workers/$name.session" || fail "$name: could not remove its Codex session record"
+    rm -f -- "$record.session" "$record.exit" || fail "$name: could not remove its Codex session records"
   fi
   if git show-ref --verify --quiet "refs/heads/worktree-$name" 2>/dev/null; then
     say "$name: branch worktree-$name is kept, never deleted here; \`git branch --merged\` lists the merged branches, \`git branch -d <name>\` deletes one"

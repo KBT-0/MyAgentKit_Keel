@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # KIT-OWNED: do not edit locally; change it in the kit and re-sync.
-"""Close a worker after a published handoff; --wait notifies the lead without a commit."""
+"""Close a worker after a published decision or completed result; --wait notifies the lead
+without a commit, also when the worker ended without publishing (its exit record)."""
 import os
 from pathlib import Path
 import subprocess
@@ -20,14 +21,25 @@ def published(path):
     return text if text.endswith(READY) else ''
 
 
-def result_kind(path, since=0):
-    if path:
-        try:
-            if path.stat().st_mtime < since:
-                return ''
-        except FileNotFoundError:
-            return ''
-    text = published(path) if path else ''
+def baseline(path, since):
+    """The file id of a result published before this run: an in-place edit of it never counts
+    as a new publication, only a rename over it (the atomic protocol) does."""
+    try:
+        info = path.stat() if path else None
+    except FileNotFoundError:
+        return None
+    # ponytail: a filesystem with no file ids (st_ino 0) falls back to the mtime check alone.
+    return info.st_ino or None if info and info.st_mtime < since and published(path) else None
+
+
+def result_kind(path, since=0, stale=None):
+    try:
+        info = path.stat() if path else None
+    except FileNotFoundError:
+        return ''
+    if info is None or info.st_mtime < since or info.st_ino == stale:
+        return ''
+    text = published(path)
     lines = text.splitlines()
     if (len(lines) < 4 or not lines[1].startswith('Task: ')
             or not lines[2].startswith('Attempt: ') or not lines[2][9:].isdigit()
@@ -122,10 +134,21 @@ def posix_tree(pid, force=False):
 
 
 def main():
-    if len(sys.argv) in (3, 5) and sys.argv[1] == '--wait':
-        result = Path(sys.argv[2])
-        since = float(sys.argv[4]) if len(sys.argv) == 5 and sys.argv[3] == '--since' else 0
-        while not (kind := result_kind(result, since)):
+    if len(sys.argv) >= 3 and sys.argv[1] == '--wait':
+        options = dict(zip(sys.argv[3::2], sys.argv[4::2]))
+        if len(sys.argv) % 2 == 0 or set(options) - {'--since', '--exit'}:
+            raise ValueError('usage: codex_worker.py --wait RESULT [--since START] [--exit RECORD]')
+        result, since = Path(sys.argv[2]), float(options.get('--since', 0))
+        record = Path(options['--exit']) if '--exit' in options else None
+        stale = baseline(result, since)
+        while not (kind := result_kind(result, since, stale)):
+            try:
+                if record and record.stat().st_mtime >= since:
+                    print('codex_worker: EXITED (' + record.read_text(encoding='utf-8').strip()
+                          + ') without publishing a new result: ' + str(result), flush=True)
+                    return 0
+            except FileNotFoundError:
+                pass
             time.sleep(0.1)
         print('codex_worker: ' + kind + ': ' + str(result), flush=True)
         return 0
@@ -136,6 +159,8 @@ def main():
     result = Path(sys.argv[2]) if separator == 3 else None
     if question.exists():
         raise ValueError('question file already exists; answer with spawn_codex.sh --resume')
+    since = float(os.environ.get('KIT_WORKER_STARTED', '0'))
+    stale = baseline(result, since)  # before Codex starts, so its first edit cannot hide in it
     # Git for Windows reparses bash -c's quoted command. Hand it a script file instead,
     # just as spawn_worker.sh does for Windows Terminal.
     command = sys.argv[separator + 1:]
@@ -146,7 +171,7 @@ def main():
             command = [command[0], str(script)]
         if os.name == 'nt':
             child, close = windows_child(command)  # inherit the tab's terminal, including stdin
-            return watch(child, question, close, result)
+            return watch(child, question, close, result, stale)
         # A CLI installed through npm has a shim and a native child. Own their process group
         # while keeping the controlling terminal, so /dev/tty and interactive input work.
         terminal = sys.stdin.fileno() if sys.stdin.isatty() else None
@@ -160,7 +185,7 @@ def main():
                 os.killpg(child.pid, signal.SIGCONT)
             def close_tree(force=False):
                 posix_tree(child.pid, force)
-            return watch(child, question, close_tree, result)
+            return watch(child, question, close_tree, result, stale)
         finally:
             if child is not None and child.poll() is None:
                 child.kill()
@@ -170,7 +195,7 @@ def main():
             signal.signal(signal.SIGTTOU, previous)
 
 
-def watch(child, question, close_tree, result=None):
+def watch(child, question, close_tree, result=None, stale=None):
     ready_at = None
     noticed = ''
     try:
@@ -179,7 +204,10 @@ def watch(child, question, close_tree, result=None):
             raise ValueError('KIT_WORKER_GRACE must be nonnegative seconds')
         since = float(os.environ.get('KIT_WORKER_STARTED', '0'))
         while child.poll() is None:
-            notice = 'decision' if published(question) else result_kind(result, since)
+            # Only a decision or a completed result ends the worker: PROGRESS, HANDOFF and
+            # BLOCKED leave it working, and --wait alone reports them.
+            notice = 'decision' if published(question) else result_kind(result, since, stale)
+            notice = notice if notice in ('decision', 'DONE') else ''
             if notice != noticed:
                 ready_at = time.monotonic() if notice else None
                 noticed = notice
@@ -192,6 +220,12 @@ def watch(child, question, close_tree, result=None):
                     print('codex_worker: ' + noticed + ': uncommitted result ready for the lead', flush=True)
                 return 0
             time.sleep(0.1)
+        # It ended on its own: the exit record lets --wait report it instead of waiting forever.
+        record = os.environ.get('KIT_WORKER_EXIT')
+        if record:
+            Path(record).parent.mkdir(parents=True, exist_ok=True)
+            Path(record).write_text('exit %d at %s\n' % (child.returncode, time.strftime('%Y-%m-%dT%H:%M:%S')),
+                                    encoding='utf-8')
         return child.returncode
     finally:
         stop(child, close_tree)

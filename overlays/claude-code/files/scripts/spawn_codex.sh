@@ -22,6 +22,8 @@
 #   - The spawning checkout records .myagentkit/workers/NAME.session outside the worker.
 #     A decision is published as QUESTION-NAME.md there. --result FILE chooses another result
 #     and FILE.question.md, both inside the worker. Session and question files are ignored.
+#     codex_worker.py writes NAME.exit beside the session record when Codex ends on its own,
+#     so the lead's --wait ends too; close_worker.sh removes both records.
 #   - A session is resumed only once its own tab or tmux session has ended: two clients on
 #     one session were never tried.
 #   - workspace-write protects Git metadata, including a linked worktree's resolved git
@@ -118,6 +120,7 @@ print(target.as_posix())' "$dir" "$result") || die "result must be a .md file in
 # Recompute the custom question after resolving links and parent components.
 [ -z "$chosen_result" ] || question=$result.question.md
 record=$top/.myagentkit/workers/$name.session
+exited=$top/.myagentkit/workers/$name.exit
 [ -d "${result%/*}" ] || die "result directory does not exist: ${result%/*}"
 [ -n "$resume" ] || { [ ! -e "$question" ] && [ ! -e "$record" ]; } ||
   die "worker '$name' has a session or a decision recorded; answer it with --resume, never replace it"
@@ -133,9 +136,9 @@ if [ -n "$windows" ]; then
   shown=$(cygpath -m "$brief") || die "cygpath cannot convert the brief's path: $brief"
   cdir=$(wpath "$dir")
   cquestion=$(cygpath -m "$question"); cresult=$(cygpath -m "$result")
-  cworker=$(cygpath -m "$kit/codex_worker.py")
+  cworker=$(cygpath -m "$kit/codex_worker.py"); cexited=$(cygpath -m "$exited")
 else
-  shown=$brief; cdir=$dir; cquestion=$question; cresult=$result; cworker=$kit/codex_worker.py
+  shown=$brief; cdir=$dir; cquestion=$question; cresult=$result; cworker=$kit/codex_worker.py; cexited=$exited
 fi
 instruction="Read $(q "$shown") and follow it. Write your result to $(q "$cresult"). Leave all work uncommitted and ready for the lead; list the exact changed and added files in the result. The lead reviews the diff through the normal cross-review, then commits with the usual commit gate. Publish a finished result atomically: write a temporary file beside it, end with <!-- codex-worker: ready -->, then rename it to the result path. If a decision is needed, finish independent work and stop all jobs first, then write Kind: blocked and QUESTIONS in the result and publish the question atomically to $(q "$cquestion") using the same temporary-file, end-marker and rename protocol. End your turn immediately after publishing; the wrapper allows 10 seconds to flush before closing this worker. The lead answers by resuming this same session."
 # The instruction comes first, before any option, as spawn_worker.sh puts it.
@@ -213,7 +216,7 @@ if [ -n "$windows" ]; then
   tab=$(mktemp) || die "cannot write the tab's script"
   printf '%s\n' 'rm -f -- "$0"' "cd $(q "$dir") || exit 1" \
     'began=$(date +%s)' \
-    "KIT_WORKER_STARTED=$(q "$start") $kit_python $(q "$cworker") $(q "$cquestion") $(q "$cresult") -- $(q "$bash") -c $(q "exec $cmd")" \
+    "KIT_WORKER_STARTED=$(q "$start") KIT_WORKER_EXIT=$(q "$cexited") $kit_python $(q "$cworker") $(q "$cquestion") $(q "$cresult") -- $(q "$bash") -c $(q "exec $cmd")" \
     's=$?; if [ "$s" -ne 0 ] && [ "$(( $(date +%s) - began ))" -lt 10 ]; then printf "codex ended at once (exit %s); press Enter to close\\n" "$s"; read -r ignored; fi' \
     'exit 0' > "$tab" || die "cannot write the tab's script: $tab"
   "$wt" -w 0 new-tab --title "$(semi "$name")" "$(semi "$bash")" -l "$(semi "$(cygpath -w "$tab")")" ||
@@ -222,7 +225,7 @@ if [ -n "$windows" ]; then
 else
   [ -z "$resume" ] || rm -f -- "$question"
   # `cd` first: tmux hands a new session the PWD of whichever client last created one.
-  tmux new-session -d -s "$name" -c "$dir" -x 200 -y 50 "cd $(q "$dir") && export KIT_WORKER_STARTED=$(q "$start") && exec $kit_python $(q "$cworker") $(q "$cquestion") $(q "$cresult") -- sh -c $(q "exec $cmd")"
+  tmux new-session -d -s "$name" -c "$dir" -x 200 -y 50 "cd $(q "$dir") && export KIT_WORKER_STARTED=$(q "$start") KIT_WORKER_EXIT=$(q "$exited") && exec $kit_python $(q "$cworker") $(q "$cquestion") $(q "$cresult") -- sh -c $(q "exec $cmd")"
   where="(tmux attach -t $name to watch)"; view="tmux session"
 fi
 
@@ -247,4 +250,4 @@ else
 fi
 printf '%s\n' "spawn_codex: leave all work uncommitted and ready for the lead, with the exact files in the result; the lead cross-reviews the diff, then commits with the usual gate (issue #43)"
 [ -n "$windows" ] || sh "$kit/show_workers.sh" "$name" || printf '%s\n' "spawn_codex: '$name' was not shown and runs anyway; attach by hand: tmux attach -t $name"
-printf '%s\n' "spawn_codex: run as a background command for the uncommitted handoff: $kit_python $(q "$cworker") --wait $(q "$cresult") --since $(q "$start")"
+printf '%s\n' "spawn_codex: run as a background command for the uncommitted handoff: $kit_python $(q "$cworker") --wait $(q "$cresult") --since $(q "$start") --exit $(q "$cexited")"

@@ -25,11 +25,10 @@ __pycache__/
 # Working copies created by agent tools: full checkouts, never repository content.
 # Add your tools' own scratch directories here; an overlay may bring more.
 .claude/worktrees/
-# Worker decision/session sidecars; result reports remain reviewable project files.
-/RESULT-*.session
+# A Codex worker's decision files (spawn_codex.sh): QUESTION-NAME.md, or FILE.question.md
+# beside a --result FILE. Result reports remain reviewable project files. Its session and exit
+# records live under .myagentkit/workers/.
 /QUESTION-*.md
-# Legacy Markdown session sidecars, retained for upgrades only.
-*.md.session
 *.md.question.md
 /.myagentkit/
 # Raw review evidence holds the whole diff and the reviewing CLI's own output. It stays

@@ -65,15 +65,19 @@ class ReviewerDocumentTests(unittest.TestCase):
 
 
 class SectionPointerTests(unittest.TestCase):
-    def test_the_mode_command_and_skill_know_the_six_modes_the_workflow_defines(self):
+    def test_the_mode_command_and_skill_know_every_mode_the_workflow_defines(self):
         # The kit ships the working modes; {{MODEL_ROUTING}} left each project to write its own.
         workflow = (ROOT / 'core/docs/WORKFLOW.md').read_text(encoding='utf-8')
         table = workflow.split('### Working modes, by name')[1].split('####')[0]
         rows = re.findall(r'^\| `([a-z-]+)` \| ([^|(]+?)(?: \(main mode\))? \|', table, re.M)
-        self.assertEqual(sorted(m for m, _ in rows), ['claude-first', 'claude-saver', 'codex-first',
+        self.assertEqual(sorted(m for m, _ in rows), ['claude-first', 'claude-only', 'claude-saver', 'codex-first',
                                                        'codex-saver', 'cross-performance', 'cross-saving'])
         command = (ROOT / 'plugin/commands/mode.md').read_text(encoding='utf-8')
         skill = (ROOT / 'plugins/myagentkit/skills/myagentkit-mode/SKILL.md').read_text(encoding='utf-8')
+        # The command may run its helper unprompted, never any Python code.
+        tools = re.search(r'(?m)^allowed-tools: (.*)$', command)[1].split(', ')
+        self.assertEqual([t for t in tools if t.startswith('Bash(')],
+                         ['Bash(%s scripts/working_mode.py:*)' % p for p in ('python', 'python3', 'py -3')])
         for mode, turkish in rows:
             with self.subTest(mode=mode):
                 self.assertRegex(workflow, r'(?m)^#### %s \(%s\)' % (mode, turkish))

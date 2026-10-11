@@ -281,6 +281,10 @@ class SpawnCodexTests(unittest.TestCase):
         self.assertIn('atomically', prompt)
         self.assertIn('<!-- codex-worker: ready -->', prompt)
         self.assertIn('--wait', result.stdout)
+        # The stub Codex ended on its own: the wrapper left the exit record --wait watches.
+        exited = self.repo / '.myagentkit/workers/w14.exit'
+        self.assertIn('--exit ' + shq(self.win(exited, '-m')), result.stdout)
+        self.assertTrue(exited.read_text().startswith('exit 0'), exited)
 
     def test_tab_preserves_quick_exit_error(self):
         (self.bin / 'codex').write_text('#!/bin/sh\necho bad-model >&2\nexit 1\n')
@@ -323,7 +327,44 @@ class SpawnCodexTests(unittest.TestCase):
         self.assertEqual(closed.returncode, 0, closed.stdout + closed.stderr)
         self.assertFalse(tree.exists())
         self.assertFalse(record.exists())
+        self.assertFalse(record.with_suffix('.exit').exists())
         self.assertEqual(self.spawn('w16', str(self.brief), *args).returncode, 0)
+
+    def close(self, name):
+        env = dict(os.environ, PATH=f'{self.bin}{os.pathsep}{os.environ["PATH"]}',
+                   SPAWN_STATE=str(self.state), KIT_PS=str(self.bin / 'ps-stub'))
+        return subprocess.run(['sh', str(SCRIPT.with_name('close_worker.sh')), name],
+                              cwd=self.repo, env=env, capture_output=True, text=True, timeout=45)
+
+    def test_close_refuses_while_the_codex_session_runs_on_windows(self):
+        result = self.spawn('w18', str(self.brief), '--model', 'm', '--effort', 'high', '--worktree')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        tree = self.repo / '.claude/worktrees/w18'
+        record = self.repo / '.myagentkit/workers/w18.session'
+        # Finished and merged: only the running session keeps the audit from removing it.
+        git = lambda *a: subprocess.run(['git', *a], cwd=self.repo, check=True, capture_output=True)
+        git('-C', str(tree), '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '--allow-empty', '-m', 'done')
+        git('merge', '--ff-only', 'worktree-w18')
+        # Native Windows: no tmux and no Claude Code session named w18, only its codex.exe.
+        (self.state / 'ps').write_text('4242 "C:\\codex\\codex.exe" resume sess-0 -C %s\r\n' % self.win(tree))
+        closed = self.close('w18')
+        self.assertEqual(closed.returncode, 1, closed.stdout + closed.stderr)
+        self.assertIn('a Codex session still runs', closed.stdout)
+        self.assertIn('(process 4242)', closed.stdout)
+        self.assertTrue(record.exists(), 'the only resume id of a running session was deleted')
+        self.assertTrue(tree.exists())
+
+    def test_close_keeps_the_record_of_a_kept_worktree(self):
+        result = self.spawn('w19', str(self.brief), '--model', 'm', '--effort', 'high', '--worktree')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        tree = self.repo / '.claude/worktrees/w19'
+        (tree / 'unfinished.txt').write_text('work in progress\n')
+        closed = self.close('w19')
+        self.assertEqual(closed.returncode, 1, closed.stdout + closed.stderr)
+        self.assertIn('worktree kept', closed.stdout)
+        self.assertTrue(tree.exists())
+        self.assertTrue((self.repo / '.myagentkit/workers/w19.session').exists(),
+                        'a kept, possibly unfinished worker lost its resume id')
 
 
 if __name__ == '__main__':

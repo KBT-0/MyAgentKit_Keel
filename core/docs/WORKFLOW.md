@@ -451,9 +451,10 @@ alike. The lead is the session that plans with the owner, whichever side it runs
 | `claude-first` | Claude Öncelikli Mod | Claude workers | Codex | the reviewing model |
 | `cross-performance` | Çapraz Performans Modu (main mode) | both sides, by tier | the other side of the author | the reviewing model |
 | `cross-saving` | Çapraz Tasarruf Modu | both sides, at most one Opus worker at a time | the other side of the author | the reviewing model |
-| `codex-first` | Codex Öncelikli Mod | Codex; Opus only for lead-selected heavy or important work | Claude; Codex for Opus work | Codex; Opus only for lead-selected heavy or important work |
+| `codex-first` | Codex Öncelikli Mod | Codex; Opus only for lead-selected heavy or important work | Claude; Codex for Opus work | Codex; the Opus worker for Codex's findings on its own work |
 | `claude-saver` | Claude Tasarruf Modu | Codex workers | Claude, on a small budget | Codex |
 | `codex-saver` | Codex Tasarruf Modu | Claude workers | Codex, on a small budget | Claude |
+| `claude-only` | Sadece Claude Modu | Claude workers | another Claude tier, in a fresh session | the reviewing tier |
 
 #### claude-first (Claude Öncelikli Mod)
 
@@ -500,11 +501,12 @@ Codex's allowance is low; it sends implementation and fixes to Claude.
 - **Lead:** the Claude Opus lead plans, briefs, routes and reviews. It writes no implementation
   or fixes, including fixes of its own review findings. Model management aims for the
   healthiest work at the lowest cost.
-- **Writes and fixes:** Codex workers write all implementation and all fixes,
+- **Writes and fixes:** Codex workers write all implementation and all fixes on it,
   including fixes of Claude's review findings. Only work the lead judges
-  too heavy or too important for Codex goes to a Claude Opus worker; Codex reviews that work.
-- **Reviews:** Claude reviews Codex work and its fixes; Codex reviews Opus worker work and
-  its fixes. Independent acceptance and the fresh NEW-label final review still apply.
+  too heavy or too important for Codex goes to a Claude Opus worker; Codex reviews that work,
+  and that Opus worker fixes Codex's findings on it, so no model reviews its own fix.
+- **Reviews:** Claude reviews Codex work and Codex's fixes; Codex reviews Opus worker work and
+  the Opus worker's fixes. Independent acceptance and the fresh NEW-label final review still apply.
 - **Workers:** Codex workers up to the worktree ceiling; Claude Opus workers only for the
   lead's heavy or important exceptions. The lead itself only leads and reviews.
 - **Effort:** Codex workers at high for design-bearing work and at medium for mechanical
@@ -554,6 +556,29 @@ by the low side, so the loop keeps both models. These rules bind both saver mode
 - **Effort:** Claude workers by the tier table's Claude column; Codex reviews by the saver
   rules above.
 - **Ends:** on Codex's allowance reset or the owner's direction; cross-performance returns.
+- **Lessons:** none yet.
+
+#### claude-only (Sadece Claude Modu)
+
+For a subscription with only Claude. Unlike codex-saver, where Codex still reviews on a small
+budget, no Codex runs here at all.
+
+- **Writes:** Claude workers do all the implementation, at the tier table's Claude column.
+- **Reviews and fixes:** the author and the reviewer are different Claude tiers, each in a
+  fresh bridged session with no shared context: Opus authors and Fable or Sonnet reviews, or
+  the reverse; the lead picks both by the tier table. A second session of the author's own
+  tier is never the review. The reviewing tier fixes its own findings, and the other tier
+  reviews that fix. Cross review stays mandatory, and rule 4's escalation and the review
+  loop's closure rules hold as in every mode. Two Claude tiers decorrelate less than two
+  vendors; fresh sessions with no shared context are what keeps the review independent.
+- **The second reviewer:** `scripts/review.sh --reviewer claude` (or `DEFAULT_REVIEWER="claude"`)
+  with `REVIEW_CLAUDE_MODEL` set for that run to the tier that did not write the change. It is
+  the existing per-reviewer Claude pin, so the review records stay in one format. `CODEX_MODEL`
+  stays empty: `--fallback` then has no other reviewer to hand the review to.
+- **Workers:** Claude workers up to the worktree ceiling; no Codex worker and no Codex review.
+- **Effort:** Claude workers at high for design-bearing work and at medium for mechanical
+  work; reviews at high, with the top tier (rule 2) for a gate or a risky area.
+- **Ends:** when the owner names another mode, for example once a Codex subscription is added.
 - **Lessons:** none yet.
 
 #### How a mode improves
@@ -716,7 +741,8 @@ answer from {{OWNER_NAME}} and delivers it into the SAME session:
 - A Codex worker (`scripts/spawn_codex.sh`) is resumed: the lead writes the answer to a file
   and runs `scripts/spawn_codex.sh NAME ANSWER_FILE --model M --effort LEVEL [--worktree]
   --resume`. The spawning checkout records `.myagentkit/workers/NAME.session`, outside
-  the worker; successful `close_worker.sh NAME` removes that record. The default result is
+  the worker; successful `close_worker.sh NAME` removes that record, and on native Windows
+  refuses while a Codex session still runs in the worker's folder. The default result is
   `RESULT-NAME.md` at the worker's repository top, and the decision file is `QUESTION-NAME.md`.
   `--result FILE` selects another `.md` result inside the worker's folder and `FILE.question.md`;
   the brief must use that spawn-time path, and it is passed again on resume. Publish a question
@@ -742,10 +768,12 @@ Codex 0.162 on native Windows keeps Git metadata read-only even with `--add-dir`
 the gate's Git-directory lock, it records that limitation; the lead runs the gate when
 committing. Never bypass the gate or switch to full access for this failure.
 
-For Codex, the lead runs the `codex_worker.py --wait FILE --since START` command printed
-by spawn as a background command. Its exit notifies the lead of DONE, BLOCKED, HANDOFF or
-PROGRESS after a result from this run has the end marker; no commit or lead polling is
-needed. The wrapper also closes the worker after the grace period. The lead reads the
+For Codex, the lead runs the `codex_worker.py --wait FILE --since START --exit RECORD` command
+printed by spawn as a background command. Its exit notifies the lead of DONE, BLOCKED, HANDOFF
+or PROGRESS after a result from this run is published with the end marker (by a rename over an
+older result), and of EXITED when Codex ended without publishing one; no commit or lead
+polling is needed. The wrapper closes the worker after the grace period only for a decision
+or a completed result. The lead reads the
 uncommitted result and diff before committing. The watcher below accepts committed Claude
 results; it is not used for the uncommitted Codex handoff.
 The result file starts with a fixed head (`docs/HANDOFF.md`): `Kind:`, `Task:`, `Attempt:`

@@ -14,21 +14,24 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 ## v0.11 — 2026-10-09
 
 - **Working modes, by name** (issue #57; `docs/WORKFLOW.md`, "Model routing"): the kit ships
-  the tier table and six modes, claude-first, cross-performance (the main mode),
-  cross-saving, codex-first, claude-saver and codex-saver, each with who writes, reviews and
+  the tier table and seven modes, claude-first, cross-performance (the main mode),
+  cross-saving, codex-first, claude-saver, codex-saver and claude-only, each with who writes, reviews and
   fixes, worker caps, effort, when it ends and a Lessons list. The `{{MODEL_ROUTING}}`
   placeholder is gone, and `docs/STATE.md` carries a "Working mode:" line.
   `/myagentkit:mode` (and the Codex skill `myagentkit-mode`) uses the shared
   `scripts/working_mode.py` to show or switch the mode, recording `.claude/mode` and the
   STATE line together and refusing disagreement on reads. Handwritten names and Turkish
-  labels are matched without case (including capital Turkish dotted I); unknown or duplicate
-  STATE lines are refused before writes. Switches preserve STATE permissions and print UTF-8
+  labels are matched without case (including capital Turkish dotted I); a list-item or
+  indented line is read and switched in place, and an unknown value, a second line or any
+  other line naming "Working mode:" is refused before writes. The command's allowed tools
+  are only `python`, `python3` and `py -3` running `scripts/working_mode.py`. Switches preserve STATE permissions and print UTF-8
   rules even through a Windows cp1252 pipe. Doctor names the mode command when its helper is
   missing. Saver modes route fixes to the
   side with allowance while preserving independent acceptance and the fresh final review.
   Codex-first now follows the owner's confirmed definition: the Claude Opus lead only
   plans, briefs, routes and reviews; Codex implements and fixes all findings. Only work the
-  lead judges too heavy or too important goes to an Opus worker, reviewed by Codex.
+  lead judges too heavy or too important goes to an Opus worker, reviewed by Codex; that
+  Opus worker fixes Codex's findings on it, so no model reviews its own fix.
   Codex-saver remains the separate low-Codex-allowance mode: Claude leads and does the work;
   no Codex worker, Codex reviews only. The shared saver rules keep Claude as lead in both
   saver modes.
@@ -36,6 +39,22 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   `core/docs/WORKFLOW.md` into yours over your own routing text, keeping your model names,
   and add the "Working mode:" line to `docs/STATE.md`. Sync the core scripts to install
   `scripts/working_mode.py` and the updated doctor check.
+- **`claude-only` (Sadece Claude Modu), a seventh working mode** (owner's decision of
+  2026-10-11; `docs/WORKFLOW.md`, "Working modes, by name"): for a subscription with only
+  Claude. Claude workers write; a different Claude tier reviews in a fresh bridged session
+  with no shared context (Opus authors and Fable or Sonnet reviews, or the reverse, picked by
+  the tier table), and the reviewing tier fixes its findings. Cross review stays mandatory,
+  and the escalation and closure rules are those of every mode. The second reviewer is
+  `scripts/review.sh --reviewer claude` with `REVIEW_CLAUDE_MODEL` set for the run to the
+  tier that did not write the change: the existing per-reviewer Claude pin, so
+  `review_dispatch.py` is unchanged. Codex-saver stays a separate mode, in which Codex still
+  reviews. `scripts/working_mode.py` now requires all seven modes in `docs/WORKFLOW.md`.
+  **ACTION:** copy the `claude-only` table row and subsection from the kit's
+  `core/docs/WORKFLOW.md` into yours, and sync `scripts/working_mode.py` with it: the new
+  helper refuses a WORKFLOW.md without the seventh mode.
+  **ACTION:** a project on claude-only sets `DEFAULT_REVIEWER="claude"` in
+  `scripts/review.sh`, leaves `CODEX_MODEL` empty, and passes `REVIEW_CLAUDE_MODEL=<the
+  reviewing tier>` on every review run.
 - **A stopped worker is answered in its own session** (issue #57; `docs/WORKFLOW.md`,
   "Worker cost"; `docs/HANDOFF.md`, rule 7): never by a fresh session. The handoff names
   the sidecars and publishes a question atomically with an end marker after independent
@@ -50,8 +69,13 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   and resumes it with `--resume`; successful `close_worker.sh NAME` removes the record,
   allowing cleanup and name reuse. Workers publish decisions to `QUESTION-NAME.md`;
   `codex_worker.py` waits for the end marker and grace period before ending their process
-  tree, and a fresh replacement is refused. Its printed `--wait FILE --since START` command
-  notifies the lead of an uncommitted handoff as a background command, ignoring old results.
+  tree, and a fresh replacement is refused. Only a decision or a newly published
+  `Kind: completed` result closes the worker; a progress, handoff or blocked result, or an
+  in-place edit of an older result, leaves it running. When Codex ends without publishing,
+  the wrapper writes `.myagentkit/workers/NAME.exit` and `--wait` reports EXITED. On native
+  Windows `close_worker.sh` refuses while a Codex session runs in the worker's folder, and a
+  kept worktree keeps its session record. Its printed
+  `--wait FILE --since START --exit RECORD` command notifies the lead of an uncommitted handoff as a background command, ignoring old results.
   Windows children join their job before running; POSIX escalation kills the entire group.
   The tab preserves quick startup errors behind an Enter prompt, and launches Git Bash by
   its full Windows path. `--no-daemon` keeps each runtime private. The default result is at
@@ -62,8 +86,11 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   `git add --chmod=+x`); a sync keeps them updated from then on. Copy `close_worker.sh` too
   and the worker-sidecar ignore rules from `core/.gitignore` into your project ignore file.
   Update Codex briefs with the atomic publication protocol and run spawn's printed wait
-  command in the background. For workers started with the old scripts, retain their legacy
-  session sidecars until resumed or finished, then remove those sidecars before cleanup.
+  command in the background.
+  **ACTION:** a Codex worker started by the first v0.11 `spawn_codex.sh` (2026-10-09)
+  recorded its session id in the git directory: `.git/codex-session-NAME`, or
+  `.git/worktrees/NAME/codex-session-NAME` for a worktree worker. The new script does not
+  read it: resume such a worker with `--resume <that id>`, then delete the file.
 - **A review no longer dies on the kit's own limits** (`agent_process.py`, the adapters,
   `review.sh`): a review attempt now gets 3600 seconds (maximum 7200) and a Claude review
   200 turns (maximum 500); three high-effort reviews had died on 1800 seconds and 12 turns.

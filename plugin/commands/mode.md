@@ -1,7 +1,7 @@
 ---
-description: Show the working mode in force and the six modes, or switch to one by name and print its rules for the lead
-argument-hint: "[claude-first | cross-performance | cross-saving | codex-first | claude-saver | codex-saver]"
-allowed-tools: Read, Grep, Bash(python:*), Bash(python3:*), Bash(py:*)
+description: Show the working mode in force and the seven modes, or switch to one by name and print its rules for the lead
+argument-hint: "[claude-first | cross-performance | cross-saving | codex-first | claude-saver | codex-saver | claude-only]"
+allowed-tools: Read, Grep, Bash(python scripts/working_mode.py:*), Bash(python3 scripts/working_mode.py:*), Bash(py -3 scripts/working_mode.py:*)
 ---
 # /myagentkit:mode [name]
 
@@ -17,13 +17,13 @@ v0.11. Say so, name the kit's `CHANGELOG.md` entry for v0.11, and stop.
 
 **No argument.** Read the "Working mode:" line of `docs/STATE.md`. When there is none, the
 mode is cross-performance, the main mode; say that the line is missing. Print the mode in
-force, then the six modes from the section's table, one line each: the English name, the
+force, then the seven modes from the section's table, one line each: the English name, the
 Turkish name, and who writes, reviews and fixes the findings.
 
 **A name.** Accept the English name or the Turkish one:
 Claude Öncelikli Mod, Çapraz Performans Modu, Çapraz Tasarruf Modu, Codex Öncelikli Mod,
-Claude Tasarruf Modu, Codex Tasarruf Modu. Refuse any other name and list the six. The
-owner switches modes; switch only when the owner asked for it in this session.
+Claude Tasarruf Modu, Codex Tasarruf Modu, Sadece Claude Modu. Refuse any other name and list
+the seven. The owner switches modes; switch only when the owner asked for it in this session.
 
 1. Run `python scripts/working_mode.py "<name>"` with the requested name as one quoted
    argument. With no argument, run the helper without a name. Never execute raw arguments as

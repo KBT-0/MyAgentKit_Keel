@@ -9,7 +9,9 @@ import shutil
 import sys
 import tempfile
 
-STATE_LINE = re.compile(r'^(\*\*Working mode:\*\*[^\S\r\n]*)([^\r\n]*)(?=\r?$)', re.M)
+# The accepted shapes: the bold key, optionally indented or as a list item. Any other line that
+# mentions the key is refused, never taken for a missing line.
+STATE_LINE = re.compile(r'^([^\S\r\n]*(?:[-*+][^\S\r\n]+)?\*\*Working mode:\*\*[^\S\r\n]*)([^\r\n]*)(?=\r?$)', re.M)
 
 
 def normalized(value):
@@ -40,16 +42,20 @@ def mode(project, choice=None):
         raise ValueError('project predates v0.11 working modes; see the kit CHANGELOG.md')
     section = workflow.split('### Working modes, by name', 1)[1].split('\n## ', 1)[0]
     rows = re.findall(r'^\| `([a-z-]+)` \| ([^|]+) \| ([^\n]+)$', section, re.M)
-    if len(rows) != 6 or len({name for name, _, _ in rows}) != 6:
-        raise ValueError('WORKFLOW.md must define all six modes')
+    if len(rows) != 7 or len({name for name, _, _ in rows}) != 7:
+        raise ValueError('WORKFLOW.md must define all seven modes')
     aliases = {normalized(alias): name for name, label, _ in rows
                for alias in (name, label.removesuffix(' (main mode)').strip())}
     state_path = checked(project, 'docs/STATE.md')
     state_bytes = state_path.read_bytes()
     state = state_bytes.decode('utf-8')
     matches = list(STATE_LINE.finditer(state))
-    if len(matches) > 1:
+    mentions = [line for line in state.splitlines() if 'working mode:' in line.casefold()]
+    if len(mentions) > 1:
         raise ValueError('STATE.md has more than one Working mode line')
+    if mentions and not matches:
+        raise ValueError('unrecognized STATE.md Working mode line (write it as **Working mode:** NAME): '
+                         + mentions[0].strip())
     current = 'cross-performance'
     note = ''
     if matches:

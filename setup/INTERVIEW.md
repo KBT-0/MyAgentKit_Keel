@@ -160,7 +160,9 @@ One topic per turn. Suggested order, because each answer informs the next:
 
    - Check which are installed: `command -v codex`, `command -v claude`. Do not assume
      either way — report what you found. If only one is present, the OTHER one is the
-     reviewer only if the owner installs it; the review gate needs two.
+     reviewer only if the owner installs it; the review gate needs two models. An owner with
+     only a Claude subscription can work in the `claude-only` mode instead: a second Claude
+     tier reviews through `--reviewer claude` (`docs/WORKFLOW.md`, "Working modes, by name").
    - If it is missing, explain the trade: without a second model, the review protocol
      becomes the paste-the-template-by-hand version in `docs/REVIEW_RUNNING.md`. That is a
      genuine fallback, and the kit works without it. With it, `/myagentkit:cross-review`

@@ -79,10 +79,13 @@ lists the exact changed and added files. The lead reads that uncommitted result 
 the diff through the normal cross-review, then commits in the worker's worktree with the
 usual commit gate. A Claude worker commits its result and leaves the tree clean when the
 brief and host permit it; otherwise it leaves the files for the lead.
-For Codex the lead runs the `codex_worker.py --wait FILE --since START` command printed by
-spawn as a background command; it reports DONE for a published uncommitted `Kind: completed`
-result from this run. A previous task's result cannot signal the new run. Other result kinds
-report BLOCKED, HANDOFF or PROGRESS. For Claude the committed `Kind: completed` result is
+For Codex the lead runs the `codex_worker.py --wait FILE --since START --exit RECORD` command
+printed by spawn as a background command; it reports DONE for a published uncommitted
+`Kind: completed` result from this run. A previous task's result cannot signal the new run,
+and neither can an in-place edit of it: a new result is published by the rename. Other result
+kinds report BLOCKED, HANDOFF or PROGRESS, and leave the worker running: only a decision or a
+completed result closes it. A worker that ends without publishing reports EXITED, from the
+`.myagentkit/workers/NAME.exit` record the wrapper writes. For Claude the committed `Kind: completed` result is
 the watcher's done signal (`scripts/close_worker.sh NAME`).
 An idle notice or a question sidecar reports a waiting worker, never completion.
 

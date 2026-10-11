@@ -11,6 +11,7 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / 'core/scripts/working_mode.py'
+MODES = ('claude-first', 'cross-performance', 'cross-saving', 'codex-first', 'claude-saver', 'codex-saver', 'claude-only')
 
 
 class WorkingModeTests(unittest.TestCase):
@@ -29,12 +30,12 @@ class WorkingModeTests(unittest.TestCase):
         return subprocess.run([sys.executable, '-X', 'utf8', str(SCRIPT), '--project', str(self.project), *args],
                               capture_output=True, text=True, encoding='utf-8', timeout=15)
 
-    def test_show_defaults_without_writing_and_lists_all_six(self):
+    def test_show_defaults_without_writing_and_lists_all_seven(self):
         before = self.state.read_bytes()
         result = self.run_mode()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('Current mode: cross-performance', result.stdout)
-        for name in ('claude-first', 'cross-performance', 'cross-saving', 'codex-first', 'claude-saver', 'codex-saver'):
+        for name in MODES:
             self.assertIn(name, result.stdout)
         self.assertEqual(self.state.read_bytes(), before)
         self.assertFalse((self.project / '.claude/mode').exists())
@@ -51,7 +52,7 @@ class WorkingModeTests(unittest.TestCase):
         self.assertIn('Current mode: claude-saver', self.run_mode().stdout)
 
     def test_every_mode_switches_and_missing_line_is_added(self):
-        for mode in ('claude-first', 'cross-performance', 'cross-saving', 'codex-first', 'claude-saver', 'codex-saver'):
+        for mode in MODES:
             result = self.run_mode(mode)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn('**Working mode:** ' + mode, self.state.read_text())
@@ -66,6 +67,7 @@ class WorkingModeTests(unittest.TestCase):
         self.assertIn("including fixes of Claude's review findings", result.stdout)
         self.assertIn('too heavy or too important for Codex', result.stdout)
         self.assertIn('Codex reviews that work', result.stdout)
+        self.assertIn("that Opus worker fixes Codex's findings on it, so no model reviews its own fix", result.stdout)
         self.assertNotIn('not yet confirmed', result.stdout)
         saver = self.run_mode('codex-saver')
         self.assertIn("Codex's allowance is low", saver.stdout)
@@ -119,9 +121,22 @@ class WorkingModeTests(unittest.TestCase):
             self.assertIn('claude-first (manual)', text)
             (self.project / '.claude/mode').unlink()
 
+    def test_list_item_and_indented_state_lines_are_read_and_switched_in_place(self):
+        for line in ('- **Working mode:** codex-first (set by hand).', '  **Working mode:** Codex-first'):
+            with self.subTest(line=line):
+                self.state.write_text('# State\n---\n' + line + '\nActive.\n', encoding='utf-8')
+                self.assertIn('Current mode: codex-first', self.run_mode().stdout)
+                self.assertEqual(self.run_mode('claude-first').returncode, 0)
+                text = self.state.read_text(encoding='utf-8')
+                self.assertEqual(text.count('Working mode:'), 1, text)
+                self.assertIn(line.split('**Working mode:**')[0] + '**Working mode:** claude-first', text)
+                (self.project / '.claude/mode').unlink()
+
     def test_unknown_and_duplicate_state_lines_are_refused_before_writes(self):
         for text in ('**Working mode:** mystery\n',
-                     '**Working mode:** codex-first\n**Working mode:** Claude-first\n'):
+                     '**Working mode:** codex-first\n**Working mode:** Claude-first\n',
+                     '- **Working mode:** codex-first\n**Working mode:** claude-first\n',
+                     'Working mode: codex-first\n', '> **Working mode:** codex-first\n'):
             self.state.write_text(text, encoding='utf-8')
             for args in ((), ('claude-first',)):
                 result = self.run_mode(*args)
@@ -156,6 +171,19 @@ class WorkingModeTests(unittest.TestCase):
                 module.mode(self.project, 'claude-first')
             self.assertTrue(any(call.args[0] == self.state for call in copy.call_args_list),
                             'STATE replacement must inherit its original permissions')
+
+    def test_claude_only_reviews_with_another_claude_tier_and_no_codex(self):
+        result = self.run_mode('Sadece Claude Modu')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('Current mode: claude-only', result.stdout)
+        self.assertIn('different Claude tiers', result.stdout)
+        self.assertIn('fresh bridged session with no shared context', result.stdout)
+        self.assertIn('REVIEW_CLAUDE_MODEL', result.stdout)
+        self.assertIn('no Codex worker and no Codex review', result.stdout)
+        self.assertIn('Cross review stays mandatory', result.stdout)
+        self.assertNotIn('The two saver modes', result.stdout)
+        # codex-saver stays its own mode: Codex still reviews there.
+        self.assertIn('Codex reviews within a small budget', self.run_mode('codex-saver').stdout)
 
     def test_codex_saver_has_no_codex_lead_or_worker(self):
         result = self.run_mode('codex-saver')
