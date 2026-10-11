@@ -414,9 +414,10 @@ Rules for whoever routes work, binding with any table:
    switches to it: the reviewer pins in `scripts/review.sh` and the machine's Codex
    configuration (`~/.codex/config.toml`). The lead then reports the switch to the kit, so
    that the kit and every project built from it follow.
-6. **The tier boundaries are measured, not guessed.** After about ten errands, the lead
-   runs `python scripts/usage_summary.py` and moves the tier boundaries where the rejects
-   and rework show. Records with a tier group by tier; otherwise they group by model and effort.
+6. **The tier boundaries are measured, not guessed.** After about ten errands in a tier, the
+   lead counts review rejects and rework per tier and moves the boundaries where they show.
+   `python3 scripts/usage_summary.py` gives the review side: rounds, verdicts and rejects per
+   task and per model and effort. Worker errands write no record; the lead counts their rework.
 7. **A low allowance shrinks what that side does, never the review.** When the owner says
    one side's allowance is low, that side only reviews: the other side writes the fixes of
    its findings, and every fix still goes back to a review by the low side. Its reviews run
@@ -508,7 +509,10 @@ Rules, binding for whoever routes workers:
    one summary turn is cheaper than a handoff note plus a cold start. **Hand off** (update
    STATE, write the handoff, start fresh) when the work changes direction, a batch has just
    closed, or most of the context is the detail of finished work that a summary would still
-   carry. The lead keeps big output out of its own context: logs, diffs and images go to
+   carry. After the warning the lead starts no new round: it lets the running jobs finish,
+   commits what is done, updates STATE, then stops and reports, because a session end
+   kills every background job it started; the owner decides at that stop, never mid-flow.
+   The lead keeps big output out of its own context: logs, diffs and images go to
    files and it reads the summary line; long reads go to a worker that returns conclusions;
    independent calls go out in one turn.
 9. **A worker runs the cheapest check that proves its change; the expensive step runs
@@ -682,7 +686,8 @@ The shell stays in the lead's checkout, so its Stop hook runs that checkout's ga
 1. Start the self-test and the review together, on the same commit, never one after the other.
 2. Run two reviewers at the same time, never one after the other.
 3. Keep one review label for the whole feature, so that each round carries the earlier ones.
-   Only the closing review takes a label never used before (`docs/REVIEW_RUNNING.md`,
+   Only the final reviews (one per model, each over the parts it did not write) take a label
+   never used before (`docs/REVIEW_RUNNING.md`,
    "Rounds, labels and designs").
 4. Start the next worker while the self-test after a merge still runs. If that self-test
    fails, tell the next worker to rebase onto the fix.

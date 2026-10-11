@@ -34,7 +34,9 @@ Escalating after the second dirty round avoids paying for repeated unsuccessful 
 The owner approved fix ownership: the reviewing model fixes its findings; each verdict
 counts only for parts it did not write. Two models writing requires two independent final reviews.
 
-Decision — 2026-10-10: after two review rounds asked about it, the owner decided that
+### 2026-10-10 — REVIEW_ALLOW_EOL_ONLY stays
+
+Decision: after two review rounds asked about it, the owner decided that
 `REVIEW_ALLOW_EOL_ONLY=1` stays as explicit permission for deliberate line-ending normalization.
 An explicitly permitted normalization is not itself a review finding; unpermitted churn still fails.
 

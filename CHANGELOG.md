@@ -14,9 +14,10 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 ## v0.11 — 2026-10-09
 
 - **Routing sets effort, risk checks and second-round escalation.** Briefs name route,
-  risk, checks, model and effort. `usage_summary.py` reports task and tier outcomes.
-  **ACTION:** copy `$KIT/core/scripts/usage_summary.py` to `scripts/usage_summary.py`;
-  reconcile `$KIT/core/docs/WORKFLOW.md` into `docs/WORKFLOW.md`,
+  risk, checks, model and effort. `scripts/usage_summary.py` (kit-owned, synced) reports
+  review rounds, verdicts and rejects per task and per model and effort; worker errands
+  write no record and are not in it. **ACTION:** reconcile `$KIT/core/docs/WORKFLOW.md`
+  into `docs/WORKFLOW.md`,
   `$KIT/core/docs/HANDOFF.md` into `docs/HANDOFF.md`,
   `$KIT/core/docs/USAGE.md` into `docs/USAGE.md`, and
   `$KIT/overlays/claude-code/files/.claude/agents/worker.md` into `.claude/agents/worker.md`,

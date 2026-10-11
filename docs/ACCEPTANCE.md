@@ -1,5 +1,7 @@
 # Acceptance evidence
 
+## v0.11 — 2026-10-09
+
 Decision — 2026-10-11: the owner approved that the reviewing model fixes its own findings,
 and a verdict counts only for parts it did not write. Once both models have written parts,
 closure requires one fresh NEW-label final review per model over the parts it did not write;

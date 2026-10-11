@@ -1,53 +1,107 @@
-"""Summaries count invocations once, including failures and dispatch fallback attempts."""
+"""Summaries count completed review rounds once and read verdicts only from intact evidence."""
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / 'core/scripts'))
+import agent_usage  # noqa: E402
+
+SCRIPT = ROOT / 'core/scripts/usage_summary.py'
 
 
 class UsageSummaryTests(unittest.TestCase):
-    def test_records_chains_and_missing_evidence(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            repo = Path(tmp)
-            usage = repo / '.myagentkit/usage'
-            (usage / 'chains').mkdir(parents=True)
-            rows = [
-                ('a', 'T1', 'claude', 'opus', 'high', 'Reject', 1000, 'gate'),
-                ('b', 'T1', 'codex', 'sol', 'medium', 'Accept', 2000, None),
-                ('c', 'T2', 'codex', 'sol', None, None, 500, 'mechanical'),
-            ]
-            for invocation, task, reviewer, model, effort, verdict, duration, tier in rows:
-                evidence = repo / (invocation + '.md')
-                if verdict:
-                    evidence.write_text(f'| effort | {effort} |\nVERDICT: {verdict}\n', encoding='utf-8')
-                record = dict(invocation_id=invocation, task={'id': task, 'tier': tier},
-                              callee=reviewer, model_requested=model, duration_ms=duration,
-                              evidence=str(evidence), status='completed' if verdict else 'failed',
-                              failure_kind=None if verdict else 'quota')
-                (usage / (invocation + '.json')).write_text(json.dumps(record), encoding='utf-8')
-            for checkpoint in range(3):
-                (usage / 'chains' / f'chain-{checkpoint}.json').write_text(
-                    json.dumps({'chain_id': 'chain', 'task_id': 'T1', 'attempts': rows[:checkpoint]}))
-            result = subprocess.run([sys.executable, '-I', str(ROOT / 'core/scripts/usage_summary.py'),
-                                     '--repo', str(repo)], capture_output=True, text=True)
-            self.assertEqual(result.returncode, 0, result.stderr)
-            for line in ('Task T1: rounds=2', 'claude model=opus effort=high verdict=Reject duration=1.000s',
-                         'codex model=sol effort=medium verdict=Accept duration=2.000s',
-                         'Task T2: rounds=1', 'effort=unknown verdict=none (failed/quota)',
-                         'Total: rounds=3 duration=3.500s rejects=1',
-                         'Tier gate: rounds=1', 'Model sol / effort medium: rounds=1',
-                         'Tier mechanical: rounds=1'):
-                self.assertIn(line, result.stdout)
-            # Proposal evidence is JSON rather than the reviews' Markdown header table.
-            (repo / 'c.md').write_text(json.dumps({'mode': 'propose', 'effort': 'medium'}), encoding='utf-8')
-            result = subprocess.run([sys.executable, '-I', str(ROOT / 'core/scripts/usage_summary.py'),
-                                     '--repo', str(repo)], capture_output=True, text=True)
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertIn('model=sol effort=medium verdict=none (failed/quota)', result.stdout)
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.repo = Path(tmp.name)
+        subprocess.run(['git', 'init', '-q', str(self.repo)], check=True)
+        (self.repo / '.gitignore').write_text('.myagentkit/\ndocs/reviews/\n')
+        (self.repo / 'docs/reviews').mkdir(parents=True)
+
+    def record(self, name, task, report=None, kind='review', callee='claude', model='opus',
+               status='completed', reason=None, duration=1000, chain=''):
+        """One record written by the adapters' own writer, so the schema is production's."""
+        evidence = None
+        if report is not None:
+            evidence = self.repo / 'docs/reviews' / (name + '.md')
+            evidence.write_bytes(report)
+        with mock.patch.dict(os.environ, {'MYAGENTKIT_REVIEW_CHAIN_ID': chain}):
+            path, _ = agent_usage.record(self.repo, callee, model, 'test', {'id': task, 'kind': kind},
+                                         {'duration_ms': duration}, status, reason,
+                                         evidence and str(evidence), report)
+        return path
+
+    def chain(self, chain_id, status, failure_kind=None):
+        chains = self.repo / '.myagentkit/usage/chains'
+        chains.mkdir(exist_ok=True)
+        for number, value in enumerate(('pending', status)):
+            (chains / f'{chain_id}-{number}.json').write_text(json.dumps(
+                {'chain_id': chain_id, 'task_id': 'T', 'attempts': [{}] * number,
+                 'status': value, 'failure_kind': failure_kind if number else None}))
+
+    def summary(self, env=None):
+        command = [sys.executable] + ([] if env else ['-I']) + [str(SCRIPT), '--repo', str(self.repo)]
+        result = subprocess.run(command, capture_output=True, text=True, env=env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout
+
+    def test_rounds_verdicts_and_groups(self):
+        first = self.record('a', 'T1', b'| effort | high |\nVERDICT: Reject\n', chain='c1')
+        self.chain('c1', 'completed')
+        second = self.record('b', 'T1', b'| effort | medium |\nVERDICT: Accept\n', callee='codex',
+                             model='sol', duration=2000)
+        # Rounds follow recorded_at, never the file name or its random suffix.
+        first.rename(first.with_name('z.json'))
+        second.rename(second.with_name('a.json'))
+        self.record('c', 'T1', b'VERDICT: Accept\n', status='failed', reason='quota', duration=500)
+        self.record('d', 'T1', json.dumps({'mode': 'propose', 'effort': 'medium'}).encode(),
+                    kind='propose', duration=300)
+        self.record('e', 'T2', b'VERDICT: Accept\n', chain='c2')
+        self.chain('c2', 'failed', 'stale_checkout')
+        self.record('f', 'T2', b'VERDICT: Reject\n')
+        (self.repo / 'docs/reviews/f.md').write_bytes(b'VERDICT: Accept\n')
+        out = self.summary()
+        for line in ('Task T1: invocations=4 rounds=2 duration=3.800s rejects=1',
+                     '  round=1 kind=review callee=claude model=opus effort=high verdict=Reject duration=1.000s',
+                     '  round=2 kind=review callee=codex model=sol effort=medium verdict=Accept duration=2.000s',
+                     '  not a round kind=review callee=claude model=opus effort=unknown '
+                     'verdict=none (failed/quota) duration=0.500s',
+                     '  not a round kind=propose callee=claude model=opus effort=medium '
+                     'verdict=none (no verdict line) duration=0.300s',
+                     'Task T2: invocations=2 rounds=1 duration=2.000s rejects=0',
+                     '  not a round kind=review callee=claude model=opus effort=unknown '
+                     'verdict=none (chain failed/stale_checkout)',
+                     '  round=1 kind=review callee=claude model=opus effort=unknown verdict=none (evidence mismatch)',
+                     'Total: invocations=6 rounds=3 duration=5.800s rejects=1',
+                     'Model opus / effort high: invocations=1 rounds=1 duration=1.000s rejects=1',
+                     'Model sol / effort medium: invocations=1 rounds=1 duration=2.000s rejects=0'):
+            self.assertIn(line, out)
+        # chains/ snapshots are not records: read as records they would count as unreadable.
+        self.assertNotIn('Unreadable', out)
+        self.assertNotIn('Tier', out)
+
+    def test_damaged_records_leave_the_rest_of_the_summary(self):
+        self.record('g', 'T3', b'\xff\n| effort | high |\nVERDICT: Reject\n')
+        usage = self.repo / '.myagentkit/usage'
+        (usage / 'truncated.json').write_text('{"invocation_id": "x"')
+        (usage / 'no-task.json').write_text(json.dumps({'invocation_id': 'y', 'task': None}))
+        (usage / 'no-id.json').write_text(json.dumps({'task': {'id': 'T9', 'kind': 'review'}}))
+        out = self.summary()
+        self.assertIn('Task T3: invocations=1 rounds=1 duration=1.000s rejects=1', out)
+        self.assertIn('effort=high verdict=Reject', out)
+        self.assertIn('Unreadable records skipped: 3', out)
+        self.assertNotIn('T9', out)
+
+    def test_a_task_label_the_console_cannot_encode_is_escaped(self):
+        self.record('h', 'fix→lexer', b'VERDICT: Accept\n')
+        out = self.summary(dict(os.environ, PYTHONIOENCODING='ascii'))
+        self.assertIn('Task fix\\u2192lexer: invocations=1 rounds=1', out)
 
 
 if __name__ == '__main__':

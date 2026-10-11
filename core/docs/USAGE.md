@@ -1,7 +1,5 @@
 # Cross-model usage and recovery
 
-Run `python scripts/usage_summary.py` for task rounds, reviewers, models, effort, verdicts, duration and tier totals.
-
 Both supported CLI adapters write one local JSON record per launched invocation under
 `.myagentkit/usage/`. This directory is ignored by Git: raw provider output and account
 diagnostics are local operational evidence, not material for a public push. Back it up
@@ -32,6 +30,12 @@ python3 scripts/agent_usage.py --repo . --task-id STABLE_TASK_LABEL --json
 In the kit checkout, use `core/scripts/agent_usage.py`; an installed Codex plugin also has
 `scripts/agent_usage.py` beside its bundled bridge. The report omits raw transcripts by
 default. A lack of records means no recorded evidence, not zero historical usage.
+
+`python3 scripts/usage_summary.py --repo .` lists the recorded invocations per task and per
+model and effort: review rounds, verdicts, duration and rejects. A round is a completed
+review whose dispatch chain also completed; a verdict is read only from an archive that
+still matches its record's sha256. Worker and sub-agent errands write no record, so they
+are not in it.
 
 Every record includes task, requester, requested callee model, source revision/hash,
 elapsed time, status, failure classification, evidence location, and available usage.

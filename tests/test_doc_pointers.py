@@ -69,7 +69,7 @@ class SectionPointerTests(unittest.TestCase):
     def test_routing_and_closure_rules_agree(self):
         workflow = (ROOT / 'core/docs/WORKFLOW.md').read_text(encoding='utf-8')
         self.assertIn('after the second dirty round', workflow)
-        self.assertIn('python scripts/usage_summary.py', workflow)
+        self.assertIn('python3 scripts/usage_summary.py', workflow)
         self.assertIn('| Mechanical work and re-review of a small fix round | medium |', workflow)
         handoff = (ROOT / 'core/docs/HANDOFF.md').read_text(encoding='utf-8')
         self.assertIn('Route: quick|build|deep · Risk: low|medium|high · Checks: ...', handoff)
@@ -80,6 +80,9 @@ class SectionPointerTests(unittest.TestCase):
         bridge = (ROOT / 'core/scripts/claude_bridge.py').read_text(encoding='utf-8')
         self.assertIn('one fresh NEW-label final review per model', bridge)
         self.assertNotIn('model did not write the latest fix; the final Accept', bridge)
+        # A single closing review contradicts the per-model final reviews wherever it is said.
+        for path in [ROOT / 'core/AGENTS.md', *sorted((ROOT / 'core/docs').glob('*.md'))]:
+            self.assertNotIn('closing review', path.read_text(encoding='utf-8').lower(), path)
 
     def test_the_lead_keeps_its_shell_in_its_own_checkout(self):
         text = (ROOT / 'core/docs/WORKFLOW.md').read_text().split("### The lead's steps when a branch is ready")[1]

@@ -10,8 +10,8 @@ KIT-OWNED: do not edit locally; change it in the kit and re-sync.
 
 They hold no project content, so `sync-kit.sh` overwrites them wholesale. Today that is a
 short list: the three git hooks (`pre-commit`, `pre-merge-commit`, `commit-msg`),
-`scripts/doctor.sh`, `scripts/agent_cost.py`, the module-rules template, and the two setup
-documents.
+`scripts/doctor.sh`, `scripts/agent_cost.py`, `scripts/usage_summary.py`, the module-rules
+template, and the two setup documents.
 
 **PROJECT-OWNED** is everything else, and that is most of the kit: the constitution, the
 workflow, the review gate, the architecture map, the check script, the boundary checks and

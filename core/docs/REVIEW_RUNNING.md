@@ -148,7 +148,10 @@ When the rounds start and what runs in parallel is the lead's part, in `docs/WOR
   writes into the working tree fails the reviews with `stale_checkout`; such a self-test runs
   in a second worktree of the same commit.
 - Every round of one feature uses the same `MYAGENTKIT_TASK_ID`, so that later rounds carry
-  the earlier ones. The closing review alone uses a new label.
+  the earlier ones. Only the final reviews (one per model, each over the parts it did
+  not write) take a label never used before. When a final review returns a High or
+  Medium, the reviewing model fixes it and only the other model's final review runs
+  again, under a fresh label, over that fix; the fixer's own final stands.
 
 ## Unavailable reviewer
 
@@ -251,7 +254,8 @@ deferred one stays open under Manual checks), and ask which are fixed before rev
 whole cumulative diff for context. Your verdict counts only for parts you did not write;
 your last fix round is accepted only by the other model's next round. Once both models have
 written parts, closure requires one fresh NEW-label final review per model over parts it
-did not write. The change closes when both return without a High or Medium finding. Finish with a line
+did not write. The change closes when both return without a High or Medium finding. If only
+one model wrote the change, one fresh NEW-label final review by the other model closes it. Finish with a line
 "VERDICT: Accept" / "VERDICT: Accept with Manual Checks" / "VERDICT: Reject", followed by
 any manual checks written as full sentences ready to paste into docs/STATE.md.
 
