@@ -17,8 +17,9 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   proposal, and live permission and customization probes, passed on native Windows.
   On 2026-10-10, Bash write and network containment passed on WSL2 Debian; macOS is not covered.
 - **The Claude reviewer's shell is sandboxed, or absent** (issue #39; `claude_bridge.py`,
-  `review.sh`): on macOS, Linux and WSL2 its Bash is enforced by Claude Code's sandbox;
-  verified live on WSL2 only. The sandbox allows writes only in the throwaway copy and Claude
+  `review.sh`): on macOS, Linux and WSL2 its Bash runs inside Claude Code's sandbox. Verified:
+  native Windows (no Bash) and the live WSL2 probe. NOT RUN: macOS and native Linux, where the
+  enforcement is unverified. The sandbox allows writes only in the throwaway copy and Claude
   Code's temporary directory, allows no network, never retries a command outside it, and
   stops the review at startup where it
   cannot start (`sandbox_unavailable`, never a fallback). On native Windows, where Claude
@@ -39,7 +40,10 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   usage record), not exit 2 without a record. Old orphan lock files are swept after acquiring
   their lock. Errors from a running reviewer are recorded as `run_failed`, with evidence,
   a failed usage record, captured output and a structured dispatcher result. They are never
-  labelled as copy failures or preflight failures; cancellation and timeout handling stay unchanged.
+  labelled as copy failures or preflight failures; one before the launch says the reviewer did
+  not start. The evidence keeps only the tail of the reviewer's stderr, outside its own text;
+  the usage record keeps all of it. A cancel stays a cancel when the look at the reviewer's
+  exit fails; timeout handling stays unchanged.
   **ACTION:** update both the copied core scripts and the plugin to the same kit version;
   an older adapter still sweeps by age alone and can remove a new adapter's live copy.
   While no review is running, delete leftover `myagentkit-review-*` and `myagentkit-codex-*`
@@ -52,7 +56,8 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   `$KIT/core/scripts/doctor.sh` to `scripts/doctor.sh` and run it.
   Each executable's help is probed once per doctor run, and all probes share one 90-second
   budget; launch failures suggest reinstalling or selecting a working executable, and timeouts
-  suggest checking first-run prompts and retrying.
+  suggest checking first-run prompts and retrying. A candidate the spent budget cut short is
+  named in the fix, never hidden.
 
 - **A review no longer dies on the kit's own limits** (`agent_process.py`, the adapters,
   `review.sh`): a review attempt now gets 3600 seconds (maximum 7200) and a Claude review

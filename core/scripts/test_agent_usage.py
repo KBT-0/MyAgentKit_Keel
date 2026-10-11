@@ -386,6 +386,17 @@ class UsageTests(unittest.TestCase):
         self.assertEqual((result['exit_code'], result['termination']), (0, None), result)
         self.assertGreaterEqual(len(calls), 2, 'run() did not look again after the cancel')
 
+    def test_a_cancel_whose_exit_look_fails_stays_a_cancel(self):
+        # The look after a cancel raised OSError past the handler: the owner's cancel was
+        # archived as run_failed, cancelled false.
+        from unittest.mock import patch
+        import errno
+        with patch.object(agent_process, '_exited_unreaped',
+                          side_effect=[KeyboardInterrupt, OSError(errno.EIO, 'look failed')]):
+            result = agent_process.run([sys.executable, '-c', 'pass'], '', Path.cwd(), 20)
+        self.assertEqual(result['termination'], 'cancelled', result)
+        self.assertTrue(result['cancelled'])
+
     def test_timeout_stops_the_process_group_and_keeps_partial_output(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)

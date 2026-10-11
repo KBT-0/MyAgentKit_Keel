@@ -100,18 +100,24 @@ class ClaudeSandboxTests(unittest.TestCase):
         return patch('msvcrt.locking' if os.name == 'nt' else 'fcntl.flock', side_effect=error)
 
     def assert_run_os_error_is_recorded(self, bridge):
+        # The real run(), failing before its launch: a full TMPDIR. Nothing ran, so the
+        # evidence never says the reviewer ran.
         def broken(*a, **k):
-            raise OSError(errno.EIO, 'paid run failed')
+            with patch.object(claude_bridge.agent_process.tempfile, 'TemporaryFile',
+                              side_effect=OSError(errno.ENOSPC, 'temporary directory full')):
+                return real_run(*a, **k)
+        real_run = claude_bridge.agent_process.run
         code, result = self.review(bridge, run=broken)
         self.assertEqual(code, 5, result)
         self.assertEqual((result['status'], result['failure_kind']), ('failed', 'run_failed'))
         evidence = Path(result['evidence']).read_text()
         self.assertIn('run_failed', evidence)
-        self.assertIn('supervision failed', evidence)
+        self.assertIn('did not start', evidence)
+        self.assertNotIn('ran, then', evidence)
         self.assertNotIn('never ran', evidence)
         record = json.loads(Path(result['usage_record']).read_text())
         self.assertEqual((record['status'], record['failure_kind']), ('failed', 'run_failed'))
-        self.assertIn('paid run failed', record['raw_stderr'])
+        self.assertIn('temporary directory full', record['raw_stderr'])
         self.assertFalse(result['cancelled'])
         self.assertEqual(list(self.temp.iterdir()), [])
 
@@ -120,6 +126,23 @@ class ClaudeSandboxTests(unittest.TestCase):
 
     def test_codex_run_os_error_is_recorded_as_run_failed(self):
         self.assert_run_os_error_is_recorded(codex_bridge)
+
+    def test_a_run_failed_archive_keeps_only_the_tail_of_stderr(self):
+        # Codex once appended the whole stderr (up to 8 MB) to the reviewer's own text.
+        def launched_then_broken(command, prompt, workdir, timeout, into, **k):
+            into.update(exit_code=None, stdout='', stderr='x' * 100_000 + 'END',
+                        termination=None, cancelled=False, duration_ms=1)
+            raise OSError(errno.EIO, 'supervision broke')
+        for bridge in (claude_bridge, codex_bridge):
+            with self.subTest(reviewer=bridge.__name__):
+                code, result = self.review(bridge, run=launched_then_broken)
+                self.assertEqual((code, result['failure_kind']), (5, 'run_failed'), result)
+                evidence = Path(result['evidence']).read_text()
+                self.assertIn('ran, then its supervision failed', evidence)
+                self.assertIn('supervision broke', evidence)
+                self.assertLess(len(evidence), 20_000)
+                record = json.loads(Path(result['usage_record']).read_text())
+                self.assertIn('x' * 100_000 + 'END', record['raw_stderr'])
 
     def test_scratch_setup_errors_are_recorded_and_leave_no_folder_or_lock(self):
         never = lambda *a, **k: self.fail('the reviewer ran without its copy')
@@ -231,6 +254,20 @@ class ClaudeSandboxTests(unittest.TestCase):
         self.assertIn('bad', what)
         self.assertIn('next line', what)
         self.assertIn('reinstall', fix)
+
+    def test_cli_readiness_names_a_candidate_the_budget_cut_short(self):
+        # A first claude hangs 60 seconds; the second answers in 40 but has 30 left. It is
+        # named, never hidden behind 'check claude --help'.
+        clock = [0.0]
+
+        def slow(command, timeout, **kw):
+            needed = 1000 if command[0] == 'hung-cli' else 40
+            clock[0] += min(timeout, needed)
+            raise subprocess.TimeoutExpired(command, timeout)
+        with patch.object(claude_bridge.shutil, 'which',
+                          side_effect=lambda name, path: 'slow-cli' if path == 'slow' else 'hung-cli'),                 patch.object(claude_bridge.time, 'monotonic', lambda: clock[0]),                 patch.object(claude_bridge.subprocess, 'run', side_effect=slow):
+            problem = claude_bridge.cli_readiness({'PATH': os.pathsep.join(['hung', 'slow'])})
+        self.assertIn('slow-cli', problem.split('|', 1)[1])
 
     def test_cli_readiness_probes_each_path_only_once(self):
         paths = os.pathsep.join(['first', 'later', 'later'])

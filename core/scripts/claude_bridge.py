@@ -983,6 +983,8 @@ def cli_readiness(environ=os.environ) -> str | None:
                     if part.startswith("--")} - HIDDEN_FLAGS)
     # One budget for every probe: each hung claude on PATH once cost doctor 60 more seconds.
     budget = time.monotonic() + PROBE_BUDGET_SECONDS
+    # Candidates cut short by that budget: maybe slow, not broken, so the fix names them.
+    starved = []
 
     @functools.lru_cache(maxsize=None)
     def problem(path):
@@ -990,11 +992,14 @@ def cli_readiness(environ=os.environ) -> str | None:
             return "is a batch file, which cmd.exe would read the review's arguments through"
         left = min(60.0, budget - time.monotonic())
         if left <= 0:
+            starved.append(path)
             return "--help timed out: doctor's %d-second probe budget ran out" % PROBE_BUDGET_SECONDS
         try:
             shown = subprocess.run([path, "--help"], capture_output=True, text=True, timeout=left,
                                    stdin=subprocess.DEVNULL, errors="replace").stdout
         except subprocess.TimeoutExpired:
+            if left < 60:
+                starved.append(path)
             return "--help timed out after %d seconds" % left
         except (OSError, subprocess.SubprocessError) as error:
             return "cannot launch --help: %s" % error
@@ -1024,6 +1029,9 @@ def cli_readiness(environ=os.environ) -> str | None:
             os.path.dirname(later[0]), os.path.dirname(first), later[0])
     elif later:
         fix = "set CLAUDE_CLI_BIN=%s" % later[0]
+    elif starved:
+        fix = ("doctor's probe budget ran out before %s answered; run each with --help, then set "
+               "CLAUDE_CLI_BIN to one that works" % ", ".join(starved))
     elif why.startswith("cannot launch"):
         fix = "reinstall claude, or set CLAUDE_CLI_BIN to a working executable"
     elif why.startswith("--help timed out"):
@@ -1189,7 +1197,10 @@ def main(argv=None, result_sink=None) -> int:
             if execution["termination"] == "copy_failed":
                 raise BridgeError("Claude never ran: " + execution["stderr"])
             if execution["termination"] == "run_failed":
-                raise BridgeError("Claude ran, then its supervision failed: " + execution["stderr"])
+                # An empty `handed`: run() failed before its launch (a full TMPDIR), nothing ran.
+                # Only the tail: the usage record keeps the whole stderr.
+                raise BridgeError(("Claude ran, then its supervision failed: " if handed else
+                                   "Claude did not start: ") + execution["stderr"][-4000:])
             if reason and (execution["exit_code"] != 0 or execution["termination"]):
                 raise BridgeError(f"Claude exited {execution['exit_code']} ({reason}); inspect archived evidence")
             # A snapshot that cannot be taken (the reference was deleted) is a changed checkout

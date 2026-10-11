@@ -177,8 +177,11 @@ def main(argv=None, result_sink=None):
                     reason = reason or "stale_checkout"
             except (OSError, ValueError, BridgeError):
                 reason = reason or "stale_checkout"
-            if reason == "run_failed":
-                final += "\nCodex ran, then its supervision failed: " + execution["stderr"]
+            # The adapter's diagnostic, kept out of the reviewer's text, and only its tail: the
+            # usage record keeps the whole stderr. An empty `handed`: nothing was launched.
+            failure = ("\n\n## Failure\n\n" + ("Codex ran, then its supervision failed: " if handed
+                       else "Codex did not start: ") + execution["stderr"][-4000:]
+                       if reason == "run_failed" else "")
             verdicts = re.findall(r"^VERDICT: (Accept|Accept with Manual Checks|Reject)[ \t]*$", final, re.M)
             declarations = re.findall(r"^[ \t]*VERDICT[ \t]*:.*$", final, re.M)
             if not reason and (len(verdicts) != 1 or len(declarations) != 1
@@ -209,7 +212,7 @@ def main(argv=None, result_sink=None):
                   "status": status, "failure_kind": reason}
         metadata = dict(header)
         report_text = agent_usage.report(stamp, header, verdicts[0] if status == "completed" else None,
-            final or "No final message. Inspect the local usage record for diagnostics.")
+            final + failure or "No final message. Inspect the local usage record for diagnostics.")
         archived = None
         try:
             agent_usage.write_evidence(repo, report, report_text, private=True)
@@ -229,7 +232,7 @@ def main(argv=None, result_sink=None):
         def persist_cancel(usage):
             header.update(status="failed", failure_kind="cancelled")
             text = agent_usage.report(stamp, header, None,
-                final or "No final message. Inspect the local usage record for diagnostics.")
+                final + failure or "No final message. Inspect the local usage record for diagnostics.")
             try:
                 return agent_usage.relabel_cancelled(repo, path, archived, text), text
             except (OSError, ValueError) as error:

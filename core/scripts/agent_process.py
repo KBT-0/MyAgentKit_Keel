@@ -516,8 +516,12 @@ def _supervise(command, prompt, repo, timeout, started, guard, prior=None, into=
             # termination.
             # A cancel raised inside the wait, after the exit was seen but before it was
             # recorded here, is the same case: a non-reaping look settles it.
+            # A look that fails is no exit seen: the cancel stands, never a run_failed.
             if child is not None and not exited and not termination:
-                exited = _exited_unreaped(child, 0)
+                try:
+                    exited = _exited_unreaped(child, 0)
+                except OSError:
+                    pass
             if termination or child is None or not exited:
                 termination = "cancelled"
         except OSError as error:
