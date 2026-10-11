@@ -6,6 +6,7 @@ adapter would run, its working directory and the records it writes are what is c
 """
 import argparse
 import contextlib
+import errno
 import io
 import json
 import os
@@ -79,6 +80,129 @@ class ClaudeSandboxTests(unittest.TestCase):
         with patch.object(claude_bridge.agent_process, 'run', run or fake),                 contextlib.redirect_stdout(io.StringIO()):
             code = claude_bridge.main(argv, results.append)
         return code, results[-1] if results else None, launches
+
+    def review(self, bridge, run=None):
+        if bridge is claude_bridge:
+            return self.bridge('review', run=run)[:2]
+        results = []
+
+        def fake(command, *a, **k):
+            Path(command[command.index('-o') + 1]).write_text('VERDICT: Accept\n', newline='\n')
+            return {'exit_code': 0, 'stdout': '{"type":"turn.completed"}\n', 'stderr': '',
+                    'termination': None, 'cancelled': False, 'duration_ms': 1}
+        with patch.object(codex_bridge.agent_process, 'run', run or fake), \
+                contextlib.redirect_stdout(io.StringIO()):
+            code = codex_bridge.main(['--repo', str(self.repo), '--model', 'fixture-codex',
+                                      '--uncommitted'], results.append)
+        return code, results[-1] if results else None
+
+    def lock_refusal(self, error):
+        return patch('msvcrt.locking' if os.name == 'nt' else 'fcntl.flock', side_effect=error)
+
+    def test_a_run_os_error_is_never_recorded_as_a_copy_failure(self):
+        def broken(*a, **k):
+            raise OSError(errno.EIO, 'paid run failed')
+        code, result = self.review(claude_bridge, run=broken)
+        self.assertEqual(code, 2)
+        self.assertIsNone(result, 'a run error was falsely recorded as never launched')
+        with self.assertRaises(OSError):
+            self.review(codex_bridge, run=broken)
+        self.assertEqual(list(self.temp.iterdir()), [])
+
+    def test_scratch_setup_errors_are_recorded_and_leave_no_folder_or_lock(self):
+        never = lambda *a, **k: self.fail('the reviewer ran without its copy')
+        for bridge in (claude_bridge, codex_bridge):
+            for fault in ('mkdtemp', 'lock', 'marker'):
+                with self.subTest(reviewer=bridge.__name__, fault=fault):
+                    error = OSError(errno.EACCES, 'scratch setup denied')
+                    if fault == 'mkdtemp':
+                        original = tempfile.mkdtemp
+
+                        def denied(*a, **k):
+                            if k.get('prefix', '').startswith('myagentkit-'):
+                                raise error
+                            return original(*a, **k)
+                        refusal = patch.object(tempfile, 'mkdtemp', side_effect=denied)
+                    elif fault == 'lock':
+                        refusal = self.lock_refusal(error)
+                    else:
+                        @contextlib.contextmanager
+                        def collision(path, create=False):
+                            Path(path + '.lock').write_text('existing marker')
+                            raise FileExistsError('marker exists')
+                            yield
+                        refusal = patch.object(claude_bridge, 'scratch_lock', collision)
+                    with refusal:
+                        code, result = self.review(bridge, run=never)
+                    self.assertEqual(code, 5, result)
+                    self.assertEqual(result['failure_kind'], 'copy_failed')
+                    self.assertTrue(Path(result['evidence']).is_file())
+                    record = json.loads(Path(result['usage_record']).read_text())
+                    self.assertEqual(record['failure_kind'], 'copy_failed')
+                    self.assertEqual(list(self.temp.iterdir()), [], 'scratch setup leaked')
+
+    def test_reviews_complete_when_the_temp_filesystem_refuses_locks(self):
+        for bridge in (claude_bridge, codex_bridge):
+            for refused in (errno.ENOLCK, errno.EOPNOTSUPP, errno.ENOSYS):
+                with self.subTest(reviewer=bridge.__name__, errno=refused), \
+                        self.lock_refusal(OSError(refused, 'no locks')):
+                    code, result = self.review(bridge)
+                self.assertEqual(code, 0, result)
+                self.assertTrue(Path(result['usage_record']).is_file())
+                self.assertEqual(list(self.temp.iterdir()), [])
+
+    def test_lockless_scratch_folders_fall_back_to_age_only_sweeping(self):
+        old = time.time() - claude_bridge.STALE_SCRATCH_SECONDS - 60
+        for prefix in ('myagentkit-review-', 'myagentkit-codex-'):
+            with self.subTest(prefix=prefix), \
+                    self.lock_refusal(OSError(errno.ENOLCK, 'no locks')):
+                with claude_bridge.scratch(prefix) as path:
+                    folder = Path(path)
+                    marker = Path(path + '.lock')
+                    self.assertEqual(marker.read_bytes(), b'age-only\n')
+                    claude_bridge.sweep(prefix)
+                    self.assertTrue(folder.is_dir(), 'a young lockless copy was swept')
+                    os.utime(folder, (old, old))
+                    claude_bridge.sweep(prefix)
+                    self.assertFalse(folder.exists())
+                self.assertFalse(marker.exists())  # Windows keeps it until the handle closes.
+
+    def test_cli_readiness_probes_each_path_only_once(self):
+        paths = os.pathsep.join(['first', 'later', 'later'])
+        with patch.object(claude_bridge.shutil, 'which',
+                          side_effect=lambda name, path: 'later-cli' if path == 'later' else 'hung-cli'), \
+                patch.object(claude_bridge.subprocess, 'run',
+                             side_effect=subprocess.TimeoutExpired('cli', 60)) as run:
+            self.assertIn('timed out', claude_bridge.cli_readiness({'PATH': paths}))
+        self.assertEqual([call.args[0] for call in run.call_args_list],
+                         [['hung-cli', '--help'], ['later-cli', '--help']])
+
+    def test_sweep_keeps_a_young_folder_with_an_unheld_lock(self):
+        folder = self.temp / 'myagentkit-review-young'
+        folder.mkdir()
+        with claude_bridge.scratch_lock(str(folder), create=True):
+            pass
+        claude_bridge.sweep('myagentkit-review-')
+        self.assertTrue(folder.is_dir(), 'the sweep removed a copy before its lock was acquired')
+        self.assertTrue(Path(str(folder) + '.lock').is_file())
+
+    def test_sweep_removes_only_old_unheld_orphan_lock_files(self):
+        old = time.time() - claude_bridge.STALE_SCRATCH_SECONDS - 60
+        orphan = self.temp / 'myagentkit-review-orphan'
+        held = self.temp / 'myagentkit-review-held'
+        young = self.temp / 'myagentkit-review-young.lock'
+        young.write_bytes(b'0')
+        with claude_bridge.scratch_lock(str(orphan), create=True):
+            pass
+        os.utime(str(orphan) + '.lock', (old, old))
+        with claude_bridge.scratch_lock(str(held), create=True):
+            os.utime(str(held) + '.lock', (old, old))
+            claude_bridge.sweep('myagentkit-review-')
+            self.assertFalse(Path(str(orphan) + '.lock').exists())
+            self.assertTrue(Path(str(held) + '.lock').is_file(), 'a held orphan lock was removed')
+            self.assertTrue(young.is_file(), 'a young orphan lock was removed')
+        claude_bridge.sweep('myagentkit-review-')
+        self.assertFalse(Path(str(held) + '.lock').exists())
 
     def test_the_review_command_sandboxes_bash_or_offers_none(self):
         for sandboxed in (True, False):
@@ -193,6 +317,10 @@ class ClaudeSandboxTests(unittest.TestCase):
         self.assertIn('cannot launch', problem)
         self.assertIn('invalid executable', problem)
         self.assertIn('|', problem)
+        fix = problem.split('|', 1)[1]
+        self.assertIn('reinstall', fix)
+        self.assertIn('working executable', fix)
+        self.assertNotIn('claude update', fix)
 
     def test_cli_readiness_reports_help_timeout(self):
         with patch.object(claude_bridge.shutil, 'which', return_value='hung-cli'), \
@@ -202,6 +330,10 @@ class ClaudeSandboxTests(unittest.TestCase):
         self.assertIsNotNone(problem)
         self.assertIn('timed out', problem)
         self.assertIn('|', problem)
+        fix = problem.split('|', 1)[1]
+        self.assertIn('first-run', fix)
+        self.assertIn('retry', fix)
+        self.assertNotIn('claude update', fix)
 
     def test_sweep_keeps_a_live_copy_with_an_old_directory_timestamp(self):
         old = time.time() - claude_bridge.STALE_SCRATCH_SECONDS - 60

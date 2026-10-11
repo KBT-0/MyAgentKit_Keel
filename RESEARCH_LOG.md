@@ -21,6 +21,26 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-10-10 — A live review copy can have an old timestamp (#39)
+
+Archive extraction can restore an old directory timestamp while the reviewer is still
+running. Age alone therefore cannot distinguish a live copy from one a killed adapter
+left behind. A lifetime lock beside the copy, outside extraction, protects the live copy;
+the age guard also protects the interval between creating the marker and acquiring its lock.
+An old orphan marker is removed only after taking its lock. Unmarked copies from older
+adapters cannot prove inactivity, so owners remove them while no review runs and update
+the copied scripts and plugin together: older sweepers do not respect the lifetime lock.
+
+Some temporary filesystems refuse locking. Those copies explicitly fall back to age-only
+sweeping, accepting the old-timestamp limitation so a host does not fail every review.
+Other scratch setup failures must remove the folder and marker and write failure evidence
+and usage, just like a failed copy. The preparation handler must exclude the reviewer run:
+an I/O error after launch is no evidence that the model never ran or incurred no cost.
+
+Doctor's help probe also needs a per-path cache: retrying a timed-out first executable
+through the alternative-selection path doubled the wait, and repeated PATH entries added
+more waits. Launch failures and timeouts need different remedies from missing CLI flags.
+
 ### 2026-10-09 — The Claude reviewer's Bash could write the repository (#39)
 
 The bridged reviewers execute in a throwaway copy, but only Codex had an operating-system

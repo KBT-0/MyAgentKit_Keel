@@ -43,15 +43,22 @@ subtracts, the kit's `core/.gitignore`). Total live spend: about 0.12 USD.
   `claude_bridge.claude_command(..., sandboxed=True)` in a throwaway copy. The prompt asked
   Bash for three commands. `echo inside > ./inside.txt` succeeded in the copy.
   `echo pwned > <a sibling directory outside the copy>/pwned.txt` failed with
-  "read-only file system"; the file did not exist afterwards.
+  "read-only file system"; the file did not exist afterwards. This sibling directory stood
+  in for the repository, since the sandbox allows writes only under the working directory;
+  the probe did not target the real repository's absolute path. Repository containment is
+  inferred from the same write rule.
   `curl -sS -m 5 https://example.com` was refused with 403 because the host was not on
   the sandbox network allowlist. This establishes operating-system write and network
-  containment on WSL2 Debian. macOS was not covered.
-- Offline, on this host: `tests/test_claude_sandbox.py` (6 tests: the review command per
-  host, no Bash on native Windows, a proposal without a scratch folder, a copy failure
-  recorded as `copy_failed` by both adapters, `sandbox_unavailable`, the stale-copy sweep)
-  and `tests/test_doctor.py` (the old-CLI and `claude.cmd` cases), each seen red on the old
-  code first.
+  containment for the tested directories on WSL2 Debian. Native Linux and macOS were not covered.
+- Offline, on native Windows: `tests/test_claude_sandbox.py` (17 tests: the review command
+  per host, no Bash on native Windows, a proposal without scratch, recorded copy failures,
+  `sandbox_unavailable`, recorded copy OS errors, help launch failure, help timeout, a live
+  copy with an old timestamp, stale-copy sweeping, run errors outside copy handling,
+  recorded scratch setup errors and cleanup, reviews on lock-refusing filesystems, age-only
+  fallback sweeping, one help probe per path, the young unheld-lock age guard, and orphan
+  lock sweeping). The new behavioural regressions failed before these fixes; removing the
+  age guard failed the young-folder test. `tests/test_doctor.py` covers the old-CLI and
+  `claude.cmd` cases.
 
 **Superseded:** the fresh Claude review of the combined delta from `c358c917` (and the
 separate `842e78d` scope) is no longer run: that code has since been reviewed again by the
@@ -59,7 +66,9 @@ Claude reviews of v0.11 on 2026-10-09, which cover the current source.
 
 **NOT RUN**
 
-- Live Bash write and network containment on macOS. The 2026-10-10 probe covered WSL2 Debian.
+- Live Bash write and network containment on native Linux and macOS: NOT RUN. The
+  2026-10-10 probe covered WSL2 Debian and a sibling standing in for the repository.
+- A live sandboxed Bash write to the real repository by absolute path: NOT RUN.
 - `core/scripts/test_claude_bridge.py` and the POSIX-only parts of `tests/test_doctor.py`
   (the Linux `bubblewrap` and `socat` check, the old CLI earlier on PATH than a newer one):
   POSIX hosts only; CI's Linux and macOS jobs run them.

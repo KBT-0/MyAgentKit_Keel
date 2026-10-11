@@ -2,6 +2,7 @@
 """Collect bounded Codex review evidence before recording completion and usage."""
 import argparse
 from datetime import datetime, timezone
+import contextlib
 import hashlib
 import json
 import os
@@ -78,12 +79,14 @@ def main(argv=None, result_sink=None):
         # The reviewer's workspace is a throwaway copy inside this directory, removed with it
         # on every way out (threat model: claude_bridge.throwaway_copy). Its sandbox confines
         # writes to the copy and the temporary directories and keeps the network off.
-        review_tmpdir(repo)
-        with scratch("myagentkit-codex-") as tmp:
-            last = Path(tmp) / "final.txt"
-            workdir = Path(tmp) / "copy"
+        with contextlib.ExitStack() as copies:
+            last = None
             prepared = None
             try:
+                review_tmpdir(repo)
+                tmp = copies.enter_context(scratch("myagentkit-codex-"))
+                last = Path(tmp) / "final.txt"
+                workdir = Path(tmp) / "copy"
                 workdir.mkdir()
                 throwaway_copy(repo, head, diff if scope == "uncommitted" else None, workdir,
                                deadline=deadline)
@@ -156,7 +159,7 @@ def main(argv=None, result_sink=None):
                 recovered, reason = reason, None
             final = ""
             try:
-                if last.is_file():
+                if last is not None and last.is_file():
                     with last.open("rb") as stream:
                         raw = stream.read(8_000_001)
                     if len(raw) > 8_000_000:

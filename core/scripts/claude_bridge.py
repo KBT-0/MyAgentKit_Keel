@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import errno
+import functools
 import hashlib
 import json
 import os
@@ -97,15 +99,27 @@ def scratch_lock(path: str, create: bool = False):
     if create:
         flags |= os.O_CREAT | os.O_EXCL
     with os.fdopen(os.open(marker, flags, 0o600), "r+b", buffering=0) as lock:
-        if os.name == "nt":
-            import msvcrt
+        try:
+            if os.name == "nt":
+                import msvcrt
+                if create:
+                    lock.write(b"0")
+                    lock.seek(0)
+                msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as error:
+            if error.errno not in (errno.ENOLCK, errno.EOPNOTSUPP, errno.ENOSYS):
+                raise
+            # Some temporary filesystems refuse locks. Only these folders fall back to
+            # age-only sweeping, which cannot protect a live copy with an old timestamp.
             if create:
-                lock.write(b"0")
                 lock.seek(0)
-            msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
-        else:
-            import fcntl
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                lock.write(b"age-only\n")
+                lock.truncate()
+            elif lock.read() != b"age-only\n":
+                raise
         yield
 
 
@@ -115,8 +129,9 @@ def sweep(prefix: str) -> None:
     A SIGKILL (or a power loss) skips scratch()'s cleanup, and the reviewer's copy of the
     source stayed in the temporary directory for good. Only a real directory this user owns,
     named with this adapter's prefix and unmodified for STALE_SCRATCH_SECONDS, is removed
-    after its lifetime lock is acquired. Unmarked legacy folders are kept: their age cannot
-    prove inactivity. Never a symlink, another account's folder or a running review's copy.
+    after its lifetime lock is acquired (age alone on a filesystem that refuses locks).
+    Unmarked legacy folders are kept: their age cannot prove inactivity. Symlinks and other
+    accounts' folders are kept too; a held lock protects a running review's copy.
     """
     parent = tempfile.gettempdir()
     try:
@@ -129,13 +144,19 @@ def sweep(prefix: str) -> None:
             status = os.lstat(path)
         except OSError:
             continue
-        if (stat.S_ISDIR(status.st_mode)
-                and (not hasattr(os, "getuid") or status.st_uid == os.getuid())
+        if ((not hasattr(os, "getuid") or status.st_uid == os.getuid())
                 and time.time() - status.st_mtime > STALE_SCRATCH_SECONDS):
+            orphan = (stat.S_ISREG(status.st_mode) and name.endswith(".lock")
+                      and not os.path.lexists(path[:-5]))
+            if orphan:
+                path = path[:-5]
+            elif not stat.S_ISDIR(status.st_mode):
+                continue
             try:
                 with scratch_lock(path):
-                    shutil.rmtree(path, ignore_errors=True)
-                if not os.path.exists(path):
+                    if not orphan:
+                        shutil.rmtree(path, ignore_errors=True)
+                if not os.path.lexists(path):
                     os.unlink(path + ".lock")
             except OSError:
                 continue  # live, unmarked or inaccessible: leave it alone
@@ -151,8 +172,9 @@ def scratch(prefix: str):
     sweep(prefix)
     path = tempfile.mkdtemp(prefix=prefix)
     try:
-        with scratch_lock(path, create=True):
+        with contextlib.ExitStack() as locks:
             try:
+                locks.enter_context(scratch_lock(path, create=True))
                 yield path
             finally:
                 shutil.rmtree(path, ignore_errors=True)
@@ -944,6 +966,7 @@ def cli_readiness(environ=os.environ) -> str | None:
     flags = sorted({part for part in claude_command("claude", probe, sandboxed=True)[0]
                     if part.startswith("--")} - HIDDEN_FLAGS)
 
+    @functools.lru_cache(maxsize=None)
     def problem(path):
         if path.lower().endswith((".cmd", ".bat")):
             return "is a batch file, which cmd.exe would read the review's arguments through"
@@ -980,6 +1003,10 @@ def cli_readiness(environ=os.environ) -> str | None:
             os.path.dirname(later[0]), os.path.dirname(first), later[0])
     elif later:
         fix = "set CLAUDE_CLI_BIN=%s" % later[0]
+    elif why.startswith("cannot launch"):
+        fix = "reinstall claude, or set CLAUDE_CLI_BIN to a working executable"
+    elif why.startswith("--help timed out"):
+        fix = "check claude --help for a first-run prompt or a hung process, then retry doctor"
     else:
         fix = ("update claude (claude update, or npm install -g @anthropic-ai/claude-code)%s"
                % (", or set CLAUDE_CLI_BIN to a newer one" if named else ""))
@@ -1093,30 +1120,32 @@ def main(argv=None, result_sink=None) -> int:
         held = agent_process.hold(lambda signum, frame: cancelled.append(signum))
         deadline = time.monotonic() + args.timeout
         # Removed when the attempt ends: a cancel is only noted here, so it reaches the cleanup.
-        if args.mode == "review":
-            review_tmpdir(repo)
         # A proposal runs in the checkout and makes no scratch folder.
-        with (scratch("myagentkit-review-") if args.mode == "review" else contextlib.nullcontext()) as copy:
+        with contextlib.ExitStack() as copies:
             workdir = repo
+            execution = None
             # A preparation that uses up the deadline is a timeout like any other: it is
             # recorded as one, so --fallback may try the other reviewer. A copy that cannot be
             # made is recorded too, as copy_failed, which never falls back: the other reviewer
             # would get the same copy. It once ended the adapter with exit 2 and no record.
             try:
                 if args.mode == "review":
+                    review_tmpdir(repo)
+                    copy = copies.enter_context(scratch("myagentkit-review-"))
                     workdir = Path(copy)
                     throwaway_copy(repo, head, diff if scope == "uncommitted" else None, workdir,
                                    cancelled=cancelled, deadline=deadline)
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     raise BridgeError("the review wall-clock limit passed during preparation")
-                execution = agent_process.run(command, prompt, workdir, remaining, noted=cancelled)
             except (BridgeError, OSError) as error:
                 if cancelled:
                     raise
                 execution = {"exit_code": None, "stdout": "", "stderr": str(error),
                              "termination": "timeout" if time.monotonic() >= deadline else "copy_failed",
                              "cancelled": False, "duration_ms": 0}
+            if execution is None:
+                execution = agent_process.run(command, prompt, workdir, remaining, noted=cancelled)
         if execution.pop("cancelled", False):
             cancelled.append(True)
         evidence.update(execution)

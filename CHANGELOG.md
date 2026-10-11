@@ -30,12 +30,21 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   cannot cause a live copy to be swept; unmarked legacy folders are kept. A proposal makes
   no temporary folder. A copy that cannot be made, including an operating-system error,
   is a recorded failure (`copy_failed`, with evidence and a usage record) in both adapters.
+  Scratch setup failures are recorded too and cleaned up; filesystems that refuse locks
+  use age-only sweeping for those folders. Old orphan lock files are swept after acquiring
+  their lock. Errors from a running reviewer are never labelled as copy failures.
+  **ACTION:** update both the copied core scripts and the plugin to the same kit version;
+  an older adapter still sweeps by age alone and can remove a new adapter's live copy.
+  While no review is running, delete leftover `myagentkit-review-*` and `myagentkit-codex-*`
+  temporary folders that have no `.lock` sibling; these unmarked legacy copies are kept.
 - **doctor finds a claude CLI the review cannot use** (`scripts/doctor.sh`): one too old for
   a flag the review passes (the winget claude 2.1.218 lacked `--restricted`), or npm's
   `claude.cmd` on native Windows, or a CLI whose help probe cannot launch or times out,
   first on PATH or named by `CLAUDE_CLI_BIN`, is MISSING
   with the binary to put first or the `CLAUDE_CLI_BIN` to set. **ACTION:** copy
   `$KIT/core/scripts/doctor.sh` to `scripts/doctor.sh` and run it.
+  Each executable's help is probed once per doctor run; launch failures suggest reinstalling
+  or selecting a working executable, and timeouts suggest checking first-run prompts and retrying.
 
 - **A review no longer dies on the kit's own limits** (`agent_process.py`, the adapters,
   `review.sh`): a review attempt now gets 3600 seconds (maximum 7200) and a Claude review
