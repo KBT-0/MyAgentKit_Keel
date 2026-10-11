@@ -84,6 +84,11 @@ def git(repo: Path, *args: str, allowed=(0,), stdin: bytes | None = None, env: d
 
 # Dead scratch folders wait out the longest review plus an hour for evidence and usage writes.
 STALE_SCRATCH_SECONDS = agent_process.MAX_REVIEW_TIMEOUT + 3600
+# Lock refusals of a filesystem without lock support; macOS tells ENOTSUP (45) from
+# EOPNOTSUPP (102), Linux gives both one number.
+LOCKLESS = {errno.ENOLCK, errno.EOPNOTSUPP, getattr(errno, "ENOTSUP", errno.EOPNOTSUPP), errno.ENOSYS}
+SCRATCH_ATTEMPTS = 5
+PROBE_BUDGET_SECONDS = 90  # every --help probe of one doctor run together
 
 
 @contextlib.contextmanager
@@ -110,16 +115,12 @@ def scratch_lock(path: str, create: bool = False):
                 import fcntl
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError as error:
-            if error.errno not in (errno.ENOLCK, errno.EOPNOTSUPP, errno.ENOSYS):
-                raise
-            # Some temporary filesystems refuse locks. Only these folders fall back to
-            # age-only sweeping, which cannot protect a live copy with an old timestamp.
-            if create:
-                lock.seek(0)
-                lock.write(b"age-only\n")
-                lock.truncate()
-            elif lock.read() != b"age-only\n":
-                raise
+            # The owner's decision (2026-10-11): no age-only fallback, which could sweep a
+            # live copy with an old timestamp; a review there fails as copy_failed.
+            if error.errno in LOCKLESS:
+                raise OSError(error.errno, "the temporary directory %s refuses file locks; set "
+                              "TMPDIR to a filesystem with lock support" % os.path.dirname(marker))
+            raise
         yield
 
 
@@ -129,7 +130,7 @@ def sweep(prefix: str) -> None:
     A SIGKILL (or a power loss) skips scratch()'s cleanup, and the reviewer's copy of the
     source stayed in the temporary directory for good. Only a real directory this user owns,
     named with this adapter's prefix and unmodified for STALE_SCRATCH_SECONDS, is removed
-    after its lifetime lock is acquired (age alone on a filesystem that refuses locks).
+    after its lifetime lock is acquired.
     Unmarked legacy folders are kept: their age cannot prove inactivity. Symlinks and other
     accounts' folders are kept too; a held lock protects a running review's copy.
     """
@@ -170,11 +171,26 @@ def scratch(prefix: str):
     a completed, paid review was lost with its verdict; what cannot be removed stays behind.
     The folders a killed adapter left with the same prefix are removed first (sweep)."""
     sweep(prefix)
-    path = tempfile.mkdtemp(prefix=prefix)
+    locks = contextlib.ExitStack()
+    for attempt in range(SCRATCH_ATTEMPTS):
+        path = tempfile.mkdtemp(prefix=prefix)
+        try:
+            locks.enter_context(scratch_lock(path, create=True))
+            break
+        except FileExistsError:
+            # A marker this run did not create (another account can watch a shared /tmp):
+            # never remove it; pick another folder.
+            shutil.rmtree(path, ignore_errors=True)
+            if attempt == SCRATCH_ATTEMPTS - 1:
+                raise
+        except BaseException:
+            shutil.rmtree(path, ignore_errors=True)
+            with contextlib.suppress(OSError):
+                os.unlink(path + ".lock")
+            raise
     try:
-        with contextlib.ExitStack() as locks:
+        with locks:
             try:
-                locks.enter_context(scratch_lock(path, create=True))
                 yield path
             finally:
                 shutil.rmtree(path, ignore_errors=True)
@@ -965,16 +981,21 @@ def cli_readiness(environ=os.environ) -> str | None:
                                max_budget_usd=1.0)
     flags = sorted({part for part in claude_command("claude", probe, sandboxed=True)[0]
                     if part.startswith("--")} - HIDDEN_FLAGS)
+    # One budget for every probe: each hung claude on PATH once cost doctor 60 more seconds.
+    budget = time.monotonic() + PROBE_BUDGET_SECONDS
 
     @functools.lru_cache(maxsize=None)
     def problem(path):
         if path.lower().endswith((".cmd", ".bat")):
             return "is a batch file, which cmd.exe would read the review's arguments through"
+        left = min(60.0, budget - time.monotonic())
+        if left <= 0:
+            return "--help timed out: doctor's %d-second probe budget ran out" % PROBE_BUDGET_SECONDS
         try:
-            shown = subprocess.run([path, "--help"], capture_output=True, text=True, timeout=60,
+            shown = subprocess.run([path, "--help"], capture_output=True, text=True, timeout=left,
                                    stdin=subprocess.DEVNULL, errors="replace").stdout
         except subprocess.TimeoutExpired:
-            return "--help timed out after 60 seconds"
+            return "--help timed out after %d seconds" % left
         except (OSError, subprocess.SubprocessError) as error:
             return "cannot launch --help: %s" % error
         lacking = [flag for flag in flags if not re.search(r"(?<![\w-])%s(?![\w-])" % re.escape(flag), shown)]
@@ -1010,7 +1031,9 @@ def cli_readiness(environ=os.environ) -> str | None:
     else:
         fix = ("update claude (claude update, or npm install -g @anthropic-ai/claude-code)%s"
                % (", or set CLAUDE_CLI_BIN to a newer one" if named else ""))
-    return "the claude CLI %s (%s) %s|%s" % (where, first, why, fix)
+    # doctor.sh splits the line at its first '|'; a newline would end its MISSING line.
+    what = re.sub(r"[|\x00-\x1f\x7f]", " ", "the claude CLI %s (%s) %s" % (where, first, why))
+    return "%s|%s" % (what, re.sub(r"[\x00-\x1f\x7f]", " ", fix))
 
 
 def main(argv=None, result_sink=None) -> int:

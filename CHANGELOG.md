@@ -17,9 +17,10 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   proposal, and live permission and customization probes, passed on native Windows.
   On 2026-10-10, Bash write and network containment passed on WSL2 Debian; macOS is not covered.
 - **The Claude reviewer's shell is sandboxed, or absent** (issue #39; `claude_bridge.py`,
-  `review.sh`): on macOS, Linux and WSL2 its Bash runs in Claude Code's own sandbox, which
-  allows writes only in the throwaway copy and Claude Code's temporary directory, allows no
-  network, never retries a command outside it, and stops the review at startup where it
+  `review.sh`): on macOS, Linux and WSL2 its Bash is enforced by Claude Code's sandbox;
+  verified live on WSL2 only. The sandbox allows writes only in the throwaway copy and Claude
+  Code's temporary directory, allows no network, never retries a command outside it, and
+  stops the review at startup where it
   cannot start (`sandbox_unavailable`, never a fallback). On native Windows, where Claude
   Code has no sandbox, the Claude reviewer gets no Bash: it reads the copy and marks its
   findings REASONED. A reviewer that found the repository by its absolute path could
@@ -30,8 +31,12 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   cannot cause a live copy to be swept; unmarked legacy folders are kept. A proposal makes
   no temporary folder. A copy that cannot be made, including an operating-system error,
   is a recorded failure (`copy_failed`, with evidence and a usage record) in both adapters.
-  Scratch setup failures are recorded too and cleaned up; filesystems that refuse locks
-  use age-only sweeping for those folders. Old orphan lock files are swept after acquiring
+  Scratch setup failures are recorded too and cleaned up. By the owner's decision, a
+  temporary filesystem that refuses locks fails each review as `copy_failed`, whose message
+  says to set `TMPDIR` to a filesystem with lock support; there is no age-only fallback. A
+  `.lock` the adapter did not create is never removed: it picks another folder. A `TMPDIR`
+  inside the reviewed repository is now a recorded `copy_failed` (exit 5, evidence and a
+  usage record), not exit 2 without a record. Old orphan lock files are swept after acquiring
   their lock. Errors from a running reviewer are never labelled as copy failures.
   **ACTION:** update both the copied core scripts and the plugin to the same kit version;
   an older adapter still sweeps by age alone and can remove a new adapter's live copy.
@@ -43,8 +48,9 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   first on PATH or named by `CLAUDE_CLI_BIN`, is MISSING
   with the binary to put first or the `CLAUDE_CLI_BIN` to set. **ACTION:** copy
   `$KIT/core/scripts/doctor.sh` to `scripts/doctor.sh` and run it.
-  Each executable's help is probed once per doctor run; launch failures suggest reinstalling
-  or selecting a working executable, and timeouts suggest checking first-run prompts and retrying.
+  Each executable's help is probed once per doctor run, and all probes share one 90-second
+  budget; launch failures suggest reinstalling or selecting a working executable, and timeouts
+  suggest checking first-run prompts and retrying.
 
 - **A review no longer dies on the kit's own limits** (`agent_process.py`, the adapters,
   `review.sh`): a review attempt now gets 3600 seconds (maximum 7200) and a Claude review

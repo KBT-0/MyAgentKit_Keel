@@ -112,7 +112,7 @@ class ClaudeSandboxTests(unittest.TestCase):
     def test_scratch_setup_errors_are_recorded_and_leave_no_folder_or_lock(self):
         never = lambda *a, **k: self.fail('the reviewer ran without its copy')
         for bridge in (claude_bridge, codex_bridge):
-            for fault in ('mkdtemp', 'lock', 'marker'):
+            for fault in ('mkdtemp', 'lock'):
                 with self.subTest(reviewer=bridge.__name__, fault=fault):
                     error = OSError(errno.EACCES, 'scratch setup denied')
                     if fault == 'mkdtemp':
@@ -123,15 +123,8 @@ class ClaudeSandboxTests(unittest.TestCase):
                                 raise error
                             return original(*a, **k)
                         refusal = patch.object(tempfile, 'mkdtemp', side_effect=denied)
-                    elif fault == 'lock':
-                        refusal = self.lock_refusal(error)
                     else:
-                        @contextlib.contextmanager
-                        def collision(path, create=False):
-                            Path(path + '.lock').write_text('existing marker')
-                            raise FileExistsError('marker exists')
-                            yield
-                        refusal = patch.object(claude_bridge, 'scratch_lock', collision)
+                        refusal = self.lock_refusal(error)
                     with refusal:
                         code, result = self.review(bridge, run=never)
                     self.assertEqual(code, 5, result)
@@ -141,31 +134,91 @@ class ClaudeSandboxTests(unittest.TestCase):
                     self.assertEqual(record['failure_kind'], 'copy_failed')
                     self.assertEqual(list(self.temp.iterdir()), [], 'scratch setup leaked')
 
-    def test_reviews_complete_when_the_temp_filesystem_refuses_locks(self):
+    def test_a_temp_filesystem_that_refuses_locks_fails_the_review_with_a_record(self):
+        # The owner's decision (2026-10-11): no age-only fallback; macOS refuses with ENOTSUP.
+        refusals = {errno.ENOLCK, errno.EOPNOTSUPP, errno.ENOSYS, getattr(errno, 'ENOTSUP', errno.ENOLCK)}
+        never = lambda *a, **k: self.fail('the reviewer ran without a lifetime lock')
         for bridge in (claude_bridge, codex_bridge):
-            for refused in (errno.ENOLCK, errno.EOPNOTSUPP, errno.ENOSYS):
+            for refused in sorted(refusals):
                 with self.subTest(reviewer=bridge.__name__, errno=refused), \
                         self.lock_refusal(OSError(refused, 'no locks')):
-                    code, result = self.review(bridge)
-                self.assertEqual(code, 0, result)
-                self.assertTrue(Path(result['usage_record']).is_file())
+                    code, result = self.review(bridge, run=never)
+                self.assertEqual(code, 5, result)
+                self.assertEqual(result['failure_kind'], 'copy_failed')
+                record = json.loads(Path(result['usage_record']).read_text())
+                self.assertEqual(record['failure_kind'], 'copy_failed')
+                self.assertIn('set TMPDIR to a filesystem with lock support', record['raw_stderr'])
                 self.assertEqual(list(self.temp.iterdir()), [])
 
-    def test_lockless_scratch_folders_fall_back_to_age_only_sweeping(self):
+    def test_lockless_scratch_folders_are_never_made_or_swept_by_age(self):
         old = time.time() - claude_bridge.STALE_SCRATCH_SECONDS - 60
         for prefix in ('myagentkit-review-', 'myagentkit-codex-'):
-            with self.subTest(prefix=prefix), \
-                    self.lock_refusal(OSError(errno.ENOLCK, 'no locks')):
-                with claude_bridge.scratch(prefix) as path:
-                    folder = Path(path)
-                    marker = Path(path + '.lock')
-                    self.assertEqual(marker.read_bytes(), b'age-only\n')
-                    claude_bridge.sweep(prefix)
-                    self.assertTrue(folder.is_dir(), 'a young lockless copy was swept')
-                    os.utime(folder, (old, old))
-                    claude_bridge.sweep(prefix)
-                    self.assertFalse(folder.exists())
-                self.assertFalse(marker.exists())  # Windows keeps it until the handle closes.
+            with self.subTest(prefix=prefix):
+                folder = self.temp / (prefix + 'old')
+                folder.mkdir()
+                with claude_bridge.scratch_lock(str(folder), create=True):
+                    pass
+                os.utime(folder, (old, old))
+                with self.lock_refusal(OSError(errno.ENOLCK, 'no locks')):
+                    with self.assertRaises(OSError) as refused:
+                        with claude_bridge.scratch(prefix):
+                            self.fail('a scratch folder was made without its lock')
+                self.assertIn('lock support', str(refused.exception))
+                self.assertTrue(folder.is_dir(), 'an old copy was swept by age alone')
+                self.assertEqual(sorted(p.name for p in self.temp.iterdir()),
+                                 sorted([folder.name, folder.name + '.lock']))
+                shutil.rmtree(folder)
+                os.unlink(str(folder) + '.lock')
+
+    def test_a_foreign_marker_is_kept_and_another_folder_picked(self):
+        original = claude_bridge.scratch_lock
+        planted = []
+
+        def planting(times):
+            def lock(path, create=False):
+                if create and len(planted) < times:
+                    # Another account creates the marker between mkdtemp and the O_EXCL open.
+                    Path(path + '.lock').write_text('foreign marker')
+                    planted.append(Path(path + '.lock'))
+                return original(path, create)
+            return lock
+        for times, code_wanted in ((1, 0), (claude_bridge.SCRATCH_ATTEMPTS, 5)):
+            for bridge in (claude_bridge, codex_bridge):
+                with self.subTest(collisions=times, reviewer=bridge.__name__):
+                    planted.clear()
+                    with patch.object(claude_bridge, 'scratch_lock', planting(times)):
+                        code, result = self.review(bridge)
+                    self.assertEqual(code, code_wanted, result)
+                    if code_wanted:
+                        self.assertEqual(result['failure_kind'], 'copy_failed')
+                    self.assertEqual(len(planted), times)
+                    for marker in planted:
+                        self.assertEqual(marker.read_text(), 'foreign marker', 'a foreign marker was removed')
+                        marker.unlink()
+                    self.assertEqual(list(self.temp.iterdir()), [], 'scratch setup leaked')
+
+    def test_cli_readiness_has_one_probe_budget_and_a_clean_missing_line(self):
+        clock = [0.0]
+        timeouts = []
+
+        def hung(command, timeout, **kw):
+            timeouts.append(timeout)
+            clock[0] += timeout
+            raise subprocess.TimeoutExpired(command, timeout)
+        paths = os.pathsep.join('dir%d' % n for n in range(5))
+        with patch.object(claude_bridge.shutil, 'which', side_effect=lambda name, path: path + '-cli'), \
+                patch.object(claude_bridge.time, 'monotonic', lambda: clock[0]), \
+                patch.object(claude_bridge.subprocess, 'run', side_effect=hung):
+            self.assertIn('timed out', claude_bridge.cli_readiness({'PATH': paths}))
+        self.assertLessEqual(sum(timeouts), claude_bridge.PROBE_BUDGET_SECONDS)
+        with patch.object(claude_bridge.shutil, 'which', return_value='broken-cli'), \
+                patch.object(claude_bridge.subprocess, 'run', side_effect=OSError('bad | pipe\nnext line')):
+            problem = claude_bridge.cli_readiness({'CLAUDE_CLI_BIN': 'broken-cli', 'PATH': ''})
+        what, fix = problem.split('|', 1)
+        self.assertNotIn('\n', problem)
+        self.assertIn('bad', what)
+        self.assertIn('next line', what)
+        self.assertIn('reinstall', fix)
 
     def test_cli_readiness_probes_each_path_only_once(self):
         paths = os.pathsep.join(['first', 'later', 'later'])

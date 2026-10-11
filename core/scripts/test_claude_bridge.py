@@ -3125,8 +3125,10 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                 claude_bridge.review_tmpdir(self.repo)
             self.assertIn('inside the reviewed repository', str(ctx.exception))
             code, result = self.run_bridge()
-            self.assertNotEqual(code, 0)
-            self.assertIn('inside the reviewed repository', json.dumps(result))
+            # Recorded since v0.11: evidence and a usage record, as a copy that was never made.
+            self.assertEqual((code, result['failure_kind']), (5, 'copy_failed'), result)
+            self.assertIn('inside the reviewed repository', result['error'])
+            self.assertTrue(Path(result['usage_record']).is_file())
             outcome = self.run_wrapper('--reviewer', 'codex', REVIEW_CLI_BIN=str(self.build_fake_codex()),
                                        REVIEW_CODEX_MODEL='fixture-codex-model', TMPDIR=str(inside))
             self.assertNotEqual(outcome.returncode, 0)

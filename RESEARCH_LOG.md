@@ -31,15 +31,19 @@ An old orphan marker is removed only after taking its lock. Unmarked copies from
 adapters cannot prove inactivity, so owners remove them while no review runs and update
 the copied scripts and plugin together: older sweepers do not respect the lifetime lock.
 
-Some temporary filesystems refuse locking. Those copies explicitly fall back to age-only
-sweeping, accepting the old-timestamp limitation so a host does not fail every review.
+Some temporary filesystems refuse locking (macOS reports ENOTSUP there, Linux EOPNOTSUPP).
+An age-only fallback would bring back the old-timestamp sweep of a live copy. The owner
+decided on 2026-10-11 that such a host fails each review as `copy_failed`, with a message
+to move TMPDIR to a filesystem with lock support. A marker that already exists beside a new
+folder may belong to another account; the adapter keeps it and picks another folder.
 Other scratch setup failures must remove the folder and marker and write failure evidence
 and usage, just like a failed copy. The preparation handler must exclude the reviewer run:
 an I/O error after launch is no evidence that the model never ran or incurred no cost.
 
 Doctor's help probe also needs a per-path cache: retrying a timed-out first executable
 through the alternative-selection path doubled the wait, and repeated PATH entries added
-more waits. Launch failures and timeouts need different remedies from missing CLI flags.
+more waits. Several distinct hung CLIs still cost 60 seconds each, so all probes share one
+budget. Launch failures and timeouts need different remedies from missing CLI flags.
 
 ### 2026-10-09 — The Claude reviewer's Bash could write the repository (#39)
 
