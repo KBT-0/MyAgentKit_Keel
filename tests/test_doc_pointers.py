@@ -71,6 +71,13 @@ class SectionPointerTests(unittest.TestCase):
         self.assertIn('after the second dirty round', workflow)
         self.assertIn('python3 scripts/usage_summary.py', workflow)
         self.assertIn('| Mechanical work and re-review of a small fix round | medium |', workflow)
+        for name in ('core/docs/REVIEW_RUNNING.md', 'core/docs/WORKFLOW.md'):
+            policy = ' '.join((ROOT / name).read_text(encoding='utf-8').split())
+            for rule in ('model B fixes its own findings',
+                         'model A reviews B\'s fix under a fresh label',
+                         'B\'s final review counts as clean for every other part',
+                         'no open High or Medium finding on any part by a model that did not write that part'):
+                self.assertIn(rule, policy, name)
         handoff = (ROOT / 'core/docs/HANDOFF.md').read_text(encoding='utf-8')
         self.assertIn('Route: quick|build|deep · Risk: low|medium|high · Checks: ...', handoff)
         for name in ('core/docs/REVIEW_RUNNING.md', 'core/docs/REVIEW_GATE.md', 'core/AGENTS.md'):

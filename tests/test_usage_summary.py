@@ -103,6 +103,45 @@ class UsageSummaryTests(unittest.TestCase):
         out = self.summary(dict(os.environ, PYTHONIOENCODING='ascii'))
         self.assertIn('Task fix\\u2192lexer: invocations=1 rounds=1', out)
 
+    def test_bad_chain_id_and_evidence_path_are_damaged_records(self):
+        self.record('healthy', 'healthy', b'VERDICT: Accept\n')
+        path = self.record('bad', 'damaged', b'VERDICT: Reject\n')
+        original = json.loads(path.read_text())
+        for field, value in (('review_chain_id', ['c1']), ('evidence', 'bad\0path')):
+            with self.subTest(field=field):
+                path.write_text(json.dumps(dict(original, **{field: value})))
+                out = self.summary()
+                self.assertIn('Task healthy: invocations=1 rounds=1', out)
+                self.assertIn('Unreadable records skipped: 1', out)
+                self.assertNotIn('Task damaged:', out)
+
+    def test_every_consumed_field_rejects_invalid_values(self):
+        self.record('healthy', 'healthy', b'VERDICT: Accept\n')
+        path = self.record('bad', 'damaged', b'VERDICT: Reject\n')
+        original = json.loads(path.read_text())
+        cases = [(field, []) for field in (
+            'invocation_id', 'recorded_at', 'status', 'failure_kind', 'callee',
+            'model_requested', 'review_chain_id', 'evidence', 'evidence_sha256', 'task')]
+        cases += [('task', {'id': [], 'kind': 'review'}),
+                  ('task', {'id': 'damaged', 'kind': []})]
+        cases += [('duration_ms', value) for value in ([], '1000', True, -1, float('nan'), float('inf'), 10 ** 400)]
+        for field, value in cases:
+            with self.subTest(field=field, value=value):
+                path.write_text(json.dumps(dict(original, **{field: value})))
+                out = self.summary()
+                self.assertIn('Task healthy: invocations=1 rounds=1', out)
+                self.assertIn('Unreadable records skipped: 1', out)
+                self.assertNotIn('Task damaged:', out)
+                self.assertIn('Total: invocations=1 rounds=1 duration=1.000s rejects=0', out)
+
+    def test_control_characters_in_task_labels_are_escaped(self):
+        self.record('controls', 'fix\nTotal: forged\r\t\x1b[2J\x7f\x85', b'VERDICT: Accept\n')
+        out = self.summary()
+        self.assertIn('Task fix\\nTotal: forged\\r\\t\\x1b[2J\\x7f\\x85: invocations=1 rounds=1', out)
+        self.assertEqual(sum(line.startswith('Total:') for line in out.splitlines()), 1)
+        for control in ('\r', '\t', '\x1b', '\x7f', '\x85'):
+            self.assertNotIn(control, out)
+
 
 if __name__ == '__main__':
     unittest.main()

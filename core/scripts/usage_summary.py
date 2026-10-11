@@ -15,6 +15,22 @@ import re
 import sys
 
 
+def valid_record(record):
+    """Validate every consumed field before a damaged record can affect healthy rows."""
+    if (not isinstance(record, dict) or not isinstance(record.get('invocation_id'), str)
+            or not isinstance(record.get('task'), dict)):
+        return False
+    for fields, value in ((('recorded_at', 'status', 'failure_kind', 'callee', 'model_requested',
+                            'review_chain_id', 'evidence', 'evidence_sha256'), record),
+                          (('id', 'kind'), record['task'])):
+        if any(value.get(field) is not None and not isinstance(value[field], str) for field in fields):
+            return False
+    duration = record.get('duration_ms')
+    return ('\0' not in (record.get('evidence') or '')
+            and (duration is None or (type(duration) in (int, float)
+                                     and 0 <= duration <= sys.float_info.max)))
+
+
 def evidence_fields(repo, record):
     """Effort and verdict from the archive, or why it has none."""
     effort, path = 'unknown', record.get('evidence')
@@ -56,6 +72,10 @@ def chain_status(usage, chain_id, cache):
         if checkpoints:
             try:
                 chain = json.loads(max(checkpoints)[1].read_text(encoding='utf-8'))
+                if (not isinstance(chain, dict) or not isinstance(chain.get('status'), str)
+                        or (chain.get('failure_kind') is not None
+                            and not isinstance(chain['failure_kind'], str))):
+                    raise ValueError('invalid chain fields')
                 status = '%s/%s' % (chain['status'], chain.get('failure_kind') or '-')
             except (OSError, ValueError, TypeError, KeyError):
                 status = 'unreadable'
@@ -67,7 +87,7 @@ def totals(rows):
     durations = [row['duration_ms'] for row in rows if isinstance(row.get('duration_ms'), (int, float))]
     missing = len(rows) - len(durations)
     return (f'invocations={len(rows)} rounds={sum(row["round"] for row in rows)}'
-            f' duration={sum(durations) / 1000:.3f}s'
+            f' duration={sum(duration / 1000 for duration in durations):.3f}s'
             + (f' (+{missing} unknown)' if missing else '')
             + f' rejects={sum(row["verdict"] == "Reject" for row in rows)}')
 
@@ -85,8 +105,7 @@ def main():
             record = json.loads(path.read_text(encoding='utf-8'))
         except (OSError, ValueError):
             record = None
-        if (not isinstance(record, dict) or not isinstance(record.get('invocation_id'), str)
-                or not isinstance(record.get('task'), dict)):
+        if not valid_record(record):
             unreadable += 1
             continue
         effort, verdict, why = evidence_fields(args.repo, record)
@@ -109,6 +128,8 @@ def main():
         tasks[str(record['task'].get('id') or 'unknown')].append(record)
         groups[f'Model {record.get("model_requested", "unknown")} / effort {record["effort"]}'].append(record)
     for task, records in sorted(tasks.items()):
+        task = ''.join(char if char == ' ' or char.isprintable()
+                       else char.encode('unicode_escape').decode('ascii') for char in task)
         print(f'Task {task}: {totals(records)}')
         number = 0
         for record in records:

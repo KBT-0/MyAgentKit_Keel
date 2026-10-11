@@ -689,6 +689,10 @@ The shell stays in the lead's checkout, so its Stop hook runs that checkout's ga
    Only the final reviews (one per model, each over the parts it did not write) take a label
    never used before (`docs/REVIEW_RUNNING.md`,
    "Rounds, labels and designs").
+   When model B's final review finds a High or Medium, model B fixes its own findings.
+   Then model A reviews B's fix under a fresh label.
+   B's final review counts as clean for every other part.
+   Closure requires no open High or Medium finding on any part by a model that did not write that part.
 4. Start the next worker while the self-test after a merge still runs. If that self-test
    fails, tell the next worker to rebase onto the fix.
 

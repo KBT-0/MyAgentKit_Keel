@@ -149,9 +149,10 @@ When the rounds start and what runs in parallel is the lead's part, in `docs/WOR
   in a second worktree of the same commit.
 - Every round of one feature uses the same `MYAGENTKIT_TASK_ID`, so that later rounds carry
   the earlier ones. Only the final reviews (one per model, each over the parts it did
-  not write) take a label never used before. When a final review returns a High or
-  Medium, the reviewing model fixes it and only the other model's final review runs
-  again, under a fresh label, over that fix; the fixer's own final stands.
+  not write) take a label never used before. When model B's final review finds a High or Medium,
+  model B fixes its own findings, and model A reviews B's fix under a fresh label.
+  B's final review counts as clean for every other part.
+  Closure requires no open High or Medium finding on any part by a model that did not write that part.
 
 ## Unavailable reviewer
 
