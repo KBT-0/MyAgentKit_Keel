@@ -514,10 +514,11 @@ Codex's allowance is low; it sends implementation and fixes to Claude.
 
 #### The two saver modes
 
-A saver mode is for a side whose allowance is low. That side spends only on judgement: it
-plans, briefs, verifies and reviews within a small budget, and the other side implements AND
-fixes the findings, the low side's findings included. Every such fix still goes back to a
-review by the low side, so the loop keeps both models. These rules bind both saver modes:
+A saver mode is for a side whose allowance is low. That side reviews within a small budget,
+and the other side implements AND fixes the findings, the low side's findings included.
+Claude leads in both saver modes: in claude-saver it plans, briefs, verifies and reviews;
+in codex-saver it also does the work, and Codex only reviews. Every fix goes back to a review
+by the low side, so the loop keeps both models. These rules bind both saver modes:
 
 - The low side's reviews run at the lowest effort that fits: a re-review of a small fix
   round at medium; high for a gate, hook or review-tooling change and for a new mechanism's
@@ -548,9 +549,8 @@ review by the low side, so the loop keeps both models. These rules bind both sav
 
 - **Writes:** Claude workers implement every errand and fix every finding.
 - **Reviews:** Codex reviews within a small budget, by the saver rules above.
-- **Workers:** no Codex implementing worker; a Codex lead plans, briefs and verifies within
-  a small budget, and Codex reviews. Claude workers up to the worktree
-  ceiling.
+- **Workers:** no Codex worker; Codex reviews only. Claude leads and does the work,
+  with Claude workers up to the worktree ceiling.
 - **Effort:** Claude workers by the tier table's Claude column; Codex reviews by the saver
   rules above.
 - **Ends:** on Codex's allowance reset or the owner's direction; cross-performance returns.
@@ -715,11 +715,17 @@ answer from {{OWNER_NAME}} and delivers it into the SAME session:
   {{OWNER_NAME}}, or is resumed (`claude --resume <session id>`) once its tab has closed.
 - A Codex worker (`scripts/spawn_codex.sh`) is resumed: the lead writes the answer to a file
   and runs `scripts/spawn_codex.sh NAME ANSWER_FILE --model M --effort LEVEL [--worktree]
-  --resume`. By default the script records the session id beside `RESULT-NAME.md` in
-  `RESULT-NAME.session`; the decision file is `QUESTION-NAME.md`. `--result FILE` selects
-  another result and the sidecars `FILE.session` and `FILE.question.md`; pass it again on
-  resume. `codex_worker.py` closes only that worker's process tree after the question is
-  published, using a Windows job or an interactive POSIX process group. `--no-daemon`
+  --resume`. The spawning checkout records `.myagentkit/workers/NAME.session`, outside
+  the worker; successful `close_worker.sh NAME` removes that record. The default result is
+  `RESULT-NAME.md` at the worker's repository top, and the decision file is `QUESTION-NAME.md`.
+  `--result FILE` selects another `.md` result inside the worker's folder and `FILE.question.md`;
+  the brief must use that spawn-time path, and it is passed again on resume. Publish a question
+  or finished result atomically: write a temporary file beside it, end with
+  `<!-- codex-worker: ready -->`, then rename it into place and end the turn immediately.
+  `codex_worker.py` allows ten seconds for the turn to flush (`KIT_WORKER_GRACE` overrides
+  the grace period), then closes only that worker's process tree, using a Windows job or
+  an interactive POSIX process group. Windows children start suspended until assigned to
+  their job; POSIX escalation signals the entire group. `--no-daemon`
   keeps the worker's runtime separate from any shared Codex server. The script refuses a
   resume while the old session still runs, and refuses a
   fresh replacement when its session or question record exists. On resume it consumes the
@@ -736,8 +742,12 @@ Codex 0.162 on native Windows keeps Git metadata read-only even with `--add-dir`
 the gate's Git-directory lock, it records that limitation; the lead runs the gate when
 committing. Never bypass the gate or switch to full access for this failure.
 
-For Codex, the lead reads the uncommitted result and diff directly before committing;
-the watcher below only accepts committed results and cannot signal that handoff.
+For Codex, the lead runs the `codex_worker.py --wait FILE --since START` command printed
+by spawn as a background command. Its exit notifies the lead of DONE, BLOCKED, HANDOFF or
+PROGRESS after a result from this run has the end marker; no commit or lead polling is
+needed. The wrapper also closes the worker after the grace period. The lead reads the
+uncommitted result and diff before committing. The watcher below accepts committed Claude
+results; it is not used for the uncommitted Codex handoff.
 The result file starts with a fixed head (`docs/HANDOFF.md`): `Kind:`, `Task:`, `Attempt:`
 and `Remaining:`, and only `Kind: completed` is done. The lead runs `scripts/watch_workers.sh
 --result NAME=PATH NAME` as a background command, and starts it again after every report

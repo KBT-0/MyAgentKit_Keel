@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # KIT-OWNED: do not edit locally; change it in the kit and re-sync.
-"""Close a worker after its decision; its result lists uncommitted files for the lead."""
+"""Close a worker after a published handoff; --wait notifies the lead without a commit."""
 import os
 from pathlib import Path
 import subprocess
@@ -8,6 +8,33 @@ import signal
 import sys
 import tempfile
 import time
+
+READY = '<!-- codex-worker: ready -->'
+
+
+def published(path):
+    try:
+        text = path.read_text(encoding='utf-8').strip()
+    except FileNotFoundError:
+        return ''
+    return text if text.endswith(READY) else ''
+
+
+def result_kind(path, since=0):
+    if path:
+        try:
+            if path.stat().st_mtime < since:
+                return ''
+        except FileNotFoundError:
+            return ''
+    text = published(path) if path else ''
+    lines = text.splitlines()
+    if (len(lines) < 4 or not lines[1].startswith('Task: ')
+            or not lines[2].startswith('Attempt: ') or not lines[2][9:].isdigit()
+            or not lines[3].startswith('Remaining: ')):
+        return ''
+    return {'Kind: completed': 'DONE', 'Kind: blocked': 'BLOCKED',
+            'Kind: handoff': 'HANDOFF', 'Kind: progress': 'PROGRESS'}.get(lines[0], '')
 
 
 def windows_job(child):
@@ -39,39 +66,87 @@ def windows_job(child):
         api.CloseHandle(handle)
         child.kill()
         raise error
-    return lambda: api.CloseHandle(handle)
+    def close(force=False):
+        nonlocal handle
+        if handle:
+            api.CloseHandle(handle)
+            handle = None
+    return close
+
+
+def resume_windows(child):
+    import ctypes
+    from ctypes import wintypes
+    api = ctypes.WinDLL('ntdll', use_last_error=True)
+    api.NtResumeProcess.argtypes = [wintypes.HANDLE]
+    if api.NtResumeProcess(int(child._handle)) != 0:
+        raise OSError('cannot resume worker after job assignment')
+
+
+def windows_child(command):
+    child = subprocess.Popen(command, creationflags=0x4)  # CREATE_SUSPENDED
+    close = None
+    try:
+        close = windows_job(child)
+        resume_windows(child)
+        return child, close
+    except BaseException:
+        stop(child, close)
+        raise
 
 
 def stop(child, close_tree=None):
     if close_tree:
         close_tree()
-    if child.poll() is not None:
-        return
-    child.terminate()
     try:
-        child.wait(timeout=10)
-    except subprocess.TimeoutExpired:
-        child.kill()
-        child.wait()
+        if child.poll() is None:
+            child.terminate()
+            try:
+                child.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                if close_tree:
+                    close_tree(True)
+                child.kill()
+                child.wait()
+    finally:
+        # A leader that exits on SIGTERM can still leave descendants ignoring it.
+        if close_tree:
+            close_tree(True)
+
+
+def posix_tree(pid, force=False):
+    try:
+        os.killpg(pid, signal.SIGKILL if force else signal.SIGTERM)
+    except ProcessLookupError:
+        pass
 
 
 def main():
+    if len(sys.argv) in (3, 5) and sys.argv[1] == '--wait':
+        result = Path(sys.argv[2])
+        since = float(sys.argv[4]) if len(sys.argv) == 5 and sys.argv[3] == '--since' else 0
+        while not (kind := result_kind(result, since)):
+            time.sleep(0.1)
+        print('codex_worker: ' + kind + ': ' + str(result), flush=True)
+        return 0
+    if len(sys.argv) < 4 or '--' not in sys.argv[2:4]:
+        raise ValueError('usage: codex_worker.py QUESTION_FILE [RESULT_FILE] -- COMMAND...')
     question = Path(sys.argv[1])
-    if sys.argv[2] != '--' or len(sys.argv) < 4:
-        raise ValueError('usage: codex_worker.py QUESTION_FILE -- COMMAND...')
+    separator = sys.argv.index('--')
+    result = Path(sys.argv[2]) if separator == 3 else None
     if question.exists():
         raise ValueError('question file already exists; answer with spawn_codex.sh --resume')
     # Git for Windows reparses bash -c's quoted command. Hand it a script file instead,
     # just as spawn_worker.sh does for Windows Terminal.
-    command = sys.argv[3:]
+    command = sys.argv[separator + 1:]
     with tempfile.TemporaryDirectory(prefix='codex-worker-') as tmp:
         if os.name == 'nt' and len(command) == 3 and command[1] == '-c':
             script = Path(tmp) / 'worker.sh'
             script.write_text(command[2] + '\n', encoding='utf-8', newline='\n')
             command = [command[0], str(script)]
         if os.name == 'nt':
-            child = subprocess.Popen(command)  # inherit the tab's terminal, including stdin
-            return watch(child, question, windows_job(child))
+            child, close = windows_child(command)  # inherit the tab's terminal, including stdin
+            return watch(child, question, close, result)
         # A CLI installed through npm has a shim and a native child. Own their process group
         # while keeping the controlling terminal, so /dev/tty and interactive input work.
         terminal = sys.stdin.fileno() if sys.stdin.isatty() else None
@@ -83,12 +158,9 @@ def main():
             if terminal is not None:
                 os.tcsetpgrp(terminal, child.pid)
                 os.killpg(child.pid, signal.SIGCONT)
-            def close_tree():
-                try:
-                    os.killpg(child.pid, signal.SIGTERM)
-                except ProcessLookupError:
-                    pass
-            return watch(child, question, close_tree)
+            def close_tree(force=False):
+                posix_tree(child.pid, force)
+            return watch(child, question, close_tree, result)
         finally:
             if child is not None and child.poll() is None:
                 child.kill()
@@ -98,14 +170,26 @@ def main():
             signal.signal(signal.SIGTTOU, previous)
 
 
-def watch(child, question, close_tree):
+def watch(child, question, close_tree, result=None):
+    ready_at = None
+    noticed = ''
     try:
+        grace = float(os.environ.get('KIT_WORKER_GRACE', '10'))
+        if grace < 0:
+            raise ValueError('KIT_WORKER_GRACE must be nonnegative seconds')
+        since = float(os.environ.get('KIT_WORKER_STARTED', '0'))
         while child.poll() is None:
-            if question.is_file() and question.stat().st_size:
-                # Publish the file only after independent work and all jobs have stopped.
+            notice = 'decision' if published(question) else result_kind(result, since)
+            if notice != noticed:
+                ready_at = time.monotonic() if notice else None
+                noticed = notice
+            if ready_at is not None and time.monotonic() - ready_at >= grace:
                 stop(child, close_tree)
                 close_tree = None
-                print('codex_worker: decision recorded; answer in the same session with --resume', flush=True)
+                if noticed == 'decision':
+                    print('codex_worker: decision recorded; answer in the same session with --resume', flush=True)
+                else:
+                    print('codex_worker: ' + noticed + ': uncommitted result ready for the lead', flush=True)
                 return 0
             time.sleep(0.1)
         return child.returncode

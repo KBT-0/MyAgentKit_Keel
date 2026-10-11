@@ -62,17 +62,28 @@ finishes it carries `Done: <id>` and its line leaves `docs/STATE.md` in that sam
 
 A brief for a separate worker session (`scripts/spawn_worker.sh` or `scripts/spawn_codex.sh`
 in the Claude Code overlay) names its result FILE and its question and session sidecars.
-For Codex the defaults are `RESULT-NAME.md`, `QUESTION-NAME.md` and `RESULT-NAME.session`;
-`--result FILE` selects `FILE.question.md` and `FILE.session`. The brief says to publish the
-question last, after independent work and jobs finish, and to exit so the lead can resume
-the recorded session. A question reaches the lead through that sidecar without a commit.
+For Codex the brief must use the spawn-time result path: `RESULT-NAME.md` at the worker's
+repository top by default, or `--result FILE` (a `.md` file inside the worker's folder).
+Its question is `QUESTION-NAME.md`, or `FILE.question.md` for a custom result. The spawning
+checkout records `.myagentkit/workers/NAME.session`, outside the worker's folder; successful
+`close_worker.sh NAME` removes that record so the name can be reused. Pass the custom result
+again on resume. The brief says to publish the question last, after independent work and
+jobs finish. Publish questions and finished results atomically: write a temporary file
+beside the destination, end with `<!-- codex-worker: ready -->`, then rename it into place.
+End the turn immediately; the wrapper allows ten seconds to flush (overridden by
+`KIT_WORKER_GRACE`) before closing the worker's process tree. A question reaches the lead
+through its sidecar without a commit, and the recorded session is resumed with the answer.
 For Claude the lead uses SendMessage or records the separate session's id for `claude --resume`.
 For Codex, the brief says to leave all work uncommitted and ready for the lead; the result
 lists the exact changed and added files. The lead reads that uncommitted result and reviews
 the diff through the normal cross-review, then commits in the worker's worktree with the
 usual commit gate. A Claude worker commits its result and leaves the tree clean when the
 brief and host permit it; otherwise it leaves the files for the lead.
-The committed `Kind: completed` result is the watcher's done signal (`scripts/close_worker.sh NAME`).
+For Codex the lead runs the `codex_worker.py --wait FILE --since START` command printed by
+spawn as a background command; it reports DONE for a published uncommitted `Kind: completed`
+result from this run. A previous task's result cannot signal the new run. Other result kinds
+report BLOCKED, HANDOFF or PROGRESS. For Claude the committed `Kind: completed` result is
+the watcher's done signal (`scripts/close_worker.sh NAME`).
 An idle notice or a question sidecar reports a waiting worker, never completion.
 
 The result file starts with four lines, exact keys, in this order:

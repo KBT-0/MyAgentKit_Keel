@@ -5,9 +5,15 @@ import argparse
 import os
 from pathlib import Path
 import re
+import shutil
+import sys
 import tempfile
 
-STATE_LINE = re.compile(r'^(\*\*Working mode:\*\*[^\S\r\n]*)([a-z-]+)([^\r\n]*)(?=\r?$)', re.M)
+STATE_LINE = re.compile(r'^(\*\*Working mode:\*\*[^\S\r\n]*)([^\r\n]*)(?=\r?$)', re.M)
+
+
+def normalized(value):
+    return value.replace('İ', 'I').replace('ı', 'i').casefold().strip()
 
 
 def checked(project, relative):
@@ -23,6 +29,8 @@ def prepared(path, data):
     fd, name = tempfile.mkstemp(prefix='.' + path.name + '-', dir=path.parent)
     with os.fdopen(fd, 'wb') as handle:
         handle.write(data)
+    if path.exists():
+        shutil.copymode(path, name)
     return Path(name)
 
 
@@ -34,7 +42,7 @@ def mode(project, choice=None):
     rows = re.findall(r'^\| `([a-z-]+)` \| ([^|]+) \| ([^\n]+)$', section, re.M)
     if len(rows) != 6 or len({name for name, _, _ in rows}) != 6:
         raise ValueError('WORKFLOW.md must define all six modes')
-    aliases = {alias.casefold(): name for name, label, _ in rows
+    aliases = {normalized(alias): name for name, label, _ in rows
                for alias in (name, label.removesuffix(' (main mode)').strip())}
     state_path = checked(project, 'docs/STATE.md')
     state_bytes = state_path.read_bytes()
@@ -42,18 +50,23 @@ def mode(project, choice=None):
     matches = list(STATE_LINE.finditer(state))
     if len(matches) > 1:
         raise ValueError('STATE.md has more than one Working mode line')
+    current = 'cross-performance'
+    note = ''
+    if matches:
+        value, separator, suffix = matches[0][2].partition(' (')
+        current = aliases.get(normalized(value))
+        if current is None:
+            raise ValueError('invalid STATE.md working mode: ' + value)
+        note = separator + suffix
     record = checked(project, '.claude/mode')
     if choice is None:
-        current = matches[0][2] if matches else 'cross-performance'
-        if current not in aliases:
-            raise ValueError('invalid STATE.md working mode: ' + current)
         if record.exists() and record.read_text(encoding='utf-8').strip() != current:
             raise ValueError('.claude/mode and STATE.md disagree; choose a mode explicitly to repair them')
         print('Current mode: ' + current + ('' if matches else ' (STATE.md line missing; main mode)'))
         for name, label, rules in rows:
             print(name + ' — ' + label + ' | ' + rules)
         return
-    selected = aliases.get(choice.casefold())
+    selected = aliases.get(normalized(choice))
     if selected is None:
         raise ValueError('unknown mode; choose ' + ', '.join(name for name, _, _ in rows))
     # Validate and extract the rules before making either edit.
@@ -66,7 +79,7 @@ def mode(project, choice=None):
     if selected in ('claude-saver', 'codex-saver'):
         output += '\n\n' + rules('The two saver modes')
     if matches:
-        updated = STATE_LINE.sub(lambda m: m[1] + selected + m[3], state)
+        updated = STATE_LINE.sub(lambda m: m[1] + selected + note, state)
     else:
         newline = '\r\n' if '\r\n' in state else '\n'
         line = '**Working mode:** ' + selected + ' (docs/WORKFLOW.md, "Working modes, by name").' + newline
@@ -91,6 +104,7 @@ def mode(project, choice=None):
 
 
 def main():
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('name', nargs='?')
     parser.add_argument('--project', type=Path, default=Path.cwd())

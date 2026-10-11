@@ -87,8 +87,11 @@ class SectionPointerTests(unittest.TestCase):
         for name in ('core/docs/WORKFLOW.md', 'setup/INTERVIEW.md'):
             self.assertNotIn('{{MODEL_ROUTING}}', (ROOT / name).read_text(encoding='utf-8'))
         handoff = (ROOT / 'core/docs/HANDOFF.md').read_text(encoding='utf-8')
-        for sidecar in ('RESULT-NAME.session', 'QUESTION-NAME.md'):
+        for sidecar in ('.myagentkit/workers/NAME.session', 'QUESTION-NAME.md'):
             self.assertIn(sidecar, handoff)
+        self.assertNotIn('`RESULT-NAME.session`', handoff)
+        self.assertIn('<!-- codex-worker: ready -->', handoff)
+        self.assertIn('codex_worker.py --wait FILE --since START', handoff)
         self.assertIn('before publishing the question', handoff)
         self.assertNotIn('commits the file. It then goes on', handoff)
         self.assertNotIn('owner only after that commit', handoff)

@@ -103,9 +103,11 @@ esac
 for f in scripts/check.sh .githooks/pre-commit .githooks/pre-merge-commit .githooks/commit-msg \
          scripts/doctor.sh scripts/review.sh \
          scripts/review_dispatch.py scripts/claude_bridge.py scripts/codex_bridge.py scripts/agent_process.py \
-         scripts/agent_usage.py scripts/codex_quota.py scripts/working_mode.py; do
+         scripts/agent_usage.py scripts/codex_quota.py; do
   [ -f "$f" ] || miss "$f does not exist (the gate needs it)" "git checkout -- $f, or sync the kit again"
 done
+[ -f scripts/working_mode.py ] ||
+  miss "scripts/working_mode.py does not exist (the /myagentkit:mode command needs it)" "git checkout -- scripts/working_mode.py, or sync the kit again"
 # Not the gate's: without it finished worker worktrees are never cleaned up after a merge.
 [ -f .githooks/post-merge ] ||
   miss ".githooks/post-merge does not exist (worktree clean-up after a merge needs it)" "git checkout -- .githooks/post-merge, or sync the kit again"

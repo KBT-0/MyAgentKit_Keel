@@ -1,10 +1,13 @@
 """Exercise the mode command against disposable project documents."""
 import os
+import importlib.util
+import io
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / 'core/scripts/working_mode.py'
@@ -105,6 +108,60 @@ class WorkingModeTests(unittest.TestCase):
                 link.rmdir()
             else:
                 link.unlink()
+
+    def test_state_accepts_case_and_turkish_labels_without_adding_a_line(self):
+        for value in ('Codex-first', 'Codex Öncelikli Mod'):
+            self.state.write_text('**Working mode:** ' + value + ' (manual).\n', encoding='utf-8')
+            self.assertIn('Current mode: codex-first', self.run_mode().stdout)
+            self.assertEqual(self.run_mode('claude-first').returncode, 0)
+            text = self.state.read_text(encoding='utf-8')
+            self.assertEqual(text.count('**Working mode:**'), 1)
+            self.assertIn('claude-first (manual)', text)
+            (self.project / '.claude/mode').unlink()
+
+    def test_unknown_and_duplicate_state_lines_are_refused_before_writes(self):
+        for text in ('**Working mode:** mystery\n',
+                     '**Working mode:** codex-first\n**Working mode:** Claude-first\n'):
+            self.state.write_text(text, encoding='utf-8')
+            for args in ((), ('claude-first',)):
+                result = self.run_mode(*args)
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertEqual(self.state.read_text(encoding='utf-8'), text)
+            self.assertFalse((self.project / '.claude/mode').exists())
+
+    def test_uppercase_turkish_dotted_i_label(self):
+        result = self.run_mode('CLAUDE ÖNCELİKLİ MOD')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('Current mode: claude-first', result.stdout)
+
+    def test_cp1252_pipe_switch_prints_utf8_rules_after_writes(self):
+        workflow = self.project / 'docs/WORKFLOW.md'
+        workflow.write_text(workflow.read_text(encoding='utf-8').replace(
+            '#### claude-first (', '#### claude-first (işi ağır: '), encoding='utf-8')
+        code = ('import sys,runpy; sys.stdout.reconfigure(encoding="cp1252"); '
+                'sys.argv=[%r,"--project",%r,"claude-first"]; runpy.run_path(%r,run_name="__main__")') % (
+                    str(SCRIPT), str(self.project), str(SCRIPT))
+        result = subprocess.run([sys.executable, '-I', '-c', code], capture_output=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('işi ağır', result.stdout.decode('utf-8'))
+        self.assertEqual((self.project / '.claude/mode').read_text().strip(), 'claude-first')
+
+    def test_atomic_replacement_copies_original_permissions(self):
+        spec = importlib.util.spec_from_file_location('working_mode', SCRIPT)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        import shutil
+        with mock.patch.object(shutil, 'copymode', wraps=shutil.copymode) as copy:
+            with mock.patch('sys.stdout', new=io.StringIO()):
+                module.mode(self.project, 'claude-first')
+            self.assertTrue(any(call.args[0] == self.state for call in copy.call_args_list),
+                            'STATE replacement must inherit its original permissions')
+
+    def test_codex_saver_has_no_codex_lead_or_worker(self):
+        result = self.run_mode('codex-saver')
+        self.assertIn('no Codex worker; Codex reviews only', result.stdout)
+        self.assertNotIn('a Codex lead', result.stdout)
+        self.assertIn('Claude leads in both saver modes', result.stdout)
 
 
 if __name__ == '__main__':

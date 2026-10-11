@@ -283,6 +283,9 @@ for name; do
   # the log could not take still prints `removed 1`, and its audit record is missing.
   [ "$rc" -eq 0 ] || [ -n "$kept" ] ||
     fail "$name: clean_worktrees.sh exited $rc: $(printf '%s\n' "$out" | sed -n '$p')"
+  if [ -z "$dry" ] && [ "$rc" -eq 0 ] && [ -z "$kept" ] && [ -n "$top" ]; then
+    rm -f -- "$top/.myagentkit/workers/$name.session" || fail "$name: could not remove its Codex session record"
+  fi
   if git show-ref --verify --quiet "refs/heads/worktree-$name" 2>/dev/null; then
     say "$name: branch worktree-$name is kept, never deleted here; \`git branch --merged\` lists the merged branches, \`git branch -d <name>\` deletes one"
   else

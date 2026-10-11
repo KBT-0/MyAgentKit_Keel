@@ -685,6 +685,7 @@ class DoctorTests(unittest.TestCase):
         doctor = (ROOT / 'core/scripts/doctor.sh').read_text()
         listed = re.search(r'^for f in (scripts/check\.sh[^;]*);', doctor, re.M).group(1).split()
         listed = {f[len('scripts/'):] for f in listed if f.endswith('.py')}
+        listed.update(re.findall(r'\[ -f scripts/([a-z_]+\.py) \]', doctor))
         packaged = next(
             {element.value for element in node.elts}
             for node in ast.walk(ast.parse((ROOT / 'scripts/package_codex_plugin.py').read_text()))
@@ -693,3 +694,22 @@ class DoctorTests(unittest.TestCase):
         expected = review_runtime() | {'working_mode.py'}
         self.assertEqual(listed, expected)
         self.assertEqual(packaged, expected)
+
+    def test_missing_mode_helper_names_the_command_not_the_gate(self):
+        # Execute the installed required-file checks without bootstrapping an unrelated project.
+        doctor = (ROOT / 'core/scripts/doctor.sh').read_text()
+        checks = doctor.split('for f in scripts/check.sh', 1)[1].split('# --- the executable bit', 1)[0]
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            (project / 'scripts').mkdir()
+            (project / 'scripts/check.sh').touch()
+            for path in re.findall(r'(?:scripts|\.githooks)/[a-z_-]+\.(?:sh|py)|\.githooks/[a-z-]+', checks):
+                target = project / path
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.touch()
+            (project / 'scripts/working_mode.py').unlink()
+            result = subprocess.run(['sh', '-c', 'miss() { echo "$1"; }; for f in scripts/check.sh' + checks],
+                                    cwd=project, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn('scripts/working_mode.py does not exist (the /myagentkit:mode command needs it)', result.stdout)
+            self.assertNotIn('working_mode.py does not exist (the gate needs it)', result.stdout)

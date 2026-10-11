@@ -20,34 +20,50 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   placeholder is gone, and `docs/STATE.md` carries a "Working mode:" line.
   `/myagentkit:mode` (and the Codex skill `myagentkit-mode`) uses the shared
   `scripts/working_mode.py` to show or switch the mode, recording `.claude/mode` and the
-  STATE line together and refusing disagreement on reads; doctor checks that the helper is
-  installed. Saver modes route fixes to the
+  STATE line together and refusing disagreement on reads. Handwritten names and Turkish
+  labels are matched without case (including capital Turkish dotted I); unknown or duplicate
+  STATE lines are refused before writes. Switches preserve STATE permissions and print UTF-8
+  rules even through a Windows cp1252 pipe. Doctor names the mode command when its helper is
+  missing. Saver modes route fixes to the
   side with allowance while preserving independent acceptance and the fresh final review.
   Codex-first now follows the owner's confirmed definition: the Claude Opus lead only
   plans, briefs, routes and reviews; Codex implements and fixes all findings. Only work the
   lead judges too heavy or too important goes to an Opus worker, reviewed by Codex.
-  Codex-saver remains the separate low-Codex-allowance mode.
+  Codex-saver remains the separate low-Codex-allowance mode: Claude leads and does the work;
+  no Codex worker, Codex reviews only. The shared saver rules keep Claude as lead in both
+  saver modes.
   **ACTION:** copy the "Model routing" section and "Working modes, by name" from the kit's
   `core/docs/WORKFLOW.md` into yours over your own routing text, keeping your model names,
   and add the "Working mode:" line to `docs/STATE.md`. Sync the core scripts to install
   `scripts/working_mode.py` and the updated doctor check.
 - **A stopped worker is answered in its own session** (issue #57; `docs/WORKFLOW.md`,
   "Worker cost"; `docs/HANDOFF.md`, rule 7): never by a fresh session. The handoff names
-  the sidecars and publishes a question after independent work, without requiring a commit.
+  the sidecars and publishes a question atomically with an end marker after independent
+  work, without requiring a commit. A ten-second grace period lets the turn flush.
 - **`scripts/spawn_codex.sh`** (issues #57 and #43; Claude Code overlay): an interactive Codex
   worker in a Windows Terminal tab on native Windows and in tmux elsewhere, with the
   workspace-write sandbox and no approval prompts. The lead commits all Codex worker work
   after the normal cross-review, with the usual commit gate; the brief and result identify
   exact uncommitted files. Git-directory writable roots are removed: the owner's native
   Windows codex-cli 0.162 probe proved `git add` still fails on `index.lock` with both roots.
-  It records `RESULT-NAME.session` beside `RESULT-NAME.md` and resumes it with `--resume`.
-  Workers publish decisions to `QUESTION-NAME.md`; `codex_worker.py` ends their process tree,
-  and a fresh replacement is refused. `--no-daemon` keeps each runtime private, and POSIX
-  workers use their own foreground process group. `--result FILE` chooses custom result/sidecar paths.
+  The spawning checkout records `.myagentkit/workers/NAME.session`, outside the worker,
+  and resumes it with `--resume`; successful `close_worker.sh NAME` removes the record,
+  allowing cleanup and name reuse. Workers publish decisions to `QUESTION-NAME.md`;
+  `codex_worker.py` waits for the end marker and grace period before ending their process
+  tree, and a fresh replacement is refused. Its printed `--wait FILE --since START` command
+  notifies the lead of an uncommitted handoff as a background command, ignoring old results.
+  Windows children join their job before running; POSIX escalation kills the entire group.
+  The tab preserves quick startup errors behind an Enter prompt, and launches Git Bash by
+  its full Windows path. `--no-daemon` keeps each runtime private. The default result is at
+  the repository top; the brief uses the spawn-time path. `--result FILE` requires a `.md`
+  file inside the worker's folder. Ignore patterns keep project `docs/QUESTION-*.md` visible.
   **ACTION:** adopt the lead-owned commit rule from `core/docs/WORKFLOW.md` and copy
   `overlays/claude-code/files/scripts/spawn_codex.sh` and `codex_worker.py` into `scripts/` (`chmod +x`,
-  `git add --chmod=+x`); a sync keeps them updated from then on. Copy the worker-sidecar
-  ignore rules from `core/.gitignore` into your project ignore file.
+  `git add --chmod=+x`); a sync keeps them updated from then on. Copy `close_worker.sh` too
+  and the worker-sidecar ignore rules from `core/.gitignore` into your project ignore file.
+  Update Codex briefs with the atomic publication protocol and run spawn's printed wait
+  command in the background. For workers started with the old scripts, retain their legacy
+  session sidecars until resumed or finished, then remove those sidecars before cleanup.
 - **A review no longer dies on the kit's own limits** (`agent_process.py`, the adapters,
   `review.sh`): a review attempt now gets 3600 seconds (maximum 7200) and a Claude review
   200 turns (maximum 500); three high-effort reviews had died on 1800 seconds and 12 turns.

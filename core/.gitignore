@@ -26,8 +26,9 @@ __pycache__/
 # Add your tools' own scratch directories here; an overlay may bring more.
 .claude/worktrees/
 # Worker decision/session sidecars; result reports remain reviewable project files.
-RESULT-*.session
-QUESTION-*.md
+/RESULT-*.session
+/QUESTION-*.md
+# Legacy Markdown session sidecars, retained for upgrades only.
 *.md.session
 *.md.question.md
 /.myagentkit/

@@ -29,14 +29,20 @@ which is the part that gets lost.
   requires that helper too; its exact package-list check distinguishes command helpers from
   review imports without allowing missing or unexpected packaged modules.
 - A session record under Git metadata fails precisely where a worktree worker cannot write
-  Git. Record it beside the result instead, with a separate decision file. Publishing the
-  decision only after independent work and jobs stop lets the terminal wrapper end that
-  worker's process tree without losing its resumable context. A fresh replacement is refused.
+  Git. A result-side record also blocks the cleanup audit and name reuse. The spawning shell
+  owns the record in its checkout's ignored `.myagentkit/workers/` folder, outside the worker,
+  and a successful close removes it. Publish questions and results atomically with an end
+  marker after jobs stop, then give the turn a grace period to flush before closing its tree.
+  This reduces mid-turn interruption; a live paid-session resume probe is still needed to
+  confirm rollout continuity on each host. A fresh replacement is refused.
   The handoff template must say the same: requiring a question commit first prevents a
   sandbox-blocked worker from asking at all, and publishing before independent work risks
   the wrapper terminating unfinished jobs.
 - Saver modes deliberately put fixes on the side with available allowance. Their exception
   changes fix authorship, while independent acceptance and the fresh final review remain.
+  Rule 7 settles codex-saver: Claude leads and does the work; Codex only reviews. The
+  accidental Codex-lead wording was reverted, not promoted to a new product decision.
+  The shared saver paragraph must agree too: Claude leads in both saver modes.
 - The owner's live probe on 2026-10-10 used codex-cli 0.162 on native Windows:
   `codex exec -s workspace-write --add-dir <main .git> --add-dir <.git/worktrees/NAME>`.
   Adding both Git directories did not lift the sandbox's read-only Git policy: `git add`
@@ -51,7 +57,14 @@ which is the part that gets lost.
   This quality/cost routing is distinct from codex-saver's low Codex allowance.
 - An npm CLI shim is not its native child, and a shared Codex server cannot belong to one
   worker's lifetime. Use --no-daemon and close the worker's Windows job or POSIX process
-  group, including descendants, after it publishes a decision.
+  group, including descendants, after publication and the grace period. Suspended Windows
+  creation closes the assignment window; POSIX SIGKILL must target the group even after its
+  leader exits. An uncommitted result needs a separate background wait notification because
+  the committed-result watcher cannot observe it. Its timestamp excludes a previous task.
+- Mode-line discovery must count all Working mode lines before interpreting values. Case
+  and Turkish dotted I normalization prevent false defaults and duplicate records. Atomic
+  replacement must retain the original permissions, and UTF-8 stdout prevents a Windows
+  pipe error from reporting failure after both records have already switched.
 
 ### 2026-10-09 — Working modes, Codex workers and answering a stopped worker (#43, #57)
 
