@@ -52,6 +52,44 @@ def alive(pid):
 
 
 class DoctorTests(unittest.TestCase):
+    def test_an_old_claude_cli_earlier_on_path_is_not_ready(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / 'scripts').mkdir()
+            (root / '.githooks').mkdir()
+            (root / 'home').mkdir()
+            modern, old = root / 'modern', root / 'old'
+            modern.mkdir(); old.mkdir()
+            shutil.copyfile(ROOT / 'core/scripts/doctor.sh', root / 'scripts/doctor.sh')
+            for name in ('check.sh', 'review.sh'):
+                (root / 'scripts' / name).write_text('#!/bin/sh\ntoolchain_path=""\nDEFAULT_REVIEWER="claude"\n')
+            for name in review_runtime():
+                (root / 'scripts' / name).write_text('')
+            for name in ('pre-commit', 'pre-merge-commit', 'commit-msg', 'post-merge'):
+                (root / '.githooks' / name).write_text('#!/bin/sh\nexit 0\n')
+            for path in list((root / 'scripts').glob('*.sh')) + list((root / '.githooks').iterdir()):
+                path.chmod(0o755)
+            for directory, help_text in ((modern, '--effort <level>'), (old, '--model <model>')):
+                (directory / 'claude').write_text('#!/bin/sh\necho "%s"\n' % help_text)
+                (directory / 'claude').chmod(0o755)
+            env = dict(os.environ, HOME=str(root / 'home'), SHELL='',
+                       PATH=str(modern) + os.pathsep + os.environ['PATH'])
+            for key in ('REVIEW_REVIEWER', 'CLAUDE_CLI_BIN', 'REVIEW_CLI_BIN'):
+                env.pop(key, None)
+            subprocess.run(['git', 'init', '-q'], cwd=root, env=env, check=True)
+            for key, value in (('user.name', 'fixture'), ('user.email', 'fixture@example.invalid'),
+                               ('core.hooksPath', '.githooks')):
+                subprocess.run(['git', 'config', key, value], cwd=root, env=env, check=True)
+            subprocess.run(['git', 'add', '--chmod=+x', '--', 'scripts', '.githooks'],
+                           cwd=root, env=env, check=True)
+            for old_cli in (False, True):
+                with self.subTest(old_cli=old_cli):
+                    path = (str(old) + os.pathsep if old_cli else '') + env['PATH']
+                    result = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=root,
+                                            env=dict(env, PATH=path), capture_output=True, text=True)
+                    self.assertEqual(result.returncode, int(old_cli), result.stdout + result.stderr)
+                    self.assertIn('does not support --effort' if old_cli else 'DOCTOR: ready', result.stdout)
+
     def test_each_injected_trap_turns_doctor_red(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
@@ -61,7 +99,7 @@ class DoctorTests(unittest.TestCase):
                            check=True, capture_output=True)
             # Stubs for the tools a ready machine has; the test must not depend on this one.
             for tool in ('claude', 'codex', 'tmux'):
-                (bin_dir / tool).write_text('#!/bin/sh\nexit 0\n')
+                (bin_dir / tool).write_text('#!/bin/sh\necho --effort\nexit 0\n')
                 (bin_dir / tool).chmod(0o755)
             # A controlled timeout, so the grep probe runs whether or not this host has one.
             # It enforces its seconds and kills only the command it ran: a stand-in that only
@@ -479,7 +517,7 @@ class DoctorTests(unittest.TestCase):
             self.assertEqual(red.returncode, 1, red.stdout)
             self.assertIn("MISSING: the second CLI 'claude'", red.stdout)
             env['PATH'] = full_path
-            (bin_dir / 'claude').write_text('#!/bin/sh\nexit 0\n')
+            (bin_dir / 'claude').write_text('#!/bin/sh\necho --effort\nexit 0\n')
             (bin_dir / 'claude').chmod(0o755)
 
             # Codex installed only in ~/.local/bin, off PATH: review.sh falls back to it, so
@@ -519,7 +557,7 @@ class DoctorTests(unittest.TestCase):
                     else:
                         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             env['PATH'] = full_path
-            (bin_dir / 'claude').write_text('#!/bin/sh\nexit 0\n')
+            (bin_dir / 'claude').write_text('#!/bin/sh\necho --effort\nexit 0\n')
             (bin_dir / 'claude').chmod(0o755)
             # An override set to empty: the adapters run an empty command, so with claude on
             # PATH doctor once said ready for a review that cannot start.

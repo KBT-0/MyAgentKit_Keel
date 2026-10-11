@@ -33,14 +33,15 @@ fi
 
 # A self-test may inject files into the gated paths while it holds this checkout's gate lock.
 # File names prove nothing (a tool's .selftest.log, a tracked file); the evidence is
-# check-selftest beside the lock: check.sh --self-test writes the lock holder's marker (pid,
-# or token on native Windows) there and removes it when it ends. A marker that still equals
-# the lock file's content tells the gate not to wait: a free lock (a killed self-test's
-# leftover) runs the gate now; a held one (75) with the marker still matching is the live
-# self-test, and the hook steps aside.
+# check-selftest beside the lock: check.sh --self-test writes its shell pid and lock token
+# there and removes it when it ends. The shell must still be alive: build descendants can
+# hold the lock after the self-test dies. A matching token and a held lock (75) then let the
+# hook step aside; a free lock runs the gate now.
 lock=$(git rev-parse --git-path check.lock 2>/dev/null)
 selftest_live() {
-  marker=$(cat "${lock%.lock}-selftest" 2>/dev/null) && [ -n "$marker" ] &&
+  IFS=' ' read -r pid marker extra 2>/dev/null < "${lock%.lock}-selftest" || return 1
+  case "$pid" in ''|0*|*[!0-9]*) return 1 ;; esac
+  [ -n "$marker" ] && [ -z "$extra" ] && kill -0 "$pid" 2>/dev/null &&
     [ "$marker" = "$(cat "$lock" 2>/dev/null)" ]
 }
 gate_wait="${GATE_LOCK_WAIT:-500}"

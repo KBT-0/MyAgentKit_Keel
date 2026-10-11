@@ -423,13 +423,32 @@ self_test() {
   inj="$work/injected.md"
   # The marker that lets this run's nested gates honour the seams (see the seam block).
   GATE_SELFTEST_NESTED=$(cat "$lock_path"); export GATE_SELFTEST_NESTED
-  # The Stop hook's evidence of a live self-test: the same marker beside the lock, removed on
-  # exit (cleanup). The hook believes it only while it equals the lock file and the lock is held.
+  # The Stop hook checks this shell is alive as well as the held lock and its token: a build
+  # descendant can keep the lock after this shell dies. Publish without writing through links.
   # Without git there is no hook and the lock sits in the tree: no marker.
   case "$lock_path" in
     */.check.lock) ;;
-    *) selftest_marker="${lock_path%.lock}-selftest"
-       printf '%s' "$GATE_SELFTEST_NESTED" > "$selftest_marker" ;;
+    *) python3 -I -c '
+import os, stat, sys, tempfile
+path, pid, token = sys.argv[1:]
+temporary = None
+try:
+    if os.path.lexists(path):
+        info = os.lstat(path)
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or getattr(info, "st_file_attributes", 0) & 0x400:
+            raise OSError("existing marker is linked or not a regular file")
+    fd, temporary = tempfile.mkstemp(prefix="check-selftest-", dir=os.path.dirname(path))
+    with os.fdopen(fd, "w", encoding="ascii", newline="\n") as out:
+        out.write(pid + " " + token + "\n")
+    os.replace(temporary, path)
+except OSError as error:
+    print("FAIL [self-test]: cannot publish %s (%s)." % (path, error), flush=True)
+    sys.exit(1)
+finally:
+    if temporary and os.path.exists(temporary):
+        os.unlink(temporary)
+' "${lock_path%.lock}-selftest" "$$" "$GATE_SELFTEST_NESTED" || return 1
+       selftest_marker="${lock_path%.lock}-selftest" ;;
   esac
   # The throwaway repositories below are never the caller's: every git call and hook run on a
   # fixture runs in a subshell that calls fixture_env first (defined above self_test).

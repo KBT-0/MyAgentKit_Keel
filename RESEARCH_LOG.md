@@ -21,6 +21,19 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-10-12 — Self-test marker and Windows regression fixes
+
+Writing the self-test marker through a hard link overwrote owner data. A fresh sibling file
+and atomic replacement avoid target writes; lstat refuses linked or nonregular destinations.
+A killed self-test can leave its build holding the gate lock, so lock ownership alone cannot
+justify skipping Stop. The marker now identifies the self-test shell as well as its lock token.
+Both failure conditions were observed before the fixes through automated regressions.
+
+The bootstrap rollback fixture wrote CRLF on Windows but compared its bytes with LF. The
+fixture now writes the same LF stamp as bootstrap. Doctor previously accepted an old Claude
+CLI before a current installation on PATH. It now probes the resolved CLI for the --effort
+option already required by the review adapter; the earlier-on-PATH regression was observed RED.
+
 ### 2026-10-10 — Round 3 bootstrap and Stop-hook findings
 
 Mode repair reused any staged blob as a regular executable, converting tracked symlinks

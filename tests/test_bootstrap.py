@@ -519,7 +519,7 @@ class BootstrapTests(unittest.TestCase):
                     if prior:
                         subprocess.run(['git', '-C', str(project), 'config', 'core.hooksPath', prior], check=True)
                     stamp = project / 'docs/kit/.kit-version'
-                    stamp.write_text(start + '\n')
+                    stamp.write_text(start + '\n', newline='\n')
                     stamp.chmod(0o444)
                     real = shutil.which(tool)
                     (shims / tool).write_text('#!/bin/sh\n' + (body % real if '%s' in body else body) +

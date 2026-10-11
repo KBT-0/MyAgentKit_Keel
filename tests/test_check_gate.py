@@ -61,6 +61,23 @@ class CheckGateTests(unittest.TestCase):
         code, out = gate(self.project, self.build)
         self.assertEqual(code, 0, out)
 
+    def test_linked_self_test_markers_never_change_owner_data(self):
+        self.build.write_text('false\n')
+        owner, marker = self.tmp / 'owner.txt', self.project / '.git/check-selftest'
+        owner.write_bytes(b'owner data\n')
+        for link in (os.link, os.symlink):
+            with self.subTest(link=link.__name__):
+                link(owner, marker)
+                try:
+                    code, out = gate(self.project, self.build, args=('--self-test',))
+                    self.assertEqual(owner.read_bytes(), b'owner data\n', out)
+                    self.assertEqual(code, 1, out)
+                    self.assertIn('FAIL [self-test]:', out)
+                    self.assertEqual(list(marker.parent.glob('check-selftest-*')), [], 'temporary left')
+                finally:
+                    if os.path.lexists(marker):
+                        marker.unlink()
+
     def test_a_symlink_is_never_followed(self):
         # Git tracks a symlink's link text, never its target. A link to an existing file
         # outside the tree was followed by grep: its lines leaked into the scan, and a link

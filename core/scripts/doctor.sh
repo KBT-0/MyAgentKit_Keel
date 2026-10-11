@@ -183,6 +183,12 @@ if [ -n "$reviewer" ] && [ -z "$reviewer_cli" ]; then
 elif [ -n "$reviewer" ] && ! ( [ -x "$HOME/.local/bin/codex" ] && PATH="$PATH:$HOME/.local/bin"
                             command -v "$reviewer_cli" ) >/dev/null 2>&1; then
   miss "the second CLI '$reviewer_cli' that scripts/review.sh calls" "install and log in to $reviewer (docs/DEV_SETUP.md §3)"
+elif [ "$reviewer" = claude ]; then
+  # Resolve the same first command as the adapter: a newer installation later on PATH
+  # cannot supply --effort to an older CLI that actually runs.
+  help=$("$reviewer_cli" --help 2>/dev/null) || help=""
+  printf '%s\n' "$help" | grep -Eq -- '(^|[[:space:],])--effort([[:space:]=,]|$)' ||
+    miss "the Claude CLI '$reviewer_cli' does not support --effort (an old CLI earlier on PATH can shadow the current installation)" "update that CLI, reorder PATH, or set CLAUDE_CLI_BIN to the current executable"
 fi
 # On native Windows (Git for Windows' sh, MSYS2, Cygwin) spawn_worker.sh opens a Windows
 # Terminal tab instead of a tmux session, which that host cannot run.

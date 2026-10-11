@@ -111,6 +111,13 @@ def children(pid):
     return found
 
 
+def descendants(pid):
+    found = children(pid)
+    for child, _ in found:
+        found.extend(children(child))
+    return found
+
+
 def set_reparse_point(path):
     """Make path a file carrying a reparse point with a non-Microsoft tag. Unlike a symlink,
     this needs no privilege; Python's os.remove deletes it, MSYS rm cannot."""
@@ -160,8 +167,30 @@ elif mode == 'noid':
 exec(compile(open(source, encoding='utf-8').read(), '<probe>', 'exec'), {'__name__': '__main__'})
 '''
 
+def kill_process(pid):
+    """Terminate a fixture process directly; taskkill needs privileges absent in sandboxes."""
+    KERNEL32.OpenProcess.restype = ctypes.c_void_p
+    KERNEL32.TerminateProcess.argtypes = (ctypes.c_void_p, ctypes.c_uint)
+    KERNEL32.GetExitCodeProcess.argtypes = (ctypes.c_void_p, ctypes.POINTER(wintypes.DWORD))
+    handle = KERNEL32.OpenProcess(0x1001, False, pid)
+    if not handle:
+        if ctypes.get_last_error() == 87:  # The fixture already exited.
+            return
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        if not KERNEL32.TerminateProcess(handle, 1):
+            error, status = ctypes.get_last_error(), wintypes.DWORD()
+            if not KERNEL32.GetExitCodeProcess(handle, ctypes.byref(status)) or status.value == 259:
+                raise ctypes.WinError(error)
+    finally:
+        close_handle(handle)
+
+
 def kill_tree(pid):
-    subprocess.run(['taskkill', '/F', '/T', '/PID', str(pid)], capture_output=True)
+    # Snapshot before terminating parents: reparented descendants must still be stopped.
+    victims = [pid] + [child for child, _ in descendants(pid)]
+    for victim in victims:
+        kill_process(victim)
 
 
 def released(lock, seconds=45):
@@ -245,6 +274,33 @@ class WindowsGateLockTests(unittest.TestCase):
         """The lock path in the form the gate compares GATE_LOCK_HELD with."""
         return subprocess.run(['sh', '-c', 'cygpath -m "$(pwd -P)/.git/check.lock"'], cwd=self.project,
                               capture_output=True, text=True, check=True).stdout.strip()
+
+    @windows_only
+    def test_a_linked_self_test_marker_never_changes_owner_data(self):
+        self.write_build('false\n')  # End at the baseline, without running the full self-test.
+        marker, owner = self.project / '.git/check-selftest', self.tmp / 'owner.txt'
+        owner.write_bytes(b'owner data\n')
+        for kind in ('hard link', 'symbolic link', 'reparse point'):
+            with self.subTest(kind=kind):
+                if kind == 'hard link':
+                    os.link(owner, marker)
+                elif kind == 'symbolic link':
+                    os.symlink(owner, marker)
+                else:
+                    set_reparse_point(marker)
+                try:
+                    proc = subprocess.Popen(['sh', 'scripts/check.sh', '--self-test'], cwd=self.project,
+                                            env=environment(self.build), text=True, stdout=subprocess.PIPE,
+                                            stderr=subprocess.STDOUT)
+                    code, out = finish(proc)
+                    self.assertEqual(owner.read_bytes(), b'owner data\n', out)
+                    self.assertEqual(code, 1, out)
+                    self.assertIn('FAIL [self-test]:', out)
+                    self.assertEqual(list(marker.parent.glob('check-selftest-*')), [], 'temporary left')
+                finally:
+                    if os.path.lexists(marker):
+                        os.remove(marker)
+
 
     @windows_only
     def test_the_gate_passes_holding_its_lock(self):
@@ -430,9 +486,9 @@ class WindowsGateLockTests(unittest.TestCase):
             self.assertIsNone(proc.poll(), 'the gate ended before its build started')
             self.assertLess(time.monotonic(), deadline, 'the gate never started its build')
             time.sleep(0.1)
-        holders = [pid for pid, name in children(proc.pid) if name.lower().startswith('python')]
-        self.assertEqual(len(holders), 1, children(proc.pid))
-        subprocess.run(['taskkill', '/F', '/PID', str(holders[0])], check=True, capture_output=True)
+        holders = [pid for pid, name in descendants(proc.pid) if name.lower().startswith('python')]
+        self.assertEqual(len(holders), 1, descendants(proc.pid))
+        kill_process(holders[0])
         waiters = [start(self.project, self.build, SIDE=self.side.as_posix()) for _ in range(2)]
         results = [finish(waiter, 120) for waiter in waiters]
         kill_tree(proc.pid)

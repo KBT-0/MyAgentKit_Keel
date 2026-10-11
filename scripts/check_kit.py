@@ -85,8 +85,8 @@ REQUIRED_SUITES = {
     # every test with the kit check green. A new test raises its suite's number here.
     'tests': {'test_packaging': 1, 'test_bootstrap': 36, 'test_acceptance': 9,
               'test_review_upgrade': 3, 'test_boundary_example': 3, 'test_scan_gate': 1,
-              'test_check_gate': 23, 'test_check_gate_windows': 18, 'test_boundary_restore': 39,
-              'test_sync_kit': 29, 'test_doctor': 2, 'test_git_hooks': 30, 'test_stop_hook': 6, 'test_context_hook': 10, 'test_overlay_permissions': 6,
+              'test_check_gate': 24, 'test_check_gate_windows': 19, 'test_boundary_restore': 39,
+              'test_sync_kit': 29, 'test_doctor': 3, 'test_git_hooks': 30, 'test_stop_hook': 7, 'test_context_hook': 10, 'test_overlay_permissions': 6,
               'test_spawn_worker': 18, 'test_worker_visibility': 55, 'test_doc_pointers': 7,
               'test_kit_output': 1, 'test_kit_runner': 22, 'test_clean_worktrees': 137, 'test_clean_worktrees_windows': 9, 'test_close_worker_windows': 1,
               'test_review_windows': 20, 'test_worker_paths_windows': 3,

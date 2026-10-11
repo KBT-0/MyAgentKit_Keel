@@ -13,6 +13,10 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## v0.11 — 2026-10-09
 
+- **Doctor catches an old Claude CLI earlier on PATH** (`scripts/doctor.sh`): the configured
+  Claude reviewer must advertise `--effort`, which the adapter already requires. A newer
+  installation later on PATH cannot satisfy that check. **ACTION:** sync the kit or copy
+  `$KIT/core/scripts/doctor.sh` to `scripts/doctor.sh`.
 - **A review no longer dies on the kit's own limits** (`agent_process.py`, the adapters,
   `review.sh`): a review attempt now gets 3600 seconds (maximum 7200) and a Claude review
   200 turns (maximum 500); three high-effort reviews had died on 1800 seconds and 12 turns.
@@ -56,16 +60,19 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   **ACTION:** copy `$KIT/core/scripts/review_dispatch.py` to `scripts/review_dispatch.py`.
 - **The lead's Stop hook stays out of a worker's self-test** (issue #68, item 3): the lead
   uses `git -C <worktree>` and keeps its shell in its own checkout. `check.sh --self-test`
-  writes its lock marker to `check-selftest` beside the gate lock and removes it on exit.
-  After the cheap gated-paths check, the Stop hook skips with a NOTE only while that marker
-  equals the lock file and the lock is held. A killed self-test's marker does not skip the gate.
+  atomically publishes its shell pid and lock token to `check-selftest` beside the gate lock
+  and removes it on exit. Linked markers are refused without changing their target data.
+  After the cheap gated-paths check, the Stop hook skips with a NOTE only while that shell
+  lives, its token equals the lock file, and the lock is held. Surviving build descendants
+  cannot make a killed self-test's marker skip the gate.
   File names never do: a `.selftest.*` file, tracked or not, no longer skips or blocks.
   **ACTION:** add the two sentences under "The lead's steps when a branch is ready" in
   `$KIT/core/docs/WORKFLOW.md` to your `docs/WORKFLOW.md`, copy
   `$KIT/overlays/claude-code/files/.claude/hooks/gate_on_stop.sh` to `.claude/hooks/gate_on_stop.sh`,
-  keeping your gated paths and file pattern, and add the `selftest_marker` lines of
-  `$KIT/core/scripts/check.sh` (in `cleanup` and at the start of `self_test`) to your
-  `scripts/check.sh`. Without them the hook waits for a self-test's lock as for any gate run.
+  keeping your gated paths and file pattern. Merge the marker removal in `cleanup` and the
+  full marker-publication block at the start of `self_test` from `$KIT/core/scripts/check.sh`
+  into `scripts/check.sh`. Upgrade both marker publication and the hook together. Without them
+  the hook waits for a self-test's lock as for any gate run.
 - **An incremental-build brief names both shared dependencies** (issue #68, item 4;
   `docs/HANDOFF.md`, "The brief"): always-run inputs belong to every stage's dependency
   set, and a changed driver script invalidates every stage. **ACTION:** add the two
