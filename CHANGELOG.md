@@ -37,7 +37,9 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   `.lock` the adapter did not create is never removed: it picks another folder. A `TMPDIR`
   inside the reviewed repository is now a recorded `copy_failed` (exit 5, evidence and a
   usage record), not exit 2 without a record. Old orphan lock files are swept after acquiring
-  their lock. Errors from a running reviewer are never labelled as copy failures.
+  their lock. Errors from a running reviewer are recorded as `run_failed`, with evidence,
+  a failed usage record, captured output and a structured dispatcher result. They are never
+  labelled as copy failures or preflight failures; cancellation and timeout handling stay unchanged.
   **ACTION:** update both the copied core scripts and the plugin to the same kit version;
   an older adapter still sweeps by age alone and can remove a new adapter's live copy.
   While no review is running, delete leftover `myagentkit-review-*` and `myagentkit-codex-*`

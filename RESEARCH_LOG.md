@@ -21,6 +21,14 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-10-11 — Supervision errors can lose a launched review's accounting (#39)
+
+An operating-system error after reviewer launch escaped both adapters without evidence or
+a usage record. The dispatcher then classified the launched attempt as a preflight failure.
+Both adapters now record `run_failed` and deliver their structured result. The process runner
+keeps output captured before a supervision error, so reported billed usage survives the failure.
+Copy errors remain `copy_failed`; cancellation and timeout handling retain their existing paths.
+
 ### 2026-10-10 — A live review copy can have an old timestamp (#39)
 
 Archive extraction can restore an old directory timestamp while the reviewer is still

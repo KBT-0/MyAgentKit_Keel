@@ -322,7 +322,7 @@ def run(command: list[str], prompt: str, repo: Path, timeout: float, into: dict 
     guard = OneShot()
     try:
         with guard:
-            result.update(_supervise(command, prompt, repo, timeout, started, guard, noted))
+            result.update(_supervise(command, prompt, repo, timeout, started, guard, noted, result))
             return result
     finally:
         # Noted while the handlers were restored: still a cancel.
@@ -411,7 +411,7 @@ def finish(child, pgid, timeout: float) -> bool:
     return exited
 
 
-def _supervise(command, prompt, repo, timeout, started, guard, prior=None):
+def _supervise(command, prompt, repo, timeout, started, guard, prior=None, into=None):
     with tempfile.TemporaryFile() as inp, selectors.DefaultSelector() as selector:
         # A file gives even a slow-starting CLI the entire prompt and EOF. Repeated
         # communicate(input=None) after a short timeout can strand a partially written pipe.
@@ -520,15 +520,34 @@ def _supervise(command, prompt, repo, timeout, started, guard, prior=None):
                 exited = _exited_unreaped(child, 0)
             if termination or child is None or not exited:
                 termination = "cancelled"
+        except OSError as error:
+            # The reviewer may already have emitted billed usage. Keep those bytes and
+            # finish cleanup before returning this distinct execution failure.
+            termination = "run_failed"
+            buffers["stderr"].extend(("\n" + str(error)).encode())
         finally:
             # Already noting on every path through the try; this covers an unexpected error.
             guard.armed = False
             noted = guard.noted
             # Also stop descendants left behind by a parent that already exited.
-            if child is not None:
-                stop_group(child, child.pid)
-                child.stdout.close()
-                child.stderr.close()
+            try:
+                if child is not None:
+                    try:
+                        stop_group(child, child.pid)
+                    finally:
+                        try:
+                            child.stdout.close()
+                        finally:
+                            child.stderr.close()
+            finally:
+                # A cleanup OSError also escapes run(). Hand the captured state to the
+                # adapter before that happens, so its run_failed record keeps billed usage.
+                if into is not None:
+                    into.update(exit_code=child.returncode if child else None,
+                                stdout=buffers['stdout'].decode(errors="replace"),
+                                stderr=buffers['stderr'].decode(errors="replace"),
+                                termination=termination, cancelled=bool(guard.noted),
+                                duration_ms=round((time.monotonic() - started) * 1000))
     # Built after the with block: closing the prompt file and the selector runs with the
     # noting handler too, and a cancel noted there once left a launch failure 'unavailable',
     # an eligible failure that started the fallback reviewer.

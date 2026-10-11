@@ -25,7 +25,7 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'MYAGENTKIT_TASK_ID', 'MYAGENTKIT_R
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 133, 'test_agent_usage': 20, 'test_codex_quota': 5}
+SUITE_MINIMUMS = {'test_claude_bridge': 136, 'test_agent_usage': 20, 'test_codex_quota': 5}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -2292,6 +2292,69 @@ class BridgeTests(unittest.TestCase):
         self.assertIsNone(record["usage"]["subscription_percent_consumed"])
         self.assertEqual(record["recovery"]["action"], "continue_independent_work")
         self.assertFalse(record["recovery"]["review_approved"])
+
+    def assert_supervision_os_error_keeps_usage(self, provider, fault):
+        from contextlib import redirect_stdout
+        from unittest.mock import patch
+        import errno
+        import agent_process
+        import claude_bridge
+        import codex_bridge
+        module = claude_bridge if provider == 'claude' else codex_bridge
+        output = (json.dumps({'type': 'result', 'subtype': 'success', 'is_error': False,
+                             'total_cost_usd': 0.123, 'usage': {'input_tokens': 7}})
+                  if provider == 'claude' else
+                  json.dumps({'type': 'turn.completed', 'usage': {'input_tokens': 7}}))
+        real_run = agent_process.run
+        real_stop = agent_process.stop_group
+
+        def broken_cleanup(*args):
+            real_stop(*args)
+            raise OSError(errno.EIO, 'cleanup EIO')
+
+        def reviewer(command, prompt, repo, timeout, **kwargs):
+            if '--json' not in command and '--output-format' not in command:
+                return real_run(command, prompt, repo, timeout, **kwargs)
+            failure = (patch.object(agent_process, '_exited_unreaped',
+                                    side_effect=OSError(errno.EIO, 'supervision EIO'))
+                       if fault == 'supervision' else
+                       patch.object(agent_process, 'stop_group', side_effect=broken_cleanup))
+            with failure:
+                return real_run([sys.executable, '-B', '-c',
+                                 'import sys; sys.stdin.read(); print(' + repr(output) + ')'],
+                                prompt, repo, timeout, **kwargs)
+
+        results = []
+        args = ['review'] if provider == 'claude' else ['--model', 'fixture-codex-model']
+        with patch.dict(os.environ, self.review_env(MYAGENTKIT_CAPTURE_QUOTA='0')), \
+                patch.object(agent_process, 'run', side_effect=reviewer), \
+                redirect_stdout(io.StringIO()):
+            code = module.main([*args, '--repo', str(self.repo)], results.append)
+        self.assertEqual(code, 5)
+        self.assertEqual(len(results), 1)
+        result = results[0]
+        self.assertEqual(result['failure_kind'], 'run_failed')
+        evidence = Path(result['evidence']).read_text()
+        self.assertIn('supervision failed', evidence)
+        self.assertNotIn('never ran', evidence)
+        record = json.loads(Path(result['usage_record']).read_text())
+        self.assertEqual((record['status'], record['failure_kind']), ('failed', 'run_failed'))
+        self.assertEqual(record['usage']['input_tokens'], 7)
+        self.assertIn(output, record['raw_stdout'])
+        self.assertIn(fault + ' EIO', record['raw_stderr'])
+        self.assertGreater(record['duration_ms'], 0)
+        if provider == 'claude':
+            self.assertEqual(record['usage']['api_cost_usd_reported'], 0.123)
+
+    def test_claude_supervision_os_error_keeps_partial_usage_and_evidence(self):
+        for fault in ('supervision', 'cleanup'):
+            with self.subTest(fault=fault):
+                self.assert_supervision_os_error_keeps_usage('claude', fault)
+
+    def test_codex_supervision_os_error_keeps_partial_usage_and_evidence(self):
+        for fault in ('supervision', 'cleanup'):
+            with self.subTest(fault=fault):
+                self.assert_supervision_os_error_keeps_usage('codex', fault)
 
     def test_timeout_keeps_partial_usage_and_raw_evidence(self):
         code, result = self.run_bridge("partial_timeout", extra=["--timeout", "1"])

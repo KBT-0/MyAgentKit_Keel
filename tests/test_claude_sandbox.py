@@ -99,15 +99,27 @@ class ClaudeSandboxTests(unittest.TestCase):
     def lock_refusal(self, error):
         return patch('msvcrt.locking' if os.name == 'nt' else 'fcntl.flock', side_effect=error)
 
-    def test_a_run_os_error_is_never_recorded_as_a_copy_failure(self):
+    def assert_run_os_error_is_recorded(self, bridge):
         def broken(*a, **k):
             raise OSError(errno.EIO, 'paid run failed')
-        code, result = self.review(claude_bridge, run=broken)
-        self.assertEqual(code, 2)
-        self.assertIsNone(result, 'a run error was falsely recorded as never launched')
-        with self.assertRaises(OSError):
-            self.review(codex_bridge, run=broken)
+        code, result = self.review(bridge, run=broken)
+        self.assertEqual(code, 5, result)
+        self.assertEqual((result['status'], result['failure_kind']), ('failed', 'run_failed'))
+        evidence = Path(result['evidence']).read_text()
+        self.assertIn('run_failed', evidence)
+        self.assertIn('supervision failed', evidence)
+        self.assertNotIn('never ran', evidence)
+        record = json.loads(Path(result['usage_record']).read_text())
+        self.assertEqual((record['status'], record['failure_kind']), ('failed', 'run_failed'))
+        self.assertIn('paid run failed', record['raw_stderr'])
+        self.assertFalse(result['cancelled'])
         self.assertEqual(list(self.temp.iterdir()), [])
+
+    def test_claude_run_os_error_is_recorded_as_run_failed(self):
+        self.assert_run_os_error_is_recorded(claude_bridge)
+
+    def test_codex_run_os_error_is_recorded_as_run_failed(self):
+        self.assert_run_os_error_is_recorded(codex_bridge)
 
     def test_scratch_setup_errors_are_recorded_and_leave_no_folder_or_lock(self):
         never = lambda *a, **k: self.fail('the reviewer ran without its copy')

@@ -124,7 +124,15 @@ def main(argv=None, result_sink=None):
                 if prepared is None and remaining <= 0:
                     prepared = {"exit_code": None, "stdout": "", "stderr": "the review wall-clock limit passed during preparation", "termination": "timeout",
                              "cancelled": False, "duration_ms": 0}
-                execution = prepared or agent_process.run(command, prompt, workdir, remaining, into=handed)
+                started = time.monotonic()
+                try:
+                    execution = prepared or agent_process.run(command, prompt, workdir, remaining, into=handed)
+                except OSError as error:
+                    execution = dict(handed) if handed else {
+                        "exit_code": None, "stdout": "", "stderr": "", "cancelled": False,
+                        "duration_ms": round((time.monotonic() - started) * 1000)}
+                    execution.update(termination="run_failed",
+                                     stderr=execution["stderr"] + "\n" + str(error))
                 if execution.pop("cancelled", False):
                     cancelled.append(True)
                 # A cancelled review must stop now, not start another CLI process to read quota.
@@ -169,6 +177,8 @@ def main(argv=None, result_sink=None):
                     reason = reason or "stale_checkout"
             except (OSError, ValueError, BridgeError):
                 reason = reason or "stale_checkout"
+            if reason == "run_failed":
+                final += "\nCodex ran, then its supervision failed: " + execution["stderr"]
             verdicts = re.findall(r"^VERDICT: (Accept|Accept with Manual Checks|Reject)[ \t]*$", final, re.M)
             declarations = re.findall(r"^[ \t]*VERDICT[ \t]*:.*$", final, re.M)
             if not reason and (len(verdicts) != 1 or len(declarations) != 1

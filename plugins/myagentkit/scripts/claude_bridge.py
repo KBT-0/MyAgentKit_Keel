@@ -1168,7 +1168,17 @@ def main(argv=None, result_sink=None) -> int:
                              "termination": "timeout" if time.monotonic() >= deadline else "copy_failed",
                              "cancelled": False, "duration_ms": 0}
             if execution is None:
-                execution = agent_process.run(command, prompt, workdir, remaining, noted=cancelled)
+                handed = {}
+                started = time.monotonic()
+                try:
+                    execution = agent_process.run(command, prompt, workdir, remaining,
+                                                  into=handed, noted=cancelled)
+                except OSError as error:
+                    execution = dict(handed) if handed else {
+                        "exit_code": None, "stdout": "", "stderr": "", "cancelled": False,
+                        "duration_ms": round((time.monotonic() - started) * 1000)}
+                    execution.update(termination="run_failed",
+                                     stderr=execution["stderr"] + "\n" + str(error))
         if execution.pop("cancelled", False):
             cancelled.append(True)
         evidence.update(execution)
@@ -1178,6 +1188,8 @@ def main(argv=None, result_sink=None) -> int:
                 raise BridgeError("Claude exceeded the wall-clock limit; process group stopped")
             if execution["termination"] == "copy_failed":
                 raise BridgeError("Claude never ran: " + execution["stderr"])
+            if execution["termination"] == "run_failed":
+                raise BridgeError("Claude ran, then its supervision failed: " + execution["stderr"])
             if reason and (execution["exit_code"] != 0 or execution["termination"]):
                 raise BridgeError(f"Claude exited {execution['exit_code']} ({reason}); inspect archived evidence")
             # A snapshot that cannot be taken (the reference was deleted) is a changed checkout
