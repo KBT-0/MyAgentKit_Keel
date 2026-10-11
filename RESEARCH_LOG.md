@@ -2076,3 +2076,16 @@ temporary parent directory no longer existed. Completion now recreates that one 
 and writes the marker before printing PASS. A regression removes the directory, then puts
 a regular file in its place: the first recovers, while the second fails without a PASS line
 and preserves the file. The cause of the directory's disappearance was not established.
+On macOS the marker scan read record boundaries from text: a raw newline inside an
+environment value (`PORTS=$'8080\n8081'`) left a continuation line led by digits, read as a
+new process, and the marker after it was credited to that pid, which named another process,
+while the marked one ran on. A mocked listing reproduced it (`[8081]` for `[41]`). The
+listing now says only whether any process holds the marker; each pid is then read on its
+own with `ps -p`, so the cost of one `ps` per process is paid only when a marked process
+exists. The gate-lock fixtures moved into a Job Object, and cleanup by `TerminateJobObject`
+alone stopped the build before the lock holder: the holder saw its gate end and cleared
+the token the killed-gate regression reads (5 of 5 runs red). The python3 alias of the
+Python install manager also starts the holder, the gate and the build outside the job, so
+on this host the job stopped none of them. Cleanup again stops parents before children,
+through handles checked by creation time (a process older than the parent it names is a
+pid reuse and is spared), and then the job.

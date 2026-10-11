@@ -124,12 +124,15 @@ def _marked(name) -> list:
     """The pids of the processes whose environment holds `name`=1 (Linux: /proc; else ps -E)."""
     if os.path.isdir("/proc/self"):
         return [int(pid) for pid in filter(str.isdigit, os.listdir("/proc")) if _holds(pid, name)]
-    try:
-        # A project's PATH may contain CLI fixtures or wrappers; use the host's ps.
-        listing = subprocess.run(["/bin/ps", "-A", "-E", "-ww", "-o", "pid=,command="], stdin=subprocess.DEVNULL,
-                                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-    except OSError:
-        listing = None
+    def ps(*options):
+        try:
+            # A project's PATH may contain CLI fixtures or wrappers; use the host's ps.
+            return subprocess.run(["/bin/ps", *options], stdin=subprocess.DEVNULL,
+                                  stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        except OSError:
+            return None
+    entry = name.encode() + b"=1"
+    listing = ps("-A", "-E", "-ww", "-o", "command=")
     if listing is None or listing.returncode:
         # A ps without -E (the BSDs) is no scan, not an empty one: say so once per process.
         if not _SCAN_UNAVAILABLE:
@@ -137,14 +140,19 @@ def _marked(name) -> list:
             sys.stderr.write("agent_process: /bin/ps -E failed; review descendants that left "
                              "their process group are not stopped\n")
         return []
-    pids, pid = [], None
-    for line in listing.stdout.splitlines():
-        fields = line.split()
-        if fields and fields[0].isdigit():
-            pid, fields = int(fields[0]), fields[1:]
-        # A raw newline inside an environment value continues the previous process's record.
-        if pid is not None and name.encode() + b"=1" in fields and pid not in pids:
-            pids.append(pid)
+    # A raw newline inside an environment value (PORTS=$'8080\n8081') splits a record over
+    # lines, and a continuation line led by digits read as a new record: the marker went to a
+    # pid naming another process, which was killed while the marked one ran on. The whole
+    # listing says only whether any process holds the marker; each pid is then read on its
+    # own, so all of its output is its own.
+    if entry not in listing.stdout.split():
+        return []
+    every = ps("-A", "-o", "pid=")
+    pids = []
+    for pid in filter(bytes.isdigit, [] if every is None or every.returncode else every.stdout.split()):
+        record = ps("-E", "-ww", "-o", "command=", "-p", pid.decode())
+        if record is not None and not record.returncode and entry in record.stdout.split():
+            pids.append(int(pid))
     return pids
 
 

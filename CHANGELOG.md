@@ -30,7 +30,9 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   remain contained and breakaway is refused. A descendant whose environment cleanup cannot
   read is outside the POSIX marker mechanism: a cleared environment, a non-dumpable,
   setuid, setgid or file-capability process on Linux, or one `ps -E` does not show on
-  macOS. **ACTION:** copy `core/scripts/agent_process.py`.
+  macOS. On macOS each process is read on its own once the marker shows, so a multi-line
+  environment value can no longer credit the marker to the wrong pid. **ACTION:** copy
+  `core/scripts/agent_process.py`.
 
 - **A review no longer dies on the kit's own limits** (`agent_process.py`, the adapters,
   `review.sh`): a review attempt now gets 3600 seconds (maximum 7200) and a Claude review

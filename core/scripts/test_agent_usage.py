@@ -12,6 +12,17 @@ import agent_usage
 from review_test_support import posix_only, send_cancel
 
 
+def ps_output(records, options):
+    """What /bin/ps prints for `options` over {pid: command and environment}: the table, with
+    or without its pid column, the pid list, or one pid's record (-p)."""
+    if '-p' in options:
+        return records.get(int(options[-1]), '').encode()
+    if options[-1] == 'pid=':
+        return ''.join(' %d\n' % pid for pid in records).encode()
+    pid_column = options[-1] == 'pid=,command='
+    return ''.join((' %d ' % pid if pid_column else '') + text for pid, text in records.items()).encode()
+
+
 class UsageTests(unittest.TestCase):
     def test_posix_launch_markers_preserve_empty_and_nested_environments(self):
         import os
@@ -38,11 +49,12 @@ class UsageTests(unittest.TestCase):
                 patch('builtins.open', side_effect=[io.BytesIO((marker + '=1\0OTHER=x').encode()),
                                                    io.BytesIO((marker + '=10\0').encode())]):
             self.assertEqual(agent_process._marked(marker), [12])
-        listing = (' 12 python ' + marker + '=1 OTHER=x\n 13 python ' + marker + '=10\n').encode()
+        records = {12: 'python ' + marker + '=1 OTHER=x\n', 13: 'python ' + marker + '=10\n'}
         def ps(command, **kwargs):
             # A project's PATH shim must not be able to invent the processes cleanup kills.
-            output = listing if command[0] == '/bin/ps' else ('999 shim ' + marker + '=1\n').encode()
-            return SimpleNamespace(returncode=0, stdout=output)
+            if command[0] != '/bin/ps':
+                return SimpleNamespace(returncode=0, stdout=('999 shim ' + marker + '=1\n').encode())
+            return SimpleNamespace(returncode=0, stdout=ps_output(records, command[1:]))
         with patch('os.path.isdir', return_value=False), patch('subprocess.run', side_effect=ps):
             self.assertEqual(agent_process._marked(marker), [12])
 
@@ -53,17 +65,44 @@ class UsageTests(unittest.TestCase):
         from types import SimpleNamespace
         from unittest.mock import patch
         marker = 'MYAGENTKIT_PROCESS_abc'
-        listing = (' 41 bash BASH_FUNC_f%%=() {  echo hi\n} ' + marker + '=1 OTHER=x\n'
-                   ' 42 python ' + marker + '=1\n').encode()
-        runs = [SimpleNamespace(returncode=0, stdout=listing)] + [SimpleNamespace(returncode=1, stdout=b'')] * 2
-        with patch('os.path.isdir', return_value=False), patch('subprocess.run', side_effect=runs), \
+        records = {41: 'bash BASH_FUNC_f%%=() {  echo hi\n} ' + marker + '=1 OTHER=x\n',
+                   42: 'python ' + marker + '=1\n'}
+        failing = []
+
+        def ps(command, **kwargs):
+            if failing:
+                return SimpleNamespace(returncode=1, stdout=b'')
+            return SimpleNamespace(returncode=0, stdout=ps_output(records, command[1:]))
+        with patch('os.path.isdir', return_value=False), patch('subprocess.run', side_effect=ps), \
                 patch.object(agent_process, '_SCAN_UNAVAILABLE', []), \
                 patch('sys.stderr', new_callable=io.StringIO) as stderr:
             self.assertEqual(agent_process._marked(marker), [41, 42])
+            failing.append(True)
             # A ps without -E (the BSDs) exits non-zero: no scan, said once, not "none found".
             self.assertEqual(agent_process._marked(marker), [])
             self.assertEqual(agent_process._marked(marker), [])
         self.assertEqual(stderr.getvalue().count('/bin/ps -E failed'), 1, stderr.getvalue())
+
+    def test_marker_scan_credits_a_digit_led_continuation_line_to_its_own_process(self):
+        # PORTS=$'8080\n8081' put a line led by digits inside 41's record, and the marker after
+        # it: read as a new record, it was credited to 8081, a pid naming another process,
+        # while 41 ran on. Each pid is read on its own now; a listing without the marker
+        # starts no per-pid read.
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        marker = 'MYAGENTKIT_PROCESS_abc'
+        records = {41: 'bash PORTS=8080\n8081 ' + marker + '=1\n', 42: 'python OTHER=x\n'}
+        calls = []
+
+        def ps(command, **kwargs):
+            calls.append(command)
+            return SimpleNamespace(returncode=0, stdout=ps_output(records, command[1:]))
+        with patch('os.path.isdir', return_value=False), patch('subprocess.run', side_effect=ps):
+            self.assertEqual(agent_process._marked(marker), [41])
+            del records[41]
+            calls.clear()
+            self.assertEqual(agent_process._marked(marker), [])
+        self.assertEqual(len(calls), 1, calls)
 
     def test_the_marker_kill_spares_a_pid_reused_since_the_scan(self):
         # The scan found 41; before the kill it exited and its pid went to an unrelated
