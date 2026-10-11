@@ -172,6 +172,67 @@ class WorkingModeTests(unittest.TestCase):
             self.assertTrue(any(call.args[0] == self.state for call in copy.call_args_list),
                             'STATE replacement must inherit its original permissions')
 
+    def test_overlapping_switch_is_refused_while_both_records_are_replaced(self):
+        spec = importlib.util.spec_from_file_location('working_mode', SCRIPT)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        replace = os.replace
+        competitors = []
+        def interrupted(source, target):
+            replace(source, target)
+            if target == self.state:
+                competitors.append(self.run_mode('codex-first'))
+        with mock.patch.object(module.os, 'replace', side_effect=interrupted), \
+                mock.patch('sys.stdout', new=io.StringIO()):
+            module.mode(self.project, 'claude-first')
+        self.assertNotEqual(competitors[0].returncode, 0, 'overlapping switch was allowed')
+        self.assertIn('mode switch in progress', competitors[0].stderr)
+        self.assertIn('Current mode: claude-first', self.run_mode().stdout)
+        self.assertEqual(self.run_mode('codex-first').returncode, 0, 'switch lock was not released')
+
+    def test_interrupted_switch_reports_repair_and_releases_the_lock(self):
+        self.assertEqual(self.run_mode('cross-performance').returncode, 0)
+        spec = importlib.util.spec_from_file_location('working_mode', SCRIPT)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        replace = os.replace
+        def interrupted(source, target):
+            if target.name == 'mode':
+                raise KeyboardInterrupt()
+            replace(source, target)
+        with mock.patch.object(module.os, 'replace', side_effect=interrupted):
+            with self.assertRaises(KeyboardInterrupt):
+                module.mode(self.project, 'claude-first')
+        result = self.run_mode()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('.claude/mode and STATE.md disagree', result.stderr)
+        self.assertIn('choose a mode explicitly to repair', result.stderr)
+        self.assertEqual(self.run_mode('codex-first').returncode, 0)
+        self.assertIn('Current mode: codex-first', self.run_mode().stdout)
+
+    def test_junction_is_refused_without_the_python_312_path_api(self):
+        if os.name != 'nt':
+            sys.stderr.write('\nNOT RUN: %s (native Windows junction)\n' % self.id())
+            return
+        target = self.project / 'elsewhere'
+        target.mkdir()
+        link = self.project / '.claude'
+        subprocess.run(['cmd', '/c', 'mklink', '/J', str(link), str(target)], check=True, capture_output=True)
+        spec = importlib.util.spec_from_file_location('working_mode', SCRIPT)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        before = self.state.read_bytes()
+        try:
+            with mock.patch.object(Path, 'is_junction', create=True), \
+                    mock.patch('sys.stdout', new=io.StringIO()):
+                del Path.is_junction  # Python 3.10/3.11 have no such API.
+                with self.assertRaisesRegex(ValueError, 'linked path refused'):
+                    module.mode(self.project, 'codex-first')
+            self.assertFalse((target / 'mode').exists())
+            self.assertEqual(self.state.read_bytes(), before)
+        finally:
+            link.rmdir()
+
     def test_claude_only_reviews_with_another_claude_tier_and_no_codex(self):
         result = self.run_mode('Sadece Claude Modu')
         self.assertEqual(result.returncode, 0, result.stderr)

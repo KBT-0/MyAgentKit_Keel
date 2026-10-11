@@ -104,6 +104,29 @@ class CodexWorkerTests(unittest.TestCase):
         worker.stop(child, tree)
         self.assertIn(mock.call(True), tree.call_args_list)
 
+    def test_ready_blocked_result_before_question_unblocks_the_leads_waiter(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            question, result = Path(tmp) / 'q.md', Path(tmp) / 'result.md'
+            waiter = subprocess.Popen([sys.executable, str(SCRIPT), '--wait', str(result)],
+                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            try:
+                code = ('from pathlib import Path; import os,time; p=Path(%r); '
+                        'p.write_text("Kind: blocked\\nTask: t\\nAttempt: 1\\nRemaining: decision\\n'
+                        'QUESTIONS: A or B?\\n%s"); os.replace(p,%r); '
+                        'p=Path(%r); p.write_text("A or B?\\n%s"); os.replace(p,%r); time.sleep(30)') % (
+                            str(result) + '.tmp', READY, str(result), str(question) + '.tmp', READY, str(question))
+                worker = self.run_worker(question, code, result)
+                self.assertEqual(worker.returncode, 0, worker.stderr)
+                self.assertIn('decision recorded', worker.stdout)
+                out, err = waiter.communicate(timeout=5)
+                self.assertEqual(waiter.returncode, 0, err)
+                self.assertIn('BLOCKED', out)
+                self.assertIn(READY, result.read_text())
+            finally:
+                if waiter.poll() is None:
+                    waiter.kill()
+                    waiter.communicate()
+
     def test_windows_child_is_suspended_until_job_assignment(self):
         worker = module()
         events = []

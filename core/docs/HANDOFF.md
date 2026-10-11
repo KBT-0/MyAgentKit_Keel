@@ -70,6 +70,7 @@ checkout records `.myagentkit/workers/NAME.session`, outside the worker's folder
 again on resume. The brief says to publish the question last, after independent work and
 jobs finish. Publish questions and finished results atomically: write a temporary file
 beside the destination, end with `<!-- codex-worker: ready -->`, then rename it into place.
+Publish the blocked result with this same protocol before publishing the question.
 End the turn immediately; the wrapper allows ten seconds to flush (overridden by
 `KIT_WORKER_GRACE`) before closing the worker's process tree. A question reaches the lead
 through its sidecar without a commit, and the recorded session is resumed with the answer.

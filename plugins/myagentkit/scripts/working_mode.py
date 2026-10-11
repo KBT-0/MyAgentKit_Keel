@@ -2,10 +2,12 @@
 # KIT-OWNED: do not edit locally; change it in the kit and re-sync.
 """Show or record the owner's working mode, using WORKFLOW.md as the rule source."""
 import argparse
+from contextlib import contextmanager
 import os
 from pathlib import Path
 import re
 import shutil
+import stat
 import sys
 import tempfile
 
@@ -22,7 +24,8 @@ def checked(project, relative):
     path = project
     for part in Path(relative).parts:
         path /= part
-        if path.is_symlink() or (path.exists() and getattr(path, 'is_junction', lambda: False)()):
+        if path.is_symlink() or (path.exists() and getattr(path.lstat(), 'st_file_attributes', 0)
+                                 & stat.FILE_ATTRIBUTE_REPARSE_POINT):
             raise ValueError('linked path refused: ' + relative)
     return path
 
@@ -36,7 +39,42 @@ def prepared(path, data):
     return Path(name)
 
 
+@contextmanager
+def switch_lock(project):
+    path = checked(project, '.claude/mode.lock')
+    path.parent.mkdir(exist_ok=True)
+    with path.open('a+b') as handle:
+        if os.name == 'nt':
+            import msvcrt
+            if not path.stat().st_size:
+                handle.write(b'\0')
+                handle.flush()
+            handle.seek(0)
+            acquire = lambda: msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            release = lambda: msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+            acquire = lambda: fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            release = lambda: fcntl.flock(handle, fcntl.LOCK_UN)
+        try:
+            acquire()
+        except OSError as error:
+            raise ValueError('mode switch in progress; retry when it ends') from error
+        try:
+            yield
+        finally:
+            handle.seek(0)
+            release()
+
+
 def mode(project, choice=None):
+    if choice is None:
+        return working_mode(project)
+    with switch_lock(project):
+        return working_mode(project, choice)
+
+
+def working_mode(project, choice=None):
     workflow = checked(project, 'docs/WORKFLOW.md').read_text(encoding='utf-8')
     if '### Working modes, by name' not in workflow:
         raise ValueError('project predates v0.11 working modes; see the kit CHANGELOG.md')

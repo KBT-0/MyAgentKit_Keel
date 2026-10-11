@@ -23,8 +23,9 @@ INSTRUCTION = ("Read %s and follow it. Write your result to %s. Leave all work u
                "cross-review, then commits with the usual commit gate. Publish a finished result atomically: write a "
                "temporary file beside it, end with <!-- codex-worker: ready -->, then rename it to the result path. "
                "If a decision is needed, finish independent work "
-               "and stop all jobs first, then write Kind: blocked and QUESTIONS in the result and publish the question "
-               "atomically to %s using the same temporary-file, end-marker and rename protocol. "
+               "and stop all jobs first, then write Kind: blocked and QUESTIONS in the result; "
+               "publish the blocked result atomically using the same temporary-file, end-marker and rename protocol "
+               "before publishing the question atomically to %s using that protocol too. "
                "End your turn immediately after publishing; the wrapper allows 10 seconds to flush before closing "
                "this worker. The lead answers by resuming this same session.")
 
@@ -280,6 +281,7 @@ class SpawnCodexTests(unittest.TestCase):
         prompt = self.runs()[0]['argv'][0]
         self.assertIn('atomically', prompt)
         self.assertIn('<!-- codex-worker: ready -->', prompt)
+        self.assertIn('publish the blocked result atomically using the same temporary-file, end-marker and rename protocol before publishing the question', prompt)
         self.assertIn('--wait', result.stdout)
         # The stub Codex ended on its own: the wrapper left the exit record --wait watches.
         exited = self.repo / '.myagentkit/workers/w14.exit'
@@ -365,6 +367,40 @@ class SpawnCodexTests(unittest.TestCase):
         self.assertTrue(tree.exists())
         self.assertTrue((self.repo / '.myagentkit/workers/w19.session').exists(),
                         'a kept, possibly unfinished worker lost its resume id')
+
+    def test_invalid_result_does_not_create_a_worktree_or_branch_and_retry_succeeds(self):
+        (self.repo / 'docs').mkdir()
+        (self.repo / 'docs/readme.md').write_text('tracked folder\n')
+        for args in (('add', 'docs'), ('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'docs')):
+            subprocess.run(['git', *args], cwd=self.repo, check=True, capture_output=True)
+        args = ('w20', str(self.brief), '--model', 'm', '--effort', 'high', '--worktree')
+        for path in (str(self.tmp / 'outside.md'), 'x.txt', 'missing/result.md'):
+            result = self.spawn(*args, '--result', path)
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertFalse((self.repo / '.claude/worktrees/w20').exists())
+            branch = subprocess.run(['git', 'show-ref', '--verify', '--quiet', 'refs/heads/worktree-w20'],
+                                    cwd=self.repo)
+            self.assertNotEqual(branch.returncode, 0)
+            self.assertEqual(self.runs(), [])
+        result = self.spawn(*args, '--result', 'docs/result.md')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_close_without_worktree_keeps_a_live_codex_workers_record(self):
+        result = self.spawn('w21', str(self.brief), '--model', 'm', '--effort', 'high')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        record = self.repo / '.myagentkit/workers/w21.session'
+        exited = record.with_suffix('.exit')
+        before = record.read_bytes(), exited.read_bytes()
+        (self.state / 'ps').write_text('4242 "C:\\codex\\codex.exe" resume sess-0 -C %s\r\n' % self.win(self.repo))
+        closed = self.close('w21')
+        self.assertEqual(closed.returncode, 1, closed.stdout + closed.stderr)
+        self.assertIn('a Codex session still runs', closed.stdout)
+        self.assertEqual((record.read_bytes(), exited.read_bytes()), before)
+        (self.state / 'ps').write_text('')
+        closed = self.close('w21')
+        self.assertEqual(closed.returncode, 0, closed.stdout + closed.stderr)
+        self.assertFalse(record.exists())
+        self.assertFalse(exited.exists())
 
 
 if __name__ == '__main__':

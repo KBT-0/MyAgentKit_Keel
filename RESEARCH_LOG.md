@@ -21,6 +21,15 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-10-11 — Claude-only keeps cross review between tiers (#57)
+
+The owner chose `claude-only` for a subscription with only Claude: the author and reviewer
+are different Claude tiers in fresh bridged sessions with no shared context. Same-tier fresh
+sessions were considered and rejected because they keep the same tier's blind spots;
+dropping cross review was rejected because independent acceptance must remain. The tier
+table chooses the author and reviewer by the work. Source: Model Routing Playbook, checked
+2026-10-05. This is the owner's 2026-10-11 decision, not a new research check by this worker.
+
 ### 2026-10-10 — Mode records and stopped-session sidecars (#43, #57)
 
 - A prose-only mode switch cannot prove that two state records stay together. The shared

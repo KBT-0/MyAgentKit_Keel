@@ -20,7 +20,10 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   placeholder is gone, and `docs/STATE.md` carries a "Working mode:" line.
   `/myagentkit:mode` (and the Codex skill `myagentkit-mode`) uses the shared
   `scripts/working_mode.py` to show or switch the mode, recording `.claude/mode` and the
-  STATE line together and refusing disagreement on reads. Handwritten names and Turkish
+  STATE line under a shared `.claude/mode.lock`, refusing overlapping switches. Interrupted
+  switches report disagreement on reads and name the repair: choose a mode explicitly.
+  Linked paths, including Windows junctions on Python 3.10/3.11, are refused.
+  Handwritten names and Turkish
   labels are matched without case (including capital Turkish dotted I); a list-item or
   indented line is read and switched in place, and an unknown value, a second line or any
   other line naming "Working mode:" is refused before writes. The command's allowed tools
@@ -38,7 +41,8 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   **ACTION:** copy the "Model routing" section and "Working modes, by name" from the kit's
   `core/docs/WORKFLOW.md` into yours over your own routing text, keeping your model names,
   and add the "Working mode:" line to `docs/STATE.md`. Sync the core scripts to install
-  `scripts/working_mode.py` and the updated doctor check.
+  `scripts/working_mode.py` and the updated doctor check; copy the `/.claude/mode.lock`
+  ignore rule from `core/.gitignore`.
 - **`claude-only` (Sadece Claude Modu), a seventh working mode** (owner's decision of
   2026-10-11; `docs/WORKFLOW.md`, "Working modes, by name"): for a subscription with only
   Claude. Claude workers write; a different Claude tier reviews in a fresh bridged session
@@ -57,8 +61,9 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   reviewing tier>` on every review run.
 - **A stopped worker is answered in its own session** (issue #57; `docs/WORKFLOW.md`,
   "Worker cost"; `docs/HANDOFF.md`, rule 7): never by a fresh session. The handoff names
-  the sidecars and publishes a question atomically with an end marker after independent
-  work, without requiring a commit. A ten-second grace period lets the turn flush.
+  the sidecars and publishes the blocked result atomically with the ready end marker before
+  publishing the question the same way after independent work, without requiring a commit.
+  A ten-second grace period lets the turn flush.
 - **`scripts/spawn_codex.sh`** (issues #57 and #43; Claude Code overlay): an interactive Codex
   worker in a Windows Terminal tab on native Windows and in tmux elsewhere, with the
   workspace-write sandbox and no approval prompts. The lead commits all Codex worker work
@@ -80,7 +85,9 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   The tab preserves quick startup errors behind an Enter prompt, and launches Git Bash by
   its full Windows path. `--no-daemon` keeps each runtime private. The default result is at
   the repository top; the brief uses the spawn-time path. `--result FILE` requires a `.md`
-  file inside the worker's folder. Ignore patterns keep project `docs/QUESTION-*.md` visible.
+  file inside the worker's folder; its path and parent directory are validated before a
+  worktree or branch is created, so a rejected path leaves the name available for retry.
+  Ignore patterns keep project `docs/QUESTION-*.md` visible.
   **ACTION:** adopt the lead-owned commit rule from `core/docs/WORKFLOW.md` and copy
   `overlays/claude-code/files/scripts/spawn_codex.sh` and `codex_worker.py` into `scripts/` (`chmod +x`,
   `git add --chmod=+x`); a sync keeps them updated from then on. Copy `close_worker.sh` too

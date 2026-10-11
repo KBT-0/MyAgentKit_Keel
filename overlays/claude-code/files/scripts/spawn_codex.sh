@@ -98,7 +98,6 @@ if [ -n "$worktree" ]; then
     ! git show-ref --verify --quiet "refs/heads/worktree-$name" ||
       die "branch worktree-$name already exists and may be stale; delete it or pick another name"
     [ ! -e "$dir" ] || die "worktree path already exists: $dir"
-    git worktree add -q "$dir" -b "worktree-$name" HEAD >&2 || die "git worktree add failed: $dir"
   fi
 fi
 chosen_result=$result
@@ -109,19 +108,27 @@ if [ -n "$result" ]; then
 else
   result=$dir/RESULT-$name.md; question=$dir/QUESTION-$name.md
 fi
-result=$($kit_python -I -c 'import pathlib, sys
-root, target = (pathlib.Path(p).resolve() for p in sys.argv[1:])
+result=$($kit_python -I -c 'import pathlib, subprocess, sys
+root, target = (pathlib.Path(p).resolve() for p in sys.argv[1:3])
 try:
     target.relative_to(root)
     if target.suffix != ".md": raise ValueError()
 except ValueError:
     sys.exit("result must be a .md file inside the worker folder")
-print(target.as_posix())' "$dir" "$result") || die "result must be a .md file inside the worker folder"
+if sys.argv[3] == "new":
+    parent = target.parent.relative_to(root).as_posix()
+    if parent != ".":
+        kind = subprocess.run(["git", "cat-file", "-t", "HEAD:" + parent], cwd=sys.argv[4],
+                              capture_output=True, text=True)
+        if kind.returncode or kind.stdout.strip() != "tree":
+            sys.exit("result directory does not exist in HEAD: " + parent)
+elif not target.parent.is_dir():
+    sys.exit("result directory does not exist: " + str(target.parent))
+print(target.as_posix())' "$dir" "$result" "${worktree:+${resume:-new}}" "$top") || die "invalid result path"
 # Recompute the custom question after resolving links and parent components.
 [ -z "$chosen_result" ] || question=$result.question.md
 record=$top/.myagentkit/workers/$name.session
 exited=$top/.myagentkit/workers/$name.exit
-[ -d "${result%/*}" ] || die "result directory does not exist: ${result%/*}"
 [ -n "$resume" ] || { [ ! -e "$question" ] && [ ! -e "$record" ]; } ||
   die "worker '$name' has a session or a decision recorded; answer it with --resume, never replace it"
 if [ -n "$resume" ] && [ -z "$session" ]; then
@@ -129,6 +136,9 @@ if [ -n "$resume" ] && [ -z "$session" ]; then
   ctl "session id" "$session"
 fi
 [ -z "$resume" ] || [ -n "$session" ] || die "--resume: the recorded session id is empty; never open a fresh picker"
+if [ -n "$worktree" ] && [ -z "$resume" ]; then
+  git worktree add -q "$dir" -b "worktree-$name" HEAD >&2 || die "git worktree add failed: $dir"
+fi
 
 # Codex is a native program on Windows: every path it is handed is Windows' own spelling.
 if [ -n "$windows" ]; then
@@ -140,7 +150,7 @@ if [ -n "$windows" ]; then
 else
   shown=$brief; cdir=$dir; cquestion=$question; cresult=$result; cworker=$kit/codex_worker.py; cexited=$exited
 fi
-instruction="Read $(q "$shown") and follow it. Write your result to $(q "$cresult"). Leave all work uncommitted and ready for the lead; list the exact changed and added files in the result. The lead reviews the diff through the normal cross-review, then commits with the usual commit gate. Publish a finished result atomically: write a temporary file beside it, end with <!-- codex-worker: ready -->, then rename it to the result path. If a decision is needed, finish independent work and stop all jobs first, then write Kind: blocked and QUESTIONS in the result and publish the question atomically to $(q "$cquestion") using the same temporary-file, end-marker and rename protocol. End your turn immediately after publishing; the wrapper allows 10 seconds to flush before closing this worker. The lead answers by resuming this same session."
+instruction="Read $(q "$shown") and follow it. Write your result to $(q "$cresult"). Leave all work uncommitted and ready for the lead; list the exact changed and added files in the result. The lead reviews the diff through the normal cross-review, then commits with the usual commit gate. Publish a finished result atomically: write a temporary file beside it, end with <!-- codex-worker: ready -->, then rename it to the result path. If a decision is needed, finish independent work and stop all jobs first, then write Kind: blocked and QUESTIONS in the result; publish the blocked result atomically using the same temporary-file, end-marker and rename protocol before publishing the question atomically to $(q "$cquestion") using that protocol too. End your turn immediately after publishing; the wrapper allows 10 seconds to flush before closing this worker. The lead answers by resuming this same session."
 # The instruction comes first, before any option, as spawn_worker.sh puts it.
 cmd="codex${resume:+ resume $(q "$session")} $(q "$instruction") -m $(q "$model") -c $(q "model_reasoning_effort=$effort")"
 cmd="$cmd -s workspace-write -a never --no-daemon -C $(q "$cdir")"
