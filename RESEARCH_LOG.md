@@ -21,6 +21,25 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-10-12 — Launch reservations and mode snapshots (#43, #57)
+
+Checking for a session before launching does not reserve its name or checkout. Concurrent
+launches can pass together and overwrite their sole resume record. A shared reservation now
+covers the checks, launch and session recording; an unrecorded launch retains it for recovery.
+
+The mode lock only coordinates mode switches. STATE can change during preparation or after
+replacement. Recheck its bytes before replacement, refuse a changed snapshot, and never
+roll back an independent edit. Validate the supplied project root and its ancestors too;
+checking only paths below a linked root silently redirects both records.
+
+A delayed waiter cannot reconstruct an old file's identity from its updated timestamp.
+Spawn now captures that identity before launch and passes it to both supervisor and waiter.
+The printed resume command also quotes the model, matching the actual launch's quoting.
+
+Default POSIX termination skips Python cleanup and leaves a separate worker group running.
+SIGTERM and SIGHUP now unwind cleanup, including cancellation during child creation.
+Regressions reproduce each failure; live POSIX cancellation still requires a POSIX host.
+
 ### 2026-10-11 — Claude-only keeps cross review between tiers (#57)
 
 The owner chose `claude-only` for a subscription with only Claude: the author and reviewer

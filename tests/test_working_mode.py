@@ -17,7 +17,7 @@ MODES = ('claude-first', 'cross-performance', 'cross-saving', 'codex-first', 'cl
 class WorkingModeTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        self.project = Path(self.tmp.name)
+        self.project = Path(self.tmp.name).resolve()
         (self.project / 'docs').mkdir()
         (self.project / 'docs/WORKFLOW.md').write_bytes((ROOT / 'core/docs/WORKFLOW.md').read_bytes())
         self.state = self.project / 'docs/STATE.md'
@@ -189,6 +189,77 @@ class WorkingModeTests(unittest.TestCase):
         self.assertIn('mode switch in progress', competitors[0].stderr)
         self.assertIn('Current mode: claude-first', self.run_mode().stdout)
         self.assertEqual(self.run_mode('codex-first').returncode, 0, 'switch lock was not released')
+
+    def test_state_edit_during_preparation_is_refused_without_losing_work(self):
+        self.assertEqual(self.run_mode('cross-performance').returncode, 0)
+        spec = importlib.util.spec_from_file_location('working_mode', SCRIPT)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        before = self.state.read_bytes()
+        concurrent = before + b'An independently added task.\n'
+        prepare = module.prepared
+        def interrupted(path, data):
+            pending = prepare(path, data)
+            if path.name == 'mode':
+                self.state.write_bytes(concurrent)
+            return pending
+        with mock.patch.object(module, 'prepared', side_effect=interrupted), \
+                mock.patch('sys.stdout', new=io.StringIO()):
+            with self.assertRaisesRegex(ValueError, 'STATE.md changed'):
+                module.mode(self.project, 'claude-first')
+        self.assertEqual(self.state.read_bytes(), concurrent)
+        self.assertEqual((self.project / '.claude/mode').read_text().strip(), 'cross-performance')
+        self.assertEqual(self.run_mode('codex-first').returncode, 0)
+
+    def test_failed_record_replace_does_not_roll_back_an_independent_state_edit(self):
+        self.assertEqual(self.run_mode('cross-performance').returncode, 0)
+        spec = importlib.util.spec_from_file_location('working_mode', SCRIPT)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        replace = os.replace
+        concurrent = []
+        def interrupted(source, target):
+            if target.name == 'mode':
+                concurrent.append(self.state.read_bytes() + b'Another active task.\n')
+                self.state.write_bytes(concurrent[0])
+                raise OSError('record replacement failed')
+            replace(source, target)
+        with mock.patch.object(module.os, 'replace', side_effect=interrupted):
+            with self.assertRaises(OSError):
+                module.mode(self.project, 'claude-first')
+        self.assertEqual(self.state.read_bytes(), concurrent[0])
+        self.assertIn('disagree', self.run_mode().stderr)
+
+    def test_project_root_and_ancestor_links_are_refused_before_lock_creation(self):
+        link = self.project / 'linked-project'
+        if os.name == 'nt':
+            subprocess.run(['cmd', '/c', 'mklink', '/J', str(link), str(self.project)],
+                           check=True, capture_output=True)
+        else:
+            link.symlink_to(self.project, target_is_directory=True)
+        before = self.state.read_bytes()
+        try:
+            for root in (link, link / 'child'):
+                with self.subTest(root=root):
+                    if root.name == 'child':
+                        child = self.project / 'child'
+                        (child / 'docs').mkdir(parents=True)
+                        (child / 'docs/STATE.md').write_bytes(before)
+                        (child / 'docs/WORKFLOW.md').write_bytes((self.project / 'docs/WORKFLOW.md').read_bytes())
+                    state = root / 'docs/STATE.md'
+                    result = subprocess.run([sys.executable, '-X', 'utf8', str(SCRIPT), '--project',
+                                             str(root), 'claude-first'], capture_output=True, text=True,
+                                            encoding='utf-8', timeout=15)
+                    self.assertNotEqual(result.returncode, 0, result.stdout)
+                    self.assertIn('linked path refused', result.stderr)
+                    self.assertEqual(state.read_bytes(), before)
+                    self.assertFalse((root / '.claude').exists(), 'the refusal must precede lock creation')
+            self.assertEqual(self.state.read_bytes(), before)
+        finally:
+            if os.name == 'nt':
+                link.rmdir()
+            else:
+                link.unlink()
 
     def test_interrupted_switch_reports_repair_and_releases_the_lock(self):
         self.assertEqual(self.run_mode('cross-performance').returncode, 0)

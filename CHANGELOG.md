@@ -22,7 +22,9 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   `scripts/working_mode.py` to show or switch the mode, recording `.claude/mode` and the
   STATE line under a shared `.claude/mode.lock`, refusing overlapping switches. Interrupted
   switches report disagreement on reads and name the repair: choose a mode explicitly.
-  Linked paths, including Windows junctions on Python 3.10/3.11, are refused.
+  A STATE edit detected before replacement refuses the switch; rollback preserves later
+  independent edits. Linked paths, including the supplied project root, its ancestors and
+  Windows junctions on Python 3.10/3.11, are refused before lock creation.
   Handwritten names and Turkish
   labels are matched without case (including capital Turkish dotted I); a list-item or
   indented line is read and switched in place, and an unknown value, a second line or any
@@ -71,7 +73,10 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   exact uncommitted files. Git-directory writable roots are removed: the owner's native
   Windows codex-cli 0.162 probe proved `git add` still fails on `index.lock` with both roots.
   The spawning checkout records `.myagentkit/workers/NAME.session`, outside the worker,
-  and resumes it with `--resume`; successful `close_worker.sh NAME` removes the record,
+  under a shared `.myagentkit/workers/spawn.lock` reservation from the initial checks through
+  session recording, refusing concurrent launches. An unrecorded launch keeps its reservation
+  until the lead resolves it; printed resume commands quote the model argument.
+  The lead resumes it with `--resume`; successful `close_worker.sh NAME` removes the record,
   allowing cleanup and name reuse. Workers publish decisions to `QUESTION-NAME.md`;
   `codex_worker.py` waits for the end marker and grace period before ending their process
   tree, and a fresh replacement is refused. Only a decision or a newly published
@@ -80,8 +85,11 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   the wrapper writes `.myagentkit/workers/NAME.exit` and `--wait` reports EXITED. On native
   Windows `close_worker.sh` refuses while a Codex session runs in the worker's folder, and a
   kept worktree keeps its session record. Its printed
-  `--wait FILE --since START --exit RECORD` command notifies the lead of an uncommitted handoff as a background command, ignoring old results.
+  `--wait FILE --since START --stale FILE_ID --exit RECORD` command notifies the lead of an
+  uncommitted handoff as a background command. It uses the result identity captured before
+  launch, so a delayed wait still excludes an in-place edit of an old result.
   Windows children join their job before running; POSIX escalation kills the entire group.
+  POSIX SIGTERM and SIGHUP unwind supervisor cleanup and reap the worker's process group.
   The tab preserves quick startup errors behind an Enter prompt, and launches Git Bash by
   its full Windows path. `--no-daemon` keeps each runtime private. The default result is at
   the repository top; the brief uses the spawn-time path. `--result FILE` requires a `.md`

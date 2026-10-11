@@ -81,12 +81,20 @@ ctl "effort" "$effort"
 ctl "result path" "$result"
 case "$effort" in minimal|low|medium|high|xhigh) ;; *) die "unsupported effort: $effort" ;; esac
 
-[ -n "$windows" ] || ! tmux has-session -t "=$name" 2>/dev/null ||
-  die "tmux session '$name' still runs; a session is resumed or replaced only after it ended"
-
 top=$(git rev-parse --show-toplevel) || die "a Codex worker needs a git repository"
 dir=$top
 ctl "working directory" "$dir"
+# Reserve names and checkouts before checks or worktree creation, through session recording.
+spawn_lock=$top/.myagentkit/workers/spawn.lock
+mkdir -p -- "${spawn_lock%/*}" || die "cannot create the worker records directory"
+mkdir -- "$spawn_lock" 2>/dev/null || die "spawn in progress or an unrecorded launch at $spawn_lock; retry after it is resolved"
+spawn_launched=""; spawn_recorded=""
+trap 'if [ -z "$spawn_launched" ] || [ -n "$spawn_recorded" ]; then rmdir -- "$spawn_lock"; else printf "spawn_codex: unrecorded launch; reservation kept at %s\n" "$spawn_lock" >&2; fi' 0
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+[ -n "$windows" ] || ! tmux has-session -t "=$name" 2>/dev/null ||
+  die "tmux session '$name' still runs; a session is resumed or replaced only after it ended"
 if python3 -I -c '' </dev/null >/dev/null 2>&1; then kit_python=python3
 elif python -I -c '' </dev/null >/dev/null 2>&1; then kit_python=python
 else kit_python="py -3"; fi   # unquoted at every use
@@ -212,6 +220,11 @@ running() {
 }
 
 start=$($kit_python -I -c 'import time; print(time.time())')
+stale=$($kit_python -I -c 'from pathlib import Path; import sys
+try:
+    print(Path(sys.argv[1]).stat().st_ino)
+except FileNotFoundError:
+    print(0)' "$result") || die "cannot capture the previous result identity"
 session_wait=${KIT_SESSION_WAIT:-60}
 case "$session_wait" in ""|*[!0-9]*) die "KIT_SESSION_WAIT must be seconds" ;; esac
 if [ -n "$windows" ]; then
@@ -226,16 +239,19 @@ if [ -n "$windows" ]; then
   tab=$(mktemp) || die "cannot write the tab's script"
   printf '%s\n' 'rm -f -- "$0"' "cd $(q "$dir") || exit 1" \
     'began=$(date +%s)' \
-    "KIT_WORKER_STARTED=$(q "$start") KIT_WORKER_EXIT=$(q "$cexited") $kit_python $(q "$cworker") $(q "$cquestion") $(q "$cresult") -- $(q "$bash") -c $(q "exec $cmd")" \
+    "KIT_WORKER_STARTED=$(q "$start") KIT_WORKER_STALE=$(q "$stale") KIT_WORKER_EXIT=$(q "$cexited") $kit_python $(q "$cworker") $(q "$cquestion") $(q "$cresult") -- $(q "$bash") -c $(q "exec $cmd")" \
     's=$?; if [ "$s" -ne 0 ] && [ "$(( $(date +%s) - began ))" -lt 10 ]; then printf "codex ended at once (exit %s); press Enter to close\\n" "$s"; read -r ignored; fi' \
     'exit 0' > "$tab" || die "cannot write the tab's script: $tab"
+  spawn_launched=1
   "$wt" -w 0 new-tab --title "$(semi "$name")" "$(semi "$bash")" -l "$(semi "$(cygpath -w "$tab")")" ||
-    { rm -f -- "$tab"; die "$wt could not open a tab for '$name'"; }
+    { spawn_launched=""; rm -f -- "$tab"; die "$wt could not open a tab for '$name'"; }
   where="in a Windows Terminal tab; watch it there"; view=tab
 else
   [ -z "$resume" ] || rm -f -- "$question"
   # `cd` first: tmux hands a new session the PWD of whichever client last created one.
-  tmux new-session -d -s "$name" -c "$dir" -x 200 -y 50 "cd $(q "$dir") && export KIT_WORKER_STARTED=$(q "$start") KIT_WORKER_EXIT=$(q "$exited") && exec $kit_python $(q "$cworker") $(q "$cquestion") $(q "$cresult") -- sh -c $(q "exec $cmd")"
+  spawn_launched=1
+  tmux new-session -d -s "$name" -c "$dir" -x 200 -y 50 "cd $(q "$dir") && export KIT_WORKER_STARTED=$(q "$start") KIT_WORKER_STALE=$(q "$stale") KIT_WORKER_EXIT=$(q "$exited") && exec $kit_python $(q "$cworker") $(q "$cquestion") $(q "$cresult") -- sh -c $(q "exec $cmd")" ||
+    { spawn_launched=""; die "tmux could not start '$name'"; }
   where="(tmux attach -t $name to watch)"; view="tmux session"
 fi
 
@@ -251,13 +267,14 @@ printf '%s\n' "spawn_codex: '$name' started with $brief $where"
 if [ -n "$session" ] && $kit_python -I -c 'from pathlib import Path; import sys
 record = Path(sys.argv[1]); record.parent.mkdir(parents=True, exist_ok=True)
 record.write_text(sys.argv[2] + "\n", encoding="utf-8")' "$record" "$session"; then
+  spawn_recorded=1
   printf '%s\n' "spawn_codex: session $session recorded in $record"
   printf '%s\n' "spawn_codex: decision file: $question; result file: $result"
   result_arg=""; [ -z "$chosen_result" ] || result_arg=" --result $(q "$result")"
-  printf '%s\n' "spawn_codex: to answer a question it stops on, once its session has ended: scripts/spawn_codex.sh $name ANSWER_FILE --model $model --effort $effort${worktree:+ --worktree}$result_arg --resume $(q "$session")"
+  printf '%s\n' "spawn_codex: to answer a question it stops on, once its session has ended: scripts/spawn_codex.sh $name ANSWER_FILE --model $(q "$model") --effort $effort${worktree:+ --worktree}$result_arg --resume $(q "$session")"
 else
   die "no Codex session for '$name' showed within $session_wait s; nothing is recorded. Look at its $view; do not replace it with a fresh session"
 fi
 printf '%s\n' "spawn_codex: leave all work uncommitted and ready for the lead, with the exact files in the result; the lead cross-reviews the diff, then commits with the usual gate (issue #43)"
 [ -n "$windows" ] || sh "$kit/show_workers.sh" "$name" || printf '%s\n' "spawn_codex: '$name' was not shown and runs anyway; attach by hand: tmux attach -t $name"
-printf '%s\n' "spawn_codex: run as a background command for the uncommitted handoff: $kit_python $(q "$cworker") --wait $(q "$cresult") --since $(q "$start") --exit $(q "$cexited")"
+printf '%s\n' "spawn_codex: run as a background command for the uncommitted handoff: $kit_python $(q "$cworker") --wait $(q "$cresult") --since $(q "$start") --stale $(q "$stale") --exit $(q "$cexited")"

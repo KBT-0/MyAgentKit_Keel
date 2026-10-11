@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from types import SimpleNamespace
 import unittest
 from unittest import mock
 
@@ -228,6 +229,101 @@ class CodexWorkerTests(unittest.TestCase):
                                      '--exit', str(record)], capture_output=True, text=True, timeout=10)
             self.assertEqual(waiter.returncode, 0, waiter.stderr)
             self.assertIn('EXITED (exit 3', waiter.stdout)
+
+    def test_late_wait_uses_launch_identity_after_an_in_place_edit(self):
+        worker = module()
+        with tempfile.TemporaryDirectory() as tmp:
+            result, record = Path(tmp) / 'result.md', Path(tmp) / 'w.exit'
+            result.write_text('Kind: blocked\nTask: old\nAttempt: 1\nRemaining: decision\n' + READY)
+            os.utime(result, (time.time() - 60, time.time() - 60))
+            since = time.time()
+            stale = worker.baseline(result, since)
+            self.assertIsNotNone(stale)
+            result.write_text(result.read_text().replace('Kind: blocked', 'Kind: completed'))
+            record.write_text('exit 0\n')
+            args = [sys.executable, str(SCRIPT), '--wait', str(result), '--since', str(since),
+                    '--stale', str(stale), '--exit', str(record)]
+            waiter = subprocess.run(args, capture_output=True, text=True, timeout=10)
+            self.assertEqual(waiter.returncode, 0, waiter.stderr)
+            self.assertIn('EXITED', waiter.stdout)
+            self.assertNotIn('DONE', waiter.stdout)
+            fresh = result.with_suffix('.tmp')
+            fresh.write_bytes(result.read_bytes())
+            os.replace(fresh, result)
+            waiter = subprocess.run(args, capture_output=True, text=True, timeout=10)
+            self.assertEqual(waiter.returncode, 0, waiter.stderr)
+            self.assertIn('DONE', waiter.stdout)
+
+    def test_posix_termination_unwinds_cleanup_and_restores_signal_handlers(self):
+        for sig in (signal.SIGTERM, getattr(signal, 'SIGHUP', 1)):
+            with self.subTest(sig=sig), tempfile.TemporaryDirectory() as tmp:
+                worker = module()
+                child = mock.Mock(pid=123, returncode=None)
+                child.poll.side_effect = lambda: child.returncode
+                child.terminate.side_effect = lambda: setattr(child, 'returncode', -sig)
+                handlers = {}
+                previous = mock.Mock()
+                def install(sig, handler):
+                    old = handlers.get(sig, previous)
+                    handlers[sig] = handler
+                    return old
+                def interrupt(*args):
+                    self.assertIn(sig, handlers, 'termination has no cleanup handler')
+                    handlers[sig](sig, None)
+                with mock.patch.object(worker, 'os', SimpleNamespace(name='posix', environ={},
+                                       setpgrp=mock.Mock(), killpg=mock.Mock())), \
+                        mock.patch.object(worker.signal, 'SIGTTOU', 22, create=True), \
+                        mock.patch.object(worker.signal, 'SIGHUP', 1, create=True), \
+                        mock.patch.object(worker.signal, 'SIGKILL', 9, create=True), \
+                        mock.patch.object(worker.signal, 'signal', side_effect=install), \
+                        mock.patch.object(worker.subprocess, 'Popen', return_value=child), \
+                        mock.patch.object(worker.time, 'sleep', side_effect=interrupt), \
+                        mock.patch('sys.stdin') as stdin, \
+                        mock.patch('sys.argv', ['codex_worker.py', str(Path(tmp) / 'q.md'), '--', 'fake']):
+                    stdin.isatty.return_value = False
+                    with self.assertRaises(SystemExit) as ended:
+                        worker.main()
+                    self.assertEqual(ended.exception.code, 128 + sig)
+                    worker.os.killpg.assert_any_call(123, signal.SIGTERM)
+                    worker.os.killpg.assert_any_call(123, 9)
+                    child.wait.assert_called()
+                    self.assertIs(handlers[sig], previous)
+
+    def test_posix_signals_stop_the_live_worker_group(self):
+        if os.name == 'nt':
+            sys.stderr.write('\nNOT RUN: %s (live POSIX signals)\n' % self.id())
+            return
+        for sig in (signal.SIGTERM, signal.SIGHUP):
+            with self.subTest(sig=sig), tempfile.TemporaryDirectory() as tmp:
+                started, escaped = Path(tmp) / 'started', Path(tmp) / 'escaped'
+                grandchild = ('import signal,time; from pathlib import Path; '
+                              'signal.signal(signal.SIGTERM,signal.SIG_IGN); '
+                              'Path(%r).touch(); time.sleep(2); Path(%r).touch()') % (str(started), str(escaped))
+                parent = ('import os,subprocess,sys,time; from pathlib import Path; '
+                          'Path(%r).write_text(str(os.getpid())); '
+                          'subprocess.Popen([sys.executable,"-c",%r]); time.sleep(30)') % (
+                              str(Path(tmp) / 'pid'), grandchild)
+                supervisor = subprocess.Popen([sys.executable, str(SCRIPT), str(Path(tmp) / 'q.md'), '--',
+                                               sys.executable, '-c', parent], stdout=subprocess.PIPE,
+                                              stderr=subprocess.PIPE, text=True)
+                try:
+                    deadline = time.monotonic() + 10
+                    while not started.exists():
+                        self.assertIsNone(supervisor.poll())
+                        self.assertLess(time.monotonic(), deadline)
+                        time.sleep(.05)
+                    supervisor.send_signal(sig)
+                    out, err = supervisor.communicate(timeout=15)
+                    self.assertEqual(supervisor.returncode, 128 + sig, out + err)
+                    time.sleep(2.2)
+                    self.assertFalse(escaped.exists(), 'a descendant outlived supervisor cancellation')
+                finally:
+                    if supervisor.poll() is None:
+                        supervisor.kill()
+                    supervisor.communicate()
+                    pid = Path(tmp) / 'pid'
+                    if pid.exists():
+                        module().posix_tree(int(pid.read_text()), True)
 
     def test_normal_exit_status_is_preserved_and_no_question_is_invented(self):
         with tempfile.TemporaryDirectory() as tmp:

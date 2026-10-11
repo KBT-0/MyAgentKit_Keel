@@ -136,11 +136,11 @@ def posix_tree(pid, force=False):
 def main():
     if len(sys.argv) >= 3 and sys.argv[1] == '--wait':
         options = dict(zip(sys.argv[3::2], sys.argv[4::2]))
-        if len(sys.argv) % 2 == 0 or set(options) - {'--since', '--exit'}:
-            raise ValueError('usage: codex_worker.py --wait RESULT [--since START] [--exit RECORD]')
+        if len(sys.argv) % 2 == 0 or set(options) - {'--since', '--exit', '--stale'}:
+            raise ValueError('usage: codex_worker.py --wait RESULT [--since START] [--stale FILE_ID] [--exit RECORD]')
         result, since = Path(sys.argv[2]), float(options.get('--since', 0))
         record = Path(options['--exit']) if '--exit' in options else None
-        stale = baseline(result, since)
+        stale = int(options['--stale']) or None if '--stale' in options else baseline(result, since)
         while not (kind := result_kind(result, since, stale)):
             try:
                 if record and record.stat().st_mtime >= since:
@@ -160,7 +160,8 @@ def main():
     if question.exists():
         raise ValueError('question file already exists; answer with spawn_codex.sh --resume')
     since = float(os.environ.get('KIT_WORKER_STARTED', '0'))
-    stale = baseline(result, since)  # before Codex starts, so its first edit cannot hide in it
+    stale = (int(os.environ['KIT_WORKER_STALE']) or None if 'KIT_WORKER_STALE' in os.environ
+             else baseline(result, since))
     # Git for Windows reparses bash -c's quoted command. Hand it a script file instead,
     # just as spawn_worker.sh does for Windows Terminal.
     command = sys.argv[separator + 1:]
@@ -178,20 +179,35 @@ def main():
         foreground = os.tcgetpgrp(terminal) if terminal is not None else None
         previous = signal.signal(signal.SIGTTOU, signal.SIG_IGN)
         child = None
+        handlers = {}
+        cancelled = None
+        supervising = False
+        def terminate(sig, frame):
+            nonlocal cancelled
+            cancelled = sig
+            if supervising:
+                raise SystemExit(128 + sig)
         try:
+            for sig in (signal.SIGTERM, signal.SIGHUP):
+                handlers[sig] = signal.signal(sig, terminate)
             child = subprocess.Popen(command, preexec_fn=os.setpgrp)
+            def close_tree(force=False):
+                posix_tree(child.pid, force)
+            supervising = True
+            if cancelled is not None:
+                raise SystemExit(128 + cancelled)
             if terminal is not None:
                 os.tcsetpgrp(terminal, child.pid)
                 os.killpg(child.pid, signal.SIGCONT)
-            def close_tree(force=False):
-                posix_tree(child.pid, force)
             return watch(child, question, close_tree, result, stale)
         finally:
-            if child is not None and child.poll() is None:
-                child.kill()
-                child.wait()
+            supervising = False
+            if child is not None:
+                stop(child, lambda force=False: posix_tree(child.pid, force))
             if terminal is not None:
                 os.tcsetpgrp(terminal, foreground)
+            for sig, handler in handlers.items():
+                signal.signal(sig, handler)
             signal.signal(signal.SIGTTOU, previous)
 
 

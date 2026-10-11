@@ -11,7 +11,9 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 
 from test_spawn_worker import WT_TAB, shq
 
@@ -83,7 +85,7 @@ class SpawnCodexTests(unittest.TestCase):
         if not WINDOWS:
             stubs.update(cygpath=CYGPATH, uname='#!/bin/sh\necho MINGW64_NT-10.0-26200\n')
         for name, body in stubs.items():
-            (self.bin / name).write_text(body)
+            (self.bin / name).write_text(body, newline='\n')
             (self.bin / name).chmod(0o755)
         git = lambda *a: subprocess.run(['git', *a], cwd=self.repo, check=True, capture_output=True)
         git('init', '-q')
@@ -105,7 +107,7 @@ class SpawnCodexTests(unittest.TestCase):
         env = dict(os.environ, PATH=f'{self.bin}{os.pathsep}{os.environ["PATH"]}', SPAWN_STATE=str(self.state),
                    CODEX_HOME=str(self.home), KIT_WT=str(self.bin / 'wt-tab'), KIT_PS=str(self.bin / 'ps-stub'), KIT_SESSION_WAIT='2', **extra)
         if tmux:
-            (self.bin / 'uname').write_text('#!/bin/sh\necho Linux\n')
+            (self.bin / 'uname').write_text('#!/bin/sh\necho Linux\n', newline='\n')
             (self.bin / 'uname').chmod(0o755)
         return subprocess.run(['sh', str(SCRIPT), *args], cwd=self.repo, env=env,
                               capture_output=True, text=True, timeout=60)
@@ -289,7 +291,7 @@ class SpawnCodexTests(unittest.TestCase):
         self.assertTrue(exited.read_text().startswith('exit 0'), exited)
 
     def test_tab_preserves_quick_exit_error(self):
-        (self.bin / 'codex').write_text('#!/bin/sh\necho bad-model >&2\nexit 1\n')
+        (self.bin / 'codex').write_text('#!/bin/sh\necho bad-model >&2\nexit 1\n', newline='\n')
         result = self.spawn('w15', str(self.brief), '--model', 'm', '--effort', 'high')
         self.assertEqual(result.returncode, 1)
         self.assertIn('bad-model', result.stderr)
@@ -401,6 +403,81 @@ class SpawnCodexTests(unittest.TestCase):
         self.assertEqual(closed.returncode, 0, closed.stdout + closed.stderr)
         self.assertFalse(record.exists())
         self.assertFalse(exited.exists())
+
+    def test_concurrent_spawns_reserve_the_name_and_checkout_until_recorded(self):
+        # Hold the first launch after the process check, before its session is visible.
+        gate = self.bin / 'wt-tab'
+        gate.write_text(CODEX_TAB.replace('args = sys.argv[1:]', '''args = sys.argv[1:]
+import pathlib, time
+state = pathlib.Path(os.environ['SPAWN_STATE'])
+if os.environ.get('SPAWN_HOLD'):
+    (state / 'launching').touch()
+    while not (state / 'release').exists(): time.sleep(.05)'''), newline='\n')
+        args = ('w22', str(self.brief), '--model', 'm', '--effort', 'high')
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(self.spawn, *args, SPAWN_HOLD='1')
+            try:
+                deadline = time.monotonic() + 20
+                while not (self.state / 'launching').exists():
+                    self.assertFalse(first.done(), first.result() if first.done() else 'launch pending')
+                    self.assertLess(time.monotonic(), deadline, 'first launch never reached the terminal')
+                    time.sleep(.05)
+                second = pool.submit(self.spawn, *args)
+                refused = second.result(timeout=15)
+                self.assertNotEqual(refused.returncode, 0, refused.stdout + refused.stderr)
+                self.assertIn('spawn in progress', refused.stderr)
+                # A second name in the same checkout must not bypass the reservation either.
+                refused = self.spawn('w23', str(self.brief), '--model', 'm', '--effort', 'high')
+                self.assertNotEqual(refused.returncode, 0, refused.stdout + refused.stderr)
+                self.assertIn('spawn in progress', refused.stderr)
+            finally:
+                (self.state / 'release').touch()
+            started = first.result(timeout=30)
+        self.assertEqual(started.returncode, 0, started.stdout + started.stderr)
+        self.assertEqual(len(self.runs()), 1)
+        self.assertEqual((self.repo / '.myagentkit/workers/w22.session').read_text().strip(), 'sess-0')
+        resumed = self.spawn(*args, '--resume')
+        self.assertEqual(resumed.returncode, 0, resumed.stdout + resumed.stderr)
+
+    def test_printed_resume_command_quotes_the_model_and_round_trips(self):
+        marker = self.repo / 'injected'
+        model = "m'; : ' value; touch injected; #"
+        result = self.spawn('w24', str(self.brief), '--model', model, '--effort', 'high')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        line = next(line for line in result.stdout.splitlines() if 'scripts/spawn_codex.sh w24 ANSWER_FILE ' in line)
+        command = line.split(': scripts/spawn_codex.sh ', 1)[1]
+        # Execute the printed command with an argv logger in place of the script.
+        logger = self.bin / 'argv.py'
+        logger.write_text('import json,sys; print(json.dumps(sys.argv[1:]))\n', newline='\n')
+        printed = subprocess.run(['sh', '-c', shq(sys.executable.replace('\\', '/')) + ' '
+                                  + shq(str(logger).replace('\\', '/')) + ' ' + command],
+                                 cwd=self.repo, capture_output=True, text=True, timeout=10)
+        self.assertEqual(printed.returncode, 0, printed.stderr)
+        self.assertFalse(marker.exists(), 'following the printed command executed the model as shell code')
+        argv = json.loads(printed.stdout)
+        self.assertEqual(argv[argv.index('--model') + 1], model)
+        self.assertEqual(argv[-2:], ['--resume', 'sess-0'])
+
+    def test_printed_late_wait_reuses_identity_captured_before_launch(self):
+        result_file = self.repo / 'RESULT-w25.md'
+        result_file.write_text('Kind: blocked\nTask: old\nAttempt: 1\nRemaining: decision\n'
+                               '<!-- codex-worker: ready -->')
+        os.utime(result_file, (time.time() - 60, time.time() - 60))
+        (self.bin / 'codex').write_text(CODEX + '''
+from pathlib import Path
+p = Path(os.environ['RESULT_EDIT'])
+p.write_text(p.read_text().replace('Kind: blocked', 'Kind: completed'))
+''', newline='\n')
+        started = self.spawn('w25', str(self.brief), '--model', 'm', '--effort', 'high',
+                             RESULT_EDIT=str(result_file))
+        self.assertEqual(started.returncode, 0, started.stdout + started.stderr)
+        command = next(line.partition('handoff: ')[2] for line in started.stdout.splitlines()
+                       if 'background command for the uncommitted handoff: ' in line)
+        waited = subprocess.run(['sh', '-c', command], cwd=self.repo, capture_output=True,
+                                text=True, timeout=15)
+        self.assertEqual(waited.returncode, 0, waited.stdout + waited.stderr)
+        self.assertIn('EXITED', waited.stdout)
+        self.assertNotIn('DONE', waited.stdout)
 
 
 if __name__ == '__main__':

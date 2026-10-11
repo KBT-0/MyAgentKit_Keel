@@ -21,12 +21,13 @@ def normalized(value):
 
 
 def checked(project, relative):
-    path = project
-    for part in Path(relative).parts:
+    project = project.absolute()
+    path = Path(project.anchor)
+    for part in (*project.parts[1:], *Path(relative).parts):
         path /= part
         if path.is_symlink() or (path.exists() and getattr(path.lstat(), 'st_file_attributes', 0)
                                  & stat.FILE_ATTRIBUTE_REPARSE_POINT):
-            raise ValueError('linked path refused: ' + relative)
+            raise ValueError('linked path refused: ' + str(path))
     return path
 
 
@@ -131,15 +132,19 @@ def working_mode(project, choice=None):
         position = separator.end() if separator else len(state)
         updated = state[:position] + ('' if position == 0 or state[:position].endswith('\n') else newline) + line + state[position:]
     record.parent.mkdir(exist_ok=True)
+    updated_bytes = updated.encode('utf-8')
     pending = []
     try:
-        pending.append(prepared(state_path, updated.encode('utf-8')))
+        pending.append(prepared(state_path, updated_bytes))
         pending.append(prepared(record, (selected + '\n').encode('utf-8')))
+        if state_path.read_bytes() != state_bytes:
+            raise ValueError('STATE.md changed during the mode switch; retry with the current document')
         os.replace(pending[0], state_path)
         try:
             os.replace(pending[1], record)
         except OSError:
-            state_path.write_bytes(state_bytes)
+            if state_path.read_bytes() == updated_bytes:
+                state_path.write_bytes(state_bytes)
             raise
     finally:
         for path in pending:
