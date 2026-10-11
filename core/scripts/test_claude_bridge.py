@@ -25,9 +25,9 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'MYAGENTKIT_TASK_ID', 'MYAGENTKIT_R
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 138, 'test_agent_usage': 22, 'test_codex_quota': 5}
+SUITE_MINIMUMS = {'test_claude_bridge': 139, 'test_agent_usage': 24, 'test_codex_quota': 5}
 # These are executed cases, excluding only the explicitly declared POSIX exclusions.
-WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 115, 'test_agent_usage': 18, 'test_codex_quota': 4}
+WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 116, 'test_agent_usage': 20, 'test_codex_quota': 4}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -2079,6 +2079,18 @@ class BridgeTests(unittest.TestCase):
                                   REVIEW_CODEX_MODEL='fixture-codex-model')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertNotIn('adapter_error', result.stdout)
+
+    def test_utf8_output_escapes_what_it_cannot_encode_and_skips_a_missing_stream(self):
+        # A bare encoding reset the error handler to strict: a lone surrogate (a non-UTF-8 path)
+        # then raised while printing, the same lost review. pythonw has no stdout at all.
+        import io
+        from unittest.mock import patch
+        stderr = io.TextIOWrapper(io.BytesIO(), encoding='ascii', errors='backslashreplace')
+        with patch.object(sys, 'stdout', None), patch.object(sys, 'stderr', stderr):
+            bridge.utf8_output()
+            print('A → B \udcff', file=stderr)
+        stderr.flush()
+        self.assertIn('A → B \\udcff'.encode(), stderr.buffer.getvalue())
 
     def test_malformed_codex_verdict_never_becomes_accept(self):
         fake = self.root / 'codex-conflict'

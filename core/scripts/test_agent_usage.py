@@ -42,9 +42,47 @@ class UsageTests(unittest.TestCase):
         def ps(command, **kwargs):
             # A project's PATH shim must not be able to invent the processes cleanup kills.
             output = listing if command[0] == '/bin/ps' else ('999 shim ' + marker + '=1\n').encode()
-            return SimpleNamespace(stdout=output)
+            return SimpleNamespace(returncode=0, stdout=output)
         with patch('os.path.isdir', return_value=False), patch('subprocess.run', side_effect=ps):
             self.assertEqual(agent_process._marked(marker), [12])
+
+    def test_marker_scan_skips_lines_naming_no_process_and_reports_a_failed_ps_once(self):
+        # A raw newline in an exported bash function put the marker on a line that names no
+        # process: int() raised out of stop_group, and run() raised instead of returning.
+        import io
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        marker = 'MYAGENTKIT_PROCESS_abc'
+        listing = (' 41 bash BASH_FUNC_f%%=() {  echo hi\n} ' + marker + '=1 OTHER=x\n'
+                   ' 42 python ' + marker + '=1\n').encode()
+        runs = [SimpleNamespace(returncode=0, stdout=listing)] + [SimpleNamespace(returncode=1, stdout=b'')] * 2
+        with patch('os.path.isdir', return_value=False), patch('subprocess.run', side_effect=runs), \
+                patch.object(agent_process, '_SCAN_UNAVAILABLE', []), \
+                patch('sys.stderr', new_callable=io.StringIO) as stderr:
+            self.assertEqual(agent_process._marked(marker), [42])
+            # A ps without -E (the BSDs) exits non-zero: no scan, said once, not "none found".
+            self.assertEqual(agent_process._marked(marker), [])
+            self.assertEqual(agent_process._marked(marker), [])
+        self.assertEqual(stderr.getvalue().count('/bin/ps -E failed'), 1, stderr.getvalue())
+
+    def test_the_marker_kill_spares_a_pid_reused_since_the_scan(self):
+        # The scan found 41; before the kill it exited and its pid went to an unrelated
+        # process. Through a pidfd the environment is read again first: a newcomer without
+        # the marker is never signalled, a marked process is, through the pidfd only.
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        child = SimpleNamespace(returncode=0, _kit_marker='MYAGENTKIT_PROCESS_abc', wait=lambda: 0)
+        for marked, expected in ((False, []), (True, [(99, 9)])):
+            sent, killed, closed = [], [], []
+            with self.subTest(marked=marked), patch.object(agent_process, 'POSIX', True), \
+                    patch.object(agent_process, '_marked', side_effect=[[41], []]), \
+                    patch.object(agent_process, '_holds', return_value=marked), \
+                    patch('os.pidfd_open', create=True, return_value=99), patch('os.close', closed.append), \
+                    patch('signal.pidfd_send_signal', create=True, side_effect=lambda *a: sent.append(a)), \
+                    patch('signal.SIGKILL', 9, create=True), patch('os.kill', side_effect=lambda *a: killed.append(a)), \
+                    patch('time.sleep'):
+                agent_process.stop_group(child, 41)
+                self.assertEqual((sent, killed, closed), (expected, [], [99]))
 
     def test_private_staging_and_publication_require_ignore_rules(self):
         from unittest.mock import patch

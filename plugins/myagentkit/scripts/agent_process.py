@@ -7,6 +7,7 @@ import select
 import selectors
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -107,26 +108,42 @@ def pending() -> set:
     return {sig for cancel in CANCEL_SIGNALS for sig in getattr(signal.getsignal(cancel), 'held', ())}
 
 
+def _holds(pid, name) -> bool:
+    """Whether /proc shows `name`=1 in the environment of process `pid`."""
+    try:
+        with open("/proc/%s/environ" % pid, "rb") as environ:
+            return name.encode() + b"=1" in environ.read().split(b"\0")
+    except OSError:
+        return False  # gone, another user's, or not dumpable (launch())
+
+
+_SCAN_UNAVAILABLE = []
+
+
 def _marked(name) -> list:
     """The pids of the processes whose environment holds `name`=1 (Linux: /proc; else ps -E)."""
-    entry = name.encode() + b"=1"
     if os.path.isdir("/proc/self"):
-        pids = []
-        for pid in filter(str.isdigit, os.listdir("/proc")):
-            try:
-                with open("/proc/%s/environ" % pid, "rb") as environ:
-                    if entry in environ.read().split(b"\0"):
-                        pids.append(int(pid))
-            except OSError:
-                pass  # gone, or another user's
-        return pids
+        return [int(pid) for pid in filter(str.isdigit, os.listdir("/proc")) if _holds(pid, name)]
     try:
         # A project's PATH may contain CLI fixtures or wrappers; use the host's ps.
         listing = subprocess.run(["/bin/ps", "-A", "-E", "-ww", "-o", "pid=,command="], stdin=subprocess.DEVNULL,
-                                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL).stdout
+                                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     except OSError:
+        listing = None
+    if listing is None or listing.returncode:
+        # A ps without -E (the BSDs) is no scan, not an empty one: say so once per process.
+        if not _SCAN_UNAVAILABLE:
+            _SCAN_UNAVAILABLE.append(name)
+            sys.stderr.write("agent_process: /bin/ps -E failed; review descendants that left "
+                             "their process group are not stopped\n")
         return []
-    return [int(line.split()[0]) for line in listing.splitlines() if entry in line.split()[1:]]
+    pids = []
+    for line in listing.stdout.splitlines():
+        fields = line.split()
+        # A raw newline inside an environment value starts a line that names no process.
+        if fields and fields[0].isdigit() and name.encode() + b"=1" in fields[1:]:
+            pids.append(int(fields[0]))
+    return pids
 
 
 def launch(command, mask, **popen_kw) -> subprocess.Popen:
@@ -139,7 +156,11 @@ def launch(command, mask, **popen_kw) -> subprocess.Popen:
         # over PR_SET_CHILD_SUBREAPER, which is Linux only (macOS has none) and makes this
         # supervisor the parent of every orphan of the run. A name per launch, not one shared
         # name: a nested run adds its own and keeps the outer one, so the outer stop still
-        # finds it. Ceiling: a descendant started with a cleared environment (env -i) escapes.
+        # finds it. Ceiling: a descendant whose environment cannot be read escapes: one
+        # started with a cleared environment (env -i); on Linux one that is not dumpable
+        # (prctl PR_SET_DUMPABLE 0, as ssh-agent does, or a setuid, setgid or file-capability
+        # binary), whose /proc environ is closed to us; on macOS one whose environment ps -E
+        # does not show.
         marker = "MYAGENTKIT_PROCESS_" + os.urandom(8).hex()
         environment = os.environ if popen_kw.get("env") is None else popen_kw["env"]
         popen_kw["env"] = dict(environment, **{marker: "1"})
@@ -198,6 +219,11 @@ def stop_group(child, pgid) -> None:
     the group again once it is reaped. Windows: TerminateJobObject stops every process in the
     child's job (launch()), once; a child launched elsewhere gets `taskkill /T /F`, and
     child.kill() when taskkill is missing or fails.
+
+    POSIX also kills every process whose environment holds the child's marker (launch()), so
+    a descendant that left the group with setsid stops too. Ceilings: a descendant whose
+    environment cannot be read survives (launch() names them), and outside Linux pidfds a pid
+    reused between the scan and the kill can be signalled (below).
     """
     if POSIX:
         # The leader's pid is signalled only while it is ours (not yet reaped): a reaped
@@ -224,10 +250,28 @@ def stop_group(child, pgid) -> None:
             if not pids:
                 break
             for pid in pids:
+                # A process found may have exited since the scan and its pid gone to another.
+                # On Linux the kill goes through a pidfd opened first, and only after the
+                # environment is read again: a pid reused before the open fails that read, one
+                # reused after it leaves the pidfd on the dead process. Ceiling: on macOS, or a
+                # Linux kernel without pidfds (before 5.3), the window between the scan and
+                # os.kill stays; sequential pid allocation keeps it small.
                 try:
-                    os.kill(pid, signal.SIGKILL)
+                    handle = os.pidfd_open(pid) if hasattr(signal, "pidfd_send_signal") else None
+                except ProcessLookupError:
+                    continue
+                except OSError:
+                    handle = None
+                try:
+                    if handle is None:
+                        os.kill(pid, signal.SIGKILL)
+                    elif _holds(pid, child._kit_marker):
+                        signal.pidfd_send_signal(handle, signal.SIGKILL)
                 except (ProcessLookupError, PermissionError):
                     pass
+                finally:
+                    if handle is not None:
+                        os.close(handle)
             time.sleep(0.05)
     elif getattr(child, "_kit_job", None) is not None:
         job, child._kit_job = child._kit_job, None

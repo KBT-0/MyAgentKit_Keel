@@ -2034,7 +2034,10 @@ A process group cannot contain a descendant after `setsid`. A unique inherited e
 marker lets cleanup find it via Linux `/proc` or macOS `ps -A -E -ww`, including after the
 leader exits. This is smaller and portable compared with Linux-only child-subreaper state,
 which changes orphan parentage and has no macOS counterpart. Nested launches preserve outer
-markers; a deliberately cleared environment is excluded. POSIX cancellation and timeout
+markers. A descendant whose environment cleanup cannot read is excluded: a cleared
+environment, a non-dumpable or privileged-exec process on Linux (its `/proc` environ answers
+EACCES, reproduced with `prctl(PR_SET_DUMPABLE, 0)`), or one `ps -E` does not show on
+macOS. POSIX cancellation and timeout
 regressions are left for Linux and macOS CI; Windows tests prove detached descendants cannot
 break away from the Job Object. The existing kit-wrapper tests cover `set -m` cancellation
 both after startup and before Python installs its handlers, on POSIX CI.

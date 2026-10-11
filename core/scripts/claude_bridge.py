@@ -128,8 +128,11 @@ def throwaway_copy(repo: Path, head: str, diff: str | None, copy: Path,
       it, and Claude's Bash can write to it: Claude has no OS sandbox here. Codex's
       workspace-write sandbox blocks writes outside the copy and the temporary directories,
       and keeps the network off; Claude is only asked to stay off the network.
-    - Accepted limit: a SIGKILL leaves the copy in the temporary directory, and a process the
-      reviewer or preparation command detached from its group survives the group kill.
+    - Accepted limit: a SIGKILL leaves the copy in the temporary directory. On POSIX, a
+      process the reviewer or preparation command detached from its group is stopped through
+      its inherited environment marker (agent_process.launch()), unless its environment
+      cannot be read: a cleared environment, a non-dumpable or setuid, setgid or
+      file-capability process on Linux, one ps -E does not show on macOS.
     - Accepted limit: committed snapshots use `git archive`, which honours export-ignore and
       export-subst. Uncommitted snapshots use checkout bytes instead. Untracked ignored files
       (installed dependencies, build output) and submodule contents are absent.
@@ -1065,9 +1068,12 @@ def main(argv=None, result_sink=None) -> int:
 def utf8_output():
     """Write stdout and stderr as UTF-8 wherever they lead. Redirected on native Windows they
     used the ANSI code page: a completed review whose text held one character outside it (an
-    arrow) raised while printing, failed as adapter_error, and the paid review was lost."""
+    arrow) raised while printing, failed as adapter_error, and the paid review was lost.
+    Errors are escaped, never raised: a bare encoding reset them to strict, and a lone
+    surrogate (a non-UTF-8 path) then lost the review the same way. A missing stream stays."""
     for stream in (sys.stdout, sys.stderr):
-        stream.reconfigure(encoding="utf-8")
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
 
 
 if __name__ == "__main__":

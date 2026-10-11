@@ -214,8 +214,11 @@ by its own CLI.
 On Linux and macOS, each launched process inherits a unique environment marker. Cleanup
 stops the original process group and scans for that marker, so a descendant that calls
 `setsid` or Python's `start_new_session=True` is still stopped, even after its parent exits.
-Nested launches retain outer markers. A descendant that deliberately clears its environment
-is outside this mechanism, and SIGKILL of the POSIX supervisor still prevents cleanup.
+Nested launches retain outer markers. A descendant whose environment cleanup cannot read is
+outside this mechanism. That covers a descendant that clears its environment. On Linux it
+also covers a non-dumpable descendant (`prctl(PR_SET_DUMPABLE, 0)`, as ssh-agent does) and
+one running a setuid, setgid or file-capability program. On macOS it covers a process
+whose environment `ps -E` does not show. SIGKILL of the POSIX supervisor still prevents cleanup.
 On native Windows, pipe readers run in threads and a Job Object contains every descendant,
 including one that detaches its console or starts a new process group; breakaway is refused.
 Closing the job also stops them if the supervisor dies. Redirected adapter output is UTF-8,

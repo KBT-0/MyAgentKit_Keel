@@ -190,11 +190,21 @@ def kill_process(pid):
 def kill_tree(pid):
     # Snapshot first, then stop parents before children: killing the build first lets its
     # live lock holder finish normally and truncate the token this regression must retain.
-    pids = [pid]
-    for parent in pids:
-        pids.extend(child for child, _ in children(parent) if child not in pids)
-    for child in pids:
-        kill_process(child)
+    # Snapshot again after each round until no new descendant shows: a child the build or the
+    # holder started after a snapshot kept the lock open. Windows keeps an exited parent's id in
+    # its children's entries, so a killed parent still leads to them.
+    # ponytail: an exited pid reused within the same call would be walked too; a Job Object
+    # around each fixture tree closes that, if it ever bites.
+    pids, killed = [pid], set()
+    while True:
+        for parent in pids:
+            pids.extend(child for child, _ in children(parent) if child not in pids)
+        fresh = [child for child in pids if child not in killed]
+        if not fresh:
+            return
+        for child in fresh:
+            kill_process(child)
+            killed.add(child)
 
 
 def released(lock, seconds=45):
@@ -255,6 +265,25 @@ def finish(proc, timeout=90):
 
 def gate(cwd, build, timeout=90, **extra):
     return finish(start(cwd, build, **extra), timeout)
+
+
+class KillTreeTests(unittest.TestCase):
+    @windows_only
+    def test_kill_tree_stops_a_child_started_after_its_snapshot(self):
+        # The build starts a sleeper only once its parent is being killed: one snapshot missed
+        # it, and it kept the gate lock open for the next case.
+        from unittest.mock import patch
+        killed = []
+        tree = {1: [(2, 'sh.exe')], 2: []}
+
+        def listed(parent):
+            if 2 in killed:
+                tree[2] = [(3, 'sleep.exe')]
+            return tree.get(parent, [])
+        module = sys.modules[__name__]
+        with patch.object(module, 'children', listed), patch.object(module, 'kill_process', killed.append):
+            kill_tree(1)
+        self.assertEqual(killed, [1, 2, 3])
 
 
 class WindowsGateLockTests(unittest.TestCase):
