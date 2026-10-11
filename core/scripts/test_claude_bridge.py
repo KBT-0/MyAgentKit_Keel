@@ -25,7 +25,7 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'MYAGENTKIT_TASK_ID', 'MYAGENTKIT_R
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 139, 'test_agent_usage': 20, 'test_codex_quota': 5}
+SUITE_MINIMUMS = {'test_claude_bridge': 140, 'test_agent_usage': 20, 'test_codex_quota': 5}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -317,6 +317,30 @@ except ValueError as error:
             diffs = [call for call in calls.call_args_list if call.args[1] == 'diff']
             self.assertEqual(len(diffs), 2)
             self.assertTrue(all('--numstat' in call.args and '-z' in call.args for call in diffs))
+
+    def test_line_ending_ratio_is_refused_just_above_two_to_one(self):
+        # Each changed line counts 2 (deleted and added): total = 2 * (edits + CR-only lines)
+        # and real = 2 * edits, so CR-only lines equal to edits sit exactly at 2:1.
+        import review_dispatch
+
+        for cr_only, refused in ((2, False), (3, True)):
+            with self.subTest(cr_only=cr_only), tempfile.TemporaryDirectory() as tmp:
+                repo = self.project(tmp)
+                path = repo / 'line ends [1].txt'
+                lines = [str(i).encode() for i in range(20)]
+                path.write_bytes(b''.join(line + b'\n' for line in lines))
+                self.commit(repo)
+                ends = [b'\n'] * 20
+                lines[2], lines[10] = b'edited', b'edited too'
+                for i in (5, 15, 18)[:cr_only]:
+                    ends[i] = b'\r\n'
+                path.write_bytes(b''.join(map(bytes.__add__, lines, ends)))
+                diff = self.git(repo, 'diff', 'HEAD').decode()
+                if refused:
+                    with self.assertRaisesRegex(ValueError, 'line-ending churn'):
+                        review_dispatch.reject_line_ending_churn(repo, 'uncommitted', None, diff)
+                else:
+                    review_dispatch.reject_line_ending_churn(repo, 'uncommitted', None, diff)
 
     def test_an_adapter_preflight_failure_follows_the_about_to_run_line(self):
         with tempfile.TemporaryDirectory() as tmp:

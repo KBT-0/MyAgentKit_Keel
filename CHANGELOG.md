@@ -41,7 +41,8 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 - **Context warnings survive concurrent prompts and compaction** (issue #70): the hook
   announces each step once, keeps its highest step until compaction, and re-arms even when
   a new request already followed the boundary. Upgrading an integer step preserves the
-  warning already given in the current compaction. **ACTION:** copy
+  warning already given in the current compaction. A state of the wrong type (a null or
+  string step) counts as no state, so the hook is not silenced. **ACTION:** copy
   `$KIT/overlays/claude-code/files/.claude/hooks/context_size.py` to `.claude/hooks/context_size.py`.
 - **A review names its next attempt** (issue #68, item 1; `scripts/review.sh`, `scripts/review_dispatch.py`):
   before each adapter runs, including a fallback, it prints the model and effort as
@@ -54,16 +55,17 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   a deliberate normalization.
   **ACTION:** copy `$KIT/core/scripts/review_dispatch.py` to `scripts/review_dispatch.py`.
 - **The lead's Stop hook stays out of a worker's self-test** (issue #68, item 3): the lead
-  uses `git -C <worktree>` and keeps its shell in its own checkout. After the cheap gated-paths
-  check, the Stop hook skips with a NOTE for tracked or nonignored untracked `.selftest.*`
-  or `*.selftest-backup` files only when every match was modified in the last ten minutes.
-  Older mtimes block with a message to check for a running self-test and wait for it before
-  any cleanup: a moved backup can keep an old mtime. Leading-dash paths work too.
-  Worker worktrees and ignored folders do not disable the lead's gate.
+  uses `git -C <worktree>` and keeps its shell in its own checkout. `check.sh --self-test`
+  writes its lock marker to `check-selftest` beside the gate lock and removes it on exit.
+  After the cheap gated-paths check, the Stop hook skips with a NOTE only while that marker
+  equals the lock file and the lock is held. A killed self-test's marker does not skip the gate.
+  File names never do: a `.selftest.*` file, tracked or not, no longer skips or blocks.
   **ACTION:** add the two sentences under "The lead's steps when a branch is ready" in
-  `$KIT/core/docs/WORKFLOW.md` to your `docs/WORKFLOW.md`, and copy
+  `$KIT/core/docs/WORKFLOW.md` to your `docs/WORKFLOW.md`, copy
   `$KIT/overlays/claude-code/files/.claude/hooks/gate_on_stop.sh` to `.claude/hooks/gate_on_stop.sh`,
-  keeping your gated paths and file pattern.
+  keeping your gated paths and file pattern, and add the `selftest_marker` lines of
+  `$KIT/core/scripts/check.sh` (in `cleanup` and at the start of `self_test`) to your
+  `scripts/check.sh`. Without them the hook waits for a self-test's lock as for any gate run.
 - **An incremental-build brief names both shared dependencies** (issue #68, item 4;
   `docs/HANDOFF.md`, "The brief"): always-run inputs belong to every stage's dependency
   set, and a changed driver script invalidates every stage. **ACTION:** add the two
@@ -74,8 +76,9 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   `core.fileMode=false`. Repair runs before a gate-content conflict stops installation.
   Only stage-0 100644 entries are repaired; symlinks and other index types stay unchanged.
   Tracked files keep their staged content, including in repository subfolders;
-  new nonignored kit scripts are staged only at the repository top level. Bootstrap prints
-  each staged path and notes that other kit files were not staged. Subfolder installs print
+  new nonignored kit scripts are staged only at the repository top level, and only after
+  the conflict check: a stopped install stages nothing new. Bootstrap prints each staged
+  path and notes once that other kit files were not staged. Subfolder installs print
   the exact `git add --chmod=+x -- <files>` commands to run from the target instead.
   Ignored files stay out of the index.
   Other project-owned scripts are left alone. **ACTION:** rerun bootstrap with the project's
@@ -164,10 +167,10 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   work. A round may review the whole cumulative diff for context; its verdict counts only
   for parts it did not write. Its last fix is accepted only by the other model's next round.
   The loop ends at the first round with no High or Medium finding whose reviewer did not write the latest fix.
-  Inner same-model checks stay with the worker; cross-model gate findings go to the model
-  that found them. **ACTION:** update `docs/REVIEW_GATE.md`, `docs/REVIEW_RUNNING.md` and the
-  review-fix rules in `docs/WORKFLOW.md`, and copy the Claude Code overlay's
-  `.claude/agents/worker.md`; copy `claude_bridge.py` as listed in the first ACTION above.
+  Inner same-model checks stay with the worker; cross-model gate findings go to a fresh
+  worker of the model that found them, since a gate reviewer cannot be resumed.
+  **ACTION:** update `docs/REVIEW_GATE.md`, `docs/REVIEW_RUNNING.md` and the review-fix rules
+  in `docs/WORKFLOW.md`, and copy the Claude Code overlay's `.claude/agents/worker.md`; copy `claude_bridge.py` as listed in the first ACTION above.
 
 ## v0.10 — 2026-10-07
 

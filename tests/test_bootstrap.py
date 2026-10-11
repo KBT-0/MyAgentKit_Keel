@@ -75,13 +75,36 @@ class BootstrapTests(unittest.TestCase):
                 else:
                     for name in names:
                         self.assertIn('bootstrap: staged ' + name, result.stdout)
-                    self.assertIn('other kit files were not staged by bootstrap', result.stdout)
+                    self.assertEqual(result.stdout.count('other kit files were not staged by bootstrap'), 1)
                 indexed = subprocess.check_output(['git', 'ls-files', '-s'], cwd=repo).decode().splitlines()
                 prefix = subfolder + '/' if subfolder else ''
                 self.assertEqual({line.split('\t')[1] for line in indexed},
                                  {'owner.txt', *(prefix + name for name in names)})
                 self.assertTrue(all(line.startswith('100755 ') for line in indexed if '\tscripts/' in line
                                     or '\tapp space/scripts/' in line))
+
+    def test_a_stopped_install_stages_no_new_kit_file(self):
+        # New kit scripts were staged before the gate-conflict stop: an install that exited 1
+        # left the kit's hooks in the owner's index, for the next unrelated commit to take.
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as tmp:
+            kit, project = Path(tmp) / 'kit', Path(tmp) / 'project'
+            kit.mkdir()
+            shutil.copyfile(root / 'bootstrap.sh', kit / 'bootstrap.sh')
+            (kit / 'CHANGELOG.md').write_text('## v0.11\n')
+            for name in ('scripts/check.sh', '.githooks/pre-commit', 'scripts/review.sh'):
+                source = kit / 'core' / name
+                source.parent.mkdir(parents=True, exist_ok=True)
+                source.write_text('#!/bin/sh\nexit 0\n')
+            (project / 'scripts').mkdir(parents=True)
+            (project / 'scripts/check.sh').write_text('#!/bin/sh\n# owner gate\n')
+            subprocess.run(['git', 'init', '-q'], cwd=project, check=True)
+            result = subprocess.run(['sh', str(kit / 'bootstrap.sh'), str(project)],
+                                    capture_output=True, text=True, timeout=bootstrap_timeout(30))
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn('STOPPING', result.stdout)
+            self.assertNotIn('bootstrap: staged', result.stdout)
+            self.assertEqual(subprocess.check_output(['git', 'ls-files'], cwd=project), b'')
 
     def test_mode_repair_preserves_nonregular_index_entries(self):
         root = Path(__file__).resolve().parents[1]

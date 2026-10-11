@@ -31,21 +31,20 @@ if [ -z "$(git status --porcelain -- $gated_paths 2>/dev/null | grep -E "$gated_
   exit 0
 fi
 
-# Boundary self-tests inject .selftest.*; older project gates back up files in place.
-sentinels=$(git -c core.quotePath=false ls-files -co --exclude-standard |
-  grep -E '(^|/)\.selftest\.[^/]*$|(^|/)[^/]*\.selftest-backup$')
-if [ -n "$sentinels" ]; then
-  # Age limits a silent skip, but does not prove abandonment: mv keeps a backup's mtime.
-  older=$(printf '%s\n' "$sentinels" | while IFS= read -r sentinel; do
-    [ -n "$(find "./$sentinel" -mmin -10 -print 2>/dev/null)" ] || printf '%s\n' "$sentinel"
-  done)
-  if [ -n "$older" ]; then
-    printf 'GATE DID NOT RUN (Stop hook): self-test sentinel needs attention: %s; first check whether a self-test is running and wait for it; only when none is running, restore the original file or remove the injection, then run ./scripts/check.sh.\n' "$older" >&2
-    exit 2
-  fi
-  printf 'NOTE [Stop hook]: skipping the gate while a self-test sentinel/injection is present: %s\n' "$sentinels" >&2
-  exit 0
-fi
+# A self-test may inject files into the gated paths while it holds this checkout's gate lock.
+# File names prove nothing (a tool's .selftest.log, a tracked file); the evidence is
+# check-selftest beside the lock: check.sh --self-test writes the lock holder's marker (pid,
+# or token on native Windows) there and removes it when it ends. A marker that still equals
+# the lock file's content tells the gate not to wait: a free lock (a killed self-test's
+# leftover) runs the gate now; a held one (75) with the marker still matching is the live
+# self-test, and the hook steps aside.
+lock=$(git rev-parse --git-path check.lock 2>/dev/null)
+selftest_live() {
+  marker=$(cat "${lock%.lock}-selftest" 2>/dev/null) && [ -n "$marker" ] &&
+    [ "$marker" = "$(cat "$lock" 2>/dev/null)" ]
+}
+gate_wait="${GATE_LOCK_WAIT:-500}"
+! selftest_live || gate_wait=0
 
 # No result caching, on purpose: a cache that says PASS for a tree that has since changed is
 # worse than a ten-second gate.
@@ -54,9 +53,13 @@ fi
 # start later. Exit 75 is that bound running out — the gate did not run, it did not fail.
 # The bound covers only the wait: a gate that takes longer than the remaining 100 s still
 # hits the hook timeout, so keep the hook's gate short (the full self-test is not for hooks).
-out=$(GATE_LOCK_WAIT="${GATE_LOCK_WAIT:-500}" ./scripts/check.sh 2>&1)
+out=$(GATE_LOCK_WAIT="$gate_wait" ./scripts/check.sh 2>&1)
 rc=$?
 [ "$rc" -eq 0 ] && exit 0
+if [ "$rc" -eq 75 ] && [ "$gate_wait" = 0 ] && selftest_live; then
+  echo "NOTE [Stop hook]: skipping the gate while ./scripts/check.sh --self-test holds this checkout's lock." >&2
+  exit 0
+fi
 
 printf '%s\n' "$out" >&2
 echo "" >&2

@@ -28,15 +28,11 @@ def pin_valid(provider, model):
 def reject_line_ending_churn(repo, scope, reference, diff):
     if os.environ.get("REVIEW_ALLOW_EOL_ONLY") == "1":
         return
-    # Use the captured scope's paths, including its archive exclusions. Numstat's rename
-    # form has an empty name followed by the old and new names, all NUL-delimited.
-    entries = iter(claude_bridge.git(repo, "apply", "--numstat", "-z",
-                                     stdin=diff.encode("utf-8")).split(b"\0"))
-    names = set()
-    for entry in entries:
-        if entry:
-            name = entry.split(b"\t", 2)[2]
-            names.update([name] if name else [next(entries), next(entries)])
+    # Use the captured scope's paths, including its archive exclusions. `git apply --numstat
+    # -z` prints one name per patch, a rename's new name; only `git diff` has a rename form.
+    names = {entry.split(b"\t", 2)[2]
+             for entry in claude_bridge.git(repo, "apply", "--numstat", "-z",
+                                            stdin=diff.encode("utf-8")).split(b"\0") if entry}
     refs = ["HEAD"]
     if scope == "base":
         refs = [reference + "...HEAD"]

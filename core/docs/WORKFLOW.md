@@ -452,12 +452,14 @@ Rules, binding for whoever routes workers:
    may have no such setting), choose the fallback from the measured table in the kit's
    `docs/worker-cost-setups.md`: usually waits split into pieces under five minutes, at the
    price of a context read per piece.
-2. **A review-fix round goes back to the model that found the findings** (a resumed
-   sub-agent, or the same separate session) while it is available and its context is not
-   spent: a fresh worker re-reads the whole context to change a few lines. A fresh worker
-   running that model, briefed with the findings, the branch and the files to read, takes
-   the round when the context is spent (near rule 3's limit) or the fix is a redesign. The reviewer is fresh in
-   every round and runs the other model; the worker never reviews its own change.
+2. **Cross-model gate findings go to a fresh worker of the reviewing model**, briefed with
+   the findings, the branch and the files to read. The gate's reviewer is a headless process
+   in a throwaway copy, so it cannot be resumed. Only inner same-model rounds ("Review inside
+   the worker") go back to the worker that wrote the change (a resumed sub-agent, or the same
+   separate session) while its context is not spent: a fresh worker re-reads the whole
+   context to change a few lines. A fresh worker of that model takes such a round when the
+   context is spent (near rule 3's limit) or the fix is a redesign. The gate's reviewer is
+   fresh in every round and runs the other model; no model reviews its own change.
 3. **One small task per worker**, sized to end under roughly 150 requests (`maxTurns` in the
    worker definition enforces it). Split before starting: a mechanism first, then its uses.
 4. **The lead does not poll either.** It waits for task notifications or an idle notice from
@@ -650,8 +652,9 @@ costs a fix round.
 - The inner rounds do not replace the lead's review. A risky diff still passes
   `docs/REVIEW_GATE.md` before the merge, and the inner rounds make that review shorter.
 
-A fix in the worker's warm context costs minutes; the same fix in a later round costs a fresh
-worker's whole re-read. The brief states which of the two cases it expects (`docs/HANDOFF.md`,
+A fix in the worker's warm context, in an inner round, costs minutes. The same finding left
+for the gate's cross-model review goes to a fresh worker of the reviewing model, which pays
+the whole re-read. The brief states which of the two cases it expects (`docs/HANDOFF.md`,
 "The brief").
 
 ### Before you report

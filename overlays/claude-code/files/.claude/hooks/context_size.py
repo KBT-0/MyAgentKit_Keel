@@ -72,8 +72,11 @@ def main() -> None:
         try:
             saved = json.loads(state.read_text())
             # Before this version the state held only an integer step.
-            legacy = isinstance(saved, int)
+            legacy = type(saved) is int
             said, previous = (saved, compactions) if legacy else (saved['step'], saved['compactions'])
+            # Any other type (null, "0", true) is a missing file: compared, it raised and silenced the hook.
+            if type(said) is not int or type(previous) is not int:
+                raise TypeError(said, previous)
         except (OSError, ValueError, KeyError, TypeError):
             said, previous = -1, 0
         if previous != compactions:

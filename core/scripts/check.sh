@@ -378,6 +378,7 @@ work=$(mktemp -d) || { echo "FAIL [gate]: cannot create a temp dir; refusing to 
 # removed file while the next run creates and locks a new one, and both run.
 cleanup() {
   rm -rf "$work"
+  [ -z "${selftest_marker:-}" ] || rm -f "$selftest_marker"
   [ "$(cat "$lock_path" 2>/dev/null)" != "$$" ] || : > "$lock_path"
 }
 trap cleanup EXIT
@@ -422,6 +423,14 @@ self_test() {
   inj="$work/injected.md"
   # The marker that lets this run's nested gates honour the seams (see the seam block).
   GATE_SELFTEST_NESTED=$(cat "$lock_path"); export GATE_SELFTEST_NESTED
+  # The Stop hook's evidence of a live self-test: the same marker beside the lock, removed on
+  # exit (cleanup). The hook believes it only while it equals the lock file and the lock is held.
+  # Without git there is no hook and the lock sits in the tree: no marker.
+  case "$lock_path" in
+    */.check.lock) ;;
+    *) selftest_marker="${lock_path%.lock}-selftest"
+       printf '%s' "$GATE_SELFTEST_NESTED" > "$selftest_marker" ;;
+  esac
   # The throwaway repositories below are never the caller's: every git call and hook run on a
   # fixture runs in a subshell that calls fixture_env first (defined above self_test).
 

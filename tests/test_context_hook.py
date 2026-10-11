@@ -72,6 +72,17 @@ class ContextHookTests(unittest.TestCase):
             turns + [{'type': 'system', 'subtype': 'compact_boundary'}, request(260_000)]))
         self.assertIn('Context is 310k tokens', self.run_hook(turns + [request(310_000)]))
 
+    def test_a_state_of_the_wrong_type_is_a_missing_state(self):
+        # Compared, a null or string step raised TypeError, the hook swallowed it and never
+        # rewrote the state: no warning until the next compaction.
+        state = self.transcript.with_suffix('.context-step')
+        for saved in ('{"step": null, "compactions": 0}', '{"step": "0", "compactions": 0}',
+                      '{"step": 0, "compactions": true}', 'true'):
+            with self.subTest(saved=saved):
+                state.write_text(saved)
+                self.assertIn('Context is 260k tokens', self.run_hook([prompt(), request(260_000)]))
+                self.assertIn('Context is 400k tokens', self.run_hook([prompt(), request(400_000)]))
+
     def test_killing_a_lock_holder_allows_the_next_prompt(self):
         wrapper = self.tmp / 'held_hook.py'
         wrapper.write_text('import runpy, time\n'

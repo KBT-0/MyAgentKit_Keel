@@ -346,7 +346,9 @@ if git -C "$target" rev-parse --git-dir >/dev/null 2>&1; then
   # Repair modes before a customized gate stops the install. Only kit-named regular
   # files reach this list; tracked bytes stay staged as they were, differing untracked
   # files and ignored files stay out of the index. New scripts are staged only at the
-  # repository top level; a subfolder install prints the command for the owner instead.
+  # repository top level, and only after the stop below: a stopped install leaves nothing
+  # new in the owner's index. A subfolder install prints the command for the owner instead.
+  stage=""
   while IFS= read -r f; do
     [ -n "$f" ] || continue
     if indexed=$(git -C "$target" --literal-pathspecs ls-files -s --error-unmatch -- "$f" 2>/dev/null); then
@@ -362,8 +364,8 @@ if git -C "$target" rev-parse --git-dir >/dev/null 2>&1; then
       esac
     elif ! grep -qxF -e "$f" "$skiplist" && ! git -C "$target" check-ignore -q -- "$f"; then
       if [ -z "$repo_prefix" ]; then
-        git -C "$target" add --chmod=+x -- "$f"
-        printf 'bootstrap: staged %s (other kit files were not staged by bootstrap)\n' "$f"
+        stage="$stage$f
+"
       else
         printf 'bootstrap: NOTE: %s was not staged; from %s run:\n' "$f" "$target"
         printf '  git add --chmod=+x -- "%s"\n' "$(printf '%s' "$f" | sed 's/[\\"$`]/\\&/g')"
@@ -425,6 +427,17 @@ if [ -n "$gates$stops" ]; then
   echo
   echo "bootstrap: the version was not recorded and core.hooksPath was not set."
   exit 1
+fi
+
+if [ -n "${stage:-}" ]; then
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    git -C "$target" add --chmod=+x -- "$f"
+    printf 'bootstrap: staged %s\n' "$f"
+  done <<STAGE
+$stage
+STAGE
+  echo "bootstrap: other kit files were not staged by bootstrap."
 fi
 
 if [ -n "$note" ]; then
