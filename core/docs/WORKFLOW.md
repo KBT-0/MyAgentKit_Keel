@@ -374,18 +374,30 @@ both directions publish one format.
 Caveat worth stating once: a more autonomous model fills ambiguity by itself instead of
 asking. The mitigations are sharper briefs (`docs/HANDOFF.md`) and the gates, not trust.
 
-**Reasoning effort is the second dial.** Mechanical, well-specified work goes at low effort
-or to the cheaper model; architecture, contract design and risky-diff review go at high
-effort. Effort is chosen per task, not per session — running everything high spends the
-scarce budget on work that did not need it.
+**Reasoning effort is the second dial.** Choose effort from this table for implementation
+and review. Running everything high spends the scarce budget on work that did not need it.
+
+| Work | Effort |
+|---|---|
+| Mechanical work and re-review of a small fix round | medium |
+| A new mechanism's first round, a gate/hook/review-tooling change, or a risky diff | high |
+| Work requiring xhigh/max | Only by the lead's decision, with the reason in the brief |
+
+Every brief carries `Route: quick|build|deep · Risk: low|medium|high · Checks: ...`, plus
+the chosen model and effort. Route describes the task; risk determines the check list:
+low means tests for touched files; medium means focused suites plus the package check;
+high means the full gate plus a careful diff read. Review effort follows the work table
+above: a small fix re-review uses medium; a risky diff or mechanism change uses high.
+The lead session changes its model or effort only at a task boundary, never mid-task,
+because a switch rebuilds the prompt cache at full price.
 
 Rules for whoever routes work, binding with any table:
 
 1. **Model and effort are chosen with equal care.** The table sorts work into tiers:
    mechanical work (renames, figure fixes, data fetches, proof runs, summaries);
    detail-bearing errands and ordinary reviews; risky and gate reviews and design
-   consultations. The lead picks the model and the effort for every errand from its tier and
-   writes both into the brief. Neither is left to a default or to inheritance.
+   consultations. The lead picks the model from its tier and effort from the work table above.
+   It writes both into the brief. Neither is left to a default or to inheritance.
 2. **The top models are the lead's pick, and only where the subscription has them.** A model
    above the strongest routine one (for example Codex Astra or Claude Fable) is never a
    default. The lead picks it for one errand when the errand needs it, without asking the
@@ -393,22 +405,23 @@ Rules for whoever routes work, binding with any table:
    plan does not, and then the strongest routine model takes the errand. While that side's
    allowance is low (rule 7), the top model and the highest effort need the owner's yes.
 3. **A failed mechanical errand is rerun one tier up**, never retried at the same tier.
-4. **A review loop is broken by escalation, not by more rounds.** When three review rounds
-   in a row have not come back clean, the lead raises the effort, the model tier, or both,
-   chosen for the case and written into the next brief. The model writing this round's fixes
-   is raised first; the model reviewing them is raised too when its findings keep the loop
-   going. One stronger round costs less than several more rounds at the same level.
+4. **A review loop is broken by escalation after the second dirty round.** When round 2
+   still returns a High or Medium finding, round 3 runs one step up. If the fixer skipped
+   a file or did not run the tests, raise its effort. If it had the full context and was
+   still wrong, raise its model tier. The lead writes the choice and reason into the next
+   brief. One stronger round costs less than several more rounds at the same level.
 5. **Model versions are kept current.** A lead that learns of a newer Codex or Claude model
    switches to it: the reviewer pins in `scripts/review.sh` and the machine's Codex
    configuration (`~/.codex/config.toml`). The lead then reports the switch to the kit, so
    that the kit and every project built from it follow.
-6. **The tier boundaries are measured, not guessed.** After about ten errands in a tier, the
-   lead counts review rejects and rework per tier and moves the boundaries where they show.
+6. **The tier boundaries are measured, not guessed.** After about ten errands, the lead
+   runs `python scripts/usage_summary.py` and moves the tier boundaries where the rejects
+   and rework show. Records with a tier group by tier; otherwise they group by model and effort.
 7. **A low allowance shrinks what that side does, never the review.** When the owner says
    one side's allowance is low, that side only reviews: the other side writes the fixes of
    its findings, and every fix still goes back to a review by the low side. Its reviews run
    at the lowest effort that fits: a re-review of a small fix round at medium; high for a
-   gate, hook or review-tooling change and for a new mechanism's first round; the top model
+   gate, hook or review-tooling change, a risky diff and a new mechanism's first round; the top model
    or the highest effort only with the owner's yes. A running review is not cancelled to
    lower its effort, since what it spent is gone. Independent reviews run at the same time,
    with each other and with the self-test. A review that fails on quota leaves its rerun
@@ -462,9 +475,10 @@ Rules, binding for whoever routes workers:
    worker definition enforces it). Split before starting: a mechanism first, then its uses.
 4. **The lead does not poll either.** It waits for task notifications or an idle notice from
    a separate session; it does not check on workers or CI in a loop.
-5. **Mechanical work goes to the cheaper model at a lower effort**: doc fixes, running a
-   documented proof, folding notes. Design-bearing code and reviews get the strongest model
-   at high effort. Model and effort are never left to inheritance: a sub-agent runs at its
+5. **Mechanical work goes to the cheaper model at medium effort**: doc fixes, running a
+   documented proof, folding notes. Design-bearing code gets the strongest model at high
+   effort; reviews follow the "Model routing" effort table. Model and effort are never left
+   to inheritance: a sub-agent runs at its
    lead session's effort unless its definition sets `effort:` (the Claude Code overlay's
    `worker.md` and `diff-reviewer.md` do, as a fallback), and nothing in its output shows
    which one it got. The lead passes `model` and `effort` on every Agent call. A separate

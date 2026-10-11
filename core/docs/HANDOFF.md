@@ -7,6 +7,9 @@ sentences, one instruction per sentence, one term per thing. State each requirem
 
 ## The brief
 
+Every brief includes `Route: quick|build|deep · Risk: low|medium|high · Checks: ...`.
+Name the model and effort from `docs/WORKFLOW.md`, "Model routing", alongside that line.
+
 1. **Task:** one paragraph, exact scope, explicit non-goals ("do not touch X").
 2. **Files:** full paths and member names — verified to exist RIGHT NOW with grep or a
    read, never from memory. A path that has moved sends the implementer somewhere else and
@@ -28,7 +31,10 @@ sentences, one instruction per sentence, one term per thing. State each requirem
 5. **Routing check:** does this task belong on the model it is being sent to? Judgement work
    — architecture, contracts, risky diffs — goes to the strongest model; bulk, mechanical,
    well-specified work goes to the cheaper one. If the requested route violates that, say so
-   instead of producing the prompt. The brief names the model AND the effort level, and the
+   instead of producing the prompt. Choose effort from the "Model routing" table: medium
+   for mechanical work and small fix re-reviews; high for a new mechanism's first round,
+   gate/hook/review-tooling changes and risky diffs. Only the lead chooses xhigh/max and
+   writes the reason in the brief. The brief names the model AND the effort level, and the
    lead verifies both after the run from the transcript (Claude Code: the `"effort"` field;
    Codex: the `reasoning effort:` header of its log). A delegated agent that was never told
    its effort runs at whatever its parent had (`docs/WORKFLOW.md`, "Worker cost").

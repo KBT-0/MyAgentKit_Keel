@@ -20,7 +20,9 @@ fix findings only when the user also asked for implementation or review-and-fix.
 
 Use the project's configured model pins and the user's explicit overrides, never infer a
 fallback model from the host's identity. Defaults are high effort, 200 Claude turns, and
-3600 seconds per attempt. This is a total wall-clock limit, not a startup or inactivity
+3600 seconds per attempt. Choose effort from `docs/WORKFLOW.md`, "Model routing", and pass
+`--effort medium` for a small fix re-review; risky diffs and mechanism changes use high.
+This is a total wall-clock limit, not a startup or inactivity
 timer; two attempts may take about two hours plus local overhead. Use `REVIEW_TIMEOUT_SECONDS`
 (at most 7200) and `REVIEW_MAX_TURNS` (at most 500) to honor an explicit wrapper/dispatcher limit. Reviews have no default monetary budget cap:
 omit `--max-budget-usd` unless the owner explicitly specifies a cap. An explicit dollar
@@ -47,8 +49,11 @@ Set `MYAGENTKIT_REQUESTER=codex/ACTUAL_MODEL` when known, otherwise `codex/unkno
 This is reported metadata, not independent attestation. Set `MYAGENTKIT_TASK_ID` to the
 same stable task label across rounds: earlier completed reviews with that label are carried
 into the next round's prompt, and `REVIEW_DISPOSITIONS=<file>` adds your answer to each
-finding as a claim the reviewer verifies. The final Accept comes from one fresh review under
-a label never used before. Environment overrides `REVIEW_CLAUDE_MODEL` and
+finding as a claim the reviewer verifies. Once both models have written parts, the final
+Accept requires one fresh NEW-label final review per model over parts it did not write.
+The change closes when both return without a High or Medium finding. If only one model
+wrote the change, one fresh NEW-label final review by the other model closes it.
+Environment overrides `REVIEW_CLAUDE_MODEL` and
 `REVIEW_CODEX_MODEL` are supported by both entry points. Missing primary pins stop before
 launch; an unconfigured alternate is never replaced with an invented default.
 

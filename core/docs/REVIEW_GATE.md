@@ -40,9 +40,12 @@ Independence is judged per part: a fresh round may review the whole cumulative d
 for context, but each verdict counts only for the parts the reviewing model did not write.
 Afterwards the reviewing model verifies and fixes its own findings; its last fix round is
 accepted only by the other model's next round. The reviewer never changes the checkout during
-its review run. No model approves its own work. The loop ends at the first round with no High or Medium finding
-in which the reviewing model did not write the latest fix. An existing local commit without
-review is still unreviewed work, not an exception that moves this gate to push time.
+its review run. No model approves its own work. Once both models have written parts of a
+change, closure requires one fresh NEW-label final review per model, each over parts it
+did not write. The change closes when both return without a High or Medium finding.
+If only one model wrote the change, one fresh NEW-label final review by the other model closes it.
+An existing local commit without review is still unreviewed work, not an exception that
+moves this gate to push time.
 
 A diff is risky when a silent bug in it is expensive, hard to attribute, or slow to
 surface. For this project:

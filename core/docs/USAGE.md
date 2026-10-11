@@ -1,5 +1,7 @@
 # Cross-model usage and recovery
 
+Run `python scripts/usage_summary.py` for task rounds, reviewers, models, effort, verdicts, duration and tier totals.
+
 Both supported CLI adapters write one local JSON record per launched invocation under
 `.myagentkit/usage/`. This directory is ignored by Git: raw provider output and account
 diagnostics are local operational evidence, not material for a public push. Back it up

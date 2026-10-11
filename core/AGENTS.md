@@ -141,8 +141,10 @@ cost", and `docs/WORKFLOW.md`, "Review rounds".
   part: the reviewing model verifies and fixes its own findings, becoming AUTHOR of those
   fixes; the other model reviews them. With low allowance the other side writes the fixes
   (`docs/WORKFLOW.md`, "Model routing", rule 7). A verdict counts only for parts the reviewing
-  model did not write. The loop ends at the first round with no High or Medium finding in
-  which the reviewing model did not write the latest fix.
+  model did not write. Once both models have written parts, closure requires one fresh
+  NEW-label final review per model, each over parts it did not write. The change closes when
+  both return without a High or Medium finding. If only one model wrote the change, one fresh
+  NEW-label final review by the other model closes it.
 - A verdict's manual checks are written to `docs/STATE.md` before commit.
 - **Never report a verification you did not run** — if you could not run it, say "not run".
 

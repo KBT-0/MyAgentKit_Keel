@@ -50,7 +50,8 @@ class ReviewerDocumentTests(unittest.TestCase):
         gate = (ROOT / 'core/docs/REVIEW_GATE.md').read_text()
         policy = ' '.join(gate.split())
         self.assertIn('each verdict counts only for the parts the reviewing model did not write', policy)
-        self.assertIn('first round with no High or Medium finding in which the reviewing model did not write the latest fix', policy)
+        self.assertIn('one fresh NEW-label final review per model', policy)
+        self.assertIn('both return without a High or Medium finding', policy)
         worker = ' '.join((ROOT / 'overlays/claude-code/files/.claude/agents/worker.md').read_text().split())
         self.assertIn('Inner same-model checks stay with the worker', worker)
         self.assertIn('cross-model gate findings go to the model that found them', worker)
@@ -65,6 +66,21 @@ class ReviewerDocumentTests(unittest.TestCase):
 
 
 class SectionPointerTests(unittest.TestCase):
+    def test_routing_and_closure_rules_agree(self):
+        workflow = (ROOT / 'core/docs/WORKFLOW.md').read_text(encoding='utf-8')
+        self.assertIn('after the second dirty round', workflow)
+        self.assertIn('python scripts/usage_summary.py', workflow)
+        self.assertIn('| Mechanical work and re-review of a small fix round | medium |', workflow)
+        handoff = (ROOT / 'core/docs/HANDOFF.md').read_text(encoding='utf-8')
+        self.assertIn('Route: quick|build|deep · Risk: low|medium|high · Checks: ...', handoff)
+        for name in ('core/docs/REVIEW_RUNNING.md', 'core/docs/REVIEW_GATE.md', 'core/AGENTS.md'):
+            policy = ' '.join((ROOT / name).read_text(encoding='utf-8').split())
+            self.assertIn('one fresh NEW-label final review per model', policy, name)
+            self.assertIn('both return without a High or Medium finding', policy, name)
+        bridge = (ROOT / 'core/scripts/claude_bridge.py').read_text(encoding='utf-8')
+        self.assertIn('one fresh NEW-label final review per model', bridge)
+        self.assertNotIn('model did not write the latest fix; the final Accept', bridge)
+
     def test_the_lead_keeps_its_shell_in_its_own_checkout(self):
         text = (ROOT / 'core/docs/WORKFLOW.md').read_text().split("### The lead's steps when a branch is ready")[1]
         self.assertIn("The lead never changes its shell directory into a worker's worktree", text)

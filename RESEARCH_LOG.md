@@ -21,6 +21,23 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-10-11 — Routing effort and review ownership
+
+The owner keeps routing by scarcity, mandatory cross-model review, the review record chain
+and the kit's Stop hook. The kit rejects a same-family verifier subagent, an npm-test Stop
+hook and auto routers. These would duplicate checks without independent model judgement.
+The Model Routing Playbook (checked 2026-10-05), citing
+[Anthropic's cost and intelligence measurements](https://platform.claude.com/docs/en/about-claude/models/optimizing-for-cost-and-intelligence),
+reports medium about 2.5 points below high at about 70% of the cost. The effort table uses
+medium for mechanical work and small fix re-reviews, reserving high for mechanisms and risk.
+Escalating after the second dirty round avoids paying for repeated unsuccessful repairs.
+The owner approved fix ownership: the reviewing model fixes its findings; each verdict
+counts only for parts it did not write. Two models writing requires two independent final reviews.
+
+Decision — 2026-10-10: after two review rounds asked about it, the owner decided that
+`REVIEW_ALLOW_EOL_ONLY=1` stays as explicit permission for deliberate line-ending normalization.
+An explicitly permitted normalization is not itself a review finding; unpermitted churn still fails.
+
 ### 2026-10-10 — Round 3 bootstrap and Stop-hook findings
 
 Mode repair reused any staged blob as a regular executable, converting tracked symlinks

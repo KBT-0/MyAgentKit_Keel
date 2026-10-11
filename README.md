@@ -1,5 +1,7 @@
 # MyAgentKit_Keel
 
+After about ten errands, run `python scripts/usage_summary.py` in your project to inspect routing outcomes.
+
 A foundation for codebases that AI agents write and maintain. It installs rules that a
 script enforces, one memory file that every tool and session reads, a review gate that a
 second model runs, and a way to spawn, watch and close worker sessions without losing

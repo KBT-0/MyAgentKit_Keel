@@ -92,16 +92,16 @@ dispositions exceed the 400000-byte guard. A round recorded before these checks 
 carries neither the resolved reference nor the sha256 and is refused the same way. A fresh
 label starts at round 1.
 
-**The loop ends at the first round with no High or Medium finding whose reviewer did not write the latest fix.**
 A round may review the whole cumulative diff (`--base`) for context, but its verdict counts
 only for parts the reviewing model did not write (`docs/REVIEW_GATE.md`, "What counts as a risky diff").
 The reviewing model fixes its own findings; only the other model's next round accepts that fix.
 
-**The final Accept comes from one fresh full review under a NEW label.** Carried rounds and
-dispositions help the loop converge, but they also steer the reviewer toward what was
-already said. When the rounds under one label stop finding anything, run one more review
-under a label never used before: it sees no earlier round and no disposition, and its
-verdict is the one that closes the change.
+**The final Accept requires one fresh NEW-label final review per model once both models have written parts of the change.**
+Each reviews the parts it did not write. The change closes when both return without a High or Medium finding.
+If only one model wrote the change, one fresh NEW-label final review by the other model closes it.
+Carried rounds and dispositions help the loop converge, but they also steer the reviewer toward what was
+already said. When the rounds under one label stop finding anything, run the final reviews
+under labels never used before: each sees no earlier round and no disposition.
 
 **A checkout that changes while the review runs fails it with `stale_checkout`.** That is
 correct, not a flake: the reviewer reads files while it runs, so its findings may describe a
@@ -249,8 +249,9 @@ later round, paste the earlier rounds' findings and verdicts and the author's di
 each as claims to verify (a disproved finding counts only once checked against the code; a
 deferred one stays open under Manual checks), and ask which are fixed before reviewing the
 whole cumulative diff for context. Your verdict counts only for parts you did not write;
-your last fix round is accepted only by the other model's next round. The loop ends at the
-first round with no High or Medium finding whose reviewer did not write the latest fix. Finish with a line
+your last fix round is accepted only by the other model's next round. Once both models have
+written parts, closure requires one fresh NEW-label final review per model over parts it
+did not write. The change closes when both return without a High or Medium finding. Finish with a line
 "VERDICT: Accept" / "VERDICT: Accept with Manual Checks" / "VERDICT: Reject", followed by
 any manual checks written as full sentences ready to paste into docs/STATE.md.
 

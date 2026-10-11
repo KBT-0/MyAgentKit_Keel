@@ -13,6 +13,19 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## v0.11 — 2026-10-09
 
+- **Routing sets effort, risk checks and second-round escalation.** Briefs name route,
+  risk, checks, model and effort. `usage_summary.py` reports task and tier outcomes.
+  **ACTION:** copy `$KIT/core/scripts/usage_summary.py` to `scripts/usage_summary.py`;
+  reconcile `$KIT/core/docs/WORKFLOW.md` into `docs/WORKFLOW.md`,
+  `$KIT/core/docs/HANDOFF.md` into `docs/HANDOFF.md`,
+  `$KIT/core/docs/USAGE.md` into `docs/USAGE.md`, and
+  `$KIT/overlays/claude-code/files/.claude/agents/worker.md` into `.claude/agents/worker.md`,
+  preserving project settings.
+- **Two models writing requires two final reviews.** Each model runs a fresh NEW-label
+  review over parts it did not write; both must return without a High or Medium finding.
+  **ACTION:** reconcile `$KIT/core/docs/REVIEW_RUNNING.md` into `docs/REVIEW_RUNNING.md`,
+  `$KIT/core/docs/REVIEW_GATE.md` into `docs/REVIEW_GATE.md`, and `$KIT/core/AGENTS.md`
+  into `AGENTS.md`; copy `$KIT/core/scripts/claude_bridge.py` to `scripts/claude_bridge.py`.
 - **A review no longer dies on the kit's own limits** (`agent_process.py`, the adapters,
   `review.sh`): a review attempt now gets 3600 seconds (maximum 7200) and a Claude review
   200 turns (maximum 500); three high-effort reviews had died on 1800 seconds and 12 turns.
