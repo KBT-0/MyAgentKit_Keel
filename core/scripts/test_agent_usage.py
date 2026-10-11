@@ -46,7 +46,7 @@ class UsageTests(unittest.TestCase):
         with patch('os.path.isdir', return_value=False), patch('subprocess.run', side_effect=ps):
             self.assertEqual(agent_process._marked(marker), [12])
 
-    def test_marker_scan_skips_lines_naming_no_process_and_reports_a_failed_ps_once(self):
+    def test_marker_scan_keeps_continuation_lines_and_reports_a_failed_ps_once(self):
         # A raw newline in an exported bash function put the marker on a line that names no
         # process: int() raised out of stop_group, and run() raised instead of returning.
         import io
@@ -59,7 +59,7 @@ class UsageTests(unittest.TestCase):
         with patch('os.path.isdir', return_value=False), patch('subprocess.run', side_effect=runs), \
                 patch.object(agent_process, '_SCAN_UNAVAILABLE', []), \
                 patch('sys.stderr', new_callable=io.StringIO) as stderr:
-            self.assertEqual(agent_process._marked(marker), [42])
+            self.assertEqual(agent_process._marked(marker), [41, 42])
             # A ps without -E (the BSDs) exits non-zero: no scan, said once, not "none found".
             self.assertEqual(agent_process._marked(marker), [])
             self.assertEqual(agent_process._marked(marker), [])

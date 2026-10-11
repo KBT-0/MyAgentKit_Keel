@@ -137,12 +137,14 @@ def _marked(name) -> list:
             sys.stderr.write("agent_process: /bin/ps -E failed; review descendants that left "
                              "their process group are not stopped\n")
         return []
-    pids = []
+    pids, pid = [], None
     for line in listing.stdout.splitlines():
         fields = line.split()
-        # A raw newline inside an environment value starts a line that names no process.
-        if fields and fields[0].isdigit() and name.encode() + b"=1" in fields[1:]:
-            pids.append(int(fields[0]))
+        if fields and fields[0].isdigit():
+            pid, fields = int(fields[0]), fields[1:]
+        # A raw newline inside an environment value continues the previous process's record.
+        if pid is not None and name.encode() + b"=1" in fields and pid not in pids:
+            pids.append(pid)
     return pids
 
 
