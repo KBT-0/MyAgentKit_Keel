@@ -57,55 +57,102 @@ set -u
 say() { { printf 'close_worker: %s' "$1" | LC_ALL=C tr '\001-\037\177' '?'; echo; }; }
 first=""
 fail() { say "$1"; [ -n "$first" ] || first=$1; }
-# Claim the destination with an exclusive rename: 2 is a collision, 1 any other failure, with
+# Print the archive actually used; 2 is a collision, 1 any other failure, with
 # only its errno and text on stderr (a path can hold control bytes). Never fall back to a
 # free-name check followed by an overwriting rename.
 move_report() {
-  $kit_python -I -c 'import ctypes, errno, os, sys
+  $kit_python -I -c 'import ctypes, errno, glob, hashlib, os, re, stat, sys, tempfile
 source, target = sys.argv[1:]
 unsupported = (errno.EINVAL, errno.ENOSYS, errno.ENOTSUP, errno.EOPNOTSUPP)
+
+def archived(source, target):
+    # A previous link+unlink may have stopped after publication. Reuse that archive, including
+    # a recovered copy of its bytes, rather than claiming the next number on a retry.
+    match = re.fullmatch(r"(.*\.result)(?:-[1-9][0-9]*)?\.md", target)
+    if not match:
+        return None
+    info = os.lstat(source)
+    digest = None
+    for path in sorted(glob.glob(glob.escape(match[1]) + "*.md")):
+        if not re.fullmatch(re.escape(match[1]) + r"(?:-[1-9][0-9]*)?\.md", path):
+            continue
+        other = os.lstat(path)
+        if os.path.samestat(info, other):
+            return path
+        if stat.S_ISREG(info.st_mode) and stat.S_ISREG(other.st_mode) and info.st_size == other.st_size:
+            if digest is None:
+                with open(source, "rb") as file:
+                    digest = hashlib.sha256(file.read()).digest()
+            with open(path, "rb") as file:
+                contents = hashlib.sha256(file.read()).digest()
+            if contents == digest and os.path.samestat(other, os.lstat(path)):
+                return path
+    return None
+
 try:
-    if os.name == "nt":
+    duplicate = archived(source, target)
+    if os.name == "nt" and not duplicate:
         os.rename(source, target)  # Windows refuses an existing destination atomically.
     else:
-        try:
-            api = ctypes.CDLL(None, use_errno=True)
-            if sys.platform == "darwin":
-                rename = api.renamex_np
-                rename.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
-                rc = rename(os.fsencode(source), os.fsencode(target), 4)  # RENAME_EXCL
-            else:
-                rename = api.renameat2
-                rename.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
-                rc = rename(-100, os.fsencode(source), -100, os.fsencode(target), 1)  # AT_FDCWD, RENAME_NOREPLACE
-            error = ctypes.get_errno() if rc else 0
-        except AttributeError:
-            error = errno.ENOSYS  # no such symbol: glibc before 2.28, an older musl
-        if error in unsupported:
-            # A filesystem without an exclusive rename (WSL /mnt/c, NFS, FUSE, SMB): a hard
-            # link refuses an existing name as atomically, and names a symlink, not its target.
+        error = errno.ENOSYS  # a duplicate is consumed privately and verified again
+        if not duplicate:
             try:
-                os.link(source, target, follow_symlinks=False)
-            except OSError as link_error:
-                if link_error.errno not in unsupported + (errno.EPERM,):
-                    raise
-                # ponytail: the weaker case, no hard links either: the name is claimed
-                # exclusively, but a writer that opens the claimed empty file without O_EXCL
-                # before this replace loses its bytes to it.
-                os.close(os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
+                api = ctypes.CDLL(None, use_errno=True)
+                if sys.platform == "darwin":
+                    rename = api.renamex_np
+                    rename.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
+                    rc = rename(os.fsencode(source), os.fsencode(target), 4)  # RENAME_EXCL
+                else:
+                    rename = api.renameat2
+                    rename.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+                    rc = rename(-100, os.fsencode(source), -100, os.fsencode(target), 1)  # AT_FDCWD, RENAME_NOREPLACE
+                error = ctypes.get_errno() if rc else 0
+            except AttributeError:
+                error = errno.ENOSYS  # no such symbol: glibc before 2.28, an older musl
+        if duplicate or error in unsupported:
+            if not duplicate and os.path.lexists(target):
+                raise FileExistsError(errno.EEXIST, os.strerror(errno.EEXIST))
+            folder = tempfile.mkdtemp(prefix=".report-move-", dir=os.path.dirname(target))
+            probe, owned = os.path.join(folder, "probe"), os.path.join(folder, "report")
+            try:
+                # Test the exclusive link before moving anything. With neither primitive the
+                # no-overwrite promise cannot be kept, so the report stays where it was.
                 try:
-                    os.replace(source, target)
-                except OSError:
-                    os.unlink(target)
+                    os.link(source, probe, follow_symlinks=False)
+                except OSError as link_error:
+                    if link_error.errno in unsupported + (errno.EPERM,):
+                        raise OSError(link_error.errno, "no-overwrite guarantee unavailable: exclusive rename and hard links unsupported")
                     raise
-            else:
+                os.rename(source, owned)  # only this caller can publish into its private directory
+                os.unlink(probe)
                 try:
-                    os.unlink(source)
+                    duplicate = archived(owned, target)
+                    if duplicate:
+                        target = duplicate
+                    else:
+                        os.link(owned, target, follow_symlinks=False)
+                    os.unlink(owned)  # never unlink the reusable source pathname
                 except OSError:
-                    os.unlink(target)  # the claim this link made: a retried close must not archive the report twice
+                    # Restore exclusively; a successor keeps its name and the old report stays
+                    # private if restoration is refused. Never remove a published archive.
+                    try:
+                        os.link(owned, source, follow_symlinks=False)
+                        os.unlink(owned)
+                    except FileExistsError:
+                        raise OSError(errno.EBUSY, "source changed during refused move; owned report preserved")
+                    except OSError:
+                        pass
                     raise
+            finally:
+                if os.path.lexists(probe):
+                    os.unlink(probe)
+                try:
+                    os.rmdir(folder)
+                except OSError:
+                    pass  # an interrupted or refused transaction retains its owned report
         elif error:
             raise OSError(error, os.strerror(error))
+    sys.stdout.buffer.write(os.fsencode(target) + b"\n")
 except FileExistsError:
     sys.exit(2)
 except OSError as error:
@@ -376,8 +423,8 @@ for name; do
     if [ -n "$dry" ]; then say "$name: dry run: would move its result RESULT-$name.md to $saved"
     elif mkdir -p -- "${record%/*}"; then
       while :; do
-        move_report "$wt_dir/RESULT-$name.md" "$saved"; move_rc=$?
-        if [ "$move_rc" -eq 0 ]; then moved=1; say "$name: its result RESULT-$name.md moved to $saved"; break
+        actual=$(move_report "$wt_dir/RESULT-$name.md" "$saved"); move_rc=$?
+        if [ "$move_rc" -eq 0 ]; then saved=$actual; moved=1; say "$name: its result RESULT-$name.md moved to $saved"; break
         elif [ "$move_rc" -eq 2 ]; then n=$((n + 1)); saved=$record.result-$n.md
         else fail "$name: could not move its result RESULT-$name.md to $saved"; break; fi
       done
@@ -411,7 +458,7 @@ for name; do
   if [ -n "$moved" ] && [ "$wt_dir" != "$top" ] && [ -d "$wt_dir" ]; then
     restored=$wt_dir/RESULT-$name.md; n=0
     while :; do
-      move_report "$saved" "$restored"; move_rc=$?
+      move_report "$saved" "$restored" >/dev/null; move_rc=$?
       if [ "$move_rc" -eq 0 ]; then
         if [ "$n" -eq 0 ]; then say "$name: its result moved back to RESULT-$name.md beside the kept work"
         else say "$name: newer RESULT-$name.md kept; its saved result moved back to $restored beside the kept work"; fi

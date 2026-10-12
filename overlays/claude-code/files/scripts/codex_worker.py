@@ -44,6 +44,7 @@ def published(path):
     try:
         text = path.read_text(encoding='utf-8').strip()
     except FileNotFoundError:
+        REFUSED.pop(path, None)
         return ''
     except PermissionError as error:
         tolerated(path, error)
@@ -89,11 +90,13 @@ def result_kind(path, since=0, stale=None):
         # ponytail: a same-size in-place edit within one timestamp tick is read at its next change.
         seen = SEEN.get(path)
         if seen and seen[0] == (info.st_ino, info.st_size, info.st_mtime_ns, since, stale):
+            REFUSED.pop(path, None)
             return seen[1]
         with path.open(encoding='utf-8') as file:
             info = os.fstat(file.fileno())
             text = file.read().strip()
     except FileNotFoundError:
+        REFUSED.pop(path, None)
         return '', None
     except PermissionError as error:
         tolerated(path, error)

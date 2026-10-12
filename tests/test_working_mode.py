@@ -39,7 +39,75 @@ class WorkingModeTests(unittest.TestCase):
         path = self.project / '.myagentkit' / name
         result = self.run_mode('--read-state', str(path))
         self.assertEqual(result.returncode, 0, result.stderr)
-        return path, result.stdout.strip()
+        sha, _, printed = result.stdout.strip().partition(' ')
+        return Path(printed) if printed else path, sha
+
+    def test_read_state_never_truncates_an_existing_hard_link(self):
+        victim = self.project / 'build.py'
+        victim.write_bytes(b'keep this script\n')
+        requested = self.project / '.myagentkit/STATE.edit.md'
+        requested.parent.mkdir()
+        os.link(victim, requested)
+        snapshot, sha = self.snapshot()
+        self.assertEqual(victim.read_bytes(), b'keep this script\n')
+        self.assertNotEqual(snapshot, requested)
+        self.assertEqual(snapshot.read_bytes(), self.state.read_bytes())
+        self.assertEqual(sha, hashlib.sha256(self.state.read_bytes()).hexdigest())
+
+    def test_two_reads_own_distinct_snapshots_and_keep_the_first_draft(self):
+        before = self.state.read_bytes()
+        first, sha = self.snapshot()
+        first.write_bytes(before + b'Writer A task.\n')
+        second, second_sha = self.snapshot()
+        self.assertNotEqual(first, second)
+        self.assertEqual(first.read_bytes(), before + b'Writer A task.\n')
+        self.assertEqual(second.read_bytes(), before)
+        self.assertEqual(sha, second_sha)
+        result = self.run_mode('--replace-state', str(first), '--expect', sha)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.state.read_bytes(), before + b'Writer A task.\n')
+        self.assertTrue(second.exists())
+
+    def test_snapshot_cleanup_preserves_a_successor_at_the_supplied_name(self):
+        spec = importlib.util.spec_from_file_location('working_mode', SCRIPT)
+        worker = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(worker)
+        snapshot, sha = self.snapshot()
+        edited = snapshot.read_bytes() + b'Writer A task.\n'
+        snapshot.write_bytes(edited)
+        replace = os.replace
+        def publishing(source, target):
+            replace(source, target)
+            if target == self.state:
+                successor = snapshot.with_suffix('.new')
+                successor.write_bytes(b'Writer B draft.\n')
+                replace(successor, snapshot)
+        with mock.patch.object(worker.os, 'replace', publishing):
+            worker.replace_state(self.project, snapshot, sha)
+        self.assertEqual(self.state.read_bytes(), edited)
+        self.assertTrue(snapshot.exists(), 'cleanup deleted the successor snapshot')
+        self.assertEqual(snapshot.read_bytes(), b'Writer B draft.\n')
+
+    def test_snapshot_cleanup_deletes_only_the_object_read_by_fstat(self):
+        spec = importlib.util.spec_from_file_location('working_mode', SCRIPT)
+        worker = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(worker)
+        snapshot, sha = self.snapshot()
+        opening, replace, reads = Path.open, os.replace, []
+        def opened(path, mode='r', *args, **kwargs):
+            if mode == 'rb' and path != self.state:
+                reads.append(path)
+            return opening(path, mode, *args, **kwargs)
+        def publishing(source, target):
+            replace(source, target)
+            if target == self.state:
+                self.assertEqual(len(reads), 1)
+                fresh = reads[0].with_suffix('.new')
+                fresh.write_bytes(b'A successor at the consumed name.\n')
+                replace(fresh, reads[0])
+        with mock.patch.object(worker.os, 'replace', publishing), mock.patch.object(Path, 'open', opened):
+            worker.replace_state(self.project, snapshot, sha)
+        self.assertEqual(reads[0].read_bytes(), b'A successor at the consumed name.\n')
 
     def test_show_defaults_without_writing_and_lists_all_seven(self):
         before = self.state.read_bytes()
@@ -478,8 +546,10 @@ class WorkingModeTests(unittest.TestCase):
             snapshot = Path(folder) / 'STATE.edit.md'
             read = self.run_mode('--read-state', str(snapshot))
             self.assertEqual(read.returncode, 0, read.stderr)
+            sha, printed = read.stdout.strip().split(' ', 1)
+            snapshot = Path(printed)
             snapshot.write_bytes(before + b'A new task.\n')
-            result = self.run_mode('--replace-state', str(snapshot), '--expect', read.stdout.strip())
+            result = self.run_mode('--replace-state', str(snapshot), '--expect', sha)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertFalse(snapshot.exists(), 'the published snapshot was left behind')
         self.assertEqual(self.state.read_bytes(), before + b'A new task.\n')

@@ -35,7 +35,7 @@ time.sleep(60)
 
 # Forces the archive move's POSIX path on every host, its exclusive rename failing as one the
 # filesystem (EINVAL), the kernel (ENOSYS) or the libc (no symbol) lacks.
-NO_EXCLUSIVE_RENAME = '''import ctypes, errno, os
+NO_EXCLUSIVE_RENAME = '''import ctypes, errno, glob, hashlib, os, re, stat, tempfile
 def primitive(*args):
     ctypes.set_errno(errno.%s)
     return -1
@@ -59,6 +59,96 @@ def move_report():
 
 
 class CloseWorkerOnWindows(unittest.TestCase):
+    def test_archive_link_cleanup_preserves_a_new_report_at_the_source(self):
+        racing = '''import sys
+linking = os.link
+def link(source, target, *args, **kwargs):
+    linking(source, target, *args, **kwargs)
+    if target == sys.argv[2]:
+        fresh = sys.argv[1] + ".new"
+        with open(fresh, "w") as file:
+            file.write("new report\\n")
+        os.replace(fresh, sys.argv[1])
+os.link = link
+'''
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp) / 'iş archive'
+            folder.mkdir()
+            source, target = folder / 'RESULT-w.md', folder / 'w.result.md'
+            source.write_text('old report\n')
+            moved = subprocess.run([sys.executable, '-I', '-c',
+                                    NO_EXCLUSIVE_RENAME % ('EINVAL', True) + racing + move_report(),
+                                    str(source), str(target)], capture_output=True, timeout=10)
+            self.assertEqual(moved.returncode, 0, moved.stderr)
+            self.assertEqual(moved.stdout.decode('utf-8').strip(), str(target))
+            self.assertEqual(target.read_text(), 'old report\n')
+            self.assertTrue(source.exists(), 'archive cleanup deleted the newer report')
+            self.assertEqual(source.read_text(), 'new report\n')
+
+    def test_no_link_fallback_refuses_instead_of_overwriting_a_replaced_claim(self):
+        racing = '''import sys
+opening = os.open
+def open_claim(path, flags, *args, **kwargs):
+    fd = opening(path, flags, *args, **kwargs)
+    if path == sys.argv[2] and flags & os.O_EXCL:
+        os.close(fd)
+        fresh = path + ".new"
+        with open(fresh, "w") as file:
+            file.write("newer destination\\n")
+        os.replace(fresh, path)
+        fd = opening(path, os.O_WRONLY)
+    return fd
+os.open = open_claim
+'''
+        with tempfile.TemporaryDirectory() as tmp:
+            source, target = Path(tmp) / 'RESULT-w.md', Path(tmp) / 'w.result.md'
+            source.write_text('the report\n')
+            moved = subprocess.run([sys.executable, '-I', '-c',
+                                    NO_EXCLUSIVE_RENAME % ('EINVAL', True) + NO_HARD_LINKS + racing + move_report(),
+                                    str(source), str(target)], capture_output=True, timeout=10)
+            self.assertEqual(moved.returncode, 1, moved.stderr)
+            self.assertIn(b'no-overwrite guarantee unavailable', moved.stderr)
+            self.assertEqual(source.read_text(), 'the report\n')
+            if target.exists():
+                self.assertEqual(target.read_text(), 'newer destination\n')
+
+    def test_interrupted_archive_is_recognized_by_object_or_contents_on_retry(self):
+        interrupted = '''import sys
+linking, unlinking = os.link, os.unlink
+archive_linked = False
+def link(source, target, *args, **kwargs):
+    global archive_linked
+    linking(source, target, *args, **kwargs)
+    if target == sys.argv[2]:
+        archive_linked = True
+def unlink(*args, **kwargs):
+    if archive_linked:
+        os._exit(73)
+    return unlinking(*args, **kwargs)
+os.link, os.unlink = link, unlink
+'''
+        for same_object in (True, False):
+            with self.subTest(same_object=same_object), tempfile.TemporaryDirectory() as tmp:
+                source, first, second = (Path(tmp) / name for name in ('RESULT-w.md', 'w.result.md', 'w.result-2.md'))
+                source.write_text('the report\n')
+                forced = NO_EXCLUSIVE_RENAME % ('EINVAL', True)
+                moved = subprocess.run([sys.executable, '-I', '-c', forced + interrupted + move_report(),
+                                        str(source), str(first)], capture_output=True, timeout=10)
+                self.assertEqual(moved.returncode, 73, moved.stderr)
+                self.assertEqual(first.read_text(), 'the report\n')
+                if source.exists():
+                    source.unlink()
+                if same_object:
+                    os.link(first, source)
+                else:
+                    source.write_bytes(first.read_bytes())
+                retry = subprocess.run([sys.executable, '-I', '-c', forced + move_report(),
+                                        str(source), str(second)], capture_output=True, timeout=10)
+                self.assertEqual(retry.returncode, 0, retry.stderr)
+                self.assertFalse(second.exists(), 'retry allocated a duplicate archive number')
+                self.assertFalse(source.exists())
+                self.assertEqual(retry.stdout.decode().strip(), str(first))
+
     def test_the_archive_move_never_overwrites_where_no_exclusive_rename_exists(self):
         cases = {'EINVAL': NO_EXCLUSIVE_RENAME % ('EINVAL', True),
                  'ENOSYS': NO_EXCLUSIVE_RENAME % ('ENOSYS', True),
@@ -76,16 +166,21 @@ class CloseWorkerOnWindows(unittest.TestCase):
                 self.assertEqual(source.read_text(), 'the report\n')
                 target.unlink()
                 moved = subprocess.run(move, capture_output=True, timeout=10)
+                if label == 'EINVAL and no hard links':
+                    self.assertEqual(moved.returncode, 1, moved.stderr)
+                    self.assertIn(b'no-overwrite guarantee unavailable', moved.stderr)
+                    self.assertFalse(target.exists())
+                    self.assertEqual(source.read_text(), 'the report\n')
+                    continue
                 self.assertEqual(moved.returncode, 0, moved.stderr)
                 self.assertEqual(target.read_text(), 'the report\n')
                 self.assertFalse(source.exists())
 
-    def test_a_linked_claim_whose_source_cannot_go_is_taken_back(self):
-        # The hard-link fallback is two steps: a source that cannot be unlinked (a read-only
-        # folder) leaves the report under one name, never under both for a retry to archive twice.
-        stuck = ('import sys\nunlinking = os.unlink\ndef unlink(path, *args, **kwargs):\n'
+    def test_a_source_that_cannot_be_consumed_keeps_its_report_without_an_archive(self):
+        # A read-only source folder refuses the private rename before archive publication.
+        stuck = ('import sys\nrenaming = os.rename\ndef rename(path, *args, **kwargs):\n'
                  '    if path == sys.argv[1]:\n        raise PermissionError(errno.EACCES, "read-only folder")\n'
-                 '    unlinking(path, *args, **kwargs)\nos.unlink = unlink\n')
+                 '    return renaming(path, *args, **kwargs)\nos.rename = rename\n')
         with tempfile.TemporaryDirectory() as tmp:
             source, target = Path(tmp) / 'RESULT-w.md', Path(tmp) / 'w.result.md'
             source.write_text('the report\n')

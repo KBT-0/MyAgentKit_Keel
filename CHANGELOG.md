@@ -13,6 +13,13 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## v0.11 — 2026-10-09
 
+- **Exclusive STATE snapshots**: `--read-state OUT` creates with O_CREAT|O_EXCL; an existing hard link is never truncated. **ACTION:** sync `scripts/working_mode.py`.
+- **A snapshot per edit**: `--read-state OUT` treats OUT as a prefix and prints `SHA256 PATH`; writers edit and replace their own returned PATH. **ACTION:** update the STATE protocol from `core/AGENTS.md` and `core/docs/WORKFLOW.md`.
+- **Verified snapshot cleanup**: replacement consumes a private name and deletes only the published fstat identity, preserving a successor draft at the supplied path.
+- **Private archive sources**: the hard-link fallback first moves the report into a caller-private name, preserving a newer publication at the source path. **ACTION:** sync `close_worker.sh` from the Claude Code overlay.
+- **Archive refusal without safe publication**: when exclusive rename and hard links are unavailable, the helper refuses with "no-overwrite guarantee unavailable" instead of replacing an empty claim.
+- **Interrupted archive retries**: an existing archive of the same object or contents is reused before another number is claimed; restoration uses the returned archive path.
+- **Consecutive polling refusals**: every successful observation, cached results included, resets that path's refusal count. **ACTION:** sync `codex_worker.py` from the Claude Code overlay.
 - **Working modes, by name** (issue #57; `docs/WORKFLOW.md`, "Model routing"): the kit ships
   the tier table and seven modes, claude-first, cross-performance (the main mode),
   cross-saving, codex-first, claude-saver, codex-saver and claude-only, each with who writes, reviews and
@@ -25,8 +32,9 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   A STATE edit detected before replacement refuses the switch; rollback preserves later
   independent edits. Session edits of STATE are a compare-and-swap under the same lock that
   refuses a stale edit instead of losing a concurrent one (owner decision, `RESEARCH_LOG.md`):
-  `--read-state OUT` writes the snapshot and prints its sha256 from one read, the writer edits
-  that file, and `--replace-state FILE --expect SHA256` publishes it and deletes it. No command
+  `--read-state OUT` creates a per-edit snapshot using OUT as a prefix and prints `SHA256 PATH`
+  from one read; the writer edits PATH, and `--replace-state FILE --expect SHA256` publishes
+  it and deletes the verified object. No command
   prints a hash apart from its bytes, which let a copy read earlier pass. The snapshot lives in
   `.myagentkit/` or the temporary folder outside the project, the STATE operations run only from
   the project root, and an edit that changes the "Working mode:" line is refused. Links

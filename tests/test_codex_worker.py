@@ -27,6 +27,26 @@ def module():
 
 
 class CodexWorkerTests(unittest.TestCase):
+    def test_cached_successes_reset_isolated_windows_refusals(self):
+        worker = module()
+        with tempfile.TemporaryDirectory() as tmp:
+            result = Path(tmp) / 'result.md'
+            result.write_text('Kind: completed\nTask: w\nAttempt: 1\nRemaining: none\n' + READY)
+            expected = worker.result_kind(result)
+            self.assertEqual(expected[0], 'DONE')
+            stat = Path.stat
+            def refused(path, *args, **kwargs):
+                if path == result:
+                    raise PermissionError('sharing violation')
+                return stat(path, *args, **kwargs)
+            with mock.patch.object(worker.os, 'name', 'nt'), \
+                    mock.patch.object(Path, 'open', side_effect=AssertionError('cached poll reopened result')):
+                for _ in range(worker.REFUSALS + 1):
+                    with mock.patch.object(Path, 'stat', refused):
+                        self.assertEqual(worker.result_kind(result), ('', None))
+                    self.assertEqual(worker.result_kind(result), expected)
+                    self.assertNotIn(result, worker.REFUSED, 'successful cached poll retained a refusal')
+
     def run_worker(self, question, code, result=None):
         args = [str(question)] + ([str(result)] if result else [])
         return subprocess.run([sys.executable, str(SCRIPT), *args, '--', sys.executable, '-c', code],

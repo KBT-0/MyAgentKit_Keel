@@ -88,12 +88,13 @@ def private(project, path):
 
 
 def read_state(project, out):
-    """Write STATE's exact bytes to OUT and return their sha256: one read names the bytes the
-    writer edits, where a separate hash let a copy read earlier pass over a later edit."""
+    """Create an exclusive per-edit snapshot with OUT as its prefix; return its path and hash."""
     data = checked(project, 'docs/STATE.md').read_bytes()
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_bytes(data)
-    return hashlib.sha256(data).hexdigest()
+    fd, name = tempfile.mkstemp(prefix=out.name + '-', dir=out.parent)
+    with os.fdopen(fd, 'wb') as handle:
+        handle.write(data)
+    return Path(name), hashlib.sha256(data).hexdigest()
 
 
 def replace_state(project, source, expected):
@@ -106,17 +107,32 @@ def replace_state(project, source, expected):
         if actual != expected.lower():
             raise ValueError('STATE.md sha256 mismatch: expected ' + expected + ', current ' + actual
                              + '; read it again with --read-state, redo the edit in that snapshot, and retry')
-        data = source.read_bytes()
-        if mode_lines(data.decode('utf-8')) != mode_lines(current.decode('utf-8')):
-            raise ValueError('the edit changes the Working mode line of STATE.md; only a mode switch '
-                             '(working_mode.py NAME) changes it, together with .claude/mode')
-        pending = prepared(state, data)
+        folder = Path(tempfile.mkdtemp(prefix='.' + source.name + '-', dir=source.parent))
+        owned = folder / 'snapshot'
+        identity = pending = None
+        published = False
         try:
+            os.rename(source, owned)  # the destination is in this caller's fresh private directory
+            identity = owned.lstat()
+            with owned.open('rb') as handle:
+                identity = os.fstat(handle.fileno())
+                data = handle.read()
+            if mode_lines(data.decode('utf-8')) != mode_lines(current.decode('utf-8')):
+                raise ValueError('the edit changes the Working mode line of STATE.md; only a mode switch '
+                                 '(working_mode.py NAME) changes it, together with .claude/mode')
+            pending = prepared(state, data)
             os.replace(pending, state)
+            published = True
         finally:
-            pending.unlink(missing_ok=True)
-    with suppress(OSError):
-        source.unlink()  # published; a copy that cannot go is in a private folder
+            if pending is not None:
+                pending.unlink(missing_ok=True)
+            with suppress(OSError):
+                if identity is not None and os.path.samestat(identity, owned.lstat()):
+                    if not published:
+                        os.link(owned, source, follow_symlinks=False)  # restore without replacing a successor
+                    owned.unlink()  # only the verified object, never the caller's reusable pathname
+            with suppress(OSError):
+                folder.rmdir()  # an unconsumed draft stays private for recovery
 
 
 def mode(project, choice=None):
@@ -221,7 +237,7 @@ def main():
     parser.add_argument('--project', type=Path, default=Path.cwd())
     operations = parser.add_mutually_exclusive_group()
     operations.add_argument('--read-state', type=Path, metavar='OUT',
-                            help='write the STATE.md snapshot to OUT (in .myagentkit/ or the temporary folder) and print its sha256')
+                            help='create a per-edit STATE.md snapshot with prefix OUT (in .myagentkit/ or the temporary folder); print SHA256 PATH')
     operations.add_argument('--replace-state', type=Path, metavar='FILE',
                             help='atomically publish the edited snapshot FILE, then delete it')
     parser.add_argument('--expect', metavar='SHA256', help='the sha256 --read-state printed for that snapshot')
@@ -239,7 +255,8 @@ def main():
         if (args.read_state, args.replace_state) != (None, None) and project != Path.cwd().resolve():
             raise ValueError('STATE operations run in the project root, without another --project')
         if args.read_state is not None:
-            print(read_state(project, private(project, args.read_state)))
+            snapshot, sha = read_state(project, private(project, args.read_state))
+            print(sha + ' ' + str(snapshot))
         elif args.replace_state is not None:
             replace_state(project, private(project, args.replace_state), args.expect)
         else:

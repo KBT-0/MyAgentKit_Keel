@@ -40,9 +40,15 @@ rename claims the name (Linux `renameat2` RENAME_NOREPLACE, macOS `renamex_np` R
 the Windows rename), and a collision takes the next number: a free-name check followed by a
 rename replaced a report published in between. Without that rename (WSL `/mnt/c`, NFS, FUSE,
 SMB, glibc before 2.28) every close failed, so there a hard link claims the name, as
-exclusively; without hard links an O_EXCL create claims it and the report replaces the claim.
-That is the one weaker case: a writer that opens the empty claim without O_EXCL in the moment
-before the replace loses its bytes. A suffix longer than nine digits is not a number, because
+exclusively. Review r7 reproduced a newer source deleted between link and unlink: the source
+now moves first into a fresh caller-private directory, and only that owned name is unlinked.
+Without hard links the former empty O_EXCL claim could be replaced before publication, which
+then overwrote that newer destination. The helper now refuses with "no-overwrite guarantee
+unavailable" before consuming the source when neither primitive works. A killed link+unlink
+also left the same report available for a second archive number: a retry recognizes an existing
+archive by object identity or content hash, verifies it again after private consumption, and
+returns that archive path for restoration. Interrupted private reports remain recoverable beside
+the archives. A suffix longer than nine digits is not a number, because
 the shell's arithmetic overflowed on it. The helper prints only the errno and its text: a path
 can hold control bytes, and the line bypassed the close's filter.
 
@@ -73,7 +79,9 @@ seconds, and 0 of 3000 failed under those stat loops (361 needed a retry; Python
 without the retry, 0 with it). Python 3.10 and 3.11,
 which open a handle on every stat, were not measured. A refusal that lasts, a denied ACL or a
 held lock, is an error after 50 consecutive refusals of one file, about five seconds: reading
-every refusal as a rename made such a wait endless. A same-size in-place edit within one
+every refusal as a rename made such a wait endless. Review r7 reproduced isolated refusals
+accumulating across cached successful polls: every successful observation now clears that
+path's counter, including a cached return or an absent file. A same-size in-place edit within one
 timestamp tick is read at its next change; in-place edits are not the publishing protocol.
 
 ### 2026-10-12 — A wrapper stopped from outside, and the result sidecar (#57)
@@ -108,8 +116,14 @@ command-executing `--edit-state` was rejected for that reason. Byte rechecks alo
 independent edits in the reproduced publication and rollback windows. Sharing the lock closes
 both windows, and compare-and-swap refuses a stale retry after the switch or rollback. Both
 regression probes preserve the independent edit after its writer re-reads, retries and succeeds.
-The hash and the bytes come from one read, `--read-state OUT`, and the writer edits that
-snapshot: a separate `--state-sha` let a writer that read STATE at its session start and hashed
+The hash and the bytes come from one read, `--read-state OUT`, which creates an exclusively
+owned per-edit snapshot with OUT as its prefix and prints `SHA256 PATH`; the writer edits the
+returned PATH. Review r7 reproduced a hard-linked OUT truncating a tracked script, and two
+writers erasing each other's drafts through a shared OUT. Creation now uses O_CREAT|O_EXCL
+under a fresh name and never reuses an existing file. Replacement consumes a caller-private
+name, reads its fstat identity, and deletes only that verified object after publication; a
+successor at the supplied name stays. The former unconditional cleanup deleted that successor.
+A separate `--state-sha` let a writer that read STATE at its session start and hashed
 it later publish its stale copy over an edit made in between (Claude review r7, reproduced).
 The pre-approval let a STATE operation copy any readable file into any project's STATE.md, so
 the operations run only from the project root and read or write a snapshot only in

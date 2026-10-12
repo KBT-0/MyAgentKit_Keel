@@ -108,9 +108,10 @@ cost", and `docs/WORKFLOW.md`, "Review rounds".
 ### STATE.md discipline
 
 - Every authorized session edit is a compare-and-swap, in this order, from the project root:
-  `python scripts/working_mode.py --read-state .myagentkit/STATE.edit.md` writes the current
-  snapshot there and prints its sha256; edit that file, never a copy read earlier; then
-  `python scripts/working_mode.py --replace-state .myagentkit/STATE.edit.md --expect SHA256`.
+  `python scripts/working_mode.py --read-state .myagentkit/STATE.edit.md` creates a fresh,
+  exclusively owned per-edit snapshot using that prefix and prints `SHA256 PATH`. Edit the
+  returned PATH, never a copy read earlier or another writer's snapshot; then run
+  `python scripts/working_mode.py --replace-state "PATH" --expect SHA256`.
   The file lives in `.myagentkit/` (ignored) or the temporary folder, and the helper deletes it
   once published. On refusal, run `--read-state` again, redo the edit there, and retry. The
   "Working mode:" line belongs to the mode switch: an edit that changes it is refused.

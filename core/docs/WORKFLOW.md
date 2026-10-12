@@ -80,15 +80,17 @@ The rules for `docs/STATE.md` are in `AGENTS.md`, "STATE.md discipline". This se
 their reasons, so that the always-loaded files carry only the rules.
 
 For every authorized session edit, run `python scripts/working_mode.py --read-state
-.myagentkit/STATE.edit.md` first: it writes the current snapshot there and prints its sha256,
-from one read. Edit that file, never a copy of STATE.md read earlier, then run
-`python scripts/working_mode.py --replace-state .myagentkit/STATE.edit.md --expect SHA256` with
-that sha. On refusal, run `--read-state` again, redo the edit there, and retry. Do not retry
+.myagentkit/STATE.edit.md` first: it creates a fresh, exclusively owned per-edit snapshot with
+that prefix and prints `SHA256 PATH`, from one read. Each caller gets its own path; an existing
+file is never reused, including a hard link. Edit the returned PATH, never a copy of STATE.md
+read earlier, then run `python scripts/working_mode.py --replace-state "PATH" --expect SHA256`
+with that sha. On refusal, run `--read-state` again, redo the edit there, and retry. Do not retry
 stale contents. A hash read apart from the bytes it names let a copy read at the session's start
 pass over an edit published in between. The helper compares the bytes under the same lock as a
 mode switch, then replaces the file atomically. It preserves the file mode, runs no arbitrary
-command, and deletes the published snapshot. Both publication and rollback can otherwise erase
-another writer's work. The STATE operations run from the project root without another
+command, consumes the snapshot into a caller-private name, and deletes only the object verified
+by the read descriptor after publication; a successor at the supplied path stays. Both publication
+and rollback can otherwise erase another writer's work. The STATE operations run from the project root without another
 `--project`, and read or write a snapshot only in `.myagentkit/` (ignored by Git) or the
 temporary folder: `/myagentkit:mode` runs the helper unprompted, so it copies no other file,
 and a snapshot never lands where `git add -A` commits it. An edit that changes or removes the
