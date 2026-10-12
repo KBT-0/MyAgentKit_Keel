@@ -1,9 +1,7 @@
-"""A self-test leaves the worktree's Git view as it found it: HEAD, the index, git status.
+"""A self-test compares HEAD, index, status and file contents at the end of its run.
 
-A review running in the same worktree fails as stale_checkout when one of them changes, and
-the docs let the self-test share that worktree. So the project gate's self-test and the kit's
-own wrapper compare the view before and after, and a difference fails the run by path.
-Files Git ignores may change.
+Reviews must run sequentially or in another worktree: a temporary injection can cause
+stale_checkout even when the self-test removes it. Files Git ignores may change.
 """
 import os
 from pathlib import Path
@@ -23,6 +21,7 @@ GIT = ['git', '-c', 'user.name=t', '-c', 'user.email=t@example.invalid', '-c', '
 LEAVES = ('mkdir -p ignored-out && : > ignored-out/build.txt\n'
           ': > leftover.txt\n'
           'echo three >> notes.md\n'
+          'echo changed >> existing.txt\n'
           "echo '  ok   — the fixture case ran'\n")
 
 
@@ -44,11 +43,12 @@ class ProjectSelfTestTests(unittest.TestCase):
         write(self.project / 'AGENTS.md', '- **No AI attribution in git.**\n')
         write(self.project / '.gitignore', 'ignored-out/\n')
         # A tracked file already modified before the run: status names it the same way after
-        # another edit, so only the hash of `git diff --binary HEAD` sees that edit.
+        # another edit, so its content hash must see that edit and name the path.
         write(self.project / 'notes.md', 'one\n')
         subprocess.run(GIT + ['add', 'notes.md'], cwd=self.project, check=True)
         subprocess.run(GIT + ['commit', '-qm', 'notes'], cwd=self.project, check=True)
         write(self.project / 'notes.md', 'two\n')
+        write(self.project / 'existing.txt', 'before\n')
         self.build = self.tmp / 'build.sh'
         write(self.build, 'true\n')
 
@@ -68,12 +68,58 @@ class ProjectSelfTestTests(unittest.TestCase):
         self.assertEqual(code, 1, out)
         self.assertIn('FAIL — the self-test changed this worktree', out)
         self.assertIn('    + ?? leftover.txt', out)
-        self.assertIn('    + diff ', out)
+        self.assertRegex(out, r'    \+ [0-9a-f]{40,64} notes\.md')
+        self.assertRegex(out, r'    \+ [0-9a-f]{40,64} existing\.txt')
         self.assertNotIn('ignored-out', out)
         self.assertIn('SELF-TEST: FAIL', out)
 
 
 class KitWrapperTests(unittest.TestCase):
+    def assert_content_edit_fails(self, tracked):
+        with tempfile.TemporaryDirectory() as tmp:
+            kit = Path(tmp) / 'kit'
+            (kit / 'scripts').mkdir(parents=True)
+            shutil.copyfile(ROOT / 'scripts/check.sh', kit / 'scripts/check.sh')
+            write(kit / 'scripts/check_kit.py',
+                  'import os\nfrom pathlib import Path\n'
+                  'p = Path("existing file.txt")\ns = p.stat()\n'
+                  'p.write_bytes(b"after!\\n")\n'
+                  'os.utime(p, ns=(s.st_atime_ns, s.st_mtime_ns))\n'
+                  'Path(os.environ["KIT_CHECK_PASSED"]).touch()\n')
+            subprocess.run(['git', 'init', '-q', str(kit)], check=True)
+            subprocess.run(['git', 'config', 'core.autocrlf', 'false'], cwd=kit, check=True)
+            write(kit / 'existing file.txt', 'before\n')
+            if tracked:
+                subprocess.run(['git', 'config', 'core.trustctime', 'false'], cwd=kit, check=True)
+                subprocess.run(['git', 'config', 'core.checkStat', 'minimal'], cwd=kit, check=True)
+                subprocess.run(GIT + ['add', 'existing file.txt'], cwd=kit, check=True)
+                subprocess.run(GIT + ['commit', '-qm', 'tracked'], cwd=kit, check=True)
+                # Avoid Git's racy-index timestamp window; keep the same indexed mtime on edit.
+                stamp = 1_600_000_000_000_000_000
+                os.utime(kit / 'existing file.txt', ns=(stamp, stamp))
+                subprocess.run(['git', 'update-index', '--refresh'], cwd=kit, check=True)
+            before = subprocess.run(['git', 'status', '--porcelain'], cwd=kit,
+                                    capture_output=True, check=True).stdout
+            result = subprocess.run(['sh', str(kit / 'scripts/check.sh'), '--self-test'], cwd=kit,
+                                    capture_output=True, text=True, encoding='utf-8',
+                                    errors='replace', timeout=120)
+            after = subprocess.run(['git', 'status', '--porcelain'], cwd=kit,
+                                   capture_output=True, check=True).stdout
+            self.assertEqual(before, after)
+            if tracked:
+                self.assertEqual(subprocess.run(['git', 'diff', '--binary', 'HEAD'], cwd=kit,
+                                               capture_output=True, check=True).stdout, b'')
+            out = result.stdout + result.stderr
+            self.assertEqual(result.returncode, 1, out)
+            self.assertIn('KIT CHECK: FAIL', out)
+            self.assertRegex(out, r'    \+ [0-9a-f]{40,64} existing file\.txt')
+
+    def test_an_existing_untracked_file_edited_in_place_fails_by_path(self):
+        self.assert_content_edit_fails(tracked=False)
+
+    def test_a_tracked_edit_hidden_by_restored_mtime_fails_by_path(self):
+        self.assert_content_edit_fails(tracked=True)
+
     def test_the_kit_self_test_fails_on_a_file_it_leaves_and_passes_an_ignored_one(self):
         with tempfile.TemporaryDirectory() as tmp:
             kit = Path(tmp) / 'kit'
@@ -108,8 +154,7 @@ class KitWrapperTests(unittest.TestCase):
                         self.assertNotIn('leftover.txt\n', out.replace('leftover2.txt', ''))
                     if leave == 'tracked.txt':
                         # Status says " M tracked.txt" before and after: only the hash differs.
-                        self.assertIn('    + diff ', out)
-                        self.assertNotIn('tracked.txt', out)
+                        self.assertRegex(out, r'    \+ [0-9a-f]{40,64} tracked\.txt')
 
 
 if __name__ == '__main__':

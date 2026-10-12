@@ -25,8 +25,9 @@
 #
 # A SELF-TEST CASE NEVER CHANGES A TRACKED FILE, and leaves nothing in the working tree but
 # files Git ignores: the self-test FAILS when HEAD, the index, `git status --porcelain
-# --untracked-files=all` or the content of `git diff --binary HEAD` differ at its end, because a review running in this worktree
-# meanwhile would fail as stale_checkout. Point the gate at a synthetic file outside the tree through an
+# --untracked-files=all` or the content hashes of tracked and untracked non-ignored files differ
+# at its end. A review must run in another worktree or after the self-test: a temporary injection
+# can fail it as stale_checkout even when removed. Point the gate at a synthetic file outside the tree through a
 # self-test seam (GATE_SELFTEST_STATE_FILE, GATE_SELFTEST_EXTRA_FILE below; honoured only in the self-test's
 # own nested runs, so the case passes it to expect_fail or expect_pass), or run the case against
 # a disposable copy of the tree. A file injected into the tree is seen by a concurrent
@@ -460,8 +461,7 @@ finally:
   # them as it found them: compared at the end, a difference fails it. Ignored files may change.
   git_view() {
     git rev-parse --verify -q HEAD || :; git ls-files -s; git status --porcelain --untracked-files=all
-    # The content of tracked files already modified before the run: status names them alike.
-    echo "diff $(git diff --no-ext-diff --no-textconv --binary HEAD 2>/dev/null | git hash-object --stdin)"
+    git ls-files -c -o --exclude-standard | while IFS= read -r path; do printf '%s %s\n' "$(printf '%s\n' "$path" | git hash-object --no-filters --stdin-paths 2>/dev/null)" "$path"; done
   }
   view_before=""
   if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
@@ -1218,7 +1218,7 @@ LOCKCASE
   else
     echo "  FAIL — the self-test changed this worktree: a review running here meanwhile fails"
     echo "         as stale_checkout. Make the case remove what it writes, or ignore its output"
-    echo "         path in .gitignore. Lines before (-) and after (+): HEAD, index, status, diff hash:"
+    echo "         path in .gitignore. Lines before (-) and after (+): HEAD, index, status, content hashes by path:"
     diff "$view_before" "$work/git-view.after" | sed -n 's/^< /    - /p; s/^> /    + /p' | head -40
     st_fail=1
   fi

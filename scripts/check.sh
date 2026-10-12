@@ -25,13 +25,12 @@ cancel() {
 }
 trap 'cancel INT 130' INT
 trap 'cancel TERM 143' TERM
-# The self-test leaves this checkout's HEAD, index, git status and tracked changes as it found
-# them, as the project gate's own self-test does (core/scripts/check.sh, self_test): a review
-# running here meanwhile fails as stale_checkout on anything else. Ignored files may change.
+# The self-test compares HEAD, index, status and file contents at its end, as the project gate
+# does. Run a review in another worktree or sequentially: a temporary injection can fail it as
+# stale_checkout even when removed before this check. Ignored files may change.
 git_view() {
   git rev-parse --verify -q HEAD || :; git ls-files -s; git status --porcelain --untracked-files=all
-  # The content of tracked files already modified before the run: status names them alike.
-  echo "diff $(git diff --no-ext-diff --no-textconv --binary HEAD 2>/dev/null | git hash-object --stdin)"
+  git ls-files -c -o --exclude-standard | while IFS= read -r path; do printf '%s %s\n' "$(printf '%s\n' "$path" | git hash-object --no-filters --stdin-paths 2>/dev/null)" "$path"; done
 }
 view=""
 case " $* " in
@@ -49,7 +48,7 @@ if [ "$status" -eq 0 ] && [ ! -f "$passed/passed" ]; then
 fi
 if [ -n "$view" ] && ! { git_view > "$view.after" 2>&1 && cmp -s "$view.before" "$view.after"; }; then
   echo "KIT CHECK: FAIL — the self-test changed this checkout, so a review running here meanwhile" >&2
-  echo "  fails as stale_checkout. Lines before (-) and after (+): HEAD, index, status, diff hash:" >&2
+  echo "  fails as stale_checkout. Lines before (-) and after (+): HEAD, index, status, content hashes by path:" >&2
   diff "$view.before" "$view.after" | sed -n 's/^< /    - /p; s/^> /    + /p' | head -40 >&2
   status=1
 fi

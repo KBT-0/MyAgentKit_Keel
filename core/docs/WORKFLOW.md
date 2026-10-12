@@ -174,8 +174,10 @@ breaks, everything keeps looking green.
   automated one does not.
 - **A self-test case never changes a tracked file**, and leaves nothing in the working tree
   but files Git ignores: the self-test fails when HEAD, the index, `git status --porcelain
-  --untracked-files=all` or a hash of `git diff --binary HEAD` (the content of tracked files
-  already modified before it) differ at its end. Point the gate at a synthetic file outside the
+  --untracked-files=all` or content hashes of tracked and untracked non-ignored files differ
+  at its end. This proves only that the tree ends unchanged. Run reviews in another worktree
+  or sequentially: a temporary injection can fail a review as `stale_checkout` even when removed.
+  Point the gate at a synthetic file outside the
   tree through an overridable path, or run against a disposable copy. Several sessions share one
   checkout, and a file injected into it is seen by their `git add -A`, their edits and their
   commits. `check.sh` holds a per-checkout lock for a whole run (the self-test included), so
@@ -569,7 +571,7 @@ by the low side, so the loop keeps both models. These rules bind both saver mode
   round at medium; high for a gate, hook or review-tooling change, a risky diff and a new
   mechanism's first round. The top model or the highest effort needs the owner's yes.
 - A running review is not cancelled to lower its effort, since what it spent is gone.
-- Independent reviews run at the same time, with each other and with the self-test.
+- Independent reviews run together. A concurrent self-test uses another worktree on the same commit.
 - A review that fails on quota leaves its rerun command in the task's issue or STATE line
   and waits. It goes to the other side only with the owner's yes, because a second model's
   judgement is the point of it.
@@ -963,11 +965,11 @@ already shown once costs a whole round when the worker leaves it for the reviewe
 The lead never changes its shell directory into a worker's worktree; use `git -C <worktree>` for its Git commands.
 The shell stays in the lead's checkout, so its Stop hook runs that checkout's gate.
 
-1. Start the self-test and the review together, on the same commit and in the same worktree,
-   never one after the other. The self-test enforces that this is safe: it fails when it
-   leaves HEAD, the index, `git status` or the content of `git diff --binary HEAD` changed,
-   so it writes files Git ignores and nothing else (`docs/REVIEW_RUNNING.md`, "Rounds,
-   labels and designs").
+1. Run the self-test and review on the same commit in separate worktrees, or run them sequentially.
+   A review must never run in a worktree while a self-test runs there. The self-test compares
+   HEAD, the index, `git status` and file content hashes only at its end. A temporary injection
+   can fail a review as `stale_checkout` even when removed before that check
+   (`docs/REVIEW_RUNNING.md`, "Rounds, labels and designs").
 2. Run two reviewers at the same time, never one after the other.
 3. Keep one review label for the whole feature, so that each round carries the earlier ones.
    Only the final reviews (one per model, each over the parts it did not write) take a label

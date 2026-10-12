@@ -1296,6 +1296,7 @@ def main(argv=None, result_sink=None) -> int:
         if result_sink is not None:
             result_sink(result)
         print(json.dumps(result))
+        sys.stdout.flush()  # Catch buffered pipe failures here, before shutdown can replace the exit with 120.
         return 0 if evidence["status"] == "completed" else 5
     except (BridgeError, OSError, ValueError) as error:
         if result is not None:
@@ -1304,6 +1305,10 @@ def main(argv=None, result_sink=None) -> int:
             # "failed" line after the "completed" one. The handed-over status decides; the
             # dispatcher, holding this same dict, records the failure with the attempt.
             result["error_after_result"] = str(error)
+            try:
+                sys.stdout.flush()
+            except (OSError, ValueError):
+                sys.stdout = open(os.devnull, "w")
             with contextlib.suppress(OSError, ValueError):
                 print("NOTE [review]: claude failed after it handed over its result (%s); the result "
                       "stands as recorded in %s" % (error, result["evidence"]), file=sys.stderr, flush=True)

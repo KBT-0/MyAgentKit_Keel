@@ -41,8 +41,8 @@
 #     between two of this script's reads to hide a change (a filter attribute removed and
 #     restored), and hostile files planted by anyone but the owner: either could edit this
 #     script instead. An ordinary edit during a review fails it as stale_checkout. A
-#     self-test of the same commit may run in this checkout meanwhile only if it writes files
-#     Git ignores and nothing else; any other self-test runs in a second worktree.
+#     self-test must run in another worktree or sequentially with the review. Its final status
+#     check cannot prevent a temporary injection from failing a review as stale_checkout.
 #
 # The sandbox is pinned HERE and in the adapters, not assumed of the CLI: the scope forms
 # above, --reviewer and --fallback are the ONLY accepted arguments. There is deliberately no

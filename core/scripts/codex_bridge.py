@@ -281,10 +281,15 @@ def main(argv=None, result_sink=None):
                 print(report_text)
             if reason:
                 print("FAIL [review]: " + reason)
+            sys.stdout.flush()  # Catch buffered pipe failures before shutdown can replace the exit with 120.
         except (OSError, ValueError) as error:
             # Recorded and handed over: a failure printing it keeps the result's exit code. The
             # dispatcher, holding this same dict, records the failure with the attempt.
             result["error_after_result"] = str(error)
+            try:
+                sys.stdout.flush()
+            except (OSError, ValueError):
+                sys.stdout = open(os.devnull, "w")
             with contextlib.suppress(OSError, ValueError):
                 print("NOTE [review]: codex failed after it handed over its result (%s); the result "
                       "stands as recorded in %s" % (error, archived), file=sys.stderr, flush=True)

@@ -157,14 +157,14 @@ When the rounds start and what runs in parallel is the lead's part, in `docs/WOR
   exclusion as its disposition ("deferred by decision", naming the design's section). Pass
   it in `REVIEW_DISPOSITIONS` from the second round on; the first round has no earlier round
   to attach it to, and the reviewer reads the exclusion in the diff.
-- Start the self-test and two reviewers at once, each as its own background job: for example
-  `./scripts/check.sh --self-test`, then `MYAGENTKIT_TASK_ID=<feature> ./scripts/review.sh
+- Run the self-test in another worktree on the same commit, or finish it before starting reviews.
+  Start the two reviewers together: `MYAGENTKIT_TASK_ID=<feature> ./scripts/review.sh
   --base <base> --reviewer codex` and the same with `--reviewer claude`. Concurrent reviews
-  write archives with unique names that lie outside the review scope. The self-test of the
-  same commit shares the reviews' worktree safely: it writes files Git ignores and nothing
-  else, and it fails itself, naming the paths, when it leaves HEAD, the index, `git status` or
-  the content of `git diff --binary HEAD` (compared by hash) changed. A change it left would
-  have failed the reviews with `stale_checkout`.
+  write archives with unique names outside the review scope. The self-test compares HEAD,
+  the index, `git status` and content hashes of tracked and untracked non-ignored files at its end.
+  That check proves only that the tree ends unchanged. A temporary injection, such as
+  `src/domain/.selftest.py`, can fail a concurrent review as `stale_checkout` even when removed.
+  A review must never run in a worktree while a self-test runs there.
 - Every round of one feature uses the same `MYAGENTKIT_TASK_ID`, so that later rounds carry
   the earlier ones. Only the final reviews (one per model, each over the parts it did
   not write) take a label never used before. When model B's final review finds a High or Medium,

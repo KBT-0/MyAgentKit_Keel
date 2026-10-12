@@ -25,9 +25,9 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'MYAGENTKIT_TASK_ID', 'MYAGENTKIT_R
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 150, 'test_agent_usage': 30, 'test_codex_quota': 5}
+SUITE_MINIMUMS = {'test_claude_bridge': 153, 'test_agent_usage': 30, 'test_codex_quota': 5}
 # These are executed cases, excluding only the explicitly declared POSIX exclusions.
-WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 127, 'test_agent_usage': 26, 'test_codex_quota': 4}
+WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 130, 'test_agent_usage': 26, 'test_codex_quota': 4}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -2096,6 +2096,90 @@ class BridgeTests(unittest.TestCase):
                         self.assertEqual((chain['status'], chain['selected_reviewer']), ('completed', reviewer))
                         self.assertIn('the result stands as recorded in', out.getvalue())
                     self.assertIn('cp1252', attempt['error_after_result'])
+
+    def test_persistent_stdout_failure_does_not_lose_the_completed_dispatch_attempt(self):
+        from contextlib import redirect_stdout
+        from unittest.mock import patch
+        import review_dispatch
+
+        def execution(command, prompt, repo, timeout, into=None, noted=None):
+            if '-o' in command:
+                Path(command[command.index('-o') + 1]).write_bytes(b'VERDICT: Accept\n')
+                value = {'type': 'turn.completed', 'usage': {}}
+            else:
+                value = {'type': 'result', 'subtype': 'success', 'is_error': False,
+                         'modelUsage': {'claude-opus-5': {}}, 'structured_output':
+                         {'verdict': 'Accept', 'findings': [], 'manual_checks': []}}
+            return {'exit_code': 0, 'stdout': json.dumps(value), 'stderr': '',
+                    'termination': None, 'duration_ms': 1}
+
+        class Console(io.StringIO):
+            broken = False
+
+            def write(self, text):
+                self.broken |= '"evidence"' in text
+                if self.broken:
+                    raise BrokenPipeError('reader closed stdout permanently')
+                return super().write(text)
+
+        for reviewer in ('claude', 'codex'):
+            with self.subTest(reviewer=reviewer), patch.dict(os.environ, self.review_env()), \
+                    patch('agent_process.run', side_effect=execution), redirect_stdout(Console()):
+                # A permanently closed console can still raise, but its disk result must stand.
+                try:
+                    review_dispatch.main(['--repo', str(self.repo), '--uncommitted', '--reviewer', reviewer,
+                                          '--claude-model', 'claude-opus-5',
+                                          '--codex-model', 'fixture-codex-model'])
+                except BrokenPipeError:
+                    pass
+                records = self.repo / '.myagentkit/usage/chains'
+                chain_id = os.environ['MYAGENTKIT_REVIEW_CHAIN_ID']
+                chain = json.loads((records / (chain_id + '-1.json')).read_text())
+                self.assertEqual(chain['status'], 'completed', chain)
+                self.assertEqual(len(chain['attempts']), 1)
+                attempt = chain['attempts'][0]
+                self.assertEqual((attempt['status'], attempt['failure_kind']), ('completed', None))
+                self.assertIn('permanently', attempt['error_after_result'])
+                usage = json.loads(Path(attempt['usage_record']).read_text())
+                self.assertEqual(usage['status'], 'completed')
+                self.assertEqual(verdicts_of(attempt['evidence']), ['VERDICT: Accept'])
+
+    def assert_closed_pipe_keeps_adapter_status(self, provider):
+        scripts = self.install_wrapper()
+        args = ['review', '--model', 'claude-opus-5'] if provider == 'claude' else ['--model', 'fixture-codex-model']
+        source = ('import sys\nsys.path.insert(0, sys.argv[1])\n'
+                  'sys.stdin.read(1)\nimport ' + provider + '_bridge as adapter\n'
+                  'adapter.utf8_output()\nraise SystemExit(adapter.main(sys.argv[2:]))\n')
+        for case, expected in (('accept', 0), ('quota', 5)):
+            label = 'closed-pipe-' + provider + '-' + case
+            env = self.review_env(MYAGENTKIT_TASK_ID=label, CLAUDE_CLI_BIN=str(self.fixture),
+                                  REVIEW_CLI_BIN=str(self.build_fake_codex()), FIXTURE_CASE=case,
+                                  CODEX_FIXTURE_CASE=case)
+            with self.subTest(case=case), subprocess.Popen(
+                    [sys.executable, '-X', 'utf8', '-B', '-c', source, str(scripts), *args,
+                     '--repo', str(self.repo), '--uncommitted'], env=env,
+                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as proc:
+                # Close the real reader before allowing the adapter to run, with buffering enabled.
+                proc.stdout.close()
+                proc.stdout = None
+                try:
+                    _, err = proc.communicate(input=b'x', timeout=90)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.communicate()
+                    self.fail('closed-pipe adapter did not finish')
+                records = [json.loads(p.read_text()) for p in (self.repo / '.myagentkit/usage').glob('*.json')]
+                usage = next(r for r in records if r['task']['id'] == label)
+                self.assertEqual(usage['status'], 'completed' if expected == 0 else 'failed')
+                self.assertTrue(Path(usage['evidence']).is_file())
+                self.assertEqual(proc.returncode, expected, err.decode('utf-8', errors='replace'))
+                self.assertNotIn(b'Exception ignored', err)
+
+    def test_claude_direct_adapter_keeps_recorded_status_with_a_real_closed_pipe(self):
+        self.assert_closed_pipe_keeps_adapter_status('claude')
+
+    def test_codex_direct_adapter_keeps_recorded_status_with_a_real_closed_pipe(self):
+        self.assert_closed_pipe_keeps_adapter_status('codex')
 
     def test_an_adapter_run_directly_keeps_its_handed_over_status_after_a_later_failure(self):
         # Run directly, the Claude adapter caught a failure after its result was recorded and
