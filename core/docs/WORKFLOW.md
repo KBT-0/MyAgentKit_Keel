@@ -714,10 +714,14 @@ Rules, binding for whoever routes workers:
    `scripts/spawn_codex.sh --model --effort` refuses a Codex worker without them. The brief states model and
    effort, and the lead verifies both in the transcript after the run, not in the report.
 6. **Parallel workers only for independent modules**; each one multiplies the bill. The lead
-   runs as many heavy background jobs as the host's free memory allows (a gate, a self-test,
-   a review, a build, a `codex exec` errand): this is a memory budget, not a fixed job count.
-   A review or gate takes about 1–2 GB on this host. The lead lowers the number after a low-memory reap.
-   Two was the reduced budget on 2026-10-12 after five jobs were killed together
+   runs heavy background jobs (a gate, a self-test, a review, a build, a `codex exec`
+   errand) within a memory budget: two at a time until the lead has measured its host, then
+   (free memory minus a 4 GB reserve) divided by the measured peak of one job. Read free
+   memory with `Get-CimInstance Win32_OperatingSystem | Select FreePhysicalMemory` in
+   PowerShell on Windows, `free -g` on Linux, `vm_stat` or `memory_pressure` on macOS. Measure
+   a job's peak on your host; one measured example: a review or gate took 1–2 GB on native
+   Windows 11 with Git Bash (2026-10-12). The lead lowers the number after a low-memory reap,
+   because five jobs started together were killed at once
    (`docs/GOTCHAS.md`, "Background jobs die with the session and in a low-memory reap"). Workers
    whose last step waits on one exclusive resource (a heavy lock, a device, a licence) run
    one after another, or run only their independent parts in parallel: in one project,
@@ -743,7 +747,8 @@ Rules, binding for whoever routes workers:
    closed, or most of the context is the detail of finished work that a summary would still
    carry. After the warning the lead starts no new round: it lets the running batch finish,
    commits what is done, updates STATE and the handoff, then stops and proposes a hand-off or
-   `/compact`, because a session end kills every background job it started; the owner
+   `/compact`, because a session end kills the background jobs started from its tool shell (survivors:
+   `docs/GOTCHAS.md`, "Background jobs die with the session and in a low-memory reap"); the owner
    decides at that stop, never mid-flow.
    The lead keeps big output out of its own context: logs, diffs and images go to
    files and it reads the summary line; long reads go to a worker that returns conclusions;
@@ -1013,6 +1018,9 @@ After their first round, merge branches touching the same files into one integra
 Per-branch rounds multiply wall time and leave merge conflicts to resolve and review afterwards.
 The loop is unchanged: cross review, the reviewer fixes its own findings, the other model reviews the fix,
 until no High or Medium remains, with per-model NEW-label finals.
+A merge-conflict resolution is a part authored by whoever resolved it, so the other model reviews it before closure
+(`docs/REVIEW_GATE.md`, independence is judged per part). A member branch rejected or abandoned after the merge
+leaves the cluster by rebuilding the integration branch without it. Prefer clustering branches with the same author model.
 
 1. Start the self-test and the review together, on the same commit, never one after the other.
    The self-test runs once per batch, beside the review, never between worker rounds while

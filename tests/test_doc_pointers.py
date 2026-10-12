@@ -71,21 +71,27 @@ class SectionPointerTests(unittest.TestCase):
         self.assertIn('after the second dirty round', workflow)
         self.assertIn('python3 scripts/usage_summary.py', workflow)
         flat = ' '.join(workflow.split())
-        self.assertIn("as many heavy background jobs as the host's free memory allows", flat)
-        self.assertIn('lowers the number after a low-memory reap', flat)
+        for rule in ('two at a time until the lead has measured its host', '4 GB reserve',
+                     'Win32_OperatingSystem', 'free -g', 'vm_stat', 'lowers the number after a low-memory reap',
+                     'conflict resolution is a part authored by whoever resolved it',
+                     'rebuilding the integration branch without it', 'kills the background jobs started from its tool shell'):
+            self.assertIn(rule, flat)
         self.assertIn('review rounds run per cluster of related branches', flat)
         self.assertIn('After their first round, merge branches touching the same files into one integration branch', flat)
         self.assertIn('remaining rounds run on the cluster', flat)
         gotchas = ' '.join((ROOT / 'core/docs/GOTCHAS.md').read_text(encoding='utf-8').split())
         for rule in ("lead's tool shell", 'on most hosts', '`&` under `sh -c`',
                      '`nohup`', 'Windows Terminal tab', 'command line names the checkout or its worktrees',
-                     'wait for them or stop them with a reason'):
+                     'Wait for the survivors by default', 'reason that holds', 'Win32_Process', 'pgrep -af', 'ps -eww'):
             self.assertIn(rule, gotchas)
+        self.assertNotIn('stop them with a reason', gotchas)
         running = ' '.join((ROOT / 'core/docs/REVIEW_RUNNING.md').read_text(encoding='utf-8').split())
         self.assertIn('Start the self-test and two reviewers at once', running)
         self.assertIn('memory budget', running)
-        for policy in (flat, gotchas):
+        self.assertIn('"Worker cost", rule 6', running)
+        for policy in (flat, gotchas, running):
             self.assertNotIn('at most two heavy background jobs', policy)
+            self.assertNotIn('this host', policy)
         # Rules of 2026-10-12: each said once, beside its siblings; reviews are never reduced.
         for rule in ('effort is never carried up from the round before',
                      'Both start at the cheapest table row that fits',

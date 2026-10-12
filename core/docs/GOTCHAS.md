@@ -168,10 +168,15 @@ under Associated Handles on the CPU tab of Resource Monitor (`resmon`).
 ## Background jobs die with the session and in a low-memory reap
 
 A job started from the lead's tool shell ends with the session on most hosts: a hand-off
-in the middle of a batch killed three Codex jobs in one evening. A detached job survives:
-`&` under `sh -c`, `nohup`, or a separate Windows Terminal tab can outlive the launching session.
-Before resuming work after a cut-off, list surviving jobs whose command line names the checkout or its worktrees.
-Then wait for them or stop them with a reason before starting work that could race them.
+in the middle of a batch killed three Codex jobs in one evening. Observed to survive on
+native Windows (2026-10-12): a separate Windows Terminal tab and a `codex exec` run in it.
+`&` under `sh -c` and `nohup` are unverified there (a Job Object may kill them;
+`RESEARCH_LOG.md` 2026-10-10).
+Before resuming work after a cut-off, list the processes whose command line names the checkout
+or its worktrees: Windows `Get-CimInstance Win32_Process | Where-Object CommandLine -like '*<checkout>*' | Select ProcessId,CommandLine`;
+Linux `pgrep -af <checkout>`; macOS `ps -eww -o pid,args | grep <checkout>`.
+Wait for the survivors by default. Stop one only under the hard rule in `AGENTS.md` ("Never end
+running work without a reason that holds": the owner asked, or it is provably finished or hung).
 When the machine runs low on memory, the host can reap jobs: five heavy jobs started together
 were killed at once, and their work was lost. Follow the memory budget and finish jobs before
 ending their session (`docs/WORKFLOW.md`, "Worker cost", rules 6 and 8). A Codex or Claude
