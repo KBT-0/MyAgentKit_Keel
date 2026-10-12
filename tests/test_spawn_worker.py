@@ -82,9 +82,16 @@ elif cmd == 'send-keys':
 CLAUDE = r'''#!/usr/bin/env python3
 import json, os, sys
 with open(os.path.join(os.environ['SPAWN_STATE'], 'claude.json'), 'w') as f:
-    json.dump({'argv': sys.argv[1:], 'cwd': os.getcwd()}, f)
+    json.dump({'argv': sys.argv[1:], 'cwd': os.getcwd(), 'env': sorted(os.environ)}, f)
 '''
 
+
+# The lead's Claude Code session markers: a claude that sees CLAUDE_CODE_CHILD_SESSION never
+# registers as a peer. CLAUDE_CODE_EXECPATH names the binary and is kept.
+MARKERS = {'CLAUDE_CODE_CHILD_SESSION', 'CLAUDECODE', 'CLAUDE_CODE_SESSION_ID', 'CLAUDE_PID',
+           'CLAUDE_CODE_MESSAGING_SOCKET', 'CLAUDE_CODE_MESSAGING_TOKEN', 'CLAUDE_CODE_SESSION_ATTENDED',
+           'CLAUDE_CODE_ENTRYPOINT'}
+LEAD_ENV = dict.fromkeys(MARKERS | {'CLAUDE_CODE_EXECPATH'}, '1')
 
 # The terminal launcher, named by KIT_WT and never *.exe: under WSL any file of that name is
 # handed to Windows. It logs what it was asked to open; SPAWN_WT=fail is WSL interop down.
@@ -209,7 +216,7 @@ class SpawnWorkerTests(unittest.TestCase):
         # Never the host's terminal: the WSL name is the test's own, so wt.exe is the stub.
         env = {k: v for k, v in os.environ.items() if k not in ('TERM_PROGRAM', 'TMUX', 'TMUX_PANE')}
         return dict(env, PATH=f'{self.bin}{os.pathsep}{os.environ["PATH"]}', SPAWN_STATE=str(self.state),
-                    WSL_DISTRO_NAME='Test-1', KIT_WT=str(self.bin / 'wt-stub'))
+                    WSL_DISTRO_NAME='Test-1', KIT_WT=str(self.bin / 'wt-stub'), **LEAD_ENV)
 
     def launched(self):
         path = self.state / 'claude.json'
@@ -306,6 +313,9 @@ class SpawnWorkerTests(unittest.TestCase):
                                             'high', '--settings', settings, '--allowedTools', tools])
         self.assertEqual(Path(launched['cwd']).resolve(), self.cwd.resolve())
         self.assertEqual(self.tmux_log(), '')
+        # A worker is no child of the lead: the lead's session markers never reach it.
+        self.assertFalse(MARKERS & set(launched['env']), launched['env'])
+        self.assertIn('CLAUDE_CODE_EXECPATH', launched['env'])
         self.assertFalse((self.state / 'wt.log').exists(), 'the tab was shown a second time')
         # Registered (sessions/9.json): the lead is told to subscribe, and no warning.
         (self.state / 'claude.json').unlink()
@@ -510,6 +520,13 @@ class SpawnWorkerTests(unittest.TestCase):
         self.assertNotEqual(again.returncode, 0)
         self.assertIn('worktree-w3', again.stderr)
         self.assertNotIn('new-session', self.tmux_log())
+
+    def test_the_tmux_worker_does_not_inherit_the_leads_session_markers(self):
+        result = self.spawn('w1', str(self.brief))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        env = self.launched()['env']
+        self.assertFalse(MARKERS & set(env), env)
+        self.assertIn('CLAUDE_CODE_EXECPATH', env)
 
     def test_a_started_worker_is_shown_unless_batch(self):
         # A session nobody sees can wait on a dialog for hours: it opens in a terminal tab

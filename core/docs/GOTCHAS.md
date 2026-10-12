@@ -26,6 +26,7 @@ A new entry adds its heading to this list.
 - A checkout under `/mnt/<drive>` in WSL
 - Under WSL, a file named `*.exe` runs on Windows
 - A build server the gate started keeps the gate lock
+- A worker spawned from a lead's shell inherits its child-session markers
 
 ---
 
@@ -163,3 +164,13 @@ the server off in the build command (`dotnet build -nodeReuse:false
 The gate's waiting `NOTE [lock]` line names the lock file; `fuser -v <lock file>` or
 `lsof <lock file>` shows which process holds it. On native Windows, search for `check.lock`
 under Associated Handles on the CPU tab of Resource Monitor (`resmon`).
+
+## A worker spawned from a lead's shell inherits its child-session markers
+
+A Claude Code session's shell carries `CLAUDE_CODE_CHILD_SESSION`, `CLAUDECODE` and a few
+siblings. A `claude` started from that shell, such as a worker in a Windows Terminal tab (the
+tab hands on the environment), takes itself for the lead's child and never registers as a peer:
+`~/.claude/sessions/<pid>.json` is not written, ListAgents does not list it and SendMessage
+cannot reach it. Under tmux the marker is ignored, so the same worker registered there. Clear
+the markers (`unset CLAUDE_CODE_CHILD_SESSION CLAUDECODE ...`) in the command that starts the
+worker; `spawn_worker.sh` does.
