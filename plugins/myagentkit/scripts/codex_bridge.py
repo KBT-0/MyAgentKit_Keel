@@ -178,8 +178,8 @@ def main(argv=None, result_sink=None):
             except (OSError, ValueError, BridgeError):
                 reason = reason or "stale_checkout"
             # The adapter's diagnostic, kept out of the reviewer's text, and only its tail: the
-            # usage record keeps the whole stderr. An empty `handed`: nothing was launched.
-            failure = ("\n\n## Failure\n\n" + ("Codex ran, then its supervision failed: " if handed
+            # usage record keeps the whole stderr.
+            failure = ("\n\n## Failure\n\n" + ("Codex ran, then its supervision failed: " if execution.get("launched")
                        else "Codex did not start: ") + execution["stderr"][-4000:]
                        if reason == "run_failed" else "")
             verdicts = re.findall(r"^VERDICT: (Accept|Accept with Manual Checks|Reject)[ \t]*$", final, re.M)

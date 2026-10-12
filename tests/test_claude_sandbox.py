@@ -127,10 +127,43 @@ class ClaudeSandboxTests(unittest.TestCase):
     def test_codex_run_os_error_is_recorded_as_run_failed(self):
         self.assert_run_os_error_is_recorded(codex_bridge)
 
+    def assert_launch_and_prompt_close_errors_are_recorded(self, bridge):
+        real_run = bridge.agent_process.run
+        temporary_file = tempfile.TemporaryFile
+
+        @contextlib.contextmanager
+        def broken_close():
+            with temporary_file() as stream:
+                yield stream
+            raise OSError(errno.EIO, 'prompt close failed')
+
+        def broken(*a, **k):
+            with patch.object(bridge.agent_process, 'launch',
+                              side_effect=FileNotFoundError('reviewer executable missing')), \
+                    patch.object(tempfile, 'TemporaryFile', broken_close):
+                return real_run(*a, **k)
+        code, result = self.review(bridge, run=broken)
+        self.assertEqual((code, result['status'], result['failure_kind']), (5, 'failed', 'run_failed'))
+        evidence = Path(result['evidence']).read_text()
+        self.assertIn('did not start', evidence)
+        self.assertNotIn('ran, then', evidence)
+        record = json.loads(Path(result['usage_record']).read_text())
+        self.assertEqual((record['status'], record['failure_kind']), ('failed', 'run_failed'))
+        self.assertIn('reviewer executable missing', record['raw_stderr'])
+        self.assertIn('prompt close failed', record['raw_stderr'])
+        self.assertFalse(result['cancelled'])
+        self.assertEqual(list(self.temp.iterdir()), [])
+
+    def test_claude_launch_and_prompt_close_errors_do_not_claim_a_run(self):
+        self.assert_launch_and_prompt_close_errors_are_recorded(claude_bridge)
+
+    def test_codex_launch_and_prompt_close_errors_do_not_claim_a_run(self):
+        self.assert_launch_and_prompt_close_errors_are_recorded(codex_bridge)
+
     def test_a_run_failed_archive_keeps_only_the_tail_of_stderr(self):
         # Codex once appended the whole stderr (up to 8 MB) to the reviewer's own text.
         def launched_then_broken(command, prompt, workdir, timeout, into, **k):
-            into.update(exit_code=None, stdout='', stderr='x' * 100_000 + 'END',
+            into.update(launched=True, exit_code=None, stdout='', stderr='x' * 100_000 + 'END',
                         termination=None, cancelled=False, duration_ms=1)
             raise OSError(errno.EIO, 'supervision broke')
         for bridge in (claude_bridge, codex_bridge):

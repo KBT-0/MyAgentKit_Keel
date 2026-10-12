@@ -308,7 +308,7 @@ class OneShot:
 
 def run(command: list[str], prompt: str, repo: Path, timeout: float, into: dict | None = None,
         noted: list | None = None) -> dict:
-    """Return exit status, partial output, and termination reason within a fractional seconds budget.
+    """Return launch status, exit status, partial output, and termination reason within a fractional seconds budget.
 
     `into` receives the result before the caller's handlers are restored: a raising one
     restored there raised before the returned result was assigned, and the attempt was lost.
@@ -547,7 +547,7 @@ def _supervise(command, prompt, repo, timeout, started, guard, prior=None, into=
                 # A cleanup OSError also escapes run(). Hand the captured state to the
                 # adapter before that happens, so its run_failed record keeps billed usage.
                 if into is not None:
-                    into.update(exit_code=child.returncode if child else None,
+                    into.update(launched=child is not None, exit_code=child.returncode if child else None,
                                 stdout=buffers['stdout'].decode(errors="replace"),
                                 stderr=buffers['stderr'].decode(errors="replace"),
                                 termination=termination, cancelled=bool(guard.noted),
@@ -561,7 +561,8 @@ def _supervise(command, prompt, repo, timeout, started, guard, prior=None, into=
     # a completed review until the adapter has read the response (a Claude result with
     # is_error exits zero). The adapter keeps a completed review completed and turns a
     # failed one into a cancel, so the dispatcher never fails over.
-    return {"exit_code": child.returncode if child else 127 if launch_failed else None,
+    return {"launched": child is not None,
+            "exit_code": child.returncode if child else 127 if launch_failed else None,
             "stdout": buffers['stdout'].decode(errors="replace"),
             "stderr": buffers['stderr'].decode(errors="replace"), "termination": termination,
             "cancelled": termination == "cancelled" or bool(noted),

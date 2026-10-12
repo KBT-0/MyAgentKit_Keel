@@ -1197,9 +1197,8 @@ def main(argv=None, result_sink=None) -> int:
             if execution["termination"] == "copy_failed":
                 raise BridgeError("Claude never ran: " + execution["stderr"])
             if execution["termination"] == "run_failed":
-                # An empty `handed`: run() failed before its launch (a full TMPDIR), nothing ran.
                 # Only the tail: the usage record keeps the whole stderr.
-                raise BridgeError(("Claude ran, then its supervision failed: " if handed else
+                raise BridgeError(("Claude ran, then its supervision failed: " if execution.get("launched") else
                                    "Claude did not start: ") + execution["stderr"][-4000:])
             if reason and (execution["exit_code"] != 0 or execution["termination"]):
                 raise BridgeError(f"Claude exited {execution['exit_code']} ({reason}); inspect archived evidence")
