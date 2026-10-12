@@ -132,9 +132,11 @@ def main():
     tasks, groups = defaultdict(list), defaultdict(list)
     for record in rows:
         tasks[str(record['task'].get('id') or 'unknown')].append(record)
-        # A missing or null value and the label 'unknown' are one group: equal printed labels
-        # always mean one group, and 'unknown' is reserved for a missing value.
-        record['model_requested'] = record.get('model_requested') or 'unknown'
+        # A missing, null or empty value and the label 'unknown' are one group: equal printed
+        # labels always mean one group, and 'unknown' is reserved for a missing value.
+        for key in ('model_requested', 'callee', 'effort'):
+            record[key] = record.get(key) or 'unknown'
+        record['task']['kind'] = record['task'].get('kind') or 'unknown'
         groups[(record['model_requested'], record['effort'])].append(record)
     for task, records in sorted(tasks.items()):
         print(f'Task {printable(task)}: {totals(records)}')
@@ -145,8 +147,8 @@ def main():
             duration = f'{duration / 1000:.3f}s' if isinstance(duration, (int, float)) else 'unknown'
             verdict = record['verdict'] or f'none ({printable(record["why"] or "no verdict line")})'
             print(f'  {f"round={number}" if record["round"] else "not a round"}'
-                  f' kind={printable(record["task"].get("kind", "unknown"))}'
-                  f' callee={printable(record.get("callee", "unknown"))}'
+                  f' kind={printable(record["task"]["kind"])}'
+                  f' callee={printable(record["callee"])}'
                   f' model={printable(record["model_requested"])}'
                   f' effort={printable(record["effort"])} verdict={verdict} duration={duration}')
     if rows:

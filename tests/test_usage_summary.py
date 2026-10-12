@@ -169,10 +169,14 @@ class UsageSummaryTests(unittest.TestCase):
         self.record('a', 'T1', b'VERDICT: Accept\n', model=None)
         self.record('b', 'T1', b'VERDICT: Accept\n', model='None')
         self.record('c', 'T1', b'VERDICT: Accept\n', model='unknown')
+        self.record('d', 'T1', b'| effort |  |\nVERDICT: Accept\n', callee=None, kind=None)
         out = self.summary()
         self.assertIn('Model None / effort unknown: invocations=1 ', out)
         self.assertIn('Model unknown / effort unknown: invocations=2 ', out)
+        self.assertIn('Model opus / effort unknown: invocations=1 ', out)
+        self.assertIn(' kind=unknown callee=unknown model=opus effort=unknown ', out)
         self.assertEqual(out.count('Model None'), 1)
+        self.assertNotIn('=None', out.replace('model=None', ''))
 
     def test_control_characters_in_task_labels_are_escaped(self):
         self.record('controls', 'fix\nTotal: forged\r\t\x1b[2J\x7f\x85', b'VERDICT: Accept\n')

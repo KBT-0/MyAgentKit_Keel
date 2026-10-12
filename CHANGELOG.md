@@ -18,8 +18,8 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   review rounds, verdicts and rejects per task and per model and effort; worker errands
   write no record and are not in it. Every printed label is escaped, the backslash included,
   so a literal `\x1b` and the control character it names print differently and stay in
-  separate groups; a missing model or effort prints as the reserved label `unknown`, and a
-  value that is literally `unknown` joins that group. **ACTION:** reconcile `$KIT/core/docs/WORKFLOW.md`
+  separate groups; a missing, null or empty model, callee, kind or effort prints as the reserved
+  label `unknown`, and a value that is literally `unknown` joins that group. **ACTION:** reconcile `$KIT/core/docs/WORKFLOW.md`
   into `docs/WORKFLOW.md`,
   `$KIT/core/docs/HANDOFF.md` into `docs/HANDOFF.md`,
   `$KIT/core/docs/USAGE.md` into `docs/USAGE.md`, and
