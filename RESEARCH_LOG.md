@@ -46,7 +46,12 @@ covers the checks, launch and session recording; an unrecorded launch retains it
 
 The mode lock only coordinates mode switches. STATE can change during preparation or after
 replacement. Recheck its bytes before replacement, refuse a changed snapshot, and never
-roll back an independent edit. Resolve the supplied project root once and refuse links only
+roll back an independent edit. An edit made between that recheck and the publication can
+still be lost. An `--edit-state` entry point that ran every STATE writer under the mode
+lock closed that window, but the mode command pre-approves `python scripts/working_mode.py`,
+so it ran any command without a prompt. A switch is rare, short and started by the lead:
+the lead judged the window the lesser risk and removed the entry point (2026-10-12).
+Resolve the supplied project root once and refuse links only
 below it: refusing every ancestor link refused macOS `/tmp` and a linked home, and both
 records still land together in the one resolved project. On Windows only a name-surrogate
 reparse tag redirects a path; refusing every reparse point refused cloud-file placeholders.
@@ -61,7 +66,9 @@ the waiter hold the stale result open instead: an inode held open is never freed
 number is never reused. NTFS ids carry a sequence number, and a held handle would block the
 publishing rename there. After PROGRESS or HANDOFF the wait prints its follow-up with that
 result's id as `--stale` and the same `--since`: the `.live` and `.exit` records are read by
-the run's start, so a later `--since` would hide a killed supervisor.
+the run's start, so a later `--since` would hide a killed supervisor. Nothing holds the
+reported result open between the two waits, so that id pairs its inode with a hash of its
+contents: a later result given the freed inode number still counts as new.
 An unrecorded launch names its worker inside the reservation, so the printed `--resume` of
 that name, which records the launch, takes the reservation over instead of being refused.
 

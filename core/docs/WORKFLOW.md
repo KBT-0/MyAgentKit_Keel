@@ -430,11 +430,6 @@ line of `docs/STATE.md` and the small `.claude/mode` file name the mode in force
 the rest of STATE.md. Reads refuse disagreeing records; an explicit owner choice repairs
 them. A project without either record works in **cross-performance**, the main mode.
 
-Every STATE writer runs through `python scripts/working_mode.py --edit-state COMMAND...`.
-The editor command reads, changes and publishes STATE.md while holding the mode switch lock.
-If another writer holds the lock, retry the whole command after it ends, including its read.
-Never prepare an edit from a snapshot read before acquiring the lock.
-
 Without names, the owner explained the same situation in a long prompt at the start of every
 session ("Claude is low today, let Codex write and fix"), and a lead that was not told routed
 by habit: one Opus lead routed no implementation to Codex and spent five Opus sessions on
@@ -762,8 +757,9 @@ answer from {{OWNER_NAME}} and delivers it into the SAME session:
   their job; POSIX escalation signals the entire group. `--no-daemon`
   keeps the worker's runtime separate from any shared Codex server. The script refuses a
   resume while the old session still runs, and refuses a
-  fresh replacement when its session or question record exists. On resume it consumes the
-  old question file after the process check; the result retains the question history.
+  fresh replacement when its session or question record exists. On resume the wrapper removes
+  the answered question file once the resumed session publishes a result or runs past ten
+  seconds; a failed launch keeps it for the retry. The result retains the question history.
 
 A stopped worker is always answered in its own session, never replaced with a fresh one.
 
@@ -782,8 +778,9 @@ notifies the lead of DONE, BLOCKED, HANDOFF or PROGRESS after a result from this
 published with the end marker (by a rename over an older result), and of EXITED when the worker
 stopped without publishing one, even when its wrapper was killed; no commit or lead polling is
 needed. After PROGRESS or HANDOFF the worker goes on, and `--wait` prints its exact follow-up
-command (`--stale` set to the reported result's file id, the same `--since`): the lead runs that
-one next, since spawn's command would return the same result at once. A spawn that found no
+command (`--stale` set to the reported result's file id and content hash, the same
+`--since`): the lead runs that one next, since spawn's command would return the same result
+at once. A spawn that found no
 session keeps the checkout's `.myagentkit/workers/spawn.lock` reservation with the worker's name
 inside, and refuses every other spawn there. The printed `--resume SESSION_ID` of that name
 records the launch and takes the reservation over; once the tab or tmux session has ended, or

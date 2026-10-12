@@ -665,5 +665,64 @@ class CodexWorkerTests(unittest.TestCase):
                         self.assertNotIn('codex_worker: ' + notice + ': ', unchanged)
 
 
+    def test_an_empty_unlocked_live_record_left_at_startup_ends_the_wait(self):
+        worker = module()
+        with tempfile.TemporaryDirectory() as tmp:
+            result, record = Path(tmp) / 'result.md', Path(tmp) / 'w.exit'
+            live = record.with_suffix('.live')
+            # A supervisor that died between creating its .live record and locking it.
+            subprocess.run(['sh', '-c', ': > "$1"', 'sh', live.as_posix()], check=True)
+            since = time.time() - 30
+            self.assertFalse(worker.gone(live, since), 'a supervisor still starting was reported as ended')
+            os.utime(live, (since + 1, since + 1))
+            waiter = subprocess.run([sys.executable, str(SCRIPT), '--wait', str(result), '--since', str(since),
+                                     '--exit', str(record)], capture_output=True, text=True, timeout=10)
+            self.assertEqual(waiter.returncode, 0, waiter.stderr)
+            self.assertIn('its supervisor ended without an exit record', waiter.stdout)
+
+    def test_the_supervisor_retries_its_lock_while_a_waiter_probes_it(self):
+        worker = module()
+        with tempfile.TemporaryDirectory() as tmp:
+            live = Path(tmp) / 'w.live'
+            opening, locking = os.open, worker.lock
+            descriptors, probes = [], []
+            def opened(*args, **kwargs):
+                fd = opening(*args, **kwargs)
+                if args[0] == live and args[1] & os.O_CREAT:
+                    descriptors.append(fd)
+                return fd
+            def probed(fd):
+                if not probes:
+                    probes.append(fd)
+                    raise OSError('held by a waiter probe')
+                locking(fd)
+            try:
+                with mock.patch.dict(os.environ, KIT_WORKER_EXIT=str(live.with_suffix('.exit'))), \
+                        mock.patch.object(worker.os, 'open', side_effect=opened), \
+                        mock.patch.object(worker, 'lock', side_effect=probed), \
+                        mock.patch.object(worker, 'windows_child', side_effect=OSError('stop after startup')), \
+                        mock.patch.object(worker.subprocess, 'Popen', side_effect=OSError('stop after startup')), \
+                        mock.patch('sys.argv', ['codex_worker.py', str(Path(tmp) / 'q.md'), '--', 'missing-cli']):
+                    with self.assertRaisesRegex(OSError, 'stop after startup'):
+                        worker.main()
+            finally:
+                for fd in descriptors:
+                    os.close(fd)
+            self.assertEqual(live.read_bytes().strip(), b'%d' % os.getpid(), 'the startup lock was not retried')
+
+    def test_the_exit_record_and_status_survive_a_question_that_cannot_be_removed(self):
+        worker = module()
+        with tempfile.TemporaryDirectory() as tmp:
+            question, record = Path(tmp) / 'q.md', Path(tmp) / 'w.exit'
+            question.write_text('Choose A or B.\n' + READY)
+            child = mock.Mock(returncode=0)
+            child.poll.return_value = 0
+            with mock.patch.dict(os.environ, KIT_WORKER_EXIT=str(record)), \
+                    mock.patch.object(Path, 'unlink', side_effect=PermissionError('open in another program')):
+                self.assertEqual(worker.watch(child, question, None, answered=worker.question_id(question)), 0)
+            self.assertIn('exit 0 at ', record.read_text())
+            self.assertTrue(question.exists())
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -233,41 +233,6 @@ class WorkingModeTests(unittest.TestCase):
         self.assertEqual(self.state.read_bytes(), concurrent[0])
         self.assertIn('disagree', self.run_mode().stderr)
 
-    def test_state_writers_share_the_switch_lock_after_both_comparisons(self):
-        self.assertEqual(self.run_mode('cross-performance').returncode, 0)
-        spec = importlib.util.spec_from_file_location('working_mode', SCRIPT)
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        read = Path.read_bytes
-        attempts = []
-        reads = []
-        command = ('from pathlib import Path; p=Path(%r); '
-                   'p.write_bytes(p.read_bytes()+b"An independently added task.\\n")') % str(self.state)
-        def interrupted(path):
-            data = read(path)
-            if path == self.state:
-                reads.append(data)
-                if len(reads) >= 2:
-                    attempts.append(self.run_mode('--edit-state', sys.executable, '-c', command))
-            return data
-        replace = os.replace
-        def failed(source, target):
-            if target.name == 'mode':
-                raise OSError('record replacement failed')
-            replace(source, target)
-        with mock.patch.object(Path, 'read_bytes', interrupted), \
-                mock.patch.object(module.os, 'replace', side_effect=failed):
-            with self.assertRaises(OSError):
-                module.mode(self.project, 'claude-first')
-        self.assertGreaterEqual(len(attempts), 2, 'both comparison windows must be exercised')
-        for attempt in attempts:
-            self.assertNotEqual(attempt.returncode, 0)
-            self.assertIn('mode switch in progress', attempt.stderr)
-        edited = self.run_mode('--edit-state', sys.executable, '-c', command)
-        self.assertEqual(edited.returncode, 0, edited.stderr)
-        self.assertIn('An independently added task.', self.state.read_text())
-        self.assertIn('Current mode: cross-performance', self.run_mode().stdout)
-
     def test_rollback_cancellation_never_truncates_state(self):
         self.assertEqual(self.run_mode('cross-performance').returncode, 0)
         spec = importlib.util.spec_from_file_location('working_mode', SCRIPT)
@@ -299,21 +264,6 @@ class WorkingModeTests(unittest.TestCase):
         self.assertNotEqual(self.state.read_bytes(), before)
         self.assertIn('disagree', self.run_mode().stderr)
         self.assertEqual(self.run_mode('codex-first').returncode, 0)
-
-    def test_state_editor_holds_the_lock_and_propagates_its_exit_status(self):
-        self.assertEqual(self.run_mode('cross-performance').returncode, 0)
-        command = ('import subprocess,sys; from pathlib import Path; '
-                   'p=Path(%r); before=p.read_bytes(); '
-                   'r=subprocess.run([sys.executable,%r,"--project",%r,"claude-first"],'
-                   'capture_output=True,text=True); sys.stderr.write(r.stderr); '
-                   'p.write_bytes(before+b"Another active task.\\n"); sys.exit(7)') % (
-                       str(self.state), str(SCRIPT), str(self.project))
-        result = self.run_mode('--edit-state', sys.executable, '-c', command)
-        self.assertEqual(result.returncode, 7, result.stderr)
-        self.assertIn('mode switch in progress', result.stderr)
-        self.assertIn('Another active task.', self.state.read_text())
-        self.assertIn('Current mode: cross-performance', self.run_mode().stdout)
-        self.assertEqual(self.run_mode('claude-first').returncode, 0, 'the editor kept its lock')
 
     def test_a_root_named_through_a_link_is_resolved_once_and_written_where_it_leads(self):
         # macOS /tmp and a linked home are ordinary ways to name a project; links below it are not.
@@ -369,20 +319,28 @@ class WorkingModeTests(unittest.TestCase):
         lines = workflow.read_bytes().decode('utf-8').split('\n')
         workflow.write_bytes('\n'.join(l for l in lines if not l.startswith('| `claude-only` |')).encode('utf-8'))
         before = self.state.read_bytes()
-        for args in ((), ('claude-first',)):
+        # A show succeeds; a requested switch that did not happen fails. Neither creates the lock.
+        for args, status in (((), 0), (('claude-first',), 1)):
             with self.subTest(args=args):
                 result = subprocess.run([sys.executable, '-X', 'utf8', str(PLUGIN), '--project', str(self.project),
                                          *args], capture_output=True, text=True, encoding='utf-8', timeout=15)
-                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.returncode, status, result.stderr)
                 self.assertIn('ACTION: docs/WORKFLOW.md predates the seventh mode, claude-only', result.stdout)
                 self.assertIn('sync the core scripts (scripts/working_mode.py)', result.stdout)
                 self.assertEqual(self.state.read_bytes(), before)
-                self.assertFalse((self.project / '.claude/mode').exists())
-        # Any other incomplete table is still refused.
-        workflow.write_bytes('\n'.join(l for l in lines if not l.startswith('| `codex-saver` |')).encode('utf-8'))
-        result = self.run_mode()
-        self.assertEqual(result.returncode, 1, result.stdout)
-        self.assertIn('must define all seven modes', result.stderr)
+                self.assertFalse((self.project / '.claude').exists())
+        # Any other incomplete table is still refused, a misspelled six-row one too.
+        misspelled = [l.replace('| `codex-saver` |', '| `codex-savr` |') for l in lines
+                      if not l.startswith('| `claude-only` |')]
+        for table in ([l for l in lines if not l.startswith('| `codex-saver` |')], misspelled):
+            workflow.write_bytes('\n'.join(table).encode('utf-8'))
+            for args in ((), ('codex-first',)):
+                with self.subTest(args=args):
+                    result = self.run_mode(*args)
+                    self.assertEqual(result.returncode, 1, result.stdout)
+                    self.assertNotIn('ACTION', result.stdout)
+                    self.assertIn('must define all seven modes', result.stderr)
+                    self.assertFalse((self.project / '.claude').exists())
 
     def test_interrupted_switch_reports_repair_and_releases_the_lock(self):
         self.assertEqual(self.run_mode('cross-performance').returncode, 0)

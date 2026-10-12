@@ -107,8 +107,6 @@ cost", and `docs/WORKFLOW.md`, "Review rounds".
 
 ### STATE.md discipline
 
-- Run STATE editors through `python scripts/working_mode.py --edit-state COMMAND...`.
-  The command must read and edit STATE.md while it holds the shared mode switch lock.
 - `docs/STATE.md` is TRANSIENT: current state only — what is in flight and what waits on
   someone.
 - A next task or a parked item is written to `docs/BACKLOG.md`, never to STATE.md.

@@ -106,6 +106,10 @@ def gone(live, since):
     try:
         lock(fd)
         ready = os.read(fd, 64)
+        if not ready:
+            # Created, never locked: a starting supervisor locks it within its one-second retry,
+            # so one still empty and unlocked five seconds on died at startup.
+            return os.fstat(fd).st_mtime < time.time() - 5
         return (os.fstat(fd).st_mtime >= since and ready.endswith(b'\n')
                 and ready[:-1].isdigit())  # the PID is published only after startup locks LIVE
     except OSError:
@@ -256,7 +260,14 @@ def main():
         # supervisor that could not write its exit record (a closed tab, taskkill /F, SIGKILL).
         Path(record).parent.mkdir(parents=True, exist_ok=True)
         live = os.open(Path(record).with_suffix('.live'), os.O_RDWR | os.O_CREAT)
-        lock(live)
+        for attempt in range(100):
+            try:
+                lock(live)
+                break
+            except OSError:
+                if attempt == 99:
+                    raise
+                time.sleep(.01)  # a waiter's gone() probe holds the lock for a moment
         os.ftruncate(live, 0)
         os.write(live, b'%d\n' % os.getpid())  # after the lock: its time marks this run
     # Git for Windows reparses bash -c's quoted command. Hand it a script file instead,
@@ -308,20 +319,40 @@ def main():
             signal.signal(signal.SIGTTOU, previous)
 
 
+def consume(question, answered):
+    """Remove the answered decision unless a new one replaced it. Returns None once done, and
+    ANSWERED while the file cannot go yet (open elsewhere on Windows): the caller retries.
+    ponytail: a new question renamed in between the id check and the unlink is removed; a lock
+    shared with the worker's publication would close that microsecond window."""
+    try:
+        if question_id(question) == answered:
+            question.unlink(missing_ok=True)
+    except OSError:
+        return answered
+    return None
+
+
 def watch(child, question, close_tree, result=None, stale=None, answered=None):
     ready_at = None
     noticed = ''
     ended = 'stopped by a signal or an error in its supervisor'
+    began = time.monotonic()
+    since = float(os.environ.get('KIT_WORKER_STARTED', '0'))  # main() parsed it already
     try:
         grace = float(os.environ.get('KIT_WORKER_GRACE', '10'))
         if grace < 0:
             raise ValueError('KIT_WORKER_GRACE must be nonnegative seconds')
-        since = float(os.environ.get('KIT_WORKER_STARTED', '0'))
         while child.poll() is None:
+            kind = result_kind(result, since, stale)[0]
+            # A resumed session took its answer once it publishes a result or outlives a failed
+            # start (the tab's ten seconds): the answered decision goes while the worker runs,
+            # so close_worker.sh no longer reads it as waiting.
+            if answered is not None and (kind or time.monotonic() - began >= 10):
+                answered = consume(question, answered)
             # Only a decision or a completed result ends the worker: PROGRESS, HANDOFF and
             # BLOCKED leave it working, and --wait alone reports them.
             decision = published(question) and question_id(question) != answered
-            notice = 'decision' if decision else result_kind(result, since, stale)[0]
+            notice = 'decision' if decision else kind
             notice = notice if notice in ('decision', 'DONE') else ''
             if notice != noticed:
                 ready_at = time.monotonic() if notice else None
@@ -340,16 +371,18 @@ def watch(child, question, close_tree, result=None, stale=None, answered=None):
         return child.returncode
     finally:
         stop(child, close_tree)
-        # Keep the answered decision as closure evidence until the resumed child succeeds.
-        # A launch error, cancellation or failed CLI leaves it, and a new question stays too.
-        if (answered is not None and ended in ('exit 0', 'DONE published')
-                and question_id(question) == answered):
-            question.unlink()
         # Every way out records why, a decision without a blocked result included: the record
         # lets --wait report it instead of waiting forever.
         record = os.environ.get('KIT_WORKER_EXIT')
         if record:
             Path(record).write_text('%s at %s\n' % (ended, time.strftime('%Y-%m-%dT%H:%M:%S')), encoding='utf-8')
+        # A launch error, or a cancellation or failed CLI before the session took its answer,
+        # keeps the answered decision for the retry; a new question stays too. Never changes the result.
+        try:
+            if answered is not None and (ended == 'exit 0' or result_kind(result, since, stale)[0]):
+                consume(question, answered)
+        except (OSError, ValueError):
+            pass
 
 
 if __name__ == '__main__':

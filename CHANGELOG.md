@@ -23,8 +23,10 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   STATE line under a shared `.claude/mode.lock`, refusing overlapping switches. Interrupted
   switches report disagreement on reads and name the repair: choose a mode explicitly.
   A STATE edit detected before replacement refuses the switch; rollback preserves later
-  independent edits. Links below the project root, Windows junctions on Python 3.10/3.11
-  included, are refused before lock creation. The supplied root is resolved once, so macOS
+  independent edits. An edit made in the moment between that check and the replacement can
+  still be lost: no STATE writer shares the mode lock (`RESEARCH_LOG.md`). Links below the
+  project root, Windows junctions on Python 3.10/3.11 included, are refused before lock
+  creation. The supplied root is resolved once, so macOS
   `/tmp` or a linked home names a project as usual; on Windows only a name-surrogate reparse
   point (a junction or symlink) is a link, a cloud-file placeholder is not.
   Handwritten names and Turkish
@@ -59,7 +61,8 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   reviews. `scripts/working_mode.py` now requires all seven modes in `docs/WORKFLOW.md`.
   **ACTION:** copy the `claude-only` table row and subsection from the kit's
   `core/docs/WORKFLOW.md` into yours, and sync `scripts/working_mode.py` with it: for a
-  WORKFLOW.md without the seventh mode the helper prints this ACTION and switches nothing.
+  WORKFLOW.md whose table is exactly the six earlier modes the helper prints this ACTION,
+  switches nothing, and exits 1 when a switch was asked for.
   **ACTION:** a project on claude-only sets `DEFAULT_REVIEWER="claude"` in
   `scripts/review.sh`, leaves `CODEX_MODEL` empty, and passes `REVIEW_CLAUDE_MODEL=<the
   reviewing tier>` on every review run.
@@ -82,10 +85,12 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   `rm -r .myagentkit/workers/spawn.lock`; printed resume commands quote the model argument.
   The lead resumes it with `--resume`; successful `close_worker.sh NAME` removes the records,
   allowing cleanup and name reuse. The close refuses while the worker's decision file (its path
-  recorded in `NAME.question`) waits for its answer. It moves an uncommitted default
+  recorded in `NAME.question`) waits for its answer; a resume removes the answered file once
+  the resumed session publishes a result or runs past ten seconds. It moves an uncommitted default
   `RESULT-NAME.md`, which the lead never commits, to `.myagentkit/workers/NAME.result.md`, so
-  the audit can remove the finished worktree. An earlier report there is kept (the new one is
-  `NAME.result-2.md`, and on), and a worktree the audit keeps gets its result back.
+  the audit can remove the finished worktree. An earlier report there is kept (the new one
+  takes the number above the highest, `NAME.result-2.md` and on), and a worktree the audit
+  keeps gets its result back.
   Workers publish decisions to `QUESTION-NAME.md`;
   `codex_worker.py` waits for the end marker and grace period before ending their process
   tree, and a fresh replacement is refused. Only a decision or a newly published

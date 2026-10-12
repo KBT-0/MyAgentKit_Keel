@@ -41,7 +41,8 @@
 # answers it with spawn_codex.sh --resume, or deletes it to abandon the worker. Before step 3 an
 # untracked RESULT-NAME.md at the worker's top moves to .myagentkit/workers/NAME.result.md:
 # the lead read it and committed the files it lists. An earlier report there stays, and this one
-# becomes NAME.result-2.md (-3, ...); a worktree the audit keeps gets its result back. After a
+# takes the number above the highest there (NAME.result-2.md, -3, ...), so a newer report never
+# has a lower number; a worktree the audit keeps gets its result back. After a
 # removal (or with no worktree), the Codex records NAME.session, NAME.exit, NAME.live and
 # NAME.question go too; a kept worktree keeps them.
 # Exit 0 when every named session is gone and every named worktree was removed or did not
@@ -335,8 +336,13 @@ for name; do
   # An earlier run's report is never replaced, and a worktree the audit keeps gets it back.
   moved=""
   if [ -n "$(git -C "$wt_dir" ls-files --others -- "RESULT-$name.md" 2>/dev/null)" ]; then
-    saved=$record.result.md; n=1
-    while [ -e "$saved" ]; do n=$((n + 1)); saved=$record.result-$n.md; done
+    # Above the highest earlier number: a lower free one would make a newer report look older.
+    n=0; [ ! -e "$record.result.md" ] || n=1
+    for f in "$record".result-*.md; do
+      k=${f##*.result-}; k=${k%.md}
+      case $k in ''|0*|*[!0-9]*) ;; *) [ "$k" -le "$n" ] || n=$k ;; esac
+    done
+    n=$((n + 1)); saved=$record.result-$n.md; [ "$n" -ne 1 ] || saved=$record.result.md
     if [ -n "$dry" ]; then say "$name: dry run: would move its result RESULT-$name.md to $saved"
     elif mkdir -p -- "${record%/*}"; then
       while :; do

@@ -688,6 +688,38 @@ pathlib.Path(%r).write_text('a concurrently published report\\n')
         self.assertIn('newer RESULT-restore.md kept', closed.stdout)
         self.assertIn(restored[0].name, closed.stdout)
 
+    def test_a_resumed_worker_that_published_and_then_failed_can_be_closed(self):
+        # The reproduced sequence: the resumed session publishes progress, then its CLI exits 1.
+        for name, after in (('ran-on', 'time.sleep(.5); '), ('ended-at-once', '')):
+            with self.subTest(name=name):
+                question, result = self.repo / ('QUESTION-%s.md' % name), self.repo / ('RESULT-%s.md' % name)
+                question.write_text('Choose A or B.\n<!-- codex-worker: ready -->')
+                code = ('from pathlib import Path; import os,time; p=Path(%r); '
+                        'p.write_text("Kind: progress\\nTask: t\\nAttempt: 2\\nRemaining: x\\n'
+                        '<!-- codex-worker: ready -->"); os.replace(p,%r); %sraise SystemExit(1)') % (
+                            str(result) + '.tmp', str(result), after)
+                worker = subprocess.run([sys.executable, str(SCRIPT.with_name('codex_worker.py')), str(question),
+                                         str(result), '--', sys.executable, '-c', code], capture_output=True,
+                                        text=True, timeout=30, env=dict(os.environ, KIT_WORKER_RESUME='1',
+                                                                        KIT_WORKER_GRACE='0'))
+                self.assertEqual(worker.returncode, 1, worker.stderr)
+                self.assertFalse(question.exists(), 'the answered decision outlived the session that took it')
+                closed = self.close(name)
+                self.assertEqual(closed.returncode, 0, closed.stdout + closed.stderr)
+                self.assertNotIn('a decision waits for its answer', closed.stdout)
+
+    def test_close_numbers_a_new_report_above_every_earlier_one(self):
+        workers = self.repo / '.myagentkit/workers'
+        workers.mkdir(parents=True)
+        # The first report was deleted; the newest earlier one is -2.
+        (workers / 'gap.result-2.md').write_text('the newest earlier report\n')
+        (self.repo / 'RESULT-gap.md').write_text('the report being closed\n')
+        closed = self.close('gap')
+        self.assertEqual(closed.returncode, 0, closed.stdout + closed.stderr)
+        self.assertFalse((workers / 'gap.result.md').exists(), 'a newer report took a lower number')
+        self.assertEqual((workers / 'gap.result-2.md').read_text(), 'the newest earlier report\n')
+        self.assertEqual((workers / 'gap.result-3.md').read_text(), 'the report being closed\n')
+
 
 if __name__ == '__main__':
     unittest.main()
