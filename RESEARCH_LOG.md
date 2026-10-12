@@ -2089,3 +2089,9 @@ Python install manager also starts the holder, the gate and the build outside th
 on this host the job stopped none of them. Cleanup again stops parents before children,
 through handles checked by creation time (a process older than the parent it names is a
 pid reuse and is spared), and then the job.
+A failed pid enumeration or per-pid read was taken as "no descendants", so a detached
+descendant survived the stop. Cleanup now retries such a scan, up to 20 scans, and reports
+a give-up. A failed `ps -E` listing is not retried unless an earlier scan found a process:
+where `ps -E` never works, or `/bin/ps` is missing, 20 doomed scans added a second to every
+stop. A `ps -p` that fails for a pid that has since exited counts as no failure: BSD `ps`
+exits 1 then, and any process exiting mid-scan had printed a false warning.

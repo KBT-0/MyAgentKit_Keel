@@ -220,7 +220,7 @@ def parent_pid(handle):
 def child_handle(pid, parent_handle):
     """A terminate and wait handle on `pid` only if its parent matches the retained handle.
     A younger creation time also rules out children of an earlier process with that parent pid."""
-    handle = KERNEL32.OpenProcess(0x1 | 0x400 | 0x00100000, False, pid)
+    handle = KERNEL32.OpenProcess(0x1 | 0x1000 | 0x00100000, False, pid)
     try:
         if handle and parent_pid(handle) == KERNEL32.GetProcessId(parent_handle) and \
                 created(handle) >= created(parent_handle):

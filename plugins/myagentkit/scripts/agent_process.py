@@ -120,8 +120,10 @@ def _holds(pid, name) -> bool:
 _SCAN_UNAVAILABLE = []
 
 
-def _marked(name) -> list | None:
-    """Pids holding `name`=1 (/proc or ps -E); None when a failed scan found no matches."""
+def _marked(name) -> list | None | bool:
+    """Pids holding `name`=1 (/proc or ps -E). None: a ps read failed after the listing showed
+    the marker, and found no match (worth another scan). False: the listing itself failed (a ps
+    without -E, the BSDs, or no /bin/ps), which another scan does not mend."""
     if os.path.isdir("/proc/self"):
         return [int(pid) for pid in filter(str.isdigit, os.listdir("/proc")) if _holds(pid, name)]
     failed = False
@@ -135,16 +137,26 @@ def _marked(name) -> list | None:
                 return result
         except OSError:
             pass
+        # BSD ps exits 1 for a pid that exited since the enumeration: that one is gone, and the
+        # scan is whole. Read as a failure, any process on the host exiting mid-scan warned.
+        if options[-2] == "-p":
+            try:
+                os.kill(int(options[-1]), 0)
+            except ProcessLookupError:
+                return None
+            except PermissionError:
+                pass
         failed = True
-        # A ps without -E (the BSDs) is no scan, not an empty one: say so once per process.
+        # A failed ps is no scan, not an empty one: say so once per process.
         if not _SCAN_UNAVAILABLE:
             _SCAN_UNAVAILABLE.append(name)
-            sys.stderr.write("agent_process: /bin/ps -E failed; review descendant scan is incomplete\n")
+            sys.stderr.write("agent_process: /bin/ps %s failed; review descendant scan is incomplete\n"
+                             % " ".join(options))
         return None
     entry = name.encode() + b"=1"
     listing = ps("-A", "-E", "-ww", "-o", "command=")
     if listing is None:
-        return None
+        return False
     # A raw newline inside an environment value (PORTS=$'8080\n8081') splits a record over
     # lines, and a continuation line led by digits read as a new record: the marker went to a
     # pid naming another process, which was killed while the marked one ran on. The whole
@@ -238,7 +250,9 @@ def stop_group(child, pgid) -> None:
     child.kill() when taskkill is missing or fails.
 
     POSIX also kills every process whose environment holds the child's marker (launch()), so
-    a descendant that left the group with setsid stops too. Ceilings: a descendant whose
+    a descendant that left the group with setsid stops too. A failed scan is retried, up to 20
+    scans, and a give-up is reported. A ps that cannot list environments is tried once, unless
+    an earlier scan found a process. Ceilings: a descendant whose
     environment cannot be read survives (launch() names them), and outside Linux pidfds a pid
     reused between the scan and the kill can be signalled (below).
     """
@@ -262,13 +276,17 @@ def stop_group(child, pgid) -> None:
         # The descendants that left the group (launch()). Scanned again until none is left:
         # one may have started another before it was killed. A zombie's environment reads
         # empty, so a reaped id is never matched.
+        # A failed scan (None) is retried. A failed listing (False) is retried only after a scan
+        # found a process: where ps -E never works, 20 doomed scans cost every stop a second.
+        found = False
         for _ in range(20):
             pids = _marked(child._kit_marker) if hasattr(child, "_kit_marker") else ()
-            if pids is None:
+            if pids is None or (pids is False and found):
                 time.sleep(0.05)
                 continue
             if not pids:
                 break
+            found = True
             for pid in pids:
                 # A process found may have exited since the scan and its pid gone to another.
                 # On Linux the kill goes through a pidfd opened first, and only after the
@@ -293,6 +311,8 @@ def stop_group(child, pgid) -> None:
                     if handle is not None:
                         os.close(handle)
             time.sleep(0.05)
+        else:
+            sys.stderr.write("agent_process: review descendant cleanup gave up after 20 scans\n")
     elif getattr(child, "_kit_job", None) is not None:
         job, child._kit_job = child._kit_job, None
         _win()["kernel32"].TerminateJobObject(job, 1)

@@ -31,7 +31,9 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   read is outside the POSIX marker mechanism: a cleared environment, a non-dumpable,
   setuid, setgid or file-capability process on Linux, or one `ps -E` does not show on
   macOS. On macOS each process is read on its own once the marker shows, so a multi-line
-  environment value can no longer credit the marker to the wrong pid. **ACTION:** copy
+  environment value can no longer credit the marker to the wrong pid. A failed scan is
+  retried, up to 20 scans, and a give-up is reported; a `ps` that cannot list environments
+  is tried once per stop, and a pid that exits mid-scan is no failure. **ACTION:** copy
   `core/scripts/agent_process.py`.
 
 - **A review no longer dies on the kit's own limits** (`agent_process.py`, the adapters,
