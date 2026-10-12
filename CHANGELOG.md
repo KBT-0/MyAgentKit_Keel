@@ -26,6 +26,53 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   complete') NOTE.
   **ACTION:** sync the kit or copy
   `$KIT/core/scripts/doctor.sh` to `scripts/doctor.sh`.
+- **Live Claude adapter acceptance recorded** (issue #6; `docs/ACCEPTANCE.md`): a live
+  proposal, and live permission and customization probes, passed on native Windows.
+  On 2026-10-10, Bash write and network containment passed on WSL2 Debian; macOS is not covered.
+- **The Claude reviewer's shell is sandboxed, or absent** (issue #39; `claude_bridge.py`,
+  `review.sh`): on macOS, Linux and WSL2 its Bash runs inside Claude Code's sandbox. Verified:
+  native Windows (no Bash) and the live WSL2 probe. NOT RUN: macOS and native Linux, where the
+  enforcement is unverified. The sandbox allows writes only in the throwaway copy and Claude
+  Code's temporary directory, allows no network, never retries a command outside it, and
+  stops the review at startup where it
+  cannot start (`sandbox_unavailable`, never a fallback). On native Windows, where Claude
+  Code has no sandbox, the Claude reviewer gets no Bash: it reads the copy and marks its
+  findings REASONED. A reviewer that found the repository by its absolute path could
+  write to it before. **ACTION:** copy the core scripts; on Linux and WSL2 install
+  `bubblewrap` and `socat` (`scripts/doctor.sh` says so).
+- **Review clean-up gaps closed** (issue #39): a copy left by a killed adapter is removed
+  by a later run once it is old and its lifetime lock is free. An old archive timestamp
+  cannot cause a live copy to be swept; unmarked legacy folders are kept. A proposal makes
+  no temporary folder. A copy that cannot be made, including an operating-system error,
+  is a recorded failure (`copy_failed`, with evidence and a usage record) in both adapters.
+  Scratch setup failures are recorded too and cleaned up. By the owner's decision, a
+  temporary filesystem that refuses locks fails each review as `copy_failed`, whose message
+  says to set `TMPDIR` to a filesystem with lock support; there is no age-only fallback. A
+  `.lock` the adapter did not create is never removed: it picks another folder. A `TMPDIR`
+  inside the reviewed repository is now a recorded `copy_failed` (exit 5, evidence and a
+  usage record), not exit 2 without a record. Old orphan lock files are swept after acquiring
+  their lock. Errors from a running reviewer are recorded as `run_failed`, with evidence,
+  and the archive says whether the reviewer launched (`agent_process.run` records it), so a
+  launch that failed and then raised on cleanup reads `did not start`, not `ran`,
+  a failed usage record, captured output and a structured dispatcher result. They are never
+  labelled as copy failures or preflight failures; one before the launch says the reviewer did
+  not start. The evidence keeps only the tail of the reviewer's stderr, outside its own text;
+  the usage record keeps all of it. A cancel stays a cancel when the look at the reviewer's
+  exit fails; timeout handling stays unchanged.
+  **ACTION:** update both the copied core scripts and the plugin to the same kit version;
+  an older adapter still sweeps by age alone and can remove a new adapter's live copy.
+  While no review is running, delete leftover `myagentkit-review-*` and `myagentkit-codex-*`
+  temporary folders that have no `.lock` sibling; these unmarked legacy copies are kept.
+- **doctor finds a claude CLI the review cannot use** (`scripts/doctor.sh`): one too old for
+  a flag the review passes (the winget claude 2.1.218 lacked `--restricted`), or npm's
+  `claude.cmd` on native Windows, or a CLI whose help probe cannot launch or times out,
+  first on PATH or named by `CLAUDE_CLI_BIN`, is MISSING
+  with the binary to put first or the `CLAUDE_CLI_BIN` to set. **ACTION:** copy
+  `$KIT/core/scripts/doctor.sh` to `scripts/doctor.sh` and run it.
+  Each executable's help is probed once per doctor run, and all probes share one 90-second
+  budget; launch failures suggest reinstalling or selecting a working executable, and timeouts
+  suggest checking first-run prompts and retrying. A candidate the spent budget cut short is
+  named in the fix, never hidden.
 - **A review no longer dies on the kit's own limits** (`agent_process.py`, the adapters,
   `review.sh`): a review attempt now gets 3600 seconds (maximum 7200) and a Claude review
   200 turns (maximum 500); three high-effort reviews had died on 1800 seconds and 12 turns.

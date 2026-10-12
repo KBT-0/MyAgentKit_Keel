@@ -83,7 +83,9 @@ and some were false; a reviewer that executed found decisive, reproducible defec
 - You may run the test suite, the self-test and your own reproductions, and you should.
 - Run them only in a throwaway copy of the checkout, never in the reviewed checkout.
 - A bridged reviewer (`scripts/review.sh`) already runs in one: its adapter copies HEAD with
-  `git archive`, applies the uncommitted part of the diff and removes the copy afterwards.
+  `git archive` (the checkout's bytes for uncommitted work) and removes the copy afterwards.
+- The bridged Claude reviewer has no shell on native Windows, where Claude Code cannot
+  sandbox one: there it reads the copy and marks each finding REASONED.
 - Any other reviewer makes the copy with `git archive <commit> | tar -x -C "$(mktemp -d)"`,
   then runs `git init` there if the suite needs a repository.
 - Never make it with `git worktree add`, which writes into the reviewed repository.

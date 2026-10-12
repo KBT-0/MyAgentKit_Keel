@@ -2,6 +2,7 @@
 """Collect bounded Codex review evidence before recording completion and usage."""
 import argparse
 from datetime import datetime, timezone
+import contextlib
 import hashlib
 import json
 import os
@@ -78,21 +79,24 @@ def main(argv=None, result_sink=None):
         # The reviewer's workspace is a throwaway copy inside this directory, removed with it
         # on every way out (threat model: claude_bridge.throwaway_copy). Its sandbox confines
         # writes to the copy and the temporary directories and keeps the network off.
-        review_tmpdir(repo)
-        with scratch("myagentkit-codex-") as tmp:
-            last = Path(tmp) / "final.txt"
-            workdir = Path(tmp) / "copy"
-            workdir.mkdir()
+        with contextlib.ExitStack() as copies:
+            last = None
             prepared = None
             try:
+                review_tmpdir(repo)
+                tmp = copies.enter_context(scratch("myagentkit-codex-"))
+                last = Path(tmp) / "final.txt"
+                workdir = Path(tmp) / "copy"
+                workdir.mkdir()
                 throwaway_copy(repo, head, diff if scope == "uncommitted" else None, workdir,
                                deadline=deadline)
-            except BridgeError as error:
-                if time.monotonic() < deadline:
-                    raise
-                # A preparation that used up the deadline is recorded as a timeout.
-                prepared = {"exit_code": None, "stdout": "", "stderr": str(error), "termination": "timeout",
-                             "cancelled": False, "duration_ms": 0}
+            except (BridgeError, OSError) as error:
+                # A preparation that used up the deadline is recorded as a timeout; a copy that
+                # could not be made, as copy_failed (never a fallback): it once ended the
+                # adapter with exit 2 and no record.
+                prepared = {"exit_code": None, "stdout": "", "stderr": str(error),
+                            "termination": "timeout" if time.monotonic() >= deadline else "copy_failed",
+                            "cancelled": False, "duration_ms": 0}
             command = [os.environ.get("REVIEW_CLI_BIN", "codex"), "exec", "--json", "--ephemeral",
                        "-s", "workspace-write", "-c", "sandbox_workspace_write.network_access=false",
                        "--skip-git-repo-check", "-c", "model_reasoning_effort=" + args.effort,
@@ -120,7 +124,15 @@ def main(argv=None, result_sink=None):
                 if prepared is None and remaining <= 0:
                     prepared = {"exit_code": None, "stdout": "", "stderr": "the review wall-clock limit passed during preparation", "termination": "timeout",
                              "cancelled": False, "duration_ms": 0}
-                execution = prepared or agent_process.run(command, prompt, workdir, remaining, into=handed)
+                started = time.monotonic()
+                try:
+                    execution = prepared or agent_process.run(command, prompt, workdir, remaining, into=handed)
+                except OSError as error:
+                    execution = dict(handed) if handed else {
+                        "exit_code": None, "stdout": "", "stderr": "", "cancelled": False,
+                        "duration_ms": round((time.monotonic() - started) * 1000)}
+                    execution.update(termination="run_failed",
+                                     stderr=execution["stderr"] + "\n" + str(error))
                 if execution.pop("cancelled", False):
                     cancelled.append(True)
                 # A cancelled review must stop now, not start another CLI process to read quota.
@@ -155,7 +167,7 @@ def main(argv=None, result_sink=None):
                 recovered, reason = reason, None
             final = ""
             try:
-                if last.is_file():
+                if last is not None and last.is_file():
                     with last.open("rb") as stream:
                         raw = stream.read(8_000_001)
                     if len(raw) > 8_000_000:
@@ -165,6 +177,11 @@ def main(argv=None, result_sink=None):
                     reason = reason or "stale_checkout"
             except (OSError, ValueError, BridgeError):
                 reason = reason or "stale_checkout"
+            # The adapter's diagnostic, kept out of the reviewer's text, and only its tail: the
+            # usage record keeps the whole stderr.
+            failure = ("\n\n## Failure\n\n" + ("Codex ran, then its supervision failed: " if execution.get("launched")
+                       else "Codex did not start: ") + execution["stderr"][-4000:]
+                       if reason == "run_failed" else "")
             verdicts = re.findall(r"^VERDICT: (Accept|Accept with Manual Checks|Reject)[ \t]*$", final, re.M)
             declarations = re.findall(r"^[ \t]*VERDICT[ \t]*:.*$", final, re.M)
             if not reason and (len(verdicts) != 1 or len(declarations) != 1
@@ -195,7 +212,7 @@ def main(argv=None, result_sink=None):
                   "status": status, "failure_kind": reason}
         metadata = dict(header)
         report_text = agent_usage.report(stamp, header, verdicts[0] if status == "completed" else None,
-            final or "No final message. Inspect the local usage record for diagnostics.")
+            final + failure or "No final message. Inspect the local usage record for diagnostics.")
         archived = None
         try:
             agent_usage.write_evidence(repo, report, report_text, private=True)
@@ -215,7 +232,7 @@ def main(argv=None, result_sink=None):
         def persist_cancel(usage):
             header.update(status="failed", failure_kind="cancelled")
             text = agent_usage.report(stamp, header, None,
-                final or "No final message. Inspect the local usage record for diagnostics.")
+                final + failure or "No final message. Inspect the local usage record for diagnostics.")
             try:
                 return agent_usage.relabel_cancelled(repo, path, archived, text), text
             except (OSError, ValueError) as error:

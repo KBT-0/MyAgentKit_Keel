@@ -24,6 +24,15 @@ def not_on_windows(case, why):
     return WINDOWS
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / 'core/scripts'))
+import claude_bridge  # noqa: E402
+
+# A ready reviewer CLI: its --help names every flag the review passes (doctor reads it).
+_flags = sorted({part for part in claude_bridge.claude_command(
+    'claude', __import__('argparse').Namespace(mode='review', model='claude-x', effort='low',
+                                               max_turns=1, max_budget_usd=1.0), True)[0]
+    if part.startswith('--')})
+CLI_STUB = '#!/bin/sh\necho "%s"\n' % ' '.join(_flags)
 spec = importlib.util.spec_from_file_location('check_kit', ROOT / 'scripts/check_kit.py')
 check_kit = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(check_kit)
@@ -97,6 +106,10 @@ class DoctorTests(unittest.TestCase):
                 (directory / 'claude').chmod(0o755)
             tools = root / 'tools'
             tools.mkdir()
+            # Claude Code's Bash sandbox tools, which doctor requires for a Claude review on Linux.
+            for tool in ('bwrap', 'socat'):
+                (tools / tool).write_text('#!/bin/sh\n')
+                (tools / tool).chmod(0o755)
             if not WINDOWS:
                 (tools / 'timeout').write_text(TIMEOUT_STUB)
                 (tools / 'timeout').chmod(0o755)
@@ -211,8 +224,8 @@ class DoctorTests(unittest.TestCase):
             subprocess.run(['sh', str(ROOT / 'bootstrap.sh'), str(project), '--overlay', 'claude-code'],
                            check=True, capture_output=True)
             # Stubs for the tools a ready machine has; the test must not depend on this one.
-            for tool in ('claude', 'codex', 'tmux'):
-                (bin_dir / tool).write_text('#!/bin/sh\necho --effort\nexit 0\n')
+            for tool in ('claude', 'codex', 'tmux', 'bwrap', 'socat'):
+                (bin_dir / tool).write_text(CLI_STUB)
                 (bin_dir / tool).chmod(0o755)
             if not WINDOWS:
                 (bin_dir / 'timeout').write_text(TIMEOUT_STUB)
@@ -223,7 +236,15 @@ class DoctorTests(unittest.TestCase):
             shell.chmod(0o755)
             env = {k: v for k, v in os.environ.items() if not k.lower().startswith('npm_config_')}
             env.update(HOME=str(home), SHELL=str(shell), GIT_CONFIG_NOSYSTEM='1',
-                       PATH=str(bin_dir) + os.pathsep + os.environ['PATH'])
+                       # This machine's own claude stays off PATH: doctor runs the claude the
+                       # review would launch, and on native Windows that is never the sh stub.
+                       PATH=os.pathsep.join([str(bin_dir)] + [
+                           d for d in os.environ['PATH'].split(os.pathsep) if d and not any(
+                               os.path.exists(os.path.join(d, name))
+                               for name in ('claude', 'claude.exe', 'claude.cmd'))]))
+            # Nor does a reviewer or CLI this machine names: each case sets its own.
+            for key in ('REVIEW_REVIEWER', 'CLAUDE_CLI_BIN', 'REVIEW_CLI_BIN'):
+                env.pop(key, None)
             git = lambda *a: subprocess.run(['git', *a], cwd=project, env=env, check=True)
             git('init', '-q')
             git('config', 'user.name', 'fixture')
@@ -336,10 +357,58 @@ class DoctorTests(unittest.TestCase):
                 return check_kit.path_without(str(dangling) + os.pathsep + env['PATH'],
                                               lambda name: name in tools,
                                               tmp / ('no-%s-bin' % '-'.join(tools)))
+            # A claude too old for the review, earlier on PATH than a newer one: the winget
+            # claude 2.1.218 lacked --restricted, and every review failed as cli_unsupported.
+            # On native Windows the adapter resolves the CLI as Windows does (PATHEXT), so a
+            # sh stub is not one it can start: there an npm-style claude.cmd and an old
+            # executable named by CLAUDE_CLI_BIN stand in.
+            old_dir = tmp / 'old-bin'
+            old_dir.mkdir()
+            if WINDOWS:
+                (old_dir / 'claude.cmd').write_text('@echo off\r\n')
+                cases = (({'PATH': str(old_dir) + os.pathsep + env['PATH']},
+                          ['the claude CLI first on PATH', 'is a batch file']),
+                         ({'CLAUDE_CLI_BIN': sys.executable},
+                          ['the claude CLI that CLAUDE_CLI_BIN names', ' lacks ', '--restricted']))
+            else:
+                (old_dir / 'claude').write_text('#!/bin/sh\necho "--safe-mode --tools --model"\n')
+                (old_dir / 'claude').chmod(0o755)
+                cases = (({'PATH': str(old_dir) + os.pathsep + env['PATH']},
+                          ['the claude CLI first on PATH (%s) lacks' % (old_dir / 'claude'), '--restricted',
+                           'fix: put %s before %s on PATH, or set CLAUDE_CLI_BIN=%s'
+                           % (bin_dir, old_dir, bin_dir / 'claude')]),
+                         ({'CLAUDE_CLI_BIN': str(old_dir / 'claude')},
+                          ['the claude CLI that CLAUDE_CLI_BIN names', 'lacks --restricted',
+                           'fix: update claude']))
+            for extra, expected in cases:
+                with self.subTest(old_cli=extra):
+                    result = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=project, text=True,
+                                            capture_output=True, env=dict(env, **extra))
+                    self.assertEqual(result.returncode, 1, result.stdout)
+                    line = next((l for l in result.stdout.splitlines() if 'the claude CLI' in l), '')
+                    self.assertTrue(line.startswith('MISSING: '), result.stdout)
+                    for text in expected:
+                        self.assertIn(text, line)
+            # The ready claude stub on PATH stays ready (above), and so does one CLAUDE_CLI_BIN names.
+            ready = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=project, text=True, capture_output=True,
+                                   env=dict(env, CLAUDE_CLI_BIN=str(bin_dir / 'claude')))
+            self.assertEqual(ready.returncode, 0, ready.stdout + ready.stderr)
+
             # From here on each case sets up a POSIX host: process groups, signals, a FIFO, a
             # shell's rc files, tmux, the host's node and npm cache, WSL paths.
             if not_on_windows(self.id() + ' (the grep probe and the host traps)', 'POSIX host set-ups'):
                 return
+            # Linux and WSL2: Claude Code's Bash sandbox needs bubblewrap and socat, and the
+            # Claude review stops at startup without them.
+            if sys.platform.startswith('linux'):
+                for tool in ('bwrap', 'socat'):
+                    with self.subTest(sandbox_tool=tool):
+                        (bin_dir / tool).rename(tmp / tool)
+                        red = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=project, text=True, capture_output=True,
+                                             env=dict(env, PATH=path_without(tool)))
+                        (tmp / tool).rename(bin_dir / tool)
+                        self.assertEqual(red.returncode, 1, red.stdout)
+                        self.assertIn("MISSING: %s, which Claude Code's Bash sandbox needs" % tool, red.stdout)
             # Without `timeout` (stock macOS) an rc file that waits on the terminal would hang
             # the probe, and with it every session start: the probe is skipped and says so.
             no_timeout = path_without('timeout')
@@ -629,7 +698,7 @@ class DoctorTests(unittest.TestCase):
             self.assertEqual(red.returncode, 1, red.stdout)
             self.assertIn("MISSING: the second CLI 'claude'", red.stdout)
             env['PATH'] = full_path
-            (bin_dir / 'claude').write_text('#!/bin/sh\necho --effort\nexit 0\n')
+            (bin_dir / 'claude').write_text(CLI_STUB)
             (bin_dir / 'claude').chmod(0o755)
 
             # Codex installed only in ~/.local/bin, off PATH: review.sh falls back to it, so
@@ -669,7 +738,7 @@ class DoctorTests(unittest.TestCase):
                     else:
                         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             env['PATH'] = full_path
-            (bin_dir / 'claude').write_text('#!/bin/sh\necho --effort\nexit 0\n')
+            (bin_dir / 'claude').write_text(CLI_STUB)
             (bin_dir / 'claude').chmod(0o755)
             # An override set to empty: the adapters run an empty command, so with claude on
             # PATH doctor once said ready for a review that cannot start.

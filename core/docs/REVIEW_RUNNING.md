@@ -64,11 +64,17 @@ prompt tells it to run anything there. The copy is removed when the attempt ends
 too, and a `--fallback` attempt gets a fresh one. The reviewer is not told the repository's
 path: the prompt names relative paths only, and its environment sets `PWD` to the copy and
 drops `OLDPWD`, `REVIEW_REPO_ROOT` and every `GIT_*` variable. A reviewer that finds the
-repository anyway can still read it. Codex's sandbox blocks its writes outside the copy and the
-temporary directories; Claude's Bash has no OS sandbox and can write there. A write that
-reaches the checkout fails the review as `stale_checkout`. The evidence's sandbox field
-records `workspace-write (throwaway copy)` for Codex and `throwaway copy, no OS sandbox` for
-Claude. A `propose` run stays read-only in the checkout. The threat model is in
+repository anyway can still read it, but neither reviewer's shell can write outside the copy
+and the temporary directories or reach the network. Codex's sandbox blocks both. Claude's
+Bash runs in Claude Code's own sandbox on macOS, Linux and WSL2 (Linux and WSL2 need
+`bubblewrap` and `socat`); a host where that sandbox cannot start fails the review at
+startup instead of running Bash unsandboxed. Claude Code has no sandbox on native Windows, so
+there the Claude reviewer gets no Bash at all: it reads the copy and marks its findings
+REASONED. A write that reaches the checkout anyway fails the review as `stale_checkout`. The
+evidence's sandbox field records `workspace-write (throwaway copy)` for Codex, and for Claude
+either the Bash sandbox or `no Bash: native Windows`. A copy that a killed adapter left in
+the temporary directory is removed by a later run once it is older than the longest review.
+A `propose` run stays read-only in the checkout and makes no copy. The threat model is in
 `scripts/claude_bridge.py`, `throwaway_copy`.
 Reference reviews require matching clean checkout context. Both share scope collection and
 checkout fingerprint validation, so a change while the reviewer runs invalidates its
@@ -192,7 +198,9 @@ then opens with a `FALLBACK REVIEWER:` line naming the requested reviewer and it
 its usage record carries `review_fallback_from`, and the run prints a `FALLBACK [review]`
 line. A CLI that rejects a flag the review requires (`cli_unsupported`, typically an
 outdated CLI) fails every run the same way; it is a setup fault, never routed to the other
-reviewer even with `--fallback`, and the fix is upgrading the CLI, not dropping the flag. Both model pins remain owned
+reviewer even with `--fallback`, and the fix is upgrading the CLI, not dropping the flag. A
+Claude Code Bash sandbox that cannot start (`sandbox_unavailable`: `bubblewrap` or `socat`
+missing on Linux or WSL2, or WSL1) is the same kind of setup fault. Both model pins remain owned
 by project setup (`REVIEW_CLAUDE_MODEL` / `REVIEW_CODEX_MODEL` override them). An absent or
 invalid alternate pin stops failover rather than choosing a model. Direct adapter calls
 remain single-provider. A completed Reject or manual-check verdict is a result, not an

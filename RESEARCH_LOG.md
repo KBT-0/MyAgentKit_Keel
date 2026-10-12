@@ -40,6 +40,17 @@ trap removes the temp file when doctor is interrupted (the leftover file was see
 Unterminated `--help` output, or an rc file's unterminated EXIT-trap print, put the status
 marker mid-line, where doctor never found it; both probes now start it on a new line (seen RED).
 
+### 2026-10-11 — Supervision errors can lose a launched review's accounting (#39)
+
+An operating-system error after reviewer launch escaped both adapters without evidence or
+a usage record. The dispatcher then classified the launched attempt as a preflight failure.
+Both adapters now record `run_failed` and deliver their structured result. The process runner
+keeps output captured before a supervision error, so reported billed usage survives the failure.
+Copy errors remain `copy_failed`; cancellation and timeout handling retain their existing paths.
+A non-empty `handed` dictionary does not prove a child process existed (the prompt file is
+handed before launch), so the runner records `launched` itself and the adapters choose the
+`did not start` wording from that flag (Codex review, 2026-10-12).
+
 ### 2026-10-10 — Round 3 bootstrap and Stop-hook findings
 
 Mode repair reused any staged blob as a regular executable, converting tracked symlinks
@@ -57,6 +68,51 @@ parts, including fixes, with the owner's low-allowance exception.
 The review-limit change left the suite minimum stale and its direct-entry guards untested.
 Codex-only dispatch also rejected an unused Claude turn setting, and fallback guidance
 still estimated one hour for two attempts whose defaults now total two hours.
+### 2026-10-10 — A live review copy can have an old timestamp (#39)
+
+Archive extraction can restore an old directory timestamp while the reviewer is still
+running. Age alone therefore cannot distinguish a live copy from one a killed adapter
+left behind. A lifetime lock beside the copy, outside extraction, protects the live copy;
+the age guard also protects the interval between creating the marker and acquiring its lock.
+An old orphan marker is removed only after taking its lock. Unmarked copies from older
+adapters cannot prove inactivity, so owners remove them while no review runs and update
+the copied scripts and plugin together: older sweepers do not respect the lifetime lock.
+
+Some temporary filesystems refuse locking (macOS reports ENOTSUP there, Linux EOPNOTSUPP).
+An age-only fallback would bring back the old-timestamp sweep of a live copy. The owner
+decided on 2026-10-11 that such a host fails each review as `copy_failed`, with a message
+to move TMPDIR to a filesystem with lock support. A marker that already exists beside a new
+folder may belong to another account; the adapter keeps it and picks another folder.
+Other scratch setup failures must remove the folder and marker and write failure evidence
+and usage, just like a failed copy. The preparation handler must exclude the reviewer run:
+an I/O error after launch is no evidence that the model never ran or incurred no cost.
+
+Doctor's help probe also needs a per-path cache: retrying a timed-out first executable
+through the alternative-selection path doubled the wait, and repeated PATH entries added
+more waits. Several distinct hung CLIs still cost 60 seconds each, so all probes share one
+budget. Launch failures and timeouts need different remedies from missing CLI flags.
+
+### 2026-10-09 — The Claude reviewer's Bash could write the repository (#39)
+
+The bridged reviewers execute in a throwaway copy, but only Codex had an operating-system
+sandbox. Claude's Bash was merely asked to stay in the copy and off the network, so a
+reviewer that found the repository by its absolute path could change it, detected only
+afterwards as `stale_checkout`. Claude Code ships its own Bash sandbox (Seatbelt on macOS,
+bubblewrap and socat on Linux and WSL2), configurable per run with `--settings`, which
+`--restricted` keeps while it drops the user, project and local settings files. By default
+a host without the sandbox runs Bash unsandboxed, so `failIfUnavailable` is required, and
+`allowUnsandboxedCommands: false` stops the model from retrying a blocked command outside
+it. Native Windows has no sandbox (Claude Code 2.1.295 has one behind a feature gate that
+is off), and there the reviewer now gets no shell: a review that cannot reproduce is weaker
+than one that can, but one that can write the owner's checkout is not a review. The live
+probe on native Windows showed `failIfUnavailable` refusing at startup, before any model
+call; the error is classified `sandbox_unavailable`, a setup fault like `cli_unsupported`.
+
+On the same host the first `claude` on PATH was npm's `claude.cmd`, which the review cannot
+launch (cmd.exe would read its quoted JSON arguments as shell), and an older winget
+`claude.exe` lacked `--restricted`. Both failed every review with an error that looked like
+a broken adapter; doctor now asks `--help` of the claude the review would launch for every
+flag the adapter passes (`--max-turns` is accepted but hidden from `--help`).
 
 ### 2026-10-09 — Acceptance and context-hook edge cases (#42, #65, #66, #69, #70)
 

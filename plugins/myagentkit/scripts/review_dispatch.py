@@ -192,6 +192,10 @@ def main(argv=None):
         if chain["failure_kind"] == "cli_unsupported":
             print("FAIL [review]: the installed CLI rejected a flag the review requires; "
                   "upgrade the CLI. The review never drops a sandbox flag to make a run start.")
+        if chain["failure_kind"] == "sandbox_unavailable":
+            print("FAIL [review]: Claude Code's Bash sandbox cannot start on this host, and the "
+                  "review never runs Bash outside it. On Linux and WSL2 install bubblewrap and "
+                  "socat (see scripts/doctor.sh); WSL1 cannot sandbox.")
         if chain["failure_kind"] == "content_flagged":
             print("FAIL [review]: the provider's content classifier stopped the review; run it "
                   "again, or send a smaller scope (--commit, or a shorter --base range).")

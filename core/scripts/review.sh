@@ -28,11 +28,12 @@
 # Threat model, in short (in full: claude_bridge.py, throwaway_copy):
 #   - Defended: what the reviewer runs in its working directory changes only the copy.
 #   - Defended: the repository's path is not in the prompt or the reviewer's environment.
+#   - Prevented: a shell write outside the copy and the temporary directories, and network
+#     use. Codex's workspace-write sandbox blocks both; Claude's Bash runs in Claude Code's
+#     own sandbox (macOS, Linux, WSL2), and a host where it cannot start fails the review. On
+#     native Windows Claude Code has no sandbox, so the Claude reviewer gets no Bash there.
 #   - Detected: a write that reaches the repository anyway fails the review (stale_checkout).
-#   - ACCEPTED LIMIT: a reviewer that finds the repository by its absolute path can read it,
-#     and Claude's Bash can write to it. Codex's workspace-write sandbox blocks writes outside
-#     the copy and the temporary directories and keeps the network off; Claude has no OS
-#     sandbox here and is only asked to stay off the network.
+#   - ACCEPTED LIMIT: a reviewer that finds the repository by its absolute path can read it.
 #   - OUT OF SCOPE: a process that changes the tree, the index or the Git configuration
 #     between two of this script's reads to hide a change (a filter attribute removed and
 #     restored), and hostile files planted by anyone but the owner: either could edit this

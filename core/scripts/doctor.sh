@@ -189,32 +189,50 @@ if [ -n "$reviewer" ] && [ -z "$reviewer_cli" ]; then
 elif [ -n "$reviewer" ] && ! reviewer_path=$( [ -x "$HOME/.local/bin/codex" ] && PATH="$PATH:$HOME/.local/bin"
                             command -v "$reviewer_cli" 2>/dev/null ); then
   miss "the second CLI '$reviewer_cli' that scripts/review.sh calls" "install and log in to $reviewer (docs/DEV_SETUP.md §3)"
-elif [ "$reviewer" = claude ] && ! command -v timeout >/dev/null 2>&1; then
-  echo "NOTE: Claude CLI --effort probe skipped, no timeout on this machine"
-elif [ "$reviewer" = claude ] && ! help_out=$(mktemp); then
-  echo "NOTE: Claude CLI --effort probe skipped, cannot create a temp file"
 elif [ "$reviewer" = claude ]; then
-  # Probe the command the adapter runs, found as above: a newer installation later on PATH
-  # cannot supply --effort to an older CLI that actually runs. Bounded as the grep probe is
-  # (below): a --help that blocks would hang every session start.
-  # A child can keep stdout open after the CLI exits; a file capture never waits for EOF.
-  # Where setsid exists, the CLI's background children are killed with its process group,
-  # as the grep probe's are (the comment there says why the leader kills its own group).
-  if command -v setsid >/dev/null 2>&1; then
-    help_mark="<<DOCTOR-HELP-$$>>-exit"
-    ( setsid sh -c 'timeout --foreground -k 1 5 "$0" --help; printf "\n%s %s\n" "$1" "$?"; kill -s KILL 0' \
-        "$reviewer_path" "$help_mark" </dev/null >"$help_out" 2>/dev/null; : ) 2>/dev/null
-    help_status=$(awk -v m="$help_mark " 'index($0, m) == 1 { print substr($0, length(m) + 1) }' "$help_out")
+  if ! command -v timeout >/dev/null 2>&1; then
+    echo "NOTE: Claude CLI --effort probe skipped, no timeout on this machine"
+  elif ! help_out=$(mktemp); then
+    echo "NOTE: Claude CLI --effort probe skipped, cannot create a temp file"
   else
-    timeout -k 1 5 "$reviewer_path" --help </dev/null >"$help_out" 2>/dev/null; help_status=$?
-    echo "NOTE: no setsid on this machine: a process the Claude CLI's --help starts in the background is not stopped"
+    # Probe the command the adapter runs, found as above: a newer installation later on PATH
+    # cannot supply --effort to an older CLI that actually runs. Bounded as the grep probe is
+    # (below): a --help that blocks would hang every session start.
+    # A child can keep stdout open after the CLI exits; a file capture never waits for EOF.
+    # Where setsid exists, the CLI's background children are killed with its process group,
+    # as the grep probe's are (the comment there says why the leader kills its own group).
+    if command -v setsid >/dev/null 2>&1; then
+      help_mark="<<DOCTOR-HELP-$$>>-exit"
+      ( setsid sh -c 'timeout --foreground -k 1 5 "$0" --help; printf "\n%s %s\n" "$1" "$?"; kill -s KILL 0' \
+          "$reviewer_path" "$help_mark" </dev/null >"$help_out" 2>/dev/null; : ) 2>/dev/null
+      help_status=$(awk -v m="$help_mark " 'index($0, m) == 1 { print substr($0, length(m) + 1) }' "$help_out")
+    else
+      timeout -k 1 5 "$reviewer_path" --help </dev/null >"$help_out" 2>/dev/null; help_status=$?
+      echo "NOTE: no setsid on this machine: a process the Claude CLI's --help starts in the background is not stopped"
+    fi
+    help=$(cat "$help_out")
+    rm -f "$help_out"
+    if [ -z "$help_status" ] || [ "$help_status" -eq 124 ] || [ "$help_status" -eq 137 ]; then
+      echo "NOTE: the Claude CLI '$reviewer_cli' did not answer --help within 5 s; --effort was not checked"
+    elif [ "$help_status" -ne 0 ] || ! printf '%s\n' "$help" | grep -Eq -- '(^|[[:space:],])--effort([[:space:]=,]|$)'; then
+      miss "the Claude CLI '$reviewer_cli' does not support --effort (an old CLI earlier on PATH can shadow the current installation)" "update that CLI, reorder PATH, or set CLAUDE_CLI_BIN to the current executable"
+    fi
   fi
-  help=$(cat "$help_out")
-  rm -f "$help_out"
-  if [ -z "$help_status" ] || [ "$help_status" -eq 124 ] || [ "$help_status" -eq 137 ]; then
-    echo "NOTE: the Claude CLI '$reviewer_cli' did not answer --help within 5 s; --effort was not checked"
-  elif [ "$help_status" -ne 0 ] || ! printf '%s\n' "$help" | grep -Eq -- '(^|[[:space:],])--effort([[:space:]=,]|$)'; then
-    miss "the Claude CLI '$reviewer_cli' does not support --effort (an old CLI earlier on PATH can shadow the current installation)" "update that CLI, reorder PATH, or set CLAUDE_CLI_BIN to the current executable"
+  if [ -f scripts/claude_bridge.py ]; then
+    # Present is not enough: a claude too old for a flag the review passes (--restricted), or
+    # npm's claude.cmd on native Windows, failed every review. The adapter itself names the
+    # claude it would launch and the flags it needs (claude_bridge.cli_readiness).
+    cli_problem=$(python3 -B -c 'import sys; sys.path.insert(0, "scripts"); import claude_bridge
+print(claude_bridge.cli_readiness() or "")' 2>/dev/null)
+    [ -n "$cli_problem" ] && miss "${cli_problem%%|*}" "${cli_problem#*|}"
+    # The review's Bash runs only in Claude Code's sandbox, which needs these two on Linux and
+    # WSL2; without them every Claude review stops at startup (sandbox_unavailable).
+    if [ "$(uname -s 2>/dev/null)" = Linux ]; then
+      for tool in bwrap socat; do
+        command -v "$tool" >/dev/null 2>&1 ||
+          miss "$tool, which Claude Code's Bash sandbox needs for the Claude review" "sudo apt-get install bubblewrap socat (or your distribution's packages)"
+      done
+    fi
   fi
 fi
 # On native Windows (Git for Windows' sh, MSYS2, Cygwin) spawn_worker.sh opens a Windows
