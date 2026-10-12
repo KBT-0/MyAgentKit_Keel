@@ -88,7 +88,7 @@ REQUIRED_SUITES = {
               'test_boundary_example': 3, 'test_scan_gate': 1,
               'test_check_gate': 24, 'test_check_gate_windows': 23, 'test_boundary_restore': 39,
               'test_sync_kit': 29, 'test_doctor': 4, 'test_git_hooks': 30, 'test_stop_hook': 8, 'test_context_hook': 10, 'test_overlay_permissions': 6,
-              'test_spawn_worker': 18, 'test_spawn_codex': 36, 'test_codex_worker': 47, 'test_working_mode': 44, 'test_worker_visibility': 55, 'test_doc_pointers': 9,
+              'test_spawn_worker': 18, 'test_spawn_codex': 36, 'test_codex_worker': 47, 'test_working_mode': 44, 'test_worker_visibility': 59, 'test_doc_pointers': 9,
               'test_usage_summary': 9,
               'test_kit_output': 1, 'test_kit_runner': 24, 'test_clean_worktrees': 137, 'test_clean_worktrees_windows': 9, 'test_close_worker_windows': 20,
               'test_review_windows': 22, 'test_claude_sandbox': 24, 'test_worker_paths_windows': 3,
@@ -326,39 +326,23 @@ def check_syntax(root):
             lines = case_in_substitution(path.read_text())
             if lines:
                 raise RuntimeError("%s: `case` inside $( ) on line %s: bash 3.2, macOS's sh, reads its "
-                                   "pattern's `)` as the end of the $( ); move it out (a `case` argument "
-                                   "after a reserved word or a symbol is flagged too: rename or quote it)"
+                                   "pattern's `)` as the end of the $( ); move it out (unclassifiable "
+                                   "shell syntax is flagged too)"
                                    % (path, lines[0]))
             run(["sh", "-n", str(path)])
-
-
-RESERVED = {"if", "then", "elif", "else", "fi", "for", "while", "until", "do", "done", "case", "esac",
-            "in", "select", "function", "time", "coproc"}
-
-
-def command_position(before):
-    """Whether a `case` after `before` may start a command: yes unless the token right before it
-    is a plain word that is not a reserved word. Tokens are words (\\w+) or single other
-    characters; spaces, tabs and backslash-newlines between them are skipped. A word right after
-    `-` is an option, not a plain word (`time -p case` is a command).
-
-    One flat rule, not the shell's grammar: every hand-rolled walk of that grammar missed a form.
-    It fails loudly: `echo if case` and `echo -n case` are flagged (rename or quote the word),
-    `echo case` is not."""
-    # \Z, not $: a $ also matches before a final newline, and a newline ends a command.
-    before = re.sub(r"(\\\n|[ \t])+\Z", "", before)
-    word = re.search(r"(-?)(\w+)\Z", before)
-    return not word or word.group(1) == "-" or word.group(2) in RESERVED
 
 
 def case_in_substitution(text):
     """The lines where a `case` starts inside $( ). bash 3.2, macOS's sh, does not parse it, and
     the `sh -n` of a host with a newer shell passes it: one did, and only macOS CI failed.
 
-    A sketch of the shell's grammar, not a parser: quotes, backslashes, comments and
-    here-documents are skipped, every parenthesis is counted; inside $(( )) a `<<` is a shift and
-    only a nested $( ) is read for commands; `case` counts unless a plain word precedes it
-    (command_position: `echo case` is an argument, `echo if case` is flagged anyway)."""
+    The scan locates unquoted candidates; Bash parses a transformed copy to classify them.
+    Replacing a command's `case` with `esac` breaks the grammar; replacing an argument or
+    arithmetic variable preserves it. No copy is executed. Unknown syntax fails loudly.
+    Covered shapes: function f case / $((:)then case -> finding;
+    echo if case / echo -n case / echo $(x) case -> argument.
+    Arithmetic is checked too, because `$((` can open a substitution containing a subshell.
+    Bash is available on CI's Linux/macOS and in Git for Windows, like the gate's sh."""
     found, stack, heredocs, i, line = [], [], [], 0, 1
     while i < len(text):
         c = text[i]
@@ -395,17 +379,24 @@ def case_in_substitution(text):
             end = text.find("\n", i)
             i = len(text) if end < 0 else end
         else:
-            # The innermost $( or $(( : in arithmetic, `<<` is a shift and no command starts.
+            # Treat `<<` as a shift in $((; Bash resolves an ambiguous arithmetic opener below.
             arithmetic = next((s for s in reversed(stack) if s in "$A"), "") == "A"
             here = not arithmetic and re.match(r"<<(-?)[ \t]*['\"]?([A-Za-z0-9_]+)['\"]?", text[i:i + 80])
-            word = text.startswith(("case ", "case\t"), i) and (i == 0 or text[i - 1] in " \t\n;&|(){}")
-            word = word and command_position(text[:i])
+            word = (re.match(r"case(?=$|[ \t\n;&|(){}])", text[i:i + 5])
+                    and (i == 0 or text[i - 1] in " \t\n;&|(){}"))
             if here:
                 heredocs.append((here.group(1) == "-", here.group(2)))
                 i += here.end()
                 continue
-            if word and not arithmetic and "$" in stack:
-                found.append(line)
+            if word and any(s in "$A" for s in stack):
+                try:
+                    parsed = subprocess.run(["bash", "--posix", "-n"],
+                                            input=text[:i] + "esac" + text[i + 4:],
+                                            text=True, capture_output=True, timeout=10)
+                except (OSError, subprocess.TimeoutExpired) as error:
+                    raise RuntimeError("cannot classify `case` on line %s: %s" % (line, error)) from error
+                if parsed.returncode:
+                    found.append(line)
             if c == '"':
                 stack.append('"')
             elif text.startswith("$(", i):

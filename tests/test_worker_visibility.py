@@ -675,15 +675,15 @@ class ResultTests(Base):
         self.assertEqual(gate.case_in_substitution('x=$(echo "case a" \'case b\') # $( case\n'
                                                    'cat <<-E\n\t$(case\n\tE\n'), [])
         # An argument is not a command: `case` counts only where a command starts.
-        self.assertEqual(gate.case_in_substitution('x=$(echo case value)\ny=$(f; then case)\n'), [])
+        self.assertEqual(gate.case_in_substitution('x=$(echo case value)\n'), [])
+        self.assertEqual(gate.case_in_substitution('y=$(f; then case)\n'), [1])
         self.assertEqual(gate.case_in_substitution('x=$(true && case a in a) :;; esac)\n'), [1])
         self.assertEqual(gate.case_in_substitution('x=$(if :; then case a in a) :;; esac; fi)\n'), [1])
-        # A reserved word or a symbol before `case` is flagged even in an argument: the lint fails
-        # loudly rather than read the grammar. Rename or quote such a word.
+        # The shell parser recognizes arguments even after reserved words or substitutions.
         for text in ('x=$(echo if case value)\n', 'x=$(echo time case a)\n', 'x=$(echo ! case a)\n',
                      'x=$(echo then do case a)\n', 'x=$(echo $(x) case a)\n'):
             with self.subTest(text=text):
-                self.assertEqual(gate.case_in_substitution(text), [1])
+                self.assertEqual(gate.case_in_substitution(text), [])
         for text in ('x=$(echo case value)\n', 'x=$(printf case)\n', 'x=$(printf \\\n  case a)\n'):
             with self.subTest(text=text):
                 self.assertEqual(gate.case_in_substitution(text), [])
@@ -711,9 +711,9 @@ class ResultTests(Base):
                       'for i in a b; do', 'for i in a b do', 'select i in a; do', 'select i do'):
             with self.subTest(start=start):
                 self.assertEqual(gate.case_in_substitution('x=$(%s case a in a) :;; esac)\n' % start), [1])
-        # Every form a grammar walk missed in review; the flat rule flags each.
+        # Every command form a grammar walk missed in review remains a finding.
         for start in ('if (:)then', 'if if :; then :; fi then', 'while for i in a; do :; done do', 'f()',
-                      'time -p', 'coproc', '{ :; }then', 'f() {', 'echo -n'):
+                      'time -p', 'coproc', '{ :; }then', 'f() {'):
             with self.subTest(start=start):
                 self.assertEqual(gate.case_in_substitution('x=$(%s case a in a) :;; esac)\n' % start), [1])
 
@@ -736,7 +736,9 @@ class ResultTests(Base):
         spec.loader.exec_module(gate)
         # A newline ends the command before it: `$(echo before\ncase ...)` is flagged.
         self.assertEqual(gate.case_in_substitution("x=$(echo before\ncase x in x) echo after;; esac)\n"), [2])
-        self.assertEqual(gate.case_in_substitution("x=$(echo before \\\ncase x in x) :;; esac)\n"), [])
+        self.assertEqual(gate.case_in_substitution("x=$(echo before \\\ncase x)\n"), [])
+        # The former fixture continued an argument with unmatched case syntax: fail loudly.
+        self.assertEqual(gate.case_in_substitution("x=$(echo before \\\ncase x in x) :;; esac)\n"), [2])
 
     def test_the_kit_check_rejects_a_case_inside_a_substitution(self):
         # The scan alone is not the gate: check_syntax must run it and stop on it.
@@ -757,6 +759,36 @@ class ResultTests(Base):
                 gate.check_syntax(self.tmp)
         finally:
             os.environ['PATH'] = path
+
+
+class CaseLintTests(unittest.TestCase):
+    def setUp(self):
+        spec = importlib.util.spec_from_file_location('kit_check', ROOT / 'scripts/check_kit.py')
+        self.gate = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.gate)
+
+    def test_arithmetic_looking_subshell_and_function_body_are_findings(self):
+        for text in ('x=$((:)then case a in a) :;; esac)\n',
+                     'x=$(function f case a in a) :;; esac)\n'):
+            with self.subTest(text=text):
+                self.assertEqual(self.gate.case_in_substitution(text), [1])
+
+    def test_reserved_option_and_substitution_arguments_are_not_findings(self):
+        for text in ('x=$(echo if case value)\n', 'x=$(echo -n case)\n',
+                     'x=$(echo $(x) case)\n', 'x=$(echo -n case value)\n',
+                     'x=$(echo $(x) case value)\n'):
+            with self.subTest(text=text):
+                self.assertEqual(self.gate.case_in_substitution(text), [])
+        self.assertEqual(self.gate.case_in_substitution('n=$((case + 1))\n'), [])
+
+    def test_unclassifiable_syntax_remains_a_finding(self):
+        self.assertEqual(self.gate.case_in_substitution('x=$(echo case; then)\n'), [1])
+
+    def test_every_kit_shell_script_passes_the_case_lint(self):
+        for path in sorted(ROOT.rglob('*.sh')):
+            if '.git' not in path.parts:
+                with self.subTest(path=path.relative_to(ROOT)):
+                    self.assertEqual(self.gate.case_in_substitution(path.read_text()), [])
 
 
 class ContextTests(Base):
