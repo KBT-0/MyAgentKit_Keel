@@ -93,10 +93,13 @@ class SectionPointerTests(unittest.TestCase):
                      '`nohup`', 'Windows Terminal tab', 'command line names the checkout or its worktrees',
                      'Wait for the survivors by default', 'reason that holds',
                      "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine.IndexOf('<checkout>', [StringComparison]::OrdinalIgnoreCase) -ge 0 } | Select ProcessId,CommandLine",
-                     "Linux `ps -eo pid,args | grep -F -- '<checkout>' | grep -v -F 'grep -F'`",
-                     "macOS `ps -eww -o pid,args | grep -F -- '<checkout>' | grep -v -F 'grep -F'`",
+                     "Linux `ps -eo pid,args | grep -F -- '<checkout>'`",
+                     "macOS `ps -eww -o pid,args | grep -F -- '<checkout>'`",
+                     "On Linux and macOS, the listing's own `grep` appears as one row naming `<checkout>` and is ignored; every other row is a survivor.",
+                     "A checkout path containing an apostrophe cannot go inside the single quotes as is; on Linux/macOS write it as `'\\''` or put the path in a variable and match \"$checkout\"; on Windows double the apostrophe inside the PowerShell single-quoted string.",
                      'The Windows match ignores case because Windows paths do'):
             self.assertIn(rule, gotchas)
+        self.assertNotIn("grep -v -F 'grep -F'", gotchas)
         self.assertNotIn('stop them with a reason', gotchas)
         running = ' '.join((ROOT / 'core/docs/REVIEW_RUNNING.md').read_text(encoding='utf-8').split())
         self.assertIn('Start the self-test and two reviewers together only when the memory budget permits', running)
