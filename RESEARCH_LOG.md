@@ -23,7 +23,8 @@ which is the part that gets lost.
 
 ### 2026-10-12 — Consuming an answer, claiming an archive, publishing the live record (#57)
 
-2026-10-12. A resumed worker's answered question goes once the resumed session shows it took
+2026-10-12. Review decision, owner accepted 2026-10-12: the ten-second rule is removed. A
+resumed worker's answered question goes once the resumed session shows it took
 the answer: a valid new result while it runs, or a clean exit. A close refuses while the
 question exists, so keeping it until the child exited refused the close of a session that had
 published its work and then failed. Elapsed time is not evidence: a CLI that fails slowly,
@@ -45,22 +46,35 @@ before the replace loses its bytes. A suffix longer than nine digits is not a nu
 the shell's arithmetic overflowed on it. The helper prints only the errno and its text: a path
 can hold control bytes, and the line bypassed the close's filter.
 
-2026-10-12. The supervisor writes its PID into a private temporary file, locks it, and only
+2026-10-12. Review decision, owner accepted 2026-10-12: the `.live` startup protocol. The
+supervisor writes its PID into a private temporary file, locks it, and only
 then renames it to `NAME.live`, so a published record always carries its PID and its lock. A
 waiter reads a dropped lock on such a record as a dead supervisor; an empty or malformed record
 is damaged, never proof of death. A record that could be seen empty and unlocked was read as a
 dead supervisor, ending the lead's wait while the worker ran, and no delay makes that reading
-safe: a startup can pause for any time.
+safe: a startup can pause for any time. On a resume the previous run's record is there, and the
+lead's waiter opens it every 0.1 s; Windows refused the rename over it, the supervisor stopped
+before it wrote any record, and the wait never ended, since the old record predates the run.
+The rename is retried for about two seconds, and a supervisor that fails before it runs the
+worker writes its exit record (Claude review r7, reproduced).
 
 2026-10-12. On Windows a rename over a file fails while any process holds it open, delete
 sharing included (measured on Windows 11), and an open that meets the rename fails too. The
 supervisor and each waiter polled the result every 0.1 s, so the worker's publication failed,
-or the poller did, and the supervisor's error closed the worker with it. A poller opens a result
-only when its id, size or time changed since its last read, and on Windows an open refused
-during a rename reads as no result yet. With two pollers and 600 publications 0.15 s apart, 3
-publications failed when every poll opened the result, and none with the check. A same-size
-in-place edit within one timestamp tick is read at its next change; in-place edits are not the
-publishing protocol.
+or the poller did, and the supervisor's error closed the worker with it. A poller opens a result,
+or a new question, only when its id, size or time changed since its last read, and on Windows
+an open refused during a rename reads as no result yet. That check lowers the rate but does not
+end it: the stat itself opens the file for a moment (Claude review r7). Measured with Python
+3.13 on Windows 11, two pollers and publications 0.15 s apart: 3 of 600 failed when every poll
+opened the result; with the check 0 of 600 here and 1 of 600 in the review. Two processes
+calling stat in a loop failed 392 of 3000 renames. The publishing side therefore retries: the
+worker renames with `codex_worker.py --publish`, which retries a refused rename for about two
+seconds, and 0 of 3000 failed under those stat loops (361 needed a retry; Python 3.12: 404 failed
+without the retry, 0 with it). Python 3.10 and 3.11,
+which open a handle on every stat, were not measured. A refusal that lasts, a denied ACL or a
+held lock, is an error after 50 consecutive refusals of one file, about five seconds: reading
+every refusal as a rename made such a wait endless. A same-size in-place edit within one
+timestamp tick is read at its next change; in-place edits are not the publishing protocol.
 
 ### 2026-10-12 — A wrapper stopped from outside, and the result sidecar (#57)
 
@@ -86,14 +100,23 @@ launches can pass together and overwrite their sole resume record. A shared rese
 covers the checks, launch and session recording; an unrecorded launch retains it for recovery.
 
 OWNER DECISION 2026-10-12: STATE writers use a constrained compare-and-swap under the mode
-switch lock. `--state-sha` reads the current hash; `--replace-state FILE --expect SHA256`
-publishes prepared contents atomically only when the current bytes still match that hash.
-A refused writer re-reads and redoes its edit. No arbitrary command runs through the helper,
-whose mode command is pre-approved. The earlier command-executing `--edit-state` was rejected
-for that reason. Byte rechecks alone still lost independent edits in the reproduced publication
-and rollback windows. Sharing the lock closes both windows, and compare-and-swap refuses a
-stale retry after the switch or rollback. Both regression probes preserve the independent
-edit after its writer re-reads, retries and succeeds.
+switch lock. That decision is the compare-and-swap alone; the points below are how it holds.
+`--replace-state FILE --expect SHA256` publishes prepared contents atomically only when the
+current bytes still match that hash. A refused writer re-reads and redoes its edit. No arbitrary
+command runs through the helper, whose mode command is pre-approved. The earlier
+command-executing `--edit-state` was rejected for that reason. Byte rechecks alone still lost
+independent edits in the reproduced publication and rollback windows. Sharing the lock closes
+both windows, and compare-and-swap refuses a stale retry after the switch or rollback. Both
+regression probes preserve the independent edit after its writer re-reads, retries and succeeds.
+The hash and the bytes come from one read, `--read-state OUT`, and the writer edits that
+snapshot: a separate `--state-sha` let a writer that read STATE at its session start and hashed
+it later publish its stale copy over an edit made in between (Claude review r7, reproduced).
+The pre-approval let a STATE operation copy any readable file into any project's STATE.md, so
+the operations run only from the project root and read or write a snapshot only in
+`.myagentkit/` or the temporary folder, and the helper deletes the published snapshot: one left
+in the project root would be committed by `git add -A`. The "Working mode:" line is the mode
+switch's, written together with `.claude/mode`: an edit that changed it made the two records
+disagree, so it is refused.
 Resolve the supplied project root once and refuse links only
 below it: refusing every ancestor link refused macOS `/tmp` and a linked home, and both
 records still land together in the one resolved project. On Windows only a name-surrogate
@@ -111,9 +134,10 @@ publishing rename there. After PROGRESS or HANDOFF the wait prints its follow-up
 result's content hash as `--stale` and the same `--since`: the `.live` and `.exit` records are
 read by the run's start, so a later `--since` would hide a killed supervisor. Nothing holds the
 reported result open between the two waits, so a file id cannot name it: the next result can
-be given its freed inode number. The hash alone decides (2026-10-12): other contents are a new
-publication, renamed in or rewritten in place, and the same bytes published again tell the
-lead nothing new.
+be given its freed inode number. Review decision, owner accepted 2026-10-12: the hash alone
+decides. Other contents are a new publication, renamed in or rewritten in place, and the same
+bytes published again tell the lead nothing new. A follow-up printed earlier in the `INO:HASH`
+form is compared by its hash, so it does not report the same result twice.
 An unrecorded launch names its worker inside the reservation, so the printed `--resume` of
 that name, which records the launch, takes the reservation over instead of being refused.
 

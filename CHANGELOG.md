@@ -23,9 +23,13 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   STATE line under a shared `.claude/mode.lock`, refusing overlapping switches. Interrupted
   switches report disagreement on reads and name the repair: choose a mode explicitly.
   A STATE edit detected before replacement refuses the switch; rollback preserves later
-  independent edits. Session edits of STATE publish through `--replace-state FILE --expect
-  SHA256` (`--state-sha` reads the hash), a compare-and-swap under the same lock that refuses a
-  stale edit instead of losing a concurrent one (owner decision, `RESEARCH_LOG.md`). Links
+  independent edits. Session edits of STATE are a compare-and-swap under the same lock that
+  refuses a stale edit instead of losing a concurrent one (owner decision, `RESEARCH_LOG.md`):
+  `--read-state OUT` writes the snapshot and prints its sha256 from one read, the writer edits
+  that file, and `--replace-state FILE --expect SHA256` publishes it and deletes it. No command
+  prints a hash apart from its bytes, which let a copy read earlier pass. The snapshot lives in
+  `.myagentkit/` or the temporary folder outside the project, the STATE operations run only from
+  the project root, and an edit that changes the "Working mode:" line is refused. Links
   below the project root, Windows junctions on Python 3.10/3.11 included, are refused before lock
   creation. The supplied root is resolved once, so macOS
   `/tmp` or a linked home names a project as usual; on Windows only a name-surrogate reparse
@@ -110,10 +114,15 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   supervisor and the waiter hold that result open, so a new result cannot be given its freed
   inode number. After PROGRESS or HANDOFF the wait prints its exact follow-up command, which
   waits for the worker's next result: other contents than the reported result's, by rename or
-  by in-place rewrite; a byte-identical republication does not count. A poll opens the result
-  only after its id, size or time changed, so on Windows no poller holds it open against the
-  worker's rename, and an open that meets that rename is read again at the next poll. The
-  supervisor never opens the answered question, and reads a new one the same way.
+  by in-place rewrite; a byte-identical republication does not count. A follow-up printed with
+  the earlier `INO:HASH` form compares its hash. A poll opens the result, and a new question,
+  only after its id, size or time changed; the answered question is opened only to consume it.
+  On Windows a poll's stat still holds the file for a moment and refuses a rename over it, so the
+  worker publishes with `codex_worker.py --publish TEMPORARY_FILE DESTINATION`, which retries a
+  refused rename for about two seconds. An open that meets a rename is read again at the next
+  poll; 50 consecutive refusals of one file, about five seconds, are an error, not an endless
+  wait. A resumed supervisor retries the rename of its live record while a waiter probes the
+  previous run's, and a supervisor that fails to start writes its exit record, so the wait ends.
   Windows children join their job before running; POSIX escalation kills the entire group.
   POSIX SIGTERM and SIGHUP unwind supervisor cleanup and reap the worker's process group.
   The worker's instruction tells it to run the checks named on its brief's

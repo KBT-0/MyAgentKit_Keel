@@ -2,7 +2,8 @@
 # KIT-OWNED: do not edit locally; change it in the kit and re-sync.
 """Close a worker after a published decision or completed result; --wait notifies the lead
 without a commit, also when the worker stopped without publishing (its exit record) or its
-supervisor was killed (its lock on the .live record dropped)."""
+supervisor was killed (its lock on the .live record dropped). --publish TEMPORARY_FILE
+DESTINATION is the worker's own last step: the rename, retried while Windows refuses it."""
 import hashlib
 import os
 from pathlib import Path
@@ -14,17 +15,40 @@ import tempfile
 import time
 
 READY = '<!-- codex-worker: ready -->'
+REFUSALS = 50  # consecutive Windows refusals of one path a poller waits through, about five seconds
+REFUSED = {}  # path: its consecutive refusals
+
+
+def tolerated(path, error):
+    """On Windows an open that meets a rename over the file is refused, and the next poll reads
+    it. A refusal that lasts, a denied ACL or a lock held on, is an error, not an endless wait."""
+    REFUSED[path] = REFUSED.get(path, 0) + 1
+    if os.name != 'nt' or REFUSED[path] > REFUSALS:
+        raise error
+
+
+def renamed(source, target):
+    """os.replace, retried for about two seconds on Windows: a rename over a file another process
+    holds open, if only to stat it, is refused there, delete sharing included."""
+    for attempt in range(100):
+        try:
+            return os.replace(source, target)
+        except PermissionError:
+            if os.name != 'nt' or attempt == 99:
+                raise
+            time.sleep(.02)
 
 
 def published(path):
+    """The text of a decision published with its end marker, '' without one, None when refused."""
     try:
         text = path.read_text(encoding='utf-8').strip()
     except FileNotFoundError:
         return ''
-    except PermissionError:
-        if os.name != 'nt':
-            raise
-        return ''  # opened in the middle of a rename over it; the next poll reads it
+    except PermissionError as error:
+        tolerated(path, error)
+        return None  # opened in the middle of a rename over it; the next poll reads it
+    REFUSED.pop(path, None)
     return text if text.endswith(READY) else ''
 
 
@@ -71,10 +95,10 @@ def result_kind(path, since=0, stale=None):
             text = file.read().strip()
     except FileNotFoundError:
         return '', None
-    except PermissionError:
-        if os.name != 'nt':
-            raise
+    except PermissionError as error:
+        tolerated(path, error)
         return '', None  # opened in the middle of a rename over it; the next poll reads it
+    REFUSED.pop(path, None)
     SEEN[path] = (info.st_ino, info.st_size, info.st_mtime_ns, since, stale), parse(text, info, since, stale)
     return SEEN[path][1]
 
@@ -161,7 +185,7 @@ def start_live(record):
                 if attempt == 99:
                     raise
                 time.sleep(.01)
-        os.replace(name, live)
+        renamed(name, live)  # a waiter's probe of the previous run's record holds it for a moment
         return held  # the process holds this descriptor for its whole life
     except BaseException:
         if held is not None:
@@ -287,6 +311,8 @@ def main():
             stale = baseline(result, since)
         elif ':' not in stale:
             stale = int(stale) or None
+        elif not stale.startswith('sha256:'):
+            stale = 'sha256:' + stale.partition(':')[2]  # INO:HASH, printed before the hash alone decided
         pin(result, stale)
         while True:
             # Read first: what the supervisor published or recorded before it ended is seen below.
@@ -315,6 +341,25 @@ def main():
                       'or it was killed) without publishing a new result: ' + str(result), flush=True)
                 return 0
             time.sleep(0.1)
+    if sys.argv[1:2] == ['--publish']:
+        # The worker's own last step: its finished temporary file renamed over the destination.
+        if len(sys.argv) != 4:
+            raise ValueError('usage: codex_worker.py --publish TEMPORARY_FILE DESTINATION')
+        renamed(sys.argv[2], sys.argv[3])
+        return 0
+    record = os.environ.get('KIT_WORKER_EXIT')
+    previous = question_id(Path(record)) if record else None
+    try:
+        return supervise()
+    except BaseException as error:
+        # A supervisor that fails before watch() records its end (a refused question, its live
+        # record, its child) records it here: --wait would wait on the previous run's forever.
+        if record and question_id(Path(record)) == previous:
+            record_exit('supervisor failed to start (%s)' % type(error).__name__)
+        raise
+
+
+def supervise():
     if len(sys.argv) < 4 or '--' not in sys.argv[2:4]:
         raise ValueError('usage: codex_worker.py QUESTION_FILE [RESULT_FILE] -- COMMAND...')
     question = Path(sys.argv[1])
@@ -426,9 +471,17 @@ def consume(question, answered):
     return None
 
 
+def record_exit(ended):
+    """Record why the supervisor ended, so --wait reports it instead of waiting forever."""
+    record = os.environ.get('KIT_WORKER_EXIT')
+    if record:
+        Path(record).write_text('%s at %s\n' % (ended, time.strftime('%Y-%m-%dT%H:%M:%S')), encoding='utf-8')
+
+
 def watch(child, question, close_tree, result=None, stale=None, answered=None):
     ready_at = None
     noticed = ''
+    asked = None, ''  # the id of the last new question read, and its published text
     ended = 'stopped by a signal or an error in its supervisor'
     since = float(os.environ.get('KIT_WORKER_STARTED', '0'))  # main() parsed it already
     try:
@@ -443,8 +496,13 @@ def watch(child, question, close_tree, result=None, stale=None, answered=None):
                 answered = consume(question, answered)
             # Only a decision or a completed result ends the worker: PROGRESS, HANDOFF and
             # BLOCKED leave it working, and --wait alone reports them.
-            # The id first: the answered question is never opened, so a rename over it is not refused.
-            decision = question_id(question) != answered and published(question)
+            # The id first: the answered question is never opened, and a new one only after its id,
+            # size or time changed, as a result: Windows refuses a rename over a file held open.
+            identity = question_id(question)
+            if identity not in (answered, asked[0]):
+                text = published(question)
+                asked = (None if text is None else identity), text or ''
+            decision = identity != answered and asked[1]
             notice = 'decision' if decision else kind
             notice = notice if notice in ('decision', 'DONE') else ''
             if notice != noticed:
@@ -466,9 +524,7 @@ def watch(child, question, close_tree, result=None, stale=None, answered=None):
         stop(child, close_tree)
         # Every way out records why, a decision without a blocked result included: the record
         # lets --wait report it instead of waiting forever.
-        record = os.environ.get('KIT_WORKER_EXIT')
-        if record:
-            Path(record).write_text('%s at %s\n' % (ended, time.strftime('%Y-%m-%dT%H:%M:%S')), encoding='utf-8')
+        record_exit(ended)
         # A launch error, or a cancellation or failed CLI before the session took its answer,
         # keeps the answered decision for the retry; a new question stays too. Never changes the result.
         try:

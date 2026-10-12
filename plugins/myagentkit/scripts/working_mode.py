@@ -2,7 +2,7 @@
 # KIT-OWNED: do not edit locally; change it in the kit and re-sync.
 """Show or record the owner's working mode, using WORKFLOW.md as the rule source."""
 import argparse
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 import hashlib
 import os
 from pathlib import Path
@@ -71,24 +71,52 @@ def switch_lock(project):
             release()
 
 
-def state_sha(project):
-    """Hash STATE's exact bytes without creating a lock or writing a project file."""
-    return hashlib.sha256(checked(project, 'docs/STATE.md').read_bytes()).hexdigest()
+def mode_lines(text):
+    return [line for line in text.splitlines() if 'working mode:' in line.casefold()]
+
+
+def private(project, path):
+    """PATH resolved, only inside the project's .myagentkit/ or the temporary folder (outside the
+    project): /mode runs this helper unprompted, so a STATE operation reads and writes no other
+    file, and a prepared copy never lands where `git add -A` commits it."""
+    path = path.resolve()
+    temporary = Path(tempfile.gettempdir()).resolve()
+    if path.is_relative_to(project / '.myagentkit') or (path.is_relative_to(temporary)
+                                                       and not path.is_relative_to(project)):
+        return path
+    raise ValueError('a prepared STATE.md file lives in .myagentkit/ or the temporary folder: ' + str(path))
+
+
+def read_state(project, out):
+    """Write STATE's exact bytes to OUT and return their sha256: one read names the bytes the
+    writer edits, where a separate hash let a copy read earlier pass over a later edit."""
+    data = checked(project, 'docs/STATE.md').read_bytes()
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_bytes(data)
+    return hashlib.sha256(data).hexdigest()
 
 
 def replace_state(project, source, expected):
-    """Publish a prepared STATE edit only if its snapshot still matches under the switch lock."""
+    """Publish an edited snapshot only if STATE still matches it under the switch lock, then
+    delete the snapshot. Its Working mode line stays the mode switch's."""
     with switch_lock(project):
         state = checked(project, 'docs/STATE.md')
-        actual = hashlib.sha256(state.read_bytes()).hexdigest()
+        current = state.read_bytes()
+        actual = hashlib.sha256(current).hexdigest()
         if actual != expected.lower():
             raise ValueError('STATE.md sha256 mismatch: expected ' + expected + ', current ' + actual
-                             + '; re-read STATE.md and its sha, redo the edit, and retry')
-        pending = prepared(state, source.read_bytes())
+                             + '; read it again with --read-state, redo the edit in that snapshot, and retry')
+        data = source.read_bytes()
+        if mode_lines(data.decode('utf-8')) != mode_lines(current.decode('utf-8')):
+            raise ValueError('the edit changes the Working mode line of STATE.md; only a mode switch '
+                             '(working_mode.py NAME) changes it, together with .claude/mode')
+        pending = prepared(state, data)
         try:
             os.replace(pending, state)
         finally:
             pending.unlink(missing_ok=True)
+    with suppress(OSError):
+        source.unlink()  # published; a copy that cannot go is in a private folder
 
 
 def mode(project, choice=None):
@@ -122,7 +150,7 @@ def working_mode(project, section, rows, choice=None):
     state_bytes = state_path.read_bytes()
     state = state_bytes.decode('utf-8')
     matches = list(STATE_LINE.finditer(state))
-    mentions = [line for line in state.splitlines() if 'working mode:' in line.casefold()]
+    mentions = mode_lines(state)
     if len(mentions) > 1:
         raise ValueError('STATE.md has more than one Working mode line')
     if mentions and not matches:
@@ -192,11 +220,14 @@ def main():
     parser.add_argument('name', nargs='?')
     parser.add_argument('--project', type=Path, default=Path.cwd())
     operations = parser.add_mutually_exclusive_group()
-    operations.add_argument('--state-sha', action='store_true', help='print the current STATE.md sha256 without writing')
-    operations.add_argument('--replace-state', type=Path, metavar='FILE', help='atomically publish a prepared STATE.md edit')
-    parser.add_argument('--expect', metavar='SHA256', help='the STATE.md sha256 read before preparing the edit')
+    operations.add_argument('--read-state', type=Path, metavar='OUT',
+                            help='write the STATE.md snapshot to OUT (in .myagentkit/ or the temporary folder) and print its sha256')
+    operations.add_argument('--replace-state', type=Path, metavar='FILE',
+                            help='atomically publish the edited snapshot FILE, then delete it')
+    parser.add_argument('--expect', metavar='SHA256', help='the sha256 --read-state printed for that snapshot')
     args = parser.parse_args()
-    if args.name is not None and (args.state_sha or args.replace_state is not None or args.expect is not None):
+    if args.name is not None and (args.read_state is not None or args.replace_state is not None
+                                  or args.expect is not None):
         parser.error('a mode name cannot be combined with STATE operations')
     if args.replace_state is not None:
         if args.expect is None or re.fullmatch(r'[0-9a-fA-F]{64}', args.expect) is None:
@@ -205,10 +236,12 @@ def main():
         parser.error('--expect requires --replace-state')
     try:
         project = args.project.resolve()
-        if args.state_sha:
-            print(state_sha(project))
+        if (args.read_state, args.replace_state) != (None, None) and project != Path.cwd().resolve():
+            raise ValueError('STATE operations run in the project root, without another --project')
+        if args.read_state is not None:
+            print(read_state(project, private(project, args.read_state)))
         elif args.replace_state is not None:
-            replace_state(project, args.replace_state, args.expect)
+            replace_state(project, private(project, args.replace_state), args.expect)
         else:
             mode(project, args.name)
     except (OSError, ValueError) as error:

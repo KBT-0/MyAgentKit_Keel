@@ -74,7 +74,8 @@ result is a project file, such as an operation file, that the lead commits with 
 Pass the custom result again on resume. The brief says to publish the question last, after
 independent work and jobs finish. Publish questions and finished results atomically: write a
 temporary file beside the destination, end with `<!-- codex-worker: ready -->`, then rename it
-into place.
+into place with `codex_worker.py --publish TEMPORARY_FILE DESTINATION`, as spawn's instruction
+names it: Windows refuses a rename over a file a poll holds open, and it retries for a moment.
 Publish the blocked result with this same protocol before publishing the question.
 End the turn immediately; the wrapper allows ten seconds to flush (overridden by
 `KIT_WORKER_GRACE`) before closing the worker's process tree. A question reaches the lead

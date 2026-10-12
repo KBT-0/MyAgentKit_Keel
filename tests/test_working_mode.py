@@ -30,9 +30,16 @@ class WorkingModeTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def run_mode(self, *args):
+    def run_mode(self, *args, cwd=None):
         return subprocess.run([sys.executable, '-X', 'utf8', str(SCRIPT), '--project', str(self.project), *args],
-                              capture_output=True, text=True, encoding='utf-8', timeout=15)
+                              capture_output=True, text=True, encoding='utf-8', timeout=15, cwd=cwd or self.project)
+
+    def snapshot(self, name='STATE.edit.md'):
+        """--read-state into the project's private folder: the snapshot's path and its sha256."""
+        path = self.project / '.myagentkit' / name
+        result = self.run_mode('--read-state', str(path))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return path, result.stdout.strip()
 
     def test_show_defaults_without_writing_and_lists_all_seven(self):
         before = self.state.read_bytes()
@@ -405,23 +412,87 @@ class WorkingModeTests(unittest.TestCase):
         self.assertNotIn('a Codex lead', result.stdout)
         self.assertIn('Claude leads in both saver modes', result.stdout)
 
-    def test_state_sha_hashes_exact_bytes_without_creating_a_lock(self):
+    def test_read_state_writes_the_snapshot_with_its_sha_without_a_lock(self):
         before = b'# State\r\nAn active task.\r\n'
         self.state.write_bytes(before)
-        result = self.run_mode('--state-sha')
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout.strip(), hashlib.sha256(before).hexdigest())
+        snapshot, sha = self.snapshot()
+        self.assertEqual(sha, hashlib.sha256(before).hexdigest())
+        self.assertEqual(snapshot.read_bytes(), before)
         self.assertEqual(self.state.read_bytes(), before)
         self.assertFalse((self.project / '.claude').exists())
 
+    def test_a_snapshot_read_before_a_concurrent_edit_is_refused_and_a_late_read_keeps_that_edit(self):
+        # Writer 1 read STATE at its session start; writer 2 then publishes Task B.
+        stale = self.state.read_bytes()
+        early, early_sha = self.snapshot('writer-1.md')
+        theirs, sha = self.snapshot('writer-2.md')
+        theirs.write_bytes(theirs.read_bytes() + b'Task B.\n')
+        self.assertEqual(self.run_mode('--replace-state', str(theirs), '--expect', sha).returncode, 0)
+        # No hash comes apart from its bytes: a stale copy hashed late cannot pass.
+        hashing = self.run_mode('--state-sha')
+        self.assertEqual(hashing.returncode, 2, hashing.stdout)
+        early.write_bytes(stale + b'Task C.\n')
+        refused = self.run_mode('--replace-state', str(early), '--expect', early_sha)
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn('STATE.md sha256 mismatch', refused.stderr)
+        self.assertIn(b'Task B.', self.state.read_bytes())
+        # Read late, the snapshot it edits already holds Task B.
+        late, late_sha = self.snapshot('writer-1.md')
+        late.write_bytes(late.read_bytes() + b'Task C.\n')
+        self.assertEqual(self.run_mode('--replace-state', str(late), '--expect', late_sha).returncode, 0)
+        self.assertEqual(self.state.read_bytes(), stale + b'Task B.\nTask C.\n')
+
+    def test_an_edit_that_changes_the_working_mode_line_is_refused(self):
+        self.assertEqual(self.run_mode('cross-performance').returncode, 0)
+        before = self.state.read_bytes()
+        for edited in (before.replace(b'cross-performance', b'claude-first'),
+                       b''.join(line for line in before.splitlines(True) if b'Working mode' not in line)):
+            with self.subTest(edited=edited):
+                snapshot, sha = self.snapshot()
+                snapshot.write_bytes(edited)
+                result = self.run_mode('--replace-state', str(snapshot), '--expect', sha)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('Working mode line', result.stderr)
+                self.assertIn('mode switch', result.stderr)
+                self.assertEqual(self.state.read_bytes(), before)
+        self.assertIn('Current mode: cross-performance', self.run_mode().stdout)
+
+    def test_state_operations_stay_in_the_project_and_its_private_folder(self):
+        before = self.state.read_bytes()
+        secret = self.project / 'secret.txt'
+        secret.write_bytes(b'not for STATE\n')
+        sha = hashlib.sha256(before).hexdigest()
+        outside = Path(self.tmp.name).resolve().parent
+        for args, cwd in ((('--replace-state', str(secret), '--expect', sha), None),
+                          (('--read-state', str(self.project / 'docs/copy.md')), None),
+                          (('--read-state', str(self.project / '.myagentkit/x.md')), outside)):
+            with self.subTest(args=args, cwd=cwd):
+                result = self.run_mode(*args, cwd=cwd)
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertIn('mode: ', result.stderr)
+                self.assertEqual(self.state.read_bytes(), before)
+        self.assertFalse((self.project / 'docs/copy.md').exists())
+        self.assertFalse((self.project / '.myagentkit/x.md').exists())
+        # A snapshot in the temporary folder outside the project works and is gone once published.
+        with tempfile.TemporaryDirectory() as folder:
+            snapshot = Path(folder) / 'STATE.edit.md'
+            read = self.run_mode('--read-state', str(snapshot))
+            self.assertEqual(read.returncode, 0, read.stderr)
+            snapshot.write_bytes(before + b'A new task.\n')
+            result = self.run_mode('--replace-state', str(snapshot), '--expect', read.stdout.strip())
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertFalse(snapshot.exists(), 'the published snapshot was left behind')
+        self.assertEqual(self.state.read_bytes(), before + b'A new task.\n')
+
     def test_state_cas_refuses_a_wrong_expectation_without_publishing(self):
         before = self.state.read_bytes()
-        proposed = self.project / 'replacement.md'
+        proposed = self.project / '.myagentkit/replacement.md'
+        proposed.parent.mkdir()
         proposed.write_bytes(b'A different task.\n')
         result = self.run_mode('--replace-state', str(proposed), '--expect', '0' * 64)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('STATE.md sha256 mismatch', result.stderr)
-        self.assertIn('re-read', result.stderr)
+        self.assertIn('--read-state', result.stderr)
         self.assertIn('retry', result.stderr)
         self.assertEqual(self.state.read_bytes(), before)
         self.assertEqual(proposed.read_bytes(), b'A different task.\n')
@@ -432,11 +503,12 @@ class WorkingModeTests(unittest.TestCase):
         self.state.chmod(0o666 if os.name == 'nt' else 0o640)
         permissions = stat.S_IMODE(self.state.stat().st_mode)
         before = self.state.read_bytes()
-        proposed = self.project / 'replacement.md'
+        proposed, sha = self.snapshot()
         proposed.write_bytes(before + b'A new active task.\r\n')
-        result = self.run_mode('--replace-state', str(proposed), '--expect', hashlib.sha256(before).hexdigest())
+        result = self.run_mode('--replace-state', str(proposed), '--expect', sha)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(self.state.read_bytes(), proposed.read_bytes())
+        self.assertEqual(self.state.read_bytes(), before + b'A new active task.\r\n')
+        self.assertFalse(proposed.exists())
         self.assertEqual(stat.S_IMODE(self.state.stat().st_mode), permissions)
         self.assertEqual(list(self.state.parent.glob('.STATE.md-*')), [])
         self.assertFalse((self.project / '.claude/mode').exists())
@@ -446,7 +518,8 @@ class WorkingModeTests(unittest.TestCase):
         spec = importlib.util.spec_from_file_location('working_mode', SCRIPT)
         worker = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(worker)
-        proposed = self.project / 'replacement.md'
+        proposed = self.project / '.myagentkit/replacement.md'
+        proposed.parent.mkdir()
         reading, replacing = Path.read_bytes, os.replace
         checks, refusals, snapshots = [], [], []
         def checked(path):
@@ -484,7 +557,7 @@ class WorkingModeTests(unittest.TestCase):
         proposed.write_bytes(current + b'An independent active task.\n')
         retry = self.run_mode('--replace-state', str(proposed), '--expect', hashlib.sha256(current).hexdigest())
         self.assertEqual(retry.returncode, 0, retry.stderr)
-        self.assertEqual(self.state.read_bytes(), proposed.read_bytes())
+        self.assertEqual(self.state.read_bytes(), current + b'An independent active task.\n')
         self.assertIn('Current mode: ' + ('cross-performance' if rollback else 'claude-first'),
                       self.run_mode().stdout)
 
@@ -498,7 +571,8 @@ class WorkingModeTests(unittest.TestCase):
         spec = importlib.util.spec_from_file_location('working_mode', SCRIPT)
         worker = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(worker)
-        proposed = self.project / 'replacement.md'
+        proposed = self.project / '.myagentkit/replacement.md'
+        proposed.parent.mkdir()
         before = self.state.read_bytes()
         proposed.write_bytes(before + b'An independent active task.\n')
         replace, attempts = os.replace, []
@@ -508,6 +582,7 @@ class WorkingModeTests(unittest.TestCase):
                 attempts.append(self.run_mode('claude-first'))
             replace(source, target)
         with mock.patch.object(worker.os, 'replace', publishing), \
+                mock.patch.object(worker.Path, 'cwd', return_value=self.project), \
                 mock.patch('sys.argv', [str(SCRIPT), '--project', str(self.project), '--replace-state',
                                         str(proposed), '--expect', hashlib.sha256(before).hexdigest()]):
             worker.main()

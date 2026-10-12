@@ -79,12 +79,20 @@ deletion checkable.
 The rules for `docs/STATE.md` are in `AGENTS.md`, "STATE.md discipline". This section keeps
 their reasons, so that the always-loaded files carry only the rules.
 
-For every authorized session edit, read STATE.md and its sha with
-`python scripts/working_mode.py --state-sha`. Prepare the new contents in a separate file.
-Run `python scripts/working_mode.py --replace-state FILE --expect SHA256` with the sha you read.
-On refusal, re-read STATE.md and its sha, redo the edit, and retry. Do not retry stale contents.
-The helper compares the bytes under the same lock as a mode switch, then replaces the file atomically.
-It preserves the file mode and runs no arbitrary command. Both publication and rollback can otherwise erase another writer's work.
+For every authorized session edit, run `python scripts/working_mode.py --read-state
+.myagentkit/STATE.edit.md` first: it writes the current snapshot there and prints its sha256,
+from one read. Edit that file, never a copy of STATE.md read earlier, then run
+`python scripts/working_mode.py --replace-state .myagentkit/STATE.edit.md --expect SHA256` with
+that sha. On refusal, run `--read-state` again, redo the edit there, and retry. Do not retry
+stale contents. A hash read apart from the bytes it names let a copy read at the session's start
+pass over an edit published in between. The helper compares the bytes under the same lock as a
+mode switch, then replaces the file atomically. It preserves the file mode, runs no arbitrary
+command, and deletes the published snapshot. Both publication and rollback can otherwise erase
+another writer's work. The STATE operations run from the project root without another
+`--project`, and read or write a snapshot only in `.myagentkit/` (ignored by Git) or the
+temporary folder: `/myagentkit:mode` runs the helper unprompted, so it copies no other file,
+and a snapshot never lands where `git add -A` commits it. An edit that changes or removes the
+"Working mode:" line is refused: the mode switch writes that line together with `.claude/mode`.
 The branch and worktree policy below still decides which session may edit STATE.md.
 
 - `docs/STATE.md` is read at the start of every session, in every tool, so its length is a
@@ -759,7 +767,9 @@ answer from {{OWNER_NAME}} and delivers it into the SAME session:
   `--result FILE` selects another `.md` result inside the worker's folder and `FILE.question.md`;
   the brief must use that spawn-time path, and it is passed again on resume. Publish a question
   or finished result atomically: write a temporary file beside it, end with
-  `<!-- codex-worker: ready -->`, then rename it into place and end the turn immediately.
+  `<!-- codex-worker: ready -->`, then rename it into place with `codex_worker.py --publish
+  TEMPORARY_FILE DESTINATION` (spawn's instruction names it), which retries for about two
+  seconds a rename Windows refuses while a poll reads the file, and end the turn immediately.
   `codex_worker.py` allows ten seconds for the turn to flush (`KIT_WORKER_GRACE` overrides
   the grace period), then closes only that worker's process tree, using a Windows job or
   an interactive POSIX process group. Windows children start suspended until assigned to

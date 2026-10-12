@@ -12,6 +12,14 @@ above this skill) with `--project <absolute project root>`. The helper records t
 name in `.claude/mode` and the "Working mode:" line of `docs/STATE.md`, detects disagreement
 on reads, and prints the canonical rules. Both records are shared across tools. Do not commit.
 
+Session edits of STATE.md follow `AGENTS.md`, "STATE.md discipline", in this order, from the
+project root: first `--read-state .myagentkit/STATE.edit.md` writes the snapshot there and
+prints its sha256; edit that file, never a copy read earlier; then publish it with
+`--replace-state .myagentkit/STATE.edit.md --expect SHA256`, which deletes it once published.
+On refusal, read it again, redo the edit, and retry. The helper refuses a `--project` other than
+the current folder, a snapshot outside `.myagentkit/` or the temporary folder, and an edit that
+changes the "Working mode:" line, which only a switch changes.
+
 If `docs/WORKFLOW.md` has no "Working modes, by name" section, the project predates the kit's
 v0.11. Say so, name the kit's `CHANGELOG.md` entry for v0.11, and stop.
 

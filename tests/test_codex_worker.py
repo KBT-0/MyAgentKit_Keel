@@ -1,5 +1,6 @@
 """A decision sidecar ends the interactive worker without losing its session."""
 from pathlib import Path
+import hashlib
 import importlib.util
 import io
 import os
@@ -8,6 +9,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from types import SimpleNamespace
 import unittest
@@ -769,8 +771,10 @@ class CodexWorkerTests(unittest.TestCase):
             os.replace(fresh, result)
             self.assertEqual(worker.result_kind(result, 0, reported)[0], 'HANDOFF', 'a renamed result was missed')
 
-    def test_publications_never_fail_while_two_pollers_watch_the_result(self):
+    def test_a_poller_opens_a_result_it_read_again_only_after_it_changed(self):
         # Windows refuses a rename over a file any process holds open, delete sharing included.
+        # Its stat still opens the file for a moment: the publisher's retry covers that
+        # (test_a_publication_retries_a_rename_windows_refuses_while_a_poll_holds_the_result).
         pollers = module(), module()
         with tempfile.TemporaryDirectory() as tmp:
             result, fresh = Path(tmp) / 'result.md', Path(tmp) / 'fresh.md'
@@ -904,6 +908,151 @@ class CodexWorkerTests(unittest.TestCase):
                 self.assertEqual(worker.watch(child, question, None, answered=worker.question_id(question)), 0)
             self.assertIn('exit 0 at ', record.read_text())
             self.assertTrue(question.exists())
+
+    def test_a_resumed_supervisor_publishes_its_live_record_while_a_waiter_probes_the_old_one(self):
+        worker = module()
+        with tempfile.TemporaryDirectory() as tmp:
+            record = Path(tmp) / 'w.exit'
+            live = record.with_suffix('.live')
+            live.write_bytes(b'4242\n')  # the previous run's record, which the lead's waiter opens
+            probe = worker.shared_open(live)  # as gone() opens it, delete sharing included
+            if os.name == 'nt':
+                other = Path(tmp) / 'other'
+                other.write_bytes(b'x')
+                with self.assertRaises(PermissionError):  # the refusal the startup waits through is real
+                    os.replace(other, live)
+            else:
+                sys.stderr.write('\nNOT RUN: %s (the Windows rename refusal)\n' % self.id())
+            closing = threading.Timer(.3, os.close, [probe])
+            closing.start()
+            try:
+                held = worker.start_live(record)
+            finally:
+                closing.join()
+            os.close(held)
+            self.assertEqual(live.read_bytes(), b'%d\n' % os.getpid())
+
+    def test_a_supervisor_that_fails_to_start_records_it_and_the_wait_ends(self):
+        worker = module()
+        with tempfile.TemporaryDirectory() as tmp:
+            result, record = Path(tmp) / 'result.md', Path(tmp) / 'w.exit'
+            live = record.with_suffix('.live')
+            live.write_bytes(b'4242\n')  # the previous run's, from before this run started
+            os.utime(live, (time.time() - 60, time.time() - 60))
+            since = str(time.time() - 1)
+            replacing = os.replace
+            def refused(source, target):
+                if Path(target) == live:
+                    raise PermissionError(13, 'held open by a waiter')  # every attempt
+                return replacing(source, target)
+            with mock.patch.dict(os.environ, KIT_WORKER_EXIT=str(record), KIT_WORKER_STARTED=since), \
+                    mock.patch.object(worker.os, 'replace', refused), mock.patch.object(worker.time, 'sleep'), \
+                    mock.patch('sys.argv', ['codex_worker.py', str(Path(tmp) / 'q.md'), str(result), '--', 'missing-cli']):
+                with self.assertRaises(PermissionError):
+                    worker.main()
+            self.assertIn('supervisor failed to start (PermissionError)', record.read_text())
+            # Without the record the wait hangs: the stale live record predates the run.
+            waiter = subprocess.run([sys.executable, str(SCRIPT), '--wait', str(result), '--since', since,
+                                     '--exit', str(record)], capture_output=True, text=True, timeout=10)
+            self.assertEqual(waiter.returncode, 0, waiter.stderr)
+            self.assertIn('EXITED (supervisor failed to start', waiter.stdout)
+
+    def test_a_publication_retries_a_rename_windows_refuses_while_a_poll_holds_the_result(self):
+        worker = module()
+        with tempfile.TemporaryDirectory() as tmp:
+            result, fresh = Path(tmp) / 'result.md', Path(tmp) / 'fresh.md'
+            result.write_text('Kind: progress\nTask: t\nAttempt: 1\nRemaining: x\n' + READY)
+            fresh.write_text('Kind: handoff\nTask: t\nAttempt: 2\nRemaining: review\n' + READY)
+            replacing, attempts = os.replace, []
+            def counted(source, target):
+                attempts.append(target)
+                return replacing(source, target)
+            poll = worker.shared_open(result)  # a stat or a read of the result, delete sharing included
+            closing = threading.Timer(.3, os.close, [poll])
+            closing.start()
+            try:
+                with mock.patch.object(worker.os, 'replace', counted):
+                    worker.renamed(fresh, result)
+            finally:
+                closing.join()
+            self.assertEqual(worker.result_kind(result)[0], 'HANDOFF')
+            if os.name == 'nt':
+                self.assertGreater(len(attempts), 1, 'the held result did not refuse the rename')
+            else:
+                sys.stderr.write('\nNOT RUN: %s (the Windows rename refusal)\n' % self.id())
+            # The worker's instruction runs the same step from its own shell.
+            fresh.write_text('Kind: completed\nTask: t\nAttempt: 3\nRemaining: none\n' + READY)
+            published = subprocess.run([sys.executable, str(SCRIPT), '--publish', str(fresh), str(result)],
+                                       capture_output=True, text=True, timeout=10)
+            self.assertEqual(published.returncode, 0, published.stderr)
+            self.assertFalse(fresh.exists())
+            self.assertEqual(module().result_kind(result)[0], 'DONE')
+
+    def test_an_unchanged_new_question_is_read_once_and_a_changed_one_again(self):
+        worker = module()
+        with tempfile.TemporaryDirectory() as tmp:
+            question = Path(tmp) / 'q.md'
+            question.write_text('A question still being written.')  # no end marker yet
+            polls = iter([None] * 10)
+            child = mock.Mock(returncode=0)
+            child.poll.side_effect = lambda: next(polls, 0)
+            reading, reads, sleeps = Path.read_text, [], []
+            def read(path, *args, **kwargs):
+                if path == question:
+                    reads.append(path)
+                return reading(path, *args, **kwargs)
+            def sleep(seconds):
+                sleeps.append(seconds)
+                if len(sleeps) == 5:
+                    question.write_text('A question.\n' + READY)
+            with mock.patch.dict(os.environ, KIT_WORKER_GRACE='0'), mock.patch.object(Path, 'read_text', read), \
+                    mock.patch.object(worker.time, 'sleep', sleep), mock.patch.object(worker, 'stop'), \
+                    mock.patch('sys.stdout', new=io.StringIO()) as output:
+                self.assertEqual(worker.watch(child, question, None), 0)
+            self.assertIn('decision recorded', output.getvalue())
+            self.assertEqual(len(reads), 2, 'an unchanged question was opened on every poll')
+
+    def test_a_lasting_windows_refusal_is_an_error_not_an_endless_wait(self):
+        worker = module()
+        with tempfile.TemporaryDirectory() as tmp:
+            result, question = Path(tmp) / 'result.md', Path(tmp) / 'q.md'
+            result.write_text('Kind: completed\nTask: t\nAttempt: 1\nRemaining: none\n' + READY)
+            question.write_text('A question.\n' + READY)
+            denied = PermissionError(13, 'Access is denied')  # an ACL denial, or a lock that stays
+            for read, path, refused in ((worker.result_kind, result, ('', None)), (worker.published, question, None)):
+                with self.subTest(read=read.__name__):
+                    with mock.patch.object(Path, 'open', side_effect=denied), \
+                            mock.patch.object(Path, 'read_text', side_effect=denied):
+                        if os.name != 'nt':
+                            with self.assertRaises(PermissionError):
+                                read(path)
+                            continue
+                        for _ in range(worker.REFUSALS - 1):
+                            self.assertEqual(read(path), refused)
+                    self.assertTrue(read(path))  # a read that succeeds starts the count again
+                    path.write_text(path.read_text() + '\n')  # changed, so a poll opens it again
+                    with mock.patch.object(Path, 'open', side_effect=denied), \
+                            mock.patch.object(Path, 'read_text', side_effect=denied):
+                        for _ in range(worker.REFUSALS):
+                            self.assertEqual(read(path), refused)
+                        with self.assertRaises(PermissionError, msg='a lasting refusal was waited on forever'):
+                            read(path)
+
+    def test_a_follow_up_printed_with_a_legacy_stale_id_compares_its_hash(self):
+        worker = module()
+        with tempfile.TemporaryDirectory() as tmp:
+            result, record = Path(tmp) / 'result.md', Path(tmp) / 'w.exit'
+            text = 'Kind: progress\nTask: t\nAttempt: 1\nRemaining: x\n' + READY
+            result.write_text(text)
+            record.write_text('exit 0\n')
+            # The INO:HASH form a follow-up printed before the content hash alone decided.
+            legacy = '%d:%s' % (result.stat().st_ino, hashlib.sha256(text.encode('utf-8')).hexdigest())
+            output = io.StringIO()
+            with mock.patch('sys.argv', [str(SCRIPT), '--wait', str(result), '--since', '0', '--stale', legacy,
+                                         '--exit', str(record)]), mock.patch('sys.stdout', output):
+                self.assertEqual(worker.main(), 0)
+            self.assertIn('EXITED', output.getvalue())
+            self.assertNotIn('PROGRESS', output.getvalue(), 'the reported result was reported again')
 
 
 if __name__ == '__main__':

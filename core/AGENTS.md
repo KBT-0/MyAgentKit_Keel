@@ -107,10 +107,13 @@ cost", and `docs/WORKFLOW.md`, "Review rounds".
 
 ### STATE.md discipline
 
-- Every authorized session edit uses `python scripts/working_mode.py --replace-state FILE --expect SHA256`.
-  Read `docs/STATE.md` and its sha with `--state-sha`, then prepare the new contents in a separate file.
-  On refusal, re-read STATE.md and its sha, redo the edit, and retry. Never publish the stale prepared contents.
-  This compare-and-swap shares the mode switch lock and preserves STATE.md's file mode.
+- Every authorized session edit is a compare-and-swap, in this order, from the project root:
+  `python scripts/working_mode.py --read-state .myagentkit/STATE.edit.md` writes the current
+  snapshot there and prints its sha256; edit that file, never a copy read earlier; then
+  `python scripts/working_mode.py --replace-state .myagentkit/STATE.edit.md --expect SHA256`.
+  The file lives in `.myagentkit/` (ignored) or the temporary folder, and the helper deletes it
+  once published. On refusal, run `--read-state` again, redo the edit there, and retry. The
+  "Working mode:" line belongs to the mode switch: an edit that changes it is refused.
 - `docs/STATE.md` is TRANSIENT: current state only — what is in flight and what waits on
   someone.
 - A next task or a parked item is written to `docs/BACKLOG.md`, never to STATE.md.

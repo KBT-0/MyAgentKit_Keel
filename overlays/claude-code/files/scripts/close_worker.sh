@@ -99,7 +99,11 @@ try:
                     os.unlink(target)
                     raise
             else:
-                os.unlink(source)
+                try:
+                    os.unlink(source)
+                except OSError:
+                    os.unlink(target)  # the claim this link made: a retried close must not archive the report twice
+                    raise
         elif error:
             raise OSError(error, os.strerror(error))
 except FileExistsError:

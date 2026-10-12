@@ -80,6 +80,23 @@ class CloseWorkerOnWindows(unittest.TestCase):
                 self.assertEqual(target.read_text(), 'the report\n')
                 self.assertFalse(source.exists())
 
+    def test_a_linked_claim_whose_source_cannot_go_is_taken_back(self):
+        # The hard-link fallback is two steps: a source that cannot be unlinked (a read-only
+        # folder) leaves the report under one name, never under both for a retry to archive twice.
+        stuck = ('import sys\nunlinking = os.unlink\ndef unlink(path, *args, **kwargs):\n'
+                 '    if path == sys.argv[1]:\n        raise PermissionError(errno.EACCES, "read-only folder")\n'
+                 '    unlinking(path, *args, **kwargs)\nos.unlink = unlink\n')
+        with tempfile.TemporaryDirectory() as tmp:
+            source, target = Path(tmp) / 'RESULT-w.md', Path(tmp) / 'w.result.md'
+            source.write_text('the report\n')
+            move = [sys.executable, '-I', '-c', NO_EXCLUSIVE_RENAME % ('EINVAL', True) + stuck + move_report(),
+                    str(source), str(target)]
+            moved = subprocess.run(move, capture_output=True, timeout=10)
+            self.assertEqual(moved.returncode, 1, moved.stderr)
+            self.assertRegex(moved.stderr, rb'^\[Errno \d+\] read-only folder')
+            self.assertEqual(source.read_text(), 'the report\n')
+            self.assertFalse(target.exists(), 'the report was left under both names')
+
     def test_a_failed_archive_move_prints_only_its_errno_and_text(self):
         with tempfile.TemporaryDirectory() as tmp:
             # An escape sequence in the path: Windows refuses such a name, POSIX finds none.

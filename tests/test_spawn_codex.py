@@ -24,7 +24,9 @@ INSTRUCTION = ("Read %s and follow it. The brief carries its Route: quick|build|
                "· Checks: ... line; run the checks it names. Write your result to %s. Leave all work uncommitted and ready for the lead; "
                "list the exact changed and added files in the result. The lead reviews the diff through the normal "
                "cross-review, then commits with the usual commit gate. Publish a finished result atomically: write a "
-               "temporary file beside it, end with <!-- codex-worker: ready -->, then rename it to the result path. "
+               "temporary file beside it, end with <!-- codex-worker: ready -->, then rename it to the result path "
+               "with %s --publish TEMPORARY_FILE DESTINATION, which retries a rename Windows refuses while a poll "
+               "reads the file. "
                "If a decision is needed, finish independent work "
                "and stop all jobs first, then write Kind: blocked and QUESTIONS in the result; "
                "publish the blocked result atomically using the same temporary-file, end-marker and rename protocol "
@@ -113,6 +115,11 @@ class SpawnCodexTests(unittest.TestCase):
         return subprocess.run(['sh', str(SCRIPT), *args], cwd=self.repo, env=env,
                               capture_output=True, text=True, timeout=60)
 
+    def publisher(self, stdout):
+        """The interpreter and codex_worker.py as spawn names them, read from its printed wait command."""
+        line = next(l for l in stdout.splitlines() if 'for the uncommitted handoff: ' in l)
+        return line.partition('for the uncommitted handoff: ')[2].partition(' --wait ')[0]
+
     def runs(self):
         path = self.state / 'codex.log'
         return [json.loads(l) for l in path.read_text().splitlines()] if path.exists() else []
@@ -123,7 +130,8 @@ class SpawnCodexTests(unittest.TestCase):
         tree = self.repo / '.claude/worktrees/w1'
         (run,) = self.runs()
         # Git metadata remains read-only even with --add-dir (issue #43); the lead commits.
-        self.assertEqual(run['argv'], [INSTRUCTION % tuple(shq(self.win(p, '-m')) for p in (self.brief, tree / 'RESULT-w1.md', tree / 'QUESTION-w1.md')), '-m', 'gpt-x', '-c', 'model_reasoning_effort=high', '-s', 'workspace-write',
+        brief, cresult, cquestion = (shq(self.win(p, '-m')) for p in (self.brief, tree / 'RESULT-w1.md', tree / 'QUESTION-w1.md'))
+        self.assertEqual(run['argv'], [INSTRUCTION % (brief, cresult, self.publisher(result.stdout), cquestion), '-m', 'gpt-x', '-c', 'model_reasoning_effort=high', '-s', 'workspace-write',
                                        '-a', 'never', '--no-daemon', '-C', self.win(tree)])
         self.assertEqual(Path(run['cwd']).resolve(), tree.resolve())
         branch = subprocess.run(['git', '-C', str(tree), 'branch', '--show-current'], capture_output=True, text=True)
@@ -204,7 +212,8 @@ class SpawnCodexTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("'new-session', '-d', '-s', 'w6'", (self.state / 'tmux.log').read_text())
         run = self.runs()[0]
-        self.assertEqual(run['argv'][0], INSTRUCTION % tuple(shq(str(p)) for p in (self.brief, self.repo / 'RESULT-w6.md', self.repo / 'QUESTION-w6.md')))
+        self.assertEqual(run['argv'][0], INSTRUCTION % (shq(str(self.brief)), shq(str(self.repo / 'RESULT-w6.md')),
+                                                        self.publisher(result.stdout), shq(str(self.repo / 'QUESTION-w6.md'))))
         self.assertEqual(run['argv'][-2:], ['-C', str(self.repo)])
         self.assertEqual((self.repo / '.myagentkit/workers/w6.session').read_text().strip(), 'sess-0')
         # A tmux session of that name still running is never resumed beside.
