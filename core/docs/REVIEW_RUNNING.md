@@ -97,7 +97,9 @@ only for parts the reviewing model did not write (`docs/REVIEW_GATE.md`, "What c
 The reviewing model fixes its own findings; only the other model's next round accepts that fix.
 
 **The final Accept requires one fresh NEW-label final review per model once both models have written parts of the change.**
-Each reviews the parts it did not write. The change closes when both return without a High or Medium finding.
+Each reviews the parts it did not write. The change closes when both return without a High or Medium finding;
+when model B's final review finds a High or Medium, B fixes its own findings and model A reviews B's fix
+under a fresh label; B's final counts as clean for every other part.
 If only one model wrote the change, one fresh NEW-label final review by the other model closes it.
 Carried rounds and dispositions help the loop converge, but they also steer the reviewer toward what was
 already said. When the rounds under one label stop finding anything, run the final reviews
@@ -255,7 +257,10 @@ deferred one stays open under Manual checks), and ask which are fixed before rev
 whole cumulative diff for context. Your verdict counts only for parts you did not write;
 your last fix round is accepted only by the other model's next round. Once both models have
 written parts, closure requires one fresh NEW-label final review per model over parts it
-did not write. The change closes when both return without a High or Medium finding. If only
+did not write. The change closes when both return without a High or Medium finding. When model
+B's final review finds a High or Medium, model B fixes its own findings and model A reviews B's
+fix under a fresh label; B's final review counts as clean for every other part, and closure
+requires no open High or Medium finding on any part by a model that did not write that part. If only
 one model wrote the change, one fresh NEW-label final review by the other model closes it. Finish with a line
 "VERDICT: Accept" / "VERDICT: Accept with Manual Checks" / "VERDICT: Reject", followed by
 any manual checks written as full sentences ready to paste into docs/STATE.md.

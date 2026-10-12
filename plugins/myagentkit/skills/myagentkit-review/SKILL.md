@@ -51,7 +51,10 @@ same stable task label across rounds: earlier completed reviews with that label 
 into the next round's prompt, and `REVIEW_DISPOSITIONS=<file>` adds your answer to each
 finding as a claim the reviewer verifies. Once both models have written parts, the final
 Accept requires one fresh NEW-label final review per model over parts it did not write.
-The change closes when both return without a High or Medium finding. If only one model
+The change closes when both return without a High or Medium finding. When model B's final
+review finds a High or Medium, model B fixes its own findings and model A reviews B's fix under
+a fresh label; B's final review counts as clean for every other part, and closure requires no
+open High or Medium finding on any part by a model that did not write that part. If only one model
 wrote the change, one fresh NEW-label final review by the other model closes it.
 Environment overrides `REVIEW_CLAUDE_MODEL` and
 `REVIEW_CODEX_MODEL` are supported by both entry points. Missing primary pins stop before

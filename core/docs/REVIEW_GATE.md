@@ -43,6 +43,9 @@ accepted only by the other model's next round. The reviewer never changes the ch
 its review run. No model approves its own work. Once both models have written parts of a
 change, closure requires one fresh NEW-label final review per model, each over parts it
 did not write. The change closes when both return without a High or Medium finding.
+When model B's final review finds a High or Medium, model B fixes its own findings and model A
+reviews B's fix under a fresh label; B's final review counts as clean for every other part, and
+closure requires no open High or Medium finding on any part by a model that did not write that part.
 If only one model wrote the change, one fresh NEW-label final review by the other model closes it.
 An existing local commit without review is still unreviewed work, not an exception that
 moves this gate to push time.

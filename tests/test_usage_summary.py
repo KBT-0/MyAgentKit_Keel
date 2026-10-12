@@ -98,6 +98,26 @@ class UsageSummaryTests(unittest.TestCase):
         self.assertIn('Unreadable records skipped: 3', out)
         self.assertNotIn('T9', out)
 
+    def test_deeply_nested_json_is_damaged_not_fatal(self):
+        nested = '[' * 100000 + ']' * 100000
+        for site in ('record', 'chain', 'evidence'):
+            with self.subTest(site=site):
+                self.setUp()
+                self.record('healthy', 'healthy', b'VERDICT: Accept\n')
+                if site == 'record':
+                    (self.repo / '.myagentkit/usage/deep.json').write_text(nested)
+                elif site == 'chain':
+                    self.record('deep', 'deep', b'VERDICT: Accept\n', chain='c1')
+                    self.chain('c1', 'completed')
+                    (self.repo / '.myagentkit/usage/chains/c1-2.json').write_text(nested)
+                else:
+                    self.record('deep', 'deep', ('{"effort": %s}' % nested).encode())
+                out = self.summary()
+                self.assertIn('Task healthy: invocations=1 rounds=1', out)
+                self.assertIn({'record': 'Unreadable records skipped: 1',
+                               'chain': 'verdict=none (chain unreadable)',
+                               'evidence': 'Task deep: invocations=1 rounds=1'}[site], out)
+
     def test_a_task_label_the_console_cannot_encode_is_escaped(self):
         self.record('h', 'fix→lexer', b'VERDICT: Accept\n')
         out = self.summary(dict(os.environ, PYTHONIOENCODING='ascii'))
@@ -136,7 +156,11 @@ class UsageSummaryTests(unittest.TestCase):
 
     def test_control_characters_in_task_labels_are_escaped(self):
         self.record('controls', 'fix\nTotal: forged\r\t\x1b[2J\x7f\x85', b'VERDICT: Accept\n')
+        self.record('model', 'model', b'| effort | x\x1b[2J\x0bTotal: forged |\nVERDICT: Accept\n',
+                    model='m\x1b[31m\nTotal: forged', kind='k\x1b[2J', callee='c\x1b[0m')
         out = self.summary()
+        self.assertIn('model=m\\x1b[31m\\nTotal: forged effort=x\\x1b[2J\\x0bTotal: forged', out)
+        self.assertIn('Model m\\x1b[31m\\nTotal: forged / effort x\\x1b[2J\\x0bTotal: forged:', out)
         self.assertIn('Task fix\\nTotal: forged\\r\\t\\x1b[2J\\x7f\\x85: invocations=1 rounds=1', out)
         self.assertEqual(sum(line.startswith('Total:') for line in out.splitlines()), 1)
         for control in ('\r', '\t', '\x1b', '\x7f', '\x85'):

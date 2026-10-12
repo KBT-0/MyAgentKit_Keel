@@ -49,7 +49,7 @@ def evidence_fields(repo, record):
     if content.lstrip().startswith('{'):
         try:
             proposal = json.loads(content)
-        except ValueError:
+        except Exception:  # RecursionError on deep nesting is damage too
             proposal = None
         if isinstance(proposal, dict) and isinstance(proposal.get('effort'), str):
             effort = proposal['effort']
@@ -77,10 +77,16 @@ def chain_status(usage, chain_id, cache):
                             and not isinstance(chain['failure_kind'], str))):
                     raise ValueError('invalid chain fields')
                 status = '%s/%s' % (chain['status'], chain.get('failure_kind') or '-')
-            except (OSError, ValueError, TypeError, KeyError):
+            except Exception:  # RecursionError on deep nesting is damage too
                 status = 'unreadable'
         cache[chain_id] = status
     return cache[chain_id]
+
+
+def printable(value):
+    """Escape control characters so a recorded value cannot rewrite or forge terminal lines."""
+    return ''.join(char if char == ' ' or char.isprintable()
+                   else char.encode('unicode_escape').decode('ascii') for char in str(value))
 
 
 def totals(rows):
@@ -103,7 +109,7 @@ def main():
     for path in usage.glob('*.json'):
         try:
             record = json.loads(path.read_text(encoding='utf-8'))
-        except (OSError, ValueError):
+        except Exception:  # RecursionError on deep nesting is damage too
             record = None
         if not valid_record(record):
             unreadable += 1
@@ -126,21 +132,21 @@ def main():
     tasks, groups = defaultdict(list), defaultdict(list)
     for record in rows:
         tasks[str(record['task'].get('id') or 'unknown')].append(record)
-        groups[f'Model {record.get("model_requested", "unknown")} / effort {record["effort"]}'].append(record)
+        groups[f'Model {printable(record.get("model_requested", "unknown"))}'
+               f' / effort {printable(record["effort"])}'].append(record)
     for task, records in sorted(tasks.items()):
-        task = ''.join(char if char == ' ' or char.isprintable()
-                       else char.encode('unicode_escape').decode('ascii') for char in task)
-        print(f'Task {task}: {totals(records)}')
+        print(f'Task {printable(task)}: {totals(records)}')
         number = 0
         for record in records:
             number += record['round']
             duration = record.get('duration_ms')
             duration = f'{duration / 1000:.3f}s' if isinstance(duration, (int, float)) else 'unknown'
-            verdict = record['verdict'] or f'none ({record["why"] or "no verdict line"})'
+            verdict = record['verdict'] or f'none ({printable(record["why"] or "no verdict line")})'
             print(f'  {f"round={number}" if record["round"] else "not a round"}'
-                  f' kind={record["task"].get("kind", "unknown")} callee={record.get("callee", "unknown")}'
-                  f' model={record.get("model_requested", "unknown")} effort={record["effort"]}'
-                  f' verdict={verdict} duration={duration}')
+                  f' kind={printable(record["task"].get("kind", "unknown"))}'
+                  f' callee={printable(record.get("callee", "unknown"))}'
+                  f' model={printable(record.get("model_requested", "unknown"))}'
+                  f' effort={printable(record["effort"])} verdict={verdict} duration={duration}')
     if rows:
         print(f'Total: {totals(rows)}')
     for group, records in sorted(groups.items()):
