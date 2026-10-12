@@ -232,7 +232,6 @@ case "$session_wait" in ""|*[!0-9]*) die "KIT_SESSION_WAIT must be seconds" ;; e
 if [ -n "$windows" ]; then
   pids=$(running) || die "cannot list the Codex processes to check '$name': $pids"
   [ -z "$pids" ] || die "a Codex session already runs in $cdir (process $pids); a session is resumed or replaced only after it ended: quit it in its tab (/quit)"
-  [ -z "$resume" ] || rm -f -- "$question"
   wt=${KIT_WT:-wt.exe}
   command -v "$wt" >/dev/null || die "Windows Terminal ($wt) is not on PATH; start the worker by hand: $cmd"
   bash=$(command -v bash) || die "bash is not on PATH"
@@ -241,7 +240,7 @@ if [ -n "$windows" ]; then
   tab=$(mktemp) || die "cannot write the tab's script"
   printf '%s\n' 'rm -f -- "$0"' "cd $(q "$dir") || exit 1" \
     'began=$(date +%s)' \
-    "KIT_WORKER_STARTED=$(q "$start") KIT_WORKER_STALE=$(q "$stale") KIT_WORKER_EXIT=$(q "$cexited") $kit_python $(q "$cworker") $(q "$cquestion") $(q "$cresult") -- $(q "$bash") -c $(q "exec $cmd")" \
+    "KIT_WORKER_STARTED=$(q "$start") KIT_WORKER_STALE=$(q "$stale") KIT_WORKER_EXIT=$(q "$cexited") KIT_WORKER_RESUME=$(q "$resume") $kit_python $(q "$cworker") $(q "$cquestion") $(q "$cresult") -- $(q "$bash") -c $(q "exec $cmd")" \
     's=$?; if [ "$s" -ne 0 ] && [ "$(( $(date +%s) - began ))" -lt 10 ]; then printf "codex ended at once (exit %s); press Enter to close\\n" "$s"; read -r ignored; fi' \
     'exit 0' > "$tab" || die "cannot write the tab's script: $tab"
   spawn_launched=1
@@ -249,10 +248,9 @@ if [ -n "$windows" ]; then
     { spawn_launched=""; rm -f -- "$tab"; die "$wt could not open a tab for '$name'"; }
   where="in a Windows Terminal tab; watch it there"; view=tab
 else
-  [ -z "$resume" ] || rm -f -- "$question"
   # `cd` first: tmux hands a new session the PWD of whichever client last created one.
   spawn_launched=1
-  tmux new-session -d -s "$name" -c "$dir" -x 200 -y 50 "cd $(q "$dir") && export KIT_WORKER_STARTED=$(q "$start") KIT_WORKER_STALE=$(q "$stale") KIT_WORKER_EXIT=$(q "$exited") && exec $kit_python $(q "$cworker") $(q "$cquestion") $(q "$cresult") -- sh -c $(q "exec $cmd")" ||
+  tmux new-session -d -s "$name" -c "$dir" -x 200 -y 50 "cd $(q "$dir") && export KIT_WORKER_STARTED=$(q "$start") KIT_WORKER_STALE=$(q "$stale") KIT_WORKER_EXIT=$(q "$exited") KIT_WORKER_RESUME=$(q "$resume") && exec $kit_python $(q "$cworker") $(q "$cquestion") $(q "$cresult") -- sh -c $(q "exec $cmd")" ||
     { spawn_launched=""; die "tmux could not start '$name'"; }
   where="(tmux attach -t $name to watch)"; view="tmux session"
 fi

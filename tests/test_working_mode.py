@@ -230,6 +230,88 @@ class WorkingModeTests(unittest.TestCase):
         self.assertEqual(self.state.read_bytes(), concurrent[0])
         self.assertIn('disagree', self.run_mode().stderr)
 
+    def test_state_writers_share_the_switch_lock_after_both_comparisons(self):
+        self.assertEqual(self.run_mode('cross-performance').returncode, 0)
+        spec = importlib.util.spec_from_file_location('working_mode', SCRIPT)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        read = Path.read_bytes
+        attempts = []
+        reads = []
+        command = ('from pathlib import Path; p=Path(%r); '
+                   'p.write_bytes(p.read_bytes()+b"An independently added task.\\n")') % str(self.state)
+        def interrupted(path):
+            data = read(path)
+            if path == self.state:
+                reads.append(data)
+                if len(reads) >= 2:
+                    attempts.append(self.run_mode('--edit-state', sys.executable, '-c', command))
+            return data
+        replace = os.replace
+        def failed(source, target):
+            if target.name == 'mode':
+                raise OSError('record replacement failed')
+            replace(source, target)
+        with mock.patch.object(Path, 'read_bytes', interrupted), \
+                mock.patch.object(module.os, 'replace', side_effect=failed):
+            with self.assertRaises(OSError):
+                module.mode(self.project, 'claude-first')
+        self.assertGreaterEqual(len(attempts), 2, 'both comparison windows must be exercised')
+        for attempt in attempts:
+            self.assertNotEqual(attempt.returncode, 0)
+            self.assertIn('mode switch in progress', attempt.stderr)
+        edited = self.run_mode('--edit-state', sys.executable, '-c', command)
+        self.assertEqual(edited.returncode, 0, edited.stderr)
+        self.assertIn('An independently added task.', self.state.read_text())
+        self.assertIn('Current mode: cross-performance', self.run_mode().stdout)
+
+    def test_rollback_cancellation_never_truncates_state(self):
+        self.assertEqual(self.run_mode('cross-performance').returncode, 0)
+        spec = importlib.util.spec_from_file_location('working_mode', SCRIPT)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        before = self.state.read_bytes()
+        replace, opening = os.replace, Path.open
+        published = []
+        def interrupted(source, target):
+            if target.name == 'mode':
+                raise OSError('record replacement failed')
+            if target == self.state and published:
+                raise KeyboardInterrupt()  # cancel before an atomic rollback publication
+            replace(source, target)
+            if target == self.state:
+                published.append(self.state.read_bytes())
+        def cancelled_open(path, mode='r', *args, **kwargs):
+            handle = opening(path, mode, *args, **kwargs)
+            if path == self.state and mode == 'wb':
+                handle.close()  # the old rollback has already truncated STATE
+                raise KeyboardInterrupt()
+            return handle
+        with mock.patch.object(module.os, 'replace', side_effect=interrupted), \
+                mock.patch.object(Path, 'open', cancelled_open):
+            with self.assertRaises(KeyboardInterrupt):
+                module.mode(self.project, 'claude-first')
+        self.assertEqual(self.state.read_bytes(), published[0])
+        self.assertIn(b'Active work stays here.', self.state.read_bytes())
+        self.assertNotEqual(self.state.read_bytes(), before)
+        self.assertIn('disagree', self.run_mode().stderr)
+        self.assertEqual(self.run_mode('codex-first').returncode, 0)
+
+    def test_state_editor_holds_the_lock_and_propagates_its_exit_status(self):
+        self.assertEqual(self.run_mode('cross-performance').returncode, 0)
+        command = ('import subprocess,sys; from pathlib import Path; '
+                   'p=Path(%r); before=p.read_bytes(); '
+                   'r=subprocess.run([sys.executable,%r,"--project",%r,"claude-first"],'
+                   'capture_output=True,text=True); sys.stderr.write(r.stderr); '
+                   'p.write_bytes(before+b"Another active task.\\n"); sys.exit(7)') % (
+                       str(self.state), str(SCRIPT), str(self.project))
+        result = self.run_mode('--edit-state', sys.executable, '-c', command)
+        self.assertEqual(result.returncode, 7, result.stderr)
+        self.assertIn('mode switch in progress', result.stderr)
+        self.assertIn('Another active task.', self.state.read_text())
+        self.assertIn('Current mode: cross-performance', self.run_mode().stdout)
+        self.assertEqual(self.run_mode('claude-first').returncode, 0, 'the editor kept its lock')
+
     def test_project_root_and_ancestor_links_are_refused_before_lock_creation(self):
         link = self.project / 'linked-project'
         if os.name == 'nt':

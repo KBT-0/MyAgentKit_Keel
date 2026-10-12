@@ -518,6 +518,41 @@ p.write_text(p.read_text().replace('Kind: blocked', 'Kind: completed'))
                 resumed = self.spawn(name, str(self.brief), *args, *extra, '--resume')
                 self.assertEqual(resumed.returncode, 0, resumed.stdout + resumed.stderr)
 
+    def test_failed_resume_launch_preserves_the_unanswered_decision(self):
+        if WINDOWS:
+            # Native helpers keep this launch-failure test independent of MSYS mkdir's
+            # sandbox-denied ancestor probes and the inaccessible WindowsApps aliases.
+            python = shq(sys.executable.replace('\\', '/'))
+            for name in ('python', 'python3'):
+                (self.bin / name).write_text('#!/bin/sh\nexec ' + python + ' "$@"\n', newline='\n')
+            mkdir = ('import pathlib,sys; a=sys.argv[1:]; '
+                     '[pathlib.Path(p).mkdir(parents="-p" in a,exist_ok="-p" in a) '
+                     'for p in a if p not in ("-p","--")]')
+            (self.bin / 'mkdir').write_text('#!/bin/sh\nexec ' + python + ' -c ' + shq(mkdir) + ' "$@"\n', newline='\n')
+        for posix in (False, True):
+            with self.subTest(posix=posix):
+                name = 'failed-posix' if posix else 'failed-tab'
+                record = self.repo / ('.myagentkit/workers/%s.session' % name)
+                record.parent.mkdir(parents=True, exist_ok=True)
+                record.write_text('saved-session\n')
+                question = self.repo / ('QUESTION-%s.md' % name)
+                before = b'Choose A or B.\n<!-- codex-worker: ready -->'
+                question.write_bytes(before)
+                launcher = self.bin / ('tmux' if posix else 'wt-tab')
+                launcher.write_text('#!/bin/sh\nexit 1\n', newline='\n')
+                result = self.spawn(name, str(self.brief), '--model', 'm', '--effort', 'high',
+                                    '--resume', tmux=posix)
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn('could not', result.stderr)
+                self.assertEqual(self.runs(), [])
+                self.assertTrue(question.exists(), 'a failed launch consumed its unanswered decision')
+                self.assertEqual(question.read_bytes(), before)
+                self.assertEqual(record.read_text().strip(), 'saved-session')
+                closed = self.close(name)
+                self.assertEqual(closed.returncode, 1, closed.stdout + closed.stderr)
+                self.assertIn('a decision waits for its answer', closed.stdout)
+                self.assertTrue(record.exists(), 'a failed resume lost its closure evidence')
+
 
 if __name__ == '__main__':
     unittest.main()

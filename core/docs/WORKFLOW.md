@@ -430,6 +430,11 @@ line of `docs/STATE.md` and the small `.claude/mode` file name the mode in force
 the rest of STATE.md. Reads refuse disagreeing records; an explicit owner choice repairs
 them. A project without either record works in **cross-performance**, the main mode.
 
+Every STATE writer runs through `python scripts/working_mode.py --edit-state COMMAND...`.
+The editor command reads, changes and publishes STATE.md while holding the mode switch lock.
+If another writer holds the lock, retry the whole command after it ends, including its read.
+Never prepare an edit from a snapshot read before acquiring the lock.
+
 Without names, the owner explained the same situation in a long prompt at the start of every
 session ("Claude is low today, let Codex write and fix"), and a lead that was not told routed
 by habit: one Opus lead routed no implementation to Codex and spent five Opus sessions on

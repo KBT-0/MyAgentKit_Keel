@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import shutil
 import stat
+import subprocess
 import sys
 import tempfile
 
@@ -137,6 +138,7 @@ def working_mode(project, choice=None):
     try:
         pending.append(prepared(state_path, updated_bytes))
         pending.append(prepared(record, (selected + '\n').encode('utf-8')))
+        pending.append(prepared(state_path, state_bytes))
         if state_path.read_bytes() != state_bytes:
             raise ValueError('STATE.md changed during the mode switch; retry with the current document')
         os.replace(pending[0], state_path)
@@ -144,7 +146,7 @@ def working_mode(project, choice=None):
             os.replace(pending[1], record)
         except OSError:
             if state_path.read_bytes() == updated_bytes:
-                state_path.write_bytes(state_bytes)
+                os.replace(pending[2], state_path)
             raise
     finally:
         for path in pending:
@@ -157,12 +159,19 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('name', nargs='?')
     parser.add_argument('--project', type=Path, default=Path.cwd())
+    parser.add_argument('--edit-state', nargs=argparse.REMAINDER,
+                        help='run a STATE editor under the mode switch lock, including its initial read')
     args = parser.parse_args()
+    if args.edit_state is not None and (not args.edit_state or args.name):
+        parser.error('--edit-state needs an editor command and cannot select a mode')
     try:
+        if args.edit_state is not None:
+            with switch_lock(args.project.absolute()):
+                return subprocess.call(args.edit_state, cwd=args.project.absolute())
         mode(args.project.absolute(), args.name)
     except (OSError, ValueError) as error:
         parser.exit(1, 'mode: ' + str(error) + '\n')
 
 
 if __name__ == '__main__':
-    main()
+    raise SystemExit(main())

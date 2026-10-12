@@ -410,6 +410,91 @@ class CodexWorkerTests(unittest.TestCase):
             self.assertEqual(result.returncode, 7, result.stderr)
             self.assertFalse(question.exists())
 
+    def test_resume_keeps_the_question_when_the_child_fails_to_start(self):
+        worker = module()
+        with tempfile.TemporaryDirectory() as tmp:
+            question = Path(tmp) / 'q.md'
+            before = b'Choose A or B.\n<!-- codex-worker: ready -->'
+            question.write_bytes(before)
+            with mock.patch.dict(os.environ, KIT_WORKER_RESUME='1'), \
+                    mock.patch.object(worker, 'os', SimpleNamespace(name='nt', environ=os.environ)), \
+                    mock.patch.object(worker, 'windows_child', side_effect=OSError('launch failed')) as launch, \
+                    mock.patch('sys.argv', ['codex_worker.py', str(question), '--', 'missing-cli']):
+                with self.assertRaisesRegex(OSError, 'launch failed'):
+                    worker.main()
+            launch.assert_called_once()
+            self.assertEqual(question.read_bytes(), before)
+
+    def test_resume_consumes_the_old_question_only_after_success(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            question = Path(tmp) / 'q.md'
+            before = b'Choose A or B.\n<!-- codex-worker: ready -->'
+            for status in (7, 0):
+                with self.subTest(status=status):
+                    question.write_bytes(before)
+                    code = 'import time; time.sleep(.4); raise SystemExit(%d)' % status
+                    result = subprocess.run([sys.executable, str(SCRIPT), str(question), '--',
+                                             sys.executable, '-c', code], capture_output=True, text=True,
+                                            timeout=10, env=dict(os.environ, KIT_WORKER_GRACE='0',
+                                                                 KIT_WORKER_RESUME='1'))
+                    self.assertEqual(result.returncode, status, result.stderr)
+                    self.assertEqual(question.exists(), status != 0)
+                    if status:
+                        self.assertEqual(question.read_bytes(), before)
+
+    def test_live_record_cannot_report_exit_before_startup_lock(self):
+        worker = module()
+        with tempfile.TemporaryDirectory() as tmp:
+            record = Path(tmp) / 'w.exit'
+            live = record.with_suffix('.live')
+            since = time.time()
+            observations, descriptors = [], []
+            locking, opening = worker.lock, os.open
+            def opened(*args, **kwargs):
+                fd = opening(*args, **kwargs)
+                if args[0] == live and args[1] & os.O_CREAT:
+                    descriptors.append(fd)
+                return fd
+            def starting(fd):
+                with mock.patch.object(worker, 'lock', locking):
+                    observations.append(worker.gone(live, since))
+                locking(fd)
+            try:
+                with mock.patch.dict(os.environ, KIT_WORKER_EXIT=str(record)), \
+                        mock.patch.object(worker.os, 'open', side_effect=opened), \
+                        mock.patch.object(worker, 'lock', side_effect=starting), \
+                        mock.patch.object(worker, 'windows_child', side_effect=OSError('stop after startup')), \
+                        mock.patch('sys.argv', ['codex_worker.py', str(Path(tmp) / 'q.md'), '--', 'missing-cli']):
+                    # This host's child path is irrelevant to the creation-to-lock interval.
+                    if os.name == 'nt':
+                        with self.assertRaisesRegex(OSError, 'stop after startup'):
+                            worker.main()
+                    else:
+                        with mock.patch.object(worker.subprocess, 'Popen', side_effect=OSError('stop after startup')):
+                            with self.assertRaisesRegex(OSError, 'stop after startup'):
+                                worker.main()
+                self.assertEqual(observations, [False], 'an unlocked, unready file ended the waiter')
+                self.assertFalse(worker.gone(live, since), 'the running supervisor was reported as ended')
+            finally:
+                for fd in descriptors:
+                    os.close(fd)
+            self.assertTrue(worker.gone(live, since), 'a ready supervisor with a dropped lock must be reported')
+
+    def test_resume_preserves_a_new_question_even_with_the_same_words(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            question = Path(tmp) / 'q.md'
+            before = b'Choose A or B.\n<!-- codex-worker: ready -->'
+            question.write_bytes(before)
+            code = ('from pathlib import Path; import os,time; q=Path(%r); p=q.with_suffix(".tmp"); '
+                    'p.write_bytes(q.read_bytes()); os.replace(p,q); time.sleep(30)') % str(question)
+            result = subprocess.run([sys.executable, str(SCRIPT), str(question), '--',
+                                     sys.executable, '-c', code], capture_output=True, text=True,
+                                    timeout=10, env=dict(os.environ, KIT_WORKER_GRACE='0',
+                                                         KIT_WORKER_RESUME='1'))
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn('decision recorded', result.stdout)
+            self.assertEqual(question.read_bytes(), before)
+
 
 if __name__ == '__main__':
     unittest.main()

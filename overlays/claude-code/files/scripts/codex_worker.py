@@ -22,6 +22,14 @@ def published(path):
     return text if text.endswith(READY) else ''
 
 
+def question_id(path):
+    try:
+        info = path.stat()
+    except FileNotFoundError:
+        return None
+    return info.st_ino, info.st_mtime_ns, info.st_size
+
+
 def baseline(path, since):
     """The file id of a result published before this run: an in-place edit of it never counts
     as a new publication, only a rename over it (the atomic protocol) does."""
@@ -71,11 +79,13 @@ def gone(live, since):
         return False
     try:
         lock(fd)
+        ready = os.read(fd, 64)
+        return (os.fstat(fd).st_mtime >= since and ready.endswith(b'\n')
+                and ready[:-1].isdigit())  # the PID is published only after startup locks LIVE
     except OSError:
         return False
     finally:
         os.close(fd)
-    return True
 
 
 def windows_job(child):
@@ -193,7 +203,8 @@ def main():
     question = Path(sys.argv[1])
     separator = sys.argv.index('--')
     result = Path(sys.argv[2]) if separator == 3 else None
-    if question.exists():
+    answered = question_id(question)
+    if answered is not None and os.environ.get('KIT_WORKER_RESUME') != '1':
         raise ValueError('question file already exists; answer with spawn_codex.sh --resume')
     since = float(os.environ.get('KIT_WORKER_STARTED', '0'))
     stale = (int(os.environ['KIT_WORKER_STALE']) or None if 'KIT_WORKER_STALE' in os.environ
@@ -217,7 +228,7 @@ def main():
             command = [command[0], str(script)]
         if os.name == 'nt':
             child, close = windows_child(command)  # inherit the tab's terminal, including stdin
-            return watch(child, question, close, result, stale)
+            return watch(child, question, close, result, stale, answered)
         # A CLI installed through npm has a shim and a native child. Own their process group
         # while keeping the controlling terminal, so /dev/tty and interactive input work.
         terminal = sys.stdin.fileno() if sys.stdin.isatty() else None
@@ -244,7 +255,7 @@ def main():
             if terminal is not None:
                 os.tcsetpgrp(terminal, child.pid)
                 os.killpg(child.pid, signal.SIGCONT)
-            return watch(child, question, close_tree, result, stale)
+            return watch(child, question, close_tree, result, stale, answered)
         finally:
             supervising = False
             if child is not None:
@@ -256,7 +267,7 @@ def main():
             signal.signal(signal.SIGTTOU, previous)
 
 
-def watch(child, question, close_tree, result=None, stale=None):
+def watch(child, question, close_tree, result=None, stale=None, answered=None):
     ready_at = None
     noticed = ''
     ended = 'stopped by a signal or an error in its supervisor'
@@ -268,7 +279,8 @@ def watch(child, question, close_tree, result=None, stale=None):
         while child.poll() is None:
             # Only a decision or a completed result ends the worker: PROGRESS, HANDOFF and
             # BLOCKED leave it working, and --wait alone reports them.
-            notice = 'decision' if published(question) else result_kind(result, since, stale)
+            decision = published(question) and question_id(question) != answered
+            notice = 'decision' if decision else result_kind(result, since, stale)
             notice = notice if notice in ('decision', 'DONE') else ''
             if notice != noticed:
                 ready_at = time.monotonic() if notice else None
@@ -287,6 +299,11 @@ def watch(child, question, close_tree, result=None, stale=None):
         return child.returncode
     finally:
         stop(child, close_tree)
+        # Keep the answered decision as closure evidence until the resumed child succeeds.
+        # A launch error, cancellation or failed CLI leaves it, and a new question stays too.
+        if (answered is not None and ended in ('exit 0', 'DONE published')
+                and question_id(question) == answered):
+            question.unlink()
         # Every way out records why, a decision without a blocked result included: the record
         # lets --wait report it instead of waiting forever.
         record = os.environ.get('KIT_WORKER_EXIT')
