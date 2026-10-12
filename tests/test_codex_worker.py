@@ -230,6 +230,83 @@ class CodexWorkerTests(unittest.TestCase):
             self.assertEqual(waiter.returncode, 0, waiter.stderr)
             self.assertIn('EXITED (exit 3', waiter.stdout)
 
+    def test_wait_ends_on_a_decision_published_without_a_blocked_result(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            question, result, record = (Path(tmp) / n for n in ('q.md', 'result.md', 'w.exit'))
+            since = str(time.time())
+            # The model forgot the blocked result: only the question is published.
+            code = ('from pathlib import Path; import os,time; p=Path(%r); p.write_text("A or B?\\n%s"); '
+                    'os.replace(p,%r); time.sleep(30)') % (str(question) + '.tmp', READY, str(question))
+            worker = subprocess.run([sys.executable, str(SCRIPT), str(question), str(result), '--',
+                                     sys.executable, '-c', code], capture_output=True, text=True, timeout=15,
+                                    env=dict(os.environ, KIT_WORKER_GRACE='0.5', KIT_WORKER_STARTED=since,
+                                             KIT_WORKER_EXIT=str(record)))
+            self.assertEqual(worker.returncode, 0, worker.stderr)
+            self.assertIn('decision recorded', worker.stdout)
+            waiter = subprocess.run([sys.executable, str(SCRIPT), '--wait', str(result), '--since', since,
+                                     '--exit', str(record)], capture_output=True, text=True, timeout=10)
+            self.assertEqual(waiter.returncode, 0, waiter.stderr)
+            self.assertIn('EXITED (decision', waiter.stdout)
+
+    def test_wait_ends_when_the_supervisor_is_killed_before_any_record(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            question, result, record, pid = (Path(tmp) / n for n in ('q.md', 'result.md', 'w.exit', 'pid'))
+            since = str(time.time())
+            code = 'import os,time; from pathlib import Path; Path(%r).write_text(str(os.getpid())); time.sleep(30)' % str(pid)
+            # No pipes: on POSIX the killed supervisor's worker lives on, and would hold them open.
+            supervisor = subprocess.Popen([sys.executable, str(SCRIPT), str(question), str(result), '--',
+                                           sys.executable, '-c', code], stdout=subprocess.DEVNULL,
+                                          stderr=subprocess.DEVNULL,
+                                          env=dict(os.environ, KIT_WORKER_STARTED=since, KIT_WORKER_EXIT=str(record)))
+            waiter = subprocess.Popen([sys.executable, str(SCRIPT), '--wait', str(result), '--since', since,
+                                       '--exit', str(record)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            try:
+                deadline = time.monotonic() + 10
+                while not pid.exists():
+                    self.assertIsNone(supervisor.poll(), 'the supervisor ended before its worker started')
+                    self.assertLess(time.monotonic(), deadline, 'the worker never started')
+                    time.sleep(.05)
+                time.sleep(.5)
+                self.assertIsNone(waiter.poll(), 'a running worker was reported as ended')
+                # A closed tab or a hard kill (taskkill /F, SIGKILL): no handler runs, no record is written.
+                supervisor.kill()
+                supervisor.wait()
+                out, err = waiter.communicate(timeout=10)
+                self.assertEqual(waiter.returncode, 0, err)
+                self.assertIn('EXITED', out)
+                self.assertFalse(record.exists())
+            finally:
+                for process in (supervisor, waiter):
+                    if process.poll() is None:
+                        process.kill()
+                    process.communicate()
+                if os.name != 'nt' and pid.exists():
+                    module().posix_tree(int(pid.read_text()), True)
+
+    def test_wait_ignores_an_exit_record_from_before_its_start(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result, record = Path(tmp) / 'result.md', Path(tmp) / 'w.exit'
+            # A resumed worker: the previous run's records stay, and spawn does not delete them.
+            record.write_text('exit 0 at an earlier run\n')
+            record.with_suffix('.live').write_text('4242\n')
+            for old in (record, record.with_suffix('.live')):
+                os.utime(old, (time.time() - 60, time.time() - 60))
+            waiter = subprocess.Popen([sys.executable, str(SCRIPT), '--wait', str(result), '--since', str(time.time()),
+                                       '--exit', str(record)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            try:
+                time.sleep(.75)
+                self.assertIsNone(waiter.poll(), "a previous run's exit record ended the wait of a resumed worker")
+                fresh = result.with_suffix('.tmp')
+                fresh.write_text('Kind: completed\nTask: t\nAttempt: 2\nRemaining: none\n' + READY)
+                os.replace(fresh, result)
+                out, err = waiter.communicate(timeout=5)
+                self.assertEqual(waiter.returncode, 0, err)
+                self.assertIn('DONE', out)
+            finally:
+                if waiter.poll() is None:
+                    waiter.kill()
+                    waiter.communicate()
+
     def test_late_wait_uses_launch_identity_after_an_in_place_edit(self):
         worker = module()
         with tempfile.TemporaryDirectory() as tmp:

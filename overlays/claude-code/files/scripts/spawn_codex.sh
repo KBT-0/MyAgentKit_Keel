@@ -22,8 +22,10 @@
 #   - The spawning checkout records .myagentkit/workers/NAME.session outside the worker.
 #     A decision is published as QUESTION-NAME.md there. --result FILE chooses another result
 #     and FILE.question.md, both inside the worker. Session and question files are ignored.
-#     codex_worker.py writes NAME.exit beside the session record when Codex ends on its own,
-#     so the lead's --wait ends too; close_worker.sh removes both records.
+#     NAME.question names the decision file. codex_worker.py writes NAME.exit beside them on
+#     every way out it controls and holds NAME.live locked while it runs, so the lead's --wait
+#     ends even when the wrapper is killed. close_worker.sh removes these records, refuses
+#     while the decision file exists, and moves an uncommitted RESULT-NAME.md to NAME.result.md.
 #   - A session is resumed only once its own tab or tmux session has ended: two clients on
 #     one session were never tried.
 #   - workspace-write protects Git metadata, including a linked worktree's resolved git
@@ -158,7 +160,7 @@ if [ -n "$windows" ]; then
 else
   shown=$brief; cdir=$dir; cquestion=$question; cresult=$result; cworker=$kit/codex_worker.py; cexited=$exited
 fi
-instruction="Read $(q "$shown") and follow it. Write your result to $(q "$cresult"). Leave all work uncommitted and ready for the lead; list the exact changed and added files in the result. The lead reviews the diff through the normal cross-review, then commits with the usual commit gate. Publish a finished result atomically: write a temporary file beside it, end with <!-- codex-worker: ready -->, then rename it to the result path. If a decision is needed, finish independent work and stop all jobs first, then write Kind: blocked and QUESTIONS in the result; publish the blocked result atomically using the same temporary-file, end-marker and rename protocol before publishing the question atomically to $(q "$cquestion") using that protocol too. End your turn immediately after publishing; the wrapper allows 10 seconds to flush before closing this worker. The lead answers by resuming this same session."
+instruction="Read $(q "$shown") and follow it. The brief carries its Route: quick|build|deep · Risk: low|medium|high · Checks: ... line; run the checks it names. Write your result to $(q "$cresult"). Leave all work uncommitted and ready for the lead; list the exact changed and added files in the result. The lead reviews the diff through the normal cross-review, then commits with the usual commit gate. Publish a finished result atomically: write a temporary file beside it, end with <!-- codex-worker: ready -->, then rename it to the result path. If a decision is needed, finish independent work and stop all jobs first, then write Kind: blocked and QUESTIONS in the result; publish the blocked result atomically using the same temporary-file, end-marker and rename protocol before publishing the question atomically to $(q "$cquestion") using that protocol too. End your turn immediately after publishing; the wrapper allows 10 seconds to flush before closing this worker. The lead answers by resuming this same session."
 # The instruction comes first, before any option, as spawn_worker.sh puts it.
 cmd="codex${resume:+ resume $(q "$session")} $(q "$instruction") -m $(q "$model") -c $(q "model_reasoning_effort=$effort")"
 cmd="$cmd -s workspace-write -a never --no-daemon -C $(q "$cdir")"
@@ -264,17 +266,23 @@ if [ -z "$resume" ]; then
   done
 fi
 printf '%s\n' "spawn_codex: '$name' started with $brief $where"
+printf '%s\n' "spawn_codex: decision file: $question; result file: $result"
+result_arg=""; [ -z "$chosen_result" ] || result_arg=" --result $(q "$result")"
+answer="scripts/spawn_codex.sh $name ANSWER_FILE --model $(q "$model") --effort $effort${worktree:+ --worktree}$result_arg --resume"
+waiter="spawn_codex: run as a background command for the uncommitted handoff: $kit_python $(q "$cworker") --wait $(q "$cresult") --since $(q "$start") --stale $(q "$stale") --exit $(q "$cexited")"
+# NAME.question names the decision file, so close_worker.sh finds a custom one too.
 if [ -n "$session" ] && $kit_python -I -c 'from pathlib import Path; import sys
 record = Path(sys.argv[1]); record.parent.mkdir(parents=True, exist_ok=True)
-record.write_text(sys.argv[2] + "\n", encoding="utf-8")' "$record" "$session"; then
+record.write_text(sys.argv[2] + "\n", encoding="utf-8")
+record.with_suffix(".question").write_text(sys.argv[3] + "\n", encoding="utf-8")' "$record" "$session" "$question"; then
   spawn_recorded=1
   printf '%s\n' "spawn_codex: session $session recorded in $record"
-  printf '%s\n' "spawn_codex: decision file: $question; result file: $result"
-  result_arg=""; [ -z "$chosen_result" ] || result_arg=" --result $(q "$result")"
-  printf '%s\n' "spawn_codex: to answer a question it stops on, once its session has ended: scripts/spawn_codex.sh $name ANSWER_FILE --model $(q "$model") --effort $effort${worktree:+ --worktree}$result_arg --resume $(q "$session")"
+  printf '%s\n' "spawn_codex: to answer a question it stops on, once its session has ended: $answer $(q "$session")"
 else
-  die "no Codex session for '$name' showed within $session_wait s; nothing is recorded. Look at its $view; do not replace it with a fresh session"
+  # The worker runs anyway: the lead still waits on it, and answers it once it finds the id.
+  printf '%s\n' "$waiter"
+  die "no Codex session for '$name' showed within $session_wait s; nothing is recorded. Look at its $view; do not replace it with a fresh session. Once its id is found (in $codex_home/sessions), answer a question it stops on with: $answer SESSION_ID"
 fi
 printf '%s\n' "spawn_codex: leave all work uncommitted and ready for the lead, with the exact files in the result; the lead cross-reviews the diff, then commits with the usual gate (issue #43)"
 [ -n "$windows" ] || sh "$kit/show_workers.sh" "$name" || printf '%s\n' "spawn_codex: '$name' was not shown and runs anyway; attach by hand: tmux attach -t $name"
-printf '%s\n' "spawn_codex: run as a background command for the uncommitted handoff: $kit_python $(q "$cworker") --wait $(q "$cresult") --since $(q "$start") --stale $(q "$stale") --exit $(q "$cexited")"
+printf '%s\n' "$waiter"

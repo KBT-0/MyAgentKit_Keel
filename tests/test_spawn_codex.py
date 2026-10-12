@@ -20,7 +20,8 @@ from test_spawn_worker import WT_TAB, shq
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / 'overlays/claude-code/files/scripts/spawn_codex.sh'
 WINDOWS = os.name == 'nt'
-INSTRUCTION = ("Read %s and follow it. Write your result to %s. Leave all work uncommitted and ready for the lead; "
+INSTRUCTION = ("Read %s and follow it. The brief carries its Route: quick|build|deep · Risk: low|medium|high "
+               "· Checks: ... line; run the checks it names. Write your result to %s. Leave all work uncommitted and ready for the lead; "
                "list the exact changed and added files in the result. The lead reviews the diff through the normal "
                "cross-review, then commits with the usual commit gate. Publish a finished result atomically: write a "
                "temporary file beside it, end with <!-- codex-worker: ready -->, then rename it to the result path. "
@@ -176,6 +177,9 @@ class SpawnCodexTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stdout)
         self.assertIn('no Codex session', result.stderr)
         self.assertFalse((self.repo / '.myagentkit/workers/w4.session').exists())
+        # The worker runs anyway: the lead still gets its wait command and the resume form.
+        self.assertIn('background command for the uncommitted handoff: ', result.stdout)
+        self.assertIn('--resume SESSION_ID', result.stderr)
 
     def test_a_worker_without_its_model_or_effort_or_brief_is_refused(self):
         for args, message in ((('--effort', 'high'), '--model is required'), (('--model', 'm'), '--effort is required'),
@@ -478,6 +482,41 @@ p.write_text(p.read_text().replace('Kind: blocked', 'Kind: completed'))
         self.assertEqual(waited.returncode, 0, waited.stdout + waited.stderr)
         self.assertIn('EXITED', waited.stdout)
         self.assertNotIn('DONE', waited.stdout)
+
+    def test_close_moves_the_uncommitted_default_result_so_the_finished_worktree_goes(self):
+        args = ('--model', 'm', '--effort', 'high')
+        self.assertEqual(self.spawn('w26', str(self.brief), *args, '--worktree').returncode, 0)
+        tree = self.repo / '.claude/worktrees/w26'
+        (tree / 'feature.txt').write_bytes(b'work\n')
+        report = 'Kind: completed\nTask: t\nAttempt: 1\nRemaining: none\nChanged: feature.txt\n'
+        (tree / 'RESULT-w26.md').write_text(report)
+        # The lead commits exactly the files the result lists, then merges.
+        git = lambda *a: subprocess.run(['git', *a], cwd=self.repo, check=True, capture_output=True)
+        git('-C', str(tree), 'add', 'feature.txt')
+        git('-C', str(tree), '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'feature')
+        git('merge', '-q', '--ff-only', 'worktree-w26')
+        closed = self.close('w26')
+        self.assertEqual(closed.returncode, 0, closed.stdout + closed.stderr)
+        self.assertFalse(tree.exists(), 'the result sidecar kept a finished, merged worktree')
+        self.assertEqual((self.repo / '.myagentkit/workers/w26.result.md').read_text(), report)
+        self.assertFalse((self.repo / '.myagentkit/workers/w26.session').exists())
+
+    def test_close_refuses_while_a_decision_waits_for_its_answer(self):
+        args = ('--model', 'm', '--effort', 'high')
+        custom = self.repo / 'custom.md'
+        for name, extra, question in (('w27', (), self.repo / 'QUESTION-w27.md'),
+                                      ('w28', ('--result', str(custom)), Path(str(custom) + '.question.md'))):
+            with self.subTest(name=name):
+                started = self.spawn(name, str(self.brief), *args, *extra)
+                self.assertEqual(started.returncode, 0, started.stdout + started.stderr)
+                question.write_text('Choose A or B.\n<!-- codex-worker: ready -->')
+                closed = self.close(name)
+                self.assertEqual(closed.returncode, 1, closed.stdout + closed.stderr)
+                self.assertIn('a decision waits for its answer', closed.stdout)
+                self.assertTrue((self.repo / ('.myagentkit/workers/%s.session' % name)).exists(),
+                                'the close stranded an unanswered decision without its session id')
+                resumed = self.spawn(name, str(self.brief), *args, *extra, '--resume')
+                self.assertEqual(resumed.returncode, 0, resumed.stdout + resumed.stderr)
 
 
 if __name__ == '__main__':

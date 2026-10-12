@@ -76,13 +76,19 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   under a shared `.myagentkit/workers/spawn.lock` reservation from the initial checks through
   session recording, refusing concurrent launches. An unrecorded launch keeps its reservation
   until the lead resolves it; printed resume commands quote the model argument.
-  The lead resumes it with `--resume`; successful `close_worker.sh NAME` removes the record,
-  allowing cleanup and name reuse. Workers publish decisions to `QUESTION-NAME.md`;
+  The lead resumes it with `--resume`; successful `close_worker.sh NAME` removes the records,
+  allowing cleanup and name reuse. The close refuses while the worker's decision file (its path
+  recorded in `NAME.question`) waits for its answer. It moves an uncommitted default
+  `RESULT-NAME.md`, which the lead never commits, to `.myagentkit/workers/NAME.result.md`, so
+  the audit can remove the finished worktree. Workers publish decisions to `QUESTION-NAME.md`;
   `codex_worker.py` waits for the end marker and grace period before ending their process
   tree, and a fresh replacement is refused. Only a decision or a newly published
   `Kind: completed` result closes the worker; a progress, handoff or blocked result, or an
-  in-place edit of an older result, leaves it running. When Codex ends without publishing,
-  the wrapper writes `.myagentkit/workers/NAME.exit` and `--wait` reports EXITED. On native
+  in-place edit of an older result, leaves it running. The wrapper writes
+  `.myagentkit/workers/NAME.exit` on every way out it controls, a decision without a blocked
+  result included, and holds `NAME.live` locked while it runs, so `--wait` reports EXITED for
+  a worker that stops without publishing, even when the wrapper is killed or its tab closed.
+  A spawn whose session never shows still prints the wait command and the resume form. On native
   Windows `close_worker.sh` refuses while a Codex session runs in the worker's folder, and a
   kept worktree keeps its session record. Its printed
   `--wait FILE --since START --stale FILE_ID --exit RECORD` command notifies the lead of an
@@ -90,9 +96,11 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   launch, so a delayed wait still excludes an in-place edit of an old result.
   Windows children join their job before running; POSIX escalation kills the entire group.
   POSIX SIGTERM and SIGHUP unwind supervisor cleanup and reap the worker's process group.
-  The tab preserves quick startup errors behind an Enter prompt, and launches Git Bash by
-  its full Windows path. `--no-daemon` keeps each runtime private. The default result is at
-  the repository top; the brief uses the spawn-time path. `--result FILE` requires a `.md`
+  The worker's instruction tells it to run the checks named on its brief's
+  `Route: ... · Risk: ... · Checks: ...` line. The tab preserves quick startup errors behind an
+  Enter prompt, and launches Git Bash by its full Windows path. `--no-daemon` keeps each
+  runtime private. The default result is at the repository top; the brief uses the spawn-time
+  path. `--result FILE` requires a `.md`
   file inside the worker's folder; its path and parent directory are validated before a
   worktree or branch is created, so a rejected path leaves the name available for retry.
   Ignore patterns keep project `docs/QUESTION-*.md` visible.

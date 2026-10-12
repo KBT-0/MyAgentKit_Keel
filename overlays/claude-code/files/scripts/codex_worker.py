@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # KIT-OWNED: do not edit locally; change it in the kit and re-sync.
 """Close a worker after a published decision or completed result; --wait notifies the lead
-without a commit, also when the worker ended without publishing (its exit record)."""
+without a commit, also when the worker stopped without publishing (its exit record) or its
+supervisor was killed (its lock on the .live record dropped)."""
 import os
 from pathlib import Path
 import subprocess
@@ -47,6 +48,34 @@ def result_kind(path, since=0, stale=None):
         return ''
     return {'Kind: completed': 'DONE', 'Kind: blocked': 'BLOCKED',
             'Kind: handoff': 'HANDOFF', 'Kind: progress': 'PROGRESS'}.get(lines[0], '')
+
+
+def lock(fd):
+    """Lock FD's first byte without waiting; OSError while another process holds it. The
+    operating system drops the lock however its holder ends, a closed tab or a hard kill too."""
+    if os.name == 'nt':
+        import msvcrt
+        msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+    else:
+        import fcntl
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
+def gone(live, since):
+    """Whether the supervisor of this run, which locked LIVE when it started, has ended."""
+    try:
+        if live.stat().st_mtime < since:
+            return False  # not started yet, or a previous run's
+        fd = os.open(live, os.O_RDONLY)
+    except FileNotFoundError:
+        return False
+    try:
+        lock(fd)
+    except OSError:
+        return False
+    finally:
+        os.close(fd)
+    return True
 
 
 def windows_job(child):
@@ -141,7 +170,12 @@ def main():
         result, since = Path(sys.argv[2]), float(options.get('--since', 0))
         record = Path(options['--exit']) if '--exit' in options else None
         stale = int(options['--stale']) or None if '--stale' in options else baseline(result, since)
-        while not (kind := result_kind(result, since, stale)):
+        while True:
+            # Read first: what the supervisor published or recorded before it ended is seen below.
+            ended = record is not None and gone(record.with_suffix('.live'), since)
+            if kind := result_kind(result, since, stale):
+                print('codex_worker: ' + kind + ': ' + str(result), flush=True)
+                return 0
             try:
                 if record and record.stat().st_mtime >= since:
                     print('codex_worker: EXITED (' + record.read_text(encoding='utf-8').strip()
@@ -149,9 +183,11 @@ def main():
                     return 0
             except FileNotFoundError:
                 pass
+            if ended:
+                print('codex_worker: EXITED (its supervisor ended without an exit record: its tab closed '
+                      'or it was killed) without publishing a new result: ' + str(result), flush=True)
+                return 0
             time.sleep(0.1)
-        print('codex_worker: ' + kind + ': ' + str(result), flush=True)
-        return 0
     if len(sys.argv) < 4 or '--' not in sys.argv[2:4]:
         raise ValueError('usage: codex_worker.py QUESTION_FILE [RESULT_FILE] -- COMMAND...')
     question = Path(sys.argv[1])
@@ -162,6 +198,15 @@ def main():
     since = float(os.environ.get('KIT_WORKER_STARTED', '0'))
     stale = (int(os.environ['KIT_WORKER_STALE']) or None if 'KIT_WORKER_STALE' in os.environ
              else baseline(result, since))
+    record = os.environ.get('KIT_WORKER_EXIT')
+    if record:
+        # Locked for this process's whole life, however it ends: --wait reads a dropped lock as a
+        # supervisor that could not write its exit record (a closed tab, taskkill /F, SIGKILL).
+        Path(record).parent.mkdir(parents=True, exist_ok=True)
+        live = os.open(Path(record).with_suffix('.live'), os.O_RDWR | os.O_CREAT)
+        lock(live)
+        os.ftruncate(live, 0)
+        os.write(live, b'%d\n' % os.getpid())  # after the lock: its time marks this run
     # Git for Windows reparses bash -c's quoted command. Hand it a script file instead,
     # just as spawn_worker.sh does for Windows Terminal.
     command = sys.argv[separator + 1:]
@@ -214,6 +259,7 @@ def main():
 def watch(child, question, close_tree, result=None, stale=None):
     ready_at = None
     noticed = ''
+    ended = 'stopped by a signal or an error in its supervisor'
     try:
         grace = float(os.environ.get('KIT_WORKER_GRACE', '10'))
         if grace < 0:
@@ -230,21 +276,22 @@ def watch(child, question, close_tree, result=None, stale=None):
             if ready_at is not None and time.monotonic() - ready_at >= grace:
                 stop(child, close_tree)
                 close_tree = None
+                ended = noticed + ' published'
                 if noticed == 'decision':
                     print('codex_worker: decision recorded; answer in the same session with --resume', flush=True)
                 else:
                     print('codex_worker: ' + noticed + ': uncommitted result ready for the lead', flush=True)
                 return 0
             time.sleep(0.1)
-        # It ended on its own: the exit record lets --wait report it instead of waiting forever.
-        record = os.environ.get('KIT_WORKER_EXIT')
-        if record:
-            Path(record).parent.mkdir(parents=True, exist_ok=True)
-            Path(record).write_text('exit %d at %s\n' % (child.returncode, time.strftime('%Y-%m-%dT%H:%M:%S')),
-                                    encoding='utf-8')
+        ended = 'exit %d' % child.returncode
         return child.returncode
     finally:
         stop(child, close_tree)
+        # Every way out records why, a decision without a blocked result included: the record
+        # lets --wait report it instead of waiting forever.
+        record = os.environ.get('KIT_WORKER_EXIT')
+        if record:
+            Path(record).write_text('%s at %s\n' % (ended, time.strftime('%Y-%m-%dT%H:%M:%S')), encoding='utf-8')
 
 
 if __name__ == '__main__':

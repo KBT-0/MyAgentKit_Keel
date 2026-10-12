@@ -742,8 +742,11 @@ answer from {{OWNER_NAME}} and delivers it into the SAME session:
   and runs `scripts/spawn_codex.sh NAME ANSWER_FILE --model M --effort LEVEL [--worktree]
   --resume`. The spawning checkout records `.myagentkit/workers/NAME.session`, outside
   the worker; successful `close_worker.sh NAME` removes that record, and on native Windows
-  refuses while a Codex session still runs in the worker's folder. The default result is
+  refuses while a Codex session still runs in the worker's folder. It also refuses while the
+  worker's decision file waits for its answer. The default result is
   `RESULT-NAME.md` at the worker's repository top, and the decision file is `QUESTION-NAME.md`.
+  The lead never commits the default result: the close moves it to
+  `.myagentkit/workers/NAME.result.md`, so the audit can remove the finished worktree.
   `--result FILE` selects another `.md` result inside the worker's folder and `FILE.question.md`;
   the brief must use that spawn-time path, and it is passed again on resume. Publish a question
   or finished result atomically: write a temporary file beside it, end with
@@ -768,11 +771,12 @@ Codex 0.162 on native Windows keeps Git metadata read-only even with `--add-dir`
 the gate's Git-directory lock, it records that limitation; the lead runs the gate when
 committing. Never bypass the gate or switch to full access for this failure.
 
-For Codex, the lead runs the `codex_worker.py --wait FILE --since START --exit RECORD` command
-printed by spawn as a background command. Its exit notifies the lead of DONE, BLOCKED, HANDOFF
-or PROGRESS after a result from this run is published with the end marker (by a rename over an
-older result), and of EXITED when Codex ended without publishing one; no commit or lead
-polling is needed. The wrapper closes the worker after the grace period only for a decision
+For Codex, the lead runs the `codex_worker.py --wait FILE --since START --stale FILE_ID --exit RECORD`
+command printed by spawn as a background command, also when spawn found no session. Its exit
+notifies the lead of DONE, BLOCKED, HANDOFF or PROGRESS after a result from this run is
+published with the end marker (by a rename over an older result), and of EXITED when the worker
+stopped without publishing one, even when its wrapper was killed; no commit or lead polling is
+needed. The wrapper closes the worker after the grace period only for a decision
 or a completed result. The lead reads the
 uncommitted result and diff before committing. The watcher below accepts committed Claude
 results; it is not used for the uncommitted Codex handoff.

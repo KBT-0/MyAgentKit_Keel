@@ -27,8 +27,8 @@ __pycache__/
 .claude/worktrees/
 /.claude/mode.lock
 # A Codex worker's decision files (spawn_codex.sh): QUESTION-NAME.md, or FILE.question.md
-# beside a --result FILE. Result reports remain reviewable project files. Its session and exit
-# records live under .myagentkit/workers/.
+# beside a --result FILE. Result reports stay visible for the lead's review; close_worker.sh
+# moves the default RESULT-NAME.md under .myagentkit/workers/, beside the worker's records.
 /QUESTION-*.md
 *.md.question.md
 /.myagentkit/

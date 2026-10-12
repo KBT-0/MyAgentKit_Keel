@@ -36,13 +36,19 @@
 # codex.exe whose command line names its folder with -C instead: while one runs in the worker's
 # folder, nothing is done for that name, since its .myagentkit/workers/NAME.session record is
 # the only id to resume it by; the lead quits it in its tab and closes again. Steps 1, 3 and 4
-# are the same. After a removal (or with no worktree), the Codex records NAME.session and
-# NAME.exit go too; a kept worktree keeps them.
+# are the same. On every host a Codex worker whose decision file (the path NAME.question
+# records, else QUESTION-NAME.md at its top) still exists is refused before step 2: the lead
+# answers it with spawn_codex.sh --resume, or deletes it to abandon the worker. Before step 3 an
+# untracked RESULT-NAME.md at the worker's top moves to .myagentkit/workers/NAME.result.md:
+# the lead read it and committed the files it lists. After a removal (or with no worktree), the
+# Codex records NAME.session, NAME.exit, NAME.live and NAME.question go too; a kept worktree
+# keeps them.
 # Exit 0 when every named session is gone and every named worktree was removed or did not
 # exist; 1 otherwise, with the first reason on the last line: a nonzero exit of
 # clean_worktrees.sh is one whatever its summary says (after a removal, an outcome line its log
-# could not take); 2 on a usage error. A dry run exits 1 only for a refused name, a running
-# Codex session, a tmux or lister that could not answer, or a removal that could not run.
+# could not take); 2 on a usage error. A dry run exits 1 only for a refused name, a waiting
+# decision, a running Codex session, a tmux or lister that could not answer, or a removal that
+# could not run.
 set -u
 
 # Every line of this script is printed with its control bytes as `?` (a name is an argument).
@@ -221,6 +227,13 @@ for name; do
   refuse() { fail "$name: $why; ending the session now would leave it running without its caller, so nothing is done for $name: wait until it ends, then close again"; }
   if why=$(busy "$wt_dir"); then refuse; continue; fi
   record=$top/.myagentkit/workers/$name
+  # An unanswered Codex decision: its session record is the only way to answer it, and a fresh
+  # spawn of the name is refused while the question exists, so a close would strand both.
+  ask=$(cat "$record.question" 2>/dev/null) || ask=$wt_dir/QUESTION-$name.md
+  if [ -e "$ask" ]; then
+    fail "$name: a decision waits for its answer in $ask; answer it (spawn_codex.sh --resume), or delete it to abandon the worker, then close again; nothing is done for $name"
+    continue
+  fi
   if [ -n "$windows" ] && { [ -e "$record.session" ] || [ "$wt_dir" != "$top" ]; }; then
     if ! pids=$(codex "$wt_dir"); then
       fail "$name: could not list the Codex processes, so its Codex session may still run: $pids; nothing is done for $name"
@@ -289,6 +302,15 @@ for name; do
     fail "$name: tmux kill-session -t =$name failed; the session may still run"
   fi
 
+  # The default result reports on the work and is not project content: once the lead committed
+  # the files it lists, it is all the audit would keep the worktree for. It moves beside the
+  # records instead. A custom --result is a project file: the lead commits it or removes it.
+  if [ -n "$(git -C "$wt_dir" ls-files --others -- "RESULT-$name.md" 2>/dev/null)" ]; then
+    if [ -n "$dry" ]; then say "$name: dry run: would move its result RESULT-$name.md to $record.result.md"
+    elif mkdir -p -- "${record%/*}" && mv -f -- "$wt_dir/RESULT-$name.md" "$record.result.md"; then
+      say "$name: its result RESULT-$name.md moved to $record.result.md"
+    else fail "$name: could not move its result RESULT-$name.md to $record.result.md"; fi
+  fi
   apply=--apply; [ -z "$dry" ] || { apply=""; say "$name: dry run: the removal would lift the quiet period for this worktree alone (--no-quiet), every other proof stays"; }
   out=$(sh "$kit/clean_worktrees.sh" $apply "--only=$name" --no-quiet 2>&1); rc=$?
   printf '%s\n' "$out" | LC_ALL=C tr '\001-\011\013-\037\177' '?'
@@ -315,7 +337,7 @@ for name; do
   [ "$rc" -eq 0 ] || [ -n "$kept" ] ||
     fail "$name: clean_worktrees.sh exited $rc: $(printf '%s\n' "$out" | sed -n '$p')"
   if [ -z "$dry" ] && [ "$rc" -eq 0 ] && [ -z "$kept" ] && [ -n "$top" ]; then
-    rm -f -- "$record.session" "$record.exit" || fail "$name: could not remove its Codex session records"
+    rm -f -- "$record.session" "$record.exit" "$record.live" "$record.question" || fail "$name: could not remove its Codex session records"
   fi
   if git show-ref --verify --quiet "refs/heads/worktree-$name" 2>/dev/null; then
     say "$name: branch worktree-$name is kept, never deleted here; \`git branch --merged\` lists the merged branches, \`git branch -d <name>\` deletes one"

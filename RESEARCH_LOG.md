@@ -21,6 +21,20 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-10-12 — A wrapper stopped from outside, and the result sidecar (#57)
+
+The wrapper wrote its exit record only when Codex ended on its own. A decision published
+without its blocked result left no record, and a closed Windows Terminal tab or `taskkill /F`
+runs no Python code at all, so the lead's wait never ended. The wrapper now records every
+exit it controls and holds a lock for its whole life. The operating system drops that lock
+however the process ends, so the waiter tells a dead wrapper from a live one without a
+reusable process id.
+
+The default `RESULT-NAME.md` reports to the lead and is not project content. Committing it
+puts a report at the top of main with every merge; leaving it kept every finished worktree
+from the audit. The close moves it beside the worker's records. A waiting decision refuses
+the close, because the session record is the only way to answer it.
+
 ### 2026-10-12 — Launch reservations and mode snapshots (#43, #57)
 
 Checking for a session before launching does not reserve its name or checkout. Concurrent

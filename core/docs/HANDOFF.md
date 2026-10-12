@@ -65,11 +65,16 @@ in the Claude Code overlay) names its result FILE and its question and session s
 For Codex the brief must use the spawn-time result path: `RESULT-NAME.md` at the worker's
 repository top by default, or `--result FILE` (a `.md` file inside the worker's folder).
 Its question is `QUESTION-NAME.md`, or `FILE.question.md` for a custom result. The spawning
-checkout records `.myagentkit/workers/NAME.session`, outside the worker's folder; successful
-`close_worker.sh NAME` removes that record so the name can be reused. Pass the custom result
-again on resume. The brief says to publish the question last, after independent work and
-jobs finish. Publish questions and finished results atomically: write a temporary file
-beside the destination, end with `<!-- codex-worker: ready -->`, then rename it into place.
+checkout records `.myagentkit/workers/NAME.session` and the question's path in `NAME.question`,
+outside the worker's folder; successful `close_worker.sh NAME` removes those records so the
+name can be reused, and refuses while the question waits for its answer. The default result
+reports on the work and is never committed: the close moves it to
+`.myagentkit/workers/NAME.result.md` once the lead has committed the files it lists. A custom
+result is a project file, such as an operation file, that the lead commits with the work.
+Pass the custom result again on resume. The brief says to publish the question last, after
+independent work and jobs finish. Publish questions and finished results atomically: write a
+temporary file beside the destination, end with `<!-- codex-worker: ready -->`, then rename it
+into place.
 Publish the blocked result with this same protocol before publishing the question.
 End the turn immediately; the wrapper allows ten seconds to flush (overridden by
 `KIT_WORKER_GRACE`) before closing the worker's process tree. A question reaches the lead
@@ -86,8 +91,10 @@ printed by spawn as a background command; it reports DONE for a published uncomm
 and neither can an in-place edit of it: spawn captures FILE_ID before launch, and a new result
 is published by the rename. Other result
 kinds report BLOCKED, HANDOFF or PROGRESS, and leave the worker running: only a decision or a
-completed result closes it. A worker that ends without publishing reports EXITED, from the
-`.myagentkit/workers/NAME.exit` record the wrapper writes. For Claude the committed `Kind: completed` result is
+completed result closes it. A worker that stops without publishing a result reports EXITED,
+from the `.myagentkit/workers/NAME.exit` record the wrapper writes on every way out, a decision
+without a blocked result included, or from its `NAME.live` lock once the wrapper itself was
+killed. For Claude the committed `Kind: completed` result is
 the watcher's done signal (`scripts/close_worker.sh NAME`).
 An idle notice or a question sidecar reports a waiting worker, never completion.
 
