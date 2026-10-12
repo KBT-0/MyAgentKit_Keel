@@ -20,6 +20,9 @@
 # Pitfalls this script encodes, besides spawn_worker.sh's own (Git Bash by its full Windows path,
 # every `;` handed to wt.exe escaped, the tab's command in a script because wt.exe drops double
 # quotes, `exit 0` at the tab's end, values quoted with `q`, control bytes refused):
+#   - tmux receives only `sh PATH`, without quotes, for its default shell (fish included).
+#     The temporary script path is made absolute and checked for letters, digits, _, ., / and -.
+#     Set TMPDIR to a safe absolute directory if that check refuses the path.
 #   - The spawning checkout records .myagentkit/workers/NAME.session outside the worker.
 #     A decision is published as QUESTION-NAME.md there. --result FILE chooses another result
 #     and FILE.question.md, both inside the worker. Session and question files are ignored.
@@ -258,8 +261,17 @@ if [ -n "$windows" ]; then
 else
   # `cd` first: tmux hands a new session the PWD of whichever client last created one.
   # tmux parses its command with its default shell (fish, say): the quoted command goes into a
-  # script that removes itself, and tmux is handed two plain words (spawn_worker.sh).
+  # script that removes itself, and tmux is handed two plain words. Resolve the path
+  # against this checkout before tmux changes directory, then refuse shell syntax or spaces.
   run=$(mktemp) || die "cannot write the session's script"
+  case "$run" in */*) run_dir=${run%/*}/ ;; *) run_dir=. ;; esac
+  run_dir=$(CDPATH= cd -P -- "$run_dir" && pwd -P && echo x) ||
+    { rm -f -- "$run"; die "cannot resolve the session script's folder; set TMPDIR to a safe absolute directory"; }
+  run=${run_dir%"${nl}x"}/${run##*/}
+  case "$run" in *[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_./-]*)
+    rm -f -- "$run"
+    die "unsafe session script path: set TMPDIR to an absolute directory containing only letters, digits, _, ., / and -" ;;
+  esac
   printf '%s\n' 'rm -f -- "$0"' "cd $(q "$dir") && exec $unmark KIT_WORKER_STARTED=$(q "$start") KIT_WORKER_STALE=$(q "$stale") KIT_WORKER_EXIT=$(q "$exited") KIT_WORKER_RESUME=$(q "$resume") $kit_python $(q "$cworker") $(q "$cquestion") $(q "$cresult") -- sh -c $(q "exec $cmd")" > "$run" ||
     { rm -f -- "$run"; die "cannot write the session's script: $run"; }
   spawn_launched=1

@@ -757,6 +757,9 @@ tokens including the lead's, review rounds, and waits on an exclusive resource. 
 will be thin.
 
 `scripts/spawn_worker.sh` (Claude Code overlay) opens the session in tmux with a brief file.
+Both spawn scripts hand tmux a quote-free `sh PATH` command, with an absolute temporary script path.
+They refuse paths containing anything except letters, digits, underscore, dot, slash and dash.
+If refused, set `TMPDIR` to an absolute directory using those characters; spaces are refused too.
 The lead subscribes once with SendMessage `notify_when_idle`; on native Windows (a Windows
 Terminal tab) only when the spawn prints "is a peer session", and after a WARNING it watches the
 tab and the result file instead. A tmux worker always registers.

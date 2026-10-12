@@ -283,6 +283,11 @@ script copies `overlays/claude-code/files/scripts/close_worker.sh` into `scripts
 (`chmod +x`, `git add --chmod=+x`), with the clean-up scripts it calls; a sync keeps it
 updated from then on.
 
+Both spawn scripts use a quote-free `sh PATH` command for tmux's default shell, including fish.
+Both spawn scripts resolve the temporary script path before tmux changes to the worker's directory.
+They refuse paths containing anything except letters, digits, underscore, dot, slash and dash.
+If refused, set `TMPDIR` to an absolute directory using those characters; spaces are refused too.
+
 The worker scripts (`spawn_worker.sh`, `spawn_codex.sh`, `codex_worker.py`, `show_workers.sh`, `watch_workers.sh`,
 `waiting_patterns.txt`, `close_worker.sh`) carry the KIT-OWNED header, so a sync updates them
 where they exist. A copy from before the header is a sync conflict, and the sync copies

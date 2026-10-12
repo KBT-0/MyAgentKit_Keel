@@ -15,6 +15,7 @@ import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 
+import test_spawn_worker
 from test_spawn_worker import MARKERS, WT_TAB, shq
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -79,7 +80,11 @@ if args[0] == 'new-session':
     text = subprocess.run(['sh', '-c', 'cat "$1"', 'sh', words[1]], capture_output=True, text=True).stdout
     with open(os.path.join(state, 'tmux-script'), 'w') as g:
         g.write(text)
-    sys.exit(subprocess.run(['sh', words[1]]).returncode)
+    directory = args[args.index('-c') + 1]
+    if os.name == 'nt':
+        directory = subprocess.run(['cygpath', '-m', directory], capture_output=True,
+                                   text=True, check=True).stdout.rstrip('\n')
+    sys.exit(subprocess.run(['sh', '-c', args[-1]], cwd=directory).returncode)
 '''
 
 
@@ -236,6 +241,51 @@ class SpawnCodexTests(unittest.TestCase):
         result = self.spawn('w6', str(self.brief), '--model', 'm', '--effort', 'high', '--resume', tmux=True)
         self.assertEqual(result.returncode, 1, result.stdout)
         self.assertIn("tmux session 'w6' still runs", result.stderr)
+
+    def test_unsafe_tmpdir_is_refused_before_tmux_can_expand_it(self):
+        if WINDOWS:
+            sys.stderr.write('\nNOT RUN: %s (the tmux path, POSIX only)\n' % self.id())
+            return
+        for folder in ('temp$(touch INJECTED)', 'temp`touch INJECTED`', 'temp$REVIEW_SEGMENT'):
+            with self.subTest(folder=folder):
+                tmpdir = self.tmp / folder
+                tmpdir.mkdir()
+                result = self.spawn('unsafe-temp', str(self.brief), '--model', 'm', '--effort', 'high',
+                                    tmux=True, TMPDIR=str(tmpdir))
+                self.assertFalse((self.repo / 'INJECTED').exists(), 'TMPDIR ran as shell code')
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn('TMPDIR', result.stderr)
+                self.assertNotIn("'new-session'", (self.state / 'tmux.log').read_text())
+                self.assertEqual(self.runs(), [])
+                self.assertEqual(list(tmpdir.iterdir()), [], 'the refused script was left behind')
+
+    def test_tmpdir_with_a_space_is_refused_by_name(self):
+        if WINDOWS:
+            sys.stderr.write('\nNOT RUN: %s (the tmux path, POSIX only)\n' % self.id())
+            return
+        tmpdir = self.tmp / 'temp space'
+        tmpdir.mkdir()
+        result = self.spawn('spaced-temp', str(self.brief), '--model', 'm', '--effort', 'high',
+                            tmux=True, TMPDIR=str(tmpdir))
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('TMPDIR', result.stderr)
+        self.assertNotIn("'new-session'", (self.state / 'tmux.log').read_text())
+        self.assertEqual(self.runs(), [])
+        self.assertEqual(list(tmpdir.iterdir()), [])
+
+    def test_relative_tmpdir_launches_in_a_worktree_with_an_absolute_script_path(self):
+        if WINDOWS:
+            sys.stderr.write('\nNOT RUN: %s (the tmux path, POSIX only)\n' % self.id())
+            return
+        tmpdir = self.tmp / 'session-temp'
+        tmpdir.mkdir()
+        result = self.spawn('relative-temp', str(self.brief), '--model', 'm', '--effort', 'high',
+                            '--worktree', tmux=True, TMPDIR='../session-temp')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(Path(self.runs()[0]['cwd']).resolve(),
+                         (self.repo / '.claude/worktrees/relative-temp').resolve())
+        self.assertIn('sh ' + str(tmpdir) + '/', (self.state / 'tmux.log').read_text())
+        self.assertEqual(list(tmpdir.iterdir()), [], 'the launched script did not remove itself')
 
     def test_an_unsafe_name_or_control_byte_in_model_is_refused_before_launch(self):
         for name, model, effort in (('../escape', 'm', 'high'), ('a/b', 'm', 'high'),
@@ -773,6 +823,29 @@ pathlib.Path(%r).write_text('a concurrently published report\\n')
         self.assertFalse((workers / 'gap.result.md').exists(), 'a newer report took a lower number')
         self.assertEqual((workers / 'gap.result-2.md').read_text(), 'the newest earlier report\n')
         self.assertEqual((workers / 'gap.result-3.md').read_text(), 'the report being closed\n')
+
+
+class TmuxStubTests(unittest.TestCase):
+    def test_tmux_stub_reparses_the_final_command_in_the_start_directory(self):
+        with tempfile.TemporaryDirectory() as folder:
+            state = Path(folder)
+            for segment in ('literal$REVIEW_SEGMENT', 'literal$($REVIEW_PAYLOAD)',
+                            'literal`$REVIEW_BACKQUOTE`'):
+                with self.subTest(segment=segment):
+                    script = state / segment / 'run.sh'
+                    script.parent.mkdir()
+                    script.write_text('exit 0\n', newline='\n')
+                    command = 'sh ' + test_spawn_worker.SpawnWorkerTests.physical(script)
+                    result = subprocess.run([sys.executable, '-c', TMUX, 'new-session', '-d',
+                                             '-s', 'stub', '-c', str(state), '-x', '200', '-y', '50', command],
+                                            env=dict(os.environ, SPAWN_STATE=str(state), REVIEW_SEGMENT='expanded',
+                                                     REVIEW_PAYLOAD='touch INJECTED', REVIEW_BACKQUOTE='touch BACKQUOTED'),
+                                            capture_output=True, text=True, timeout=10)
+                    self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertIn('literal', result.stderr)
+                    self.assertNotIn(segment, result.stderr, 'the stub bypassed shell expansion')
+            self.assertTrue((state / 'INJECTED').exists(), 'the stub did not run command substitution')
+            self.assertTrue((state / 'BACKQUOTED').exists(), 'the stub did not run backquotes')
 
 
 if __name__ == '__main__':

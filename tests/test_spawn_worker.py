@@ -2,8 +2,8 @@
 build its worktree from the lead's current commit.
 
 No live `claude` and no tmux server: both are stubs on PATH. The tmux stub accepts only
-`sh SCRIPT` (two plain words, so tmux's fish default shell can parse it) and runs that script,
-so values that escape the command's quoting run here too.
+`sh SCRIPT` (two plain words, so tmux's fish default shell can parse it) and passes that
+command to `sh -c` in the start directory, so unquoted path expansions run here too.
 No real terminal either: the launcher (KIT_WT), `osascript` and `uname` are stubs, and the
 environment says WSL, so showing a session goes to the launcher stub, which marks it attached.
 """
@@ -59,7 +59,11 @@ if cmd == 'new-session':
         g.write(text)
     with open(started, 'a') as f:
         f.write(args[args.index('-s') + 1] + '\n')
-    sys.exit(subprocess.run(['sh', words[1]]).returncode)
+    directory = args[args.index('-c') + 1]
+    if os.name == 'nt':
+        directory = subprocess.run(['cygpath', '-m', directory], capture_output=True,
+                                   text=True, check=True).stdout.rstrip('\n')
+    sys.exit(subprocess.run(['sh', '-c', args[-1]], cwd=directory).returncode)
 if cmd == 'capture-pane':
     if 'SPAWN_PANE' in os.environ:
         sys.stdout.write(read(os.environ['SPAWN_PANE']))
@@ -238,6 +242,42 @@ class SpawnWorkerTests(unittest.TestCase):
     def tmux_log(self):
         path = self.state / 'tmux.log'
         return path.read_text() if path.exists() else ''
+
+    def test_unsafe_tmpdir_is_refused_before_tmux_can_expand_it(self):
+        for folder in ('temp$(touch INJECTED)', 'temp`touch INJECTED`', 'temp$REVIEW_SEGMENT'):
+            with self.subTest(folder=folder):
+                tmpdir = self.tmp / folder
+                tmpdir.mkdir()
+                result = self.spawn('unsafe-temp', str(self.brief), TMPDIR=str(tmpdir))
+                self.assertFalse((self.cwd / 'INJECTED').exists(), 'TMPDIR ran as shell code')
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn('TMPDIR', result.stderr)
+                self.assertNotIn("'new-session'", self.tmux_log())
+                self.assertIsNone(self.launched())
+                self.assertEqual(list(tmpdir.iterdir()), [], 'the refused script was left behind')
+
+    def test_tmpdir_with_a_space_is_refused_by_name(self):
+        tmpdir = self.tmp / 'temp space'
+        tmpdir.mkdir()
+        result = self.spawn('spaced-temp', str(self.brief), TMPDIR=str(tmpdir))
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('TMPDIR', result.stderr)
+        self.assertNotIn("'new-session'", self.tmux_log())
+        self.assertIsNone(self.launched())
+        self.assertEqual(list(tmpdir.iterdir()), [])
+
+    def test_relative_tmpdir_launches_in_a_worktree_with_an_absolute_script_path(self):
+        subprocess.run(['git', 'init', '-q'], cwd=self.cwd, check=True, capture_output=True)
+        subprocess.run(['git', '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q',
+                        '--allow-empty', '-m', 'base'], cwd=self.cwd, check=True, capture_output=True)
+        tmpdir = self.cwd.parent / 'session-temp'
+        tmpdir.mkdir()
+        result = self.spawn('relative-temp', str(self.brief), '--worktree', TMPDIR='../session-temp')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(Path(self.launched()['cwd']).resolve(),
+                         (self.cwd / '.claude/worktrees/relative-temp').resolve())
+        self.assertIn('sh ' + str(tmpdir.resolve()) + '/', self.tmux_log())
+        self.assertEqual(list(tmpdir.iterdir()), [], 'the launched script did not remove itself')
 
     def test_values_with_apostrophes_arrive_intact_and_run_nothing(self):
         marker = self.tmp / 'injected'
@@ -765,6 +805,29 @@ class WorkerStateHookTests(unittest.TestCase):
                 raise RuntimeError('stop')
             with patch('os.replace', side_effect=look), self.assertRaises(RuntimeError):
                 run_state_hook(state, {'hook_event_name': 'Stop'})
+
+
+class TmuxStubTests(unittest.TestCase):
+    def test_tmux_stub_reparses_the_final_command_in_the_start_directory(self):
+        with tempfile.TemporaryDirectory() as folder:
+            state = Path(folder)
+            for segment in ('literal$REVIEW_SEGMENT', 'literal$($REVIEW_PAYLOAD)',
+                            'literal`$REVIEW_BACKQUOTE`'):
+                with self.subTest(segment=segment):
+                    script = state / segment / 'run.sh'
+                    script.parent.mkdir()
+                    script.write_text('exit 0\n', newline='\n')
+                    command = 'sh ' + SpawnWorkerTests.physical(script)
+                    result = subprocess.run([sys.executable, '-c', TMUX, 'new-session', '-d',
+                                             '-s', 'stub', '-c', str(state), '-x', '200', '-y', '50', command],
+                                            env=dict(os.environ, SPAWN_STATE=str(state), REVIEW_SEGMENT='expanded',
+                                                     REVIEW_PAYLOAD='touch INJECTED', REVIEW_BACKQUOTE='touch BACKQUOTED'),
+                                            capture_output=True, text=True, timeout=10)
+                    self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertIn('literal', result.stderr)
+                    self.assertNotIn(segment, result.stderr, 'the stub bypassed shell expansion')
+            self.assertTrue((state / 'INJECTED').exists(), 'the stub did not run command substitution')
+            self.assertTrue((state / 'BACKQUOTED').exists(), 'the stub did not run backquotes')
 
 
 if __name__ == '__main__':

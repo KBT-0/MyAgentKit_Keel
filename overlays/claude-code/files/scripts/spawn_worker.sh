@@ -39,7 +39,10 @@
 #     telling it to write questions into its result file instead of asking in the pane, not
 #     the brief pasted as a block: one model took a pasted brief with no typed sentence of the
 #     user's own for mere content and sat idle for 35 minutes asking for confirmation.
-#   - Every value that goes into the session's shell command, and the brief path, passes
+#   - tmux receives only `sh PATH`, without quotes, for its default shell (fish included).
+#     The temporary script path is made absolute and checked for letters, digits, _, ., / and -.
+#     Set TMPDIR to a safe absolute directory if that check refuses the path.
+#   - Every value that goes into the temporary script's shell command, and the brief path, passes
 #     through `q`: a value with an apostrophe (a --settings JSON string) otherwise
 #     ends its quoting and the rest runs as shell in the new pane.
 #   - --worktree makes the worktree here with `git worktree add` from the commit the lead's
@@ -354,8 +357,17 @@ fi
 # the tool exits with "the current working directory was deleted" when that folder (a
 # removed worktree, say) is gone, whatever -c says.
 # tmux parses its command with its default shell, which may be fish: the quoted command goes
-# into a script that removes itself, and tmux is handed two plain words (a mktemp path has no quotes).
+# into a script that removes itself, and tmux is handed two plain words. Resolve the path
+# against this checkout before tmux changes directory, then refuse shell syntax or spaces.
 run=$(mktemp) || die "cannot write the session's script"
+case "$run" in */*) run_dir=${run%/*}/ ;; *) run_dir=. ;; esac
+run_dir=$(CDPATH= cd -P -- "$run_dir" && pwd -P && echo x) ||
+  { rm -f -- "$run"; die "cannot resolve the session script's folder; set TMPDIR to a safe absolute directory"; }
+run=${run_dir%"${nl}x"}/${run##*/}
+case "$run" in *[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_./-]*)
+  rm -f -- "$run"
+  die "unsafe session script path: set TMPDIR to an absolute directory containing only letters, digits, _, ., / and -" ;;
+esac
 printf '%s\n' 'rm -f -- "$0"' "cd $(q "$dir") && exec $unmark $cmd" > "$run" || { rm -f -- "$run"; die "cannot write the session's script: $run"; }
 tmux new-session -d -s "$name" -c "$dir" -x 200 -y 50 "sh $run" || { rm -f -- "$run"; die "tmux could not start '$name'"; }
 
