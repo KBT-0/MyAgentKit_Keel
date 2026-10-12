@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import uuid
 
@@ -18,11 +19,49 @@ UNAVAILABLE = frozenset({"quota", "authentication", "timeout", "unavailable", "c
                          "context_limit", "budget_or_turn_limit", "output_limit", "content_flagged"})
 # Set only while a substitute reviewer runs, so its archived evidence says so in its body.
 FALLBACK_ENV = "MYAGENTKIT_REVIEW_FALLBACK_FROM"
+# What a backend file may set: the endpoint, its token and the model names Claude Code maps.
+BACKEND_KEYS = frozenset({"ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_MODEL",
+                          "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL",
+                          "ANTHROPIC_DEFAULT_HAIKU_MODEL"})
 
 
-def pin_valid(provider, model):
+def pin_valid(provider, model, backend=None):
+    # A backend's model is no claude- id; its file names it, so it is no moving alias either.
     return bool(model.strip()) and not any(c.isspace() for c in model) and (
-        provider != "claude" or model.startswith("claude-"))
+        provider != "claude" or bool(backend) or model.startswith("claude-"))
+
+
+def load_backend(repo, name):
+    """The environment and the model pin of backend `name`, from .myagentkit/backends/NAME.env.
+
+    Fails closed, like an empty pin: a file without an endpoint or a model would send the
+    review to Anthropic's own endpoint under a name that claims another. No message prints a
+    value, because the file holds the endpoint's token.
+    """
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", name):
+        raise ValueError("backend name must be letters, digits, '.', '_' or '-' (got %r)" % name)
+    path = repo / ".myagentkit/backends" / (name + ".env")
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeError) as error:
+        raise ValueError("backend %s: %s cannot be read (%s)" % (name, path, type(error).__name__)) from error
+    env = {}
+    for number, line in enumerate(lines, 1):
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        key, sep, value = line.partition("=")
+        if not sep or key not in BACKEND_KEYS:
+            raise ValueError("backend %s: line %d of %s is not KEY=VALUE with one of %s"
+                             % (name, number, path, ", ".join(sorted(BACKEND_KEYS))))
+        env[key] = value
+    if not env.get("ANTHROPIC_BASE_URL"):
+        raise ValueError("backend %s: %s sets no ANTHROPIC_BASE_URL" % (name, path))
+    model = env.get("ANTHROPIC_MODEL") or env.get("ANTHROPIC_DEFAULT_OPUS_MODEL")
+    if not model or not pin_valid("claude", model, name):
+        raise ValueError("backend %s: %s sets no model (ANTHROPIC_MODEL or "
+                         "ANTHROPIC_DEFAULT_OPUS_MODEL, one id without spaces)" % (name, path))
+    return env, model
 
 
 def reject_line_ending_churn(repo, scope, reference, diff):
@@ -76,6 +115,8 @@ def main(argv=None):
     # Off by default: the requested reviewer is usually chosen because the other model
     # authored the patch, so a silent substitute could be the author reviewing itself.
     parser.add_argument("--allow-fallback", action="store_true")
+    # The Claude reviewer through an Anthropic-compatible endpoint, as reviewer claude@NAME.
+    parser.add_argument("--backend")
     scope_args = parser.add_mutually_exclusive_group()
     scope_args.add_argument("--uncommitted", action="store_true")
     scope_args.add_argument("--base")
@@ -87,9 +128,14 @@ def main(argv=None):
     if Path(os.fsdecode(claude_bridge.git(repo, "rev-parse", "--show-toplevel")).strip()).resolve() != repo:
         raise ValueError("--repo must name the repository root")
     pins = {"claude": args.claude_model, "codex": args.codex_model}
+    # Another reviewer identity: a patch Claude wrote may be reviewed by claude@NAME.
+    names, backend_env = {"claude": "claude", "codex": "codex"}, {}
+    if args.backend:
+        backend_env, pins["claude"] = load_backend(repo, args.backend)
+        names["claude"] = "claude@" + args.backend
     if not pins[args.reviewer].strip():
         raise ValueError("no model pinned for reviewer '%s'" % args.reviewer)
-    if not pin_valid(args.reviewer, pins[args.reviewer]):
+    if not pin_valid(args.reviewer, pins[args.reviewer], args.backend):
         raise ValueError("invalid primary model pin")
     scope, ref = ("base", args.base) if args.base else (("commit", args.commit) if args.commit else ("uncommitted", None))
     original = claude_bridge.snapshot(repo, scope, ref)
@@ -115,7 +161,7 @@ def main(argv=None):
     # round refused as damaged.
     if not os.environ.get("MYAGENTKIT_TASK_ID"):
         os.environ["MYAGENTKIT_TASK_ID"] = "review-" + chain_id
-    chain = {"schema_version": 1, "chain_id": chain_id, "requested_reviewer": args.reviewer,
+    chain = {"schema_version": 1, "chain_id": chain_id, "requested_reviewer": names[args.reviewer],
              "configured_models": pins, "task_id": os.environ["MYAGENTKIT_TASK_ID"],
              "head": original[0], "fingerprint": original[1], "scope": scope, "reference": ref,
              "fallback_allowed": args.allow_fallback,
@@ -139,19 +185,32 @@ def main(argv=None):
         received = []
         command = ["--repo", str(repo), "--model", pins[provider], "--effort", args.effort,
                    "--" + scope] + ([ref] if ref else [])
-        print("REVIEW [about to run]: %s model %s, effort %s" % (provider, pins[provider], args.effort),
+        print("REVIEW [about to run]: %s model %s, effort %s" % (names[provider], pins[provider], args.effort),
               flush=True)
+        # The backend's variables reach the Claude CLI of this attempt only, in place of every
+        # inherited ANTHROPIC_* one: an inherited API key would otherwise go to the backend's
+        # endpoint, and a Codex fallback after it would see the backend's token.
+        backend = provider == "claude" and args.backend
+        if backend:
+            inherited = {key: os.environ.pop(key) for key in list(os.environ) if key.startswith("ANTHROPIC_")}
+            os.environ.update(backend_env)
         try:
             if provider == "claude":
-                exit_code = claude_bridge.main(["review", "--timeout", str(timeout), "--max-turns", str(turns), *command], received.append)
+                exit_code = claude_bridge.main(["review", "--timeout", str(timeout), "--max-turns", str(turns), *command]
+                                               + (["--backend", args.backend] if backend else []), received.append)
             else:
                 exit_code = codex_bridge.main(command, received.append)
         except (OSError, ValueError, claude_bridge.BridgeError, subprocess.SubprocessError) as error:
             # Includes persistence failures. No machine result means no safe failover.
             exit_code = 5
             received = [{"status": "failed", "failure_kind": "adapter_error", "error": str(error)}]
+        finally:
+            if backend:
+                for key in [key for key in os.environ if key.startswith("ANTHROPIC_")]:
+                    del os.environ[key]
+                os.environ.update(inherited)
         result = received[-1] if received else {"status": "failed", "failure_kind": "preflight_failed"}
-        chain["attempts"].append(dict(result, reviewer=provider, model=pins[provider]))
+        chain["attempts"].append(dict(result, reviewer=names[provider], model=pins[provider]))
         chain.update(status=result["status"], failure_kind=result.get("failure_kind"))
         try:
             if claude_bridge.snapshot(repo, scope, ref) != original:
@@ -162,7 +221,7 @@ def main(argv=None):
                          failure_kind="stale_checkout" if reason is None or reason in UNAVAILABLE else reason)
             exit_code = 5
         if chain["status"] == "completed" and exit_code == 0:
-            chain["selected_reviewer"] = provider
+            chain["selected_reviewer"] = names[provider]
             checkpoint()
             break  # Accept, manual checks AND Reject are terminal review results.
         chain["status"] = "failed"
@@ -173,7 +232,7 @@ def main(argv=None):
         if eligible and not args.allow_fallback:
             chain["fallback_blocked"] = "not requested; --fallback allows one other configured reviewer"
             eligible = False
-        if eligible and not pin_valid(other, pins[other]):
+        if eligible and not pin_valid(other, pins[other], args.backend):
             chain["fallback_blocked"] = "other reviewer has no valid configured model pin"
             eligible = False
         checkpoint()  # Never spend on the alternate if primary evidence cannot be saved.
@@ -181,13 +240,13 @@ def main(argv=None):
             break
         print("FALLBACK [review]: requested reviewer %s did not complete (%s); --fallback was "
               "passed, so configured %s model %s runs once instead."
-              % (provider, chain["failure_kind"], other, pins[other]), flush=True)
-        os.environ[FALLBACK_ENV] = "%s (%s)" % (provider, chain["failure_kind"])
+              % (names[provider], chain["failure_kind"], names[other], pins[other]), flush=True)
+        os.environ[FALLBACK_ENV] = "%s (%s)" % (names[provider], chain["failure_kind"])
     os.environ.pop(FALLBACK_ENV, None)
     print("review dispatch: " + json.dumps(chain))
     if chain["status"] != "completed":
         print("FAIL [review]: requested reviewer %s did not produce a review (%s)%s"
-              % (args.reviewer, chain["failure_kind"], "; " + chain["fallback_blocked"]
+              % (names[args.reviewer], chain["failure_kind"], "; " + chain["fallback_blocked"]
                  if chain.get("fallback_blocked") else ""))
         if chain["failure_kind"] == "cli_unsupported":
             print("FAIL [review]: the installed CLI rejected a flag the review requires; "
@@ -206,9 +265,9 @@ def main(argv=None):
                   "untracked file, a moved HEAD or base), so the result cannot be tied to the "
                   "diff it names. Leave this checkout untouched until review.sh exits: keep "
                   "working in another worktree, or wait for it, then run the review again.")
-    elif chain.get("selected_reviewer") != args.reviewer:
+    elif chain.get("selected_reviewer") != names[args.reviewer]:
         print("FALLBACK [review]: this review is by %s, not the requested %s; check it did not "
-              "author the patch." % (chain["selected_reviewer"], args.reviewer))
+              "author the patch." % (chain["selected_reviewer"], names[args.reviewer]))
     return 0 if chain["status"] == "completed" else (exit_code or 5)
 
 

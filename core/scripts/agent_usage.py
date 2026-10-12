@@ -233,7 +233,7 @@ def normalize(provider: str, values: list[dict], complete: bool) -> dict:
 
 def record(repo: Path, provider: str, model: str, requester: str, task: dict,
            execution: dict, status: str, reason: str | None, evidence: str | None,
-           published: bytes | None = None) -> tuple[Path, dict]:
+           published: bytes | None = None, backend: str | None = None) -> tuple[Path, dict]:
     """Write one exclusive local record, including failed and partially billed calls.
 
     `published` is the evidence exactly as archived. Hashing it here, never the archive
@@ -265,6 +265,8 @@ def record(repo: Path, provider: str, model: str, requester: str, task: dict,
              "evidence_sha256": hashlib.sha256(published).hexdigest() if evidence else None,
              "raw_stdout": execution.get("stdout", ""),
              "raw_stderr": execution.get("stderr", "")}
+    if backend:  # Only then: a record without a backend stays as it was.
+        value["backend"] = backend
     value["usage"]["account_quota_snapshots"] = execution.get("account_quota_snapshots")
     directory = repo / ".myagentkit/usage"
     if not directory.resolve().is_relative_to(repo.resolve()):

@@ -6,7 +6,7 @@
 # prints it. The gate itself is docs/REVIEW_GATE.md; this script only collects the evidence.
 #
 # Usage: review.sh [--uncommitted | --base <ref> | --commit <sha>] [--reviewer codex|claude]
-#                  [--fallback]
+#                  [--fallback] [--backend NAME]
 #        review.sh --self-test
 #   default scope     --uncommitted (staged + unstaged + untracked) — the pre-commit case.
 #   default reviewer  the one configured below during setup.
@@ -14,6 +14,9 @@
 #                     configured model review once. Off by default: without it a reviewer that
 #                     cannot run FAILS the review, it is never replaced. The substitute's
 #                     evidence carries a FALLBACK REVIEWER line.
+#   --backend NAME    the Claude reviewer talks to the Anthropic-compatible endpoint that
+#                     .myagentkit/backends/NAME.env names, with that file's model as the pin,
+#                     and is recorded as reviewer claude@NAME (docs/REVIEW_RUNNING.md).
 #
 # THE KIT TAKES NO POSITION ON WHICH MODEL WRITES AND WHICH REVIEWS. The rule is that the
 # AUTHOR never reviews its own patch and the REVIEWER is a different model — not that a
@@ -40,15 +43,16 @@
 #     script instead. An ordinary edit during a review fails it as stale_checkout.
 #
 # The sandbox is pinned HERE and in the adapters, not assumed of the CLI: the scope forms
-# above, --reviewer and --fallback are the ONLY accepted arguments. There is deliberately no
-# pass-through for further flags — an agent must not be able to talk this script into a run
-# outside the copy or with the sandbox off. "Please be careful" is not a guarantee when the
-# caller is a model.
+# above, --reviewer, --fallback and --backend are the ONLY accepted arguments, and a backend
+# never relaxes the sandbox flags. There is deliberately no pass-through for further flags —
+# an agent must not be able to talk this script into a run outside the copy or with the
+# sandbox off. "Please be careful" is not a guarantee when the caller is a model.
 #
 # The result is INPUT to a review decision the CALLING agent owns, never a verdict to relay
 # verbatim (docs/REVIEW_RUNNING.md).
 #
 #   REVIEW_REVIEWER      override the configured reviewer for one run (codex | claude)
+#   MYAGENTKIT_BACKEND   the backend for one run when --backend is not given
 #   REVIEW_CODEX_MODEL   override the pinned Codex model for one run
 #   REVIEW_CLAUDE_MODEL  override the pinned Claude model for one run
 #   REVIEW_EFFORT    reasoning effort             (default: high)
@@ -90,7 +94,7 @@ CLAUDE_MODEL=""
 # ---------------------------------------------------------------------------------------
 
 usage() {
-  echo "usage: review.sh [--uncommitted | --base <ref> | --commit <sha>] [--reviewer codex|claude] [--fallback]"
+  echo "usage: review.sh [--uncommitted | --base <ref> | --commit <sha>] [--reviewer codex|claude] [--fallback] [--backend NAME]"
   echo "       review.sh --self-test"
   exit 2
 }
@@ -115,6 +119,7 @@ scope_arg=""
 scope_seen=0
 fallback=""
 reviewer="${REVIEW_REVIEWER:-$DEFAULT_REVIEWER}"
+backend="${MYAGENTKIT_BACKEND:-}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --uncommitted)
@@ -131,6 +136,9 @@ while [ $# -gt 0 ]; do
       reviewer="$2"; shift 2 ;;
     --fallback)
       fallback="--allow-fallback"; shift ;;
+    --backend)
+      [ $# -ge 2 ] || usage
+      backend="$2"; shift 2 ;;
     *) usage ;;
   esac
 done
@@ -144,6 +152,8 @@ esac
 
 set -- "$scope_flag"
 [ -n "$scope_arg" ] && set -- "$scope_flag" "$scope_arg"
+# The dispatcher checks the name and reads the file; without a backend its argv is unchanged.
+[ -z "$backend" ] || set -- "$@" --backend "$backend"
 
 # Reviewing CLIs are commonly per-user installs missing from a non-login shell's PATH: a
 # fallback, never first. An old standalone build left in ~/.local/bin once shadowed the

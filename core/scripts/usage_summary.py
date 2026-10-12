@@ -21,7 +21,7 @@ def valid_record(record):
             or not isinstance(record.get('task'), dict)):
         return False
     for fields, value in ((('recorded_at', 'status', 'failure_kind', 'callee', 'model_requested',
-                            'review_chain_id', 'evidence', 'evidence_sha256'), record),
+                            'review_chain_id', 'evidence', 'evidence_sha256', 'backend'), record),
                           (('id', 'kind'), record['task'])):
         if any(value.get(field) is not None and not isinstance(value[field], str) for field in fields):
             return False
@@ -137,7 +137,8 @@ def main():
         for key in ('model_requested', 'callee', 'effort'):
             record[key] = record.get(key) or 'unknown'
         record['task']['kind'] = record['task'].get('kind') or 'unknown'
-        groups[(record['model_requested'], record['effort'])].append(record)
+        # A backend is its own group: one model name may be served by two endpoints.
+        groups[(record['model_requested'], record['effort'], record.get('backend') or None)].append(record)
     for task, records in sorted(tasks.items()):
         print(f'Task {printable(task)}: {totals(records)}')
         number = 0
@@ -150,11 +151,13 @@ def main():
                   f' kind={printable(record["task"]["kind"])}'
                   f' callee={printable(record["callee"])}'
                   f' model={printable(record["model_requested"])}'
+                  + (f' backend={printable(record["backend"])}' if record.get('backend') else '') +
                   f' effort={printable(record["effort"])} verdict={verdict} duration={duration}')
     if rows:
         print(f'Total: {totals(rows)}')
-    for (model, effort), records in sorted(groups.items(), key=lambda item: tuple(map(str, item[0]))):
-        print(f'Model {printable(model)} / effort {printable(effort)}: {totals(records)}')
+    for (model, effort, backend), records in sorted(groups.items(), key=lambda item: tuple(map(str, item[0]))):
+        print(f'Model {printable(model)} / effort {printable(effort)}'
+              + (f' / backend {printable(backend)}' if backend else '') + f': {totals(records)}')
     if unreadable:
         print(f'Unreadable records skipped: {unreadable}')
 

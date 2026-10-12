@@ -182,6 +182,31 @@ Verify it end to end before trusting it — one real invocation, on a small diff
 A stub or a dry run does not count. A wrapper validated only against a fake CLI is a wrapper
 that has never met the real contract (`docs/GOTCHAS.md`).
 
+**Optional: a second Claude-compatible backend.**
+
+The Claude CLI can talk to another provider's Anthropic-compatible endpoint, such as GLM's.
+A backend is one file, `.myagentkit/backends/NAME.env`, with one `KEY=VALUE` per line. Blank
+lines and lines starting with `#` are skipped. Only these keys are accepted:
+
+```sh
+# .myagentkit/backends/glm.env (the provider's documentation names the URL and the models)
+ANTHROPIC_BASE_URL=<the provider's Anthropic-compatible URL>
+ANTHROPIC_AUTH_TOKEN=<your API key for that provider>
+ANTHROPIC_DEFAULT_OPUS_MODEL=<the provider's model id>
+ANTHROPIC_DEFAULT_SONNET_MODEL=<the provider's model id>
+ANTHROPIC_DEFAULT_HAIKU_MODEL=<the provider's model id>
+# Optional: the model the review is pinned to; without it the OPUS model is the pin.
+ANTHROPIC_MODEL=<the provider's model id>
+```
+
+The token lives in this file and nowhere else: `.myagentkit/` is ignored, so it never reaches
+Git. Never export it in your shell profile. Then run
+`./scripts/review.sh --uncommitted --reviewer claude --backend glm`, or set
+`MYAGENTKIT_BACKEND=glm` for the run. A file without `ANTHROPIC_BASE_URL` or a model fails
+the review before launch. An existing project gets `--backend` only from the updated
+`review.sh` (the upgrade above); an older `review.sh` keeps working without it.
+`scripts/spawn_worker.sh --backend glm` starts a Claude worker session on the same backend.
+
 **Optional: the vendor plugin for your host agent.**
 
 Separate from the above, and NOT needed by `scripts/review.sh`. If your host agent has an

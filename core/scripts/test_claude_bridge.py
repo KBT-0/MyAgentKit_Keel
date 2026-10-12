@@ -25,9 +25,9 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'MYAGENTKIT_TASK_ID', 'MYAGENTKIT_R
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 147, 'test_agent_usage': 30, 'test_codex_quota': 5}
+SUITE_MINIMUMS = {'test_claude_bridge': 151, 'test_agent_usage': 30, 'test_codex_quota': 5}
 # These are executed cases, excluding only the explicitly declared POSIX exclusions.
-WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 124, 'test_agent_usage': 26, 'test_codex_quota': 4}
+WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 128, 'test_agent_usage': 26, 'test_codex_quota': 4}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -54,6 +54,8 @@ assert '--resume' not in args and '--continue' not in args
 assert os.environ['MYAGENTKIT_DELEGATION_DEPTH'] == '1'
 prompt = sys.stdin.read()
 if os.environ.get('PROMPT_LOG'): pathlib.Path(os.environ['PROMPT_LOG']).write_text(prompt)
+if os.environ.get('ENV_LOG'): pathlib.Path(os.environ['ENV_LOG']).write_text(json.dumps(
+    {k: v for k, v in os.environ.items() if k.startswith('ANTHROPIC_')}))
 case = os.environ.get('FIXTURE_CASE', 'accept')
 # The real repository, reached by its absolute path: what a reviewer escaping its copy does.
 repo = pathlib.Path(os.environ.get('FIXTURE_REPO', '.'))
@@ -3880,6 +3882,98 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                                     REVIEW_CODEX_MODEL='fixture-codex-model')
         self.assertEqual(explicit.returncode, 0, explicit.stdout + explicit.stderr)
         self.assertEqual(len(list((self.repo / 'docs/reviews').glob('*-codex-review.md'))), 1)
+
+    BACKEND = {'ANTHROPIC_BASE_URL': 'https://backend.invalid/api', 'ANTHROPIC_AUTH_TOKEN': 'tok=en',
+               'ANTHROPIC_DEFAULT_OPUS_MODEL': 'glm-fixture'}
+
+    def backend_file(self, text):
+        # The tests own every ANTHROPIC_* variable: one from the host would change what the CLI sees.
+        for key in [key for key in os.environ if key.startswith('ANTHROPIC_')]:
+            del os.environ[key]
+        path = self.repo / '.myagentkit/backends/glm.env'
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+
+    def test_a_backend_review_runs_on_its_endpoint_and_records_its_model(self):
+        # The file's variables reach the CLI in place of the inherited ones; its model is the pin
+        # the CLI's modelUsage attests; the review is by another identity, claude@glm. The flag
+        # wins over MYAGENTKIT_BACKEND, which names a file that does not exist.
+        self.backend_file('# GLM\n' + ''.join('%s=%s\n' % item for item in self.BACKEND.items()))
+        log = self.root / 'env.json'
+        for args, chosen in ((['--backend', 'glm'], 'missing'), ([], 'glm')):
+            with self.subTest(args=args):
+                result = self.run_wrapper('--uncommitted', *args, CLAUDE_CLI_BIN=str(self.fixture),
+                                          REVIEW_CLAUDE_MODEL='claude-opus-5', ENV_LOG=str(log),
+                                          ANTHROPIC_API_KEY='lead-key', MYAGENTKIT_BACKEND=chosen)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(json.loads(log.read_text()), self.BACKEND)
+                self.assertIn('REVIEW [about to run]: claude@glm model glm-fixture, effort high', result.stdout)
+                self.assertNotIn('tok=en', result.stdout)
+                chain = json.loads(next(line.removeprefix('review dispatch: ') for line in result.stdout.splitlines()
+                                        if line.startswith('review dispatch: ')))
+                self.assertEqual((chain['requested_reviewer'], chain['selected_reviewer']), ('claude@glm', 'claude@glm'))
+                usage = json.loads(Path(chain['attempts'][0]['usage_record']).read_text())
+                self.assertEqual((usage['backend'], usage['model_requested']), ('glm', 'glm-fixture'))
+                self.assertEqual(header_of(chain['attempts'][0]['evidence'])['model'],
+                                 'backend glm, model glm-fixture')
+
+    def test_a_backend_without_its_endpoint_or_model_refuses_before_launch(self):
+        log = self.root / 'env.json'
+        for name, text, reason in (
+                ('glm', 'ANTHROPIC_DEFAULT_OPUS_MODEL=glm-fixture\n', 'sets no ANTHROPIC_BASE_URL'),
+                ('glm', 'ANTHROPIC_BASE_URL=https://backend.invalid\nANTHROPIC_DEFAULT_SONNET_MODEL=x\n', 'sets no model'),
+                ('glm', 'ANTHROPIC_BASE_URL=https://backend.invalid\nANTHROPIC_MODEL=glm-fixture\n'
+                        'ANTHROPIC_API_KEY=secret-value\n', 'line 3 of'),
+                ('absent', '', 'cannot be read'),
+                ('../glm', '', 'backend name must be')):
+            with self.subTest(name=name, reason=reason):
+                self.backend_file(text)
+                result = self.run_wrapper('--uncommitted', '--backend', name, CLAUDE_CLI_BIN=str(self.fixture),
+                                          REVIEW_CLAUDE_MODEL='claude-opus-5', ENV_LOG=str(log))
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn('FAIL [review]: ', result.stdout)
+                self.assertIn(reason, result.stdout)
+                self.assertNotIn('secret-value', result.stdout)
+                self.assertFalse(log.exists(), 'the reviewer launched')
+                self.assertFalse((self.repo / '.myagentkit/usage').exists(), 'a chain was recorded')
+
+    def test_without_a_backend_the_claude_review_is_unchanged(self):
+        self.backend_file(''.join('%s=%s\n' % item for item in self.BACKEND.items()))
+        log = self.root / 'env.json'
+        result = self.run_wrapper('--uncommitted', CLAUDE_CLI_BIN=str(self.fixture), MYAGENTKIT_BACKEND='',
+                                  REVIEW_CLAUDE_MODEL='claude-opus-5', ENV_LOG=str(log), ANTHROPIC_API_KEY='lead-key')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(json.loads(log.read_text()), {'ANTHROPIC_API_KEY': 'lead-key'})
+        chain = json.loads(next(line.removeprefix('review dispatch: ') for line in result.stdout.splitlines()
+                                if line.startswith('review dispatch: ')))
+        self.assertEqual(chain['requested_reviewer'], 'claude')
+        self.assertNotIn('backend', json.loads(Path(chain['attempts'][0]['usage_record']).read_text()))
+        self.assertEqual(header_of(chain['attempts'][0]['evidence'])['model'], 'claude-opus-5')
+
+    def test_the_backend_environment_lives_only_through_its_claude_attempt(self):
+        # A Codex fallback after a backend attempt, and the dispatcher after both, see the
+        # inherited environment again, never the backend's token.
+        from contextlib import redirect_stdout
+        from unittest.mock import patch
+        import review_dispatch
+        self.backend_file(''.join('%s=%s\n' % item for item in self.BACKEND.items()))
+        seen = {}
+
+        def adapter(name):
+            def main(argv, report):
+                seen[name] = {k: v for k, v in os.environ.items() if k.startswith('ANTHROPIC_')}
+                report({'status': 'failed', 'failure_kind': 'quota', 'evidence': 'e', 'usage_record': 'u'})
+                return 5
+            return main
+        with patch.dict(os.environ, self.review_env(ANTHROPIC_API_KEY='lead-key')), \
+                patch.object(review_dispatch.claude_bridge, 'main', adapter('claude')), \
+                patch.object(review_dispatch.codex_bridge, 'main', adapter('codex')), redirect_stdout(io.StringIO()):
+            review_dispatch.main(['--repo', str(self.repo), '--uncommitted', '--reviewer', 'claude',
+                                  '--allow-fallback', '--backend', 'glm', '--claude-model', 'claude-opus-5',
+                                  '--codex-model', 'fixture-codex-model'])
+            after = {k: v for k, v in os.environ.items() if k.startswith('ANTHROPIC_')}
+        self.assertEqual(seen, {'claude': self.BACKEND, 'codex': {'ANTHROPIC_API_KEY': 'lead-key'}})
+        self.assertEqual(after, {'ANTHROPIC_API_KEY': 'lead-key'})
 
     def test_unavailable_claude_uses_codex_only_with_fallback(self):
         result = self.run_wrapper('--uncommitted', '--fallback', FIXTURE_CASE='quota',

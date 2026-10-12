@@ -916,7 +916,8 @@ def render(stamp: str, evidence: dict, args) -> str:
     """
     result = evidence.get("result") or {}
     completed = evidence["status"] == "completed"
-    header = {"reviewer": "claude", "model": args.model,
+    model = "backend %s, model %s" % (args.backend, args.model) if args.backend else args.model
+    header = {"reviewer": "claude", "model": model,
               "model_attested": "yes (CLI modelUsage)" if completed else "no (run did not complete)",
               "effort": args.effort, "sandbox": "throwaway copy, " + (
                   "Claude Code Bash sandbox: writes to the copy and the temporary directory, "
@@ -1061,6 +1062,8 @@ def main(argv=None, result_sink=None) -> int:
     parser.add_argument("--task-id", default=os.environ.get("MYAGENTKIT_TASK_ID"),
                         help="Stable task label for usage accounting across review rounds")
     parser.add_argument("--model", default="claude-opus-5")
+    parser.add_argument("--backend", help="The backend whose environment the caller set "
+                        "(review_dispatch.py); recorded, and its --model need not be claude-")
     parser.add_argument("--effort", choices=["low", "medium", "high", "xhigh", "max"], default="high")
     parser.add_argument("--timeout", type=int,
                         help="Total wall-clock seconds; defaults to %d for review, 600 for propose"
@@ -1078,7 +1081,7 @@ def main(argv=None, result_sink=None) -> int:
     try:
         if os.environ.get("MYAGENTKIT_DELEGATION_DEPTH", "0") != "0":
             raise BridgeError("nested delegation is disabled")
-        if not args.model.startswith("claude-") or any(c.isspace() for c in args.model):
+        if not (args.backend or args.model.startswith("claude-")) or any(c.isspace() for c in args.model):
             raise BridgeError("use an explicit Claude model id, not a moving alias")
         max_timeout = agent_process.MAX_REVIEW_TIMEOUT if args.mode == "review" else 3600
         max_turns = agent_process.MAX_REVIEW_TURNS if args.mode == "review" else 100
@@ -1242,7 +1245,7 @@ def main(argv=None, result_sink=None) -> int:
                  "kind": args.mode, "scope": scope, "reference": ref,
                  "resolved": resolved, "head": head,
                  "diff_sha256": evidence["diff_sha256"]}, execution, evidence["status"], reason,
-                archived_path, published.encode() if archived_path else None)
+                archived_path, published.encode() if archived_path else None, backend=args.backend)
             recovery = usage["recovery"]
             if usage["failure_kind"] == "evidence_unavailable":
                 evidence.update(status="failed", error="Review evidence was lost before it was recorded")

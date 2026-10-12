@@ -6,7 +6,10 @@
 # watching and closing a tmux session does not apply there.
 #
 # Usage: spawn_worker.sh NAME BRIEF_FILE --model M --effort LEVEL [--settings JSON_OR_FILE]
-#                        [--allowed-tools LIST] [--worktree] [--batch]
+#                        [--allowed-tools LIST] [--worktree] [--batch] [--backend NAME]
+#
+# --backend NAME starts the worker on the Anthropic-compatible endpoint that
+# .myagentkit/backends/NAME.env in the current folder names (docs/DEV_SETUP.md, section 3).
 #
 # Once the worker has its brief, its session is SHOWN: show_workers.sh opens a terminal tab
 # attached to it, because a session nobody sees can wait on a dialog for hours. --batch skips
@@ -88,7 +91,7 @@ ctl "brief path" "$brief"
 [ -n "$windows" ] || command -v tmux >/dev/null || die "tmux is not installed"
 command -v claude >/dev/null || die "claude is not on PATH"
 
-model=""; settings=""; tools=""; worktree=""; effort=""; batch=""
+model=""; settings=""; tools=""; worktree=""; effort=""; batch=""; backend=""
 # Git for Windows' dirname handles both separators, including mixed paths such as D:/p\scripts\x.sh.
 case $0 in *'\'*) kit=$(dirname -- "$0") ;; */*) kit=${0%/*} ;; *) kit=. ;; esac
 while [ $# -gt 0 ]; do
@@ -99,6 +102,7 @@ while [ $# -gt 0 ]; do
     --worktree)      worktree=1; shift ;;
     --effort)        effort=$2; shift 2 ;;
     --batch)         batch=1; shift ;;
+    --backend)       backend=$2; shift 2 ;;
     *) die "unknown option: $1" ;;
   esac
 done
@@ -111,6 +115,31 @@ done
 
 here=$(pwd -P && echo x) || die "cannot resolve the current folder"
 dir=${here%"${nl}x"}
+# The backend's variables go before claude as `env K='V' ...`, each value through `q`. Only
+# the keys review_dispatch.py accepts: any other name would be a variable the file could set
+# for the worker. No message prints a value: the file holds the endpoint's token.
+envs=""
+if [ -n "$backend" ]; then
+  case $backend in [!A-Za-z0-9]*|*[!A-Za-z0-9._-]*) die "--backend must be letters, digits, '.', '_' or '-': $backend" ;; esac
+  file=$dir/.myagentkit/backends/$backend.env
+  { [ -f "$file" ] && [ -r "$file" ]; } || die "backend file not found or not readable: $file"
+  cr=$(printf '\r'); url=""
+  while IFS= read -r line || [ -n "$line" ]; do
+    line=${line%"$cr"}
+    case $line in ""|"#"*) continue ;; esac
+    key=${line%%=*}; value=${line#*=}
+    case $key in
+      ANTHROPIC_BASE_URL|ANTHROPIC_AUTH_TOKEN|ANTHROPIC_MODEL|ANTHROPIC_DEFAULT_OPUS_MODEL|\
+      ANTHROPIC_DEFAULT_SONNET_MODEL|ANTHROPIC_DEFAULT_HAIKU_MODEL)
+        [ "$key" != "$line" ] || die "a line of $file is not KEY=VALUE" ;;
+      *) die "a line of $file is not KEY=VALUE with one of the ANTHROPIC_* keys review.sh accepts" ;;
+    esac
+    [ "$key" != ANTHROPIC_BASE_URL ] || [ -z "$value" ] || url=1
+    envs="$envs$key=$(q "$value") "
+  done < "$file"
+  [ -n "$url" ] || die "$file sets no ANTHROPIC_BASE_URL"
+  envs="env $envs"
+fi
 # --settings is inline JSON or a file. The tool starts in the worktree, so a relative file is
 # made absolute here, against the caller's folder: resolved there, an untracked settings file
 # was missing and a tracked one of the same name was loaded instead. A relative value that is
@@ -245,7 +274,7 @@ if [ -n "$windows" ]; then
   # status, failed to start: the tab then waits for Enter, so its error stays on screen.
   tab=$(mktemp) || die "cannot write the tab's script"
   printf '%s\n' 'rm -f -- "$0"' "cd $(q "$dir") || exit 1" \
-    "t=\$(date +%s); claude $(q "$instruction") ${cmd#claude }; s=\$?; [ \$((\$(date +%s) - t)) -gt 10 ] || { echo \"claude ended at once (exit \$s); press Enter to close\"; read -r _; }" \
+    "t=\$(date +%s); ${envs}claude $(q "$instruction") ${cmd#claude }; s=\$?; [ \$((\$(date +%s) - t)) -gt 10 ] || { echo \"claude ended at once (exit \$s); press Enter to close\"; read -r _; }" \
     'exit 0' > "$tab" || die "cannot write the tab's script: $tab"
   "$wt" -w 0 new-tab --title "$(semi "$name")" "$(semi "$bash")" -l "$(semi "$(cygpath -w "$tab")")" ||
     { rm -f -- "$tab"; die "$wt could not open a tab for '$name'"; }
@@ -285,7 +314,7 @@ fi
 # `cd` first: tmux hands new sessions the PWD of whichever client last created one, and
 # the tool exits with "the current working directory was deleted" when that folder (a
 # removed worktree, say) is gone, whatever -c says.
-tmux new-session -d -s "$name" -c "$dir" -x 200 -y 50 "cd $(q "$dir") && exec $cmd"
+tmux new-session -d -s "$name" -c "$dir" -x 200 -y 50 "cd $(q "$dir") && exec $envs$cmd"
 
 # Wait for the input line: the TUI shows its prompt arrow at the start of a line once ready
 # (v2.1.285 follows the arrow with a NO-BREAK space, so the match is on the arrow alone)

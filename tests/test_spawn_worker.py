@@ -82,7 +82,8 @@ elif cmd == 'send-keys':
 CLAUDE = r'''#!/usr/bin/env python3
 import json, os, sys
 with open(os.path.join(os.environ['SPAWN_STATE'], 'claude.json'), 'w') as f:
-    json.dump({'argv': sys.argv[1:], 'cwd': os.getcwd()}, f)
+    json.dump({'argv': sys.argv[1:], 'cwd': os.getcwd(),
+               'env': {k: v for k, v in os.environ.items() if k.startswith('ANTHROPIC_')}}, f)
 '''
 
 
@@ -150,7 +151,8 @@ WINDOWS = os.name == 'nt'
 ON_WINDOWS = {'test_a_missing_or_failing_watcher_stops_the_spawn', 'test_a_worker_without_its_model_or_effort_is_refused',
               'test_missing_or_unreadable_brief_is_refused_before_any_session',
               'test_no_error_message_echoes_a_control_character',
-              'test_on_native_windows_the_worker_opens_as_a_windows_terminal_tab'}
+              'test_on_native_windows_the_worker_opens_as_a_windows_terminal_tab',
+              'test_a_backend_reaches_the_worker_quoted_on_both_paths'}
 
 
 def tmux_path_cases(cls):
@@ -334,6 +336,48 @@ class SpawnWorkerTests(unittest.TestCase):
         tab = json.loads((self.state / 'wt.json').read_text())[-1]
         self.assertIn('t=$(date +%s); claude ', tab)
         self.assertIn('press Enter to close', tab)
+
+    def test_a_backend_reaches_the_worker_quoted_on_both_paths(self):
+        # The file's variables reach claude's environment intact, CRLF line ends included, and
+        # a value that would end its quoting runs nothing. The tmux path runs on POSIX only.
+        marker = self.tmp / 'injected'
+        token = "to'k$(touch %s)'en" % marker
+        backend = self.cwd / '.myagentkit/backends/glm.env'
+        backend.parent.mkdir(parents=True)
+        backend.write_bytes(('# GLM\r\nANTHROPIC_BASE_URL=https://backend.invalid\r\nANTHROPIC_AUTH_TOKEN=%s\r\n'
+                             'ANTHROPIC_DEFAULT_OPUS_MODEL=glm-x' % token).encode())
+        expected = {'ANTHROPIC_BASE_URL': 'https://backend.invalid', 'ANTHROPIC_AUTH_TOKEN': token,
+                    'ANTHROPIC_DEFAULT_OPUS_MODEL': 'glm-x'}
+
+        def check(result):
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            launched = self.launched()
+            self.assertEqual({k: launched['env'].get(k) for k in expected}, expected)
+            self.assertEqual(launched['argv'][-6:], ['-n', 'w1', '--model', 'm', '--effort', 'high'])
+            self.assertFalse(marker.exists(), 'a backend value ran as shell')
+            self.assertNotIn(token, result.stdout + result.stderr)
+            (self.state / 'claude.json').unlink()
+        if not WINDOWS:
+            check(self.spawn('w1', str(self.brief), '--backend', 'glm'))
+        for name, body in (('uname', '#!/bin/sh\necho MINGW64_NT-10.0-26200\n'), ('cygpath', CYGPATH),
+                           ('wt-tab', WT_TAB), ('ps-stub', '#!/bin/sh\n[ ! -f "$SPAWN_STATE/claude.json" ] || '
+                                                          'printf "8 claude.exe -n w1\\r\\n"\n')):
+            if WINDOWS and name == 'cygpath':
+                continue
+            (self.bin / name).write_text(body)
+            (self.bin / name).chmod(0o755)
+        config = self.tmp / 'config'
+        (config / 'sessions').mkdir(parents=True)
+        (config / 'sessions' / '8.json').write_text('{}')
+        tab = dict(KIT_WT=str(self.bin / 'wt-tab'), KIT_PS=str(self.bin / 'ps-stub'), CLAUDE_CONFIG_DIR=str(config))
+        check(self.spawn('w1', str(self.brief), '--backend', 'glm', **tab))
+        # A file without the endpoint is refused before any session, and prints no value.
+        backend.write_text('ANTHROPIC_AUTH_TOKEN=%s\n' % token)
+        result = self.spawn('w1', str(self.brief), '--backend', 'glm', **tab)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('sets no ANTHROPIC_BASE_URL', result.stderr)
+        self.assertNotIn(token, result.stderr)
+        self.assertIsNone(self.launched())
 
     def assert_refused(self, brief):
         result = self.spawn('w2', str(brief))

@@ -25,7 +25,7 @@ class UsageSummaryTests(unittest.TestCase):
         (self.repo / 'docs/reviews').mkdir(parents=True)
 
     def record(self, name, task, report=None, kind='review', callee='claude', model='opus',
-               status='completed', reason=None, duration=1000, chain=''):
+               status='completed', reason=None, duration=1000, chain='', backend=None):
         """One record written by the adapters' own writer, so the schema is production's."""
         evidence = None
         if report is not None:
@@ -34,7 +34,7 @@ class UsageSummaryTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {'MYAGENTKIT_REVIEW_CHAIN_ID': chain}):
             path, _ = agent_usage.record(self.repo, callee, model, 'test', {'id': task, 'kind': kind},
                                          {'duration_ms': duration}, status, reason,
-                                         evidence and str(evidence), report)
+                                         evidence and str(evidence), report, backend=backend)
         return path
 
     def chain(self, chain_id, status, failure_kind=None):
@@ -141,7 +141,7 @@ class UsageSummaryTests(unittest.TestCase):
         original = json.loads(path.read_text())
         cases = [(field, []) for field in (
             'invocation_id', 'recorded_at', 'status', 'failure_kind', 'callee',
-            'model_requested', 'review_chain_id', 'evidence', 'evidence_sha256', 'task')]
+            'model_requested', 'review_chain_id', 'evidence', 'evidence_sha256', 'backend', 'task')]
         cases += [('task', {'id': [], 'kind': 'review'}),
                   ('task', {'id': 'damaged', 'kind': []})]
         cases += [('duration_ms', value) for value in ([], '1000', True, -1, float('nan'), float('inf'), 10 ** 400)]
@@ -153,6 +153,18 @@ class UsageSummaryTests(unittest.TestCase):
                 self.assertIn('Unreadable records skipped: 1', out)
                 self.assertNotIn('Task damaged:', out)
                 self.assertIn('Total: invocations=1 rounds=1 duration=1.000s rejects=0', out)
+
+    def test_a_backend_is_shown_and_grouped_only_when_recorded(self):
+        # One model name served by two endpoints: the backend keeps their numbers apart.
+        self.record('a', 'T', b'| effort | high |\nVERDICT: Accept\n', model='glm-x', backend='glm')
+        self.record('b', 'T', b'| effort | high |\nVERDICT: Reject\n', model='glm-x')
+        out = self.summary()
+        self.assertIn(' callee=claude model=glm-x backend=glm effort=high verdict=Accept ', out)
+        self.assertIn(' callee=claude model=glm-x effort=high verdict=Reject ', out)
+        self.assertIn('Model glm-x / effort high / backend glm: invocations=1 rounds=1 '
+                      'duration=1.000s rejects=0', out)
+        self.assertIn('Model glm-x / effort high: invocations=1 rounds=1 duration=1.000s rejects=1', out)
+        self.assertEqual(out.count('backend'), 2)
 
     def test_control_and_literal_escape_values_have_distinct_groups(self):
         for name, value in (('control', '\x1b'), ('literal', r'\x1b')):

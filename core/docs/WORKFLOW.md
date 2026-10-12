@@ -463,6 +463,18 @@ Rules for whoever routes work, binding with any table:
    otherwise; then the main rule is back at once, unasked: the reviewing model fixes its own
    findings again. A decision made for a moment never outlives its reason.
 
+### A second Claude-compatible backend
+
+A third model can take work beside Codex: the Claude CLI pointed at another provider's
+Anthropic-compatible endpoint (GLM today), with no third bridge. The owner writes the
+endpoint, its token and its model ids into `.myagentkit/backends/NAME.env`
+(`docs/DEV_SETUP.md`, section 3). `scripts/review.sh --backend NAME` runs the Claude reviewer
+there as reviewer `claude@NAME` (`docs/REVIEW_RUNNING.md`). `scripts/spawn_worker.sh
+--backend NAME` starts a Claude worker session there. The backend changes neither the tiers
+above nor the sandbox. The lead measures it before routing work to it: run a few real reviews
+on it, then compare rejects and rework in `usage_summary.py`, which shows the backend column.
+The owner decides whether a `claude@NAME` review counts as the second model.
+
 ### Working modes, by name
 
 The owner switches the working mode by its name, in English or Turkish. The "Working mode:"
