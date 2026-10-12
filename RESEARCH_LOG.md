@@ -37,6 +37,8 @@ The first probe read `--help` through command substitution, and a background chi
 held that pipe until it exited, far past the 5 s bound (seen RED: 14 s). It now captures to a
 file and kills the child's process group where `setsid` exists, as the grep probe does; a
 trap removes the temp file when doctor is interrupted (the leftover file was seen RED).
+Unterminated `--help` output, or an rc file's unterminated EXIT-trap print, put the status
+marker mid-line, where doctor never found it; both probes now start it on a new line (seen RED).
 
 ### 2026-10-10 — Round 3 bootstrap and Stop-hook findings
 

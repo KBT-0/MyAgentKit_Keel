@@ -21,6 +21,9 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   cannot hold session start past that bound. Where `setsid` exists, that child is killed with
   the probe's process group (otherwise a NOTE says it is not), and an interrupted doctor
   removes the temp file. Without `timeout` or a temp file the probe is skipped with a NOTE.
+  Both probes print their exit status on a line of its own: a `--help` or an rc file ending
+  without a newline once hid it, and doctor gave a false 'did not answer' (or 'did not
+  complete') NOTE.
   **ACTION:** sync the kit or copy
   `$KIT/core/scripts/doctor.sh` to `scripts/doctor.sh`.
 - **A review no longer dies on the kit's own limits** (`agent_process.py`, the adapters,

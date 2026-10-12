@@ -63,6 +63,10 @@ TIMEOUT_STUB = ('#!/usr/bin/env python3\n'
                 '    child.wait()\n'
                 '    sys.exit(124)\n')
 
+# A stand-in setsid for a host without one (Git for Windows, stock macOS): it runs the probe's
+# script, status framing included, with a no-op kill, so the caller's process group survives.
+SETSID_SHIM = '#!/bin/sh\nscript=$3; shift 3\nexec sh -c "kill() { :; }; $script" "$@"\n'
+
 
 def alive(pid):
     # ps, not kill -0: a killed child not yet reaped is a zombie, and kill -0 still finds it.
@@ -113,12 +117,11 @@ class DoctorTests(unittest.TestCase):
                                             env=dict(env, PATH=path), capture_output=True, text=True)
                     self.assertEqual(result.returncode, int(old_cli), result.stdout + result.stderr)
                     self.assertIn('does not support --effort' if old_cli else 'DOCTOR: ready', result.stdout)
-            # Unterminated help must not hide the status marker. Git for Windows lacks
-            # setsid: a shim exercises its framing without killing the caller's group.
-            for shim in ((False, True) if WINDOWS else (False,)):
+            # Unterminated help must not hide the status marker. Each host runs its own setsid
+            # (or the no-setsid branch) and the shim, so the framing is exercised everywhere.
+            for shim in (False, True):
                 if shim:
-                    (tools / 'setsid').write_text('#!/bin/sh\nscript=$3; shift 3\n'
-                                                'exec sh -c "kill() { :; }; $script" "$@"\n')
+                    (tools / 'setsid').write_text(SETSID_SHIM)
                     (tools / 'setsid').chmod(0o755)
                 for help_text, status, missing in (('old CLI help', 0, True),
                                                    ('old CLI help', 2, True), ('--effort', 0, False)):
@@ -130,6 +133,8 @@ class DoctorTests(unittest.TestCase):
                                                 capture_output=True, text=True)
                         self.assertEqual(result.returncode, int(missing), result.stdout + result.stderr)
                         self.assertIn('MISSING: the Claude CLI' if missing else 'DOCTOR: ready', result.stdout)
+                        # Checked and supported, not skipped: a lost marker also ends ready.
+                        self.assertNotIn('did not answer --help', result.stdout)
                 if shim:
                     (tools / 'setsid').unlink()
             # review.sh appends ~/.local/bin when codex is there, and runs a claude found only
@@ -238,6 +243,22 @@ class DoctorTests(unittest.TestCase):
             self.assertEqual(ready.returncode, 0, ready.stdout + ready.stderr)
             self.assertIn('DOCTOR: ready', ready.stdout)
             self.assertEqual(ready.stderr, '')
+            # An rc file that ends with unterminated output (an EXIT trap's printf) put the grep
+            # probe's status marker mid-line, and doctor called a clean probe incomplete.
+            shim_dir = tmp / 'setsid-shim'
+            shim_dir.mkdir()
+            (shim_dir / 'setsid').write_text(SETSID_SHIM)
+            (shim_dir / 'setsid').chmod(0o755)
+            shell.write_text('#!/bin/sh\ncommand() { echo "grep is an alias for grep --color=auto"; }\n'
+                             'eval "$2"\nprintf bye\n')
+            for shim in (False, True):
+                with self.subTest(setsid_shim=shim):
+                    shim_path = (str(shim_dir) + os.pathsep if shim else '') + env['PATH']
+                    probed = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=project, capture_output=True,
+                                            text=True, env=dict(env, PATH=shim_path))
+                    self.assertEqual(probed.returncode, 0, probed.stdout + probed.stderr)
+                    self.assertNotIn('grep probe did not complete', probed.stdout)
+            shell.write_text('#!/bin/sh\ncommand() { echo "grep is an alias for grep --color=auto"; }\neval "$2"\n')
 
             # A hooks path of the project's own is not wired: the hook belongs beside the kit's.
             git('config', 'core.hooksPath', '.husky')

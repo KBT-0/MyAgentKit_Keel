@@ -301,7 +301,8 @@ elif [ -n "${SHELL:-}" ]; then
     # by its saved number, which by then could name another process group. The subshell
     # takes the "Killed" line bash prints for a command killed by a signal; the ":" keeps it
     # from exec-ing setsid in its own place, which put that line back on doctor's stderr.
-    ( setsid sh -c 'timeout --foreground -k 1 5 "$0" -ic "$1"; echo "$2 $?"; kill -s KILL 0' \
+    # The status starts on its own line: an rc file's unterminated output hid it mid-line.
+    ( setsid sh -c 'timeout --foreground -k 1 5 "$0" -ic "$1"; printf "\n%s %s\n" "$2" "$?"; kill -s KILL 0' \
         "$SHELL" "$probe_cmd" "$probe_mark-exit" </dev/null >"$probe_out" 2>/dev/null; : ) 2>/dev/null
     probe_status=$(awk -v m="$probe_mark-exit " 'index($0, m) == 1 { print substr($0, length(m) + 1) }' "$probe_out")
   else
