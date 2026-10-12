@@ -202,7 +202,7 @@ elif [ "$reviewer" = claude ]; then
   # as the grep probe's are (the comment there says why the leader kills its own group).
   if command -v setsid >/dev/null 2>&1; then
     help_mark="<<DOCTOR-HELP-$$>>-exit"
-    ( setsid sh -c 'timeout --foreground -k 1 5 "$0" --help; echo "$1 $?"; kill -s KILL 0' \
+    ( setsid sh -c 'timeout --foreground -k 1 5 "$0" --help; printf "\n%s %s\n" "$1" "$?"; kill -s KILL 0' \
         "$reviewer_path" "$help_mark" </dev/null >"$help_out" 2>/dev/null; : ) 2>/dev/null
     help_status=$(awk -v m="$help_mark " 'index($0, m) == 1 { print substr($0, length(m) + 1) }' "$help_out")
   else

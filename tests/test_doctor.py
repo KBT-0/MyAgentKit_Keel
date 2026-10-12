@@ -113,6 +113,25 @@ class DoctorTests(unittest.TestCase):
                                             env=dict(env, PATH=path), capture_output=True, text=True)
                     self.assertEqual(result.returncode, int(old_cli), result.stdout + result.stderr)
                     self.assertIn('does not support --effort' if old_cli else 'DOCTOR: ready', result.stdout)
+            # Unterminated help must not hide the status marker. Git for Windows lacks
+            # setsid: a shim exercises its framing without killing the caller's group.
+            for shim in ((False, True) if WINDOWS else (False,)):
+                if shim:
+                    (tools / 'setsid').write_text('#!/bin/sh\nscript=$3; shift 3\n'
+                                                'exec sh -c "kill() { :; }; $script" "$@"\n')
+                    (tools / 'setsid').chmod(0o755)
+                for help_text, status, missing in (('old CLI help', 0, True),
+                                                   ('old CLI help', 2, True), ('--effort', 0, False)):
+                    with self.subTest(shim=shim, help_text=help_text, status=status):
+                        (old / 'claude').write_text('#!/bin/sh\nprintf \'%%s\' %s\nexit %s\n'
+                                                   % (shlex.quote(help_text), status))
+                        result = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=root,
+                                                env=dict(env, PATH=str(old) + os.pathsep + env['PATH']),
+                                                capture_output=True, text=True)
+                        self.assertEqual(result.returncode, int(missing), result.stdout + result.stderr)
+                        self.assertIn('MISSING: the Claude CLI' if missing else 'DOCTOR: ready', result.stdout)
+                if shim:
+                    (tools / 'setsid').unlink()
             # review.sh appends ~/.local/bin when codex is there, and runs a claude found only
             # there. Then a --help that never returns: bounded as the grep probe is, and named.
             local = root / 'home/.local/bin'
