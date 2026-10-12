@@ -44,9 +44,10 @@
 # byte-identical one from another run too, and this one takes the number above the highest
 # there (NAME.result-2.md, -3, ...), so a newer report never has a lower number; a worktree the
 # audit keeps gets its result back. Only a retry of an interrupted older move, whose source is
-# still that archive's object, reuses the archive. A move that fails after the report left the
-# worktree keeps the worktree without the audit, which could remove it while the report sits
-# only in a .report-move-* folder there; the helper prints that folder. Where neither an
+# still that archive's object, reuses the archive. Every non-collision move failure keeps the
+# worktree without the audit. NAME.report-move records the move before consumption and blocks
+# later closes until the lead recovers the report and removes that marker. The helper prints
+# the .report-move-* folder of a report it could not restore. Where neither an
 # exclusive rename nor a hard link works, the move refuses and the report stays (owner
 # decision). After a removal (or with no worktree), the Codex records NAME.session, NAME.exit,
 # NAME.live and NAME.question go too; a kept worktree keeps them.
@@ -82,7 +83,11 @@ def archived(source, target):
     if not match:
         return None
     info = os.lstat(source)
-    for entry in sorted(os.listdir(folder or ".")):
+    try:
+        entries = sorted(os.listdir(folder or "."))
+    except OSError:
+        return None  # no reuse evidence; exclusive publication can still succeed
+    for entry in entries:
         if re.fullmatch(re.escape(match[1]) + r"(?:-[1-9][0-9]*)?\.md", entry):
             path = target[:len(target) - len(name)] + entry
             try:
@@ -143,8 +148,8 @@ try:
                         os.unlink(owned)
                     except FileExistsError:
                         raise OSError(errno.EBUSY, "source changed during refused move; owned report preserved")
-                    except OSError:
-                        pass
+                    except OSError as restore_error:
+                        raise OSError(restore_error.errno, "report restoration failed; owned report preserved")
                     raise
             finally:
                 if os.path.lexists(probe):
@@ -162,6 +167,20 @@ except FileExistsError:
     sys.exit(2)
 except OSError as error:
     sys.exit("[Errno %s] %s" % (error.errno, error.strerror))' "$1" "$2"
+}
+# A persistent per-worker marker precedes every move, including restoration after an audit.
+# A killed helper or shell leaves it for the next close. Only publication or a collision with
+# the source intact clears it; all other outcomes need the lead to recover the named report.
+move_recorded_report() {
+  if ! (set -C; printf 'source: %s\ntarget: %s\n' "$1" "$2" > "$record.report-move"); then
+    printf '%s\n' 'could not record the report move; nothing moved' >&2
+    return 1
+  fi
+  move_report "$1" "$2"; status=$?
+  case $status in
+    0|2) rm -- "$record.report-move" || return 1 ;;
+  esac
+  return "$status"
 }
 nl='
 '
@@ -335,6 +354,11 @@ for name; do
   refuse() { fail "$name: $why; ending the session now would leave it running without its caller, so nothing is done for $name: wait until it ends, then close again"; }
   if why=$(busy "$wt_dir"); then refuse; continue; fi
   record=$top/.myagentkit/workers/$name
+  if [ -e "$record.report-move" ] || [ -L "$record.report-move" ]; then
+    fail "$name: unfinished report move recorded in $record.report-move; the audit will not run and the worktree and session records are kept"
+    say "$name: $(cat "$record.report-move" 2>/dev/null); recover the original report to its source or archive, checking .report-move-* folders beside both paths, then remove $record.report-move and close again"
+    continue
+  fi
   # An unanswered Codex decision: its session record is the only way to answer it, and a fresh
   # spawn of the name is refused while the question exists, so a close would strand both.
   ask=$(cat "$record.question" 2>/dev/null) || ask=$wt_dir/QUESTION-$name.md
@@ -428,21 +452,20 @@ for name; do
     if [ -n "$dry" ]; then say "$name: dry run: would move its result RESULT-$name.md to $saved"
     elif mkdir -p -- "${record%/*}"; then
       while :; do
-        actual=$(move_report "$wt_dir/RESULT-$name.md" "$saved"); move_rc=$?
+        actual=$(move_recorded_report "$wt_dir/RESULT-$name.md" "$saved"); move_rc=$?
         if [ "$move_rc" -eq 0 ]; then saved=$actual; moved=1; say "$name: its result RESULT-$name.md moved to $saved"; break
         elif [ "$move_rc" -eq 2 ]; then n=$((n + 1)); saved=$record.result-$n.md
         else
           fail "$name: could not move its result RESULT-$name.md to $saved"
-          [ -e "$wt_dir/RESULT-$name.md" ] || lost=1; break
+          lost=1; break
         fi
       done
-    else fail "$name: could not move its result RESULT-$name.md to $saved"; fi
+    else fail "$name: could not move its result RESULT-$name.md to $saved"; lost=1; fi
   fi
   kept=""; rc=0
   if [ -n "$lost" ]; then
-    # The report left the worktree and reached no archive: a removal would leave it only in a
-    # private folder nobody looks in, so the worktree stays and the audit does not run.
-    say "$name: the audit did not run, so a worktree stays: RESULT-$name.md was taken from it but reached no archive; recover the report from the path printed above, else from a .report-move-* folder in ${record%/*}"
+    # A successor at the original path proves no restoration. Keep every non-collision failure.
+    say "$name: the audit did not run, so a worktree stays: publication of RESULT-$name.md failed; recover the report from its source, archive or the path printed above, else from a .report-move-* folder in ${record%/*}; after recovery remove $record.report-move if present and close again"
     kept=1
   else
     apply=--apply; [ -z "$dry" ] || { apply=""; say "$name: dry run: the removal would lift the quiet period for this worktree alone (--no-quiet), every other proof stays"; }
@@ -473,16 +496,17 @@ for name; do
   if [ -n "$moved" ] && [ "$wt_dir" != "$top" ] && [ -d "$wt_dir" ]; then
     restored=$wt_dir/RESULT-$name.md; n=0
     while :; do
-      move_report "$saved" "$restored" >/dev/null; move_rc=$?
+      move_recorded_report "$saved" "$restored" >/dev/null; move_rc=$?
       if [ "$move_rc" -eq 0 ]; then
         if [ "$n" -eq 0 ]; then say "$name: its result moved back to RESULT-$name.md beside the kept work"
         else say "$name: newer RESULT-$name.md kept; its saved result moved back to $restored beside the kept work"; fi
         break
       elif [ "$move_rc" -eq 2 ]; then n=$((n + 1)); restored=$wt_dir/RESULT-$name-restored-$n.md
-      else fail "$name: could not move its result back from $saved to the kept worktree"; break; fi
+      else fail "$name: could not move its result back from $saved to the kept worktree"; kept=1; break; fi
     done
   fi
-  if [ -z "$dry" ] && [ "$rc" -eq 0 ] && [ -z "$kept" ] && [ -n "$top" ]; then
+  if [ -z "$dry" ] && [ "$rc" -eq 0 ] && [ -z "$kept" ] && [ -n "$top" ] &&
+     [ ! -e "$record.report-move" ] && [ ! -L "$record.report-move" ]; then
     rm -f -- "$record.session" "$record.exit" "$record.live" "$record.question" || fail "$name: could not remove its Codex session records"
   fi
   if git show-ref --verify --quiet "refs/heads/worktree-$name" 2>/dev/null; then

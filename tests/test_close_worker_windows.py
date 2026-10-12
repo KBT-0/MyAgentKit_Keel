@@ -9,6 +9,7 @@ the flock lock and index.lock). The archive cases run the script's own code on e
 """
 import os
 from pathlib import Path
+import shlex
 import shutil
 import subprocess
 import sys
@@ -59,6 +60,163 @@ def move_report():
 
 
 class CloseWorkerOnWindows(unittest.TestCase):
+    def close_fixture(self, interruption):
+        """Real worktree and removal audit, with only the archive interruption injected."""
+        tmp = Path(tempfile.mkdtemp(prefix='kit-close-recovery-')).resolve()
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        main, kit, bin_dir = (tmp / name for name in ('main', 'scripts', 'bin'))
+        for path in (main, kit, bin_dir):
+            path.mkdir()
+        python = shlex.quote(Path(sys.executable).as_posix())
+        # Native mkdir avoids Git Bash's sandbox directory-creation denial in this fixture.
+        mkdir = bin_dir / 'mkdir.py'
+        mkdir.write_text('import pathlib, sys\nfor arg in sys.argv[1:]:\n'
+                         '    if arg not in ("-p", "--"):\n'
+                         '        pathlib.Path(arg).mkdir(parents=True, exist_ok=True)\n')
+        stubs = {'mkdir': '#!/bin/sh\nexec ' + python + ' ' + shlex.quote(mkdir.as_posix()) + ' "$@"\n',
+                 'ps-stub': '#!/bin/sh\nexit 0\n',
+                 'tmux': '#!/bin/sh\necho "no server running" >&2\nexit 1\n'}
+        for name, body in stubs.items():
+            path = bin_dir / name
+            path.write_text(body, newline='\n')
+            path.chmod(0o755)
+        env = dict(os.environ, PATH=str(bin_dir) + os.pathsep + str(Path(sys.executable).parent)
+                   + os.pathsep + os.environ['PATH'], KIT_PS=shlex.quote((bin_dir / 'ps-stub').as_posix()),
+                   PYTHONUTF8='1', CLEAN_WORKTREES_NOW=str(time.time() + 7200),
+                   GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1',
+                   GIT_AUTHOR_NAME='t', GIT_AUTHOR_EMAIL='t@example.invalid',
+                   GIT_COMMITTER_NAME='t', GIT_COMMITTER_EMAIL='t@example.invalid',
+                   GIT_CONFIG_COUNT='1', GIT_CONFIG_KEY_0='core.autocrlf', GIT_CONFIG_VALUE_0='false')
+        for key in ('KIT_NO_WORKTREE_CLEANUP', 'CLEAN_WORKTREES_PROC', 'CLEAN_WORKTREES_MOUNTINFO',
+                    'GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'TMUX'):
+            env.pop(key, None)
+        def git(*args, cwd=main):
+            result = subprocess.run(['git', *args], cwd=cwd, env=env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+        git('init', '-q', '-b', 'main')
+        (main / '.gitignore').write_text('/.claude/worktrees/\n/.myagentkit/\n')
+        git('add', '-A')
+        git('commit', '-q', '-m', 'base')
+        tree = main / '.claude/worktrees/taken'
+        git('worktree', 'add', '-q', str(tree), '-b', 'worktree-taken')
+        (tree / 'finished.txt').write_text('finished work\n')
+        git('add', 'finished.txt', cwd=tree)
+        git('commit', '-q', '-m', 'finished work', cwd=tree)
+        git('merge', '-q', '--no-edit', 'worktree-taken')
+        records = main / '.myagentkit/workers'
+        records.mkdir(parents=True)
+        (records / 'taken.session').write_text('the session\n')
+        (tree / 'RESULT-taken.md').write_text('the report\n')
+        script = kit / 'close_worker.sh'
+        original = SCRIPT.read_text(encoding='utf-8')
+        start = 'source, target = sys.argv[1:]\n'
+        self.assertIn(start, original)
+        script.write_text(original.replace(start, start + interruption, 1), encoding='utf-8', newline='\n')
+        audited = tmp / 'audited'
+        (kit / 'clean_worktrees.sh').write_text('#!/bin/sh\n: > ' + shlex.quote(audited.as_posix())
+                                               + '\nexec sh ' + shlex.quote(SCRIPT.with_name('clean_worktrees.sh').as_posix())
+                                               + ' "$@"\n', newline='\n')
+        def close(*args):
+            result = subprocess.run(['sh', str(script), *args, 'taken'], cwd=main, env=env,
+                                    capture_output=True, text=True, encoding='utf-8', timeout=45)
+            return result.returncode, result.stdout + result.stderr
+        return tree, records, script, audited, close
+
+    def test_two_closes_preserve_an_unpublished_report_until_recovery(self):
+        interrupted = ('folder = os.path.join(os.path.dirname(target), ".report-move-killed")\n'
+                       'os.mkdir(folder)\nos.rename(source, os.path.join(folder, "report"))\nos._exit(73)\n')
+        tree, records, script, audited, close = self.close_fixture(interrupted)
+        code, out = close()
+        self.assertEqual(code, 1, out)
+        self.assertFalse(audited.exists(), out)
+        owned = records / '.report-move-killed/report'
+        self.assertEqual(owned.read_text(), 'the report\n')
+        self.assertTrue(tree.exists())
+        self.assertTrue((records / 'taken.session').exists())
+        script.write_bytes(SCRIPT.read_bytes())  # the next close has no injected failure
+        code, out = close()
+        self.assertEqual(code, 1, out)
+        self.assertFalse(audited.exists(), 'the second close audited an unrecovered report: ' + out)
+        self.assertTrue(tree.exists())
+        self.assertEqual((records / 'taken.session').read_text(), 'the session\n')
+        self.assertEqual(owned.read_text(), 'the report\n')
+        marker = records / 'taken.report-move'
+        self.assertTrue(marker.exists())
+        self.assertIn('unfinished report move', out)
+        code, out = close('--dry-run')
+        self.assertEqual(code, 1, out)
+        self.assertFalse(audited.exists())
+        self.assertTrue(marker.exists())
+        # The printed recovery protocol: recover the report, then release its marker.
+        owned.rename(tree / 'RESULT-taken.md')
+        marker.unlink()
+        code, out = close()
+        self.assertEqual(code, 0, out)
+        self.assertTrue(audited.exists(), out)
+        self.assertFalse(tree.exists(), out)
+        self.assertFalse((records / 'taken.session').exists())
+        self.assertFalse(marker.exists())
+        self.assertEqual((records / 'taken.result.md').read_text(), 'the report\n')
+
+    def test_an_empty_directory_successor_does_not_prove_report_restoration(self):
+        interrupted = ('folder = os.path.join(os.path.dirname(target), ".report-move-failed")\n'
+                       'os.mkdir(folder)\nos.rename(source, os.path.join(folder, "report"))\n'
+                       'os.mkdir(source)\nos._exit(1)\n')
+        tree, records, _, audited, close = self.close_fixture(interrupted)
+        code, out = close()
+        self.assertEqual(code, 1, out)
+        self.assertFalse(audited.exists(), 'the audit ran despite failed report publication: ' + out)
+        self.assertTrue((tree / 'RESULT-taken.md').is_dir())
+        self.assertEqual((records / 'taken.session').read_text(), 'the session\n')
+        self.assertEqual((records / '.report-move-failed/report').read_text(), 'the report\n')
+
+    def test_denied_archive_listing_still_allows_exclusive_publication(self):
+        denied = '''import errno, os
+def listdir(*args, **kwargs):
+    raise PermissionError(errno.EACCES, "directory enumeration denied")
+os.listdir = listdir
+'''
+        for forced in ('', NO_EXCLUSIVE_RENAME % ('EINVAL', True)):
+            with self.subTest(fallback=bool(forced)), tempfile.TemporaryDirectory() as tmp:
+                source, first, target = (Path(tmp) / name for name in ('RESULT-w.md', 'w.result.md', 'w.result-2.md'))
+                first.write_text('earlier report\n')
+                source.write_text('the report\n')
+                command = [sys.executable, '-I', '-c', forced + denied + move_report(), str(source), str(target)]
+                moved = subprocess.run(command, capture_output=True, timeout=10)
+                self.assertEqual(moved.returncode, 0, moved.stderr)
+                self.assertEqual(target.read_text(), 'the report\n')
+                self.assertEqual(first.read_text(), 'earlier report\n')
+                self.assertFalse(source.exists())
+                source.write_text('another report\n')
+                collision = subprocess.run(command, capture_output=True, timeout=10)
+                self.assertEqual(collision.returncode, 2, collision.stderr)
+                self.assertEqual(target.read_text(), 'the report\n')
+                self.assertEqual(source.read_text(), 'another report\n')
+
+    def test_an_archive_collision_with_failed_restoration_is_not_retryable(self):
+        refused = '''import sys
+linking = os.link
+def link(source, target, *args, **kwargs):
+    if target == sys.argv[2]:
+        raise FileExistsError(errno.EEXIST, "archive collision")
+    if target == sys.argv[1]:
+        raise PermissionError(errno.EACCES, "restoration denied")
+    return linking(source, target, *args, **kwargs)
+os.link = link
+'''
+        with tempfile.TemporaryDirectory() as tmp:
+            source, target = Path(tmp) / 'RESULT-w.md', Path(tmp) / 'w.result.md'
+            source.write_text('the report\n')
+            moved = subprocess.run([sys.executable, '-I', '-c', NO_EXCLUSIVE_RENAME % ('EINVAL', True)
+                                    + refused + move_report(), str(source), str(target)],
+                                   capture_output=True, timeout=10)
+            self.assertEqual(moved.returncode, 1, moved.stderr)
+            self.assertFalse(source.exists())
+            self.assertFalse(target.exists())
+            kept = list(Path(tmp).glob('.report-move-*/report'))
+            self.assertEqual(len(kept), 1)
+            self.assertEqual(kept[0].read_text(), 'the report\n')
+
     def test_archive_link_cleanup_preserves_a_new_report_at_the_source(self):
         racing = '''import sys
 linking = os.link

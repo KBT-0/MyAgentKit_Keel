@@ -606,6 +606,71 @@ class WorkingModeTests(unittest.TestCase):
         self.assertEqual([p.name for p in snapshot.parent.iterdir()], [snapshot.name])
         self.assertEqual(self.state.read_bytes(), before)
 
+    def test_failed_folder_restoration_cannot_leave_private_contents_visible_to_git(self):
+        worker = self.module()
+        before = self.state.read_bytes()
+        sha = hashlib.sha256(before).hexdigest()
+        subprocess.run(['git', 'init', '-q', str(self.project)], check=True, capture_output=True)
+        (self.project / '.gitignore').write_text('/.myagentkit/\n/.claude/\n')
+        source = self.project / '.myagentkit'
+        source.write_bytes(before)  # a regular FILE named after the private directory
+        source = worker.private(self.project, source)
+        initially_visible = subprocess.run(['git', 'ls-files', '--others', '--exclude-standard'], cwd=self.project,
+                                           check=True, capture_output=True, text=True).stdout.splitlines()
+        renaming = os.rename
+        consumed = []
+        def swapped(path, target):
+            if Path(path) == source:
+                source.unlink()
+                source.mkdir()
+                (source / 'w.session').write_text('private session\n')
+                renaming(path, target)
+                consumed.append(Path(target))
+                source.mkdir()
+                (source / 'successor').write_text('keep the successor\n')
+            else:
+                renaming(path, target)  # restoration cannot replace the nonempty successor
+        with mock.patch.object(worker.os, 'rename', swapped), mock.patch('sys.stderr', io.StringIO()):
+            with self.assertRaises((ValueError, OSError)):
+                worker.replace_state(self.project, source, sha)
+        visible = subprocess.run(['git', 'ls-files', '--others', '--exclude-standard'], cwd=self.project,
+                                 check=True, capture_output=True, text=True).stdout.splitlines()
+        self.assertEqual(sorted(visible), sorted(initially_visible),
+                         'a failed recovery exposed private contents to git')
+        self.assertEqual(consumed, [], 'the recovery parent must be private before consuming FILE')
+        self.assertEqual(source.read_bytes(), before)
+        self.assertEqual(self.state.read_bytes(), before)
+
+    def test_failed_folder_restoration_keeps_its_recovery_inside_the_private_parent(self):
+        worker = self.module()
+        before = self.state.read_bytes()
+        source, sha = self.snapshot()
+        subprocess.run(['git', 'init', '-q', str(self.project)], check=True, capture_output=True)
+        (self.project / '.gitignore').write_text('/.myagentkit/\n/.claude/\n')
+        renaming = os.rename
+        def swapped(path, target):
+            if Path(path) == source:
+                source.unlink()
+                source.mkdir()
+                (source / 'w.session').write_text('private session\n')
+                renaming(path, target)
+                source.mkdir()
+                (source / 'successor').write_text('keep the successor\n')
+            else:
+                renaming(path, target)
+        errors = io.StringIO()
+        with mock.patch.object(worker.os, 'rename', swapped), mock.patch('sys.stderr', errors):
+            with self.assertRaises(OSError):
+                worker.replace_state(self.project, source, sha)
+        kept = Path(errors.getvalue().split(' kept at ', 1)[1].strip())
+        self.assertTrue(kept.is_relative_to(self.project / '.myagentkit'))
+        self.assertEqual((kept / 'w.session').read_text(), 'private session\n')
+        self.assertEqual((source / 'successor').read_text(), 'keep the successor\n')
+        visible = subprocess.run(['git', 'ls-files', '--others', '--exclude-standard'], cwd=self.project,
+                                 check=True, capture_output=True, text=True).stdout.splitlines()
+        self.assertEqual(sorted(visible), ['.gitignore', 'docs/STATE.md', 'docs/WORKFLOW.md'])
+        self.assertEqual(self.state.read_bytes(), before)
+
     def test_read_state_refuses_a_folder_as_out_and_writes_nothing_outside(self):
         with tempfile.TemporaryDirectory() as folder:
             fake = Path(folder).resolve()

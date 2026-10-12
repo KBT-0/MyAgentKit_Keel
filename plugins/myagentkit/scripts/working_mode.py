@@ -119,7 +119,8 @@ def replace_state(project, source, expected):
                              + '; read it again with --read-state, redo the edit in that snapshot, and retry')
         if not stat.S_ISREG(os.lstat(source).st_mode):
             raise ValueError('a prepared STATE.md file is a regular file: ' + shown(source))
-        folder = Path(tempfile.mkdtemp(prefix='.' + source.name + '-', dir=source.parent))
+        parent = private(project, source.parent)  # failed restoration must keep the whole folder private
+        folder = Path(tempfile.mkdtemp(prefix='.' + source.name + '-', dir=parent))
         owned = folder / 'snapshot'
         identity = pending = None
         published = False

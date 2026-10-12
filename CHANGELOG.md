@@ -13,6 +13,10 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## v0.11 — 2026-10-09
 
+- **Unfinished report moves survive retries**: `NAME.report-move` records each move before consumption and blocks later closes, keeping the worktree and session records until the lead recovers the report and removes the marker. **ACTION:** sync `close_worker.sh` from the Claude Code overlay.
+- **Failed moves skip the audit**: every non-collision report-move failure keeps the worktree, even when a successor occupies the source path; a collision whose restoration failed also stops the close.
+- **Private STATE recovery parents**: `--replace-state FILE` checks the recovery folder's parent before consumption, so failed folder restoration cannot expose private contents to Git. **ACTION:** sync `scripts/working_mode.py`.
+- **Archives without listing permission**: a denied archive scan supplies no reuse evidence; exclusive publication still proceeds without replacing an existing archive.
 - **Exclusive STATE snapshots**: `--read-state OUT` creates with O_CREAT|O_EXCL; an existing hard link is never truncated. **ACTION:** sync `scripts/working_mode.py`.
 - **A snapshot per edit**: `--read-state OUT` treats OUT as a prefix and prints `SHA256 PATH`; writers edit and replace their own returned PATH. **ACTION:** update the STATE protocol from `core/AGENTS.md` and `core/docs/WORKFLOW.md`.
 - **Verified snapshot cleanup**: replacement consumes a private name and deletes only the published fstat identity, preserving a successor draft at the supplied path.
