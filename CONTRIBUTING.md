@@ -28,7 +28,7 @@ below is the same process by hand.
   have asked and did not.
 - A document that contradicts another document, or itself.
 - A script that broke on your platform — macOS, BSD, Windows, a different shell. This one is
-  especially wanted: only Linux under WSL has ever been tested.
+  especially wanted: a passing development-host run can still hide a platform regression.
 - An ecosystem claim that has gone stale. Tool names, flags and install commands rot fast.
 
 **Keep it local** when it only makes sense given your domain. A rule about your game's

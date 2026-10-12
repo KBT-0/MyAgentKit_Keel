@@ -220,7 +220,9 @@ class DoctorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
             project, bin_dir, home = tmp / 'project', tmp / 'bin', tmp / 'home'
-            bin_dir.mkdir(); home.mkdir()
+            # Bootstrap into a real, empty fixture folder. The doctor cases do not test
+            # mkdir's traversal of protected Windows temp-directory ancestors.
+            project.mkdir(); bin_dir.mkdir(); home.mkdir()
             subprocess.run(['sh', str(ROOT / 'bootstrap.sh'), str(project), '--overlay', 'claude-code'],
                            check=True, capture_output=True)
             # Stubs for the tools a ready machine has; the test must not depend on this one.

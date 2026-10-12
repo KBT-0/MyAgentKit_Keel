@@ -10,9 +10,12 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / 'core/scripts'))
+from review_test_support import PYTHON_SHEBANG, posix_only, python_cli  # noqa: E402
 
 
 class ReviewUpgradeTests(unittest.TestCase):
+    @posix_only
     def test_review_self_test_without_a_python3_command(self):
         spec = importlib.util.spec_from_file_location('check_kit', ROOT / 'scripts/check_kit.py')
         check_kit = importlib.util.module_from_spec(spec)
@@ -100,11 +103,10 @@ class ReviewUpgradeTests(unittest.TestCase):
                 subprocess.run(['git', '-C', str(project), *args], check=True, capture_output=True)
             (project / 'file.py').write_text('changed\n')
             fake = project / 'fake-codex'
-            fake.write_text('#!/usr/bin/env python3\nimport json,pathlib,sys\n'
+            fake = python_cli(fake, PYTHON_SHEBANG + 'import json,pathlib,sys\n'
                             'sys.stdin.read()\n'
                             'pathlib.Path(sys.argv[sys.argv.index("-o")+1]).write_text("VERDICT: Accept\\n")\n'
                             'print(json.dumps({"type":"turn.completed","usage":{}}))\n')
-            fake.chmod(0o755)
             env = dict(os.environ, REVIEW_CLI_BIN=str(fake),
                        CLAUDE_CLI_BIN=str(project / 'NO-PAID-CLI'),
                        REVIEW_REPO_ROOT=str(project), REVIEW_CODEX_MODEL='fixture-codex-model',

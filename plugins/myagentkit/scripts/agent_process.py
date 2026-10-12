@@ -7,6 +7,7 @@ import select
 import selectors
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -31,6 +32,9 @@ CANCEL_SIGNALS = tuple(getattr(signal, name) for name in ("SIGINT", "SIGTERM", "
 # runs, so every process it starts is in that job and TerminateJobObject stops them all, also
 # after the child itself has exited (taskkill /T finds no tree below an exited process). The
 # job is killed when its last handle closes: a supervisor that dies takes its reviewer with it.
+# Ceiling: a packaged-app execution alias (the WindowsApps `python3` stub that opens the Python
+# install manager) is started by the system broker, not by the child, so it is outside the job
+# and cancel and timeout cannot stop what a reviewer starts through it.
 POSIX = os.name == "posix"
 _WIN = {}
 
@@ -107,12 +111,95 @@ def pending() -> set:
     return {sig for cancel in CANCEL_SIGNALS for sig in getattr(signal.getsignal(cancel), 'held', ())}
 
 
+def _holds(pid, name) -> bool:
+    """Whether /proc shows `name`=1 in the environment of process `pid`."""
+    try:
+        with open("/proc/%s/environ" % pid, "rb") as environ:
+            return name.encode() + b"=1" in environ.read().split(b"\0")
+    except OSError:
+        return False  # gone, another user's, or not dumpable (launch())
+
+
+_SCAN_UNAVAILABLE = []
+
+
+def _marked(name) -> list | None | bool:
+    """Pids holding `name`=1 (/proc or ps -E). None: a ps read failed after the listing showed
+    the marker, and found no match (worth another scan). False: the listing itself failed (a ps
+    without -E, the BSDs, or no /bin/ps), which another scan does not mend."""
+    if os.path.isdir("/proc/self"):
+        return [int(pid) for pid in filter(str.isdigit, os.listdir("/proc")) if _holds(pid, name)]
+    failed = False
+    def ps(*options):
+        nonlocal failed
+        try:
+            # A project's PATH may contain CLI fixtures or wrappers; use the host's ps.
+            result = subprocess.run(["/bin/ps", *options], stdin=subprocess.DEVNULL,
+                                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            if not result.returncode:
+                return result
+        except OSError:
+            pass
+        # BSD ps exits 1 for a pid that exited since the enumeration: that one is gone, and the
+        # scan is whole. Read as a failure, any process on the host exiting mid-scan warned.
+        if options[-2] == "-p":
+            try:
+                os.kill(int(options[-1]), 0)
+            except ProcessLookupError:
+                return None
+            except PermissionError:
+                pass
+        failed = True
+        # A failed ps is no scan, not an empty one: say so once per process.
+        if not _SCAN_UNAVAILABLE:
+            _SCAN_UNAVAILABLE.append(name)
+            sys.stderr.write("agent_process: /bin/ps %s failed; review descendant scan is incomplete\n"
+                             % " ".join(options))
+        return None
+    entry = name.encode() + b"=1"
+    listing = ps("-A", "-E", "-ww", "-o", "command=")
+    if listing is None:
+        return False
+    # A raw newline inside an environment value (PORTS=$'8080\n8081') splits a record over
+    # lines, and a continuation line led by digits read as a new record: the marker went to a
+    # pid naming another process, which was killed while the marked one ran on. The whole
+    # listing says only whether any process holds the marker; each pid is then read on its
+    # own, so all of its output is its own.
+    if entry not in listing.stdout.split():
+        return []
+    every = ps("-A", "-o", "pid=")
+    if every is None:
+        return None
+    pids = []
+    for pid in filter(bytes.isdigit, every.stdout.split()):
+        record = ps("-E", "-ww", "-o", "command=", "-p", pid.decode())
+        if record is not None and entry in record.stdout.split():
+            pids.append(int(pid))
+    return pids if pids or not failed else None
+
+
 def launch(command, mask, **popen_kw) -> subprocess.Popen:
     """Popen in a group of its own. Called with the cancels blocked (`mask` is what
     block_cancels() returned): on POSIX the child restores `mask` before exec."""
     if POSIX:
-        return subprocess.Popen(command, start_new_session=True,
-                                preexec_fn=lambda: restore_mask(mask), **popen_kw)
+        # A descendant that calls setsid (start_new_session) leaves this group, and killpg
+        # never reached it: it ran on after a cancel or a timeout. Every descendant inherits
+        # this variable, and stop_group kills each process whose environment holds it. Chosen
+        # over PR_SET_CHILD_SUBREAPER, which is Linux only (macOS has none) and makes this
+        # supervisor the parent of every orphan of the run. A name per launch, not one shared
+        # name: a nested run adds its own and keeps the outer one, so the outer stop still
+        # finds it. Ceiling: a descendant whose environment cannot be read escapes: one
+        # started with a cleared environment (env -i); on Linux one that is not dumpable
+        # (prctl PR_SET_DUMPABLE 0, as ssh-agent does, or a setuid, setgid or file-capability
+        # binary), whose /proc environ is closed to us; on macOS one whose environment ps -E
+        # does not show.
+        marker = "MYAGENTKIT_PROCESS_" + os.urandom(8).hex()
+        environment = os.environ if popen_kw.get("env") is None else popen_kw["env"]
+        popen_kw["env"] = dict(environment, **{marker: "1"})
+        child = subprocess.Popen(command, start_new_session=True,
+                                 preexec_fn=lambda: restore_mask(mask), **popen_kw)
+        child._kit_marker = marker
+        return child
     # A bare name is looked up as a shell would, PATHEXT included: CreateProcess adds only
     # .exe, and an npm-installed CLI (codex, claude) is a .cmd, so every review there failed
     # to launch. The search follows the child's PATH when the caller gives it one.
@@ -156,6 +243,20 @@ def launch(command, mask, **popen_kw) -> subprocess.Popen:
     return child
 
 
+def lock_file(lock, create: bool) -> None:
+    """Take a nonblocking exclusive lock on the open file `lock`, or raise OSError. Windows
+    locks a byte range, so a file just created (`create`) gets its one byte first."""
+    if os.name == "nt":
+        import msvcrt
+        if create:
+            lock.write(b"0")
+            lock.seek(0)
+        msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+    else:
+        import fcntl
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
 def stop_group(child, pgid) -> None:
     """Kill `child`'s group (or, off POSIX, its process tree) and reap the leader.
 
@@ -164,6 +265,13 @@ def stop_group(child, pgid) -> None:
     the group again once it is reaped. Windows: TerminateJobObject stops every process in the
     child's job (launch()), once; a child launched elsewhere gets `taskkill /T /F`, and
     child.kill() when taskkill is missing or fails.
+
+    POSIX also kills every process whose environment holds the child's marker (launch()), so
+    a descendant that left the group with setsid stops too. A failed scan is retried, up to 20
+    scans, and a give-up is reported. A ps that cannot list environments is tried once, unless
+    an earlier scan found a process. Ceilings: a descendant whose
+    environment cannot be read survives (launch() names them), and outside Linux pidfds a pid
+    reused between the scan and the kill can be signalled (below).
     """
     if POSIX:
         # The leader's pid is signalled only while it is ours (not yet reaped): a reaped
@@ -182,6 +290,46 @@ def stop_group(child, pgid) -> None:
             except (ProcessLookupError, PermissionError):
                 pass
             child.wait()
+        # The descendants that left the group (launch()). Scanned again until none is left:
+        # one may have started another before it was killed. A zombie's environment reads
+        # empty, so a reaped id is never matched.
+        # A failed scan (None) is retried. A failed listing (False) is retried only after a scan
+        # found a process: where ps -E never works, 20 doomed scans cost every stop a second.
+        found = False
+        for _ in range(20):
+            pids = _marked(child._kit_marker) if hasattr(child, "_kit_marker") else ()
+            if pids is None or (pids is False and found):
+                time.sleep(0.05)
+                continue
+            if not pids:
+                break
+            found = True
+            for pid in pids:
+                # A process found may have exited since the scan and its pid gone to another.
+                # On Linux the kill goes through a pidfd opened first, and only after the
+                # environment is read again: a pid reused before the open fails that read, one
+                # reused after it leaves the pidfd on the dead process. Ceiling: on macOS, or a
+                # Linux kernel without pidfds (before 5.3), the window between the scan and
+                # os.kill stays; sequential pid allocation keeps it small.
+                try:
+                    handle = os.pidfd_open(pid) if hasattr(signal, "pidfd_send_signal") else None
+                except ProcessLookupError:
+                    continue
+                except OSError:
+                    handle = None
+                try:
+                    if handle is None:
+                        os.kill(pid, signal.SIGKILL)
+                    elif _holds(pid, child._kit_marker):
+                        signal.pidfd_send_signal(handle, signal.SIGKILL)
+                except (ProcessLookupError, PermissionError):
+                    pass
+                finally:
+                    if handle is not None:
+                        os.close(handle)
+            time.sleep(0.05)
+        else:
+            sys.stderr.write("agent_process: review descendant cleanup gave up after 20 scans\n")
     elif getattr(child, "_kit_job", None) is not None:
         job, child._kit_job = child._kit_job, None
         _win()["kernel32"].TerminateJobObject(job, 1)

@@ -155,9 +155,16 @@ alongside the updated `review.sh`; reapply the project's default reviewer and mo
 
 `review_dispatch.py`, `claude_bridge.py`,
 `codex_bridge.py`, `agent_process.py`, `agent_usage.py`, `test_claude_bridge.py`, and
-`test_agent_usage.py`, plus `codex_quota.py` and `test_codex_quota.py`.
+`test_agent_usage.py`, plus `codex_quota.py`, `test_codex_quota.py` and `review_test_support.py`.
 
 <!-- REVIEW_COMPANIONS_END -->
+
+The offline review self-test runs on native Windows as well as Linux and macOS. Windows
+fixtures use the current Python interpreter through pip's bundled console launcher, so pip
+must be installed for the self-test (`python -m ensurepip` repairs a Python without it).
+POSIX signal-mask, process-group, FIFO and resource-limit cases report NOT RUN on Windows;
+Linux and macOS CI run them. Each platform enforces a minimum of executed tests per suite;
+declared platform skips do not count, and unexpected skips fail the self-test.
 
 Merge `.myagentkit/`
 into the root ignore rules. Also merge the raw review/handoff archive exclusions and final

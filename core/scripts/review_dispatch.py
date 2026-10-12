@@ -213,6 +213,7 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
+    claude_bridge.utf8_output()
     try:
         raise SystemExit(main())
     except (OSError, ValueError, claude_bridge.BridgeError, subprocess.SubprocessError) as error:

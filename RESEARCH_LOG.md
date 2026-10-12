@@ -2113,3 +2113,82 @@ small and stable, batch documentation edits into their own session, volatile sta
 the on-demand state file), and the kit's own core files are kept short for the same reason.
 `GOTCHAS.md` is explicitly NOT a session-start file — it is referenced from the
 constitution in one line and read only when something behaves unexpectedly.
+
+
+## 2026-10-10: Review supervision across native Windows and detached POSIX sessions
+
+Issue #54 exposed two independent test failures: Windows `os.kill` terminated the runner
+instead of invoking its cancel handler, and CreateProcess could not execute POSIX fixture
+scripts. Offline fixtures now use the running interpreter via executable console launchers;
+Windows uses `raise_signal` for injected cancels. Platform skips are explicit and never count
+toward executed suite minimums. The kit's project-gate self-test runs the review case on
+Windows too, with real pipe-draining and Job Object regressions in `tests/test_review_windows.py`.
+
+A process group cannot contain a descendant after `setsid`. A unique inherited environment
+marker lets cleanup find it via Linux `/proc` or macOS `ps -A -E -ww`, including after the
+leader exits. This is smaller and portable compared with Linux-only child-subreaper state,
+which changes orphan parentage and has no macOS counterpart. Nested launches preserve outer
+markers. A descendant whose environment cleanup cannot read is excluded: a cleared
+environment, a non-dumpable or privileged-exec process on Linux (its `/proc` environ answers
+EACCES, reproduced with `prctl(PR_SET_DUMPABLE, 0)`), or one `ps -E` does not show on
+macOS. POSIX cancellation and timeout
+regressions are left for Linux and macOS CI; Windows tests prove detached descendants cannot
+break away from the Job Object. One Windows ceiling stays (owner decision, 2026-10-12, noted
+rather than coded): a packaged-app execution alias such as the WindowsApps `python3` stub that
+opens the Python install manager is started by the system broker, not by the reviewer, so it
+escapes the job and cancel or timeout cannot stop what a reviewer starts through it. The existing kit-wrapper tests cover `set -m` cancellation
+both after startup and before Python installs its handlers, on POSIX CI.
+
+A redirected Windows adapter could also lose a paid, completed review while printing text
+outside its ANSI code page. Entrypoints configure UTF-8 output, and an offline review with an
+arrow in its findings checks that it completes without being relabelled `adapter_error`.
+
+Native Git startup also made the copy/reviewer deadline regression measure unrelated
+preflight and accounting work. It now times the actual bounded region, retaining its
+original remaining-budget and elapsed-time assertions. The real Windows review suite
+outlasted acceptance's 900-second scaled allowance; its bounded native allowance is longer,
+while POSIX keeps the previous limit. Boundary-status tests exercise only their boundary
+tail, and missing review companions are checked before any suite runs, avoiding repeated
+full reviews in unrelated failure probes. Recovery commands use a quoted project directory
+and relative paths so Git Bash does not traverse protected ancestors with `mkdir -p`.
+
+The full native gate also exposed a count assertion that compared executed minimums with
+discovered, skipped cases; it now subtracts declared platform exclusions before its exact
+comparison. Windows lock-test cleanup uses Win32 handles instead of the sandbox-denied
+taskkill CLI. Parents stop before children so the holder cannot truncate its token
+by finishing normally; an already-signalled handle distinguishes an exit race from a live
+process whose termination is denied. Doctor fixtures begin in an existing empty directory,
+keeping that regression independent of protected temp-ancestor traversal. Local gate runs
+need a working native python3 command, rather than the inaccessible Windows Store alias.
+Native Git could also exhaust the 0.7 seconds left by the deadline-sharing fixture's injected
+delay, so its reviewer never ran. That probe now prepares a real pinned copy before timing,
+checks the copy arguments, then publishes it after the controlled delay. Its original budget,
+elapsed-time and timeout assertions remain; separate archive-deadline cases use real processes.
+One older LFS fixture still named its driver `lfs`: the host's `filter.lfs.process` then
+overrode its fake clean command. A deliberately failing host process filter reproduced
+the dependency; naming the fixture driver `fakelfs`, as the other LFS fixtures do, preserves
+the content assertions without invoking the host's Git LFS CLI.
+The final full check completed all three units, then its marker write failed because the
+temporary parent directory no longer existed. Completion now recreates that one directory
+and writes the marker before printing PASS. A regression removes the directory, then puts
+a regular file in its place: the first recovers, while the second fails without a PASS line
+and preserves the file. The cause of the directory's disappearance was not established.
+On macOS the marker scan read record boundaries from text: a raw newline inside an
+environment value (`PORTS=$'8080\n8081'`) left a continuation line led by digits, read as a
+new process, and the marker after it was credited to that pid, which named another process,
+while the marked one ran on. A mocked listing reproduced it (`[8081]` for `[41]`). The
+listing now says only whether any process holds the marker; each pid is then read on its
+own with `ps -p`, so the cost of one `ps` per process is paid only when a marked process
+exists. The gate-lock fixtures moved into a Job Object, and cleanup by `TerminateJobObject`
+alone stopped the build before the lock holder: the holder saw its gate end and cleared
+the token the killed-gate regression reads (5 of 5 runs red). The python3 alias of the
+Python install manager also starts the holder, the gate and the build outside the job, so
+on this host the job stopped none of them. Cleanup again stops parents before children,
+through handles checked by creation time (a process older than the parent it names is a
+pid reuse and is spared), and then the job.
+A failed pid enumeration or per-pid read was taken as "no descendants", so a detached
+descendant survived the stop. Cleanup now retries such a scan, up to 20 scans, and reports
+a give-up. A failed `ps -E` listing is not retried unless an earlier scan found a process:
+where `ps -E` never works, or `/bin/ps` is missing, 20 doomed scans added a second to every
+stop. A `ps -p` that fails for a pid that has since exited counts as no failure: BSD `ps`
+exits 1 then, and any process exiting mid-scan had printed a false warning.

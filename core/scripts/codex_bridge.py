@@ -15,7 +15,7 @@ import agent_process
 import agent_usage
 import codex_quota
 from claude_bridge import (REVIEW_ASKS, REVIEW_RUNS, BridgeError, git, prior_rounds, scratch, snapshot,
-                           throwaway_copy, review_tmpdir)
+                           throwaway_copy, review_tmpdir, utf8_output)
 
 
 def main(argv=None, result_sink=None):
@@ -181,7 +181,11 @@ def main(argv=None, result_sink=None):
             # usage record keeps the whole stderr.
             failure = ("\n\n## Failure\n\n" + ("Codex ran, then its supervision failed: " if execution.get("launched")
                        else "Codex did not start: ") + execution["stderr"][-4000:]
-                       if reason == "run_failed" else "")
+                       if reason == "run_failed" else
+                       # As Claude's evidence says why its copy failed: without it the wrapper
+                       # printed copy_failed and no reason.
+                       "\n\n## Failure\n\nCodex never ran: " + execution["stderr"][-4000:]
+                       if reason == "copy_failed" else "")
             verdicts = re.findall(r"^VERDICT: (Accept|Accept with Manual Checks|Reject)[ \t]*$", final, re.M)
             declarations = re.findall(r"^[ \t]*VERDICT[ \t]*:.*$", final, re.M)
             if not reason and (len(verdicts) != 1 or len(declarations) != 1
@@ -305,6 +309,7 @@ def main(argv=None, result_sink=None):
 
 
 if __name__ == "__main__":
+    utf8_output()
     try:
         raise SystemExit(main())
     except (OSError, ValueError, BridgeError, subprocess.SubprocessError) as error:

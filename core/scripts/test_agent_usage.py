@@ -9,9 +9,220 @@ import time
 import unittest
 import agent_process
 import agent_usage
+from review_test_support import posix_only, send_cancel
+
+
+def ps_output(records, options):
+    """What /bin/ps prints for `options` over {pid: command and environment}: the table, with
+    or without its pid column, the pid list, or one pid's record (-p)."""
+    if '-p' in options:
+        return records.get(int(options[-1]), '').encode()
+    if options[-1] == 'pid=':
+        return ''.join(' %d\n' % pid for pid in records).encode()
+    pid_column = options[-1] == 'pid=,command='
+    return ''.join((' %d ' % pid if pid_column else '') + text for pid, text in records.items()).encode()
 
 
 class UsageTests(unittest.TestCase):
+    def test_posix_launch_markers_preserve_empty_and_nested_environments(self):
+        import os
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        seen = []
+
+        def popen(command, **kwargs):
+            seen.append(kwargs['env'])
+            return SimpleNamespace()
+        with patch.object(agent_process, 'POSIX', True), patch('subprocess.Popen', side_effect=popen), \
+                patch.dict(os.environ, {'KIT_ENV_PROBE': 'visible'}, clear=True):
+            outer = agent_process.launch(['fixture'], None, env={})
+            inner = agent_process.launch(['fixture'], None, env=seen[0])
+        self.assertEqual(seen[0], {outer._kit_marker: '1'})
+        self.assertEqual(seen[1], {outer._kit_marker: '1', inner._kit_marker: '1'})
+
+    def test_marker_scan_matches_complete_environment_entries_on_both_backends(self):
+        import io
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        marker = 'MYAGENTKIT_PROCESS_fixture'
+        with patch('os.path.isdir', return_value=True), patch('os.listdir', return_value=['12', '13', 'self']), \
+                patch('builtins.open', side_effect=[io.BytesIO((marker + '=1\0OTHER=x').encode()),
+                                                   io.BytesIO((marker + '=10\0').encode())]):
+            self.assertEqual(agent_process._marked(marker), [12])
+        records = {12: 'python ' + marker + '=1 OTHER=x\n', 13: 'python ' + marker + '=10\n'}
+        def ps(command, **kwargs):
+            # A project's PATH shim must not be able to invent the processes cleanup kills.
+            if command[0] != '/bin/ps':
+                return SimpleNamespace(returncode=0, stdout=('999 shim ' + marker + '=1\n').encode())
+            return SimpleNamespace(returncode=0, stdout=ps_output(records, command[1:]))
+        with patch('os.path.isdir', return_value=False), patch('subprocess.run', side_effect=ps):
+            self.assertEqual(agent_process._marked(marker), [12])
+
+    def test_marker_scan_keeps_continuation_lines_and_reports_a_failed_ps_once(self):
+        # A raw newline in an exported bash function put the marker on a line that names no
+        # process: int() raised out of stop_group, and run() raised instead of returning.
+        import io
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        marker = 'MYAGENTKIT_PROCESS_abc'
+        records = {41: 'bash BASH_FUNC_f%%=() {  echo hi\n} ' + marker + '=1 OTHER=x\n',
+                   42: 'python ' + marker + '=1\n'}
+        failing = []
+
+        def ps(command, **kwargs):
+            if failing:
+                return SimpleNamespace(returncode=1, stdout=b'')
+            return SimpleNamespace(returncode=0, stdout=ps_output(records, command[1:]))
+        with patch('os.path.isdir', return_value=False), patch('subprocess.run', side_effect=ps), \
+                patch.object(agent_process, '_SCAN_UNAVAILABLE', []), \
+                patch('sys.stderr', new_callable=io.StringIO) as stderr:
+            self.assertEqual(agent_process._marked(marker), [41, 42])
+            failing.append(True)
+            # A ps without -E (the BSDs) exits non-zero: no scan, said once, not "none found".
+            self.assertIs(agent_process._marked(marker), False)
+            self.assertIs(agent_process._marked(marker), False)
+        self.assertEqual(stderr.getvalue().count('/bin/ps -A -E -ww -o command= failed'), 1, stderr.getvalue())
+
+    def test_marker_scan_credits_a_digit_led_continuation_line_to_its_own_process(self):
+        # PORTS=$'8080\n8081' put a line led by digits inside 41's record, and the marker after
+        # it: read as a new record, it was credited to 8081, a pid naming another process,
+        # while 41 ran on. Each pid is read on its own now; a listing without the marker
+        # starts no per-pid read.
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        marker = 'MYAGENTKIT_PROCESS_abc'
+        records = {41: 'bash PORTS=8080\n8081 ' + marker + '=1\n', 42: 'python OTHER=x\n'}
+        calls = []
+
+        def ps(command, **kwargs):
+            calls.append(command)
+            return SimpleNamespace(returncode=0, stdout=ps_output(records, command[1:]))
+        with patch('os.path.isdir', return_value=False), patch('subprocess.run', side_effect=ps):
+            self.assertEqual(agent_process._marked(marker), [41])
+            del records[41]
+            calls.clear()
+            self.assertEqual(agent_process._marked(marker), [])
+        self.assertEqual(len(calls), 1, calls)
+
+    def test_marker_cleanup_retries_failed_pid_enumeration_and_reports_once(self):
+        self.failed_marker_scan('enumeration')
+
+    def test_marker_cleanup_retries_failed_per_pid_reads_and_reports_once(self):
+        self.failed_marker_scan('record')
+
+    def failed_marker_scan(self, stage):
+        import io
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        marker = 'MYAGENTKIT_PROCESS_abc'
+        for error in (False, True):
+            for recovers in (False, True):
+                records = {41: 'python ' + marker + '=1\n'}
+                failed, killed = [], []
+
+                def ps(command, **kwargs):
+                    targeted = command[-1] == 'pid=' if stage == 'enumeration' else '-p' in command
+                    if targeted and (not recovers or len(failed) < 2):
+                        failed.append(command)
+                        if error:
+                            raise OSError('ps unavailable')
+                        return SimpleNamespace(returncode=1, stdout=b'')
+                    return SimpleNamespace(returncode=0, stdout=ps_output(records, command[1:]))
+
+                def kill(pid, sig):
+                    if sig:  # signal 0 asks only whether the pid exists
+                        killed.append(pid)
+                        records.pop(pid)
+
+                child = SimpleNamespace(returncode=0, _kit_marker=marker, wait=lambda: 0)
+                with self.subTest(error=error, recovers=recovers), \
+                        patch.object(agent_process, 'POSIX', True), patch('os.path.isdir', return_value=False), \
+                        patch('subprocess.run', side_effect=ps), patch.object(agent_process, '_SCAN_UNAVAILABLE', []), \
+                        patch.object(agent_process, '_holds', return_value=True), \
+                        patch('os.pidfd_open', create=True, return_value=99), patch('os.close'), \
+                        patch('signal.pidfd_send_signal', create=True, side_effect=lambda fd, sig: kill(41, sig)), \
+                        patch('signal.SIGKILL', 9, create=True), patch('os.kill', side_effect=kill), \
+                        patch('time.sleep'), patch('sys.stderr', new_callable=io.StringIO) as stderr:
+                    agent_process.stop_group(child, 1)
+                    self.assertEqual(killed, [41] if recovers else [])
+                    self.assertEqual(len(failed), 2 if recovers else 20)
+                    self.assertEqual(stderr.getvalue().count('scan is incomplete'), 1, stderr.getvalue())
+                    self.assertEqual(stderr.getvalue().count('gave up'), 0 if recovers else 1, stderr.getvalue())
+
+    def test_marker_scan_passes_over_a_pid_that_exited_mid_scan(self):
+        # BSD ps exits 1 for a pid gone since the enumeration: any process on the host exiting
+        # mid-scan printed "scan is incomplete" and used up the one report a real failure needs.
+        import io
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        marker = 'MYAGENTKIT_PROCESS_abc'
+        records = {41: 'python ' + marker + '=1\n', 50: 'python OTHER=x\n'}
+
+        def ps(command, **kwargs):
+            if command[-1] == '50':
+                return SimpleNamespace(returncode=1, stdout=b'')
+            return SimpleNamespace(returncode=0, stdout=ps_output(records, command[1:]))
+
+        def exists(pid, sig):
+            if pid == 50:
+                raise ProcessLookupError(pid)
+        with patch('os.path.isdir', return_value=False), patch('subprocess.run', side_effect=ps), \
+                patch('os.kill', side_effect=exists), patch.object(agent_process, '_SCAN_UNAVAILABLE', []) as latch, \
+                patch('sys.stderr', new_callable=io.StringIO) as stderr:
+            self.assertEqual(agent_process._marked(marker), [41])
+            self.assertEqual((stderr.getvalue(), latch), ('', []))
+
+    def test_marker_cleanup_tries_a_listing_ps_cannot_make_once(self):
+        # Where ps -E never works (the BSDs) or /bin/ps is missing, each stop ran 20 doomed
+        # scans with a sleep after each. A listing that failed after a scan found a process
+        # may be passing, and is retried.
+        import io
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        child = SimpleNamespace(returncode=0, _kit_marker='MYAGENTKIT_PROCESS_abc', wait=lambda: 0)
+        for error in (False, True):
+            calls = []
+
+            def ps(command, **kwargs):
+                calls.append(command)
+                if error:
+                    raise OSError('no /bin/ps')
+                return SimpleNamespace(returncode=1, stdout=b'')
+            with self.subTest(error=error), patch.object(agent_process, 'POSIX', True), \
+                    patch('os.path.isdir', return_value=False), patch('subprocess.run', side_effect=ps), \
+                    patch.object(agent_process, '_SCAN_UNAVAILABLE', []), patch('time.sleep') as sleep, \
+                    patch('sys.stderr', new_callable=io.StringIO) as stderr:
+                agent_process.stop_group(child, 1)
+                self.assertEqual((len(calls), sleep.call_count), (1, 0))
+                self.assertEqual(stderr.getvalue().count('scan is incomplete'), 1, stderr.getvalue())
+        with patch.object(agent_process, 'POSIX', True), \
+                patch.object(agent_process, '_marked', side_effect=[[41], False, []]) as marked, \
+                patch.object(agent_process, '_holds', return_value=True), \
+                patch('os.pidfd_open', create=True, return_value=99), patch('os.close'), \
+                patch('signal.pidfd_send_signal', create=True), patch('signal.SIGKILL', 9, create=True), \
+                patch('time.sleep'):
+            agent_process.stop_group(child, 1)
+        self.assertEqual(marked.call_count, 3)
+
+    def test_the_marker_kill_spares_a_pid_reused_since_the_scan(self):
+        # The scan found 41; before the kill it exited and its pid went to an unrelated
+        # process. Through a pidfd the environment is read again first: a newcomer without
+        # the marker is never signalled, a marked process is, through the pidfd only.
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        child = SimpleNamespace(returncode=0, _kit_marker='MYAGENTKIT_PROCESS_abc', wait=lambda: 0)
+        for marked, expected in ((False, []), (True, [(99, 9)])):
+            sent, killed, closed = [], [], []
+            with self.subTest(marked=marked), patch.object(agent_process, 'POSIX', True), \
+                    patch.object(agent_process, '_marked', side_effect=[[41], []]), \
+                    patch.object(agent_process, '_holds', return_value=marked), \
+                    patch('os.pidfd_open', create=True, return_value=99), patch('os.close', closed.append), \
+                    patch('signal.pidfd_send_signal', create=True, side_effect=lambda *a: sent.append(a)), \
+                    patch('signal.SIGKILL', 9, create=True), patch('os.kill', side_effect=lambda *a: killed.append(a)), \
+                    patch('time.sleep'):
+                agent_process.stop_group(child, 41)
+                self.assertEqual((sent, killed, closed), (expected, [], [99]))
+
     def test_private_staging_and_publication_require_ignore_rules(self):
         from unittest.mock import patch
         with tempfile.TemporaryDirectory() as tmp:
@@ -179,6 +390,7 @@ class UsageTests(unittest.TestCase):
             self.assertEqual(len(rows), 1)
             self.assertNotIn("private transcript", result.stdout)
 
+    @posix_only
     def test_a_signal_the_caller_ignores_does_not_cancel_the_review(self):
         # nohup ignores SIGHUP and a background job ignores SIGINT; turning either back on
         # cancelled a nohup review the moment its terminal closed.
@@ -206,11 +418,13 @@ class UsageTests(unittest.TestCase):
                 created = []
 
                 def popen(*args, **kwargs):
+                    if args[0][0] == '/bin/ps':
+                        return real(*args, **kwargs)  # macOS cleanup scan, not the reviewer launch
                     if when == 'before':
-                        os.kill(os.getpid(), signal.SIGTERM)
+                        send_cancel(signal.SIGTERM)
                     created.append(real(*args, **kwargs))
                     if when == 'after':
-                        os.kill(os.getpid(), signal.SIGTERM)
+                        send_cancel(signal.SIGTERM)
                     return created[-1]
 
                 try:
@@ -227,11 +441,14 @@ class UsageTests(unittest.TestCase):
                 self.assertEqual(len(created), 1)
         # The cancel signals are blocked only around Popen in this process: the reviewer
         # starts with none of them blocked.
+        if not agent_process.POSIX:
+            return  # Windows recorder coverage above; only POSIX has a child signal mask.
         child = 'import signal; print(sorted(int(s) for s in signal.pthread_sigmask(signal.SIG_BLOCK, [])))'
         result = agent_process.run([sys.executable, '-c', child], '', Path.cwd(), 5)
         blocked = json.loads(result['stdout'])
         self.assertFalse({int(s) for s in agent_process.CANCEL_SIGNALS} & set(blocked), blocked)
 
+    @posix_only
     def test_a_cancel_during_cleanup_is_noted_not_raised(self):
         # Raised there, it interrupted the group kill or the reap, and run() returned nothing
         # for the adapter to record.
@@ -245,7 +462,7 @@ class UsageTests(unittest.TestCase):
                                       ('completed review', 'print("done")', None)):
             with self.subTest(case=name):
                 def killpg(pid, sig):
-                    os.kill(os.getpid(), signal.SIGTERM)
+                    send_cancel(signal.SIGTERM)
                     real(pid, sig)
                 try:
                     with patch.object(agent_process.os, 'killpg', side_effect=killpg):
@@ -257,6 +474,7 @@ class UsageTests(unittest.TestCase):
                 # A zero exit is not yet a completed review: the cancel is returned either way.
                 self.assertTrue(result['cancelled'], result)
 
+    @posix_only
     def test_a_cancel_as_cleanup_begins_is_noted_not_raised(self):
         # Cleanup swapped the raising handlers for noting ones one signal at a time: a cancel
         # before its own handler was swapped still raised, past the group kill and the reap.
@@ -271,6 +489,8 @@ class UsageTests(unittest.TestCase):
                 created, sent = [], []
 
                 def popen(*args, **kwargs):
+                    if args[0][0] == '/bin/ps':
+                        return real_popen(*args, **kwargs)  # macOS cleanup scan, not reviewer
                     created.append(real_popen(*args, **kwargs))
                     return created[-1]
 
@@ -278,7 +498,7 @@ class UsageTests(unittest.TestCase):
                     # The first handler change after the launch is where cleanup begins.
                     if created and not sent:
                         sent.append(sig)
-                        os.kill(os.getpid(), signal.SIGTERM)
+                        send_cancel(signal.SIGTERM)
                     return real_signal(sig, handler)
 
                 try:
@@ -297,6 +517,7 @@ class UsageTests(unittest.TestCase):
                 self.assertEqual(result['termination'], expected, result)
                 self.assertTrue(result['cancelled'], result)
 
+    @posix_only
     def test_a_cancel_at_any_line_after_a_completed_wait_keeps_the_review_completed(self):
         # The raising handler stayed armed into the cleanup: a cancel at a signal check before
         # the switch raised inside `finally`, past the group kill, the reap and the result,

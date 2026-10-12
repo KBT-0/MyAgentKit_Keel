@@ -73,6 +73,29 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   budget; launch failures suggest reinstalling or selecting a working executable, and timeouts
   suggest checking first-run prompts and retrying. A candidate the spent budget cut short is
   named in the fix, never hidden.
+- **The review self-test runs on native Windows** (issue #54): offline CLI fixtures use
+  executable Python launchers, tests inject cancels without terminating the test runner,
+  and per-platform suite minimums count executed tests. POSIX-only cases report NOT RUN;
+  Linux and macOS CI still run them. The kit acceptance no longer bypasses review tests on
+  Windows. Native gate-lock fixtures use owned Win32 process handles for forced exits;
+  restricted hosts need no taskkill CLI. Redirected adapter output uses UTF-8 so a completed review with non-ANSI text
+  remains usable. LFS fixtures use their own driver rather than the host's Git LFS process.
+  The kit check recovers a missing temporary completion-marker directory and prints PASS
+  only after writing that marker; a failed marker write still fails the check.
+  **ACTION:** copy the review companion files listed in `core/docs/DEV_SETUP.md`,
+  including the new `review_test_support.py`; Windows self-tests require pip's bundled launcher.
+- **Cancels and timeouts also stop detached review descendants** (`agent_process.py`):
+  Linux and macOS cleanup scans a unique inherited environment marker in addition to killing
+  the reviewer's process group. Native Windows Job Object tests prove that detached children
+  remain contained and breakaway is refused. A descendant whose environment cleanup cannot
+  read is outside the POSIX marker mechanism: a cleared environment, a non-dumpable,
+  setuid, setgid or file-capability process on Linux, or one `ps -E` does not show on
+  macOS; on Windows a packaged-app execution alias (the WindowsApps `python3` stub) is started
+  by the system broker and escapes the Job Object. On macOS each process is read on its own once the marker shows, so a multi-line
+  environment value can no longer credit the marker to the wrong pid. A failed scan is
+  retried, up to 20 scans, and a give-up is reported; a `ps` that cannot list environments
+  is tried once per stop, and a pid that exits mid-scan is no failure. **ACTION:** copy
+  `core/scripts/agent_process.py`.
 - **A review no longer dies on the kit's own limits** (`agent_process.py`, the adapters,
   `review.sh`): a review attempt now gets 3600 seconds (maximum 7200) and a Claude review
   200 turns (maximum 500); three high-effort reviews had died on 1800 seconds and 12 turns.

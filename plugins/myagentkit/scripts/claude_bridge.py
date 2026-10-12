@@ -105,15 +105,7 @@ def scratch_lock(path: str, create: bool = False):
         flags |= os.O_CREAT | os.O_EXCL
     with os.fdopen(os.open(marker, flags, 0o600), "r+b", buffering=0) as lock:
         try:
-            if os.name == "nt":
-                import msvcrt
-                if create:
-                    lock.write(b"0")
-                    lock.seek(0)
-                msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
-            else:
-                import fcntl
-                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            agent_process.lock_file(lock, create)
         except OSError as error:
             # The owner's decision (2026-10-11): no age-only fallback, which could sweep a
             # live copy with an old timestamp; a review there fails as copy_failed.
@@ -257,8 +249,11 @@ def throwaway_copy(repo: Path, head: str, diff: str | None, copy: Path,
     - Accepted limit: a repository inside Claude Code's per-user temporary directory is
       writable to the sandboxed Bash; and admin-managed Claude Code settings outrank SANDBOX.
     - Accepted limit: a SIGKILL leaves the copy in the temporary directory until a later run
-      of the same adapter sweeps it (scratch, sweep), and a process the reviewer or
-      preparation command detached from its group survives the group kill.
+      of the same adapter sweeps it (scratch, sweep). On POSIX, a process the reviewer or
+      preparation command detached from its group is stopped through its inherited
+      environment marker (agent_process.launch()), unless its environment cannot be read:
+      a cleared environment, a non-dumpable or setuid, setgid or file-capability process on
+      Linux, one ps -E does not show on macOS.
     - Accepted limit: committed snapshots use `git archive`, which honours export-ignore and
       export-subst. Uncommitted snapshots use checkout bytes instead. Untracked ignored files
       (installed dependencies, build output) and submodule contents are absent.
@@ -730,9 +725,11 @@ def prior_rounds(repo: Path, task_id: str | None, scope: str, resolved: str | No
         return BridgeError("usage record %s %s; an earlier round of task %s may be in it. Every "
                            "labelled round reads every record, so a new task label does not "
                            "help. Restore it, or set it aside (a record written by v0.7 or v0.8 "
-                           "with an empty task id is one of these): mkdir -p %s && mv %s %s/"
-                           % (path, what, task_id, shlex.quote(str(aside)),
-                              shlex.quote(str(path)), shlex.quote(str(aside))))
+                           "with an empty task id is one of these): cd %s && mkdir -p %s && mv %s %s/"
+                           % (path, what, task_id, shlex.quote(repo.as_posix()),
+                              shlex.quote(aside.relative_to(repo).as_posix()),
+                              shlex.quote(path.relative_to(repo).as_posix()),
+                              shlex.quote(aside.relative_to(repo).as_posix())))
     # Path.glob() swallows a listing error: a usage directory the owner could write but not
     # list read as "no earlier rounds". Only an absent directory has none.
     usage, names = repo / ".myagentkit/usage", []
@@ -1305,5 +1302,17 @@ def main(argv=None, result_sink=None) -> int:
         agent_process.handing_back(held, settle)
 
 
+def utf8_output():
+    """Write stdout and stderr as UTF-8 wherever they lead. Redirected on native Windows they
+    used the ANSI code page: a completed review whose text held one character outside it (an
+    arrow) raised while printing, failed as adapter_error, and the paid review was lost.
+    Errors are escaped, never raised: a bare encoding reset them to strict, and a lone
+    surrogate (a non-UTF-8 path) then lost the review the same way. A missing stream stays."""
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
+
+
 if __name__ == "__main__":
+    utf8_output()
     raise SystemExit(main())

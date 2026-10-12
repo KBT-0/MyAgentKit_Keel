@@ -134,8 +134,9 @@ POSIX `sh`, git (2.36 or newer for the worktree clean-up), Python 3.10 or newer 
 review tooling and the kit's own tests. The kit's own check also needs bash.
 Ubuntu, macOS and native Windows are in CI. The kit is
 developed on native Windows (Git for Windows' `sh` with a python.org CPython), with workers in
-Windows Terminal tabs; there a review run still needs a POSIX host (issue #54), and each check
-case that needs one prints NOT RUN. One AI CLI runs the project; a second one runs
+Windows Terminal tabs. The review self-test runs there too; cases that require POSIX signals
+or tools print NOT RUN and run on Linux and macOS CI. Native Windows self-test fixtures need
+pip's bundled console launcher. One AI CLI runs the project; a second one runs
 the review gate. Without either, the rules, the gate and the hooks still work.
 
 ## Feedback upstream

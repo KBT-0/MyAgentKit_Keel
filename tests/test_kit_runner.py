@@ -98,6 +98,21 @@ class KitRunnerTests(unittest.TestCase):
         self.assertFalse(passed)
         self.assertIn('required test suite is incomplete: test_kit_probe', out)
 
+    def test_declared_platform_skips_do_not_satisfy_suite_minimums(self):
+        for declared, minimum, expected in ((True, 1, True), (True, 2, False), (False, 1, False)):
+            with self.subTest(declared=declared, minimum=minimum):
+                command = self.suite_unit('True', minimum)
+                source = PROBE % 'True'
+                source = source.replace('    def test_maybe',
+                                        '    @unittest.skip("platform probe")\n    def test_maybe')
+                if declared:
+                    source += '    test_maybe._kit_platform_skip = True\n'
+                (self.tmp / 'suite/test_kit_probe.py').write_text(source)
+                passed, out = runner(('suite', command))
+                self.assertEqual(passed, expected, out)
+                if declared:
+                    self.assertIn('NOT RUN: test_kit_probe.Probe.test_maybe', out)
+
     def test_a_nested_only_failing_module_fails_the_run(self):
         command = self.suite_unit('True', 2)
         nested = self.tmp / 'suite/nested'
@@ -226,6 +241,33 @@ class KitRunnerTests(unittest.TestCase):
                                 text=True, env=dict(os.environ, PATH=str(shims) + os.pathsep + os.environ['PATH']))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("gate ran ['--timing']", result.stdout)
+
+    def test_completion_recovers_its_missing_marker_directory_and_refuses_a_file(self):
+        # The full native run completed every unit, but its temporary marker directory
+        # was gone by then. A PASS line followed by a failed marker write is not a pass.
+        for obstacle in (False, True):
+            with self.subTest(obstacle=obstacle):
+                owner = self.tmp / ('marker-file' if obstacle else 'missing-marker')
+                if obstacle:
+                    owner.write_text('keep this file')
+                marker = owner / 'passed'
+                out = io.StringIO()
+                with unittest.mock.patch.object(check_kit, '_PASSED_FILE', str(marker)), \
+                        unittest.mock.patch.object(check_kit, 'check_syntax'), \
+                        unittest.mock.patch.object(check_kit, 'check_release'), \
+                        unittest.mock.patch.object(check_kit, 'run', return_value='packaged source matches'), \
+                        unittest.mock.patch.object(check_kit, 'run_units', return_value=True), \
+                        unittest.mock.patch.object(sys, 'argv', ['check_kit.py']), \
+                        contextlib.redirect_stdout(out):
+                    if obstacle:
+                        with self.assertRaises(OSError):
+                            check_kit.main()
+                        self.assertNotIn('KIT CHECK: PASS', out.getvalue())
+                        self.assertEqual(owner.read_text(), 'keep this file')
+                    else:
+                        self.assertEqual(check_kit.main(), 0)
+                        self.assertTrue(marker.is_file())
+                        self.assertIn('KIT CHECK: PASS', out.getvalue().splitlines())
 
     def cancel_wrapper(self, early=False):
         if os.name == 'nt':

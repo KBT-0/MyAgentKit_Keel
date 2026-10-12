@@ -11,15 +11,20 @@ On native Windows no case is NOT RUN: a guard whose case cannot run there fails.
 import ctypes
 import os
 from pathlib import Path
+import queue
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / 'core/scripts'))
+import agent_process  # noqa: E402
+
 WINDOWS = os.name == 'nt'
 
 
@@ -47,6 +52,23 @@ if WINDOWS:
                                          ctypes.POINTER(wintypes.HANDLE), wintypes.DWORD, wintypes.BOOL,
                                          wintypes.DWORD)
     KERNEL32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    KERNEL32.OpenProcess.restype = wintypes.HANDLE
+    KERNEL32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    KERNEL32.GetProcessId.restype = wintypes.DWORD
+    KERNEL32.GetProcessId.argtypes = (wintypes.HANDLE,)
+    KERNEL32.TerminateProcess.argtypes = (wintypes.HANDLE, wintypes.UINT)
+    KERNEL32.WaitForSingleObject.restype = wintypes.DWORD
+    KERNEL32.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+    KERNEL32.GetProcessTimes.argtypes = (wintypes.HANDLE,) + (ctypes.POINTER(ctypes.c_uint64),) * 4
+
+    class ProcessBasicInformation(ctypes.Structure):
+        _fields_ = [('ExitStatus', ctypes.c_long), ('PebBaseAddress', ctypes.c_void_p),
+                    ('AffinityMask', ctypes.c_size_t), ('BasePriority', ctypes.c_long),
+                    ('UniqueProcessId', ctypes.c_size_t), ('InheritedFromUniqueProcessId', ctypes.c_size_t)]
+
+    NTDLL = ctypes.WinDLL('ntdll')
+    NTDLL.NtQueryInformationProcess.argtypes = (wintypes.HANDLE, wintypes.ULONG, ctypes.c_void_p,
+                                               wintypes.ULONG, ctypes.POINTER(wintypes.ULONG))
 
     class ProcessEntry(ctypes.Structure):
         _fields_ = [('dwSize', wintypes.DWORD), ('cntUsage', wintypes.DWORD),
@@ -111,7 +133,9 @@ def children(pid):
     return found
 
 
-def descendants(pid):
+def pid_descendants(pid):
+    """(pid, image name) of each process under pid, from snapshots; tests/test_stop_hook.py's
+    walk, which needs no handle on the root."""
     found = children(pid)
     for child, _ in found:
         found.extend(children(child))
@@ -121,8 +145,27 @@ def descendants(pid):
 def lock_holder(pid):
     """(holder, gate): the first python under pid whose direct child is an sh, and that sh.
     A launcher (the WindowsApps alias, a venv redirector) can run between pid and the holder."""
-    return next((parent, child) for parent, image in descendants(pid) if image.lower().startswith('python')
+    return next((parent, child) for parent, image in pid_descendants(pid) if image.lower().startswith('python')
                 for child, name in children(parent) if name == 'sh.exe')
+
+
+def kill_process(pid):
+    """Terminate a fixture process directly; taskkill needs privileges absent in sandboxes."""
+    KERNEL32.OpenProcess.restype = ctypes.c_void_p
+    KERNEL32.TerminateProcess.argtypes = (ctypes.c_void_p, ctypes.c_uint)
+    KERNEL32.GetExitCodeProcess.argtypes = (ctypes.c_void_p, ctypes.POINTER(wintypes.DWORD))
+    handle = KERNEL32.OpenProcess(0x1001, False, pid)
+    if not handle:
+        if ctypes.get_last_error() == 87:  # The fixture already exited.
+            return
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        if not KERNEL32.TerminateProcess(handle, 1):
+            error, status = ctypes.get_last_error(), wintypes.DWORD()
+            if not KERNEL32.GetExitCodeProcess(handle, ctypes.byref(status)) or status.value == 259:
+                raise ctypes.WinError(error)
+    finally:
+        close_handle(handle)
 
 
 def set_reparse_point(path):
@@ -174,35 +217,99 @@ elif mode == 'noid':
 exec(compile(open(source, encoding='utf-8').read(), '<probe>', 'exec'), {'__name__': '__main__'})
 '''
 
-def kill_process(pid):
-    """Terminate a fixture process directly; taskkill needs privileges absent in sandboxes."""
-    KERNEL32.OpenProcess.restype = ctypes.c_void_p
-    KERNEL32.TerminateProcess.argtypes = (ctypes.c_void_p, ctypes.c_uint)
-    KERNEL32.GetExitCodeProcess.argtypes = (ctypes.c_void_p, ctypes.POINTER(wintypes.DWORD))
-    handle = KERNEL32.OpenProcess(0x1001, False, pid)
-    if not handle:
-        if ctypes.get_last_error() == 87:  # The fixture already exited.
-            return
+def terminate(handle):
+    """Force the process behind `handle` to exit, and wait until it has: TerminateProcess only
+    starts the exit. Not taskkill: restricted Windows hosts deny it even for these children.
+    A denied termination of a live process fails the test."""
+    killed = KERNEL32.TerminateProcess(handle, 1)
+    error = ctypes.get_last_error()
+    # TerminateProcess reports access denied for a process already exiting (the python3
+    # alias's launcher takes the real python with it). Its handle is signalled once it has
+    # gone; a denied process still live then fails.
+    waited = KERNEL32.WaitForSingleObject(handle, 10000)
+    if waited != 0:
+        if waited == 0xffffffff:
+            raise ctypes.WinError(ctypes.get_last_error())
+        if not killed:
+            raise ctypes.WinError(error)
+        raise OSError('process exit was not signalled after termination (wait result %#x)' % waited)
+
+
+def created(handle):
+    """The creation time of the process behind `handle` (FILETIME ticks)."""
+    times = [ctypes.c_uint64() for _ in range(4)]
+    if not KERNEL32.GetProcessTimes(handle, *map(ctypes.byref, times)):
         raise ctypes.WinError(ctypes.get_last_error())
+    return times[0].value
+
+
+def parent_pid(handle):
+    """The parent pid recorded by the process behind `handle`, not by a process snapshot."""
+    info = ProcessBasicInformation()
+    status = NTDLL.NtQueryInformationProcess(handle, 0, ctypes.byref(info), ctypes.sizeof(info), None)
+    if status != 0:
+        raise OSError('cannot read process parent (NTSTATUS %#x)' % (status & 0xffffffff))
+    return info.InheritedFromUniqueProcessId
+
+
+def child_handle(pid, parent_handle):
+    """A terminate and wait handle on `pid` only if its parent matches the retained handle.
+    A younger creation time also rules out children of an earlier process with that parent pid."""
+    handle = KERNEL32.OpenProcess(0x1 | 0x1000 | 0x00100000, False, pid)
     try:
-        if not KERNEL32.TerminateProcess(handle, 1):
-            error, status = ctypes.get_last_error(), wintypes.DWORD()
-            if not KERNEL32.GetExitCodeProcess(handle, ctypes.byref(status)) or status.value == 259:
-                raise ctypes.WinError(error)
-    finally:
+        if handle and parent_pid(handle) == KERNEL32.GetProcessId(parent_handle) and \
+                created(handle) >= created(parent_handle):
+            return handle
+    except OSError:
+        pass
+    if handle:
         close_handle(handle)
+    return None
 
 
-def kill_tree(pid):
-    # Snapshot before terminating parents: reparented descendants must still be stopped.
-    victims = [pid] + [child for child, _ in descendants(pid)]
-    for victim in victims:
-        kill_process(victim)
+def descendants(proc):
+    """(pid, parent pid, image name, handle) of each descendant of proc, parents before
+    children; the caller closes each handle. Each acquired handle's parent pid and creation
+    time must match the retained parent, so a snapshot pid replaced before OpenProcess is
+    never trusted. Every handle stays open through the walk. Not a Job Object
+    query: the Python install manager's python3 alias starts the gate's lock holder outside
+    the fixture's job, with the gate and the build below it."""
+    found, parents = [], [(proc.pid, int(proc._handle))]
+    for parent, parent_handle in parents:
+        for pid, name in children(parent):
+            handle = None if any(pid == seen for seen, _ in parents) else child_handle(pid, parent_handle)
+            if handle:
+                found.append((pid, parent, name, handle))
+                parents.append((pid, handle))
+    return found
+
+
+def kill_tree(proc):
+    # Parents before children, then the job. TerminateJobObject alone stops the job's
+    # processes in no fixed order: the build died before the lock holder, which saw its gate
+    # end and cleared the token test_variables_copied_out_of_a_killed_gate_are_refused reads.
+    # Every kill goes through a handle descendants() checked, never a bare pid; the job then
+    # stops what started inside it after the walk.
+    members = descendants(proc)
+    try:
+        for *_, handle in members:
+            terminate(handle)
+    finally:
+        for *_, handle in members:
+            close_handle(handle)
+        agent_process.stop_group(proc, proc.pid)
+
+
+def read_line(stream, seconds=30):
+    """stream.readline(), raising queue.Empty after `seconds` instead of hanging the suite."""
+    lines = queue.SimpleQueue()
+    threading.Thread(target=lambda: lines.put(stream.readline()), daemon=True).start()
+    return lines.get(timeout=seconds)
 
 
 def released(lock, seconds=45):
-    """Wait until no process holds `lock` (a write open succeeds). A build the test left running
-    can outlive kill_tree, as on a CI runner, and hold the lock until its own sleep ends."""
+    """Wait until no process holds `lock` (a write open succeeds). A killed build's handles
+    close only once Windows has ended it, which on a CI runner can lag kill_tree."""
     deadline = time.monotonic() + seconds
     while True:
         try:
@@ -242,22 +349,128 @@ def environment(build, **extra):
 
 
 def start(cwd, build, **extra):
-    return subprocess.Popen(['sh', 'scripts/check.sh'], cwd=cwd, env=environment(build, **extra),
-                            text=True, errors='replace', stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT, close_fds=False)
+    return agent_process.launch(['sh', 'scripts/check.sh'], None, cwd=cwd, env=environment(build, **extra),
+                                text=True, errors='replace', stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, close_fds=False)
 
 
 def finish(proc, timeout=90):
     try:
         out = proc.communicate(timeout=timeout)[0]
     except subprocess.TimeoutExpired:
-        kill_tree(proc.pid)
+        kill_tree(proc)
         return None, proc.communicate()[0]
+    finally:
+        kill_tree(proc)
     return proc.returncode, out
 
 
 def gate(cwd, build, timeout=90, **extra):
     return finish(start(cwd, build, **extra), timeout)
+
+
+class KillTreeTests(unittest.TestCase):
+    @windows_only
+    def test_kill_tree_spares_a_pid_replaced_between_snapshot_and_open(self):
+        from unittest.mock import Mock, patch
+        module = sys.modules[__name__]
+        proc = Mock(pid=1, _handle=101, _kit_job=99)
+        events, closed = [], []
+
+        def query(handle, info, out, size, returned):
+            self.assertEqual(handle, 102)
+            out._obj.InheritedFromUniqueProcessId = 900
+            return 0
+
+        kernel32 = Mock()
+        kernel32.TerminateJobObject.side_effect = lambda job, code: events.append('job')
+        with patch.object(module, 'children', side_effect=lambda pid: [(2, 'python.exe')] if pid == 1 else []), \
+                patch.object(module, 'KERNEL32', Mock(OpenProcess=Mock(return_value=102),
+                                                   GetProcessId=Mock(return_value=1))), \
+                patch.object(module, 'NTDLL', Mock(NtQueryInformationProcess=Mock(side_effect=query)), create=True), \
+                patch.object(module, 'created', side_effect={101: 100, 102: 200}.get), \
+                patch.object(module, 'terminate', events.append), patch.object(module, 'close_handle', closed.append), \
+                patch('agent_process._win', return_value={'kernel32': kernel32}):
+            kill_tree(proc)
+        self.assertEqual(events, ['job'], 'a newer replacement with another parent must never be killed')
+        self.assertEqual(closed, [102])
+
+    @windows_only
+    def test_terminate_requires_a_signalled_wait_even_after_a_successful_kill(self):
+        from unittest.mock import Mock, patch
+        for killed in (0, 1):
+            for waited in (0x102, 0xffffffff):
+                with self.subTest(killed=killed, waited=waited), \
+                        patch.object(sys.modules[__name__], 'KERNEL32',
+                                     Mock(TerminateProcess=Mock(return_value=killed),
+                                          WaitForSingleObject=Mock(return_value=waited))), \
+                        patch.object(ctypes, 'get_last_error', return_value=5), self.assertRaises(OSError):
+                    terminate(101)
+            with patch.object(sys.modules[__name__], 'KERNEL32',
+                              Mock(TerminateProcess=Mock(return_value=killed),
+                                   WaitForSingleObject=Mock(return_value=0))):
+                terminate(101)  # already exited processes can refuse TerminateProcess
+
+    @windows_only
+    def test_kill_tree_stops_parents_first_and_spares_a_child_of_an_earlier_pid(self):
+        # TerminateJobObject alone stopped the build (4, 5) before the lock holder (2), which
+        # then cleared its token. 3 names 2 as its parent but is older than 2: its parent was
+        # an earlier process with that pid. It is never killed; the job is stopped last.
+        from unittest.mock import Mock, patch
+        events = []
+        proc = Mock(pid=1, _handle=1, _kit_job=99)
+        tree = {1: [(2, 'python.exe')], 2: [(4, 'sh.exe'), (3, 'unrelated.exe')], 4: [(5, 'sh.exe')]}
+        born = {1: 100, 2: 110, 3: 50, 4: 120, 5: 130}
+        kernel32 = Mock()
+        kernel32.TerminateJobObject.side_effect = lambda job, code: events.append('job')
+        module = sys.modules[__name__]
+        with patch.object(module, 'children', lambda pid: tree.get(pid, [])), \
+                patch.object(module, 'KERNEL32', Mock(OpenProcess=lambda access, inherit, pid: pid,
+                                                   GetProcessId=lambda handle: handle)), \
+                patch.object(module, 'parent_pid', side_effect={2: 1, 3: 2, 4: 2, 5: 4}.get), \
+                patch.object(module, 'created', born.get), \
+                patch.object(module, 'terminate', events.append), patch.object(module, 'close_handle'), \
+                patch('agent_process._win', return_value={'kernel32': kernel32}):
+            kill_tree(proc)
+        self.assertEqual(events, [2, 4, 5, 'job'])
+
+    @windows_only
+    def test_kill_tree_stops_a_child_started_after_its_snapshot(self):
+        # A real descendant starts after a walk that misses it (children() patched to find
+        # none). The launch job still owns it.
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / 'scripts').mkdir()
+            (root / 'scripts/check.sh').write_text('exec "$FIXTURE_PYTHON" -u parent.py\n')
+            (root / 'parent.py').write_text(
+                'import os, pathlib, subprocess, sys, time\n'
+                'print("ready", flush=True)\n'
+                'while not pathlib.Path(os.environ["GATE_TEST_BUILD"]).exists(): time.sleep(.01)\n'
+                'child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])\n'
+                'print(child.pid, flush=True)\nchild.wait()\n')
+            proc = start(root, root / 'spawn', FIXTURE_PYTHON=sys.executable)
+            handle = None
+            try:
+                self.assertIsNotNone(proc._kit_job, 'the fixture must join its job before running')
+                self.assertEqual(read_line(proc.stdout).strip(), 'ready')
+                with patch.object(sys.modules[__name__], 'children', return_value=[]):
+                    (root / 'spawn').touch()
+                    pid = int(read_line(proc.stdout))
+                    handle = KERNEL32.OpenProcess(0x00100000, False, pid)
+                    self.assertTrue(handle, 'the descendant must still exist before cleanup')
+                    self.assertEqual(KERNEL32.WaitForSingleObject(handle, 0), 0x102)
+                    began = time.monotonic()
+                    kill_tree(proc)
+                # Within half its sleep: a cleanup that only waited saw it end by itself.
+                self.assertEqual(KERNEL32.WaitForSingleObject(handle, 10000), 0,
+                                 'cleanup left the late descendant alive')
+                self.assertLess(time.monotonic() - began, 30, 'cleanup waited for the descendant to end')
+            finally:
+                kill_tree(proc)
+                proc.communicate()
+                if handle:
+                    close_handle(handle)
 
 
 class WindowsGateLockTests(unittest.TestCase):
@@ -467,7 +680,7 @@ class WindowsGateLockTests(unittest.TestCase):
             self.assertIsNone(proc.poll(), 'the gate to be killed ended before its build started')
             self.assertLess(time.monotonic(), deadline, 'the gate to be killed never started its build')
             time.sleep(0.1)
-        kill_tree(proc.pid)
+        kill_tree(proc)
         proc.communicate()
         token = (self.side / 'token').read_text()
         self.assertTrue(token, 'the holder wrote no token into the lock file')
@@ -493,10 +706,20 @@ class WindowsGateLockTests(unittest.TestCase):
             self.assertIsNone(proc.poll(), 'the gate ended before its build started')
             self.assertLess(time.monotonic(), deadline, 'the gate never started its build')
             time.sleep(0.1)
-        kill_process(lock_holder(proc.pid)[0])
+        members = descendants(proc)
+        try:
+            # The holder is the python whose direct child is the gate's sh, at whatever depth:
+            # a launcher (the WindowsApps alias, a venv redirector) can run between proc and it.
+            holders = [handle for pid, _, name, handle in members if name.lower().startswith('python')
+                       and any(parent == pid and child.lower() == 'sh.exe' for _, parent, child, _ in members)]
+            self.assertEqual(len(holders), 1, members)
+            terminate(holders[0])
+        finally:
+            for *_, handle in members:
+                close_handle(handle)
         waiters = [start(self.project, self.build, SIDE=self.side.as_posix()) for _ in range(2)]
         results = [finish(waiter, 120) for waiter in waiters]
-        kill_tree(proc.pid)
+        kill_tree(proc)
         proc.communicate()
         outputs = '\n'.join(out for _, out in results)
         self.assertEqual([code for code, _ in results], [0, 0], outputs)
@@ -520,8 +743,10 @@ class WindowsGateLockTests(unittest.TestCase):
         # passed on as the exit status, sh read its low byte: 0, a pass.
         self.write_build('kill -9 $PPID\nsleep 5\n')
         code, out = gate(self.project, self.build)
-        # The build outlives its gate by design and holds the lock: removing the fixture
-        # under it failed the clean-up (Codex review). Wait until it lets the lock go.
+        # The build's gate is gone, so the walk in finish()'s kill_tree may not reach it: only
+        # the job stops it, and a python3 alias that starts the holder outside the job leaves it
+        # to run out its sleep. It holds the lock: removing the fixture under it failed the
+        # clean-up (Codex review). Wait until it lets the lock go.
         deadline = time.monotonic() + 30
         while True:
             try:

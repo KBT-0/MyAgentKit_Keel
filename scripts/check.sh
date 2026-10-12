@@ -10,8 +10,8 @@ cd "$kit"
 if python3 -c 'import sys' >/dev/null 2>&1; then py=python3; else py=python; fi
 # Help ends at exit 0 with no PASS line by design.
 case " $* " in *" -h "*|*" --help "*) exec "$py" -B scripts/check_kit.py "$@" ;; esac
-# A run once exited 0 without printing KIT CHECK: PASS. The check writes this file right after
-# that line, so exit 0 without it is a failure, whatever ended the run early.
+# A run once exited 0 without printing KIT CHECK: PASS. The check writes this file only once
+# all checks complete, just before that line, so exit 0 without it fails an early-ended run.
 passed=$(mktemp -d)
 trap 'rm -rf "$passed"' EXIT
 cancel() {

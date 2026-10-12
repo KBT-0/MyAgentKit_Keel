@@ -25,25 +25,27 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'MYAGENTKIT_TASK_ID', 'MYAGENTKIT_R
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 142, 'test_agent_usage': 21, 'test_codex_quota': 5}
+SUITE_MINIMUMS = {'test_claude_bridge': 147, 'test_agent_usage': 30, 'test_codex_quota': 5}
+# These are executed cases, excluding only the explicitly declared POSIX exclusions.
+WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 124, 'test_agent_usage': 26, 'test_codex_quota': 4}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(bridge)
 
-# A fallback named python or py may be the only Python command on PATH.
-# A launcher sh and Python both read: sh runs `:` then execs the (quoted: a path with a
-# space) interpreter on this file; Python sees a string literal and goes on.
-PYTHON_SHEBANG = "#!/bin/sh\n''':'\nexec %s \"$0\" \"$@\"\n'''\n" % shlex.quote(sys.executable)
+from review_test_support import (PYTHON_SHEBANG, WINDOWS, fixture_source, send_cancel,
+                                 python_cli, posix_only, platform_skips)
 
 FIXTURE = PYTHON_SHEBANG + '''import json, os, pathlib, sys, time
 args = sys.argv[1:]
 # A review executes in the throwaway copy; a proposal stays read-only.
 review = 'verdict' in args[args.index('--json-schema') + 1]
-assert args[args.index('--tools') + 1] == ('Read,Glob,Grep,Bash' if review else 'Read,Glob,Grep')
-assert (args[args.index('--allowed-tools') + 1] == 'Bash') if review else '--allowed-tools' not in args
-# The review's Bash runs only in Claude Code's sandbox, which refuses to start without one.
-assert (json.loads(args[args.index('--settings') + 1])['sandbox']['failIfUnavailable'] is True) if review else '--settings' not in args
+# The review's Bash runs only in Claude Code's sandbox, which refuses to start without one;
+# native Windows has no such sandbox, so a review there gets no Bash at all.
+bash = review and os.name == 'posix'
+assert args[args.index('--tools') + 1] == ('Read,Glob,Grep,Bash' if bash else 'Read,Glob,Grep')
+assert (args[args.index('--allowed-tools') + 1] == 'Bash') if bash else '--allowed-tools' not in args
+assert (json.loads(args[args.index('--settings') + 1])['sandbox']['failIfUnavailable'] is True) if bash else '--settings' not in args
 assert args[args.index('--permission-mode') + 1] == 'dontAsk'
 assert '--safe-mode' in args and '--restricted' in args
 assert '--strict-mcp-config' in args and '--no-session-persistence' in args
@@ -125,18 +127,24 @@ time.sleep(60)
 '''
 
 
-def run_quietly(suite, out=sys.stdout):
-    """Run a suite; print its whole log only on a failure or a skip, else one summary line.
+def run_quietly(suite, out=sys.stdout, minimum=0):
+    """Run a suite; print its whole log on failure, declared skips and a summary otherwise.
 
     The per-test lines of a passing run were about 17 KB in every gate self-test, read by the
     agent that ran it. A failing run still prints every line, the passing ones included.
     """
+    allowed = platform_skips(suite)
     log = io.StringIO()
     result = unittest.TextTestRunner(stream=log, verbosity=2).run(suite)
-    if not result.wasSuccessful() or result.skipped:
+    executed = result.testsRun - len(result.skipped)
+    unexpected = [test.id() for test, _ in result.skipped if test.id() not in allowed]
+    if not result.wasSuccessful() or unexpected or executed < minimum:
         out.write(log.getvalue())
+        out.write('Executed %d tests; minimum %d; unexpected skips %r\n' % (executed, minimum, unexpected))
         return False
-    out.write("Ran %d tests: OK\n" % result.testsRun)
+    for test, reason in result.skipped:
+        out.write('NOT RUN: %s (%s)\n' % (test.id(), reason))
+    out.write("Ran %d tests: OK\n" % executed)
     return True
 
 
@@ -388,6 +396,28 @@ class BridgeTests(unittest.TestCase):
                             run.assert_not_called()
                             launch.assert_not_called()
 
+    def test_only_declared_platform_skips_are_allowed_and_never_count_as_executed(self):
+        class Probe(unittest.TestCase):
+            def test_passes(self):
+                pass
+
+            @unittest.skip('platform probe')
+            def test_platform(self):
+                pass
+
+            @unittest.skip('unexpected missing coverage')
+            def test_unexpected(self):
+                pass
+        Probe.test_platform._kit_platform_skip = True
+        out = io.StringIO()
+        self.assertTrue(run_quietly(unittest.TestSuite([Probe('test_passes'), Probe('test_platform')]),
+                                   out, minimum=1))
+        self.assertIn('NOT RUN:', out.getvalue())
+        self.assertFalse(run_quietly(unittest.TestSuite([Probe('test_passes'), Probe('test_platform')]),
+                                    io.StringIO(), minimum=2))
+        self.assertFalse(run_quietly(unittest.TestSuite([Probe('test_passes'), Probe('test_unexpected')]),
+                                    io.StringIO(), minimum=1))
+
     def test_a_passing_run_prints_a_summary_and_a_failing_run_its_whole_log(self):
         class Probe(unittest.TestCase):
             def test_passes(self):
@@ -597,9 +627,10 @@ class BridgeTests(unittest.TestCase):
         self.repo.mkdir()
         os.environ['FIXTURE_REPO'] = str(self.repo)
         self.fixture = self.root / "claude"
-        self.fixture.write_text(FIXTURE)
-        self.fixture.chmod(0o755)
+        self.fixture = python_cli(self.fixture, FIXTURE)
         self.git("init", "-q")
+        # Git for Windows turns autocrlf on system-wide: archive and checkout bytes then differ.
+        self.git("config", "core.autocrlf", "false")
         (self.repo / '.gitignore').write_bytes((ROOT.parent / '.gitignore').read_bytes())
         for name in ["AGENTS.md", "docs/PHASES.md", "docs/ARCHITECTURE.md", "docs/REVIEW_GATE.md"]:
             path = self.repo / name
@@ -699,8 +730,10 @@ class BridgeTests(unittest.TestCase):
             '    data = b"version https://git-lfs.github.com/spec/v1\\noid sha256:%s\\nsize %d\\n" % (\n'
             '        hashlib.sha256(data).hexdigest().encode(), len(data))\n'
             'sys.stdout.buffer.write(data)\n')
-        self.git('config', 'filter.lfs.clean', '"%s" "%s"' % (sys.executable, clean))
-        (self.repo / '.gitattributes').write_text('*.bin filter=lfs\n')
+        # A host's filter.lfs.process overrides our clean command. Use our own driver,
+        # as lfs_fixture() does, so the test never invokes the installed Git LFS CLI.
+        self.git('config', 'filter.fakelfs.clean', '"%s" "%s"' % (sys.executable, clean))
+        (self.repo / '.gitattributes').write_text('*.bin filter=fakelfs\n')
         asset, pointer = self.repo / 'asset.bin', self.repo / 'unsmudged.bin'
         asset.write_bytes(b'large binary content\n')
         pointer.write_bytes(b'other binary content\n')
@@ -956,7 +989,7 @@ class BridgeTests(unittest.TestCase):
             def execution(command, prompt, repo, timeout, into=None, noted=None):
                 self.git('update-ref', 'refs/heads/review-base', intermediate)
                 if '-o' in command:
-                    Path(command[command.index('-o') + 1]).write_text('VERDICT: Accept\n')
+                    Path(command[command.index('-o') + 1]).write_bytes(b'VERDICT: Accept\n')
                     value = {'type': 'turn.completed', 'usage': {}}
                 else:
                     value = {'type': 'result', 'subtype': 'success', 'is_error': False,
@@ -990,7 +1023,7 @@ class BridgeTests(unittest.TestCase):
             def execution(command, prompt, repo, timeout, into=None, noted=None):
                 self.git('update-ref', '-d', 'refs/heads/review-base')
                 if '-o' in command:
-                    Path(command[command.index('-o') + 1]).write_text('VERDICT: Accept\n')
+                    Path(command[command.index('-o') + 1]).write_bytes(b'VERDICT: Accept\n')
                     value = {'type': 'turn.completed', 'usage': {}}
                 else:
                     value = {'type': 'result', 'subtype': 'success', 'is_error': False,
@@ -1026,11 +1059,16 @@ class BridgeTests(unittest.TestCase):
         # A git that moves the reference right after the review's first resolve of it, once.
         shim, moved, real = self.root / 'shim', self.root / 'moved', shutil.which('git')
         shim.mkdir()
-        (shim / 'git').write_text(
-            '#!/bin/sh\n"%s" "$@"; status=$?\ncase "$*" in *"--verify review-base^{commit}"*)\n'
-            '  [ -e "%s" ] || { : > "%s"; "%s" -C "%s" update-ref refs/heads/review-base %s; } ;;\n'
-            'esac\nexit $status\n' % (real, moved, moved, real, self.repo, intermediate))
-        (shim / 'git').chmod(0o755)
+        python_cli(shim / 'git', PYTHON_SHEBANG +
+                   'import pathlib, subprocess, sys\n'
+                   'real, moved, repo, intermediate = %r\n'
+                   'status = subprocess.run([real, *sys.argv[1:]]).returncode\n'
+                   'moved = pathlib.Path(moved)\n'
+                   'if "--verify review-base^{commit}" in " ".join(sys.argv[1:]) and not moved.exists():\n'
+                   '    moved.touch()\n'
+                   '    subprocess.run([real, "-C", repo, "update-ref", "refs/heads/review-base", intermediate],\n'
+                   '                   check=True)\n'
+                   'raise SystemExit(status)\n' % ((real, str(moved), str(self.repo), intermediate),))
         for main, args in ((bridge.main, ['review']),
                            (codex_bridge.main, ['--model', 'fixture-codex-model'])):
             label = 'moving-base-' + ('claude' if main is bridge.main else 'codex')
@@ -1039,7 +1077,7 @@ class BridgeTests(unittest.TestCase):
             def execution(command, prompt, repo, timeout, into=None, noted=None):
                 prompts.append(prompt)
                 if '-o' in command:
-                    Path(command[command.index('-o') + 1]).write_text('VERDICT: Accept\n')
+                    Path(command[command.index('-o') + 1]).write_bytes(b'VERDICT: Accept\n')
                     value = {'type': 'turn.completed', 'usage': {}}
                 else:
                     value = {'type': 'result', 'subtype': 'success', 'is_error': False,
@@ -1086,7 +1124,7 @@ class BridgeTests(unittest.TestCase):
                            (codex_bridge.main, ['--model', 'fixture-codex-model'])):
             def execution(command, prompt, repo, timeout, into=None, noted=None):
                 if '-o' in command:
-                    Path(command[command.index('-o') + 1]).write_text('VERDICT: Accept\n')
+                    Path(command[command.index('-o') + 1]).write_bytes(b'VERDICT: Accept\n')
                     value = {'type': 'turn.completed', 'usage': {}}
                 else:
                     value = {'type': 'result', 'subtype': 'success', 'is_error': False,
@@ -1135,11 +1173,11 @@ class BridgeTests(unittest.TestCase):
 
         def cancel_during_evidence(repo, path, text, **kwargs):
             if path.parent.name == 'reviews':
-                os.kill(os.getpid(), signal.SIGTERM)
+                send_cancel(signal.SIGTERM)
             return publish(repo, path, text, **kwargs)
 
         def cancel_during_record(*args, **kwargs):
-            os.kill(os.getpid(), signal.SIGTERM)
+            send_cancel(signal.SIGTERM)
             return account(*args, **kwargs)
 
         for primary in ('claude', 'codex'):
@@ -1175,6 +1213,7 @@ class BridgeTests(unittest.TestCase):
                     self.assertTrue(received[0]['cancelled'])
                     self.persisted_cancel(received[0])
 
+    @posix_only
     def test_a_cancel_during_cleanup_of_a_zero_exit_failure_never_starts_the_fallback(self):
         # run() dropped a cancel noted during its cleanup when the child exited zero, before
         # either adapter had read the response: a zero-exit Claude result with is_error and
@@ -1199,7 +1238,7 @@ class BridgeTests(unittest.TestCase):
                                 prompt, repo, timeout, into)
 
         def killpg(pid, sig):
-            os.kill(os.getpid(), signal.SIGTERM)
+            send_cancel(signal.SIGTERM)
             real_killpg(pid, sig)
 
         for primary in ('claude', 'codex'):
@@ -1219,6 +1258,7 @@ class BridgeTests(unittest.TestCase):
                 self.assertTrue(chain['attempts'][0]['cancelled'])
                 self.persisted_cancel(chain['attempts'][0])
 
+    @posix_only
     def test_a_cancel_during_cleanup_after_a_launch_failure_never_starts_the_fallback(self):
         # A CLI that cannot be launched returned 'unavailable' before cleanup: a cancel noted
         # while the prompt file and the selector closed was dropped, and --fallback launched
@@ -1238,7 +1278,7 @@ class BridgeTests(unittest.TestCase):
 
         class CancelOnClose(selectors.DefaultSelector):
             def close(self):
-                os.kill(os.getpid(), signal.SIGTERM)
+                send_cancel(signal.SIGTERM)
                 super().close()
 
         for primary in ('claude', 'codex'):
@@ -1269,7 +1309,7 @@ class BridgeTests(unittest.TestCase):
         real_run, launched = agent_process.run, self.root / 'launched'
 
         def run(*args, **kwargs):
-            os.kill(os.getpid(), signal.SIGTERM)
+            send_cancel(signal.SIGTERM)
             return real_run(*args, **kwargs)
 
         received = []
@@ -1282,6 +1322,7 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual((received[0]['failure_kind'], received[0]['cancelled']), ('cancelled', True))
         self.persisted_cancel(received[0])
 
+    @posix_only  # Needs a signal mask during the individual handler restores.
     def test_a_guard_hands_every_handler_back_and_notes_a_cancel_meanwhile(self):
         # OneShot.__exit__ restored the handlers one at a time: a cancel after the first restore
         # met the caller's raising handler there, and the other signals stayed routed to the
@@ -1296,7 +1337,7 @@ class BridgeTests(unittest.TestCase):
             previous = real_signal(sig, handler)
             if handler is outer and not fired:
                 fired.append(sig)
-                os.kill(os.getpid(), sig)
+                send_cancel(sig)
             return previous
 
         with outer:
@@ -1312,6 +1353,7 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual((inner.noted, outer.noted), (fired, []))
         self.assertTrue(all(handler is outer for handler in routed.values()), routed)
 
+    @posix_only  # Injects inside a POSIX masked restore, rather than Windows settlement.
     def test_a_cancel_while_run_hands_back_keeps_the_completed_review(self):
         # run() put the adapter's raising handler back before it returned: a cancel during
         # that restore raised before the result was assigned, and a completed, possibly paid
@@ -1332,7 +1374,7 @@ class BridgeTests(unittest.TestCase):
                 if not raising or handler is raising[0]:
                     raising.append(handler)
                 if len(raising) == 2 and handler is raising[0]:
-                    os.kill(os.getpid(), signal.SIGTERM)
+                    send_cancel(signal.SIGTERM)
             return previous
 
         received = []
@@ -1349,6 +1391,7 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(json.loads(Path(received[0]['usage_record']).read_text())['status'], 'completed')
         self.assertTrue(Path(received[0]['evidence']).is_file())
 
+    @posix_only
     def test_a_cancel_while_codex_restores_its_handlers_is_persisted_for_a_failed_attempt(self):
         # The records were relabelled before the adapter put the caller's handlers back: a
         # SIGTERM noted during that restore reached only the returned result, and the usage
@@ -1360,6 +1403,7 @@ class BridgeTests(unittest.TestCase):
         import agent_process
         import codex_bridge
         real_signal, fired = signal.signal, []
+        caller_int = signal.getsignal(signal.SIGINT)
 
         def quota(command, prompt, repo, timeout, into=None, noted=None):
             return {'exit_code': 1, 'stdout': json.dumps({'type': 'turn.failed',
@@ -1369,9 +1413,9 @@ class BridgeTests(unittest.TestCase):
         def install(sig, handler):
             # run() is replaced, so the only handler put back that is not the adapter's own
             # is its restore; SIGINT goes back first, SIGTERM still meets the noting guard.
-            if sig == signal.SIGINT and not isinstance(handler, agent_process.OneShot) and not fired:
+            if sig == signal.SIGINT and handler is caller_int and not fired:
                 fired.append(sig)
-                os.kill(os.getpid(), signal.SIGTERM)
+                send_cancel(signal.SIGTERM)
             return real_signal(sig, handler)
 
         class CallerCancel(Exception):
@@ -1399,6 +1443,7 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual((received[0]['failure_kind'], received[0]['cancelled']), ('cancelled', True))
         self.persisted_cancel(received[0])
 
+    @posix_only
     def test_a_cancel_after_the_hand_back_sample_is_persisted_before_the_caller_gets_it(self):
         # handing_back() sampled the pending cancels once: one arriving after that sample,
         # while the adapter still held the signals, reached the caller's handler with the
@@ -1423,7 +1468,7 @@ class BridgeTests(unittest.TestCase):
             value = real_pending()
             if not fired:
                 fired.append(True)
-                os.kill(os.getpid(), signal.SIGTERM)
+                send_cancel(signal.SIGTERM)
             return value
 
         class CallerCancel(Exception):
@@ -1531,7 +1576,7 @@ class BridgeTests(unittest.TestCase):
             def __getitem__(self, key):
                 if key == 'termination' and recorded and not fired:
                     fired.append(True)
-                    os.kill(os.getpid(), signal.SIGTERM)
+                    send_cancel(signal.SIGTERM)
                 return dict.__getitem__(self, key)
 
         def quota(command, prompt, repo, timeout, into=None, noted=None):
@@ -1555,6 +1600,7 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual((received[0]['failure_kind'], received[0]['cancelled']), ('cancelled', True))
         self.persisted_cancel(received[0])
 
+    @posix_only  # Windows installs a recorder at this point, before restoring the caller.
     def test_a_cancel_while_codex_switches_to_noting_keeps_the_completed_review(self):
         # After run() returned, the adapter installed its noting handler one signal at a time:
         # a SIGTERM before the swap reached SIGTERM still met the raising handler, unwound the
@@ -1578,7 +1624,7 @@ class BridgeTests(unittest.TestCase):
             # the last line, that is the hand-back to the caller's handlers.
             if returned and not fired:
                 fired.append(sig)
-                os.kill(os.getpid(), signal.SIGTERM)
+                send_cancel(signal.SIGTERM)
             return real_signal(sig, handler)
 
         class CallerCancel(Exception):
@@ -1630,7 +1676,7 @@ class BridgeTests(unittest.TestCase):
                 # The adapter's own result line: the dispatcher prints none starting so.
                 if text.startswith('{"status": "failed"') and not fired:
                     fired.append(text)
-                    os.kill(os.getpid(), signal.SIGTERM)
+                    send_cancel(signal.SIGTERM)
                 return super().write(text)
 
         launched, fired, out = [], [], Blocked()
@@ -1687,7 +1733,7 @@ class BridgeTests(unittest.TestCase):
 
         def second_cancel(*args, **kwargs):
             fired.append('relabel')
-            os.kill(os.getpid(), signal.SIGTERM)
+            send_cancel(signal.SIGTERM)
             return relabel(*args, **kwargs)
 
         class Blocked(StringIO):
@@ -1696,7 +1742,7 @@ class BridgeTests(unittest.TestCase):
                 # while the handlers go back has its own test.
                 if text.startswith(('{"status": "failed"', 'review invocation: ')) and not fired:
                     fired.append('print')
-                    os.kill(os.getpid(), signal.SIGTERM)
+                    send_cancel(signal.SIGTERM)
                 return super().write(text)
 
         for name, main, args, hooks in (
@@ -1730,6 +1776,7 @@ class BridgeTests(unittest.TestCase):
                                        if line.startswith(('{', 'review invocation: '))))
                 self.assertEqual((last['cancelled'], last['failure_kind']), (True, 'cancelled'), out.getvalue())
 
+    @posix_only  # Cancels after Windows' final settlement sample are explicitly excluded.
     def test_a_second_cancel_inside_the_handler_restoration_leaves_the_records_cancelled(self):
         # A first SIGTERM was noted while the adapter put the caller's SIGINT back; with the
         # caller's SIGTERM handler back, a second one ended the adapter before the late
@@ -1760,10 +1807,10 @@ class BridgeTests(unittest.TestCase):
             previous = real_signal(sig, handler)
             if sig == signal.SIGINT and handler is signal.default_int_handler and not fired:
                 fired.append('first')
-                os.kill(os.getpid(), signal.SIGTERM)
+                send_cancel(signal.SIGTERM)
             elif sig == signal.SIGTERM and handler is caller and fired == ['first']:
                 fired.append('second')
-                os.kill(os.getpid(), signal.SIGTERM)
+                send_cancel(signal.SIGTERM)
             return previous
 
         for name, main, args in (
@@ -1818,7 +1865,7 @@ class BridgeTests(unittest.TestCase):
             def write(self, text):
                 if text.startswith('review invocation: ') and not fired:
                     fired.append(text)
-                    os.kill(os.getpid(), signal.SIGTERM)
+                    send_cancel(signal.SIGTERM)
                 return super().write(text)
 
         from unittest.mock import patch
@@ -1868,13 +1915,18 @@ class BridgeTests(unittest.TestCase):
                     'termination': None, 'duration_ms': 1}
 
         def cancel_during_record(*args, **kwargs):
-            os.kill(os.getpid(), signal.SIGTERM)
+            send_cancel(signal.SIGTERM)
             return account(*args, **kwargs)
 
         def replacement_fails(repo, path, text, **kwargs):
             raise OSError('injected archive replacement failure')
 
         def directory_fsync_fails(repo, path, text, **kwargs):
+            if WINDOWS:
+                # Windows has no directory fsync. Inject the same post-replacement error
+                # after the real publication, preserving the landed-bytes/hash oracle.
+                publish(repo, path, text, **kwargs)
+                raise OSError('injected directory fsync failure')
             def fsync(fd):
                 if stat.S_ISDIR(os.fstat(fd).st_mode):
                     raise OSError('injected directory fsync failure')
@@ -1911,9 +1963,11 @@ class BridgeTests(unittest.TestCase):
                     usage = json.loads(Path(received[0]['usage_record']).read_text())
                     self.assertEqual((usage['status'], usage['failure_kind']), ('failed', 'cancelled'))
                     evidence = Path(received[0]['evidence'])
+                    # Claude embeds this diagnostic in JSON; Codex prints it as plain text.
+                    shown = json.dumps(str(evidence))[1:-1] if main is bridge.main else str(evidence)
                     if fault is archive_vanishes:
                         self.assertFalse(evidence.exists())
-                        self.assertIn('the archive %s on disk could not be read (' % evidence,
+                        self.assertIn('the archive %s on disk could not be read (' % shown,
                                       out.getvalue())
                         self.assertIn('; the write reported: injected archive removal', out.getvalue())
                     else:
@@ -1925,7 +1979,7 @@ class BridgeTests(unittest.TestCase):
                                          replaced)
                         self.assertIn('the usage record says cancelled; the archive %s on disk %s; '
                                       'the write reported: %s'
-                                      % (evidence, 'matches the record (sha256 %s)'
+                                      % (shown, 'matches the record (sha256 %s)'
                                          % usage['evidence_sha256'] if replaced
                                          else 'does not match the record',
                                          'injected directory fsync failure' if replaced
@@ -1992,7 +2046,7 @@ class BridgeTests(unittest.TestCase):
         self.commit_fixture('Reference review fixture')
         def execution(command, prompt, repo, timeout, into=None, noted=None):
             if '-o' in command:
-                Path(command[command.index('-o') + 1]).write_text('VERDICT: Accept\n')
+                Path(command[command.index('-o') + 1]).write_bytes(b'VERDICT: Accept\n')
                 value = {'type': 'turn.completed', 'usage': {}}
             else:
                 value = {'type': 'result', 'subtype': 'success', 'is_error': False,
@@ -2045,11 +2099,10 @@ class BridgeTests(unittest.TestCase):
 
     def test_codex_manual_verdict_requires_actual_manual_checks(self):
         fake = self.root / 'codex-manual'
-        fake.write_text(PYTHON_SHEBANG + 'import json,os,pathlib,sys\n'
+        fake = python_cli(fake, PYTHON_SHEBANG + 'import json,os,pathlib,sys\n'
                         'sys.stdin.read()\n'
                         'pathlib.Path(sys.argv[sys.argv.index("-o")+1]).write_text(os.environ["FINAL_RESPONSE"])\n'
                         'print(json.dumps({"type":"turn.completed","usage":{}}))\n')
-        fake.chmod(0o755)
         for checks in ('', '## Manual checks\n', '## Manual checks\nNone.\n',
                        '## Manual checks\n- Verify the live deployment.\n'):
             with self.subTest(checks=checks):
@@ -2061,11 +2114,10 @@ class BridgeTests(unittest.TestCase):
 
     def test_a_verdict_inside_manual_checks_is_not_itself_a_check(self):
         fake = self.root / 'codex-manual-placement'
-        fake.write_text(PYTHON_SHEBANG + 'import json,os,pathlib,sys\n'
+        fake = python_cli(fake, PYTHON_SHEBANG + 'import json,os,pathlib,sys\n'
                         'sys.stdin.read()\n'
                         'pathlib.Path(sys.argv[sys.argv.index("-o")+1]).write_text(os.environ["FINAL_RESPONSE"])\n'
                         'print(json.dumps({"type":"turn.completed","usage":{}}))\n')
-        fake.chmod(0o755)
         for checks in ('', 'None.\n', '- Verify the live deployment.\n'):
             with self.subTest(checks=checks):
                 result = self.run_wrapper('--reviewer', 'codex', REVIEW_CLI_BIN=str(fake),
@@ -2100,7 +2152,8 @@ class BridgeTests(unittest.TestCase):
                 record = header_of(result["evidence"])
                 self.assertEqual(record["status"], "completed")
                 self.assertIn("throwaway copy", record["sandbox"])
-                self.assertIn("Read,Glob,Grep,Bash", record["sandbox"])
+                # Native Windows has no Bash sandbox, so its reviewer reads only.
+                self.assertIn("no Bash" if WINDOWS else "Read,Glob,Grep,Bash", record["sandbox"])
                 self.assertEqual(len(record["diff_sha256"]), 64)
                 self.assertEqual(verdicts_of(result["evidence"]), ["VERDICT: " + verdict])
 
@@ -2157,14 +2210,42 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(chain['failure_kind'], 'invalid_evidence')
         self.assertEqual(verdicts_of(chain['attempts'][0]['evidence']), [])
 
+    def test_a_review_whose_text_leaves_the_console_code_page_completes(self):
+        # Redirected on native Windows, the dispatcher's stdout used the ANSI code page: a
+        # completed review with an arrow in its text raised while printing, and was lost as
+        # adapter_error. (setUp restores the environment.)
+        os.environ.pop('PYTHONIOENCODING', None)
+        os.environ.pop('PYTHONUTF8', None)
+        fake = python_cli(self.root / 'codex-arrow', PYTHON_SHEBANG +
+                          'import json, pathlib, sys\n'
+                          'sys.stdin.read()\n'
+                          'pathlib.Path(sys.argv[sys.argv.index("-o") + 1]).write_text('
+                          '"## Findings\\n\\nA \\u2192 B.\\n\\nVERDICT: Accept\\n", encoding="utf-8")\n'
+                          'print(json.dumps({"type": "turn.completed", "usage": {}}))\n')
+        result = self.run_wrapper('--reviewer', 'codex', REVIEW_CLI_BIN=str(fake),
+                                  REVIEW_CODEX_MODEL='fixture-codex-model')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn('adapter_error', result.stdout)
+
+    def test_utf8_output_escapes_what_it_cannot_encode_and_skips_a_missing_stream(self):
+        # A bare encoding reset the error handler to strict: a lone surrogate (a non-UTF-8 path)
+        # then raised while printing, the same lost review. pythonw has no stdout at all.
+        import io
+        from unittest.mock import patch
+        stderr = io.TextIOWrapper(io.BytesIO(), encoding='ascii', errors='backslashreplace')
+        with patch.object(sys, 'stdout', None), patch.object(sys, 'stderr', stderr):
+            bridge.utf8_output()
+            print('A → B \udcff', file=stderr)
+        stderr.flush()
+        self.assertIn('A → B \\udcff'.encode(), stderr.buffer.getvalue())
+
     def test_malformed_codex_verdict_never_becomes_accept(self):
         fake = self.root / 'codex-conflict'
-        fake.write_text(PYTHON_SHEBANG +
+        fake = python_cli(fake, PYTHON_SHEBANG +
                         'import json, os, pathlib, sys\n'
                         'sys.stdin.read()\n'
                         'pathlib.Path(sys.argv[sys.argv.index("-o") + 1]).write_text(os.environ["FINAL_RESPONSE"])\n'
                         'print(json.dumps({"type": "turn.completed", "usage": {}}))\n')
-        fake.chmod(0o755)
         for final in ('VERDICT: Accept\nVERDICT: Reject — unresolved defect\n',
                       'VERDICT: Accept\n  VERDICT: Reject\n',
                       'VERDICT: Accept\nVERDICT: Unknown\n',
@@ -2181,13 +2262,12 @@ class BridgeTests(unittest.TestCase):
 
     def test_transcript_accept_cannot_replace_a_missing_final_response(self):
         fake = self.root / 'codex-transcript'
-        fake.write_text(PYTHON_SHEBANG +
+        fake = python_cli(fake, PYTHON_SHEBANG +
                         'import json, sys\n'
                         'sys.stdin.read()\n'
                         'print(json.dumps({"type": "item.completed", "item": '
                         '{"type": "agent_message", "text": "VERDICT: Accept"}}))\n'
                         'print(json.dumps({"type": "turn.completed", "usage": {}}))\n')
-        fake.chmod(0o755)
         result = self.run_wrapper('--reviewer', 'codex', REVIEW_CLI_BIN=str(fake),
                                   REVIEW_CODEX_MODEL='fixture-codex-model')
         self.assertNotEqual(result.returncode, 0, result.stdout)
@@ -2257,7 +2337,7 @@ class BridgeTests(unittest.TestCase):
         # attempt's own record, then what the chain says (None: no chain was written).
         dispatched = {'chain_failure': ('quota', None), 'quota_mutation': ('quota', 'stale_checkout')}
         self.assertLessEqual(set(re.findall(r"case == '(\w+)'", FIXTURE)), set(claude) | set(dispatched))
-        self.assertLessEqual(set(re.findall(r"case == '(\w+)'", self.build_fake_codex().read_text())),
+        self.assertLessEqual(set(re.findall(r"case == '(\w+)'", fixture_source(self.build_fake_codex()))),
                              set(codex))
         task = self.root / 'handoff.md'
         task.write_text('Propose a fix and stop on ambiguity.\n')
@@ -2571,7 +2651,7 @@ class BridgeTests(unittest.TestCase):
     def test_codex_wrapper_rejects_absent_and_conflicting_final_evidence(self):
         scripts = self.install_wrapper()
         fake = self.root / "codex"
-        fake.write_text(PYTHON_SHEBANG + '''import json, os, pathlib, sys, time
+        fake = python_cli(fake, PYTHON_SHEBANG + '''import json, os, pathlib, sys, time
 if '--version' in sys.argv: print('offline codex'); sys.exit(0)
 prompt = sys.stdin.read()
 assert 'PRIVATE_PREVIOUS_REVIEW' not in prompt
@@ -2599,7 +2679,6 @@ if case == 'archive_failure':
     (repo / 'docs/reviews').write_text('blocked archive')
     last.write_text('VERDICT: Accept\\n')
 ''')
-        fake.chmod(0o755)
         self.fake_codex = fake
         (self.repo / '.gitignore').write_bytes((ROOT.parent / '.gitignore').read_bytes())
         reviews = self.repo / 'docs/reviews'
@@ -2651,7 +2730,7 @@ if case == 'archive_failure':
     def build_fake_codex(self):
         """A Codex stand-in that returns one valid Accept; no paid CLI is ever called."""
         fake = self.root / "codex-accept"
-        fake.write_text(PYTHON_SHEBANG +
+        fake = python_cli(fake, PYTHON_SHEBANG +
                         "import json, os, pathlib, sys\n"
                         "prompt = sys.stdin.read()\n"
                         "if os.environ.get('PROMPT_LOG'): pathlib.Path(os.environ['PROMPT_LOG']).write_text(prompt)\n"
@@ -2686,7 +2765,6 @@ if case == 'archive_failure':
                         "if case == 'mcp_failed_turn': print(json.dumps({'type': 'turn.failed', 'error': {}}))\n"
                         "if case != 'mcp_no_completion': print(json.dumps({'type': 'turn.completed', 'usage': {}}))\n"
                         "if case == 'mcp_exit': sys.exit(1)\n")
-        fake.chmod(0o755)
         return fake
 
     def run_wrapper(self, *argv, **env_extra):
@@ -2704,12 +2782,14 @@ if case == 'archive_failure':
         good = self.build_fake_codex()
         bin_dir = self.root / "good-bin"
         bin_dir.mkdir()
-        (bin_dir / "codex").symlink_to(good)
+        # PATHEXT lookup on native Windows needs the executable extension.
+        shutil.copyfile(good, bin_dir / ('codex.exe' if WINDOWS else 'codex'))
+        (bin_dir / ('codex.exe' if WINDOWS else 'codex')).chmod(0o755)
         home = self.root / "home"
         stale = home / ".local" / "bin"
         stale.mkdir(parents=True)
-        (stale / "codex").write_text("#!/bin/sh\necho 'stale standalone build' >&2; exit 1\n")
-        (stale / "codex").chmod(0o755)
+        python_cli(stale / 'codex', PYTHON_SHEBANG +
+                   "import sys\nprint('stale standalone build', file=sys.stderr)\nraise SystemExit(1)\n")
         result = self.run_wrapper("--uncommitted", "--reviewer", "codex",
                                   REVIEW_CLI_BIN="codex", HOME=str(home),
                                   PATH=str(bin_dir) + os.pathsep + os.environ["PATH"],
@@ -2757,10 +2837,12 @@ if case == 'archive_failure':
         # spent a round reproducing it; one that executed in a throwaway copy found decisive defects.
         # The bridged reviewers now execute, in a throwaway copy the adapter made: the ask is
         # unconditional, and the prompt never names the reviewed repository's path.
+        # Native Windows has no Bash sandbox: there the reviewer reads and reasons instead.
         asks = ('EVERY finding', 'Critical, High, Medium or Low', 'Fix sketch:',
-                'You are in a throwaway copy', 'run anything inside this copy',
-                'Run the suite and reproductions', 'REPRODUCED',
-                'if a run is impossible, mark it REASONED', 'NOT RUN', 'Never use the network')
+                'You are in a throwaway copy', 'NOT RUN', 'Never use the network') + (
+                    ('You have no shell on this host', 'mark each finding REASONED') if WINDOWS else
+                    ('run anything inside this copy', 'Run the suite and reproductions', 'REPRODUCED',
+                     'if a run is impossible, mark it REASONED'))
         forbidden = ('Do not run tests', 'run code', 'SHOULD run', 'worktree add --detach',
                      'If your tools can execute', 'edit files in this checkout',
                      'never change the reviewed checkout', str(self.repo))
@@ -2858,7 +2940,8 @@ if case == 'archive_failure':
         # A clean --commit review gets the archive of HEAD itself: one file compared.
         (self.repo / 'new file.txt').unlink()
         self.commit_fixture('Commit the change')
-        head_file = self.git('show', 'HEAD:file.py').stdout.decode()
+        # The fixture reads in text mode: a CRLF that Windows wrote into the commit reads as LF.
+        head_file = self.git('show', 'HEAD:file.py').stdout.decode().replace('\r\n', '\n')
         for reviewer in ('claude', 'codex'):
             with self.subTest(reviewer=reviewer, scope='commit'):
                 if reviewer == 'claude':
@@ -2959,6 +3042,7 @@ if case == 'archive_failure':
     def test_copy_handles_directory_to_symlink(self):
         self.check_directory_replacement(True)
 
+    @posix_only
     def test_copy_compares_large_unchanged_files_with_bounded_memory(self):
         # Only the child is constrained: the suite runner may already exceed this limit.
         asset = self.repo / 'large.bin'
@@ -3007,31 +3091,46 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         for module, args in ((claude_bridge, ['review', '--timeout', '2']),
                              (codex_bridge, ['--model', 'fixture-codex-model'])):
             with self.subTest(reviewer=module.__name__):
+                # Exercise the real pinned archive before this controlled deadline probe.
+                # Native Git can itself exhaust the 0.7 s left by the injected delay;
+                # the separate archive-deadline tests cover that preparation-only failure.
+                head, _, diff, _ = bridge.snapshot(self.repo, 'uncommitted', None)
+                prepared = self.root / ('prepared-' + module.__name__)
+                prepared.mkdir()
+                real_copy(self.repo, head, diff, prepared)
                 budgets = []
+                timed_region = []
 
-                def slow_copy(*args, **kwargs):
+                def slow_copy(repo, copied_head, copied_diff, destination, **kwargs):
+                    self.assertEqual((repo, copied_head, copied_diff), (self.repo, head, diff))
+                    timed_region.append(time.monotonic())
                     time.sleep(1.3)
-                    return real_copy(*args, **kwargs)
+                    shutil.copytree(prepared, destination, symlinks=True, dirs_exist_ok=True)
 
                 def slow_reviewer(command, prompt, repo, timeout, **kwargs):
                     budgets.append(timeout)
-                    return real_run([sys.executable, '-c',
-                                     'import sys, time; sys.stdin.read(); time.sleep(1.3)'],
-                                    prompt, repo, timeout, **kwargs)
+                    try:
+                        return real_run([sys.executable, '-c',
+                                         'import sys, time; sys.stdin.read(); time.sleep(1.3)'],
+                                        prompt, repo, timeout, **kwargs)
+                    finally:
+                        timed_region.append(time.monotonic())
 
                 received = []
                 with patch.dict(os.environ, self.review_env(REVIEW_TIMEOUT_SECONDS='2')), \
                         patch.object(module, 'throwaway_copy', side_effect=slow_copy), \
                         patch('agent_process.run', side_effect=slow_reviewer), \
                         redirect_stdout(io.StringIO()):
-                    started = time.monotonic()
                     module.main([*args, '--repo', str(self.repo)], received.append)
-                    elapsed = time.monotonic() - started
+                self.assertEqual(len(timed_region), 2, received)
+                elapsed = timed_region[1] - timed_region[0]
                 self.assertEqual(len(budgets), 1, received)
                 self.assertGreater(budgets[0], 0)
                 self.assertLess(budgets[0], 0.8)
                 # The budget above is the proof of the shared deadline; the wall time only
                 # rules out two full timeouts in a row (3.3 s), with room for a slow runner.
+                # Git preflight and final accounting are outside that deadline, and native
+                # Windows Git can take seconds there: time only the copy/reviewer region.
                 self.assertLess(elapsed, 3.2)
                 self.assertEqual(received[0]['failure_kind'], 'timeout', received)
 
@@ -3065,6 +3164,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                         claude_bridge.throwaway_copy(self.repo, 'HEAD', diff, destination)
                     self.assertEqual(list(outside.iterdir()), [])
 
+    @posix_only
     def test_copy_cancel_during_each_launch_reaps_the_child(self):
         from unittest.mock import patch
         import claude_bridge
@@ -3089,6 +3189,8 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                     pid_file.unlink(missing_ok=True)
 
                     def launch(command, *args, **kwargs):
+                        if command[0] == '/bin/ps':
+                            return real_popen(command, *args, **kwargs)  # macOS cleanup scan
                         inject = target in command
                         child = real_popen([str(stub)] if inject else command, *args, **kwargs)
                         children.append(child)
@@ -3098,7 +3200,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                                 time.sleep(0.01)
                             self.assertTrue(pid_file.exists(), 'stub did not start')
                             # Deliver inside Popen, before its caller has assigned the handle.
-                            os.kill(os.getpid(), sig)
+                            send_cancel(sig)
                         return child
 
                     previous = signal.signal(sig, cancel)
@@ -3127,6 +3229,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                                 if stream is not None:
                                     stream.close()
 
+    @posix_only
     def test_copy_deadline_kills_descendants_after_tar_exits(self):
         from unittest.mock import patch
         import claude_bridge
@@ -3172,7 +3275,9 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         children = []
 
         def launch(command, *args, **kwargs):
-            if command[0] == 'tar':
+            if command[0] == '/bin/ps':
+                return real_popen(command, *args, **kwargs)  # macOS cleanup scan, not archive
+            if Path(command[0]).name.lower() in ('tar', 'tar.exe'):
                 raise FileNotFoundError('tar is unavailable')
             child = real_popen([sys.executable, '-c', 'import time; time.sleep(60)'],
                                *args, **kwargs)
@@ -3190,10 +3295,12 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         finally:
             for child in children:
                 if child.poll() is None:
-                    os.killpg(child.pid, signal.SIGKILL)
+                    import agent_process
+                    agent_process.stop_group(child, child.pid)
                 child.wait()
                 child.stdout.close()
 
+    @posix_only
     def test_the_copy_is_bounded_and_cancellable(self):
         import claude_bridge
         # A stalled extraction ends at the wall-clock bound or at a noted cancel, and no child
@@ -3244,8 +3351,8 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         # failure with a record, not an adapter error without one.
         bin_dir = self.root / 'slowbin2'
         bin_dir.mkdir(exist_ok=True)
-        (bin_dir / 'tar').write_text('#!/bin/sh\ncat > /dev/null\nsleep 5\n')
-        (bin_dir / 'tar').chmod(0o755)
+        python_cli(bin_dir / 'tar', PYTHON_SHEBANG +
+                   'import sys, time\nsys.stdin.buffer.read()\ntime.sleep(5)\n')
         self.install_wrapper()
         self.commit_fixture('A clean HEAD')
         old_path = os.environ['PATH']
@@ -3263,6 +3370,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         finally:
             os.environ['PATH'] = old_path
 
+    @posix_only
     def test_a_cancel_during_cleanup_still_reaps_the_extraction(self):
         # A raising cancel handler armed, and the cancel delivered DURING the first reap (sent
         # by the first kill itself): without the blocked mask the raise skipped the second
@@ -3285,7 +3393,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
 
         def killpg_then_cancel(pgid, sig):
             real_killpg(pgid, sig)
-            os.kill(os.getpid(), signal.SIGTERM)  # pending while blocked, raised after the reaps
+            send_cancel(signal.SIGTERM)  # pending while blocked, raised after the reaps
         old_path = os.environ['PATH']
         os.environ['PATH'] = str(bin_dir) + os.pathsep + old_path
         try:
@@ -3452,6 +3560,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         with self.assertRaises(claude_bridge.BridgeError):
             claude_bridge.snapshot(self.repo, 'uncommitted', None)
 
+    @posix_only
     def test_fixture_launchers_run_under_an_interpreter_path_with_a_space(self):
         # A shebang cannot quote: an interpreter under a directory with a space never ran
         # the fixtures. The launcher is sh, which execs the quoted path.
@@ -3469,6 +3578,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
             self.assertIn('ran under', result.stdout)
             self.assertTrue(PYTHON_SHEBANG.startswith('#!/bin/sh\n'), PYTHON_SHEBANG)
 
+    @posix_only
     def test_sparse_mode_is_read_through_git_s_boolean_and_a_cancel_during_reap_orphans_nothing(self):
         import claude_bridge
         import agent_process
@@ -3498,7 +3608,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
             real_stop(child, pgid)
             if not state['sent']:
                 state['sent'] = True
-                os.kill(os.getpid(), signal.SIGTERM)  # pending while blocked
+                send_cancel(signal.SIGTERM)  # pending while blocked
         old_path = os.environ['PATH']
         os.environ['PATH'] = str(bin_dir) + os.pathsep + old_path
         guard = agent_process.OneShot()
@@ -3608,7 +3718,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         self.assertEqual(code, 2, refused)
         self.assertIn(str(record), refused['error'])
         self.assertIn('v0.7 or v0.8', refused['error'])
-        command = 'mkdir -p ' + refused['error'].rsplit('mkdir -p ', 1)[1]
+        command = refused['error'].rsplit('): ', 1)[1]
         subprocess.run(['sh', '-c', command], check=True)
         self.assertFalse(record.exists())
         self.assertTrue((self.repo / '.myagentkit/usage-set-aside' / record.name).is_file())
@@ -3628,6 +3738,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
             env=dict(os.environ, REVIEW_DISPOSITIONS=str(notes), MYAGENTKIT_TASK_ID='inherited-task'))
         self.assertEqual(result.returncode, 0, result.stderr[-3000:])
 
+    @posix_only
     def test_the_cancel_cases_pass_under_a_caller_that_ignores_sigint(self):
         # Started as a `&` job of a non-interactive shell or under nohup, the self-test
         # inherited an ignored SIGINT and these cases failed, pointing at the review tooling
@@ -3827,7 +3938,11 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                  'timeout': 'timeout', 'exit': 'cli_error'}
         for case, kind in cases.items():
             with self.subTest(case=case):
-                result, chain = self.dispatch_result(FIXTURE_CASE=case, REVIEW_TIMEOUT_SECONDS='1')
+                # A native fixture's interpreter startup can exceed one second under load.
+                # The stalled fixture sleeps 20 s: a 5 s bound still proves real timeout
+                # failover, while allowing the immediate fallback reviewer to finish.
+                result, chain = self.dispatch_result(FIXTURE_CASE=case,
+                                                     REVIEW_TIMEOUT_SECONDS='5' if WINDOWS else '1')
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertEqual(chain['attempts'][0]['failure_kind'], kind)
                 self.assertEqual(len(chain['attempts']), 2)
@@ -3899,6 +4014,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         self.assertEqual(chain['selected_reviewer'], 'codex')
         self.assertFalse(chain['review_approved'])
 
+    @posix_only
     def test_cancelled_review_stops_the_reviewer_records_usage_and_never_fails_over(self):
         # SIGTERM and SIGHUP used to end the dispatcher without its cleanup, leaving the paid
         # reviewer's process group running; Ctrl-C lost the failed attempt's usage record.
@@ -3906,8 +4022,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         import signal
         import time
         hanging = self.root / 'hanging-cli'
-        hanging.write_text(HANGING_CLI)
-        hanging.chmod(0o755)
+        hanging = python_cli(hanging, HANGING_CLI)
         for provider, sig in (('claude', signal.SIGINT), ('claude', signal.SIGTERM),
                               ('claude', signal.SIGHUP), ('codex', signal.SIGINT),
                               ('codex', signal.SIGTERM)):
@@ -3963,6 +4078,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                 self.assertEqual((usage['status'], usage['failure_kind']), ('failed', 'cancelled'))
                 self.assertEqual(verdicts_of(chain['attempts'][0]['evidence']), [])
 
+    @posix_only
     def test_a_cancel_during_the_closing_quota_read_keeps_the_completed_attempt(self):
         # The quota read after the review ran with the default handlers back in place, so a
         # SIGTERM there ended the adapter before the paid, completed review was recorded.
@@ -4051,6 +4167,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                     self.assertEqual([a['reviewer'] for a in chain['attempts']], ['codex'])
                     self.assertEqual(chain['failure_kind'], 'cancelled')
 
+    @posix_only
     def test_a_cancel_during_the_claude_final_snapshot_keeps_the_usage_record(self):
         # The Claude adapter restored the default handlers when the reviewer exited, so a
         # SIGTERM while it hashed the checkout for the stale check ended it before the paid
@@ -4210,11 +4327,13 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
 
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
-            for posix in (True, False):
+            # The POSIX half needs a signal mask, which native Windows lacks.
+            for posix in (False,) if WINDOWS else (True, False):
                 del seen[:]
                 with patch.object(agent_process, 'POSIX', posix), patch('subprocess.Popen', fake), \
-                        patch('os.killpg', absent), \
-                        patch('signal.pthread_sigmask', absent if not posix else signal.pthread_sigmask):
+                        patch('os.killpg', absent, create=True), \
+                        patch('signal.pthread_sigmask', absent if not posix else signal.pthread_sigmask,
+                              create=True):
                     self.assertEqual(agent_process.run(['fixture'], 'p', tmp, 5)['termination'], 'unavailable')
                     self.assertEqual(codex_quota.snapshot('fixture', tmp)['status'], 'unavailable')
                     for diff in (None, ''):
@@ -4235,6 +4354,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                             # CREATE_NEW_PROCESS_GROUP, suspended until it joins its job object
                             self.assertEqual(kw['creationflags'], 0x200 | 0x4)
 
+    @posix_only
     def test_stop_group_never_signals_a_reaped_pid(self):
         # A reviewer that ended normally was reaped by run(); stop_group then signalled its
         # pid anyway, which a later process may already own.
@@ -4246,6 +4366,64 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
             agent_process.stop_group(child, child.pid)
         self.assertEqual(kill.call_count, 0, 'a reaped pid was signalled')
 
+    def run_with_a_setsid_grandchild(self, timeout, cancel_after_start):
+        """Run a reviewer with a detached descendant; return (result, descendant pid)."""
+        import agent_process
+        import threading
+        pid_file = self.root / 'grandchild.pid'
+        reviewer = self.root / 'setsid-reviewer.py'
+        reviewer.write_text('import subprocess, sys, time\n'
+                            'subprocess.Popen([sys.executable, "-c", "import os, sys, time; '
+                            'open(sys.argv[1], \'w\').write(str(os.getpid())); time.sleep(120)", sys.argv[1]], '
+                            'start_new_session=True, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, '
+                            'stderr=subprocess.DEVNULL)\n'
+                            'time.sleep(120)\n')
+
+        finished = threading.Event()
+
+        def started():
+            deadline = time.monotonic() + 20
+            while not (pid_file.exists() and pid_file.read_text()) and time.monotonic() < deadline:
+                if finished.wait(0.05):
+                    return
+            if cancel_after_start and not finished.is_set() and pid_file.exists() and pid_file.read_text():
+                send_cancel(signal.SIGTERM)
+        watcher = threading.Thread(target=started, daemon=True)
+        watcher.start()
+        try:
+            result = agent_process.run([sys.executable, '-I', str(reviewer), str(pid_file)], '', self.root, timeout)
+        finally:
+            finished.set()
+            watcher.join()
+        self.assertTrue(pid_file.exists() and pid_file.read_text(), 'the grandchild never started')
+        return result, int(pid_file.read_text())
+
+    def assert_gone(self, pid):
+        """A zombie is gone too: an orphan's reaper may be slow, and it runs nothing."""
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            state = subprocess.run(['ps', '-o', 'stat=', '-p', str(pid)], capture_output=True, text=True).stdout
+            if not state.strip() or state.strip().startswith('Z'):
+                return
+            time.sleep(0.1)
+        os.kill(pid, signal.SIGKILL)
+        self.fail('the setsid grandchild %d outlived the stopped review' % pid)
+
+    @posix_only
+    def test_a_cancel_stops_a_descendant_that_left_the_process_group(self):
+        # killpg reaches the reviewer's group only: a descendant that called setsid ran on
+        # after the review was cancelled.
+        result, pid = self.run_with_a_setsid_grandchild(60, cancel_after_start=True)
+        self.assert_gone(pid)
+        self.assertEqual(result['termination'], 'cancelled', result)
+
+    @posix_only
+    def test_a_timeout_stops_a_descendant_that_left_the_process_group(self):
+        result, pid = self.run_with_a_setsid_grandchild(3, cancel_after_start=False)
+        self.assert_gone(pid)
+        self.assertEqual(result['termination'], 'timeout', result)
+
+    @posix_only
     def test_off_posix_stop_group_runs_taskkill_on_the_tree_and_never_killpg(self):
         from unittest.mock import patch
         import agent_process
@@ -4282,8 +4460,8 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         # fcntl: CANCEL_SIGNALS once named SIGHUP at module level, and the import raised.
         simulated = ('import os, signal, sys, selectors, shutil, subprocess, tempfile, threading\n'
                      'for name in ("SIGHUP", "SIGKILL", "pthread_sigmask", "sigpending", "sigwait"):\n'
-                     '    delattr(signal, name)\n'
-                     'del os.killpg\n'
+                     '    signal.__dict__.pop(name, None)\n'  # native Windows lacks them already
+                     'os.__dict__.pop("killpg", None)\n'
                      'sys.modules["fcntl"] = None\n'
                      'os.name = "nt"\n'
                      'sys.path.insert(0, sys.argv[1])\n'
@@ -4302,7 +4480,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         # Every launch, block and group kill of the review tooling goes through agent_process's
         # seam, which alone knows the platform; a direct call elsewhere breaks native Windows.
         import ast
-        seam = {'block_cancels', 'restore_mask', 'pending', 'launch', 'stop_group'}
+        seam = {'block_cancels', 'restore_mask', 'pending', 'launch', 'stop_group', 'lock_file'}
         attributes = {'killpg', 'pthread_sigmask', 'sigpending', 'SIGHUP', 'SIGKILL'}
         keywords = {'preexec_fn', 'start_new_session'}
         offenders = []
@@ -4328,18 +4506,22 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
 if __name__ == "__main__":
     from test_agent_usage import UsageTests
     from test_codex_quota import QuotaTests
-    suite = unittest.TestSuite()
+    minimums = WINDOWS_SUITE_MINIMUMS if WINDOWS else SUITE_MINIMUMS
+    suites = []
     for case, name in ((BridgeTests, 'test_claude_bridge'), (UsageTests, 'test_agent_usage'),
                        (QuotaTests, 'test_codex_quota')):
-        minimum = SUITE_MINIMUMS[name]
+        minimum = minimums[name]
         tests = unittest.defaultTestLoader.loadTestsFromTestCase(case)
         if name == 'test_claude_bridge':
             tests.addTests(unittest.defaultTestLoader.loadTestsFromTestCase(ReviewPreflightTests))
         if tests.countTestCases() < minimum:
             raise SystemExit("FAIL: %s has %d of at least %d tests; a suite that did not run is "
                              "not a pass" % (case.__name__, tests.countTestCases(), minimum))
-        suite.addTests(tests)
-    if not run_quietly(suite):
-        raise SystemExit(1)
-    print("Suite minimums met: " + ", ".join("%s %d" % item for item in sorted(SUITE_MINIMUMS.items())))
+        suites.append((tests, minimum))
+    # Refuse an absent companion before spending time on the other suites. Acceptance
+    # empties a companion deliberately; it must reach that failure within its time limit.
+    for tests, minimum in suites:
+        if not run_quietly(tests, minimum=minimum):
+            raise SystemExit(1)
+    print("Suite minimums met: " + ", ".join("%s %d" % item for item in sorted(minimums.items())))
     print("REVIEW SELF-TEST: PASS")
