@@ -769,11 +769,14 @@ comes when it stops on a question, a usage limit or an error. Nothing can read t
 pane either, so there `spawn_worker.sh` adds a Notification and a Stop hook to the worker's
 `--settings` (the owner's settings and hooks are kept, merged into
 `.myagentkit/workers/NAME.settings.json`); they write its state line to
-`.myagentkit/workers/NAME.state`: `waiting permission|question TIME` when it asks for a
-permission, an approval or an answer, `idle TIME` when it stops. `scripts/watch_workers.sh
---result NAME=PATH NAME`, run from the same checkout, reads that file in place of a pane:
-WAITING, then the result file as on tmux, then IDLE (it stopped with no new result), each
-line once. The folder-trust dialog writes no state line, so the folder must be trusted
+`.myagentkit/workers/NAME.state`: `waiting permission|question TIME ID` when it asks for a
+permission, an approval or an answer, `idle TIME ID` when it stops (ID tells two events of
+the same second apart). `scripts/watch_workers.sh --result NAME=PATH NAME`, run from the same
+checkout, reads that file in place of a pane: WAITING, then the result file as on tmux, then
+IDLE (it stopped with no new result), each event once. A worker name is letters, digits, `-`
+and `_`, not starting with `-`; both scripts refuse any other. A state file the watcher cannot
+read or understand is exit 3 (it names the file: delete it); an absent or empty one is no
+signal yet. The folder-trust dialog writes no state line, so the folder must be trusted
 already. The lead still looks at the tab after every usage-limit reset. What `close_worker.sh` does NOT see, so
 the lead closes only a worker whose result says it is done: a gate or a commit that starts
 in the instant between its last check and the kill; a commit waiting in a project's own

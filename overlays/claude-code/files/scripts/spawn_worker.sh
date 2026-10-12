@@ -6,7 +6,7 @@
 # watching and closing a tmux session does not apply there. Nothing can read that tab, so
 # there the worker's --settings gain a Notification and a Stop hook (the owner's settings and
 # hooks are kept; the merged file is .myagentkit/workers/NAME.settings.json) that write its
-# state line, `waiting permission|question|input TIME ID` or `idle TIME ID`, to .myagentkit/workers/
+# state line, `waiting permission|question TIME ID` or `idle TIME ID`, to .myagentkit/workers/
 # NAME.state, which watch_workers.sh reads in place of a pane. The result file stays the done
 # signal.
 #
@@ -39,7 +39,7 @@
 #     the brief pasted as a block: one model took a pasted brief with no typed sentence of the
 #     user's own for mere content and sat idle for 35 minutes asking for confirmation.
 #   - Every value that goes into the session's shell command, and the brief path, passes
-#     through `q`: a value with an apostrophe (a --settings JSON string, a name) otherwise
+#     through `q`: a value with an apostrophe (a --settings JSON string) otherwise
 #     ends its quoting and the rest runs as shell in the new pane.
 #   - --worktree makes the worktree here with `git worktree add` from the commit the lead's
 #     checkout is on now. Passing `-w` to the tool built it from a stale base, and workers
@@ -251,21 +251,26 @@ sessions() {
 if [ -n "$windows" ]; then
   running=$(sessions "$name") || die "cannot list the Claude Code sessions to check the name '$name': $running"
   [ -z "$running" ] || die "a Claude Code session named '$name' already runs (process $running)"
-  # The hook: `waiting permission|question|input TIME ID` on a Notification asking for input,
+  # The hook: `waiting permission|question TIME ID` on a Notification asking for input,
   # `idle TIME ID` on Stop. Python is the interpreter chosen
   # above by running it, as .claude/hooks/py.sh chooses for the project's hooks.
   hook=$kit_python' -I -c '$(q 'import json, os, sys, tempfile, time
 e = json.loads(sys.stdin.buffer.read() or b"{}")
 m = str(e.get("message", "")).lower()
-s = {"permission_prompt": "waiting permission", "elicitation_dialog": "waiting question", "idle_prompt": "waiting input"}.get(e.get("notification_type"), "")
+s = {"permission_prompt": "waiting permission", "elicitation_dialog": "waiting question"}.get(e.get("notification_type"), "")
 if "notification_type" not in e:
     s = "waiting question" if "question" in m else "waiting permission" if "permission" in m or "approval" in m else ""
 s = "idle" if e.get("hook_event_name") == "Stop" else s
 if s:
-    with tempfile.NamedTemporaryFile(mode="w", dir=os.path.dirname(sys.argv[1]), delete=False, newline="") as f:
-        f.write(s + time.strftime(" %Y-%m-%dT%H:%M:%S") + " " + str(time.time_ns()) + chr(10))
-    os.replace(f.name, sys.argv[1])')' '$(q "$(cygpath -m "$wdir/$name.state")")
-  mkdir -p -- "$wdir" && rm -f -- "$wdir/$name.state" "$wdir/$name".watch-* || die "cannot prepare $wdir"
+    d, b = os.path.split(sys.argv[1])
+    f = tempfile.NamedTemporaryFile(mode="w", dir=d, prefix=b + ".", delete=False, newline="")
+    try:
+        with f:
+            f.write(s + time.strftime(" %Y-%m-%dT%H:%M:%S") + " " + str(time.time_ns()) + chr(10))
+        os.replace(f.name, sys.argv[1])
+    finally:
+        if os.path.exists(f.name): os.unlink(f.name)')' '$(q "$(cygpath -m "$wdir/$name.state")")
+  mkdir -p -- "$wdir" && rm -f -- "$wdir/$name".state* "$wdir/$name".watch-* || die "cannot prepare $wdir"
   { case $own in "") echo '{}' ;; "$lead{"*) printf '%s' "$own" ;; *) cat -- "$own" ;; esac; } |
     $kit_python -I -c 'if 1:
     import json, sys

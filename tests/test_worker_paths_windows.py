@@ -17,8 +17,6 @@ SCRIPTS = ROOT / 'overlays/claude-code/files/scripts'
 
 class WorkerPathsOnWindows(unittest.TestCase):
     def setUp(self):
-        if os.name != 'nt':
-            return
         self.tmp = Path(tempfile.mkdtemp(prefix='kit-worker-paths-'))
         self.addCleanup(shutil.rmtree, self.tmp)
         self.scripts = self.tmp / 'with space/scripts'
@@ -26,20 +24,25 @@ class WorkerPathsOnWindows(unittest.TestCase):
         self.bin = self.tmp / 'bin'
         self.bin.mkdir()
         self.env = dict(os.environ, PATH=str(self.bin) + os.pathsep + os.environ['PATH'])
-        self.stub(self.bin / 'python3', 'exec %s "$@"\n' % shlex.quote(sys.executable))
+        if os.name == 'nt':
+            self.stub(self.bin / 'python3', 'exec %s "$@"\n' % shlex.quote(sys.executable))
+        else:  # the watcher's state-file tests run here too, as on Git for Windows
+            self.stub(self.bin / 'uname', 'echo MINGW64_NT-10.0\n')
 
     @staticmethod
     def stub(path, body):
         path.write_text('#!/bin/sh\n' + body, encoding='utf-8', newline='\n')
         path.chmod(0o755)
 
-    def paths(self, name):
-        if os.name != 'nt':
+    def paths(self, name, posix=False):
+        if os.name != 'nt' and not posix:
             sys.stderr.write('\nNOT RUN: %s (native Windows only)\n' % self.id())
             return []
         target = self.scripts / name
         shutil.copyfile(SCRIPTS / name, target)
         forward = target.as_posix()
+        if os.name != 'nt':
+            return [str(target)]
         return [forward[:3] + forward[3:].replace('/', '\\'), str(target), forward]
 
     def run_script(self, path, *args):
@@ -60,7 +63,7 @@ class WorkerPathsOnWindows(unittest.TestCase):
     def test_watch_reads_a_tabs_state_file_in_place_of_a_pane(self):
         # A Windows Terminal tab has no pane to read: the state line the worker's hooks write
         # (spawn_worker.sh) is WAITING or IDLE, once each, and no tmux is needed.
-        paths = self.paths('watch_workers.sh')
+        paths = self.paths('watch_workers.sh', posix=True)
         if not paths:
             return
         shutil.copyfile(SCRIPTS / 'waiting_patterns.txt', self.scripts / 'waiting_patterns.txt')
@@ -68,7 +71,6 @@ class WorkerPathsOnWindows(unittest.TestCase):
         workers.mkdir(parents=True)
         for line, out in (('waiting permission 2026-10-12T10:00:00', 'WAITING: w1, on a permission prompt'),
                           ('waiting question 2026-10-12T10:01:00', 'WAITING: w1, on a question'),
-                          ('waiting input 2026-10-12T10:02:00 123', 'WAITING: w1, on input'),
                           ('idle 2026-10-12T10:05:00', 'IDLE: w1, its session stopped')):
             with self.subTest(line=line):
                 (workers / 'w1.state').write_text(line + '\n', newline='\n')
@@ -79,7 +81,7 @@ class WorkerPathsOnWindows(unittest.TestCase):
                 self.assertEqual(self.run_script(paths[0], '--once', 'w1').stdout, '')
 
     def test_two_stops_in_the_same_second_are_each_reported(self):
-        paths = self.paths('watch_workers.sh')
+        paths = self.paths('watch_workers.sh', posix=True)
         if not paths:
             return
         shutil.copyfile(SCRIPTS / 'waiting_patterns.txt', self.scripts / 'waiting_patterns.txt')
@@ -94,10 +96,10 @@ class WorkerPathsOnWindows(unittest.TestCase):
                 self.assertIn('IDLE: w1', result.stdout)
                 self.assertIn('2026-10-12T10:00:00', result.stdout)
                 self.assertEqual(self.run_script(paths[0], '--once', 'w1').stdout, '')
-        self.assertEqual((workers / 'w1.watch-state').read_text().strip(), '102')
+        self.assertEqual((workers / 'w1.watch-state').read_text().strip(), 'idle 2026-10-12T10:00:00 102')
 
     def test_unreadable_or_invalid_state_is_an_observation_failure(self):
-        paths = self.paths('watch_workers.sh')
+        paths = self.paths('watch_workers.sh', posix=True)
         if not paths:
             return
         shutil.copyfile(SCRIPTS / 'waiting_patterns.txt', self.scripts / 'waiting_patterns.txt')
@@ -110,16 +112,49 @@ class WorkerPathsOnWindows(unittest.TestCase):
         state.mkdir()
         result = self.run_script(paths[0], '--once', 'w1', 'w2')
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn('watch: w1: state unreadable: not a regular file', result.stderr)
+        self.assertIn('watch_workers: w1: state unreadable: not a regular file', result.stderr)
+        self.assertIn('w1.state', result.stderr)
+        self.assertIn('delete it', result.stderr)
         state.rmdir()
-        for content in ('', 'garbage\n', 'idle nonsense\n',
-                        'idle 2026-10-12T10:00:00 1\ngarbage\n'):
+        for content in ('garbage\n', 'idle nonsense\n', 'idle 2026-10-12T10:00:00 1\ngarbage\n',
+                        'waiting input 2026-10-12T10:00:00 1\n') + (
+                ('idle 2026-10-12T10:00:00 1\r\n',) if os.name != 'nt' else ()):  # Git Bash's $(...) drops the CR
             with self.subTest(content=content):
-                state.write_text(content)
+                state.write_bytes(content.encode())
                 result = self.run_script(paths[0], '--once', 'w1')
                 self.assertNotEqual(result.returncode, 0)
-                self.assertIn('watch: w1: state unreadable: invalid state content', result.stderr)
+                self.assertIn('watch_workers: w1: state unreadable: invalid state content', result.stderr)
                 self.assertFalse((workers / 'w1.watch-state').exists())
+        # No signal yet, not a failure: an old hook truncates the file before it writes.
+        state.write_bytes(b'')
+        result = self.run_script(paths[0], '--once', 'w1', 'w2')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
+        # Blank lines after the line are harmless.
+        (workers / 'w1.watch-state').unlink(missing_ok=True)
+        state.write_bytes(b'idle 2026-10-12T10:00:00 1\n\n\n')
+        result = self.run_script(paths[0], '--once', 'w1')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('IDLE: w1', result.stdout)
+
+    def test_watch_refuses_a_session_name_outside_the_workers_folder(self):
+        paths = self.paths('watch_workers.sh', posix=True)
+        if not paths:
+            return
+        shutil.copyfile(SCRIPTS / 'waiting_patterns.txt', self.scripts / 'waiting_patterns.txt')
+        workers = self.tmp / '.myagentkit/workers'
+        workers.mkdir(parents=True)
+        (workers.parent / 'victim.state').write_text('idle 2026-10-12T10:00:00 1\n')
+
+        def snapshot():
+            return {str(p.relative_to(self.tmp)): p.read_bytes() if p.is_file() else None
+                    for p in self.tmp.rglob('*')}
+        before = snapshot()
+        for name in ('../victim', 'a/b', '-w', 'a b', '.'):
+            with self.subTest(name=name):
+                result = self.run_script(paths[0], '--once', '--', name)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn('refused the session name', result.stderr)
+                self.assertEqual(snapshot(), before)
 
     def test_spawn_finds_its_watcher(self):
         paths = self.paths('spawn_worker.sh')

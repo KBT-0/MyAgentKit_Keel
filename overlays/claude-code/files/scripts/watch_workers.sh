@@ -24,7 +24,8 @@
 # a session that exists could not be read, or tmux could not say whether it exists
 # (`watch_workers: NAME: capture failed: ...` on stderr), or a committed result could not be
 # read (`... could not read the committed result ...`), or a report could not be written
-# (`... could not write its report ...`); that is an observation failure, never "nothing
+# (`... could not write its report ...`), or, on Windows, a state file is invalid or unreadable
+# (`watch_workers: NAME: state unreadable: ...`, the message names the file: delete it); that is an observation failure, never "nothing
 # waiting", and the run prints no result or context report. With several sessions, the GONE
 # and WAITING lines print first, then the result and context lines. Run once per spawn, the
 # watcher stopped watching at the first PROGRESS, QUESTIONS or CONTEXT report (see above).
@@ -51,12 +52,14 @@
 # Native Windows: a worker is a Windows Terminal tab whose pane nothing can read. The
 # Notification and Stop hooks spawn_worker.sh gives it write one line to
 # .myagentkit/workers/NAME.state at the top of this checkout (or this folder outside git):
-# `waiting permission|question|input TIME ID` or `idle TIME ID`. A waiting line is WAITING, before the
+# `waiting permission|question TIME ID` or `idle TIME ID`. A waiting line is WAITING, before the
 # result file is read; an idle line, when the result file says nothing new, is IDLE: the worker
-# stopped (a question in the tab, a usage limit, an error). Each event id is reported once; the
-# once-markers are NAME.watch-* files beside it, which spawn_worker.sh removes. There is no GONE
-# and no context figure there, and no tmux is needed. Unreadable or invalid state is an
-# observation failure (exit 3); an absent state file means no signal yet.
+# stopped (a question in the tab, a usage limit, an error). Each event (the whole line, id
+# included) is reported once; the once-markers are NAME.watch-* files beside it, which
+# spawn_worker.sh removes. There is no GONE and no context figure there, and no tmux is
+# needed. An invalid state file is an observation failure (exit 3); an absent or empty one
+# means no signal yet. A session name is letters, digits, - and _, not starting with -
+# (spawn_worker.sh's rule): anything else is a usage error (exit 2).
 set -eu
 
 say() { printf '%s\n' "$1" | LC_ALL=C tr '\001-\011\013-\037\177' '?'; }
@@ -104,7 +107,13 @@ while [ $# -gt 0 ]; do
 done
 [ $# -ge 1 ] || { sed -n '3,10p' "$0"; exit 2; }
 [ "$interval" -ge 10 ] || die "--interval $interval is below the floor of 10 seconds"
-for n in "$@"; do plain "$n"; done
+for n in "$@"; do
+  plain "$n"
+  case $n in
+    ''|-*|*[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-]*)
+      die "refused the session name: use letters, digits, - and _, not starting with -" ;;
+  esac
+done
 # A name given twice is watched once: its second pass reported what the first had queued.
 seen=$nl
 for n in "$@"; do case $seen in *"$nl$n$nl"*) ;; *) seen=$seen$n$nl ;; esac; done
@@ -301,26 +310,27 @@ tab() {
   [ -e "$state" ] || [ -L "$state" ] || return 1
   reason=""
   if [ ! -f "$state" ]; then reason="not a regular file"
-  elif ! line=$(cat -- "$state" 2>"$err"); then reason=$(cat "$err")
-  elif ! printf '%s\n' "$line" | LC_ALL=C grep -Eq '^(waiting (permission|question|input)|idle) [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}( [0-9]+)?$' ||
+  elif ! line=$(cat -- "$state" 2>"$err"); then
+    [ -e "$state" ] || return 1  # removed by a re-spawn since the check: no signal yet
+    reason=$(cat "$err")
+  elif [ -z "$line" ]; then return 1  # an older hook truncates the file before it writes: no signal yet
+  elif ! printf '%s\n' "$line" | LC_ALL=C grep -Eq '^(waiting (permission|question)|idle) [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}( [0-9]+)?$' ||
        [ "$(printf '%s\n' "$line" | wc -l)" -ne 1 ]; then reason="invalid state content"
   fi
   if [ -n "$reason" ]; then
-    say "watch: $1: state unreadable: $reason" >&2
+    say "watch_workers: $1: state unreadable: $reason ($state; delete it to clear)" >&2
     failed=1; return 3
   fi
   case $line in "$2 "*) ;; *) return 1 ;; esac
-  event=${line##* }
-  case $event in *[!0-9]*) event=$line ;; esac  # legacy lines have no event id
-  [ "$(mark "$1" state)" != "$event" ] || return 1
+  [ "$(mark "$1" state)" != "$line" ] || return 1
   if [ "$2" = waiting ]; then
-    case $line in "waiting question "*) what="a question" ;; "waiting input "*) what="input" ;; *) what="a permission prompt" ;; esac
+    case $line in "waiting question "*) what="a question" ;; *) what="a permission prompt" ;; esac
     say "watch_workers: WAITING: $1, on $what (its state file: $line)" || return 2
   else
     say "watch_workers: IDLE: $1, its session stopped and waits for input, with no new result report (its state file: $line)" || return 2
   fi
   say "  look at it: its Windows Terminal tab, titled $1" || return 2
-  setmark "$1" state "$event"
+  setmark "$1" state "$line"
 }
 
 # Report the context figure in NAME's status line ($win) when it is past the warning line,

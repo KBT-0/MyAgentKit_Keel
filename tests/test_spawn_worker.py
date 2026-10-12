@@ -388,6 +388,7 @@ class SpawnWorkerTests(unittest.TestCase):
         workers = Path(os.path.realpath(self.cwd)) / '.myagentkit/workers'
         workers.mkdir(parents=True)
         (workers / 'w1.watch-state').write_text('idle from an earlier worker\n')
+        (workers / 'w1.state.tmpleft').write_text('a hook that died\n')
         # Registered as a peer (sessions/8.json), so the spawn does not wait 30 s for it.
         (self.tmp / 'config/sessions').mkdir(parents=True)
         (self.tmp / 'config/sessions/8.json').write_text('{}')
@@ -405,10 +406,10 @@ class SpawnWorkerTests(unittest.TestCase):
         self.assertEqual(merged['hooks']['Notification'], [{'hooks': [{'type': 'command', 'command': hook}]}])
         self.assertIn('w1.state', hook)
         self.assertFalse((workers / 'w1.watch-state').exists(), "an earlier worker's once-marker was kept")
+        self.assertFalse((workers / 'w1.state.tmpleft').exists(), "an earlier hook's temporary file was kept")
         if not WINDOWS:
             return  # the hook names C:/... paths of the cygpath stub
         for payload, line in (({'hook_event_name': 'Notification', 'notification_type': 'permission_prompt'}, 'waiting permission '),
-                              ({'hook_event_name': 'Notification', 'notification_type': 'idle_prompt'}, 'waiting input '),
                               ({'hook_event_name': 'Notification', 'notification_type': 'elicitation_dialog'}, 'waiting question '),
                               ({'hook_event_name': 'Stop'}, 'idle ')):
             with self.subTest(payload=payload):
@@ -666,10 +667,11 @@ class WorkerStateHookTests(unittest.TestCase):
             cases = [({'notification_type': kind, 'message': 'question permission approval'}, expected)
                      for kind, expected in (('permission_prompt', 'waiting permission'),
                                             ('elicitation_dialog', 'waiting question'),
-                                            ('idle_prompt', 'waiting input'),
+                                            ('idle_prompt', None),
                                             ('auth_success', None), ('other', None), ('', None))]
             cases += [({'message': message}, expected) for message, expected in
                       (('a question', 'waiting question'), ('permission needed', 'waiting permission'),
+                       ('Claude is waiting for your input', None),
                        ('approval needed', 'waiting permission'), ('unrelated', None))]
             for payload, expected in cases:
                 with self.subTest(payload=payload):
@@ -693,6 +695,16 @@ class WorkerStateHookTests(unittest.TestCase):
             with patch('os.replace', side_effect=crash), self.assertRaisesRegex(RuntimeError, 'crash'):
                 run_state_hook(state, {'hook_event_name': 'Stop'})
             self.assertEqual(state.read_bytes(), previous)
+            self.assertEqual([p.name for p in state.parent.iterdir()], ['w1.state'], 'the temporary file was left behind')
+
+    def test_temporary_file_is_named_after_the_state_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp) / 'w1.state'
+            def look(source, target):
+                self.assertTrue(Path(source).name.startswith('w1.state.'))
+                raise RuntimeError('stop')
+            with patch('os.replace', side_effect=look), self.assertRaises(RuntimeError):
+                run_state_hook(state, {'hook_event_name': 'Stop'})
 
 
 if __name__ == '__main__':
