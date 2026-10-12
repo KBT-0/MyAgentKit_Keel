@@ -464,7 +464,10 @@ class SpawnWorkerTests(unittest.TestCase):
                                     CLAUDE_CONFIG_DIR=str(config), **env)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertIn('behaviour appendix: ' + (shown if appended else 'off'), result.stdout)
-                self.assertEqual(self.launched()['argv'][1:], ['-n', 'wb', '--model', 'm', '--effort', 'high', *appended])
+                # On native Windows the worker also gets the merged --settings file (the state hooks).
+                argv = self.launched()['argv'][1:]
+                self.assertEqual(argv[6], '--settings')
+                self.assertEqual(argv[:6] + argv[8:], ['-n', 'wb', '--model', 'm', '--effort', 'high', *appended])
 
     def assert_refused(self, brief):
         result = self.spawn('w2', str(brief))
