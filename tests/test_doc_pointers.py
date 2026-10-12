@@ -83,6 +83,9 @@ class SectionPointerTests(unittest.TestCase):
                      'Never reduce the reviews or deliberately run the reviewers one after the other; the self-test waits'):
             self.assertIn(rule, budget_rule)
         self.assertIn("A review round's floor is the two reviewers", budget_rule)
+        self.assertIn('when two slots are free; heavy jobs already running take slots', budget_rule)
+        self.assertIn('rather than waiting without limit', budget_rule)
+        self.assertIn('as a recorded exception (the usage note names the budget figure)', budget_rule)
         self.assertIn('starts the round only when two jobs fit', budget_rule)
         self.assertIn('"In parallel" means the reviewers', flat)
         self.assertIn('review rounds run per cluster of related branches', flat)
@@ -94,12 +97,17 @@ class SectionPointerTests(unittest.TestCase):
                      'Wait for the survivors by default', 'reason that holds',
                      "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine.IndexOf('<checkout>', [StringComparison]::OrdinalIgnoreCase) -ge 0 } | Select ProcessId,CommandLine",
                      "Linux `ps -eo pid,args | grep -F -- '<checkout>'`",
-                     "macOS `ps -eww -o pid,args | grep -F -- '<checkout>'`",
-                     "On Linux and macOS, the listing's own `grep` appears as one row naming `<checkout>` and is ignored; every other row is a survivor.",
+                     "macOS `ps -eww -o pid,args | grep -iF -- '<checkout>'`",
+                     "It ignores its own rows: the `grep`, and the shell or PowerShell that runs the listing",
+                     'the gate and the self-test are found through the holder of `check.lock`',
+                     'chain record under `.myagentkit/usage/chains/`',
+                     '`.myagentkit/usage` as a second literal',
+                     "Git Bash's `/c/x`", 'the `pwd -P` form of a symlinked checkout', '`/private/var` for `/var`',
                      "A checkout path containing an apostrophe cannot go inside the single quotes as is; on Linux/macOS write it as `'\\''` or put the path in a variable and match \"$checkout\"; on Windows double the apostrophe inside the PowerShell single-quoted string.",
                      'The Windows match ignores case because Windows paths do'):
             self.assertIn(rule, gotchas)
         self.assertNotIn("grep -v -F 'grep -F'", gotchas)
+        self.assertNotIn('every other row is a survivor', gotchas)
         self.assertNotIn('stop them with a reason', gotchas)
         running = ' '.join((ROOT / 'core/docs/REVIEW_RUNNING.md').read_text(encoding='utf-8').split())
         self.assertIn('Start the self-test and two reviewers together only when the memory budget permits', running)

@@ -175,11 +175,12 @@ native Windows (2026-10-12): a separate Windows Terminal tab and a `codex exec` 
 Before resuming work after a cut-off, list the processes whose command line names the checkout
 or its worktrees. Quote the checkout path and match it literally:
 Windows `Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine.IndexOf('<checkout>', [StringComparison]::OrdinalIgnoreCase) -ge 0 } | Select ProcessId,CommandLine`;
-Linux `ps -eo pid,args | grep -F -- '<checkout>'`; macOS `ps -eww -o pid,args | grep -F -- '<checkout>'`.
-On Linux and macOS, the listing's own `grep` appears as one row naming `<checkout>` and is ignored; every other row is a survivor.
+Linux `ps -eo pid,args | grep -F -- '<checkout>'`; macOS `ps -eww -o pid,args | grep -iF -- '<checkout>'` (APFS ignores case).
+The listing finds jobs whose arguments name the checkout (a `codex exec` with a brief path, a worker with its worktree). It ignores its own rows: the `grep`, and the shell or PowerShell that runs the listing when an agent runs it through a tool (on Windows, the `powershell` process whose command line holds the query).
+It does not find the kit's own jobs, which start with relative paths: the gate and the self-test are found through the holder of `check.lock` (`fuser`, `lsof` or `resmon`, above); a running review through its chain record under `.myagentkit/usage/chains/` (`docs/REVIEW_RUNNING.md`), and its own process by grepping the listing for `.myagentkit/usage` as a second literal.
 A checkout path containing an apostrophe cannot go inside the single quotes as is; on Linux/macOS write it as `'\''` or put the path in a variable and match "$checkout";
 on Windows double the apostrophe inside the PowerShell single-quoted string.
-The Windows match ignores case because Windows paths do; a drive-letter or separator difference (`c:/x` vs `C:\x`) still needs the form the launching shell used.
+The Windows match ignores case because Windows paths do; search for every spelling the launching shell may have used: `C:/x`, `C:\x` and Git Bash's `/c/x` on Windows, the `pwd -P` form of a symlinked checkout on Linux and macOS, and `/private/var` for `/var` on macOS.
 Wait for the survivors by default. Stop one only under the hard rule in `AGENTS.md` ("Never end
 running work without a reason that holds": the owner asked, or it is provably finished or hung).
 When the machine runs low on memory, the host can reap jobs: five heavy jobs started together

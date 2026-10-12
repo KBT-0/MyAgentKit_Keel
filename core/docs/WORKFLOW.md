@@ -717,14 +717,15 @@ Rules, binding for whoever routes workers:
    runs heavy background jobs (a gate, a self-test, a review, a build, a `codex exec`
    errand) within a memory budget: two at a time until the lead has measured its host, then
    (free memory minus a 4 GB reserve) divided by the measured peak of one job.
-   Start the two reviewers together. Start the self-test with them only when all three jobs
+   Start the two reviewers together when two slots are free; heavy jobs already running take slots. Start the self-test with them only when all three jobs
    fit within the budget. With a budget of two, start both reviewers first, then the self-test
    when one reviewer ends. Never reduce the reviews or deliberately run the reviewers one
-   after the other; the self-test waits. A review round's floor is the two reviewers: they
-   always start together. When the budget is below two, the lead first frees memory it owns
+   after the other; the self-test waits. A review round's floor is the two reviewers. When the budget is below two, the lead first frees memory it owns
    (waits for or closes its own finished jobs, never ending running work without a reason)
    and starts the round only when two jobs fit; the self-test and every other heavy job wait
-   until a reviewer ends. Read free
+   until a reviewer ends. If two never fit after that, the lead asks the owner; when the owner
+   is away it runs the two reviewers one after the other as a recorded exception (the usage
+   note names the budget figure) rather than waiting without limit. Read free
    memory with `Get-CimInstance Win32_OperatingSystem | Select FreePhysicalMemory` in
    PowerShell on Windows, `free -g` on Linux, `vm_stat` or `memory_pressure` on macOS. Measure
    a job's peak on your host; one measured example: a review or gate took 1–2 GB on native
