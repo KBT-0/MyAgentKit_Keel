@@ -155,8 +155,9 @@ When the rounds start and what runs in parallel is the lead's part, in `docs/WOR
   exclusion as its disposition ("deferred by decision", naming the design's section). Pass
   it in `REVIEW_DISPOSITIONS` from the second round on; the first round has no earlier round
   to attach it to, and the reviewer reads the exclusion in the diff.
-- Start the self-test and two reviewers at once as the normal case, within the memory budget
-  (`docs/WORKFLOW.md`, "Worker cost", rule 6), each as its own background job: for example
+- Start the self-test and two reviewers together only when the memory budget permits
+  (`docs/WORKFLOW.md`, "Worker cost", rule 6 defines the launch sequence). Each runs as its
+  own background job; when all three fit, for example, run
   `./scripts/check.sh --self-test`, then `MYAGENTKIT_TASK_ID=<feature> ./scripts/review.sh
   --base <base> --reviewer codex` and the same with `--reviewer claude`. Concurrent reviews
   write archives with unique names that lie outside the review scope. A self-test that

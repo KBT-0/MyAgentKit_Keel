@@ -587,7 +587,7 @@ by the low side, so the loop keeps both models. These rules bind both saver mode
   round at medium; high for a gate, hook or review-tooling change, a risky diff and a new
   mechanism's first round. The top model or the highest effort needs the owner's yes.
 - A running review is not cancelled to lower its effort, since what it spent is gone.
-- Independent reviews run at the same time, with each other and with the self-test.
+- Independent reviews follow the launch sequence in "Worker cost", rule 6.
 - A review that fails on quota leaves its rerun command in the task's issue or STATE line
   and waits. It goes to the other side only with the owner's yes, because a second model's
   judgement is the point of it.
@@ -716,7 +716,11 @@ Rules, binding for whoever routes workers:
 6. **Parallel workers only for independent modules**; each one multiplies the bill. The lead
    runs heavy background jobs (a gate, a self-test, a review, a build, a `codex exec`
    errand) within a memory budget: two at a time until the lead has measured its host, then
-   (free memory minus a 4 GB reserve) divided by the measured peak of one job. Read free
+   (free memory minus a 4 GB reserve) divided by the measured peak of one job.
+   Start the two reviewers together. Start the self-test with them only when all three jobs
+   fit within the budget. With a budget of two, start both reviewers first, then the self-test
+   when one reviewer ends. Never reduce the reviews or deliberately run the reviewers one
+   after the other; the self-test waits. Read free
    memory with `Get-CimInstance Win32_OperatingSystem | Select FreePhysicalMemory` in
    PowerShell on Windows, `free -g` on Linux, `vm_stat` or `memory_pressure` on macOS. Measure
    a job's peak on your host; one measured example: a review or gate took 1–2 GB on native
@@ -992,8 +996,8 @@ costs a fix round.
   has argued a disposition for each one that remains.
 - The report lists the inner rounds: their count, the findings fixed and each disposition.
 - A worker that cannot start a sub-agent (a sub-agent itself) says so in its report. The lead
-  then starts the review the moment the worker's branch exists, in parallel with the
-  self-test, never after it.
+  then starts the review the moment the worker's branch exists. The launch sequence follows
+  "Worker cost", rule 6.
 - The inner rounds do not replace the lead's review. A risky diff still passes
   `docs/REVIEW_GATE.md` before the merge, and the inner rounds make that review shorter.
 
@@ -1022,12 +1026,11 @@ A merge-conflict resolution is a part authored by whoever resolved it, so the ot
 (`docs/REVIEW_GATE.md`, independence is judged per part). A member branch rejected or abandoned after the merge
 leaves the cluster by rebuilding the integration branch without it. Prefer clustering branches with the same author model.
 
-1. Start the self-test and the review together, on the same commit, never one after the other.
-   The self-test runs once per batch, beside the review, never between worker rounds while
+1. Start the self-test and the reviews on the same commit, following "Worker cost", rule 6.
+   The self-test runs once per batch, never between worker rounds while
    workers wait for it, because each run locks the checkout and every waiting worker pays
    for the wait.
-   Parallel launches follow the memory budget in "Worker cost", rule 6.
-2. Run two reviewers at the same time, never one after the other.
+2. Run two reviewers following the launch sequence in "Worker cost", rule 6.
 3. Keep one review label for the whole feature, so that each round carries the earlier ones.
    Only the final reviews (one per model, each over the parts it did not write) take a label
    never used before (`docs/REVIEW_RUNNING.md`,
@@ -1039,8 +1042,8 @@ leaves the cluster by rebuilding the integration branch without it. Prefer clust
 4. Start the next worker while the self-test after a merge still runs. If that self-test
    fails, tell the next worker to rebase onto the fix.
 
-Each step that waits on another adds its whole duration to the round, and nothing in a round
-needs another step's result before it starts.
+Each step that waits on another adds its whole duration to the round. No step needs another
+step's result before it starts; the memory budget can still require a wait.
 
 What the watcher reports decides the lead's next step for a spawned worker:
 

@@ -173,8 +173,9 @@ native Windows (2026-10-12): a separate Windows Terminal tab and a `codex exec` 
 `&` under `sh -c` and `nohup` are unverified there (a Job Object may kill them;
 `RESEARCH_LOG.md` 2026-10-10).
 Before resuming work after a cut-off, list the processes whose command line names the checkout
-or its worktrees: Windows `Get-CimInstance Win32_Process | Where-Object CommandLine -like '*<checkout>*' | Select ProcessId,CommandLine`;
-Linux `pgrep -af <checkout>`; macOS `ps -eww -o pid,args | grep <checkout>`.
+or its worktrees. Quote the checkout path and match it literally:
+Windows `Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine.Contains('<checkout>') } | Select ProcessId,CommandLine`;
+Linux `ps -eo pid,args | grep -F -- '<checkout>'`; macOS `ps -eww -o pid,args | grep -F -- '<checkout>'`.
 Wait for the survivors by default. Stop one only under the hard rule in `AGENTS.md` ("Never end
 running work without a reason that holds": the owner asked, or it is provably finished or hung).
 When the machine runs low on memory, the host can reap jobs: five heavy jobs started together

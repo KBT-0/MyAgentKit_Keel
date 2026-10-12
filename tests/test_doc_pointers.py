@@ -76,19 +76,39 @@ class SectionPointerTests(unittest.TestCase):
                      'conflict resolution is a part authored by whoever resolved it',
                      'rebuilding the integration branch without it', 'kills the background jobs started from its tool shell'):
             self.assertIn(rule, flat)
+        budget_rule = ' '.join(workflow.split('6. **Parallel workers only for independent modules**')[1].split('7. **Worker reports are short**')[0].split())
+        for rule in ('Start the two reviewers together',
+                     'Start the self-test with them only when all three jobs fit within the budget',
+                     'With a budget of two, start both reviewers first, then the self-test when one reviewer ends',
+                     'Never reduce the reviews or deliberately run the reviewers one after the other; the self-test waits'):
+            self.assertIn(rule, budget_rule)
         self.assertIn('review rounds run per cluster of related branches', flat)
         self.assertIn('After their first round, merge branches touching the same files into one integration branch', flat)
         self.assertIn('remaining rounds run on the cluster', flat)
         gotchas = ' '.join((ROOT / 'core/docs/GOTCHAS.md').read_text(encoding='utf-8').split())
         for rule in ("lead's tool shell", 'on most hosts', '`&` under `sh -c`',
                      '`nohup`', 'Windows Terminal tab', 'command line names the checkout or its worktrees',
-                     'Wait for the survivors by default', 'reason that holds', 'Win32_Process', 'pgrep -af', 'ps -eww'):
+                     'Wait for the survivors by default', 'reason that holds',
+                     "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine.Contains('<checkout>') } | Select ProcessId,CommandLine",
+                     "Linux `ps -eo pid,args | grep -F -- '<checkout>'`",
+                     "macOS `ps -eww -o pid,args | grep -F -- '<checkout>'`"):
             self.assertIn(rule, gotchas)
         self.assertNotIn('stop them with a reason', gotchas)
         running = ' '.join((ROOT / 'core/docs/REVIEW_RUNNING.md').read_text(encoding='utf-8').split())
-        self.assertIn('Start the self-test and two reviewers at once', running)
+        self.assertIn('Start the self-test and two reviewers together only when the memory budget permits', running)
         self.assertIn('memory budget', running)
         self.assertIn('"Worker cost", rule 6', running)
+        for old_launch in ('Independent reviews run at the same time, with each other and with the self-test',
+                           'in parallel with the self-test, never after it',
+                           'Start the self-test and the review together, on the same commit, never one after the other',
+                           'Start the self-test and two reviewers at once'):
+            self.assertNotIn(old_launch, flat + ' ' + running)
+        self.assertIn('Independent reviews follow the launch sequence in "Worker cost", rule 6', flat)
+        self.assertIn('The launch sequence follows "Worker cost", rule 6', flat)
+        self.assertIn('Start the self-test and the reviews on the same commit, following "Worker cost", rule 6', flat)
+        self.assertNotIn("Where-Object CommandLine -like '*<checkout>*'", gotchas)
+        self.assertNotIn('pgrep -af <checkout>', gotchas)
+        self.assertNotIn('grep <checkout>', gotchas)
         for policy in (flat, gotchas, running):
             self.assertNotIn('at most two heavy background jobs', policy)
             self.assertNotIn('this host', policy)
@@ -96,7 +116,7 @@ class SectionPointerTests(unittest.TestCase):
         for rule in ('effort is never carried up from the round before',
                      'Both start at the cheapest table row that fits',
                      'the lead never opens visible sessions to show the workflow',
-                     'The self-test runs once per batch, beside the review',
+                     'The self-test runs once per batch',
                      'Open issues are never closed to finish a release',
                      "never only into a lead's private memory",
                      'reviews are never reduced'):
