@@ -32,6 +32,9 @@ CANCEL_SIGNALS = tuple(getattr(signal, name) for name in ("SIGINT", "SIGTERM", "
 # runs, so every process it starts is in that job and TerminateJobObject stops them all, also
 # after the child itself has exited (taskkill /T finds no tree below an exited process). The
 # job is killed when its last handle closes: a supervisor that dies takes its reviewer with it.
+# Ceiling: a packaged-app execution alias (the WindowsApps `python3` stub that opens the Python
+# install manager) is started by the system broker, not by the child, so it is outside the job
+# and cancel and timeout cannot stop what a reviewer starts through it.
 POSIX = os.name == "posix"
 _WIN = {}
 

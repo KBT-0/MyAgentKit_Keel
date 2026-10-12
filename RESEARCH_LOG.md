@@ -2039,7 +2039,10 @@ environment, a non-dumpable or privileged-exec process on Linux (its `/proc` env
 EACCES, reproduced with `prctl(PR_SET_DUMPABLE, 0)`), or one `ps -E` does not show on
 macOS. POSIX cancellation and timeout
 regressions are left for Linux and macOS CI; Windows tests prove detached descendants cannot
-break away from the Job Object. The existing kit-wrapper tests cover `set -m` cancellation
+break away from the Job Object. One Windows ceiling stays (owner decision, 2026-10-12, noted
+rather than coded): a packaged-app execution alias such as the WindowsApps `python3` stub that
+opens the Python install manager is started by the system broker, not by the reviewer, so it
+escapes the job and cancel or timeout cannot stop what a reviewer starts through it. The existing kit-wrapper tests cover `set -m` cancellation
 both after startup and before Python installs its handlers, on POSIX CI.
 
 A redirected Windows adapter could also lose a paid, completed review while printing text
