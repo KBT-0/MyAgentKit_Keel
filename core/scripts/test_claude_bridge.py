@@ -21,13 +21,13 @@ import agent_usage
 ROOT = Path(__file__).resolve().parent
 INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'MYAGENTKIT_TASK_ID', 'MYAGENTKIT_REVIEW_CHAIN_ID',
                       'MYAGENTKIT_REVIEW_ATTEMPT', 'MYAGENTKIT_REVIEW_FALLBACK_FROM',
-                      'MYAGENTKIT_REQUESTER', 'CLAUDE_REVIEW_DOCS')
+                      'MYAGENTKIT_REQUESTER', 'CLAUDE_REVIEW_DOCS', 'MYAGENTKIT_BACKEND')
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 151, 'test_agent_usage': 30, 'test_codex_quota': 5}
+SUITE_MINIMUMS = {'test_claude_bridge': 159, 'test_agent_usage': 30, 'test_codex_quota': 5}
 # These are executed cases, excluding only the explicitly declared POSIX exclusions.
-WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 128, 'test_agent_usage': 26, 'test_codex_quota': 4}
+WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 135, 'test_agent_usage': 26, 'test_codex_quota': 4}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -167,6 +167,13 @@ def verdicts_of(path):
 
 
 class ReviewPreflightTests(unittest.TestCase):
+    def setUp(self):
+        from unittest.mock import patch
+        environment = patch.dict(os.environ)
+        environment.start()
+        self.addCleanup(environment.stop)
+        os.environ.pop('MYAGENTKIT_BACKEND', None)
+
     def git(self, repo, *args):
         return subprocess.run(['git', '-C', str(repo), *args], check=True, capture_output=True).stdout
 
@@ -369,6 +376,113 @@ except ValueError as error:
 
 
 class BridgeTests(unittest.TestCase):
+    def test_an_inherited_backend_cannot_change_a_synthetic_review(self):
+        from unittest.mock import patch
+        # Run the real setUp with an inherited selector, as a shell launching this suite does.
+        with patch.dict(os.environ, MYAGENTKIT_BACKEND='absent-in-synthetic-repo'):
+            case = BridgeTests('test_default_reviewer_is_claude_and_codex_remains_explicit')
+            result = unittest.TestResult()
+            case.run(result)
+        self.assertTrue(result.wasSuccessful(), result.errors + result.failures)
+
+    def test_backend_secrets_must_be_ignored_and_untracked_before_review(self):
+        token = 'backend-private-test-token'
+        self.backend_file('ANTHROPIC_BASE_URL=https://backend.invalid\nANTHROPIC_MODEL=glm-x\n'
+                          'ANTHROPIC_AUTH_TOKEN=' + token + '\n')
+        path = '.myagentkit/backends/glm.env'
+        for tracked in (False, True):
+            with self.subTest(tracked=tracked):
+                (self.repo / '.gitignore').write_text('/.myagentkit/usage/\n/docs/reviews/\n')
+                if tracked:
+                    self.git('add', '-f', path)
+                    (self.repo / '.gitignore').write_text('/.myagentkit/\n/docs/reviews/\n')
+                log = self.root / 'secret-prompt.txt'
+                result = self.run_wrapper('--uncommitted', '--backend', 'glm',
+                                          CLAUDE_CLI_BIN=str(self.fixture), PROMPT_LOG=str(log))
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn('must be Git-ignored and untracked', result.stdout)
+                self.assertNotIn(token, result.stdout + result.stderr)
+                self.assertFalse(log.exists(), 'backend secret reached the reviewer')
+                self.assertFalse((self.repo / '.myagentkit/usage').exists())
+        # Untracking a previously committed backend must not review its token as deleted text.
+        self.commit_fixture('Historical backend fixture')
+        reference = self.git('rev-parse', 'HEAD').stdout.decode().strip()
+        self.git('rm', '--cached', path)
+        self.assertNotIn(token, bridge.snapshot(self.repo, 'uncommitted', None)[2])
+        self.commit_fixture('Untrack backend fixture')
+        self.assertNotIn(token, bridge.snapshot(self.repo, 'commit', 'HEAD')[2])
+        (self.repo / 'file.py').write_text('after backend cleanup\n')
+        self.commit_fixture('Visible change fixture')
+        for scope, ref in (('base', reference), ('commit', 'HEAD')):
+            self.assertNotIn(token, bridge.snapshot(self.repo, scope, ref)[2])
+
+    def test_backend_final_values_cannot_be_emptied_by_duplicate_keys(self):
+        import review_dispatch
+        for key, reason in (('ANTHROPIC_BASE_URL', 'sets no ANTHROPIC_BASE_URL'),
+                            ('ANTHROPIC_MODEL', 'sets no model')):
+            with self.subTest(key=key):
+                self.backend_file('ANTHROPIC_BASE_URL=https://backend.invalid\nANTHROPIC_MODEL=glm-x\n'
+                                  + key + '=\n')
+                with self.assertRaisesRegex(ValueError, reason):
+                    review_dispatch.load_backend(self.repo, 'glm')
+
+    def test_backend_reads_require_a_regular_file_and_are_bounded(self):
+        import review_dispatch
+        self.backend_file('ANTHROPIC_BASE_URL=https://backend.invalid\nANTHROPIC_MODEL=glm-x\n')
+        path = self.repo / '.myagentkit/backends/glm.env'
+        path.unlink()
+        path.mkdir()
+        with self.assertRaisesRegex(ValueError, 'regular file'):
+            review_dispatch.load_backend(self.repo, 'glm')
+        path.rmdir()
+        path.write_bytes(b'#' + b'x' * 65536)
+        with self.assertRaisesRegex(ValueError, 'too large'):
+            review_dispatch.load_backend(self.repo, 'glm')
+
+    def test_backend_opened_descriptor_must_be_regular(self):
+        from unittest.mock import patch
+        import stat
+        import review_dispatch
+        self.backend_file('ANTHROPIC_BASE_URL=https://backend.invalid\nANTHROPIC_MODEL=glm-x\n')
+        with patch.object(review_dispatch.os, 'fstat', return_value=type('Stat', (), {'st_mode': stat.S_IFIFO})()):
+            with self.assertRaisesRegex(ValueError, 'regular file'):
+                review_dispatch.load_backend(self.repo, 'glm')
+
+    @posix_only
+    def test_a_backend_fifo_is_refused_without_waiting_for_a_writer(self):
+        self.backend_file('')
+        path = self.repo / '.myagentkit/backends/glm.env'
+        path.unlink()
+        os.mkfifo(path)
+        scripts = self.install_wrapper()
+        # A real subprocess deadline prevents the negative test itself from hanging.
+        result = subprocess.run(['sh', str(scripts / 'review.sh'), '--uncommitted', '--backend', 'glm'],
+                                env=self.review_env(REVIEW_TIMEOUT_SECONDS='1'), capture_output=True,
+                                text=True, timeout=5)
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn('regular file', result.stdout)
+
+    def test_backend_nul_values_fail_before_mutation_or_a_chain(self):
+        from unittest.mock import patch
+        import review_dispatch
+        self.backend_file('ANTHROPIC_BASE_URL=https://backend.invalid\nANTHROPIC_MODEL=glm-x\n'
+                          'ANTHROPIC_AUTH_TOKEN=private\x00value\n')
+        with patch.dict(os.environ, self.review_env(ANTHROPIC_API_KEY='inherited-key')), \
+                patch.object(review_dispatch.claude_bridge, 'main') as launch:
+            before = dict(os.environ)
+            with self.assertRaises(ValueError) as error:
+                review_dispatch.main(['--repo', str(self.repo), '--uncommitted', '--backend', 'glm'])
+            self.assertTrue(dict(os.environ) == before, 'backend rejection mutated the environment')
+            self.assertNotIn('private', str(error.exception))
+            launch.assert_not_called()
+        self.assertFalse((self.repo / '.myagentkit/usage').exists())
+
+    def test_backend_whitespace_lines_share_the_worker_grammar(self):
+        import review_dispatch
+        self.backend_file(' \t\r\n  # ignored comment\r\n' +
+                          ''.join('  %s=%s  \r\n' % item for item in self.BACKEND.items()))
+        self.assertEqual(review_dispatch.load_backend(self.repo, 'glm'), (self.BACKEND, 'glm-fixture'))
+
     def test_direct_claude_limits_are_validated_per_mode(self):
         from contextlib import redirect_stdout
         from unittest.mock import patch
@@ -2166,7 +2280,8 @@ class BridgeTests(unittest.TestCase):
         from contextlib import redirect_stdout
         from io import StringIO
 
-        for case in ('missing_ignore', 'tracked_usage', 'tracked_review', 'unignored_review'):
+        for case in ('missing_ignore', 'tracked_usage', 'tracked_review', 'unignored_review',
+                     'unignored_backend', 'tracked_backend'):
             with self.subTest(case=case):
                 (self.repo / '.gitignore').write_bytes((ROOT.parent / '.gitignore').read_bytes())
                 if case == 'missing_ignore':
@@ -2174,8 +2289,16 @@ class BridgeTests(unittest.TestCase):
                 elif case == 'unignored_review':
                     with (self.repo / '.gitignore').open('a') as stream:
                         stream.write('\n!/docs/reviews/*-review.md\n')
+                elif case == 'unignored_backend':
+                    ignore = (self.repo / '.gitignore').read_text()
+                    # Preserve LF bytes: a CRLF blank rule made this Windows fixture
+                    # ignore the backend too, so it did not represent exposed storage.
+                    (self.repo / '.gitignore').write_bytes(
+                        ignore.replace('/.myagentkit/\n', '/.myagentkit/usage/\n')
+                        .replace('/.myagentkit/backends/\n', '').encode('utf-8'))
                 else:
                     name = ('.myagentkit/usage/old.json' if case == 'tracked_usage' else
+                            '.myagentkit/backends/glm.env' if case == 'tracked_backend' else
                             'docs/reviews/20260101T000000Z-000000000000-codex-review.md')
                     path = self.repo / name
                     path.parent.mkdir(parents=True, exist_ok=True)
@@ -3974,6 +4097,22 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
             after = {k: v for k, v in os.environ.items() if k.startswith('ANTHROPIC_')}
         self.assertEqual(seen, {'claude': self.BACKEND, 'codex': {'ANTHROPIC_API_KEY': 'lead-key'}})
         self.assertEqual(after, {'ANTHROPIC_API_KEY': 'lead-key'})
+        # Even a partial environment update failure must run the restoration guard.
+        update = os.environ.update
+
+        def partial_update(values):
+            if values == self.BACKEND:
+                update({'ANTHROPIC_BASE_URL': values['ANTHROPIC_BASE_URL']})
+                raise ValueError('injected environment update failure')
+            update(values)
+
+        with patch.dict(os.environ, self.review_env(ANTHROPIC_API_KEY='lead-key')), \
+                patch.object(os.environ, 'update', side_effect=partial_update), \
+                patch.object(review_dispatch.claude_bridge, 'main') as launch, redirect_stdout(io.StringIO()):
+            self.assertEqual(review_dispatch.main(['--repo', str(self.repo), '--uncommitted', '--backend', 'glm']), 5)
+            self.assertEqual({k: v for k, v in os.environ.items() if k.startswith('ANTHROPIC_')},
+                             {'ANTHROPIC_API_KEY': 'lead-key'})
+            launch.assert_not_called()
 
     def test_unavailable_claude_uses_codex_only_with_fallback(self):
         result = self.run_wrapper('--uncommitted', '--fallback', FIXTURE_CASE='quota',

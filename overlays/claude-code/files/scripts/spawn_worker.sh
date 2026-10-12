@@ -115,31 +115,51 @@ done
 
 here=$(pwd -P && echo x) || die "cannot resolve the current folder"
 dir=${here%"${nl}x"}
-# The backend's variables go before claude as `env K='V' ...`, each value through `q`. Only
-# the keys review_dispatch.py accepts: any other name would be a variable the file could set
-# for the worker. No message prints a value: the file holds the endpoint's token.
-envs=""
+# The existing Python selector is also used by the backend reader on either platform.
+if python3 -I -c '' </dev/null >/dev/null 2>&1; then kit_python=python3
+elif python -I -c '' </dev/null >/dev/null 2>&1; then kit_python=python
+else kit_python="py -3"; fi   # unquoted at every use
+# Validate here, then read again in the child at start. The launch script/command holds
+# only the reader and paths, never backend values. Both entry points use load_backend's
+# grammar, privacy checks, regular-file check and bounded read.
 if [ -n "$backend" ]; then
-  case $backend in [!A-Za-z0-9]*|*[!A-Za-z0-9._-]*) die "--backend must be letters, digits, '.', '_' or '-': $backend" ;; esac
-  file=$dir/.myagentkit/backends/$backend.env
-  { [ -f "$file" ] && [ -r "$file" ]; } || die "backend file not found or not readable: $file"
-  cr=$(printf '\r'); url=""
-  while IFS= read -r line || [ -n "$line" ]; do
-    line=${line%"$cr"}
-    case $line in ""|"#"*) continue ;; esac
-    key=${line%%=*}; value=${line#*=}
-    case $key in
-      ANTHROPIC_BASE_URL|ANTHROPIC_AUTH_TOKEN|ANTHROPIC_MODEL|ANTHROPIC_DEFAULT_OPUS_MODEL|\
-      ANTHROPIC_DEFAULT_SONNET_MODEL|ANTHROPIC_DEFAULT_HAIKU_MODEL)
-        [ "$key" != "$line" ] || die "a line of $file is not KEY=VALUE" ;;
-      *) die "a line of $file is not KEY=VALUE with one of the ANTHROPIC_* keys review.sh accepts" ;;
-    esac
-    [ "$key" != ANTHROPIC_BASE_URL ] || [ -z "$value" ] || url=1
-    envs="$envs$key=$(q "$value") "
-  done < "$file"
-  [ -n "$url" ] || die "$file sets no ANTHROPIC_BASE_URL"
-  envs="env $envs"
+  backend_repo=$dir
+  backend_scripts=$(CDPATH= cd -P -- "$kit" && pwd -P && echo x) || die "cannot resolve the review companion folder"
+  backend_scripts=${backend_scripts%"${nl}x"}
+  backend_reader='if 1:
+    import os, shlex, subprocess, sys
+    from pathlib import Path
+    if os.name == "nt":
+        sys.argv[1:3] = [subprocess.check_output(["cygpath", "-m", p], text=True).rstrip("\r\n")
+                         for p in sys.argv[1:3]]
+    sys.path.insert(0, sys.argv[1])
+    from review_dispatch import load_backend
+    try:
+        values, model = load_backend(Path(sys.argv[2]), sys.argv[3])
+    except (OSError, ValueError) as error:
+        print("spawn_worker: " + str(error), file=sys.stderr)
+        sys.exit(1)
+    if len(sys.argv) > 4:
+        # Captured and evaluated only in the child shell, never put in a launch argument.
+        # Read raw shell names: Windows os.environ uppercases them, so an unset generated
+        # from it missed an inherited mixed-case name in Git Bash.
+        raw = sys.stdin.buffer.read()
+        if not raw.endswith(b"\0"):
+            print("spawn_worker: cannot read the child environment names", file=sys.stderr)
+            sys.exit(1)
+        keys = [os.fsdecode(entry.partition(b"=")[0]) for entry in raw.split(b"\0")
+                if entry.startswith(b"ANTHROPIC_")]
+        print("unset " + " ".join(shlex.quote(k) for k in keys))
+        for key, value in values.items():
+            print("export " + key + "=" + shlex.quote(value))'
+  $kit_python -I -c "$backend_reader" "$backend_scripts" "$backend_repo" "$backend" || exit 1
 fi
+backend_command() {
+  read_cmd="env -0 | $kit_python -I -c $(q "$backend_reader") $(q "$backend_scripts") $(q "$backend_repo") $(q "$backend") export"
+  # Python ends after reading; the child shell exports the result and execs the TUI, so
+  # no waiting Python process can intercept the worker's Ctrl-C.
+  printf '%s' "sh -c $(q "set -e; backend_values=\$($read_cmd) || exit 1; eval \"\$backend_values\"; unset backend_values; exec $1")"
+}
 # --settings is inline JSON or a file. The tool starts in the worktree, so a relative file is
 # made absolute here, against the caller's folder: resolved there, an untracked settings file
 # was missing and a tracked one of the same name was loaded instead. A relative value that is
@@ -198,9 +218,6 @@ instruction="Read $(q "$brief") and follow it. Do not ask questions in this pane
 # KIT_PS names another lister (the kit's tests), printing "<pid> <command line>" lines as this
 # one does. A command line Windows does not show (another user's process) names nothing. A
 # lister that fails prints its words instead and returns 2.
-if python3 -I -c '' </dev/null >/dev/null 2>&1; then kit_python=python3
-elif python -I -c '' </dev/null >/dev/null 2>&1; then kit_python=python
-else kit_python="py -3"; fi   # unquoted at every use
 sessions() {
   out=$(${KIT_PS:-powershell.exe -NoProfile -NonInteractive -Command} \
     "Get-CimInstance Win32_Process -Filter \"Name='claude.exe' or Name='node.exe'\" | ForEach-Object { \"\$(\$_.ProcessId) \$(\$_.CommandLine)\" }" \
@@ -273,8 +290,10 @@ if [ -n "$windows" ]; then
   # pass through wt.exe. A claude that ends within ten seconds of its own start, whatever its
   # status, failed to start: the tab then waits for Enter, so its error stays on screen.
   tab=$(mktemp) || die "cannot write the tab's script"
+  tab_cmd="claude $(q "$instruction") ${cmd#claude }"
+  [ -z "$backend" ] || tab_cmd=$(backend_command "$tab_cmd")
   printf '%s\n' 'rm -f -- "$0"' "cd $(q "$dir") || exit 1" \
-    "t=\$(date +%s); ${envs}claude $(q "$instruction") ${cmd#claude }; s=\$?; [ \$((\$(date +%s) - t)) -gt 10 ] || { echo \"claude ended at once (exit \$s); press Enter to close\"; read -r _; }" \
+    "t=\$(date +%s); $tab_cmd; s=\$?; [ \$((\$(date +%s) - t)) -gt 10 ] || { echo \"claude ended at once (exit \$s); press Enter to close\"; read -r _; }" \
     'exit 0' > "$tab" || die "cannot write the tab's script: $tab"
   "$wt" -w 0 new-tab --title "$(semi "$name")" "$(semi "$bash")" -l "$(semi "$(cygpath -w "$tab")")" ||
     { rm -f -- "$tab"; die "$wt could not open a tab for '$name'"; }
@@ -314,7 +333,8 @@ fi
 # `cd` first: tmux hands new sessions the PWD of whichever client last created one, and
 # the tool exits with "the current working directory was deleted" when that folder (a
 # removed worktree, say) is gone, whatever -c says.
-tmux new-session -d -s "$name" -c "$dir" -x 200 -y 50 "cd $(q "$dir") && exec $envs$cmd"
+[ -z "$backend" ] || cmd=$(backend_command "$cmd")
+tmux new-session -d -s "$name" -c "$dir" -x 200 -y 50 "cd $(q "$dir") && exec $cmd"
 
 # Wait for the input line: the TUI shows its prompt arrow at the start of a line once ready
 # (v2.1.285 follows the arrow with a NO-BREAK space, so the match is on the arrow alone)

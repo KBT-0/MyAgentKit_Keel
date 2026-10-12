@@ -32,9 +32,11 @@ VERDICTS = {"Accept", "Accept with Manual Checks", "Reject"}
 # Review archives are excluded from the next review's scope so a report does not recursively
 # embed its predecessors. The pattern covers EVERY reviewer's evidence, not just this
 # adapter's: when the roles swap, the other direction's reports sit in the same folder.
+# Private usage records and backend credentials also stay outside every review scope.
 ARCHIVES = (":(exclude)docs/reviews/*-review.md",
             ":(exclude)docs/reviews/*-claude-review.json",
-            ":(exclude)docs/handoffs/*-claude-propose.json", ":(exclude).myagentkit/usage/**")
+            ":(exclude)docs/handoffs/*-claude-propose.json", ":(exclude).myagentkit/usage/**",
+            ":(exclude).myagentkit/backends/**")
 
 # One wording for both reviewers. Asked only for "file, line, impact", a reviewer reported a
 # different top few on every fresh pass: one medium-size change took more than ten Reject
@@ -638,7 +640,7 @@ def snapshot(repo: Path, scope: str, reference: str | None) -> tuple[str, str, s
     for raw in git(repo, "ls-files", "--others", "--exclude-standard", "-z").split(b"\0"):
         if raw:
             name = os.fsdecode(raw)
-            if name.startswith(".myagentkit/usage/"):
+            if name.startswith((".myagentkit/usage/", ".myagentkit/backends/")):
                 continue
             if (re.fullmatch(r"docs/reviews/\d{8}T\d{6}Z-.+\.md", name) and not name.endswith('-summary.md')) \
                     or re.fullmatch(r"docs/handoffs/\d{8}T\d{6}Z-[a-f0-9]{12}-claude-propose\.json", name):

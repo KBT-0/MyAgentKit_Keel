@@ -17,7 +17,11 @@ priority order of `docs/REVIEW_GATE.md`, archives the report as evidence under
 
 **A second Claude-compatible backend.** `--backend NAME` (or `MYAGENTKIT_BACKEND=NAME`; the
 flag wins) runs the Claude reviewer against the endpoint that `.myagentkit/backends/NAME.env`
-names (`docs/DEV_SETUP.md`, section 3). The file's variables reach that review's Claude CLI
+names (`docs/DEV_SETUP.md`, section 3). The backend must be a regular UTF-8 file of at most
+64 KiB, Git-ignored and untracked. Merge `.myagentkit/backends/` into the root ignore rules
+when upgrading, and preserve existing files locally before untracking them. The loader
+refuses unsafe storage before launch, without printing any configured value.
+The file's variables reach that review's Claude CLI
 only, in place of any inherited `ANTHROPIC_*` variable. The file's model is the pin that
 `modelUsage` attests. The evidence header records `backend NAME, model M`, and the usage
 record carries `backend`, which `usage_summary.py` shows. The sandbox flags stay the same. The

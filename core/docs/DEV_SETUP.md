@@ -166,7 +166,7 @@ POSIX signal-mask, process-group, FIFO and resource-limit cases report NOT RUN o
 Linux and macOS CI run them. Each platform enforces a minimum of executed tests per suite;
 declared platform skips do not count, and unexpected skips fail the self-test.
 
-Merge `.myagentkit/`
+Merge `.myagentkit/` (including `.myagentkit/backends/`)
 into the root ignore rules. Also merge the raw review/handoff archive exclusions and final
 summary re-include from the kit's `core/.gitignore`. The adapters refuse to launch if
 private storage is not ignored or raw records are already tracked. Preserve any existing
@@ -185,8 +185,11 @@ that has never met the real contract (`docs/GOTCHAS.md`).
 **Optional: a second Claude-compatible backend.**
 
 The Claude CLI can talk to another provider's Anthropic-compatible endpoint, such as GLM's.
-A backend is one file, `.myagentkit/backends/NAME.env`, with one `KEY=VALUE` per line. Blank
-lines and lines starting with `#` are skipped. Only these keys are accepted:
+A backend is one regular UTF-8 file, `.myagentkit/backends/NAME.env`, at most 64 KiB,
+with one `KEY=VALUE` per line. It must be Git-ignored and untracked; both review and worker
+launch refuse a file that fails either check. Leading and trailing whitespace is stripped;
+blank lines (including whitespace-only lines) and lines starting with `#` are skipped.
+Only these keys are accepted:
 
 ```sh
 # .myagentkit/backends/glm.env (the provider's documentation names the URL and the models)
@@ -199,13 +202,17 @@ ANTHROPIC_DEFAULT_HAIKU_MODEL=<the provider's model id>
 ANTHROPIC_MODEL=<the provider's model id>
 ```
 
-The token lives in this file and nowhere else: `.myagentkit/` is ignored, so it never reaches
-Git. Never export it in your shell profile. Then run
+The token stays in this ignored, untracked file. Bootstrap installs the rules from
+`core/.gitignore`; after sync, merge those rules into the project's own `.gitignore` and
+preserve any existing backend files locally before removing them from Git's index.
+Never export the token in your shell profile. Then run
 `./scripts/review.sh --uncommitted --reviewer claude --backend glm`, or set
 `MYAGENTKIT_BACKEND=glm` for the run. A file without `ANTHROPIC_BASE_URL` or a model fails
 the review before launch. An existing project gets `--backend` only from the updated
 `review.sh` (the upgrade above); an older `review.sh` keeps working without it.
 `scripts/spawn_worker.sh --backend glm` starts a Claude worker session on the same backend.
+The worker reads the file at start, replacing every inherited `ANTHROPIC_*` variable;
+the terminal script and tmux launch command carry the file path, never its token.
 
 **Optional: the vendor plugin for your host agent.**
 

@@ -9,6 +9,7 @@ environment says WSL, so showing a session goes to the launcher stub, which mark
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -152,7 +153,13 @@ ON_WINDOWS = {'test_a_missing_or_failing_watcher_stops_the_spawn', 'test_a_worke
               'test_missing_or_unreadable_brief_is_refused_before_any_session',
               'test_no_error_message_echoes_a_control_character',
               'test_on_native_windows_the_worker_opens_as_a_windows_terminal_tab',
-              'test_a_backend_reaches_the_worker_quoted_on_both_paths'}
+              'test_a_backend_reaches_the_worker_quoted_on_both_paths',
+              'test_backend_secrets_must_be_ignored_and_untracked',
+              'test_backend_replaces_every_inherited_anthropic_variable',
+              'test_backend_token_is_absent_from_recorded_launch_commands',
+              'test_backend_duplicate_keys_cannot_empty_final_values',
+              'test_backend_whitespace_lines_use_the_review_grammar',
+              'test_backend_nul_and_nonregular_files_refuse_before_launch'}
 
 
 def tmux_path_cases(cls):
@@ -180,6 +187,12 @@ class SpawnWorkerTests(unittest.TestCase):
                            ('osascript', '#!/bin/sh\nexit 1\n'), ('uname', '#!/bin/sh\necho Linux\n')):
             (self.bin / name).write_text(body)
             (self.bin / name).chmod(0o755)
+        if WINDOWS:
+            # Native Windows' python3 may be an inaccessible WindowsApps alias. Every
+            # shebang fixture uses this runner's interpreter, never a host alias.
+            (self.bin / 'python3').write_text('#!/bin/sh\nexec ' +
+                                            shq(sys.executable.replace('\\', '/')) + ' "$@"\n')
+            (self.bin / 'python3').chmod(0o755)
         self.brief = self.cwd / "it's the brief.md"
         self.brief.write_text('Line one of the brief.\nLine two.\n')
 
@@ -204,12 +217,13 @@ class SpawnWorkerTests(unittest.TestCase):
         if choose:
             args += tuple(a for flag, value in (('--model', 'm'), ('--effort', 'high'))
                           if flag not in args for a in (flag, value))
-        return subprocess.run(['sh', str(SCRIPT), *args], cwd=self.cwd, env=env,
+        return subprocess.run(['sh', str(getattr(self, 'script', SCRIPT)), *args], cwd=self.cwd, env=env,
                               capture_output=True, text=True, timeout=60)
 
     def base_env(self):
         # Never the host's terminal: the WSL name is the test's own, so wt.exe is the stub.
-        env = {k: v for k, v in os.environ.items() if k not in ('TERM_PROGRAM', 'TMUX', 'TMUX_PANE')}
+        env = {k: v for k, v in os.environ.items() if k not in ('TERM_PROGRAM', 'TMUX', 'TMUX_PANE')
+               and not k.startswith('ANTHROPIC_')}
         return dict(env, PATH=f'{self.bin}{os.pathsep}{os.environ["PATH"]}', SPAWN_STATE=str(self.state),
                     WSL_DISTRO_NAME='Test-1', KIT_WT=str(self.bin / 'wt-stub'))
 
@@ -220,6 +234,132 @@ class SpawnWorkerTests(unittest.TestCase):
     def tmux_log(self):
         path = self.state / 'tmux.log'
         return path.read_text() if path.exists() else ''
+
+    def backend_file(self, text):
+        # Exercise the installed layout: the overlay worker and review companions share scripts/.
+        scripts = self.cwd / 'scripts'
+        if not scripts.exists():
+            shutil.copytree(SCRIPT.parent, scripts)
+            for source in (ROOT / 'core/scripts').glob('*.py'):
+                if not source.name.startswith('test_'):
+                    shutil.copyfile(source, scripts / source.name)
+            self.script = scripts / SCRIPT.name
+            subprocess.run(['git', 'init', '-q', str(self.cwd)], check=True, capture_output=True)
+            (self.cwd / '.gitignore').write_bytes((ROOT / 'core/.gitignore').read_bytes())
+        path = self.cwd / '.myagentkit/backends/glm.env'
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(text.encode('utf-8'))
+        return path
+
+    def backend_paths(self):
+        if not WINDOWS:
+            (self.bin / 'uname').write_text('#!/bin/sh\necho Linux\n')
+            yield {}
+        for name, body in (('uname', '#!/bin/sh\necho MINGW64_NT-10.0-26200\n'), ('cygpath', CYGPATH),
+                           ('wt-tab', WT_TAB), ('ps-stub', '#!/bin/sh\n[ ! -f "$SPAWN_STATE/claude.json" ] || '
+                                                          'printf "8 claude.exe -n w1\\r\\n"\n')):
+            if WINDOWS and name == 'cygpath':
+                continue
+            (self.bin / name).write_text(body)
+            (self.bin / name).chmod(0o755)
+        config = self.tmp / 'config'
+        (config / 'sessions').mkdir(parents=True, exist_ok=True)
+        (config / 'sessions/8.json').write_text('{}')
+        yield dict(KIT_WT=str(self.bin / 'wt-tab'), KIT_PS=str(self.bin / 'ps-stub'),
+                   CLAUDE_CONFIG_DIR=str(config))
+
+    def test_backend_secrets_must_be_ignored_and_untracked(self):
+        token = 'backend-private-test-token'
+        self.backend_file('ANTHROPIC_BASE_URL=https://backend.invalid\nANTHROPIC_MODEL=glm-x\n'
+                          'ANTHROPIC_AUTH_TOKEN=' + token + '\n')
+        for tracked in (False, True):
+            (self.cwd / '.gitignore').write_text('/.myagentkit/usage/\n')
+            if tracked:
+                subprocess.run(['git', '-C', str(self.cwd), 'add', '-f', '.myagentkit/backends/glm.env'],
+                               check=True, capture_output=True)
+                (self.cwd / '.gitignore').write_text('/.myagentkit/\n')
+            for tab in self.backend_paths():
+                result = self.spawn('w1', str(self.brief), '--backend', 'glm', **tab)
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn('must be Git-ignored and untracked', result.stderr)
+                self.assertNotIn(token, result.stdout + result.stderr)
+                self.assertIsNone(self.launched())
+                self.assertNotIn('new-session', self.tmux_log())
+                self.assertFalse((self.state / 'wt.json').exists())
+
+    def test_backend_replaces_every_inherited_anthropic_variable(self):
+        expected = {'ANTHROPIC_BASE_URL': 'https://backend.invalid', 'ANTHROPIC_MODEL': 'glm-x',
+                    'ANTHROPIC_AUTH_TOKEN': 'backend-token'}
+        self.backend_file(''.join('%s=%s\n' % item for item in expected.items()))
+        inherited = {'ANTHROPIC_API_KEY': 'lead-key', 'ANTHROPIC_CUSTOM_HEADERS': 'lead-header',
+                     'ANTHROPIC_DEFAULT_SONNET_MODEL': 'lead-model', 'ANTHROPIC_FUTURE_SETTING': 'lead-value',
+                     'ANTHROPIC_mixed_case': 'lead-mixed-case'}
+        for tab in self.backend_paths():
+            result = self.spawn('w1', str(self.brief), '--backend', 'glm', **tab, **inherited)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(self.launched()['env'], expected)
+            (self.state / 'claude.json').unlink()
+
+        # If env cannot supply raw names, the child must refuse rather than keep credentials.
+        real_env = shutil.which('env').replace('\\', '/')
+        (self.bin / 'env').write_text('#!/bin/sh\n[ "$1" != -0 ] || exit 1\nexec ' + shq(real_env) + ' "$@"\n')
+        (self.bin / 'env').chmod(0o755)
+        result = self.spawn('w1', str(self.brief), '--backend', 'glm', **tab, **inherited)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('cannot read the child environment names', result.stderr)
+        self.assertIsNone(self.launched())
+
+    def test_backend_token_is_absent_from_recorded_launch_commands(self):
+        token = 'launch-record-secret-token'
+        self.backend_file('ANTHROPIC_BASE_URL=https://backend.invalid\nANTHROPIC_MODEL=glm-x\n'
+                          'ANTHROPIC_AUTH_TOKEN=' + token + '\n')
+        for tab in self.backend_paths():
+            result = self.spawn('w1', str(self.brief), '--backend', 'glm', **tab)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(self.launched()['env']['ANTHROPIC_AUTH_TOKEN'], token)
+            recorded = self.tmux_log()
+            if tab:
+                recorded += (self.state / 'wt.json').read_text()
+            self.assertNotIn(token, recorded + result.stdout + result.stderr)
+            (self.state / 'claude.json').unlink()
+
+    def test_backend_duplicate_keys_cannot_empty_final_values(self):
+        for key, reason in (('ANTHROPIC_BASE_URL', 'sets no ANTHROPIC_BASE_URL'),
+                            ('ANTHROPIC_MODEL', 'sets no model')):
+            self.backend_file('ANTHROPIC_BASE_URL=https://backend.invalid\nANTHROPIC_MODEL=glm-x\n'
+                              + key + '=\n')
+            for tab in self.backend_paths():
+                result = self.spawn('w1', str(self.brief), '--backend', 'glm', **tab)
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn(reason, result.stderr)
+                self.assertIsNone(self.launched())
+
+    def test_backend_whitespace_lines_use_the_review_grammar(self):
+        expected = {'ANTHROPIC_BASE_URL': 'https://backend.invalid', 'ANTHROPIC_MODEL': 'glm-x',
+                    'ANTHROPIC_AUTH_TOKEN': 'backend-token'}
+        self.backend_file(' \t\r\n  # ignored comment\r\n' +
+                          ''.join('  %s=%s  \r\n' % item for item in expected.items()))
+        for tab in self.backend_paths():
+            result = self.spawn('w1', str(self.brief), '--backend', 'glm', **tab)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(self.launched()['env'], expected)
+            (self.state / 'claude.json').unlink()
+
+    def test_backend_nul_and_nonregular_files_refuse_before_launch(self):
+        path = self.backend_file('ANTHROPIC_BASE_URL=https://backend.invalid\nANTHROPIC_MODEL=glm-x\n'
+                                 'ANTHROPIC_AUTH_TOKEN=private\x00value\n')
+        for tab in self.backend_paths():
+            result = self.spawn('w1', str(self.brief), '--backend', 'glm', **tab)
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertNotIn('private', result.stdout + result.stderr)
+            self.assertIsNone(self.launched())
+        path.unlink()
+        path.mkdir()
+        for tab in self.backend_paths():
+            result = self.spawn('w1', str(self.brief), '--backend', 'glm', **tab)
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('regular file', result.stderr)
+            self.assertIsNone(self.launched())
 
     def test_values_with_apostrophes_arrive_intact_and_run_nothing(self):
         marker = self.tmp / 'injected'
@@ -342,10 +482,8 @@ class SpawnWorkerTests(unittest.TestCase):
         # a value that would end its quoting runs nothing. The tmux path runs on POSIX only.
         marker = self.tmp / 'injected'
         token = "to'k$(touch %s)'en" % marker
-        backend = self.cwd / '.myagentkit/backends/glm.env'
-        backend.parent.mkdir(parents=True)
-        backend.write_bytes(('# GLM\r\nANTHROPIC_BASE_URL=https://backend.invalid\r\nANTHROPIC_AUTH_TOKEN=%s\r\n'
-                             'ANTHROPIC_DEFAULT_OPUS_MODEL=glm-x' % token).encode())
+        backend = self.backend_file('# GLM\r\nANTHROPIC_BASE_URL=https://backend.invalid\r\nANTHROPIC_AUTH_TOKEN=%s\r\n'
+                                    'ANTHROPIC_DEFAULT_OPUS_MODEL=glm-x' % token)
         expected = {'ANTHROPIC_BASE_URL': 'https://backend.invalid', 'ANTHROPIC_AUTH_TOKEN': token,
                     'ANTHROPIC_DEFAULT_OPUS_MODEL': 'glm-x'}
 

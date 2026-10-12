@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import re
+import stat
 import subprocess
 import uuid
 
@@ -23,6 +24,7 @@ FALLBACK_ENV = "MYAGENTKIT_REVIEW_FALLBACK_FROM"
 BACKEND_KEYS = frozenset({"ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_MODEL",
                           "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL",
                           "ANTHROPIC_DEFAULT_HAIKU_MODEL"})
+BACKEND_MAX_BYTES = 64 * 1024
 
 
 def pin_valid(provider, model, backend=None):
@@ -41,8 +43,25 @@ def load_backend(repo, name):
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", name):
         raise ValueError("backend name must be letters, digits, '.', '_' or '-' (got %r)" % name)
     path = repo / ".myagentkit/backends" / (name + ".env")
+    relative = path.relative_to(repo).as_posix()
+    tracked = subprocess.run(["git", "-C", str(repo), "ls-files", "--error-unmatch", "--", relative],
+                             capture_output=True)
+    ignored = subprocess.run(["git", "-C", str(repo), "check-ignore", "-q", "--", relative],
+                             capture_output=True)
+    if tracked.returncode != 1 or ignored.returncode != 0:
+        raise ValueError("backend %s: %s must be Git-ignored and untracked" % (name, path))
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
+        if not os.path.isfile(path):
+            raise ValueError("backend %s: %s cannot be read: expected a regular file" % (name, path))
+        # Nonblocking open also prevents a FIFO swapped in after isfile() from blocking.
+        flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0)
+        with os.fdopen(os.open(path, flags), "rb") as stream:
+            if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                raise ValueError("backend %s: %s must be a regular file" % (name, path))
+            data = stream.read(BACKEND_MAX_BYTES + 1)
+        if len(data) > BACKEND_MAX_BYTES:
+            raise ValueError("backend %s: %s is too large (maximum %d bytes)" % (name, path, BACKEND_MAX_BYTES))
+        lines = data.decode("utf-8").splitlines()
     except (OSError, UnicodeError) as error:
         raise ValueError("backend %s: %s cannot be read (%s)" % (name, path, type(error).__name__)) from error
     env = {}
@@ -54,6 +73,8 @@ def load_backend(repo, name):
         if not sep or key not in BACKEND_KEYS:
             raise ValueError("backend %s: line %d of %s is not KEY=VALUE with one of %s"
                              % (name, number, path, ", ".join(sorted(BACKEND_KEYS))))
+        if "\x00" in value:
+            raise ValueError("backend %s: line %d of %s contains an invalid environment value" % (name, number, path))
         env[key] = value
     if not env.get("ANTHROPIC_BASE_URL"):
         raise ValueError("backend %s: %s sets no ANTHROPIC_BASE_URL" % (name, path))
@@ -192,9 +213,12 @@ def main(argv=None):
         # endpoint, and a Codex fallback after it would see the backend's token.
         backend = provider == "claude" and args.backend
         if backend:
-            inherited = {key: os.environ.pop(key) for key in list(os.environ) if key.startswith("ANTHROPIC_")}
-            os.environ.update(backend_env)
+            inherited = {key: value for key, value in os.environ.items() if key.startswith("ANTHROPIC_")}
         try:
+            if backend:
+                for key in inherited:
+                    del os.environ[key]
+                os.environ.update(backend_env)
             if provider == "claude":
                 exit_code = claude_bridge.main(["review", "--timeout", str(timeout), "--max-turns", str(turns), *command]
                                                + (["--backend", args.backend] if backend else []), received.append)
