@@ -444,12 +444,84 @@ class CodexWorkerTests(unittest.TestCase):
                     if status:
                         self.assertEqual(question.read_bytes(), before)
 
+    def test_publication_between_the_consumption_check_and_removal_is_preserved(self):
+        worker = module()
+        with tempfile.TemporaryDirectory() as tmp:
+            question, fresh = Path(tmp) / 'q.md', Path(tmp) / 'fresh.md'
+            question.write_text('The answered question.\n' + READY)
+            fresh.write_text('A new unanswered question.\n' + READY)
+            answered = worker.question_id(question)
+            unlinking, renaming = Path.unlink, os.rename
+            publications = []
+            def publish():
+                if publications:
+                    return
+                publications.append(True)
+                if os.name == 'nt':
+                    # A delete-sharing reader permits moving the old file aside on Windows.
+                    renaming(question, question.with_suffix('.old'))
+                os.replace(fresh, question)
+            def unlink(path, *args, **kwargs):
+                if path == question:
+                    publish()
+                return unlinking(path, *args, **kwargs)
+            def rename(source, target, *args, **kwargs):
+                if Path(source) == question:
+                    publish()
+                return renaming(source, target, *args, **kwargs)
+            with mock.patch.object(Path, 'unlink', unlink), mock.patch.object(worker.os, 'rename', rename):
+                self.assertIsNone(worker.consume(question, answered))
+            self.assertEqual(publications, [True], 'the publication race was not scheduled')
+            self.assertTrue(question.exists(), 'consumption removed the new unanswered question')
+            self.assertEqual(question.read_text(), 'A new unanswered question.\n' + READY)
+
+    def test_a_slow_failed_resume_keeps_its_unaccepted_question(self):
+        worker = module()
+        with tempfile.TemporaryDirectory() as tmp:
+            question = Path(tmp) / 'q.md'
+            before = b'Choose A or B.\n<!-- codex-worker: ready -->'
+            question.write_bytes(before)
+            child = mock.Mock(returncode=1)
+            child.poll.side_effect = [None, None, 1]
+            clock = [0.0]
+            def advance(seconds):
+                clock[0] += 11.0
+            with mock.patch.object(worker.time, 'monotonic', lambda: clock[0]), \
+                    mock.patch.object(worker.time, 'sleep', advance), mock.patch.object(worker, 'stop'):
+                self.assertEqual(worker.watch(child, question, None, answered=worker.question_id(question)), 1)
+            self.assertGreater(clock[0], 10, 'the child never passed the old acceptance timeout')
+            self.assertTrue(question.exists(), 'survival was mistaken for answer acceptance')
+            self.assertEqual(question.read_bytes(), before)
+
+    def test_any_valid_new_result_accepts_the_answer_while_the_child_runs(self):
+        worker = module()
+        with tempfile.TemporaryDirectory() as tmp:
+            question, result = Path(tmp) / 'q.md', Path(tmp) / 'result.md'
+            for kind in ('progress', 'handoff', 'blocked', 'completed'):
+                with self.subTest(kind=kind):
+                    result.unlink(missing_ok=True)
+                    question.write_text('The answered question.\n' + READY)
+                    child = mock.Mock(returncode=7)
+                    child.poll.side_effect = [None, None, 7]
+                    publications = []
+                    def publish(seconds):
+                        if not publications:
+                            publications.append(True)
+                            result.write_text('Kind: %s\nTask: t\nAttempt: 1\nRemaining: x\n%s' % (kind, READY))
+                        else:
+                            self.assertFalse(question.exists(), 'acceptance must be observed before child exit')
+                    with mock.patch.dict(os.environ, KIT_WORKER_GRACE='10000', KIT_WORKER_STARTED='0'), \
+                            mock.patch.object(worker.time, 'sleep', publish), mock.patch.object(worker, 'stop'):
+                        self.assertEqual(worker.watch(child, question, None, result=result,
+                                                       answered=worker.question_id(question)), 7)
+                    self.assertFalse(question.exists())
+
     def test_live_record_cannot_report_exit_before_startup_lock(self):
         worker = module()
         with tempfile.TemporaryDirectory() as tmp:
             record = Path(tmp) / 'w.exit'
             live = record.with_suffix('.live')
-            since = time.time()
+            since = time.time() - 60
             observations, descriptors = [], []
             locking, opening = worker.lock, os.open
             def opened(*args, **kwargs):
@@ -458,6 +530,9 @@ class CodexWorkerTests(unittest.TestCase):
                     descriptors.append(fd)
                 return fd
             def starting(fd):
+                descriptors.append(fd)
+                if live.exists():
+                    os.utime(live, (since + 1, since + 1))  # paused longer than the old five-second deadline
                 with mock.patch.object(worker, 'lock', locking):
                     observations.append(worker.gone(live, since))
                 locking(fd)
@@ -478,7 +553,7 @@ class CodexWorkerTests(unittest.TestCase):
                 self.assertEqual(observations, [False], 'an unlocked, unready file ended the waiter')
                 self.assertFalse(worker.gone(live, since), 'the running supervisor was reported as ended')
             finally:
-                for fd in descriptors:
+                for fd in set(descriptors):
                     os.close(fd)
             self.assertTrue(worker.gone(live, since), 'a ready supervisor with a dropped lock must be reported')
 
@@ -665,20 +740,26 @@ class CodexWorkerTests(unittest.TestCase):
                         self.assertNotIn('codex_worker: ' + notice + ': ', unchanged)
 
 
-    def test_an_empty_unlocked_live_record_left_at_startup_ends_the_wait(self):
+    def test_an_empty_unlocked_live_record_is_damaged_and_does_not_end_the_wait(self):
         worker = module()
         with tempfile.TemporaryDirectory() as tmp:
             result, record = Path(tmp) / 'result.md', Path(tmp) / 'w.exit'
             live = record.with_suffix('.live')
-            # A supervisor that died between creating its .live record and locking it.
-            subprocess.run(['sh', '-c', ': > "$1"', 'sh', live.as_posix()], check=True)
+            # An empty file cannot establish startup identity, however old it becomes.
+            live.write_bytes(b'')
             since = time.time() - 30
             self.assertFalse(worker.gone(live, since), 'a supervisor still starting was reported as ended')
             os.utime(live, (since + 1, since + 1))
-            waiter = subprocess.run([sys.executable, str(SCRIPT), '--wait', str(result), '--since', str(since),
-                                     '--exit', str(record)], capture_output=True, text=True, timeout=10)
-            self.assertEqual(waiter.returncode, 0, waiter.stderr)
-            self.assertIn('its supervisor ended without an exit record', waiter.stdout)
+            self.assertFalse(worker.gone(live, since), 'a damaged record was treated as proof of death')
+            waiter = subprocess.Popen([sys.executable, str(SCRIPT), '--wait', str(result), '--since', str(since),
+                                      '--exit', str(record)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            try:
+                with self.assertRaises(subprocess.TimeoutExpired):
+                    waiter.communicate(timeout=.4)
+                self.assertIsNone(waiter.poll(), 'the waiter unsubscribed from a potentially live supervisor')
+            finally:
+                waiter.kill()
+                waiter.communicate()
 
     def test_the_supervisor_retries_its_lock_while_a_waiter_probes_it(self):
         worker = module()
@@ -692,6 +773,7 @@ class CodexWorkerTests(unittest.TestCase):
                     descriptors.append(fd)
                 return fd
             def probed(fd):
+                descriptors.append(fd)
                 if not probes:
                     probes.append(fd)
                     raise OSError('held by a waiter probe')
@@ -706,7 +788,7 @@ class CodexWorkerTests(unittest.TestCase):
                     with self.assertRaisesRegex(OSError, 'stop after startup'):
                         worker.main()
             finally:
-                for fd in descriptors:
+                for fd in set(descriptors):
                     os.close(fd)
             self.assertEqual(live.read_bytes().strip(), b'%d' % os.getpid(), 'the startup lock was not retried')
 

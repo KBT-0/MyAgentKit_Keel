@@ -1,5 +1,6 @@
 """Exercise the mode command against disposable project documents."""
 import os
+import hashlib
 import importlib.util
 import io
 from pathlib import Path
@@ -403,6 +404,118 @@ class WorkingModeTests(unittest.TestCase):
         self.assertIn('no Codex worker; Codex reviews only', result.stdout)
         self.assertNotIn('a Codex lead', result.stdout)
         self.assertIn('Claude leads in both saver modes', result.stdout)
+
+    def test_state_sha_hashes_exact_bytes_without_creating_a_lock(self):
+        before = b'# State\r\nAn active task.\r\n'
+        self.state.write_bytes(before)
+        result = self.run_mode('--state-sha')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), hashlib.sha256(before).hexdigest())
+        self.assertEqual(self.state.read_bytes(), before)
+        self.assertFalse((self.project / '.claude').exists())
+
+    def test_state_cas_refuses_a_wrong_expectation_without_publishing(self):
+        before = self.state.read_bytes()
+        proposed = self.project / 'replacement.md'
+        proposed.write_bytes(b'A different task.\n')
+        result = self.run_mode('--replace-state', str(proposed), '--expect', '0' * 64)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('STATE.md sha256 mismatch', result.stderr)
+        self.assertIn('re-read', result.stderr)
+        self.assertIn('retry', result.stderr)
+        self.assertEqual(self.state.read_bytes(), before)
+        self.assertEqual(proposed.read_bytes(), b'A different task.\n')
+        self.assertEqual(list(self.state.parent.glob('.STATE.md-*')), [])
+        self.assertFalse((self.project / '.claude/mode').exists())
+
+    def test_state_cas_keeps_permissions_and_replaces_complete_bytes(self):
+        self.state.chmod(0o666 if os.name == 'nt' else 0o640)
+        permissions = stat.S_IMODE(self.state.stat().st_mode)
+        before = self.state.read_bytes()
+        proposed = self.project / 'replacement.md'
+        proposed.write_bytes(before + b'A new active task.\r\n')
+        result = self.run_mode('--replace-state', str(proposed), '--expect', hashlib.sha256(before).hexdigest())
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.state.read_bytes(), proposed.read_bytes())
+        self.assertEqual(stat.S_IMODE(self.state.stat().st_mode), permissions)
+        self.assertEqual(list(self.state.parent.glob('.STATE.md-*')), [])
+        self.assertFalse((self.project / '.claude/mode').exists())
+
+    def state_writer_race(self, rollback):
+        self.assertEqual(self.run_mode('cross-performance').returncode, 0)
+        spec = importlib.util.spec_from_file_location('working_mode', SCRIPT)
+        worker = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(worker)
+        proposed = self.project / 'replacement.md'
+        reading, replacing = Path.read_bytes, os.replace
+        checks, refusals, snapshots = [], [], []
+        def checked(path):
+            contents = reading(path)
+            if path == self.state:
+                checks.append(contents)
+                # The publication probe runs after the snapshot recheck; the rollback probe
+                # runs after the rollback guard read. Both still hold the switch lock.
+                if len(checks) == (3 if rollback else 2):
+                    snapshots.append(contents)
+                    proposed.write_bytes(contents + b'An independent active task.\n')
+                    refusals.append(self.run_mode('--replace-state', str(proposed), '--expect',
+                                                  hashlib.sha256(contents).hexdigest()))
+            return contents
+        def replace(source, target):
+            if rollback and target.name == 'mode':
+                raise OSError('record replacement failed')
+            replacing(source, target)
+        with mock.patch.object(Path, 'read_bytes', checked), \
+                mock.patch.object(worker.os, 'replace', replace), mock.patch('sys.stdout', new=io.StringIO()):
+            if rollback:
+                with self.assertRaisesRegex(OSError, 'record replacement failed'):
+                    worker.mode(self.project, 'claude-first')
+            else:
+                worker.mode(self.project, 'claude-first')
+        self.assertEqual(len(refusals), 1, 'the intended STATE race was not scheduled')
+        self.assertNotEqual(refusals[0].returncode, 0)
+        self.assertIn('mode switch in progress', refusals[0].stderr)
+        # A stale retry cannot overwrite the switch (or its rollback). Re-read and redo.
+        refused = self.run_mode('--replace-state', str(proposed), '--expect',
+                                hashlib.sha256(snapshots[0]).hexdigest())
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn('STATE.md sha256 mismatch', refused.stderr)
+        current = self.state.read_bytes()
+        proposed.write_bytes(current + b'An independent active task.\n')
+        retry = self.run_mode('--replace-state', str(proposed), '--expect', hashlib.sha256(current).hexdigest())
+        self.assertEqual(retry.returncode, 0, retry.stderr)
+        self.assertEqual(self.state.read_bytes(), proposed.read_bytes())
+        self.assertIn('Current mode: ' + ('cross-performance' if rollback else 'claude-first'),
+                      self.run_mode().stdout)
+
+    def test_state_race_refuses_the_writer_then_preserves_its_retried_edit(self):
+        self.state_writer_race(rollback=False)
+
+    def test_rollback_race_refuses_the_writer_then_preserves_its_retried_edit(self):
+        self.state_writer_race(rollback=True)
+
+    def test_state_cas_and_mode_switch_share_the_lock_in_both_directions(self):
+        spec = importlib.util.spec_from_file_location('working_mode', SCRIPT)
+        worker = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(worker)
+        proposed = self.project / 'replacement.md'
+        before = self.state.read_bytes()
+        proposed.write_bytes(before + b'An independent active task.\n')
+        replace, attempts = os.replace, []
+        def publishing(source, target):
+            if target == self.state:
+                self.assertEqual(self.state.read_bytes(), before, 'STATE was truncated before publication')
+                attempts.append(self.run_mode('claude-first'))
+            replace(source, target)
+        with mock.patch.object(worker.os, 'replace', publishing), \
+                mock.patch('sys.argv', [str(SCRIPT), '--project', str(self.project), '--replace-state',
+                                        str(proposed), '--expect', hashlib.sha256(before).hexdigest()]):
+            worker.main()
+        self.assertEqual(len(attempts), 1)
+        self.assertNotEqual(attempts[0].returncode, 0)
+        self.assertIn('mode switch in progress', attempts[0].stderr)
+        self.assertEqual(self.run_mode('claude-first').returncode, 0)
+        self.assertIn(b'An independent active task.', self.state.read_bytes())
 
 
 if __name__ == '__main__':

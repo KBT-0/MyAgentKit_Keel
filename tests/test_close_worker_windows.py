@@ -34,6 +34,26 @@ time.sleep(60)
 
 
 class CloseWorkerOnWindows(unittest.TestCase):
+    def test_archive_suffix_overflow_names_are_not_numbers(self):
+        # Run the actual archive-selection block on every host. No session, audit or process
+        # stub is needed to exercise the shell arithmetic that runs on native Windows too.
+        script = SCRIPT.read_text(encoding='utf-8')
+        selection = script.split('    n=0; [ ! -e "$record.result.md" ] || n=1\n', 1)[1]
+        selection = 'n=0; [ ! -e "$record.result.md" ] || n=1\n' + selection.split('    if [ -n "$dry" ];', 1)[0]
+        with tempfile.TemporaryDirectory() as tmp:
+            record = Path(tmp) / 'overflow'
+            for suffix in ('9223372036854775807', '9999999999', '12x', '-7', '01'):
+                Path(str(record) + '.result-' + suffix + '.md').write_text('An earlier report.\n')
+            command = ['sh', '-c', 'record=$1\n' + selection + '\nprintf "%s\\n" "$saved"\n',
+                       'sh', record.as_posix()]
+            result = subprocess.run(command, capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.strip(), record.as_posix() + '.result.md')
+            Path(str(record) + '.result-999999999.md').write_text('The highest valid suffix.\n')
+            result = subprocess.run(command, capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.strip(), record.as_posix() + '.result-1000000000.md')
+
     def test_a_worker_whose_gate_holds_its_lock_is_not_ended(self):
         if not WINDOWS:
             sys.stderr.write('\nNOT RUN: %s (native Windows only)\n' % self.id())

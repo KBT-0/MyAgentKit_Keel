@@ -95,23 +95,70 @@ def lock(fd):
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
 
 
+def shared_open(path, flags=os.O_RDONLY):
+    """Open a protocol file with delete sharing on Windows so a held identity can be renamed."""
+    if os.name != 'nt':
+        return os.open(path, flags)
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes as w
+    api = ctypes.WinDLL('kernel32', use_last_error=True)
+    api.CreateFileW.argtypes = [w.LPCWSTR, w.DWORD, w.DWORD, ctypes.c_void_p, w.DWORD, w.DWORD, w.HANDLE]
+    api.CreateFileW.restype = w.HANDLE
+    api.CloseHandle.argtypes = [w.HANDLE]
+    access = 0x80000000 | (0x40000000 if flags & os.O_RDWR else 0)
+    handle = api.CreateFileW(str(path), access, 7, None, 3, 0x80, None)  # share read/write/delete, OPEN_EXISTING
+    if handle in (None, ctypes.c_void_p(-1).value):
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        return msvcrt.open_osfhandle(handle, flags | os.O_BINARY)
+    except BaseException:
+        api.CloseHandle(handle)
+        raise
+
+
+def start_live(record):
+    """Publish an already identified and locked supervisor record; delayed startup stays private."""
+    live = Path(record).with_suffix('.live')
+    live.parent.mkdir(parents=True, exist_ok=True)
+    fd, name = tempfile.mkstemp(prefix='.' + live.name + '-', dir=live.parent)
+    held = None
+    try:
+        with os.fdopen(fd, 'wb') as file:
+            file.write(b'%d\n' % os.getpid())
+        held = shared_open(Path(name), os.O_RDWR)
+        for attempt in range(100):
+            try:
+                lock(held)
+                break
+            except OSError:
+                if attempt == 99:
+                    raise
+                time.sleep(.01)
+        os.replace(name, live)
+        return held  # the process holds this descriptor for its whole life
+    except BaseException:
+        if held is not None:
+            os.close(held)
+        raise
+    finally:
+        Path(name).unlink(missing_ok=True)
+
+
 def gone(live, since):
     """Whether the supervisor of this run, which locked LIVE when it started, has ended."""
     try:
-        if live.stat().st_mtime < since:
-            return False  # not started yet, or a previous run's
-        fd = os.open(live, os.O_RDONLY)
+        fd = shared_open(live)
     except FileNotFoundError:
         return False
     try:
+        if os.fstat(fd).st_mtime < since:
+            return False  # not started yet, or a previous run's
         lock(fd)
         ready = os.read(fd, 64)
-        if not ready:
-            # Created, never locked: a starting supervisor locks it within its one-second retry,
-            # so one still empty and unlocked five seconds on died at startup.
-            return os.fstat(fd).st_mtime < time.time() - 5
+        # An empty or malformed record is damaged, not evidence that its supervisor died.
         return (os.fstat(fd).st_mtime >= since and ready.endswith(b'\n')
-                and ready[:-1].isdigit())  # the PID is published only after startup locks LIVE
+                and ready[:-1].isdigit())  # startup publishes the PID and its held lock together
     except OSError:
         return False
     finally:
@@ -258,18 +305,7 @@ def main():
     if record:
         # Locked for this process's whole life, however it ends: --wait reads a dropped lock as a
         # supervisor that could not write its exit record (a closed tab, taskkill /F, SIGKILL).
-        Path(record).parent.mkdir(parents=True, exist_ok=True)
-        live = os.open(Path(record).with_suffix('.live'), os.O_RDWR | os.O_CREAT)
-        for attempt in range(100):
-            try:
-                lock(live)
-                break
-            except OSError:
-                if attempt == 99:
-                    raise
-                time.sleep(.01)  # a waiter's gone() probe holds the lock for a moment
-        os.ftruncate(live, 0)
-        os.write(live, b'%d\n' % os.getpid())  # after the lock: its time marks this run
+        live = start_live(record)
     # Git for Windows reparses bash -c's quoted command. Hand it a script file instead,
     # just as spawn_worker.sh does for Windows Terminal.
     command = sys.argv[separator + 1:]
@@ -322,13 +358,45 @@ def main():
 def consume(question, answered):
     """Remove the answered decision unless a new one replaced it. Returns None once done, and
     ANSWERED while the file cannot go yet (open elsewhere on Windows): the caller retries.
-    ponytail: a new question renamed in between the id check and the unlink is removed; a lock
-    shared with the worker's publication would close that microsecond window."""
+    Hold the answered inode, rename the path aside, then verify before unlinking only the
+    temporary name. If publication wins the rename race, restore its question without replacing
+    a later publication. A second publication keeps the displaced question at the temporary name."""
+    fd, directory, aside = None, None, None
     try:
-        if question_id(question) == answered:
-            question.unlink(missing_ok=True)
+        fd = shared_open(question)
+        info = os.fstat(fd)
+        identity = info.st_ino, info.st_mtime_ns, info.st_size
+        if identity != answered:
+            return None
+        directory = Path(tempfile.mkdtemp(prefix='.' + question.name + '-consume-', dir=question.parent))
+        aside = directory / question.name
+        os.rename(question, aside)
+        if question_id(aside) != identity:
+            try:
+                os.link(aside, question)  # atomic restoration, refusing to overwrite a later publication
+            except FileExistsError:
+                print('codex_worker: concurrent question preserved at ' + str(aside), file=sys.stderr, flush=True)
+                return None
+        aside.unlink()
+    except FileNotFoundError:
+        return None
     except OSError:
+        if aside is not None and aside.exists():
+            try:
+                os.link(aside, question)
+            except FileExistsError:
+                pass
+            except OSError:
+                print('codex_worker: question recovery required at ' + str(aside), file=sys.stderr, flush=True)
         return answered
+    finally:
+        if fd is not None:
+            os.close(fd)
+        if directory is not None:
+            try:
+                directory.rmdir()
+            except OSError:
+                pass  # a question which could not be deleted or restored remains recoverable
     return None
 
 
@@ -336,7 +404,6 @@ def watch(child, question, close_tree, result=None, stale=None, answered=None):
     ready_at = None
     noticed = ''
     ended = 'stopped by a signal or an error in its supervisor'
-    began = time.monotonic()
     since = float(os.environ.get('KIT_WORKER_STARTED', '0'))  # main() parsed it already
     try:
         grace = float(os.environ.get('KIT_WORKER_GRACE', '10'))
@@ -344,10 +411,9 @@ def watch(child, question, close_tree, result=None, stale=None, answered=None):
             raise ValueError('KIT_WORKER_GRACE must be nonnegative seconds')
         while child.poll() is None:
             kind = result_kind(result, since, stale)[0]
-            # A resumed session took its answer once it publishes a result or outlives a failed
-            # start (the tab's ten seconds): the answered decision goes while the worker runs,
-            # so close_worker.sh no longer reads it as waiting.
-            if answered is not None and (kind or time.monotonic() - began >= 10):
+            # A valid new result shows observable acceptance. Survival alone cannot distinguish
+            # a resumed session that took its answer from one that will fail without doing so.
+            if answered is not None and kind:
                 answered = consume(question, answered)
             # Only a decision or a completed result ends the worker: PROGRESS, HANDOFF and
             # BLOCKED leave it working, and --wait alone reports them.

@@ -107,6 +107,10 @@ cost", and `docs/WORKFLOW.md`, "Review rounds".
 
 ### STATE.md discipline
 
+- Every authorized session edit uses `python scripts/working_mode.py --replace-state FILE --expect SHA256`.
+  Read `docs/STATE.md` and its sha with `--state-sha`, then prepare the new contents in a separate file.
+  On refusal, re-read STATE.md and its sha, redo the edit, and retry. Never publish the stale prepared contents.
+  This compare-and-swap shares the mode switch lock and preserves STATE.md's file mode.
 - `docs/STATE.md` is TRANSIENT: current state only — what is in flight and what waits on
   someone.
 - A next task or a parked item is written to `docs/BACKLOG.md`, never to STATE.md.

@@ -340,7 +340,9 @@ for name; do
     n=0; [ ! -e "$record.result.md" ] || n=1
     for f in "$record".result-*.md; do
       k=${f##*.result-}; k=${k%.md}
-      case $k in ''|0*|*[!0-9]*) ;; *) [ "$k" -le "$n" ] || n=$k ;; esac
+      case $k in ''|0*|*[!0-9]*) ;; *)
+        [ "${#k}" -gt 9 ] || { [ "$k" -le "$n" ] || n=$k; } ;;
+      esac
     done
     n=$((n + 1)); saved=$record.result-$n.md; [ "$n" -ne 1 ] || saved=$record.result.md
     if [ -n "$dry" ]; then say "$name: dry run: would move its result RESULT-$name.md to $saved"

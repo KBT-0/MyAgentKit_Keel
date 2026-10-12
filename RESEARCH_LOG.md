@@ -44,13 +44,15 @@ Checking for a session before launching does not reserve its name or checkout. C
 launches can pass together and overwrite their sole resume record. A shared reservation now
 covers the checks, launch and session recording; an unrecorded launch retains it for recovery.
 
-The mode lock only coordinates mode switches. STATE can change during preparation or after
-replacement. Recheck its bytes before replacement, refuse a changed snapshot, and never
-roll back an independent edit. An edit made between that recheck and the publication can
-still be lost. An `--edit-state` entry point that ran every STATE writer under the mode
-lock closed that window, but the mode command pre-approves `python scripts/working_mode.py`,
-so it ran any command without a prompt. A switch is rare, short and started by the lead:
-the lead judged the window the lesser risk and removed the entry point (2026-10-12).
+OWNER DECISION 2026-10-12: STATE writers use a constrained compare-and-swap under the mode
+switch lock. `--state-sha` reads the current hash; `--replace-state FILE --expect SHA256`
+publishes prepared contents atomically only when the current bytes still match that hash.
+A refused writer re-reads and redoes its edit. No arbitrary command runs through the helper,
+whose mode command is pre-approved. The earlier command-executing `--edit-state` was rejected
+for that reason. Byte rechecks alone still lost independent edits in the reproduced publication
+and rollback windows. Sharing the lock closes both windows, and compare-and-swap refuses a
+stale retry after the switch or rollback. Both regression probes preserve the independent
+edit after its writer re-reads, retries and succeeds.
 Resolve the supplied project root once and refuse links only
 below it: refusing every ancestor link refused macOS `/tmp` and a linked home, and both
 records still land together in the one resolved project. On Windows only a name-surrogate

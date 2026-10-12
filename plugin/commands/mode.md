@@ -12,6 +12,11 @@ The helper records the English name in `.claude/mode` and the "Working mode:" li
 are shared across tools and committed with the next authorized commit. Do not commit merely
 to switch modes. The project root must be the owner's current checkout.
 
+Session edits of STATE.md follow `AGENTS.md`, "STATE.md discipline": read STATE.md and its
+sha with `--state-sha`, prepare the new contents in a file, then publish with
+`--replace-state FILE --expect SHA256`. On refusal, re-read, redo the edit, and retry.
+The helper shares the switch lock and only replaces contents; it executes no writer command.
+
 If `docs/WORKFLOW.md` has no "Working modes, by name" section, the project predates the kit's
 v0.11. Say so, name the kit's `CHANGELOG.md` entry for v0.11, and stop.
 

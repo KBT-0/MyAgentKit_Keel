@@ -3,6 +3,7 @@
 """Show or record the owner's working mode, using WORKFLOW.md as the rule source."""
 import argparse
 from contextlib import contextmanager
+import hashlib
 import os
 from pathlib import Path
 import re
@@ -68,6 +69,26 @@ def switch_lock(project):
         finally:
             handle.seek(0)
             release()
+
+
+def state_sha(project):
+    """Hash STATE's exact bytes without creating a lock or writing a project file."""
+    return hashlib.sha256(checked(project, 'docs/STATE.md').read_bytes()).hexdigest()
+
+
+def replace_state(project, source, expected):
+    """Publish a prepared STATE edit only if its snapshot still matches under the switch lock."""
+    with switch_lock(project):
+        state = checked(project, 'docs/STATE.md')
+        actual = hashlib.sha256(state.read_bytes()).hexdigest()
+        if actual != expected.lower():
+            raise ValueError('STATE.md sha256 mismatch: expected ' + expected + ', current ' + actual
+                             + '; re-read STATE.md and its sha, redo the edit, and retry')
+        pending = prepared(state, source.read_bytes())
+        try:
+            os.replace(pending, state)
+        finally:
+            pending.unlink(missing_ok=True)
 
 
 def mode(project, choice=None):
@@ -170,9 +191,26 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('name', nargs='?')
     parser.add_argument('--project', type=Path, default=Path.cwd())
+    operations = parser.add_mutually_exclusive_group()
+    operations.add_argument('--state-sha', action='store_true', help='print the current STATE.md sha256 without writing')
+    operations.add_argument('--replace-state', type=Path, metavar='FILE', help='atomically publish a prepared STATE.md edit')
+    parser.add_argument('--expect', metavar='SHA256', help='the STATE.md sha256 read before preparing the edit')
     args = parser.parse_args()
+    if args.name is not None and (args.state_sha or args.replace_state is not None or args.expect is not None):
+        parser.error('a mode name cannot be combined with STATE operations')
+    if args.replace_state is not None:
+        if args.expect is None or re.fullmatch(r'[0-9a-fA-F]{64}', args.expect) is None:
+            parser.error('--replace-state requires --expect with a 64-digit sha256')
+    elif args.expect is not None:
+        parser.error('--expect requires --replace-state')
     try:
-        mode(args.project.resolve(), args.name)
+        project = args.project.resolve()
+        if args.state_sha:
+            print(state_sha(project))
+        elif args.replace_state is not None:
+            replace_state(project, args.replace_state, args.expect)
+        else:
+            mode(project, args.name)
     except (OSError, ValueError) as error:
         parser.exit(1, 'mode: ' + str(error) + '\n')
 

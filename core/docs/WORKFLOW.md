@@ -39,6 +39,7 @@ a risky change ships. Agents propose; {{OWNER_NAME}} decides.
 7. **Update `docs/STATE.md`:** active work and what waits on {{OWNER_NAME}}, with a
    tool+model trace. Unwritten progress does not exist. A next task or a parked item goes to
    `docs/BACKLOG.md`, which is read when the next task is chosen, not every session.
+   Publish session edits through the compare-and-swap protocol below, never by overwriting STATE.md directly.
 8. **Summarize:** what, why, which files. If you hit an OPEN design item, flag it as a
    question rather than deciding it.
 
@@ -77,6 +78,14 @@ deletion checkable.
 
 The rules for `docs/STATE.md` are in `AGENTS.md`, "STATE.md discipline". This section keeps
 their reasons, so that the always-loaded files carry only the rules.
+
+For every authorized session edit, read STATE.md and its sha with
+`python scripts/working_mode.py --state-sha`. Prepare the new contents in a separate file.
+Run `python scripts/working_mode.py --replace-state FILE --expect SHA256` with the sha you read.
+On refusal, re-read STATE.md and its sha, redo the edit, and retry. Do not retry stale contents.
+The helper compares the bytes under the same lock as a mode switch, then replaces the file atomically.
+It preserves the file mode and runs no arbitrary command. Both publication and rollback can otherwise erase another writer's work.
+The branch and worktree policy below still decides which session may edit STATE.md.
 
 - `docs/STATE.md` is read at the start of every session, in every tool, so its length is a
   bill paid every session. What is planned next, and what was parked on purpose, is a
