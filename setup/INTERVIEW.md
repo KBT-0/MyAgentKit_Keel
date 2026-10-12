@@ -160,7 +160,9 @@ One topic per turn. Suggested order, because each answer informs the next:
 
    - Check which are installed: `command -v codex`, `command -v claude`. Do not assume
      either way — report what you found. If only one is present, the OTHER one is the
-     reviewer only if the owner installs it; the review gate needs two.
+     reviewer only if the owner installs it; the review gate needs two models. An owner with
+     only a Claude subscription can work in the `claude-only` mode instead: a second Claude
+     tier reviews through `--reviewer claude` (`docs/WORKFLOW.md`, "Working modes, by name").
    - If it is missing, explain the trade: without a second model, the review protocol
      becomes the paste-the-template-by-hand version in `docs/REVIEW_RUNNING.md`. That is a
      genuine fallback, and the kit works without it. With it, `/myagentkit:cross-review`
@@ -372,29 +374,16 @@ placeholder is either a quoted value or a whole file.
 | Placeholder | What goes in |
 |---|---|
 | `{{WORKTREE_POLICY}}` | A table: path, worktrees yes/no/conditional, and the condition. Anything with a huge cache or a shared database is a "no" or a "needs its own" |
-| `{{MODEL_ROUTING}}` | Which model gets judgement work, which gets volume, and which budget is scarce |
 | `{{REJECTED_DECISIONS}}` | Everything considered and turned down in this interview, with the reason and what would reopen it |
 | `{{PROJECT_STOP_RULES}}` | Project-specific reasons an agent must stop and ask |
 | `{{PROJECT_SETUP_STEPS}}` | Anything else a fresh clone needs |
 | `{{MODULE}}` | Only in `MODULE_AGENTS_TEMPLATE.md` — copy that file per module and fill it there |
 
-**An example `{{MODEL_ROUTING}}`**, by the tiers of `docs/WORKFLOW.md`, "Model routing" (a
-project's own as of 2026-10-08; replace the model names with what the owner's subscriptions
-offer today):
-
-| Tier | Work | Codex | Claude |
-|---|---|---|---|
-| 1 | Mechanical: renames, figure fixes, data fetches, proof runs, summaries | `gpt-6-luna`, medium effort | Haiku 5.5 or Sonnet 5.5 |
-| 2 | Detail-bearing errands, ordinary reviews | `gpt-6.1-sol`, high effort | Opus 5.5, only for design-bearing work |
-| 3 | Risky and gate reviews, design consultations | `gpt-6.1-sol`, xhigh effort; `gpt-6-astra` when the lead picks it | Opus 5.5; Fable 5.1 when the lead picks it |
-
-The prices behind it come from third-party summaries of OpenAI's launch figures: Luna costs
-about a twentieth of Sol's token price, and Sol 6.1 about a fifth of Astra's. Neither the
-per-model Codex allowance nor the quality claims were verified. Astra and Fable are
-available only on the subscriptions that include them. **The table is provisional**: API
-token prices say nothing about how much each model draws from a subscription's five-hour and
-weekly allowance. Measure that draw (`/status` before and after a few errands per model) and
-move the tiers by it.
+**Model routing ships filled.** `docs/WORKFLOW.md`, "Model routing", carries the kit's tier
+table and its working modes. Replace the table's model names with what the owner's
+subscriptions offer today, and ask which working mode starts (cross-performance unless the
+owner names another). Run `scripts/working_mode.py <name>` with the host's Python to record
+the choice in both `.claude/mode` and the "Working mode:" line of `docs/STATE.md`.
 
 ### Then, in this order
 

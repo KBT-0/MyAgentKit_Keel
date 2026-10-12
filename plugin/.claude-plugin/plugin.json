@@ -1,7 +1,7 @@
 {
   "name": "myagentkit",
   "version": "0.1.0",
-  "description": "The review gate, the handoff brief, and a one-command path to send what you learned back upstream.",
+  "description": "The review gate, the handoff brief, the working modes, and a one-command path to send what you learned back upstream.",
   "author": {
     "name": "Kemal Berhan TAN",
     "url": "https://github.com/KBT-0"

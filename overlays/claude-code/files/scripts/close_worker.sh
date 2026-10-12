@@ -32,18 +32,166 @@
 # claude.exe whose command line holds `-n NAME`, with `taskkill /T /F` (its tree), and waits up
 # to 15 s until no such process is left; its Windows Terminal tab closes by itself, because the
 # tab's command ends with `exit 0` (spawn_worker.sh). A lister that cannot answer fails the
-# close with its words, as the session may still run. Steps 1, 3 and 4 are the same.
+# close with its words, as the session may still run. A Codex worker (spawn_codex.sh) is a
+# codex.exe whose command line names its folder with -C instead: while one runs in the worker's
+# folder, nothing is done for that name, since its .myagentkit/workers/NAME.session record is
+# the only id to resume it by; the lead quits it in its tab and closes again. Steps 1, 3 and 4
+# are the same. On every host a Codex worker whose decision file (the path NAME.question
+# records, else QUESTION-NAME.md at its top) still exists is refused before step 2: the lead
+# answers it with spawn_codex.sh --resume, or deletes it to abandon the worker. Before step 3 an
+# untracked RESULT-NAME.md at the worker's top moves to .myagentkit/workers/NAME.result.md:
+# the lead read it and committed the files it lists. An earlier report there stays, a
+# byte-identical one from another run too, and this one takes the number above the highest
+# there (NAME.result-2.md, -3, ...), so a newer report never has a lower number; a worktree the
+# audit keeps gets its result back. Only a retry of an interrupted older move, whose source is
+# still that archive's object, reuses the archive. Every non-collision move failure keeps the
+# worktree without the audit. NAME.report-move records the move before consumption; a move
+# refused before the report left its path (a Windows sharing violation, the refusals below)
+# clears it (owner decision); any other failure, a killed helper included, keeps it, blocking
+# later closes until the lead recovers the report and removes that marker.
+# The helper prints the .report-move-* folder of a report it could not restore. Where neither
+# an exclusive rename nor a hard link works, the move refuses and the report stays (owner
+# decision). After a removal (or with no worktree), the Codex records NAME.session, NAME.exit,
+# NAME.live and NAME.question go too; a kept worktree keeps them.
 # Exit 0 when every named session is gone and every named worktree was removed or did not
 # exist; 1 otherwise, with the first reason on the last line: a nonzero exit of
 # clean_worktrees.sh is one whatever its summary says (after a removal, an outcome line its log
-# could not take); 2 on a usage error. A dry run exits 1 only for a refused name, a tmux that
-# could not answer, or a removal that could not run.
+# could not take); 2 on a usage error. A dry run exits 1 only for a refused name, a waiting
+# decision, a running Codex session, an unfinished report move (NAME.report-move), a tmux or
+# lister that could not answer, or a removal that could not run.
 set -u
 
 # Every line of this script is printed with its control bytes as `?` (a name is an argument).
 say() { { printf 'close_worker: %s' "$1" | LC_ALL=C tr '\001-\037\177' '?'; echo; }; }
 first=""
 fail() { say "$1"; [ -n "$first" ] || first=$1; }
+# Print the archive actually used; 2 is a collision, 3 a refusal before the source was
+# consumed (it is untouched), 1 any other failure, with
+# only its errno and text on stderr (a path can hold control bytes), after the private path of
+# a report it consumed and could not publish or put back, its control bytes as `?`. Never fall
+# back to a free-name check followed by an overwriting rename.
+move_report() {
+  $kit_python -I -c 'import ctypes, errno, os, re, sys, tempfile
+source, target = sys.argv[1:]
+consumed = False  # the source left its path: from here a failure needs the lead to recover it
+unsupported = (errno.EINVAL, errno.ENOSYS, errno.ENOTSUP, errno.EOPNOTSUPP)
+
+def archived(source, target):
+    # An older link+unlink may have stopped after publication, the source still being that
+    # archive. Reuse it rather than claim the next number on a retry. Only the same object is
+    # this report: separate runs never share an archive, byte-identical ones included (owner
+    # decision). Names are compared within the folder, as Git Bash passes C:/ paths that the
+    # listing joins with a backslash; a candidate that vanished or cannot be read is not this.
+    folder, name = os.path.split(target)
+    match = re.fullmatch(r"(.*\.result)(?:-[1-9][0-9]*)?\.md", name)
+    if not match:
+        return None
+    info = os.lstat(source)
+    try:
+        entries = sorted(os.listdir(folder or "."))
+    except OSError:
+        return None  # no reuse evidence; exclusive publication can still succeed
+    for entry in entries:
+        if re.fullmatch(re.escape(match[1]) + r"(?:-[1-9][0-9]*)?\.md", entry):
+            path = target[:len(target) - len(name)] + entry
+            try:
+                if os.path.samestat(info, os.lstat(path)):
+                    return path
+            except OSError:
+                pass
+    return None
+
+try:
+    duplicate = archived(source, target)
+    if os.name == "nt" and not duplicate:
+        os.rename(source, target)  # Windows refuses an existing destination atomically.
+    else:
+        error = errno.ENOSYS  # a duplicate is consumed privately and verified again
+        if not duplicate:
+            try:
+                api = ctypes.CDLL(None, use_errno=True)
+                if sys.platform == "darwin":
+                    rename = api.renamex_np
+                    rename.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
+                    rc = rename(os.fsencode(source), os.fsencode(target), 4)  # RENAME_EXCL
+                else:
+                    rename = api.renameat2
+                    rename.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+                    rc = rename(-100, os.fsencode(source), -100, os.fsencode(target), 1)  # AT_FDCWD, RENAME_NOREPLACE
+                error = ctypes.get_errno() if rc else 0
+            except AttributeError:
+                error = errno.ENOSYS  # no such symbol: glibc before 2.28, an older musl
+        if duplicate or error in unsupported:
+            if not duplicate and os.path.lexists(target):
+                raise FileExistsError(errno.EEXIST, os.strerror(errno.EEXIST))
+            folder = tempfile.mkdtemp(prefix=".report-move-", dir=os.path.dirname(target))
+            probe, owned = os.path.join(folder, "probe"), os.path.join(folder, "report")
+            try:
+                # Test the exclusive link before moving anything. With neither primitive the
+                # no-overwrite promise cannot be kept, so the report stays where it was.
+                try:
+                    os.link(source, probe, follow_symlinks=False)
+                except OSError as link_error:
+                    if link_error.errno in unsupported + (errno.EPERM,):
+                        raise OSError(link_error.errno, "no-overwrite guarantee unavailable: exclusive rename and hard links unsupported")
+                    raise
+                os.rename(source, owned)  # only this caller can publish into its private directory
+                consumed = True
+                os.unlink(probe)
+                try:
+                    duplicate = archived(owned, target)
+                    if duplicate:
+                        target = duplicate
+                    else:
+                        os.link(owned, target, follow_symlinks=False)
+                    os.unlink(owned)  # never unlink the reusable source pathname
+                except OSError:
+                    # Restore exclusively; a successor keeps its name and the old report stays
+                    # private if restoration is refused. Never remove a published archive.
+                    try:
+                        os.link(owned, source, follow_symlinks=False)
+                        os.unlink(owned)
+                    except FileExistsError:
+                        raise OSError(errno.EBUSY, "source changed during refused move; owned report preserved")
+                    except OSError as restore_error:
+                        raise OSError(restore_error.errno, "report restoration failed; owned report preserved")
+                    raise
+            finally:
+                if os.path.lexists(probe):
+                    os.unlink(probe)
+                try:
+                    os.rmdir(folder)
+                except OSError:  # a refused transaction retains its owned report, and says where
+                    if os.path.lexists(owned):
+                        shown = re.sub(rb"[\x01-\x1f\x7f]", b"?", os.fsencode(owned))
+                        sys.stderr.buffer.write(b"owned report preserved at " + shown + b"\n")
+        elif error:
+            raise OSError(error, os.strerror(error))
+    consumed = True  # published by one exclusive rename or link
+    sys.stdout.buffer.write(os.fsencode(target) + b"\n")
+except FileExistsError:
+    sys.exit(2)
+except OSError as error:
+    sys.stderr.write("[Errno %s] %s\n" % (error.errno, error.strerror))
+    sys.exit(1 if consumed else 3)' "$1" "$2"
+}
+# A persistent per-worker marker precedes every move, including restoration after an audit.
+# A killed helper or shell leaves it for the next close. Publication, a collision with the
+# source intact and a refusal before consumption (3) clear it (owner decision); a report that
+# really entered a .report-move-* folder needs the lead to recover it. 4: published, but the
+# marker could not be removed, so only the marker is stale.
+move_recorded_report() {
+  if ! (set -C; printf 'source: %s\ntarget: %s\n' "$1" "$2" > "$record.report-move"); then
+    printf '%s\n' 'could not record the report move; nothing moved' >&2
+    return 1
+  fi
+  move_report "$1" "$2"; status=$?
+  case $status in
+    0) rm -- "$record.report-move" || return 4 ;;
+    2|3) rm -- "$record.report-move" || return 1 ;;
+  esac
+  return "$status"
+}
 nl='
 '
 # Git for Windows' dirname handles both separators, including mixed paths such as D:/p\scripts\x.sh.
@@ -140,6 +288,22 @@ sessions() {
     sys.stdout.write(" ".join(pids))' "$1"
 }
 case $(uname -s 2>/dev/null) in MINGW*|MSYS*|CYGWIN*) windows=1 ;; *) windows="" ;; esac
+# codex DIR: the process ids of the codex.exe programs whose command line names DIR with -C,
+# as spawn_codex.sh's running() reads them. ponytail: a text match on `-C <folder>`, not a
+# full command-line parse; a worker without --worktree shares this checkout's folder, so any
+# Codex session there holds the close of such a name.
+codex() {
+  out=$(${KIT_PS:-powershell.exe -NoProfile -NonInteractive -Command} \
+    "Get-CimInstance Win32_Process -Filter \"Name='codex.exe'\" | ForEach-Object { \"\$(\$_.ProcessId) \$(\$_.CommandLine)\" }" \
+    2>&1) || { printf '%s' "$out"; return 2; }
+  folder=$(cygpath -w "$1") || { printf '%s' "cygpath cannot convert $1"; return 2; }
+  printf '%s\n' "$out" | $kit_python -I -c 'if 1:
+    import re, sys
+    folder = re.escape(sys.argv[1].rstrip("\\/"))
+    pat = re.compile(r"\s-C\s+(\"%s[\\/]?\"|%s[\\/]?)(\s|$)" % (folder, folder), re.I)
+    print(" ".join(l.split(" ", 1)[0] for l in sys.stdin.read().replace("\r", "").split("\n")
+                   if l.split(" ", 1)[0].isdigit() and pat.search(l)))' "$folder"
+}
 # busy DIR: prints what runs in the checkout at DIR and succeeds while a gate or a git
 # operation runs there, or while that cannot be checked. Ending the session then orphans it: on
 # Windows a killed worker's check.sh ran on without its caller and raced the lead's next gate
@@ -199,6 +363,29 @@ for name; do
   wt_dir=$top; [ -z "$top" ] || [ ! -d "$top/.claude/worktrees/$name" ] || wt_dir=$top/.claude/worktrees/$name
   refuse() { fail "$name: $why; ending the session now would leave it running without its caller, so nothing is done for $name: wait until it ends, then close again"; }
   if why=$(busy "$wt_dir"); then refuse; continue; fi
+  record=$top/.myagentkit/workers/$name
+  if [ -e "$record.report-move" ] || [ -L "$record.report-move" ]; then
+    fail "$name: unfinished report move recorded in $record.report-move; the session is not ended, the audit will not run and the worktree and session records are kept"
+    cat -- "$record.report-move" 2>/dev/null | while IFS= read -r line || [ -n "$line" ]; do say "$name: recorded $line"; done
+    say "$name: recover the original report to its recorded source or target, checking .report-move-* folders beside both paths, then remove $record.report-move and close again"
+    continue
+  fi
+  # An unanswered Codex decision: its session record is the only way to answer it, and a fresh
+  # spawn of the name is refused while the question exists, so a close would strand both.
+  ask=$(cat "$record.question" 2>/dev/null) || ask=$wt_dir/QUESTION-$name.md
+  if [ -e "$ask" ]; then
+    fail "$name: a decision waits for its answer in $ask; answer it (spawn_codex.sh --resume), or delete it to abandon the worker, then close again; nothing is done for $name"
+    continue
+  fi
+  if [ -n "$windows" ] && { [ -e "$record.session" ] || [ "$wt_dir" != "$top" ]; }; then
+    if ! pids=$(codex "$wt_dir"); then
+      fail "$name: could not list the Codex processes, so its Codex session may still run: $pids; nothing is done for $name"
+      continue
+    elif [ -n "$pids" ]; then
+      fail "$name: a Codex session still runs in $wt_dir (process $pids); its session record and worktree are kept: quit it in its tab (/quit), then close again"
+      continue
+    fi
+  fi
 
   if [ -n "$windows" ]; then
     if ! pids=$(sessions "$name"); then
@@ -258,31 +445,92 @@ for name; do
     fail "$name: tmux kill-session -t =$name failed; the session may still run"
   fi
 
-  apply=--apply; [ -z "$dry" ] || { apply=""; say "$name: dry run: the removal would lift the quiet period for this worktree alone (--no-quiet), every other proof stays"; }
-  out=$(sh "$kit/clean_worktrees.sh" $apply "--only=$name" --no-quiet 2>&1); rc=$?
-  printf '%s\n' "$out" | LC_ALL=C tr '\001-\011\013-\037\177' '?'
-  kept=""
-  case $nl$out in
-    *"${nl}clean_worktrees: no worktree at "*)
-      say "$name: no worktree at .claude/worktrees/$name; nothing to remove" ;;
-    *"${nl}clean_worktrees: removed 1,"*)
-      say "$name: worktree removed through the audit (its log: kit-worktree-removals.log in the git directory)" ;;
-    *"${nl}clean_worktrees: dry run: would remove 1,"*)
-      say "$name: dry run: the audit would remove the worktree" ;;
-    *)
-      # The audit's first reason to keep, else its last line (a run that stopped).
-      why=$(printf '%s\n' "$out" | sed -n -e 's/^         - //p' -e 's/^         stopped: //p' | sed -n 1p)
-      [ -n "$why" ] || why=$(printf '%s\n' "$out" | sed -n '$p')
-      if [ -n "$dry" ] && [ "$rc" -eq 0 ]; then
-        say "$name: dry run: the audit would keep the worktree: $why"
-      else
-        fail "$name: worktree kept: $why"; kept=1
-      fi ;;
-  esac
+  # The default result reports on the work and is not project content: once the lead committed
+  # the files it lists, it is all the audit would keep the worktree for. It moves beside the
+  # records instead. A custom --result is a project file: the lead commits it or removes it.
+  # An earlier run's report is never replaced, and a worktree the audit keeps gets it back.
+  moved=""; lost=""
+  if [ -n "$(git -C "$wt_dir" ls-files --others -- "RESULT-$name.md" 2>/dev/null)" ]; then
+    # Above the highest earlier number: a lower free one would make a newer report look older.
+    n=0; [ ! -e "$record.result.md" ] || n=1
+    for f in "$record".result-*.md; do
+      k=${f##*.result-}; k=${k%.md}
+      case $k in ''|0*|*[!0-9]*) ;; *)
+        [ "${#k}" -gt 9 ] || { [ "$k" -le "$n" ] || n=$k; } ;;
+      esac
+    done
+    n=$((n + 1)); saved=$record.result-$n.md; [ "$n" -ne 1 ] || saved=$record.result.md
+    if [ -n "$dry" ]; then say "$name: dry run: would move its result RESULT-$name.md to $saved"
+    elif mkdir -p -- "${record%/*}"; then
+      while :; do
+        actual=$(move_recorded_report "$wt_dir/RESULT-$name.md" "$saved"); move_rc=$?
+        if [ "$move_rc" -eq 0 ]; then saved=$actual; moved=1; say "$name: its result RESULT-$name.md moved to $saved"; break
+        elif [ "$move_rc" -eq 2 ]; then n=$((n + 1)); saved=$record.result-$n.md
+        elif [ "$move_rc" -eq 3 ]; then
+          fail "$name: could not move its result RESULT-$name.md to $saved; nothing moved, the report stays in the worktree"
+          lost=untouched; break
+        elif [ "$move_rc" -eq 4 ]; then
+          fail "$name: its result RESULT-$name.md moved to $actual, but $record.report-move could not be removed; only that marker is stale: remove it and close again"
+          lost=stale; break
+        else
+          fail "$name: could not move its result RESULT-$name.md to $saved"
+          lost=1; break
+        fi
+      done
+    else fail "$name: could not move its result RESULT-$name.md to $saved"; lost=1; fi
+  fi
+  kept=""; rc=0
+  if [ "$lost" = untouched ] || [ "$lost" = stale ]; then
+    say "$name: the audit did not run, so the worktree stays; nothing needs recovering, close again once the cause above is gone"
+    kept=1
+  elif [ -n "$lost" ]; then
+    # A successor at the original path proves no restoration. Keep every non-collision failure.
+    say "$name: the audit did not run, so a worktree stays: publication of RESULT-$name.md failed; recover the report from its source, archive or the path printed above, else from a .report-move-* folder in ${record%/*}; after recovery remove $record.report-move if present and close again"
+    kept=1
+  else
+    apply=--apply; [ -z "$dry" ] || { apply=""; say "$name: dry run: the removal would lift the quiet period for this worktree alone (--no-quiet), every other proof stays"; }
+    out=$(sh "$kit/clean_worktrees.sh" $apply "--only=$name" --no-quiet 2>&1); rc=$?
+    printf '%s\n' "$out" | LC_ALL=C tr '\001-\011\013-\037\177' '?'
+    case $nl$out in
+      *"${nl}clean_worktrees: no worktree at "*)
+        say "$name: no worktree at .claude/worktrees/$name; nothing to remove" ;;
+      *"${nl}clean_worktrees: removed 1,"*)
+        say "$name: worktree removed through the audit (its log: kit-worktree-removals.log in the git directory)" ;;
+      *"${nl}clean_worktrees: dry run: would remove 1,"*)
+        say "$name: dry run: the audit would remove the worktree" ;;
+      *)
+        # The audit's first reason to keep, else its last line (a run that stopped).
+        why=$(printf '%s\n' "$out" | sed -n -e 's/^         - //p' -e 's/^         stopped: //p' | sed -n 1p)
+        [ -n "$why" ] || why=$(printf '%s\n' "$out" | sed -n '$p')
+        if [ -n "$dry" ] && [ "$rc" -eq 0 ]; then
+          say "$name: dry run: the audit would keep the worktree: $why"
+        else
+          fail "$name: worktree kept: $why"; kept=1
+        fi ;;
+    esac
+  fi
   # A nonzero exit is a failed close whatever the summary says: a removal whose outcome line
   # the log could not take still prints `removed 1`, and its audit record is missing.
   [ "$rc" -eq 0 ] || [ -n "$kept" ] ||
     fail "$name: clean_worktrees.sh exited $rc: $(printf '%s\n' "$out" | sed -n '$p')"
+  if [ -n "$moved" ] && [ "$wt_dir" != "$top" ] && [ -d "$wt_dir" ]; then
+    restored=$wt_dir/RESULT-$name.md; n=0
+    while :; do
+      move_recorded_report "$saved" "$restored" >/dev/null; move_rc=$?
+      if [ "$move_rc" -eq 0 ]; then
+        if [ "$n" -eq 0 ]; then say "$name: its result moved back to RESULT-$name.md beside the kept work"
+        else say "$name: newer RESULT-$name.md kept; its saved result moved back to $restored beside the kept work"; fi
+        break
+      elif [ "$move_rc" -eq 2 ]; then n=$((n + 1)); restored=$wt_dir/RESULT-$name-restored-$n.md
+      elif [ "$move_rc" -eq 4 ]; then
+        fail "$name: its result moved back to $restored beside the kept work, but $record.report-move could not be removed; only that marker is stale: remove it and close again"; kept=1; break
+      else fail "$name: could not move its result back from $saved to the kept worktree"; kept=1; break; fi
+    done
+  fi
+  if [ -z "$dry" ] && [ "$rc" -eq 0 ] && [ -z "$kept" ] && [ -n "$top" ] &&
+     [ ! -e "$record.report-move" ] && [ ! -L "$record.report-move" ]; then
+    rm -f -- "$record.session" "$record.exit" "$record.live" "$record.question" || fail "$name: could not remove its Codex session records"
+  fi
   if git show-ref --verify --quiet "refs/heads/worktree-$name" 2>/dev/null; then
     say "$name: branch worktree-$name is kept, never deleted here; \`git branch --merged\` lists the merged branches, \`git branch -d <name>\` deletes one"
   else

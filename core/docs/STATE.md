@@ -7,6 +7,9 @@ true next month, are in `AGENTS.md`, "STATE.md discipline" (the reasons: `docs/W
 
 ---
 
+**Working mode:** cross-performance (`docs/WORKFLOW.md`, "Working modes, by name"; the owner
+names another, and `/myagentkit:mode` sets it).
+
 ## Active work
 
 (task + module + status, or one line per operation pointing at its `docs/<OPERATION>.md`;

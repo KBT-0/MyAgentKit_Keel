@@ -40,6 +40,193 @@ trap removes the temp file when doctor is interrupted (the leftover file was see
 Unterminated `--help` output, or an rc file's unterminated EXIT-trap print, put the status
 marker mid-line, where doctor never found it; both probes now start it on a new line (seen RED).
 
+### 2026-10-12 — Consuming an answer, claiming an archive, publishing the live record (#57)
+
+2026-10-12. Review decision, owner accepted 2026-10-12: the ten-second rule is removed. A
+resumed worker's answered question goes once the resumed session shows it took
+the answer: a valid new result while it runs, or a clean exit. A close refuses while the
+question exists, so keeping it until the child exited refused the close of a session that had
+published its work and then failed. Elapsed time is not evidence: a CLI that fails slowly,
+without using its answer, would lose the question that is the only way to retry. The removal
+renames the file aside by its verified id (inode, time, size) and deletes only that private
+name; a question renamed in between goes back by a hard link, which never replaces a later
+one. A check followed by an unlink deleted a new decision published in that moment, and the
+protocol publishes the blocked result and the new question back to back.
+
+2026-10-12. The close archives a report under the number above the highest there: a gap left
+by a deleted report gave a newer report a lower number, so it read as older. An exclusive
+rename claims the name (Linux `renameat2` RENAME_NOREPLACE, macOS `renamex_np` RENAME_EXCL,
+the Windows rename), and a collision takes the next number: a free-name check followed by a
+rename replaced a report published in between. Without that rename (WSL `/mnt/c`, NFS, FUSE,
+SMB, glibc before 2.28) every close failed, so there a hard link claims the name, as
+exclusively. Review r7 reproduced a newer source deleted between link and unlink: the source
+now moves first into a fresh caller-private directory, and only that owned name is unlinked.
+Without hard links the former empty O_EXCL claim could be replaced before publication, which
+then overwrote that newer destination. The helper now refuses with "no-overwrite guarantee
+unavailable" before consuming the source when neither primitive works. OWNER DECISION
+2026-10-12: that refusal is an accepted trade. On such a filesystem (some SMB, FUSE or exFAT
+setups) every close keeps the report where it is and the worktree with it, where the base
+replaced an empty O_EXCL claim; such a refusal leaves no `NAME.report-move` marker, so it never
+blocks the next close (owner decision of 2026-10-12, below). A killed link+unlink of the
+older code left the source and the archive as one object, so a retry recognizes that object
+and returns its archive path for restoration. OWNER DECISION 2026-10-12: separate runs never
+share an archive, and the content-hash reuse is gone. The NAME record is reused by every later
+worker of that name, so a
+later run's byte-identical report was deleted as "already archived", and a kept worktree's
+restore then moved the earlier run's archive away, leaving neither run one (Claude review r8,
+reproduced). The current move consumes the source before it links, so it never leaves both
+names. Names are compared within the folder: Git Bash passes `C:/` paths, the listing joined
+them with a backslash, and a pattern over the full path never matched, so the reuse never ran
+on native Windows. A candidate that vanishes or cannot be examined is not this report; it
+failed a close the base completed. A report the move consumed and could not publish or put
+back stays in its `.report-move-*` folder, and the helper prints that path. When the move fails
+after the report left the worktree, the close keeps the worktree without the audit, which
+could remove it while the report sat only in that hidden folder (review r8). A move refused
+before the report left its path keeps the worktree too, but clears its marker (below). A
+suffix longer than nine digits is not a number, because the shell's arithmetic overflowed on
+it. The helper's error line carries only the errno and its text, and the recovery path its
+control bytes as `?`: a path can hold control bytes, and the
+helper's stderr bypasses the close's filter.
+
+2026-10-12. Codex review r9, reproduced, and Claude review r10. A killed move left the report
+in `.report-move-*` and nothing else: the next close found no `RESULT-NAME.md`, ran the audit,
+removed the worktree holding that folder and deleted `NAME.session`. The close now writes
+`NAME.report-move` before every move, the restoration after an audit included; while it
+exists every close refuses before the session is ended, and the session records stay. The audit
+ran when the source path existed again, but an empty directory created there proved no
+restoration and the worktree went: now every non-collision move failure skips the audit.
+`--replace-state FILE` with a regular file named `.myagentkit` made its recovery folder in the
+project root; a folder swapped in that could not go back left `w.session` where `git ls-files
+--others --exclude-standard` listed it, so the recovery folder's parent is checked before
+anything is consumed, and the refusal names FILE. A records folder that allows creation but
+not listing failed every close although an exclusive rename would succeed: a denied listing is
+no reuse evidence and the publication goes on. OWNER DECISION 2026-10-12: a move refused
+before the report left its path (a Windows sharing violation, EACCES or EXDEV from
+`renameat2`, a failed probe link, "no-overwrite guarantee unavailable") leaves no marker. The
+helper exits 3 for it, the close clears the marker for 0, 2 and 3 and keeps the worktree, and
+the next close is not blocked. Review r10 reproduced the alternative: such a refusal left a
+marker whose recovery steps pointed at a `.report-move-*` folder that never existed, so every
+later close needed the marker deleted by hand; on a filesystem the earlier owner decision
+covers, that was every close with a report. The marker stays only when the report really
+entered a `.report-move-*` folder or the helper was killed. A marker that cannot be removed
+after a publication is named stale beside the published path, where the close said the
+publication had failed.
+
+2026-10-12. Review decision, owner accepted 2026-10-12: the `.live` startup protocol. The
+supervisor writes its PID into a private temporary file, locks it, and only
+then renames it to `NAME.live`, so a published record always carries its PID and its lock. A
+waiter reads a dropped lock on such a record as a dead supervisor; an empty or malformed record
+is damaged, never proof of death. A record that could be seen empty and unlocked was read as a
+dead supervisor, ending the lead's wait while the worker ran, and no delay makes that reading
+safe: a startup can pause for any time. On a resume the previous run's record is there, and the
+lead's waiter opens it every 0.1 s; Windows refused the rename over it, the supervisor stopped
+before it wrote any record, and the wait never ended, since the old record predates the run.
+The rename is retried for about two seconds, and a supervisor that fails before it runs the
+worker writes its exit record (Claude review r7, reproduced).
+
+2026-10-12. On Windows a rename over a file fails while any process holds it open, delete
+sharing included (measured on Windows 11), and an open that meets the rename fails too. The
+supervisor and each waiter polled the result every 0.1 s, so the worker's publication failed,
+or the poller did, and the supervisor's error closed the worker with it. A poller opens a result,
+or a new question, only when its id, size or time changed since its last read, and on Windows
+an open refused during a rename reads as no result yet. That check lowers the rate but does not
+end it: the stat itself opens the file for a moment (Claude review r7). Measured with Python
+3.13 on Windows 11, two pollers and publications 0.15 s apart: 3 of 600 failed when every poll
+opened the result; with the check 0 of 600 here and 1 of 600 in the review. Two processes
+calling stat in a loop failed 392 of 3000 renames. The publishing side therefore retries: the
+worker renames with `codex_worker.py --publish`, which retries a refused rename for about two
+seconds, and 0 of 3000 failed under those stat loops (361 needed a retry; Python 3.12: 404 failed
+without the retry, 0 with it). Python 3.10 and 3.11,
+which open a handle on every stat, were not measured. A refusal that lasts, a denied ACL or a
+held lock, is an error after 50 consecutive refusals of one file, about five seconds: reading
+every refusal as a rename made such a wait endless. Review r7 reproduced isolated refusals
+accumulating across cached successful polls: every successful observation now clears that
+path's counter, including a cached return or an absent file. A same-size in-place edit within one
+timestamp tick is read at its next change; in-place edits are not the publishing protocol.
+
+### 2026-10-12 — A wrapper stopped from outside, and the result sidecar (#57)
+
+The wrapper wrote its exit record only when Codex ended on its own. A decision published
+without its blocked result left no record, and a closed Windows Terminal tab or `taskkill /F`
+runs no Python code at all, so the lead's wait never ended. The wrapper now records every
+exit it controls and holds a lock for its whole life. The operating system drops that lock
+however the process ends, so the waiter tells a dead wrapper from a live one without a
+reusable process id.
+
+The default `RESULT-NAME.md` reports to the lead and is not project content. Committing it
+puts a report at the top of main with every merge; leaving it kept every finished worktree
+from the audit. The close moves it beside the worker's records. A waiting decision refuses
+the close, because the session record is the only way to answer it. A close made before the
+lead committed the listed files kept the worktree but took its report away, and a reused name
+replaced the earlier report: the result now goes back to a kept worktree, and an earlier
+report stays beside the new one.
+
+### 2026-10-12 — Launch reservations and mode snapshots (#43, #57)
+
+Checking for a session before launching does not reserve its name or checkout. Concurrent
+launches can pass together and overwrite their sole resume record. A shared reservation now
+covers the checks, launch and session recording; an unrecorded launch retains it for recovery.
+
+OWNER DECISION 2026-10-12: STATE writers use a constrained compare-and-swap under the mode
+switch lock. That decision is the compare-and-swap alone; the points below are how it holds.
+`--replace-state FILE --expect SHA256` publishes prepared contents atomically only when the
+current bytes still match that hash. A refused writer re-reads and redoes its edit. No arbitrary
+command runs through the helper, whose mode command is pre-approved. The earlier
+command-executing `--edit-state` was rejected for that reason. Byte rechecks alone still lost
+independent edits in the reproduced publication and rollback windows. Sharing the lock closes
+both windows, and compare-and-swap refuses a stale retry after the switch or rollback. Both
+regression probes preserve the independent edit after its writer re-reads, retries and succeeds.
+The hash and the bytes come from one read, `--read-state OUT`, which creates an exclusively
+owned per-edit snapshot with OUT as its prefix and prints `SHA256 PATH`; the writer edits the
+returned PATH. Review r7 reproduced a hard-linked OUT truncating a tracked script, and two
+writers erasing each other's drafts through a shared OUT. Creation now uses O_CREAT|O_EXCL
+under a fresh name and never reuses an existing file. Replacement consumes a caller-private
+name, reads its fstat identity, and deletes only that verified object after publication; a
+successor at the supplied name stays. The former unconditional cleanup deleted that successor.
+Claude review r8 reproduced a folder named as FILE: once `--expect` matched, the rename moved
+`.myagentkit`, a subfolder of it or the temporary folder whole into the private name, outside
+the anchored ignore rule, where `git add -A` would commit it. FILE must be a regular file by
+`lstat` before anything moves, and a folder swapped in after that check is renamed back: no
+hard link restores a folder, and the rename can replace only an empty one. OUT naming
+`.myagentkit` itself, or ending in a separator, put the snapshot in the project root, so OUT
+never names a folder and the folder the snapshot is created in must be private too. A draft
+that cannot go back to FILE stays in its private folder, and the helper prints that path.
+A separate `--state-sha` let a writer that read STATE at its session start and hashed
+it later publish its stale copy over an edit made in between (Claude review r7, reproduced).
+The pre-approval let a STATE operation copy any readable file into any project's STATE.md, so
+the operations run only from the project root and read or write a snapshot only in
+`.myagentkit/` or the temporary folder, and the helper deletes the published snapshot: one left
+in the project root would be committed by `git add -A`. The "Working mode:" line is the mode
+switch's, written together with `.claude/mode`: an edit that changed it made the two records
+disagree, so it is refused.
+Resolve the supplied project root once and refuse links only
+below it: refusing every ancestor link refused macOS `/tmp` and a linked home, and both
+records still land together in the one resolved project. On Windows only a name-surrogate
+reparse tag redirects a path; refusing every reparse point refused cloud-file placeholders.
+
+A delayed waiter cannot reconstruct an old file's identity from its updated timestamp.
+Spawn now captures that identity before launch and passes it to both supervisor and waiter.
+The printed resume command also quotes the model, matching the actual launch's quoting.
+A file id alone can name a new file on ext4, which reuses a freed inode number at once.
+Pairing it with `st_ctime_ns` would count every in-place edit as a publication on POSIX,
+where a write changes the ctime, and Linux's `os.stat` has no birth time. The supervisor and
+the waiter hold the stale result open instead: an inode held open is never freed, so its
+number is never reused. NTFS ids carry a sequence number, and a held handle would block the
+publishing rename there. After PROGRESS or HANDOFF the wait prints its follow-up with that
+result's content hash as `--stale` and the same `--since`: the `.live` and `.exit` records are
+read by the run's start, so a later `--since` would hide a killed supervisor. Nothing holds the
+reported result open between the two waits, so a file id cannot name it: the next result can
+be given its freed inode number. Review decision, owner accepted 2026-10-12: the hash alone
+decides. Other contents are a new publication, renamed in or rewritten in place, and the same
+bytes published again tell the lead nothing new. A follow-up printed earlier in the `INO:HASH`
+form is compared by its hash, so it does not report the same result twice.
+An unrecorded launch names its worker inside the reservation, so the printed `--resume` of
+that name, which records the launch, takes the reservation over instead of being refused.
+
+Default POSIX termination skips Python cleanup and leaves a separate worker group running.
+SIGTERM and SIGHUP now unwind cleanup, including cancellation during child creation.
+Regressions reproduce each failure; live POSIX cancellation still requires a POSIX host.
+
 ### 2026-10-11 — Supervision errors can lose a launched review's accounting (#39)
 
 An operating-system error after reviewer launch escaped both adapters without evidence or
@@ -71,6 +258,15 @@ become two groups with one printed label, so a missing, null or empty model, cal
 is normalised to the reserved label `unknown` before printing and grouping, and equal printed labels
 always mean one group (2026-10-12).
 
+### 2026-10-11 — Claude-only keeps cross review between tiers (#57)
+
+The owner chose `claude-only` for a subscription with only Claude: the author and reviewer
+are different Claude tiers in fresh bridged sessions with no shared context. Same-tier fresh
+sessions were considered and rejected because they keep the same tier's blind spots;
+dropping cross review was rejected because independent acceptance must remain. The tier
+table chooses the author and reviewer by the work. Source: Model Routing Playbook, checked
+2026-10-05. This is the owner's 2026-10-11 decision, not a new research check by this worker.
+
 ### 2026-10-10 — REVIEW_ALLOW_EOL_ONLY stays
 
 Decision: after two review rounds asked about it, the owner decided that
@@ -94,6 +290,7 @@ parts, including fixes, with the owner's low-allowance exception.
 The review-limit change left the suite minimum stale and its direct-entry guards untested.
 Codex-only dispatch also rejected an unused Claude turn setting, and fallback guidance
 still estimated one hour for two attempts whose defaults now total two hours.
+
 ### 2026-10-10 — A live review copy can have an old timestamp (#39)
 
 Archive extraction can restore an old directory timestamp while the reviewer is still
@@ -118,6 +315,51 @@ through the alternative-selection path doubled the wait, and repeated PATH entri
 more waits. Several distinct hung CLIs still cost 60 seconds each, so all probes share one
 budget. Launch failures and timeouts need different remedies from missing CLI flags.
 
+### 2026-10-10 — Mode records and stopped-session sidecars (#43, #57)
+
+- A prose-only mode switch cannot prove that two state records stay together. The shared
+  working_mode.py helper preserves the rest of STATE.md, writes both records, detects drift,
+  and is tested against disposable project documents, including linked-path refusal. Doctor
+  requires that helper too; its exact package-list check distinguishes command helpers from
+  review imports without allowing missing or unexpected packaged modules.
+- A session record under Git metadata fails precisely where a worktree worker cannot write
+  Git. A result-side record also blocks the cleanup audit and name reuse. The spawning shell
+  owns the record in its checkout's ignored `.myagentkit/workers/` folder, outside the worker,
+  and a successful close removes it. Publish questions and results atomically with an end
+  marker after jobs stop, then give the turn a grace period to flush before closing its tree.
+  This reduces mid-turn interruption; a live paid-session resume probe is still needed to
+  confirm rollout continuity on each host. A fresh replacement is refused.
+  The handoff template must say the same: requiring a question commit first prevents a
+  sandbox-blocked worker from asking at all, and publishing before independent work risks
+  the wrapper terminating unfinished jobs.
+- Saver modes deliberately put fixes on the side with available allowance. Their exception
+  changes fix authorship, while independent acceptance and the fresh final review remain.
+  Rule 7 settles codex-saver: Claude leads and does the work; Codex only reviews. The
+  accidental Codex-lead wording was reverted, not promoted to a new product decision.
+  The shared saver paragraph must agree too: Claude leads in both saver modes.
+- The owner's live probe on 2026-10-10 used codex-cli 0.162 on native Windows:
+  `codex exec -s workspace-write --add-dir <main .git> --add-dir <.git/worktrees/NAME>`.
+  Adding both Git directories did not lift the sandbox's read-only Git policy: `git add`
+  failed with `Unable to create '.../.git/worktrees/probe43/index.lock': Permission denied`.
+  This is owner-supplied probe evidence, not a new probe run by this worker. The owner
+  decided the lead commits Codex worker work after the normal cross-review, with the usual
+  commit gate. Remove the ineffective roots, and make the brief and result name the exact
+  uncommitted files so the lead can stage a reviewable handoff without a sandbox bypass.
+- The owner confirmed codex-first: the Claude Opus lead plans, briefs, routes and reviews,
+  and Codex writes implementation and fixes, including Claude's review findings. Only work
+  the lead judges too heavy or too important goes to an Opus worker, reviewed by Codex.
+  This quality/cost routing is distinct from codex-saver's low Codex allowance.
+- An npm CLI shim is not its native child, and a shared Codex server cannot belong to one
+  worker's lifetime. Use --no-daemon and close the worker's Windows job or POSIX process
+  group, including descendants, after publication and the grace period. Suspended Windows
+  creation closes the assignment window; POSIX SIGKILL must target the group even after its
+  leader exits. An uncommitted result needs a separate background wait notification because
+  the committed-result watcher cannot observe it. Its timestamp excludes a previous task.
+- Mode-line discovery must count all Working mode lines before interpreting values. Case
+  and Turkish dotted I normalization prevent false defaults and duplicate records. Atomic
+  replacement must retain the original permissions, and UTF-8 stdout prevents a Windows
+  pipe error from reporting failure after both records have already switched.
+
 ### 2026-10-09 — The Claude reviewer's Bash could write the repository (#39)
 
 The bridged reviewers execute in a throwaway copy, but only Codex had an operating-system
@@ -139,6 +381,28 @@ launch (cmd.exe would read its quoted JSON arguments as shell), and an older win
 `claude.exe` lacked `--restricted`. Both failed every review with an error that looked like
 a broken adapter; doctor now asks `--help` of the claude the review would launch for every
 flag the adapter passes (`--max-turns` is accepted but hidden from `--help`).
+
+### 2026-10-09 — Working modes, Codex workers and answering a stopped worker (#43, #57)
+
+The owner explained the same routing situation in a long prompt at the start of every
+session, and a lead that was not told routed by habit: one Opus lead routed no
+implementation to Codex and spent five Opus sessions on review rounds. Six named modes now
+ship in `docs/WORKFLOW.md`, each with a Lessons list that projects feed back, so a mode gets
+cheaper with use instead of being re-explained.
+
+A Codex worker that stopped at a design question had no channel back from the lead. The lead
+ended it and started a fresh session, which read the whole context again. `spawn_codex.sh`
+records the session id at spawn time and resumes that session with the answer.
+
+The initial issue #43 investigation used `codex sandbox` (no model call) and reproduced
+the failure on Codex 0.162 on native Windows: inside a linked worktree, every write into the
+worktree's git directory is denied (`index.lock: Permission denied`). Neither `--add-dir` of
+the repository's `.git`, nor `sandbox_workspace_write.writable_roots` naming the worktree's
+own git directory, nor a custom permission profile lifts it. A project's Codex worker started
+with `--add-dir .git` hit the same denial on 2026-10-09. The 2026-10-10 owner probe and
+decision above settle the kit's rule: the lead commits Codex worker work. The gate's lock
+lives in Git metadata, so a protected worker records that it cannot run that gate there.
+Linux and macOS sandbox behavior was not probed.
 
 ### 2026-10-09 — Acceptance and context-hook edge cases (#42, #65, #66, #69, #70)
 

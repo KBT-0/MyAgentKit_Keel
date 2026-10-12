@@ -26,7 +26,8 @@ use the seven-part structure below rather than inventing a format:
    to make an unclear part fit. An unanswered question comes back as a question, not as a
    guess buried in the diff. A spawned session has nobody to ask in its pane: it writes the
    question into its result file, with `Kind: blocked` if the work cannot continue, and
-   commits the file. It then goes on with what does not depend on the answer.
+   commits the file. It then goes on with what does not depend on the answer. The answer
+   comes into that same session, never a fresh one (`docs/WORKFLOW.md`, "Worker cost").
 
 Verify every path and member name with grep or a read before writing it down. A path from
 memory sends the implementer to the wrong place and the diff comes back there.

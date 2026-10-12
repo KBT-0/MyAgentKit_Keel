@@ -25,6 +25,12 @@ __pycache__/
 # Working copies created by agent tools: full checkouts, never repository content.
 # Add your tools' own scratch directories here; an overlay may bring more.
 .claude/worktrees/
+/.claude/mode.lock
+# A Codex worker's decision files (spawn_codex.sh): QUESTION-NAME.md, or FILE.question.md
+# beside a --result FILE. Result reports stay visible for the lead's review; close_worker.sh
+# moves the default RESULT-NAME.md under .myagentkit/workers/, beside the worker's records.
+/QUESTION-*.md
+*.md.question.md
 /.myagentkit/
 # Raw review evidence holds the whole diff and the reviewing CLI's own output. It stays
 # local; publish a deliberately scrubbed `-summary.md` instead (re-included at the bottom).

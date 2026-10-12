@@ -101,6 +101,12 @@ label starts at round 1.
 A round may review the whole cumulative diff (`--base`) for context, but its verdict counts
 only for parts the reviewing model did not write (`docs/REVIEW_GATE.md`, "What counts as a risky diff").
 The reviewing model fixes its own findings; only the other model's next round accepts that fix.
+In codex-first, the Claude Opus lead only leads and reviews: Codex writes all implementation
+and fixes, including Claude's findings. Only work the lead judges too heavy or too important
+goes to an Opus worker, and Codex reviews that work and its fixes.
+The owner's named saver mode (`docs/WORKFLOW.md`, "Working modes, by name") routes fixes
+to the side with available allowance instead. The low side reviews those fixes; the same
+independent stopping rule and fresh NEW-label final review still apply.
 
 **The final Accept requires one fresh NEW-label final review per model once both models have written parts of the change.**
 Each reviews the parts it did not write. The change closes when both return without a High or Medium finding;

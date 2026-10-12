@@ -63,6 +63,14 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   an older adapter still sweeps by age alone and can remove a new adapter's live copy.
   While no review is running, delete leftover `myagentkit-review-*` and `myagentkit-codex-*`
   temporary folders that have no `.lock` sibling; these unmarked legacy copies are kept.
+- **A Codex copy failure says why** (`codex_bridge.py`): a review whose copy could not be
+  made keeps the adapter's reason in its evidence (`## Failure`, `Codex never ran:` and the
+  tail of the error), as Claude's evidence already did; the wrapper once printed
+  `copy_failed` and no reason. **ACTION:** copy the core scripts.
+- **One lock seam for the scratch copy** (`agent_process.lock_file()`): the copy's lifetime
+  lock (Windows' one-byte range lock, `flock` elsewhere) moved out of `claude_bridge.py` into
+  `agent_process.py`, beside the other process seams the review self-test stubs.
+  **ACTION:** copy the core scripts.
 - **doctor finds a claude CLI the review cannot use** (`scripts/doctor.sh`): one too old for
   a flag the review passes (the winget claude 2.1.218 lacked `--restricted`), or npm's
   `claude.cmd` on native Windows, or a CLI whose help probe cannot launch or times out,
@@ -113,6 +121,159 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   **ACTION:** reconcile `$KIT/core/docs/REVIEW_RUNNING.md` into `docs/REVIEW_RUNNING.md`,
   `$KIT/core/docs/REVIEW_GATE.md` into `docs/REVIEW_GATE.md`, and `$KIT/core/AGENTS.md`
   into `AGENTS.md`; copy `$KIT/core/scripts/claude_bridge.py` to `scripts/claude_bridge.py`.
+- **Refused moves leave no marker** (owner decision): a report move refused before the report left its path (a Windows sharing violation, EACCES or EXDEV from `renameat2`, a failed probe link, "no-overwrite guarantee unavailable") exits 3 and clears `NAME.report-move`; the close keeps the worktree without the audit, and the next close runs normally. **ACTION:** sync `close_worker.sh` from the Claude Code overlay.
+- **Stale markers are named**: when `NAME.report-move` cannot be removed after a publication, the close prints the published path and says only the marker is stale, instead of reporting a failed publication.
+- **Clearer marker refusals**: the refusal says the session is not ended and prints the recorded source and target on lines of their own; the header lists a marker among the reasons a dry run exits 1.
+- **STATE refusals name FILE**: `--replace-state FILE` whose own folder is not private names FILE and says its folder must be inside `.myagentkit/` or the temporary folder. **ACTION:** sync `scripts/working_mode.py`.
+- **Unfinished report moves survive retries**: `NAME.report-move` records each move before consumption and, once the report left its path, blocks later closes, keeping the worktree and session records until the lead recovers the report and removes the marker. **ACTION:** sync `close_worker.sh` from the Claude Code overlay.
+- **Failed moves skip the audit**: every non-collision report-move failure keeps the worktree, even when a successor occupies the source path; a collision whose restoration failed also stops the close.
+- **Private STATE recovery parents**: `--replace-state FILE` checks the recovery folder's parent before consumption, so failed folder restoration cannot expose private contents to Git. **ACTION:** sync `scripts/working_mode.py`.
+- **Archives without listing permission**: a denied archive scan supplies no reuse evidence; exclusive publication still proceeds without replacing an existing archive.
+- **Exclusive STATE snapshots**: `--read-state OUT` creates with O_CREAT|O_EXCL; an existing hard link is never truncated. **ACTION:** sync `scripts/working_mode.py`.
+- **A snapshot per edit**: `--read-state OUT` treats OUT as a prefix and prints `SHA256 PATH`; writers edit and replace their own returned PATH. **ACTION:** update the STATE protocol from `core/AGENTS.md` and `core/docs/WORKFLOW.md`.
+- **Verified snapshot cleanup**: replacement consumes a private name and deletes only the published fstat identity, preserving a successor draft at the supplied path.
+- **A folder is never a STATE file**: `--replace-state FILE` refuses a FILE that `lstat` does not show as a regular file before anything moves, and renames back a folder swapped in after that check; `.myagentkit`, a subfolder of it or the temporary folder named as FILE was moved whole into a private name. **ACTION:** sync `scripts/working_mode.py`.
+- **A folder is never a snapshot prefix**: `--read-state OUT` refuses an OUT that is an existing folder or ends in a separator, and creates the snapshot only in a private folder; `--read-state .myagentkit/` put a committable copy of STATE.md in the project root.
+- **Kept drafts are named**: a STATE draft that cannot go back to FILE stays in its private folder, and `working_mode.py` prints that path on stderr with its control bytes as `?`.
+- **Private archive sources**: the hard-link fallback first moves the report into a caller-private name, preserving a newer publication at the source path. **ACTION:** sync `close_worker.sh` from the Claude Code overlay.
+- **Archive refusal without safe publication**: when exclusive rename and hard links are unavailable, the helper refuses with "no-overwrite guarantee unavailable" instead of replacing an empty claim; the report and the worktree stay (owner decision, accepted trade).
+- **Interrupted archive retries**: an existing archive of the same object is reused before another number is claimed; restoration uses the returned archive path. A byte-identical report from another run gets its own number (owner decision: separate runs never share an archive).
+- **Archive reuse on native Windows**: archive names are compared within the records folder, so the same-object reuse also works with the `C:/` paths Git Bash passes.
+- **Unreadable archives**: an earlier archive that vanishes or cannot be examined is not taken for this report and no longer fails the close.
+- **Kept reports are named**: a report the archive move consumed and could not publish or put back stays in its `.report-move-*` folder, and the helper prints that path on stderr with its control bytes as `?`.
+- **No audit without the report**: when the move fails after the report left the worktree, `close_worker.sh` keeps the worktree without running the audit and says where to recover the report.
+- **Consecutive polling refusals**: every successful observation, cached results included, resets that path's refusal count. **ACTION:** sync `codex_worker.py` from the Claude Code overlay.
+- **Working modes, by name** (issue #57; `docs/WORKFLOW.md`, "Model routing"): the kit ships
+  the tier table and seven modes, claude-first, cross-performance (the main mode),
+  cross-saving, codex-first, claude-saver, codex-saver and claude-only, each with who writes, reviews and
+  fixes, worker caps, effort, when it ends and a Lessons list. The `{{MODEL_ROUTING}}`
+  placeholder is gone, and `docs/STATE.md` carries a "Working mode:" line.
+  `/myagentkit:mode` (and the Codex skill `myagentkit-mode`) uses the shared
+  `scripts/working_mode.py` to show or switch the mode, recording `.claude/mode` and the
+  STATE line under a shared `.claude/mode.lock`, refusing overlapping switches. Interrupted
+  switches report disagreement on reads and name the repair: choose a mode explicitly.
+  A STATE edit detected before replacement refuses the switch; rollback preserves later
+  independent edits. Session edits of STATE are a compare-and-swap under the same lock that
+  refuses a stale edit instead of losing a concurrent one (owner decision, `RESEARCH_LOG.md`):
+  `--read-state OUT` creates a per-edit snapshot using OUT as a prefix and prints `SHA256 PATH`
+  from one read; the writer edits PATH, and `--replace-state FILE --expect SHA256` publishes
+  it and deletes the verified object. No command
+  prints a hash apart from its bytes, which let a copy read earlier pass. The snapshot lives in
+  `.myagentkit/` or the temporary folder outside the project, the STATE operations run only from
+  the project root, and an edit that changes the "Working mode:" line is refused. Links
+  below the project root, Windows junctions on Python 3.10/3.11 included, are refused before lock
+  creation. The supplied root is resolved once, so macOS
+  `/tmp` or a linked home names a project as usual; on Windows only a name-surrogate reparse
+  point (a junction or symlink) is a link, a cloud-file placeholder is not.
+  Handwritten names and Turkish
+  labels are matched without case (including capital Turkish dotted I); a list-item or
+  indented line is read and switched in place, and an unknown value, a second line or any
+  other line naming "Working mode:" is refused before writes. The command's allowed tools
+  are only `python`, `python3` and `py -3` running `scripts/working_mode.py`. Switches preserve STATE permissions and print UTF-8
+  rules even through a Windows cp1252 pipe. Doctor names the mode command when its helper is
+  missing. Saver modes route fixes to the
+  side with allowance while preserving independent acceptance and the fresh final review.
+  Codex-first now follows the owner's confirmed definition: the Claude Opus lead only
+  plans, briefs, routes and reviews; Codex implements and fixes all findings. Only work the
+  lead judges too heavy or too important goes to an Opus worker, reviewed by Codex; that
+  Opus worker fixes Codex's findings on it, so no model reviews its own fix.
+  Codex-saver remains the separate low-Codex-allowance mode: Claude leads and does the work;
+  no Codex worker, Codex reviews only. The shared saver rules keep Claude as lead in both
+  saver modes.
+  **ACTION:** copy the "Model routing" section and "Working modes, by name" from the kit's
+  `core/docs/WORKFLOW.md` into yours over your own routing text, keeping your model names,
+  and add the "Working mode:" line to `docs/STATE.md`. Sync the core scripts to install
+  `scripts/working_mode.py` and the updated doctor check; copy the `/.claude/mode.lock`
+  ignore rule from `core/.gitignore`.
+- **`claude-only` (Sadece Claude Modu), a seventh working mode** (owner's decision of
+  2026-10-11; `docs/WORKFLOW.md`, "Working modes, by name"): for a subscription with only
+  Claude. Claude workers write; a different Claude tier reviews in a fresh bridged session
+  with no shared context (Opus authors and Fable or Sonnet reviews, or the reverse, picked by
+  the tier table), and the reviewing tier fixes its findings. Cross review stays mandatory,
+  and the escalation and closure rules are those of every mode. The second reviewer is
+  `scripts/review.sh --reviewer claude` with `REVIEW_CLAUDE_MODEL` set for the run to the
+  tier that did not write the change: the existing per-reviewer Claude pin, so
+  `review_dispatch.py` is unchanged. Codex-saver stays a separate mode, in which Codex still
+  reviews. `scripts/working_mode.py` now requires all seven modes in `docs/WORKFLOW.md`.
+  **ACTION:** copy the `claude-only` table row and subsection from the kit's
+  `core/docs/WORKFLOW.md` into yours, and sync `scripts/working_mode.py` with it: for a
+  WORKFLOW.md whose table is exactly the six earlier modes the helper prints this ACTION,
+  switches nothing, and exits 1 when a switch was asked for.
+  **ACTION:** a project on claude-only sets `DEFAULT_REVIEWER="claude"` in
+  `scripts/review.sh`, leaves `CODEX_MODEL` empty, and passes `REVIEW_CLAUDE_MODEL=<the
+  reviewing tier>` on every review run.
+- **A stopped worker is answered in its own session** (issue #57; `docs/WORKFLOW.md`,
+  "Worker cost"; `docs/HANDOFF.md`, rule 7): never by a fresh session. The handoff names
+  the sidecars and publishes the blocked result atomically with the ready end marker before
+  publishing the question the same way after independent work, without requiring a commit.
+  A ten-second grace period lets the turn flush.
+- **`scripts/spawn_codex.sh`** (issues #57 and #43; Claude Code overlay): an interactive Codex
+  worker in a Windows Terminal tab on native Windows and in tmux elsewhere, with the
+  workspace-write sandbox and no approval prompts. The lead commits all Codex worker work
+  after the normal cross-review, with the usual commit gate; the brief and result identify
+  exact uncommitted files. Git-directory writable roots are removed: the owner's native
+  Windows codex-cli 0.162 probe proved `git add` still fails on `index.lock` with both roots.
+  The spawning checkout records `.myagentkit/workers/NAME.session`, outside the worker,
+  under a shared `.myagentkit/workers/spawn.lock` reservation from the initial checks through
+  session recording, refusing concurrent launches. An unrecorded launch keeps its reservation,
+  with its worker's name inside, until the printed `--resume SESSION_ID` of that name records
+  the launch and takes it over, or the lead confirms the launch ended and runs
+  `rm -r .myagentkit/workers/spawn.lock`; printed resume commands quote the model argument.
+  The lead resumes it with `--resume`; successful `close_worker.sh NAME` removes the records,
+  allowing cleanup and name reuse. The close refuses while the worker's decision file (its path
+  recorded in `NAME.question`) waits for its answer; a resume removes the answered file once
+  the resumed session publishes a new result or exits cleanly, never on elapsed time. It moves
+  an uncommitted default `RESULT-NAME.md`, which the lead never commits, to `.myagentkit/workers/NAME.result.md`, so
+  the audit can remove the finished worktree. An earlier report there is kept (the new one
+  takes the number above the highest, `NAME.result-2.md` and on), never replaced, also on a
+  filesystem without an exclusive rename (WSL `/mnt/c`, NFS, FUSE, SMB), and a worktree the audit
+  keeps gets its result back.
+  Workers publish decisions to `QUESTION-NAME.md`;
+  `codex_worker.py` waits for the end marker and grace period before ending their process
+  tree, and a fresh replacement is refused. Only a decision or a newly published
+  `Kind: completed` result closes the worker; a progress, handoff or blocked result, or an
+  in-place edit of an older result, leaves it running. The wrapper writes
+  `.myagentkit/workers/NAME.exit` on every way out it controls, a decision without a blocked
+  result included, and holds `NAME.live` locked while it runs, so `--wait` reports EXITED for
+  a worker that stops without publishing, even when the wrapper is killed or its tab closed.
+  A spawn whose session never shows still prints the wait command and the resume form. On native
+  Windows `close_worker.sh` refuses while a Codex session runs in the worker's folder, and a
+  kept worktree keeps its session record. Its printed
+  `--wait FILE --since START --stale FILE_ID --exit RECORD` command notifies the lead of an
+  uncommitted handoff as a background command. It uses the result identity captured before
+  launch, so a delayed wait still excludes an in-place edit of an old result. On POSIX the
+  supervisor and the waiter hold that result open, so a new result cannot be given its freed
+  inode number. After PROGRESS or HANDOFF the wait prints its exact follow-up command, which
+  waits for the worker's next result: other contents than the reported result's, by rename or
+  by in-place rewrite; a byte-identical republication does not count. A follow-up printed with
+  the earlier `INO:HASH` form compares its hash. A poll opens the result, and a new question,
+  only after its id, size or time changed; the answered question is opened only to consume it.
+  On Windows a poll's stat still holds the file for a moment and refuses a rename over it, so the
+  worker publishes with `codex_worker.py --publish TEMPORARY_FILE DESTINATION`, which retries a
+  refused rename for about two seconds. An open that meets a rename is read again at the next
+  poll; 50 consecutive refusals of one file, about five seconds, are an error, not an endless
+  wait. A resumed supervisor retries the rename of its live record while a waiter probes the
+  previous run's, and a supervisor that fails to start writes its exit record, so the wait ends.
+  Windows children join their job before running; POSIX escalation kills the entire group.
+  POSIX SIGTERM and SIGHUP unwind supervisor cleanup and reap the worker's process group.
+  The worker's instruction tells it to run the checks named on its brief's
+  `Route: ... · Risk: ... · Checks: ...` line. The tab preserves quick startup errors behind an
+  Enter prompt, and launches Git Bash by its full Windows path. `--no-daemon` keeps each
+  runtime private. The default result is at the repository top; the brief uses the spawn-time
+  path. `--result FILE` requires a `.md`
+  file inside the worker's folder; its path and parent directory are validated before a
+  worktree or branch is created, so a rejected path leaves the name available for retry.
+  Ignore patterns keep project `docs/QUESTION-*.md` visible.
+  **ACTION:** adopt the lead-owned commit rule from `core/docs/WORKFLOW.md` and copy
+  `overlays/claude-code/files/scripts/spawn_codex.sh` and `codex_worker.py` into `scripts/` (`chmod +x`,
+  `git add --chmod=+x`); a sync keeps them updated from then on. Copy `close_worker.sh` too
+  and the worker-sidecar ignore rules from `core/.gitignore` into your project ignore file.
+  Update Codex briefs with the atomic publication protocol and run spawn's printed wait
+  command in the background.
+  **ACTION:** a Codex worker started by the first v0.11 `spawn_codex.sh` (2026-10-09)
+  recorded its session id in the git directory: `.git/codex-session-NAME`, or
+  `.git/worktrees/NAME/codex-session-NAME` for a worktree worker. The new script does not
+  read it: resume such a worker with `--resume <that id>`, then delete the file.
 - **A review no longer dies on the kit's own limits** (`agent_process.py`, the adapters,
   `review.sh`): a review attempt now gets 3600 seconds (maximum 7200) and a Claude review
   200 turns (maximum 500); three high-effort reviews had died on 1800 seconds and 12 turns.

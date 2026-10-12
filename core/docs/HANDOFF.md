@@ -52,9 +52,11 @@ Name the model and effort from `docs/WORKFLOW.md`, "Model routing", alongside th
    "Not run / not verified" and "Noticed, not fixed" are always present, outside the cap.
 7. **If ambiguous: STOP and ask.** Do not assume, do not invent scope, do not widen the task
    to make an unclear part fit. An unanswered question comes back as a question, not as a
-   guess buried in the diff. A spawned session has nobody to ask in its pane: it writes the
-   question into its result file, with `Kind: blocked` if the work cannot continue, and
-   commits the file. It then goes on with what does not depend on the answer.
+   guess buried in the diff. A spawned session has nobody to ask in its pane: it finishes
+   independent work and stops its running jobs before publishing the question. It writes
+   `Kind: blocked` and QUESTIONS into its result file, then publishes the question to the
+   known sidecar and exits its separate session. A peer ends its turn and accepts SendMessage.
+   The answer comes into that same session, never a fresh one (`docs/WORKFLOW.md`, "Worker cost").
 
 End the prompt with: updating `docs/STATE.md` at session end is the implementer's job. When
 the task belongs to an operation with its own file, `docs/<OPERATION>.md`, the detail and
@@ -64,14 +66,49 @@ it — no separate note and no fold step. A project that folded every worker's n
 finishes it carries `Done: <id>` and its line leaves `docs/STATE.md` in that same commit
 (`docs/WORKFLOW.md`, "Task ids").
 
-A brief for a separate worker session (`scripts/spawn_worker.sh` in the Claude Code overlay)
-also ends with the path of its result FILE and these lines: "Commit the result file and
-leave the tree clean; the watcher reads it only then; a question written there reaches the
-owner only after that commit. The lead reuses or closes this session after reading a
-`Kind: completed` result file (`scripts/close_worker.sh NAME`); write the file last and stop."
-The session does not end by itself when the task is done, and its idle notice also fires
-whenever it parks on a background job, so a committed `Kind: completed` result file is the
-only end signal. A file of any other kind reports a worker that is still working or waiting.
+A brief for a separate worker session (`scripts/spawn_worker.sh` or `scripts/spawn_codex.sh`
+in the Claude Code overlay) names its result FILE and its question and session sidecars.
+For Codex the brief must use the spawn-time result path: `RESULT-NAME.md` at the worker's
+repository top by default, or `--result FILE` (a `.md` file inside the worker's folder).
+Its question is `QUESTION-NAME.md`, or `FILE.question.md` for a custom result. The spawning
+checkout records `.myagentkit/workers/NAME.session` and the question's path in `NAME.question`,
+outside the worker's folder; successful `close_worker.sh NAME` removes those records so the
+name can be reused, and refuses while the question waits for its answer. The default result
+reports on the work and is never committed: the close moves it to
+`.myagentkit/workers/NAME.result.md` once the lead has committed the files it lists. A custom
+result is a project file, such as an operation file, that the lead commits with the work.
+Pass the custom result again on resume. The brief says to publish the question last, after
+independent work and jobs finish. Publish questions and finished results atomically: write a
+temporary file beside the destination, end with `<!-- codex-worker: ready -->`, then rename it
+into place with `codex_worker.py --publish TEMPORARY_FILE DESTINATION`, as spawn's instruction
+names it: Windows refuses a rename over a file a poll holds open, and it retries for a moment.
+Publish the blocked result with this same protocol before publishing the question.
+End the turn immediately; the wrapper allows ten seconds to flush (overridden by
+`KIT_WORKER_GRACE`) before closing the worker's process tree. A question reaches the lead
+through its sidecar without a commit, and the recorded session is resumed with the answer.
+For Claude the lead uses SendMessage or records the separate session's id for `claude --resume`.
+For Codex, the brief says to leave all work uncommitted and ready for the lead; the result
+lists the exact changed and added files. The lead reads that uncommitted result and reviews
+the diff through the normal cross-review, then commits in the worker's worktree with the
+usual commit gate. A Claude worker commits its result and leaves the tree clean when the
+brief and host permit it; otherwise it leaves the files for the lead.
+For Codex the lead runs the `codex_worker.py --wait FILE --since START --stale FILE_ID --exit RECORD` command
+printed by spawn as a background command; it reports DONE for a published uncommitted
+`Kind: completed` result from this run. A previous task's result cannot signal the new run,
+and neither can an in-place edit of it: spawn captures FILE_ID before launch, and a new result
+is published by the rename. Other result
+kinds report BLOCKED, HANDOFF or PROGRESS, and leave the worker running: only a decision or a
+completed result closes it. After PROGRESS or HANDOFF, `--wait` also prints its exact follow-up
+command: the same wait with `--stale` set to the reported result's content hash, and
+`--since` still the run's start. It counts a publication as new when its content hash differs
+from the reported one, by rename or by in-place rewrite; a byte-identical republication is
+suppressed. The lead runs it as the next background command,
+since spawn's command would return the same result at once. A worker that stops without publishing a result reports EXITED,
+from the `.myagentkit/workers/NAME.exit` record the wrapper writes on every way out, a decision
+without a blocked result included, or from its `NAME.live` lock once the wrapper itself was
+killed. For Claude the committed `Kind: completed` result is
+the watcher's done signal (`scripts/close_worker.sh NAME`).
+An idle notice or a question sidecar reports a waiting worker, never completion.
 
 The result file starts with four lines, exact keys, in this order:
 
@@ -90,7 +127,8 @@ fixed" follow as always.
 - Only `Kind: completed` is done. `blocked`, `handoff` and `progress` are not done, and an
   idle notice is a hint, never the done signal.
 - A worker that notices a compaction of its context writes `Kind: handoff` at once, with a
-  handoff section in the shape of this file, and commits it.
+  handoff section in the shape of this file. A Codex worker leaves it uncommitted for the
+  lead; a Claude worker commits it when its brief permits.
 - `Task:` and `Attempt:` name the work the file reports on, so a result left by an earlier
   task of a reused session is never taken for the current one.
 

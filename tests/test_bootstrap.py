@@ -214,6 +214,10 @@ class BootstrapTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertEqual(self._hooks_path(project), '.githooks')
             self.assertTrue((project / 'docs/kit/.kit-version').is_file())
+            for name, source in (('spawn_codex.sh', 'overlays/claude-code/files/scripts'),
+                                 ('codex_worker.py', 'overlays/claude-code/files/scripts'),
+                                 ('working_mode.py', 'core/scripts')):
+                self.assertEqual((project / 'scripts' / name).read_bytes(), (root / source / name).read_bytes())
             indexed = subprocess.check_output(['git', 'ls-files', '.claude'], cwd=project)
             self.assertEqual(indexed, b'')
 

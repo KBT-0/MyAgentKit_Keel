@@ -72,9 +72,11 @@ Claude reviews of v0.11 on 2026-10-09, which cover the current source.
 - Live Bash write and network containment on native Linux and macOS: NOT RUN. The
   2026-10-10 probe covered WSL2 Debian and a sibling standing in for the repository.
 - A live sandboxed Bash write to the real repository by absolute path: NOT RUN.
-- `core/scripts/test_claude_bridge.py` and the POSIX-only parts of `tests/test_doctor.py`
-  (the Linux `bubblewrap` and `socat` check, the old CLI earlier on PATH than a newer one):
-  POSIX hosts only; CI's Linux and macOS jobs run them.
+- The POSIX-only parts of `tests/test_doctor.py` (the Linux `bubblewrap` and `socat` check,
+  the old CLI earlier on PATH than a newer one) and the cases `core/scripts/test_claude_bridge.py`
+  declares POSIX-only: POSIX hosts only; CI's Linux and macOS jobs run them. The rest of the
+  review self-test runs on native Windows too, against its own minimums there
+  (`WINDOWS_SUITE_MINIMUMS`).
 
 Decision — 2026-10-11: the owner approved that the reviewing model fixes its own findings,
 and a verdict counts only for parts it did not write. Once both models have written parts,

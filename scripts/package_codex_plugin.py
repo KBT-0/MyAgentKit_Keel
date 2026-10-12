@@ -12,7 +12,7 @@ def main():
     parser.add_argument("--check", action="store_true")
     args = parser.parse_args()
     for name in ["claude_bridge.py", "codex_bridge.py", "review_dispatch.py",
-                 "codex_quota.py", "agent_process.py", "agent_usage.py"]:
+                 "codex_quota.py", "agent_process.py", "agent_usage.py", "working_mode.py"]:
         source = ROOT / "core/scripts" / name
         target = ROOT / "plugins/myagentkit/scripts" / name
         if args.check:

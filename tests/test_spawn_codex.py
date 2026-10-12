@@ -1,0 +1,764 @@
+"""spawn_codex.sh leaves sandboxed work uncommitted for the lead, records its session id,
+and answers a stopped worker in that same session.
+
+No live `codex`, tmux or terminal: each is a stub on PATH. The codex stub writes a session the
+way Codex 0.162 does ($CODEX_HOME/sessions/YYYY/MM/DD/rollout-*.jsonl, a `session_meta` first
+line), and the terminal stub runs the tab's script as Windows Terminal would.
+"""
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import time
+import unittest
+from concurrent.futures import ThreadPoolExecutor
+
+from test_spawn_worker import WT_TAB, shq
+
+ROOT = Path(__file__).resolve().parents[1]
+SCRIPT = ROOT / 'overlays/claude-code/files/scripts/spawn_codex.sh'
+WINDOWS = os.name == 'nt'
+INSTRUCTION = ("Read %s and follow it. The brief carries its Route: quick|build|deep · Risk: low|medium|high "
+               "· Checks: ... line; run the checks it names. Write your result to %s. Leave all work uncommitted and ready for the lead; "
+               "list the exact changed and added files in the result. The lead reviews the diff through the normal "
+               "cross-review, then commits with the usual commit gate. Publish a finished result atomically: write a "
+               "temporary file beside it, end with <!-- codex-worker: ready -->, then rename it to the result path "
+               "with %s --publish TEMPORARY_FILE DESTINATION, which retries a rename Windows refuses while a poll "
+               "reads the file. "
+               "If a decision is needed, finish independent work "
+               "and stop all jobs first, then write Kind: blocked and QUESTIONS in the result; "
+               "publish the blocked result atomically using the same temporary-file, end-marker and rename protocol "
+               "before publishing the question atomically to %s using that protocol too. "
+               "End your turn immediately after publishing; the wrapper allows 10 seconds to flush before closing "
+               "this worker. The lead answers by resuming this same session.")
+
+CODEX = r'''#!/usr/bin/env python3
+import json, os, sys
+state, args = os.environ['SPAWN_STATE'], sys.argv[1:]
+with open(os.path.join(state, 'codex.log'), 'a') as log:
+    log.write(json.dumps({'argv': args, 'cwd': os.getcwd()}) + '\n')
+if args[0] != 'resume' and 'CODEX_SILENT' not in os.environ:
+    folder = os.path.join(os.environ['CODEX_HOME'], 'sessions', '2026', '10', '09')
+    os.makedirs(folder, exist_ok=True)
+    sid = 'sess-%d' % len(os.listdir(folder))
+    with open(os.path.join(folder, 'rollout-2026-10-09T10-00-00-%s.jsonl' % sid), 'w') as f:
+        f.write(json.dumps({'type': 'session_meta', 'payload': {'id': sid, 'cwd': args[args.index('-C') + 1]}}) + '\n')
+        f.write(json.dumps({'type': 'response_item', 'payload': {'content': [{'text': args[0]}]}}) + '\n')
+'''
+
+# cygpath as Git for Windows has it, for the POSIX hosts that stand in for Windows here.
+CYGPATH = r'''#!/usr/bin/env python3
+import sys
+print('C:' + sys.argv[2].replace('/', '\\') if sys.argv[1] == '-w' else sys.argv[2])
+'''
+
+# Retain the Windows command in the tab log, but execute its host Bash in the POSIX stand-in.
+CODEX_TAB = WT_TAB.replace(
+    "sys.exit(subprocess.run(['sh', script], stdin=subprocess.DEVNULL).returncode)",
+    r'''if os.name != 'nt':
+    with open(script, 'w') as f:
+        f.write(re.sub(r"-- '([A-Za-z]:\\[^']*\\bash(?:\.exe)?)' -c",
+                      lambda m: "-- '" + m[1][2:].replace('\\', '/') + "' -c", args[-1]))
+sys.exit(subprocess.run(['sh', script], stdin=subprocess.DEVNULL).returncode)''')
+
+
+TMUX = r'''#!/usr/bin/env python3
+import os, subprocess, sys
+state, args = os.environ['SPAWN_STATE'], sys.argv[1:]
+with open(os.path.join(state, 'tmux.log'), 'a') as log:
+    log.write(repr(args) + '\n')
+if args[0] == 'has-session':
+    sys.exit(0 if os.path.exists(os.path.join(state, 'live')) else 1)
+if args[0] == 'new-session':
+    sys.exit(subprocess.run(['sh', '-c', args[-1]]).returncode)
+'''
+
+
+class SpawnCodexTests(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name).resolve()
+        self.state, self.bin, self.repo, self.home = (self.tmp / n for n in ('state', 'bin', 'repo', 'codex-home'))
+        for folder in (self.state, self.bin, self.repo, self.home):
+            folder.mkdir()
+        stubs = {'codex': CODEX, 'tmux': TMUX, 'wt-tab': CODEX_TAB, 'sleep': '#!/bin/sh\nexit 0\n',
+                 'show_workers': '#!/bin/sh\nexit 0\n', 'ps-stub': '#!/bin/sh\ncat "$SPAWN_STATE/ps" 2>/dev/null\nexit 0\n'}
+        if not WINDOWS:
+            stubs.update(cygpath=CYGPATH, uname='#!/bin/sh\necho MINGW64_NT-10.0-26200\n')
+        for name, body in stubs.items():
+            (self.bin / name).write_text(body, newline='\n')
+            (self.bin / name).chmod(0o755)
+        git = lambda *a: subprocess.run(['git', *a], cwd=self.repo, check=True, capture_output=True)
+        git('init', '-q')
+        git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'a')
+        # A `;` (a new-tab separator for wt.exe) and an apostrophe (a shell quote) in the path.
+        self.brief = self.tmp / "brief; it's.md"
+        self.brief.write_text('A brief.\n')
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def win(self, path, flag='-w'):
+        if WINDOWS:
+            return subprocess.run(['cygpath', flag, str(path)], capture_output=True, text=True,
+                                  check=True).stdout.rstrip('\n')
+        return 'C:' + str(path).replace('/', '\\') if flag == '-w' else str(path)
+
+    def spawn(self, *args, tmux=False, **extra):
+        env = dict(os.environ, PATH=f'{self.bin}{os.pathsep}{os.environ["PATH"]}', SPAWN_STATE=str(self.state),
+                   CODEX_HOME=str(self.home), KIT_WT=str(self.bin / 'wt-tab'), KIT_PS=str(self.bin / 'ps-stub'), KIT_SESSION_WAIT='2', **extra)
+        if tmux:
+            (self.bin / 'uname').write_text('#!/bin/sh\necho Linux\n', newline='\n')
+            (self.bin / 'uname').chmod(0o755)
+        return subprocess.run(['sh', str(SCRIPT), *args], cwd=self.repo, env=env,
+                              capture_output=True, text=True, timeout=60)
+
+    def publisher(self, stdout):
+        """The interpreter and codex_worker.py as spawn names them, read from its printed wait command."""
+        line = next(l for l in stdout.splitlines() if 'for the uncommitted handoff: ' in l)
+        return line.partition('for the uncommitted handoff: ')[2].partition(' --wait ')[0]
+
+    def runs(self):
+        path = self.state / 'codex.log'
+        return [json.loads(l) for l in path.read_text().splitlines()] if path.exists() else []
+
+    def test_a_worker_starts_sandboxed_without_git_roots_and_its_session_recorded(self):
+        result = self.spawn('w1', str(self.brief), '--model', 'gpt-x', '--effort', 'high', '--worktree')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        tree = self.repo / '.claude/worktrees/w1'
+        (run,) = self.runs()
+        # Git metadata remains read-only even with --add-dir (issue #43); the lead commits.
+        brief, cresult, cquestion = (shq(self.win(p, '-m')) for p in (self.brief, tree / 'RESULT-w1.md', tree / 'QUESTION-w1.md'))
+        self.assertEqual(run['argv'], [INSTRUCTION % (brief, cresult, self.publisher(result.stdout), cquestion), '-m', 'gpt-x', '-c', 'model_reasoning_effort=high', '-s', 'workspace-write',
+                                       '-a', 'never', '--no-daemon', '-C', self.win(tree)])
+        self.assertEqual(Path(run['cwd']).resolve(), tree.resolve())
+        branch = subprocess.run(['git', '-C', str(tree), 'branch', '--show-current'], capture_output=True, text=True)
+        self.assertEqual(branch.stdout.strip(), 'worktree-w1')
+        # The tab's script ends with `exit 0` and is deleted.
+        tab = json.loads((self.state / 'wt.json').read_text())
+        self.assertTrue(tab[-1].endswith('\nexit 0\n'), tab[-1])
+        # The spawning checkout owns the record; the worker sandbox need not write it.
+        record = self.repo / '.myagentkit/workers/w1.session'
+        self.assertEqual(record.read_text().strip(), 'sess-0')
+        self.assertIn('session sess-0 recorded', result.stdout)
+        self.assertIn('--worktree', result.stdout)
+        self.assertIn('--resume', result.stdout)
+        self.assertIn('leave all work uncommitted', result.stdout)
+        self.assertNotIn('--add-dir', run['argv'])
+        self.assertIn(self.win(tree / 'QUESTION-w1.md', '-m'), run['argv'][0])
+
+    def test_a_stopped_worker_is_answered_in_its_own_session(self):
+        self.assertEqual(self.spawn('w2', str(self.brief), '--model', 'm', '--effort', 'high').returncode, 0)
+        answer = self.tmp / 'answer.md'
+        answer.write_text('Take option B.\n')
+        # While its session still runs in this folder, a resume (or a second spawn) is refused.
+        (self.state / 'ps').write_text('41 codex.exe -s workspace-write -C %s "Read ..."\r\n' % self.win(self.repo))
+        refused = self.spawn('w2', str(answer), '--model', 'm', '--effort', 'high', '--resume')
+        self.assertEqual(refused.returncode, 1, refused.stdout)
+        self.assertIn('already runs in', refused.stderr)
+        self.assertIn('(process 41)', refused.stderr)
+        self.assertEqual(len(self.runs()), 1)
+        # A folder that only starts with this one's name is another worker's.
+        (self.state / 'ps').write_text('42 codex.exe -C %s-two "Read ..."\r\n' % self.win(self.repo))
+        result = self.spawn('w2', str(answer), '--model', 'm', '--effort', 'high', '--resume')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        run = self.runs()[-1]
+        # The recorded id, without searching: `codex resume <id> <answer instruction>`.
+        self.assertEqual(run['argv'][:2], ['resume', 'sess-0'])
+        self.assertIn(self.win(answer, '-m'), run['argv'][2])
+        self.assertEqual(run['argv'][-2:], ['-C', self.win(self.repo)])
+        # An id named on the command line wins.
+        result = self.spawn('w2', str(answer), '--resume', 'other-id', '--model', 'm', '--effort', 'high')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.runs()[-1]['argv'][:2], ['resume', 'other-id'])
+
+    def test_resume_without_a_recorded_session_is_refused(self):
+        result = self.spawn('w3', str(self.brief), '--model', 'm', '--effort', 'high', '--resume')
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn('no session id recorded', result.stderr)
+        self.assertEqual(self.runs(), [])
+
+    def test_a_session_that_never_shows_is_reported_not_recorded(self):
+        result = self.spawn('w4', str(self.brief), '--model', 'm', '--effort', 'high', CODEX_SILENT='1')
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn('no Codex session', result.stderr)
+        self.assertFalse((self.repo / '.myagentkit/workers/w4.session').exists())
+        # The worker runs anyway: the lead still gets its wait command and the resume form.
+        self.assertIn('background command for the uncommitted handoff: ', result.stdout)
+        self.assertIn('--resume SESSION_ID', result.stderr)
+
+    def test_a_worker_without_its_model_or_effort_or_brief_is_refused(self):
+        for args, message in ((('--effort', 'high'), '--model is required'), (('--model', 'm'), '--effort is required'),
+                              (('--model', 'm', '--effort', 'high', '--x\x1b[2J'), 'unknown option')):
+            with self.subTest(args=args):
+                result = self.spawn('w5', str(self.brief), *args)
+                self.assertEqual(result.returncode, 1, result.stdout)
+                self.assertIn(message, result.stderr)
+                self.assertNotIn('\x1b', result.stderr)
+        result = self.spawn('w5', str(self.tmp / 'absent.md'), '--model', 'm', '--effort', 'high')
+        self.assertIn('brief file not found', result.stderr)
+        result = self.spawn('w\x1b5', str(self.brief), '--model', 'm', '--effort', 'high')
+        self.assertIn('control character', result.stderr)
+        self.assertEqual(self.runs(), [])
+
+    def test_elsewhere_the_worker_is_a_tmux_session(self):
+        if WINDOWS:
+            # Native Windows never takes the tmux path, and its paths do not reach it.
+            sys.stderr.write('\nNOT RUN: %s (the tmux path, POSIX only)\n' % self.id())
+            return
+        result = self.spawn('w6', str(self.brief), '--model', 'm', '--effort', 'high', tmux=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("'new-session', '-d', '-s', 'w6'", (self.state / 'tmux.log').read_text())
+        run = self.runs()[0]
+        self.assertEqual(run['argv'][0], INSTRUCTION % (shq(str(self.brief)), shq(str(self.repo / 'RESULT-w6.md')),
+                                                        self.publisher(result.stdout), shq(str(self.repo / 'QUESTION-w6.md'))))
+        self.assertEqual(run['argv'][-2:], ['-C', str(self.repo)])
+        self.assertEqual((self.repo / '.myagentkit/workers/w6.session').read_text().strip(), 'sess-0')
+        # A tmux session of that name still running is never resumed beside.
+        (self.state / 'live').write_text('')
+        result = self.spawn('w6', str(self.brief), '--model', 'm', '--effort', 'high', '--resume', tmux=True)
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("tmux session 'w6' still runs", result.stderr)
+
+    def test_an_unsafe_name_or_control_byte_in_model_is_refused_before_launch(self):
+        for name, model, effort in (('../escape', 'm', 'high'), ('a/b', 'm', 'high'),
+                                    ('w7', 'm\x1b', 'high'), ('w7', 'm', 'bad\nvalue')):
+            result = self.spawn(name, str(self.brief), '--model', model, '--effort', effort)
+            self.assertNotEqual(result.returncode, 0, result.stdout)
+            self.assertEqual(self.runs(), [])
+
+    def test_a_question_file_blocks_a_fresh_replacement(self):
+        question = self.repo / 'QUESTION-w8.md'
+        question.write_text('Choose A or B.\n')
+        result = self.spawn('w8', str(self.brief), '--model', 'm', '--effort', 'high')
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn('--resume', result.stderr)
+        self.assertEqual(self.runs(), [])
+
+    def test_empty_session_record_is_refused_without_opening_a_picker(self):
+        record = self.repo / '.myagentkit/workers/w9.session'
+        record.parent.mkdir(parents=True)
+        record.write_text('')
+        result = self.spawn('w9', str(self.brief), '--resume', '--model', 'm', '--effort', 'high')
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn('session id is empty', result.stderr)
+        self.assertEqual(self.runs(), [])
+
+    def test_custom_result_sidecars_are_reused_on_resume(self):
+        result_file = self.repo / "custom; it's.md"
+        args = ('--model', 'm', '--effort', 'high', '--result', str(result_file))
+        result = self.spawn('w10', str(self.brief), *args)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        record = self.repo / '.myagentkit/workers/w10.session'
+        question = Path(str(result_file) + '.question.md')
+        self.assertEqual(record.read_text().strip(), 'sess-0')
+        self.assertIn(shq(self.win(question, '-m')), self.runs()[0]['argv'][0])
+        question.write_text('Choose A or B.\n')
+        result = self.spawn('w10', str(self.brief), *args, '--resume')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.runs()[-1]['argv'][:2], ['resume', 'sess-0'])
+        self.assertFalse(question.exists())
+
+    def test_record_only_refuses_fresh_replacement(self):
+        record = self.repo / '.myagentkit/workers/w11.session'
+        record.parent.mkdir(parents=True)
+        record.write_text('saved-session\n')
+        result = self.spawn('w11', str(self.brief), '--model', 'm', '--effort', 'high')
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('answer it with --resume', result.stderr)
+        self.assertEqual(self.runs(), [])
+
+    def test_result_outside_worker_or_non_markdown_is_refused(self):
+        for result_path in (self.tmp / 'outside.md', self.repo / 'x.txt'):
+            result = self.spawn('w12', str(self.brief), '--model', 'm', '--effort', 'high',
+                                '--result', str(result_path))
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertEqual(self.runs(), [])
+
+    def test_default_result_uses_repository_top_from_subfolder(self):
+        sub = self.repo / 'sub'
+        sub.mkdir()
+        original = self.repo
+        self.repo = sub
+        try:
+            result = self.spawn('w13', str(self.brief), '--model', 'm', '--effort', 'high')
+        finally:
+            self.repo = original
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn(shq(self.win(original / 'RESULT-w13.md', '-m')), self.runs()[0]['argv'][0])
+        self.assertEqual(Path(self.runs()[0]['cwd']).resolve(), original.resolve())
+
+    def test_question_instruction_requires_atomic_publish_end_marker_and_grace(self):
+        result = self.spawn('w14', str(self.brief), '--model', 'm', '--effort', 'high')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        prompt = self.runs()[0]['argv'][0]
+        self.assertIn('atomically', prompt)
+        self.assertIn('<!-- codex-worker: ready -->', prompt)
+        self.assertIn('publish the blocked result atomically using the same temporary-file, end-marker and rename protocol before publishing the question', prompt)
+        self.assertIn('--wait', result.stdout)
+        # The stub Codex ended on its own: the wrapper left the exit record --wait watches.
+        exited = self.repo / '.myagentkit/workers/w14.exit'
+        self.assertIn('--exit ' + shq(self.win(exited, '-m')), result.stdout)
+        self.assertTrue(exited.read_text().startswith('exit 0'), exited)
+
+    def test_tab_preserves_quick_exit_error(self):
+        (self.bin / 'codex').write_text('#!/bin/sh\necho bad-model >&2\nexit 1\n', newline='\n')
+        result = self.spawn('w15', str(self.brief), '--model', 'm', '--effort', 'high')
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('bad-model', result.stderr)
+        self.assertIn('press Enter to close', result.stdout)
+
+    def test_worker_uses_absolute_git_bash(self):
+        result = self.spawn('w17', str(self.brief), '--model', 'm', '--effort', 'high')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        tab = json.loads((self.state / 'wt.json').read_text())[-1]
+        self.assertNotIn('-- bash -c', tab)
+        self.assertRegex(tab, r"-- '[A-Za-z]:\\[^']*bash(?:\.exe)?' -c")
+
+    def test_sidecars_do_not_ignore_project_questions_or_accept_txt_results(self):
+        (self.repo / '.gitignore').write_bytes((ROOT / 'core/.gitignore').read_bytes())
+        for path, ignored in (('QUESTION-w.md', True), ('docs/QUESTION-design.md', False),
+                              ('.myagentkit/workers/w.session', True), ('custom.md.question.md', True)):
+            result = subprocess.run(['git', 'check-ignore', '--no-index', path], cwd=self.repo,
+                                    capture_output=True)
+            self.assertEqual(result.returncode == 0, ignored, path)
+
+    def test_close_removes_lead_record_and_allows_name_reuse(self):
+        args = ('--model', 'm', '--effort', 'high')
+        result = self.spawn('w16', str(self.brief), *args, '--worktree')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        tree = self.repo / '.claude/worktrees/w16'
+        record = self.repo / '.myagentkit/workers/w16.session'
+        self.assertTrue(record.exists(), 'session must be stored outside the worker tree')
+        self.assertFalse((tree / 'RESULT-w16.session').exists())
+        git = lambda *a: subprocess.run(['git', *a], cwd=self.repo, check=True, capture_output=True)
+        git('-C', str(tree), '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit',
+            '--allow-empty', '-m', 'worker complete')
+        git('merge', '--ff-only', 'worktree-w16')
+        env = dict(os.environ, PATH=f'{self.bin}{os.pathsep}{os.environ["PATH"]}',
+                   SPAWN_STATE=str(self.state), KIT_PS=str(self.bin / 'ps-stub'))
+        closed = subprocess.run(['sh', str(SCRIPT.with_name('close_worker.sh')), 'w16'],
+                                cwd=self.repo, env=env, capture_output=True, text=True, timeout=45)
+        self.assertEqual(closed.returncode, 0, closed.stdout + closed.stderr)
+        self.assertFalse(tree.exists())
+        self.assertFalse(record.exists())
+        self.assertFalse(record.with_suffix('.exit').exists())
+        self.assertEqual(self.spawn('w16', str(self.brief), *args).returncode, 0)
+
+    def close(self, name):
+        env = dict(os.environ, PATH=f'{self.bin}{os.pathsep}{os.environ["PATH"]}',
+                   SPAWN_STATE=str(self.state), KIT_PS=str(self.bin / 'ps-stub'))
+        return subprocess.run(['sh', str(SCRIPT.with_name('close_worker.sh')), name],
+                              cwd=self.repo, env=env, capture_output=True, text=True, timeout=45)
+
+    def test_close_refuses_while_the_codex_session_runs_on_windows(self):
+        result = self.spawn('w18', str(self.brief), '--model', 'm', '--effort', 'high', '--worktree')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        tree = self.repo / '.claude/worktrees/w18'
+        record = self.repo / '.myagentkit/workers/w18.session'
+        # Finished and merged: only the running session keeps the audit from removing it.
+        git = lambda *a: subprocess.run(['git', *a], cwd=self.repo, check=True, capture_output=True)
+        git('-C', str(tree), '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '--allow-empty', '-m', 'done')
+        git('merge', '--ff-only', 'worktree-w18')
+        # Native Windows: no tmux and no Claude Code session named w18, only its codex.exe.
+        (self.state / 'ps').write_text('4242 "C:\\codex\\codex.exe" resume sess-0 -C %s\r\n' % self.win(tree))
+        closed = self.close('w18')
+        self.assertEqual(closed.returncode, 1, closed.stdout + closed.stderr)
+        self.assertIn('a Codex session still runs', closed.stdout)
+        self.assertIn('(process 4242)', closed.stdout)
+        self.assertTrue(record.exists(), 'the only resume id of a running session was deleted')
+        self.assertTrue(tree.exists())
+
+    def test_close_keeps_the_record_of_a_kept_worktree(self):
+        result = self.spawn('w19', str(self.brief), '--model', 'm', '--effort', 'high', '--worktree')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        tree = self.repo / '.claude/worktrees/w19'
+        (tree / 'unfinished.txt').write_text('work in progress\n')
+        closed = self.close('w19')
+        self.assertEqual(closed.returncode, 1, closed.stdout + closed.stderr)
+        self.assertIn('worktree kept', closed.stdout)
+        self.assertTrue(tree.exists())
+        self.assertTrue((self.repo / '.myagentkit/workers/w19.session').exists(),
+                        'a kept, possibly unfinished worker lost its resume id')
+
+    def test_invalid_result_does_not_create_a_worktree_or_branch_and_retry_succeeds(self):
+        (self.repo / 'docs').mkdir()
+        (self.repo / 'docs/readme.md').write_text('tracked folder\n')
+        for args in (('add', 'docs'), ('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'docs')):
+            subprocess.run(['git', *args], cwd=self.repo, check=True, capture_output=True)
+        args = ('w20', str(self.brief), '--model', 'm', '--effort', 'high', '--worktree')
+        for path in (str(self.tmp / 'outside.md'), 'x.txt', 'missing/result.md'):
+            result = self.spawn(*args, '--result', path)
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertFalse((self.repo / '.claude/worktrees/w20').exists())
+            branch = subprocess.run(['git', 'show-ref', '--verify', '--quiet', 'refs/heads/worktree-w20'],
+                                    cwd=self.repo)
+            self.assertNotEqual(branch.returncode, 0)
+            self.assertEqual(self.runs(), [])
+        result = self.spawn(*args, '--result', 'docs/result.md')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_close_without_worktree_keeps_a_live_codex_workers_record(self):
+        result = self.spawn('w21', str(self.brief), '--model', 'm', '--effort', 'high')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        record = self.repo / '.myagentkit/workers/w21.session'
+        exited = record.with_suffix('.exit')
+        before = record.read_bytes(), exited.read_bytes()
+        (self.state / 'ps').write_text('4242 "C:\\codex\\codex.exe" resume sess-0 -C %s\r\n' % self.win(self.repo))
+        closed = self.close('w21')
+        self.assertEqual(closed.returncode, 1, closed.stdout + closed.stderr)
+        self.assertIn('a Codex session still runs', closed.stdout)
+        self.assertEqual((record.read_bytes(), exited.read_bytes()), before)
+        (self.state / 'ps').write_text('')
+        closed = self.close('w21')
+        self.assertEqual(closed.returncode, 0, closed.stdout + closed.stderr)
+        self.assertFalse(record.exists())
+        self.assertFalse(exited.exists())
+
+    def test_concurrent_spawns_reserve_the_name_and_checkout_until_recorded(self):
+        # Hold the first launch after the process check, before its session is visible.
+        gate = self.bin / 'wt-tab'
+        gate.write_text(CODEX_TAB.replace('args = sys.argv[1:]', '''args = sys.argv[1:]
+import pathlib, time
+state = pathlib.Path(os.environ['SPAWN_STATE'])
+if os.environ.get('SPAWN_HOLD'):
+    (state / 'launching').touch()
+    while not (state / 'release').exists(): time.sleep(.05)'''), newline='\n')
+        args = ('w22', str(self.brief), '--model', 'm', '--effort', 'high')
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(self.spawn, *args, SPAWN_HOLD='1')
+            try:
+                deadline = time.monotonic() + 20
+                while not (self.state / 'launching').exists():
+                    self.assertFalse(first.done(), first.result() if first.done() else 'launch pending')
+                    self.assertLess(time.monotonic(), deadline, 'first launch never reached the terminal')
+                    time.sleep(.05)
+                second = pool.submit(self.spawn, *args)
+                refused = second.result(timeout=15)
+                self.assertNotEqual(refused.returncode, 0, refused.stdout + refused.stderr)
+                self.assertIn('spawn in progress', refused.stderr)
+                # A second name in the same checkout must not bypass the reservation either.
+                refused = self.spawn('w23', str(self.brief), '--model', 'm', '--effort', 'high')
+                self.assertNotEqual(refused.returncode, 0, refused.stdout + refused.stderr)
+                self.assertIn('spawn in progress', refused.stderr)
+            finally:
+                (self.state / 'release').touch()
+            started = first.result(timeout=30)
+        self.assertEqual(started.returncode, 0, started.stdout + started.stderr)
+        self.assertEqual(len(self.runs()), 1)
+        self.assertEqual((self.repo / '.myagentkit/workers/w22.session').read_text().strip(), 'sess-0')
+        resumed = self.spawn(*args, '--resume')
+        self.assertEqual(resumed.returncode, 0, resumed.stdout + resumed.stderr)
+
+    def test_printed_resume_command_quotes_the_model_and_round_trips(self):
+        marker = self.repo / 'injected'
+        model = "m'; : ' value; touch injected; #"
+        result = self.spawn('w24', str(self.brief), '--model', model, '--effort', 'high')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        line = next(line for line in result.stdout.splitlines() if 'scripts/spawn_codex.sh w24 ANSWER_FILE ' in line)
+        command = line.split(': scripts/spawn_codex.sh ', 1)[1]
+        # Execute the printed command with an argv logger in place of the script.
+        logger = self.bin / 'argv.py'
+        logger.write_text('import json,sys; print(json.dumps(sys.argv[1:]))\n', newline='\n')
+        printed = subprocess.run(['sh', '-c', shq(sys.executable.replace('\\', '/')) + ' '
+                                  + shq(str(logger).replace('\\', '/')) + ' ' + command],
+                                 cwd=self.repo, capture_output=True, text=True, timeout=10)
+        self.assertEqual(printed.returncode, 0, printed.stderr)
+        self.assertFalse(marker.exists(), 'following the printed command executed the model as shell code')
+        argv = json.loads(printed.stdout)
+        self.assertEqual(argv[argv.index('--model') + 1], model)
+        self.assertEqual(argv[-2:], ['--resume', 'sess-0'])
+
+    def test_printed_late_wait_reuses_identity_captured_before_launch(self):
+        result_file = self.repo / 'RESULT-w25.md'
+        result_file.write_text('Kind: blocked\nTask: old\nAttempt: 1\nRemaining: decision\n'
+                               '<!-- codex-worker: ready -->')
+        os.utime(result_file, (time.time() - 60, time.time() - 60))
+        (self.bin / 'codex').write_text(CODEX + '''
+from pathlib import Path
+p = Path(os.environ['RESULT_EDIT'])
+p.write_text(p.read_text().replace('Kind: blocked', 'Kind: completed'))
+''', newline='\n')
+        started = self.spawn('w25', str(self.brief), '--model', 'm', '--effort', 'high',
+                             RESULT_EDIT=str(result_file))
+        self.assertEqual(started.returncode, 0, started.stdout + started.stderr)
+        command = next(line.partition('handoff: ')[2] for line in started.stdout.splitlines()
+                       if 'background command for the uncommitted handoff: ' in line)
+        waited = subprocess.run(['sh', '-c', command], cwd=self.repo, capture_output=True,
+                                text=True, timeout=15)
+        self.assertEqual(waited.returncode, 0, waited.stdout + waited.stderr)
+        self.assertIn('EXITED', waited.stdout)
+        self.assertNotIn('DONE', waited.stdout)
+
+    def test_close_moves_the_uncommitted_default_result_so_the_finished_worktree_goes(self):
+        args = ('--model', 'm', '--effort', 'high')
+        self.assertEqual(self.spawn('w26', str(self.brief), *args, '--worktree').returncode, 0)
+        tree = self.repo / '.claude/worktrees/w26'
+        (tree / 'feature.txt').write_bytes(b'work\n')
+        report = 'Kind: completed\nTask: t\nAttempt: 1\nRemaining: none\nChanged: feature.txt\n'
+        (tree / 'RESULT-w26.md').write_text(report)
+        # The lead commits exactly the files the result lists, then merges.
+        git = lambda *a: subprocess.run(['git', *a], cwd=self.repo, check=True, capture_output=True)
+        git('-C', str(tree), 'add', 'feature.txt')
+        git('-C', str(tree), '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'feature')
+        git('merge', '-q', '--ff-only', 'worktree-w26')
+        closed = self.close('w26')
+        self.assertEqual(closed.returncode, 0, closed.stdout + closed.stderr)
+        self.assertFalse(tree.exists(), 'the result sidecar kept a finished, merged worktree')
+        self.assertEqual((self.repo / '.myagentkit/workers/w26.result.md').read_text(), report)
+        self.assertFalse((self.repo / '.myagentkit/workers/w26.session').exists())
+
+    def test_close_refuses_while_a_decision_waits_for_its_answer(self):
+        args = ('--model', 'm', '--effort', 'high')
+        custom = self.repo / 'custom.md'
+        for name, extra, question in (('w27', (), self.repo / 'QUESTION-w27.md'),
+                                      ('w28', ('--result', str(custom)), Path(str(custom) + '.question.md'))):
+            with self.subTest(name=name):
+                started = self.spawn(name, str(self.brief), *args, *extra)
+                self.assertEqual(started.returncode, 0, started.stdout + started.stderr)
+                question.write_text('Choose A or B.\n<!-- codex-worker: ready -->')
+                closed = self.close(name)
+                self.assertEqual(closed.returncode, 1, closed.stdout + closed.stderr)
+                self.assertIn('a decision waits for its answer', closed.stdout)
+                self.assertTrue((self.repo / ('.myagentkit/workers/%s.session' % name)).exists(),
+                                'the close stranded an unanswered decision without its session id')
+                resumed = self.spawn(name, str(self.brief), *args, *extra, '--resume')
+                self.assertEqual(resumed.returncode, 0, resumed.stdout + resumed.stderr)
+
+    def test_failed_resume_launch_preserves_the_unanswered_decision(self):
+        if WINDOWS:
+            # Native helpers keep this launch-failure test independent of MSYS mkdir's
+            # sandbox-denied ancestor probes and the inaccessible WindowsApps aliases.
+            python = shq(sys.executable.replace('\\', '/'))
+            for name in ('python', 'python3'):
+                (self.bin / name).write_text('#!/bin/sh\nexec ' + python + ' "$@"\n', newline='\n')
+            mkdir = ('import pathlib,sys; a=sys.argv[1:]; '
+                     '[pathlib.Path(p).mkdir(parents="-p" in a,exist_ok="-p" in a) '
+                     'for p in a if p not in ("-p","--")]')
+            (self.bin / 'mkdir').write_text('#!/bin/sh\nexec ' + python + ' -c ' + shq(mkdir) + ' "$@"\n', newline='\n')
+        for posix in (False, True):
+            with self.subTest(posix=posix):
+                name = 'failed-posix' if posix else 'failed-tab'
+                record = self.repo / ('.myagentkit/workers/%s.session' % name)
+                record.parent.mkdir(parents=True, exist_ok=True)
+                record.write_text('saved-session\n')
+                question = self.repo / ('QUESTION-%s.md' % name)
+                before = b'Choose A or B.\n<!-- codex-worker: ready -->'
+                question.write_bytes(before)
+                launcher = self.bin / ('tmux' if posix else 'wt-tab')
+                launcher.write_text('#!/bin/sh\nexit 1\n', newline='\n')
+                result = self.spawn(name, str(self.brief), '--model', 'm', '--effort', 'high',
+                                    '--resume', tmux=posix)
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn('could not', result.stderr)
+                self.assertEqual(self.runs(), [])
+                self.assertTrue(question.exists(), 'a failed launch consumed its unanswered decision')
+                self.assertEqual(question.read_bytes(), before)
+                self.assertEqual(record.read_text().strip(), 'saved-session')
+                closed = self.close(name)
+                self.assertEqual(closed.returncode, 1, closed.stdout + closed.stderr)
+                self.assertIn('a decision waits for its answer', closed.stdout)
+                self.assertTrue(record.exists(), 'a failed resume lost its closure evidence')
+
+    def test_the_printed_resume_takes_over_the_reservation_of_an_unrecorded_launch(self):
+        args = ('--model', 'm', '--effort', 'high')
+        lost = self.spawn('u1', str(self.brief), *args, CODEX_SILENT='1')
+        self.assertEqual(lost.returncode, 1, lost.stdout + lost.stderr)
+        lock = self.repo / '.myagentkit/workers/spawn.lock'
+        self.assertTrue((lock / 'u1').exists(), 'the kept reservation must name its launch')
+        self.assertIn('rm -r -- ', lost.stderr)
+        # Every other spawn in the checkout is refused with the recovery, a resume of another name too.
+        for other in (('u2', str(self.brief), *args), ('u2', str(self.brief), *args, '--resume', 'x')):
+            refused = self.spawn(*other)
+            self.assertEqual(refused.returncode, 1, refused.stdout + refused.stderr)
+            self.assertIn('an unrecorded launch at', refused.stderr)
+            self.assertIn('--resume SESSION_ID, which records it and takes the reservation over', refused.stderr)
+        line = next(line for line in lost.stderr.splitlines() if ': scripts/spawn_codex.sh u1 ANSWER_FILE ' in line)
+        command = line.split(': scripts/spawn_codex.sh ', 1)[1]
+        logger = self.bin / 'argv.py'
+        logger.write_text('import json,sys; print(json.dumps(sys.argv[1:]))\n', newline='\n')
+        printed = subprocess.run(['sh', '-c', shq(sys.executable.replace('\\', '/')) + ' '
+                                  + shq(str(logger).replace('\\', '/')) + ' ' + command],
+                                 cwd=self.repo, capture_output=True, text=True, timeout=10)
+        self.assertEqual(printed.returncode, 0, printed.stderr)
+        answer = self.tmp / 'answer.md'
+        answer.write_text('Take option B.\n')
+        argv = [{'ANSWER_FILE': str(answer), 'SESSION_ID': 'sess-found'}.get(a, a) for a in json.loads(printed.stdout)]
+        # While the launch still runs, the take-over is refused and the reservation stays with it.
+        (self.state / 'ps').write_text('41 codex.exe -C %s "Read ..."\r\n' % self.win(self.repo))
+        refused = self.spawn(*argv)
+        self.assertEqual(refused.returncode, 1, refused.stdout + refused.stderr)
+        self.assertIn('already runs in', refused.stderr)
+        self.assertTrue((lock / 'u1').exists(), 'a refused take-over dropped the reservation')
+        (self.state / 'ps').write_text('')
+        resumed = self.spawn(*argv)
+        self.assertEqual(resumed.returncode, 0, resumed.stdout + resumed.stderr)
+        self.assertEqual(self.runs()[-1]['argv'][:2], ['resume', 'sess-found'])
+        self.assertEqual((self.repo / '.myagentkit/workers/u1.session').read_text().strip(), 'sess-found')
+        self.assertFalse(lock.exists(), 'the recorded launch kept the reservation')
+        started = self.spawn('u2', str(self.brief), *args)
+        self.assertEqual(started.returncode, 0, started.stdout + started.stderr)
+
+    def test_a_kept_worktree_keeps_its_result_and_an_earlier_report_is_never_replaced(self):
+        args = ('--model', 'm', '--effort', 'high')
+        self.assertEqual(self.spawn('w29', str(self.brief), *args, '--worktree').returncode, 0)
+        tree = self.repo / '.claude/worktrees/w29'
+        earlier = self.repo / '.myagentkit/workers/w29.result.md'
+        earlier.write_text("an earlier run's report\n")
+        (tree / 'feature.txt').write_bytes(b'work\n')
+        report = 'Kind: completed\nTask: t\nAttempt: 1\nRemaining: none\nChanged: feature.txt\n'
+        (tree / 'RESULT-w29.md').write_text(report)
+        # A premature close, before the lead committed the listed files: the report stays with the work.
+        closed = self.close('w29')
+        self.assertEqual(closed.returncode, 1, closed.stdout + closed.stderr)
+        self.assertIn('worktree kept', closed.stdout)
+        self.assertEqual((tree / 'RESULT-w29.md').read_text(), report)
+        self.assertEqual(earlier.read_text(), "an earlier run's report\n")
+        git = lambda *a: subprocess.run(['git', *a], cwd=self.repo, check=True, capture_output=True)
+        git('-C', str(tree), 'add', 'feature.txt')
+        git('-C', str(tree), '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'feature')
+        git('merge', '-q', '--ff-only', 'worktree-w29')
+        closed = self.close('w29')
+        self.assertEqual(closed.returncode, 0, closed.stdout + closed.stderr)
+        self.assertFalse(tree.exists())
+        self.assertEqual(earlier.read_text(), "an earlier run's report\n")
+        self.assertEqual((self.repo / '.myagentkit/workers/w29.result-2.md').read_text(), report)
+
+    def test_both_printed_reservation_recoveries_quote_a_single_deletion_operand(self):
+        spaced = self.repo.with_name('repo space')
+        self.repo.rename(spaced)
+        self.repo = spaced
+        args = ('--model', 'm', '--effort', 'high')
+        lost = self.spawn('quoted', str(self.brief), *args, CODEX_SILENT='1')
+        refused = self.spawn('other', str(self.brief), *args)
+        lock = self.repo / '.myagentkit/workers/spawn.lock'
+        logger = self.bin / 'argv.py'
+        logger.write_text('import json,sys; print(json.dumps(sys.argv[1:]))\n', newline='\n')
+        for output in (lost, refused):
+            with self.subTest(stderr=output.stderr):
+                self.assertEqual(output.returncode, 1, output.stdout + output.stderr)
+                operands = next(line.partition('release it: rm -r -- ')[2]
+                                for line in output.stderr.splitlines() if 'release it: rm -r -- ' in line)
+                # Log argv instead of invoking the destructive recovery command.
+                printed = subprocess.run(['sh', '-c', shq(sys.executable.replace('\\', '/')) + ' '
+                                          + shq(str(logger).replace('\\', '/')) + ' ' + operands],
+                                         cwd=self.repo, capture_output=True, text=True, timeout=10)
+                self.assertEqual(printed.returncode, 0, printed.stderr)
+                self.assertEqual(json.loads(printed.stdout), [self.win(lock, '-m')])
+                self.assertTrue(lock.exists())
+
+    def test_close_atomically_claims_the_archive_when_a_report_arrives_after_the_name_check(self):
+        report = self.repo / 'RESULT-race.md'
+        report.write_text('the report being closed\n')
+        saved = self.repo / '.myagentkit/workers/race.result.md'
+        hook = self.bin / 'mkdir-hook.py'
+        hook.write_text('''import pathlib,sys
+args = sys.argv[1:]
+for arg in args:
+    if arg not in ('-p', '--'):
+        pathlib.Path(arg).mkdir(parents='-p' in args, exist_ok='-p' in args)
+pathlib.Path(%r).write_text('a concurrently published report\\n')
+''' % str(saved), newline='\n')
+        (self.bin / 'mkdir').write_text('#!/bin/sh\nexec ' + shq(sys.executable.replace('\\', '/'))
+                                      + ' ' + shq(str(hook).replace('\\', '/')) + ' "$@"\n', newline='\n')
+        (self.bin / 'mkdir').chmod(0o755)
+        closed = self.close('race')
+        self.assertEqual(closed.returncode, 0, closed.stdout + closed.stderr)
+        self.assertEqual(saved.read_text(), 'a concurrently published report\n')
+        self.assertEqual(saved.with_name('race.result-2.md').read_text(), 'the report being closed\n')
+        self.assertFalse(report.exists())
+
+    def test_close_restores_both_reports_when_the_kept_worktree_publishes_a_new_result(self):
+        tree = self.repo / '.claude/worktrees/restore'
+        subprocess.run(['git', 'worktree', 'add', '-q', str(tree), '-b', 'worktree-restore'],
+                       cwd=self.repo, check=True, capture_output=True)
+        report = tree / 'RESULT-restore.md'
+        report.write_text('the saved report\n')
+        # The audit keeps the worktree and schedules a publication immediately before restore.
+        kit = self.tmp / 'close-scripts'
+        kit.mkdir()
+        script = kit / 'close_worker.sh'
+        script.write_bytes(SCRIPT.with_name('close_worker.sh').read_bytes())
+        publish = 'from pathlib import Path; Path(%r).write_text("a newer report\\n")' % str(report)
+        (kit / 'clean_worktrees.sh').write_text('#!/bin/sh\n' + shq(sys.executable.replace('\\', '/'))
+                                               + ' -c ' + shq(publish)
+                                               + "\necho 'clean_worktrees: kept 1, removed 0'\nexit 1\n", newline='\n')
+        env = dict(os.environ, PATH=f'{self.bin}{os.pathsep}{os.environ["PATH"]}',
+                   SPAWN_STATE=str(self.state), KIT_PS=str(self.bin / 'ps-stub'))
+        closed = subprocess.run(['sh', str(script), 'restore'], cwd=self.repo, env=env,
+                                capture_output=True, text=True, timeout=45)
+        self.assertEqual(closed.returncode, 1, closed.stdout + closed.stderr)
+        self.assertEqual(report.read_text(), 'a newer report\n')
+        restored = list(tree.glob('RESULT-restore-restored*.md'))
+        self.assertEqual(len(restored), 1, closed.stdout + closed.stderr)
+        self.assertEqual(restored[0].read_text(), 'the saved report\n')
+        self.assertIn('newer RESULT-restore.md kept', closed.stdout)
+        self.assertIn(restored[0].name, closed.stdout)
+
+    def test_a_move_that_took_the_report_and_failed_keeps_the_worktree_without_the_audit(self):
+        tree = self.repo / '.claude/worktrees/taken'
+        subprocess.run(['git', 'worktree', 'add', '-q', str(tree), '-b', 'worktree-taken'],
+                       cwd=self.repo, check=True, capture_output=True)
+        (tree / 'RESULT-taken.md').write_text('the report\n')
+        kit = self.tmp / 'close-scripts'
+        kit.mkdir()
+        # The helper dies with the report in its private folder, before any archive holds it.
+        killed = ('source, target = sys.argv[1:]\n'
+                  'folder = os.path.join(os.path.dirname(target), ".report-move-killed")\n'
+                  'os.mkdir(folder)\nos.rename(source, os.path.join(folder, "report"))\nos._exit(137)\n')
+        script = SCRIPT.with_name('close_worker.sh').read_text(encoding='utf-8')
+        self.assertIn('source, target = sys.argv[1:]\n', script)
+        (kit / 'close_worker.sh').write_text(script.replace('source, target = sys.argv[1:]\n', killed, 1),
+                                            encoding='utf-8', newline='\n')
+        audited = self.tmp / 'audited'
+        (kit / 'clean_worktrees.sh').write_text('#!/bin/sh\n: > ' + shq(audited.as_posix())
+                                               + "\necho 'clean_worktrees: removed 1, kept 0'\n", newline='\n')
+        env = dict(os.environ, PATH=f'{self.bin}{os.pathsep}{os.environ["PATH"]}',
+                   SPAWN_STATE=str(self.state), KIT_PS=str(self.bin / 'ps-stub'))
+        closed = subprocess.run(['sh', str(kit / 'close_worker.sh'), 'taken'], cwd=self.repo, env=env,
+                                capture_output=True, text=True, timeout=45)
+        self.assertEqual(closed.returncode, 1, closed.stdout + closed.stderr)
+        self.assertIn('could not move its result RESULT-taken.md', closed.stdout)
+        self.assertIn('the audit did not run, so a worktree stays', closed.stdout)
+        self.assertIn('.report-move-* folder in ', closed.stdout)
+        self.assertFalse(audited.exists(), 'the audit ran while the report sat only in a private folder')
+        self.assertTrue(tree.exists())
+        self.assertEqual((self.repo / '.myagentkit/workers/.report-move-killed/report').read_text(), 'the report\n')
+
+    def test_a_resumed_worker_that_published_and_then_failed_can_be_closed(self):
+        # The reproduced sequence: the resumed session publishes progress, then its CLI exits 1.
+        for name, after in (('ran-on', 'time.sleep(.5); '), ('ended-at-once', '')):
+            with self.subTest(name=name):
+                question, result = self.repo / ('QUESTION-%s.md' % name), self.repo / ('RESULT-%s.md' % name)
+                question.write_text('Choose A or B.\n<!-- codex-worker: ready -->')
+                code = ('from pathlib import Path; import os,time; p=Path(%r); '
+                        'p.write_text("Kind: progress\\nTask: t\\nAttempt: 2\\nRemaining: x\\n'
+                        '<!-- codex-worker: ready -->"); os.replace(p,%r); %sraise SystemExit(1)') % (
+                            str(result) + '.tmp', str(result), after)
+                worker = subprocess.run([sys.executable, str(SCRIPT.with_name('codex_worker.py')), str(question),
+                                         str(result), '--', sys.executable, '-c', code], capture_output=True,
+                                        text=True, timeout=30, env=dict(os.environ, KIT_WORKER_RESUME='1',
+                                                                        KIT_WORKER_GRACE='0'))
+                self.assertEqual(worker.returncode, 1, worker.stderr)
+                self.assertFalse(question.exists(), 'the answered decision outlived the session that took it')
+                closed = self.close(name)
+                self.assertEqual(closed.returncode, 0, closed.stdout + closed.stderr)
+                self.assertNotIn('a decision waits for its answer', closed.stdout)
+
+    def test_close_numbers_a_new_report_above_every_earlier_one(self):
+        workers = self.repo / '.myagentkit/workers'
+        workers.mkdir(parents=True)
+        # The first report was deleted; the newest earlier one is -2.
+        (workers / 'gap.result-2.md').write_text('the newest earlier report\n')
+        (self.repo / 'RESULT-gap.md').write_text('the report being closed\n')
+        closed = self.close('gap')
+        self.assertEqual(closed.returncode, 0, closed.stdout + closed.stderr)
+        self.assertFalse((workers / 'gap.result.md').exists(), 'a newer report took a lower number')
+        self.assertEqual((workers / 'gap.result-2.md').read_text(), 'the newest earlier report\n')
+        self.assertEqual((workers / 'gap.result-3.md').read_text(), 'the report being closed\n')
+
+
+if __name__ == '__main__':
+    unittest.main()

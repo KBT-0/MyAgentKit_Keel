@@ -95,7 +95,7 @@ class DoctorTests(unittest.TestCase):
             shutil.copyfile(ROOT / 'core/scripts/doctor.sh', root / 'scripts/doctor.sh')
             for name in ('check.sh', 'review.sh'):
                 (root / 'scripts' / name).write_text('#!/bin/sh\ntoolchain_path=""\nDEFAULT_REVIEWER="claude"\n')
-            for name in review_runtime():
+            for name in review_runtime() | {'working_mode.py'}:
                 (root / 'scripts' / name).write_text('')
             for name in ('pre-commit', 'pre-merge-commit', 'commit-msg', 'post-merge'):
                 (root / '.githooks' / name).write_text('#!/bin/sh\nexit 0\n')
@@ -223,8 +223,9 @@ class DoctorTests(unittest.TestCase):
             # Bootstrap into a real, empty fixture folder. The doctor cases do not test
             # mkdir's traversal of protected Windows temp-directory ancestors.
             project.mkdir(); bin_dir.mkdir(); home.mkdir()
-            subprocess.run(['sh', str(ROOT / 'bootstrap.sh'), str(project), '--overlay', 'claude-code'],
-                           check=True, capture_output=True)
+            installed = subprocess.run(['sh', str(ROOT / 'bootstrap.sh'), project.as_posix(), '--overlay', 'claude-code'],
+                                       capture_output=True, text=True)
+            self.assertEqual(installed.returncode, 0, installed.stdout + installed.stderr)
             # Stubs for the tools a ready machine has; the test must not depend on this one.
             for tool in ('claude', 'codex', 'tmux', 'bwrap', 'socat'):
                 (bin_dir / tool).write_text(CLI_STUB)
@@ -840,8 +841,8 @@ class DoctorTests(unittest.TestCase):
                 self.assertEqual(red.stdout.count('MISSING:'), 1, red.stdout)
             review.write_text(review_before)
 
-            # Every module review.sh runs: deleting one left doctor ready and review.sh broken.
-            for name in sorted(review_runtime()):
+            # Missing review modules or the mode helper must each make doctor red.
+            for name in sorted(review_runtime() | {'working_mode.py'}):
                 with self.subTest(runtime=name):
                     module = project / 'scripts' / name
                     module_bytes = module.read_bytes()
@@ -900,15 +901,36 @@ class DoctorTests(unittest.TestCase):
 
     def test_the_required_review_files_match_what_review_sh_runs(self):
         # doctor.sh is copied into projects, where neither the packaging list nor the kit's
-        # sources exist, so its list is kept by hand; this keeps it equal to the modules
-        # review.sh imports and to the runtime the plugin packages.
+        # sources exist, so its list is kept by hand; require all review imports plus the
+        # mode command's helper, with no missing or unexpected packaged modules.
         doctor = (ROOT / 'core/scripts/doctor.sh').read_text()
         listed = re.search(r'^for f in (scripts/check\.sh[^;]*);', doctor, re.M).group(1).split()
         listed = {f[len('scripts/'):] for f in listed if f.endswith('.py')}
+        listed.update(re.findall(r'\[ -f scripts/([a-z_]+\.py) \]', doctor))
         packaged = next(
             {element.value for element in node.elts}
             for node in ast.walk(ast.parse((ROOT / 'scripts/package_codex_plugin.py').read_text()))
             if isinstance(node, ast.List) and node.elts
             and all(isinstance(e, ast.Constant) and str(e.value).endswith('.py') for e in node.elts))
-        self.assertEqual(listed, review_runtime())
-        self.assertEqual(packaged, review_runtime())
+        expected = review_runtime() | {'working_mode.py'}
+        self.assertEqual(listed, expected)
+        self.assertEqual(packaged, expected)
+
+    def test_missing_mode_helper_names_the_command_not_the_gate(self):
+        # Execute the installed required-file checks without bootstrapping an unrelated project.
+        doctor = (ROOT / 'core/scripts/doctor.sh').read_text()
+        checks = doctor.split('for f in scripts/check.sh', 1)[1].split('# --- the executable bit', 1)[0]
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            (project / 'scripts').mkdir()
+            (project / 'scripts/check.sh').touch()
+            for path in re.findall(r'(?:scripts|\.githooks)/[a-z_-]+\.(?:sh|py)|\.githooks/[a-z-]+', checks):
+                target = project / path
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.touch()
+            (project / 'scripts/working_mode.py').unlink()
+            result = subprocess.run(['sh', '-c', 'miss() { echo "$1"; }; for f in scripts/check.sh' + checks],
+                                    cwd=project, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn('scripts/working_mode.py does not exist (the /myagentkit:mode command needs it)', result.stdout)
+            self.assertNotIn('working_mode.py does not exist (the gate needs it)', result.stdout)

@@ -92,6 +92,42 @@ class SectionPointerTests(unittest.TestCase):
         for path in [ROOT / 'core/AGENTS.md', *sorted((ROOT / 'core/docs').glob('*.md'))]:
             self.assertNotIn('closing review', path.read_text(encoding='utf-8').lower(), path)
 
+    def test_the_mode_command_and_skill_know_every_mode_the_workflow_defines(self):
+        # The kit ships the working modes; {{MODEL_ROUTING}} left each project to write its own.
+        workflow = (ROOT / 'core/docs/WORKFLOW.md').read_text(encoding='utf-8')
+        table = workflow.split('### Working modes, by name')[1].split('####')[0]
+        rows = re.findall(r'^\| `([a-z-]+)` \| ([^|(]+?)(?: \(main mode\))? \|', table, re.M)
+        self.assertEqual(sorted(m for m, _ in rows), ['claude-first', 'claude-only', 'claude-saver', 'codex-first',
+                                                       'codex-saver', 'cross-performance', 'cross-saving'])
+        command = (ROOT / 'plugin/commands/mode.md').read_text(encoding='utf-8')
+        skill = (ROOT / 'plugins/myagentkit/skills/myagentkit-mode/SKILL.md').read_text(encoding='utf-8')
+        # The command may run its helper unprompted, never any Python code.
+        tools = re.search(r'(?m)^allowed-tools: (.*)$', command)[1].split(', ')
+        self.assertEqual([t for t in tools if t.startswith('Bash(')],
+                         ['Bash(%s scripts/working_mode.py:*)' % p for p in ('python', 'python3', 'py -3')])
+        for mode, turkish in rows:
+            with self.subTest(mode=mode):
+                self.assertRegex(workflow, r'(?m)^#### %s \(%s\)' % (mode, turkish))
+                definition = workflow.split('#### %s (' % mode)[1].split('####')[0]
+                for field in ('Ends', 'Lessons', 'Effort', 'Workers'):
+                    self.assertIn('**%s:**' % field, definition)
+                for text in (command, skill):
+                    self.assertIn(mode, text)
+                    self.assertIn(turkish, text)
+        self.assertIn('**Working mode:** cross-performance', (ROOT / 'core/docs/STATE.md').read_text())
+        for name in ('core/docs/WORKFLOW.md', 'setup/INTERVIEW.md'):
+            self.assertNotIn('{{MODEL_ROUTING}}', (ROOT / name).read_text(encoding='utf-8'))
+        handoff = (ROOT / 'core/docs/HANDOFF.md').read_text(encoding='utf-8')
+        for sidecar in ('.myagentkit/workers/NAME.session', 'QUESTION-NAME.md'):
+            self.assertIn(sidecar, handoff)
+        self.assertNotIn('`RESULT-NAME.session`', handoff)
+        self.assertIn('<!-- codex-worker: ready -->', handoff)
+        self.assertIn('codex_worker.py --wait FILE --since START', handoff)
+        self.assertIn('before publishing the question', handoff)
+        self.assertIn('Publish the blocked result with this same protocol before publishing the question.', handoff)
+        self.assertNotIn('commits the file. It then goes on', handoff)
+        self.assertNotIn('owner only after that commit', handoff)
+
     def test_the_lead_keeps_its_shell_in_its_own_checkout(self):
         text = (ROOT / 'core/docs/WORKFLOW.md').read_text().split("### The lead's steps when a branch is ready")[1]
         self.assertIn("The lead never changes its shell directory into a worker's worktree", text)
