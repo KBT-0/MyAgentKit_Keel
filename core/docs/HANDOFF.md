@@ -92,8 +92,10 @@ and neither can an in-place edit of it: spawn captures FILE_ID before launch, an
 is published by the rename. Other result
 kinds report BLOCKED, HANDOFF or PROGRESS, and leave the worker running: only a decision or a
 completed result closes it. After PROGRESS or HANDOFF, `--wait` also prints its exact follow-up
-command: the same wait with `--stale` set to the reported result's file id and content
-hash, and `--since` still the run's start. The lead runs it as the next background command,
+command: the same wait with `--stale` set to the reported result's content hash, and
+`--since` still the run's start. It counts a publication as new when its content hash differs
+from the reported one, by rename or by in-place rewrite; a byte-identical republication is
+suppressed. The lead runs it as the next background command,
 since spawn's command would return the same result at once. A worker that stops without publishing a result reports EXITED,
 from the `.myagentkit/workers/NAME.exit` record the wrapper writes on every way out, a decision
 without a blocked result included, or from its `NAME.live` lock once the wrapper itself was

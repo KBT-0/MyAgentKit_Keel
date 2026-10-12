@@ -767,8 +767,9 @@ answer from {{OWNER_NAME}} and delivers it into the SAME session:
   keeps the worker's runtime separate from any shared Codex server. The script refuses a
   resume while the old session still runs, and refuses a
   fresh replacement when its session or question record exists. On resume the wrapper removes
-  the answered question file once the resumed session publishes a result or runs past ten
-  seconds; a failed launch keeps it for the retry. The result retains the question history.
+  the answered question file once the resumed session publishes a new result or exits
+  cleanly, never on elapsed time; a failed launch, or a CLI that fails without a new result,
+  keeps it for the retry. The result retains the question history.
 
 A stopped worker is always answered in its own session, never replaced with a fresh one.
 
@@ -787,8 +788,9 @@ notifies the lead of DONE, BLOCKED, HANDOFF or PROGRESS after a result from this
 published with the end marker (by a rename over an older result), and of EXITED when the worker
 stopped without publishing one, even when its wrapper was killed; no commit or lead polling is
 needed. After PROGRESS or HANDOFF the worker goes on, and `--wait` prints its exact follow-up
-command (`--stale` set to the reported result's file id and content hash, the same
-`--since`): the lead runs that one next, since spawn's command would return the same result
+command (`--stale` set to the reported result's content hash, the same `--since`; other
+contents count as new, by rename or by in-place rewrite, and a byte-identical republication
+does not): the lead runs that one next, since spawn's command would return the same result
 at once. A spawn that found no
 session keeps the checkout's `.myagentkit/workers/spawn.lock` reservation with the worker's name
 inside, and refuses every other spawn there. The printed `--resume SESSION_ID` of that name

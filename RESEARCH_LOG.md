@@ -21,6 +21,47 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-10-12 — Consuming an answer, claiming an archive, publishing the live record (#57)
+
+2026-10-12. A resumed worker's answered question goes once the resumed session shows it took
+the answer: a valid new result while it runs, or a clean exit. A close refuses while the
+question exists, so keeping it until the child exited refused the close of a session that had
+published its work and then failed. Elapsed time is not evidence: a CLI that fails slowly,
+without using its answer, would lose the question that is the only way to retry. The removal
+renames the file aside by its verified id (inode, time, size) and deletes only that private
+name; a question renamed in between goes back by a hard link, which never replaces a later
+one. A check followed by an unlink deleted a new decision published in that moment, and the
+protocol publishes the blocked result and the new question back to back.
+
+2026-10-12. The close archives a report under the number above the highest there: a gap left
+by a deleted report gave a newer report a lower number, so it read as older. An exclusive
+rename claims the name (Linux `renameat2` RENAME_NOREPLACE, macOS `renamex_np` RENAME_EXCL,
+the Windows rename), and a collision takes the next number: a free-name check followed by a
+rename replaced a report published in between. Without that rename (WSL `/mnt/c`, NFS, FUSE,
+SMB, glibc before 2.28) every close failed, so there a hard link claims the name, as
+exclusively; without hard links an O_EXCL create claims it and the report replaces the claim.
+That is the one weaker case: a writer that opens the empty claim without O_EXCL in the moment
+before the replace loses its bytes. A suffix longer than nine digits is not a number, because
+the shell's arithmetic overflowed on it. The helper prints only the errno and its text: a path
+can hold control bytes, and the line bypassed the close's filter.
+
+2026-10-12. The supervisor writes its PID into a private temporary file, locks it, and only
+then renames it to `NAME.live`, so a published record always carries its PID and its lock. A
+waiter reads a dropped lock on such a record as a dead supervisor; an empty or malformed record
+is damaged, never proof of death. A record that could be seen empty and unlocked was read as a
+dead supervisor, ending the lead's wait while the worker ran, and no delay makes that reading
+safe: a startup can pause for any time.
+
+2026-10-12. On Windows a rename over a file fails while any process holds it open, delete
+sharing included (measured on Windows 11), and an open that meets the rename fails too. The
+supervisor and each waiter polled the result every 0.1 s, so the worker's publication failed,
+or the poller did, and the supervisor's error closed the worker with it. A poller opens a result
+only when its id, size or time changed since its last read, and on Windows an open refused
+during a rename reads as no result yet. With two pollers and 600 publications 0.15 s apart, 3
+publications failed when every poll opened the result, and none with the check. A same-size
+in-place edit within one timestamp tick is read at its next change; in-place edits are not the
+publishing protocol.
+
 ### 2026-10-12 — A wrapper stopped from outside, and the result sidecar (#57)
 
 The wrapper wrote its exit record only when Codex ended on its own. A decision published
@@ -67,10 +108,12 @@ where a write changes the ctime, and Linux's `os.stat` has no birth time. The su
 the waiter hold the stale result open instead: an inode held open is never freed, so its
 number is never reused. NTFS ids carry a sequence number, and a held handle would block the
 publishing rename there. After PROGRESS or HANDOFF the wait prints its follow-up with that
-result's id as `--stale` and the same `--since`: the `.live` and `.exit` records are read by
-the run's start, so a later `--since` would hide a killed supervisor. Nothing holds the
-reported result open between the two waits, so that id pairs its inode with a hash of its
-contents: a later result given the freed inode number still counts as new.
+result's content hash as `--stale` and the same `--since`: the `.live` and `.exit` records are
+read by the run's start, so a later `--since` would hide a killed supervisor. Nothing holds the
+reported result open between the two waits, so a file id cannot name it: the next result can
+be given its freed inode number. The hash alone decides (2026-10-12): other contents are a new
+publication, renamed in or rewritten in place, and the same bytes published again tell the
+lead nothing new.
 An unrecorded launch names its worker inside the reservation, so the printed `--resume` of
 that name, which records the launch, takes the reservation over instead of being refused.
 

@@ -23,9 +23,10 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   STATE line under a shared `.claude/mode.lock`, refusing overlapping switches. Interrupted
   switches report disagreement on reads and name the repair: choose a mode explicitly.
   A STATE edit detected before replacement refuses the switch; rollback preserves later
-  independent edits. An edit made in the moment between that check and the replacement can
-  still be lost: no STATE writer shares the mode lock (`RESEARCH_LOG.md`). Links below the
-  project root, Windows junctions on Python 3.10/3.11 included, are refused before lock
+  independent edits. Session edits of STATE publish through `--replace-state FILE --expect
+  SHA256` (`--state-sha` reads the hash), a compare-and-swap under the same lock that refuses a
+  stale edit instead of losing a concurrent one (owner decision, `RESEARCH_LOG.md`). Links
+  below the project root, Windows junctions on Python 3.10/3.11 included, are refused before lock
   creation. The supplied root is resolved once, so macOS
   `/tmp` or a linked home names a project as usual; on Windows only a name-surrogate reparse
   point (a junction or symlink) is a link, a cloud-file placeholder is not.
@@ -86,10 +87,11 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   The lead resumes it with `--resume`; successful `close_worker.sh NAME` removes the records,
   allowing cleanup and name reuse. The close refuses while the worker's decision file (its path
   recorded in `NAME.question`) waits for its answer; a resume removes the answered file once
-  the resumed session publishes a result or runs past ten seconds. It moves an uncommitted default
-  `RESULT-NAME.md`, which the lead never commits, to `.myagentkit/workers/NAME.result.md`, so
+  the resumed session publishes a new result or exits cleanly, never on elapsed time. It moves
+  an uncommitted default `RESULT-NAME.md`, which the lead never commits, to `.myagentkit/workers/NAME.result.md`, so
   the audit can remove the finished worktree. An earlier report there is kept (the new one
-  takes the number above the highest, `NAME.result-2.md` and on), and a worktree the audit
+  takes the number above the highest, `NAME.result-2.md` and on), never replaced, also on a
+  filesystem without an exclusive rename (WSL `/mnt/c`, NFS, FUSE, SMB), and a worktree the audit
   keeps gets its result back.
   Workers publish decisions to `QUESTION-NAME.md`;
   `codex_worker.py` waits for the end marker and grace period before ending their process
@@ -107,7 +109,11 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   launch, so a delayed wait still excludes an in-place edit of an old result. On POSIX the
   supervisor and the waiter hold that result open, so a new result cannot be given its freed
   inode number. After PROGRESS or HANDOFF the wait prints its exact follow-up command, which
-  waits for the worker's next result.
+  waits for the worker's next result: other contents than the reported result's, by rename or
+  by in-place rewrite; a byte-identical republication does not count. A poll opens the result
+  only after its id, size or time changed, so on Windows no poller holds it open against the
+  worker's rename, and an open that meets that rename is read again at the next poll. The
+  supervisor never opens the answered question, and reads a new one the same way.
   Windows children join their job before running; POSIX escalation kills the entire group.
   POSIX SIGTERM and SIGHUP unwind supervisor cleanup and reap the worker's process group.
   The worker's instruction tells it to run the checks named on its brief's

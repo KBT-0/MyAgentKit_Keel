@@ -21,6 +21,10 @@ def published(path):
         text = path.read_text(encoding='utf-8').strip()
     except FileNotFoundError:
         return ''
+    except PermissionError:
+        if os.name != 'nt':
+            raise
+        return ''  # opened in the middle of a rename over it; the next poll reads it
     return text if text.endswith(READY) else ''
 
 
@@ -33,8 +37,9 @@ def question_id(path):
 
 
 def baseline(path, since):
-    """The file id of a result published before this run: an in-place edit of it never counts
-    as a new publication, only a rename over it (the atomic protocol) does."""
+    """The file id of a result published before this run, the launch's STALE: an in-place edit
+    of it never counts as a new publication, only a rename over it (the atomic protocol) does.
+    A follow-up wait's STALE is the reported result's content hash instead (result_kind)."""
     try:
         info = path.stat() if path else None
     except FileNotFoundError:
@@ -43,20 +48,41 @@ def baseline(path, since):
     return info.st_ino or None if info and info.st_mtime < since and published(path) else None
 
 
+SEEN = {}  # result path: the id, size and time of its last read with that SINCE and STALE, and its kind
+
+
 def result_kind(path, since=0, stale=None):
     """The kind of a result published in this run and its publication id; '' when absent.
-    A launch's inode suppresses in-place edits; a reported result's hash survives inode reuse."""
+    A launch's file id (an int STALE) suppresses that earlier result, edited in place too. A
+    reported result's id (a str STALE) is the hash of its contents: other contents count as a
+    new publication, by rename or by in-place rewrite, and a byte-identical one does not."""
     if path is None:
         return '', None
     try:
+        info = path.stat()
+        # Windows refuses a rename over a file held open, delete sharing included: a result
+        # this poller has read is not opened again until its id, size or time changes.
+        # ponytail: a same-size in-place edit within one timestamp tick is read at its next change.
+        seen = SEEN.get(path)
+        if seen and seen[0] == (info.st_ino, info.st_size, info.st_mtime_ns, since, stale):
+            return seen[1]
         with path.open(encoding='utf-8') as file:
             info = os.fstat(file.fileno())
             text = file.read().strip()
     except FileNotFoundError:
         return '', None
+    except PermissionError:
+        if os.name != 'nt':
+            raise
+        return '', None  # opened in the middle of a rename over it; the next poll reads it
+    SEEN[path] = (info.st_ino, info.st_size, info.st_mtime_ns, since, stale), parse(text, info, since, stale)
+    return SEEN[path][1]
+
+
+def parse(text, info, since, stale):
     if info.st_mtime < since or info.st_ino == stale or not text.endswith(READY):
         return '', None
-    published_id = str(info.st_ino) + ':' + hashlib.sha256(text.encode('utf-8')).hexdigest()
+    published_id = 'sha256:' + hashlib.sha256(text.encode('utf-8')).hexdigest()
     if published_id == stale:
         return '', None
     lines = text.splitlines()
@@ -417,7 +443,8 @@ def watch(child, question, close_tree, result=None, stale=None, answered=None):
                 answered = consume(question, answered)
             # Only a decision or a completed result ends the worker: PROGRESS, HANDOFF and
             # BLOCKED leave it working, and --wait alone reports them.
-            decision = published(question) and question_id(question) != answered
+            # The id first: the answered question is never opened, so a rename over it is not refused.
+            decision = question_id(question) != answered and published(question)
             notice = 'decision' if decision else kind
             notice = notice if notice in ('decision', 'DONE') else ''
             if notice != noticed:

@@ -475,6 +475,18 @@ class CodexWorkerTests(unittest.TestCase):
             self.assertTrue(question.exists(), 'consumption removed the new unanswered question')
             self.assertEqual(question.read_text(), 'A new unanswered question.\n' + READY)
 
+    def test_consumption_leaves_a_new_question_that_replaced_the_answered_one(self):
+        worker = module()
+        with tempfile.TemporaryDirectory() as tmp:
+            question, fresh = Path(tmp) / 'q.md', Path(tmp) / 'fresh.md'
+            question.write_text('The answered question.\n' + READY)
+            answered = worker.question_id(question)
+            # The resumed session published its blocked result, then a new question, before this poll.
+            fresh.write_text('A new unanswered question.\n' + READY)
+            os.replace(fresh, question)
+            self.assertIsNone(worker.consume(question, answered))
+            self.assertEqual(question.read_text(), 'A new unanswered question.\n' + READY)
+
     def test_a_slow_failed_resume_keeps_its_unaccepted_question(self):
         worker = module()
         with tempfile.TemporaryDirectory() as tmp:
@@ -673,9 +685,9 @@ class CodexWorkerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             result, fresh = Path(tmp) / 'result.md', Path(tmp) / 'fresh.md'
             result.write_text('Kind: progress\nTask: t\nAttempt: 1\nRemaining: work\n' + READY)
-            expected = worker.result_kind(result)
+            expected = module().result_kind(result)  # another poller: this one has read nothing yet
             fresh.write_text('Kind: handoff\nTask: t\nAttempt: 1\nRemaining: review\n' + READY)
-            stat, fstat, opening = Path.stat, os.fstat, Path.open
+            fstat, opening = os.fstat, Path.open
             renamed = []
             def publish(info):
                 if not renamed:
@@ -698,22 +710,22 @@ class CodexWorkerTests(unittest.TestCase):
                 handle = api.CreateFileW(str(path), 0x80000000, 7, None, 3, 0x80, None)
                 self.assertNotIn(handle, (None, ctypes.c_void_p(-1).value), ctypes.get_last_error())
                 return open(msvcrt.open_osfhandle(handle, os.O_RDONLY), *args, **kwargs)
-            with mock.patch.object(Path, 'stat', lambda path, *a, **k: publish(stat(path, *a, **k))), \
-                    mock.patch.object(worker.os, 'fstat', lambda fd: publish(fstat(fd))), \
+            with mock.patch.object(worker.os, 'fstat', lambda fd: publish(fstat(fd))), \
                     mock.patch.object(Path, 'open', opened):
                 observed = worker.result_kind(result)
             self.assertEqual(renamed, [True], 'the publication was not scheduled between metadata and read')
             self.assertEqual(observed, expected, 'new contents were paired with the preceding result identity')
             self.assertEqual(worker.result_kind(result)[0], 'HANDOFF')
 
-    def test_follow_up_waits_distinguish_publications_with_a_recycled_inode(self):
+    def test_a_follow_up_wait_reports_other_contents_on_a_recycled_inode(self):
         worker = module()
         with tempfile.TemporaryDirectory() as tmp:
             result, record = Path(tmp) / 'result.md', Path(tmp) / 'w.exit'
             record.write_text('exit 0\n')
             stat, fstat = Path.stat, os.fstat
             def reused(info):
-                return SimpleNamespace(st_ino=41, st_mtime=info.st_mtime)
+                return SimpleNamespace(st_ino=41, st_mtime=info.st_mtime, st_mtime_ns=info.st_mtime_ns,
+                                       st_size=info.st_size)
             def wait(argv):
                 output = io.StringIO()
                 with mock.patch('sys.argv', argv), mock.patch('sys.stdout', output):
@@ -739,6 +751,94 @@ class CodexWorkerTests(unittest.TestCase):
                         self.assertIn('EXITED', unchanged)
                         self.assertNotIn('codex_worker: ' + notice + ': ', unchanged)
 
+
+    def test_a_follow_up_wait_counts_other_contents_by_rename_or_rewrite_and_never_the_same_bytes(self):
+        worker = module()
+        with tempfile.TemporaryDirectory() as tmp:
+            result, fresh = Path(tmp) / 'result.md', Path(tmp) / 'fresh.md'
+            progress = 'Kind: progress\nTask: t\nAttempt: 1\nRemaining: x\n' + READY
+            result.write_text(progress)
+            kind, reported = worker.result_kind(result)
+            self.assertEqual(kind, 'PROGRESS')
+            fresh.write_text(progress)
+            os.replace(fresh, result)
+            self.assertEqual(worker.result_kind(result, 0, reported), ('', None), 'the same bytes, renamed, were new')
+            result.write_text(progress.replace('Kind: progress', 'Kind: completed'))
+            self.assertEqual(worker.result_kind(result, 0, reported)[0], 'DONE', 'an in-place rewrite was missed')
+            fresh.write_text(progress.replace('Kind: progress', 'Kind: handoff'))
+            os.replace(fresh, result)
+            self.assertEqual(worker.result_kind(result, 0, reported)[0], 'HANDOFF', 'a renamed result was missed')
+
+    def test_publications_never_fail_while_two_pollers_watch_the_result(self):
+        # Windows refuses a rename over a file any process holds open, delete sharing included.
+        pollers = module(), module()
+        with tempfile.TemporaryDirectory() as tmp:
+            result, fresh = Path(tmp) / 'result.md', Path(tmp) / 'fresh.md'
+            fstat, pending = os.fstat, []
+            def publish():
+                if pending:
+                    os.replace(pending.pop(), result)
+            result.write_text('Kind: progress\nTask: t\nAttempt: 1\nRemaining: x\n' + READY)
+            # A poller calls fstat only while it holds the result open.
+            with mock.patch.object(os, 'fstat', lambda fd: publish() or fstat(fd)):
+                for attempt, (kind, notice) in enumerate((('handoff', 'HANDOFF'), ('progress', 'PROGRESS'),
+                                                          ('blocked', 'BLOCKED'), ('completed', 'DONE')), 2):
+                    for poller in pollers:
+                        self.assertTrue(poller.result_kind(result)[0])
+                    fresh.write_text('Kind: %s\nTask: t\nAttempt: %d\nRemaining: x\n%s' % (kind, attempt, READY))
+                    pending.append(fresh)
+                    # The worker's rename lands inside this poll of a result the poller already read,
+                    # while it holds the file if it ever does, else just after it.
+                    pollers[attempt % 2].result_kind(result)
+                    publish()
+                    for poller in pollers:
+                        self.assertEqual(poller.result_kind(result)[0], notice)
+
+    def test_a_poll_that_opens_the_result_during_a_rename_over_it_reads_it_at_the_next(self):
+        worker = module()
+        with tempfile.TemporaryDirectory() as tmp:
+            result = Path(tmp) / 'result.md'
+            result.write_text('Kind: completed\nTask: t\nAttempt: 1\nRemaining: none\n' + READY)
+            with mock.patch.object(Path, 'open', side_effect=PermissionError(13, 'Permission denied')):
+                if os.name == 'nt':
+                    # Windows refuses an open while a rename replaces the file: no supervisor crash.
+                    self.assertEqual(worker.result_kind(result), ('', None))
+                else:
+                    with self.assertRaises(PermissionError):  # a real permission problem stays an error
+                        worker.result_kind(result)
+            self.assertEqual(worker.result_kind(result)[0], 'DONE')
+
+    def test_the_answered_question_is_never_read_and_a_read_during_a_rename_is_retried(self):
+        worker = module()
+        with tempfile.TemporaryDirectory() as tmp:
+            question, fresh = Path(tmp) / 'q.md', Path(tmp) / 'fresh.md'
+            question.write_text('The answered question.\n' + READY)
+            answered = worker.question_id(question)
+            fresh.write_text('A new question.\n' + READY)
+            child = mock.Mock(returncode=None)
+            child.poll.return_value = None
+            reading, reads, renaming = Path.read_text, [], []
+            def read(path, *args, **kwargs):
+                if path == question:
+                    reads.append(worker.question_id(path))
+                    if renaming:
+                        renaming.pop()
+                        raise PermissionError(13, 'Permission denied')  # Windows: met the rename
+                return reading(path, *args, **kwargs)
+            def publish(seconds):
+                if fresh.exists():
+                    os.replace(fresh, question)
+                    renaming.append(True)
+            with mock.patch.dict(os.environ, KIT_WORKER_GRACE='0'), mock.patch.object(Path, 'read_text', read), \
+                    mock.patch.object(worker.time, 'sleep', publish), mock.patch.object(worker, 'stop'):
+                if os.name == 'nt':
+                    self.assertEqual(worker.watch(child, question, None, answered=answered), 0)
+                else:
+                    with self.assertRaises(PermissionError):  # a real permission problem stays an error
+                        worker.watch(child, question, None, answered=answered)
+            self.assertTrue(reads, 'the new question was never read')
+            self.assertNotIn(answered, reads, 'the answered question was opened while unchanged')
+            self.assertEqual(question.read_text(), 'A new question.\n' + READY)
 
     def test_an_empty_unlocked_live_record_is_damaged_and_does_not_end_the_wait(self):
         worker = module()

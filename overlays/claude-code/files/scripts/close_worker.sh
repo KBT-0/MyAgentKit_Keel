@@ -57,31 +57,55 @@ set -u
 say() { { printf 'close_worker: %s' "$1" | LC_ALL=C tr '\001-\037\177' '?'; echo; }; }
 first=""
 fail() { say "$1"; [ -n "$first" ] || first=$1; }
-# Claim the destination with an exclusive rename: 2 is a collision, 1 any other failure.
-# Never fall back to a free-name check followed by an overwriting rename.
+# Claim the destination with an exclusive rename: 2 is a collision, 1 any other failure, with
+# only its errno and text on stderr (a path can hold control bytes). Never fall back to a
+# free-name check followed by an overwriting rename.
 move_report() {
-  $kit_python -I -c 'import ctypes, os, sys
+  $kit_python -I -c 'import ctypes, errno, os, sys
+source, target = sys.argv[1:]
+unsupported = (errno.EINVAL, errno.ENOSYS, errno.ENOTSUP, errno.EOPNOTSUPP)
 try:
     if os.name == "nt":
-        os.rename(sys.argv[1], sys.argv[2])  # Windows refuses an existing destination atomically.
+        os.rename(source, target)  # Windows refuses an existing destination atomically.
     else:
-        api = ctypes.CDLL(None, use_errno=True)
-        source, target = map(os.fsencode, sys.argv[1:])
-        if sys.platform == "darwin":
-            rename = api.renamex_np
-            rename.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
-            rc = rename(source, target, 4)  # RENAME_EXCL
-        else:
-            rename = api.renameat2
-            rename.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
-            rc = rename(-100, source, -100, target, 1)  # AT_FDCWD, RENAME_NOREPLACE
-        if rc:
-            error = ctypes.get_errno()
+        try:
+            api = ctypes.CDLL(None, use_errno=True)
+            if sys.platform == "darwin":
+                rename = api.renamex_np
+                rename.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
+                rc = rename(os.fsencode(source), os.fsencode(target), 4)  # RENAME_EXCL
+            else:
+                rename = api.renameat2
+                rename.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+                rc = rename(-100, os.fsencode(source), -100, os.fsencode(target), 1)  # AT_FDCWD, RENAME_NOREPLACE
+            error = ctypes.get_errno() if rc else 0
+        except AttributeError:
+            error = errno.ENOSYS  # no such symbol: glibc before 2.28, an older musl
+        if error in unsupported:
+            # A filesystem without an exclusive rename (WSL /mnt/c, NFS, FUSE, SMB): a hard
+            # link refuses an existing name as atomically, and names a symlink, not its target.
+            try:
+                os.link(source, target, follow_symlinks=False)
+            except OSError as link_error:
+                if link_error.errno not in unsupported + (errno.EPERM,):
+                    raise
+                # ponytail: the weaker case, no hard links either: the name is claimed
+                # exclusively, but a writer that opens the claimed empty file without O_EXCL
+                # before this replace loses its bytes to it.
+                os.close(os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
+                try:
+                    os.replace(source, target)
+                except OSError:
+                    os.unlink(target)
+                    raise
+            else:
+                os.unlink(source)
+        elif error:
             raise OSError(error, os.strerror(error))
 except FileExistsError:
     sys.exit(2)
-except (OSError, AttributeError) as error:
-    sys.exit(str(error))' "$1" "$2"
+except OSError as error:
+    sys.exit("[Errno %s] %s" % (error.errno, error.strerror))' "$1" "$2"
 }
 nl='
 '
