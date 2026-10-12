@@ -185,11 +185,16 @@ elif [ -n "$reviewer" ] && ! reviewer_path=$( [ -x "$HOME/.local/bin/codex" ] &&
   miss "the second CLI '$reviewer_cli' that scripts/review.sh calls" "install and log in to $reviewer (docs/DEV_SETUP.md §3)"
 elif [ "$reviewer" = claude ] && ! command -v timeout >/dev/null 2>&1; then
   echo "NOTE: Claude CLI --effort probe skipped, no timeout on this machine"
+elif [ "$reviewer" = claude ] && ! help_out=$(mktemp); then
+  echo "NOTE: Claude CLI --effort probe skipped, cannot create a temp file"
 elif [ "$reviewer" = claude ]; then
   # Probe the command the adapter runs, found as above: a newer installation later on PATH
   # cannot supply --effort to an older CLI that actually runs. Bounded as the grep probe is
   # (below): a --help that blocks would hang every session start.
-  help=$(timeout -k 1 5 "$reviewer_path" --help </dev/null 2>/dev/null); help_status=$?
+  # A child can keep stdout open after the CLI exits; a file capture never waits for EOF.
+  timeout -k 1 5 "$reviewer_path" --help </dev/null >"$help_out" 2>/dev/null; help_status=$?
+  help=$(cat "$help_out")
+  rm -f "$help_out"
   if [ "$help_status" -eq 124 ] || [ "$help_status" -eq 137 ]; then
     echo "NOTE: the Claude CLI '$reviewer_cli' did not answer --help within 5 s; --effort was not checked"
   elif [ "$help_status" -ne 0 ] || ! printf '%s\n' "$help" | grep -Eq -- '(^|[[:space:],])--effort([[:space:]=,]|$)'; then

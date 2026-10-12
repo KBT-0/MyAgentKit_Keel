@@ -133,6 +133,17 @@ class DoctorTests(unittest.TestCase):
                     self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                     self.assertIn(said, result.stdout)
 
+            # The CLI exits, but its child keeps stdout open: capture must also be bounded.
+            (old / 'claude').write_text('#!/bin/sh\nsleep 12 &\necho --effort\nexit 0\n')
+            started = time.monotonic()
+            result = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=root,
+                                    env=dict(env, PATH=str(old) + os.pathsep + bare),
+                                    capture_output=True, text=True, timeout=20)
+            elapsed = time.monotonic() - started
+            self.assertLess(elapsed, 6, 'doctor.sh waited %.2f s for the CLI child' % elapsed)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('DOCTOR: ready', result.stdout)
+
     def test_each_injected_trap_turns_doctor_red(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
