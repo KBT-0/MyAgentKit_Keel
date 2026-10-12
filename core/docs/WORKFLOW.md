@@ -720,7 +720,11 @@ Rules, binding for whoever routes workers:
    Start the two reviewers together. Start the self-test with them only when all three jobs
    fit within the budget. With a budget of two, start both reviewers first, then the self-test
    when one reviewer ends. Never reduce the reviews or deliberately run the reviewers one
-   after the other; the self-test waits. Read free
+   after the other; the self-test waits. A review round's floor is the two reviewers: they
+   always start together. When the budget is below two, the lead first frees memory it owns
+   (waits for or closes its own finished jobs, never ending running work without a reason)
+   and starts the round only when two jobs fit; the self-test and every other heavy job wait
+   until a reviewer ends. Read free
    memory with `Get-CimInstance Win32_OperatingSystem | Select FreePhysicalMemory` in
    PowerShell on Windows, `free -g` on Linux, `vm_stat` or `memory_pressure` on macOS. Measure
    a job's peak on your host; one measured example: a review or gate took 1–2 GB on native
@@ -955,6 +959,8 @@ reviewer would before it reports ("Before you report"). The review loop is uncha
 reviews are never reduced (`docs/REVIEW_GATE.md`, "What counts as a risky diff"); prevention
 is what lets its first round find nothing. A project or a kit that spends its budget
 reviewing itself fails at its purpose, which is the product.
+
+"In parallel" means the reviewers; the self-test follows "Worker cost", rule 6.
 
 In one project a feature took five fix rounds in about seven hours. Each round cost a fresh
 worker re-reading 100k to 300k tokens (20 to 60 minutes), a ten-minute self-test, reviews of

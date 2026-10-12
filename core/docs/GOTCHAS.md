@@ -174,8 +174,9 @@ native Windows (2026-10-12): a separate Windows Terminal tab and a `codex exec` 
 `RESEARCH_LOG.md` 2026-10-10).
 Before resuming work after a cut-off, list the processes whose command line names the checkout
 or its worktrees. Quote the checkout path and match it literally:
-Windows `Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine.Contains('<checkout>') } | Select ProcessId,CommandLine`;
-Linux `ps -eo pid,args | grep -F -- '<checkout>'`; macOS `ps -eww -o pid,args | grep -F -- '<checkout>'`.
+Windows `Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine.IndexOf('<checkout>', [StringComparison]::OrdinalIgnoreCase) -ge 0 } | Select ProcessId,CommandLine`;
+Linux `ps -eo pid,args | grep -F -- '<checkout>' | grep -v -F 'grep -F'`; macOS `ps -eww -o pid,args | grep -F -- '<checkout>' | grep -v -F 'grep -F'`.
+The Windows match ignores case because Windows paths do; a drive-letter or separator difference (`c:/x` vs `C:\x`) still needs the form the launching shell used.
 Wait for the survivors by default. Stop one only under the hard rule in `AGENTS.md` ("Never end
 running work without a reason that holds": the owner asked, or it is provably finished or hung).
 When the machine runs low on memory, the host can reap jobs: five heavy jobs started together

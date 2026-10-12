@@ -147,7 +147,8 @@ for choosing a different reviewing model; `--requester` is reported metadata, no
 ## Rounds, labels and designs
 
 When the rounds start and what runs in parallel is the lead's part, in `docs/WORKFLOW.md`,
-"Review rounds — early, inside the worker, in parallel". This section says how to run them.
+"Review rounds — early, inside the worker, in parallel". This section says how to run them. ("In parallel" means the reviewers; the self-test follows
+"Worker cost", rule 6.)
 
 - Review a design under its own label, such as `<feature>-design`, before any code exists.
   Commit the design on the feature's branch, so that every code round's diff carries it.

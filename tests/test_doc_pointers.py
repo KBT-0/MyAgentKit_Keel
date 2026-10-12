@@ -82,6 +82,9 @@ class SectionPointerTests(unittest.TestCase):
                      'With a budget of two, start both reviewers first, then the self-test when one reviewer ends',
                      'Never reduce the reviews or deliberately run the reviewers one after the other; the self-test waits'):
             self.assertIn(rule, budget_rule)
+        self.assertIn("A review round's floor is the two reviewers", budget_rule)
+        self.assertIn('starts the round only when two jobs fit', budget_rule)
+        self.assertIn('"In parallel" means the reviewers', flat)
         self.assertIn('review rounds run per cluster of related branches', flat)
         self.assertIn('After their first round, merge branches touching the same files into one integration branch', flat)
         self.assertIn('remaining rounds run on the cluster', flat)
@@ -89,9 +92,10 @@ class SectionPointerTests(unittest.TestCase):
         for rule in ("lead's tool shell", 'on most hosts', '`&` under `sh -c`',
                      '`nohup`', 'Windows Terminal tab', 'command line names the checkout or its worktrees',
                      'Wait for the survivors by default', 'reason that holds',
-                     "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine.Contains('<checkout>') } | Select ProcessId,CommandLine",
-                     "Linux `ps -eo pid,args | grep -F -- '<checkout>'`",
-                     "macOS `ps -eww -o pid,args | grep -F -- '<checkout>'`"):
+                     "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine.IndexOf('<checkout>', [StringComparison]::OrdinalIgnoreCase) -ge 0 } | Select ProcessId,CommandLine",
+                     "Linux `ps -eo pid,args | grep -F -- '<checkout>' | grep -v -F 'grep -F'`",
+                     "macOS `ps -eww -o pid,args | grep -F -- '<checkout>' | grep -v -F 'grep -F'`",
+                     'The Windows match ignores case because Windows paths do'):
             self.assertIn(rule, gotchas)
         self.assertNotIn('stop them with a reason', gotchas)
         running = ' '.join((ROOT / 'core/docs/REVIEW_RUNNING.md').read_text(encoding='utf-8').split())
