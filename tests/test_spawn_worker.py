@@ -1,9 +1,9 @@
 """spawn_worker.sh must hand every value to the worker intact, deliver the brief by path, and
 build its worktree from the lead's current commit.
 
-No live `claude` and no tmux server: both are stubs on PATH. The tmux stub runs the session
-command with `sh -c` after rejecting `unset`, which tmux's fish default shell cannot run.
-Values that escape the command's quoting run here too.
+No live `claude` and no tmux server: both are stubs on PATH. The tmux stub accepts only
+`sh SCRIPT` (two plain words, so tmux's fish default shell can parse it) and runs that script,
+so values that escape the command's quoting run here too.
 No real terminal either: the launcher (KIT_WT), `osascript` and `uname` are stubs, and the
 environment says WSL, so showing a session goes to the launcher stub, which marks it attached.
 """
@@ -48,10 +48,16 @@ if cmd == 'list-clients':
         print('/dev/pts/9: w [120x30 xterm-256color] (attached,UTF-8)')
     sys.exit(0)
 if cmd == 'new-session':
-    assert 'unset' not in args[-1], 'tmux default shells need an env -u prefix'
+    # tmux's default shell may be fish: it must only see two plain words, `sh SCRIPT`.
+    words = args[-1].split(' ')
+    assert len(words) == 2 and words[0] == 'sh' and not set("'\";&|") & set(words[1]), args[-1]
+    # The script removes itself when run: read it first, through sh (a Git Bash path).
+    text = subprocess.run(['sh', '-c', 'cat "$1"', 'sh', words[1]], capture_output=True, text=True).stdout
+    with open(os.path.join(state, 'tmux-script'), 'w') as g:
+        g.write(text)
     with open(started, 'a') as f:
         f.write(args[args.index('-s') + 1] + '\n')
-    sys.exit(subprocess.run(['sh', '-c', args[-1]]).returncode)
+    sys.exit(subprocess.run(['sh', words[1]]).returncode)
 if cmd == 'capture-pane':
     if 'SPAWN_PANE' in os.environ:
         sys.stdout.write(read(os.environ['SPAWN_PANE']))
@@ -344,7 +350,7 @@ class SpawnWorkerTests(unittest.TestCase):
         self.assertNotIn('started with', result.stdout)
         # The tab measures claude's own run, and waits for Enter after a quick end of any status.
         tab = json.loads((self.state / 'wt.json').read_text())[-1]
-        self.assertIn('t=$(date +%s); claude ', tab)
+        self.assertIn('t=$(date +%s); env -u CLAUDE_CODE_CHILD_SESSION ', tab)
         self.assertIn('press Enter to close', tab)
 
     def assert_refused(self, brief):
@@ -526,6 +532,9 @@ class SpawnWorkerTests(unittest.TestCase):
     def test_the_tmux_worker_does_not_inherit_the_leads_session_markers(self):
         result = self.spawn('w1', str(self.brief))
         self.assertEqual(result.returncode, 0, result.stderr)
+        script = (self.state / 'tmux-script').read_text()
+        self.assertIn('exec env -u CLAUDE_CODE_CHILD_SESSION ', script)
+        self.assertIn(' claude ', script)
         env = self.launched()['env']
         self.assertFalse(MARKERS & set(env), env)
         self.assertIn('CLAUDE_CODE_EXECPATH', env)

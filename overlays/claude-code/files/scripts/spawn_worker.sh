@@ -19,7 +19,8 @@
 # "Worker cost"). A sub-agent with `experimental.cacheTtl: 1h` in its definition costs the
 # same; the session adds visibility (`tmux attach -t NAME`) and survives the lead ending.
 #
-# The lead then subscribes once with SendMessage `notify_when_idle` and reads the result
+# The lead then subscribes once with SendMessage `notify_when_idle` (on native Windows only
+# when the spawn printed "is a peer session"; a tmux worker registers) and reads the result
 # FILE the brief asks the worker to write. It does not poll and it does not chat with the
 # worker: every message to an idle session is a full-context turn. After reading the file
 # the lead reuses the session or closes it with `scripts/close_worker.sh NAME`; it does not
@@ -292,7 +293,11 @@ fi
 # `cd` first: tmux hands new sessions the PWD of whichever client last created one, and
 # the tool exits with "the current working directory was deleted" when that folder (a
 # removed worktree, say) is gone, whatever -c says.
-tmux new-session -d -s "$name" -c "$dir" -x 200 -y 50 "cd $(q "$dir") && exec $unmark $cmd"
+# tmux parses its command with its default shell, which may be fish: the quoted command goes
+# into a script that removes itself, and tmux is handed two plain words (a mktemp path has no quotes).
+run=$(mktemp) || die "cannot write the session's script"
+printf '%s\n' 'rm -f -- "$0"' "cd $(q "$dir") && exec $unmark $cmd" > "$run" || { rm -f -- "$run"; die "cannot write the session's script: $run"; }
+tmux new-session -d -s "$name" -c "$dir" -x 200 -y 50 "sh $run" || { rm -f -- "$run"; die "tmux could not start '$name'"; }
 
 # Wait for the input line: the TUI shows its prompt arrow at the start of a line once ready
 # (v2.1.285 follows the arrow with a NO-BREAK space, so the match is on the arrow alone)

@@ -256,9 +256,14 @@ if [ -n "$windows" ]; then
   where="in a Windows Terminal tab; watch it there"; view=tab
 else
   # `cd` first: tmux hands a new session the PWD of whichever client last created one.
+  # tmux parses its command with its default shell (fish, say): the quoted command goes into a
+  # script that removes itself, and tmux is handed two plain words (spawn_worker.sh).
+  run=$(mktemp) || die "cannot write the session's script"
+  printf '%s\n' 'rm -f -- "$0"' "cd $(q "$dir") && exec $unmark KIT_WORKER_STARTED=$(q "$start") KIT_WORKER_STALE=$(q "$stale") KIT_WORKER_EXIT=$(q "$exited") KIT_WORKER_RESUME=$(q "$resume") $kit_python $(q "$cworker") $(q "$cquestion") $(q "$cresult") -- sh -c $(q "exec $cmd")" > "$run" ||
+    { rm -f -- "$run"; die "cannot write the session's script: $run"; }
   spawn_launched=1
-  tmux new-session -d -s "$name" -c "$dir" -x 200 -y 50 "cd $(q "$dir") && exec $unmark KIT_WORKER_STARTED=$(q "$start") KIT_WORKER_STALE=$(q "$stale") KIT_WORKER_EXIT=$(q "$exited") KIT_WORKER_RESUME=$(q "$resume") $kit_python $(q "$cworker") $(q "$cquestion") $(q "$cresult") -- sh -c $(q "exec $cmd")" ||
-    { spawn_launched=""; die "tmux could not start '$name'"; }
+  tmux new-session -d -s "$name" -c "$dir" -x 200 -y 50 "sh $run" ||
+    { spawn_launched=""; rm -f -- "$run"; die "tmux could not start '$name'"; }
   where="(tmux attach -t $name to watch)"; view="tmux session"
 fi
 
