@@ -141,7 +141,7 @@ fi
 # registration (no sessions/<pid>.json: ListAgents never lists the worker, SendMessage cannot
 # reach it). tmux ignores the marker, a Windows Terminal tab does not, so both paths clear them.
 # CLAUDE_CLI_BIN and CLAUDE_CODE_EXECPATH name the binary and stay.
-unmark="unset CLAUDE_CODE_CHILD_SESSION CLAUDECODE CLAUDE_CODE_SESSION_ID CLAUDE_PID CLAUDE_CODE_MESSAGING_SOCKET CLAUDE_CODE_MESSAGING_TOKEN CLAUDE_CODE_SESSION_ATTENDED CLAUDE_CODE_ENTRYPOINT"
+unmark="env -u CLAUDE_CODE_CHILD_SESSION -u CLAUDECODE -u CLAUDE_CODE_SESSION_ID -u CLAUDE_PID -u CLAUDE_CODE_MESSAGING_SOCKET -u CLAUDE_CODE_MESSAGING_TOKEN -u CLAUDE_CODE_SESSION_ATTENDED -u CLAUDE_CODE_ENTRYPOINT"
 
 # Variadic flags come LAST and the prompt is never on this line (see the header).
 cmd="claude -n $(q "$name")"
@@ -251,8 +251,8 @@ if [ -n "$windows" ]; then
   # pass through wt.exe. A claude that ends within ten seconds of its own start, whatever its
   # status, failed to start: the tab then waits for Enter, so its error stays on screen.
   tab=$(mktemp) || die "cannot write the tab's script"
-  printf '%s\n' 'rm -f -- "$0"' "cd $(q "$dir") || exit 1" "$unmark" \
-    "t=\$(date +%s); claude $(q "$instruction") ${cmd#claude }; s=\$?; [ \$((\$(date +%s) - t)) -gt 10 ] || { echo \"claude ended at once (exit \$s); press Enter to close\"; read -r _; }" \
+  printf '%s\n' 'rm -f -- "$0"' "cd $(q "$dir") || exit 1" \
+    "t=\$(date +%s); $unmark claude $(q "$instruction") ${cmd#claude }; s=\$?; [ \$((\$(date +%s) - t)) -gt 10 ] || { echo \"claude ended at once (exit \$s); press Enter to close\"; read -r _; }" \
     'exit 0' > "$tab" || die "cannot write the tab's script: $tab"
   "$wt" -w 0 new-tab --title "$(semi "$name")" "$(semi "$bash")" -l "$(semi "$(cygpath -w "$tab")")" ||
     { rm -f -- "$tab"; die "$wt could not open a tab for '$name'"; }
@@ -292,7 +292,7 @@ fi
 # `cd` first: tmux hands new sessions the PWD of whichever client last created one, and
 # the tool exits with "the current working directory was deleted" when that folder (a
 # removed worktree, say) is gone, whatever -c says.
-tmux new-session -d -s "$name" -c "$dir" -x 200 -y 50 "cd $(q "$dir") && $unmark && exec $cmd"
+tmux new-session -d -s "$name" -c "$dir" -x 200 -y 50 "cd $(q "$dir") && exec $unmark $cmd"
 
 # Wait for the input line: the TUI shows its prompt arrow at the start of a line once ready
 # (v2.1.285 follows the arrow with a NO-BREAK space, so the match is on the arrow alone)

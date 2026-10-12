@@ -72,6 +72,7 @@ with open(os.path.join(state, 'tmux.log'), 'a') as log:
 if args[0] == 'has-session':
     sys.exit(0 if os.path.exists(os.path.join(state, 'live')) else 1)
 if args[0] == 'new-session':
+    assert 'unset' not in args[-1], 'tmux default shells need an env -u prefix'
     sys.exit(subprocess.run(['sh', '-c', args[-1]]).returncode)
 '''
 

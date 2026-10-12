@@ -2,7 +2,8 @@
 build its worktree from the lead's current commit.
 
 No live `claude` and no tmux server: both are stubs on PATH. The tmux stub runs the session
-command with `sh -c`, the way tmux does, so a value that escapes its quoting runs here too.
+command with `sh -c` after rejecting `unset`, which tmux's fish default shell cannot run.
+Values that escape the command's quoting run here too.
 No real terminal either: the launcher (KIT_WT), `osascript` and `uname` are stubs, and the
 environment says WSL, so showing a session goes to the launcher stub, which marks it attached.
 """
@@ -47,6 +48,7 @@ if cmd == 'list-clients':
         print('/dev/pts/9: w [120x30 xterm-256color] (attached,UTF-8)')
     sys.exit(0)
 if cmd == 'new-session':
+    assert 'unset' not in args[-1], 'tmux default shells need an env -u prefix'
     with open(started, 'a') as f:
         f.write(args[args.index('-s') + 1] + '\n')
     sys.exit(subprocess.run(['sh', '-c', args[-1]]).returncode)

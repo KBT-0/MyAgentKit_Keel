@@ -168,7 +168,7 @@ instruction="Read $(q "$shown") and follow it. The brief carries its Route: quic
 # The instruction comes first, before any option, as spawn_worker.sh puts it.
 # A worker is a session of its own, never the lead's child (spawn_worker.sh): clear the lead's
 # Claude Code session markers, which hooks the worker starts would otherwise inherit.
-unmark="unset CLAUDE_CODE_CHILD_SESSION CLAUDECODE CLAUDE_CODE_SESSION_ID CLAUDE_PID CLAUDE_CODE_MESSAGING_SOCKET CLAUDE_CODE_MESSAGING_TOKEN CLAUDE_CODE_SESSION_ATTENDED CLAUDE_CODE_ENTRYPOINT"
+unmark="env -u CLAUDE_CODE_CHILD_SESSION -u CLAUDECODE -u CLAUDE_CODE_SESSION_ID -u CLAUDE_PID -u CLAUDE_CODE_MESSAGING_SOCKET -u CLAUDE_CODE_MESSAGING_TOKEN -u CLAUDE_CODE_SESSION_ATTENDED -u CLAUDE_CODE_ENTRYPOINT"
 cmd="codex${resume:+ resume $(q "$session")} $(q "$instruction") -m $(q "$model") -c $(q "model_reasoning_effort=$effort")"
 cmd="$cmd -s workspace-write -a never --no-daemon -C $(q "$cdir")"
 
@@ -245,9 +245,9 @@ if [ -n "$windows" ]; then
   bash=$(cygpath -w "$bash") || die "cygpath cannot convert the path of bash: $bash"
   semi() { printf '%s' "$1" | sed 's/;/\\;/g'; }
   tab=$(mktemp) || die "cannot write the tab's script"
-  printf '%s\n' 'rm -f -- "$0"' "cd $(q "$dir") || exit 1" "$unmark" \
+  printf '%s\n' 'rm -f -- "$0"' "cd $(q "$dir") || exit 1" \
     'began=$(date +%s)' \
-    "KIT_WORKER_STARTED=$(q "$start") KIT_WORKER_STALE=$(q "$stale") KIT_WORKER_EXIT=$(q "$cexited") KIT_WORKER_RESUME=$(q "$resume") $kit_python $(q "$cworker") $(q "$cquestion") $(q "$cresult") -- $(q "$bash") -c $(q "exec $cmd")" \
+    "KIT_WORKER_STARTED=$(q "$start") KIT_WORKER_STALE=$(q "$stale") KIT_WORKER_EXIT=$(q "$cexited") KIT_WORKER_RESUME=$(q "$resume") $unmark $kit_python $(q "$cworker") $(q "$cquestion") $(q "$cresult") -- $(q "$bash") -c $(q "exec $cmd")" \
     's=$?; if [ "$s" -ne 0 ] && [ "$(( $(date +%s) - began ))" -lt 10 ]; then printf "codex ended at once (exit %s); press Enter to close\\n" "$s"; read -r ignored; fi' \
     'exit 0' > "$tab" || die "cannot write the tab's script: $tab"
   spawn_launched=1
@@ -257,7 +257,7 @@ if [ -n "$windows" ]; then
 else
   # `cd` first: tmux hands a new session the PWD of whichever client last created one.
   spawn_launched=1
-  tmux new-session -d -s "$name" -c "$dir" -x 200 -y 50 "cd $(q "$dir") && $unmark && export KIT_WORKER_STARTED=$(q "$start") KIT_WORKER_STALE=$(q "$stale") KIT_WORKER_EXIT=$(q "$exited") KIT_WORKER_RESUME=$(q "$resume") && exec $kit_python $(q "$cworker") $(q "$cquestion") $(q "$cresult") -- sh -c $(q "exec $cmd")" ||
+  tmux new-session -d -s "$name" -c "$dir" -x 200 -y 50 "cd $(q "$dir") && exec $unmark KIT_WORKER_STARTED=$(q "$start") KIT_WORKER_STALE=$(q "$stale") KIT_WORKER_EXIT=$(q "$exited") KIT_WORKER_RESUME=$(q "$resume") $kit_python $(q "$cworker") $(q "$cquestion") $(q "$cresult") -- sh -c $(q "exec $cmd")" ||
     { spawn_launched=""; die "tmux could not start '$name'"; }
   where="(tmux attach -t $name to watch)"; view="tmux session"
 fi
