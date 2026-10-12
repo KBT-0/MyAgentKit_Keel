@@ -171,6 +171,18 @@ class SyncKitTests(unittest.TestCase):
         self.assertIn('Start with `"$KIT/sync-kit.sh" .`', intro)
         self.assertIn('copies nothing new', items.split('\n5. ', 1)[1].split('\n## ', 1)[0])
 
+    def test_the_behaviour_appendix_is_kit_owned_and_reaches_the_project_root(self):
+        # spawn_worker.sh and claude_bridge.py read BEHAVIOUR.md at the project's root; a sync
+        # installs it there and refreshes it, as it does every file with the KIT-OWNED header.
+        with tempfile.TemporaryDirectory() as tmp:
+            kit, project = Path(tmp) / 'kit', Path(tmp) / 'project'
+            self.sync(tmp, ACTION, '--dry-run')
+            (kit / 'core').mkdir()
+            shutil.copyfile(ROOT / 'core/BEHAVIOUR.md', kit / 'core/BEHAVIOUR.md')
+            result, _ = self.sync(tmp, ACTION)
+            self.assertIn('new:     BEHAVIOUR.md', result.stdout, result.stdout + result.stderr)
+            self.assertEqual((project / 'BEHAVIOUR.md').read_bytes(), (ROOT / 'core/BEHAVIOUR.md').read_bytes())
+
     def test_the_checklist_runs_kit_scripts_only_from_a_fresh_full_clone(self):
         # Its first command runs the kit's sync-kit.sh. A v0.9 kit clone made with
         # core.autocrlf=true keeps that script CRLF after a pull, so it cannot start; a shallow

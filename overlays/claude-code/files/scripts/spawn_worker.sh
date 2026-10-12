@@ -111,6 +111,14 @@ done
 
 here=$(pwd -P && echo x) || die "cannot resolve the current folder"
 dir=${here%"${nl}x"}
+# The kit's behaviour appendix reaches the worker as system-prompt text: BEHAVIOUR.md here, or
+# core/BEHAVIOUR.md in the kit's own checkout. MYAGENTKIT_NO_BEHAVIOUR=1 leaves it out (an A/B).
+behaviour=""
+if [ "${MYAGENTKIT_NO_BEHAVIOUR:-}" != 1 ]; then
+  for f in "$dir/BEHAVIOUR.md" "$dir/core/BEHAVIOUR.md"; do
+    if [ -f "$f" ]; then behaviour=$f; break; fi
+  done
+fi
 # --settings is inline JSON or a file. The tool starts in the worktree, so a relative file is
 # made absolute here, against the caller's folder: resolved there, an untracked settings file
 # was missing and a tracked one of the same name was loaded instead. A relative value that is
@@ -141,6 +149,11 @@ cmd="claude -n $(q "$name")"
 [ -n "$model" ]    && cmd="$cmd --model $(q "$model")"
 [ -n "$effort" ]   && cmd="$cmd --effort $(q "$effort")"
 [ -n "$settings" ] && cmd="$cmd --settings $(q "$settings")"
+if [ -n "$behaviour" ]; then
+  [ -z "$windows" ] || behaviour=$(cygpath -m "$behaviour") || die "cygpath cannot convert the behaviour appendix's path"
+  cmd="$cmd --append-system-prompt-file $(q "$behaviour")"
+fi
+printf '%s\n' "spawn_worker: behaviour appendix: ${behaviour:-off}"
 [ -n "$tools" ]    && cmd="$cmd --allowedTools $(q "$tools")"
 # One line naming the brief by its absolute path, quoted by the same helper so a path with a
 # space or an apostrophe still reads as one path. Its second sentence keeps questions out of
