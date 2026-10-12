@@ -220,8 +220,12 @@
 # | try:
 # |     if os.name == "nt":
 # |         # By path: the races that dir_fd closes on POSIX are out of scope for this example.
-# |         root, found = path, os.lstat(path)
-# |         now, drop = lambda: os.lstat(path), lambda: remove(path)
+# |         # The \\?\ prefix lifts the 260-character limit of the plain path, which a deep tree in the
+# |         # copy (node_modules, under a longer temporary folder than the checkout) can pass.
+# |         root = os.path.abspath(path)
+# |         root = root if root.startswith("\\\\") else "\\\\?\\" + root
+# |         found = os.lstat(root)
+# |         now, drop = lambda: os.lstat(root), lambda: remove(root)
 # |     else:
 # |         parent = os.open(os.path.dirname(path), os.O_RDONLY | os.O_DIRECTORY)
 # |         root = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)

@@ -169,10 +169,6 @@ def main(argv=None):
         if received and error is not None:
             attempt["error_after_result"] = str(error)
         chain["attempts"].append(attempt)
-        if attempt.get("error_after_result"):  # Set here, or by the Claude adapter itself.
-            print("NOTE [review]: %s failed after it handed over its result (%s); the result "
-                  "stands as recorded in %s" % (provider, attempt["error_after_result"],
-                                                result.get("evidence")), flush=True)
         chain.update(status=result["status"], failure_kind=result.get("failure_kind"))
         try:
             if claude_bridge.snapshot(repo, scope, ref) != original:
@@ -184,12 +180,11 @@ def main(argv=None):
             exit_code = 5
         if chain["status"] == "completed" and exit_code == 0:
             chain["selected_reviewer"] = provider
-            checkpoint()
-            break  # Accept, manual checks AND Reject are terminal review results.
-        chain["status"] = "failed"
+        else:
+            chain["status"] = "failed"
         # A cancel at any point after launch ends the chain: both adapters relabel a cancelled
         # failure "cancelled", which is not in UNAVAILABLE, before they return.
-        eligible = (provider == args.reviewer and chain["failure_kind"] in UNAVAILABLE
+        eligible = (chain["status"] != "completed" and provider == args.reviewer and chain["failure_kind"] in UNAVAILABLE
                     and bool(result.get("evidence")) and bool(result.get("usage_record")))
         if eligible and not args.allow_fallback:
             chain["fallback_blocked"] = "not requested; --fallback allows one other configured reviewer"
@@ -198,7 +193,15 @@ def main(argv=None):
             chain["fallback_blocked"] = "other reviewer has no valid configured model pin"
             eligible = False
         checkpoint()  # Never spend on the alternate if primary evidence cannot be saved.
-        if not eligible:
+        if attempt.get("error_after_result"):  # Save once, before a closed console can raise again.
+            # The result stands only when the chain completed; after a stale_checkout it did not.
+            print("NOTE [review]: %s failed after it handed over its result (%s); %s %s%s"
+                  % (provider, attempt["error_after_result"],
+                     "the result stands as recorded in" if chain["status"] == "completed"
+                     else "the adapter recorded the result in", result.get("evidence"),
+                     ", but the checkout changed, so the chain failed"
+                     if chain.get("checkout_changed") else ""), flush=True)
+        if chain["status"] == "completed" or not eligible:
             break
         print("FALLBACK [review]: requested reviewer %s did not complete (%s); --fallback was "
               "passed, so configured %s model %s runs once instead."

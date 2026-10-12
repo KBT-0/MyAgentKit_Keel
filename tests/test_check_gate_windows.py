@@ -1033,6 +1033,22 @@ class WindowsProbeCopyTests(unittest.TestCase):
         self.assertFalse(self.copy.exists(), 'the copy was not deleted')
 
     @windows_only
+    def test_the_delete_removes_a_tree_whose_paths_pass_260_characters(self):
+        # A deep tree (node_modules) in the copy, under a longer temporary folder than the checkout's.
+        # Without the long-path prefix the scan and the delete fail on a host with LongPathsEnabled=0;
+        # on a host with it enabled this case passes either way and proves only that the prefix works.
+        deep = self.copy / 'checkout'
+        for _ in range(6):
+            deep = deep / ('d' * 50)
+        self.assertGreater(len(str(deep)), 260)
+        prefix = os.sep * 2 + '?' + os.sep
+        os.makedirs(prefix + str(deep))
+        (Path(prefix + str(deep)) / 'file.txt').write_text('deep\n')
+        result = self.delete()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse(self.copy.exists(), 'the copy was not deleted')
+
+    @windows_only
     def test_a_file_hard_linked_with_the_checkout_keeps_its_read_only_attribute(self):
         # Clearing the attribute to delete the copy's name would clear it on the checkout's file too.
         checkout = self.tmp / 'checkout'

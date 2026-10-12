@@ -26,8 +26,11 @@
 # A SELF-TEST CASE NEVER CHANGES A TRACKED FILE, and leaves nothing in the working tree but
 # files Git ignores: the self-test FAILS when HEAD, the index, `git status --porcelain
 # --untracked-files=all` or the content hashes of tracked and untracked non-ignored files differ
-# at its end. A review must run in another worktree or after the self-test: a temporary injection
-# can fail it as stale_checkout even when removed. Point the gate at a synthetic file outside the tree through a
+# at its end. A self-test may run beside a review in the same worktree only when every one of its
+# cases writes nothing but files Git ignores (owner decision, 2026-10-12): this check cannot catch
+# a non-ignored file that a case writes and removes meanwhile, which fails the review as
+# stale_checkout (the kit's own boundary example does that, so the kit's self-test runs in another
+# worktree or after the review). Point the gate at a synthetic file outside the tree through a
 # self-test seam (GATE_SELFTEST_STATE_FILE, GATE_SELFTEST_EXTRA_FILE below; honoured only in the self-test's
 # own nested runs, so the case passes it to expect_fail or expect_pass), or run the case against
 # a disposable copy of the tree. A file injected into the tree is seen by a concurrent
@@ -461,7 +464,18 @@ finally:
   # them as it found them: compared at the end, a difference fails it. Ignored files may change.
   git_view() {
     git rev-parse --verify -q HEAD || :; git ls-files -s; git status --porcelain --untracked-files=all
-    git ls-files -c -o --exclude-standard | while IFS= read -r path; do printf '%s %s\n' "$(printf '%s\n' "$path" | git hash-object --no-filters --stdin-paths 2>/dev/null)" "$path"; done
+    # One ls-files and ONE git hash-object for the whole tree (a process per file cost minutes on a
+    # large project). The list is newline-separated, so a path holding a newline is not hashed
+    # correctly; the kit refuses such paths elsewhere (#41). Only readable regular files are listed:
+    # hash-object stops at the first path it cannot read, and `git status` already covers deletions.
+    # Each path goes in as ./path, since hash-object unquotes a line that starts with a double quote.
+    paths=$(mktemp) || return 1
+    git -c core.quotePath=false ls-files -z --cached --others --exclude-standard | tr '\0' '\n' |
+      LC_ALL=C sort -u | while IFS= read -r path; do
+        if [ -f "$path" ] && [ -r "$path" ]; then printf '%s\n' "$path"; fi
+      done > "$paths"
+    sed 's|^|./|' "$paths" | git hash-object --no-filters --stdin-paths 2>/dev/null | paste -d ' ' - "$paths"
+    rm -f "$paths"
   }
   view_before=""
   if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
@@ -1218,7 +1232,8 @@ LOCKCASE
   else
     echo "  FAIL — the self-test changed this worktree: a review running here meanwhile fails"
     echo "         as stale_checkout. Make the case remove what it writes, or ignore its output"
-    echo "         path in .gitignore. Lines before (-) and after (+): HEAD, index, status, content hashes by path:"
+    echo "         path in .gitignore. Or another process edited the checkout meanwhile (a second session, an editor)."
+    echo "         Lines before (-) and after (+): HEAD, index, status, content hashes by path:"
     diff "$view_before" "$work/git-view.after" | sed -n 's/^< /    - /p; s/^> /    + /p' | head -40
     st_fail=1
   fi

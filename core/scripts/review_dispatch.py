@@ -194,9 +194,13 @@ def main(argv=None):
             eligible = False
         checkpoint()  # Never spend on the alternate if primary evidence cannot be saved.
         if attempt.get("error_after_result"):  # Save once, before a closed console can raise again.
-            print("NOTE [review]: %s failed after it handed over its result (%s); the result "
-                  "stands as recorded in %s" % (provider, attempt["error_after_result"],
-                                                result.get("evidence")), flush=True)
+            # The result stands only when the chain completed; after a stale_checkout it did not.
+            print("NOTE [review]: %s failed after it handed over its result (%s); %s %s%s"
+                  % (provider, attempt["error_after_result"],
+                     "the result stands as recorded in" if chain["status"] == "completed"
+                     else "the adapter recorded the result in", result.get("evidence"),
+                     ", but the checkout changed, so the chain failed"
+                     if chain.get("checkout_changed") else ""), flush=True)
         if chain["status"] == "completed" or not eligible:
             break
         print("FALLBACK [review]: requested reviewer %s did not complete (%s); --fallback was "

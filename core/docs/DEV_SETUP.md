@@ -16,6 +16,8 @@ git does not run pre-commit. `.githooks/commit-msg` rejects an AI co-author trai
 `core.hooksPath` is local configuration, not repository content, so **a clone without this
 line has NO gate** — the commit succeeds and CI catches the problem later, if at all.
 Git older than 2.24 has no `pre-merge-commit` hook, so a clean merge there is ungated.
+A sparse checkout needs Git 2.42 or later for the kit's refusal of a deleted skip-worktree file
+(#53): `git sparse-checkout check-rules` is missing before it, and the review is refused.
 A hook of the project's own (husky, lefthook, a script of yours) lives in `.githooks` too,
 project-owned and executable: for a name the kit ships (`pre-commit`, `commit-msg`,
 `pre-merge-commit`, `post-merge`) as `.githooks/<name>.project`, which the kit's hook runs

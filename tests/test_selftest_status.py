@@ -1,9 +1,10 @@
 """A self-test compares HEAD, index, status and file contents at the end of its run.
 
-Reviews must run sequentially or in another worktree: a temporary injection can cause
-stale_checkout even when the self-test removes it. Files Git ignores may change.
+A self-test may share a review's worktree only when every case writes nothing but files Git
+ignores: its end check cannot catch a non-ignored file a case writes and removes meanwhile.
 """
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -67,6 +68,7 @@ class ProjectSelfTestTests(unittest.TestCase):
         code, out = self.self_test()
         self.assertEqual(code, 1, out)
         self.assertIn('FAIL — the self-test changed this worktree', out)
+        self.assertIn('another process edited the checkout meanwhile', out)
         self.assertIn('    + ?? leftover.txt', out)
         self.assertRegex(out, r'    \+ [0-9a-f]{40,64} notes\.md')
         self.assertRegex(out, r'    \+ [0-9a-f]{40,64} existing\.txt')
@@ -75,28 +77,28 @@ class ProjectSelfTestTests(unittest.TestCase):
 
 
 class KitWrapperTests(unittest.TestCase):
-    def assert_content_edit_fails(self, tracked):
+    def assert_content_edit_fails(self, tracked, name='existing file.txt'):
         with tempfile.TemporaryDirectory() as tmp:
             kit = Path(tmp) / 'kit'
             (kit / 'scripts').mkdir(parents=True)
             shutil.copyfile(ROOT / 'scripts/check.sh', kit / 'scripts/check.sh')
             write(kit / 'scripts/check_kit.py',
                   'import os\nfrom pathlib import Path\n'
-                  'p = Path("existing file.txt")\ns = p.stat()\n'
+                  'p = Path(%r)\ns = p.stat()\n' % name +
                   'p.write_bytes(b"after!\\n")\n'
                   'os.utime(p, ns=(s.st_atime_ns, s.st_mtime_ns))\n'
                   'Path(os.environ["KIT_CHECK_PASSED"]).touch()\n')
             subprocess.run(['git', 'init', '-q', str(kit)], check=True)
             subprocess.run(['git', 'config', 'core.autocrlf', 'false'], cwd=kit, check=True)
-            write(kit / 'existing file.txt', 'before\n')
+            write(kit / name, 'before\n')
             if tracked:
                 subprocess.run(['git', 'config', 'core.trustctime', 'false'], cwd=kit, check=True)
                 subprocess.run(['git', 'config', 'core.checkStat', 'minimal'], cwd=kit, check=True)
-                subprocess.run(GIT + ['add', 'existing file.txt'], cwd=kit, check=True)
+                subprocess.run(GIT + ['add', name], cwd=kit, check=True)
                 subprocess.run(GIT + ['commit', '-qm', 'tracked'], cwd=kit, check=True)
                 # Avoid Git's racy-index timestamp window; keep the same indexed mtime on edit.
                 stamp = 1_600_000_000_000_000_000
-                os.utime(kit / 'existing file.txt', ns=(stamp, stamp))
+                os.utime(kit / name, ns=(stamp, stamp))
                 subprocess.run(['git', 'update-index', '--refresh'], cwd=kit, check=True)
             before = subprocess.run(['git', 'status', '--porcelain'], cwd=kit,
                                     capture_output=True, check=True).stdout
@@ -112,13 +114,47 @@ class KitWrapperTests(unittest.TestCase):
             out = result.stdout + result.stderr
             self.assertEqual(result.returncode, 1, out)
             self.assertIn('KIT CHECK: FAIL', out)
-            self.assertRegex(out, r'    \+ [0-9a-f]{40,64} existing file\.txt')
+            self.assertRegex(out, r'    \+ [0-9a-f]{40,64} ' + re.escape(name))
+            self.assertIn('another process edited the checkout meanwhile', out)
 
     def test_an_existing_untracked_file_edited_in_place_fails_by_path(self):
         self.assert_content_edit_fails(tracked=False)
 
     def test_a_tracked_edit_hidden_by_restored_mtime_fails_by_path(self):
         self.assert_content_edit_fails(tracked=True)
+
+    def test_a_non_ascii_name_edited_in_place_fails_by_path(self):
+        # Git prints such a name C-quoted by default, and hash-object does not unquote it: the
+        # old per-file loop hashed nothing, before and after, so the edit went unseen.
+        self.assert_content_edit_fails(tracked=False, name='ä.txt')
+        self.assert_content_edit_fails(tracked=True, name='ä.txt')
+
+    def test_the_tree_is_hashed_by_one_git_hash_object_call_per_view(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            kit, wrapped, calls = Path(tmp) / 'kit', Path(tmp) / 'bin', Path(tmp) / 'calls.log'
+            (kit / 'scripts').mkdir(parents=True)
+            shutil.copyfile(ROOT / 'scripts/check.sh', kit / 'scripts/check.sh')
+            write(kit / 'scripts/check_kit.py',
+                  'import os\nfrom pathlib import Path\nPath(os.environ["KIT_CHECK_PASSED"]).touch()\n')
+            subprocess.run(['git', 'init', '-q', str(kit)], check=True)
+            for number in range(30):
+                write(kit / ('file %d.txt' % number), 'x\n')
+            subprocess.run(GIT + ['add', 'file 1*.txt'], cwd=kit, check=True)
+            # An indexed file deleted from disk must not shift the hashes onto the wrong names.
+            (kit / 'file 10.txt').unlink()
+            # git, counting its hash-object calls and then running the real one.
+            write(wrapped / 'git',
+                  '#!/bin/sh\nfor a; do [ "$a" = hash-object ] && echo x >> "%s"; done\nexec "%s" "$@"\n'
+                  % (calls.as_posix(), Path(shutil.which('git')).as_posix()))
+            os.chmod(wrapped / 'git', 0o755)
+            result = subprocess.run(['sh', str(kit / 'scripts/check.sh'), '--self-test'], cwd=kit,
+                                    env=dict(os.environ, PATH=str(wrapped) + os.pathsep + os.environ['PATH']),
+                                    capture_output=True, text=True, encoding='utf-8',
+                                    errors='replace', timeout=120)
+            out = result.stdout + result.stderr
+            self.assertEqual(result.returncode, 0, out)
+            # Once for the view before the run and once after it; the old loop made one per file.
+            self.assertEqual(len(calls.read_text().split()), 2, out)
 
     def test_the_kit_self_test_fails_on_a_file_it_leaves_and_passes_an_ignored_one(self):
         with tempfile.TemporaryDirectory() as tmp:

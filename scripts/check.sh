@@ -26,11 +26,25 @@ cancel() {
 trap 'cancel INT 130' INT
 trap 'cancel TERM 143' TERM
 # The self-test compares HEAD, index, status and file contents at its end, as the project gate
-# does. Run a review in another worktree or sequentially: a temporary injection can fail it as
-# stale_checkout even when removed before this check. Ignored files may change.
+# does. It cannot catch a non-ignored file that a case writes and removes meanwhile, which fails a
+# review in this worktree as stale_checkout, and the kit's own boundary example does that: run the
+# kit's self-test in another worktree or after the review (a project's own self-test may share the
+# review's worktree only when every case writes nothing but ignored files; owner decision,
+# 2026-10-12). Ignored files may change.
 git_view() {
   git rev-parse --verify -q HEAD || :; git ls-files -s; git status --porcelain --untracked-files=all
-  git ls-files -c -o --exclude-standard | while IFS= read -r path; do printf '%s %s\n' "$(printf '%s\n' "$path" | git hash-object --no-filters --stdin-paths 2>/dev/null)" "$path"; done
+  # One ls-files and ONE git hash-object for the whole tree (a process per file cost minutes on a
+  # large project). The list is newline-separated, so a path holding a newline is not hashed
+  # correctly; the kit refuses such paths elsewhere (#41). Only readable regular files are listed:
+  # hash-object stops at the first path it cannot read, and `git status` already covers deletions.
+  # Each path goes in as ./path, since hash-object unquotes a line that starts with a double quote.
+  paths=$(mktemp) || return 1
+  git -c core.quotePath=false ls-files -z --cached --others --exclude-standard | tr '\0' '\n' |
+    LC_ALL=C sort -u | while IFS= read -r path; do
+      if [ -f "$path" ] && [ -r "$path" ]; then printf '%s\n' "$path"; fi
+    done > "$paths"
+  sed 's|^|./|' "$paths" | git hash-object --no-filters --stdin-paths 2>/dev/null | paste -d ' ' - "$paths"
+  rm -f "$paths"
 }
 view=""
 case " $* " in
@@ -48,7 +62,8 @@ if [ "$status" -eq 0 ] && [ ! -f "$passed/passed" ]; then
 fi
 if [ -n "$view" ] && ! { git_view > "$view.after" 2>&1 && cmp -s "$view.before" "$view.after"; }; then
   echo "KIT CHECK: FAIL — the self-test changed this checkout, so a review running here meanwhile" >&2
-  echo "  fails as stale_checkout. Lines before (-) and after (+): HEAD, index, status, content hashes by path:" >&2
+  echo "  fails as stale_checkout, or another process edited the checkout meanwhile." >&2
+  echo "  Lines before (-) and after (+): HEAD, index, status, content hashes by path:" >&2
   diff "$view.before" "$view.after" | sed -n 's/^< /    - /p; s/^> /    + /p' | head -40 >&2
   status=1
 fi

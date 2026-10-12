@@ -2091,6 +2091,9 @@ class BridgeTests(unittest.TestCase):
                         self.assertIn('the checkout changed while the review ran', out.getvalue())
                         # The docs' terms: an ignored file never fails a review.
                         self.assertIn('a new untracked file Git does not ignore', out.getvalue())
+                        # The chain failed: the NOTE must not say the result stands.
+                        self.assertNotIn('the result stands', out.getvalue())
+                        self.assertIn('the checkout changed, so the chain failed', out.getvalue())
                     else:
                         self.assertEqual(code, 0, out.getvalue())
                         self.assertEqual((chain['status'], chain['selected_reviewer']), ('completed', reviewer))
@@ -3758,17 +3761,24 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         (self.repo / 'src/a.txt').write_text('a\n')
         (self.repo / 'docs/kept.md').write_text('kept\n')
         self.commit_fixture('A tree with two folders')
-        for rules in (['docs'], ['--no-cone', '/*', '!/src/']):
-            with self.subTest(rules=rules):
-                self.git('sparse-checkout', 'set', *rules)
-                self.assertFalse((self.repo / 'src/a.txt').exists())
-                claude_bridge.snapshot(self.repo, 'uncommitted', None)
-                self.git('update-index', '--skip-worktree', 'docs/kept.md')
-                (self.repo / 'docs/kept.md').unlink()
-                with self.assertRaisesRegex(claude_bridge.BridgeError, 'inside the sparse-checkout rules.*docs/kept.md'):
+        # The real-Git subtests need `check-rules` (Git 2.42); the usage line names it when present.
+        usage = subprocess.run(['git', 'sparse-checkout', '-h'], capture_output=True, text=True)
+        if 'check-rules' in usage.stdout + usage.stderr:
+            for rules in (['docs'], ['--no-cone', '/*', '!/src/']):
+                with self.subTest(rules=rules):
+                    self.git('sparse-checkout', 'set', *rules)
+                    self.assertFalse((self.repo / 'src/a.txt').exists())
                     claude_bridge.snapshot(self.repo, 'uncommitted', None)
-                self.git('update-index', '--no-skip-worktree', 'docs/kept.md')
-                self.git('checkout', '--', 'docs/kept.md')
+                    self.git('update-index', '--skip-worktree', 'docs/kept.md')
+                    (self.repo / 'docs/kept.md').unlink()
+                    with self.assertRaisesRegex(claude_bridge.BridgeError, 'inside the sparse-checkout rules.*docs/kept.md'):
+                        claude_bridge.snapshot(self.repo, 'uncommitted', None)
+                    self.git('update-index', '--no-skip-worktree', 'docs/kept.md')
+                    self.git('checkout', '--', 'docs/kept.md')
+        else:
+            sys.stderr.write('\nNOT RUN: %s, the real-Git subtests (this Git has no `sparse-checkout '
+                             'check-rules`; it needs Git 2.42 or later)\n' % self.id())
+            self.git('sparse-checkout', 'set', 'docs')
         real = claude_bridge.git
 
         def old_git(repo, *args, **kwargs):

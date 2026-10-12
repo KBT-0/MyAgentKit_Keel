@@ -69,7 +69,7 @@ subtracts, the kit's `core/.gitignore`). Total live spend: about 0.12 USD.
   its 40 tests there and `tests/test_boundary_example.py` 1 of 3; each other case is a declared
   platform skip, with its reason: POSIX signals and process groups, a FIFO, a folder hidden by
   mode, and a root replaced by a running gate, which Windows refuses (its guard runs in
-  `tests/test_check_gate_windows.py` instead). `tests/test_check_gate_windows.py` (31 tests)
+  `tests/test_check_gate_windows.py` instead). `tests/test_check_gate_windows.py` (33 tests)
   holds the Windows killing tests: a junction or folder symlink in the copy is removed as a
   link and its target survives, the audit never enters a junction and refuses one leading out,
   a replaced root is refused and nothing is deleted, read-only git objects are deleted, a file
