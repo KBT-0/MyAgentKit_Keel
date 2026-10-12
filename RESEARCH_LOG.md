@@ -33,6 +33,10 @@ The bootstrap rollback fixture wrote CRLF on Windows but compared its bytes with
 fixture now writes the same LF stamp as bootstrap. Doctor previously accepted an old Claude
 CLI before a current installation on PATH. It now probes the resolved CLI for the --effort
 option already required by the review adapter; the earlier-on-PATH regression was observed RED.
+The first probe read `--help` through command substitution, and a background child of the CLI
+held that pipe until it exited, far past the 5 s bound (seen RED: 14 s). It now captures to a
+file and kills the child's process group where `setsid` exists, as the grep probe does; a
+trap removes the temp file when doctor is interrupted (the leftover file was seen RED).
 
 ### 2026-10-10 — Round 3 bootstrap and Stop-hook findings
 

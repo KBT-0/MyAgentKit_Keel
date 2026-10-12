@@ -16,8 +16,12 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 - **Doctor catches an old Claude CLI earlier on PATH** (`scripts/doctor.sh`): the configured
   Claude reviewer must advertise `--effort`, which the adapter already requires. A newer
   installation later on PATH cannot satisfy that check. The probe finds the CLI as `review.sh`
-  does, `~/.local/bin` included, under the grep probe's 5-second bound; without `timeout` it
-  is skipped with a NOTE. **ACTION:** sync the kit or copy
+  does, `~/.local/bin` included, under the grep probe's 5-second bound. Its `--help` output
+  goes to a temp file, never a pipe, so a CLI whose background child keeps stdout open
+  cannot hold session start past that bound. Where `setsid` exists, that child is killed with
+  the probe's process group (otherwise a NOTE says it is not), and an interrupted doctor
+  removes the temp file. Without `timeout` or a temp file the probe is skipped with a NOTE.
+  **ACTION:** sync the kit or copy
   `$KIT/core/scripts/doctor.sh` to `scripts/doctor.sh`.
 - **A review no longer dies on the kit's own limits** (`agent_process.py`, the adapters,
   `review.sh`): a review attempt now gets 3600 seconds (maximum 7200) and a Claude review

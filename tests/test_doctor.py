@@ -133,8 +133,11 @@ class DoctorTests(unittest.TestCase):
                     self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                     self.assertIn(said, result.stdout)
 
-            # The CLI exits, but its child keeps stdout open: capture must also be bounded.
-            (old / 'claude').write_text('#!/bin/sh\nsleep 12 &\necho --effort\nexit 0\n')
+            # The CLI exits, but its child keeps stdout open: capture must also be bounded,
+            # and where setsid exists the child is killed with the probe's process group.
+            pid_file = root / 'child.pid'
+            (old / 'claude').write_text('#!/bin/sh\nsleep 12 &\necho $! > "%s"\necho --effort\nexit 0\n'
+                                        % pid_file.as_posix())
             started = time.monotonic()
             result = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=root,
                                     env=dict(env, PATH=str(old) + os.pathsep + bare),
@@ -143,6 +146,38 @@ class DoctorTests(unittest.TestCase):
             self.assertLess(elapsed, 6, 'doctor.sh waited %.2f s for the CLI child' % elapsed)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn('DOCTOR: ready', result.stdout)
+            if shutil.which('setsid', path=bare):
+                child = int(pid_file.read_text())
+                survived = alive(child)
+                if survived:
+                    os.kill(child, signal.SIGKILL)
+                self.assertFalse(survived, "the Claude CLI's background child outlived doctor")
+            else:
+                self.assertIn("a process the Claude CLI's --help starts in the background is not stopped",
+                              result.stdout)
+
+            # No temp file: the probe is skipped with a NOTE, never run against an empty path.
+            no_mktemp = root / 'no-mktemp'
+            no_mktemp.mkdir()
+            (no_mktemp / 'mktemp').write_text('#!/bin/sh\nexit 1\n')
+            (no_mktemp / 'mktemp').chmod(0o755)
+            result = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=root,
+                                    env=dict(env, PATH=os.pathsep.join((str(no_mktemp), str(old), bare))),
+                                    capture_output=True, text=True, timeout=20)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('NOTE: Claude CLI --effort probe skipped, cannot create a temp file', result.stdout)
+
+            # Interrupted in the middle of the probe, doctor still removes its temp file.
+            (old / 'claude').write_text('#!/bin/sh\nexec sleep 30\n')
+            tmpdir = root / 'tmpdir'
+            tmpdir.mkdir()
+            interrupt = ('sh scripts/doctor.sh >/dev/null & pid=$!; n=0\n'
+                         'while [ -z "$(ls "$TMPDIR")" ] && [ $n -lt 100 ]; do sleep 0.1; n=$((n+1)); done\n'
+                         'ls "$TMPDIR"; kill -s TERM $pid; wait $pid\n')
+            seen = subprocess.run(['sh', '-c', interrupt], cwd=root, timeout=30, capture_output=True, text=True,
+                                  env=dict(env, TMPDIR=tmpdir.as_posix(), PATH=str(old) + os.pathsep + bare))
+            self.assertTrue(seen.stdout.strip(), 'the probe never created its temp file')
+            self.assertEqual(list(tmpdir.iterdir()), [], 'an interrupted probe left its temp file')
 
     def test_each_injected_trap_turns_doctor_red(self):
         with tempfile.TemporaryDirectory() as tmp:

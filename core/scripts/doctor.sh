@@ -173,6 +173,12 @@ fi
 # An override set to empty is not unset: the adapters read it with os.environ.get and run
 # an empty command, so it is MISSING here, never read as the default.
 reviewer=${REVIEW_REVIEWER:-$configured}
+# The probes below capture into temp files: an interrupt (Ctrl-C, a hook's time limit) in
+# the middle of one still removes them.
+help_out=; probe_out=
+trap 'rm -f ${help_out:+"$help_out"} ${probe_out:+"$probe_out"}' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 case "$reviewer" in
   codex) reviewer_cli=${REVIEW_CLI_BIN-codex}; override=REVIEW_CLI_BIN ;;
   claude) reviewer_cli=${CLAUDE_CLI_BIN-claude}; override=CLAUDE_CLI_BIN ;;
@@ -192,10 +198,20 @@ elif [ "$reviewer" = claude ]; then
   # cannot supply --effort to an older CLI that actually runs. Bounded as the grep probe is
   # (below): a --help that blocks would hang every session start.
   # A child can keep stdout open after the CLI exits; a file capture never waits for EOF.
-  timeout -k 1 5 "$reviewer_path" --help </dev/null >"$help_out" 2>/dev/null; help_status=$?
+  # Where setsid exists, the CLI's background children are killed with its process group,
+  # as the grep probe's are (the comment there says why the leader kills its own group).
+  if command -v setsid >/dev/null 2>&1; then
+    help_mark="<<DOCTOR-HELP-$$>>-exit"
+    ( setsid sh -c 'timeout --foreground -k 1 5 "$0" --help; echo "$1 $?"; kill -s KILL 0' \
+        "$reviewer_path" "$help_mark" </dev/null >"$help_out" 2>/dev/null; : ) 2>/dev/null
+    help_status=$(awk -v m="$help_mark " 'index($0, m) == 1 { print substr($0, length(m) + 1) }' "$help_out")
+  else
+    timeout -k 1 5 "$reviewer_path" --help </dev/null >"$help_out" 2>/dev/null; help_status=$?
+    echo "NOTE: no setsid on this machine: a process the Claude CLI's --help starts in the background is not stopped"
+  fi
   help=$(cat "$help_out")
   rm -f "$help_out"
-  if [ "$help_status" -eq 124 ] || [ "$help_status" -eq 137 ]; then
+  if [ -z "$help_status" ] || [ "$help_status" -eq 124 ] || [ "$help_status" -eq 137 ]; then
     echo "NOTE: the Claude CLI '$reviewer_cli' did not answer --help within 5 s; --effort was not checked"
   elif [ "$help_status" -ne 0 ] || ! printf '%s\n' "$help" | grep -Eq -- '(^|[[:space:],])--effort([[:space:]=,]|$)'; then
     miss "the Claude CLI '$reviewer_cli' does not support --effort (an old CLI earlier on PATH can shadow the current installation)" "update that CLI, reorder PATH, or set CLAUDE_CLI_BIN to the current executable"
