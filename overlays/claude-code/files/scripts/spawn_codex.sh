@@ -166,6 +166,9 @@ else
 fi
 instruction="Read $(q "$shown") and follow it. The brief carries its Route: quick|build|deep · Risk: low|medium|high · Checks: ... line; run the checks it names. Write your result to $(q "$cresult"). Leave all work uncommitted and ready for the lead; list the exact changed and added files in the result. The lead reviews the diff through the normal cross-review, then commits with the usual commit gate. Publish a finished result atomically: write a temporary file beside it, end with <!-- codex-worker: ready -->, then rename it to the result path with $kit_python $(q "$cworker") --publish TEMPORARY_FILE DESTINATION, which retries a rename Windows refuses while a poll reads the file. If a decision is needed, finish independent work and stop all jobs first, then write Kind: blocked and QUESTIONS in the result; publish the blocked result atomically using the same temporary-file, end-marker and rename protocol before publishing the question atomically to $(q "$cquestion") using that protocol too. End your turn immediately after publishing; the wrapper allows 10 seconds to flush before closing this worker. The lead answers by resuming this same session."
 # The instruction comes first, before any option, as spawn_worker.sh puts it.
+# A worker is a session of its own, never the lead's child (spawn_worker.sh): clear the lead's
+# Claude Code session markers, which hooks the worker starts would otherwise inherit.
+unmark="env -u CLAUDE_CODE_CHILD_SESSION -u CLAUDECODE -u CLAUDE_CODE_SESSION_ID -u CLAUDE_PID -u CLAUDE_CODE_MESSAGING_SOCKET -u CLAUDE_CODE_MESSAGING_TOKEN -u CLAUDE_CODE_SESSION_ATTENDED -u CLAUDE_CODE_ENTRYPOINT"
 cmd="codex${resume:+ resume $(q "$session")} $(q "$instruction") -m $(q "$model") -c $(q "model_reasoning_effort=$effort")"
 cmd="$cmd -s workspace-write -a never --no-daemon -C $(q "$cdir")"
 
@@ -244,7 +247,7 @@ if [ -n "$windows" ]; then
   tab=$(mktemp) || die "cannot write the tab's script"
   printf '%s\n' 'rm -f -- "$0"' "cd $(q "$dir") || exit 1" \
     'began=$(date +%s)' \
-    "KIT_WORKER_STARTED=$(q "$start") KIT_WORKER_STALE=$(q "$stale") KIT_WORKER_EXIT=$(q "$cexited") KIT_WORKER_RESUME=$(q "$resume") $kit_python $(q "$cworker") $(q "$cquestion") $(q "$cresult") -- $(q "$bash") -c $(q "exec $cmd")" \
+    "KIT_WORKER_STARTED=$(q "$start") KIT_WORKER_STALE=$(q "$stale") KIT_WORKER_EXIT=$(q "$cexited") KIT_WORKER_RESUME=$(q "$resume") $unmark $kit_python $(q "$cworker") $(q "$cquestion") $(q "$cresult") -- $(q "$bash") -c $(q "exec $cmd")" \
     's=$?; if [ "$s" -ne 0 ] && [ "$(( $(date +%s) - began ))" -lt 10 ]; then printf "codex ended at once (exit %s); press Enter to close\\n" "$s"; read -r ignored; fi' \
     'exit 0' > "$tab" || die "cannot write the tab's script: $tab"
   spawn_launched=1
@@ -253,9 +256,14 @@ if [ -n "$windows" ]; then
   where="in a Windows Terminal tab; watch it there"; view=tab
 else
   # `cd` first: tmux hands a new session the PWD of whichever client last created one.
+  # tmux parses its command with its default shell (fish, say): the quoted command goes into a
+  # script that removes itself, and tmux is handed two plain words (spawn_worker.sh).
+  run=$(mktemp) || die "cannot write the session's script"
+  printf '%s\n' 'rm -f -- "$0"' "cd $(q "$dir") && exec $unmark KIT_WORKER_STARTED=$(q "$start") KIT_WORKER_STALE=$(q "$stale") KIT_WORKER_EXIT=$(q "$exited") KIT_WORKER_RESUME=$(q "$resume") $kit_python $(q "$cworker") $(q "$cquestion") $(q "$cresult") -- sh -c $(q "exec $cmd")" > "$run" ||
+    { rm -f -- "$run"; die "cannot write the session's script: $run"; }
   spawn_launched=1
-  tmux new-session -d -s "$name" -c "$dir" -x 200 -y 50 "cd $(q "$dir") && export KIT_WORKER_STARTED=$(q "$start") KIT_WORKER_STALE=$(q "$stale") KIT_WORKER_EXIT=$(q "$exited") KIT_WORKER_RESUME=$(q "$resume") && exec $kit_python $(q "$cworker") $(q "$cquestion") $(q "$cresult") -- sh -c $(q "exec $cmd")" ||
-    { spawn_launched=""; die "tmux could not start '$name'"; }
+  tmux new-session -d -s "$name" -c "$dir" -x 200 -y 50 "sh $run" ||
+    { spawn_launched=""; rm -f -- "$run"; die "tmux could not start '$name'"; }
   where="(tmux attach -t $name to watch)"; view="tmux session"
 fi
 

@@ -15,7 +15,7 @@ import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 
-from test_spawn_worker import WT_TAB, shq
+from test_spawn_worker import MARKERS, WT_TAB, shq
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / 'overlays/claude-code/files/scripts/spawn_codex.sh'
@@ -38,7 +38,7 @@ CODEX = r'''#!/usr/bin/env python3
 import json, os, sys
 state, args = os.environ['SPAWN_STATE'], sys.argv[1:]
 with open(os.path.join(state, 'codex.log'), 'a') as log:
-    log.write(json.dumps({'argv': args, 'cwd': os.getcwd()}) + '\n')
+    log.write(json.dumps({'argv': args, 'cwd': os.getcwd(), 'env': sorted(os.environ)}) + '\n')
 if args[0] != 'resume' and 'CODEX_SILENT' not in os.environ:
     folder = os.path.join(os.environ['CODEX_HOME'], 'sessions', '2026', '10', '09')
     os.makedirs(folder, exist_ok=True)
@@ -72,7 +72,14 @@ with open(os.path.join(state, 'tmux.log'), 'a') as log:
 if args[0] == 'has-session':
     sys.exit(0 if os.path.exists(os.path.join(state, 'live')) else 1)
 if args[0] == 'new-session':
-    sys.exit(subprocess.run(['sh', '-c', args[-1]]).returncode)
+    # tmux's default shell may be fish: it must only see two plain words, `sh SCRIPT`.
+    words = args[-1].split(' ')
+    assert len(words) == 2 and words[0] == 'sh' and not set("'\";&|") & set(words[1]), args[-1]
+    # The script removes itself when run: read it first, through sh (a Git Bash path).
+    text = subprocess.run(['sh', '-c', 'cat "$1"', 'sh', words[1]], capture_output=True, text=True).stdout
+    with open(os.path.join(state, 'tmux-script'), 'w') as g:
+        g.write(text)
+    sys.exit(subprocess.run(['sh', words[1]]).returncode)
 '''
 
 
@@ -108,7 +115,7 @@ class SpawnCodexTests(unittest.TestCase):
 
     def spawn(self, *args, tmux=False, **extra):
         env = dict(os.environ, PATH=f'{self.bin}{os.pathsep}{os.environ["PATH"]}', SPAWN_STATE=str(self.state),
-                   CODEX_HOME=str(self.home), KIT_WT=str(self.bin / 'wt-tab'), KIT_PS=str(self.bin / 'ps-stub'), KIT_SESSION_WAIT='2', **extra)
+                   CODEX_HOME=str(self.home), KIT_WT=str(self.bin / 'wt-tab'), KIT_PS=str(self.bin / 'ps-stub'), KIT_SESSION_WAIT='2', **dict.fromkeys(MARKERS, '1'), CLAUDE_CODE_EXECPATH='x', **extra)
         if tmux:
             (self.bin / 'uname').write_text('#!/bin/sh\necho Linux\n', newline='\n')
             (self.bin / 'uname').chmod(0o755)
@@ -129,6 +136,9 @@ class SpawnCodexTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         tree = self.repo / '.claude/worktrees/w1'
         (run,) = self.runs()
+        # A worker is no child of the lead's Claude Code session; the binary's name is kept.
+        self.assertFalse(MARKERS & set(run['env']), run['env'])
+        self.assertIn('CLAUDE_CODE_EXECPATH', run['env'])
         # Git metadata remains read-only even with --add-dir (issue #43); the lead commits.
         brief, cresult, cquestion = (shq(self.win(p, '-m')) for p in (self.brief, tree / 'RESULT-w1.md', tree / 'QUESTION-w1.md'))
         self.assertEqual(run['argv'], [INSTRUCTION % (brief, cresult, self.publisher(result.stdout), cquestion), '-m', 'gpt-x', '-c', 'model_reasoning_effort=high', '-s', 'workspace-write',
@@ -211,10 +221,15 @@ class SpawnCodexTests(unittest.TestCase):
         result = self.spawn('w6', str(self.brief), '--model', 'm', '--effort', 'high', tmux=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("'new-session', '-d', '-s', 'w6'", (self.state / 'tmux.log').read_text())
+        # tmux got `sh SCRIPT`; the script carries the env -u prefix and the quoted command.
+        script = (self.state / 'tmux-script').read_text()
+        self.assertIn('exec env -u CLAUDE_CODE_CHILD_SESSION ', script)
+        self.assertIn(' -- sh -c ', script)
         run = self.runs()[0]
         self.assertEqual(run['argv'][0], INSTRUCTION % (shq(str(self.brief)), shq(str(self.repo / 'RESULT-w6.md')),
                                                         self.publisher(result.stdout), shq(str(self.repo / 'QUESTION-w6.md'))))
         self.assertEqual(run['argv'][-2:], ['-C', str(self.repo)])
+        self.assertFalse(MARKERS & set(run['env']), run['env'])
         self.assertEqual((self.repo / '.myagentkit/workers/w6.session').read_text().strip(), 'sess-0')
         # A tmux session of that name still running is never resumed beside.
         (self.state / 'live').write_text('')

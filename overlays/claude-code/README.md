@@ -60,8 +60,9 @@ says about tmux sessions, `--batch`, `show_workers.sh` and `watch_workers.sh` do
 there. `spawn_worker.sh` opens the worker as a tab of the window the lead runs in (`wt.exe -w
 0`, or the launcher `KIT_WT` names) with the brief's instruction as its first prompt, and
 refuses a name a running Claude Code session already has. The tab is the only view of it:
-watch the tab and wait for the result file the brief names (the separate session does not
-answer `notify_when_idle`). `close_worker.sh NAME` ends it: it finds the `claude.exe` whose
+subscribe once with `notify_when_idle` only when the spawn prints "is a peer session".
+If it prints WARNING, watch the tab and result file; no idle notice arrives.
+`close_worker.sh NAME` ends it: it finds the `claude.exe` whose
 command line holds `-n NAME`, stops it with `taskkill /T /F` (the tab closes, because its
 command ends with `exit 0`), then removes the worktree through the same audit as on POSIX,
 which reads each process's working directory on Windows itself. A session that survives, or

@@ -747,7 +747,10 @@ tokens including the lead's, review rounds, and waits on an exclusive resource. 
 will be thin.
 
 `scripts/spawn_worker.sh` (Claude Code overlay) opens the session in tmux with a brief file.
-The lead subscribes once for its idle notice and does not message it: every message to an
+The lead subscribes once with SendMessage `notify_when_idle`; on native Windows (a Windows
+Terminal tab) only when the spawn prints "is a peer session", and after a WARNING it watches the
+tab and the result file instead. A tmux worker always registers.
+The lead does not message an idle session: every message to an
 idle session is a full-context turn. The idle notice also fires on every park on a
 background job, and the session does not end with its task. A committed result file of
 `Kind: completed` is therefore the end signal; a file of another kind reports a worker still
