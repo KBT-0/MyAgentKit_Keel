@@ -132,7 +132,10 @@ def main():
     tasks, groups = defaultdict(list), defaultdict(list)
     for record in rows:
         tasks[str(record['task'].get('id') or 'unknown')].append(record)
-        groups[(record.get('model_requested', 'unknown'), record['effort'])].append(record)
+        # A missing or null value and the label 'unknown' are one group: equal printed labels
+        # always mean one group, and 'unknown' is reserved for a missing value.
+        record['model_requested'] = record.get('model_requested') or 'unknown'
+        groups[(record['model_requested'], record['effort'])].append(record)
     for task, records in sorted(tasks.items()):
         print(f'Task {printable(task)}: {totals(records)}')
         number = 0
@@ -144,7 +147,7 @@ def main():
             print(f'  {f"round={number}" if record["round"] else "not a round"}'
                   f' kind={printable(record["task"].get("kind", "unknown"))}'
                   f' callee={printable(record.get("callee", "unknown"))}'
-                  f' model={printable(record.get("model_requested", "unknown"))}'
+                  f' model={printable(record["model_requested"])}'
                   f' effort={printable(record["effort"])} verdict={verdict} duration={duration}')
     if rows:
         print(f'Total: {totals(rows)}')

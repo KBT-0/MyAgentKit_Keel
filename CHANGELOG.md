@@ -16,7 +16,10 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 - **Routing sets effort, risk checks and second-round escalation.** Briefs name route,
   risk, checks, model and effort. `scripts/usage_summary.py` (kit-owned, synced) reports
   review rounds, verdicts and rejects per task and per model and effort; worker errands
-  write no record and are not in it. **ACTION:** reconcile `$KIT/core/docs/WORKFLOW.md`
+  write no record and are not in it. Every printed label is escaped, the backslash included,
+  so a literal `` and the control character it names print differently and stay in
+  separate groups; a missing model or effort prints as the reserved label `unknown`, and a
+  value that is literally `unknown` joins that group. **ACTION:** reconcile `$KIT/core/docs/WORKFLOW.md`
   into `docs/WORKFLOW.md`,
   `$KIT/core/docs/HANDOFF.md` into `docs/HANDOFF.md`,
   `$KIT/core/docs/USAGE.md` into `docs/USAGE.md`, and

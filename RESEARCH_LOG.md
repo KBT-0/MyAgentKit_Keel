@@ -34,6 +34,12 @@ Escalating after the second dirty round avoids paying for repeated unsuccessful 
 The owner approved fix ownership: the reviewing model fixes its findings; each verdict
 counts only for parts it did not write. Two models writing requires two independent final reviews.
 
+`usage_summary.py` groups by the raw model and effort and escapes only the printed label, with
+the backslash itself escaped: grouping by the escaped label had merged a value holding an ESC
+byte with one holding the literal text ``. A null model and the string `None` had then
+become two groups with one printed label, so a missing value is normalised to the reserved label
+`unknown` before grouping, and equal printed labels always mean one group (2026-10-12).
+
 ### 2026-10-10 — REVIEW_ALLOW_EOL_ONLY stays
 
 Decision: after two review rounds asked about it, the owner decided that

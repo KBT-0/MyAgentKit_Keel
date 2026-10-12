@@ -165,6 +165,15 @@ class UsageSummaryTests(unittest.TestCase):
             self.assertIn(f'Model {value} / effort {value}: invocations=1 rounds=1 '
                           'duration=1.000s rejects=0', groups)
 
+    def test_null_model_is_unknown_and_not_the_label_none(self):
+        self.record('a', 'T1', b'VERDICT: Accept\n', model=None)
+        self.record('b', 'T1', b'VERDICT: Accept\n', model='None')
+        self.record('c', 'T1', b'VERDICT: Accept\n', model='unknown')
+        out = self.summary()
+        self.assertIn('Model None / effort unknown: invocations=1 ', out)
+        self.assertIn('Model unknown / effort unknown: invocations=2 ', out)
+        self.assertEqual(out.count('Model None'), 1)
+
     def test_control_characters_in_task_labels_are_escaped(self):
         self.record('controls', 'fix\nTotal: forged\r\t\x1b[2J\x7f\x85', b'VERDICT: Accept\n')
         self.record('model', 'model', b'| effort | x\x1b[2J\x0bTotal: forged |\nVERDICT: Accept\n',
