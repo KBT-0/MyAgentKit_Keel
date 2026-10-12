@@ -161,12 +161,18 @@ When the rounds start and what runs in parallel is the lead's part, in `docs/WOR
   write archives with unique names that lie outside the review scope. A self-test that
   writes into the working tree fails the reviews with `stale_checkout`; such a self-test runs
   in a second worktree of the same commit.
+- Each reviewer runs once per tree at a time, and nobody edits a tree under review: a second
+  run of the same reviewer there buys the same verdict twice, and an edit fails every running
+  review with `stale_checkout`.
 - Every round of one feature uses the same `MYAGENTKIT_TASK_ID`, so that later rounds carry
   the earlier ones. Only the final reviews (one per model, each over the parts it did
   not write) take a label never used before. When model B's final review finds a High or Medium,
   model B fixes its own findings, and model A reviews B's fix under a fresh label.
   B's final review counts as clean for every other part.
   Closure requires no open High or Medium finding on any part by a model that did not write that part.
+  A label is bound to its base: the wrapper refuses a round whose scope, resolved reference
+  or head does not continue the label's earlier rounds (exit 2, above), so another base or
+  another change takes a new label.
 
 ## Unavailable reviewer
 
@@ -196,6 +202,11 @@ is still stopped at sixty minutes by default. Claude's final-JSON output does no
 reliable startup/activity detection. With `--fallback`, two timed-out default
 attempts can take about two hours plus local processing and quota-observation overhead. There is no purchase
 of extra credits and no retry of the same provider.
+
+**A Codex capacity error is transient.** When Codex reports that the model is at capacity,
+the lead runs the same review again by hand after about ten minutes, because the capacity
+returns and the review's judgement is still needed. The lead passes `--fallback`, or hands the
+review to the other side, only with {{OWNER_NAME}}'s yes: the substitute may be the author.
 
 **The requested reviewer is never silently replaced.** The reviewer is usually requested
 because the other model wrote the patch, so a substitute can be the author reviewing its own

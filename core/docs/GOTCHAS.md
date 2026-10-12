@@ -26,6 +26,7 @@ A new entry adds its heading to this list.
 - A checkout under `/mnt/<drive>` in WSL
 - Under WSL, a file named `*.exe` runs on Windows
 - A build server the gate started keeps the gate lock
+- Background jobs die with the session and in a low-memory reap
 
 ---
 
@@ -163,3 +164,13 @@ the server off in the build command (`dotnet build -nodeReuse:false
 The gate's waiting `NOTE [lock]` line names the lock file; `fuser -v <lock file>` or
 `lsof <lock file>` shows which process holds it. On native Windows, search for `check.lock`
 under Associated Handles on the CPU tab of Resource Monitor (`resmon`).
+
+## Background jobs die with the session and in a low-memory reap
+
+A background shell and a `codex exec` run belong to the session that started them. When that
+session ends (a hand-off, a closed terminal, a restart), they end with it: a hand-off in the
+middle of a batch killed three Codex jobs in one evening. And when the machine runs low on
+memory, the host reaps them: five heavy jobs started together were killed at once, and their
+work was lost. Run at most two heavy background jobs at a time, and end a session only once
+its jobs have finished (`docs/WORKFLOW.md`, "Worker cost", rules 6 and 8). A Codex or Claude
+session that was cut off is resumed, not restarted (`docs/WORKFLOW.md`, "Worker cost").

@@ -70,6 +70,17 @@ class SectionPointerTests(unittest.TestCase):
         workflow = (ROOT / 'core/docs/WORKFLOW.md').read_text(encoding='utf-8')
         self.assertIn('after the second dirty round', workflow)
         self.assertIn('python3 scripts/usage_summary.py', workflow)
+        flat = ' '.join(workflow.split())
+        # Rules of 2026-10-12: each said once, beside its siblings; reviews are never reduced.
+        for rule in ('effort is never carried up from the round before',
+                     'Both start at the cheapest table row that fits',
+                     'the lead never opens visible sessions to show the workflow',
+                     'The self-test runs once per batch, beside the review',
+                     'Open issues are never closed to finish a release',
+                     "never only into a lead's private memory",
+                     'reviews are never reduced'):
+            self.assertEqual(flat.count(rule), 1, rule)
+        self.assertIn('**Prevention over detection.**', workflow.split('## Review rounds')[1].split('\n\n')[1])
         self.assertIn('| Mechanical work and re-review of a small fix round | medium |', workflow)
         for name in ('core/docs/REVIEW_RUNNING.md', 'core/docs/WORKFLOW.md',
                      'core/docs/REVIEW_GATE.md', 'core/AGENTS.md'):
