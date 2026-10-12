@@ -51,11 +51,12 @@
 # Native Windows: a worker is a Windows Terminal tab whose pane nothing can read. The
 # Notification and Stop hooks spawn_worker.sh gives it write one line to
 # .myagentkit/workers/NAME.state at the top of this checkout (or this folder outside git):
-# `waiting permission|question TIME` or `idle TIME`. A waiting line is WAITING, before the
+# `waiting permission|question|input TIME ID` or `idle TIME ID`. A waiting line is WAITING, before the
 # result file is read; an idle line, when the result file says nothing new, is IDLE: the worker
-# stopped (a question in the tab, a usage limit, an error). Each line is reported once; the
+# stopped (a question in the tab, a usage limit, an error). Each event id is reported once; the
 # once-markers are NAME.watch-* files beside it, which spawn_worker.sh removes. There is no GONE
-# and no context figure there, and no tmux is needed.
+# and no context figure there, and no tmux is needed. Unreadable or invalid state is an
+# observation failure (exit 3); an absent state file means no signal yet.
 set -eu
 
 say() { printf '%s\n' "$1" | LC_ALL=C tr '\001-\011\013-\037\177' '?'; }
@@ -293,19 +294,33 @@ EOF
 }
 
 # Native Windows: report NAME's state line when it starts with $2 (waiting or idle) and was not
-# reported yet. Return 1 when nothing is said, 2 when the report could not be written.
+# reported yet. Return 1 when nothing is said, 2 when the report could not be written,
+# 3 when its state is unreadable or invalid.
 tab() {
-  line=$(head -n 1 -- "$wdir/$1.state" 2>/dev/null) || return 1
+  state=$wdir/$1.state
+  [ -e "$state" ] || [ -L "$state" ] || return 1
+  reason=""
+  if [ ! -f "$state" ]; then reason="not a regular file"
+  elif ! line=$(cat -- "$state" 2>"$err"); then reason=$(cat "$err")
+  elif ! printf '%s\n' "$line" | LC_ALL=C grep -Eq '^(waiting (permission|question|input)|idle) [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}( [0-9]+)?$' ||
+       [ "$(printf '%s\n' "$line" | wc -l)" -ne 1 ]; then reason="invalid state content"
+  fi
+  if [ -n "$reason" ]; then
+    say "watch: $1: state unreadable: $reason" >&2
+    failed=1; return 3
+  fi
   case $line in "$2 "*) ;; *) return 1 ;; esac
-  [ "$(mark "$1" state)" != "$line" ] || return 1
+  event=${line##* }
+  case $event in *[!0-9]*) event=$line ;; esac  # legacy lines have no event id
+  [ "$(mark "$1" state)" != "$event" ] || return 1
   if [ "$2" = waiting ]; then
-    case $line in "waiting question "*) what="a question" ;; *) what="a permission prompt" ;; esac
+    case $line in "waiting question "*) what="a question" ;; "waiting input "*) what="input" ;; *) what="a permission prompt" ;; esac
     say "watch_workers: WAITING: $1, on $what (its state file: $line)" || return 2
   else
     say "watch_workers: IDLE: $1, its session stopped and waits for input, with no new result report (its state file: $line)" || return 2
   fi
   say "  look at it: its Windows Terminal tab, titled $1" || return 2
-  setmark "$1" state "$line"
+  setmark "$1" state "$event"
 }
 
 # Report the context figure in NAME's status line ($win) when it is past the warning line,
@@ -361,6 +376,7 @@ while :; do
       case $w in
         0) found=1 ;;
         1) ;;
+        3) failed=1 ;;
         *) say "watch_workers: $n: could not write its report: the report buffer failed" >&2; failed=1 ;;
       esac
     fi

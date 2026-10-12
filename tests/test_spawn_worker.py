@@ -7,12 +7,14 @@ No real terminal either: the launcher (KIT_WT), `osascript` and `uname` are stub
 environment says WSL, so showing a session goes to the launcher stub, which marks it attached.
 """
 import json
+import io
 import os
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / 'overlays/claude-code/files/scripts/spawn_worker.sh'
@@ -148,6 +150,7 @@ WINDOWS = os.name == 'nt'
 # which native Windows never takes, through Python stubs whose `sh -c` command line Git for
 # Windows parses again (an apostrophe is a quote there): there each prints NOT RUN.
 ON_WINDOWS = {'test_a_missing_or_failing_watcher_stops_the_spawn', 'test_a_worker_without_its_model_or_effort_is_refused',
+              'test_unsafe_names_are_refused_without_changing_worker_files',
               'test_missing_or_unreadable_brief_is_refused_before_any_session',
               'test_no_error_message_echoes_a_control_character',
               'test_on_native_windows_the_worker_opens_as_a_windows_terminal_tab',
@@ -224,7 +227,7 @@ class SpawnWorkerTests(unittest.TestCase):
         marker = self.tmp / 'injected'
         # Each value holds an even number of apostrophes, so under unescaped quoting every
         # $(...) lands outside quotes and runs; escaped, each arrives as written.
-        name = "o'brien's"
+        name = "obrien"
         settings = json.dumps({'note': f"'$(touch {marker})'"})
         model, effort = "m'x'", f"high'$(touch {marker})'"
         tools = "Bash(echo 'a b'),Read"
@@ -247,6 +250,30 @@ class SpawnWorkerTests(unittest.TestCase):
                 self.assertIn('spawn_worker: %s is required' % missing, result.stderr)
                 self.assertIsNone(self.launched(), 'a worker started without its model or effort')
                 self.assertEqual(self.tmux_log(), '')
+
+    def test_unsafe_names_are_refused_without_changing_worker_files(self):
+        (self.bin / 'uname').write_text('#!/bin/sh\necho MINGW64_NT-10.0\n')
+        (self.bin / 'ps-empty').write_text('#!/bin/sh\nexit 0\n')
+        (self.bin / 'ps-empty').chmod(0o755)
+        (self.bin / 'wt-refuse').write_text('#!/bin/sh\nexit 99\n')
+        (self.bin / 'wt-refuse').chmod(0o755)
+        workers = self.cwd / '.myagentkit/workers'
+        workers.mkdir(parents=True)
+        for path in (workers / 'w1.state', workers / 'w1.watch-state',
+                     workers.parent / 'victim.settings.json'):
+            path.write_bytes(b'keep this\n')
+        def snapshot():
+            return {str(p.relative_to(workers.parent)): p.read_bytes() if p.is_file() else None
+                    for p in workers.parent.rglob('*')}
+        before = snapshot()
+        for name in ('../victim', r'..\victim', 'a/b', "o'brien", '-bad', ''):
+            with self.subTest(name=name):
+                result = self.spawn(name, str(self.brief), KIT_PS=str(self.bin / 'ps-empty'),
+                                    KIT_WT=str(self.bin / 'wt-refuse'))
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('refused the worker name', result.stderr)
+                self.assertEqual(snapshot(), before)
+                self.assertIsNone(self.launched())
 
     def test_brief_is_delivered_by_path_as_one_typed_instruction(self):
         result = self.spawn('w1', str(self.brief))
@@ -380,12 +407,13 @@ class SpawnWorkerTests(unittest.TestCase):
         self.assertFalse((workers / 'w1.watch-state').exists(), "an earlier worker's once-marker was kept")
         if not WINDOWS:
             return  # the hook names C:/... paths of the cygpath stub
-        for event, message, line in (('Notification', 'Claude needs your permission to use Bash', 'waiting permission '),
-                                     ('Notification', 'Claude is waiting for your input', 'waiting permission '),  # unchanged
-                                     ('Notification', 'Claude has a question for you', 'waiting question '),
-                                     ('Stop', '', 'idle ')):
-            with self.subTest(event=event, message=message):
-                run = subprocess.run(['sh', '-c', hook], input=json.dumps({'hook_event_name': event, 'message': message}),
+        for payload, line in (({'hook_event_name': 'Notification', 'notification_type': 'permission_prompt'}, 'waiting permission '),
+                              ({'hook_event_name': 'Notification', 'notification_type': 'idle_prompt'}, 'waiting input '),
+                              ({'hook_event_name': 'Notification', 'notification_type': 'elicitation_dialog'}, 'waiting question '),
+                              ({'hook_event_name': 'Stop'}, 'idle ')):
+            with self.subTest(payload=payload):
+                (workers / 'w1.state').unlink(missing_ok=True)
+                run = subprocess.run(['sh', '-c', hook], input=json.dumps(payload),
                                      capture_output=True, text=True, timeout=30)
                 self.assertEqual(run.returncode, 0, run.stderr)
                 self.assertTrue((workers / 'w1.state').read_text().startswith(line))
@@ -621,6 +649,50 @@ class SpawnWorkerTests(unittest.TestCase):
                 self.assertIn("cannot check session 'w%d': the watcher exited " % bool(body), result.stderr)
                 self.assertEqual(len(result.stderr.strip().splitlines()), 1, result.stderr)
                 self.assertNotIn("'-l'", self.tmux_log())
+
+
+def run_state_hook(state, payload):
+    # Execute the exact inline Python carried in --settings, without a live worker.
+    code = SCRIPT.read_text(encoding='utf-8').split("hook=$kit_python' -I -c '$(q '", 1)[1].split("')' ", 1)[0]
+    with patch.object(sys, 'argv', ['hook', str(state)]), \
+            patch.object(sys, 'stdin', io.TextIOWrapper(io.BytesIO(json.dumps(payload).encode()))):
+        exec(compile(code, str(SCRIPT), 'exec'), {})
+
+
+class WorkerStateHookTests(unittest.TestCase):
+    def test_notification_types_are_classified_from_a_fresh_state(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp) / 'w1.state'
+            cases = [({'notification_type': kind, 'message': 'question permission approval'}, expected)
+                     for kind, expected in (('permission_prompt', 'waiting permission'),
+                                            ('elicitation_dialog', 'waiting question'),
+                                            ('idle_prompt', 'waiting input'),
+                                            ('auth_success', None), ('other', None), ('', None))]
+            cases += [({'message': message}, expected) for message, expected in
+                      (('a question', 'waiting question'), ('permission needed', 'waiting permission'),
+                       ('approval needed', 'waiting permission'), ('unrelated', None))]
+            for payload, expected in cases:
+                with self.subTest(payload=payload):
+                    state.unlink(missing_ok=True)
+                    run_state_hook(state, dict(payload, hook_event_name='Notification'))
+                    if expected is None:
+                        self.assertFalse(state.exists())
+                    else:
+                        self.assertTrue(state.read_text().startswith(expected + ' '))
+
+    def test_crash_after_temp_write_preserves_previous_state(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp) / 'w1.state'
+            previous = b'waiting permission 2026-10-12T10:00:00 1\n'
+            state.write_bytes(previous)
+            def crash(source, target):
+                self.assertEqual(Path(source).parent, state.parent)
+                self.assertEqual(Path(target), state)
+                self.assertTrue(Path(source).read_text().startswith('idle '))
+                raise RuntimeError('crash before publication')
+            with patch('os.replace', side_effect=crash), self.assertRaisesRegex(RuntimeError, 'crash'):
+                run_state_hook(state, {'hook_event_name': 'Stop'})
+            self.assertEqual(state.read_bytes(), previous)
 
 
 if __name__ == '__main__':
