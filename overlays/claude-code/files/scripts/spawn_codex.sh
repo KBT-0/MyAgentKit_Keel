@@ -9,6 +9,7 @@
 # checkout or, with --worktree, in .claude/worktrees/NAME on the branch worktree-NAME, cut from
 # the commit this checkout is on now. Git metadata stays read-only; the lead commits.
 # The brief uses the spawn-time result path; codex_worker.py --wait reports its handoff.
+# The kit's BEHAVIOUR.md is not passed: Codex has no --append-system-prompt (spawn_worker.sh's).
 #
 # --resume answers a worker that stopped for a decision IN ITS OWN SESSION: the BRIEF_FILE then
 # holds the answer, and `codex resume` keeps everything the session read, where a fresh session
@@ -43,7 +44,7 @@ ctl() {
     die "the $1 contains a control character (a newline, carriage return, tab, ESC or DEL); it is not printed"
 }
 
-[ $# -ge 2 ] || { sed -n '3,17p' "$0"; exit 2; }
+[ $# -ge 2 ] || { sed -n '3,18p' "$0"; exit 2; }
 name=$1; brief=$2; shift 2
 ctl "worker name" "$name"
 ctl "brief path" "$brief"

@@ -20,6 +20,16 @@ a risky change ships. Agents propose; {{OWNER_NAME}} decides.
 
 **If the task brief does not state a role, you are the WORKER.**
 
+Every Claude-based role works with the same short appendix, `BEHAVIOUR.md`. It is a kit-owned
+file that a sync refreshes; the project changes it only through the kit. `scripts/spawn_worker.sh`
+passes it to every worker with `--append-system-prompt-file`. `scripts/claude_bridge.py` appends it
+to the reviewer's prompt. The lead starts its own session with it:
+`claude --append-system-prompt-file BEHAVIOUR.md`. A Codex session gets no appendix, because Codex
+has no such flag. `MYAGENTKIT_NO_BEHAVIOUR=1` turns the appendix off everywhere, for an A/B run.
+Every review's usage record notes `behaviour: on` or `off`, and `scripts/usage_summary.py` totals
+the rounds and rejects of each side. A resumed session keeps the system prompt it started with,
+so an A/B counts only sessions started fresh on its side.
+
 ## Task lifecycle (every task)
 
 1. **Read:** `AGENTS.md` → `docs/PHASES.md` → `docs/STATE.md` → `docs/ARCHITECTURE.md` →

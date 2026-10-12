@@ -169,7 +169,8 @@ ON_WINDOWS = {'test_a_missing_or_failing_watcher_stops_the_spawn', 'test_a_worke
               'test_missing_or_unreadable_brief_is_refused_before_any_session',
               'test_no_error_message_echoes_a_control_character',
               'test_on_native_windows_the_worker_opens_as_a_windows_terminal_tab',
-              'test_on_native_windows_the_worker_gets_state_hooks_and_keeps_its_own'}
+              'test_on_native_windows_the_worker_gets_state_hooks_and_keeps_its_own',
+              'test_the_behaviour_appendix_reaches_the_worker_unless_turned_off'}
 
 
 def tmux_path_cases(cls):
@@ -436,6 +437,34 @@ class SpawnWorkerTests(unittest.TestCase):
                                      capture_output=True, text=True, timeout=30)
                 self.assertEqual(run.returncode, 0, run.stderr)
                 self.assertTrue((workers / 'w1.state').read_text().startswith(line))
+
+    def test_the_behaviour_appendix_reaches_the_worker_unless_turned_off(self):
+        # Issue #74: BEHAVIOUR.md in the lead's folder (core/BEHAVIOUR.md in the kit itself) is
+        # the worker's appended system prompt, by its file flag; MYAGENTKIT_NO_BEHAVIOUR=1 is the
+        # A/B's other side. Driven through the Windows tab, the path every host can run.
+        for name, body in (('uname', '#!/bin/sh\necho MINGW64_NT-10.0-26200\n'), ('cygpath', CYGPATH),
+                           ('wt-tab', WT_TAB)):
+            if not (WINDOWS and name == 'cygpath'):
+                (self.bin / name).write_text(body)
+                (self.bin / name).chmod(0o755)
+        (self.bin / 'ps-stub').write_text('#!/bin/sh\n[ ! -f "$SPAWN_STATE/claude.json" ] || printf "8 claude.exe -n wb\\r\\n"\n')
+        (self.bin / 'ps-stub').chmod(0o755)
+        config = self.tmp / 'config'
+        (config / 'sessions').mkdir(parents=True)
+        (config / 'sessions' / '8.json').write_text('{}')
+        (self.cwd / 'core').mkdir()
+        behaviour = self.cwd / 'core' / 'BEHAVIOUR.md'
+        behaviour.write_text('Lead with the answer.\n')
+        shown = (subprocess.run(['cygpath', '-m', self.physical(behaviour)], capture_output=True, text=True,
+                                check=True).stdout.rstrip('\n') if WINDOWS else 'C:' + self.physical(behaviour))
+        for env, appended in (({}, ['--append-system-prompt-file', shown]), ({'MYAGENTKIT_NO_BEHAVIOUR': '1'}, [])):
+            with self.subTest(env=env):
+                (self.state / 'claude.json').unlink(missing_ok=True)
+                result = self.spawn('wb', str(self.brief), KIT_WT=str(self.bin / 'wt-tab'), KIT_PS=str(self.bin / 'ps-stub'),
+                                    CLAUDE_CONFIG_DIR=str(config), **env)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn('behaviour appendix: ' + (shown if appended else 'off'), result.stdout)
+                self.assertEqual(self.launched()['argv'][1:], ['-n', 'wb', '--model', 'm', '--effort', 'high', *appended])
 
     def assert_refused(self, brief):
         result = self.spawn('w2', str(brief))

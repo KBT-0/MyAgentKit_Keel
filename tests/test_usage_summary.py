@@ -25,14 +25,15 @@ class UsageSummaryTests(unittest.TestCase):
         (self.repo / 'docs/reviews').mkdir(parents=True)
 
     def record(self, name, task, report=None, kind='review', callee='claude', model='opus',
-               status='completed', reason=None, duration=1000, chain=''):
+               status='completed', reason=None, duration=1000, chain='', behaviour=None):
         """One record written by the adapters' own writer, so the schema is production's."""
         evidence = None
         if report is not None:
             evidence = self.repo / 'docs/reviews' / (name + '.md')
             evidence.write_bytes(report)
         with mock.patch.dict(os.environ, {'MYAGENTKIT_REVIEW_CHAIN_ID': chain}):
-            path, _ = agent_usage.record(self.repo, callee, model, 'test', {'id': task, 'kind': kind},
+            path, _ = agent_usage.record(self.repo, callee, model, 'test',
+                                         {'id': task, 'kind': kind, **({'behaviour': behaviour} if behaviour else {})},
                                          {'duration_ms': duration}, status, reason,
                                          evidence and str(evidence), report)
         return path
@@ -85,6 +86,18 @@ class UsageSummaryTests(unittest.TestCase):
         # chains/ snapshots are not records: read as records they would count as unreadable.
         self.assertNotIn('Unreadable', out)
         self.assertNotIn('Tier', out)
+
+    def test_rounds_and_rejects_are_totalled_by_behaviour_appendix(self):
+        # The A/B of issue #74: the same totals with BEHAVIOUR.md on and off; a record from
+        # before the field (or from Codex) is unknown, never counted as either side.
+        self.record('a', 'T', b'VERDICT: Reject\n', behaviour='on')
+        self.record('b', 'T', b'VERDICT: Accept\n', behaviour='off', duration=2000)
+        self.record('c', 'T', b'VERDICT: Accept\n', duration=3000)
+        out = self.summary()
+        for line in ('Behaviour on: invocations=1 rounds=1 duration=1.000s rejects=1',
+                     'Behaviour off: invocations=1 rounds=1 duration=2.000s rejects=0',
+                     'Behaviour unknown: invocations=1 rounds=1 duration=3.000s rejects=0'):
+            self.assertIn(line, out)
 
     def test_damaged_records_leave_the_rest_of_the_summary(self):
         self.record('g', 'T3', b'\xff\n| effort | high |\nVERDICT: Reject\n')
@@ -143,7 +156,8 @@ class UsageSummaryTests(unittest.TestCase):
             'invocation_id', 'recorded_at', 'status', 'failure_kind', 'callee',
             'model_requested', 'review_chain_id', 'evidence', 'evidence_sha256', 'task')]
         cases += [('task', {'id': [], 'kind': 'review'}),
-                  ('task', {'id': 'damaged', 'kind': []})]
+                  ('task', {'id': 'damaged', 'kind': []}),
+                  ('task', {'id': 'damaged', 'kind': 'review', 'behaviour': []})]
         cases += [('duration_ms', value) for value in ([], '1000', True, -1, float('nan'), float('inf'), 10 ** 400)]
         for field, value in cases:
             with self.subTest(field=field, value=value):

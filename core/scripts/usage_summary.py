@@ -22,7 +22,7 @@ def valid_record(record):
         return False
     for fields, value in ((('recorded_at', 'status', 'failure_kind', 'callee', 'model_requested',
                             'review_chain_id', 'evidence', 'evidence_sha256'), record),
-                          (('id', 'kind'), record['task'])):
+                          (('id', 'kind', 'behaviour'), record['task'])):
         if any(value.get(field) is not None and not isinstance(value[field], str) for field in fields):
             return False
     duration = record.get('duration_ms')
@@ -129,7 +129,7 @@ def main():
     rows.sort(key=lambda row: (str(row.get('recorded_at')), row['invocation_id']))
     if not rows:
         print('No recorded invocations. This does not mean zero historical usage.')
-    tasks, groups = defaultdict(list), defaultdict(list)
+    tasks, groups, behaviours = defaultdict(list), defaultdict(list), defaultdict(list)
     for record in rows:
         tasks[str(record['task'].get('id') or 'unknown')].append(record)
         # A missing, null or empty value and the label 'unknown' are one group: equal printed
@@ -138,6 +138,8 @@ def main():
             record[key] = record.get(key) or 'unknown'
         record['task']['kind'] = record['task'].get('kind') or 'unknown'
         groups[(record['model_requested'], record['effort'])].append(record)
+        # BEHAVIOUR.md on or off for the reviewer (claude_bridge.py): the A/B's comparison.
+        behaviours[record['task'].get('behaviour') or 'unknown'].append(record)
     for task, records in sorted(tasks.items()):
         print(f'Task {printable(task)}: {totals(records)}')
         number = 0
@@ -155,6 +157,8 @@ def main():
         print(f'Total: {totals(rows)}')
     for (model, effort), records in sorted(groups.items(), key=lambda item: tuple(map(str, item[0]))):
         print(f'Model {printable(model)} / effort {printable(effort)}: {totals(records)}')
+    for behaviour, records in sorted(behaviours.items()):
+        print(f'Behaviour {printable(behaviour)}: {totals(records)}')
     if unreadable:
         print(f'Unreadable records skipped: {unreadable}')
 
