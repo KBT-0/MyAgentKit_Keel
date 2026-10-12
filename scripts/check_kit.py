@@ -86,18 +86,19 @@ REQUIRED_SUITES = {
     'tests': {'test_packaging': 1, 'test_bootstrap': 36, 'test_acceptance': 9,
               'test_review_upgrade': 2 if os.name == 'nt' else 3,
               'test_boundary_example': 3, 'test_scan_gate': 1,
-              'test_check_gate': 24, 'test_check_gate_windows': 23, 'test_boundary_restore': 39,
+              'test_check_gate': 24, 'test_check_gate_windows': 25, 'test_boundary_restore': 39,
               'test_sync_kit': 29, 'test_doctor': 4, 'test_git_hooks': 30, 'test_stop_hook': 8, 'test_context_hook': 10, 'test_overlay_permissions': 6,
               'test_spawn_worker': 18, 'test_spawn_codex': 36, 'test_codex_worker': 47, 'test_working_mode': 44, 'test_worker_visibility': 55, 'test_doc_pointers': 9,
               'test_usage_summary': 9,
-              'test_kit_output': 1, 'test_kit_runner': 24, 'test_clean_worktrees': 137, 'test_clean_worktrees_windows': 9, 'test_close_worker_windows': 20,
+              'test_kit_output': 1, 'test_kit_runner': 24, 'test_clean_worktrees': 137, 'test_clean_worktrees_windows': 10, 'test_close_worker_windows': 20,
               'test_review_windows': 22, 'test_claude_sandbox': 24, 'test_worker_paths_windows': 3,
               'test_close_worker': 22, 'test_python_fallback': 1},
 }
 # Suites that do not run on native Windows, each with the reason. There each one prints one
 # NOT RUN line and is not imported; CI's Linux and macOS jobs run every one of them. A suite
 # ported to Windows leaves this list in the same change (issue #56).
-_PROBE = 'the existing-file probe: NOT RUN on Windows by design, and issue #60'
+_PROBE = ('the existing-file probe: NOT RUN on Windows by design (it audits and deletes its copy through '
+          'O_NOFOLLOW and dir_fd, which Windows Python lacks)')
 NOT_ON_WINDOWS = {
     'core/scripts': {},
     'tests': {'test_boundary_example': _PROBE, 'test_boundary_restore': _PROBE,
@@ -695,10 +696,11 @@ def acceptance(self_test):
             original_checks, original_selftests = checks.read_bytes(), selftests.read_bytes()
             checks.write_text(": synthetic boundary check\n")
             run(["sh", "scripts/check.sh", "--self-test"], project, expected=1, reason="ran no case")
-            # Native Windows: the example's probe starts the Python install manager (issue #60).
+            # Native Windows: the example's probe audits and deletes its copy through O_NOFOLLOW
+            # and dir_fd, which Windows Python lacks (no longer the install manager, issue #60).
             if os.name == "nt":
                 print("NOT RUN: the existing-file boundary example and the commit-msg skip line"
-                      " (native Windows, issue #60)")
+                      " (native Windows: the probe needs O_NOFOLLOW and dir_fd)")
             else:
                 # The shipped existing-file example, run by the enclosing self-test against a check
                 # it can trip: it counts as a case only by printing its ok line.

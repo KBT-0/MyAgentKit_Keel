@@ -962,6 +962,10 @@ The lead never changes its shell directory into a worker's worktree; use `git -C
 The shell stays in the lead's checkout, so its Stop hook runs that checkout's gate.
 
 1. Start the self-test and the review together, on the same commit, never one after the other.
+   They may share one worktree only if the self-test writes files Git ignores and nothing else.
+   A self-test that changes anything else there fails the review with `stale_checkout`; run
+   it in a second worktree of the same commit (`docs/REVIEW_RUNNING.md`, "Rounds, labels and
+   designs").
 2. Run two reviewers at the same time, never one after the other.
 3. Keep one review label for the whole feature, so that each round carries the earlier ones.
    Only the final reviews (one per model, each over the parts it did not write) take a label

@@ -27,7 +27,7 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'MYAGENTKIT_TASK_ID', 'MYAGENTKIT_R
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
 SUITE_MINIMUMS = {'test_claude_bridge': 147, 'test_agent_usage': 30, 'test_codex_quota': 5}
 # These are executed cases, excluding only the explicitly declared POSIX exclusions.
-WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 124, 'test_agent_usage': 26, 'test_codex_quota': 4}
+WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 126, 'test_agent_usage': 26, 'test_codex_quota': 4}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -2036,6 +2036,67 @@ class BridgeTests(unittest.TestCase):
             agent_usage.record(self.repo, 'codex', 'm', 'r', {'id': '', 'kind': 'review'},
                                {'stdout': ''}, 'failed', 'quota', None)
 
+    def test_a_failure_after_the_adapter_handed_over_its_result_keeps_that_result(self):
+        # Issue #71: a completed Codex review (evidence and usage record both said completed)
+        # was reported as adapter_error, because printing the review raised after the result
+        # was handed over and the dispatcher replaced it. A checkout changed meanwhile is still
+        # stale_checkout, named as such, never adapter_error.
+        from contextlib import redirect_stdout
+        from io import StringIO
+        from unittest.mock import patch
+        import review_dispatch
+
+        def execution(command, prompt, repo, timeout, into=None, noted=None):
+            if '-o' in command:
+                Path(command[command.index('-o') + 1]).write_bytes(b'A \xe2\x86\x92 B.\n\nVERDICT: Accept\n')
+                value = {'type': 'turn.completed', 'usage': {}}
+            else:
+                value = {'type': 'result', 'subtype': 'success', 'is_error': False,
+                         'modelUsage': {'claude-opus-5': {}}, 'structured_output':
+                         {'verdict': 'Accept', 'findings': [], 'manual_checks': []}}
+            return {'exit_code': 0, 'stdout': json.dumps(value), 'stderr': '',
+                    'termination': None, 'duration_ms': 1}
+
+        class Console(StringIO):
+            # A console that cannot print the handed-over result: the first write naming the
+            # evidence comes after the adapter's sink, in both adapters.
+            def write(self, text):
+                if '"evidence"' in text and not failed:
+                    failed.append(text)
+                    if change:
+                        (repo / 'file.py').write_text('changed after the adapter check\n')
+                    raise UnicodeEncodeError('cp1252', '→', 0, 1, 'character maps to <undefined>')
+                return super().write(text)
+
+        repo = self.repo
+        for reviewer in ('codex', 'claude'):
+            for change in (False, True):
+                failed, out = [], Console()
+                with self.subTest(reviewer=reviewer, checkout_changed=change), \
+                        patch.dict(os.environ, self.review_env()), \
+                        patch('agent_process.run', side_effect=execution), redirect_stdout(out):
+                    code = review_dispatch.main(['--repo', str(repo), '--uncommitted', '--reviewer', reviewer,
+                                                 '--claude-model', 'claude-opus-5',
+                                                 '--codex-model', 'fixture-codex-model'])
+                    self.assertTrue(failed)
+                    chain = json.loads(next(line.removeprefix('review dispatch: ') for line in
+                                            out.getvalue().splitlines() if line.startswith('review dispatch: ')))
+                    attempt = chain['attempts'][0]
+                    self.assertEqual((attempt['status'], attempt['failure_kind']), ('completed', None))
+                    self.assertEqual(verdicts_of(attempt['evidence']), ['VERDICT: Accept'])
+                    if change:
+                        (repo / 'file.py').write_text('changed\n')
+                        self.assertEqual(code, 5)
+                        self.assertEqual(chain['failure_kind'], 'stale_checkout', out.getvalue())
+                        self.assertIn('the checkout changed while the review ran', out.getvalue())
+                    else:
+                        self.assertEqual(code, 0, out.getvalue())
+                        self.assertEqual((chain['status'], chain['selected_reviewer']), ('completed', reviewer))
+                        self.assertIn('the result stands as recorded in', out.getvalue())
+                    # Claude's adapter catches its own failure and exits 2.
+                    self.assertIn('cp1252' if reviewer == 'codex' else 'the adapter exited 2',
+                                  attempt['error_after_result'])
+
     def test_hidden_checkout_changes_reject_before_either_adapter_launches(self):
         from contextlib import redirect_stdout
         from io import StringIO
@@ -3559,6 +3620,39 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         (self.repo / 'src/a.txt').unlink()
         with self.assertRaises(claude_bridge.BridgeError):
             claude_bridge.snapshot(self.repo, 'uncommitted', None)
+
+    def test_a_skip_worktree_file_deleted_inside_the_sparse_rules_is_refused(self):
+        # Issue #53 (REPRODUCED): with sparse mode on, every absent skip-marked file was
+        # tolerated, so a file inside the cone marked by hand and deleted was a deletion the
+        # diff omitted. Only a path the sparse rules exclude may be absent, in cone mode and
+        # non-cone mode alike; without `check-rules` (Git before 2.42) the scope is refused.
+        import claude_bridge
+        from unittest.mock import patch
+        (self.repo / 'src').mkdir(exist_ok=True)
+        (self.repo / 'src/a.txt').write_text('a\n')
+        (self.repo / 'docs/kept.md').write_text('kept\n')
+        self.commit_fixture('A tree with two folders')
+        for rules in (['docs'], ['--no-cone', '/*', '!/src/']):
+            with self.subTest(rules=rules):
+                self.git('sparse-checkout', 'set', *rules)
+                self.assertFalse((self.repo / 'src/a.txt').exists())
+                claude_bridge.snapshot(self.repo, 'uncommitted', None)
+                self.git('update-index', '--skip-worktree', 'docs/kept.md')
+                (self.repo / 'docs/kept.md').unlink()
+                with self.assertRaisesRegex(claude_bridge.BridgeError, 'inside the sparse-checkout rules.*docs/kept.md'):
+                    claude_bridge.snapshot(self.repo, 'uncommitted', None)
+                self.git('update-index', '--no-skip-worktree', 'docs/kept.md')
+                self.git('checkout', '--', 'docs/kept.md')
+        real = claude_bridge.git
+
+        def old_git(repo, *args, **kwargs):
+            if args[:2] == ('sparse-checkout', 'check-rules'):
+                raise claude_bridge.BridgeError("git sparse-checkout failed: error: unknown subcommand: `check-rules'")
+            return real(repo, *args, **kwargs)
+        with patch.object(claude_bridge, 'git', old_git), \
+                self.assertRaisesRegex(claude_bridge.BridgeError, r'Git 2\.42 or later'):
+            claude_bridge.snapshot(self.repo, 'uncommitted', None)
+        self.git('sparse-checkout', 'disable')
 
     @posix_only
     def test_fixture_launchers_run_under_an_interpreter_path_with_a_space(self):

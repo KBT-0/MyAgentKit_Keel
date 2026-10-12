@@ -32,12 +32,16 @@
 #     use. Codex's workspace-write sandbox blocks both; Claude's Bash runs in Claude Code's
 #     own sandbox (macOS, Linux, WSL2), and a host where it cannot start fails the review. On
 #     native Windows Claude Code has no sandbox, so the Claude reviewer gets no Bash there.
-#   - Detected: a write that reaches the repository anyway fails the review (stale_checkout).
+#   - Detected: a write that reaches the repository anyway fails the review (stale_checkout)
+#     when it changes HEAD, the base, the index, a tracked file or an untracked file Git does
+#     not ignore. Files Git ignores are not checked.
 #   - ACCEPTED LIMIT: a reviewer that finds the repository by its absolute path can read it.
 #   - OUT OF SCOPE: a process that changes the tree, the index or the Git configuration
 #     between two of this script's reads to hide a change (a filter attribute removed and
 #     restored), and hostile files planted by anyone but the owner: either could edit this
-#     script instead. An ordinary edit during a review fails it as stale_checkout.
+#     script instead. An ordinary edit during a review fails it as stale_checkout. A
+#     self-test of the same commit may run in this checkout meanwhile only if it writes files
+#     Git ignores and nothing else; any other self-test runs in a second worktree.
 #
 # The sandbox is pinned HERE and in the adapters, not assumed of the CLI: the scope forms
 # above, --reviewer and --fallback are the ONLY accepted arguments. There is deliberately no

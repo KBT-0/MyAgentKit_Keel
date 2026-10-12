@@ -13,6 +13,23 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## v0.11 — 2026-10-09
 
+- **The existing-file boundary probe no longer installs Python on Windows** (issue #60;
+  `scripts/boundary_selftests.sh`): under `env -i` the Python install manager's `python3`
+  alias, missing LOCALAPPDATA, found no Python and downloaded and installed one on every
+  self-test. On Git for Windows, MSYS2 and Cygwin `probe_env` now keeps SYSTEMROOT, WINDIR,
+  LOCALAPPDATA, APPDATA, USERPROFILE, PATHEXT and COMSPEC, and the probe's audit runs the
+  Python `check.sh` resolved (`$kit_python`: python3, python or `py -3`), never a bare
+  `python3`; HOME and TMPDIR stay the copy's own. On POSIX only a host whose `python3` does
+  not run sees a change. The example still ends NOT RUN on native Windows: it audits and
+  deletes its copy through O_NOFOLLOW and dir_fd, which Windows Python lacks. **ACTION:** if
+  you adapted the existing-file example, make the same change to `probe_env` and to the
+  audit's `python3` in your `scripts/boundary_selftests.sh`.
+- **A worktree path holding a newline is kept for the right reason** (issue #41;
+  `scripts/clean_worktrees.py`): `git rev-parse` is asked one flag per call, each answer less
+  exactly its own newline. Split on newlines, such a path was judged "its folder is not its
+  own worktree"; it is now kept because the path is not printable. It was kept before too.
+  **ACTION:** copy `$KIT/overlays/claude-code/files/scripts/clean_worktrees.py` to
+  `scripts/clean_worktrees.py`.
 - **Doctor catches an old Claude CLI earlier on PATH** (`scripts/doctor.sh`): the configured
   Claude reviewer must advertise `--effort`, which the adapter already requires. A newer
   installation later on PATH cannot satisfy that check. The probe finds the CLI as `review.sh`
@@ -305,6 +322,21 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   warning already given in the current compaction. A state of the wrong type (a null or
   string step) counts as no state, so the hook is not silenced. **ACTION:** copy
   `$KIT/overlays/claude-code/files/.claude/hooks/context_size.py` to `.claude/hooks/context_size.py`.
+- **A completed review is never relabelled adapter_error** (issue #71; `scripts/review_dispatch.py`,
+  `scripts/review.sh`, `docs/REVIEW_RUNNING.md`, `docs/WORKFLOW.md`): an adapter that failed
+  after it had recorded and handed over its result (printing the review) had that result
+  replaced with `adapter_error`, so a completed, paid review was reported as none. The handed-over
+  result now stands, the later failure is kept as `error_after_result`, and a checkout changed
+  meanwhile still fails as `stale_checkout`. The docs say when a self-test may share the
+  review's worktree: only when it writes files Git ignores and nothing else. **ACTION:** copy
+  the core scripts, and update the self-test lines in `docs/WORKFLOW.md` (the lead's step 1)
+  and `docs/REVIEW_RUNNING.md`.
+- **A file deleted inside a sparse checkout's rules is refused** (issue #53; `scripts/claude_bridge.py`):
+  under a sparse checkout every missing skip-worktree file was tolerated, so a file inside
+  the cone marked skip-worktree by hand and deleted was a deletion the diff omitted. Only a
+  path the sparse rules exclude may be missing now, asked of `git sparse-checkout check-rules`
+  in one call; a Git older than 2.42, or a failed check, refuses the review. **ACTION:** copy
+  the core scripts.
 - **A review names its next attempt** (issue #68, item 1; `scripts/review.sh`, `scripts/review_dispatch.py`):
   before each adapter runs, including a fallback, it prints the model and effort as
   "about to run"; adapter preflights may still stop the attempt before any model call.
@@ -506,7 +538,7 @@ reviews. Why each change is safe is in `RESEARCH_LOG.md` (2026-10-06 and 2026-10
   or case that needs a POSIX host prints one NOT RUN line with its reason. CI's Linux and macOS
   jobs still run everything. Two Windows defects it found are filed: #59 (a project
   bootstrapped on Windows commits its scripts without the executable bit) and #60 (the
-  existing-file boundary probe starts the Python install manager).
+  existing-file boundary probe starts the Python install manager; fixed in v0.11).
 - **The gate lock on native Windows.** `scripts/check.sh` run by Git for Windows' `sh` with a
   Windows `python3` failed every run with `FAIL [lock]: python3 has no fcntl module`, so every
   commit there was blocked. On that host the lock is now the lock file opened for writing

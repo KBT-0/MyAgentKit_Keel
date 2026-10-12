@@ -119,8 +119,9 @@ under labels never used before: each sees no earlier round and no disposition.
 
 **A checkout that changes while the review runs fails it with `stale_checkout`.** That is
 correct, not a flake: the reviewer reads files while it runs, so its findings may describe a
-tree that the archived diff and fingerprint do not. An edit, a new untracked file, a moved HEAD
-or a moved base all count. Leave the checkout alone until `review.sh` exits — keep working in
+tree that the archived diff and fingerprint do not. An edit, a staged change, a new untracked
+file Git does not ignore, a moved HEAD or a moved base all count; a file Git ignores (bytecode,
+`.myagentkit/`) does not. Leave the checkout alone until `review.sh` exits — keep working in
 another worktree — and run the review again.
 
 `./scripts/review.sh --self-test` exercises both adapters' offline failure cases and is
@@ -158,9 +159,10 @@ When the rounds start and what runs in parallel is the lead's part, in `docs/WOR
 - Start the self-test and two reviewers at once, each as its own background job: for example
   `./scripts/check.sh --self-test`, then `MYAGENTKIT_TASK_ID=<feature> ./scripts/review.sh
   --base <base> --reviewer codex` and the same with `--reviewer claude`. Concurrent reviews
-  write archives with unique names that lie outside the review scope. A self-test that
-  writes into the working tree fails the reviews with `stale_checkout`; such a self-test runs
-  in a second worktree of the same commit.
+  write archives with unique names that lie outside the review scope. A self-test of the same
+  commit may share the reviews' worktree only if it writes files Git ignores and nothing else.
+  A self-test that changes anything else in the worktree fails the reviews with
+  `stale_checkout`; such a self-test runs in a second worktree of the same commit.
 - Every round of one feature uses the same `MYAGENTKIT_TASK_ID`, so that later rounds carry
   the earlier ones. Only the final reviews (one per model, each over the parts it did
   not write) take a label never used before. When model B's final review finds a High or Medium,

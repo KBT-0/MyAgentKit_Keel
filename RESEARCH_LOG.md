@@ -21,6 +21,26 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-10-12 — A handed-over review result stands; sparse rules decide a missing file (#71, #53)
+
+Issue #71 blamed a self-test running in the same worktree. The code says otherwise: a
+changed checkout fails as `stale_checkout`, both in the Codex adapter and in the dispatcher,
+and never as `adapter_error`. That label came only from an exception raised after the adapter
+had written its evidence and usage record and handed over its result. Printing the review was
+that exception: a console in the ANSI code page could not encode the review's text, which
+`utf8_output` fixed on 2026-10-11. The dispatcher still replaced the handed-over result with
+any later exception's label, so the next failure in that window would lose a paid review
+again. Now the handed-over result decides the attempt, the later failure is kept beside it,
+and the dispatcher's own checkout check still runs. A self-test may share the worktree only
+when it writes files Git ignores and nothing else, since the fingerprint ignores exactly those
+(decided by the owner 2026-10-12: the docs say so, and the root cause is fixed).
+
+Issue #53: Git's own `sparse-checkout check-rules` classifies the missing skip-worktree
+files, in cone and non-cone mode alike, in one call. Matching `sparse-checkout list` by hand
+would re-implement Git's pattern rules. The command needs Git 2.42 or later; an older Git, or
+a failed call, refuses the review, because a missing file inside the rules is a deletion the
+diff would not show (decided by the owner 2026-10-12).
+
 ### 2026-10-12 — Self-test marker and Windows regression fixes
 
 Writing the self-test marker through a hard link overwrote owner data. A fresh sibling file

@@ -141,17 +141,35 @@ def main(argv=None):
                    "--" + scope] + ([ref] if ref else [])
         print("REVIEW [about to run]: %s model %s, effort %s" % (provider, pins[provider], args.effort),
               flush=True)
+        error = None
         try:
             if provider == "claude":
                 exit_code = claude_bridge.main(["review", "--timeout", str(timeout), "--max-turns", str(turns), *command], received.append)
             else:
                 exit_code = codex_bridge.main(command, received.append)
-        except (OSError, ValueError, claude_bridge.BridgeError, subprocess.SubprocessError) as error:
+        except (OSError, ValueError, claude_bridge.BridgeError, subprocess.SubprocessError) as caught:
+            exit_code, error = 5, caught
+        if received:
+            # An adapter hands its result over only after its evidence and usage record are
+            # written, its own checkout check included. A failure after that (printing the
+            # review) does not change what was recorded: relabelled adapter_error, a completed,
+            # paid review was reported as no review (issue #71). The result decides, not the
+            # exit code; the checkout check below still runs.
+            result = received[-1]
+            delivered = 0 if result["status"] == "completed" else 5
+            if error is None and exit_code != delivered:
+                error = "the adapter exited %s" % exit_code  # Claude's catches its own.
+            exit_code = delivered
+        elif error is not None:
             # Includes persistence failures. No machine result means no safe failover.
-            exit_code = 5
-            received = [{"status": "failed", "failure_kind": "adapter_error", "error": str(error)}]
-        result = received[-1] if received else {"status": "failed", "failure_kind": "preflight_failed"}
+            result = {"status": "failed", "failure_kind": "adapter_error", "error": str(error)}
+        else:
+            result = {"status": "failed", "failure_kind": "preflight_failed"}
         chain["attempts"].append(dict(result, reviewer=provider, model=pins[provider]))
+        if received and error is not None:
+            chain["attempts"][-1]["error_after_result"] = str(error)
+            print("NOTE [review]: %s failed after it handed over its result (%s); the result "
+                  "stands as recorded in %s" % (provider, error, result.get("evidence")), flush=True)
         chain.update(status=result["status"], failure_kind=result.get("failure_kind"))
         try:
             if claude_bridge.snapshot(repo, scope, ref) != original:

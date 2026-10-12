@@ -554,11 +554,13 @@ def snapshot(repo: Path, scope: str, reference: str | None) -> tuple[str, str, s
     # These index flags suppress real working-tree changes from Git's diff. Refuse
     # the scope before launch rather than attest to files that the diff cannot see.
     # A skip-worktree entry whose file is NOT in the working tree is what a sparse checkout
-    # leaves outside its cone: tolerated, under an active sparse checkout only. Anywhere
-    # else an absent skip-marked file is a deletion the diff would not show, and a present
-    # one can hide an edit: both are refused like assume-unchanged.
+    # leaves outside its rules: tolerated, under an active sparse checkout only, and only for
+    # a path its rules exclude. Anywhere else an absent skip-marked file is a deletion the
+    # diff would not show (a file inside the cone marked by hand and deleted, issue #53), and
+    # a present one can hide an edit: both are refused like assume-unchanged.
     sparse = git(repo, 'config', '--type=bool', '--get', 'core.sparseCheckout', allowed=(0, 1)).strip() == b'true'
     entries = git(repo, 'ls-files', '-v', '-z', '--', '.', *exclusions).split(b'\0')
+    absent = []
     for entry in entries:
         if not entry:
             continue
@@ -567,6 +569,23 @@ def snapshot(repo: Path, scope: str, reference: str | None) -> tuple[str, str, s
         if hidden:
             raise BridgeError('review scope has assume-unchanged or skip-worktree index flags; '
                               'clear those flags and use a complete checkout before review')
+        if entry[:1] == b'S':
+            absent.append(entry[2:])
+    if absent:
+        # One git call classifies every absent entry: it prints the paths the rules include.
+        try:
+            included = git(repo, 'sparse-checkout', 'check-rules', '-z', stdin=b'\0'.join(absent) + b'\0')
+        except BridgeError as error:
+            raise BridgeError('review scope has skip-worktree files missing from a sparse checkout, and '
+                              '`git sparse-checkout check-rules` (Git 2.42 or later) could not tell whether '
+                              'the sparse rules exclude them; upgrade Git or use a complete checkout '
+                              'before review (%s)' % error) from None
+        included = sorted(set(included.split(b'\0')) - {b''})
+        if included:
+            raise BridgeError('review scope has a skip-worktree file inside the sparse-checkout rules that '
+                              'is missing from the working tree (%s): the diff would not show its deletion; '
+                              'clear its flag with `git update-index --no-skip-worktree` before review'
+                              % os.fsdecode(included[0]))
     # Git runs clean filters and ident collapsing on working-tree bytes BEFORE it diffs
     # them, so a filter can drop a whole file or single lines from the reviewer's payload
     # while the raw bytes still hash into the fingerprint. Refuse such paths: no flag turns

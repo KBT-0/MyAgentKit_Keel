@@ -945,12 +945,14 @@ class CleanWorktreesTests(unittest.TestCase):
                                  for ref in refs), refs)
             print('\non-disk variant not possible here: the file system or git refused the branch '
                   "b'worktree-\\xff'; the injected variant above stands for it")
-        # A newline is printable to no one either; that folder is kept (a reason of its own may come first).
+        # A newline is printable to no one either; that folder is kept, and for that reason: the
+        # rev-parse output split on newlines once judged it not its own worktree (issue #41).
         line = self.main / '.claude/worktrees' / 'new\nline'
         self.git('worktree', 'add', '-q', str(line), '-b', 'worktree-newline')
         out = self.run_script('--apply')
         self.assertTrue(line.is_dir(), out)
-        self.assertIn('keep   .claude/worktrees/new\\nline\n', out)
+        self.assertIn('keep   .claude/worktrees/new\\nline\n         - ' + reason + '\n', out)
+        self.assertNotIn('not its own worktree', out)
 
     # --- b: finished: a commit made in it, and merged into the main branch -----------------
 

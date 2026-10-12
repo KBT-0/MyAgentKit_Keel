@@ -199,11 +199,20 @@
 # |   case "$probe_base/" in
 # |     "$probe_checkout"/*) probe_fail "the disposable copy's folder, TMPDIR ($probe_base), is inside the checkout; set TMPDIR outside it." ;;
 # |   esac
-# |   # The copy's own empty HOME and TMPDIR, no system or global git configuration.
+# |   # The copy's own empty HOME and TMPDIR, no system or global git configuration. Native Windows
+# |   # (Git for Windows, MSYS2, Cygwin) also keeps what a Windows program needs to start: without
+# |   # LOCALAPPDATA the Python install manager's python3 alias found no Python and downloaded one.
+# |   case "$(uname -s 2>/dev/null)" in MSYS*|MINGW*|CYGWIN*) probe_windows=1 ;; *) probe_windows= ;; esac
 # |   probe_env() {
+# |     [ -z "$probe_windows" ] || set -- SYSTEMROOT="${SYSTEMROOT-}" WINDIR="${WINDIR-}" \
+# |       LOCALAPPDATA="${LOCALAPPDATA-}" APPDATA="${APPDATA-}" USERPROFILE="${USERPROFILE-}" \
+# |       PATHEXT="${PATHEXT-}" COMSPEC="${COMSPEC-}" "$@"
 # |     env -i PATH="$PATH" LC_ALL=C HOME="$probe_copy/home" XDG_CONFIG_HOME="$probe_copy/home" \
 # |       GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null TMPDIR="$probe_copy/tmp" "$@"
 # |   }
+# |   # The Python check.sh resolved for the gate (python3, python or py -3, whichever runs): env runs
+# |   # a program, not check.sh's python3 function. Unquoted at its use, like check.sh's.
+# |   probe_python=${kit_python:-python3}
 # |   [ -d .git ] && [ ! -L .git ] && [ ! -e .git/commondir ] ||
 # |     probe_skip "the checkout's .git is not a directory (a linked worktree, a submodule or a separate git directory); this example supports a plain repository only: run the self-test from the main checkout."
 # |   # The one read of the live checkout's configuration, made before anything is copied and with the
@@ -223,7 +232,7 @@
 # |   # the target and to the gate runs through no symlink and ends at a regular file. Prints the
 # |   # copy's digest as taken: every entry's path, type, permission bits and content, `.git` included.
 # |   probe_audit() {
-# |     probe_digest=$(probe_env python3 -I -c '
+# |     probe_digest=$(probe_env $probe_python -I -c '
 # | import hashlib, os, stat, sys
 # | root = sys.argv[1]
 # | # Every entry has its full permission bits hashed, the root of the copy too: cp -RP gives both copies the same.

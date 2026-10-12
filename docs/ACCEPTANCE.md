@@ -72,6 +72,12 @@ Claude reviews of v0.11 on 2026-10-09, which cover the current source.
 - Live Bash write and network containment on native Linux and macOS: NOT RUN. The
   2026-10-10 probe covered WSL2 Debian and a sibling standing in for the repository.
 - A live sandboxed Bash write to the real repository by absolute path: NOT RUN.
+- The existing-file boundary example on native Windows: NOT RUN. Since issue #60 its probe
+  keeps the variables a Windows program needs and runs the Python `check.sh` resolved, so it
+  no longer starts the Python install manager (2026-10-12, this host: the two
+  `WindowsBoundaryProbeTests` in `tests/test_check_gate_windows.py`, offline, through stubs).
+  It still stops at its audit: the copy is audited and deleted through O_NOFOLLOW and dir_fd,
+  which Windows Python lacks. CI's Linux and macOS jobs run it.
 - The POSIX-only parts of `tests/test_doctor.py` (the Linux `bubblewrap` and `socat` check,
   the old CLI earlier on PATH than a newer one) and the cases `core/scripts/test_claude_bridge.py`
   declares POSIX-only: POSIX hosts only; CI's Linux and macOS jobs run them. The rest of the
