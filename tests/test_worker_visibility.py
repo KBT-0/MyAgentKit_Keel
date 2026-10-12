@@ -762,11 +762,11 @@ class ResultTests(Base):
 class ContextTests(Base):
     """The context figure is read from the status line, past a warning line, once per session."""
 
-    def watch(self, status, *args, drop=False, quote=None, path_first=()):
+    def watch(self, status, *args, drop=False, quote=None, after=(), path_first=()):
         text = (PANES / 'working-auto.txt').read_text()
         self.assertIn(STATUS, text)
         lines = [line for line in text.replace(STATUS, status).splitlines() if not (drop and '│' in line)]
-        lines = ([quote] if quote else []) + lines
+        lines = ([quote] if quote else []) + lines + list(after)
         pane = self.tmp / 'pane.txt'
         pane.write_text('\n'.join(lines) + '\n')
         return self.run_script(WATCH, *args, 'w1', VIS_SESSIONS='w1', VIS_PANE=str(pane), LC_ALL='C',
@@ -797,6 +797,19 @@ class ContextTests(Base):
         self.assertEqual(result.stdout, 'watch_workers: CONTEXT: w1, no context figure: its status line '
                          'is unparsable (said once; nothing is guessed)\n')
         self.assertIn('CONTEXT: w1, 1.2M/1.0M', self.watch('1.2M/1.0M', '--once', quote=quote).stdout)
+
+    def test_a_quoted_status_line_is_not_the_status_row(self):
+        # Output quoting a whole status line, below the real row or with no real row at all,
+        # was read as the status line: a false warning and the 'over' marker for good. Only the
+        # row under the input box's bottom rule counts.
+        quoted = '  ⎿  📁a-worker │ 💰$9.10 │ Opus 5.5 900k/1.0M high'
+        for case in ({'after': (quoted, '  the end of the output')}, {'quote': quoted, 'drop': True}):
+            with self.subTest(case=case):
+                result = self.watch(STATUS, '--once', **case)
+                self.assertEqual((result.returncode, result.stdout), (0, ''), result.stderr)
+                self.assertFalse((self.state / 'opt-w1-@kit_watch_context').exists())
+        self.assertIn('CONTEXT: w1, 1.2M/1.0M', self.watch('1.2M/1.0M', '--once', quote=quoted).stdout)
+        self.assertEqual((self.state / 'opt-w1-@kit_watch_context').read_text(), 'over')
 
     def test_the_warning_fires_once_per_session(self):
         self.assertIn('CONTEXT: w1, 1.2M/1.0M', self.watch('1.2M/1.0M', '--once').stdout)

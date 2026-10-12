@@ -3,7 +3,12 @@
 # Open a SEPARATE Claude Code worker session in tmux and hand it a brief file. On native
 # Windows (Git for Windows' sh, MSYS2, Cygwin), which has no tmux, it opens as a Windows
 # Terminal tab instead (see "Native Windows" below), and what follows about showing,
-# watching and closing a tmux session does not apply there.
+# watching and closing a tmux session does not apply there. Nothing can read that tab, so
+# there the worker's --settings gain a Notification and a Stop hook (the owner's settings and
+# hooks are kept; the merged file is .myagentkit/workers/NAME.settings.json) that write its
+# state line, `waiting permission|question TIME` or `idle TIME`, to .myagentkit/workers/
+# NAME.state, which watch_workers.sh reads in place of a pane. The result file stays the done
+# signal.
 #
 # Usage: spawn_worker.sh NAME BRIEF_FILE --model M --effort LEVEL [--settings JSON_OR_FILE]
 #                        [--allowed-tools LIST] [--worktree] [--batch]
@@ -54,7 +59,7 @@ die() { { printf 'spawn_worker: %s' "$1" | LC_ALL=C tr '\001-\037\177' '?'; echo
 # The x keeps a trailing newline that $(...) would strip.
 q() { set -- "$(printf '%sx' "$1" | sed "s/'/'\\\\''/g")"; printf "'%s'" "${1%x}"; }
 
-[ $# -ge 2 ] || { sed -n '3,14p' "$0"; exit 2; }
+[ $# -ge 2 ] || { sed -n '3,19p' "$0"; exit 2; }
 name=$1; brief=$2; shift 2
 # The name and the brief path reach tmux and the TUI: `send-keys -l` types every byte, and a
 # control byte (0x01-0x1F, 0x7F) acts as a key there: a carriage return submitted the
@@ -136,6 +141,15 @@ if [ -n "$worktree" ]; then
   git worktree add -q "$dir" -b "worktree-$name" HEAD >&2 || die "git worktree add failed: $dir"
 fi
 
+# Native Windows: nothing can read the tab's pane, so the worker gets a Notification and a Stop
+# hook that keep its state line in .myagentkit/workers/NAME.state for watch_workers.sh. Its
+# --settings becomes NAME.settings.json beside it: the owner's settings with the two hooks
+# added, theirs kept. The file is written once the name is known to be free (below).
+if [ -n "$windows" ]; then
+  wdir=$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)/.myagentkit/workers
+  own=$settings
+  settings=$(cygpath -m "$wdir/$name.settings.json") || die "cygpath cannot convert the path: $wdir"
+fi
 # Variadic flags come LAST and the prompt is never on this line (see the header).
 cmd="claude -n $(q "$name")"
 [ -n "$model" ]    && cmd="$cmd --model $(q "$model")"
@@ -233,6 +247,26 @@ sessions() {
 if [ -n "$windows" ]; then
   running=$(sessions "$name") || die "cannot list the Claude Code sessions to check the name '$name': $running"
   [ -z "$running" ] || die "a Claude Code session named '$name' already runs (process $running)"
+  # The hook: `waiting permission|question TIME` on a Notification whose message asks for a
+  # permission, an approval or an answer, `idle TIME` on Stop. Python is the interpreter chosen
+  # above by running it, as .claude/hooks/py.sh chooses for the project's hooks.
+  hook=$kit_python' -I -c '$(q 'import json, sys, time
+e = json.loads(sys.stdin.buffer.read() or b"{}")
+m = str(e.get("message", "")).lower()
+s = "waiting question" if "question" in m else "waiting permission" if "permission" in m or "approval" in m else ""
+s = "idle" if e.get("hook_event_name") == "Stop" else s
+if s:
+    open(sys.argv[1], "w", newline="").write(s + time.strftime(" %Y-%m-%dT%H:%M:%S") + chr(10))')' '$(q "$(cygpath -m "$wdir/$name.state")")
+  mkdir -p -- "$wdir" && rm -f -- "$wdir/$name.state" "$wdir/$name".watch-* || die "cannot prepare $wdir"
+  { case $own in "") echo '{}' ;; "$lead{"*) printf '%s' "$own" ;; *) cat -- "$own" ;; esac; } |
+    $kit_python -I -c 'if 1:
+    import json, sys
+    d = json.loads(sys.stdin.buffer.read())
+    h = d.setdefault("hooks", {})
+    for e in ("Notification", "Stop"):
+        h.setdefault(e, []).append({"hooks": [{"type": "command", "command": sys.argv[1]}]})
+    print(json.dumps(d, indent=2))' "$hook" >"$wdir/$name.settings.json" ||
+    die "cannot add the worker's hooks to its --settings (not a JSON object?): $own"
   wt=${KIT_WT:-wt.exe}
   command -v "$wt" >/dev/null || die "Windows Terminal ($wt) is not on PATH; start the worker by hand: $cmd"
   bash=$(command -v bash) || die "bash is not on PATH"

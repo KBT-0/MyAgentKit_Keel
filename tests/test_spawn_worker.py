@@ -150,7 +150,8 @@ WINDOWS = os.name == 'nt'
 ON_WINDOWS = {'test_a_missing_or_failing_watcher_stops_the_spawn', 'test_a_worker_without_its_model_or_effort_is_refused',
               'test_missing_or_unreadable_brief_is_refused_before_any_session',
               'test_no_error_message_echoes_a_control_character',
-              'test_on_native_windows_the_worker_opens_as_a_windows_terminal_tab'}
+              'test_on_native_windows_the_worker_opens_as_a_windows_terminal_tab',
+              'test_on_native_windows_the_worker_gets_state_hooks_and_keeps_its_own'}
 
 
 def tmux_path_cases(cls):
@@ -302,8 +303,12 @@ class SpawnWorkerTests(unittest.TestCase):
         # The brief by Windows' spelling of its path, which the worker's tools know.
         shown = (subprocess.run(['cygpath', '-m', self.physical(brief)], capture_output=True, text=True,
                                 check=True).stdout.rstrip('\n') if WINDOWS else 'C:' + self.physical(brief))
-        self.assertEqual(launched['argv'], [INSTRUCTION % shq(shown), '-n', 'w1', '--model', 'm', '--effort',
-                                            'high', '--settings', settings, '--allowedTools', tools])
+        # --settings is the owner's settings with the worker's state hooks added (the next case).
+        argv = launched['argv']
+        merged = json.loads(Path(self.windows_path(argv[8])).read_text())
+        self.assertEqual(merged['permissions'], {'defaultMode': 'auto'})
+        self.assertEqual(argv[:8] + argv[9:], [INSTRUCTION % shq(shown), '-n', 'w1', '--model', 'm', '--effort',
+                                               'high', '--settings', '--allowedTools', tools])
         self.assertEqual(Path(launched['cwd']).resolve(), self.cwd.resolve())
         self.assertEqual(self.tmux_log(), '')
         self.assertFalse((self.state / 'wt.log').exists(), 'the tab was shown a second time')
@@ -334,6 +339,56 @@ class SpawnWorkerTests(unittest.TestCase):
         tab = json.loads((self.state / 'wt.json').read_text())[-1]
         self.assertIn('t=$(date +%s); claude ', tab)
         self.assertIn('press Enter to close', tab)
+
+    def windows_path(self, path):
+        # A path as the cygpath stub gives it (C: + the POSIX path), or the real one on Windows.
+        return path if WINDOWS else path[2:]
+
+    def test_on_native_windows_the_worker_gets_state_hooks_and_keeps_its_own(self):
+        # Nothing reads a Windows Terminal tab: a Notification and a Stop hook keep the worker's
+        # state line for watch_workers.sh. The owner's settings and hooks stay as they were.
+        for name, body in (('uname', '#!/bin/sh\necho MINGW64_NT-10.0-26200\n'), ('cygpath', CYGPATH),
+                           ('wt-tab', WT_TAB)):
+            if WINDOWS and name == 'cygpath':
+                continue
+            (self.bin / name).write_text(body)
+            (self.bin / name).chmod(0o755)
+        (self.bin / 'ps-stub').write_text('#!/bin/sh\n[ ! -f "$SPAWN_STATE/claude.json" ] || '
+                                          'printf "8 claude.exe -n w1\\r\\n"\n')
+        (self.bin / 'ps-stub').chmod(0o755)
+        mine = {'hooks': [{'type': 'command', 'command': 'echo mine'}]}
+        (self.cwd / 'own.json').write_text(json.dumps({'model': 'x', 'hooks': {'Stop': [mine]}}))
+        workers = Path(os.path.realpath(self.cwd)) / '.myagentkit/workers'
+        workers.mkdir(parents=True)
+        (workers / 'w1.watch-state').write_text('idle from an earlier worker\n')
+        # Registered as a peer (sessions/8.json), so the spawn does not wait 30 s for it.
+        (self.tmp / 'config/sessions').mkdir(parents=True)
+        (self.tmp / 'config/sessions/8.json').write_text('{}')
+        result = self.spawn('w1', str(self.brief), '--settings', 'own.json', KIT_WT=str(self.bin / 'wt-tab'),
+                            KIT_PS=str(self.bin / 'ps-stub'), CLAUDE_CONFIG_DIR=str(self.tmp / 'config'))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        argv = self.launched()['argv']
+        settings = Path(self.windows_path(argv[argv.index('--settings') + 1]))
+        self.assertEqual(settings, workers / 'w1.settings.json')
+        merged = json.loads(settings.read_text())
+        self.assertEqual(merged['model'], 'x')
+        self.assertEqual(len(merged['hooks']['Stop']), 2)
+        self.assertEqual(merged['hooks']['Stop'][0], mine)
+        hook = merged['hooks']['Stop'][1]['hooks'][0]['command']
+        self.assertEqual(merged['hooks']['Notification'], [{'hooks': [{'type': 'command', 'command': hook}]}])
+        self.assertIn('w1.state', hook)
+        self.assertFalse((workers / 'w1.watch-state').exists(), "an earlier worker's once-marker was kept")
+        if not WINDOWS:
+            return  # the hook names C:/... paths of the cygpath stub
+        for event, message, line in (('Notification', 'Claude needs your permission to use Bash', 'waiting permission '),
+                                     ('Notification', 'Claude is waiting for your input', 'waiting permission '),  # unchanged
+                                     ('Notification', 'Claude has a question for you', 'waiting question '),
+                                     ('Stop', '', 'idle ')):
+            with self.subTest(event=event, message=message):
+                run = subprocess.run(['sh', '-c', hook], input=json.dumps({'hook_event_name': event, 'message': message}),
+                                     capture_output=True, text=True, timeout=30)
+                self.assertEqual(run.returncode, 0, run.stderr)
+                self.assertTrue((workers / 'w1.state').read_text().startswith(line))
 
     def assert_refused(self, brief):
         result = self.spawn('w2', str(brief))

@@ -54,6 +54,26 @@ class WorkerPathsOnWindows(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertIn('KIND STATUS VERSION WHERE ERE', result.stdout)
 
+    def test_watch_reads_a_tabs_state_file_in_place_of_a_pane(self):
+        # A Windows Terminal tab has no pane to read: the state line the worker's hooks write
+        # (spawn_worker.sh) is WAITING or IDLE, once each, and no tmux is needed.
+        paths = self.paths('watch_workers.sh')
+        if not paths:
+            return
+        shutil.copyfile(SCRIPTS / 'waiting_patterns.txt', self.scripts / 'waiting_patterns.txt')
+        workers = self.tmp / '.myagentkit/workers'
+        workers.mkdir(parents=True)
+        for line, out in (('waiting permission 2026-10-12T10:00:00', 'WAITING: w1, on a permission prompt'),
+                          ('waiting question 2026-10-12T10:01:00', 'WAITING: w1, on a question'),
+                          ('idle 2026-10-12T10:05:00', 'IDLE: w1, its session stopped')):
+            with self.subTest(line=line):
+                (workers / 'w1.state').write_text(line + '\n', newline='\n')
+                result = self.run_script(paths[0], '--once', 'w1')
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertTrue(result.stdout.startswith('watch_workers: %s' % out), result.stdout)
+                self.assertIn('(its state file: %s)' % line, result.stdout)
+                self.assertEqual(self.run_script(paths[0], '--once', 'w1').stdout, '')
+
     def test_spawn_finds_its_watcher(self):
         paths = self.paths('spawn_worker.sh')
         if not paths:

@@ -151,8 +151,9 @@ exits 0 with its kind on the first line (`watch_workers: KIND: NAME, ...`):
   version of the file is reported once.
 - **The context figure** in the pane's status line, `<used>/<window>` with k or M (`Opus 5.5
   58k/1.0M high` in the real capture; the `context` rule of `waiting_patterns.txt`). The
-  status line is the last line with two or more ` │ ` separators; a figure in the worker's
-  output is not read. Past
+  status line is the line right under the input box's bottom rule, second or third from
+  the bottom (the mode line may follow), with two or more ` │ ` separators; a figure in the
+  worker's output, a quoted status line too, is not read. Past
   `--context-warn` percent (50) it is **CONTEXT** with the figure, once per session. A status
   line without the figure, or none at all, is CONTEXT once too, and the figure is never
   guessed; `--once` skips that note, because `spawn_worker.sh` runs it before the status line
@@ -160,7 +161,9 @@ exits 0 with its kind on the first line (`watch_workers: KIND: NAME, ...`):
   status line does not show it gets the note once and no warning.
 
 The once-markers are user options of the tmux session (`@kit_watch_result`,
-`@kit_watch_context`), so they end with the session. What the lead does with each report is
+`@kit_watch_context`), so they end with the session. On native Windows, with no tmux, the
+watcher reads the state line the worker's hooks write instead of a pane (`docs/WORKFLOW.md`,
+"Worker cost"). What the lead does with each report is
 in `docs/WORKFLOW.md`, "The lead's steps when a branch is ready".
 
 ## Placeholders this overlay brings

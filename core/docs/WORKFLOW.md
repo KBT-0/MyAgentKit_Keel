@@ -765,8 +765,16 @@ reason the lead never ends a worker's `claude` process by hand (Task Manager, `S
 too (on Windows: Resource Monitor, CPU tab, Associated Handles, search for `check.lock`),
 before any gate runs in that worktree. On native Windows a worker in a Windows Terminal tab
 may not be registered as a peer session; `spawn_worker.sh` then says so, and no idle notice
-comes when it stops on a question, a usage limit or an error. The lead then looks at its tab
-after every wait and after every usage-limit reset. What `close_worker.sh` does NOT see, so
+comes when it stops on a question, a usage limit or an error. Nothing can read the tab's
+pane either, so there `spawn_worker.sh` adds a Notification and a Stop hook to the worker's
+`--settings` (the owner's settings and hooks are kept, merged into
+`.myagentkit/workers/NAME.settings.json`); they write its state line to
+`.myagentkit/workers/NAME.state`: `waiting permission|question TIME` when it asks for a
+permission, an approval or an answer, `idle TIME` when it stops. `scripts/watch_workers.sh
+--result NAME=PATH NAME`, run from the same checkout, reads that file in place of a pane:
+WAITING, then the result file as on tmux, then IDLE (it stopped with no new result), each
+line once. The folder-trust dialog writes no state line, so the folder must be trusted
+already. The lead still looks at the tab after every usage-limit reset. What `close_worker.sh` does NOT see, so
 the lead closes only a worker whose result says it is done: a gate or a commit that starts
 in the instant between its last check and the kill; a commit waiting in a project's own
 pre-commit hook before the gate takes its lock, or in an editor; and a worker whose checkout
