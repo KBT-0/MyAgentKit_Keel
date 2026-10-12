@@ -71,6 +71,21 @@ class SectionPointerTests(unittest.TestCase):
         self.assertIn('after the second dirty round', workflow)
         self.assertIn('python3 scripts/usage_summary.py', workflow)
         flat = ' '.join(workflow.split())
+        self.assertIn("as many heavy background jobs as the host's free memory allows", flat)
+        self.assertIn('lowers the number after a low-memory reap', flat)
+        self.assertIn('review rounds run per cluster of related branches', flat)
+        self.assertIn('After their first round, merge branches touching the same files into one integration branch', flat)
+        self.assertIn('remaining rounds run on the cluster', flat)
+        gotchas = ' '.join((ROOT / 'core/docs/GOTCHAS.md').read_text(encoding='utf-8').split())
+        for rule in ("lead's tool shell", 'on most hosts', '`&` under `sh -c`',
+                     '`nohup`', 'Windows Terminal tab', 'command line names the checkout or its worktrees',
+                     'wait for them or stop them with a reason'):
+            self.assertIn(rule, gotchas)
+        running = ' '.join((ROOT / 'core/docs/REVIEW_RUNNING.md').read_text(encoding='utf-8').split())
+        self.assertIn('Start the self-test and two reviewers at once', running)
+        self.assertIn('memory budget', running)
+        for policy in (flat, gotchas):
+            self.assertNotIn('at most two heavy background jobs', policy)
         # Rules of 2026-10-12: each said once, beside its siblings; reviews are never reduced.
         for rule in ('effort is never carried up from the round before',
                      'Both start at the cheapest table row that fits',

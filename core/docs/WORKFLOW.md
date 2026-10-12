@@ -714,8 +714,10 @@ Rules, binding for whoever routes workers:
    `scripts/spawn_codex.sh --model --effort` refuses a Codex worker without them. The brief states model and
    effort, and the lead verifies both in the transcript after the run, not in the report.
 6. **Parallel workers only for independent modules**; each one multiplies the bill. The lead
-   runs at most two heavy background jobs at a time (a gate, a self-test, a review, a build,
-   a `codex exec` errand), because five started together were killed by a low-memory reap
+   runs as many heavy background jobs as the host's free memory allows (a gate, a self-test,
+   a review, a build, a `codex exec` errand): this is a memory budget, not a fixed job count.
+   A review or gate takes about 1–2 GB on this host. The lead lowers the number after a low-memory reap.
+   Two was the reduced budget on 2026-10-12 after five jobs were killed together
    (`docs/GOTCHAS.md`, "Background jobs die with the session and in a low-memory reap"). Workers
    whose last step waits on one exclusive resource (a heavy lock, a device, a licence) run
    one after another, or run only their independent parts in parallel: in one project,
@@ -1006,10 +1008,17 @@ already shown once costs a whole round when the worker leaves it for the reviewe
 The lead never changes its shell directory into a worker's worktree; use `git -C <worktree>` for its Git commands.
 The shell stays in the lead's checkout, so its Stop hook runs that checkout's gate.
 
+When several branches are in flight, review rounds run per cluster of related branches.
+After their first round, merge branches touching the same files into one integration branch; remaining rounds run on the cluster.
+Per-branch rounds multiply wall time and leave merge conflicts to resolve and review afterwards.
+The loop is unchanged: cross review, the reviewer fixes its own findings, the other model reviews the fix,
+until no High or Medium remains, with per-model NEW-label finals.
+
 1. Start the self-test and the review together, on the same commit, never one after the other.
    The self-test runs once per batch, beside the review, never between worker rounds while
    workers wait for it, because each run locks the checkout and every waiting worker pays
    for the wait.
+   Parallel launches follow the memory budget in "Worker cost", rule 6.
 2. Run two reviewers at the same time, never one after the other.
 3. Keep one review label for the whole feature, so that each round carries the earlier ones.
    Only the final reviews (one per model, each over the parts it did not write) take a label
