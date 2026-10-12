@@ -154,6 +154,17 @@ class UsageSummaryTests(unittest.TestCase):
                 self.assertNotIn('Task damaged:', out)
                 self.assertIn('Total: invocations=1 rounds=1 duration=1.000s rejects=0', out)
 
+    def test_control_and_literal_escape_values_have_distinct_groups(self):
+        for name, value in (('control', '\x1b'), ('literal', r'\x1b')):
+            self.record(name, 'T', json.dumps({'effort': value}).encode(), model=value)
+        out = self.summary()
+        self.assertIn('Total: invocations=2 rounds=2', out)
+        groups = [line for line in out.splitlines() if line.startswith('Model ')]
+        self.assertEqual(len(groups), 2)
+        for value in (r'\x1b', r'\\x1b'):
+            self.assertIn(f'Model {value} / effort {value}: invocations=1 rounds=1 '
+                          'duration=1.000s rejects=0', groups)
+
     def test_control_characters_in_task_labels_are_escaped(self):
         self.record('controls', 'fix\nTotal: forged\r\t\x1b[2J\x7f\x85', b'VERDICT: Accept\n')
         self.record('model', 'model', b'| effort | x\x1b[2J\x0bTotal: forged |\nVERDICT: Accept\n',

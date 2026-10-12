@@ -85,7 +85,7 @@ def chain_status(usage, chain_id, cache):
 
 def printable(value):
     """Escape control characters so a recorded value cannot rewrite or forge terminal lines."""
-    return ''.join(char if char == ' ' or char.isprintable()
+    return ''.join(char if char != '\\' and (char == ' ' or char.isprintable())
                    else char.encode('unicode_escape').decode('ascii') for char in str(value))
 
 
@@ -132,8 +132,7 @@ def main():
     tasks, groups = defaultdict(list), defaultdict(list)
     for record in rows:
         tasks[str(record['task'].get('id') or 'unknown')].append(record)
-        groups[f'Model {printable(record.get("model_requested", "unknown"))}'
-               f' / effort {printable(record["effort"])}'].append(record)
+        groups[(record.get('model_requested', 'unknown'), record['effort'])].append(record)
     for task, records in sorted(tasks.items()):
         print(f'Task {printable(task)}: {totals(records)}')
         number = 0
@@ -149,8 +148,8 @@ def main():
                   f' effort={printable(record["effort"])} verdict={verdict} duration={duration}')
     if rows:
         print(f'Total: {totals(rows)}')
-    for group, records in sorted(groups.items()):
-        print(f'{group}: {totals(records)}')
+    for (model, effort), records in sorted(groups.items(), key=lambda item: tuple(map(str, item[0]))):
+        print(f'Model {printable(model)} / effort {printable(effort)}: {totals(records)}')
     if unreadable:
         print(f'Unreadable records skipped: {unreadable}')
 
