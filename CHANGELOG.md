@@ -13,7 +13,11 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## v0.11 — 2026-10-09
 
-- **Unfinished report moves survive retries**: `NAME.report-move` records each move before consumption and blocks later closes, keeping the worktree and session records until the lead recovers the report and removes the marker. **ACTION:** sync `close_worker.sh` from the Claude Code overlay.
+- **Refused moves leave no marker** (owner decision): a report move refused before the report left its path (a Windows sharing violation, EACCES or EXDEV from `renameat2`, a failed probe link, "no-overwrite guarantee unavailable") exits 3 and clears `NAME.report-move`; the close keeps the worktree without the audit, and the next close runs normally. **ACTION:** sync `close_worker.sh` from the Claude Code overlay.
+- **Stale markers are named**: when `NAME.report-move` cannot be removed after a publication, the close prints the published path and says only the marker is stale, instead of reporting a failed publication.
+- **Clearer marker refusals**: the refusal says the session is not ended and prints the recorded source and target on lines of their own; the header lists a marker among the reasons a dry run exits 1.
+- **STATE refusals name FILE**: `--replace-state FILE` whose own folder is not private names FILE and says its folder must be inside `.myagentkit/` or the temporary folder. **ACTION:** sync `scripts/working_mode.py`.
+- **Unfinished report moves survive retries**: `NAME.report-move` records each move before consumption and, once the report left its path, blocks later closes, keeping the worktree and session records until the lead recovers the report and removes the marker. **ACTION:** sync `close_worker.sh` from the Claude Code overlay.
 - **Failed moves skip the audit**: every non-collision report-move failure keeps the worktree, even when a successor occupies the source path; a collision whose restoration failed also stops the close.
 - **Private STATE recovery parents**: `--replace-state FILE` checks the recovery folder's parent before consumption, so failed folder restoration cannot expose private contents to Git. **ACTION:** sync `scripts/working_mode.py`.
 - **Archives without listing permission**: a denied archive scan supplies no reuse evidence; exclusive publication still proceeds without replacing an existing archive.

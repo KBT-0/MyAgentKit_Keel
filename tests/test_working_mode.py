@@ -641,6 +641,17 @@ class WorkingModeTests(unittest.TestCase):
         self.assertEqual(source.read_bytes(), before)
         self.assertEqual(self.state.read_bytes(), before)
 
+    def test_a_file_whose_folder_is_not_private_is_named_in_the_refusal(self):
+        worker = self.module()
+        sha = hashlib.sha256(self.state.read_bytes()).hexdigest()
+        source = self.project / '.myagentkit'
+        source.write_bytes(self.state.read_bytes())  # private itself, its folder the project root
+        result = self.run_mode('--replace-state', str(source), '--expect', sha)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("FILE's own folder must be inside .myagentkit/ or the temporary folder", result.stderr)
+        self.assertIn(worker.shown(source.resolve()), result.stderr)
+        self.assertTrue(source.is_file())
+
     def test_failed_folder_restoration_keeps_its_recovery_inside_the_private_parent(self):
         worker = self.module()
         before = self.state.read_bytes()

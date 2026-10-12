@@ -768,7 +768,11 @@ answer from {{OWNER_NAME}} and delivers it into the SAME session:
   worker's decision file waits for its answer. The default result is
   `RESULT-NAME.md` at the worker's repository top, and the decision file is `QUESTION-NAME.md`.
   The lead never commits the default result: the close moves it to
-  `.myagentkit/workers/NAME.result.md`, so the audit can remove the finished worktree.
+  `.myagentkit/workers/NAME.result.md`, so the audit can remove the finished worktree. A move
+  that stopped after the report left its path leaves `.myagentkit/workers/NAME.report-move`,
+  naming its source and target, and every later close of NAME refuses until the lead puts the
+  report back at one of them (a `.report-move-*` folder beside either holds it), removes the
+  marker and closes again.
   `--result FILE` selects another `.md` result inside the worker's folder and `FILE.question.md`;
   the brief must use that spawn-time path, and it is passed again on resume. Publish a question
   or finished result atomically: write a temporary file beside it, end with

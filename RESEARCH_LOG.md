@@ -47,10 +47,12 @@ then overwrote that newer destination. The helper now refuses with "no-overwrite
 unavailable" before consuming the source when neither primitive works. OWNER DECISION
 2026-10-12: that refusal is an accepted trade. On such a filesystem (some SMB, FUSE or exFAT
 setups) every close keeps the report where it is and the worktree with it, where the base
-replaced an empty O_EXCL claim. A killed link+unlink of the older code left the source and the
-archive as one object, so a retry recognizes that object and returns its archive path for
-restoration. OWNER DECISION 2026-10-12: separate runs never share an archive, and the
-content-hash reuse is gone. The NAME record is reused by every later worker of that name, so a
+replaced an empty O_EXCL claim; such a refusal leaves no `NAME.report-move` marker, so it never
+blocks the next close (owner decision of 2026-10-12, below). A killed link+unlink of the
+older code left the source and the archive as one object, so a retry recognizes that object
+and returns its archive path for restoration. OWNER DECISION 2026-10-12: separate runs never
+share an archive, and the content-hash reuse is gone. The NAME record is reused by every later
+worker of that name, so a
 later run's byte-identical report was deleted as "already archived", and a kept worktree's
 restore then moved the earlier run's archive away, leaving neither run one (Claude review r8,
 reproduced). The current move consumes the source before it links, so it never leaves both
@@ -60,11 +62,36 @@ on native Windows. A candidate that vanishes or cannot be examined is not this r
 failed a close the base completed. A report the move consumed and could not publish or put
 back stays in its `.report-move-*` folder, and the helper prints that path. When the move fails
 after the report left the worktree, the close keeps the worktree without the audit, which
-could remove it while the report sat only in that hidden folder (review r8). A suffix longer
-than nine digits is not a number, because
-the shell's arithmetic overflowed on it. The helper's error line carries only the errno and its
-text, and the recovery path its control bytes as `?`: a path can hold control bytes, and the
+could remove it while the report sat only in that hidden folder (review r8). A move refused
+before the report left its path keeps the worktree too, but clears its marker (below). A
+suffix longer than nine digits is not a number, because the shell's arithmetic overflowed on
+it. The helper's error line carries only the errno and its text, and the recovery path its
+control bytes as `?`: a path can hold control bytes, and the
 helper's stderr bypasses the close's filter.
+
+2026-10-12. Codex review r9, reproduced, and Claude review r10. A killed move left the report
+in `.report-move-*` and nothing else: the next close found no `RESULT-NAME.md`, ran the audit,
+removed the worktree holding that folder and deleted `NAME.session`. The close now writes
+`NAME.report-move` before every move, the restoration after an audit included; while it
+exists every close refuses before the session is ended, and the session records stay. The audit
+ran when the source path existed again, but an empty directory created there proved no
+restoration and the worktree went: now every non-collision move failure skips the audit.
+`--replace-state FILE` with a regular file named `.myagentkit` made its recovery folder in the
+project root; a folder swapped in that could not go back left `w.session` where `git ls-files
+--others --exclude-standard` listed it, so the recovery folder's parent is checked before
+anything is consumed, and the refusal names FILE. A records folder that allows creation but
+not listing failed every close although an exclusive rename would succeed: a denied listing is
+no reuse evidence and the publication goes on. OWNER DECISION 2026-10-12: a move refused
+before the report left its path (a Windows sharing violation, EACCES or EXDEV from
+`renameat2`, a failed probe link, "no-overwrite guarantee unavailable") leaves no marker. The
+helper exits 3 for it, the close clears the marker for 0, 2 and 3 and keeps the worktree, and
+the next close is not blocked. Review r10 reproduced the alternative: such a refusal left a
+marker whose recovery steps pointed at a `.report-move-*` folder that never existed, so every
+later close needed the marker deleted by hand; on a filesystem the earlier owner decision
+covers, that was every close with a report. The marker stays only when the report really
+entered a `.report-move-*` folder or the helper was killed. A marker that cannot be removed
+after a publication is named stale beside the published path, where the close said the
+publication had failed.
 
 2026-10-12. Review decision, owner accepted 2026-10-12: the `.live` startup protocol. The
 supervisor writes its PID into a private temporary file, locks it, and only

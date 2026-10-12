@@ -143,6 +143,11 @@ class CloseWorkerOnWindows(unittest.TestCase):
         marker = records / 'taken.report-move'
         self.assertTrue(marker.exists())
         self.assertIn('unfinished report move', out)
+        self.assertIn('the session is not ended', out)
+        # The recorded paths on lines of their own: a newline shown as ? glued them together.
+        self.assertIn('close_worker: taken: recorded source: ', out)
+        self.assertIn('close_worker: taken: recorded target: ', out)
+        self.assertNotIn('?target', out)
         code, out = close('--dry-run')
         self.assertEqual(code, 1, out)
         self.assertFalse(audited.exists())
@@ -157,6 +162,96 @@ class CloseWorkerOnWindows(unittest.TestCase):
         self.assertFalse((records / 'taken.session').exists())
         self.assertFalse(marker.exists())
         self.assertEqual((records / 'taken.result.md').read_text(), 'the report\n')
+
+    # Restoration only: its target is the report's name in the worktree.
+    RESTORING = 'if os.path.basename(target) == "RESULT-taken.md":\n'
+    REFUSED = ('    def refused(*args, **kwargs):\n'
+               '        raise PermissionError(errno.EACCES, "a sharing violation")\n'
+               '    os.name, os.rename = "nt", refused\n')
+    SURVIVOR_AUDIT = "#!/bin/sh\n: > %s\necho 'clean_worktrees: removed 1, kept 0'\n"
+
+    def test_a_move_refused_before_consumption_leaves_no_marker_and_the_next_close_runs(self):
+        # Owner decision: a refusal that moved nothing keeps the worktree but blocks no later close.
+        tree, records, script, audited, close = self.close_fixture(
+            'if os.path.basename(target) == "taken.result.md":\n' + self.REFUSED)
+        code, out = close()
+        self.assertEqual(code, 1, out)
+        self.assertIn('nothing moved, the report stays in the worktree', out)
+        self.assertFalse(audited.exists(), out)
+        self.assertEqual((tree / 'RESULT-taken.md').read_text(), 'the report\n')
+        self.assertFalse((records / 'taken.report-move').exists(), out)
+        self.assertEqual(list(records.glob('.report-move-*')), [])
+        self.assertEqual((records / 'taken.session').read_text(), 'the session\n')
+        script.write_bytes(SCRIPT.read_bytes())
+        code, out = close()
+        self.assertEqual(code, 0, out)
+        self.assertTrue(audited.exists(), out)
+        self.assertFalse(tree.exists(), out)
+        self.assertEqual((records / 'taken.result.md').read_text(), 'the report\n')
+
+    def test_an_interrupted_restoration_keeps_its_marker_and_the_session_record(self):
+        killed = ('    folder = os.path.join(os.path.dirname(target), ".report-move-killed")\n'
+                  '    os.mkdir(folder)\n    os.rename(source, os.path.join(folder, "report"))\n    os._exit(73)\n')
+        tree, records, script, audited, close = self.close_fixture(self.RESTORING + killed)
+        (tree / 'draft.txt').write_text('uncommitted work keeps the worktree\n')
+        code, out = close()
+        self.assertEqual(code, 1, out)
+        self.assertTrue(audited.exists(), out)
+        self.assertIn('could not move its result back', out)
+        self.assertEqual((tree / '.report-move-killed/report').read_text(), 'the report\n')
+        self.assertTrue((records / 'taken.report-move').exists(), 'the restoration ran without its marker')
+        self.assertEqual((records / 'taken.session').read_text(), 'the session\n')
+        script.write_bytes(SCRIPT.read_bytes())
+        audited.unlink()
+        code, out = close()
+        self.assertEqual(code, 1, out)
+        self.assertIn('unfinished report move', out)
+        self.assertFalse(audited.exists(), out)
+        self.assertEqual((records / 'taken.session').read_text(), 'the session\n')
+
+    def test_a_restoration_refused_before_consumption_keeps_the_session_record(self):
+        # The audit said removed yet the folder stayed: only the failed restoration keeps the
+        # session record, as the refusal cleared its marker.
+        tree, records, script, audited, close = self.close_fixture(self.RESTORING + self.REFUSED)
+        (script.parent / 'clean_worktrees.sh').write_text(self.SURVIVOR_AUDIT % shlex.quote(audited.as_posix()),
+                                                         newline='\n')
+        code, out = close()
+        self.assertEqual(code, 1, out)
+        self.assertIn('could not move its result back', out)
+        self.assertEqual((records / 'taken.result.md').read_text(), 'the report\n')
+        self.assertFalse((records / 'taken.report-move').exists(), out)
+        self.assertEqual((records / 'taken.session').read_text(), 'the session\n')
+
+    def test_a_marker_left_after_a_publication_keeps_the_session_record_or_is_named_stale(self):
+        real_rm = '[ -x /usr/bin/rm ] && exec /usr/bin/rm "$@"; exec /bin/rm "$@"\n'
+        for status in (0, 1):
+            with self.subTest(rm_status=status):
+                tree, records, script, audited, close = self.close_fixture('')
+                stub = script.parent.parent / 'bin/rm'
+                stub.write_text('#!/bin/sh\ncase "$*" in *report-move*) exit %d ;; esac\n' % status + real_rm,
+                                newline='\n')
+                stub.chmod(0o755)
+                code, out = close()
+                self.assertEqual((records / 'taken.result.md').read_text(), 'the report\n')
+                self.assertTrue((records / 'taken.report-move').exists())
+                self.assertEqual((records / 'taken.session').read_text(), 'the session\n',
+                                 'session records went while a report-move marker remained: ' + out)
+                if status:
+                    # Published: the recovery names the archive and the stale marker only.
+                    self.assertEqual(code, 1, out)
+                    self.assertIn('.myagentkit/workers/taken.result.md, but ', out)
+                    self.assertIn('only that marker is stale', out)
+                    self.assertNotIn('publication of RESULT-taken.md failed', out)
+                    self.assertFalse(audited.exists(), out)
+
+    def test_a_records_folder_that_cannot_be_made_skips_the_audit(self):
+        tree, records, script, audited, close = self.close_fixture('')
+        (script.parent.parent / 'bin/mkdir').write_text('#!/bin/sh\nexit 1\n', newline='\n')
+        code, out = close()
+        self.assertEqual(code, 1, out)
+        self.assertFalse(audited.exists(), 'the audit ran though the report could not be archived: ' + out)
+        self.assertEqual((tree / 'RESULT-taken.md').read_text(), 'the report\n')
+        self.assertEqual((records / 'taken.session').read_text(), 'the session\n')
 
     def test_an_empty_directory_successor_does_not_prove_report_restoration(self):
         interrupted = ('folder = os.path.join(os.path.dirname(target), ".report-move-failed")\n'
@@ -264,7 +359,7 @@ os.open = open_claim
             moved = subprocess.run([sys.executable, '-I', '-c',
                                     NO_EXCLUSIVE_RENAME % ('EINVAL', True) + NO_HARD_LINKS + racing + move_report(),
                                     str(source), str(target)], capture_output=True, timeout=10)
-            self.assertEqual(moved.returncode, 1, moved.stderr)
+            self.assertEqual(moved.returncode, 3, moved.stderr)
             self.assertIn(b'no-overwrite guarantee unavailable', moved.stderr)
             self.assertEqual(source.read_text(), 'the report\n')
             if target.exists():
@@ -303,7 +398,7 @@ os.link, os.unlink = link, unlink
             # A retried close finds no RESULT-w.md to move; a move of the gone source claims no number.
             retry = subprocess.run([sys.executable, '-I', '-c', forced + move_report(),
                                     source.as_posix(), second.as_posix()], capture_output=True, timeout=10)
-            self.assertEqual(retry.returncode, 1, retry.stderr)
+            self.assertEqual(retry.returncode, 3, retry.stderr)
             self.assertFalse(second.exists())
             self.assertEqual(first.read_text(), 'the report\n')
 
@@ -401,7 +496,7 @@ os.link = link
                 target.unlink()
                 moved = subprocess.run(move, capture_output=True, timeout=10)
                 if label == 'EINVAL and no hard links':
-                    self.assertEqual(moved.returncode, 1, moved.stderr)
+                    self.assertEqual(moved.returncode, 3, moved.stderr)
                     self.assertIn(b'no-overwrite guarantee unavailable', moved.stderr)
                     self.assertFalse(target.exists())
                     self.assertEqual(source.read_text(), 'the report\n')
@@ -421,7 +516,7 @@ os.link = link
             move = [sys.executable, '-I', '-c', NO_EXCLUSIVE_RENAME % ('EINVAL', True) + stuck + move_report(),
                     str(source), str(target)]
             moved = subprocess.run(move, capture_output=True, timeout=10)
-            self.assertEqual(moved.returncode, 1, moved.stderr)
+            self.assertEqual(moved.returncode, 3, moved.stderr)
             self.assertRegex(moved.stderr, rb'^\[Errno \d+\] read-only folder')
             self.assertEqual(source.read_text(), 'the report\n')
             self.assertFalse(target.exists(), 'the report was left under both names')
@@ -432,7 +527,7 @@ os.link = link
             source = Path(tmp) / 'gone\x1b]0;title\x07.md'
             moved = subprocess.run([sys.executable, '-I', '-c', move_report(), str(source),
                                     str(Path(tmp) / 'w.result.md')], capture_output=True, timeout=10)
-            self.assertEqual(moved.returncode, 1, moved.stderr)
+            self.assertEqual(moved.returncode, 3, moved.stderr)
             self.assertNotIn(b'\x1b', moved.stderr)
             self.assertNotIn(b'gone', moved.stderr)
             self.assertRegex(moved.stderr, rb'^\[Errno \d+\] ')
