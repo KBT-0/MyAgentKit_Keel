@@ -16,9 +16,16 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 - **Exclusive STATE snapshots**: `--read-state OUT` creates with O_CREAT|O_EXCL; an existing hard link is never truncated. **ACTION:** sync `scripts/working_mode.py`.
 - **A snapshot per edit**: `--read-state OUT` treats OUT as a prefix and prints `SHA256 PATH`; writers edit and replace their own returned PATH. **ACTION:** update the STATE protocol from `core/AGENTS.md` and `core/docs/WORKFLOW.md`.
 - **Verified snapshot cleanup**: replacement consumes a private name and deletes only the published fstat identity, preserving a successor draft at the supplied path.
+- **A folder is never a STATE file**: `--replace-state FILE` refuses a FILE that `lstat` does not show as a regular file before anything moves, and renames back a folder swapped in after that check; `.myagentkit`, a subfolder of it or the temporary folder named as FILE was moved whole into a private name. **ACTION:** sync `scripts/working_mode.py`.
+- **A folder is never a snapshot prefix**: `--read-state OUT` refuses an OUT that is an existing folder or ends in a separator, and creates the snapshot only in a private folder; `--read-state .myagentkit/` put a committable copy of STATE.md in the project root.
+- **Kept drafts are named**: a STATE draft that cannot go back to FILE stays in its private folder, and `working_mode.py` prints that path on stderr with its control bytes as `?`.
 - **Private archive sources**: the hard-link fallback first moves the report into a caller-private name, preserving a newer publication at the source path. **ACTION:** sync `close_worker.sh` from the Claude Code overlay.
-- **Archive refusal without safe publication**: when exclusive rename and hard links are unavailable, the helper refuses with "no-overwrite guarantee unavailable" instead of replacing an empty claim.
-- **Interrupted archive retries**: an existing archive of the same object or contents is reused before another number is claimed; restoration uses the returned archive path.
+- **Archive refusal without safe publication**: when exclusive rename and hard links are unavailable, the helper refuses with "no-overwrite guarantee unavailable" instead of replacing an empty claim; the report and the worktree stay (owner decision, accepted trade).
+- **Interrupted archive retries**: an existing archive of the same object is reused before another number is claimed; restoration uses the returned archive path. A byte-identical report from another run gets its own number (owner decision: separate runs never share an archive).
+- **Archive reuse on native Windows**: archive names are compared within the records folder, so the same-object reuse also works with the `C:/` paths Git Bash passes.
+- **Unreadable archives**: an earlier archive that vanishes or cannot be examined is not taken for this report and no longer fails the close.
+- **Kept reports are named**: a report the archive move consumed and could not publish or put back stays in its `.report-move-*` folder, and the helper prints that path on stderr with its control bytes as `?`.
+- **No audit without the report**: when the move fails after the report left the worktree, `close_worker.sh` keeps the worktree without running the audit and says where to recover the report.
 - **Consecutive polling refusals**: every successful observation, cached results included, resets that path's refusal count. **ACTION:** sync `codex_worker.py` from the Claude Code overlay.
 - **Working modes, by name** (issue #57; `docs/WORKFLOW.md`, "Model routing"): the kit ships
   the tier table and seven modes, claude-first, cross-performance (the main mode),

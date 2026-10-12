@@ -18,7 +18,8 @@ per-edit snapshot using that prefix and prints `SHA256 PATH`; edit the returned 
 copy read earlier or another writer's snapshot; then publish it with
 `--replace-state "PATH" --expect SHA256`, which deletes the verified snapshot once published.
 On refusal, read it again, redo the edit, and retry. The helper refuses a `--project` other than
-the current folder, a snapshot outside `.myagentkit/` or the temporary folder, and an edit that
+the current folder, a snapshot outside `.myagentkit/` or the temporary folder, an OUT or FILE
+that names a folder, and an edit that
 changes the "Working mode:" line, which only a switch changes.
 
 If `docs/WORKFLOW.md` has no "Working modes, by name" section, the project predates the kit's

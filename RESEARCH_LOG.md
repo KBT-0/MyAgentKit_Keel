@@ -44,13 +44,27 @@ exclusively. Review r7 reproduced a newer source deleted between link and unlink
 now moves first into a fresh caller-private directory, and only that owned name is unlinked.
 Without hard links the former empty O_EXCL claim could be replaced before publication, which
 then overwrote that newer destination. The helper now refuses with "no-overwrite guarantee
-unavailable" before consuming the source when neither primitive works. A killed link+unlink
-also left the same report available for a second archive number: a retry recognizes an existing
-archive by object identity or content hash, verifies it again after private consumption, and
-returns that archive path for restoration. Interrupted private reports remain recoverable beside
-the archives. A suffix longer than nine digits is not a number, because
-the shell's arithmetic overflowed on it. The helper prints only the errno and its text: a path
-can hold control bytes, and the line bypassed the close's filter.
+unavailable" before consuming the source when neither primitive works. OWNER DECISION
+2026-10-12: that refusal is an accepted trade. On such a filesystem (some SMB, FUSE or exFAT
+setups) every close keeps the report where it is and the worktree with it, where the base
+replaced an empty O_EXCL claim. A killed link+unlink of the older code left the source and the
+archive as one object, so a retry recognizes that object and returns its archive path for
+restoration. OWNER DECISION 2026-10-12: separate runs never share an archive, and the
+content-hash reuse is gone. The NAME record is reused by every later worker of that name, so a
+later run's byte-identical report was deleted as "already archived", and a kept worktree's
+restore then moved the earlier run's archive away, leaving neither run one (Claude review r8,
+reproduced). The current move consumes the source before it links, so it never leaves both
+names. Names are compared within the folder: Git Bash passes `C:/` paths, the listing joined
+them with a backslash, and a pattern over the full path never matched, so the reuse never ran
+on native Windows. A candidate that vanishes or cannot be examined is not this report; it
+failed a close the base completed. A report the move consumed and could not publish or put
+back stays in its `.report-move-*` folder, and the helper prints that path. When the move fails
+after the report left the worktree, the close keeps the worktree without the audit, which
+could remove it while the report sat only in that hidden folder (review r8). A suffix longer
+than nine digits is not a number, because
+the shell's arithmetic overflowed on it. The helper's error line carries only the errno and its
+text, and the recovery path its control bytes as `?`: a path can hold control bytes, and the
+helper's stderr bypasses the close's filter.
 
 2026-10-12. Review decision, owner accepted 2026-10-12: the `.live` startup protocol. The
 supervisor writes its PID into a private temporary file, locks it, and only
@@ -123,6 +137,14 @@ writers erasing each other's drafts through a shared OUT. Creation now uses O_CR
 under a fresh name and never reuses an existing file. Replacement consumes a caller-private
 name, reads its fstat identity, and deletes only that verified object after publication; a
 successor at the supplied name stays. The former unconditional cleanup deleted that successor.
+Claude review r8 reproduced a folder named as FILE: once `--expect` matched, the rename moved
+`.myagentkit`, a subfolder of it or the temporary folder whole into the private name, outside
+the anchored ignore rule, where `git add -A` would commit it. FILE must be a regular file by
+`lstat` before anything moves, and a folder swapped in after that check is renamed back: no
+hard link restores a folder, and the rename can replace only an empty one. OUT naming
+`.myagentkit` itself, or ending in a separator, put the snapshot in the project root, so OUT
+never names a folder and the folder the snapshot is created in must be private too. A draft
+that cannot go back to FILE stays in its private folder, and the helper prints that path.
 A separate `--state-sha` let a writer that read STATE at its session start and hashed
 it later publish its stale copy over an edit made in between (Claude review r7, reproduced).
 The pre-approval let a STATE operation copy any readable file into any project's STATE.md, so

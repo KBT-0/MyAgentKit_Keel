@@ -697,6 +697,36 @@ pathlib.Path(%r).write_text('a concurrently published report\\n')
         self.assertIn('newer RESULT-restore.md kept', closed.stdout)
         self.assertIn(restored[0].name, closed.stdout)
 
+    def test_a_move_that_took_the_report_and_failed_keeps_the_worktree_without_the_audit(self):
+        tree = self.repo / '.claude/worktrees/taken'
+        subprocess.run(['git', 'worktree', 'add', '-q', str(tree), '-b', 'worktree-taken'],
+                       cwd=self.repo, check=True, capture_output=True)
+        (tree / 'RESULT-taken.md').write_text('the report\n')
+        kit = self.tmp / 'close-scripts'
+        kit.mkdir()
+        # The helper dies with the report in its private folder, before any archive holds it.
+        killed = ('source, target = sys.argv[1:]\n'
+                  'folder = os.path.join(os.path.dirname(target), ".report-move-killed")\n'
+                  'os.mkdir(folder)\nos.rename(source, os.path.join(folder, "report"))\nos._exit(137)\n')
+        script = SCRIPT.with_name('close_worker.sh').read_text(encoding='utf-8')
+        self.assertIn('source, target = sys.argv[1:]\n', script)
+        (kit / 'close_worker.sh').write_text(script.replace('source, target = sys.argv[1:]\n', killed, 1),
+                                            encoding='utf-8', newline='\n')
+        audited = self.tmp / 'audited'
+        (kit / 'clean_worktrees.sh').write_text('#!/bin/sh\n: > ' + shq(audited.as_posix())
+                                               + "\necho 'clean_worktrees: removed 1, kept 0'\n", newline='\n')
+        env = dict(os.environ, PATH=f'{self.bin}{os.pathsep}{os.environ["PATH"]}',
+                   SPAWN_STATE=str(self.state), KIT_PS=str(self.bin / 'ps-stub'))
+        closed = subprocess.run(['sh', str(kit / 'close_worker.sh'), 'taken'], cwd=self.repo, env=env,
+                                capture_output=True, text=True, timeout=45)
+        self.assertEqual(closed.returncode, 1, closed.stdout + closed.stderr)
+        self.assertIn('could not move its result RESULT-taken.md', closed.stdout)
+        self.assertIn('the audit did not run, so a worktree stays', closed.stdout)
+        self.assertIn('.report-move-* folder in ', closed.stdout)
+        self.assertFalse(audited.exists(), 'the audit ran while the report sat only in a private folder')
+        self.assertTrue(tree.exists())
+        self.assertEqual((self.repo / '.myagentkit/workers/.report-move-killed/report').read_text(), 'the report\n')
+
     def test_a_resumed_worker_that_published_and_then_failed_can_be_closed(self):
         # The reproduced sequence: the resumed session publishes progress, then its CLI exits 1.
         for name, after in (('ran-on', 'time.sleep(.5); '), ('ended-at-once', '')):

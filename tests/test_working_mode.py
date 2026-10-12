@@ -30,9 +30,20 @@ class WorkingModeTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def run_mode(self, *args, cwd=None):
+    def run_mode(self, *args, cwd=None, env=None):
         return subprocess.run([sys.executable, '-X', 'utf8', str(SCRIPT), '--project', str(self.project), *args],
-                              capture_output=True, text=True, encoding='utf-8', timeout=15, cwd=cwd or self.project)
+                              capture_output=True, text=True, encoding='utf-8', timeout=15, cwd=cwd or self.project,
+                              env=env)
+
+    def module(self):
+        spec = importlib.util.spec_from_file_location('working_mode', SCRIPT)
+        loaded = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(loaded)
+        return loaded
+
+    def temporary(self, folder):
+        """An environment whose temporary folder is FOLDER, never the user's own."""
+        return dict(os.environ, TMPDIR=str(folder), TEMP=str(folder), TMP=str(folder))
 
     def snapshot(self, name='STATE.edit.md'):
         """--read-state into the project's private folder: the snapshot's path and its sha256."""
@@ -105,9 +116,11 @@ class WorkingModeTests(unittest.TestCase):
                 fresh = reads[0].with_suffix('.new')
                 fresh.write_bytes(b'A successor at the consumed name.\n')
                 replace(fresh, reads[0])
-        with mock.patch.object(worker.os, 'replace', publishing), mock.patch.object(Path, 'open', opened):
+        with mock.patch.object(worker.os, 'replace', publishing), mock.patch.object(Path, 'open', opened), \
+                mock.patch('sys.stderr', new=io.StringIO()) as errors:
             worker.replace_state(self.project, snapshot, sha)
         self.assertEqual(reads[0].read_bytes(), b'A successor at the consumed name.\n')
+        self.assertIn('kept at ' + str(reads[0]), errors.getvalue())
 
     def test_show_defaults_without_writing_and_lists_all_seven(self):
         before = self.state.read_bytes()
@@ -553,6 +566,88 @@ class WorkingModeTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertFalse(snapshot.exists(), 'the published snapshot was left behind')
         self.assertEqual(self.state.read_bytes(), before + b'A new task.\n')
+
+    def test_replace_state_refuses_a_folder_and_moves_nothing(self):
+        before = self.state.read_bytes()
+        sha = hashlib.sha256(before).hexdigest()
+        private = self.project / '.myagentkit'
+        (private / 'workers').mkdir(parents=True)
+        (private / 'workers/w.session').write_text('session\n')
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as folder:
+            fake = Path(folder).resolve()
+            (fake / 'mine.txt').write_text('the user\'s file\n')
+            for target in (private, private / 'workers', fake):
+                with self.subTest(target=target.name):
+                    result = self.run_mode('--replace-state', str(target), '--expect', sha, env=self.temporary(fake))
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    self.assertIn('a prepared STATE.md file is a regular file', result.stderr)
+            self.assertEqual((fake / 'mine.txt').read_text(), 'the user\'s file\n')
+            self.assertEqual([p.name for p in fake.parent.iterdir() if p.name.startswith('.' + fake.name)], [])
+        self.assertEqual((private / 'workers/w.session').read_text(), 'session\n')
+        self.assertLessEqual({p.name for p in self.project.iterdir()}, {'.claude', '.myagentkit', 'docs'})
+        self.assertEqual([p.name for p in private.iterdir()], ['workers'])
+        self.assertEqual(self.state.read_bytes(), before)
+
+    def test_a_folder_swapped_in_after_the_check_goes_back_and_nothing_is_published(self):
+        worker = self.module()
+        before = self.state.read_bytes()
+        snapshot, sha = self.snapshot()
+        renaming = os.rename
+        def swapped(source, target):
+            if Path(target).name == 'snapshot':
+                Path(source).unlink()
+                Path(source).mkdir()
+                (Path(source) / 'keep.txt').write_text('keep\n')
+            renaming(source, target)
+        with mock.patch.object(worker.os, 'rename', swapped):
+            with self.assertRaisesRegex(ValueError, 'regular file'):
+                worker.replace_state(self.project, snapshot, sha)
+        self.assertEqual((snapshot / 'keep.txt').read_text(), 'keep\n')
+        self.assertEqual([p.name for p in snapshot.parent.iterdir()], [snapshot.name])
+        self.assertEqual(self.state.read_bytes(), before)
+
+    def test_read_state_refuses_a_folder_as_out_and_writes_nothing_outside(self):
+        with tempfile.TemporaryDirectory() as folder:
+            fake = Path(folder).resolve()
+            env = self.temporary(fake)
+            # .myagentkit not there yet: the snapshot would land beside it, in the project root.
+            for out in ('.myagentkit/', '.myagentkit', str(fake), str(fake) + os.sep):
+                with self.subTest(out=out):
+                    result = self.run_mode('--read-state', out, env=env)
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    self.assertIn('mode: ', result.stderr)
+            self.assertFalse((self.project / '.myagentkit').exists())
+            (self.project / '.myagentkit').mkdir()
+            for out in ('.myagentkit', '.myagentkit' + os.sep, str(self.project / '.myagentkit')):
+                with self.subTest(out=out):
+                    result = self.run_mode('--read-state', out, env=env)
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    self.assertIn('never a folder', result.stderr)
+            self.assertEqual([p.name for p in fake.parent.iterdir() if p.name.startswith(fake.name + '-')], [])
+            self.assertEqual(list(fake.iterdir()), [])
+        self.assertEqual(sorted(p.name for p in self.project.iterdir()), ['.myagentkit', 'docs'])
+        self.assertEqual(list((self.project / '.myagentkit').iterdir()), [])
+
+    def test_a_refused_edit_that_cannot_go_back_names_where_its_draft_is_kept(self):
+        self.assertEqual(self.run_mode('cross-performance').returncode, 0)
+        worker = self.module()
+        snapshot, sha = self.snapshot()
+        edited = snapshot.read_bytes().replace(b'cross-performance', b'claude-first')
+        snapshot.write_bytes(edited)
+        renaming = os.rename
+        def rename(source, target):
+            renaming(source, target)
+            if Path(source) == snapshot:
+                snapshot.write_bytes(b'A successor draft.\n')  # so the exclusive link back is refused
+        errors = io.StringIO()
+        with mock.patch.object(worker.os, 'rename', rename), mock.patch('sys.stderr', errors):
+            with self.assertRaisesRegex(ValueError, 'Working mode line'):
+                worker.replace_state(self.project, snapshot, sha)
+        self.assertIn('mode: the unpublished snapshot is kept at ', errors.getvalue())
+        kept = Path(errors.getvalue().split(' kept at ', 1)[1].strip())
+        self.assertEqual(kept.read_bytes(), edited)
+        self.assertEqual(snapshot.read_bytes(), b'A successor draft.\n')
+        self.assertEqual(worker.shown('a\x1b]0;t\x07b\nc'), 'a?]0;t?b?c')
 
     def test_state_cas_refuses_a_wrong_expectation_without_publishing(self):
         before = self.state.read_bytes()

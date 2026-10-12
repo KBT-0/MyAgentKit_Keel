@@ -112,7 +112,9 @@ os.open = open_claim
             if target.exists():
                 self.assertEqual(target.read_text(), 'newer destination\n')
 
-    def test_interrupted_archive_is_recognized_by_object_or_contents_on_retry(self):
+    def test_an_interrupted_move_leaves_its_archive_and_a_private_link_and_a_retry_claims_nothing(self):
+        # Killed after the archive link, before the private name's unlink: the state this move
+        # really leaves. Forward-slash paths, as Git Bash passes them on native Windows.
         interrupted = '''import sys
 linking, unlinking = os.link, os.unlink
 archive_linked = False
@@ -127,27 +129,101 @@ def unlink(*args, **kwargs):
     return unlinking(*args, **kwargs)
 os.link, os.unlink = link, unlink
 '''
-        for same_object in (True, False):
-            with self.subTest(same_object=same_object), tempfile.TemporaryDirectory() as tmp:
-                source, first, second = (Path(tmp) / name for name in ('RESULT-w.md', 'w.result.md', 'w.result-2.md'))
-                source.write_text('the report\n')
-                forced = NO_EXCLUSIVE_RENAME % ('EINVAL', True)
-                moved = subprocess.run([sys.executable, '-I', '-c', forced + interrupted + move_report(),
-                                        str(source), str(first)], capture_output=True, timeout=10)
-                self.assertEqual(moved.returncode, 73, moved.stderr)
-                self.assertEqual(first.read_text(), 'the report\n')
-                if source.exists():
-                    source.unlink()
-                if same_object:
-                    os.link(first, source)
-                else:
-                    source.write_bytes(first.read_bytes())
-                retry = subprocess.run([sys.executable, '-I', '-c', forced + move_report(),
-                                        str(source), str(second)], capture_output=True, timeout=10)
-                self.assertEqual(retry.returncode, 0, retry.stderr)
-                self.assertFalse(second.exists(), 'retry allocated a duplicate archive number')
-                self.assertFalse(source.exists())
-                self.assertEqual(retry.stdout.decode().strip(), str(first))
+        with tempfile.TemporaryDirectory() as tmp:
+            source, first, second = (Path(tmp) / name for name in ('RESULT-w.md', 'w.result.md', 'w.result-2.md'))
+            source.write_text('the report\n')
+            forced = NO_EXCLUSIVE_RENAME % ('EINVAL', True)
+            moved = subprocess.run([sys.executable, '-I', '-c', forced + interrupted + move_report(),
+                                    source.as_posix(), first.as_posix()], capture_output=True, timeout=10)
+            self.assertEqual(moved.returncode, 73, moved.stderr)
+            self.assertFalse(source.exists(), 'the report was not consumed before its archive link')
+            self.assertEqual(first.read_text(), 'the report\n')
+            private = list(Path(tmp).glob('.report-move-*/*'))
+            self.assertEqual([path.name for path in private], ['report'])
+            self.assertTrue(os.path.samestat(os.stat(private[0]), os.stat(first)),
+                            'the private leftover is not the published archive')
+            # A retried close finds no RESULT-w.md to move; a move of the gone source claims no number.
+            retry = subprocess.run([sys.executable, '-I', '-c', forced + move_report(),
+                                    source.as_posix(), second.as_posix()], capture_output=True, timeout=10)
+            self.assertEqual(retry.returncode, 1, retry.stderr)
+            self.assertFalse(second.exists())
+            self.assertEqual(first.read_text(), 'the report\n')
+
+    def test_only_the_same_object_reuses_an_archive_and_another_runs_identical_report_gets_its_own_number(self):
+        # Both spellings: Git Bash passes C:/ paths, which a pattern over the full path never matched.
+        for spelling in (Path.as_posix, str):
+            for forced in (NO_EXCLUSIVE_RENAME % ('EINVAL', True), ''):
+                for same_object in (True, False):
+                    with self.subTest(spelling=spelling.__name__, forced=bool(forced), same_object=same_object), \
+                            tempfile.TemporaryDirectory() as tmp:
+                        source, first, second = (Path(tmp) / name for name in ('RESULT-w.md', 'w.result.md', 'w.result-2.md'))
+                        first.write_text('the report\n')
+                        if same_object:
+                            os.link(first, source)  # an older link+unlink stopped after its publication
+                        else:
+                            source.write_text('the report\n')  # another run, the same bytes
+                        moved = subprocess.run([sys.executable, '-I', '-c', forced + move_report(),
+                                                spelling(source), spelling(second)], capture_output=True, timeout=10)
+                        self.assertEqual(moved.returncode, 0, moved.stderr)
+                        self.assertFalse(source.exists())
+                        self.assertEqual(first.read_text(), 'the report\n')
+                        if same_object:
+                            self.assertEqual(moved.stdout.decode('utf-8').strip(), spelling(first))
+                            self.assertFalse(second.exists(), 'a retry claimed a second number for one report')
+                        else:
+                            self.assertEqual(moved.stdout.decode('utf-8').strip(), spelling(second))
+                            self.assertEqual(second.read_text(), 'the report\n')
+                            self.assertFalse(os.path.samestat(os.stat(first), os.stat(second)))
+
+    def test_an_archive_that_vanishes_or_cannot_be_read_is_not_a_duplicate(self):
+        failing = '''import errno, os
+lstating = os.lstat
+def lstat(path, *args, **kwargs):
+    if os.path.basename(path) == "w.result.md":
+        raise %s(errno.%s, "the candidate")
+    return lstating(path, *args, **kwargs)
+os.lstat = lstat
+'''
+        for error in (('FileNotFoundError', 'ENOENT'), ('PermissionError', 'EACCES')):
+            for forced in (NO_EXCLUSIVE_RENAME % ('EINVAL', True), ''):
+                with self.subTest(error=error[0], forced=bool(forced)), tempfile.TemporaryDirectory() as tmp:
+                    source, first, second = (Path(tmp) / name for name in ('RESULT-w.md', 'w.result.md', 'w.result-2.md'))
+                    first.write_text('the report\n')
+                    source.write_text('the report\n')
+                    moved = subprocess.run([sys.executable, '-I', '-c', failing % error + forced + move_report(),
+                                            str(source), str(second)], capture_output=True, timeout=10)
+                    self.assertEqual(moved.returncode, 0, moved.stderr)
+                    self.assertEqual(second.read_text(), 'the report\n')
+                    self.assertFalse(source.exists())
+
+    def test_a_report_kept_in_its_private_folder_is_named_without_control_bytes(self):
+        racing = '''import sys
+linking = os.link
+def link(source, target, *args, **kwargs):
+    if target == sys.argv[2]:
+        with open(sys.argv[1], "w") as file:
+            file.write("a newer report\\n")
+        raise FileExistsError(errno.EEXIST, "the archive name was taken")
+    return linking(source, target, *args, **kwargs)
+os.link = link
+'''
+        with tempfile.TemporaryDirectory() as tmp:
+            # Windows refuses control characters in a name; elsewhere one names the folder.
+            folder = Path(tmp) / ('iş' if WINDOWS else 'iş\x1b]0;t\x07')
+            folder.mkdir()
+            source, target = folder / 'RESULT-w.md', folder / 'w.result.md'
+            source.write_text('the report\n')
+            moved = subprocess.run([sys.executable, '-I', '-c', NO_EXCLUSIVE_RENAME % ('EINVAL', True) + racing
+                                    + move_report(), str(source), str(target)], capture_output=True, timeout=10)
+            self.assertEqual(moved.returncode, 1, moved.stderr)
+            kept = list(folder.glob('.report-move-*/report'))
+            self.assertEqual(len(kept), 1, moved.stderr)
+            self.assertEqual(kept[0].read_text(), 'the report\n')
+            self.assertEqual(source.read_text(), 'a newer report\n')
+            self.assertFalse(target.exists())
+            shown = os.fsencode(kept[0]).replace(b'\x1b', b'?').replace(b'\x07', b'?')
+            self.assertIn(b'owned report preserved at ' + shown + b'\n', moved.stderr)
+            self.assertNotIn(b'\x1b', moved.stderr)
 
     def test_the_archive_move_never_overwrites_where_no_exclusive_rename_exists(self):
         cases = {'EINVAL': NO_EXCLUSIVE_RENAME % ('EINVAL', True),

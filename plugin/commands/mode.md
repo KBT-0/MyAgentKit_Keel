@@ -19,7 +19,8 @@ or another writer's snapshot; then publish it with `--replace-state "PATH" --exp
 which deletes the verified snapshot once published. On refusal, read
 it again, redo the edit, and retry. The helper shares the switch lock, only replaces contents,
 and executes no writer command. It runs the STATE operations only from the project root,
-without another `--project`, with the snapshot in `.myagentkit/` or the temporary folder, and
+without another `--project`, with the snapshot in `.myagentkit/` or the temporary folder, never
+an OUT or FILE that names a folder, and
 refuses an edit that changes the "Working mode:" line, which only a switch changes.
 
 If `docs/WORKFLOW.md` has no "Working modes, by name" section, the project predates the kit's

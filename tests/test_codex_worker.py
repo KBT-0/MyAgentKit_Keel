@@ -1058,6 +1058,24 @@ class CodexWorkerTests(unittest.TestCase):
                         with self.assertRaises(PermissionError, msg='a lasting refusal was waited on forever'):
                             read(path)
 
+    def test_an_absent_file_resets_the_refusal_count_and_only_an_unbroken_run_of_refusals_raises(self):
+        worker = module()
+        denied, absent = PermissionError(13, 'sharing violation'), FileNotFoundError(2, 'not published yet')
+        with tempfile.TemporaryDirectory() as tmp:
+            for read, method, refused, missing in ((worker.result_kind, 'stat', ('', None), ('', None)),
+                                                   (worker.published, 'read_text', None, '')):
+                path = Path(tmp) / (read.__name__ + '.md')
+                with self.subTest(read=read.__name__), mock.patch.object(worker.os, 'name', 'nt'):
+                    with mock.patch.object(Path, method, side_effect=[denied, absent] * (worker.REFUSALS + 1)):
+                        for _ in range(worker.REFUSALS + 1):
+                            self.assertEqual(read(path), refused)
+                            self.assertEqual(read(path), missing)
+                    with mock.patch.object(Path, method, side_effect=denied):
+                        for _ in range(worker.REFUSALS):
+                            self.assertEqual(read(path), refused)
+                        with self.assertRaises(PermissionError, msg='a lasting refusal was waited on forever'):
+                            read(path)
+
     def test_a_follow_up_printed_with_a_legacy_stale_id_compares_its_hash(self):
         worker = module()
         with tempfile.TemporaryDirectory() as tmp:

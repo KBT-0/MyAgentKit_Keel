@@ -93,7 +93,10 @@ by the read descriptor after publication; a successor at the supplied path stays
 and rollback can otherwise erase another writer's work. The STATE operations run from the project root without another
 `--project`, and read or write a snapshot only in `.myagentkit/` (ignored by Git) or the
 temporary folder: `/myagentkit:mode` runs the helper unprompted, so it copies no other file,
-and a snapshot never lands where `git add -A` commits it. An edit that changes or removes the
+and a snapshot never lands where `git add -A` commits it. OUT is a name prefix and FILE a regular
+file, never a folder: OUT naming `.myagentkit` put the snapshot in the project root, and FILE
+naming a folder moved it whole. An unpublished draft that cannot go back to FILE stays in a
+private folder beside it, whose path the helper prints. An edit that changes or removes the
 "Working mode:" line is refused: the mode switch writes that line together with `.claude/mode`.
 The branch and worktree policy below still decides which session may edit STATE.md.
 

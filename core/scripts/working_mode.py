@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import stat
 import sys
 import tempfile
 
@@ -87,11 +88,19 @@ def private(project, path):
     raise ValueError('a prepared STATE.md file lives in .myagentkit/ or the temporary folder: ' + str(path))
 
 
+def shown(path):
+    """PATH for a message, its control bytes as `?`, as close_worker.sh prints its lines."""
+    return re.sub(r'[\x00-\x1f\x7f]', '?', str(path))
+
+
 def read_state(project, out):
-    """Create an exclusive per-edit snapshot with OUT as its prefix; return its path and hash."""
+    """Create an exclusive per-edit snapshot with OUT as its prefix; return its path and hash.
+    The snapshot is created in OUT's folder, so that folder is private too: OUT naming
+    .myagentkit itself put the snapshot in the project root, where `git add -A` commits it."""
     data = checked(project, 'docs/STATE.md').read_bytes()
-    out.parent.mkdir(parents=True, exist_ok=True)
-    fd, name = tempfile.mkstemp(prefix=out.name + '-', dir=out.parent)
+    folder = private(project, out.parent)
+    folder.mkdir(parents=True, exist_ok=True)
+    fd, name = tempfile.mkstemp(prefix=out.name + '-', dir=folder)
     with os.fdopen(fd, 'wb') as handle:
         handle.write(data)
     return Path(name), hashlib.sha256(data).hexdigest()
@@ -99,7 +108,8 @@ def read_state(project, out):
 
 def replace_state(project, source, expected):
     """Publish an edited snapshot only if STATE still matches it under the switch lock, then
-    delete the snapshot. Its Working mode line stays the mode switch's."""
+    delete the snapshot. Its Working mode line stays the mode switch's. FILE is a regular file:
+    the rename below moved a folder named instead (.myagentkit, the temporary folder) whole."""
     with switch_lock(project):
         state = checked(project, 'docs/STATE.md')
         current = state.read_bytes()
@@ -107,6 +117,8 @@ def replace_state(project, source, expected):
         if actual != expected.lower():
             raise ValueError('STATE.md sha256 mismatch: expected ' + expected + ', current ' + actual
                              + '; read it again with --read-state, redo the edit in that snapshot, and retry')
+        if not stat.S_ISREG(os.lstat(source).st_mode):
+            raise ValueError('a prepared STATE.md file is a regular file: ' + shown(source))
         folder = Path(tempfile.mkdtemp(prefix='.' + source.name + '-', dir=source.parent))
         owned = folder / 'snapshot'
         identity = pending = None
@@ -114,6 +126,11 @@ def replace_state(project, source, expected):
         try:
             os.rename(source, owned)  # the destination is in this caller's fresh private directory
             identity = owned.lstat()
+            if not stat.S_ISREG(identity.st_mode):  # swapped in after the check
+                if stat.S_ISDIR(identity.st_mode):
+                    os.rename(owned, source)  # no link restores a folder; this replaces only an empty one
+                    identity = None
+                raise ValueError('a prepared STATE.md file is a regular file: ' + shown(source))
             with owned.open('rb') as handle:
                 identity = os.fstat(handle.fileno())
                 data = handle.read()
@@ -131,8 +148,10 @@ def replace_state(project, source, expected):
                     if not published:
                         os.link(owned, source, follow_symlinks=False)  # restore without replacing a successor
                     owned.unlink()  # only the verified object, never the caller's reusable pathname
-            with suppress(OSError):
-                folder.rmdir()  # an unconsumed draft stays private for recovery
+            try:
+                folder.rmdir()
+            except OSError:  # an unconsumed draft stays private for recovery, and says where
+                print('mode: the unpublished snapshot is kept at ' + shown(owned), file=sys.stderr)
 
 
 def mode(project, choice=None):
@@ -236,7 +255,7 @@ def main():
     parser.add_argument('name', nargs='?')
     parser.add_argument('--project', type=Path, default=Path.cwd())
     operations = parser.add_mutually_exclusive_group()
-    operations.add_argument('--read-state', type=Path, metavar='OUT',
+    operations.add_argument('--read-state', metavar='OUT',  # a string: a trailing separator names a folder
                             help='create a per-edit STATE.md snapshot with prefix OUT (in .myagentkit/ or the temporary folder); print SHA256 PATH')
     operations.add_argument('--replace-state', type=Path, metavar='FILE',
                             help='atomically publish the edited snapshot FILE, then delete it')
@@ -255,7 +274,9 @@ def main():
         if (args.read_state, args.replace_state) != (None, None) and project != Path.cwd().resolve():
             raise ValueError('STATE operations run in the project root, without another --project')
         if args.read_state is not None:
-            snapshot, sha = read_state(project, private(project, args.read_state))
+            if args.read_state.endswith(('/', os.sep)) or Path(args.read_state).is_dir():
+                raise ValueError('OUT is the snapshot name prefix, never a folder: ' + shown(args.read_state))
+            snapshot, sha = read_state(project, private(project, Path(args.read_state)))
             print(sha + ' ' + str(snapshot))
         elif args.replace_state is not None:
             replace_state(project, private(project, args.replace_state), args.expect)
