@@ -3,6 +3,7 @@
 """Close a worker after a published decision or completed result; --wait notifies the lead
 without a commit, also when the worker stopped without publishing (its exit record) or its
 supervisor was killed (its lock on the .live record dropped)."""
+import hashlib
 import os
 from pathlib import Path
 import shlex
@@ -43,28 +44,35 @@ def baseline(path, since):
 
 
 def result_kind(path, since=0, stale=None):
-    """The kind of a result published in this run, and its file id; '' when there is none."""
+    """The kind of a result published in this run and its publication id; '' when absent.
+    A launch's inode suppresses in-place edits; a reported result's hash survives inode reuse."""
+    if path is None:
+        return '', None
     try:
-        info = path.stat() if path else None
+        with path.open(encoding='utf-8') as file:
+            info = os.fstat(file.fileno())
+            text = file.read().strip()
     except FileNotFoundError:
         return '', None
-    if info is None or info.st_mtime < since or info.st_ino == stale:
+    if info.st_mtime < since or info.st_ino == stale or not text.endswith(READY):
         return '', None
-    text = published(path)
+    published_id = str(info.st_ino) + ':' + hashlib.sha256(text.encode('utf-8')).hexdigest()
+    if published_id == stale:
+        return '', None
     lines = text.splitlines()
     if (len(lines) < 4 or not lines[1].startswith('Task: ')
             or not lines[2].startswith('Attempt: ') or not lines[2][9:].isdigit()
             or not lines[3].startswith('Remaining: ')):
         return '', None
     return {'Kind: completed': 'DONE', 'Kind: blocked': 'BLOCKED', 'Kind: handoff': 'HANDOFF',
-            'Kind: progress': 'PROGRESS'}.get(lines[0], ''), info.st_ino
+            'Kind: progress': 'PROGRESS'}.get(lines[0], ''), published_id
 
 
 def pin(path, stale):
     """Hold the stale result open for this process's life on POSIX: ext4 reuses a freed inode
     number at once, and a new result given it would read as the stale one. A held inode is never
     freed. NTFS ids carry a sequence number, and an open handle there blocks the publishing rename."""
-    if os.name == 'nt' or not stale or path is None:
+    if os.name == 'nt' or not stale or path is None or isinstance(stale, str):
         return None
     try:
         fd = os.open(path, os.O_RDONLY)
@@ -194,10 +202,14 @@ def main():
     if len(sys.argv) >= 3 and sys.argv[1] == '--wait':
         options = dict(zip(sys.argv[3::2], sys.argv[4::2]))
         if len(sys.argv) % 2 == 0 or set(options) - {'--since', '--exit', '--stale'}:
-            raise ValueError('usage: codex_worker.py --wait RESULT [--since START] [--stale FILE_ID] [--exit RECORD]')
+            raise ValueError('usage: codex_worker.py --wait RESULT [--since START] [--stale ID] [--exit RECORD]')
         result, since = Path(sys.argv[2]), float(options.get('--since', 0))
         record = Path(options['--exit']) if '--exit' in options else None
-        stale = int(options['--stale']) or None if '--stale' in options else baseline(result, since)
+        stale = options.get('--stale')
+        if stale is None:
+            stale = baseline(result, since)
+        elif ':' not in stale:
+            stale = int(stale) or None
         pin(result, stale)
         while True:
             # Read first: what the supervisor published or recorded before it ended is seen below.
@@ -208,7 +220,6 @@ def main():
                 if kind in ('PROGRESS', 'HANDOFF'):
                     # The worker goes on. The same wait with this result as the stale one reports the
                     # next; --since stays the run's start, which the .live and .exit records are read by.
-                    # ponytail: a filesystem without file ids (st_ino 0) reports this result again.
                     again = [Path(sys.executable).as_posix(), Path(sys.argv[0]).absolute().as_posix(),
                              '--wait', sys.argv[2], '--since', options.get('--since', '0'),
                              '--stale', str(published_id or 0)] + (['--exit', options['--exit']] if record else [])

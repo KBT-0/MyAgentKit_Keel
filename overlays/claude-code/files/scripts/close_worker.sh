@@ -56,6 +56,32 @@ set -u
 say() { { printf 'close_worker: %s' "$1" | LC_ALL=C tr '\001-\037\177' '?'; echo; }; }
 first=""
 fail() { say "$1"; [ -n "$first" ] || first=$1; }
+# Claim the destination with an exclusive rename: 2 is a collision, 1 any other failure.
+# Never fall back to a free-name check followed by an overwriting rename.
+move_report() {
+  $kit_python -I -c 'import ctypes, os, sys
+try:
+    if os.name == "nt":
+        os.rename(sys.argv[1], sys.argv[2])  # Windows refuses an existing destination atomically.
+    else:
+        api = ctypes.CDLL(None, use_errno=True)
+        source, target = map(os.fsencode, sys.argv[1:])
+        if sys.platform == "darwin":
+            rename = api.renamex_np
+            rename.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
+            rc = rename(source, target, 4)  # RENAME_EXCL
+        else:
+            rename = api.renameat2
+            rename.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+            rc = rename(-100, source, -100, target, 1)  # AT_FDCWD, RENAME_NOREPLACE
+        if rc:
+            error = ctypes.get_errno()
+            raise OSError(error, os.strerror(error))
+except FileExistsError:
+    sys.exit(2)
+except (OSError, AttributeError) as error:
+    sys.exit(str(error))' "$1" "$2"
+}
 nl='
 '
 # Git for Windows' dirname handles both separators, including mixed paths such as D:/p\scripts\x.sh.
@@ -310,11 +336,15 @@ for name; do
   moved=""
   if [ -n "$(git -C "$wt_dir" ls-files --others -- "RESULT-$name.md" 2>/dev/null)" ]; then
     saved=$record.result.md; n=1
-    # ponytail: a free-name check, not an atomic claim; two closes of one name at once could race.
     while [ -e "$saved" ]; do n=$((n + 1)); saved=$record.result-$n.md; done
     if [ -n "$dry" ]; then say "$name: dry run: would move its result RESULT-$name.md to $saved"
-    elif mkdir -p -- "${record%/*}" && mv -- "$wt_dir/RESULT-$name.md" "$saved"; then
-      moved=1; say "$name: its result RESULT-$name.md moved to $saved"
+    elif mkdir -p -- "${record%/*}"; then
+      while :; do
+        move_report "$wt_dir/RESULT-$name.md" "$saved"; move_rc=$?
+        if [ "$move_rc" -eq 0 ]; then moved=1; say "$name: its result RESULT-$name.md moved to $saved"; break
+        elif [ "$move_rc" -eq 2 ]; then n=$((n + 1)); saved=$record.result-$n.md
+        else fail "$name: could not move its result RESULT-$name.md to $saved"; break; fi
+      done
     else fail "$name: could not move its result RESULT-$name.md to $saved"; fi
   fi
   apply=--apply; [ -z "$dry" ] || { apply=""; say "$name: dry run: the removal would lift the quiet period for this worktree alone (--no-quiet), every other proof stays"; }
@@ -343,8 +373,16 @@ for name; do
   [ "$rc" -eq 0 ] || [ -n "$kept" ] ||
     fail "$name: clean_worktrees.sh exited $rc: $(printf '%s\n' "$out" | sed -n '$p')"
   if [ -n "$moved" ] && [ "$wt_dir" != "$top" ] && [ -d "$wt_dir" ]; then
-    if mv -- "$saved" "$wt_dir/RESULT-$name.md"; then say "$name: its result moved back to RESULT-$name.md beside the kept work"
-    else fail "$name: could not move its result back from $saved to the kept worktree"; fi
+    restored=$wt_dir/RESULT-$name.md; n=0
+    while :; do
+      move_report "$saved" "$restored"; move_rc=$?
+      if [ "$move_rc" -eq 0 ]; then
+        if [ "$n" -eq 0 ]; then say "$name: its result moved back to RESULT-$name.md beside the kept work"
+        else say "$name: newer RESULT-$name.md kept; its saved result moved back to $restored beside the kept work"; fi
+        break
+      elif [ "$move_rc" -eq 2 ]; then n=$((n + 1)); restored=$wt_dir/RESULT-$name-restored-$n.md
+      else fail "$name: could not move its result back from $saved to the kept worktree"; break; fi
+    done
   fi
   if [ -z "$dry" ] && [ "$rc" -eq 0 ] && [ -z "$kept" ] && [ -n "$top" ]; then
     rm -f -- "$record.session" "$record.exit" "$record.live" "$record.question" || fail "$name: could not remove its Codex session records"

@@ -93,9 +93,9 @@ spawn_lock=$top/.myagentkit/workers/spawn.lock
 mkdir -p -- "${spawn_lock%/*}" || die "cannot create the worker records directory"
 took=""
 mkdir -- "$spawn_lock" 2>/dev/null || { [ -n "$resume" ] && rm -- "$spawn_lock/$name" 2>/dev/null && took=1; } ||
-  die "spawn in progress or an unrecorded launch at $spawn_lock; retry after it ends. An unrecorded launch has its worker's name inside: answer that worker with spawn_codex.sh NAME ANSWER_FILE ... --resume SESSION_ID, which records it and takes the reservation over; once its tab or tmux session has ended, or its id is written to NAME.session, release it: rm -r -- $spawn_lock"
+  die "spawn in progress or an unrecorded launch at $spawn_lock; retry after it ends. An unrecorded launch has its worker's name inside: answer that worker with spawn_codex.sh NAME ANSWER_FILE ... --resume SESSION_ID, which records it and takes the reservation over; once its tab or tmux session has ended, or its id is written to NAME.session, release it: rm -r -- $(q "$spawn_lock")"
 spawn_launched=""; spawn_recorded=""
-trap 'if [ -n "$spawn_recorded" ] || { [ -z "$spawn_launched" ] && [ -z "$took" ]; }; then rmdir -- "$spawn_lock"; else : > "$spawn_lock/$name"; printf "spawn_codex: unrecorded launch of %s; reservation kept at %s. Answer it with --resume SESSION_ID, which records it and takes the reservation over; once its tab or tmux session has ended, or its id is written to %s, release it: rm -r -- %s\n" "$name" "$spawn_lock" "${spawn_lock%/*}/$name.session" "$spawn_lock" >&2; fi' 0
+trap 'if [ -n "$spawn_recorded" ] || { [ -z "$spawn_launched" ] && [ -z "$took" ]; }; then rmdir -- "$spawn_lock"; else : > "$spawn_lock/$name"; printf "spawn_codex: unrecorded launch of %s; reservation kept at %s. Answer it with --resume SESSION_ID, which records it and takes the reservation over; once its tab or tmux session has ended, or its id is written to %s, release it: rm -r -- %s\n" "$name" "$spawn_lock" "${spawn_lock%/*}/$name.session" "$(q "$spawn_lock")" >&2; fi' 0
 trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM

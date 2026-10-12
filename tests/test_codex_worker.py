@@ -1,6 +1,7 @@
 """A decision sidecar ends the interactive worker without losing its session."""
 from pathlib import Path
 import importlib.util
+import io
 import os
 import shlex
 import signal
@@ -591,6 +592,77 @@ class CodexWorkerTests(unittest.TestCase):
                     except subprocess.TimeoutExpired:
                         process.kill()
                         process.wait()
+
+    def test_result_identity_and_contents_share_a_descriptor_during_a_publication(self):
+        worker = module()
+        with tempfile.TemporaryDirectory() as tmp:
+            result, fresh = Path(tmp) / 'result.md', Path(tmp) / 'fresh.md'
+            result.write_text('Kind: progress\nTask: t\nAttempt: 1\nRemaining: work\n' + READY)
+            expected = worker.result_kind(result)
+            fresh.write_text('Kind: handoff\nTask: t\nAttempt: 1\nRemaining: review\n' + READY)
+            stat, fstat, opening = Path.stat, os.fstat, Path.open
+            renamed = []
+            def publish(info):
+                if not renamed:
+                    if os.name == 'nt':
+                        # Windows can rename a shared-delete file but refuses replacing it open.
+                        result.rename(result.with_suffix('.old'))
+                    os.replace(fresh, result)
+                    renamed.append(True)
+                return info
+            def opened(path, *args, **kwargs):
+                if os.name != 'nt' or path != result:
+                    return opening(path, *args, **kwargs)
+                # Allow the real scheduled rename while the reader holds the old Windows file.
+                import ctypes
+                import msvcrt
+                api = ctypes.WinDLL('kernel32', use_last_error=True)
+                api.CreateFileW.argtypes = [ctypes.c_wchar_p, ctypes.c_ulong, ctypes.c_ulong,
+                                           ctypes.c_void_p, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_void_p]
+                api.CreateFileW.restype = ctypes.c_void_p
+                handle = api.CreateFileW(str(path), 0x80000000, 7, None, 3, 0x80, None)
+                self.assertNotIn(handle, (None, ctypes.c_void_p(-1).value), ctypes.get_last_error())
+                return open(msvcrt.open_osfhandle(handle, os.O_RDONLY), *args, **kwargs)
+            with mock.patch.object(Path, 'stat', lambda path, *a, **k: publish(stat(path, *a, **k))), \
+                    mock.patch.object(worker.os, 'fstat', lambda fd: publish(fstat(fd))), \
+                    mock.patch.object(Path, 'open', opened):
+                observed = worker.result_kind(result)
+            self.assertEqual(renamed, [True], 'the publication was not scheduled between metadata and read')
+            self.assertEqual(observed, expected, 'new contents were paired with the preceding result identity')
+            self.assertEqual(worker.result_kind(result)[0], 'HANDOFF')
+
+    def test_follow_up_waits_distinguish_publications_with_a_recycled_inode(self):
+        worker = module()
+        with tempfile.TemporaryDirectory() as tmp:
+            result, record = Path(tmp) / 'result.md', Path(tmp) / 'w.exit'
+            record.write_text('exit 0\n')
+            stat, fstat = Path.stat, os.fstat
+            def reused(info):
+                return SimpleNamespace(st_ino=41, st_mtime=info.st_mtime)
+            def wait(argv):
+                output = io.StringIO()
+                with mock.patch('sys.argv', argv), mock.patch('sys.stdout', output):
+                    self.assertEqual(worker.main(), 0)
+                return output.getvalue()
+            def follow_up(output):
+                command = next(line.partition('next result: ')[2] for line in output.splitlines()
+                               if 'next result: ' in line)
+                return shlex.split(command)[1:]
+            args = [str(SCRIPT), '--wait', str(result), '--stale', '0', '--exit', str(record)]
+            with mock.patch.object(Path, 'stat', lambda path, *a, **k: reused(stat(path, *a, **k))), \
+                    mock.patch.object(worker.os, 'fstat', lambda fd: reused(fstat(fd))), \
+                    mock.patch.object(worker, 'pin'):
+                for kind, notice in (('progress', 'PROGRESS'), ('handoff', 'HANDOFF'), ('completed', 'DONE')):
+                    fresh = result.with_suffix('.tmp')
+                    fresh.write_text('Kind: %s\nTask: t\nAttempt: 1\nRemaining: x\n%s' % (kind, READY))
+                    os.replace(fresh, result)
+                    output = wait(args)
+                    self.assertIn('codex_worker: ' + notice + ': ', output)
+                    if notice != 'DONE':
+                        args = follow_up(output)
+                        unchanged = wait(args)
+                        self.assertIn('EXITED', unchanged)
+                        self.assertNotIn('codex_worker: ' + notice + ': ', unchanged)
 
 
 if __name__ == '__main__':

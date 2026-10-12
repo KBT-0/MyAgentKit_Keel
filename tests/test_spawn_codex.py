@@ -617,6 +617,77 @@ p.write_text(p.read_text().replace('Kind: blocked', 'Kind: completed'))
         self.assertEqual(earlier.read_text(), "an earlier run's report\n")
         self.assertEqual((self.repo / '.myagentkit/workers/w29.result-2.md').read_text(), report)
 
+    def test_both_printed_reservation_recoveries_quote_a_single_deletion_operand(self):
+        spaced = self.repo.with_name('repo space')
+        self.repo.rename(spaced)
+        self.repo = spaced
+        args = ('--model', 'm', '--effort', 'high')
+        lost = self.spawn('quoted', str(self.brief), *args, CODEX_SILENT='1')
+        refused = self.spawn('other', str(self.brief), *args)
+        lock = self.repo / '.myagentkit/workers/spawn.lock'
+        logger = self.bin / 'argv.py'
+        logger.write_text('import json,sys; print(json.dumps(sys.argv[1:]))\n', newline='\n')
+        for output in (lost, refused):
+            with self.subTest(stderr=output.stderr):
+                self.assertEqual(output.returncode, 1, output.stdout + output.stderr)
+                operands = next(line.partition('release it: rm -r -- ')[2]
+                                for line in output.stderr.splitlines() if 'release it: rm -r -- ' in line)
+                # Log argv instead of invoking the destructive recovery command.
+                printed = subprocess.run(['sh', '-c', shq(sys.executable.replace('\\', '/')) + ' '
+                                          + shq(str(logger).replace('\\', '/')) + ' ' + operands],
+                                         cwd=self.repo, capture_output=True, text=True, timeout=10)
+                self.assertEqual(printed.returncode, 0, printed.stderr)
+                self.assertEqual(json.loads(printed.stdout), [self.win(lock, '-m')])
+                self.assertTrue(lock.exists())
+
+    def test_close_atomically_claims_the_archive_when_a_report_arrives_after_the_name_check(self):
+        report = self.repo / 'RESULT-race.md'
+        report.write_text('the report being closed\n')
+        saved = self.repo / '.myagentkit/workers/race.result.md'
+        hook = self.bin / 'mkdir-hook.py'
+        hook.write_text('''import pathlib,sys
+args = sys.argv[1:]
+for arg in args:
+    if arg not in ('-p', '--'):
+        pathlib.Path(arg).mkdir(parents='-p' in args, exist_ok='-p' in args)
+pathlib.Path(%r).write_text('a concurrently published report\\n')
+''' % str(saved), newline='\n')
+        (self.bin / 'mkdir').write_text('#!/bin/sh\nexec ' + shq(sys.executable.replace('\\', '/'))
+                                      + ' ' + shq(str(hook).replace('\\', '/')) + ' "$@"\n', newline='\n')
+        (self.bin / 'mkdir').chmod(0o755)
+        closed = self.close('race')
+        self.assertEqual(closed.returncode, 0, closed.stdout + closed.stderr)
+        self.assertEqual(saved.read_text(), 'a concurrently published report\n')
+        self.assertEqual(saved.with_name('race.result-2.md').read_text(), 'the report being closed\n')
+        self.assertFalse(report.exists())
+
+    def test_close_restores_both_reports_when_the_kept_worktree_publishes_a_new_result(self):
+        tree = self.repo / '.claude/worktrees/restore'
+        subprocess.run(['git', 'worktree', 'add', '-q', str(tree), '-b', 'worktree-restore'],
+                       cwd=self.repo, check=True, capture_output=True)
+        report = tree / 'RESULT-restore.md'
+        report.write_text('the saved report\n')
+        # The audit keeps the worktree and schedules a publication immediately before restore.
+        kit = self.tmp / 'close-scripts'
+        kit.mkdir()
+        script = kit / 'close_worker.sh'
+        script.write_bytes(SCRIPT.with_name('close_worker.sh').read_bytes())
+        publish = 'from pathlib import Path; Path(%r).write_text("a newer report\\n")' % str(report)
+        (kit / 'clean_worktrees.sh').write_text('#!/bin/sh\n' + shq(sys.executable.replace('\\', '/'))
+                                               + ' -c ' + shq(publish)
+                                               + "\necho 'clean_worktrees: kept 1, removed 0'\nexit 1\n", newline='\n')
+        env = dict(os.environ, PATH=f'{self.bin}{os.pathsep}{os.environ["PATH"]}',
+                   SPAWN_STATE=str(self.state), KIT_PS=str(self.bin / 'ps-stub'))
+        closed = subprocess.run(['sh', str(script), 'restore'], cwd=self.repo, env=env,
+                                capture_output=True, text=True, timeout=45)
+        self.assertEqual(closed.returncode, 1, closed.stdout + closed.stderr)
+        self.assertEqual(report.read_text(), 'a newer report\n')
+        restored = list(tree.glob('RESULT-restore-restored*.md'))
+        self.assertEqual(len(restored), 1, closed.stdout + closed.stderr)
+        self.assertEqual(restored[0].read_text(), 'the saved report\n')
+        self.assertIn('newer RESULT-restore.md kept', closed.stdout)
+        self.assertIn(restored[0].name, closed.stdout)
+
 
 if __name__ == '__main__':
     unittest.main()
