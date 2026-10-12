@@ -51,6 +51,13 @@ class AcceptanceTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, 'is not Python 3.10 syntax'):
                 gate.check_syntax(Path(tmp))
 
+    def test_the_case_lint_passes_an_argument_case_on_this_host(self):
+        # On Windows a bare `bash` is WSL's launcher, and a text pipe writes CRLF: either could make
+        # this argument a finding. The bash used there is Git's, beside the gate's sh.
+        self.assertEqual(gate.case_in_substitution('if :; then\n x=$(echo case)\nfi\n'), [])
+        if os.name == 'nt':
+            self.assertEqual(Path(gate.bash_5_2()).parent, Path(shutil.which('sh')).parent)
+
     def test_every_suite_is_required_at_its_current_count(self):
         # A minimum far below its suite (1 of 30 tests) let the suite lose almost every test
         # with the kit check still green: each minimum is the suite's count, and a new test

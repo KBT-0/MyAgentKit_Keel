@@ -12,6 +12,7 @@ if __name__ == '__main__':
 import argparse
 import ast
 import atexit
+import functools
 try:
     import fcntl
 except ImportError:  # Native Windows: the gate lock there is test_check_gate_windows's.
@@ -83,12 +84,12 @@ REQUIRED_SUITES = {
     'core/scripts': dict(BRIDGE_MINIMUMS, test_agent_cost=3),
     # Each suite's current count: a minimum far below it (1 of 30) let a suite lose almost
     # every test with the kit check green. A new test raises its suite's number here.
-    'tests': {'test_packaging': 1, 'test_bootstrap': 36, 'test_acceptance': 9,
+    'tests': {'test_packaging': 1, 'test_bootstrap': 36, 'test_acceptance': 10,
               'test_review_upgrade': 2 if os.name == 'nt' else 3,
               'test_boundary_example': 3, 'test_scan_gate': 1,
               'test_check_gate': 24, 'test_check_gate_windows': 23, 'test_boundary_restore': 39,
               'test_sync_kit': 29, 'test_doctor': 4, 'test_git_hooks': 30, 'test_stop_hook': 8, 'test_context_hook': 10, 'test_overlay_permissions': 6,
-              'test_spawn_worker': 18, 'test_spawn_codex': 36, 'test_codex_worker': 47, 'test_working_mode': 44, 'test_worker_visibility': 59, 'test_doc_pointers': 9,
+              'test_spawn_worker': 18, 'test_spawn_codex': 36, 'test_codex_worker': 47, 'test_working_mode': 44, 'test_worker_visibility': 60, 'test_doc_pointers': 9,
               'test_usage_summary': 9,
               'test_kit_output': 1, 'test_kit_runner': 24, 'test_clean_worktrees': 137, 'test_clean_worktrees_windows': 9, 'test_close_worker_windows': 20,
               'test_review_windows': 22, 'test_claude_sandbox': 24, 'test_worker_paths_windows': 3,
@@ -320,30 +321,56 @@ def check_syntax(root):
                 ast.parse(path.read_text(), filename=str(path), feature_version=(3, 10))
             except SyntaxError as error:
                 raise RuntimeError("%s is not Python 3.10 syntax: %s" % (path, error)) from error
+    bash_5_2()  # the lint's prerequisite, on every host, whether or not a file needs it
     for path in root.rglob("*.sh"):
         if ".git" not in path.parts:
             # The lint first: macOS's sh rejects the form too, and the reason must name it there.
-            lines = case_in_substitution(path.read_text())
+            try:
+                lines = case_in_substitution(path.read_text())
+            except RuntimeError as error:
+                raise RuntimeError("%s: %s" % (path, error)) from error
             if lines:
                 raise RuntimeError("%s: `case` inside $( ) on line %s: bash 3.2, macOS's sh, reads its "
-                                   "pattern's `)` as the end of the $( ); move it out (unclassifiable "
-                                   "shell syntax is flagged too)"
+                                   "pattern's `)` as the end of the $( ); move it out"
                                    % (path, lines[0]))
             run(["sh", "-n", str(path)])
+
+
+@functools.lru_cache(maxsize=None)
+def bash_5_2():
+    """The bash the case lint parses with, found once: 5.2 or later, the first bash whose -n
+    parses what is inside $( ); 3.2 to 5.1 keep it as text and report no error there. On
+    native Windows only Git's bash beside the gate's sh: a bare `bash` is WSL's launcher."""
+    if os.name == "nt":
+        sh = shutil.which("sh")
+        tried = [str(Path(sh).with_name("bash.exe"))] if sh else []
+    else:
+        tried = [path for path in (shutil.which("bash"), "/opt/homebrew/bin/bash", "/usr/local/bin/bash") if path]
+    for path in tried:
+        try:
+            version = subprocess.run([path, "--version"], capture_output=True, text=True, timeout=10).stdout
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        found = re.search(r"version (\d+)\.(\d+)", version)
+        if found and (int(found[1]), int(found[2])) >= (5, 2):
+            return path
+    raise RuntimeError("the kit check's case lint needs bash 5.2 or later (macOS: brew install bash); "
+                       "tried: %s" % (", ".join(tried) or "no bash, no sh on PATH"))
 
 
 def case_in_substitution(text):
     """The lines where a `case` starts inside $( ). bash 3.2, macOS's sh, does not parse it, and
     the `sh -n` of a host with a newer shell passes it: one did, and only macOS CI failed.
 
-    The scan locates unquoted candidates; Bash parses a transformed copy to classify them.
-    Replacing a command's `case` with `esac` breaks the grammar; replacing an argument or
-    arithmetic variable preserves it. No copy is executed. Unknown syntax fails loudly.
-    Covered shapes: function f case / $((:)then case -> finding;
+    The scan locates unquoted candidates; bash 5.2+ (bash_5_2) parses the file, then for each
+    candidate a copy with that `case` replaced by `esac`. A command's `case` so replaced breaks
+    the grammar; an argument or an arithmetic variable does not. No copy is executed. A file
+    that does not parse as it is fails with bash's own reason, so does a `$((` opening a
+    substitution whose pattern's `)` ends it. Covered shapes: function f case -> finding;
     echo if case / echo -n case / echo $(x) case -> argument.
     Arithmetic is checked too, because `$((` can open a substitution containing a subshell.
-    Bash is available on CI's Linux/macOS and in Git for Windows, like the gate's sh."""
-    found, stack, heredocs, i, line = [], [], [], 0, 1
+    A file without a candidate starts no process."""
+    candidates, stack, heredocs, i, line = [], [], [], 0, 1
     while i < len(text):
         c = text[i]
         if c == "\n":
@@ -389,14 +416,7 @@ def case_in_substitution(text):
                 i += here.end()
                 continue
             if word and any(s in "$A" for s in stack):
-                try:
-                    parsed = subprocess.run(["bash", "--posix", "-n"],
-                                            input=text[:i] + "esac" + text[i + 4:],
-                                            text=True, capture_output=True, timeout=10)
-                except (OSError, subprocess.TimeoutExpired) as error:
-                    raise RuntimeError("cannot classify `case` on line %s: %s" % (line, error)) from error
-                if parsed.returncode:
-                    found.append(line)
+                candidates.append((i, line))
             if c == '"':
                 stack.append('"')
             elif text.startswith("$(", i):
@@ -407,7 +427,23 @@ def case_in_substitution(text):
             elif c == ")" and stack:
                 stack.pop()
             i += 1
-    return found
+    if not candidates:
+        return []
+    bash = bash_5_2()
+
+    def parse(source):
+        # Bytes: a text pipe on Windows writes CRLF; bash must read the file's own bytes.
+        try:
+            return subprocess.run([bash, "--posix", "-n"], input=source.encode(),
+                                  capture_output=True, timeout=10)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise RuntimeError("cannot run %s --posix -n: %s" % (bash, error)) from error
+
+    original = parse(text)
+    if original.returncode:
+        raise RuntimeError("bash --posix -n rejects the file as it is, before any `case` is "
+                           "classified: %s" % original.stderr.decode(errors="replace").strip())
+    return [line for i, line in candidates if parse(text[:i] + "esac" + text[i + 4:]).returncode]
 
 
 def acceptance(self_test):

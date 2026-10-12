@@ -14,6 +14,7 @@ import subprocess
 import tempfile
 import time
 import unittest
+import unittest.mock
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / 'overlays/claude-code/files/scripts'
@@ -676,7 +677,6 @@ class ResultTests(Base):
                                                    'cat <<-E\n\t$(case\n\tE\n'), [])
         # An argument is not a command: `case` counts only where a command starts.
         self.assertEqual(gate.case_in_substitution('x=$(echo case value)\n'), [])
-        self.assertEqual(gate.case_in_substitution('y=$(f; then case)\n'), [1])
         self.assertEqual(gate.case_in_substitution('x=$(true && case a in a) :;; esac)\n'), [1])
         self.assertEqual(gate.case_in_substitution('x=$(if :; then case a in a) :;; esac; fi)\n'), [1])
         # The shell parser recognizes arguments even after reserved words or substitutions.
@@ -689,10 +689,13 @@ class ResultTests(Base):
                 self.assertEqual(gate.case_in_substitution(text), [])
         self.assertEqual(gate.case_in_substitution('x=$(if ! case a in a) :;; esac; then :; fi)\n'), [1])
         self.assertEqual(gate.case_in_substitution('x=$(\n  time case a in a) :;; esac)\n'), [2])
-        # Every keyword after which a command starts.
-        for start in ('if', 'while', 'until', '!', 'time', 'elif', 'then', 'do', 'else'):
+        # Every keyword after which a command starts, each in a command that parses.
+        for start, end in (('if', '; then :; fi'), ('while', '; do :; done'), ('until', '; do :; done'),
+                           ('!', ''), ('time', ''), ('if :; then :; elif', '; then :; fi'),
+                           ('if :; then', '; fi'), ('while :; do', '; done'), ('if :; then :; else', '; fi')):
             with self.subTest(start=start):
-                self.assertEqual(gate.case_in_substitution('x=$(%s case a in a) :;; esac)\n' % start), [1])
+                self.assertEqual(gate.case_in_substitution('x=$(%s case a in a) :;; esac%s)\n' % (start, end)),
+                                 [1])
         # A $( ) inside $(( )) is still a substitution, and its `case` still counts.
         self.assertEqual(gate.case_in_substitution('n=$(( $(case a in a) echo 1;; esac) + 1 ))\n'), [1])
         self.assertEqual(gate.case_in_substitution('n=$(( (1 << 2) + $(echo 1) ))\nf=$(case x in x) :;; esac)\n'),
@@ -707,15 +710,20 @@ class ResultTests(Base):
         spec = importlib.util.spec_from_file_location('kit_check', ROOT / 'scripts/check_kit.py')
         gate = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(gate)
-        for start in ('if (:) then', 'if { :; } then', 'while (:) do', 'if :; then (:) else', 'for i do',
-                      'for i in a b; do', 'for i in a b do', 'select i in a; do', 'select i do'):
+        # Each in a command that parses: a fixture bash rejects as it is raises (CaseLintTests).
+        for start, end in (('if (:) then', '; fi'), ('if { :; } then', '; fi'), ('while (:) do', '; done'),
+                           ('if :; then (:) else', '; fi'), ('for i do', '; done'), ('for i in a b; do', '; done'),
+                           ('select i in a; do', '; done'), ('select i do', '; done')):
             with self.subTest(start=start):
-                self.assertEqual(gate.case_in_substitution('x=$(%s case a in a) :;; esac)\n' % start), [1])
+                self.assertEqual(gate.case_in_substitution('x=$(%s case a in a) :;; esac%s)\n' % (start, end)),
+                                 [1])
         # Every command form a grammar walk missed in review remains a finding.
-        for start in ('if (:)then', 'if if :; then :; fi then', 'while for i in a; do :; done do', 'f()',
-                      'time -p', 'coproc', '{ :; }then', 'f() {'):
+        for start, end in (('if (:)then', '; fi'), ('if if :; then :; fi then', '; fi'),
+                           ('while for i in a; do :; done do', '; done'), ('f()', ''), ('coproc', ''),
+                           ('f() {', '; }')):
             with self.subTest(start=start):
-                self.assertEqual(gate.case_in_substitution('x=$(%s case a in a) :;; esac)\n' % start), [1])
+                self.assertEqual(gate.case_in_substitution('x=$(%s case a in a) :;; esac%s)\n' % (start, end)),
+                                 [1])
 
     def test_a_case_right_after_a_function_header_is_flagged(self):
         spec = importlib.util.spec_from_file_location('kit_check', ROOT / 'scripts/check_kit.py')
@@ -737,8 +745,9 @@ class ResultTests(Base):
         # A newline ends the command before it: `$(echo before\ncase ...)` is flagged.
         self.assertEqual(gate.case_in_substitution("x=$(echo before\ncase x in x) echo after;; esac)\n"), [2])
         self.assertEqual(gate.case_in_substitution("x=$(echo before \\\ncase x)\n"), [])
-        # The former fixture continued an argument with unmatched case syntax: fail loudly.
-        self.assertEqual(gate.case_in_substitution("x=$(echo before \\\ncase x in x) :;; esac)\n"), [2])
+        # Continued, `case x in x)` is an argument whose `)` ends the $( ): bash rejects the file.
+        with self.assertRaisesRegex(RuntimeError, "rejects the file as it is.*`;;'"):
+            gate.case_in_substitution("x=$(echo before \\\ncase x in x) :;; esac)\n")
 
     def test_the_kit_check_rejects_a_case_inside_a_substitution(self):
         # The scan alone is not the gate: check_syntax must run it and stop on it.
@@ -767,11 +776,11 @@ class CaseLintTests(unittest.TestCase):
         self.gate = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(self.gate)
 
-    def test_arithmetic_looking_subshell_and_function_body_are_findings(self):
-        for text in ('x=$((:)then case a in a) :;; esac)\n',
-                     'x=$(function f case a in a) :;; esac)\n'):
-            with self.subTest(text=text):
-                self.assertEqual(self.gate.case_in_substitution(text), [1])
+    def test_a_function_body_is_a_finding_and_an_arithmetic_looking_one_fails(self):
+        self.assertEqual(self.gate.case_in_substitution('x=$(function f case a in a) :;; esac)\n'), [1])
+        # In an arithmetic-looking $(( even bash 5.2 reads the pattern's `)` as the end: it fails.
+        with self.assertRaisesRegex(RuntimeError, 'rejects the file as it is'):
+            self.gate.case_in_substitution('x=$((:)then case a in a) :;; esac)\n')
 
     def test_reserved_option_and_substitution_arguments_are_not_findings(self):
         for text in ('x=$(echo if case value)\n', 'x=$(echo -n case)\n',
@@ -781,8 +790,25 @@ class CaseLintTests(unittest.TestCase):
                 self.assertEqual(self.gate.case_in_substitution(text), [])
         self.assertEqual(self.gate.case_in_substitution('n=$((case + 1))\n'), [])
 
-    def test_unclassifiable_syntax_remains_a_finding(self):
-        self.assertEqual(self.gate.case_in_substitution('x=$(echo case; then)\n'), [1])
+    def test_a_file_bash_rejects_fails_with_bashs_reason_not_a_case_finding(self):
+        # A `then` without `if`, here or far from the argument `case`, is the reason; never the case.
+        for text in ('x=$(echo case; then)\n', 'y=$(f; then case)\n', 'f() { :; }\nx=$(echo case)\nthen\n'):
+            with self.subTest(text=text):
+                with self.assertRaisesRegex(RuntimeError, "rejects the file as it is.*unexpected token `then'"):
+                    self.gate.case_in_substitution(text)
+
+    def test_a_bash_that_cannot_start_or_is_too_old_fails_by_name(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                unittest.mock.patch.object(self.gate, 'bash_5_2', return_value=os.path.join(tmp, 'no-bash')):
+            with self.assertRaisesRegex(RuntimeError, 'cannot run .*no-bash --posix -n'):
+                self.gate.case_in_substitution('x=$(echo case)\n')
+        old = subprocess.CompletedProcess([], 0, 'GNU bash, version 3.2.57(1)-release\n', '')
+        with unittest.mock.patch.object(self.gate.subprocess, 'run', return_value=old):
+            with self.assertRaisesRegex(RuntimeError, r'needs bash 5\.2 or later \(macOS: brew install bash\); tried: '):
+                self.gate.bash_5_2()
+        # No candidate, no process: the lookup is not even reached.
+        with unittest.mock.patch.object(self.gate, 'bash_5_2', side_effect=AssertionError('started bash')):
+            self.assertEqual(self.gate.case_in_substitution('x=$(echo esac)\ncase a in a) :;; esac\n'), [])
 
     def test_every_kit_shell_script_passes_the_case_lint(self):
         for path in sorted(ROOT.rglob('*.sh')):
