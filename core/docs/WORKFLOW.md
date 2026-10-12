@@ -781,7 +781,14 @@ command printed by spawn as a background command, also when spawn found no sessi
 notifies the lead of DONE, BLOCKED, HANDOFF or PROGRESS after a result from this run is
 published with the end marker (by a rename over an older result), and of EXITED when the worker
 stopped without publishing one, even when its wrapper was killed; no commit or lead polling is
-needed. The wrapper closes the worker after the grace period only for a decision
+needed. After PROGRESS or HANDOFF the worker goes on, and `--wait` prints its exact follow-up
+command (`--stale` set to the reported result's file id, the same `--since`): the lead runs that
+one next, since spawn's command would return the same result at once. A spawn that found no
+session keeps the checkout's `.myagentkit/workers/spawn.lock` reservation with the worker's name
+inside, and refuses every other spawn there. The printed `--resume SESSION_ID` of that name
+records the launch and takes the reservation over; once the tab or tmux session has ended, or
+the id is written to `NAME.session`, `rm -r .myagentkit/workers/spawn.lock` releases it.
+The wrapper closes the worker after the grace period only for a decision
 or a completed result. The lead reads the
 uncommitted result and diff before committing. The watcher below accepts committed Claude
 results; it is not used for the uncommitted Codex handoff.

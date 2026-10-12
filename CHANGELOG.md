@@ -23,8 +23,10 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   STATE line under a shared `.claude/mode.lock`, refusing overlapping switches. Interrupted
   switches report disagreement on reads and name the repair: choose a mode explicitly.
   A STATE edit detected before replacement refuses the switch; rollback preserves later
-  independent edits. Linked paths, including the supplied project root, its ancestors and
-  Windows junctions on Python 3.10/3.11, are refused before lock creation.
+  independent edits. Links below the project root, Windows junctions on Python 3.10/3.11
+  included, are refused before lock creation. The supplied root is resolved once, so macOS
+  `/tmp` or a linked home names a project as usual; on Windows only a name-surrogate reparse
+  point (a junction or symlink) is a link, a cloud-file placeholder is not.
   Handwritten names and Turkish
   labels are matched without case (including capital Turkish dotted I); a list-item or
   indented line is read and switched in place, and an unknown value, a second line or any
@@ -56,8 +58,8 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   `review_dispatch.py` is unchanged. Codex-saver stays a separate mode, in which Codex still
   reviews. `scripts/working_mode.py` now requires all seven modes in `docs/WORKFLOW.md`.
   **ACTION:** copy the `claude-only` table row and subsection from the kit's
-  `core/docs/WORKFLOW.md` into yours, and sync `scripts/working_mode.py` with it: the new
-  helper refuses a WORKFLOW.md without the seventh mode.
+  `core/docs/WORKFLOW.md` into yours, and sync `scripts/working_mode.py` with it: for a
+  WORKFLOW.md without the seventh mode the helper prints this ACTION and switches nothing.
   **ACTION:** a project on claude-only sets `DEFAULT_REVIEWER="claude"` in
   `scripts/review.sh`, leaves `CODEX_MODEL` empty, and passes `REVIEW_CLAUDE_MODEL=<the
   reviewing tier>` on every review run.
@@ -74,13 +76,17 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   Windows codex-cli 0.162 probe proved `git add` still fails on `index.lock` with both roots.
   The spawning checkout records `.myagentkit/workers/NAME.session`, outside the worker,
   under a shared `.myagentkit/workers/spawn.lock` reservation from the initial checks through
-  session recording, refusing concurrent launches. An unrecorded launch keeps its reservation
-  until the lead resolves it; printed resume commands quote the model argument.
+  session recording, refusing concurrent launches. An unrecorded launch keeps its reservation,
+  with its worker's name inside, until the printed `--resume SESSION_ID` of that name records
+  the launch and takes it over, or the lead confirms the launch ended and runs
+  `rm -r .myagentkit/workers/spawn.lock`; printed resume commands quote the model argument.
   The lead resumes it with `--resume`; successful `close_worker.sh NAME` removes the records,
   allowing cleanup and name reuse. The close refuses while the worker's decision file (its path
   recorded in `NAME.question`) waits for its answer. It moves an uncommitted default
   `RESULT-NAME.md`, which the lead never commits, to `.myagentkit/workers/NAME.result.md`, so
-  the audit can remove the finished worktree. Workers publish decisions to `QUESTION-NAME.md`;
+  the audit can remove the finished worktree. An earlier report there is kept (the new one is
+  `NAME.result-2.md`, and on), and a worktree the audit keeps gets its result back.
+  Workers publish decisions to `QUESTION-NAME.md`;
   `codex_worker.py` waits for the end marker and grace period before ending their process
   tree, and a fresh replacement is refused. Only a decision or a newly published
   `Kind: completed` result closes the worker; a progress, handoff or blocked result, or an
@@ -93,7 +99,10 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   kept worktree keeps its session record. Its printed
   `--wait FILE --since START --stale FILE_ID --exit RECORD` command notifies the lead of an
   uncommitted handoff as a background command. It uses the result identity captured before
-  launch, so a delayed wait still excludes an in-place edit of an old result.
+  launch, so a delayed wait still excludes an in-place edit of an old result. On POSIX the
+  supervisor and the waiter hold that result open, so a new result cannot be given its freed
+  inode number. After PROGRESS or HANDOFF the wait prints its exact follow-up command, which
+  waits for the worker's next result.
   Windows children join their job before running; POSIX escalation kills the entire group.
   POSIX SIGTERM and SIGHUP unwind supervisor cleanup and reap the worker's process group.
   The worker's instruction tells it to run the checks named on its brief's

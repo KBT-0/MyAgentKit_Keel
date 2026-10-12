@@ -40,9 +40,10 @@
 # records, else QUESTION-NAME.md at its top) still exists is refused before step 2: the lead
 # answers it with spawn_codex.sh --resume, or deletes it to abandon the worker. Before step 3 an
 # untracked RESULT-NAME.md at the worker's top moves to .myagentkit/workers/NAME.result.md:
-# the lead read it and committed the files it lists. After a removal (or with no worktree), the
-# Codex records NAME.session, NAME.exit, NAME.live and NAME.question go too; a kept worktree
-# keeps them.
+# the lead read it and committed the files it lists. An earlier report there stays, and this one
+# becomes NAME.result-2.md (-3, ...); a worktree the audit keeps gets its result back. After a
+# removal (or with no worktree), the Codex records NAME.session, NAME.exit, NAME.live and
+# NAME.question go too; a kept worktree keeps them.
 # Exit 0 when every named session is gone and every named worktree was removed or did not
 # exist; 1 otherwise, with the first reason on the last line: a nonzero exit of
 # clean_worktrees.sh is one whatever its summary says (after a removal, an outcome line its log
@@ -305,11 +306,16 @@ for name; do
   # The default result reports on the work and is not project content: once the lead committed
   # the files it lists, it is all the audit would keep the worktree for. It moves beside the
   # records instead. A custom --result is a project file: the lead commits it or removes it.
+  # An earlier run's report is never replaced, and a worktree the audit keeps gets it back.
+  moved=""
   if [ -n "$(git -C "$wt_dir" ls-files --others -- "RESULT-$name.md" 2>/dev/null)" ]; then
-    if [ -n "$dry" ]; then say "$name: dry run: would move its result RESULT-$name.md to $record.result.md"
-    elif mkdir -p -- "${record%/*}" && mv -f -- "$wt_dir/RESULT-$name.md" "$record.result.md"; then
-      say "$name: its result RESULT-$name.md moved to $record.result.md"
-    else fail "$name: could not move its result RESULT-$name.md to $record.result.md"; fi
+    saved=$record.result.md; n=1
+    # ponytail: a free-name check, not an atomic claim; two closes of one name at once could race.
+    while [ -e "$saved" ]; do n=$((n + 1)); saved=$record.result-$n.md; done
+    if [ -n "$dry" ]; then say "$name: dry run: would move its result RESULT-$name.md to $saved"
+    elif mkdir -p -- "${record%/*}" && mv -- "$wt_dir/RESULT-$name.md" "$saved"; then
+      moved=1; say "$name: its result RESULT-$name.md moved to $saved"
+    else fail "$name: could not move its result RESULT-$name.md to $saved"; fi
   fi
   apply=--apply; [ -z "$dry" ] || { apply=""; say "$name: dry run: the removal would lift the quiet period for this worktree alone (--no-quiet), every other proof stays"; }
   out=$(sh "$kit/clean_worktrees.sh" $apply "--only=$name" --no-quiet 2>&1); rc=$?
@@ -336,6 +342,10 @@ for name; do
   # the log could not take still prints `removed 1`, and its audit record is missing.
   [ "$rc" -eq 0 ] || [ -n "$kept" ] ||
     fail "$name: clean_worktrees.sh exited $rc: $(printf '%s\n' "$out" | sed -n '$p')"
+  if [ -n "$moved" ] && [ "$wt_dir" != "$top" ] && [ -d "$wt_dir" ]; then
+    if mv -- "$saved" "$wt_dir/RESULT-$name.md"; then say "$name: its result moved back to RESULT-$name.md beside the kept work"
+    else fail "$name: could not move its result back from $saved to the kept worktree"; fi
+  fi
   if [ -z "$dry" ] && [ "$rc" -eq 0 ] && [ -z "$kept" ] && [ -n "$top" ]; then
     rm -f -- "$record.session" "$record.exit" "$record.live" "$record.question" || fail "$name: could not remove its Codex session records"
   fi

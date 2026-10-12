@@ -2,6 +2,7 @@
 from pathlib import Path
 import importlib.util
 import os
+import shlex
 import signal
 import subprocess
 import sys
@@ -494,6 +495,102 @@ class CodexWorkerTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn('decision recorded', result.stdout)
             self.assertEqual(question.read_bytes(), before)
+
+    def test_wait_after_progress_prints_the_follow_up_that_reports_the_completed_result(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            question, result, record = (Path(tmp) / n for n in ('q.md', 'result.md', 'w.exit'))
+            since = str(time.time())
+            code = ('from pathlib import Path; import os,time\n'
+                    'def publish(kind):\n'
+                    '    p = Path(%r); p.write_text("Kind: " + kind + "\\nTask: t\\nAttempt: 1\\nRemaining: x\\n" + %r)\n'
+                    '    os.replace(p, %r)\n'
+                    'publish("progress"); time.sleep(3); publish("completed"); time.sleep(30)\n') % (
+                        str(result) + '.tmp', READY, str(result))
+            supervisor = subprocess.Popen([sys.executable, str(SCRIPT), str(question), str(result), '--',
+                                           sys.executable, '-c', code], stdout=subprocess.PIPE,
+                                          stderr=subprocess.PIPE, text=True,
+                                          env=dict(os.environ, KIT_WORKER_GRACE='0.5', KIT_WORKER_STARTED=since,
+                                                   KIT_WORKER_EXIT=str(record)))
+            try:
+                first = subprocess.run([sys.executable, str(SCRIPT), '--wait', str(result), '--since', since,
+                                        '--exit', str(record)], capture_output=True, text=True, timeout=10)
+                self.assertEqual(first.returncode, 0, first.stderr)
+                self.assertIn('PROGRESS', first.stdout)
+                command = next(line.partition('next result: ')[2] for line in first.stdout.splitlines()
+                               if 'next result: ' in line)
+                argv = shlex.split(command)
+                self.assertEqual(argv[argv.index('--since') + 1], since, 'the .live and .exit records are read by the start')
+                # The printed follow-up, run by a shell as the lead runs it, waits for the worker's next
+                # result instead of repeating this one.
+                again = subprocess.run(['sh', '-c', command], capture_output=True, text=True, timeout=15)
+                self.assertEqual(again.returncode, 0, again.stderr)
+                self.assertIn('DONE', again.stdout)
+                self.assertNotIn('PROGRESS', again.stdout)
+                out, err = supervisor.communicate(timeout=15)
+                self.assertEqual(supervisor.returncode, 0, err)
+                self.assertIn('DONE', out)
+            finally:
+                if supervisor.poll() is None:
+                    supervisor.kill()
+                supervisor.communicate()
+
+    def test_the_stale_result_stays_allocated_while_supervisor_and_waiter_run(self):
+        worker = module()
+        with tempfile.TemporaryDirectory() as tmp:
+            result = Path(tmp) / 'result.md'
+            result.write_text('Kind: blocked\nTask: old\nAttempt: 1\nRemaining: decision\n' + READY)
+            stale = result.stat().st_ino
+            held = worker.pin(result, stale)
+            if os.name == 'nt':
+                # NTFS ids carry a sequence number; a held handle would block the publishing rename.
+                self.assertIsNone(held)
+                sys.stderr.write('\nNOT RUN: %s (POSIX inode reuse)\n' % self.id())
+                return
+            try:
+                result.unlink()
+                fresh = result.with_suffix('.tmp')
+                fresh.write_text('Kind: completed\nTask: new\nAttempt: 1\nRemaining: none\n' + READY)
+                os.replace(fresh, result)
+                self.assertNotEqual(result.stat().st_ino, stale, 'a new result was given the held inode number')
+                self.assertEqual(os.fstat(held).st_ino, stale)
+            finally:
+                os.close(held)
+            if not Path('/proc/self/fd').is_dir():
+                sys.stderr.write('\nNOT RUN: %s (supervisor and waiter descriptors need /proc)\n' % self.id())
+                return
+            stale = result.stat().st_ino
+            key = (result.stat().st_dev, stale)
+            def holds(pid):
+                deadline = time.monotonic() + 5
+                while time.monotonic() < deadline:
+                    for fd in Path('/proc/%d/fd' % pid).iterdir():
+                        try:
+                            info = os.stat(fd)
+                        except OSError:
+                            continue
+                        if (info.st_dev, info.st_ino) == key:
+                            return True
+                    time.sleep(.05)
+                return False
+            since = str(time.time())
+            supervisor = subprocess.Popen([sys.executable, str(SCRIPT), str(Path(tmp) / 'q.md'), str(result), '--',
+                                           sys.executable, '-c', 'import time; time.sleep(30)'],
+                                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                          env=dict(os.environ, KIT_WORKER_STARTED=since, KIT_WORKER_STALE=str(stale)))
+            waiter = subprocess.Popen([sys.executable, str(SCRIPT), '--wait', str(result), '--since', since,
+                                       '--stale', str(stale)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            try:
+                self.assertTrue(holds(supervisor.pid), 'the supervisor let the stale result be freed')
+                self.assertTrue(holds(waiter.pid), 'the waiter let the stale result be freed')
+            finally:
+                supervisor.terminate()
+                waiter.kill()
+                for process in (supervisor, waiter):
+                    try:
+                        process.wait(timeout=15)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait()
 
 
 if __name__ == '__main__':

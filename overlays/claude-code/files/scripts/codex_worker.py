@@ -5,6 +5,7 @@ without a commit, also when the worker stopped without publishing (its exit reco
 supervisor was killed (its lock on the .live record dropped)."""
 import os
 from pathlib import Path
+import shlex
 import subprocess
 import signal
 import sys
@@ -42,20 +43,37 @@ def baseline(path, since):
 
 
 def result_kind(path, since=0, stale=None):
+    """The kind of a result published in this run, and its file id; '' when there is none."""
     try:
         info = path.stat() if path else None
     except FileNotFoundError:
-        return ''
+        return '', None
     if info is None or info.st_mtime < since or info.st_ino == stale:
-        return ''
+        return '', None
     text = published(path)
     lines = text.splitlines()
     if (len(lines) < 4 or not lines[1].startswith('Task: ')
             or not lines[2].startswith('Attempt: ') or not lines[2][9:].isdigit()
             or not lines[3].startswith('Remaining: ')):
-        return ''
-    return {'Kind: completed': 'DONE', 'Kind: blocked': 'BLOCKED',
-            'Kind: handoff': 'HANDOFF', 'Kind: progress': 'PROGRESS'}.get(lines[0], '')
+        return '', None
+    return {'Kind: completed': 'DONE', 'Kind: blocked': 'BLOCKED', 'Kind: handoff': 'HANDOFF',
+            'Kind: progress': 'PROGRESS'}.get(lines[0], ''), info.st_ino
+
+
+def pin(path, stale):
+    """Hold the stale result open for this process's life on POSIX: ext4 reuses a freed inode
+    number at once, and a new result given it would read as the stale one. A held inode is never
+    freed. NTFS ids carry a sequence number, and an open handle there blocks the publishing rename."""
+    if os.name == 'nt' or not stale or path is None:
+        return None
+    try:
+        fd = os.open(path, os.O_RDONLY)
+    except OSError:
+        return None
+    if os.fstat(fd).st_ino != stale:
+        os.close(fd)
+        return None
+    return fd
 
 
 def lock(fd):
@@ -180,11 +198,22 @@ def main():
         result, since = Path(sys.argv[2]), float(options.get('--since', 0))
         record = Path(options['--exit']) if '--exit' in options else None
         stale = int(options['--stale']) or None if '--stale' in options else baseline(result, since)
+        pin(result, stale)
         while True:
             # Read first: what the supervisor published or recorded before it ended is seen below.
             ended = record is not None and gone(record.with_suffix('.live'), since)
-            if kind := result_kind(result, since, stale):
+            kind, published_id = result_kind(result, since, stale)
+            if kind:
                 print('codex_worker: ' + kind + ': ' + str(result), flush=True)
+                if kind in ('PROGRESS', 'HANDOFF'):
+                    # The worker goes on. The same wait with this result as the stale one reports the
+                    # next; --since stays the run's start, which the .live and .exit records are read by.
+                    # ponytail: a filesystem without file ids (st_ino 0) reports this result again.
+                    again = [Path(sys.executable).as_posix(), Path(sys.argv[0]).absolute().as_posix(),
+                             '--wait', sys.argv[2], '--since', options.get('--since', '0'),
+                             '--stale', str(published_id or 0)] + (['--exit', options['--exit']] if record else [])
+                    print('codex_worker: the worker goes on; run as the next background command for its next '
+                          'result: ' + ' '.join(map(shlex.quote, again)), flush=True)
                 return 0
             try:
                 if record and record.stat().st_mtime >= since:
@@ -209,6 +238,7 @@ def main():
     since = float(os.environ.get('KIT_WORKER_STARTED', '0'))
     stale = (int(os.environ['KIT_WORKER_STALE']) or None if 'KIT_WORKER_STALE' in os.environ
              else baseline(result, since))
+    pin(result, stale)
     record = os.environ.get('KIT_WORKER_EXIT')
     if record:
         # Locked for this process's whole life, however it ends: --wait reads a dropped lock as a
@@ -280,7 +310,7 @@ def watch(child, question, close_tree, result=None, stale=None, answered=None):
             # Only a decision or a completed result ends the worker: PROGRESS, HANDOFF and
             # BLOCKED leave it working, and --wait alone reports them.
             decision = published(question) and question_id(question) != answered
-            notice = 'decision' if decision else result_kind(result, since, stale)
+            notice = 'decision' if decision else result_kind(result, since, stale)[0]
             notice = notice if notice in ('decision', 'DONE') else ''
             if notice != noticed:
                 ready_at = time.monotonic() if notice else None

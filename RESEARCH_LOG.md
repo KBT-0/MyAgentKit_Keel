@@ -33,7 +33,10 @@ reusable process id.
 The default `RESULT-NAME.md` reports to the lead and is not project content. Committing it
 puts a report at the top of main with every merge; leaving it kept every finished worktree
 from the audit. The close moves it beside the worker's records. A waiting decision refuses
-the close, because the session record is the only way to answer it.
+the close, because the session record is the only way to answer it. A close made before the
+lead committed the listed files kept the worktree but took its report away, and a reused name
+replaced the earlier report: the result now goes back to a kept worktree, and an earlier
+report stays beside the new one.
 
 ### 2026-10-12 — Launch reservations and mode snapshots (#43, #57)
 
@@ -43,12 +46,24 @@ covers the checks, launch and session recording; an unrecorded launch retains it
 
 The mode lock only coordinates mode switches. STATE can change during preparation or after
 replacement. Recheck its bytes before replacement, refuse a changed snapshot, and never
-roll back an independent edit. Validate the supplied project root and its ancestors too;
-checking only paths below a linked root silently redirects both records.
+roll back an independent edit. Resolve the supplied project root once and refuse links only
+below it: refusing every ancestor link refused macOS `/tmp` and a linked home, and both
+records still land together in the one resolved project. On Windows only a name-surrogate
+reparse tag redirects a path; refusing every reparse point refused cloud-file placeholders.
 
 A delayed waiter cannot reconstruct an old file's identity from its updated timestamp.
 Spawn now captures that identity before launch and passes it to both supervisor and waiter.
 The printed resume command also quotes the model, matching the actual launch's quoting.
+A file id alone can name a new file on ext4, which reuses a freed inode number at once.
+Pairing it with `st_ctime_ns` would count every in-place edit as a publication on POSIX,
+where a write changes the ctime, and Linux's `os.stat` has no birth time. The supervisor and
+the waiter hold the stale result open instead: an inode held open is never freed, so its
+number is never reused. NTFS ids carry a sequence number, and a held handle would block the
+publishing rename there. After PROGRESS or HANDOFF the wait prints its follow-up with that
+result's id as `--stale` and the same `--since`: the `.live` and `.exit` records are read by
+the run's start, so a later `--since` would hide a killed supervisor.
+An unrecorded launch names its worker inside the reservation, so the printed `--resume` of
+that name, which records the launch, takes the reservation over instead of being refused.
 
 Default POSIX termination skips Python cleanup and leaves a separate worker group running.
 SIGTERM and SIGHUP now unwind cleanup, including cancellation during child creation.

@@ -3,14 +3,17 @@ import os
 import importlib.util
 import io
 from pathlib import Path
+import stat
 import subprocess
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / 'core/scripts/working_mode.py'
+PLUGIN = ROOT / 'plugins/myagentkit/scripts/working_mode.py'
 MODES = ('claude-first', 'cross-performance', 'cross-saving', 'codex-first', 'claude-saver', 'codex-saver', 'claude-only')
 
 
@@ -312,36 +315,74 @@ class WorkingModeTests(unittest.TestCase):
         self.assertIn('Current mode: cross-performance', self.run_mode().stdout)
         self.assertEqual(self.run_mode('claude-first').returncode, 0, 'the editor kept its lock')
 
-    def test_project_root_and_ancestor_links_are_refused_before_lock_creation(self):
+    def test_a_root_named_through_a_link_is_resolved_once_and_written_where_it_leads(self):
+        # macOS /tmp and a linked home are ordinary ways to name a project; links below it are not.
         link = self.project / 'linked-project'
         if os.name == 'nt':
             subprocess.run(['cmd', '/c', 'mklink', '/J', str(link), str(self.project)],
                            check=True, capture_output=True)
         else:
             link.symlink_to(self.project, target_is_directory=True)
-        before = self.state.read_bytes()
+        child = self.project / 'child'
+        (child / 'docs').mkdir(parents=True)
+        (child / 'docs/STATE.md').write_bytes(self.state.read_bytes())
+        (child / 'docs/WORKFLOW.md').write_bytes((self.project / 'docs/WORKFLOW.md').read_bytes())
         try:
-            for root in (link, link / 'child'):
+            for root, real in ((link, self.project), (link / 'child', child)):
                 with self.subTest(root=root):
-                    if root.name == 'child':
-                        child = self.project / 'child'
-                        (child / 'docs').mkdir(parents=True)
-                        (child / 'docs/STATE.md').write_bytes(before)
-                        (child / 'docs/WORKFLOW.md').write_bytes((self.project / 'docs/WORKFLOW.md').read_bytes())
-                    state = root / 'docs/STATE.md'
                     result = subprocess.run([sys.executable, '-X', 'utf8', str(SCRIPT), '--project',
                                              str(root), 'claude-first'], capture_output=True, text=True,
                                             encoding='utf-8', timeout=15)
-                    self.assertNotEqual(result.returncode, 0, result.stdout)
-                    self.assertIn('linked path refused', result.stderr)
-                    self.assertEqual(state.read_bytes(), before)
-                    self.assertFalse((root / '.claude').exists(), 'the refusal must precede lock creation')
-            self.assertEqual(self.state.read_bytes(), before)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertIn('**Working mode:** claude-first', (real / 'docs/STATE.md').read_text(encoding='utf-8'))
+                    self.assertEqual((real / '.claude/mode').read_text().strip(), 'claude-first')
         finally:
             if os.name == 'nt':
                 link.rmdir()
             else:
                 link.unlink()
+
+    def test_only_a_name_surrogate_reparse_point_is_refused(self):
+        spec = importlib.util.spec_from_file_location('working_mode', SCRIPT)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        docs, lstat = self.project / 'docs', Path.lstat
+        # A cloud-file placeholder (IO_REPARSE_TAG_CLOUD_1) is no link; a junction (MOUNT_POINT) is.
+        for tag, refused in ((0x9000101A, False), (0xA0000003, True)):
+            with self.subTest(tag=hex(tag)):
+                def fake(path, *args, **kwargs):
+                    if path != docs:
+                        return lstat(path, *args, **kwargs)
+                    return SimpleNamespace(st_mode=stat.S_IFDIR | 0o755, st_reparse_tag=tag,
+                                           st_file_attributes=stat.FILE_ATTRIBUTE_REPARSE_POINT)
+                with mock.patch.object(Path, 'lstat', fake), mock.patch('sys.stdout', new=io.StringIO()):
+                    if refused:
+                        with self.assertRaisesRegex(ValueError, 'linked path refused'):
+                            module.mode(self.project, 'codex-first')
+                    else:
+                        module.mode(self.project, 'claude-first')
+                        self.assertEqual((self.project / '.claude/mode').read_text().strip(), 'claude-first')
+        self.assertIn('**Working mode:** claude-first', self.state.read_text(encoding='utf-8'))
+
+    def test_a_workflow_without_the_seventh_mode_names_the_update_instead_of_failing(self):
+        workflow = self.project / 'docs/WORKFLOW.md'
+        lines = workflow.read_bytes().decode('utf-8').split('\n')
+        workflow.write_bytes('\n'.join(l for l in lines if not l.startswith('| `claude-only` |')).encode('utf-8'))
+        before = self.state.read_bytes()
+        for args in ((), ('claude-first',)):
+            with self.subTest(args=args):
+                result = subprocess.run([sys.executable, '-X', 'utf8', str(PLUGIN), '--project', str(self.project),
+                                         *args], capture_output=True, text=True, encoding='utf-8', timeout=15)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn('ACTION: docs/WORKFLOW.md predates the seventh mode, claude-only', result.stdout)
+                self.assertIn('sync the core scripts (scripts/working_mode.py)', result.stdout)
+                self.assertEqual(self.state.read_bytes(), before)
+                self.assertFalse((self.project / '.claude/mode').exists())
+        # Any other incomplete table is still refused.
+        workflow.write_bytes('\n'.join(l for l in lines if not l.startswith('| `codex-saver` |')).encode('utf-8'))
+        result = self.run_mode()
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn('must define all seven modes', result.stderr)
 
     def test_interrupted_switch_reports_repair_and_releases_the_lock(self):
         self.assertEqual(self.run_mode('cross-performance').returncode, 0)

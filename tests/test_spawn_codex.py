@@ -553,6 +553,70 @@ p.write_text(p.read_text().replace('Kind: blocked', 'Kind: completed'))
                 self.assertIn('a decision waits for its answer', closed.stdout)
                 self.assertTrue(record.exists(), 'a failed resume lost its closure evidence')
 
+    def test_the_printed_resume_takes_over_the_reservation_of_an_unrecorded_launch(self):
+        args = ('--model', 'm', '--effort', 'high')
+        lost = self.spawn('u1', str(self.brief), *args, CODEX_SILENT='1')
+        self.assertEqual(lost.returncode, 1, lost.stdout + lost.stderr)
+        lock = self.repo / '.myagentkit/workers/spawn.lock'
+        self.assertTrue((lock / 'u1').exists(), 'the kept reservation must name its launch')
+        self.assertIn('rm -r -- ', lost.stderr)
+        # Every other spawn in the checkout is refused with the recovery, a resume of another name too.
+        for other in (('u2', str(self.brief), *args), ('u2', str(self.brief), *args, '--resume', 'x')):
+            refused = self.spawn(*other)
+            self.assertEqual(refused.returncode, 1, refused.stdout + refused.stderr)
+            self.assertIn('an unrecorded launch at', refused.stderr)
+            self.assertIn('--resume SESSION_ID, which records it and takes the reservation over', refused.stderr)
+        line = next(line for line in lost.stderr.splitlines() if ': scripts/spawn_codex.sh u1 ANSWER_FILE ' in line)
+        command = line.split(': scripts/spawn_codex.sh ', 1)[1]
+        logger = self.bin / 'argv.py'
+        logger.write_text('import json,sys; print(json.dumps(sys.argv[1:]))\n', newline='\n')
+        printed = subprocess.run(['sh', '-c', shq(sys.executable.replace('\\', '/')) + ' '
+                                  + shq(str(logger).replace('\\', '/')) + ' ' + command],
+                                 cwd=self.repo, capture_output=True, text=True, timeout=10)
+        self.assertEqual(printed.returncode, 0, printed.stderr)
+        answer = self.tmp / 'answer.md'
+        answer.write_text('Take option B.\n')
+        argv = [{'ANSWER_FILE': str(answer), 'SESSION_ID': 'sess-found'}.get(a, a) for a in json.loads(printed.stdout)]
+        # While the launch still runs, the take-over is refused and the reservation stays with it.
+        (self.state / 'ps').write_text('41 codex.exe -C %s "Read ..."\r\n' % self.win(self.repo))
+        refused = self.spawn(*argv)
+        self.assertEqual(refused.returncode, 1, refused.stdout + refused.stderr)
+        self.assertIn('already runs in', refused.stderr)
+        self.assertTrue((lock / 'u1').exists(), 'a refused take-over dropped the reservation')
+        (self.state / 'ps').write_text('')
+        resumed = self.spawn(*argv)
+        self.assertEqual(resumed.returncode, 0, resumed.stdout + resumed.stderr)
+        self.assertEqual(self.runs()[-1]['argv'][:2], ['resume', 'sess-found'])
+        self.assertEqual((self.repo / '.myagentkit/workers/u1.session').read_text().strip(), 'sess-found')
+        self.assertFalse(lock.exists(), 'the recorded launch kept the reservation')
+        started = self.spawn('u2', str(self.brief), *args)
+        self.assertEqual(started.returncode, 0, started.stdout + started.stderr)
+
+    def test_a_kept_worktree_keeps_its_result_and_an_earlier_report_is_never_replaced(self):
+        args = ('--model', 'm', '--effort', 'high')
+        self.assertEqual(self.spawn('w29', str(self.brief), *args, '--worktree').returncode, 0)
+        tree = self.repo / '.claude/worktrees/w29'
+        earlier = self.repo / '.myagentkit/workers/w29.result.md'
+        earlier.write_text("an earlier run's report\n")
+        (tree / 'feature.txt').write_bytes(b'work\n')
+        report = 'Kind: completed\nTask: t\nAttempt: 1\nRemaining: none\nChanged: feature.txt\n'
+        (tree / 'RESULT-w29.md').write_text(report)
+        # A premature close, before the lead committed the listed files: the report stays with the work.
+        closed = self.close('w29')
+        self.assertEqual(closed.returncode, 1, closed.stdout + closed.stderr)
+        self.assertIn('worktree kept', closed.stdout)
+        self.assertEqual((tree / 'RESULT-w29.md').read_text(), report)
+        self.assertEqual(earlier.read_text(), "an earlier run's report\n")
+        git = lambda *a: subprocess.run(['git', *a], cwd=self.repo, check=True, capture_output=True)
+        git('-C', str(tree), 'add', 'feature.txt')
+        git('-C', str(tree), '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'feature')
+        git('merge', '-q', '--ff-only', 'worktree-w29')
+        closed = self.close('w29')
+        self.assertEqual(closed.returncode, 0, closed.stdout + closed.stderr)
+        self.assertFalse(tree.exists())
+        self.assertEqual(earlier.read_text(), "an earlier run's report\n")
+        self.assertEqual((self.repo / '.myagentkit/workers/w29.result-2.md').read_text(), report)
+
 
 if __name__ == '__main__':
     unittest.main()
