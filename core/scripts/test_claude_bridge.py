@@ -25,9 +25,9 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'MYAGENTKIT_TASK_ID', 'MYAGENTKIT_R
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 147, 'test_agent_usage': 30, 'test_codex_quota': 5}
+SUITE_MINIMUMS = {'test_claude_bridge': 150, 'test_agent_usage': 30, 'test_codex_quota': 5}
 # These are executed cases, excluding only the explicitly declared POSIX exclusions.
-WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 126, 'test_agent_usage': 26, 'test_codex_quota': 4}
+WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 127, 'test_agent_usage': 26, 'test_codex_quota': 4}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -2089,13 +2089,55 @@ class BridgeTests(unittest.TestCase):
                         self.assertEqual(code, 5)
                         self.assertEqual(chain['failure_kind'], 'stale_checkout', out.getvalue())
                         self.assertIn('the checkout changed while the review ran', out.getvalue())
+                        # The docs' terms: an ignored file never fails a review.
+                        self.assertIn('a new untracked file Git does not ignore', out.getvalue())
                     else:
                         self.assertEqual(code, 0, out.getvalue())
                         self.assertEqual((chain['status'], chain['selected_reviewer']), ('completed', reviewer))
                         self.assertIn('the result stands as recorded in', out.getvalue())
-                    # Claude's adapter catches its own failure and exits 2.
-                    self.assertIn('cp1252' if reviewer == 'codex' else 'the adapter exited 2',
-                                  attempt['error_after_result'])
+                    self.assertIn('cp1252', attempt['error_after_result'])
+
+    def test_an_adapter_run_directly_keeps_its_handed_over_status_after_a_later_failure(self):
+        # Run directly, the Claude adapter caught a failure after its result was recorded and
+        # handed over (printing it), printed a "failed" line after the "completed" one and
+        # exited 2; the Codex adapter raised it, and its caller printed FAIL and exited 5.
+        # The handed-over status decides; the failure is a NOTE on stderr.
+        from contextlib import redirect_stderr, redirect_stdout
+        from io import StringIO
+        from unittest.mock import patch
+        import codex_bridge
+
+        def execution(command, prompt, repo, timeout, into=None, noted=None):
+            if '-o' in command:
+                Path(command[command.index('-o') + 1]).write_bytes(b'VERDICT: Accept\n')
+                return {'exit_code': 0, 'stdout': json.dumps({'type': 'turn.completed', 'usage': {}}),
+                        'stderr': '', 'termination': None, 'duration_ms': 1}
+            value = {'type': 'result', 'subtype': 'success', 'is_error': False,
+                     'modelUsage': {'claude-opus-5': {}}, 'structured_output':
+                     {'verdict': 'Accept', 'findings': [], 'manual_checks': []}}
+            return {'exit_code': 0, 'stdout': json.dumps(value), 'stderr': '',
+                    'termination': None, 'duration_ms': 1}
+
+        class Console(StringIO):
+            def write(self, text):
+                if '"evidence"' in text and not failed:
+                    failed.append(text)
+                    raise UnicodeEncodeError('cp1252', '→', 0, 1, 'character maps to <undefined>')
+                return super().write(text)
+
+        for name, main, prefix in (('claude', bridge.main, ['review']),
+                                   ('codex', codex_bridge.main, ['--model', 'fixture-codex-model'])):
+            failed, out, err, received = [], Console(), StringIO(), []
+            with self.subTest(adapter=name), patch.dict(os.environ, self.review_env()),                     patch('agent_process.run', side_effect=execution), redirect_stdout(out), redirect_stderr(err):
+                code = main([*prefix, '--repo', str(self.repo), '--uncommitted'], received.append)
+                self.assertTrue(failed)
+                self.assertEqual(code, 0, out.getvalue() + err.getvalue())
+                self.assertNotIn('"failed"', out.getvalue())
+                self.assertNotIn('FAIL', out.getvalue())
+                self.assertEqual(received[0]['status'], 'completed')
+                self.assertIn('cp1252', received[0]['error_after_result'])
+                self.assertIn('NOTE [review]: %s failed after it handed over its result' % name, err.getvalue())
+                self.assertIn(received[0]['evidence'], err.getvalue())
 
     def test_hidden_checkout_changes_reject_before_either_adapter_launches(self):
         from contextlib import redirect_stdout

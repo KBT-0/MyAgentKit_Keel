@@ -172,9 +172,11 @@ breaks, everything keeps looking green.
 - **Ship a negative test with it** — `./scripts/check.sh --self-test`. A new gate adds its
   case there in the same task. A manual proof rots the moment someone edits the script; the
   automated one does not.
-- **A self-test case never changes a tracked file**, and writes nothing else into the
-  working tree when it can avoid it: point the gate at a synthetic file outside the tree
-  through an overridable path, or run against a disposable copy. Several sessions share one
+- **A self-test case never changes a tracked file**, and leaves nothing in the working tree
+  but files Git ignores: the self-test fails when HEAD, the index, `git status --porcelain
+  --untracked-files=all` or a hash of `git diff --binary HEAD` (the content of tracked files
+  already modified before it) differ at its end. Point the gate at a synthetic file outside the
+  tree through an overridable path, or run against a disposable copy. Several sessions share one
   checkout, and a file injected into it is seen by their `git add -A`, their edits and their
   commits. `check.sh` holds a per-checkout lock for a whole run (the self-test included), so
   a second gate run waits instead of racing; tests that write scratch files still use a
@@ -961,11 +963,11 @@ already shown once costs a whole round when the worker leaves it for the reviewe
 The lead never changes its shell directory into a worker's worktree; use `git -C <worktree>` for its Git commands.
 The shell stays in the lead's checkout, so its Stop hook runs that checkout's gate.
 
-1. Start the self-test and the review together, on the same commit, never one after the other.
-   They may share one worktree only if the self-test writes files Git ignores and nothing else.
-   A self-test that changes anything else there fails the review with `stale_checkout`; run
-   it in a second worktree of the same commit (`docs/REVIEW_RUNNING.md`, "Rounds, labels and
-   designs").
+1. Start the self-test and the review together, on the same commit and in the same worktree,
+   never one after the other. The self-test enforces that this is safe: it fails when it
+   leaves HEAD, the index, `git status` or the content of `git diff --binary HEAD` changed,
+   so it writes files Git ignores and nothing else (`docs/REVIEW_RUNNING.md`, "Rounds,
+   labels and designs").
 2. Run two reviewers at the same time, never one after the other.
 3. Keep one review label for the whole feature, so that each round carries the earlier ones.
    Only the final reviews (one per model, each over the parts it did not write) take a label

@@ -13,17 +13,26 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## v0.11 — 2026-10-09
 
-- **The existing-file boundary probe no longer installs Python on Windows** (issue #60;
+- **The existing-file boundary probe runs on native Windows** (issue #60;
   `scripts/boundary_selftests.sh`): under `env -i` the Python install manager's `python3`
   alias, missing LOCALAPPDATA, found no Python and downloaded and installed one on every
   self-test. On Git for Windows, MSYS2 and Cygwin `probe_env` now keeps SYSTEMROOT, WINDIR,
-  LOCALAPPDATA, APPDATA, USERPROFILE, PATHEXT and COMSPEC, and the probe's audit runs the
-  Python `check.sh` resolved (`$kit_python`: python3, python or `py -3`), never a bare
-  `python3`; HOME and TMPDIR stay the copy's own. On POSIX only a host whose `python3` does
-  not run sees a change. The example still ends NOT RUN on native Windows: it audits and
-  deletes its copy through O_NOFOLLOW and dir_fd, which Windows Python lacks. **ACTION:** if
-  you adapted the existing-file example, make the same change to `probe_env` and to the
-  audit's `python3` in your `scripts/boundary_selftests.sh`.
+  LOCALAPPDATA, APPDATA, USERPROFILE, PATHEXT and COMSPEC, sets PYTHONNOUSERSITE=1 (the user
+  site lives in the real APPDATA, where HOME is the copy's own on POSIX), and the probe's
+  audit runs the Python `check.sh` resolved (`$kit_python`: python3, python or `py -3`), never
+  a bare `python3`. The probe then ran into its own POSIX calls; it is ported: the copy keeps
+  a symlink or junction as a link (`winsymlinks:nativestrict`; a host that cannot make one is
+  reported NOT RUN by name, with Developer Mode as the remedy), the audit treats every reparse point as a link and never enters one, and
+  the delete opens each entry as itself and removes it with POSIX semantics that ignore the
+  read-only attribute without changing it, so git's read-only objects go and a file
+  hard-linked with the checkout keeps its attribute. A copy is left (`cd /`) before it is
+  deleted, a gate called by a Windows path (`C:\...\check.sh`) is found in the copy, the
+  audit names paths with `/`, and the probe's Python prints UTF-8. On POSIX the delete and
+  audit behave as before. Known limit on Windows: a relative folder link whose target sorts
+  after it becomes a file symlink in the copy, so a gate that walks through it fails in the
+  copy; the checkout is never at risk. **ACTION:** if you adapted the existing-file example, take the new `probe_env`,
+  `probe_delete`, `probe_audit` and `cp` line from `$KIT/core/scripts/boundary_selftests.sh`
+  into your `scripts/boundary_selftests.sh`.
 - **A worktree path holding a newline is kept for the right reason** (issue #41;
   `scripts/clean_worktrees.py`): `git rev-parse` is asked one flag per call, each answer less
   exactly its own newline. Split on newlines, such a path was judged "its folder is not its
@@ -337,6 +346,26 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   path the sparse rules exclude may be missing now, asked of `git sparse-checkout check-rules`
   in one call; a Git older than 2.42, or a failed check, refuses the review. **ACTION:** copy
   the core scripts.
+- **The self-test fails when it changes the worktree** (`scripts/check.sh --self-test`, and the
+  kit's own wrapper): it compares HEAD, the index, `git status --porcelain
+  --untracked-files=all` and a hash of `git diff --binary HEAD` (tracked files already
+  modified before the run) before and after, and a difference FAILS it, naming each path. Files
+  Git ignores may change. A review running in the same worktree would have failed as
+  `stale_checkout` on that change, so sharing a worktree is now enforced, not only stated.
+  **Your self-test can turn red after this upgrade without any code change:** a case, a
+  build or a test that leaves an untracked file Git does not ignore now fails it. Make that
+  case remove what it writes, or ignore its output path in `.gitignore`. **ACTION:** copy
+  `$KIT/core/scripts/check.sh` to `scripts/check.sh` with your filled-in values, and update
+  the self-test lines in `docs/WORKFLOW.md` (the lead's step 1, "Writing a gate") and
+  `docs/REVIEW_RUNNING.md`.
+- **Both adapters keep their handed-over status** (`scripts/claude_bridge.py`,
+  `scripts/codex_bridge.py`): run directly, a failure after a result was recorded and handed
+  over (printing it) made the Claude adapter print a "failed" line after the "completed" one
+  and exit 2, and the Codex adapter raise it, ending in a FAIL line. The handed-over status decides the
+  exit; the failure is a NOTE on stderr naming the evidence, and the dispatcher records it as
+  `error_after_result`. The dispatcher's `stale_checkout` message now says "a new untracked
+  file Git does not ignore", and the review threat model names a write to an ignored file as
+  an accepted limit. **ACTION:** copy the core scripts.
 - **A review names its next attempt** (issue #68, item 1; `scripts/review.sh`, `scripts/review_dispatch.py`):
   before each adapter runs, including a fallback, it prints the model and effort as
   "about to run"; adapter preflights may still stop the attempt before any model call.

@@ -62,6 +62,23 @@ subtracts, the kit's `core/.gitignore`). Total live spend: about 0.12 USD.
   probe per path, the young unheld-lock age guard, and orphan lock sweeping). The new behavioural regressions failed before these fixes; removing the
   age guard failed the young-folder test. `tests/test_doctor.py` covers the old-CLI and
   `claude.cmd` cases.
+- **The existing-file boundary example on native Windows** (issue #60, 2026-10-12, Windows 11,
+  Git for Windows `sh`, Python 3.13): RUN. The kit check's acceptance phase, run alone, ran
+  the shipped example as a case of a synthetic project's `check.sh --self-test` and printed
+  `ACCEPTANCE: PASS`, with no NOT RUN line for it. `tests/test_boundary_restore.py` ran 35 of
+  its 40 tests there and `tests/test_boundary_example.py` 1 of 3; each other case is a declared
+  platform skip, with its reason: POSIX signals and process groups, a FIFO, a folder hidden by
+  mode, and a root replaced by a running gate, which Windows refuses (its guard runs in
+  `tests/test_check_gate_windows.py` instead). `tests/test_check_gate_windows.py` (31 tests)
+  holds the Windows killing tests: a junction or folder symlink in the copy is removed as a
+  link and its target survives, the audit never enters a junction and refuses one leading out,
+  a replaced root is refused and nothing is deleted, read-only git objects are deleted, a file
+  hard-linked with the checkout keeps its read-only attribute, probe_env keeps the Windows
+  variables and PYTHONNOUSERSITE=1, the probe runs the resolved Python, and a host that cannot
+  make symbolic links is reported NOT RUN by name. Each was seen to fail against a mutated
+  example. Known limit, accepted by the owner: on Windows `cp` makes a relative folder link
+  whose target sorts after it as a file symlink, so a gate walking through that link fails in
+  the copy; the checkout is never at risk.
 
 **Superseded:** the fresh Claude review of the combined delta from `c358c917` (and the
 separate `842e78d` scope) is no longer run: that code has since been reviewed again by the
@@ -72,12 +89,6 @@ Claude reviews of v0.11 on 2026-10-09, which cover the current source.
 - Live Bash write and network containment on native Linux and macOS: NOT RUN. The
   2026-10-10 probe covered WSL2 Debian and a sibling standing in for the repository.
 - A live sandboxed Bash write to the real repository by absolute path: NOT RUN.
-- The existing-file boundary example on native Windows: NOT RUN. Since issue #60 its probe
-  keeps the variables a Windows program needs and runs the Python `check.sh` resolved, so it
-  no longer starts the Python install manager (2026-10-12, this host: the two
-  `WindowsBoundaryProbeTests` in `tests/test_check_gate_windows.py`, offline, through stubs).
-  It still stops at its audit: the copy is audited and deleted through O_NOFOLLOW and dir_fd,
-  which Windows Python lacks. CI's Linux and macOS jobs run it.
 - The POSIX-only parts of `tests/test_doctor.py` (the Linux `bubblewrap` and `socat` check,
   the old CLI earlier on PATH than a newer one) and the cases `core/scripts/test_claude_bridge.py`
   declares POSIX-only: POSIX hosts only; CI's Linux and macOS jobs run them. The rest of the

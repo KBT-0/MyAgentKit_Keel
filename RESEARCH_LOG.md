@@ -21,6 +21,49 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-10-12 — The existing-file probe on native Windows: threat model and port (#60)
+
+Fixing the environment (#60: under `env -i` the Python install manager's alias found no
+LOCALAPPDATA and installed a Python) showed the probe could not run on native Windows at all:
+its audit and delete use O_NOFOLLOW, O_DIRECTORY and dir_fd, and git's read-only object files
+cannot be deleted without changing their attribute. The owner decided to port it in v0.11 and
+agreed this threat model. Protected: nothing the probe does to its copy changes the checkout
+(content, attribute or deletion); no symlink, junction or other reparse point in the copy is
+followed by the audit or the delete; a file the copy shares with the checkout through a hard
+link never has its attributes changed; the digest is of the copy as it is; no download,
+installer or Store alias starts; the copy is deleted completely, read-only objects included.
+Excluded by decision: hostile files planted by anyone but the owner, a process racing the
+probe between two of its reads, a TMPDIR inside the checkout (already refused).
+
+The design follows from the exclusions. With races out of scope, the delete works by path,
+not by handle: it never descends into an entry lstat reports as a reparse point (a junction is
+a folder to lstat, and os.walk enters it), and it opens each entry as itself
+(FILE_FLAG_OPEN_REPARSE_POINT) and deletes it with FileDispositionInfoEx (POSIX semantics,
+ignore read-only), which removes a link as a link and a read-only file without touching its
+attribute, so no chmod is ever needed. Descending by handle (NtCreateFile relative to an open
+folder) would close the races dir_fd closes on POSIX; it was not built, as those races are
+excluded. The identity check of the root (device and inode, recorded at mktemp) stays. Two
+Windows facts each needed a change: msys `cp -RP` copies a link as the folder it names unless
+`winsymlinks:nativestrict` is set, and Windows deletes no folder that is a process's working
+directory, so the probe leaves the copy (`cd /`) before deleting it. PYTHONNOUSERSITE=1 on
+Windows stands for the empty HOME: the user site lives in the real APPDATA. A test that let a
+baseline gate write a `.pth` into `site.getusersitepackages()` wrote into the real APPDATA on
+the first Windows run; the test now gives the probe its own APPDATA.
+
+### 2026-10-12 — The self-test proves it leaves the worktree as it found it
+
+The docs let a self-test share a worktree with a running review, provided the self-test writes
+files Git ignores and nothing else. Nothing checked that promise. Decided by the owner
+2026-10-12: every project's `scripts/check.sh --self-test`, and the kit's own wrapper, records
+HEAD, the index (`git ls-files -s`) and `git status --porcelain --untracked-files=all` before
+its cases and compares them after; a difference fails the self-test and names the paths. This
+is a FAIL rule in every project, not only the kit, although an upgraded project whose cases
+leave an untracked file turns red without a code change; the CHANGELOG names the remedy.
+Excluded by decision: paths `.gitignore` covers, and a concurrent process changing the tree
+(the gate lock serialises gates). A hash of `git diff --binary HEAD` is compared too (decided
+by the owner 2026-10-12): `git status` names a tracked file modified before the run the same
+way after another edit, and the review's fingerprint would see that edit.
+
 ### 2026-10-12 — A handed-over review result stands; sparse rules decide a missing file (#71, #53)
 
 Issue #71 blamed a self-test running in the same worktree. The code says otherwise: a

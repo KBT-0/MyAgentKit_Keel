@@ -85,24 +85,22 @@ REQUIRED_SUITES = {
     # every test with the kit check green. A new test raises its suite's number here.
     'tests': {'test_packaging': 1, 'test_bootstrap': 36, 'test_acceptance': 9,
               'test_review_upgrade': 2 if os.name == 'nt' else 3,
-              'test_boundary_example': 3, 'test_scan_gate': 1,
-              'test_check_gate': 24, 'test_check_gate_windows': 25, 'test_boundary_restore': 39,
+              'test_boundary_example': 1 if os.name == 'nt' else 3, 'test_scan_gate': 1,
+              'test_check_gate': 24, 'test_check_gate_windows': 32,
+              'test_boundary_restore': 35 if os.name == 'nt' else 40,
               'test_sync_kit': 29, 'test_doctor': 4, 'test_git_hooks': 30, 'test_stop_hook': 8, 'test_context_hook': 10, 'test_overlay_permissions': 6,
               'test_spawn_worker': 18, 'test_spawn_codex': 36, 'test_codex_worker': 47, 'test_working_mode': 44, 'test_worker_visibility': 55, 'test_doc_pointers': 9,
               'test_usage_summary': 9,
               'test_kit_output': 1, 'test_kit_runner': 24, 'test_clean_worktrees': 137, 'test_clean_worktrees_windows': 10, 'test_close_worker_windows': 20,
               'test_review_windows': 22, 'test_claude_sandbox': 24, 'test_worker_paths_windows': 3,
-              'test_close_worker': 22, 'test_python_fallback': 1},
+              'test_close_worker': 22, 'test_python_fallback': 1, 'test_selftest_status': 2},
 }
 # Suites that do not run on native Windows, each with the reason. There each one prints one
 # NOT RUN line and is not imported; CI's Linux and macOS jobs run every one of them. A suite
 # ported to Windows leaves this list in the same change (issue #56).
-_PROBE = ('the existing-file probe: NOT RUN on Windows by design (it audits and deletes its copy through '
-          'O_NOFOLLOW and dir_fd, which Windows Python lacks)')
 NOT_ON_WINDOWS = {
     'core/scripts': {},
-    'tests': {'test_boundary_example': _PROBE, 'test_boundary_restore': _PROBE,
-              'test_check_gate': 'the flock gate lock; tests/test_check_gate_windows proves the Windows lock',
+    'tests': {'test_check_gate': 'the flock gate lock; tests/test_check_gate_windows proves the Windows lock',
               'test_clean_worktrees': 'POSIX process liveness; tests/test_clean_worktrees_windows proves Windows',
               'test_close_worker': 'the tmux path and its Windows stand-ins, not yet ported (issue #56)',
               'test_worker_visibility': 'tmux panes, not yet ported (issue #56)'},
@@ -696,43 +694,40 @@ def acceptance(self_test):
             original_checks, original_selftests = checks.read_bytes(), selftests.read_bytes()
             checks.write_text(": synthetic boundary check\n")
             run(["sh", "scripts/check.sh", "--self-test"], project, expected=1, reason="ran no case")
-            # Native Windows: the example's probe audits and deletes its copy through O_NOFOLLOW
-            # and dir_fd, which Windows Python lacks (no longer the install manager, issue #60).
-            if os.name == "nt":
-                print("NOT RUN: the existing-file boundary example and the commit-msg skip line"
-                      " (native Windows: the probe needs O_NOFOLLOW and dir_fd)")
-            else:
-                # The shipped existing-file example, run by the enclosing self-test against a check
-                # it can trip: it counts as a case only by printing its ok line.
-                src = project / "src"
-                if src.exists():
-                    raise RuntimeError("the synthetic project already has src/")
-                (src / "domain").mkdir(parents=True)
-                (src / "domain/existing.py").write_text("original\n")
-                # Tracked, so the case can show the example leaves the checkout's status unchanged.
-                run(["git", "add", "src"], project)
-                checks.write_text("! grep -q myapp.web src/domain/existing.py ||\n"
-                                  "  { echo 'FAIL [boundary]: the domain layer imports the web layer:'; fail=1; }\n")
-                example = (ROOT / "core/scripts/boundary_selftests.sh").read_text().splitlines()
-                selftests.write_text("\n".join(line[4:] for line in example if line.startswith("# | ")) + "\n")
-                # Without the rule line (an owner who allows AI credit, or a sync that has not added
-                # it yet) the hook's case says it is off and why, never that an owner chose it.
-                agents = project / "AGENTS.md"
-                original_agents = agents.read_bytes()
-                agents.write_text(original_agents.decode().replace("No AI attribution in git", "AI credit allowed"))
-                status = run(["git", "status", "--porcelain"], project)
-                out = run(["sh", "scripts/check.sh", "--self-test"], project, reason="SELF-TEST: PASS")
-                if "commit-msg hook: off, AGENTS.md has no 'No AI attribution in git' rule line" not in out:
-                    raise RuntimeError("the commit-msg case did not say the rule line is missing:\n" + out)
-                if "  ok   — domain/web boundary gate rejects a forbidden import in an existing file" not in out:
-                    raise RuntimeError("the existing-file boundary example did not run as a case:\n" + out)
-                if (src / "domain/existing.py").read_text() != "original\n":
-                    raise RuntimeError("the existing-file boundary example changed its target in the checkout")
-                if run(["git", "status", "--porcelain"], project) != status:
-                    raise RuntimeError("the existing-file boundary example changed the checkout's git status")
-                run(["git", "rm", "-r", "-q", "--cached", "src"], project)
-                shutil.rmtree(src)
-                agents.write_bytes(original_agents)
+            # The shipped existing-file example, run by the enclosing self-test against a check
+            # it can trip: it counts as a case only by printing its ok line.
+            src = project / "src"
+            if src.exists():
+                raise RuntimeError("the synthetic project already has src/")
+            (src / "domain").mkdir(parents=True)
+            (src / "domain/existing.py").write_text("original\n")
+            # Tracked, so the case can show the example leaves the checkout's status unchanged.
+            run(["git", "add", "src"], project)
+            checks.write_text("! grep -q myapp.web src/domain/existing.py ||\n"
+                              "  { echo 'FAIL [boundary]: the domain layer imports the web layer:'; fail=1; }\n",
+                              newline="\n")
+            example = (ROOT / "core/scripts/boundary_selftests.sh").read_text(encoding="utf-8").splitlines()
+            # LF and UTF-8 on every host: Windows Python writes CRLF by default, which sh misreads.
+            selftests.write_text("\n".join(line[4:] for line in example if line.startswith("# | ")) + "\n",
+                                 encoding="utf-8", newline="\n")
+            # Without the rule line (an owner who allows AI credit, or a sync that has not added
+            # it yet) the hook's case says it is off and why, never that an owner chose it.
+            agents = project / "AGENTS.md"
+            original_agents = agents.read_bytes()
+            agents.write_bytes(original_agents.replace(b"No AI attribution in git", b"AI credit allowed"))
+            status = run(["git", "status", "--porcelain"], project)
+            out = run(["sh", "scripts/check.sh", "--self-test"], project, reason="SELF-TEST: PASS")
+            if "commit-msg hook: off, AGENTS.md has no 'No AI attribution in git' rule line" not in out:
+                raise RuntimeError("the commit-msg case did not say the rule line is missing:\n" + out)
+            if "  ok   — domain/web boundary gate rejects a forbidden import in an existing file" not in out:
+                raise RuntimeError("the existing-file boundary example did not run as a case:\n" + out)
+            if (src / "domain/existing.py").read_text() != "original\n":
+                raise RuntimeError("the existing-file boundary example changed its target in the checkout")
+            if run(["git", "status", "--porcelain"], project) != status:
+                raise RuntimeError("the existing-file boundary example changed the checkout's git status")
+            run(["git", "rm", "-r", "-q", "--cached", "src"], project)
+            shutil.rmtree(src)
+            agents.write_bytes(original_agents)
             checks.write_bytes(original_checks)
             selftests.write_bytes(original_selftests)
             wrapper.write_bytes(original_wrapper)

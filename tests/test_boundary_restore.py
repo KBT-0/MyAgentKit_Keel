@@ -12,6 +12,29 @@ import unittest
 
 # Seconds any wait here may take; MYAGENTKIT_TEST_TIMEOUT_SCALE multiplies it on a slow host.
 DEADLINE = 30 * float(os.environ.get('MYAGENTKIT_TEST_TIMEOUT_SCALE', '1'))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'core/scripts'))
+from review_test_support import posix_only  # noqa: E402
+WINDOWS = os.name == 'nt'
+
+
+def not_on_windows(reason):
+    """A case whose premise native Windows cannot build: skipped there, with the reason."""
+    def mark(test):
+        wrapped = unittest.skipIf(WINDOWS, reason + '; CI runs it on Linux and macOS')(test)
+        wrapped._kit_platform_skip = WINDOWS
+        return wrapped
+    return mark
+
+
+def setUpModule():
+    # Native Windows: the example and its gates run `python3`, there often the Python install
+    # manager's alias. A shim first on PATH runs this interpreter instead, so no case reaches it.
+    if WINDOWS:
+        shim = Path(tempfile.mkdtemp(prefix='kit-python3-'))
+        (shim / 'python3').write_text('#!/bin/sh\nexec "%s" "$@"\n' % Path(sys.executable).as_posix(), newline='\n')
+        unittest.addModuleCleanup(shutil.rmtree, shim)
+        unittest.addModuleCleanup(os.environ.__setitem__, 'PATH', os.environ['PATH'])
+        os.environ['PATH'] = str(shim) + os.pathsep + os.environ['PATH']
 
 
 def alive(pid):
@@ -30,6 +53,13 @@ class BoundaryRestoreTests(unittest.TestCase):
     def test_existing_file_example_runs_in_a_disposable_copy(self):
         # The example once overwrote the file in the checkout and restored it from traps:
         # a concurrent `git add -A` staged the injection, and SIGKILL left it there.
+        self.existing_file_example((None,))
+
+    @posix_only
+    def test_an_interrupted_existing_file_example_leaves_the_checkout_untouched(self):
+        self.existing_file_example((signal.SIGINT, signal.SIGTERM, signal.SIGKILL))
+
+    def existing_file_example(self, interruptions):
         template = (Path(__file__).resolve().parents[1] /
                     'core/scripts/boundary_selftests.sh').read_text()
         example = '\n'.join(line[4:] for line in template.splitlines() if line.startswith('# | '))
@@ -37,7 +67,7 @@ class BoundaryRestoreTests(unittest.TestCase):
         # The copied gate sees only what probe_env names: a gate that needs more names it there.
         example = example.replace('LC_ALL=C ', 'LC_ALL=C READY="$READY" INTERRUPT="$INTERRUPT" ', 1)
         self.assertIn('INTERRUPT="$INTERRUPT"', example)
-        for interruption in (None, signal.SIGINT, signal.SIGTERM, signal.SIGKILL):
+        for interruption in interruptions:
             with self.subTest(interruption=interruption), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp) / 'project'
                 source = root / 'src/domain/existing.py'
@@ -73,6 +103,8 @@ exit 1
                 original = b'Uncommitted owner content.\nPreserve these exact bytes.\n'
                 source.write_bytes(original)
                 source.chmod(0o640)
+                # As this host keeps it: on native Windows only the read-only attribute is a mode.
+                mode = source.stat().st_mode & 0o777
                 status = git('status', '--porcelain')
                 scratch, ready, continued = (Path(tmp) / name for name in ('scratch', 'ready', 'continued'))
                 scratch.mkdir()
@@ -81,7 +113,7 @@ exit 1
                                                   CONTINUED=str(continued),
                                                   INTERRUPT='yes' if interruption else 'no'),
                                          start_new_session=True, stdout=subprocess.PIPE,
-                                         stderr=subprocess.PIPE, text=True)
+                                         stderr=subprocess.PIPE, encoding="utf-8")
                 try:
                     if interruption:
                         deadline = time.monotonic() + DEADLINE
@@ -96,15 +128,15 @@ exit 1
                         os.killpg(child.pid, interruption)
                     done = self.finish(child)
                     stdout, stderr = done.stdout, done.stderr
+                    killed = getattr(signal, 'SIGKILL', None)
                     self.assertEqual(child.returncode,
-                                     -interruption if interruption == signal.SIGKILL
-                                     else 128 + interruption if interruption else 0,
-                                     stdout + stderr)
+                                     0 if interruption is None else -interruption if interruption == killed
+                                     else 128 + interruption, stdout + stderr)
                     self.assertEqual(source.read_bytes(), original)
-                    self.assertEqual(source.stat().st_mode & 0o777, 0o640)
+                    self.assertEqual(source.stat().st_mode & 0o777, mode)
                     self.assertEqual(git('status', '--porcelain'), status)
                     # Traps remove the copy; only SIGKILL leaves it, in TMPDIR, not the checkout.
-                    if interruption != signal.SIGKILL:
+                    if interruption != killed:
                         self.assertEqual(list(scratch.iterdir()), [])
                     self.assertEqual(continued.exists(), interruption is None)
                     # check.sh --self-test counts a boundary self-test as run only by this line.
@@ -350,7 +382,7 @@ exit 1
 
     def run_gate(self, args, cwd, env):
         # Its own process group: a timeout kills every process the example started, not only sh.
-        return self.finish(subprocess.Popen(args, cwd=cwd, env=env, text=True, stdout=subprocess.PIPE,
+        return self.finish(subprocess.Popen(args, cwd=cwd, env=env, encoding='utf-8', stdout=subprocess.PIPE,
                                             stderr=subprocess.PIPE, start_new_session=True))
 
     def finish(self, child, limit=DEADLINE):
@@ -373,7 +405,11 @@ exit 1
         # other group, since an unreaped leader holds that pid and a reaped one leaves it held
         # by its group while any member lives; once the group is empty the kill finds nothing.
         try:
-            os.killpg(child.pid, signal.SIGKILL)
+            if WINDOWS:
+                # No process groups there: the tree under the leader, while the leader lives.
+                subprocess.run(['taskkill', '/T', '/F', '/PID', str(child.pid)], capture_output=True)
+            else:
+                os.killpg(child.pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
         try:
@@ -387,6 +423,7 @@ exit 1
                     (late.stderr or b'').decode(errors='replace')
                     + '\n(output incomplete: a pipe stayed open after the group was killed)')
 
+    @posix_only
     def test_a_deadline_ends_a_descendant_that_outlives_its_leader(self):
         # The leader exits at once; its background descendant keeps the pipes and sleeps on.
         # A deadline killed the group only while the leader ran, then waited for the pipes forever.
@@ -469,7 +506,10 @@ exit 1
                                               "grep -q 'myapp.web' src/domain/existing.py || { %s || exit 1; exit 0; }\n"
                                               'git add -A || exit 1\n' % leave, names=('OUTSIDE',))
                 status = git('status', '--porcelain')
-                result = self.self_test(tmp, root, OUTSIDE=str(outside))
+                # Native Windows: the user site is under APPDATA, which the probe passes on (with
+                # PYTHONNOUSERSITE=1); the test's own one, so the startup file never reaches the real one.
+                appdata = {'APPDATA': str(Path(tmp) / 'appdata')} if WINDOWS else {}
+                result = self.self_test(tmp, root, OUTSIDE=str(outside), **appdata)
                 self.assertFalse(escaped.exists(), 'something the baseline left ran in the second run')
                 self.assertEqual((outside / 'existing.py').read_text(), 'committed original\n',
                                  'the injection followed a symlink the baseline left')
@@ -501,7 +541,9 @@ exit 1
                 escaped = Path(tmp) / 'escaped'
                 home = Path(tmp) / 'home'
                 (home / config).parent.mkdir(parents=True, exist_ok=True)
-                (home / config).write_text('[tar "tar.gz"]\n\tcommand = : > %s; gzip -cn\n' % shlex.quote(str(escaped)))
+                # as_posix: git reads a backslash in a value as an escape (a Windows path).
+                (home / config).write_text('[tar "tar.gz"]\n\tcommand = : > %s; gzip -cn\n'
+                                           % shlex.quote(escaped.as_posix()))
                 result = self.self_test(tmp, root, HOME=str(home), XDG_CONFIG_HOME=str(home / '.config'))
                 self.assertFalse(escaped.exists(), 'a global archive command ran outside the copy')
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -663,6 +705,8 @@ exit 1
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn('  ok   — ', result.stdout)
 
+    @not_on_windows('a running gate cannot rename the folder that holds its working directory there; '
+                    'test_check_gate_windows.WindowsProbeCopyTests replaces the root around the delete')
     def test_a_replaced_temporary_root_is_refused_by_name(self):
         # chmod -R walked a symlinked root's target outside the copy; a root that is no longer the
         # directory mktemp made, a link or another directory with content, is left as it is.
@@ -743,6 +787,10 @@ exit 1
         # between the copies went unnoticed, and a gate choosing its policy by `[ -w policy ]`
         # could print the diagnostic on its own in the second run.
         for shape, change in (('file', 'chmod 444 "$ORIGIN/policy"'), ('directory', 'chmod 555 "$ORIGIN/rules"')):
+            if WINDOWS and shape == 'directory':
+                # A folder's mode there is not a thing chmod changes or Python reports.
+                sys.stderr.write('\nNOT RUN: %s (directory: native Windows has no folder mode)\n' % self.id())
+                continue
             with self.subTest(shape=shape), tempfile.TemporaryDirectory() as tmp:
                 root, git = self.fixture(tmp, "grep -q 'myapp.web' src/domain/existing.py || { %s || exit 1; }\n" % change,
                                          names=('ORIGIN',))
@@ -758,6 +806,7 @@ exit 1
                               ' copies; run the self-test again', result.stdout)
                 self.assertNotIn('  ok   — ', result.stdout)
 
+    @posix_only
     def test_a_special_file_in_the_checkout_is_refused_by_name(self):
         # The digest reads regular files only: a FIFO would block the read, a device has no end.
         with tempfile.TemporaryDirectory() as tmp:
@@ -794,11 +843,17 @@ exit 1
             self.assertEqual(os.listdir(elsewhere), [], 'a copy was made outside TMPDIR')
             where = (Path(tmp) / 'scratch/where').read_text().splitlines()
             self.assertTrue(where)
+            scratch = os.path.realpath(Path(tmp, 'scratch'))
+            if WINDOWS:
+                # `pwd -P` prints the MSYS form (/tmp/..., /c/...).
+                scratch = subprocess.run(['cygpath', '-u', scratch], capture_output=True, text=True,
+                                         check=True).stdout.strip()
             for line in where:
-                self.assertTrue(line.startswith(os.path.realpath(Path(tmp, 'scratch')) + '/'), line)
+                self.assertTrue(line.startswith(scratch + '/'), line)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn('  ok   — ', result.stdout)
 
+    @not_on_windows('no mode hides a folder from its owner there, and sh cannot make the link at the long path')
     def test_a_folder_the_baseline_hides_goes_with_its_copy(self):
         # os.walk skips a folder it cannot read: a baseline that hid an outside symlink in one
         # passed the audit run again on its copy, and the next run made it readable and wrote
@@ -926,7 +981,7 @@ exit 1
                                      config_keys='kit.disabled')
             included = Path(tmp) / 'included'
             included.write_text('[kit]\n\tdisabled = yes\n')
-            key = 'includeif.gitdir:%s/.git.path' % root.resolve()
+            key = 'includeif.gitdir:%s/.git.path' % root.resolve().as_posix()
             git('config', key, str(included))
             self.assertEqual(git('config', 'kit.disabled'), 'yes\n', 'the include is not active in the checkout')
             self.assert_include_not_run(self.self_test(tmp, root), key)

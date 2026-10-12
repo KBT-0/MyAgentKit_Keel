@@ -34,8 +34,9 @@
 #     native Windows Claude Code has no sandbox, so the Claude reviewer gets no Bash there.
 #   - Detected: a write that reaches the repository anyway fails the review (stale_checkout)
 #     when it changes HEAD, the base, the index, a tracked file or an untracked file Git does
-#     not ignore. Files Git ignores are not checked.
+#     not ignore.
 #   - ACCEPTED LIMIT: a reviewer that finds the repository by its absolute path can read it.
+#   - ACCEPTED LIMIT: a reviewer's write that reaches a file Git ignores is not detected.
 #   - OUT OF SCOPE: a process that changes the tree, the index or the Git configuration
 #     between two of this script's reads to hide a change (a filter attribute removed and
 #     restored), and hostile files planted by anyone but the owner: either could edit this

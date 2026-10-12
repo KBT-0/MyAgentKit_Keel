@@ -9,6 +9,8 @@ import time
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / 'core/scripts'))
+from review_test_support import posix_only  # noqa: E402
 # Seconds any wait here may take; MYAGENTKIT_TEST_TIMEOUT_SCALE multiplies it on a slow host.
 DEADLINE = 30 * float(os.environ.get('MYAGENTKIT_TEST_TIMEOUT_SCALE', '1'))
 
@@ -67,6 +69,7 @@ esac
                 else:
                     self.assertFalse(injection.exists())
 
+    @posix_only
     def test_example_removes_its_injection_when_interrupted(self):
         # The injection was removed by a plain `rm -f` after the gate returned: SIGINT during
         # the injected run left src/domain/.selftest.py in the checkout, where `git add -A`
@@ -107,6 +110,7 @@ while :; do sleep 1; done
                     if child.returncode is None:
                         self.reap(child)
 
+    @posix_only
     def test_the_interrupted_cases_pass_under_a_caller_that_ignores_sigint(self):
         # A `&` job of a non-interactive shell, or nohup, starts with SIGINT ignored, which a
         # shell cannot trap: the interrupted cases failed only there, as timeouts.
@@ -114,7 +118,7 @@ while :; do sleep 1; done
         result = self.finish(subprocess.Popen(
             [sys.executable, '-m', 'unittest',
              'test_boundary_example.BoundaryExampleTests.test_example_removes_its_injection_when_interrupted',
-             'test_boundary_restore.BoundaryRestoreTests.test_existing_file_example_runs_in_a_disposable_copy'],
+             'test_boundary_restore.BoundaryRestoreTests.test_an_interrupted_existing_file_example_leaves_the_checkout_untouched'],
             cwd=Path(__file__).resolve().parent, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             start_new_session=True, preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_IGN)),
             limit=12 * DEADLINE)

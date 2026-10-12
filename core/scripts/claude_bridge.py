@@ -244,6 +244,9 @@ def throwaway_copy(repo: Path, head: str, diff: str | None, copy: Path,
       Claude's file tools are confined to the copy by --restricted and offer no write.
     - Detected: a write that reaches the repository anyway changes the fingerprint, and the
       review fails as stale_checkout.
+    - Accepted limit: a write that reaches only a file Git ignores is not detected. The
+      fingerprint covers HEAD, the base, the index, tracked files and untracked files Git does
+      not ignore.
     - Accepted limit: a reviewer that finds the repository by its absolute path can still read
       it (neither sandbox blocks reads).
     - Accepted limit: a repository inside Claude Code's per-user temporary directory is
@@ -1295,6 +1298,16 @@ def main(argv=None, result_sink=None) -> int:
         print(json.dumps(result))
         return 0 if evidence["status"] == "completed" else 5
     except (BridgeError, OSError, ValueError) as error:
+        if result is not None:
+            # The evidence and usage record are written and the result handed over: a later
+            # failure (printing it) does not turn a completed review into exit 2 and a
+            # "failed" line after the "completed" one. The handed-over status decides; the
+            # dispatcher, holding this same dict, records the failure with the attempt.
+            result["error_after_result"] = str(error)
+            with contextlib.suppress(OSError, ValueError):
+                print("NOTE [review]: claude failed after it handed over its result (%s); the result "
+                      "stands as recorded in %s" % (error, result["evidence"]), file=sys.stderr, flush=True)
+            return 0 if result["status"] == "completed" else 5
         print(json.dumps({"status": "failed", "error": str(error)}))
         return 2
     finally:

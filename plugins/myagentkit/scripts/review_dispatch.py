@@ -158,18 +158,21 @@ def main(argv=None):
             result = received[-1]
             delivered = 0 if result["status"] == "completed" else 5
             if error is None and exit_code != delivered:
-                error = "the adapter exited %s" % exit_code  # Claude's catches its own.
+                error = "the adapter exited %s" % exit_code
             exit_code = delivered
         elif error is not None:
             # Includes persistence failures. No machine result means no safe failover.
             result = {"status": "failed", "failure_kind": "adapter_error", "error": str(error)}
         else:
             result = {"status": "failed", "failure_kind": "preflight_failed"}
-        chain["attempts"].append(dict(result, reviewer=provider, model=pins[provider]))
+        attempt = dict(result, reviewer=provider, model=pins[provider])
         if received and error is not None:
-            chain["attempts"][-1]["error_after_result"] = str(error)
+            attempt["error_after_result"] = str(error)
+        chain["attempts"].append(attempt)
+        if attempt.get("error_after_result"):  # Set here, or by the Claude adapter itself.
             print("NOTE [review]: %s failed after it handed over its result (%s); the result "
-                  "stands as recorded in %s" % (provider, error, result.get("evidence")), flush=True)
+                  "stands as recorded in %s" % (provider, attempt["error_after_result"],
+                                                result.get("evidence")), flush=True)
         chain.update(status=result["status"], failure_kind=result.get("failure_kind"))
         try:
             if claude_bridge.snapshot(repo, scope, ref) != original:
@@ -220,8 +223,9 @@ def main(argv=None):
         if chain["failure_kind"] == "stale_checkout":
             # Correct to fail: the reviewer reads files while it runs, so its findings may
             # describe a tree the archived diff and fingerprint do not. The fix is the caller's.
-            print("FAIL [review]: the checkout changed while the review ran (an edit, a new "
-                  "untracked file, a moved HEAD or base), so the result cannot be tied to the "
+            print("FAIL [review]: the checkout changed while the review ran (an edit, a staged "
+                  "change, a new untracked file Git does not ignore, a moved HEAD or base), so "
+                  "the result cannot be tied to the "
                   "diff it names. Leave this checkout untouched until review.sh exits: keep "
                   "working in another worktree, or wait for it, then run the review again.")
     elif chain.get("selected_reviewer") != args.reviewer:

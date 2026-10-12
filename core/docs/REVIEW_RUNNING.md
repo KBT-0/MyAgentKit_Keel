@@ -70,7 +70,8 @@ Bash runs in Claude Code's own sandbox on macOS, Linux and WSL2 (Linux and WSL2 
 `bubblewrap` and `socat`); a host where that sandbox cannot start fails the review at
 startup instead of running Bash unsandboxed. Claude Code has no sandbox on native Windows, so
 there the Claude reviewer gets no Bash at all: it reads the copy and marks its findings
-REASONED. A write that reaches the checkout anyway fails the review as `stale_checkout`. The
+REASONED. A write that reaches the checkout anyway fails the review as `stale_checkout`;
+one that reaches only a file Git ignores is not detected, an accepted limit. The
 evidence's sandbox field records `workspace-write (throwaway copy)` for Codex, and for Claude
 either the Bash sandbox or `no Bash: native Windows`. A copy that a killed adapter left in
 the temporary directory is removed by a later run once it is older than the longest review.
@@ -159,10 +160,11 @@ When the rounds start and what runs in parallel is the lead's part, in `docs/WOR
 - Start the self-test and two reviewers at once, each as its own background job: for example
   `./scripts/check.sh --self-test`, then `MYAGENTKIT_TASK_ID=<feature> ./scripts/review.sh
   --base <base> --reviewer codex` and the same with `--reviewer claude`. Concurrent reviews
-  write archives with unique names that lie outside the review scope. A self-test of the same
-  commit may share the reviews' worktree only if it writes files Git ignores and nothing else.
-  A self-test that changes anything else in the worktree fails the reviews with
-  `stale_checkout`; such a self-test runs in a second worktree of the same commit.
+  write archives with unique names that lie outside the review scope. The self-test of the
+  same commit shares the reviews' worktree safely: it writes files Git ignores and nothing
+  else, and it fails itself, naming the paths, when it leaves HEAD, the index, `git status` or
+  the content of `git diff --binary HEAD` (compared by hash) changed. A change it left would
+  have failed the reviews with `stale_checkout`.
 - Every round of one feature uses the same `MYAGENTKIT_TASK_ID`, so that later rounds carry
   the earlier ones. Only the final reviews (one per model, each over the parts it did
   not write) take a label never used before. When model B's final review finds a High or Medium,
