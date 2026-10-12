@@ -141,8 +141,13 @@ cost", and `docs/WORKFLOW.md`, "Review rounds".
   part: the reviewing model verifies and fixes its own findings, becoming AUTHOR of those
   fixes; the other model reviews them. With low allowance the other side writes the fixes
   (`docs/WORKFLOW.md`, "Model routing", rule 7). A verdict counts only for parts the reviewing
-  model did not write. The loop ends at the first round with no High or Medium finding in
-  which the reviewing model did not write the latest fix.
+  model did not write. Once both models have written parts, closure requires one fresh
+  NEW-label final review per model, each over parts it did not write. The change closes when
+  both return without a High or Medium finding. When model B's final review finds a High or
+  Medium, model B fixes its own findings and model A reviews B's fix under a fresh label; B's
+  final review counts as clean for every other part, and closure requires no open High or Medium
+  finding on any part by a model that did not write that part. If only one model wrote the change, one fresh
+  NEW-label final review by the other model closes it.
 - A verdict's manual checks are written to `docs/STATE.md` before commit.
 - **Never report a verification you did not run** — if you could not run it, say "not run".
 
@@ -201,7 +206,7 @@ on, it is closed for this session.
 - Same manual procedure done a third time → suggest a skill.
 - Task was bulk and well-specified → suggest routing it to the cheaper model next time.
 - Context past 200k tokens (Claude Code's `context_size.py` hook says so) → recommend
-  `/compact` or a hand-off, whichever is cheaper now, with the number and the reason (`docs/WORKFLOW.md`, "Worker cost", rule 8). Neither is the default.
+  `/compact` or a hand-off, whichever is cheaper now, with the number and the reason, at the next clean stop: no new round after the warning (`docs/WORKFLOW.md`, "Worker cost", rule 8). Neither is the default.
 - A time or token cost you saw repeat, with a cheaper way around it → propose the cheaper way
   with a number. Do not spend work hunting for savings.
 {{KIT_FEEDBACK_RULE}}

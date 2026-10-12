@@ -96,6 +96,23 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   retried, up to 20 scans, and a give-up is reported; a `ps` that cannot list environments
   is tried once per stop, and a pid that exits mid-scan is no failure. **ACTION:** copy
   `core/scripts/agent_process.py`.
+- **Routing sets effort, risk checks and second-round escalation.** Briefs name route,
+  risk, checks, model and effort. `scripts/usage_summary.py` (kit-owned, synced) reports
+  review rounds, verdicts and rejects per task and per model and effort; worker errands
+  write no record and are not in it. Every printed label is escaped, the backslash included,
+  so a literal `\x1b` and the control character it names print differently and stay in
+  separate groups; a missing, null or empty model, callee, kind or effort prints as the reserved
+  label `unknown`, and a value that is literally `unknown` joins that group. **ACTION:** reconcile `$KIT/core/docs/WORKFLOW.md`
+  into `docs/WORKFLOW.md`,
+  `$KIT/core/docs/HANDOFF.md` into `docs/HANDOFF.md`,
+  `$KIT/core/docs/USAGE.md` into `docs/USAGE.md`, and
+  `$KIT/overlays/claude-code/files/.claude/agents/worker.md` into `.claude/agents/worker.md`,
+  preserving project settings.
+- **Two models writing requires two final reviews.** Each model runs a fresh NEW-label
+  review over parts it did not write; both must return without a High or Medium finding.
+  **ACTION:** reconcile `$KIT/core/docs/REVIEW_RUNNING.md` into `docs/REVIEW_RUNNING.md`,
+  `$KIT/core/docs/REVIEW_GATE.md` into `docs/REVIEW_GATE.md`, and `$KIT/core/AGENTS.md`
+  into `AGENTS.md`; copy `$KIT/core/scripts/claude_bridge.py` to `scripts/claude_bridge.py`.
 - **A review no longer dies on the kit's own limits** (`agent_process.py`, the adapters,
   `review.sh`): a review attempt now gets 3600 seconds (maximum 7200) and a Claude review
   200 turns (maximum 500); three high-effort reviews had died on 1800 seconds and 12 turns.

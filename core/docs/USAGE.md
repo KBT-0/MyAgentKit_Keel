@@ -31,6 +31,12 @@ In the kit checkout, use `core/scripts/agent_usage.py`; an installed Codex plugi
 `scripts/agent_usage.py` beside its bundled bridge. The report omits raw transcripts by
 default. A lack of records means no recorded evidence, not zero historical usage.
 
+`python3 scripts/usage_summary.py --repo .` lists the recorded invocations per task and per
+model and effort: review rounds, verdicts, duration and rejects. A round is a completed
+review whose dispatch chain also completed; a verdict is read only from an archive that
+still matches its record's sha256. Worker and sub-agent errands write no record, so they
+are not in it.
+
 Every record includes task, requester, requested callee model, source revision/hash,
 elapsed time, status, failure classification, evidence location, and available usage.
 Claude's per-model `modelUsage` is retained; a Codex requested model is not misrepresented

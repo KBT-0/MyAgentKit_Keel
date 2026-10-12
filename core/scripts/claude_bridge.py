@@ -827,9 +827,15 @@ def prior_rounds(repo: Path, task_id: str | None, scope: str, resolved: str | No
             "the verdict is never a plain Accept. Then review the whole diff again, including "
             "the code the fixes added, for context; your verdict counts only for the parts you "
             "did not write. Your last fix round is accepted only by the other model's next "
-            "round. The loop ends at the first round with no High or Medium finding in which the reviewing "
-            "model did not write the latest fix; the final Accept comes from one fresh review "
-            "with no earlier rounds.\n" % (len(rounds) + 1))
+            "round. Once both models have written parts, closure requires "
+            "one fresh NEW-label final review per model over parts it did not write. "
+            "The change closes when both return without a High or Medium finding. "
+            "When model B's final review finds a High or Medium, model B fixes its own "
+            "findings and model A reviews B's fix under a fresh label; B's final review "
+            "counts as clean for every other part, and closure requires no open High or "
+            "Medium finding on any part by a model that did not write that part. "
+            "If only one model wrote the change, one fresh NEW-label final review by the "
+            "other model closes it. Final reviews carry no earlier rounds.\n" % (len(rounds) + 1))
     for number, (_, report) in enumerate(sorted(rounds), 1):
         text += "### Round %d\n%s\n" % (number, report)
     if notes:

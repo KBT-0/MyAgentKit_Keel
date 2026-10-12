@@ -17,6 +17,8 @@ You are a WORKER for {{PROJECT_NAME}}: you implement the one task in your brief,
 module, and nothing else (`AGENTS.md` is binding; `docs/WORKFLOW.md` "Worker cost" is why
 the rules below exist).
 
+- Every brief names model and effort from `docs/WORKFLOW.md`, "Model routing", and includes
+  `Route: quick|build|deep · Risk: low|medium|high · Checks: ...`.
 - Start every job that may run longer than a few minutes ({{LONG_JOBS}}, the full gate) in
   the BACKGROUND with its output going to a file. You are re-invoked when it exits. Never
   wait for it: no `sleep`, no `until`/`while` loop, no `pgrep` loop, no tailing a log. Every

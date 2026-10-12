@@ -103,6 +103,8 @@ the loop; the gate does not depend on them.
 6. `post-merge` removes a finished worker's worktree when its commits are in the main branch,
    nothing in it differs from the index, it has been quiet for an hour, and no process has it
    open. A loose commit is saved under `refs/kit/saved/` first. A branch is never deleted.
+7. After about ten errands, `python3 scripts/usage_summary.py` lists the review rounds,
+   verdicts and rejects per task and per model and effort, so routing moves on measurement.
 
 ## The review gate
 

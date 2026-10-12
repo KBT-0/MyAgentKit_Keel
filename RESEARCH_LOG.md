@@ -51,6 +51,32 @@ A non-empty `handed` dictionary does not prove a child process existed (the prom
 handed before launch), so the runner records `launched` itself and the adapters choose the
 `did not start` wording from that flag (Codex review, 2026-10-12).
 
+### 2026-10-11 — Routing effort and review ownership
+
+The owner keeps routing by scarcity, mandatory cross-model review, the review record chain
+and the kit's Stop hook. The kit rejects a same-family verifier subagent, an npm-test Stop
+hook and auto routers. These would duplicate checks without independent model judgement.
+The Model Routing Playbook (checked 2026-10-05), citing
+[Anthropic's cost and intelligence measurements](https://platform.claude.com/docs/en/about-claude/models/optimizing-for-cost-and-intelligence),
+reports medium about 2.5 points below high at about 70% of the cost. The effort table uses
+medium for mechanical work and small fix re-reviews, reserving high for mechanisms and risk.
+Escalating after the second dirty round avoids paying for repeated unsuccessful repairs.
+The owner approved fix ownership: the reviewing model fixes its findings; each verdict
+counts only for parts it did not write. Two models writing requires two independent final reviews.
+
+`usage_summary.py` groups by the raw model and effort and escapes only the printed label, with
+the backslash itself escaped: grouping by the escaped label had merged a value holding an ESC
+byte with one holding the literal text `\x1b`. A null model and the string `None` had then
+become two groups with one printed label, so a missing, null or empty model, callee, kind or effort
+is normalised to the reserved label `unknown` before printing and grouping, and equal printed labels
+always mean one group (2026-10-12).
+
+### 2026-10-10 — REVIEW_ALLOW_EOL_ONLY stays
+
+Decision: after two review rounds asked about it, the owner decided that
+`REVIEW_ALLOW_EOL_ONLY=1` stays as explicit permission for deliberate line-ending normalization.
+An explicitly permitted normalization is not itself a review finding; unpermitted churn still fails.
+
 ### 2026-10-10 — Round 3 bootstrap and Stop-hook findings
 
 Mode repair reused any staged blob as a regular executable, converting tracked symlinks
