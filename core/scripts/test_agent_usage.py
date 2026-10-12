@@ -79,8 +79,8 @@ class UsageTests(unittest.TestCase):
             self.assertEqual(agent_process._marked(marker), [41, 42])
             failing.append(True)
             # A ps without -E (the BSDs) exits non-zero: no scan, said once, not "none found".
-            self.assertEqual(agent_process._marked(marker), [])
-            self.assertEqual(agent_process._marked(marker), [])
+            self.assertIsNone(agent_process._marked(marker))
+            self.assertIsNone(agent_process._marked(marker))
         self.assertEqual(stderr.getvalue().count('/bin/ps -E failed'), 1, stderr.getvalue())
 
     def test_marker_scan_credits_a_digit_led_continuation_line_to_its_own_process(self):
@@ -103,6 +103,49 @@ class UsageTests(unittest.TestCase):
             calls.clear()
             self.assertEqual(agent_process._marked(marker), [])
         self.assertEqual(len(calls), 1, calls)
+
+    def test_marker_cleanup_retries_failed_pid_enumeration_and_reports_once(self):
+        self.failed_marker_scan('enumeration')
+
+    def test_marker_cleanup_retries_failed_per_pid_reads_and_reports_once(self):
+        self.failed_marker_scan('record')
+
+    def failed_marker_scan(self, stage):
+        import io
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        marker = 'MYAGENTKIT_PROCESS_abc'
+        for error in (False, True):
+            for recovers in (False, True):
+                records = {41: 'python ' + marker + '=1\n'}
+                failed, killed = [], []
+
+                def ps(command, **kwargs):
+                    targeted = command[-1] == 'pid=' if stage == 'enumeration' else '-p' in command
+                    if targeted and (not recovers or len(failed) < 2):
+                        failed.append(command)
+                        if error:
+                            raise OSError('ps unavailable')
+                        return SimpleNamespace(returncode=1, stdout=b'')
+                    return SimpleNamespace(returncode=0, stdout=ps_output(records, command[1:]))
+
+                def kill(pid, sig):
+                    killed.append(pid)
+                    records.pop(pid)
+
+                child = SimpleNamespace(returncode=0, _kit_marker=marker, wait=lambda: 0)
+                with self.subTest(error=error, recovers=recovers), \
+                        patch.object(agent_process, 'POSIX', True), patch('os.path.isdir', return_value=False), \
+                        patch('subprocess.run', side_effect=ps), patch.object(agent_process, '_SCAN_UNAVAILABLE', []), \
+                        patch.object(agent_process, '_holds', return_value=True), \
+                        patch('os.pidfd_open', create=True, return_value=99), patch('os.close'), \
+                        patch('signal.pidfd_send_signal', create=True, side_effect=lambda fd, sig: kill(41, sig)), \
+                        patch('signal.SIGKILL', 9, create=True), patch('os.kill', side_effect=kill), \
+                        patch('time.sleep'), patch('sys.stderr', new_callable=io.StringIO) as stderr:
+                    agent_process.stop_group(child, 1)
+                    self.assertEqual(killed, [41] if recovers else [])
+                    self.assertEqual(len(failed), 2 if recovers else 20)
+                    self.assertEqual(stderr.getvalue().count('/bin/ps -E failed'), 1, stderr.getvalue())
 
     def test_the_marker_kill_spares_a_pid_reused_since_the_scan(self):
         # The scan found 41; before the kill it exited and its pid went to an unrelated

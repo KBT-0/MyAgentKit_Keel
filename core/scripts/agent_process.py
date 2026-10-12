@@ -120,26 +120,31 @@ def _holds(pid, name) -> bool:
 _SCAN_UNAVAILABLE = []
 
 
-def _marked(name) -> list:
-    """The pids of the processes whose environment holds `name`=1 (Linux: /proc; else ps -E)."""
+def _marked(name) -> list | None:
+    """Pids holding `name`=1 (/proc or ps -E); None when a failed scan found no matches."""
     if os.path.isdir("/proc/self"):
         return [int(pid) for pid in filter(str.isdigit, os.listdir("/proc")) if _holds(pid, name)]
+    failed = False
     def ps(*options):
+        nonlocal failed
         try:
             # A project's PATH may contain CLI fixtures or wrappers; use the host's ps.
-            return subprocess.run(["/bin/ps", *options], stdin=subprocess.DEVNULL,
-                                  stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            result = subprocess.run(["/bin/ps", *options], stdin=subprocess.DEVNULL,
+                                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            if not result.returncode:
+                return result
         except OSError:
-            return None
-    entry = name.encode() + b"=1"
-    listing = ps("-A", "-E", "-ww", "-o", "command=")
-    if listing is None or listing.returncode:
+            pass
+        failed = True
         # A ps without -E (the BSDs) is no scan, not an empty one: say so once per process.
         if not _SCAN_UNAVAILABLE:
             _SCAN_UNAVAILABLE.append(name)
-            sys.stderr.write("agent_process: /bin/ps -E failed; review descendants that left "
-                             "their process group are not stopped\n")
-        return []
+            sys.stderr.write("agent_process: /bin/ps -E failed; review descendant scan is incomplete\n")
+        return None
+    entry = name.encode() + b"=1"
+    listing = ps("-A", "-E", "-ww", "-o", "command=")
+    if listing is None:
+        return None
     # A raw newline inside an environment value (PORTS=$'8080\n8081') splits a record over
     # lines, and a continuation line led by digits read as a new record: the marker went to a
     # pid naming another process, which was killed while the marked one ran on. The whole
@@ -148,12 +153,14 @@ def _marked(name) -> list:
     if entry not in listing.stdout.split():
         return []
     every = ps("-A", "-o", "pid=")
+    if every is None:
+        return None
     pids = []
-    for pid in filter(bytes.isdigit, [] if every is None or every.returncode else every.stdout.split()):
+    for pid in filter(bytes.isdigit, every.stdout.split()):
         record = ps("-E", "-ww", "-o", "command=", "-p", pid.decode())
-        if record is not None and not record.returncode and entry in record.stdout.split():
+        if record is not None and entry in record.stdout.split():
             pids.append(int(pid))
-    return pids
+    return pids if pids or not failed else None
 
 
 def launch(command, mask, **popen_kw) -> subprocess.Popen:
@@ -257,6 +264,9 @@ def stop_group(child, pgid) -> None:
         # empty, so a reaped id is never matched.
         for _ in range(20):
             pids = _marked(child._kit_marker) if hasattr(child, "_kit_marker") else ()
+            if pids is None:
+                time.sleep(0.05)
+                continue
             if not pids:
                 break
             for pid in pids:

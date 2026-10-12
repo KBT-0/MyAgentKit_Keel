@@ -54,9 +54,21 @@ if WINDOWS:
     KERNEL32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
     KERNEL32.OpenProcess.restype = wintypes.HANDLE
     KERNEL32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    KERNEL32.GetProcessId.restype = wintypes.DWORD
+    KERNEL32.GetProcessId.argtypes = (wintypes.HANDLE,)
     KERNEL32.TerminateProcess.argtypes = (wintypes.HANDLE, wintypes.UINT)
+    KERNEL32.WaitForSingleObject.restype = wintypes.DWORD
     KERNEL32.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
     KERNEL32.GetProcessTimes.argtypes = (wintypes.HANDLE,) + (ctypes.POINTER(ctypes.c_uint64),) * 4
+
+    class ProcessBasicInformation(ctypes.Structure):
+        _fields_ = [('ExitStatus', ctypes.c_long), ('PebBaseAddress', ctypes.c_void_p),
+                    ('AffinityMask', ctypes.c_size_t), ('BasePriority', ctypes.c_long),
+                    ('UniqueProcessId', ctypes.c_size_t), ('InheritedFromUniqueProcessId', ctypes.c_size_t)]
+
+    NTDLL = ctypes.WinDLL('ntdll')
+    NTDLL.NtQueryInformationProcess.argtypes = (wintypes.HANDLE, wintypes.ULONG, ctypes.c_void_p,
+                                               wintypes.ULONG, ctypes.POINTER(wintypes.ULONG))
 
     class ProcessEntry(ctypes.Structure):
         _fields_ = [('dwSize', wintypes.DWORD), ('cntUsage', wintypes.DWORD),
@@ -179,8 +191,13 @@ def terminate(handle):
     # TerminateProcess reports access denied for a process already exiting (the python3
     # alias's launcher takes the real python with it). Its handle is signalled once it has
     # gone; a denied process still live then fails.
-    if KERNEL32.WaitForSingleObject(handle, 10000) != 0 and not killed:
-        raise ctypes.WinError(error)
+    waited = KERNEL32.WaitForSingleObject(handle, 10000)
+    if waited != 0:
+        if waited == 0xffffffff:
+            raise ctypes.WinError(ctypes.get_last_error())
+        if not killed:
+            raise ctypes.WinError(error)
+        raise OSError('process exit was not signalled after termination (wait result %#x)' % waited)
 
 
 def created(handle):
@@ -191,13 +208,22 @@ def created(handle):
     return times[0].value
 
 
-def child_handle(pid, born):
-    """A terminate and wait handle on `pid` if that process was created at or after `born`
-    (its parent's creation), else None: an older one names a parent that had the same pid
-    before it, an unrelated process."""
-    handle = KERNEL32.OpenProcess(0x1 | 0x1000 | 0x00100000, False, pid)
+def parent_pid(handle):
+    """The parent pid recorded by the process behind `handle`, not by a process snapshot."""
+    info = ProcessBasicInformation()
+    status = NTDLL.NtQueryInformationProcess(handle, 0, ctypes.byref(info), ctypes.sizeof(info), None)
+    if status != 0:
+        raise OSError('cannot read process parent (NTSTATUS %#x)' % (status & 0xffffffff))
+    return info.InheritedFromUniqueProcessId
+
+
+def child_handle(pid, parent_handle):
+    """A terminate and wait handle on `pid` only if its parent matches the retained handle.
+    A younger creation time also rules out children of an earlier process with that parent pid."""
+    handle = KERNEL32.OpenProcess(0x1 | 0x400 | 0x00100000, False, pid)
     try:
-        if handle and created(handle) >= born:
+        if handle and parent_pid(handle) == KERNEL32.GetProcessId(parent_handle) and \
+                created(handle) >= created(parent_handle):
             return handle
     except OSError:
         pass
@@ -208,18 +234,18 @@ def child_handle(pid, born):
 
 def descendants(proc):
     """(pid, parent pid, image name, handle) of each descendant of proc, parents before
-    children; the caller closes each handle. Walked down the snapshot's parent ids, each
-    process opened and kept only if it is younger than the parent it names; every handle
-    stays open through the walk, so no pid in it can go to another process. Not a Job Object
+    children; the caller closes each handle. Each acquired handle's parent pid and creation
+    time must match the retained parent, so a snapshot pid replaced before OpenProcess is
+    never trusted. Every handle stays open through the walk. Not a Job Object
     query: the Python install manager's python3 alias starts the gate's lock holder outside
     the fixture's job, with the gate and the build below it."""
-    found, parents = [], [(proc.pid, created(int(proc._handle)))]
-    for parent, born in parents:
+    found, parents = [], [(proc.pid, int(proc._handle))]
+    for parent, parent_handle in parents:
         for pid, name in children(parent):
-            handle = None if any(pid == seen for seen, _ in parents) else child_handle(pid, born)
+            handle = None if any(pid == seen for seen, _ in parents) else child_handle(pid, parent_handle)
             if handle:
                 found.append((pid, parent, name, handle))
-                parents.append((pid, created(handle)))
+                parents.append((pid, handle))
     return found
 
 
@@ -310,6 +336,47 @@ def gate(cwd, build, timeout=90, **extra):
 
 class KillTreeTests(unittest.TestCase):
     @windows_only
+    def test_kill_tree_spares_a_pid_replaced_between_snapshot_and_open(self):
+        from unittest.mock import Mock, patch
+        module = sys.modules[__name__]
+        proc = Mock(pid=1, _handle=101, _kit_job=99)
+        events, closed = [], []
+
+        def query(handle, info, out, size, returned):
+            self.assertEqual(handle, 102)
+            out._obj.InheritedFromUniqueProcessId = 900
+            return 0
+
+        kernel32 = Mock()
+        kernel32.TerminateJobObject.side_effect = lambda job, code: events.append('job')
+        with patch.object(module, 'children', side_effect=lambda pid: [(2, 'python.exe')] if pid == 1 else []), \
+                patch.object(module, 'KERNEL32', Mock(OpenProcess=Mock(return_value=102),
+                                                   GetProcessId=Mock(return_value=1))), \
+                patch.object(module, 'NTDLL', Mock(NtQueryInformationProcess=Mock(side_effect=query)), create=True), \
+                patch.object(module, 'created', side_effect={101: 100, 102: 200}.get), \
+                patch.object(module, 'terminate', events.append), patch.object(module, 'close_handle', closed.append), \
+                patch('agent_process._win', return_value={'kernel32': kernel32}):
+            kill_tree(proc)
+        self.assertEqual(events, ['job'], 'a newer replacement with another parent must never be killed')
+        self.assertEqual(closed, [102])
+
+    @windows_only
+    def test_terminate_requires_a_signalled_wait_even_after_a_successful_kill(self):
+        from unittest.mock import Mock, patch
+        for killed in (0, 1):
+            for waited in (0x102, 0xffffffff):
+                with self.subTest(killed=killed, waited=waited), \
+                        patch.object(sys.modules[__name__], 'KERNEL32',
+                                     Mock(TerminateProcess=Mock(return_value=killed),
+                                          WaitForSingleObject=Mock(return_value=waited))), \
+                        patch.object(ctypes, 'get_last_error', return_value=5), self.assertRaises(OSError):
+                    terminate(101)
+            with patch.object(sys.modules[__name__], 'KERNEL32',
+                              Mock(TerminateProcess=Mock(return_value=killed),
+                                   WaitForSingleObject=Mock(return_value=0))):
+                terminate(101)  # already exited processes can refuse TerminateProcess
+
+    @windows_only
     def test_kill_tree_stops_parents_first_and_spares_a_child_of_an_earlier_pid(self):
         # TerminateJobObject alone stopped the build (4, 5) before the lock holder (2), which
         # then cleared its token. 3 names 2 as its parent but is older than 2: its parent was
@@ -323,7 +390,9 @@ class KillTreeTests(unittest.TestCase):
         kernel32.TerminateJobObject.side_effect = lambda job, code: events.append('job')
         module = sys.modules[__name__]
         with patch.object(module, 'children', lambda pid: tree.get(pid, [])), \
-                patch.object(module, 'KERNEL32', Mock(OpenProcess=lambda access, inherit, pid: pid)), \
+                patch.object(module, 'KERNEL32', Mock(OpenProcess=lambda access, inherit, pid: pid,
+                                                   GetProcessId=lambda handle: handle)), \
+                patch.object(module, 'parent_pid', side_effect={2: 1, 3: 2, 4: 2, 5: 4}.get), \
                 patch.object(module, 'created', born.get), \
                 patch.object(module, 'terminate', events.append), patch.object(module, 'close_handle'), \
                 patch('agent_process._win', return_value={'kernel32': kernel32}):
