@@ -28,6 +28,9 @@ a usage record. The dispatcher then classified the launched attempt as a preflig
 Both adapters now record `run_failed` and deliver their structured result. The process runner
 keeps output captured before a supervision error, so reported billed usage survives the failure.
 Copy errors remain `copy_failed`; cancellation and timeout handling retain their existing paths.
+A non-empty `handed` dictionary does not prove a child process existed (the prompt file is
+handed before launch), so the runner records `launched` itself and the adapters choose the
+`did not start` wording from that flag (Codex review, 2026-10-12).
 
 ### 2026-10-10 — A live review copy can have an old timestamp (#39)
 

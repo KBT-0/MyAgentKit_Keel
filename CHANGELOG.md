@@ -39,6 +39,8 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   inside the reviewed repository is now a recorded `copy_failed` (exit 5, evidence and a
   usage record), not exit 2 without a record. Old orphan lock files are swept after acquiring
   their lock. Errors from a running reviewer are recorded as `run_failed`, with evidence,
+  and the archive says whether the reviewer launched (`agent_process.run` records it), so a
+  launch that failed and then raised on cleanup reads `did not start`, not `ran`,
   a failed usage record, captured output and a structured dispatcher result. They are never
   labelled as copy failures or preflight failures; one before the launch says the reviewer did
   not start. The evidence keeps only the tail of the reviewer's stderr, outside its own text;

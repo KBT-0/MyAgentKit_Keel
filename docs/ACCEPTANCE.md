@@ -50,11 +50,12 @@ subtracts, the kit's `core/.gitignore`). Total live spend: about 0.12 USD.
   `curl -sS -m 5 https://example.com` was refused with 403 because the host was not on
   the sandbox network allowlist. This establishes operating-system write and network
   containment for the tested directories on WSL2 Debian. Native Linux and macOS were not covered.
-- Offline, on native Windows: `tests/test_claude_sandbox.py` (22 tests: the review command
+- Offline, on native Windows: `tests/test_claude_sandbox.py` (24 tests: the review command
   per host, no Bash on native Windows, a proposal without scratch, recorded copy failures,
   `sandbox_unavailable`, recorded copy OS errors, help launch failure, help timeout, a live
   copy with an old timestamp, stale-copy sweeping, Claude and Codex pre-launch run errors
-  recorded as `run_failed` that did not start, a bounded stderr tail in a `run_failed` archive,
+  recorded as `run_failed` that did not start, a failed launch whose prompt cleanup also
+  raised still archived as not started for both adapters, a bounded stderr tail in a `run_failed` archive,
   recorded scratch setup errors and cleanup, recorded failures on lock-refusing filesystems
   (ENOTSUP included), no age-only sweeping, a foreign marker kept, one help probe budget and a
   clean MISSING line, a candidate the probe budget cut short named in the fix, one help
