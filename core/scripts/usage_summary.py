@@ -6,10 +6,11 @@ Only the review adapters write records, so worker and sub-agent errands are not 
 A round is a completed review attempt whose dispatch chain, when it has one, also completed;
 a shadow run (REVIEW_SHADOW=1) is listed apart and is no round. A verdict is read only from
 an archive whose bytes still match the record's sha256; the findings are counted from it.
-The author's dispositions carried by a round answer the round before it, so their counts
-are credited to that earlier round's configuration as its author-claimed acceptance:
-accepted = fixed + deferred, out of fixed + disproved + deferred. The author rates, the next
-round's reviewer verifies, and the owner decides what the rate means (docs/USAGE.md).
+The author's dispositions carried by a round answer the earlier rounds under its label, so
+their counts are credited to those rounds' configurations, split by the findings each round
+listed, as author-claimed acceptance: accepted = fixed + deferred, out of fixed + disproved +
+deferred. The author rates, the next round's reviewer verifies, and the owner decides what
+the rate means (docs/USAGE.md).
 """
 import argparse
 from collections import defaultdict
@@ -122,7 +123,7 @@ def totals(rows):
             + f' findings={findings}'
             + (f' per_round={findings / runs:.1f}' if runs else '')
             # Author-claimed: fixed + deferred over every answered finding of these rounds.
-            + (f' accepted={accepted}/{claimed} ({accepted / claimed:.2f}, author-claimed)'
+            + (f' accepted={accepted:.3g}/{claimed:.3g} ({accepted / claimed:.2f}, author-claimed)'
                if claimed else ''))
 
 
@@ -173,17 +174,24 @@ def main():
         # BEHAVIOUR.md on or off for the reviewer (claude_bridge.py): the A/B's comparison.
         behaviours[record['task'].get('behaviour') or 'unknown'].append(record)
     for records in tasks.values():
-        # The dispositions a round carries answer the round before it under the same label.
-        # Only a round credits: a failed attempt, its fallback and a shadow run carry the same
-        # file and would credit the same answers again.
-        previous = None
+        # The dispositions a round carries answer the earlier rounds under the same label
+        # (the reviewer saw them all), so the answers are split over those rounds by the
+        # findings each listed; rounds that listed none share nothing, and when none did,
+        # the last round takes the answers. Only a round credits: a failed attempt, its
+        # fallback and a shadow run carry the same file and would credit the answers again.
+        earlier = []
         for record in records:
             claims = record['task'].get('dispositions')
-            if claims and previous is not None and record['round']:
-                previous['accepted'] += claims['fixed'] + claims['deferred']
-                previous['claimed'] += sum(claims[key] for key in CLAIM_KEYS)
+            if claims and earlier and record['round']:
+                weights = [round_['findings'] for round_ in earlier]
+                if not sum(weights):
+                    weights = [0] * (len(earlier) - 1) + [1]
+                good, total = claims['fixed'] + claims['deferred'], sum(claims[key] for key in CLAIM_KEYS)
+                for round_, weight in zip(earlier, weights):
+                    round_['accepted'] += good * weight / sum(weights)
+                    round_['claimed'] += total * weight / sum(weights)
             if record['round']:
-                previous = record
+                earlier.append(record)
     for task, records in sorted(tasks.items()):
         print(f'Task {printable(task)}: {totals(records)}')
         number = 0

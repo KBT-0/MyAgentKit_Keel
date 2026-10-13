@@ -222,6 +222,23 @@ class UsageSummaryTests(unittest.TestCase):
         self.assertNotIn('accepted=4/6', out)
         self.assertNotIn('accepted=6/9', out)
 
+    def test_answers_are_split_over_the_rounds_they_refer_to(self):
+        # Round 3 answers rounds 1 and 2 together: the credit follows the findings each
+        # round listed, so Codex's five and Claude's two are rated apart.
+        self.record('a', 'T', b'| effort | high |\nVERDICT: Reject\n\n## Findings\n\n- High a\n- High b\n'
+                    b'- Medium c\n- Low d\n- Low e\n', callee='codex', model='sol')
+        self.record('b', 'T', b'| effort | medium |\nVERDICT: Reject\n\n## Findings\n\n- Medium f\n- Low g\n',
+                    duration=2000)
+        self.record('c', 'T', b'| effort | medium |\nVERDICT: Accept\n', duration=3000,
+                    dispositions={'fixed': 6, 'disproved': 1, 'deferred': 0})
+        out = self.summary()
+        self.assertIn('Model sol / effort high: invocations=1 rounds=1 duration=1.000s rejects=1 '
+                      'findings=5 per_round=5.0 accepted=4.29/5 (0.86, author-claimed)', out)
+        self.assertIn('Model opus / effort medium: invocations=2 rounds=2 duration=5.000s rejects=1 '
+                      'findings=2 per_round=1.0 accepted=1.71/2 (0.86, author-claimed)', out)
+        self.assertIn('Task T: invocations=3 rounds=3 duration=6.000s rejects=2 findings=7 per_round=2.3 '
+                      'accepted=6/7 (0.86, author-claimed)', out)
+
     def test_dispositions_without_an_earlier_round_credit_nothing(self):
         # A first round carrying dispositions (another label's rounds) credits no one.
         self.record('a', 'T', b'VERDICT: Accept\n', dispositions={'fixed': 2, 'disproved': 0, 'deferred': 0})

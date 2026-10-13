@@ -39,16 +39,19 @@ are not in it.
 
 The summary also measures each reviewer configuration (model, effort, backend):
 
-- `findings` counts the list items under each archive's Findings heading; `per_round`
-  divides them by the rounds. A configuration whose new findings per round fall toward
-  zero while the rounds continue is re-reviewing what it already said.
+- `findings` counts the severity-first list items under each archive's Findings heading
+  (both reviewers are asked for exactly that form), repeats of still-open findings included;
+  `per_round` divides them by the rounds. Read it with the archives: a configuration whose
+  listed findings per round do not fall while the rounds continue is re-listing what it
+  already said or is not being fixed.
 - `accepted=A/T (rate, author-claimed)` comes from the author's `REVIEW_DISPOSITIONS`
   file of the next round under the same label: each finding is answered with one key,
   `fixed:<commit>`, `disproved:<evidence>` or `deferred:<issue or decision>`, one answer per
   line (a file without a key is refused before any model runs; the file is read once, before
-  launch, so editing it during the review changes nothing). Accepted = fixed + deferred. The counts are
-  credited to the round the dispositions answer, so the rate belongs to the configuration
-  that produced the findings. The author rates its own reviewer, as Google's Tricorder has
+  launch, so editing it during the review changes nothing). Accepted = fixed + deferred.
+  The answers refer to every earlier round under the label, so the counts are split over
+  those rounds by the findings each listed, and the rate belongs to the configurations that
+  produced the findings. The author rates its own reviewer, as Google's Tricorder has
   the developer click "not useful"; the next round's reviewer verifies every disproved
   claim against the code, and a claim it rejects comes back as a finding. The rate is
   information for the owner, never an automatic switch: after about twenty rounds of one

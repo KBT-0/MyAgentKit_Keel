@@ -112,9 +112,8 @@ own work; each answer carries one key, `fixed:<commit>`, `disproved:<evidence>` 
 `deferred:<issue or decision>`, and the usage record keeps the counts for the summary's
 author-claimed acceptance rate (`docs/USAGE.md`). `REVIEW_SHADOW=1` marks a review that
 measures a reviewer configuration: its verdict is archived with a banner and counts for no
-closure. The review
-stops (exit 2) rather than carry a wrong record: when a dispositions file answers no finding
-with a key, when an earlier archive is missing, lies
+closure. The review stops (exit 2) rather than carry a wrong record: when a dispositions
+file answers no finding with a key, when an earlier archive is missing, lies
 outside `docs/reviews` or no longer matches the sha256 its usage record stored (an archive
 edited after the reviewer wrote it), when an earlier round has another scope, a reference
 that resolved to another commit (`--commit HEAD` one commit later is another change), another

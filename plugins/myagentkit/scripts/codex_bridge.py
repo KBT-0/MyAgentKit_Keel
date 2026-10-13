@@ -58,8 +58,9 @@ def main(argv=None, result_sink=None):
         "Grep callers of changed public members. For gate changes, check negative tests. "
         + REVIEW_ASKS + " " + REVIEW_RUNS + " Write exactly one "
         "line: VERDICT: Accept / VERDICT: Accept with Manual Checks / VERDICT: Reject "
-        "(choose one). Put the findings under a '## Findings' heading and the explicit manual "
-        "checks under a '## Manual checks' heading, as full sentences.\n"
+        "(choose one). Put the findings under a '## Findings' heading, one '- ' list item per "
+        "finding that starts with its severity, and the explicit manual checks under a "
+        "'## Manual checks' heading, as full sentences.\n"
         + prior_rounds(repo, os.environ.get("MYAGENTKIT_TASK_ID"), scope, resolved, head, diff)
         + f"Scope: {scope} {ref or ''}; HEAD: {head}\nDiff:\n{diff}"
     )

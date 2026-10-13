@@ -25,9 +25,9 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'REVIEW_SHADOW', 'MYAGENTKIT_TASK_I
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 187, 'test_agent_usage': 31, 'test_codex_quota': 5}
+SUITE_MINIMUMS = {'test_claude_bridge': 188, 'test_agent_usage': 31, 'test_codex_quota': 5}
 # These are executed cases, excluding only the explicitly declared POSIX exclusions.
-WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 161, 'test_agent_usage': 27, 'test_codex_quota': 4}
+WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 162, 'test_agent_usage': 27, 'test_codex_quota': 4}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -4470,6 +4470,33 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         self.assertEqual(result['status'], 'completed')
         usage = json.loads(Path(result['usage_record']).read_text())
         self.assertEqual(usage['task']['dispositions'], {'fixed': 1, 'disproved': 0, 'deferred': 1})
+
+    def test_codex_records_carry_the_dispositions_and_the_shadow_flag_too(self):
+        # The Codex adapter records the same measurement fields as Claude's: without this,
+        # dropping **MEASURED from its record would pass every Claude-fixture test.
+        usage = self.repo / '.myagentkit/usage'
+        def newest():
+            return json.loads(max(usage.glob('*.json')).read_text())
+        env = dict(REVIEW_CODEX_MODEL='fixture-codex-model', REVIEW_CLI_BIN=str(self.build_fake_codex()),
+                   MYAGENTKIT_TASK_ID='codex-measured')
+        result = self.run_wrapper('--uncommitted', '--reviewer', 'codex', **env)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        first = newest()
+        self.assertEqual(first['callee'], 'codex')
+        self.assertNotIn('dispositions', first['task'])
+        notes = self.root / 'codex-dispositions.md'
+        notes.write_text('- a.py:1 fixed: abc\n- b.py:2 disproved: the guard\n- c.py:3 deferred: #4\n')
+        result = self.run_wrapper('--uncommitted', '--reviewer', 'codex', REVIEW_DISPOSITIONS=str(notes), **env)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        second = newest()
+        self.assertEqual(second['task']['dispositions'], {'fixed': 1, 'disproved': 1, 'deferred': 1})
+        self.assertNotIn('shadow', second['task'])
+        result = self.run_wrapper('--uncommitted', '--reviewer', 'codex', REVIEW_SHADOW='1', **env)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        third = newest()
+        self.assertEqual(third['task']['shadow'], 'yes')
+        self.assertIn('SHADOW REVIEW: this run measures a reviewer configuration',
+                      Path(third['evidence']).read_text())
 
     def test_a_proposal_is_not_measured(self):
         # Only review rounds are measured: a proposal with the variables still exported
