@@ -13,6 +13,11 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## v0.11 — 2026-10-09
 
+- **ACTION — v0.11 is used for real in its first projects; report every kit problem.** leeway
+  and labricore-web take v0.11 straight away, and their daily work is part of its dogfood. A
+  lead upgrading one of them is extra careful with the upgrade and with the kit afterwards:
+  every problem, surprise or doubt about MyAgentKit, and about this release above all, goes
+  upstream through `/myagentkit:kit-feedback` (an issue), not only into the project's notes.
 - **The kit check's shell sensor** (`scripts/check_kit.py`; the shipped `check.sh`, `doctor.sh`,
   `watch_workers.sh` and the Unity overlay's `unity_gate.sh` change only in how they print): over
   the `.sh` files git tracks, the kit's own lint refuses `echo` of a variable (dash reads a
