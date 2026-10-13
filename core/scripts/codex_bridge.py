@@ -213,6 +213,7 @@ def main(argv=None, result_sink=None):
                   "sandbox": "workspace-write (throwaway copy)", "limits": str(timeout) + "s wall clock", "scope": scope, "reference": ref, "head": head,
                   "fingerprint": fingerprint,
                   "diff_sha256": hashlib.sha256(diff.encode()).hexdigest(),
+                  "behaviour_sha256": None,
                   "status": status, "failure_kind": reason}
         metadata = dict(header)
         report_text = agent_usage.report(stamp, header, verdicts[0] if status == "completed" else None,

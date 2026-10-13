@@ -94,7 +94,7 @@ def write_evidence(repo: Path, path: Path, text: str, *, private: bool = False,
 # quietly accepted an adapter's own extra column is how two directions drift into two
 # formats that no later reader can line up.
 REVIEW_FIELDS = ("reviewer", "model", "model_attested", "effort", "sandbox", "limits", "scope",
-                 "reference", "head", "fingerprint", "diff_sha256", "status", "failure_kind")
+                 "reference", "head", "fingerprint", "diff_sha256", "behaviour_sha256", "status", "failure_kind")
 VERDICT_LINE = "VERDICT: "
 REVIEW_VERDICTS = ("Accept", "Accept with Manual Checks", "Reject")
 

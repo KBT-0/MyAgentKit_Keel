@@ -25,9 +25,9 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'MYAGENTKIT_TASK_ID', 'MYAGENTKIT_R
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 148, 'test_agent_usage': 30, 'test_codex_quota': 5}
+SUITE_MINIMUMS = {'test_claude_bridge': 154, 'test_agent_usage': 30, 'test_codex_quota': 5}
 # These are executed cases, excluding only the explicitly declared POSIX exclusions.
-WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 125, 'test_agent_usage': 26, 'test_codex_quota': 4}
+WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 131, 'test_agent_usage': 26, 'test_codex_quota': 4}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -86,6 +86,10 @@ if case == 'error': result['is_error'] = True
 if case.startswith('api_'): result['api_error_status'] = int(case[4:])
 if case == 'exit': print(json.dumps(result)); sys.exit(9)
 if case == 'mutation': (repo / 'file.py').write_text('changed during review')
+if os.environ.get('APPENDIX_LOG'):
+    pathlib.Path(os.environ['APPENDIX_LOG']).write_text(
+        pathlib.Path('BEHAVIOUR.md').read_bytes().hex())
+if case == 'behaviour_mutation': (repo / 'BEHAVIOUR.md').write_bytes(b'changed during review\\n')
 if case == 'kit_docs': assert 'core/docs/ARCHITECTURE.md' in prompt
 if case == 'archive_failure':
     (repo / 'docs/reviews').rmdir()
@@ -2326,6 +2330,7 @@ class BridgeTests(unittest.TestCase):
                   'exit': 'cli_error', 'malformed_envelope': 'invalid_evidence',
                   'missing': 'invalid_evidence', 'model': 'invalid_evidence',
                   'transcript': 'invalid_evidence', 'mutation': 'stale_checkout',
+                  'behaviour_mutation': 'stale_checkout',
                   'partial_timeout': 'timeout', 'timeout': 'timeout',
                   'turns': 'budget_or_turn_limit', 'unknown_flag': 'cli_unsupported'}
         codex = {'accept': None, 'reject': None, 'mcp': None, 'mcp_reconnect': None,
@@ -3861,6 +3866,94 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                     self.assertNotIn('Lead with the answer', prompt)
                 usage = json.loads(Path(result['usage_record']).read_text())
                 self.assertEqual(usage['task']['behaviour'], side)
+
+    def test_an_escaping_behaviour_symlink_never_discloses_external_bytes(self):
+        marker = 'PRIVATE_APPENDIX_MARKER_OUTSIDE_SNAPSHOT'
+        external = self.root / 'private.txt'
+        external.write_text(marker)
+        (self.repo / 'BEHAVIOUR.md').symlink_to(external)
+        log = self.root / 'prompt.txt'
+        code, result = self.run_bridge(env_extra={'PROMPT_LOG': str(log)})
+        self.assertNotEqual(code, 0, result)
+        self.assertEqual(result['failure_kind'], 'unsafe_behaviour_appendix')
+        self.assertNotIn(marker, log.read_text() if log.exists() else '')
+        self.assertNotIn(marker, Path(result['evidence']).read_text())
+
+    def test_a_behaviour_appendix_must_be_a_regular_file_even_inside_the_snapshot(self):
+        appendix = self.repo / 'BEHAVIOUR.md'
+        appendix.mkdir()
+        code, result = self.run_bridge()
+        self.assertNotEqual(code, 0, result)
+        self.assertEqual(result['failure_kind'], 'unsafe_behaviour_appendix')
+        appendix.rmdir()
+        appendix.symlink_to(self.repo / 'file.py')
+        code, result = self.run_bridge()
+        self.assertNotEqual(code, 0, result)
+        self.assertEqual(result['failure_kind'], 'unsafe_behaviour_appendix')
+
+    def test_ignored_behaviour_bytes_are_in_the_copy_hash_and_staleness_check(self):
+        with (self.repo / '.gitignore').open('a') as stream:
+            stream.write('\n/BEHAVIOUR.md\n')
+        self.commit_fixture('ignored appendix')
+        appendix = self.repo / 'BEHAVIOUR.md'
+        log, copy_log = self.root / 'prompt.txt', self.root / 'appendix.txt'
+        env = {'PROMPT_LOG': str(log), 'APPENDIX_LOG': str(copy_log)}
+        fingerprints = []
+        for body in (b'Ignored appendix A.\r\n', b'Ignored appendix B.\r\n'):
+            appendix.write_bytes(body)
+            code, result = self.run_bridge(extra=['--commit', 'HEAD'], env_extra=env)
+            self.assertEqual(code, 0, result)
+            self.assertEqual(bytes.fromhex(copy_log.read_text()), body)
+            self.assertIn(body.decode().strip(), log.read_text())
+            digest = hashlib.sha256(body).hexdigest()
+            self.assertEqual(header_of(result['evidence'])['behaviour_sha256'], digest)
+            usage = json.loads(Path(result['usage_record']).read_text())
+            self.assertEqual(usage['task']['behaviour_sha256'], digest)
+            self.assertEqual(usage['task']['behaviour'], 'on')
+            fingerprints.append(result['fingerprint'])
+        self.assertNotEqual(*fingerprints)
+
+    def test_a_tracked_appendix_reviews_under_autocrlf_and_hashes_the_copy_bytes(self):
+        # Git for Windows turns autocrlf on: git archive then writes the tracked appendix with
+        # CRLF while the checkout keeps LF. The review must not call that stale; the recorded
+        # hash is of the bytes the reviewer saw. Seen live on the kit's own checkout.
+        body = b'Tracked appendix line.\n'
+        (self.repo / 'BEHAVIOUR.md').write_bytes(body)
+        self.commit_fixture('tracked appendix')
+        self.git('config', 'core.autocrlf', 'true')
+        copy_log = self.root / 'appendix.txt'
+        code, result = self.run_bridge(extra=['--commit', 'HEAD'], env_extra={'APPENDIX_LOG': str(copy_log)})
+        self.assertEqual(code, 0, result)
+        seen = bytes.fromhex(copy_log.read_text())
+        self.assertEqual(seen, b'Tracked appendix line.\r\n')  # the conversion really happened
+        self.assertEqual(header_of(result['evidence'])['behaviour_sha256'], hashlib.sha256(seen).hexdigest())
+        self.assertEqual((self.repo / 'BEHAVIOUR.md').read_bytes(), body)
+        # The fingerprint hashes eol-normalised bytes: the same state without autocrlf agrees.
+        self.git('config', 'core.autocrlf', 'false')
+        self.assertEqual(self.run_bridge(extra=['--commit', 'HEAD'])[1]['fingerprint'], result['fingerprint'])
+
+    def test_a_tracked_appendix_whose_archive_differs_beyond_line_endings_is_stale(self):
+        # export-subst expands a placeholder only in the archive: the reviewer would read an
+        # appendix the owner never saw. Only line endings are tolerated; this fails closed.
+        (self.repo / 'BEHAVIOUR.md').write_bytes(b'Rules for $Format:%H$\n')
+        (self.repo / '.gitattributes').write_text('BEHAVIOUR.md export-subst\n')
+        self.commit_fixture('expanding appendix')
+        code, result = self.run_bridge(extra=['--commit', 'HEAD'])
+        self.assertEqual(code, 5, result)
+        self.assertEqual(result['failure_kind'], 'stale_checkout')
+
+    def test_an_ignored_behaviour_change_during_commit_review_is_stale(self):
+        with (self.repo / '.gitignore').open('a') as stream:
+            stream.write('\n/BEHAVIOUR.md\n')
+        self.commit_fixture('ignored appendix mutation')
+        body = b'Original ignored appendix.\r\n'
+        (self.repo / 'BEHAVIOUR.md').write_bytes(body)
+        digest = hashlib.sha256(body).hexdigest()
+        code, result = self.run_bridge('behaviour_mutation', extra=['--commit', 'HEAD'])
+        self.assertEqual(code, 5, result)
+        self.assertEqual(result['status'], 'failed')
+        self.assertEqual(result['failure_kind'], 'stale_checkout')
+        self.assertEqual(header_of(result['evidence'])['behaviour_sha256'], digest)
 
     def test_failed_rounds_are_not_carried_and_outside_evidence_is_refused(self):
         log = self.root / 'prompt.txt'

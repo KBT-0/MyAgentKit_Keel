@@ -34,10 +34,16 @@ The verdict declaration itself never counts as a manual check.
 
 **The two directions are interchangeable, not merely both present.** Each archives the same
 header table — reviewer, model, whether the model is attested, effort, sandbox, limits,
-scope, reference, HEAD, checkout fingerprint, diff hash, status, failure kind — followed by
+scope, reference, HEAD, checkout fingerprint, diff hash, behaviour appendix SHA-256,
+status, failure kind — followed by
 exactly one `VERDICT:` line, or none at all when the run failed. The renderer refuses a
 header that has drifted, and refuses to print a verdict for a run that did not complete, so
 "same format" is enforced rather than agreed.
+The `behaviour_sha256` header names the exact appendix bytes in the Claude review copy.
+An ignored appendix is included in that copy and bound into the fingerprint.
+A source appendix change before the verdict fails as `stale_checkout`.
+An unsafe appendix fails as `unsafe_behaviour_appendix` before the reviewer launches.
+Codex and disabled Claude reviews record no appendix hash.
 
 **Both models are pinned by name, in both directions.** An unpinned run archives whatever
 default the CLI happened to have that week, which no later record can be compared against;
