@@ -773,10 +773,18 @@ pane either, so there `spawn_worker.sh` adds a Notification and a Stop hook to t
 permission, an approval or an answer, `idle TIME ID` when it stops (ID tells two events of
 the same second apart). `scripts/watch_workers.sh --result NAME=PATH NAME`, run from the same
 checkout, reads that file in place of a pane: WAITING, then the result file as on tmux, then
-IDLE (it stopped with no new result), each event once. A worker name is letters, digits, `-`
-and `_`, not starting with `-`; both scripts refuse any other. A state file the watcher cannot
-read or understand is exit 3 (it names the file: delete it); an absent or empty one is no
-signal yet. The folder-trust dialog writes no state line, so the folder must be trusted
+IDLE (it stopped with no new result), each event once. Legacy `waiting input` means an idle
+prompt, with no state event; the watcher never reports WAITING for it. Once per worker it
+prints "hook is from an older kit; re-spawn to install the current one".
+A worker name uses letters, digits, `-` and `_`, not starting with `-`; both scripts refuse
+any other. Spawn bounds the longest generated filename (`NAME.state.XXXXXXXX`) at 255 bytes
+(240 name characters). On native Windows it also bounds the full generated path at 259
+characters (MAX_PATH 260). Use a shorter name or checkout path; LongPathsEnabled enables
+long-path tooling, but spawn retains this portable bound.
+A state file the watcher cannot read or understand is exit 3 (it names the file: delete it).
+An absent or zero-byte file is no signal yet; a NUL-only file is invalid (exit 3).
+The watcher reads the state once and checks size and content from the same byte snapshot.
+The folder-trust dialog writes no state line, so the folder must be trusted
 already. The lead still looks at the tab after every usage-limit reset. What `close_worker.sh` does NOT see, so
 the lead closes only a worker whose result says it is done: a gate or a commit that starts
 in the instant between its last check and the kill; a commit waiting in a project's own

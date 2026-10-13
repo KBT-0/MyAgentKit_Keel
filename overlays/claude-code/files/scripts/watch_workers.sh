@@ -53,8 +53,8 @@
 # Notification and Stop hooks spawn_worker.sh gives it write one line to
 # .myagentkit/workers/NAME.state at the top of this checkout (or this folder outside git):
 # `waiting permission|question TIME ID` or `idle TIME ID`. A waiting line is WAITING, before the
-# result file is read. Legacy `waiting input` means a permission wait; once per worker the
-# watcher says its hook is from an older kit.
+# result file is read. Legacy `waiting input` means idle, with no state event; once per worker
+# the watcher says its hook is from an older kit and asks for a re-spawn.
 # An idle line, when the result file says nothing new, is IDLE: the worker
 # stopped (a question in the tab, a usage limit, an error). Each event (the whole line, id
 # included) is reported once; the once-markers are NAME.watch-* files beside it, which
@@ -308,23 +308,33 @@ EOF
 # reported yet. Return 1 when nothing is said, 2 when the report could not be written,
 # 3 when its state is unreadable or invalid.
 tab() {
-  state=$wdir/$1.state
-  [ -e "$state" ] || [ -L "$state" ] || return 1
-  reason=""
-  if [ ! -f "$state" ]; then reason="not a regular file"
-  elif ! bytes=$(wc -c <"$state" 2>"$err"); then
-    [ -e "$state" ] || return 1
-    reason=$(cat "$err")
-  elif [ "$bytes" -eq 0 ]; then return 1  # an older hook truncates before it writes: no signal yet
-  elif ! line=$(cat -- "$state" 2>"$err"); then
-    [ -e "$state" ] || return 1  # removed by a re-spawn since the check: no signal yet
-    reason=$(cat "$err")
-  elif ! printf '%s\n' "$line" | LC_ALL=C grep -Eq '^(waiting (permission|question|input)|idle) [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}( [0-9]+)?$' ||
-       [ "$(printf '%s\n' "$line" | wc -l)" -ne 1 ]; then reason="invalid state content"
-  fi
-  if [ -n "$reason" ]; then
-    say "watch_workers: $1: state unreadable: $reason ($state; delete it to clear)" >&2
-    failed=1; return 3
+  if [ -z "$tab_read" ]; then
+    tab_read=1; line=""; reason=""
+    state=$wdir/$1.state
+    [ -e "$state" ] || [ -L "$state" ] || return 1
+    if [ ! -f "$state" ]; then reason="not a regular file"
+    # Read the live file once. Both emptiness and content come from this byte snapshot.
+    # Capture stderr first, including a shell failure to open either redirection.
+    elif ! cat -- "$state" 2>"$err" >"$win"; then
+      [ -e "$state" ] || return 1  # removed by a re-spawn: no signal yet
+      reason=$(cat "$err"); reason=${reason:-"could not read the state file"}
+    elif ! bytes=$(wc -c 2>"$err" <"$win") || ! line=$(cat -- "$win" 2>"$err"); then
+      reason=$(cat "$err"); reason=${reason:-"could not read the state snapshot"}
+    elif [ "$bytes" -eq 0 ]; then return 1  # an older hook truncates before it writes
+    elif ! printf '%s\n' "$line" | LC_ALL=C grep -Eq '^(waiting (permission|question|input)|idle) [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}( [0-9]+)?$' ||
+         [ "$(printf '%s\n' "$line" | wc -l)" -ne 1 ]; then reason="invalid state content"
+    fi
+    if [ -n "$reason" ]; then
+      say "watch_workers: $1: state unreadable: $reason ($state; delete it to clear)" >&2
+      failed=1; return 3
+    fi
+    case $line in "waiting input "*)
+      if [ "$(mark "$1" legacy)" != noted ]; then
+        say "watch_workers: $1: its state hook is from an older kit; re-spawn to install the current one" || return 2
+        setmark "$1" legacy noted; found=1
+      fi
+      line="" ;;  # the old idle notification is no state event, never WAITING
+    esac
   fi
   case $line in "$2 "*) ;; *) return 1 ;; esac
   [ "$(mark "$1" state)" != "$line" ] || return 1
@@ -335,12 +345,6 @@ tab() {
     say "watch_workers: IDLE: $1, its session stopped and waits for input, with no new result report (its state file: $line)" || return 2
   fi
   say "  look at it: its Windows Terminal tab, titled $1" || return 2
-  case $line in "waiting input "*)
-    if [ "$(mark "$1" legacy)" != noted ]; then
-      say "watch_workers: $1: its state hook is from an older kit; waiting input means a permission prompt (re-spawn it to update the hook)" || return 2
-      setmark "$1" legacy noted
-    fi ;;
-  esac
   setmark "$1" state "$line"
 }
 
@@ -379,6 +383,7 @@ while :; do
   found="" failed="" pending=""
   : >"$out"
   for n in "$@"; do
+    tab_read=""; line=""
     st=$(classify "$n")
     if [ "$st" = FAILED ]; then report "$n" FAILED; failed=1
     elif [ -n "$st" ]; then

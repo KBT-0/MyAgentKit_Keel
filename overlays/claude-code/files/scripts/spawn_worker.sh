@@ -9,8 +9,9 @@
 # state line, `waiting permission|question TIME ID` or `idle TIME ID`, to .myagentkit/workers/
 # NAME.state, which watch_workers.sh reads in place of a pane. The result file stays the done
 # signal.
-# Worker names use letters, digits, - and _, not starting with -, at most 240 characters:
-# every generated filename, including a hook's temporary state file, fits in 255 bytes.
+# Worker names use letters, digits, - and _, not starting with -. The longest generated
+# filename (NAME.state.XXXXXXXX) must fit in 255 bytes; on native Windows its full path
+# must fit in 259 characters too, including the checkout's .myagentkit/workers folder.
 #
 # Usage: spawn_worker.sh NAME BRIEF_FILE --model M --effort LEVEL [--settings JSON_OR_FILE]
 #                        [--allowed-tools LIST] [--worktree] [--batch]
@@ -81,7 +82,8 @@ case $name in
   ''|-*|*[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-]*)
     die "refused the worker name: use letters, digits, - and _, not starting with -" ;;
 esac
-[ "${#name}" -le 240 ] || die "refused the worker name: at most 240 characters (generated filenames must fit in 255 bytes)"
+longest=$name.state.XXXXXXXX
+[ "${#longest}" -le 255 ] || die "refused the worker name: generated filenames must fit in 255 bytes (at most 240 characters in the name); use a shorter name"
 ctl "brief path" "$brief"
 nl='
 '
@@ -139,6 +141,13 @@ case "$settings" in
        die "--settings is neither inline JSON nor a file here, and the worktree could hold another: $settings"
      [ ! -f "$settings" ] || settings=$dir/$settings ;;
 esac
+# Validate the lead checkout's generated paths before creating a worktree or worker files.
+if [ -n "$windows" ]; then
+  wdir=$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)/.myagentkit/workers
+  longest_path=$(cygpath -m "$wdir/$longest") || die "cygpath cannot convert the path: $wdir"
+  [ "${#longest_path}" -le 259 ] ||
+    die "refused the worker path: generated paths must fit in 259 characters on native Windows (MAX_PATH 260); use a shorter name or a shorter checkout path, or enable LongPathsEnabled for long-path tooling"
+fi
 if [ -n "$worktree" ]; then
   top=$(git rev-parse --show-toplevel) || die "--worktree needs a git repository"
   dir=$top/.claude/worktrees/$name
@@ -153,7 +162,6 @@ fi
 # --settings becomes NAME.settings.json beside it: the owner's settings with the two hooks
 # added, theirs kept. The file is written once the name is known to be free (below).
 if [ -n "$windows" ]; then
-  wdir=$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)/.myagentkit/workers
   own=$settings
   settings=$(cygpath -m "$wdir/$name.settings.json") || die "cygpath cannot convert the path: $wdir"
 fi
