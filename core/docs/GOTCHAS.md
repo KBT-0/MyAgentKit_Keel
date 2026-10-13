@@ -177,7 +177,9 @@ or its worktrees. Quote the checkout path and match it literally:
 Windows `Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine.IndexOf('<checkout>', [StringComparison]::OrdinalIgnoreCase) -ge 0 } | Select ProcessId,CommandLine`;
 Linux `ps -eo pid,args | grep -F -- '<checkout>'`; macOS `ps -eww -o pid,args | grep -iF -- '<checkout>'` (APFS ignores case).
 The listing finds jobs whose arguments name the checkout (a `codex exec` with a brief path, a worker with its worktree). It ignores its own rows: the `grep`, and the shell or PowerShell that runs the listing when an agent runs it through a tool (on Windows, the `powershell` process whose command line holds the query).
-It does not find the kit's own jobs, which start with relative paths: the gate and the self-test are found through the holder of `check.lock` (`fuser`, `lsof` or `resmon`, above); a running review through its chain record under `.myagentkit/usage/chains/` (`docs/REVIEW_RUNNING.md`), and its own process by grepping the listing for `.myagentkit/usage` as a second literal.
+The command-line listing is only a shortcut for the jobs it can see; the kit's own `check.sh` holds no checkout lock.
+A pending chain record under `.myagentkit/usage/chains/` means a review MAY still run; nothing in the record names its process.
+After a cut-off, the lead treats every review started less than `REVIEW_TIMEOUT_SECONDS` ago (2 h at most, the value the lead set) as running and does not edit, merge or self-test in that worktree until that window has passed or the chain record has a completed or failed attempt.
 A checkout path containing an apostrophe cannot go inside the single quotes as is; on Linux/macOS write it as `'\''` or put the path in a variable and match "$checkout";
 on Windows double the apostrophe inside the PowerShell single-quoted string.
 The Windows match ignores case because Windows paths do; search for every spelling the launching shell may have used: `C:/x`, `C:\x` and Git Bash's `/c/x` on Windows, the `pwd -P` form of a symlinked checkout on Linux and macOS, and `/private/var` for `/var` on macOS.

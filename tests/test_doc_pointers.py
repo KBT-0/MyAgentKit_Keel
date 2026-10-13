@@ -87,6 +87,8 @@ class SectionPointerTests(unittest.TestCase):
         self.assertIn('rather than waiting without limit', budget_rule)
         self.assertIn('as a recorded exception (the usage note names the budget figure)', budget_rule)
         self.assertIn('starts the round only when two jobs fit', budget_rule)
+        self.assertIn('when the owner is away and at least one job fits the budget', budget_rule)
+        self.assertIn('When not even one job fits, the review round stays blocked and the lead reports the capacity figure to the owner; nothing heavy starts.', budget_rule)
         self.assertIn('"In parallel" means the reviewers', flat)
         self.assertIn('review rounds run per cluster of related branches', flat)
         self.assertIn('After their first round, merge branches touching the same files into one integration branch', flat)
@@ -99,9 +101,10 @@ class SectionPointerTests(unittest.TestCase):
                      "Linux `ps -eo pid,args | grep -F -- '<checkout>'`",
                      "macOS `ps -eww -o pid,args | grep -iF -- '<checkout>'`",
                      "It ignores its own rows: the `grep`, and the shell or PowerShell that runs the listing",
-                     'the gate and the self-test are found through the holder of `check.lock`',
-                     'chain record under `.myagentkit/usage/chains/`',
-                     '`.myagentkit/usage` as a second literal',
+                     'The command-line listing is only a shortcut for the jobs it can see',
+                     "the kit's own `check.sh` holds no checkout lock",
+                     'A pending chain record under `.myagentkit/usage/chains/` means a review MAY still run; nothing in the record names its process.',
+                     'After a cut-off, the lead treats every review started less than `REVIEW_TIMEOUT_SECONDS` ago (2 h at most, the value the lead set) as running and does not edit, merge or self-test in that worktree until that window has passed or the chain record has a completed or failed attempt.',
                      "Git Bash's `/c/x`", 'the `pwd -P` form of a symlinked checkout', '`/private/var` for `/var`',
                      "A checkout path containing an apostrophe cannot go inside the single quotes as is; on Linux/macOS write it as `'\\''` or put the path in a variable and match \"$checkout\"; on Windows double the apostrophe inside the PowerShell single-quoted string.",
                      'The Windows match ignores case because Windows paths do'):
@@ -109,6 +112,7 @@ class SectionPointerTests(unittest.TestCase):
         self.assertNotIn("grep -v -F 'grep -F'", gotchas)
         self.assertNotIn('every other row is a survivor', gotchas)
         self.assertNotIn('stop them with a reason', gotchas)
+        self.assertNotIn('its own process by grepping the listing for `.myagentkit/usage`', gotchas)
         running = ' '.join((ROOT / 'core/docs/REVIEW_RUNNING.md').read_text(encoding='utf-8').split())
         self.assertIn('Start the self-test and two reviewers together only when the memory budget permits', running)
         self.assertIn('memory budget', running)

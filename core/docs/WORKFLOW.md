@@ -724,8 +724,10 @@ Rules, binding for whoever routes workers:
    (waits for or closes its own finished jobs, never ending running work without a reason)
    and starts the round only when two jobs fit; the self-test and every other heavy job wait
    until a reviewer ends. If two never fit after that, the lead asks the owner; when the owner
-   is away it runs the two reviewers one after the other as a recorded exception (the usage
-   note names the budget figure) rather than waiting without limit. Read free
+   is away and at least one job fits the budget, it runs the two reviewers one after the other
+   as a recorded exception (the usage note names the budget figure) rather than waiting without limit.
+   When not even one job fits, the review round stays blocked and the lead reports the capacity
+   figure to the owner; nothing heavy starts. Read free
    memory with `Get-CimInstance Win32_OperatingSystem | Select FreePhysicalMemory` in
    PowerShell on Windows, `free -g` on Linux, `vm_stat` or `memory_pressure` on macOS. Measure
    a job's peak on your host; one measured example: a review or gate took 1–2 GB on native
