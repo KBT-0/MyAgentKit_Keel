@@ -24,7 +24,8 @@
 # a session that exists could not be read, or tmux could not say whether it exists
 # (`watch_workers: NAME: capture failed: ...` on stderr), or a committed result could not be
 # read (`... could not read the committed result ...`), or a report could not be written
-# (`... could not write its report ...`); that is an observation failure, never "nothing
+# (`... could not write its report ...`), or, on Windows, a state file is invalid or unreadable
+# (`watch_workers: NAME: state unreadable: ...`, the message names the file: delete it); that is an observation failure, never "nothing
 # waiting", and the run prints no result or context report. With several sessions, the GONE
 # and WAITING lines print first, then the result and context lines. Run once per spawn, the
 # watcher stopped watching at the first PROGRESS, QUESTIONS or CONTEXT report (see above).
@@ -38,13 +39,27 @@
 #   questions under "## Open questions for ..." is QUESTIONS with their text, first. Each
 #   committed version of the file is reported once.
 # - The `context` rule in waiting_patterns.txt finds the context figure (<used>/<window>) in
-#   the pane's status line, the last line with two or more ` │ ` separators; a figure anywhere
-#   else in the pane is output, not the status. Past --context-warn percent (default 50) it
+#   the pane's status line: the line right under the input box's bottom rule (a line of `─`
+#   only), which is the second or third line from the bottom (the mode line may follow), with
+#   two or more ` │ ` separators. A figure anywhere else in the pane, a quoted status line too,
+#   is output, not the status. Past --context-warn percent (default 50) it
 #   is CONTEXT, once per session. A status line without the figure, or none, is CONTEXT once too, and the figure is
 #   never guessed; --once skips that note, as spawn_worker.sh runs it before the status line
 #   is drawn.
 # The once-markers are user options of the tmux session, so they end with it. Every report
 # exits 0; its first line is `watch_workers: KIND: NAME, ...`.
+#
+# Native Windows: a worker is a Windows Terminal tab whose pane nothing can read. The
+# Notification and Stop hooks spawn_worker.sh gives it write one line to
+# .myagentkit/workers/NAME.state at the top of this checkout (or this folder outside git):
+# `waiting permission|question TIME ID` or `idle TIME ID`. A waiting line is WAITING, before the
+# result file is read; an idle line, when the result file says nothing new, is IDLE: the worker
+# stopped (a question in the tab, a usage limit, an error). Each event (the whole line, id
+# included) is reported once; the once-markers are NAME.watch-* files beside it, which
+# spawn_worker.sh removes. There is no GONE and no context figure there, and no tmux is
+# needed. An invalid state file is an observation failure (exit 3); an absent or empty one
+# means no signal yet. A session name is letters, digits, - and _, not starting with -
+# (spawn_worker.sh's rule): anything else is a usage error (exit 2).
 set -eu
 
 say() { printf '%s\n' "$1" | LC_ALL=C tr '\001-\011\013-\037\177' '?'; }
@@ -92,12 +107,23 @@ while [ $# -gt 0 ]; do
 done
 [ $# -ge 1 ] || { sed -n '3,10p' "$0"; exit 2; }
 [ "$interval" -ge 10 ] || die "--interval $interval is below the floor of 10 seconds"
-for n in "$@"; do plain "$n"; done
+for n in "$@"; do
+  plain "$n"
+  case $n in
+    ''|-*|*[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-]*)
+      die "refused the session name: use letters, digits, - and _, not starting with -" ;;
+  esac
+done
 # A name given twice is watched once: its second pass reported what the first had queued.
 seen=$nl
 for n in "$@"; do case $seen in *"$nl$n$nl"*) ;; *) seen=$seen$n$nl ;; esac; done
 set -f; IFS=$nl; set -- $seen; unset IFS; set +f
-command -v tmux >/dev/null || die "tmux is not installed"
+# Native Windows (Git for Windows' sh, MSYS2, Cygwin) has no tmux: a worker is a Windows Terminal
+# tab, and the hooks spawn_worker.sh gives it keep its state line in $wdir/NAME.state.
+case $(uname -s 2>/dev/null) in MINGW*|MSYS*|CYGWIN*) windows=1 ;; *) windows="" ;; esac
+if [ -n "$windows" ]; then
+  wdir=$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)/.myagentkit/workers
+else command -v tmux >/dev/null || die "tmux is not installed"; fi
 win=$(mktemp) || die "cannot make a temporary file"
 qs=$(mktemp) || { rm -f "$win"; die "cannot make a temporary file"; }
 body=$(mktemp) || { rm -f "$win" "$qs"; die "cannot make a temporary file"; }
@@ -112,10 +138,14 @@ cutb() {
   LC_ALL=C cut -b1-200 | LC_ALL=C sed -e "s/[$(printf '\300-\337')]\$//" \
     -e "s/[$(printf '\340-\357')][$c]\{0,1\}\$//" -e "s/[$(printf '\360-\367')][$c]\{0,2\}\$//"
 }
-# A once-marker: a user option of the tmux session. setmark only queues it: the queue is
-# stored after the run's reports are printed, and dropped with them by a run that exits 3.
-# mark reads only the stored option: a name is watched once per run, so its queue is never read.
-mark() { tmux show-options -qv -t "=$1:" "@kit_watch_$2" 2>/dev/null || true; }
+# A once-marker: a user option of the tmux session (on Windows the file $wdir/NAME.watch-KEY).
+# setmark only queues it: the queue is stored after the run's reports are printed, and dropped
+# with them by a run that exits 3. mark reads only the stored option: a name is watched once
+# per run, so its queue is never read.
+mark() {
+  if [ -n "$windows" ]; then cat -- "$wdir/$1.watch-$2" 2>/dev/null || true
+  else tmux show-options -qv -t "=$1:" "@kit_watch_$2" 2>/dev/null || true; fi
+}
 setmark() { pending="$pending$1	$2	$3$nl"; }
 
 # has NAME: 0 the session exists, 1 tmux says it or its server does not, 2 tmux could not
@@ -134,6 +164,7 @@ has() {
 # exists; tmux's error is in $err), or "WAITING KIND STATUS VERSION", or nothing; leaves the
 # pane's last 15 non-empty lines, control bytes removed, in $win.
 classify() {
+  [ -z "$windows" ] || return 0
   s=0; has "$1" || s=$?
   [ "$s" -ne 1 ] || { echo GONE; return 0; }
   [ "$s" -eq 0 ] || { printf '%s\n' "$why" >"$err"; echo FAILED; return 0; }
@@ -271,15 +302,49 @@ EOF
   say "watch_workers: $k: $1, $what (result file $f)" || return 2
 }
 
+# Native Windows: report NAME's state line when it starts with $2 (waiting or idle) and was not
+# reported yet. Return 1 when nothing is said, 2 when the report could not be written,
+# 3 when its state is unreadable or invalid.
+tab() {
+  state=$wdir/$1.state
+  [ -e "$state" ] || [ -L "$state" ] || return 1
+  reason=""
+  if [ ! -f "$state" ]; then reason="not a regular file"
+  elif ! line=$(cat -- "$state" 2>"$err"); then
+    [ -e "$state" ] || return 1  # removed by a re-spawn since the check: no signal yet
+    reason=$(cat "$err")
+  elif [ -z "$line" ]; then return 1  # an older hook truncates the file before it writes: no signal yet
+  elif ! printf '%s\n' "$line" | LC_ALL=C grep -Eq '^(waiting (permission|question)|idle) [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}( [0-9]+)?$' ||
+       [ "$(printf '%s\n' "$line" | wc -l)" -ne 1 ]; then reason="invalid state content"
+  fi
+  if [ -n "$reason" ]; then
+    say "watch_workers: $1: state unreadable: $reason ($state; delete it to clear)" >&2
+    failed=1; return 3
+  fi
+  case $line in "$2 "*) ;; *) return 1 ;; esac
+  [ "$(mark "$1" state)" != "$line" ] || return 1
+  if [ "$2" = waiting ]; then
+    case $line in "waiting question "*) what="a question" ;; *) what="a permission prompt" ;; esac
+    say "watch_workers: WAITING: $1, on $what (its state file: $line)" || return 2
+  else
+    say "watch_workers: IDLE: $1, its session stopped and waits for input, with no new result report (its state file: $line)" || return 2
+  fi
+  say "  look at it: its Windows Terminal tab, titled $1" || return 2
+  setmark "$1" state "$line"
+}
+
 # Report the context figure in NAME's status line ($win) when it is past the warning line,
 # or (not with --once) when there is none; once per session. Return 1 when nothing is said,
 # 2 when the report could not be written (and no marker is queued).
 context() {
   fig=$(CTX_RE=$ctx_re LC_ALL=C awk -v warn="$warn" '
     function num(s) { return substr(s, 1, length(s) - 1) * (s ~ /M$/ ? 1000000 : 1000) }
-    gsub(/ │ /, "&") >= 2 {
-      bar = 1; tok = ""; for (i = 1; i <= NF; i++) if ($i ~ ENVIRON["CTX_RE"]) tok = $i }
-    END { if (tok == "") { print (bar ? "unparsable" : "absent"); exit }
+    { l[NR] = $0 }
+    END { row = ""; tok = ""
+          for (i = NR - 1; i >= NR - 2 && i > 0; i--) if (l[i] ~ /^ *(─)+$/) { row = l[i + 1]; break }
+          bar = gsub(/ │ /, "&", row) >= 2
+          if (bar) { n = split(row, f, " "); for (i = 1; i <= n; i++) if (f[i] ~ ENVIRON["CTX_RE"]) tok = f[i] }
+          if (tok == "") { print (bar ? "unparsable" : "absent"); exit }
           split(tok, p, "/"); u = num(p[1]); w = num(p[2])
           if (w <= 0) { print "unparsable"; exit }
           printf "%s %d %s\n", (u * 100 > warn * w ? "over" : "under"), u * 100 / w, tok }
@@ -312,10 +377,16 @@ while :; do
       # A report that could not be written ends the run like a failed capture; w stays x
       # when the buffer cannot even be opened.
       w=x
-      { w=0; result "$n" || w=$?; [ "$w" -ne 1 ] || { w=0; context "$n" || w=$?; }; } >>"$out" || :
+      # On Windows: the state line's WAITING first, then the result, then its IDLE; no pane, so
+      # no context figure.
+      { w=1; [ -z "$windows" ] || { w=0; tab "$n" waiting || w=$?; }
+        [ "$w" -ne 1 ] || { w=0; result "$n" || w=$?; }
+        [ "$w" -ne 1 ] || { w=0; if [ -n "$windows" ]; then tab "$n" idle; else context "$n"; fi || w=$?; }
+      } >>"$out" || :
       case $w in
         0) found=1 ;;
         1) ;;
+        3) failed=1 ;;
         *) say "watch_workers: $n: could not write its report: the report buffer failed" >&2; failed=1 ;;
       esac
     fi
@@ -325,7 +396,8 @@ while :; do
   [ -z "$failed" ] || exit 3
   cat "$out" || { say "watch_workers: could not write its report to stdout" >&2; exit 3; }
   printf '%s' "$pending" | while IFS='	' read -r n k v; do
-    tmux set-option -t "=$n:" "@kit_watch_$k" "$v" >/dev/null 2>&1 || true
+    if [ -n "$windows" ]; then printf '%s\n' "$v" >"$wdir/$n.watch-$k" 2>/dev/null || true
+    else tmux set-option -t "=$n:" "@kit_watch_$k" "$v" >/dev/null 2>&1 || true; fi
   done
   [ -z "$found" ] || exit 0
   [ -z "$once" ] || exit 0

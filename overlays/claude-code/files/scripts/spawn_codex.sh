@@ -9,6 +9,7 @@
 # checkout or, with --worktree, in .claude/worktrees/NAME on the branch worktree-NAME, cut from
 # the commit this checkout is on now. Git metadata stays read-only; the lead commits.
 # The brief uses the spawn-time result path; codex_worker.py --wait reports its handoff.
+# The kit's BEHAVIOUR.md is not passed: Codex has no --append-system-prompt (spawn_worker.sh's).
 #
 # --resume answers a worker that stopped for a decision IN ITS OWN SESSION: the BRIEF_FILE then
 # holds the answer, and `codex resume` keeps everything the session read, where a fresh session
@@ -19,6 +20,10 @@
 # Pitfalls this script encodes, besides spawn_worker.sh's own (Git Bash by its full Windows path,
 # every `;` handed to wt.exe escaped, the tab's command in a script because wt.exe drops double
 # quotes, `exit 0` at the tab's end, values quoted with `q`, control bytes refused):
+#   - tmux receives only `sh PATH`, without quotes, for its default shell (fish included).
+#     Before worktree creation, the temporary script path is made absolute and checked for
+#     letters, digits, _, ., / and -. Set TMPDIR to an existing safe absolute directory
+#     and retry if refused; the template honours TMPDIR on macOS and Linux alike.
 #   - The spawning checkout records .myagentkit/workers/NAME.session outside the worker.
 #     A decision is published as QUESTION-NAME.md there. --result FILE chooses another result
 #     and FILE.question.md, both inside the worker. Session and question files are ignored.
@@ -43,7 +48,7 @@ ctl() {
     die "the $1 contains a control character (a newline, carriage return, tab, ESC or DEL); it is not printed"
 }
 
-[ $# -ge 2 ] || { sed -n '3,17p' "$0"; exit 2; }
+[ $# -ge 2 ] || { sed -n '3,18p' "$0"; exit 2; }
 name=$1; brief=$2; shift 2
 ctl "worker name" "$name"
 ctl "brief path" "$brief"
@@ -94,13 +99,49 @@ mkdir -p -- "${spawn_lock%/*}" || die "cannot create the worker records director
 took=""
 mkdir -- "$spawn_lock" 2>/dev/null || { [ -n "$resume" ] && rm -- "$spawn_lock/$name" 2>/dev/null && took=1; } ||
   die "spawn in progress or an unrecorded launch at $spawn_lock; retry after it ends. An unrecorded launch has its worker's name inside: answer that worker with spawn_codex.sh NAME ANSWER_FILE ... --resume SESSION_ID, which records it and takes the reservation over; once its tab or tmux session has ended, or its id is written to NAME.session, release it: rm -r -- $(q "$spawn_lock")"
-spawn_launched=""; spawn_recorded=""
-trap 'if [ -n "$spawn_recorded" ] || { [ -z "$spawn_launched" ] && [ -z "$took" ]; }; then rmdir -- "$spawn_lock"; else : > "$spawn_lock/$name"; printf "spawn_codex: unrecorded launch of %s; reservation kept at %s. Answer it with --resume SESSION_ID, which records it and takes the reservation over; once its tab or tmux session has ended, or its id is written to %s, release it: rm -r -- %s\n" "$name" "$spawn_lock" "${spawn_lock%/*}/$name.session" "$(q "$spawn_lock")" >&2; fi' 0
-trap 'exit 129' HUP
-trap 'exit 130' INT
-trap 'exit 143' TERM
+spawn_owner=$spawn_lock/.owner-$$
+mkdir -- "$spawn_owner" || die "cannot mark the spawn reservation owner"
+spawn_launched=""; spawn_recorded=""; run=""; launch_pending=""; cleaned=""
+cleanup() {
+  [ -z "$cleaned" ] || return 0
+  cleaned=1
+  trap - EXIT HUP INT TERM
+  # A signal can precede the client's return. Confirm the session before handing ownership over.
+  # The session can end between this check and handoff; its pane removes the script itself.
+  if [ -n "$launch_pending" ] && tmux has-session -t "=$name" 2>/dev/null; then
+    run=""; spawn_launched=1
+  fi
+  [ -z "$run" ] || rm -f -- "$run" || :
+  # Reservation cleanup must run even when unlinking the temporary script fails.
+  # A replaced reservation belongs to another spawner. The owner directory avoids rm failures.
+  [ -d "$spawn_owner" ] || return 0
+  rmdir -- "$spawn_owner" || return 0
+  if [ -n "$spawn_recorded" ] || { [ -z "$spawn_launched" ] && [ -z "$took" ]; }; then
+    rmdir -- "$spawn_lock" || :
+  else
+    : > "$spawn_lock/$name" || :
+    printf "spawn_codex: unrecorded launch of %s; reservation kept at %s. Answer it with --resume SESSION_ID, which records it and takes the reservation over; once its tab or tmux session has ended, or its id is written to %s, release it: rm -r -- %s\n" "$name" "$spawn_lock" "${spawn_lock%/*}/$name.session" "$(q "$spawn_lock")" >&2 || :
+  fi
+}
+trap 'cleanup' 0
+trap 'trap - 0; cleanup; exit 129' HUP
+trap 'trap - 0; cleanup; exit 130' INT
+trap 'trap - 0; cleanup; exit 143' TERM
 [ -n "$windows" ] || ! tmux has-session -t "=$name" 2>/dev/null ||
   die "tmux session '$name' still runs; a session is resumed or replaced only after it ended"
+
+# Reserve and validate the script before creating a worktree. An explicit template
+# honours TMPDIR on BSD and GNU; resolve relative paths before tmux changes directory.
+if [ -z "$windows" ]; then
+  run=$(mktemp "${TMPDIR:-/tmp}/kit-run.XXXXXX") || die "cannot write the session's script"
+  case "$run" in */*) run_dir=${run%/*}/ ;; *) run_dir=. ;; esac
+  run_dir=$(CDPATH= cd -P -- "$run_dir" && pwd -P && echo x)
+  run=${run_dir%"${nl}x"}/${run##*/}
+  case "$run" in *[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_./-]*)
+    rm -f -- "$run"
+    die "unsafe session script path: set TMPDIR to an absolute directory containing only letters, digits, _, ., / and -" ;;
+  esac
+fi
 if python3 -I -c '' </dev/null >/dev/null 2>&1; then kit_python=python3
 elif python -I -c '' </dev/null >/dev/null 2>&1; then kit_python=python
 else kit_python="py -3"; fi   # unquoted at every use
@@ -166,6 +207,9 @@ else
 fi
 instruction="Read $(q "$shown") and follow it. The brief carries its Route: quick|build|deep · Risk: low|medium|high · Checks: ... line; run the checks it names. Write your result to $(q "$cresult"). Leave all work uncommitted and ready for the lead; list the exact changed and added files in the result. The lead reviews the diff through the normal cross-review, then commits with the usual commit gate. Publish a finished result atomically: write a temporary file beside it, end with <!-- codex-worker: ready -->, then rename it to the result path with $kit_python $(q "$cworker") --publish TEMPORARY_FILE DESTINATION, which retries a rename Windows refuses while a poll reads the file. If a decision is needed, finish independent work and stop all jobs first, then write Kind: blocked and QUESTIONS in the result; publish the blocked result atomically using the same temporary-file, end-marker and rename protocol before publishing the question atomically to $(q "$cquestion") using that protocol too. End your turn immediately after publishing; the wrapper allows 10 seconds to flush before closing this worker. The lead answers by resuming this same session."
 # The instruction comes first, before any option, as spawn_worker.sh puts it.
+# A worker is a session of its own, never the lead's child (spawn_worker.sh): clear the lead's
+# Claude Code session markers, which hooks the worker starts would otherwise inherit.
+unmark="env -u CLAUDE_CODE_CHILD_SESSION -u CLAUDECODE -u CLAUDE_CODE_SESSION_ID -u CLAUDE_PID -u CLAUDE_CODE_MESSAGING_SOCKET -u CLAUDE_CODE_MESSAGING_TOKEN -u CLAUDE_CODE_SESSION_ATTENDED -u CLAUDE_CODE_ENTRYPOINT"
 cmd="codex${resume:+ resume $(q "$session")} $(q "$instruction") -m $(q "$model") -c $(q "model_reasoning_effort=$effort")"
 cmd="$cmd -s workspace-write -a never --no-daemon -C $(q "$cdir")"
 
@@ -244,7 +288,7 @@ if [ -n "$windows" ]; then
   tab=$(mktemp) || die "cannot write the tab's script"
   printf '%s\n' 'rm -f -- "$0"' "cd $(q "$dir") || exit 1" \
     'began=$(date +%s)' \
-    "KIT_WORKER_STARTED=$(q "$start") KIT_WORKER_STALE=$(q "$stale") KIT_WORKER_EXIT=$(q "$cexited") KIT_WORKER_RESUME=$(q "$resume") $kit_python $(q "$cworker") $(q "$cquestion") $(q "$cresult") -- $(q "$bash") -c $(q "exec $cmd")" \
+    "KIT_WORKER_STARTED=$(q "$start") KIT_WORKER_STALE=$(q "$stale") KIT_WORKER_EXIT=$(q "$cexited") KIT_WORKER_RESUME=$(q "$resume") $unmark $kit_python $(q "$cworker") $(q "$cquestion") $(q "$cresult") -- $(q "$bash") -c $(q "exec $cmd")" \
     's=$?; if [ "$s" -ne 0 ] && [ "$(( $(date +%s) - began ))" -lt 10 ]; then printf "codex ended at once (exit %s); press Enter to close\\n" "$s"; read -r ignored; fi' \
     'exit 0' > "$tab" || die "cannot write the tab's script: $tab"
   spawn_launched=1
@@ -253,9 +297,16 @@ if [ -n "$windows" ]; then
   where="in a Windows Terminal tab; watch it there"; view=tab
 else
   # `cd` first: tmux hands a new session the PWD of whichever client last created one.
-  spawn_launched=1
-  tmux new-session -d -s "$name" -c "$dir" -x 200 -y 50 "cd $(q "$dir") && export KIT_WORKER_STARTED=$(q "$start") KIT_WORKER_STALE=$(q "$stale") KIT_WORKER_EXIT=$(q "$exited") KIT_WORKER_RESUME=$(q "$resume") && exec $kit_python $(q "$cworker") $(q "$cquestion") $(q "$cresult") -- sh -c $(q "exec $cmd")" ||
-    { spawn_launched=""; die "tmux could not start '$name'"; }
+  # The reserved script removes itself; tmux receives two plain words for its default shell.
+  printf '%s\n' 'rm -f -- "$0"' "cd $(q "$dir") && exec $unmark KIT_WORKER_STARTED=$(q "$start") KIT_WORKER_STALE=$(q "$stale") KIT_WORKER_EXIT=$(q "$exited") KIT_WORKER_RESUME=$(q "$resume") $kit_python $(q "$cworker") $(q "$cquestion") $(q "$cresult") -- sh -c $(q "exec $cmd")" > "$run" ||
+    { rm -f -- "$run"; die "cannot write the session's script: $run"; }
+  # Keep ownership pending until tmux confirms the session, including in signal cleanup.
+  launch_pending=1
+  tmux new-session -d -s "$name" -c "$dir" -x 200 -y 50 "sh $run" ||
+    { launch_pending=""; die "tmux could not start '$name'"; }
+  tmux has-session -t "=$name" 2>/dev/null ||
+    { launch_pending=""; die "tmux could not start '$name'"; }
+  run="" launch_pending="" spawn_launched=1
   where="(tmux attach -t $name to watch)"; view="tmux session"
 fi
 

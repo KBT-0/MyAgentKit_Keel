@@ -36,7 +36,7 @@ repository.
 | `.claude/hooks/py.sh` | Starts each Python hook with the first of `python3`, `python`, `py -3` that runs: a `python3` that is missing or a Windows Store alias would turn the hook silently off |
 | `.claude/agents/diff-reviewer.md` | Read-only review subagent carrying THIS project's risky areas and `docs/REVIEW_GATE.md` |
 | `.claude/agents/worker.md` | Implementation worker with a one-hour prompt cache and a 150-turn cap, for tasks that run jobs longer than five minutes (`docs/WORKFLOW.md`, "Worker cost") |
-| `scripts/spawn_worker.sh` | Opens a SEPARATE worker session in tmux and hands it a brief file; the lead then subscribes for its idle notice instead of polling |
+| `scripts/spawn_worker.sh` | Opens a SEPARATE worker session in tmux and hands it a brief file; the lead then subscribes for its idle notice instead of polling. The session gets the kit's `BEHAVIOUR.md` with `--append-system-prompt-file` unless `MYAGENTKIT_NO_BEHAVIOUR=1`; the lead starts its own session the same way: `claude --append-system-prompt-file BEHAVIOUR.md` (`docs/WORKFLOW.md`, "How we work") |
 | `scripts/spawn_codex.sh` | Opens an interactive Codex worker in the lead's Windows Terminal window (`-w 0`) or tmux elsewhere, with workspace-write and approval never; reserves the spawning checkout through session recording in `.myagentkit/workers/spawn.lock`, records the session id in `.myagentkit/workers/NAME.session`, outside the worker, and resumes the same session with `--resume`. The worker leaves exact files uncommitted for the lead's cross-review and gated commit |
 | `scripts/codex_worker.py` | Keeps Codex interactive and closes its process tree only when it publishes a decision (`QUESTION-NAME.md`) or a new `Kind: completed` result; a progress, handoff or blocked result leaves it working. A resume removes the answered question once the resumed session publishes a new result or exits cleanly, never on elapsed time, so the close of a session that took its answer is not refused; a failed launch, or a CLI that fails without a new result, keeps it, and a new question stays. POSIX SIGTERM and SIGHUP clean up the worker group. On every way out it controls, a decision without a blocked result included, a startup that fails before it runs the worker too, it writes `.myagentkit/workers/NAME.exit`, and it holds `NAME.live` locked while it runs. The record is published with its PID inside and its lock held, so `--wait` reports a dropped lock as EXITED, also when the wrapper itself is killed or its tab closed, and an empty or malformed record never reads as EXITED; spawn_codex.sh passes its launch-time result identity to the printed `--wait` command with `--stale FILE_ID`, and on POSIX the supervisor and the waiter hold that result open, so a new result cannot be given its inode number. After PROGRESS or HANDOFF, `--wait` prints its exact follow-up command, with the reported result's content hash as `--stale`: other contents count as new, by rename or by in-place rewrite, and a byte-identical republication does not. A poll opens a result or a new question only after its id, size or time changed, yet on Windows even its stat holds the file for a moment, which refuses a rename over it (measured: 392 of 3000 renames under two stat loops); the worker therefore publishes with `codex_worker.py --publish TEMPORARY_FILE DESTINATION`, which retries a refused rename for about two seconds (0 of 3000 failed). A poller waits through 50 consecutive Windows refusals of one file, about five seconds, then fails instead of waiting forever |
 | `scripts/close_worker.sh` | Closes a finished worker: ends its tmux session and removes its worktree through the clean-up audit, never its branch. On native Windows it refuses while a Codex session runs in the worker's folder. It refuses while a Codex worker's decision file waits for its answer, and moves an uncommitted `RESULT-NAME.md` to `.myagentkit/workers/NAME.result.md` (`NAME.result-2.md` and on beside an earlier report) before the audit, and back when the audit keeps the worktree; after a removal it deletes `NAME.session`, `NAME.exit`, `NAME.live` and `NAME.question`, and a kept worktree keeps them. An unfinished move leaves `.myagentkit/workers/NAME.report-move`, which blocks later closes; recover the original report to the recorded source or archive, then remove that marker and close again |
@@ -60,8 +60,9 @@ says about tmux sessions, `--batch`, `show_workers.sh` and `watch_workers.sh` do
 there. `spawn_worker.sh` opens the worker as a tab of the window the lead runs in (`wt.exe -w
 0`, or the launcher `KIT_WT` names) with the brief's instruction as its first prompt, and
 refuses a name a running Claude Code session already has. The tab is the only view of it:
-watch the tab and wait for the result file the brief names (the separate session does not
-answer `notify_when_idle`). `close_worker.sh NAME` ends it: it finds the `claude.exe` whose
+subscribe once with `notify_when_idle` only when the spawn prints "is a peer session".
+If it prints WARNING, watch the tab and result file; no idle notice arrives.
+`close_worker.sh NAME` ends it: it finds the `claude.exe` whose
 command line holds `-n NAME`, stops it with `taskkill /T /F` (the tab closes, because its
 command ends with `exit 0`), then removes the worktree through the same audit as on POSIX,
 which reads each process's working directory on Windows itself. A session that survives, or
@@ -151,8 +152,9 @@ exits 0 with its kind on the first line (`watch_workers: KIND: NAME, ...`):
   version of the file is reported once.
 - **The context figure** in the pane's status line, `<used>/<window>` with k or M (`Opus 5.5
   58k/1.0M high` in the real capture; the `context` rule of `waiting_patterns.txt`). The
-  status line is the last line with two or more ` │ ` separators; a figure in the worker's
-  output is not read. Past
+  status line is the line right under the input box's bottom rule, second or third from
+  the bottom (the mode line may follow), with two or more ` │ ` separators; a figure in the
+  worker's output, a quoted status line too, is not read. Past
   `--context-warn` percent (50) it is **CONTEXT** with the figure, once per session. A status
   line without the figure, or none at all, is CONTEXT once too, and the figure is never
   guessed; `--once` skips that note, because `spawn_worker.sh` runs it before the status line
@@ -160,7 +162,9 @@ exits 0 with its kind on the first line (`watch_workers: KIND: NAME, ...`):
   status line does not show it gets the note once and no warning.
 
 The once-markers are user options of the tmux session (`@kit_watch_result`,
-`@kit_watch_context`), so they end with the session. What the lead does with each report is
+`@kit_watch_context`), so they end with the session. On native Windows, with no tmux, the
+watcher reads the state line the worker's hooks write instead of a pane (`docs/WORKFLOW.md`,
+"Worker cost"). What the lead does with each report is
 in `docs/WORKFLOW.md`, "The lead's steps when a branch is ready".
 
 ## Placeholders this overlay brings
@@ -278,6 +282,13 @@ would do, the removal's dry run included, and changes nothing. A project set up 
 script copies `overlays/claude-code/files/scripts/close_worker.sh` into `scripts/` by hand
 (`chmod +x`, `git add --chmod=+x`), with the clean-up scripts it calls; a sync keeps it
 updated from then on.
+
+Both spawn scripts use a quote-free `sh PATH` command for tmux's default shell, including fish.
+Both spawn scripts resolve the temporary script path before tmux changes to the worker's directory.
+They refuse paths containing anything except letters, digits, underscore, dot, slash and dash.
+The script is created and checked before any worktree is added, so a refused path leaves no
+worktree or branch. If refused, set `TMPDIR` to an existing absolute directory using those
+characters and retry; spaces are refused too. This remedy works on macOS and Linux alike.
 
 The worker scripts (`spawn_worker.sh`, `spawn_codex.sh`, `codex_worker.py`, `show_workers.sh`, `watch_workers.sh`,
 `waiting_patterns.txt`, `close_worker.sh`) carry the KIT-OWNED header, so a sync updates them

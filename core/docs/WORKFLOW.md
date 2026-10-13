@@ -20,6 +20,16 @@ a risky change ships. Agents propose; {{OWNER_NAME}} decides.
 
 **If the task brief does not state a role, you are the WORKER.**
 
+Every Claude-based role works with the same short appendix, `BEHAVIOUR.md`. It is a kit-owned
+file that a sync refreshes; the project changes it only through the kit. `scripts/spawn_worker.sh`
+passes it to every worker with `--append-system-prompt-file`. `scripts/claude_bridge.py` appends it
+to the reviewer's prompt. The lead starts its own session with it:
+`claude --append-system-prompt-file BEHAVIOUR.md`. A Codex session gets no appendix, because Codex
+has no such flag. `MYAGENTKIT_NO_BEHAVIOUR=1` turns the appendix off everywhere, for an A/B run.
+Every review's usage record notes `behaviour: on` or `off`, and `scripts/usage_summary.py` totals
+the rounds and rejects of each side. A resumed session keeps the system prompt it started with,
+so an A/B counts only sessions started fresh on its side.
+
 ## Task lifecycle (every task)
 
 1. **Read:** `AGENTS.md` → `docs/PHASES.md` → `docs/STATE.md` → `docs/ARCHITECTURE.md` →
@@ -747,7 +757,15 @@ tokens including the lead's, review rounds, and waits on an exclusive resource. 
 will be thin.
 
 `scripts/spawn_worker.sh` (Claude Code overlay) opens the session in tmux with a brief file.
-The lead subscribes once for its idle notice and does not message it: every message to an
+Both spawn scripts hand tmux a quote-free `sh PATH` command, with an absolute temporary script path.
+They refuse paths containing anything except letters, digits, underscore, dot, slash and dash.
+The script is created and checked before any worktree is added, so a refused path leaves no
+worktree or branch. If refused, set `TMPDIR` to an existing absolute directory using those
+characters and retry; spaces are refused too. This remedy works on macOS and Linux alike.
+The lead subscribes once with SendMessage `notify_when_idle`; on native Windows (a Windows
+Terminal tab) only when the spawn prints "is a peer session", and after a WARNING it watches the
+tab and the result file instead. A tmux worker always registers.
+The lead does not message an idle session: every message to an
 idle session is a full-context turn. The idle notice also fires on every park on a
 background job, and the session does not end with its task. A committed result file of
 `Kind: completed` is therefore the end signal; a file of another kind reports a worker still
@@ -765,8 +783,19 @@ reason the lead never ends a worker's `claude` process by hand (Task Manager, `S
 too (on Windows: Resource Monitor, CPU tab, Associated Handles, search for `check.lock`),
 before any gate runs in that worktree. On native Windows a worker in a Windows Terminal tab
 may not be registered as a peer session; `spawn_worker.sh` then says so, and no idle notice
-comes when it stops on a question, a usage limit or an error. The lead then looks at its tab
-after every wait and after every usage-limit reset. What `close_worker.sh` does NOT see, so
+comes when it stops on a question, a usage limit or an error. Nothing can read the tab's
+pane either, so there `spawn_worker.sh` adds a Notification and a Stop hook to the worker's
+`--settings` (the owner's settings and hooks are kept, merged into
+`.myagentkit/workers/NAME.settings.json`); they write its state line to
+`.myagentkit/workers/NAME.state`: `waiting permission|question TIME ID` when it asks for a
+permission, an approval or an answer, `idle TIME ID` when it stops (ID tells two events of
+the same second apart). `scripts/watch_workers.sh --result NAME=PATH NAME`, run from the same
+checkout, reads that file in place of a pane: WAITING, then the result file as on tmux, then
+IDLE (it stopped with no new result), each event once. A worker name is letters, digits, `-`
+and `_`, not starting with `-`; both scripts refuse any other. A state file the watcher cannot
+read or understand is exit 3 (it names the file: delete it); an absent or empty one is no
+signal yet. The folder-trust dialog writes no state line, so the folder must be trusted
+already. The lead still looks at the tab after every usage-limit reset. What `close_worker.sh` does NOT see, so
 the lead closes only a worker whose result says it is done: a gate or a commit that starts
 in the instant between its last check and the kill; a commit waiting in a project's own
 pre-commit hook before the gate takes its lock, or in an editor; and a worker whose checkout

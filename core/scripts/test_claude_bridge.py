@@ -21,13 +21,13 @@ import agent_usage
 ROOT = Path(__file__).resolve().parent
 INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'MYAGENTKIT_TASK_ID', 'MYAGENTKIT_REVIEW_CHAIN_ID',
                       'MYAGENTKIT_REVIEW_ATTEMPT', 'MYAGENTKIT_REVIEW_FALLBACK_FROM',
-                      'MYAGENTKIT_REQUESTER', 'CLAUDE_REVIEW_DOCS')
+                      'MYAGENTKIT_REQUESTER', 'CLAUDE_REVIEW_DOCS', 'MYAGENTKIT_NO_BEHAVIOUR')
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 147, 'test_agent_usage': 30, 'test_codex_quota': 5}
+SUITE_MINIMUMS = {'test_claude_bridge': 148, 'test_agent_usage': 30, 'test_codex_quota': 5}
 # These are executed cases, excluding only the explicitly declared POSIX exclusions.
-WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 124, 'test_agent_usage': 26, 'test_codex_quota': 4}
+WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 125, 'test_agent_usage': 26, 'test_codex_quota': 4}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -3839,6 +3839,28 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         self.assertEqual(code, 2, refused)
         self.assertIn('400000 bytes', refused['error'])
         self.assertIn('fresh MYAGENTKIT_TASK_ID', refused['error'])
+
+    def test_the_behaviour_appendix_follows_the_fixed_prompt_and_the_record_says_on_or_off(self):
+        # Issue #74: the kit's BEHAVIOUR.md (core/BEHAVIOUR.md in the kit itself) reaches the
+        # reviewer after its fixed rules; MYAGENTKIT_NO_BEHAVIOUR=1 leaves it out, and the usage
+        # record names the side for usage_summary.py's A/B.
+        log = self.root / 'prompt.txt'
+        (self.repo / 'core').mkdir()
+        (self.repo / 'core/BEHAVIOUR.md').write_text('Lead with the answer, synthetic.\n')
+        # Committed, so the text reaches the prompt only as the appendix, never through the diff.
+        self.commit_fixture('behaviour')
+        (self.repo / 'file.py').write_text('changed again\n')
+        for env, side in (({}, 'on'), ({'MYAGENTKIT_NO_BEHAVIOUR': '1'}, 'off')):
+            with self.subTest(side=side):
+                code, result = self.run_bridge(env_extra=dict(env, PROMPT_LOG=str(log)))
+                self.assertEqual(code, 0, result)
+                prompt = log.read_text()
+                if side == 'on':
+                    self.assertIn('is a question.\nLead with the answer, synthetic.\n', prompt)
+                else:
+                    self.assertNotIn('Lead with the answer', prompt)
+                usage = json.loads(Path(result['usage_record']).read_text())
+                self.assertEqual(usage['task']['behaviour'], side)
 
     def test_failed_rounds_are_not_carried_and_outside_evidence_is_refused(self):
         log = self.root / 'prompt.txt'

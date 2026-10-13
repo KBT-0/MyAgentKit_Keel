@@ -1,18 +1,23 @@
 """spawn_worker.sh must hand every value to the worker intact, deliver the brief by path, and
 build its worktree from the lead's current commit.
 
-No live `claude` and no tmux server: both are stubs on PATH. The tmux stub runs the session
-command with `sh -c`, the way tmux does, so a value that escapes its quoting runs here too.
+No live `claude` and no tmux server: both are stubs on PATH. The tmux stub accepts only
+`sh SCRIPT` (two plain words, so tmux's fish default shell can parse it) and passes that
+command to `sh -c` in the start directory, so unquoted path expansions run here too.
 No real terminal either: the launcher (KIT_WT), `osascript` and `uname` are stubs, and the
 environment says WSL, so showing a session goes to the launcher stub, which marks it attached.
 """
 import json
+import io
 import os
 from pathlib import Path
 import subprocess
+import shutil
+from contextlib import contextmanager
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / 'overlays/claude-code/files/scripts/spawn_worker.sh'
@@ -47,9 +52,20 @@ if cmd == 'list-clients':
         print('/dev/pts/9: w [120x30 xterm-256color] (attached,UTF-8)')
     sys.exit(0)
 if cmd == 'new-session':
+    # tmux's default shell may be fish: it must only see two plain words, `sh SCRIPT`.
+    words = args[-1].split(' ')
+    assert len(words) == 2 and words[0] == 'sh' and not set("'\";&|") & set(words[1]), args[-1]
+    # The script removes itself when run: read it first, through sh (a Git Bash path).
+    text = subprocess.run(['sh', '-c', 'cat "$1"', 'sh', words[1]], capture_output=True, text=True).stdout
+    with open(os.path.join(state, 'tmux-script'), 'w') as g:
+        g.write(text)
     with open(started, 'a') as f:
         f.write(args[args.index('-s') + 1] + '\n')
-    sys.exit(subprocess.run(['sh', '-c', args[-1]]).returncode)
+    directory = args[args.index('-c') + 1]
+    if os.name == 'nt':
+        directory = subprocess.run(['cygpath', '-m', directory], capture_output=True,
+                                   text=True, check=True).stdout.rstrip('\n')
+    sys.exit(subprocess.run(['sh', '-c', args[-1]], cwd=directory).returncode)
 if cmd == 'capture-pane':
     if 'SPAWN_PANE' in os.environ:
         sys.stdout.write(read(os.environ['SPAWN_PANE']))
@@ -82,9 +98,16 @@ elif cmd == 'send-keys':
 CLAUDE = r'''#!/usr/bin/env python3
 import json, os, sys
 with open(os.path.join(os.environ['SPAWN_STATE'], 'claude.json'), 'w') as f:
-    json.dump({'argv': sys.argv[1:], 'cwd': os.getcwd()}, f)
+    json.dump({'argv': sys.argv[1:], 'cwd': os.getcwd(), 'env': sorted(os.environ)}, f)
 '''
 
+
+# The lead's Claude Code session markers: a claude that sees CLAUDE_CODE_CHILD_SESSION never
+# registers as a peer. CLAUDE_CODE_EXECPATH names the binary and is kept.
+MARKERS = {'CLAUDE_CODE_CHILD_SESSION', 'CLAUDECODE', 'CLAUDE_CODE_SESSION_ID', 'CLAUDE_PID',
+           'CLAUDE_CODE_MESSAGING_SOCKET', 'CLAUDE_CODE_MESSAGING_TOKEN', 'CLAUDE_CODE_SESSION_ATTENDED',
+           'CLAUDE_CODE_ENTRYPOINT'}
+LEAD_ENV = dict.fromkeys(MARKERS | {'CLAUDE_CODE_EXECPATH'}, '1')
 
 # The terminal launcher, named by KIT_WT and never *.exe: under WSL any file of that name is
 # handed to Windows. It logs what it was asked to open; SPAWN_WT=fail is WSL interop down.
@@ -143,14 +166,59 @@ def shq(value):
     return "'" + value.replace("'", "'\\''") + "'"
 
 
+@contextmanager
+def safe_tmux_scratch(checkout=ROOT):
+    """Use physical allowlisted scratch paths, independently of checkout spelling."""
+    allowed = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_./-'
+    def safe(folder):
+        return all(c in allowed for c in SpawnWorkerTests.physical(Path(folder) / 'run.sh'))
+    folder = tempfile.mkdtemp(prefix='kit-tmux-')
+    if not safe(folder):
+        shutil.rmtree(folder)
+        folder = None
+        for base in (checkout,):
+            if not safe(base):
+                continue
+            base.mkdir(parents=True, exist_ok=True)
+            candidate = tempfile.mkdtemp(prefix='kit-tmux-', dir=base)
+            if safe(candidate):
+                folder = candidate
+                break
+            shutil.rmtree(candidate)
+        if folder is None:
+            raise AssertionError('Cannot allocate tmux fixture: system temp and scratch fallbacks are outside the path allowlist')
+    try:
+        yield folder
+    finally:
+        shutil.rmtree(folder)
+
+# The stub accepts a launch, signals its parent, and leaves consumption to the test.
+ACCEPT_THEN_TERM = '#!/bin/sh\nif [ "$1" = has-session ]; then [ -f "$SPAWN_STATE/accepted" ]; exit $?; fi\n[ "$1" = new-session ] || exit 1\nfor arg do command=$arg; done\nprintf "%s\\n" "$command" > "$SPAWN_STATE/accepted"\nkill -TERM "$PPID"\n/bin/sleep .1\nexit 0\n'
+# Interrupt after mktemp, during validation, before any launch has been accepted.
+PRELAUNCH_TERM = '#!/bin/sh\nkill -TERM "$(cat "$SPAWN_STATE/launcher.pid")"\n/bin/sleep .1\nexit 1\n'
+FAIL_THEN_INT = '#!/bin/sh\n[ "$1" = new-session ] || exit 1\nkill -INT "$(cat "$SPAWN_STATE/launcher.pid")"\nkill -INT "$$"\nexit 1\n'
+
+
+def run_with_launcher_pid(shell, script, args, **kwargs):
+    # $$ is the launcher's shell pid even when the signaller runs in a command substitution.
+    return subprocess.run([shell, '-c', 'printf "%s\\n" "$$" > "$SPAWN_STATE/launcher.pid"; . "$0"',
+                           str(script).replace('\\', '/'), *args], **kwargs)
+
+
 WINDOWS = os.name == 'nt'
 # The cases that run on native Windows (issue #56). Every other case drives the tmux path,
 # which native Windows never takes, through Python stubs whose `sh -c` command line Git for
 # Windows parses again (an apostrophe is a quote there): there each prints NOT RUN.
 ON_WINDOWS = {'test_a_missing_or_failing_watcher_stops_the_spawn', 'test_a_worker_without_its_model_or_effort_is_refused',
+              'test_term_after_tmux_accepts_preserves_the_panes_script',
+              'test_int_before_tmux_creates_session_removes_script',
+              'test_two_signals_do_not_repeat_cleanup',
+              'test_unsafe_names_are_refused_without_changing_worker_files',
               'test_missing_or_unreadable_brief_is_refused_before_any_session',
               'test_no_error_message_echoes_a_control_character',
-              'test_on_native_windows_the_worker_opens_as_a_windows_terminal_tab'}
+              'test_on_native_windows_the_worker_opens_as_a_windows_terminal_tab',
+              'test_on_native_windows_the_worker_gets_state_hooks_and_keeps_its_own',
+              'test_the_behaviour_appendix_reaches_the_worker_unless_turned_off'}
 
 
 def tmux_path_cases(cls):
@@ -209,7 +277,7 @@ class SpawnWorkerTests(unittest.TestCase):
         # Never the host's terminal: the WSL name is the test's own, so wt.exe is the stub.
         env = {k: v for k, v in os.environ.items() if k not in ('TERM_PROGRAM', 'TMUX', 'TMUX_PANE')}
         return dict(env, PATH=f'{self.bin}{os.pathsep}{os.environ["PATH"]}', SPAWN_STATE=str(self.state),
-                    WSL_DISTRO_NAME='Test-1', KIT_WT=str(self.bin / 'wt-stub'))
+                    WSL_DISTRO_NAME='Test-1', KIT_WT=str(self.bin / 'wt-stub'), **LEAD_ENV)
 
     def launched(self):
         path = self.state / 'claude.json'
@@ -219,11 +287,135 @@ class SpawnWorkerTests(unittest.TestCase):
         path = self.state / 'tmux.log'
         return path.read_text() if path.exists() else ''
 
+    def test_term_after_tmux_accepts_preserves_the_panes_script(self):
+        (self.bin / 'tmux').write_text(ACCEPT_THEN_TERM, newline='\n')
+        tmpdir = self.tmp / 'session-temp'
+        tmpdir.mkdir()
+        result = self.spawn('accepted', str(self.brief), TMPDIR=str(tmpdir))
+        self.assertEqual(len(list(tmpdir.iterdir())), 1, 'parent deleted the accepted script')
+        self.assertEqual(result.returncode, 143, result.stdout + result.stderr)
+        pane = subprocess.run(['sh', '-c', (self.state / 'accepted').read_text()],
+                              cwd=self.cwd, env=self.base_env(), capture_output=True, text=True, timeout=20)
+        self.assertEqual(pane.returncode, 0, pane.stdout + pane.stderr)
+        self.assertIsNotNone(self.launched(), 'the delayed pane could not start')
+        self.assertEqual(list(tmpdir.iterdir()), [])
+
+    def test_dash_term_before_launch_removes_the_reserved_script(self):
+        # Keep an extra parent between git's signaller and the command-substitution shell.
+        (self.bin / 'git').write_text('#!/bin/sh\nsh -c ' + shq(PRELAUNCH_TERM) + '\nexit 1\n', newline='\n')
+        (self.bin / 'git').chmod(0o755)
+        tmpdir = self.tmp / 'session-temp'
+        tmpdir.mkdir()
+        result = run_with_launcher_pid('dash', SCRIPT, ['interrupted', str(self.brief),
+                                 '--model', 'm', '--effort', 'high', '--worktree'],
+                                cwd=self.cwd, env=dict(self.base_env(), TMPDIR=str(tmpdir)),
+                                capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 143, result.stdout + result.stderr)
+        self.assertEqual(list(tmpdir.iterdir()), [])
+        self.assertIsNone(self.launched())
+
+    def test_int_before_tmux_creates_session_removes_script(self):
+        (self.bin / 'tmux').write_text(FAIL_THEN_INT, newline='\n')
+        tmpdir = self.tmp / 'session-temp'
+        tmpdir.mkdir()
+        result = run_with_launcher_pid('sh', SCRIPT, ['interrupted', str(self.brief),
+                                      '--model', 'm', '--effort', 'high'], cwd=self.cwd,
+                                      env=dict(self.base_env(), TMPDIR=str(tmpdir)),
+                                      capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 130, result.stdout + result.stderr)
+        self.assertEqual(list(tmpdir.iterdir()), [])
+        self.assertIsNone(self.launched())
+
+    def test_two_signals_do_not_repeat_cleanup(self):
+        (self.bin / 'git').write_text(PRELAUNCH_TERM, newline='\n')
+        (self.bin / 'git').chmod(0o755)
+        (self.bin / 'rm').write_text('''#!/bin/sh
+echo unlink >> "$SPAWN_STATE/cleanup.log"
+/bin/rm "$@"
+if [ "$(wc -l < "$SPAWN_STATE/cleanup.log")" -eq 1 ]; then
+  kill -INT "$(cat "$SPAWN_STATE/launcher.pid")"
+  kill -TERM "$(cat "$SPAWN_STATE/launcher.pid")"
+fi
+exit 0
+''', newline='\n')
+        (self.bin / 'rm').chmod(0o755)
+        tmpdir = self.tmp / 'session-temp'
+        tmpdir.mkdir()
+        result = run_with_launcher_pid('sh', SCRIPT, ['interrupted', str(self.brief),
+                                      '--model', 'm', '--effort', 'high', '--worktree'], cwd=self.cwd,
+                                      env=dict(self.base_env(), TMPDIR=str(tmpdir)),
+                                      capture_output=True, text=True, timeout=20)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual((self.state / 'cleanup.log').read_text().splitlines(), ['unlink'])
+        self.assertEqual(list(tmpdir.iterdir()), [])
+
+    def test_unsafe_tmpdir_is_refused_before_tmux_can_expand_it(self):
+        for folder in ('temp$(touch INJECTED)', 'temp`touch INJECTED`', 'temp$REVIEW_SEGMENT'):
+            with self.subTest(folder=folder):
+                tmpdir = self.tmp / folder
+                tmpdir.mkdir()
+                result = self.spawn('unsafe-temp', str(self.brief), TMPDIR=str(tmpdir))
+                self.assertFalse((self.cwd / 'INJECTED').exists(), 'TMPDIR ran as shell code')
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn('TMPDIR', result.stderr)
+                self.assertNotIn("'new-session'", self.tmux_log())
+                self.assertIsNone(self.launched())
+                self.assertEqual(list(tmpdir.iterdir()), [], 'the refused script was left behind')
+
+    def test_tmpdir_with_a_space_is_refused_by_name(self):
+        tmpdir = self.tmp / 'temp space'
+        tmpdir.mkdir()
+        result = self.spawn('spaced-temp', str(self.brief), TMPDIR=str(tmpdir))
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('TMPDIR', result.stderr)
+        self.assertNotIn("'new-session'", self.tmux_log())
+        self.assertIsNone(self.launched())
+        self.assertEqual(list(tmpdir.iterdir()), [])
+
+    def test_refused_tmpdir_with_worktree_leaves_no_worktree_or_branch(self):
+        subprocess.run(['git', 'init', '-q'], cwd=self.cwd, check=True, capture_output=True)
+        subprocess.run(['git', '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q',
+                        '--allow-empty', '-m', 'base'], cwd=self.cwd, check=True, capture_output=True)
+        tmpdir = self.tmp / 'refused temp'
+        tmpdir.mkdir()
+        result = self.spawn('refused-temp', str(self.brief), '--worktree', TMPDIR=str(tmpdir))
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('TMPDIR', result.stderr)
+        self.assertFalse((self.cwd / '.claude/worktrees/refused-temp').exists())
+        trees = subprocess.run(['git', 'worktree', 'list', '--porcelain'], cwd=self.cwd,
+                               capture_output=True, text=True, check=True).stdout
+        self.assertNotIn('refused-temp', trees)
+        branches = subprocess.run(['git', 'branch', '--list', 'worktree-refused-temp'], cwd=self.cwd,
+                                  capture_output=True, text=True, check=True).stdout
+        self.assertEqual(branches, '')
+        self.assertEqual(list(tmpdir.iterdir()), [])
+
+    def test_later_validation_failure_removes_the_reserved_session_script(self):
+        tmpdir = self.tmp / 'session-temp'
+        tmpdir.mkdir()
+        result = self.spawn('late-failure', str(self.brief), '--settings', 'absent.json', '--worktree', TMPDIR=str(tmpdir))
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('--settings is neither', result.stderr)
+        self.assertEqual(list(tmpdir.iterdir()), [], 'the reserved script was left behind')
+
+    def test_relative_tmpdir_launches_in_a_worktree_with_an_absolute_script_path(self):
+        subprocess.run(['git', 'init', '-q'], cwd=self.cwd, check=True, capture_output=True)
+        subprocess.run(['git', '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q',
+                        '--allow-empty', '-m', 'base'], cwd=self.cwd, check=True, capture_output=True)
+        tmpdir = self.cwd.parent / 'session-temp'
+        tmpdir.mkdir()
+        result = self.spawn('relative-temp', str(self.brief), '--worktree', TMPDIR='../session-temp')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(Path(self.launched()['cwd']).resolve(),
+                         (self.cwd / '.claude/worktrees/relative-temp').resolve())
+        self.assertIn('sh ' + str(tmpdir.resolve()) + '/', self.tmux_log())
+        self.assertEqual(list(tmpdir.iterdir()), [], 'the launched script did not remove itself')
+
     def test_values_with_apostrophes_arrive_intact_and_run_nothing(self):
         marker = self.tmp / 'injected'
         # Each value holds an even number of apostrophes, so under unescaped quoting every
         # $(...) lands outside quotes and runs; escaped, each arrives as written.
-        name = "o'brien's"
+        name = "obrien"
         settings = json.dumps({'note': f"'$(touch {marker})'"})
         model, effort = "m'x'", f"high'$(touch {marker})'"
         tools = "Bash(echo 'a b'),Read"
@@ -246,6 +438,30 @@ class SpawnWorkerTests(unittest.TestCase):
                 self.assertIn('spawn_worker: %s is required' % missing, result.stderr)
                 self.assertIsNone(self.launched(), 'a worker started without its model or effort')
                 self.assertEqual(self.tmux_log(), '')
+
+    def test_unsafe_names_are_refused_without_changing_worker_files(self):
+        (self.bin / 'uname').write_text('#!/bin/sh\necho MINGW64_NT-10.0\n')
+        (self.bin / 'ps-empty').write_text('#!/bin/sh\nexit 0\n')
+        (self.bin / 'ps-empty').chmod(0o755)
+        (self.bin / 'wt-refuse').write_text('#!/bin/sh\nexit 99\n')
+        (self.bin / 'wt-refuse').chmod(0o755)
+        workers = self.cwd / '.myagentkit/workers'
+        workers.mkdir(parents=True)
+        for path in (workers / 'w1.state', workers / 'w1.watch-state',
+                     workers.parent / 'victim.settings.json'):
+            path.write_bytes(b'keep this\n')
+        def snapshot():
+            return {str(p.relative_to(workers.parent)): p.read_bytes() if p.is_file() else None
+                    for p in workers.parent.rglob('*')}
+        before = snapshot()
+        for name in ('../victim', r'..\victim', 'a/b', "o'brien", '-bad', ''):
+            with self.subTest(name=name):
+                result = self.spawn(name, str(self.brief), KIT_PS=str(self.bin / 'ps-empty'),
+                                    KIT_WT=str(self.bin / 'wt-refuse'))
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('refused the worker name', result.stderr)
+                self.assertEqual(snapshot(), before)
+                self.assertIsNone(self.launched())
 
     def test_brief_is_delivered_by_path_as_one_typed_instruction(self):
         result = self.spawn('w1', str(self.brief))
@@ -302,10 +518,17 @@ class SpawnWorkerTests(unittest.TestCase):
         # The brief by Windows' spelling of its path, which the worker's tools know.
         shown = (subprocess.run(['cygpath', '-m', self.physical(brief)], capture_output=True, text=True,
                                 check=True).stdout.rstrip('\n') if WINDOWS else 'C:' + self.physical(brief))
-        self.assertEqual(launched['argv'], [INSTRUCTION % shq(shown), '-n', 'w1', '--model', 'm', '--effort',
-                                            'high', '--settings', settings, '--allowedTools', tools])
+        # --settings is the owner's settings with the worker's state hooks added (the next case).
+        argv = launched['argv']
+        merged = json.loads(Path(self.windows_path(argv[8])).read_text())
+        self.assertEqual(merged['permissions'], {'defaultMode': 'auto'})
+        self.assertEqual(argv[:8] + argv[9:], [INSTRUCTION % shq(shown), '-n', 'w1', '--model', 'm', '--effort',
+                                               'high', '--settings', '--allowedTools', tools])
         self.assertEqual(Path(launched['cwd']).resolve(), self.cwd.resolve())
         self.assertEqual(self.tmux_log(), '')
+        # A worker is no child of the lead: the lead's session markers never reach it.
+        self.assertFalse(MARKERS & set(launched['env']), launched['env'])
+        self.assertIn('CLAUDE_CODE_EXECPATH', launched['env'])
         self.assertFalse((self.state / 'wt.log').exists(), 'the tab was shown a second time')
         # Registered (sessions/9.json): the lead is told to subscribe, and no warning.
         (self.state / 'claude.json').unlink()
@@ -332,8 +555,91 @@ class SpawnWorkerTests(unittest.TestCase):
         self.assertNotIn('started with', result.stdout)
         # The tab measures claude's own run, and waits for Enter after a quick end of any status.
         tab = json.loads((self.state / 'wt.json').read_text())[-1]
-        self.assertIn('t=$(date +%s); claude ', tab)
+        self.assertIn('t=$(date +%s); env -u CLAUDE_CODE_CHILD_SESSION ', tab)
         self.assertIn('press Enter to close', tab)
+
+    def windows_path(self, path):
+        # A path as the cygpath stub gives it (C: + the POSIX path), or the real one on Windows.
+        return path if WINDOWS else path[2:]
+
+    def test_on_native_windows_the_worker_gets_state_hooks_and_keeps_its_own(self):
+        # Nothing reads a Windows Terminal tab: a Notification and a Stop hook keep the worker's
+        # state line for watch_workers.sh. The owner's settings and hooks stay as they were.
+        for name, body in (('uname', '#!/bin/sh\necho MINGW64_NT-10.0-26200\n'), ('cygpath', CYGPATH),
+                           ('wt-tab', WT_TAB)):
+            if WINDOWS and name == 'cygpath':
+                continue
+            (self.bin / name).write_text(body)
+            (self.bin / name).chmod(0o755)
+        (self.bin / 'ps-stub').write_text('#!/bin/sh\n[ ! -f "$SPAWN_STATE/claude.json" ] || '
+                                          'printf "8 claude.exe -n w1\\r\\n"\n')
+        (self.bin / 'ps-stub').chmod(0o755)
+        mine = {'hooks': [{'type': 'command', 'command': 'echo mine'}]}
+        (self.cwd / 'own.json').write_text(json.dumps({'model': 'x', 'hooks': {'Stop': [mine]}}))
+        workers = Path(os.path.realpath(self.cwd)) / '.myagentkit/workers'
+        workers.mkdir(parents=True)
+        (workers / 'w1.watch-state').write_text('idle from an earlier worker\n')
+        (workers / 'w1.state.tmpleft').write_text('a hook that died\n')
+        # Registered as a peer (sessions/8.json), so the spawn does not wait 30 s for it.
+        (self.tmp / 'config/sessions').mkdir(parents=True)
+        (self.tmp / 'config/sessions/8.json').write_text('{}')
+        result = self.spawn('w1', str(self.brief), '--settings', 'own.json', KIT_WT=str(self.bin / 'wt-tab'),
+                            KIT_PS=str(self.bin / 'ps-stub'), CLAUDE_CONFIG_DIR=str(self.tmp / 'config'))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        argv = self.launched()['argv']
+        settings = Path(self.windows_path(argv[argv.index('--settings') + 1]))
+        self.assertEqual(settings, workers / 'w1.settings.json')
+        merged = json.loads(settings.read_text())
+        self.assertEqual(merged['model'], 'x')
+        self.assertEqual(len(merged['hooks']['Stop']), 2)
+        self.assertEqual(merged['hooks']['Stop'][0], mine)
+        hook = merged['hooks']['Stop'][1]['hooks'][0]['command']
+        self.assertEqual(merged['hooks']['Notification'], [{'hooks': [{'type': 'command', 'command': hook}]}])
+        self.assertIn('w1.state', hook)
+        self.assertFalse((workers / 'w1.watch-state').exists(), "an earlier worker's once-marker was kept")
+        self.assertFalse((workers / 'w1.state.tmpleft').exists(), "an earlier hook's temporary file was kept")
+        if not WINDOWS:
+            return  # the hook names C:/... paths of the cygpath stub
+        for payload, line in (({'hook_event_name': 'Notification', 'notification_type': 'permission_prompt'}, 'waiting permission '),
+                              ({'hook_event_name': 'Notification', 'notification_type': 'elicitation_dialog'}, 'waiting question '),
+                              ({'hook_event_name': 'Stop'}, 'idle ')):
+            with self.subTest(payload=payload):
+                (workers / 'w1.state').unlink(missing_ok=True)
+                run = subprocess.run(['sh', '-c', hook], input=json.dumps(payload),
+                                     capture_output=True, text=True, timeout=30)
+                self.assertEqual(run.returncode, 0, run.stderr)
+                self.assertTrue((workers / 'w1.state').read_text().startswith(line))
+
+    def test_the_behaviour_appendix_reaches_the_worker_unless_turned_off(self):
+        # Issue #74: BEHAVIOUR.md in the lead's folder (core/BEHAVIOUR.md in the kit itself) is
+        # the worker's appended system prompt, by its file flag; MYAGENTKIT_NO_BEHAVIOUR=1 is the
+        # A/B's other side. Driven through the Windows tab, the path every host can run.
+        for name, body in (('uname', '#!/bin/sh\necho MINGW64_NT-10.0-26200\n'), ('cygpath', CYGPATH),
+                           ('wt-tab', WT_TAB)):
+            if not (WINDOWS and name == 'cygpath'):
+                (self.bin / name).write_text(body)
+                (self.bin / name).chmod(0o755)
+        (self.bin / 'ps-stub').write_text('#!/bin/sh\n[ ! -f "$SPAWN_STATE/claude.json" ] || printf "8 claude.exe -n wb\\r\\n"\n')
+        (self.bin / 'ps-stub').chmod(0o755)
+        config = self.tmp / 'config'
+        (config / 'sessions').mkdir(parents=True)
+        (config / 'sessions' / '8.json').write_text('{}')
+        (self.cwd / 'core').mkdir()
+        behaviour = self.cwd / 'core' / 'BEHAVIOUR.md'
+        behaviour.write_text('Lead with the answer.\n')
+        shown = (subprocess.run(['cygpath', '-m', self.physical(behaviour)], capture_output=True, text=True,
+                                check=True).stdout.rstrip('\n') if WINDOWS else 'C:' + self.physical(behaviour))
+        for env, appended in (({}, ['--append-system-prompt-file', shown]), ({'MYAGENTKIT_NO_BEHAVIOUR': '1'}, [])):
+            with self.subTest(env=env):
+                (self.state / 'claude.json').unlink(missing_ok=True)
+                result = self.spawn('wb', str(self.brief), KIT_WT=str(self.bin / 'wt-tab'), KIT_PS=str(self.bin / 'ps-stub'),
+                                    CLAUDE_CONFIG_DIR=str(config), **env)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn('behaviour appendix: ' + (shown if appended else 'off'), result.stdout)
+                # On native Windows the worker also gets the merged --settings file (the state hooks).
+                argv = self.launched()['argv'][1:]
+                self.assertEqual(argv[6], '--settings')
+                self.assertEqual(argv[:6] + argv[8:], ['-n', 'wb', '--model', 'm', '--effort', 'high', *appended])
 
     def assert_refused(self, brief):
         result = self.spawn('w2', str(brief))
@@ -511,6 +817,16 @@ class SpawnWorkerTests(unittest.TestCase):
         self.assertIn('worktree-w3', again.stderr)
         self.assertNotIn('new-session', self.tmux_log())
 
+    def test_the_tmux_worker_does_not_inherit_the_leads_session_markers(self):
+        result = self.spawn('w1', str(self.brief))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        script = (self.state / 'tmux-script').read_text()
+        self.assertIn('exec env -u CLAUDE_CODE_CHILD_SESSION ', script)
+        self.assertIn(' claude ', script)
+        env = self.launched()['env']
+        self.assertFalse(MARKERS & set(env), env)
+        self.assertIn('CLAUDE_CODE_EXECPATH', env)
+
     def test_a_started_worker_is_shown_unless_batch(self):
         # A session nobody sees can wait on a dialog for hours: it opens in a terminal tab
         # by default, after its brief landed; --batch leaves that to one show of the batch.
@@ -566,6 +882,96 @@ class SpawnWorkerTests(unittest.TestCase):
                 self.assertIn("cannot check session 'w%d': the watcher exited " % bool(body), result.stderr)
                 self.assertEqual(len(result.stderr.strip().splitlines()), 1, result.stderr)
                 self.assertNotIn("'-l'", self.tmux_log())
+
+
+def run_state_hook(state, payload):
+    # Execute the exact inline Python carried in --settings, without a live worker.
+    code = SCRIPT.read_text(encoding='utf-8').split("hook=$kit_python' -I -c '$(q '", 1)[1].split("')' ", 1)[0]
+    with patch.object(sys, 'argv', ['hook', str(state)]), \
+            patch.object(sys, 'stdin', io.TextIOWrapper(io.BytesIO(json.dumps(payload).encode()))):
+        exec(compile(code, str(SCRIPT), 'exec'), {})
+
+
+class WorkerStateHookTests(unittest.TestCase):
+    def test_notification_types_are_classified_from_a_fresh_state(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp) / 'w1.state'
+            cases = [({'notification_type': kind, 'message': 'question permission approval'}, expected)
+                     for kind, expected in (('permission_prompt', 'waiting permission'),
+                                            ('elicitation_dialog', 'waiting question'),
+                                            ('idle_prompt', None),
+                                            ('auth_success', None), ('other', None), ('', None))]
+            cases += [({'message': message}, expected) for message, expected in
+                      (('a question', 'waiting question'), ('permission needed', 'waiting permission'),
+                       ('Claude is waiting for your input', None),
+                       ('approval needed', 'waiting permission'), ('unrelated', None))]
+            for payload, expected in cases:
+                with self.subTest(payload=payload):
+                    state.unlink(missing_ok=True)
+                    run_state_hook(state, dict(payload, hook_event_name='Notification'))
+                    if expected is None:
+                        self.assertFalse(state.exists())
+                    else:
+                        self.assertTrue(state.read_text().startswith(expected + ' '))
+
+    def test_crash_after_temp_write_preserves_previous_state(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp) / 'w1.state'
+            previous = b'waiting permission 2026-10-12T10:00:00 1\n'
+            state.write_bytes(previous)
+            def crash(source, target):
+                self.assertEqual(Path(source).parent, state.parent)
+                self.assertEqual(Path(target), state)
+                self.assertTrue(Path(source).read_text().startswith('idle '))
+                raise RuntimeError('crash before publication')
+            with patch('os.replace', side_effect=crash), self.assertRaisesRegex(RuntimeError, 'crash'):
+                run_state_hook(state, {'hook_event_name': 'Stop'})
+            self.assertEqual(state.read_bytes(), previous)
+            self.assertEqual([p.name for p in state.parent.iterdir()], ['w1.state'], 'the temporary file was left behind')
+
+    def test_temporary_file_is_named_after_the_state_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp) / 'w1.state'
+            def look(source, target):
+                self.assertTrue(Path(source).name.startswith('w1.state.'))
+                raise RuntimeError('stop')
+            with patch('os.replace', side_effect=look), self.assertRaises(RuntimeError):
+                run_state_hook(state, {'hook_event_name': 'Stop'})
+
+
+class TmuxStubTests(unittest.TestCase):
+    def test_unsafe_system_temp_uses_the_original_checkout_fallback(self):
+        with safe_tmux_scratch() as checkout:
+            unsafe = Path(checkout) / 'temp space'
+            unsafe.mkdir()
+            with patch('tempfile.tempdir', str(unsafe)), \
+                    patch(__name__ + '.ROOT', Path(checkout) / 'checkout space'), \
+                    safe_tmux_scratch(checkout=Path(checkout)) as folder:
+                self.assertEqual(Path(folder).parent, Path(checkout))
+            self.assertEqual(list(unsafe.iterdir()), [])
+
+    def test_tmux_stub_reparses_the_final_command_in_the_start_directory(self):
+        # A checkout with spaces must not force a skip when system scratch is safe.
+        with safe_tmux_scratch() as scratch, patch('tempfile.tempdir', scratch), \
+                patch(__name__ + '.ROOT', ROOT / 'checkout space'), safe_tmux_scratch() as folder:
+            state = Path(folder)
+            for segment in ('literal$REVIEW_SEGMENT', 'literal$($REVIEW_PAYLOAD)',
+                            'literal`$REVIEW_BACKQUOTE`'):
+                with self.subTest(segment=segment):
+                    script = state / segment / 'run.sh'
+                    script.parent.mkdir()
+                    script.write_text('exit 0\n', newline='\n')
+                    command = 'sh ' + SpawnWorkerTests.physical(script)
+                    result = subprocess.run([sys.executable, '-c', TMUX, 'new-session', '-d',
+                                             '-s', 'stub', '-c', str(state), '-x', '200', '-y', '50', command],
+                                            env=dict(os.environ, SPAWN_STATE=str(state), REVIEW_SEGMENT='expanded',
+                                                     REVIEW_PAYLOAD='touch INJECTED', REVIEW_BACKQUOTE='touch BACKQUOTED'),
+                                            capture_output=True, text=True, timeout=10)
+                    self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertIn('literal', result.stderr)
+                    self.assertNotIn(segment, result.stderr, 'the stub bypassed shell expansion')
+            self.assertTrue((state / 'INJECTED').exists(), 'the stub did not run command substitution')
+            self.assertTrue((state / 'BACKQUOTED').exists(), 'the stub did not run backquotes')
 
 
 if __name__ == '__main__':
