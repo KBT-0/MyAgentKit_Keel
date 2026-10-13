@@ -25,7 +25,8 @@ class UsageSummaryTests(unittest.TestCase):
         (self.repo / 'docs/reviews').mkdir(parents=True)
 
     def record(self, name, task, report=None, kind='review', callee='claude', model='opus',
-               status='completed', reason=None, duration=1000, chain='', behaviour=None, backend=None):
+               status='completed', reason=None, duration=1000, chain='', behaviour=None, backend=None,
+               dispositions=None, shadow=None):
         """One record written by the adapters' own writer, so the schema is production's."""
         evidence = None
         if report is not None:
@@ -33,7 +34,9 @@ class UsageSummaryTests(unittest.TestCase):
             evidence.write_bytes(report)
         with mock.patch.dict(os.environ, {'MYAGENTKIT_REVIEW_CHAIN_ID': chain}):
             path, _ = agent_usage.record(self.repo, callee, model, 'test',
-                                         {'id': task, 'kind': kind, **({'behaviour': behaviour} if behaviour else {})},
+                                         {'id': task, 'kind': kind, **({'behaviour': behaviour} if behaviour else {}),
+                                          **({'dispositions': dispositions} if dispositions else {}),
+                                          **({'shadow': shadow} if shadow else {})},
                                          {'duration_ms': duration}, status, reason,
                                          evidence and str(evidence), report, backend=backend)
         return path
@@ -188,8 +191,43 @@ class UsageSummaryTests(unittest.TestCase):
         groups = [line for line in out.splitlines() if line.startswith('Model ')]
         self.assertEqual(len(groups), 2)
         for value in (r'\x1b', r'\\x1b'):
-            self.assertIn(f'Model {value} / effort {value}: invocations=1 rounds=1 '
-                          'duration=1.000s rejects=0', groups)
+            self.assertTrue(any(line.startswith(f'Model {value} / effort {value}: invocations=1 '
+                                                'rounds=1 duration=1.000s rejects=0') for line in groups), groups)
+
+    def test_dispositions_are_credited_to_the_round_they_answer(self):
+        # Round 2 carries the author's answers to round 1's findings: the counts belong to
+        # round 1's configuration (opus/high), and the rate says it is the author's claim.
+        self.record('a', 'T', b'| effort | high |\nVERDICT: Reject\n\n## Findings\n\n- High x\n- Low y\n'
+                    b'- Low z\n\n## Manual checks\n\n- not a finding\n')
+        self.record('b', 'T', b'| effort | medium |\nVERDICT: Accept\n\n## Findings\n\nNone.\n',
+                    callee='codex', model='sol', duration=2000,
+                    dispositions={'fixed': 1, 'disproved': 1, 'deferred': 1})
+        out = self.summary()
+        self.assertIn('Task T: invocations=2 rounds=2 duration=3.000s rejects=1 findings=3 per_round=1.5 '
+                      'accepted=2/3 (0.67, author-claimed)', out)
+        self.assertIn('Model opus / effort high: invocations=1 rounds=1 duration=1.000s rejects=1 '
+                      'findings=3 per_round=3.0 accepted=2/3 (0.67, author-claimed)', out)
+        self.assertIn('Model sol / effort medium: invocations=1 rounds=1 duration=2.000s rejects=0 '
+                      'findings=0 per_round=0.0\n', out)
+
+    def test_dispositions_without_an_earlier_round_credit_nothing(self):
+        # A first round carrying dispositions (another label's rounds) credits no one.
+        self.record('a', 'T', b'VERDICT: Accept\n', dispositions={'fixed': 2, 'disproved': 0, 'deferred': 0})
+        self.record('b', 'T', b'VERDICT: Accept\n', dispositions={'fixed': 'two', 'disproved': 0, 'deferred': 0})
+        out = self.summary()
+        self.assertNotIn('accepted=', out)
+        self.assertIn('Unreadable records skipped: 1', out)
+
+    def test_a_shadow_run_is_listed_apart_and_is_no_round(self):
+        # REVIEW_SHADOW=1 measures a configuration: its verdict is shown, never a round, and
+        # its group stands apart from the same model and effort run for real.
+        self.record('a', 'T', b'| effort | low |\nVERDICT: Reject\n', model='sonnet', shadow='yes')
+        self.record('b', 'T', b'| effort | low |\nVERDICT: Accept\n', model='sonnet', duration=2000)
+        out = self.summary()
+        self.assertIn('  not a round kind=review callee=claude model=sonnet effort=low verdict=Reject (shadow)', out)
+        self.assertIn('Task T: invocations=2 rounds=1 duration=3.000s rejects=1', out)
+        self.assertIn('Model sonnet / effort low / shadow: invocations=1 rounds=0 duration=1.000s rejects=1', out)
+        self.assertIn('Model sonnet / effort low: invocations=1 rounds=1 duration=2.000s rejects=0', out)
 
     def test_null_model_is_unknown_and_not_the_label_none(self):
         self.record('a', 'T1', b'VERDICT: Accept\n', model=None)

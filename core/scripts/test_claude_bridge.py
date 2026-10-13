@@ -25,9 +25,9 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'MYAGENTKIT_TASK_ID', 'MYAGENTKIT_R
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 182, 'test_agent_usage': 30, 'test_codex_quota': 5}
+SUITE_MINIMUMS = {'test_claude_bridge': 185, 'test_agent_usage': 30, 'test_codex_quota': 5}
 # These are executed cases, excluding only the explicitly declared POSIX exclusions.
-WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 156, 'test_agent_usage': 26, 'test_codex_quota': 4}
+WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 159, 'test_agent_usage': 26, 'test_codex_quota': 4}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -4219,7 +4219,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         task = {'PROMPT_LOG': str(log), 'MYAGENTKIT_TASK_ID': 'claims-task'}
         self.assertEqual(self.run_bridge('reject', env_extra=task)[0], 0)
         notes = self.root / 'dispositions.md'
-        notes.write_text('file.py:1 deferred to the owner.\n')
+        notes.write_text('file.py:1 deferred: to the owner.\n')
         code, result = self.run_bridge(env_extra=dict(task, REVIEW_DISPOSITIONS=str(notes)))
         self.assertEqual(code, 0, result)
         prompt = ' '.join(log.read_text().split())
@@ -4420,11 +4420,53 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         task = {'MYAGENTKIT_TASK_ID': 'budget-task'}
         self.assertEqual(self.run_bridge('reject', env_extra=task)[0], 0)
         notes = self.root / 'dispositions.md'
-        notes.write_text('x' * 400_000)
+        notes.write_text('deferred: ' + 'x' * 400_000)
         code, refused = self.run_bridge(env_extra=dict(task, REVIEW_DISPOSITIONS=str(notes)))
         self.assertEqual(code, 2, refused)
         self.assertIn('400000 bytes', refused['error'])
         self.assertIn('fresh MYAGENTKIT_TASK_ID', refused['error'])
+
+    def test_dispositions_without_a_key_are_refused_before_any_model_runs(self):
+        # Item F: the usage summary counts the author's answers, so a file that answers no
+        # finding with fixed: / disproved: / deferred: is refused (exit 2), not silently zero.
+        task = {'MYAGENTKIT_TASK_ID': 'keyless-task'}
+        self.assertEqual(self.run_bridge('reject', env_extra=task)[0], 0)
+        notes = self.root / 'dispositions.md'
+        notes.write_text('file.py:1 was fixed in the last commit; file.py:9 is deferred.\n')
+        before = set((self.repo / '.myagentkit/usage').glob('*.json'))
+        code, refused = self.run_bridge(env_extra=dict(task, REVIEW_DISPOSITIONS=str(notes)))
+        self.assertEqual(code, 2, refused)
+        self.assertIn('fixed:, disproved: or deferred: key', refused['error'])
+        self.assertEqual(set((self.repo / '.myagentkit/usage').glob('*.json')), before)
+
+    def test_disposition_counts_are_recorded_with_the_round_that_carries_them(self):
+        # The record keeps the author's counts (case-insensitive keys, one per finding) and
+        # a round without dispositions has no such field, so older records read the same.
+        task = {'MYAGENTKIT_TASK_ID': 'counted-task'}
+        code, first = self.run_bridge('reject', env_extra=task)
+        self.assertEqual(code, 0, first)
+        self.assertNotIn('dispositions', json.loads(Path(first['usage_record']).read_text())['task'])
+        notes = self.root / 'dispositions.md'
+        notes.write_text('- High a.py:1: Fixed: abc123\n- Low b.py:2: disproved: the guard at line 4\n'
+                         '- Low c.py:3: deferred: #12\n- Low d.py:4: fixed:abc123\n')
+        code, second = self.run_bridge(env_extra=dict(task, REVIEW_DISPOSITIONS=str(notes)))
+        self.assertEqual(code, 0, second)
+        usage = json.loads(Path(second['usage_record']).read_text())
+        self.assertEqual(usage['task']['dispositions'], {'fixed': 2, 'disproved': 1, 'deferred': 1})
+        self.assertNotIn('shadow', usage['task'])
+
+    def test_a_shadow_review_says_so_in_its_evidence_and_record(self):
+        # REVIEW_SHADOW=1 measures a configuration: the archive carries the banner above the
+        # findings, the record's task says shadow, and the verdict line is still exactly one.
+        code, result = self.run_bridge('reject', env_extra={'REVIEW_SHADOW': '1'})
+        self.assertEqual(code, 0, result)
+        evidence = Path(result['evidence']).read_text()
+        self.assertIn('SHADOW REVIEW: this run measures a reviewer configuration', evidence)
+        self.assertEqual(evidence.count('\nVERDICT: '), 1)
+        self.assertEqual(json.loads(Path(result['usage_record']).read_text())['task']['shadow'], 'yes')
+        code, plain = self.run_bridge('reject', env_extra={'REVIEW_SHADOW': '0'})
+        self.assertEqual(code, 0, plain)
+        self.assertNotIn('SHADOW REVIEW', Path(plain['evidence']).read_text())
 
     def test_the_behaviour_appendix_follows_the_fixed_prompt_and_the_record_says_on_or_off(self):
         # Issue #74: the kit's BEHAVIOUR.md (core/BEHAVIOUR.md in the kit itself) reaches the

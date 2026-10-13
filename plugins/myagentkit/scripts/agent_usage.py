@@ -97,6 +97,22 @@ REVIEW_FIELDS = ("reviewer", "model", "model_attested", "effort", "sandbox", "li
                  "reference", "head", "fingerprint", "diff_sha256", "behaviour_sha256", "status", "failure_kind")
 VERDICT_LINE = "VERDICT: "
 REVIEW_VERDICTS = ("Accept", "Accept with Manual Checks", "Reject")
+DISPOSITION_KEYS = ("fixed", "disproved", "deferred")
+
+
+def dispositions(text: str) -> dict:
+    """Count the author's answers to the earlier findings: one key per finding.
+
+    `fixed:<commit>`, `disproved:<evidence>` or `deferred:<issue or decision>`, case-insensitive.
+    These are the author's claims (the next round's reviewer verifies them), recorded so the
+    usage summary can show each reviewer configuration's author-claimed acceptance rate.
+    A file that answers no finding with a key is refused before any model is called.
+    """
+    counts = {key: len(re.findall(r"\b%s:" % key, text, re.I)) for key in DISPOSITION_KEYS}
+    if not any(counts.values()):
+        raise ValueError("REVIEW_DISPOSITIONS answers no finding: each finding needs a fixed:, "
+                         "disproved: or deferred: key")
+    return counts
 
 
 def report(stamp: str, header: dict, verdict: str | None, body: str) -> str:
@@ -124,6 +140,10 @@ def report(stamp: str, header: dict, verdict: str | None, body: str) -> str:
     body = '\n'.join(lines)
     # A substitute reviewer says so in its own record, not only in the dispatcher's output:
     # the evidence file is what a later reader opens, and it must not pass for the requested one.
+    # A shadow run measures a reviewer configuration: its verdict is recorded, never counted.
+    if os.environ.get("REVIEW_SHADOW") == "1":
+        body = ("SHADOW REVIEW: this run measures a reviewer configuration; its verdict counts "
+                "for no closure and the usage summary lists it apart.\n\n" + body)
     fallback = os.environ.get("MYAGENTKIT_REVIEW_FALLBACK_FROM")
     if fallback:
         body = ("FALLBACK REVIEWER: the requested reviewer " + fallback + " did not complete; "

@@ -13,6 +13,18 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## v0.11 — 2026-10-09
 
+- **Reviewer configurations are measured** (`claude_bridge.py`, `codex_bridge.py`,
+  `agent_usage.py`, `usage_summary.py`): each answer in `REVIEW_DISPOSITIONS` carries one
+  key, `fixed:<commit>`, `disproved:<evidence>` or `deferred:<issue or decision>`; a file
+  without a key stops the review (exit 2) before any model runs. The usage record keeps the
+  counts, and `usage_summary.py` prints per task and per model, effort and backend the
+  findings per round and the author-claimed acceptance rate (fixed + deferred over all
+  answered), credited to the round the answers refer to. `REVIEW_SHADOW=1` archives a
+  trial configuration's verdict with a `SHADOW REVIEW` banner, records `shadow` in the
+  task, and the summary lists it apart as no round. The rate informs the owner; nothing
+  switches a reviewer off by itself (`docs/USAGE.md`). **ACTION:** sync the review
+  scripts and the Codex plugin; write every disposition with its key from now on.
+
 - **Windows worker observation and generated paths corrected** (`spawn_worker.sh`,
   `watch_workers.sh`): an older hook's `waiting input` line means an idle prompt, never a
   permission WAIT; the watcher prints one older-kit notice per worker and asks for a re-spawn.

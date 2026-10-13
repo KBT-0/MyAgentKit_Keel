@@ -37,6 +37,28 @@ review whose dispatch chain also completed; a verdict is read only from an archi
 still matches its record's sha256. Worker and sub-agent errands write no record, so they
 are not in it.
 
+The summary also measures each reviewer configuration (model, effort, backend):
+
+- `findings` counts the list items under each archive's Findings heading; `per_round`
+  divides them by the rounds. A configuration whose new findings per round fall toward
+  zero while the rounds continue is re-reviewing what it already said.
+- `accepted=A/T (rate, author-claimed)` comes from the author's `REVIEW_DISPOSITIONS`
+  file of the next round under the same label: each finding is answered with one key,
+  `fixed:<commit>`, `disproved:<evidence>` or `deferred:<issue or decision>` (a file without
+  a key is refused before any model runs). Accepted = fixed + deferred. The counts are
+  credited to the round the dispositions answer, so the rate belongs to the configuration
+  that produced the findings. The author rates its own reviewer, as Google's Tricorder has
+  the developer click "not useful"; the next round's reviewer verifies every disproved
+  claim against the code, and a claim it rejects comes back as a finding. The rate is
+  information for the owner, never an automatic switch: after about twenty rounds of one
+  configuration, the owner reads its rate together with how the verifying rounds treated
+  its disproved claims and decides whether to keep, change or retire it.
+- A configuration under trial runs in shadow first: `REVIEW_SHADOW=1` on the review
+  archives its verdict with a `SHADOW REVIEW` banner, records `shadow` in the task, and the
+  summary lists it in its own `/ shadow` group and as no round. A shadow verdict counts for
+  no closure; the real review of the change still runs. After ten to twenty shadow runs the
+  owner compares its findings with the real reviewer's and decides whether it goes live.
+
 Every record includes task, requester, requested callee model, source revision/hash,
 elapsed time, status, failure classification, evidence location, and available usage.
 Claude's per-model `modelUsage` is retained; a Codex requested model is not misrepresented

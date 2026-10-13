@@ -107,9 +107,14 @@ adapters ask for every finding the pass can establish (`docs/REVIEW_GATE.md`, "F
 earlier rounds and dispositions"). When `MYAGENTKIT_TASK_ID` names the same task label as
 earlier completed reviews, the prompt carries those reviews oldest first, exactly as archived
 (their verdict lines rewritten as `Earlier verdict:`). `REVIEW_DISPOSITIONS=<file>` adds the
-author's answer to each finding (fixed in a commit, disproved with evidence, deferred to the
-owner) as claims to verify, because the author never approves its own work. The review
-stops (exit 2) rather than carry a wrong record: when an earlier archive is missing, lies
+author's answer to each finding as claims to verify, because the author never approves its
+own work; each answer carries one key, `fixed:<commit>`, `disproved:<evidence>` or
+`deferred:<issue or decision>`, and the usage record keeps the counts for the summary's
+author-claimed acceptance rate (`docs/USAGE.md`). `REVIEW_SHADOW=1` marks a review that
+measures a reviewer configuration: its verdict is archived with a banner and counts for no
+closure. The review
+stops (exit 2) rather than carry a wrong record: when a dispositions file answers no finding
+with a key, when an earlier archive is missing, lies
 outside `docs/reviews` or no longer matches the sha256 its usage record stored (an archive
 edited after the reviewer wrote it), when an earlier round has another scope, a reference
 that resolved to another commit (`--commit HEAD` one commit later is another change), another

@@ -23,7 +23,7 @@ Rapor §4 "bizim kitten eksik veri" diyordu; eldeki kayıtlardan çıkarılabile
 | Verdict'siz biten reviewer denemeleri | 3 timeout (2×7.198 s, 5.398 s), 5 content_flagged, 6 cli_error: toplam 35.074 s ≈ 9,7 saat |
 | master finalleri (v011-master-r3…r6) | 4 tur, Reject / Accept-MC / Reject / Accept-MC sırasıyla |
 | En sık bulgu sınıfı (arşivlerde anahtar kelime) | Windows 273, locale/UTF-8 91, quoting/echo/dash 80, mktemp/TMPDIR 64, trap/signal 64, symlink 44, killing test yok 39, mode bit 39, MAX_PATH 24 |
-| Review başına kabul edilen bulgu oranı (precision) | **ölçülmüyor** (madde F) |
+| Review başına kabul edilen bulgu oranı (precision) | kaydediliyor (F uygulandı; yazar beyanı, `usage_summary.py accepted=`) |
 
 Yorum: profil rapor §1.2 ile birebir: Critical yok, High nadir, Medium/Low bol; "temiz" hiç
 gelmiyor (0 düz Accept), yani döngü yakınsamıyor. Üç zaman aşımı altı ağır işin aynı anda
@@ -232,30 +232,13 @@ için "kalır / birleşir / silinir" satırı, silinenlerin gerekçesi RESEARCH_
 (belge; lead yazar). **Dosyalar.** yukarıdakiler. **Karar (sahip, 13 Ekim).** Kabul: REVIEW_GATE ≤ 600, REVIEW_RUNNING ≤ 500 kelime; lead 89 kural
 için kalır/birleşir/silinir listesini çıkarır, sahip listeyi bir kerede onaylar.
 
-### F. Ölçüm: bulgu kabul oranı (precision) kayda girer; eşik altı reviewer konfigürasyonu kapanır; yeni konfigürasyon shadow'da başlar
+### F. Ölçüm — UYGULANDI (13 Ekim)
 
-**Ne değişir.** `REVIEW_DISPOSITIONS` dosyası zaten her bulguya "fixed / disproved / deferred"
-diyor. `review_dispatch.py` bir sonraki turda bu dosyayı okuyor; aynı yerde sayar ve usage
-kaydına `findings_total / fixed / disproved / deferred` yazar. `usage_summary.py` model×effort
-başına **kabul oranı** (fixed+deferred / total) ve **tur başına yeni bulgu** basar. Kural: 20
-review sonra kabul oranı %40'ın altındaki konfigürasyon (model, effort, odak) değiştirilir ya da
-kapatılır; yeni bir konfigürasyon (örn. Codex medium yerine Claude Sonnet low; `gpt-6-astra`)
-önce **shadow**: verdict'i sayılmaz, yalnız kaydedilir, 10–20 review sonra sayılara göre açılır.
-
-**Nasıl.** Dispositions formatına her bulgu için zorunlu bir anahtar (`fixed:<sha>` /
-`disproved:<kanıt>` / `deferred:#issue`); parse eden küçük fonksiyon + killing test;
-`usage_summary.py`'ye iki sütun; `REVIEW_SHADOW=1` ile verdict `shadow` olarak arşivlenir ve
-`closure`'a sayılmaz (dispatcher'da tek bayrak).
-
-**Neden.** Rapor §4 son paragraf ("bu dört metrik olmadan çürütme yargıları bizim bağlamımızda
-doğrulanamaz; ilk adım loglamak"), §5-F, [8] shadow mode, [30] red oranı ölçümü, [50]
-Tricorder <%10 FP / Coverity >%30 terk, [6] online resolution rate ile deney, [39] Codex bench'te
-#13/15 ve [65] high effort için kazanç kanıtı yok → Codex effort'unu düşürmek ölçülecek ilk deney.
-
-**Risk.** Düşük; tamamen ek kayıt. Dispositions'ı yazan lead disiplini ister (zaten yazıyor).
-**Efor.** O. **Dosyalar.** `core/scripts/review_dispatch.py`, `core/scripts/usage_summary.py`,
-`core/scripts/agent_usage.py` (kayıt alanı), testleri, `core/docs/USAGE.md`,
-`core/docs/REVIEW_RUNNING.md`. **Karar.** %40 eşiği; shadow süresi; ilk deney Codex high→medium mu.
+Dispositions anahtarları (`fixed:` / `disproved:` / `deferred:`) ve `REVIEW_SHADOW=1`
+kayda girdi; `usage_summary.py` konfigürasyon başına `findings`, `per_round` ve
+`accepted=A/T (yazar beyanı)` basar. Sahip kararı: oran yalnız bilgi, Tricorder [50]
+gibi yazar puanlar, sonraki tur reviewer'ı doğrular, kapatma/değiştirme kararı sahibin
+(yan ajanın öz-beyan uyarısı üzerine; %40 otomatik eşiği yok). Kural `core/docs/USAGE.md`.
 
 ### G. Release: cluster/master döngüleri yerine "merge → self-test → tek final review → bir gün dogfood → push"
 
@@ -470,7 +453,7 @@ dosyası tek-model dilinde yazılır.
 
 | Sıra | Madde | Neden bu sırada |
 |---|---|---|
-| 0 | F (ölçüm) | Ölçmeden değiştirmek raporun kendi uyarısına aykırı (§4); küçük kod, hemen veri üretir |
+| 0 | F (ölçüm) — UYGULANDI | Ölçmeden değiştirmek raporun kendi uyarısına aykırı (§4) |
 | 1 | A, B, C, G, H, I, J, K (politika belgeleri) | Tek belge görevi, tek oturum, tek low/medium geçiş (I'ya göre); worker değil lead yazar, çünkü kuralların gerekçesi bu dokümanda |
 | 2 | E (prompt) + P (kural dosyaları) | Politika oturduktan sonra prompt ve iki kısa dosya onu söyler; P'nin envanter kararı E ile aynı oturum |
 | 3 | D-1 ve D-2 (locale matrisi, shell lint) | En sık iki sınıf; gate kodu olduğundan A'nın full katmanı |

@@ -864,14 +864,32 @@ def prior_rounds(repo: Path, task_id: str | None, scope: str, resolved: str | No
     for number, (_, report) in enumerate(sorted(rounds), 1):
         text += "### Round %d\n%s\n" % (number, report)
     if notes:
-        text += ("### Author's dispositions (claims to verify, not facts)\n"
-                 + Path(notes).read_text() + "\n")
+        claims = Path(notes).read_text()
+        try:
+            agent_usage.dispositions(claims)
+        except ValueError as error:
+            raise BridgeError(str(error)) from error
+        text += "### Author's dispositions (claims to verify, not facts)\n" + claims + "\n"
     # A carried verdict line echoed back would break the reviewer's exactly-one-verdict check.
     text = re.sub(r"^[ \t]*VERDICT[ \t]*:", "Earlier verdict:", text, flags=re.M | re.I)
     if len(diff.encode()) + len(text.encode()) > DIFF_LIMIT:
         raise BridgeError("the diff plus earlier rounds and dispositions exceed %d bytes; start "
                           "a fresh MYAGENTKIT_TASK_ID label" % DIFF_LIMIT)
     return text
+
+
+def measurement_fields() -> dict:
+    """The task fields the usage summary measures a reviewer configuration by.
+
+    The author's disposition counts (prior_rounds() already refused a file without a key) and
+    the shadow flag; absent from a record that has neither, so older records read the same.
+    """
+    fields, notes = {}, os.environ.get("REVIEW_DISPOSITIONS")
+    if notes:
+        fields["dispositions"] = agent_usage.dispositions(Path(notes).read_text())
+    if os.environ.get("REVIEW_SHADOW") == "1":
+        fields["shadow"] = "yes"
+    return fields
 
 
 def schema(mode: str) -> dict:
@@ -1343,7 +1361,8 @@ def main(argv=None, result_sink=None) -> int:
                  "kind": args.mode, "scope": scope, "reference": ref,
                  "resolved": resolved, "head": head, "behaviour": "on" if behaviour else "off",
                  "behaviour_sha256": behaviour_sha256,
-                 "diff_sha256": evidence["diff_sha256"]}, execution, evidence["status"], reason,
+                 "diff_sha256": evidence["diff_sha256"], **measurement_fields()},
+                execution, evidence["status"], reason,
                 archived_path, published.encode() if archived_path else None, backend=args.backend)
             recovery = usage["recovery"]
             if usage["failure_kind"] == "evidence_unavailable":

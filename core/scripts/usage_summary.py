@@ -3,8 +3,13 @@
 """Summarize the recorded review and proposal invocations by task and by model and effort.
 
 Only the review adapters write records, so worker and sub-agent errands are not counted here.
-A round is a completed review attempt whose dispatch chain, when it has one, also completed.
-A verdict is read only from an archive whose bytes still match the record's sha256.
+A round is a completed review attempt whose dispatch chain, when it has one, also completed;
+a shadow run (REVIEW_SHADOW=1) is listed apart and is no round. A verdict is read only from
+an archive whose bytes still match the record's sha256; the findings are counted from it.
+The author's dispositions carried by a round answer the round before it, so their counts
+are credited to that earlier round's configuration as its author-claimed acceptance:
+accepted = fixed + deferred, out of fixed + disproved + deferred. The author rates, the next
+round's reviewer verifies, and the owner decides what the rate means (docs/USAGE.md).
 """
 import argparse
 from collections import defaultdict
@@ -14,6 +19,8 @@ from pathlib import Path
 import re
 import sys
 
+CLAIM_KEYS = ('fixed', 'disproved', 'deferred')
+
 
 def valid_record(record):
     """Validate every consumed field before a damaged record can affect healthy rows."""
@@ -22,9 +29,13 @@ def valid_record(record):
         return False
     for fields, value in ((('recorded_at', 'status', 'failure_kind', 'callee', 'model_requested',
                             'review_chain_id', 'evidence', 'evidence_sha256', 'backend'), record),
-                          (('id', 'kind', 'behaviour'), record['task'])):
+                          (('id', 'kind', 'behaviour', 'shadow'), record['task'])):
         if any(value.get(field) is not None and not isinstance(value[field], str) for field in fields):
             return False
+    claims = record['task'].get('dispositions')
+    if claims is not None and not (isinstance(claims, dict) and all(
+            type(claims.get(key)) is int and claims[key] >= 0 for key in CLAIM_KEYS)):
+        return False
     duration = record.get('duration_ms')
     return ('\0' not in (record.get('evidence') or '')
             and (duration is None or (type(duration) in (int, float)
@@ -32,8 +43,9 @@ def valid_record(record):
 
 
 def evidence_fields(repo, record):
-    """Effort and verdict from the archive, or why it has none."""
+    """Effort, verdict and finding count from the archive, or why it has no verdict."""
     effort, path = 'unknown', record.get('evidence')
+    record['findings'] = 0
     if not isinstance(path, str) or not path:
         return effort, None, None
     path = Path(path)
@@ -57,6 +69,9 @@ def evidence_fields(repo, record):
     if match:
         effort = match[1]
     match = re.search(r'^VERDICT: (Accept with Manual Checks|Accept|Reject)[ \t]*$', content, re.M)
+    # One list item per finding under the Findings heading, as both adapters render them.
+    findings = re.search(r'^## Findings[ \t]*$(.*?)(?=^## |\Z)', content, re.M | re.S)
+    record['findings'] = len(re.findall(r'^- ', findings[1], re.M)) if findings else 0
     return effort, match and match[1], None
 
 
@@ -92,10 +107,19 @@ def printable(value):
 def totals(rows):
     durations = [row['duration_ms'] for row in rows if isinstance(row.get('duration_ms'), (int, float))]
     missing = len(rows) - len(durations)
-    return (f'invocations={len(rows)} rounds={sum(row["round"] for row in rows)}'
+    rounds = sum(row['round'] for row in rows)
+    findings = sum(row['findings'] for row in rows if row['round'])
+    accepted = sum(row['accepted'] for row in rows)
+    claimed = sum(row['claimed'] for row in rows)
+    return (f'invocations={len(rows)} rounds={rounds}'
             f' duration={sum(duration / 1000 for duration in durations):.3f}s'
             + (f' (+{missing} unknown)' if missing else '')
-            + f' rejects={sum(row["verdict"] == "Reject" for row in rows)}')
+            + f' rejects={sum(row["verdict"] == "Reject" for row in rows)}'
+            + f' findings={findings}'
+            + (f' per_round={findings / rounds:.1f}' if rounds else '')
+            # Author-claimed: fixed + deferred over every answered finding of these rounds.
+            + (f' accepted={accepted}/{claimed} ({accepted / claimed:.2f}, author-claimed)'
+               if claimed else ''))
 
 
 def main():
@@ -123,8 +147,9 @@ def main():
             status = chain_status(usage, chain, chains)
             if status.split('/')[0] != 'completed':
                 completed, verdict, why = False, None, 'chain ' + status
-        record.update(effort=effort, verdict=verdict, why=why,
-                      round=completed and record['task'].get('kind') == 'review')
+        shadow = record['task'].get('shadow') == 'yes'
+        record.update(effort=effort, verdict=verdict, why=why, shadow=shadow, accepted=0, claimed=0,
+                      round=completed and record['task'].get('kind') == 'review' and not shadow)
         rows.append(record)
     rows.sort(key=lambda row: (str(row.get('recorded_at')), row['invocation_id']))
     if not rows:
@@ -138,9 +163,20 @@ def main():
             record[key] = record.get(key) or 'unknown'
         record['task']['kind'] = record['task'].get('kind') or 'unknown'
         # A backend is its own group: one model name may be served by two endpoints.
-        groups[(record['model_requested'], record['effort'], record.get('backend') or None)].append(record)
+        groups[(record['model_requested'], record['effort'], record.get('backend') or None,
+                record['shadow'])].append(record)
         # BEHAVIOUR.md on or off for the reviewer (claude_bridge.py): the A/B's comparison.
         behaviours[record['task'].get('behaviour') or 'unknown'].append(record)
+    for records in tasks.values():
+        # The dispositions a round carries answer the round before it under the same label.
+        previous = None
+        for record in records:
+            claims = record['task'].get('dispositions')
+            if claims and previous is not None:
+                previous['accepted'] += claims['fixed'] + claims['deferred']
+                previous['claimed'] += sum(claims[key] for key in CLAIM_KEYS)
+            if record['round']:
+                previous = record
     for task, records in sorted(tasks.items()):
         print(f'Task {printable(task)}: {totals(records)}')
         number = 0
@@ -149,6 +185,8 @@ def main():
             duration = record.get('duration_ms')
             duration = f'{duration / 1000:.3f}s' if isinstance(duration, (int, float)) else 'unknown'
             verdict = record['verdict'] or f'none ({printable(record["why"] or "no verdict line")})'
+            if record['shadow']:
+                verdict += ' (shadow)'
             print(f'  {f"round={number}" if record["round"] else "not a round"}'
                   f' kind={printable(record["task"]["kind"])}'
                   f' callee={printable(record["callee"])}'
@@ -157,9 +195,10 @@ def main():
                   f' effort={printable(record["effort"])} verdict={verdict} duration={duration}')
     if rows:
         print(f'Total: {totals(rows)}')
-    for (model, effort, backend), records in sorted(groups.items(), key=lambda item: tuple(map(str, item[0]))):
+    for (model, effort, backend, shadow), records in sorted(groups.items(), key=lambda item: tuple(map(str, item[0]))):
         print(f'Model {printable(model)} / effort {printable(effort)}'
-              + (f' / backend {printable(backend)}' if backend else '') + f': {totals(records)}')
+              + (f' / backend {printable(backend)}' if backend else '')
+              + (' / shadow' if shadow else '') + f': {totals(records)}')
     for behaviour, records in sorted(behaviours.items()):
         print(f'Behaviour {printable(behaviour)}: {totals(records)}')
     if unreadable:
