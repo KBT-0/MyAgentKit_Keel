@@ -28,6 +28,8 @@ Name the model and effort from `docs/WORKFLOW.md`, "Model routing", alongside th
    reviews its own diff with fresh sub-agents before it reports; a sub-agent worker says it
    could not, and the lead starts the review when the branch exists (`docs/WORKFLOW.md`,
    "Review rounds — early, inside the worker, in parallel").
+   **Design:** the brief carries a design of five to ten lines, or tells the worker to write
+   one at the top of its result before any code (the same section).
 5. **Routing check:** does this task belong on the model it is being sent to? Judgement work
    — architecture, contracts, risky diffs — goes to the strongest model; bulk, mechanical,
    well-specified work goes to the cheaper one. If the requested route violates that, say so
@@ -64,7 +66,9 @@ the result go straight into THAT file and `docs/STATE.md` gets one status line p
 it — no separate note and no fold step. A project that folded every worker's note into
 `docs/STATE.md` grew one bullet without end. When the task has an id, the commit that
 finishes it carries `Done: <id>` and its line leaves `docs/STATE.md` in that same commit
-(`docs/WORKFLOW.md`, "Task ids").
+(`docs/WORKFLOW.md`, "Task ids"). A handoff carries open work only: the writer deletes every
+closed item from it before handing over (`docs/WORKFLOW.md`, "The state, backlog and phase
+files").
 
 A brief for a separate worker session (`scripts/spawn_worker.sh` or `scripts/spawn_codex.sh`
 in the Claude Code overlay) names its result FILE and its question and session sidecars.

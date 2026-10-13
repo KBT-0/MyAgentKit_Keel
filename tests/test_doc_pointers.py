@@ -70,6 +70,101 @@ class SectionPointerTests(unittest.TestCase):
         workflow = (ROOT / 'core/docs/WORKFLOW.md').read_text(encoding='utf-8')
         self.assertIn('after the second dirty round', workflow)
         self.assertIn('python3 scripts/usage_summary.py', workflow)
+        flat = ' '.join(workflow.split())
+        for rule in ('two at a time until the lead has measured its host', '4 GB reserve',
+                     'Win32_OperatingSystem', 'free -g', 'vm_stat', 'lowers the number after a low-memory reap',
+                     'conflict resolution is a part authored by whoever resolved it',
+                     'rebuilding the integration branch without it', 'kills the background jobs started from its tool shell'):
+            self.assertIn(rule, flat)
+        budget_rule = ' '.join(workflow.split('6. **Parallel workers only for independent modules**')[1].split('7. **Worker reports are short**')[0].split())
+        for rule in ('Start the two reviewers together',
+                     'Start the self-test with them only when all three jobs fit within the budget',
+                     'With a budget of two, start both reviewers first, then the self-test when one reviewer ends',
+                     'Never reduce the reviews; run them one after the other only when the owner is away and at least one job fits the budget, as defined below; the self-test waits'):
+            self.assertIn(rule, budget_rule)
+        self.assertIn("A review round's floor is the two reviewers", budget_rule)
+        self.assertIn('when two slots are free; heavy jobs already running take slots', budget_rule)
+        self.assertIn('rather than waiting without limit', budget_rule)
+        self.assertIn("as a recorded exception (a line in the lead's RESULT/notes file names the budget figure)", budget_rule)
+        self.assertIn('starts the round only when two jobs fit', budget_rule)
+        self.assertIn('When the owner gives no answer to that question within one review timeout (`REVIEW_TIMEOUT_SECONDS`), the owner is away', budget_rule)
+        self.assertIn('When the owner is away and at least one job fits the budget', budget_rule)
+        self.assertIn('When not even one job fits, the review round stays blocked and the lead reports the capacity figure to the owner; nothing heavy starts.', budget_rule)
+        self.assertIn('"In parallel" means the reviewers', flat)
+        self.assertIn('review rounds run per cluster of related branches', flat)
+        self.assertIn('After their first round, merge branches touching the same files into one integration branch', flat)
+        self.assertIn('remaining rounds run on the cluster', flat)
+        gotchas = ' '.join((ROOT / 'core/docs/GOTCHAS.md').read_text(encoding='utf-8').split())
+        for rule in ("lead's tool shell", 'on most hosts', '`&` under `sh -c`',
+                     '`nohup`', 'Windows Terminal tab', 'command line names the checkout or its worktrees',
+                     'Wait for the survivors by default', 'reason that holds',
+                     "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine.IndexOf('<checkout>', [StringComparison]::OrdinalIgnoreCase) -ge 0 } | Select ProcessId,CommandLine",
+                     "Linux `ps -eo pid,args | grep -F -- '<checkout>'`",
+                     "macOS `ps -eww -o pid,args | grep -iF -- '<checkout>'`",
+                     "Ignore the listing's own rows: the `grep`, and the shell or PowerShell that runs the listing",
+                     'The command-line listing is only a shortcut for the jobs it can see',
+                     "The project's gate holds the lock at `git rev-parse --git-path check.lock` and publishes `check-selftest` beside it; find the lock holder as described under ",
+                     "A build server the gate started keeps the gate lock",
+                     "A review holds no checkout lock; read its chain record as follows.",
+                     "The kit's own self-test (`scripts/check.sh` → `scripts/check_kit.py`) holds no checkout lock and publishes no checkout self-test marker.",
+                     'It is visible only in the process listing: look for a `python` process whose arguments name `check_kit.py` under the checkout.',
+                     "If those arguments are relative, confirm the checkout through the process's working directory.",
+                     'After a cut-off, look for this self-test before resuming heavy work; wait for any survivor or ask the owner.',
+                     'For reviews, read the highest-numbered `<chain>-N.json` in `.myagentkit/usage/chains/`; nothing in the record names its process.',
+                     '`<chain>-0.json` always stays pending and is not evidence of a running review.',
+                     'A review is finished only when that latest record has status `completed`, or status `failed` with no further attempt possible (the attempt count equals the number of possible attempts, a `failure_kind` outside the dispatcher\'s unavailable set, `fallback_blocked` set, or `fallback_allowed` false, or the failed attempt has no `evidence` or `usage_record`: the dispatcher never falls over from such an attempt).',
+                     'The number of possible attempts is one without `--fallback`, two with it.',
+                     'Use the mtime of `<chain>-0.json` as the review start time.',
+                     'After a cut-off, treat the review as running for at least `REVIEW_TIMEOUT_SECONDS` (3600 s when unset; the record does not store it) times the number of possible attempts plus overhead (about 4 h with 7200 s and `--fallback`), unless the latest record shows it is finished as above.',
+                     'This window is a lower bound, not proof that an orphaned reviewer stopped.',
+                     'After the window, the lead still confirms completion in the process listing.',
+                     'On POSIX, the reviewer runs in its own session; a supervisor killed with `SIGKILL` cannot enforce its timeout.',
+                     'Look for a `codex` or `claude` process whose arguments name the throwaway copy under the temp folder (`myagentkit-codex-*` or `myagentkit-review-*`).',
+                     'Use the same listing commands with the copy path; confirm its working directory if the arguments omit that path.',
+                     'If a reviewer survives, wait for it or ask the owner before starting any heavy job.',
+                     'Never start a heavy job beside a survivor, or edit or merge its worktree.',
+                     "Git Bash's `/c/x`", 'the `pwd -P` form of a symlinked checkout', '`/private/var` for `/var`',
+                     "A checkout path containing an apostrophe cannot go inside the single quotes as is; on Linux/macOS write it as `'\\''` or put the path in a variable and match \"$checkout\"; on Windows double the apostrophe inside the PowerShell single-quoted string.",
+                     'The Windows match ignores case because Windows paths do'):
+            with self.subTest(rule=rule):
+                self.assertIn(rule, gotchas)
+        self.assertNotIn("grep -v -F 'grep -F'", gotchas)
+        self.assertNotIn('every other row is a survivor', gotchas)
+        self.assertNotIn('It ignores its own rows', gotchas)
+        self.assertNotIn("Only a review's own reviewer process holds no checkout lock.", gotchas)
+        self.assertNotIn('`.git/check.lock` and publishes `.git/check-selftest`', gotchas)
+        self.assertNotIn('the chain record has a completed or failed attempt', gotchas)
+        self.assertNotIn('Never reduce the reviews or deliberately run the reviewers one after the other', budget_rule)
+        self.assertNotIn('stop them with a reason', gotchas)
+        self.assertNotIn('its own process by grepping the listing for `.myagentkit/usage`', gotchas)
+        running = ' '.join((ROOT / 'core/docs/REVIEW_RUNNING.md').read_text(encoding='utf-8').split())
+        self.assertIn('Start the self-test and two reviewers together only when the memory budget permits', running)
+        self.assertIn('memory budget', running)
+        self.assertIn('"Worker cost", rule 6', running)
+        for old_launch in ('Independent reviews run at the same time, with each other and with the self-test',
+                           'in parallel with the self-test, never after it',
+                           'Start the self-test and the review together, on the same commit, never one after the other',
+                           'Start the self-test and two reviewers at once'):
+            self.assertNotIn(old_launch, flat + ' ' + running)
+        self.assertIn('Independent reviews follow the launch sequence in "Worker cost", rule 6', flat)
+        self.assertIn('The launch sequence follows "Worker cost", rule 6', flat)
+        self.assertIn('Start the self-test and the reviews on the same commit, following "Worker cost", rule 6', flat)
+        self.assertNotIn("Where-Object CommandLine -like '*<checkout>*'", gotchas)
+        self.assertNotIn('pgrep -af <checkout>', gotchas)
+        self.assertNotIn('grep <checkout>', gotchas)
+        for policy in (flat, gotchas, running):
+            self.assertNotIn('at most two heavy background jobs', policy)
+            self.assertNotIn('this host', policy)
+        # Rules of 2026-10-12: each said once, beside its siblings; reviews are never reduced.
+        for rule in ('effort is never carried up from the round before',
+                     'Both start at the cheapest table row that fits',
+                     'the lead never opens visible sessions to show the workflow',
+                     'The self-test runs once per batch',
+                     'Open issues are never closed to finish a release',
+                     "never only into a lead's private memory",
+                     'reviews are never reduced'):
+            self.assertEqual(flat.count(rule), 1, rule)
+        self.assertIn('**Prevention over detection.**', workflow.split('## Review rounds')[1].split('\n\n')[1])
         self.assertIn('| Mechanical work and re-review of a small fix round | medium |', workflow)
         for name in ('core/docs/REVIEW_RUNNING.md', 'core/docs/WORKFLOW.md',
                      'core/docs/REVIEW_GATE.md', 'core/AGENTS.md'):

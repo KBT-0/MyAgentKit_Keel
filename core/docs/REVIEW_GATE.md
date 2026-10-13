@@ -188,9 +188,10 @@ Manual checks, so it rules out a plain Accept.
 
 - **Write the threat model before a hardening or review loop starts.** It names what the
   change protects and what is excluded by decision. Agree the stopping rule with
-  {{OWNER_NAME}} before the first round. Answer a finding outside the threat model with a
-  disposition, not with a fix. Without a threat model, a loop over an adversarial reviewer
-  has no edge: one project ran twelve rounds in one day.
+  {{OWNER_NAME}} before the first round. A finding outside the threat model, such as a race
+  with another process or a hostile file the model excludes, is recorded as an accepted
+  limit with a disposition, not fixed. Without a threat model, a loop over an adversarial
+  reviewer has no edge: one project ran twelve rounds in one day.
 - **A stopping rule ends the hunt for new classes of finding.** It does not excuse
   unreviewed code: every fix merged after a loop ends is still reviewed.
 - **A platform the project claims is a platform it is run on** (in CI or by hand) before

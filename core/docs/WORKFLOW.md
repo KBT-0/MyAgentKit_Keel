@@ -126,6 +126,18 @@ The branch and worktree policy below still decides which session may edit STATE.
 - Completed work is deleted, not marked DONE: the dates live in git
   (`git log -p -- docs/STATE.md`). The state templates name no example task id, because
   those files are the ones checked ("Task ids").
+- **A living file never keeps a closed item.** Every file that collects items (STATE.md,
+  BACKLOG.md, an operation file, a review list, a handoff) deletes an item in the step that
+  closes it, and a mechanism enforces the deletion: the `Done:` trailer check, an operation
+  file's last acceptance item, the strong review cycle's closing commit. A new file of that
+  kind ships with its deletion step, because STATE.md bloated whenever cleanup was left to
+  an agent's judgement.
+- **Open issues are never closed to finish a release.** A release is done when its issues are
+  fixed, or when {{OWNER_NAME}} has moved them, explicitly, to a named later version: an issue
+  closed unfixed hides the defect it named.
+- **A lesson is written into the project's own documents** (and, for the kit, through
+  `/myagentkit:kit-feedback`), never only into a lead's private memory, because the next
+  session, the other model and the other projects never read that memory.
 - An operation's detail lives in its own file, `docs/<OPERATION>.md`, never in STATE.md. The
   operation file tracks progress with checkboxes; its last acceptance item is "STATE.md
   harvested and pruned", and the file is deleted when the operation closes (the history is
@@ -455,6 +467,11 @@ Rules for whoever routes work, binding with any table:
    detail-bearing errands and ordinary reviews; risky and gate reviews and design
    consultations. The lead picks the model from its tier and effort from the work table above.
    It writes both into the brief. Neither is left to a default or to inheritance.
+   Both start at the cheapest table row that fits: mechanical work, docs, small fixes and
+   re-reviews go to the cheaper model (Sonnet) or a Codex worker at medium; the strongest
+   model at high is for a new mechanism's or a gate change's first round only; rule 4 steps
+   up from there. Every brief names the model, the effort and the table row, because an
+   unnamed choice drifts to the expensive default.
 2. **The top models are the lead's pick, and only where the subscription has them.** A model
    above the strongest routine one (for example Codex Astra or Claude Fable) is never a
    default. The lead picks it for one errand when the errand needs it, without asking the
@@ -466,8 +483,11 @@ Rules for whoever routes work, binding with any table:
 4. **A review loop is broken by escalation after the second dirty round.** When round 2
    still returns a High or Medium finding, round 3 runs one step up. If the fixer skipped
    a file or did not run the tests, raise its effort. If it had the full context and was
-   still wrong, raise its model tier. The lead writes the choice and reason into the next
-   brief. One stronger round costs less than several more rounds at the same level.
+   still wrong, raise its model tier and choose the effort again from the work table: the
+   stronger model's medium or high comes before its xhigh, and effort is never carried up
+   from the round before, because the top model at xhigh costs many times the routine one.
+   The lead writes the model, the effort and the reason for the step-up into the next brief.
+   One stronger round costs less than several more rounds at the same level.
 5. **Model versions are kept current.** A lead that learns of a newer Codex or Claude model
    switches to it: the reviewer pins in `scripts/review.sh` and the machine's Codex
    configuration (`~/.codex/config.toml`). The lead then reports the switch to the kit, so
@@ -480,7 +500,7 @@ Rules for whoever routes work, binding with any table:
    one side's allowance is low, the saver mode for that side is in force (below).
    The low allowance lasts until that side's allowance resets, or until the owner says
    otherwise; then the main rule is back at once, unasked: the reviewing model fixes its own
-   findings again. A decision made for a moment never outlives its reason.
+   findings again (`AGENTS.md`, "Duties toward {{OWNER_NAME}}").
 
 ### A second Claude-compatible backend
 
@@ -598,15 +618,14 @@ by the low side, so the loop keeps both models. These rules bind both saver mode
   round at medium; high for a gate, hook or review-tooling change, a risky diff and a new
   mechanism's first round. The top model or the highest effort needs the owner's yes.
 - A running review is not cancelled to lower its effort, since what it spent is gone.
-- Independent reviews run together, and with the self-test (the worktree rule is in the lead's step 1).
+- Independent reviews follow the launch sequence in "Worker cost", rule 6.
 - A review that fails on quota leaves its rerun command in the task's issue or STATE line
   and waits. It goes to the other side only with the owner's yes, because a second model's
   judgement is the point of it.
 - **Ends:** the low side's allowance resets, or the owner says otherwise. Then
   cross-performance is back at once, unasked: the lead runs `scripts/working_mode.py
   cross-performance` to update both records, and the
-  reviewing model fixes its own findings again. A decision made for a moment never outlives
-  its reason.
+  reviewing model fixes its own findings again.
 
 #### claude-saver (Claude Tasarruf Modu): Claude's allowance is low
 
@@ -697,6 +716,10 @@ Rules, binding for whoever routes workers:
    may have no such setting), choose the fallback from the measured table in the kit's
    `docs/worker-cost-setups.md`: usually waits split into pieces under five minutes, at the
    price of a context read per piece.
+   A separate, visible session (`scripts/spawn_worker.sh` in a tab or tmux) is for a worker
+   that waits on long jobs or must outlive the lead; an ordinary errand runs as a sub-agent,
+   and the lead never opens visible sessions to show the workflow, because each one is a
+   full session's bill.
 2. **Cross-model gate findings go to a fresh worker of the reviewing model**, briefed with
    the findings, the branch and the files to read. The gate's reviewer is a headless process
    in a throwaway copy, so it cannot be resumed. Only inner same-model rounds ("Review inside
@@ -718,10 +741,32 @@ Rules, binding for whoever routes workers:
    `worker.md` and `diff-reviewer.md` do, as a fallback), and nothing in its output shows
    which one it got. The lead passes `model` and `effort` on every Agent call. A separate
    session takes `scripts/spawn_worker.sh --model --effort`, which refuses a spawn without
-   them; a Codex errand takes the model and `-c model_reasoning_effort`, and
+   them; a Codex errand (`codex exec`) takes the model and `-c model_reasoning_effort`, and
    `scripts/spawn_codex.sh --model --effort` refuses a Codex worker without them. The brief states model and
    effort, and the lead verifies both in the transcript after the run, not in the report.
-6. **Parallel workers only for independent modules**; each one multiplies the bill. Workers
+6. **Parallel workers only for independent modules**; each one multiplies the bill. The lead
+   runs heavy background jobs (a gate, a self-test, a review, a build, a `codex exec`
+   errand) within a memory budget: two at a time until the lead has measured its host, then
+   (free memory minus a 4 GB reserve) divided by the measured peak of one job.
+   Start the two reviewers together when two slots are free; heavy jobs already running take slots. Start the self-test with them only when all three jobs
+   fit within the budget. With a budget of two, start both reviewers first, then the self-test
+   when one reviewer ends. Never reduce the reviews; run them one after the other only when
+   the owner is away and at least one job fits the budget, as defined below; the self-test waits. A review round's floor is the two reviewers. When the budget is below two, the lead first frees memory it owns
+   (waits for or closes its own finished jobs, never ending running work without a reason)
+   and starts the round only when two jobs fit; the self-test and every other heavy job wait
+   until a reviewer ends. If two never fit after that, the lead asks the owner.
+   When the owner gives no answer to that question within one review timeout
+   (`REVIEW_TIMEOUT_SECONDS`), the owner is away. When the owner is away and at least one job fits the
+   budget, the lead runs the two reviewers one after the other as a recorded exception (a line in the lead's
+   RESULT/notes file names the budget figure) rather than waiting without limit.
+   When not even one job fits, the review round stays blocked and the lead reports the capacity
+   figure to the owner; nothing heavy starts. Read free
+   memory with `Get-CimInstance Win32_OperatingSystem | Select FreePhysicalMemory` in
+   PowerShell on Windows, `free -g` on Linux, `vm_stat` or `memory_pressure` on macOS. Measure
+   a job's peak on your host; one measured example: a review or gate took 1–2 GB on native
+   Windows 11 with Git Bash (2026-10-12). The lead lowers the number after a low-memory reap,
+   because five jobs started together were killed at once
+   (`docs/GOTCHAS.md`, "Background jobs die with the session and in a low-memory reap"). Workers
    whose last step waits on one exclusive resource (a heavy lock, a device, a licence) run
    one after another, or run only their independent parts in parallel: in one project,
    "parallel" workers queued at one machine-wide lock.
@@ -744,9 +789,11 @@ Rules, binding for whoever routes workers:
    one summary turn is cheaper than a handoff note plus a cold start. **Hand off** (update
    STATE, write the handoff, start fresh) when the work changes direction, a batch has just
    closed, or most of the context is the detail of finished work that a summary would still
-   carry. After the warning the lead starts no new round: it lets the running jobs finish,
-   commits what is done, updates STATE, then stops and reports, because a session end
-   kills every background job it started; the owner decides at that stop, never mid-flow.
+   carry. After the warning the lead starts no new round: it lets the running batch finish,
+   commits what is done, updates STATE and the handoff, then stops and proposes a hand-off or
+   `/compact`, because a session end kills the background jobs started from its tool shell (survivors:
+   `docs/GOTCHAS.md`, "Background jobs die with the session and in a low-memory reap"); the owner
+   decides at that stop, never mid-flow.
    The lead keeps big output out of its own context: logs, diffs and images go to
    files and it reads the summary line; long reads go to a worker that returns conclusions;
    independent calls go out in one turn.
@@ -873,9 +920,18 @@ answer from {{OWNER_NAME}} and delivers it into the SAME session:
   cleanly, never on elapsed time; a failed launch, or a CLI that fails without a new result,
   keeps it for the retry. The result retains the question history.
 
-A stopped worker is always answered in its own session, never replaced with a fresh one.
+**A cut-off worker is resumed in place, never restarted.** When a worker's session is cut off
+mid-task (its host session ended, its pipe closed), the lead resumes that same session: a
+Codex worker by `scripts/spawn_codex.sh ... --resume` with a file that says to continue (the
+id is in `.myagentkit/workers/NAME.session`), a bare `codex exec` errand by `codex exec resume
+<session id>`, a Claude worker by `claude --resume <session id>`. A fresh session with a
+takeover prompt re-reads everything, loses the session's reasoning and redoes finished parts.
+Only when a resume is clearly worse (its context spent, the session corrupt) does a fresh
+session take over, from a `Kind: handoff` result the old session writes when it still can
+(`docs/HANDOFF.md`).
 
-**The lead commits a Codex worker's work (#43).** The worker's brief instructs it to leave
+**The lead commits a Codex worker's work (#43)**, and every `codex exec` errand's. The
+worker's brief instructs it to leave
 all work uncommitted and ready for the lead. Its result lists the exact changed and added
 files and their verification. The lead reviews the diff through the normal cross-review,
 then stages those files and commits in the worker's worktree; the commit gate runs as usual.
@@ -958,6 +1014,17 @@ main checkout, so git there acts on the owner's main worktree.
 
 ## Review rounds — early, inside the worker, in parallel
 
+**Prevention over detection.** Quality goes in before the code is written: every task
+starts with a design of five to ten lines, in the brief or at the top of the worker's result
+(what changes, where, the one test that proves it, what is left out); the worker makes the
+smallest change that works, reuses what the project already has, and reads its own diff as a
+reviewer would before it reports ("Before you report"). The review loop is unchanged and
+reviews are never reduced (`docs/REVIEW_GATE.md`, "What counts as a risky diff"); prevention
+is what lets its first round find nothing. A project or a kit that spends its budget
+reviewing itself fails at its purpose, which is the product.
+
+"In parallel" means the reviewers; the self-test follows "Worker cost", rule 6.
+
 In one project a feature took five fix rounds in about seven hours. Each round cost a fresh
 worker re-reading 100k to 300k tokens (20 to 60 minutes), a ten-minute self-test, reviews of
 5 to 15 minutes and a merge with another self-test. Most findings of rounds 2 to 5 sat in code
@@ -998,8 +1065,8 @@ costs a fix round.
   has argued a disposition for each one that remains.
 - The report lists the inner rounds: their count, the findings fixed and each disposition.
 - A worker that cannot start a sub-agent (a sub-agent itself) says so in its report. The lead
-  then starts the review the moment the worker's branch exists, in parallel with the
-  self-test, never after it.
+  then starts the review the moment the worker's branch exists. The launch sequence follows
+  "Worker cost", rule 6.
 - The inner rounds do not replace the lead's review. A risky diff still passes
   `docs/REVIEW_GATE.md` before the merge, and the inner rounds make that review shorter.
 
@@ -1019,17 +1086,23 @@ already shown once costs a whole round when the worker leaves it for the reviewe
 The lead never changes its shell directory into a worker's worktree; use `git -C <worktree>` for its Git commands.
 The shell stays in the lead's checkout, so its Stop hook runs that checkout's gate.
 
-1. Start the self-test and the reviews together, on the same commit. A self-test may share the
-   reviews' worktree only when every one of its cases writes nothing but files Git ignores
-   (owner decision, 2026-10-12). Its tree check at the end cannot catch a non-ignored file that
-   a case writes and removes meanwhile; any self-test whose case writes a non-ignored file,
-   such as the shipped boundary example, runs in its own worktree of that commit, started
-   with the reviews, or after them (`docs/REVIEW_RUNNING.md`, "Rounds, labels and designs").
-   Permission changes beyond Git's executable bit (or all mode changes with
-   `core.fileMode=false`) are outside this end check.
-   The check reads every tracked and untracked non-ignored file twice, which can cost minutes
-   for large binaries; ignore large assets or keep them out of the tree.
-2. Run two reviewers at the same time, never one after the other.
+When several branches are in flight, review rounds run per cluster of related branches.
+After their first round, merge branches touching the same files into one integration branch; remaining rounds run on the cluster.
+Per-branch rounds multiply wall time and leave merge conflicts to resolve and review afterwards.
+The loop is unchanged: cross review, the reviewer fixes its own findings, the other model reviews the fix,
+until no High or Medium remains, with per-model NEW-label finals.
+A merge-conflict resolution is a part authored by whoever resolved it, so the other model reviews it before closure
+(`docs/REVIEW_GATE.md`, independence is judged per part). A member branch rejected or abandoned after the merge
+leaves the cluster by rebuilding the integration branch without it. Prefer clustering branches with the same author model.
+
+1. Start the self-test and the reviews on the same commit, following "Worker cost", rule 6.
+   A self-test may share the reviews' worktree only when every one of its cases writes
+   nothing but files Git ignores (owner decision, 2026-10-12); otherwise it runs in its own
+   worktree of that commit, or after the reviews (`docs/REVIEW_RUNNING.md`, "Rounds, labels and designs").
+   The self-test runs once per batch, never between worker rounds while
+   workers wait for it, because each run locks the checkout and every waiting worker pays
+   for the wait.
+2. Run two reviewers following the launch sequence in "Worker cost", rule 6.
 3. Keep one review label for the whole feature, so that each round carries the earlier ones.
    Only the final reviews (one per model, each over the parts it did not write) take a label
    never used before (`docs/REVIEW_RUNNING.md`,
@@ -1041,8 +1114,8 @@ The shell stays in the lead's checkout, so its Stop hook runs that checkout's ga
 4. Start the next worker while the self-test after a merge still runs. If that self-test
    fails, tell the next worker to rebase onto the fix.
 
-Each step that waits on another adds its whole duration to the round, and nothing in a round
-needs another step's result before it starts.
+Each step that waits on another adds its whole duration to the round. No step needs another
+step's result before it starts; the memory budget can still require a wait.
 
 What the watcher reports decides the lead's next step for a spawned worker:
 

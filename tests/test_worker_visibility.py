@@ -880,6 +880,15 @@ class CaseLintTests(unittest.TestCase):
         with unittest.mock.patch.object(self.gate, 'bash_5_2', side_effect=AssertionError('started bash')):
             self.assertEqual(self.gate.case_in_substitution('x=$(echo esac)\ncase a in a) :;; esac\n'), [])
 
+    def test_the_lint_prerequisite_is_checked_even_when_no_file_needs_it(self):
+        # bash_5_2() runs on every host before the first file: a missing bash fails the syntax
+        # check on a tree whose scripts hold no `case` inside $( ) at all.
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, 'plain.sh').write_text('echo plain\n')
+            with unittest.mock.patch.object(self.gate, 'bash_5_2', side_effect=RuntimeError('needs bash 5.2 or later')):
+                with self.assertRaisesRegex(RuntimeError, r'needs bash 5\.2 or later'):
+                    self.gate.check_syntax(Path(tmp))
+
     def test_every_kit_shell_script_passes_the_case_lint(self):
         for path in sorted(ROOT.rglob('*.sh')):
             if '.git' not in path.parts:

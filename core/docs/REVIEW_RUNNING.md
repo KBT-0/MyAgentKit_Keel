@@ -170,7 +170,8 @@ for choosing a different reviewing model; `--requester` is reported metadata, no
 ## Rounds, labels and designs
 
 When the rounds start and what runs in parallel is the lead's part, in `docs/WORKFLOW.md`,
-"Review rounds — early, inside the worker, in parallel". This section says how to run them.
+"Review rounds — early, inside the worker, in parallel". This section says how to run them. ("In parallel" means the reviewers; the self-test follows
+"Worker cost", rule 6.)
 
 - Review a design under its own label, such as `<feature>-design`, before any code exists.
   Commit the design on the feature's branch, so that every code round's diff carries it.
@@ -178,27 +179,29 @@ When the rounds start and what runs in parallel is the lead's part, in `docs/WOR
   exclusion as its disposition ("deferred by decision", naming the design's section). Pass
   it in `REVIEW_DISPOSITIONS` from the second round on; the first round has no earlier round
   to attach it to, and the reviewer reads the exclusion in the diff.
-- Start the self-test and the two reviewers together:
-  `MYAGENTKIT_TASK_ID=<feature> ./scripts/review.sh --base <base> --reviewer codex` and the same
-  with `--reviewer claude`. Concurrent reviews
-  write archives with unique names outside the review scope. The self-test compares HEAD,
-  the index, `git status` and content hashes of tracked and untracked non-ignored files at its end.
-  That check proves only that the tree ends unchanged. A self-test may share the reviews'
-  worktree only when every one of its cases writes nothing but files Git ignores (owner
-  decision, 2026-10-12). A temporary injection, such as `src/domain/.selftest.py`, can fail a
-  concurrent review as `stale_checkout` even when removed; any self-test whose case writes a
-  non-ignored file, such as the shipped boundary example, runs in another worktree of the
-  same commit or after the reviews.
-  Permission changes beyond Git's executable bit (or all mode changes with
-  `core.fileMode=false`) are outside this end check.
-  The check reads every tracked and untracked non-ignored file twice, which can cost minutes
-  for large binaries; ignore large assets or keep them out of the tree.
+- Start the self-test and two reviewers together only when the memory budget permits
+  (`docs/WORKFLOW.md`, "Worker cost", rule 6 defines the launch sequence). Each runs as its
+  own background job; when all three fit, for example, run
+  `./scripts/check.sh --self-test`, then `MYAGENTKIT_TASK_ID=<feature> ./scripts/review.sh
+  --base <base> --reviewer codex` and the same with `--reviewer claude`. Concurrent reviews
+  write archives with unique names that lie outside the review scope. A self-test may share
+  the reviews' worktree only when every one of its cases writes nothing but files Git
+  ignores (owner decision, 2026-10-12): its end check proves only that the tree ends
+  unchanged, and a temporary non-ignored file, such as the shipped boundary example's,
+  fails a concurrent review as `stale_checkout` even when removed. Such a self-test runs
+  in a second worktree of the same commit, or after the reviews.
+- Each reviewer runs once per tree at a time, and nobody edits a tree under review: a second
+  run of the same reviewer there buys the same verdict twice, and an edit fails every running
+  review with `stale_checkout`.
 - Every round of one feature uses the same `MYAGENTKIT_TASK_ID`, so that later rounds carry
   the earlier ones. Only the final reviews (one per model, each over the parts it did
   not write) take a label never used before. When model B's final review finds a High or Medium,
   model B fixes its own findings, and model A reviews B's fix under a fresh label.
   B's final review counts as clean for every other part.
   Closure requires no open High or Medium finding on any part by a model that did not write that part.
+  A label is bound to its base: the wrapper refuses a round whose scope, resolved reference
+  or head does not continue the label's earlier rounds (exit 2, above), so another base or
+  another change takes a new label.
 
 ## Unavailable reviewer
 
@@ -228,6 +231,11 @@ is still stopped at sixty minutes by default. Claude's final-JSON output does no
 reliable startup/activity detection. With `--fallback`, two timed-out default
 attempts can take about two hours plus local processing and quota-observation overhead. There is no purchase
 of extra credits and no retry of the same provider.
+
+**A Codex capacity error is transient.** When Codex reports that the model is at capacity,
+the lead runs the same review again by hand after about ten minutes, because the capacity
+returns and the review's judgement is still needed. The lead passes `--fallback`, or hands the
+review to the other side, only with {{OWNER_NAME}}'s yes: the substitute may be the author.
 
 **The requested reviewer is never silently replaced.** The reviewer is usually requested
 because the other model wrote the patch, so a substitute can be the author reviewing its own

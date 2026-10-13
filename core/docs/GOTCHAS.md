@@ -27,6 +27,7 @@ A new entry adds its heading to this list.
 - Under WSL, a file named `*.exe` runs on Windows
 - A build server the gate started keeps the gate lock
 - A worker spawned from a lead's shell inherits its child-session markers
+- Background jobs die with the session and in a low-memory reap
 
 ---
 
@@ -174,3 +175,57 @@ tab hands on the environment), takes itself for the lead's child and never regis
 cannot reach it. Under tmux the marker is ignored, so the same worker registered there. Clear
 the markers (`unset CLAUDE_CODE_CHILD_SESSION CLAUDECODE ...`) in the command that starts the
 worker; `spawn_worker.sh` does.
+
+## Background jobs die with the session and in a low-memory reap
+
+A job started from the lead's tool shell ends with the session on most hosts: a hand-off
+in the middle of a batch killed three Codex jobs in one evening. Observed to survive on
+native Windows (2026-10-12): a separate Windows Terminal tab and a `codex exec` run in it.
+`&` under `sh -c` and `nohup` are unverified there (a Job Object may kill them;
+`RESEARCH_LOG.md` 2026-10-10).
+Before resuming work after a cut-off, list the processes whose command line names the checkout
+or its worktrees. Quote the checkout path and match it literally:
+Windows `Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine.IndexOf('<checkout>', [StringComparison]::OrdinalIgnoreCase) -ge 0 } | Select ProcessId,CommandLine`;
+Linux `ps -eo pid,args | grep -F -- '<checkout>'`; macOS `ps -eww -o pid,args | grep -iF -- '<checkout>'` (APFS ignores case).
+The listing finds jobs whose arguments name the checkout (a `codex exec` with a brief path, a worker with its worktree). Ignore the listing's own rows: the `grep`, and the shell or PowerShell that runs the listing when an agent runs it through a tool (on Windows, the `powershell` process whose command line holds the query).
+The command-line listing is only a shortcut for the jobs it can see. The project's gate holds
+the lock at `git rev-parse --git-path check.lock` and publishes `check-selftest` beside it;
+find the lock holder as described under "A build server the gate started keeps the gate lock" above.
+A review holds no checkout lock; read its chain record as follows.
+For reviews, read the highest-numbered `<chain>-N.json` in `.myagentkit/usage/chains/`; nothing in
+the record names its process. `<chain>-0.json` always stays pending and is not evidence of a
+running review. A review is finished only when that latest record has status `completed`, or
+status `failed` with no further attempt possible (the attempt count equals the number of possible
+attempts, a `failure_kind` outside the dispatcher's unavailable set, `fallback_blocked` set,
+or `fallback_allowed` false, or the failed attempt has no `evidence` or `usage_record`: the
+dispatcher never falls over from such an attempt). A failed first attempt can still be followed
+by a running fallback.
+Use the mtime of `<chain>-0.json` as the review start time. The number of possible attempts is
+one without `--fallback`, two with it. After a cut-off, treat the review as running for at least
+`REVIEW_TIMEOUT_SECONDS` (3600 s when unset; the record does not store it) times the number of
+possible attempts plus overhead (about 4 h with 7200 s and `--fallback`), unless the latest
+record shows it is finished as above.
+This window is a lower bound, not proof that an orphaned reviewer stopped.
+After the window, the lead still confirms completion in the process listing.
+On POSIX, the reviewer runs in its own session; a supervisor killed with `SIGKILL` cannot enforce its timeout.
+Look for a `codex` or `claude` process whose arguments name the throwaway copy under the temp folder
+(`myagentkit-codex-*` or `myagentkit-review-*`). Use the same listing commands with the copy path;
+confirm its working directory if the arguments omit that path. On native Windows the working
+directory is not visible through CIM: read `Get-Process -Id N | Select-Object Path` beside the
+command line, and when the checkout cannot be confirmed treat the process as a survivor.
+If a reviewer survives, wait for it or ask the owner before starting any heavy job.
+Never start a heavy job beside a survivor, or edit or merge its worktree.
+The kit's own self-test (`scripts/check.sh` → `scripts/check_kit.py`) holds no checkout lock
+and publishes no checkout self-test marker. It is visible only in the process listing:
+look for a `python` process whose arguments name `check_kit.py` under the checkout.
+If those arguments are relative, confirm the checkout through the process's working directory.
+After a cut-off, look for this self-test before resuming heavy work; wait for any survivor or ask the owner.
+A checkout path containing an apostrophe cannot go inside the single quotes as is; on Linux/macOS write it as `'\''` or put the path in a variable and match "$checkout";
+on Windows double the apostrophe inside the PowerShell single-quoted string.
+The Windows match ignores case because Windows paths do; search for every spelling the launching shell may have used: `C:/x`, `C:\x` and Git Bash's `/c/x` on Windows, the `pwd -P` form of a symlinked checkout on Linux and macOS, and `/private/var` for `/var` on macOS.
+Wait for the survivors by default. Stop one only under the hard rule in `AGENTS.md` ("Never end
+running work without a reason that holds": the owner asked, or it is provably finished or hung).
+When the machine runs low on memory, the host can reap jobs: five heavy jobs started together
+were killed at once, and their work was lost. Follow the memory budget and finish jobs before
+ending their session (`docs/WORKFLOW.md`, "Worker cost", rules 6 and 8). A Codex or Claude
+session that was cut off is resumed, not restarted (`docs/WORKFLOW.md`, "Worker cost").
