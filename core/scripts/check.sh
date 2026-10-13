@@ -23,10 +23,17 @@
 # before its own timeout kills it). A caller reports 75 as "gate did not run", never as a
 # pass and never as a gate failure.
 #
-# A SELF-TEST CASE NEVER CHANGES A TRACKED FILE, and writes nothing else inside the working
-# tree when it can avoid it. Point the gate at a synthetic file outside the tree through an
-# self-test seam (GATE_SELFTEST_STATE_FILE, GATE_SELFTEST_EXTRA_FILE below; honoured only in the self-test's
-# own nested runs, so the case passes it to expect_fail or expect_pass), or run the case against
+# A SELF-TEST CASE NEVER CHANGES A TRACKED FILE, and leaves nothing in the working tree but
+# files Git ignores: the self-test FAILS when HEAD, the index, `git status --porcelain
+# --untracked-files=all` or the content hashes of tracked and untracked non-ignored files differ
+# at its end. A self-test may run beside a review in the same worktree only when every one of its
+# cases writes nothing but files Git ignores (owner decision, 2026-10-12): this check cannot catch
+# a non-ignored file that a case writes and removes meanwhile, which fails the review as
+# stale_checkout: any self-test whose case writes a non-ignored file, such as the shipped boundary
+# example, runs in another worktree or after the review. Point the gate at a synthetic file
+# outside the tree through a self-test seam (GATE_SELFTEST_STATE_FILE,
+# GATE_SELFTEST_EXTRA_FILE below; honoured only in the self-test's own nested runs,
+# so the case passes it to expect_fail or expect_pass), or run the case against
 # a disposable copy of the tree. A file injected into the tree is seen by a concurrent
 # `git add -A` and by another session's edits, and a killed self-test leaves it behind. The
 # gate lock below keeps other gate runs from seeing it; nothing else does. A case that must
@@ -452,6 +459,41 @@ finally:
   esac
   # The throwaway repositories below are never the caller's: every git call and hook run on a
   # fixture runs in a subshell that calls fixture_env first (defined above self_test).
+
+  # A review running in this worktree meanwhile fails as stale_checkout when HEAD, the index,
+  # a tracked file or an untracked file Git does not ignore changes, so the self-test leaves
+  # them as it found them: compared at the end, a difference fails it. Ignored files may change.
+  git_view() {
+    git rev-parse --verify -q HEAD || :; git ls-files -s; git status --porcelain --untracked-files=all
+    # One ls-files and ONE hash-object for the whole tree; Git status covers deletions.
+    # Newline-separated paths are safe because the kit refuses names holding newlines (#41).
+    # Prefix ./ because hash-object unquotes a line starting with a double quote.
+    paths="${work:-$passed}/git-paths"
+    hashes="$paths.hashes"
+    errors="$paths.errors"
+    git -c core.quotePath=false ls-files -z --cached --others --exclude-standard | tr '\0' '\n' |
+      LC_ALL=C sort -u | while IFS= read -r path; do
+        if [ -f "$path" ] && [ -r "$path" ]; then printf '%s\n' "$path"; fi
+      done > "$paths"
+    hash_failed=0
+    sed 's|^|./|' "$paths" | git hash-object --no-filters --stdin-paths > "$hashes" 2> "$errors" || hash_failed=1
+    hash_count=$(wc -l < "$hashes")
+    path_count=$(wc -l < "$paths")
+    if [ "$hash_failed" -ne 0 ] || [ "$hash_count" -ne "$path_count" ]; then
+      path=$(sed -n "$((hash_count + 1))p" "$paths")
+      [ -n "$path" ] || path=$(tail -n 1 "$paths")
+      echo "FAIL — could not hash $path; the tree check is incomplete"
+      cat "$errors"
+      return 1
+    fi
+    paste -d ' ' "$hashes" "$paths"
+    rm -f "$paths" "$hashes" "$errors"
+  }
+  view_before=""
+  if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    view_before="$work/git-view.before"
+    git_view > "$view_before" 2>&1 || { cat "$view_before"; return 1; }
+  fi
 
   # A red tree cannot prove that a gate turns red: everything would "fail correctly".
   if ! baseline=$(sh "$0" 2>&1); then
@@ -1191,6 +1233,20 @@ LOCKCASE
   else
     echo "  FAIL — $BOUNDARY_SELFTESTS_FILE is missing: the project's boundary checks have"
     echo "         no negative tests, so they have never been observed rejecting anything."
+    st_fail=1
+  fi
+
+  # --- the self-test leaves the worktree as it found it ---------------------------
+  if [ -z "$view_before" ]; then
+    echo "  NOTE — not a Git worktree: the self-test's leftovers were not compared."
+  elif git_view > "$work/git-view.after" 2>&1 && cmp -s "$view_before" "$work/git-view.after"; then
+    echo "  ok   — the self-test left HEAD, the index, git status and the tracked changes as it found them"
+  else
+    echo "  FAIL — the self-test changed this worktree: a review running here meanwhile fails"
+    echo "         as stale_checkout. Make the case remove what it writes, or ignore its output"
+    echo "         path in .gitignore. Or another process edited the checkout meanwhile (a second session, an editor)."
+    echo "         Lines before (-) and after (+): HEAD, index, status, content hashes by path:"
+    diff "$view_before" "$work/git-view.after" | sed -n 's/^< /    - /p; s/^> /    + /p' | head -40
     st_fail=1
   fi
 

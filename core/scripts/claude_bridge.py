@@ -247,6 +247,9 @@ def throwaway_copy(repo: Path, head: str, diff: str | None, copy: Path,
       Claude's file tools are confined to the copy by --restricted and offer no write.
     - Detected: a write that reaches the repository anyway changes the fingerprint, and the
       review fails as stale_checkout.
+    - Accepted limit: a write that reaches only a file Git ignores is not detected. The
+      fingerprint covers HEAD, the base, the index, tracked files and untracked files Git does
+      not ignore.
     - Accepted limit: a reviewer that finds the repository by its absolute path can still read
       it (neither sandbox blocks reads).
     - Accepted limit: a repository inside Claude Code's per-user temporary directory is
@@ -557,11 +560,13 @@ def snapshot(repo: Path, scope: str, reference: str | None) -> tuple[str, str, s
     # These index flags suppress real working-tree changes from Git's diff. Refuse
     # the scope before launch rather than attest to files that the diff cannot see.
     # A skip-worktree entry whose file is NOT in the working tree is what a sparse checkout
-    # leaves outside its cone: tolerated, under an active sparse checkout only. Anywhere
-    # else an absent skip-marked file is a deletion the diff would not show, and a present
-    # one can hide an edit: both are refused like assume-unchanged.
+    # leaves outside its rules: tolerated, under an active sparse checkout only, and only for
+    # a path its rules exclude. Anywhere else an absent skip-marked file is a deletion the
+    # diff would not show (a file inside the cone marked by hand and deleted, issue #53), and
+    # a present one can hide an edit: both are refused like assume-unchanged.
     sparse = git(repo, 'config', '--type=bool', '--get', 'core.sparseCheckout', allowed=(0, 1)).strip() == b'true'
     entries = git(repo, 'ls-files', '-v', '-z', '--', '.', *exclusions).split(b'\0')
+    absent = []
     for entry in entries:
         if not entry:
             continue
@@ -570,6 +575,23 @@ def snapshot(repo: Path, scope: str, reference: str | None) -> tuple[str, str, s
         if hidden:
             raise BridgeError('review scope has assume-unchanged or skip-worktree index flags; '
                               'clear those flags and use a complete checkout before review')
+        if entry[:1] == b'S':
+            absent.append(entry[2:])
+    if absent:
+        # One git call classifies every absent entry: it prints the paths the rules include.
+        try:
+            included = git(repo, 'sparse-checkout', 'check-rules', '-z', stdin=b'\0'.join(absent) + b'\0')
+        except BridgeError as error:
+            raise BridgeError('review scope has skip-worktree files missing from a sparse checkout, and '
+                              '`git sparse-checkout check-rules` (Git 2.42 or later) could not tell whether '
+                              'the sparse rules exclude them; upgrade Git or use a complete checkout '
+                              'before review (%s)' % error) from None
+        included = sorted(set(included.split(b'\0')) - {b''})
+        if included:
+            raise BridgeError('review scope has a skip-worktree file inside the sparse-checkout rules that '
+                              'is missing from the working tree (%s): the diff would not show its deletion; '
+                              'clear its flag with `git update-index --no-skip-worktree` before review'
+                              % os.fsdecode(included[0]))
     # Git runs clean filters and ident collapsing on working-tree bytes BEFORE it diffs
     # them, so a filter can drop a whole file or single lines from the reviewer's payload
     # while the raw bytes still hash into the fingerprint. Refuse such paths: no flag turns
@@ -1354,8 +1376,25 @@ def main(argv=None, result_sink=None) -> int:
         if result_sink is not None:
             result_sink(result)
         print(json.dumps(result))
+        sys.stdout.flush()  # Catch buffered pipe failures here, before shutdown can replace the exit with 120.
         return 0 if evidence["status"] == "completed" else 5
     except (BridgeError, OSError, ValueError) as error:
+        if result is not None:
+            # The evidence and usage record are written and the result handed over: a later
+            # failure (printing it) does not turn a completed review into exit 2 and a
+            # "failed" line after the "completed" one. The handed-over status decides; the
+            # dispatcher, holding this same dict, records the failure with the attempt.
+            result["error_after_result"] = str(error)
+            try:
+                sys.stdout.flush()
+            except (OSError, ValueError):
+                sys.stdout = open(os.devnull, "w")
+            with contextlib.suppress(OSError, ValueError):
+                note = ("its %s result is recorded in %s" % (result["status"], result["evidence"])
+                        if result["evidence"] else "its %s result has no archive; evidence was not written" % result["status"])
+                print("NOTE [review]: claude failed after it handed over its result (%s); %s"
+                      % (error, note), file=sys.stderr, flush=True)
+            return 0 if result["status"] == "completed" else 5
         print(json.dumps({"status": "failed", "error": str(error)}))
         return 2
     finally:

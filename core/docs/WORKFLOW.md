@@ -186,9 +186,14 @@ breaks, everything keeps looking green.
 - **Ship a negative test with it** — `./scripts/check.sh --self-test`. A new gate adds its
   case there in the same task. A manual proof rots the moment someone edits the script; the
   automated one does not.
-- **A self-test case never changes a tracked file**, and writes nothing else into the
-  working tree when it can avoid it: point the gate at a synthetic file outside the tree
-  through an overridable path, or run against a disposable copy. Several sessions share one
+- **A self-test case never changes a tracked file**, and leaves nothing in the working tree
+  but files Git ignores: the self-test fails when HEAD, the index, `git status --porcelain
+  --untracked-files=all` or content hashes of tracked and untracked non-ignored files differ
+  at its end. This proves only that the tree ends unchanged, not that it never changed meanwhile:
+  a self-test may run beside a review in the same worktree only when every case writes nothing
+  but files Git ignores (owner decision, 2026-10-12), because a non-ignored file that a case
+  writes and removes can fail the review as `stale_checkout`. Point the gate at a synthetic
+  file outside the tree through an overridable path, or run against a disposable copy. Several sessions share one
   checkout, and a file injected into it is seen by their `git add -A`, their edits and their
   commits. `check.sh` holds a per-checkout lock for a whole run (the self-test included), so
   a second gate run waits instead of racing; tests that write scratch files still use a
@@ -593,7 +598,7 @@ by the low side, so the loop keeps both models. These rules bind both saver mode
   round at medium; high for a gate, hook or review-tooling change, a risky diff and a new
   mechanism's first round. The top model or the highest effort needs the owner's yes.
 - A running review is not cancelled to lower its effort, since what it spent is gone.
-- Independent reviews run at the same time, with each other and with the self-test.
+- Independent reviews run together, and with the self-test (the worktree rule is in the lead's step 1).
 - A review that fails on quota leaves its rerun command in the task's issue or STATE line
   and waits. It goes to the other side only with the owner's yes, because a second model's
   judgement is the point of it.
@@ -1014,7 +1019,16 @@ already shown once costs a whole round when the worker leaves it for the reviewe
 The lead never changes its shell directory into a worker's worktree; use `git -C <worktree>` for its Git commands.
 The shell stays in the lead's checkout, so its Stop hook runs that checkout's gate.
 
-1. Start the self-test and the review together, on the same commit, never one after the other.
+1. Start the self-test and the reviews together, on the same commit. A self-test may share the
+   reviews' worktree only when every one of its cases writes nothing but files Git ignores
+   (owner decision, 2026-10-12). Its tree check at the end cannot catch a non-ignored file that
+   a case writes and removes meanwhile; any self-test whose case writes a non-ignored file,
+   such as the shipped boundary example, runs in its own worktree of that commit, started
+   with the reviews, or after them (`docs/REVIEW_RUNNING.md`, "Rounds, labels and designs").
+   Permission changes beyond Git's executable bit (or all mode changes with
+   `core.fileMode=false`) are outside this end check.
+   The check reads every tracked and untracked non-ignored file twice, which can cost minutes
+   for large binaries; ignore large assets or keep them out of the tree.
 2. Run two reviewers at the same time, never one after the other.
 3. Keep one review label for the whole feature, so that each round carries the earlier ones.
    Only the final reviews (one per model, each over the parts it did not write) take a label

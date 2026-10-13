@@ -141,17 +141,34 @@ def main(argv=None):
                    "--" + scope] + ([ref] if ref else [])
         print("REVIEW [about to run]: %s model %s, effort %s" % (provider, pins[provider], args.effort),
               flush=True)
+        error = None
         try:
             if provider == "claude":
                 exit_code = claude_bridge.main(["review", "--timeout", str(timeout), "--max-turns", str(turns), *command], received.append)
             else:
                 exit_code = codex_bridge.main(command, received.append)
-        except (OSError, ValueError, claude_bridge.BridgeError, subprocess.SubprocessError) as error:
+        except (OSError, ValueError, claude_bridge.BridgeError, subprocess.SubprocessError) as caught:
+            exit_code, error = 5, caught
+        if received:
+            # An adapter hands its result over only after its evidence and usage record are
+            # written, its own checkout check included. A failure after that (printing the
+            # review) does not change what was recorded: relabelled adapter_error, a completed,
+            # paid review was reported as no review (issue #71). The result decides, not the
+            # exit code; the checkout check below still runs.
+            result = received[-1]
+            delivered = 0 if result["status"] == "completed" else 5
+            if error is None and exit_code != delivered:
+                error = "the adapter exited %s" % exit_code
+            exit_code = delivered
+        elif error is not None:
             # Includes persistence failures. No machine result means no safe failover.
-            exit_code = 5
-            received = [{"status": "failed", "failure_kind": "adapter_error", "error": str(error)}]
-        result = received[-1] if received else {"status": "failed", "failure_kind": "preflight_failed"}
-        chain["attempts"].append(dict(result, reviewer=provider, model=pins[provider]))
+            result = {"status": "failed", "failure_kind": "adapter_error", "error": str(error)}
+        else:
+            result = {"status": "failed", "failure_kind": "preflight_failed"}
+        attempt = dict(result, reviewer=provider, model=pins[provider])
+        if received and error is not None:
+            attempt["error_after_result"] = str(error)
+        chain["attempts"].append(attempt)
         chain.update(status=result["status"], failure_kind=result.get("failure_kind"))
         try:
             if claude_bridge.snapshot(repo, scope, ref) != original:
@@ -163,12 +180,11 @@ def main(argv=None):
             exit_code = 5
         if chain["status"] == "completed" and exit_code == 0:
             chain["selected_reviewer"] = provider
-            checkpoint()
-            break  # Accept, manual checks AND Reject are terminal review results.
-        chain["status"] = "failed"
+        else:
+            chain["status"] = "failed"
         # A cancel at any point after launch ends the chain: both adapters relabel a cancelled
         # failure "cancelled", which is not in UNAVAILABLE, before they return.
-        eligible = (provider == args.reviewer and chain["failure_kind"] in UNAVAILABLE
+        eligible = (chain["status"] != "completed" and provider == args.reviewer and chain["failure_kind"] in UNAVAILABLE
                     and bool(result.get("evidence")) and bool(result.get("usage_record")))
         if eligible and not args.allow_fallback:
             chain["fallback_blocked"] = "not requested; --fallback allows one other configured reviewer"
@@ -177,7 +193,15 @@ def main(argv=None):
             chain["fallback_blocked"] = "other reviewer has no valid configured model pin"
             eligible = False
         checkpoint()  # Never spend on the alternate if primary evidence cannot be saved.
-        if not eligible:
+        if attempt.get("error_after_result"):  # Save once, before a closed console can raise again.
+            # The result stands only when the chain completed; after a stale_checkout it did not.
+            print("NOTE [review]: %s failed after it handed over its result (%s); %s %s%s"
+                  % (provider, attempt["error_after_result"],
+                     "the result stands as recorded in" if chain["status"] == "completed"
+                     else "the adapter recorded the result in", result.get("evidence"),
+                     ", but the checkout changed, so the chain failed"
+                     if chain.get("checkout_changed") else ""), flush=True)
+        if chain["status"] == "completed" or not eligible:
             break
         print("FALLBACK [review]: requested reviewer %s did not complete (%s); --fallback was "
               "passed, so configured %s model %s runs once instead."
@@ -202,8 +226,9 @@ def main(argv=None):
         if chain["failure_kind"] == "stale_checkout":
             # Correct to fail: the reviewer reads files while it runs, so its findings may
             # describe a tree the archived diff and fingerprint do not. The fix is the caller's.
-            print("FAIL [review]: the checkout changed while the review ran (an edit, a new "
-                  "untracked file, a moved HEAD or base), so the result cannot be tied to the "
+            print("FAIL [review]: the checkout changed while the review ran (an edit, a staged "
+                  "change, a new untracked file Git does not ignore, a moved HEAD or base), so "
+                  "the result cannot be tied to the "
                   "diff it names. Leave this checkout untouched until review.sh exits: keep "
                   "working in another worktree, or wait for it, then run the review again.")
     elif chain.get("selected_reviewer") != args.reviewer:

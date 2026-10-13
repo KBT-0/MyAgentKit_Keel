@@ -91,7 +91,8 @@ Bash runs in Claude Code's own sandbox on macOS, Linux and WSL2 (Linux and WSL2 
 `bubblewrap` and `socat`); a host where that sandbox cannot start fails the review at
 startup instead of running Bash unsandboxed. Claude Code has no sandbox on native Windows, so
 there the Claude reviewer gets no Bash at all: it reads the copy and marks its findings
-REASONED. A write that reaches the checkout anyway fails the review as `stale_checkout`. The
+REASONED. A write that reaches the checkout anyway fails the review as `stale_checkout`;
+one that reaches only a file Git ignores is not detected, an accepted limit. The
 evidence's sandbox field records `workspace-write (throwaway copy)` for Codex, and for Claude
 either the Bash sandbox or `no Bash: native Windows`. A copy that a killed adapter left in
 the temporary directory is removed by a later run once it is older than the longest review.
@@ -140,8 +141,9 @@ under labels never used before: each sees no earlier round and no disposition.
 
 **A checkout that changes while the review runs fails it with `stale_checkout`.** That is
 correct, not a flake: the reviewer reads files while it runs, so its findings may describe a
-tree that the archived diff and fingerprint do not. An edit, a new untracked file, a moved HEAD
-or a moved base all count. Leave the checkout alone until `review.sh` exits — keep working in
+tree that the archived diff and fingerprint do not. An edit, a staged change, a new untracked
+file Git does not ignore, a moved HEAD or a moved base all count; a file Git ignores (bytecode,
+`.myagentkit/`) does not. Leave the checkout alone until `review.sh` exits — keep working in
 another worktree — and run the review again.
 
 `./scripts/review.sh --self-test` exercises both adapters' offline failure cases and is
@@ -176,12 +178,21 @@ When the rounds start and what runs in parallel is the lead's part, in `docs/WOR
   exclusion as its disposition ("deferred by decision", naming the design's section). Pass
   it in `REVIEW_DISPOSITIONS` from the second round on; the first round has no earlier round
   to attach it to, and the reviewer reads the exclusion in the diff.
-- Start the self-test and two reviewers at once, each as its own background job: for example
-  `./scripts/check.sh --self-test`, then `MYAGENTKIT_TASK_ID=<feature> ./scripts/review.sh
-  --base <base> --reviewer codex` and the same with `--reviewer claude`. Concurrent reviews
-  write archives with unique names that lie outside the review scope. A self-test that
-  writes into the working tree fails the reviews with `stale_checkout`; such a self-test runs
-  in a second worktree of the same commit.
+- Start the self-test and the two reviewers together:
+  `MYAGENTKIT_TASK_ID=<feature> ./scripts/review.sh --base <base> --reviewer codex` and the same
+  with `--reviewer claude`. Concurrent reviews
+  write archives with unique names outside the review scope. The self-test compares HEAD,
+  the index, `git status` and content hashes of tracked and untracked non-ignored files at its end.
+  That check proves only that the tree ends unchanged. A self-test may share the reviews'
+  worktree only when every one of its cases writes nothing but files Git ignores (owner
+  decision, 2026-10-12). A temporary injection, such as `src/domain/.selftest.py`, can fail a
+  concurrent review as `stale_checkout` even when removed; any self-test whose case writes a
+  non-ignored file, such as the shipped boundary example, runs in another worktree of the
+  same commit or after the reviews.
+  Permission changes beyond Git's executable bit (or all mode changes with
+  `core.fileMode=false`) are outside this end check.
+  The check reads every tracked and untracked non-ignored file twice, which can cost minutes
+  for large binaries; ignore large assets or keep them out of the tree.
 - Every round of one feature uses the same `MYAGENTKIT_TASK_ID`, so that later rounds carry
   the earlier ones. Only the final reviews (one per model, each over the parts it did
   not write) take a label never used before. When model B's final review finds a High or Medium,

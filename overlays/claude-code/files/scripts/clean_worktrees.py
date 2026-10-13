@@ -835,7 +835,10 @@ def audit(record, ctx):
     # A folder that is not its own worktree resolves elsewhere: its .git file gone, to the MAIN
     # repository, and every git command below would judge main; a `git init` in it, to a
     # repository of its own that `git worktree remove` would delete.
-    top, common = git(real, 'rev-parse', '--show-toplevel', '--git-common-dir').stdout.split(b'\n')[:2]
+    # One call each, less exactly its own newline: split on newlines, a path holding one was
+    # judged not its own worktree, and the printable check below never named the real reason.
+    top, common = (git(real, 'rev-parse', flag).stdout.removesuffix(b'\n')
+                   for flag in ('--show-toplevel', '--git-common-dir'))
     if os.path.realpath(top) != real or os.path.realpath(os.path.join(real, common)) != ctx['common']:
         return reasons + ['its folder is not its own worktree: git in it reaches %s' % show(os.path.realpath(top))], None
     if reasons and not ctx['all']:

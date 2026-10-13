@@ -25,9 +25,9 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'MYAGENTKIT_TASK_ID', 'MYAGENTKIT_R
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 176, 'test_agent_usage': 30, 'test_codex_quota': 5}
+SUITE_MINIMUMS = {'test_claude_bridge': 182, 'test_agent_usage': 30, 'test_codex_quota': 5}
 # These are executed cases, excluding only the explicitly declared POSIX exclusions.
-WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 150, 'test_agent_usage': 26, 'test_codex_quota': 4}
+WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 156, 'test_agent_usage': 26, 'test_codex_quota': 4}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -2360,6 +2360,218 @@ class BridgeTests(unittest.TestCase):
             agent_usage.record(self.repo, 'codex', 'm', 'r', {'id': '', 'kind': 'review'},
                                {'stdout': ''}, 'failed', 'quota', None)
 
+    def test_a_failure_after_the_adapter_handed_over_its_result_keeps_that_result(self):
+        # Issue #71: a completed Codex review (evidence and usage record both said completed)
+        # was reported as adapter_error, because printing the review raised after the result
+        # was handed over and the dispatcher replaced it. A checkout changed meanwhile is still
+        # stale_checkout, named as such, never adapter_error.
+        from contextlib import redirect_stdout
+        from io import StringIO
+        from unittest.mock import patch
+        import review_dispatch
+
+        def execution(command, prompt, repo, timeout, into=None, noted=None):
+            if '-o' in command:
+                Path(command[command.index('-o') + 1]).write_bytes(b'A \xe2\x86\x92 B.\n\nVERDICT: Accept\n')
+                value = {'type': 'turn.completed', 'usage': {}}
+            else:
+                value = {'type': 'result', 'subtype': 'success', 'is_error': False,
+                         'modelUsage': {'claude-opus-5': {}}, 'structured_output':
+                         {'verdict': 'Accept', 'findings': [], 'manual_checks': []}}
+            return {'exit_code': 0, 'stdout': json.dumps(value), 'stderr': '',
+                    'termination': None, 'duration_ms': 1}
+
+        class Console(StringIO):
+            # A console that cannot print the handed-over result: the first write naming the
+            # evidence comes after the adapter's sink, in both adapters.
+            def write(self, text):
+                if '"evidence"' in text and not failed:
+                    failed.append(text)
+                    if change:
+                        (repo / 'file.py').write_text('changed after the adapter check\n')
+                    raise UnicodeEncodeError('cp1252', '→', 0, 1, 'character maps to <undefined>')
+                return super().write(text)
+
+        repo = self.repo
+        for reviewer in ('codex', 'claude'):
+            for change in (False, True):
+                failed, out = [], Console()
+                with self.subTest(reviewer=reviewer, checkout_changed=change), \
+                        patch.dict(os.environ, self.review_env()), \
+                        patch('agent_process.run', side_effect=execution), redirect_stdout(out):
+                    code = review_dispatch.main(['--repo', str(repo), '--uncommitted', '--reviewer', reviewer,
+                                                 '--claude-model', 'claude-opus-5',
+                                                 '--codex-model', 'fixture-codex-model'])
+                    self.assertTrue(failed)
+                    chain = json.loads(next(line.removeprefix('review dispatch: ') for line in
+                                            out.getvalue().splitlines() if line.startswith('review dispatch: ')))
+                    attempt = chain['attempts'][0]
+                    self.assertEqual((attempt['status'], attempt['failure_kind']), ('completed', None))
+                    self.assertEqual(verdicts_of(attempt['evidence']), ['VERDICT: Accept'])
+                    if change:
+                        (repo / 'file.py').write_text('changed\n')
+                        self.assertEqual(code, 5)
+                        self.assertEqual(chain['failure_kind'], 'stale_checkout', out.getvalue())
+                        self.assertIn('the checkout changed while the review ran', out.getvalue())
+                        # The docs' terms: an ignored file never fails a review.
+                        self.assertIn('a new untracked file Git does not ignore', out.getvalue())
+                        # The chain failed: the NOTE must not say the result stands.
+                        self.assertNotIn('the result stands', out.getvalue())
+                        self.assertIn('the checkout changed, so the chain failed', out.getvalue())
+                    else:
+                        self.assertEqual(code, 0, out.getvalue())
+                        self.assertEqual((chain['status'], chain['selected_reviewer']), ('completed', reviewer))
+                        self.assertIn('the result stands as recorded in', out.getvalue())
+                    self.assertIn('cp1252', attempt['error_after_result'])
+
+    def test_persistent_stdout_failure_does_not_lose_the_completed_dispatch_attempt(self):
+        from contextlib import redirect_stdout
+        from unittest.mock import patch
+        import review_dispatch
+
+        def execution(command, prompt, repo, timeout, into=None, noted=None):
+            if '-o' in command:
+                Path(command[command.index('-o') + 1]).write_bytes(b'VERDICT: Accept\n')
+                value = {'type': 'turn.completed', 'usage': {}}
+            else:
+                value = {'type': 'result', 'subtype': 'success', 'is_error': False,
+                         'modelUsage': {'claude-opus-5': {}}, 'structured_output':
+                         {'verdict': 'Accept', 'findings': [], 'manual_checks': []}}
+            return {'exit_code': 0, 'stdout': json.dumps(value), 'stderr': '',
+                    'termination': None, 'duration_ms': 1}
+
+        class Console(io.StringIO):
+            broken = False
+
+            def write(self, text):
+                self.broken |= '"evidence"' in text
+                if self.broken:
+                    raise BrokenPipeError('reader closed stdout permanently')
+                return super().write(text)
+
+        for reviewer in ('claude', 'codex'):
+            with self.subTest(reviewer=reviewer), patch.dict(os.environ, self.review_env()), \
+                    patch('agent_process.run', side_effect=execution), redirect_stdout(Console()):
+                # A permanently closed console can still raise, but its disk result must stand.
+                try:
+                    review_dispatch.main(['--repo', str(self.repo), '--uncommitted', '--reviewer', reviewer,
+                                          '--claude-model', 'claude-opus-5',
+                                          '--codex-model', 'fixture-codex-model'])
+                except BrokenPipeError:
+                    pass
+                records = self.repo / '.myagentkit/usage/chains'
+                chain_id = os.environ['MYAGENTKIT_REVIEW_CHAIN_ID']
+                chain = json.loads((records / (chain_id + '-1.json')).read_text())
+                self.assertEqual(chain['status'], 'completed', chain)
+                self.assertEqual(len(chain['attempts']), 1)
+                attempt = chain['attempts'][0]
+                self.assertEqual((attempt['status'], attempt['failure_kind']), ('completed', None))
+                self.assertIn('permanently', attempt['error_after_result'])
+                usage = json.loads(Path(attempt['usage_record']).read_text())
+                self.assertEqual(usage['status'], 'completed')
+                self.assertEqual(verdicts_of(attempt['evidence']), ['VERDICT: Accept'])
+
+    def assert_closed_pipe_keeps_adapter_status(self, provider):
+        scripts = self.install_wrapper()
+        args = ['review', '--model', 'claude-opus-5'] if provider == 'claude' else ['--model', 'fixture-codex-model']
+        source = ('import sys\nsys.path.insert(0, sys.argv[1])\n'
+                  'sys.stdin.read(1)\nimport ' + provider + '_bridge as adapter\n'
+                  'adapter.utf8_output()\nraise SystemExit(adapter.main(sys.argv[2:]))\n')
+        for case, expected in (('accept', 0), ('quota', 5)):
+            label = 'closed-pipe-' + provider + '-' + case
+            env = self.review_env(MYAGENTKIT_TASK_ID=label, CLAUDE_CLI_BIN=str(self.fixture),
+                                  REVIEW_CLI_BIN=str(self.build_fake_codex()), FIXTURE_CASE=case,
+                                  CODEX_FIXTURE_CASE=case)
+            with self.subTest(case=case), subprocess.Popen(
+                    [sys.executable, '-X', 'utf8', '-B', '-c', source, str(scripts), *args,
+                     '--repo', str(self.repo), '--uncommitted'], env=env,
+                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as proc:
+                # Close the real reader before allowing the adapter to run, with buffering enabled.
+                proc.stdout.close()
+                proc.stdout = None
+                try:
+                    _, err = proc.communicate(input=b'x', timeout=90)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.communicate()
+                    self.fail('closed-pipe adapter did not finish')
+                records = [json.loads(p.read_text()) for p in (self.repo / '.myagentkit/usage').glob('*.json')]
+                usage = next(r for r in records if r['task']['id'] == label)
+                self.assertEqual(usage['status'], 'completed' if expected == 0 else 'failed')
+                self.assertTrue(Path(usage['evidence']).is_file())
+                self.assertEqual(proc.returncode, expected, err.decode('utf-8', errors='replace'))
+                self.assertNotIn(b'Exception ignored', err)
+
+    def test_claude_direct_adapter_keeps_recorded_status_with_a_real_closed_pipe(self):
+        self.assert_closed_pipe_keeps_adapter_status('claude')
+
+    def test_codex_direct_adapter_keeps_recorded_status_with_a_real_closed_pipe(self):
+        self.assert_closed_pipe_keeps_adapter_status('codex')
+
+    def test_an_adapter_run_directly_keeps_its_handed_over_status_after_a_later_failure(self):
+        # Run directly, the Claude adapter caught a failure after its result was recorded and
+        # handed over (printing it), printed a "failed" line after the "completed" one and
+        # exited 2; the Codex adapter raised it, and its caller printed FAIL and exited 5.
+        # The handed-over status decides; the failure is a NOTE on stderr.
+        from contextlib import nullcontext, redirect_stderr, redirect_stdout
+        from io import StringIO
+        from unittest.mock import patch
+        import codex_bridge
+
+        write_evidence = agent_usage.write_evidence
+
+        def archive_failure(repo, path, *args, **kwargs):
+            if Path(path).suffix == '.md':
+                raise OSError('archive unavailable')
+            return write_evidence(repo, path, *args, **kwargs)
+
+        def execution(command, prompt, repo, timeout, into=None, noted=None):
+            if '-o' in command:
+                Path(command[command.index('-o') + 1]).write_bytes(b'VERDICT: Accept\n')
+                return {'exit_code': 1 if case == 'failed' else 0,
+                        'stdout': 'quota exceeded' if case == 'failed' else json.dumps({'type': 'turn.completed', 'usage': {}}),
+                        'stderr': '', 'termination': None, 'duration_ms': 1}
+            value = {'type': 'result', 'subtype': 'success', 'is_error': False,
+                     'modelUsage': {'claude-opus-5': {}}, 'structured_output':
+                     {'verdict': 'Accept', 'findings': [], 'manual_checks': []}}
+            if case == 'failed':
+                value.update(is_error=True, api_error_status=429)
+            return {'exit_code': 1 if case == 'failed' else 0, 'stdout': json.dumps(value), 'stderr': '',
+                    'termination': None, 'duration_ms': 1}
+
+        class Console(StringIO):
+            def write(self, text):
+                if '"evidence"' in text and not failed:
+                    failed.append(text)
+                    raise UnicodeEncodeError('cp1252', '→', 0, 1, 'character maps to <undefined>')
+                return super().write(text)
+
+        for case in ('completed', 'failed', 'evidence-not-written'):
+            for name, main, prefix in (('claude', bridge.main, ['review']),
+                                       ('codex', codex_bridge.main, ['--model', 'fixture-codex-model'])):
+                failed, out, err, received = [], Console(), StringIO(), []
+                archive = (patch('agent_usage.write_evidence', side_effect=archive_failure)
+                           if case == 'evidence-not-written' else nullcontext())
+                with self.subTest(adapter=name, case=case), patch.dict(os.environ, self.review_env()), \
+                        patch('agent_process.run', side_effect=execution), archive, \
+                        redirect_stdout(out), redirect_stderr(err):
+                    code = main([*prefix, '--repo', str(self.repo), '--uncommitted'], received.append)
+                    self.assertTrue(failed)
+                    self.assertEqual(code, 0 if case == 'completed' else 5, out.getvalue() + err.getvalue())
+                    if case == 'completed':
+                        self.assertNotIn('"failed"', out.getvalue())
+                        self.assertNotIn('FAIL', out.getvalue())
+                    self.assertEqual(received[0]['status'], 'completed' if case == 'completed' else 'failed')
+                    self.assertIn('cp1252', received[0]['error_after_result'])
+                    self.assertIn('NOTE [review]: %s failed after it handed over its result' % name, err.getvalue())
+                    if case == 'evidence-not-written':
+                        self.assertIsNone(received[0]['evidence'])
+                        self.assertIn('evidence was not written', err.getvalue())
+                        self.assertNotIn('None', err.getvalue())
+                    else:
+                        self.assertIn(received[0]['evidence'], err.getvalue())
+                        self.assertIn('its %s result is recorded in' % case, err.getvalue())
+
     def test_hidden_checkout_changes_reject_before_either_adapter_launches(self):
         from contextlib import redirect_stdout
         from io import StringIO
@@ -3893,6 +4105,46 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         (self.repo / 'src/a.txt').unlink()
         with self.assertRaises(claude_bridge.BridgeError):
             claude_bridge.snapshot(self.repo, 'uncommitted', None)
+
+    def test_a_skip_worktree_file_deleted_inside_the_sparse_rules_is_refused(self):
+        # Issue #53 (REPRODUCED): with sparse mode on, every absent skip-marked file was
+        # tolerated, so a file inside the cone marked by hand and deleted was a deletion the
+        # diff omitted. Only a path the sparse rules exclude may be absent, in cone mode and
+        # non-cone mode alike; without `check-rules` (Git before 2.42) the scope is refused.
+        import claude_bridge
+        from unittest.mock import patch
+        (self.repo / 'src').mkdir(exist_ok=True)
+        (self.repo / 'src/a.txt').write_text('a\n')
+        (self.repo / 'docs/kept.md').write_text('kept\n')
+        self.commit_fixture('A tree with two folders')
+        # The real-Git subtests need `check-rules` (Git 2.42); the usage line names it when present.
+        usage = subprocess.run(['git', 'sparse-checkout', '-h'], capture_output=True, text=True)
+        if 'check-rules' in usage.stdout + usage.stderr:
+            for rules in (['docs'], ['--no-cone', '/*', '!/src/']):
+                with self.subTest(rules=rules):
+                    self.git('sparse-checkout', 'set', *rules)
+                    self.assertFalse((self.repo / 'src/a.txt').exists())
+                    claude_bridge.snapshot(self.repo, 'uncommitted', None)
+                    self.git('update-index', '--skip-worktree', 'docs/kept.md')
+                    (self.repo / 'docs/kept.md').unlink()
+                    with self.assertRaisesRegex(claude_bridge.BridgeError, 'inside the sparse-checkout rules.*docs/kept.md'):
+                        claude_bridge.snapshot(self.repo, 'uncommitted', None)
+                    self.git('update-index', '--no-skip-worktree', 'docs/kept.md')
+                    self.git('checkout', '--', 'docs/kept.md')
+        else:
+            sys.stderr.write('\nNOT RUN: %s, the real-Git subtests (this Git has no `sparse-checkout '
+                             'check-rules`; it needs Git 2.42 or later)\n' % self.id())
+            self.git('sparse-checkout', 'set', 'docs')
+        real = claude_bridge.git
+
+        def old_git(repo, *args, **kwargs):
+            if args[:2] == ('sparse-checkout', 'check-rules'):
+                raise claude_bridge.BridgeError("git sparse-checkout failed: error: unknown subcommand: `check-rules'")
+            return real(repo, *args, **kwargs)
+        with patch.object(claude_bridge, 'git', old_git), \
+                self.assertRaisesRegex(claude_bridge.BridgeError, r'Git 2\.42 or later'):
+            claude_bridge.snapshot(self.repo, 'uncommitted', None)
+        self.git('sparse-checkout', 'disable')
 
     @posix_only
     def test_fixture_launchers_run_under_an_interpreter_path_with_a_space(self):

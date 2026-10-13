@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 import time
 import uuid
 import agent_process
@@ -274,12 +275,27 @@ def main(argv=None, result_sink=None):
                   "usage_record": str(path), "recovery": usage["recovery"], "cancelled": was_cancelled}
         if result_sink is not None:
             result_sink(result)
-        print("review invocation: " + json.dumps(result))
-        # Not a report the accounting contradicted: a lost archive once printed its Accept.
-        if archived and status == header["status"]:
-            print(report_text)
-        if reason:
-            print("FAIL [review]: " + reason)
+        try:
+            print("review invocation: " + json.dumps(result))
+            # Not a report the accounting contradicted: a lost archive once printed its Accept.
+            if archived and status == header["status"]:
+                print(report_text)
+            if reason:
+                print("FAIL [review]: " + reason)
+            sys.stdout.flush()  # Catch buffered pipe failures before shutdown can replace the exit with 120.
+        except (OSError, ValueError) as error:
+            # Recorded and handed over: a failure printing it keeps the result's exit code. The
+            # dispatcher, holding this same dict, records the failure with the attempt.
+            result["error_after_result"] = str(error)
+            try:
+                sys.stdout.flush()
+            except (OSError, ValueError):
+                sys.stdout = open(os.devnull, "w")
+            with contextlib.suppress(OSError, ValueError):
+                note = ("its %s result is recorded in %s" % (result["status"], archived)
+                        if archived else "its %s result has no archive; evidence was not written" % result["status"])
+                print("NOTE [review]: codex failed after it handed over its result (%s); %s"
+                      % (error, note), file=sys.stderr, flush=True)
         return 5 if reason else 0
     finally:
         # A cancel noted while the result printed, or held while the caller's handlers went

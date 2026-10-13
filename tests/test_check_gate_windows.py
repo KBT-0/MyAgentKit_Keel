@@ -825,5 +825,243 @@ class WindowsGateLockTests(unittest.TestCase):
         self.assertIn('FAIL [lock]:', result.stdout)
         self.assertIn('file id', result.stdout)
 
+
+WINDOWS_PROGRAM_VARIABLES = ('SYSTEMROOT', 'WINDIR', 'LOCALAPPDATA', 'APPDATA', 'USERPROFILE', 'PATHEXT', 'COMSPEC')
+
+
+class WindowsBoundaryProbeTests(unittest.TestCase):
+    """The existing-file boundary example's probe on native Windows (issue #60): under `env -i` the
+    Python install manager's python3 alias, missing LOCALAPPDATA, downloaded and installed a Python.
+    Offline: python3 and python here are stubs, and the stub python runs this test's interpreter."""
+
+    def run_probe(self, **extra):
+        template = (ROOT / 'core/scripts/boundary_selftests.sh').read_text(encoding='utf-8')
+        example = '\n'.join(line[4:] for line in template.splitlines() if line.startswith('# | '))
+        # The fixture resolves its Python with check.sh's own lines, as the sourced example sees it.
+        check = (ROOT / 'core/scripts/check.sh').read_text(encoding='utf-8')
+        start = check.index("if python3 -I -c '' </dev/null")
+        resolve = check[start:check.index('\n', check.index('python3() { $kit_python "$@"; }'))]
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            records, scratch, stubs = tmp / 'records', tmp / 'scratch', tmp / 'bin'
+            for folder in (records, scratch, stubs):
+                folder.mkdir()
+            # A python3 that does not run, as a Store alias exits 9009: check.sh resolves `python`.
+            # A run under the probe, recognised by the copy's HOME, is recorded, except the copied
+            # gate's own resolution (`python3 -I -c ''`).
+            (stubs / 'python3').write_text('#!/bin/sh\ncase "$HOME" in */tmp.*/home) [ "$#" = 3 ] && [ -z "$3" ] ||'
+                                           ' : > "%s/python3-ran" ;; esac\nexit 9009\n' % records.as_posix(),
+                                           newline='\n')
+            # The probe's own Python records what it was given.
+            (stubs / 'python').write_text('#!/bin/sh\ncase "$HOME" in */tmp.*/home) env > "%s/probe.env" ;; esac\n'
+                                          'exec "%s" "$@"\n' % (records.as_posix(), Path(sys.executable).as_posix()),
+                                          newline='\n')
+            for name, body in extra.items():
+                (stubs / name).write_text('#!/bin/sh\n' + body, newline='\n')
+            root = tmp / 'project'
+            (root / 'src/domain').mkdir(parents=True)
+            (root / 'src/domain/existing.py').write_bytes(b'committed original\n')
+            (root / 'scripts').mkdir()
+            (root / 'scripts/check.sh').write_text(
+                '#!/bin/sh\ncd "$(dirname "$0")/.."\n' + resolve + '\n'
+                'if [ "${1:-}" = --self-test ]; then\n  st_fail=0\n' + example + '\n  exit "$st_fail"\nfi\n'
+                "grep -q 'myapp.web' src/domain/existing.py || exit 0\n"
+                "echo 'FAIL [boundary]: the domain layer imports the web layer:'\nexit 1\n",
+                encoding='utf-8', newline='\n')
+            for args in (('init', '-q'), ('config', 'core.autocrlf', 'false'), ('add', '.'),
+                         ('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
+                          '-c', 'commit.gpgsign=false', 'commit', '-qm', 'fixture')):
+                subprocess.run(['git', *args], cwd=root, check=True, capture_output=True)
+            # In lower case, still valid: the MSYS runtime adds its own SYSTEMROOT, WINDIR and
+            # USERPROFILE to a child that lacks them, so only the caller's spelling proves probe_env.
+            env = dict(os.environ, TMPDIR=str(scratch), PROBE_LEAK_CANARY='leaked',
+                       PATH=str(stubs) + os.pathsep + os.environ['PATH'],
+                       **{name: os.environ[name].lower() for name in WINDOWS_PROGRAM_VARIABLES})
+            env.pop('PYTHONNOUSERSITE', None)
+            result = subprocess.run(['sh', 'scripts/check.sh', '--self-test'], cwd=root, env=env,
+                                    capture_output=True, encoding='utf-8', errors='replace', timeout=120)
+            recorded = (records / 'probe.env').read_text(errors='replace') if (records / 'probe.env').exists() else None
+            return result, recorded, (records / 'python3-ran').exists()
+
+    @windows_only
+    def test_the_probe_keeps_what_a_windows_program_needs_and_nothing_else(self):
+        result, recorded, _ = self.run_probe()
+        output = result.stdout + result.stderr
+        self.assertIsNotNone(recorded, 'the probe never ran its Python:\n' + output)
+        seen = dict(line.split('=', 1) for line in recorded.splitlines() if '=' in line)
+        for name in WINDOWS_PROGRAM_VARIABLES:
+            self.assertEqual(seen.get(name), os.environ[name].lower(), name + ' did not reach the probe:\n' + output)
+        # Still isolated: the copy's own HOME and TMPDIR, no user site in the real APPDATA (what the
+        # empty HOME is on POSIX), and nothing probe_env does not name.
+        self.assertRegex(seen.get('HOME', ''), r'/tmp\.[^/]+/home$')
+        self.assertRegex(seen.get('TMPDIR', ''), r'/tmp\.[^/]+/tmp$')
+        self.assertEqual(seen.get('PYTHONNOUSERSITE'), '1', output)
+        self.assertNotIn('PROBE_LEAK_CANARY', seen)
+        # And the case runs to its end on native Windows.
+        self.assertEqual(result.returncode, 0, output)
+        self.assertIn('  ok   — domain/web boundary gate rejects a forbidden import in an existing file', output)
+
+    @windows_only
+    def test_the_probe_runs_the_python_check_sh_resolved_not_bare_python3(self):
+        result, recorded, python3_ran = self.run_probe()
+        output = result.stdout + result.stderr
+        self.assertIsNotNone(recorded, 'the probe never ran the resolved Python:\n' + output)
+        self.assertFalse(python3_ran, 'the probe ran python3, not the Python check.sh resolved:\n' + output)
+
+    @windows_only
+    def test_a_host_that_cannot_make_symlinks_is_not_run_by_name(self):
+        # Without Developer Mode or the privilege, cp under winsymlinks:nativestrict fails on any
+        # link in the checkout; its raw error said nothing about why. Stubs stand for that host.
+        refused = "echo \"$(basename \"$0\"): cannot create symbolic link 'x': Operation not permitted\" >&2; exit 1\n"
+        result, _, _ = self.run_probe(cp=refused, ln=refused)
+        output = result.stdout + result.stderr
+        self.assertEqual(result.returncode, 1, output)
+        self.assertIn('  NOT RUN — existing-file probe: this host cannot make symbolic links; enable Developer Mode'
+                      ' or the privilege, or run the self-test on a host that can.', output)
+        self.assertNotIn('Operation not permitted', output)
+        # A copy that failed for another reason keeps cp's own error and names no privilege.
+        result, _, _ = self.run_probe(cp="echo 'cp: disk full' >&2; exit 1\n")
+        output = result.stdout + result.stderr
+        self.assertEqual(result.returncode, 1, output)
+        self.assertIn('cp: disk full', output)
+        self.assertNotIn('cannot make symbolic links', output)
+
+
+def probe_script(which):
+    """The existing-file example's own Python: 'delete' (probe_delete) or 'audit' (probe_audit)."""
+    template = (ROOT / 'core/scripts/boundary_selftests.sh').read_text(encoding='utf-8')
+    example = '\n'.join(line[4:] for line in template.splitlines() if line.startswith('# | '))
+    scripts = re.findall(r"-I -c '\n(.*?)\n'", example, re.S)
+    return scripts[['delete', 'audit'].index(which)]
+
+
+class WindowsProbeCopyTests(unittest.TestCase):
+    """The existing-file probe's copy on native Windows: the audit and the delete never follow a
+    junction or a symlink out of the copy, the delete removes git's read-only object files, and a
+    file the copy shares with the checkout (a hard link) keeps its read-only attribute."""
+
+    def setUp(self):
+        if not WINDOWS:
+            return
+        self.tmp = Path(tempfile.mkdtemp(prefix='kit-probe-copy-'))
+        # rmdir /s removes a junction as a link and never goes through it.
+        self.addCleanup(subprocess.run, ['cmd', '/c', 'rmdir', '/s', '/q', str(self.tmp)], capture_output=True)
+        self.copy = self.tmp / 'copy'
+        self.outside = self.tmp / 'outside'
+        (self.copy / 'checkout/.git/objects/ab').mkdir(parents=True)
+        self.outside.mkdir()
+        (self.outside / 'keep.txt').write_text('outside the copy\n')
+
+    def delete(self, made=None):
+        made = made or os.lstat(self.copy)
+        return subprocess.run([sys.executable, '-I', '-c', probe_script('delete'), str(self.copy),
+                               '%d %d' % (made.st_dev, made.st_ino)],
+                              capture_output=True, encoding='utf-8', errors='replace', timeout=60)
+
+    def audit(self):
+        return subprocess.run([sys.executable, '-I', '-c', probe_script('audit'), str(self.copy / 'checkout')],
+                              capture_output=True, encoding='utf-8', errors='replace', timeout=60)
+
+    def read_only(self, path):
+        path.write_text('object\n')
+        os.chmod(path, 0o444)
+        self.assertTrue(os.stat(path).st_file_attributes & 1, 'no read-only attribute was set')
+
+    @windows_only
+    def test_the_delete_removes_a_junction_as_a_link_and_its_target_survives(self):
+        import _winapi
+        _winapi.CreateJunction(str(self.outside), str(self.copy / 'checkout/build'))
+        result = self.delete()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse(self.copy.exists(), 'the copy was not deleted')
+        self.assertEqual((self.outside / 'keep.txt').read_text(), 'outside the copy\n')
+
+    @windows_only
+    def test_the_delete_removes_a_folder_symlink_as_a_link_and_its_target_survives(self):
+        try:
+            os.symlink(self.outside, self.copy / 'checkout/linked', target_is_directory=True)
+        except OSError as error:
+            # Without Developer Mode or the privilege no symlink can exist here; the junction case stands.
+            sys.stderr.write('\nNOT RUN: %s (no symlink privilege: %s)\n' % (self.id(), error))
+            return
+        result = self.delete()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse(self.copy.exists(), 'the copy was not deleted')
+        self.assertEqual((self.outside / 'keep.txt').read_text(), 'outside the copy\n')
+
+    @windows_only
+    def test_the_audit_never_enters_a_junction_and_refuses_one_leading_out(self):
+        import _winapi
+        # A junction back to the audited root: entered, its .git would be a nested repository.
+        _winapi.CreateJunction(str(self.copy / 'checkout'), str(self.copy / 'checkout/self'))
+        result = self.audit()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertRegex(result.stdout, r'^[0-9a-f]{64}\n$')
+        _winapi.CreateJunction(str(self.outside), str(self.copy / 'checkout/out'))
+        result = self.audit()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('out is a symlink that leads out of the disposable copy', result.stderr)
+
+    @windows_only
+    def test_a_replaced_root_is_refused_and_nothing_is_deleted(self):
+        # A running gate cannot rename the folder that holds its working directory here, so the
+        # POSIX case's gate cannot build this; the root is replaced around the delete instead.
+        import _winapi
+        made = os.lstat(self.copy)
+        self.copy.rename(self.tmp / 'moved')
+        self.copy.mkdir()
+        (self.copy / 'kept').write_text('replacement\n')
+        result = self.delete(made)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('is no longer the directory made for the disposable copy; deleted nothing', result.stderr)
+        # In UTF-8, as sh prints the rest of the self-test: Windows Python wrote the ANSI code page.
+        self.assertIn('  FAIL — existing-file probe: ', result.stderr)
+        self.assertEqual((self.copy / 'kept').read_text(), 'replacement\n')
+        (self.copy / 'kept').unlink()
+        self.copy.rmdir()
+        _winapi.CreateJunction(str(self.outside), str(self.copy))
+        result = self.delete(made)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('deleted nothing', result.stderr)
+        self.assertEqual((self.outside / 'keep.txt').read_text(), 'outside the copy\n')
+
+    @windows_only
+    def test_the_delete_removes_read_only_git_objects(self):
+        self.read_only(self.copy / 'checkout/.git/objects/ab/cdef')
+        result = self.delete()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse(self.copy.exists(), 'the copy was not deleted')
+
+    @windows_only
+    def test_the_delete_removes_a_tree_whose_paths_pass_260_characters(self):
+        # A deep tree (node_modules) in the copy, under a longer temporary folder than the checkout's.
+        # Without the long-path prefix the scan and the delete fail on a host with LongPathsEnabled=0;
+        # on a host with it enabled this case passes either way and proves only that the prefix works.
+        deep = self.copy / 'checkout'
+        for _ in range(6):
+            deep = deep / ('d' * 50)
+        self.assertGreater(len(str(deep)), 260)
+        prefix = os.sep * 2 + '?' + os.sep
+        os.makedirs(prefix + str(deep))
+        (Path(prefix + str(deep)) / 'file.txt').write_text('deep\n')
+        result = self.delete()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse(self.copy.exists(), 'the copy was not deleted')
+
+    @windows_only
+    def test_a_file_hard_linked_with_the_checkout_keeps_its_read_only_attribute(self):
+        # Clearing the attribute to delete the copy's name would clear it on the checkout's file too.
+        checkout = self.tmp / 'checkout'
+        checkout.mkdir()
+        self.read_only(checkout / 'object')
+        os.link(checkout / 'object', self.copy / 'checkout/.git/objects/ab/linked')
+        result = self.delete()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse(self.copy.exists(), 'the copy was not deleted')
+        self.assertEqual((checkout / 'object').read_text(), 'object\n')
+        self.assertTrue(os.stat(checkout / 'object').st_file_attributes & 1, 'the read-only attribute was cleared')
+        os.chmod(checkout / 'object', 0o644)
+
+
 if __name__ == '__main__':
     unittest.main()

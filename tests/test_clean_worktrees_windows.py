@@ -16,6 +16,7 @@ import sys
 import tempfile
 import time
 import unittest
+import unittest.mock
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / 'overlays/claude-code/files/scripts'
@@ -230,6 +231,33 @@ class CleanWorktreesOnWindows(unittest.TestCase):
         out = self.run_script('--apply')
         self.assertKept(path, out, 'holds a mount point')
         self.assertEqual((sentinel / 'keep.txt').read_text(), 'shared\n')
+
+    @windows_only
+    def test_a_path_with_a_newline_is_kept_as_not_printable(self):
+        # NTFS refuses a newline in a name, so git and the folder are stood in for, git answering
+        # rev-parse as it does, one line per flag. Split on newlines, the answer once judged such a
+        # worktree not its own, and the reason printed was not the real one (issue #41).
+        sys.path.insert(0, str(SCRIPTS))
+        import clean_worktrees
+        home = os.path.realpath(os.fsencode(self.main / '.claude/worktrees'))
+        real = os.path.join(home, b'new\nline')
+        common = os.path.realpath(os.fsencode(self.main / '.git'))
+        answers = {'--show-toplevel': real, '--git-common-dir': common}
+
+        def git(cwd, *args, **kwargs):
+            self.assertEqual(args[0], 'rev-parse')
+            return subprocess.CompletedProcess(args, 0, b''.join(answers[a] + b'\n' for a in args[1:]), b'')
+
+        is_dir = os.path.isdir
+        ctx = {'main_root': os.path.realpath(os.fsencode(self.main)), 'own': b'', 'home': home,
+               'common': common, 'all': False}
+        record = {'worktree': real, 'branch': b'refs/heads/worktree-newline', 'HEAD': b'0' * 40}
+        with unittest.mock.patch.object(clean_worktrees, 'git', git), \
+                unittest.mock.patch.object(os.path, 'isdir', lambda p: p == real or is_dir(p)):
+            reasons, facts = clean_worktrees.audit(record, ctx)
+        self.assertIsNone(facts)
+        self.assertEqual(reasons, ['its path or branch name is not printable UTF-8: the command that brings '
+                                   'it back could not be printed'])
 
 
 if __name__ == '__main__':

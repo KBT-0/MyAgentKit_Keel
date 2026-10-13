@@ -129,6 +129,24 @@
 # and nothing is deleted, and the tree is removed entry by entry relative to its open folders.
 # A copy the gate left unreadable or unwritable is not repaired: it fails the case by name,
 # and that is the project's gate to fix.
+# Native Windows (Git for Windows, MSYS2, Cygwin), decided with the owner on 2026-10-12. Protected:
+# nothing the probe does to its copy changes the checkout (content, attribute or deletion), no
+# symlink, junction or other reparse point in the copy is followed by the audit or the delete, a
+# file the copy shares with the checkout (a hard link) never has its attributes changed, the
+# digest is of the copy as it is, no download or installer starts, and the copy goes completely,
+# git's read-only objects included. Excluded by decision: hostile files planted by anyone but the
+# owner, a process racing the probe between two of its reads, a TMPDIR inside the checkout
+# (refused above). So there: `cp` keeps links as links (strict: a host that cannot make one is
+# reported NOT RUN by name); the audit treats every reparse point as a link and never enters one, and hashes the
+# permission bits Python reports, which stand for the read-only attribute; the delete works by
+# path (no dir_fd) and opens each entry as itself, removing it with POSIX semantics that ignore
+# the read-only attribute without changing it; the probe leaves the copy (`cd /`) before
+# deleting it, as Windows deletes no folder that is a process's working directory; and probe_env
+# keeps the variables a Windows program needs, with PYTHONNOUSERSITE=1 where POSIX has the
+# copy's empty HOME. A known limit, accepted by the owner: `cp` makes a link whose target is not
+# copied yet (a relative folder link sorting before its target) as a FILE symlink, so a gate
+# that walks through such a link in the copy fails where it works in the checkout. The checkout
+# is never at risk; the audit resolves such a link by name.
 # Copying a large tree (dependencies, build output) costs time, twice: copy only what the
 # gate reads if that is known, but never let the probe write into the checkout.
 #
@@ -147,37 +165,84 @@
 # |   # entry by name relative to its open folder, never a path from the top, never a mode changed.
 # |   probe_delete() {
 # |     [ -z "$probe_copy" ] || {
+# |       # Out of the copy first: native Windows cannot delete a folder that is the working directory
+# |       # of a process, and the deleting Python inherits this one.
+# |       cd / || return 1
 # |       python3 -I -c '
 # | import os, stat, sys
+# | # UTF-8 as the rest of the self-test prints it: native Windows Python used the ANSI code page.
+# | sys.stderr.reconfigure(encoding="utf-8")
 # | path, made = sys.argv[1], sys.argv[2]
 # | name = os.path.basename(path)
 # | def same(found):
 # |     return stat.S_ISDIR(found.st_mode) and "%d %d" % (found.st_dev, found.st_ino) == made
-# | def empty(fd):
-# |     for entry in os.listdir(fd):
-# |         if stat.S_ISDIR(os.stat(entry, dir_fd=fd, follow_symlinks=False).st_mode):
-# |             sub = os.open(entry, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
-# |             try:
-# |                 empty(sub)
-# |             finally:
-# |                 os.close(sub)
-# |             os.rmdir(entry, dir_fd=fd)
-# |         else:
-# |             os.unlink(entry, dir_fd=fd)
+# | if os.name == "nt":
+# |     # Native Windows has no dir_fd and no O_NOFOLLOW, and git makes its object files read-only.
+# |     # Each entry is opened as itself (FILE_FLAG_OPEN_REPARSE_POINT), so a junction or symlink is
+# |     # removed as a link and never entered, and is deleted with POSIX semantics that ignore the
+# |     # read-only attribute without changing it: a hard link shares that attribute with the checkout.
+# |     import ctypes
+# |     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+# |     kernel32.CreateFileW.restype = ctypes.c_void_p
+# |     kernel32.CreateFileW.argtypes = (ctypes.c_wchar_p, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_void_p,
+# |                                      ctypes.c_ulong, ctypes.c_ulong, ctypes.c_void_p)
+# |     kernel32.SetFileInformationByHandle.argtypes = (ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p, ctypes.c_ulong)
+# |     kernel32.CloseHandle.argtypes = (ctypes.c_void_p,)
+# |     def remove(entry):
+# |         # DELETE access, every sharing mode, OPEN_EXISTING, the entry itself (a folder too: backup semantics).
+# |         handle = kernel32.CreateFileW(entry, 0x10000, 7, None, 3, 0x2200000, None)
+# |         # FileDispositionInfoEx: DELETE | POSIX_SEMANTICS | IGNORE_READONLY_ATTRIBUTE (Windows 10 1809).
+# |         if handle in (None, ctypes.c_void_p(-1).value) or not kernel32.SetFileInformationByHandle(
+# |                 handle, 21, ctypes.byref(ctypes.c_ulong(0x13)), 4):
+# |             error = ctypes.get_last_error()
+# |             if handle not in (None, ctypes.c_void_p(-1).value):
+# |                 kernel32.CloseHandle(handle)
+# |             raise ctypes.WinError(error, entry + ": " + ctypes.FormatError(error).strip())
+# |         kernel32.CloseHandle(handle)
+# |     def empty(folder):
+# |         for entry in os.scandir(folder):
+# |             info = entry.stat(follow_symlinks=False)
+# |             if stat.S_ISDIR(info.st_mode) and not info.st_file_attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+# |                 empty(entry.path)
+# |             remove(entry.path)
+# | else:
+# |     def empty(fd):
+# |         for entry in os.listdir(fd):
+# |             if stat.S_ISDIR(os.stat(entry, dir_fd=fd, follow_symlinks=False).st_mode):
+# |                 sub = os.open(entry, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+# |                 try:
+# |                     empty(sub)
+# |                 finally:
+# |                     os.close(sub)
+# |                 os.rmdir(entry, dir_fd=fd)
+# |             else:
+# |                 os.unlink(entry, dir_fd=fd)
 # | try:
-# |     parent = os.open(os.path.dirname(path), os.O_RDONLY | os.O_DIRECTORY)
-# |     root = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
+# |     if os.name == "nt":
+# |         # By path: the races that dir_fd closes on POSIX are out of scope for this example.
+# |         # The \\?\ prefix lifts the 260-character limit of the plain path, which a deep tree in the
+# |         # copy (node_modules, under a longer temporary folder than the checkout) can pass.
+# |         root = os.path.abspath(path)
+# |         root = root if root.startswith("\\\\") else "\\\\?\\" + root
+# |         found = os.lstat(root)
+# |         now, drop = lambda: os.lstat(root), lambda: remove(root)
+# |     else:
+# |         parent = os.open(os.path.dirname(path), os.O_RDONLY | os.O_DIRECTORY)
+# |         root = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
+# |         found = os.fstat(root)
+# |         now = lambda: os.stat(name, dir_fd=parent, follow_symlinks=False)
+# |         drop = lambda: os.rmdir(name, dir_fd=parent)
 # | except OSError:
-# |     root = None
-# | if root is None or not same(os.fstat(root)):
+# |     found = None
+# | if found is None or not same(found):
 # |     sys.exit("  FAIL — existing-file probe: " + path + " is no longer the directory made for the disposable copy; deleted nothing.")
 # | try:
 # |     empty(root)
 # |     # The check and the rmdir are two steps: an EMPTY directory a process of the same user swaps in
 # |     # between them is removed, nothing with content can be. Kept, as skipping it leaves a root per run.
-# |     if not same(os.stat(name, dir_fd=parent, follow_symlinks=False)):
+# |     if not same(now()):
 # |         raise OSError(path + " is no longer the directory made for it")
-# |     os.rmdir(name, dir_fd=parent)
+# |     drop()
 # | except (OSError, RecursionError) as error:
 # |     sys.exit("  FAIL — existing-file probe: could not delete the disposable copy at " + path + "; delete it yourself (" + str(error) + ").")
 # | ' "$probe_copy" "$probe_id" 2>&1
@@ -199,11 +264,21 @@
 # |   case "$probe_base/" in
 # |     "$probe_checkout"/*) probe_fail "the disposable copy's folder, TMPDIR ($probe_base), is inside the checkout; set TMPDIR outside it." ;;
 # |   esac
-# |   # The copy's own empty HOME and TMPDIR, no system or global git configuration.
+# |   # The copy's own empty HOME and TMPDIR, no system or global git configuration. Native Windows
+# |   # (Git for Windows, MSYS2, Cygwin) also keeps what a Windows program needs to start: without
+# |   # LOCALAPPDATA the Python install manager's python3 alias found no Python and downloaded one.
+# |   case "$(uname -s 2>/dev/null)" in MSYS*|MINGW*|CYGWIN*) probe_windows=1 ;; *) probe_windows= ;; esac
 # |   probe_env() {
+# |     # PYTHONNOUSERSITE: APPDATA is the real one, and the user site in it is what HOME is on POSIX.
+# |     [ -z "$probe_windows" ] || set -- SYSTEMROOT="${SYSTEMROOT-}" WINDIR="${WINDIR-}" \
+# |       LOCALAPPDATA="${LOCALAPPDATA-}" APPDATA="${APPDATA-}" USERPROFILE="${USERPROFILE-}" \
+# |       PATHEXT="${PATHEXT-}" COMSPEC="${COMSPEC-}" PYTHONNOUSERSITE=1 "$@"
 # |     env -i PATH="$PATH" LC_ALL=C HOME="$probe_copy/home" XDG_CONFIG_HOME="$probe_copy/home" \
 # |       GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null TMPDIR="$probe_copy/tmp" "$@"
 # |   }
+# |   # The Python check.sh resolved for the gate (python3, python or py -3, whichever runs): env runs
+# |   # a program, not check.sh's python3 function. Unquoted at its use, like check.sh's.
+# |   probe_python=${kit_python:-python3}
 # |   [ -d .git ] && [ ! -L .git ] && [ ! -e .git/commondir ] ||
 # |     probe_skip "the checkout's .git is not a directory (a linked worktree, a submodule or a separate git directory); this example supports a plain repository only: run the self-test from the main checkout."
 # |   # The one read of the live checkout's configuration, made before anything is copied and with the
@@ -218,59 +293,76 @@
 # |       exit 1
 # |     }' || exit 1
 # |   probe_target=src/domain/existing.py
-# |   probe_gate="$(basename "$(dirname "$0")")/${0##*/}"
+# |   # basename, not ${0##*/}: a gate called as C:\...\check.sh on Windows has no / in $0.
+# |   probe_gate="$(basename "$(dirname "$0")")/$(basename "$0")"
 # |   # Every symlink resolves inside the copy, no `.git` lies below the top level, and the path to
 # |   # the target and to the gate runs through no symlink and ends at a regular file. Prints the
 # |   # copy's digest as taken: every entry's path, type, permission bits and content, `.git` included.
 # |   probe_audit() {
-# |     probe_digest=$(probe_env python3 -I -c '
+# |     probe_digest=$(probe_env $probe_python -I -c '
 # | import hashlib, os, stat, sys
-# | root = sys.argv[1]
+# | sys.stderr.reconfigure(encoding="utf-8")
+# | # As Python spells it: native Windows Python is handed C:/... and its realpath uses backslashes.
+# | root = os.path.realpath(sys.argv[1])
 # | # Every entry has its full permission bits hashed, the root of the copy too: cp -RP gives both copies the same.
+# | # Native Windows has no permission bits: there they stand for the read-only attribute (and, for a
+# | # file, an executable extension), as Python reports them.
 # | digest = hashlib.sha256(b"%o\n" % stat.S_IMODE(os.lstat(root).st_mode))
+# | def linked(path):
+# |     # A symlink, or on native Windows any reparse point: a junction is a folder to lstat, os.walk enters it.
+# |     info = os.lstat(path)
+# |     return stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT
+# | def shown(path):
+# |     # With / on every host, as the messages and the digest name a path.
+# |     return os.path.relpath(path, root).replace(os.sep, "/")
 # | # Unreachable by construction (cp -RP fails first on what it cannot read); kept as the guard.
 # | def unread(error):
-# |     sys.exit("the audit could not read " + os.path.relpath(error.filename or root, root) + " (" + str(error.strerror or error) + ")")
+# |     sys.exit("the audit could not read " + shown(error.filename or root) + " (" + str(error.strerror or error) + ")")
 # | try:
 # |     for top, dirs, files in os.walk(root, onerror=unread):
 # |         dirs.sort()
 # |         for name in sorted(dirs + files):
 # |             path = os.path.join(top, name)
-# |             rel = os.path.relpath(path, root)
+# |             rel = shown(path)
 # |             if name == ".git" and top != root:
-# |                 sys.exit("the checkout contains a nested repository or worktree at " + os.path.relpath(top, root))
+# |                 sys.exit("the checkout contains a nested repository or worktree at " + shown(top))
 # |             mode = os.lstat(path).st_mode
 # |             content = hashlib.sha256()
-# |             if stat.S_ISDIR(mode):
+# |             if linked(path):
+# |                 kind = b"l"
+# |                 content.update(os.fsencode(os.readlink(path)))
+# |                 try:
+# |                     real = os.path.realpath(path, strict=True)
+# |                 # PermissionError: on Windows a file symlink to a folder (cp made it before its
+# |                 # target was copied) cannot be opened; its target is then resolved by name.
+# |                 except (FileNotFoundError, PermissionError):
+# |                     real = os.path.realpath(path)
+# |                 if os.path.commonpath([root, real]) != root:
+# |                     sys.exit(rel + " is a symlink that leads out of the disposable copy")
+# |             elif stat.S_ISDIR(mode):
 # |                 kind = b"d"
 # |             elif stat.S_ISREG(mode):
 # |                 kind = b"f"
-# |                 fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0))
+# |                 # Windows has no O_NOFOLLOW: there lstat above saw no reparse point (racing it is out of scope).
+# |                 fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+# |                              | getattr(os, "O_BINARY", 0))
 # |                 with open(fd, "rb") as data:
 # |                     if not stat.S_ISREG(os.fstat(fd).st_mode):
 # |                         sys.exit(rel + " stopped being a regular file while the audit read it")
 # |                     for chunk in iter(lambda: data.read(1 << 20), b""):
 # |                         content.update(chunk)
-# |             elif stat.S_ISLNK(mode):
-# |                 kind = b"l"
-# |                 content.update(os.fsencode(os.readlink(path)))
-# |                 try:
-# |                     real = os.path.realpath(path, strict=True)
-# |                 except FileNotFoundError:
-# |                     real = os.path.realpath(path)
-# |                 if os.path.commonpath([root, real]) != root:
-# |                     sys.exit(rel + " is a symlink that leads out of the disposable copy")
 # |             else:
 # |                 sys.exit(rel + " is not a regular file, a folder or a symlink (a FIFO, socket or device)")
 # |             digest.update(os.fsencode(rel) + b"\0" + kind + b"%o " % stat.S_IMODE(mode) + content.hexdigest().encode() + b"\n")
+# |         dirs[:] = [name for name in dirs if not linked(os.path.join(top, name))]
 # | except OSError as error:
 # |     unread(error)
 # | for rel in sys.argv[2:]:
 # |     path = root
 # |     for part in rel.split("/"):
 # |         path = os.path.join(path, part)
-# |         if os.path.islink(path):
-# |             sys.exit(rel + " runs through a symlink at " + os.path.relpath(path, root))
+# |         if os.path.lexists(path) and linked(path):
+# |             sys.exit(rel + " runs through a symlink at " + shown(path))
 # |     if not os.path.isfile(path):
 # |         sys.exit(rel + " is not a regular file in the disposable copy")
 # | print(digest.hexdigest())
@@ -289,7 +381,18 @@
 # |     probe_id=$(python3 -I -c 'import os, sys; made = os.lstat(sys.argv[1]); print(made.st_dev, made.st_ino)' \
 # |       "$probe_copy") || exit 1
 # |     mkdir "$probe_copy/home" "$probe_copy/tmp" || exit 1
-# |     cp -RP "$probe_checkout" "$probe_copy/checkout" && CDPATH= cd -P "$probe_copy/checkout" || exit 1
+# |     # Git for Windows, MSYS2 and Cygwin copy a symlink or junction as the folder it names unless told
+# |     # to keep links; strict, as a host that cannot make one fails the copy instead of following it.
+# |     # A copy that failed there may be a host that cannot make any link: one try names it.
+# |     probe_copied=$(MSYS=winsymlinks:nativestrict CYGWIN=winsymlinks:nativestrict \
+# |       cp -RP "$probe_checkout" "$probe_copy/checkout" 2>&1) || {
+# |       [ -z "$probe_windows" ] ||
+# |         MSYS=winsymlinks:nativestrict CYGWIN=winsymlinks:nativestrict ln -s . "$probe_copy/tmp/link" 2>/dev/null ||
+# |         probe_skip "this host cannot make symbolic links; enable Developer Mode or the privilege, or run the self-test on a host that can."
+# |       printf '%s\n' "$probe_copied" >&2
+# |       exit 1
+# |     }
+# |     CDPATH= cd -P "$probe_copy/checkout" || exit 1
 # |     probe_root=$(pwd -P) || exit 1
 # |     probe_audit
 # |     # The settings come from the copy's .git/config as copied and hashed, never the live checkout;
@@ -340,7 +443,7 @@
 # |   probe_first=$probe_digest
 # |   probe_env sh "$probe_root/$probe_gate" >/dev/null 2>&1 ||
 # |     probe_fail "the baseline is already red; the injection would prove nothing."
-# |   cd / && probe_delete || exit 1
+# |   probe_delete || exit 1
 # |   probe_fresh_copy
 # |   [ "$probe_digest" = "$probe_first" ] ||
 # |     probe_skip "the checkout, or its git index, changed between the two copies; run the self-test again."
