@@ -1216,16 +1216,19 @@ def main(argv=None, result_sink=None) -> int:
                         stream.write(source_bytes)
                 behaviour, behaviour_bytes = behaviour_appendix(workdir)
                 preparation_failure = "stale_checkout"
-                if behaviour != source_name:
+                # A tracked appendix is bound by the checkout fingerprint; git archive applies
+                # autocrlf on Windows, so only a line-ending difference between the copy and the
+                # source is tolerated. Anything else (export-subst, an LFS pointer) is a copy the
+                # owner did not see and fails closed. behaviour_sha256 names the bytes the
+                # reviewer saw; the fingerprint hashes the eol-normalised bytes so records of the
+                # same state agree across hosts; staleness is checked against the source bytes.
+                normalised = behaviour_bytes.replace(b"\r\n", b"\n")
+                if behaviour != source_name or normalised != source_bytes.replace(b"\r\n", b"\n"):
                     raise BridgeError("behaviour appendix differs from the reviewed snapshot")
-                # A tracked appendix is bound by the checkout fingerprint; its copy bytes may
-                # legitimately differ from the source (git archive applies autocrlf on Windows).
-                # The hash below is of the bytes the reviewer saw; staleness is checked against
-                # the source bytes read above, so only a source change during review is stale.
                 behaviour_sha256 = hashlib.sha256(behaviour_bytes).hexdigest() if behaviour else None
                 fingerprint = hashlib.sha256(
                     checkout_fingerprint.encode() + b"\0behaviour\0" + (behaviour or "").encode()
-                    + b"\0" + behaviour_bytes).hexdigest() if behaviour else checkout_fingerprint
+                    + b"\0" + normalised).hexdigest() if behaviour else checkout_fingerprint
                 evidence.update(fingerprint=fingerprint, behaviour_sha256=behaviour_sha256)
                 preparation_failure = "unsafe_behaviour_appendix"
                 prompt = prompt_prefix + (behaviour_bytes.decode("utf-8") + "\n" if behaviour else "") + prompt_suffix

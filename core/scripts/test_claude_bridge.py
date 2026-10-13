@@ -25,9 +25,9 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'MYAGENTKIT_TASK_ID', 'MYAGENTKIT_R
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 153, 'test_agent_usage': 30, 'test_codex_quota': 5}
+SUITE_MINIMUMS = {'test_claude_bridge': 154, 'test_agent_usage': 30, 'test_codex_quota': 5}
 # These are executed cases, excluding only the explicitly declared POSIX exclusions.
-WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 130, 'test_agent_usage': 26, 'test_codex_quota': 4}
+WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 131, 'test_agent_usage': 26, 'test_codex_quota': 4}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -3925,9 +3925,22 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         code, result = self.run_bridge(extra=['--commit', 'HEAD'], env_extra={'APPENDIX_LOG': str(copy_log)})
         self.assertEqual(code, 0, result)
         seen = bytes.fromhex(copy_log.read_text())
-        self.assertEqual(seen.replace(b'\r\n', b'\n'), body)
+        self.assertEqual(seen, b'Tracked appendix line.\r\n')  # the conversion really happened
         self.assertEqual(header_of(result['evidence'])['behaviour_sha256'], hashlib.sha256(seen).hexdigest())
         self.assertEqual((self.repo / 'BEHAVIOUR.md').read_bytes(), body)
+        # The fingerprint hashes eol-normalised bytes: the same state without autocrlf agrees.
+        self.git('config', 'core.autocrlf', 'false')
+        self.assertEqual(self.run_bridge(extra=['--commit', 'HEAD'])[1]['fingerprint'], result['fingerprint'])
+
+    def test_a_tracked_appendix_whose_archive_differs_beyond_line_endings_is_stale(self):
+        # export-subst expands a placeholder only in the archive: the reviewer would read an
+        # appendix the owner never saw. Only line endings are tolerated; this fails closed.
+        (self.repo / 'BEHAVIOUR.md').write_bytes(b'Rules for $Format:%H$\n')
+        (self.repo / '.gitattributes').write_text('BEHAVIOUR.md export-subst\n')
+        self.commit_fixture('expanding appendix')
+        code, result = self.run_bridge(extra=['--commit', 'HEAD'])
+        self.assertEqual(code, 5, result)
+        self.assertEqual(result['failure_kind'], 'stale_checkout')
 
     def test_an_ignored_behaviour_change_during_commit_review_is_stale(self):
         with (self.repo / '.gitignore').open('a') as stream:
