@@ -16,7 +16,7 @@ import tempfile
 
 def require_private_storage(repo: Path, archive: Path | None = None) -> None:
     """Refuse model work when private output could be staged or is already tracked."""
-    paths = [repo / '.myagentkit/usage']
+    paths = [repo / '.myagentkit/usage', repo / '.myagentkit/backends']
     if archive is not None:
         paths.append(archive)
     for path in paths:
@@ -25,7 +25,7 @@ def require_private_storage(repo: Path, archive: Path | None = None) -> None:
         if path.resolve() != repo.resolve() / path.relative_to(repo):
             raise ValueError('private evidence must not follow symlinked storage')
         relative = path.relative_to(repo).as_posix()
-        if path == paths[0]:
+        if path in paths[:2]:
             relative += '/'
         ignored = subprocess.run(['git', '-C', str(repo), 'check-ignore', '--quiet', '--no-index',
                                   '--', relative], capture_output=True)
@@ -33,7 +33,7 @@ def require_private_storage(repo: Path, archive: Path | None = None) -> None:
             raise ValueError('private evidence must be Git-ignored before review: ' + relative
                              + '; merge the ignore rules documented in docs/DEV_SETUP.md')
     tracked = subprocess.run(['git', '-C', str(repo), 'ls-files', '-z', '--',
-                              '.myagentkit/usage', 'docs/reviews/*-review.md',
+                              '.myagentkit/usage', '.myagentkit/backends', 'docs/reviews/*-review.md',
                               'docs/reviews/????????T??????Z-*.md',
                               'docs/reviews/*-claude-review.json',
                               'docs/handoffs/*-claude-propose.json',
@@ -94,7 +94,7 @@ def write_evidence(repo: Path, path: Path, text: str, *, private: bool = False,
 # quietly accepted an adapter's own extra column is how two directions drift into two
 # formats that no later reader can line up.
 REVIEW_FIELDS = ("reviewer", "model", "model_attested", "effort", "sandbox", "limits", "scope",
-                 "reference", "head", "fingerprint", "diff_sha256", "status", "failure_kind")
+                 "reference", "head", "fingerprint", "diff_sha256", "behaviour_sha256", "status", "failure_kind")
 VERDICT_LINE = "VERDICT: "
 REVIEW_VERDICTS = ("Accept", "Accept with Manual Checks", "Reject")
 
@@ -233,7 +233,7 @@ def normalize(provider: str, values: list[dict], complete: bool) -> dict:
 
 def record(repo: Path, provider: str, model: str, requester: str, task: dict,
            execution: dict, status: str, reason: str | None, evidence: str | None,
-           published: bytes | None = None) -> tuple[Path, dict]:
+           published: bytes | None = None, backend: str | None = None) -> tuple[Path, dict]:
     """Write one exclusive local record, including failed and partially billed calls.
 
     `published` is the evidence exactly as archived. Hashing it here, never the archive
@@ -265,6 +265,8 @@ def record(repo: Path, provider: str, model: str, requester: str, task: dict,
              "evidence_sha256": hashlib.sha256(published).hexdigest() if evidence else None,
              "raw_stdout": execution.get("stdout", ""),
              "raw_stderr": execution.get("stderr", "")}
+    if backend:  # Only then: a record without a backend stays as it was.
+        value["backend"] = backend
     value["usage"]["account_quota_snapshots"] = execution.get("account_quota_snapshots")
     directory = repo / ".myagentkit/usage"
     if not directory.resolve().is_relative_to(repo.resolve()):

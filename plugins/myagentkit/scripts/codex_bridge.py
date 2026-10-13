@@ -214,6 +214,7 @@ def main(argv=None, result_sink=None):
                   "sandbox": "workspace-write (throwaway copy)", "limits": str(timeout) + "s wall clock", "scope": scope, "reference": ref, "head": head,
                   "fingerprint": fingerprint,
                   "diff_sha256": hashlib.sha256(diff.encode()).hexdigest(),
+                  "behaviour_sha256": None,
                   "status": status, "failure_kind": reason}
         metadata = dict(header)
         report_text = agent_usage.report(stamp, header, verdicts[0] if status == "completed" else None,
@@ -291,8 +292,10 @@ def main(argv=None, result_sink=None):
             except (OSError, ValueError):
                 sys.stdout = open(os.devnull, "w")
             with contextlib.suppress(OSError, ValueError):
-                print("NOTE [review]: codex failed after it handed over its result (%s); the result "
-                      "stands as recorded in %s" % (error, archived), file=sys.stderr, flush=True)
+                note = ("its %s result is recorded in %s" % (result["status"], archived)
+                        if archived else "its %s result has no archive; evidence was not written" % result["status"])
+                print("NOTE [review]: codex failed after it handed over its result (%s); %s"
+                      % (error, note), file=sys.stderr, flush=True)
         return 5 if reason else 0
     finally:
         # A cancel noted while the result printed, or held while the caller's handlers went
