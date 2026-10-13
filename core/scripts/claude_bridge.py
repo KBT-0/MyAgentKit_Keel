@@ -69,7 +69,8 @@ REVIEW_READS = (
 # instead of running Bash unsandboxed. --restricted keeps --settings and drops the user,
 # project and local settings files, so a checkout cannot widen it.
 SANDBOX = {"sandbox": {"enabled": True, "failIfUnavailable": True, "allowUnsandboxedCommands": False,
-                       "network": {"allowedDomains": [], "strictAllowlist": True}}}
+                       "network": {"allowedDomains": [], "strictAllowlist": True},
+                       "filesystem": {"denyRead": [".myagentkit/backends"]}}}
 DIFF_LIMIT = 400_000  # bytes of diff, plus any carried rounds, in one review prompt
 
 
@@ -919,7 +920,7 @@ def render(stamp: str, evidence: dict, args) -> str:
     result = evidence.get("result") or {}
     completed = evidence["status"] == "completed"
     model = "backend %s, model %s" % (args.backend, args.model) if args.backend else args.model
-    header = {"reviewer": "claude", "model": model,
+    header = {"reviewer": "claude@" + args.backend if args.backend else "claude", "model": model,
               "model_attested": "yes (CLI modelUsage)" if completed else "no (run did not complete)",
               "effort": args.effort, "sandbox": "throwaway copy, " + (
                   "Claude Code Bash sandbox: writes to the copy and the temporary directory, "
@@ -963,8 +964,15 @@ def claude_command(cli: str, args, sandboxed: bool) -> tuple[list[str], list[str
                "--safe-mode", "--restricted", "--strict-mcp-config", "--mcp-config",
                '{"mcpServers":{}}', "--no-session-persistence",
                "--max-turns", str(args.max_turns)]
+    private = str((args.repo / ".myagentkit/backends").resolve()).replace("\\", "/")
+    settings = json.loads(json.dumps(SANDBOX)) if bash else {}
     if bash:
-        command += ["--allowed-tools", "Bash", "--settings", json.dumps(SANDBOX)]
+        settings["sandbox"]["filesystem"]["denyRead"].append(private)
+        command += ["--allowed-tools", "Bash"]
+    # Tool denies also apply on Windows, where Bash sandboxing is unavailable.
+    settings["permissions"] = {"deny": ["Read(.myagentkit/backends/**)",
+                                         "Read(//" + private.lstrip("/") + "/**)"]}
+    command += ["--settings", json.dumps(settings)]
     if args.max_budget_usd is not None:
         command += ["--max-budget-usd", str(args.max_budget_usd)]
     return command, tools
@@ -984,7 +992,7 @@ def cli_readiness(environ=os.environ) -> str | None:
     agent_process refuses for the review's quoted arguments.
     """
     probe = argparse.Namespace(mode="review", model="claude-probe", effort="low", max_turns=1,
-                               max_budget_usd=1.0)
+                               max_budget_usd=1.0, repo=Path.cwd())
     flags = sorted({part for part in claude_command("claude", probe, sandboxed=True)[0]
                     if part.startswith("--")} - HIDDEN_FLAGS)
     # One budget for every probe: each hung claude on PATH once cost doctor 60 more seconds.
@@ -1083,6 +1091,8 @@ def main(argv=None, result_sink=None) -> int:
     try:
         if os.environ.get("MYAGENTKIT_DELEGATION_DEPTH", "0") != "0":
             raise BridgeError("nested delegation is disabled")
+        if args.backend and not os.environ.get("ANTHROPIC_BASE_URL"):
+            raise BridgeError("--backend requires ANTHROPIC_BASE_URL")
         if not (args.backend or args.model.startswith("claude-")) or any(c.isspace() for c in args.model):
             raise BridgeError("use an explicit Claude model id, not a moving alias")
         max_timeout = agent_process.MAX_REVIEW_TIMEOUT if args.mode == "review" else 3600

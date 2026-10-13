@@ -153,7 +153,11 @@ esac
 set -- "$scope_flag"
 [ -n "$scope_arg" ] && set -- "$scope_flag" "$scope_arg"
 # The dispatcher checks the name and reads the file; without a backend its argv is unchanged.
-[ -z "$backend" ] || set -- "$@" --backend "$backend"
+if [ -n "$backend" ] && [ "$reviewer" = codex ]; then
+  printf '%s\n' 'review: --backend is ignored for --reviewer codex' >&2
+elif [ -n "$backend" ]; then
+  set -- "$@" --backend "$backend"
+fi
 
 # Reviewing CLIs are commonly per-user installs missing from a non-login shell's PATH: a
 # fallback, never first. An old standalone build left in ~/.local/bin once shadowed the

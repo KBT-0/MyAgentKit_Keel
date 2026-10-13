@@ -84,7 +84,8 @@ CLAUDE = r'''#!/usr/bin/env python3
 import json, os, sys
 with open(os.path.join(os.environ['SPAWN_STATE'], 'claude.json'), 'w') as f:
     json.dump({'argv': sys.argv[1:], 'cwd': os.getcwd(),
-               'env': {k: v for k, v in os.environ.items() if k.startswith('ANTHROPIC_')}}, f)
+               'env': {k: v for k, v in os.environ.items() if k.startswith('ANTHROPIC_') or
+               k in os.environ.get('SPAWN_CONTROL_NAMES', '').split(',')}}, f)
 '''
 
 
@@ -149,7 +150,9 @@ WINDOWS = os.name == 'nt'
 # The cases that run on native Windows (issue #56). Every other case drives the tmux path,
 # which native Windows never takes, through Python stubs whose `sh -c` command line Git for
 # Windows parses again (an apostrophe is a quote there): there each prints NOT RUN.
-ON_WINDOWS = {'test_a_missing_or_failing_watcher_stops_the_spawn', 'test_a_worker_without_its_model_or_effort_is_refused',
+ON_WINDOWS = {'test_backend_worker_clears_each_claude_credential_and_routing_control', 'test_backend_requires_nonempty_token_before_worker_launch',
+              'test_backend_worker_refuses_claude_model_id',
+              'test_backend_worker_refuses_case_variant_of_tracked_path', 'test_a_missing_or_failing_watcher_stops_the_spawn', 'test_a_worker_without_its_model_or_effort_is_refused',
               'test_missing_or_unreadable_brief_is_refused_before_any_session',
               'test_no_error_message_echoes_a_control_character',
               'test_on_native_windows_the_worker_opens_as_a_windows_terminal_tab',
@@ -287,13 +290,130 @@ class SpawnWorkerTests(unittest.TestCase):
                 self.assertNotIn('new-session', self.tmux_log())
                 self.assertFalse((self.state / 'wt.json').exists())
 
+    def test_backend_worker_clears_each_claude_credential_and_routing_control(self):
+        self.backend_file('ANTHROPIC_BASE_URL=https://backend.invalid\nANTHROPIC_MODEL=glm-x\n'
+                          'ANTHROPIC_AUTH_TOKEN=fixture\n')
+        # Independent of the production list, including on Windows.
+        keys = (
+            'CLAUDE_CODE_API_BASE_URL',
+            'CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR',
+            'CLAUDE_CODE_API_KEY_HELPER_TTL_MS',
+            'CLAUDE_CODE_ARTIFACTS_API_BASE_URL',
+            'CLAUDE_CODE_ARTIFACTS_API_TOKEN',
+            'CLAUDE_CODE_ARTIFACT_ASSET_BASE_URL',
+            'CLAUDE_CODE_ARTIFACT_LIVE_BASE_URL',
+            'CLAUDE_CODE_ARTIFACT_SYNC_BASE_URL',
+            'CLAUDE_CODE_ARTIFACT_VIEWER_BASE_URL',
+            'CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL',
+            'CLAUDE_CODE_AUTO_MODE_MODEL',
+            'CLAUDE_CODE_AWS_CHAIN_RESOLVE_TIMEOUT_MS',
+            'CLAUDE_CODE_BG_CLASSIFIER_MODEL',
+            'CLAUDE_CODE_CLIENT_CERT',
+            'CLAUDE_CODE_CLIENT_KEY',
+            'CLAUDE_CODE_CLIENT_KEY_PASSPHRASE',
+            'CLAUDE_CODE_CUSTOM_OAUTH_URL',
+            'CLAUDE_CODE_DESIGN_OAUTH_CLIENT_ID',
+            'CLAUDE_CODE_DISABLE_AUTH_REFRESH_LOCK',
+            'CLAUDE_CODE_ENABLE_PROXY_AUTH_HELPER',
+            'CLAUDE_CODE_GATEWAY_HINT_HEADERS',
+            'CLAUDE_CODE_GATEWAY_TOKEN',
+            'CLAUDE_CODE_GATEWAY_TOKEN_FILE_DESCRIPTOR',
+            'CLAUDE_CODE_GB_BASE_URL',
+            'CLAUDE_CODE_HFI_BEARER_TOKEN',
+            'CLAUDE_CODE_HOST_AUTH_ENV_VAR',
+            'CLAUDE_CODE_HOST_AUTH_REFRESH_TIMEOUT_MS',
+            'CLAUDE_CODE_HOST_GATEWAY_LINEAGE',
+            'CLAUDE_CODE_HOST_HTTP_PROXY_PORT',
+            'CLAUDE_CODE_HOST_SOCKS_PROXY_PORT',
+            'CLAUDE_CODE_HTTPS_PROXY',
+            'CLAUDE_CODE_HTTP_PROXY',
+            'CLAUDE_CODE_MCP_SERVE_AUTH_TOKEN',
+            'CLAUDE_CODE_MEMORY_API_BASE_URL',
+            'CLAUDE_CODE_MEMORY_API_TOKEN',
+            'CLAUDE_CODE_MESSAGING_TOKEN',
+            'CLAUDE_CODE_METRICS_ENDPOINT',
+            'CLAUDE_CODE_MODEL_CATALOG_URL',
+            'CLAUDE_CODE_OAUTH_CLIENT_ID',
+            'CLAUDE_CODE_OAUTH_REFRESH_TOKEN',
+            'CLAUDE_CODE_OAUTH_SCOPES',
+            'CLAUDE_CODE_OAUTH_TOKEN',
+            'CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR',
+            'CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST',
+            'CLAUDE_CODE_PROXY_AUTHENTICATE',
+            'CLAUDE_CODE_PROXY_AUTH_HELPER_TTL_MS',
+            'CLAUDE_CODE_PROXY_HOST',
+            'CLAUDE_CODE_PROXY_RESOLVES_HOSTS',
+            'CLAUDE_CODE_PROXY_URL',
+            'CLAUDE_CODE_SDK_HAS_HOST_AUTH_REFRESH',
+            'CLAUDE_CODE_SDK_HAS_OAUTH_REFRESH',
+            'CLAUDE_CODE_SESSION_ACCESS_TOKEN',
+            'CLAUDE_CODE_SKIP_ANTHROPIC_AWS_AUTH',
+            'CLAUDE_CODE_SKIP_ANTHROPIC_GOOGLE_CLOUD_AUTH',
+            'CLAUDE_CODE_SKIP_AWS_CRED_CACHE',
+            'CLAUDE_CODE_SKIP_BEDROCK_AUTH',
+            'CLAUDE_CODE_SKIP_FOUNDRY_AUTH',
+            'CLAUDE_CODE_SKIP_MANTLE_AUTH',
+            'CLAUDE_CODE_SKIP_VERTEX_AUTH',
+            'CLAUDE_CODE_SLACK_TAG_TOKEN',
+            'CLAUDE_CODE_SUBAGENT_MODEL',
+            'CLAUDE_CODE_SUBAGENT_MODEL_FORCE',
+            'CLAUDE_CODE_USE_ANTHROPIC_AWS',
+            'CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD',
+            'CLAUDE_CODE_USE_BEDROCK',
+            'CLAUDE_CODE_USE_CCR_V',
+            'CLAUDE_CODE_USE_FOUNDRY',
+            'CLAUDE_CODE_USE_GATEWAY',
+            'CLAUDE_CODE_USE_MANTLE',
+            'CLAUDE_CODE_USE_VERTEX',
+            'CLAUDE_CODE_WEBSOCKET_AUTH_FILE_DESCRIPTOR',
+            'CLAUDE_CODE_WORKFLOW_SUBAGENT_MODEL',
+        )
+        for tab in self.backend_paths():
+            result = self.spawn('w1', str(self.brief), '--backend', 'glm', **tab,
+                                SPAWN_CONTROL_NAMES=','.join(keys), **dict.fromkeys(keys, 'lead-control'))
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            for key in keys:
+                with self.subTest(key=key, tab=bool(tab)):
+                    self.assertNotIn(key, self.launched()['env'])
+            (self.state / 'claude.json').unlink()
+
+    def test_backend_requires_nonempty_token_before_worker_launch(self):
+        for token in ('', 'ANTHROPIC_AUTH_TOKEN=\n'):
+            self.backend_file('ANTHROPIC_BASE_URL=https://backend.invalid\nANTHROPIC_MODEL=glm-x\n' + token)
+            for tab in self.backend_paths():
+                result = self.spawn('w1', str(self.brief), '--backend', 'glm', **tab)
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn('sets no ANTHROPIC_AUTH_TOKEN', result.stderr)
+                self.assertIsNone(self.launched())
+
+    def test_backend_worker_refuses_claude_model_id(self):
+        self.backend_file('ANTHROPIC_BASE_URL=https://backend.invalid\nANTHROPIC_MODEL=glm-x\n'
+                          'ANTHROPIC_AUTH_TOKEN=fixture\n')
+        for tab in self.backend_paths():
+            result = self.spawn('w1', str(self.brief), '--model', 'claude-opus-5', '--backend', 'glm', **tab)
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('not a claude- model', result.stderr)
+            self.assertIsNone(self.launched())
+
+    def test_backend_worker_refuses_case_variant_of_tracked_path(self):
+        self.backend_file('ANTHROPIC_BASE_URL=https://backend.invalid\nANTHROPIC_MODEL=glm-x\n'
+                          'ANTHROPIC_AUTH_TOKEN=fixture\n')
+        subprocess.run(['git', '-C', str(self.cwd), 'add', '-f', '.myagentkit/backends/glm.env'],
+                       check=True, capture_output=True)
+        for tab in self.backend_paths():
+            result = self.spawn('w1', str(self.brief), '--backend', 'GLM', **tab)
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('Git-ignored and untracked', result.stderr)
+            self.assertIsNone(self.launched())
+
     def test_backend_replaces_every_inherited_anthropic_variable(self):
         expected = {'ANTHROPIC_BASE_URL': 'https://backend.invalid', 'ANTHROPIC_MODEL': 'glm-x',
                     'ANTHROPIC_AUTH_TOKEN': 'backend-token'}
         self.backend_file(''.join('%s=%s\n' % item for item in expected.items()))
         inherited = {'ANTHROPIC_API_KEY': 'lead-key', 'ANTHROPIC_CUSTOM_HEADERS': 'lead-header',
                      'ANTHROPIC_DEFAULT_SONNET_MODEL': 'lead-model', 'ANTHROPIC_FUTURE_SETTING': 'lead-value',
-                     'ANTHROPIC_mixed_case': 'lead-mixed-case'}
+                     'ANTHROPIC_mixed_case': 'lead-mixed-case',
+                     **({'Anthropic_Api_Key': 'lead-lower-prefix'} if WINDOWS else {})}
         for tab in self.backend_paths():
             result = self.spawn('w1', str(self.brief), '--backend', 'glm', **tab, **inherited)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

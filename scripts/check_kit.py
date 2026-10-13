@@ -64,7 +64,7 @@ if __name__ == '__main__' and '--unit' not in sys.argv:
 for _name in ('GIT_DIR', 'GIT_WORK_TREE', 'GIT_IMPLICIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY',
               'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_COMMON_DIR', 'GIT_GRAFT_FILE', 'GIT_NO_REPLACE_OBJECTS',
               'GIT_REPLACE_REF_BASE', 'GIT_PREFIX', 'GIT_SHALLOW_FILE', 'GIT_INTERNAL_SUPER_PREFIX',
-              'GIT_NAMESPACE', 'GIT_CEILING_DIRECTORIES'):
+              'GIT_NAMESPACE', 'GIT_CEILING_DIRECTORIES', 'MYAGENTKIT_BACKEND'):
     os.environ.pop(_name, None)
 # scripts/check.sh names a file to create once all units pass; popped here, so a
 # nested kit check (a unit, a test) never creates it in the outer run's place.
@@ -84,11 +84,11 @@ REQUIRED_SUITES = {
     # Each suite's current count: a minimum far below it (1 of 30) let a suite lose almost
     # every test with the kit check green. A new test raises its suite's number here.
     'tests': {'test_packaging': 1, 'test_bootstrap': 36, 'test_acceptance': 9,
-              'test_review_upgrade': 2 if os.name == 'nt' else 3,
+              'test_review_upgrade': 4 if os.name == 'nt' else 5,
               'test_boundary_example': 3, 'test_scan_gate': 1,
               'test_check_gate': 24, 'test_check_gate_windows': 23, 'test_boundary_restore': 39,
               'test_sync_kit': 29, 'test_doctor': 4, 'test_git_hooks': 30, 'test_stop_hook': 8, 'test_context_hook': 10, 'test_overlay_permissions': 6,
-              'test_spawn_worker': 25, 'test_spawn_codex': 36, 'test_codex_worker': 47, 'test_working_mode': 44, 'test_worker_visibility': 55, 'test_doc_pointers': 9,
+              'test_spawn_worker': 29, 'test_spawn_codex': 36, 'test_codex_worker': 47, 'test_working_mode': 44, 'test_worker_visibility': 55, 'test_doc_pointers': 9,
               'test_usage_summary': 10,
               'test_kit_output': 1, 'test_kit_runner': 24, 'test_clean_worktrees': 137, 'test_clean_worktrees_windows': 9, 'test_close_worker_windows': 20,
               'test_review_windows': 22, 'test_claude_sandbox': 24, 'test_worker_paths_windows': 3,

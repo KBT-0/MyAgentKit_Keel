@@ -123,6 +123,7 @@ else kit_python="py -3"; fi   # unquoted at every use
 # only the reader and paths, never backend values. Both entry points use load_backend's
 # grammar, privacy checks, regular-file check and bounded read.
 if [ -n "$backend" ]; then
+  case "$model" in claude-*) die "--backend requires a backend model id or a mapped alias, not a claude- model" ;; esac
   backend_repo=$dir
   backend_scripts=$(CDPATH= cd -P -- "$kit" && pwd -P && echo x) || die "cannot resolve the review companion folder"
   backend_scripts=${backend_scripts%"${nl}x"}
@@ -133,7 +134,7 @@ if [ -n "$backend" ]; then
         sys.argv[1:3] = [subprocess.check_output(["cygpath", "-m", p], text=True).rstrip("\r\n")
                          for p in sys.argv[1:3]]
     sys.path.insert(0, sys.argv[1])
-    from review_dispatch import load_backend
+    from review_dispatch import load_backend, BACKEND_CLEAR_KEYS
     try:
         values, model = load_backend(Path(sys.argv[2]), sys.argv[3])
     except (OSError, ValueError) as error:
@@ -147,8 +148,12 @@ if [ -n "$backend" ]; then
         if not raw.endswith(b"\0"):
             print("spawn_worker: cannot read the child environment names", file=sys.stderr)
             sys.exit(1)
-        keys = [os.fsdecode(entry.partition(b"=")[0]) for entry in raw.split(b"\0")
-                if entry.startswith(b"ANTHROPIC_")]
+        keys = []
+        for entry in raw.split(b"\0"):
+            key = os.fsdecode(entry.partition(b"=")[0])
+            match = key.upper() if os.name == "nt" else key
+            if match.startswith("ANTHROPIC_") or match in BACKEND_CLEAR_KEYS:
+                keys.append(key)
         print("unset " + " ".join(shlex.quote(k) for k in keys))
         for key, value in values.items():
             print("export " + key + "=" + shlex.quote(value))'

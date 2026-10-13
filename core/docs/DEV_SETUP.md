@@ -207,12 +207,34 @@ The token stays in this ignored, untracked file. Bootstrap installs the rules fr
 preserve any existing backend files locally before removing them from Git's index.
 Never export the token in your shell profile. Then run
 `./scripts/review.sh --uncommitted --reviewer claude --backend glm`, or set
-`MYAGENTKIT_BACKEND=glm` for the run. A file without `ANTHROPIC_BASE_URL` or a model fails
-the review before launch. An existing project gets `--backend` only from the updated
-`review.sh` (the upgrade above); an older `review.sh` keeps working without it.
+`MYAGENTKIT_BACKEND=glm` for the run. A file without a nonempty `ANTHROPIC_AUTH_TOKEN`,
+`ANTHROPIC_BASE_URL`, or a model fails the review before launch.
+An existing project gets `--backend` only from the updated `review.sh` (the upgrade above); an older `review.sh` keeps working without it.
 `scripts/spawn_worker.sh --backend glm` starts a Claude worker session on the same backend.
 The worker reads the file at start, replacing every inherited `ANTHROPIC_*` variable;
 the terminal script and tmux launch command carry the file path, never its token.
+Both paths clear the Claude credential and provider controls listed in `BACKEND_CLEAR_KEYS`
+in `review_dispatch.py`. Codex reviews ignore `--backend` and `MYAGENTKIT_BACKEND` with a notice.
+With `--backend`, worker `--model` must name the provider's model id or a mapped alias,
+such as `opus` with `ANTHROPIC_DEFAULT_OPUS_MODEL` set. A `claude-` model id is refused.
+The CLI's `--model` flag overrides `ANTHROPIC_MODEL`.
+The stored claude.ai login and `apiKeyHelper` cannot be removed from the environment.
+With a backend, the CLI still prefers `ANTHROPIC_AUTH_TOKEN` for authentication.
+User or managed settings can reintroduce environment values; verify settings before live backend use.
+Claude reviews deny reads of `.myagentkit/backends` through tool permissions and the Bash sandbox.
+The Codex review adapter uses legacy `workspace-write`, which has no per-path read-deny knob.
+On Codex installations supporting managed read denies, administrators should add this to `requirements.toml`:
+
+```toml
+[permissions.filesystem]
+deny_read = ["**/.myagentkit/backends", "**/.myagentkit/backends/**"]
+```
+
+The kit cannot install administrator policy. Without it, Codex can read a backend file by absolute path.
+Do not claim that the throwaway copy alone prevents those reads.
+See the [Codex configuration reference](https://developers.openai.com/codex/config-reference).
+See [Claude environment precedence](https://code.claude.com/docs/en/env-vars)
+and [sandbox filesystem rules](https://code.claude.com/docs/en/sandboxing).
 
 **Optional: the vendor plugin for your host agent.**
 

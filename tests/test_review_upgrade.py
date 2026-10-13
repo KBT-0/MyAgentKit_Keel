@@ -15,6 +15,25 @@ from review_test_support import PYTHON_SHEBANG, posix_only, python_cli  # noqa: 
 
 
 class ReviewUpgradeTests(unittest.TestCase):
+    def test_documented_upgrade_isolates_inherited_backend(self):
+        from unittest.mock import patch
+        run = subprocess.run
+        def isolated_run(command, **kwargs):
+            if command[0] == 'sh' and command[1].endswith('review.sh'):
+                self.assertFalse('MYAGENTKIT_BACKEND' in kwargs['env'], 'the synthetic child inherited a backend')
+            return run(command, **kwargs)
+        with patch.dict(os.environ, MYAGENTKIT_BACKEND='missing-in-synthetic-project'), \
+                patch.object(subprocess, 'run', side_effect=isolated_run):
+            self.test_documented_upgrade_supplies_runtime_and_test_imports()
+
+    def test_check_kit_clears_inherited_backend_without_running_the_gate(self):
+        # Execute only the environment cleanup prefix, never the kit gate.
+        from unittest.mock import patch
+        code = (ROOT / 'scripts/check_kit.py').read_text().split('ROOT = Path(')[0]
+        with patch.dict(os.environ, MYAGENTKIT_BACKEND='missing-in-synthetic-project'):
+            exec(compile(code, str(ROOT / 'scripts/check_kit.py'), 'exec'), {'__name__': 'cleanup_probe'})
+            self.assertFalse('MYAGENTKIT_BACKEND' in os.environ, 'the kit cleanup retained a backend')
+
     @posix_only
     def test_review_self_test_without_a_python3_command(self):
         spec = importlib.util.spec_from_file_location('check_kit', ROOT / 'scripts/check_kit.py')
@@ -35,6 +54,7 @@ class ReviewUpgradeTests(unittest.TestCase):
                                              + shlex.quote(sys.executable) + ' "$@"\n')
                     (bins / name).chmod(0o755)
                 env = dict(os.environ, PATH=str(bins) + os.pathsep + filtered)
+                env.pop('MYAGENTKIT_BACKEND', None)
                 self.assertIsNone(shutil.which('python3', path=env['PATH']))
                 if name == 'py':
                     self.assertIsNone(shutil.which('python', path=env['PATH']))
@@ -113,6 +133,7 @@ class ReviewUpgradeTests(unittest.TestCase):
                        REVIEW_CLAUDE_MODEL='', MYAGENTKIT_CAPTURE_QUOTA='0',
                        MYAGENTKIT_DELEGATION_DEPTH='0', REVIEW_TIMEOUT_SECONDS='30',
                        REVIEW_DOCS='AGENTS.md, docs/ARCHITECTURE.md and docs/REVIEW_GATE.md')
+            env.pop('MYAGENTKIT_BACKEND', None)
             result = subprocess.run(['sh', str(scripts / 'review.sh'), '--reviewer', 'codex'],
                                     env=env, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

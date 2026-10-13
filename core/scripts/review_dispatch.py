@@ -24,6 +24,82 @@ FALLBACK_ENV = "MYAGENTKIT_REVIEW_FALLBACK_FROM"
 BACKEND_KEYS = frozenset({"ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_MODEL",
                           "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL",
                           "ANTHROPIC_DEFAULT_HAIKU_MODEL"})
+# Claude Code credential/provider controls (env-vars reference and CLI 2.1.296).
+# The worker imports this list; include token descriptors and host/gateway routing.
+BACKEND_CLEAR_KEYS = frozenset({
+    'CLAUDE_CODE_API_BASE_URL',
+    'CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR',
+    'CLAUDE_CODE_API_KEY_HELPER_TTL_MS',
+    'CLAUDE_CODE_ARTIFACTS_API_BASE_URL',
+    'CLAUDE_CODE_ARTIFACTS_API_TOKEN',
+    'CLAUDE_CODE_ARTIFACT_ASSET_BASE_URL',
+    'CLAUDE_CODE_ARTIFACT_LIVE_BASE_URL',
+    'CLAUDE_CODE_ARTIFACT_SYNC_BASE_URL',
+    'CLAUDE_CODE_ARTIFACT_VIEWER_BASE_URL',
+    'CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL',
+    'CLAUDE_CODE_AUTO_MODE_MODEL',
+    'CLAUDE_CODE_AWS_CHAIN_RESOLVE_TIMEOUT_MS',
+    'CLAUDE_CODE_BG_CLASSIFIER_MODEL',
+    'CLAUDE_CODE_CLIENT_CERT',
+    'CLAUDE_CODE_CLIENT_KEY',
+    'CLAUDE_CODE_CLIENT_KEY_PASSPHRASE',
+    'CLAUDE_CODE_CUSTOM_OAUTH_URL',
+    'CLAUDE_CODE_DESIGN_OAUTH_CLIENT_ID',
+    'CLAUDE_CODE_DISABLE_AUTH_REFRESH_LOCK',
+    'CLAUDE_CODE_ENABLE_PROXY_AUTH_HELPER',
+    'CLAUDE_CODE_GATEWAY_HINT_HEADERS',
+    'CLAUDE_CODE_GATEWAY_TOKEN',
+    'CLAUDE_CODE_GATEWAY_TOKEN_FILE_DESCRIPTOR',
+    'CLAUDE_CODE_GB_BASE_URL',
+    'CLAUDE_CODE_HFI_BEARER_TOKEN',
+    'CLAUDE_CODE_HOST_AUTH_ENV_VAR',
+    'CLAUDE_CODE_HOST_AUTH_REFRESH_TIMEOUT_MS',
+    'CLAUDE_CODE_HOST_GATEWAY_LINEAGE',
+    'CLAUDE_CODE_HOST_HTTP_PROXY_PORT',
+    'CLAUDE_CODE_HOST_SOCKS_PROXY_PORT',
+    'CLAUDE_CODE_HTTPS_PROXY',
+    'CLAUDE_CODE_HTTP_PROXY',
+    'CLAUDE_CODE_MCP_SERVE_AUTH_TOKEN',
+    'CLAUDE_CODE_MEMORY_API_BASE_URL',
+    'CLAUDE_CODE_MEMORY_API_TOKEN',
+    'CLAUDE_CODE_MESSAGING_TOKEN',
+    'CLAUDE_CODE_METRICS_ENDPOINT',
+    'CLAUDE_CODE_MODEL_CATALOG_URL',
+    'CLAUDE_CODE_OAUTH_CLIENT_ID',
+    'CLAUDE_CODE_OAUTH_REFRESH_TOKEN',
+    'CLAUDE_CODE_OAUTH_SCOPES',
+    'CLAUDE_CODE_OAUTH_TOKEN',
+    'CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR',
+    'CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST',
+    'CLAUDE_CODE_PROXY_AUTHENTICATE',
+    'CLAUDE_CODE_PROXY_AUTH_HELPER_TTL_MS',
+    'CLAUDE_CODE_PROXY_HOST',
+    'CLAUDE_CODE_PROXY_RESOLVES_HOSTS',
+    'CLAUDE_CODE_PROXY_URL',
+    'CLAUDE_CODE_SDK_HAS_HOST_AUTH_REFRESH',
+    'CLAUDE_CODE_SDK_HAS_OAUTH_REFRESH',
+    'CLAUDE_CODE_SESSION_ACCESS_TOKEN',
+    'CLAUDE_CODE_SKIP_ANTHROPIC_AWS_AUTH',
+    'CLAUDE_CODE_SKIP_ANTHROPIC_GOOGLE_CLOUD_AUTH',
+    'CLAUDE_CODE_SKIP_AWS_CRED_CACHE',
+    'CLAUDE_CODE_SKIP_BEDROCK_AUTH',
+    'CLAUDE_CODE_SKIP_FOUNDRY_AUTH',
+    'CLAUDE_CODE_SKIP_MANTLE_AUTH',
+    'CLAUDE_CODE_SKIP_VERTEX_AUTH',
+    'CLAUDE_CODE_SLACK_TAG_TOKEN',
+    'CLAUDE_CODE_SUBAGENT_MODEL',
+    'CLAUDE_CODE_SUBAGENT_MODEL_FORCE',
+    'CLAUDE_CODE_USE_ANTHROPIC_AWS',
+    'CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD',
+    'CLAUDE_CODE_USE_BEDROCK',
+    'CLAUDE_CODE_USE_CCR_V',
+    'CLAUDE_CODE_USE_FOUNDRY',
+    'CLAUDE_CODE_USE_GATEWAY',
+    'CLAUDE_CODE_USE_MANTLE',
+    'CLAUDE_CODE_USE_VERTEX',
+    'CLAUDE_CODE_WEBSOCKET_AUTH_FILE_DESCRIPTOR',
+    'CLAUDE_CODE_WORKFLOW_SUBAGENT_MODEL',
+})
 BACKEND_MAX_BYTES = 64 * 1024
 
 
@@ -36,7 +112,7 @@ def pin_valid(provider, model, backend=None):
 def load_backend(repo, name):
     """The environment and the model pin of backend `name`, from .myagentkit/backends/NAME.env.
 
-    Fails closed, like an empty pin: a file without an endpoint or a model would send the
+    Fails closed: a file without an endpoint, token or model could send the
     review to Anthropic's own endpoint under a name that claims another. No message prints a
     value, because the file holds the endpoint's token.
     """
@@ -44,17 +120,20 @@ def load_backend(repo, name):
         raise ValueError("backend name must be letters, digits, '.', '_' or '-' (got %r)" % name)
     path = repo / ".myagentkit/backends" / (name + ".env")
     relative = path.relative_to(repo).as_posix()
-    tracked = subprocess.run(["git", "-C", str(repo), "ls-files", "--error-unmatch", "--", relative],
+    tracked = subprocess.run(["git", "-C", str(repo), "ls-files", "-z"],
                              capture_output=True)
     ignored = subprocess.run(["git", "-C", str(repo), "check-ignore", "-q", "--", relative],
                              capture_output=True)
-    if tracked.returncode != 1 or ignored.returncode != 0:
+    if tracked.returncode != 0 or ignored.returncode != 0 or any(
+            os.fsdecode(entry).casefold().startswith(".myagentkit/backends/")
+            for entry in tracked.stdout.split(b"\0") if entry):
         raise ValueError("backend %s: %s must be Git-ignored and untracked" % (name, path))
     try:
-        if not os.path.isfile(path):
+        if path.is_symlink() or not os.path.isfile(path):
             raise ValueError("backend %s: %s cannot be read: expected a regular file" % (name, path))
         # Nonblocking open also prevents a FIFO swapped in after isfile() from blocking.
-        flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0)
+        flags = (os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0)
+                 | getattr(os, "O_NOFOLLOW", 0))
         with os.fdopen(os.open(path, flags), "rb") as stream:
             if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
                 raise ValueError("backend %s: %s must be a regular file" % (name, path))
@@ -79,9 +158,11 @@ def load_backend(repo, name):
     if not env.get("ANTHROPIC_BASE_URL"):
         raise ValueError("backend %s: %s sets no ANTHROPIC_BASE_URL" % (name, path))
     model = env.get("ANTHROPIC_MODEL") or env.get("ANTHROPIC_DEFAULT_OPUS_MODEL")
-    if not model or not pin_valid("claude", model, name):
+    if not model or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/@-]*", model):
         raise ValueError("backend %s: %s sets no model (ANTHROPIC_MODEL or "
-                         "ANTHROPIC_DEFAULT_OPUS_MODEL, one id without spaces)" % (name, path))
+                         "ANTHROPIC_DEFAULT_OPUS_MODEL, id matching [A-Za-z0-9][A-Za-z0-9._:/@-]*)" % (name, path))
+    if not env.get("ANTHROPIC_AUTH_TOKEN"):
+        raise ValueError("backend %s: %s sets no ANTHROPIC_AUTH_TOKEN" % (name, path))
     return env, model
 
 
@@ -213,7 +294,8 @@ def main(argv=None):
         # endpoint, and a Codex fallback after it would see the backend's token.
         backend = provider == "claude" and args.backend
         if backend:
-            inherited = {key: value for key, value in os.environ.items() if key.startswith("ANTHROPIC_")}
+            inherited = {key: value for key, value in os.environ.items()
+                         if key.startswith("ANTHROPIC_") or key in BACKEND_CLEAR_KEYS}
         try:
             if backend:
                 for key in inherited:
@@ -230,7 +312,8 @@ def main(argv=None):
             received = [{"status": "failed", "failure_kind": "adapter_error", "error": str(error)}]
         finally:
             if backend:
-                for key in [key for key in os.environ if key.startswith("ANTHROPIC_")]:
+                for key in [key for key in os.environ
+                            if key.startswith("ANTHROPIC_") or key in BACKEND_CLEAR_KEYS]:
                     del os.environ[key]
                 os.environ.update(inherited)
         result = received[-1] if received else {"status": "failed", "failure_kind": "preflight_failed"}

@@ -343,7 +343,7 @@ class ClaudeSandboxTests(unittest.TestCase):
         for sandboxed in (True, False):
             for mode in ('review', 'propose'):
                 with self.subTest(sandboxed=sandboxed, mode=mode):
-                    args = argparse.Namespace(mode=mode, model=MODEL, effort='low', max_turns=5,
+                    args = argparse.Namespace(repo=self.repo, mode=mode, model=MODEL, effort='low', max_turns=5,
                                               max_budget_usd=None)
                     command, tools = claude_bridge.claude_command('claude', args, sandboxed)
                     offered = command[command.index('--tools') + 1]
@@ -356,12 +356,13 @@ class ClaudeSandboxTests(unittest.TestCase):
                         self.assertIs(settings['failIfUnavailable'], True)
                         self.assertIs(settings['allowUnsandboxedCommands'], False)
                         self.assertEqual(settings['network'], {'allowedDomains': [], 'strictAllowlist': True})
-                        self.assertNotIn('filesystem', settings)  # writes: the copy and the temp dir only
+                        self.assertIn('.myagentkit/backends', settings['filesystem']['denyRead'])
                     else:
                         # No host without a sandbox, and no proposal, is offered a shell.
                         self.assertEqual(offered, 'Read,Glob,Grep')
                         self.assertNotIn('Bash', ' '.join(command))
-                        self.assertNotIn('--settings', command)
+                        self.assertIn('Read(.myagentkit/backends/**)',
+                                      json.loads(command[command.index('--settings') + 1])['permissions']['deny'])
 
     def test_a_review_on_this_host_gets_a_sandboxed_shell_or_none(self):
         code, result, launches = self.bridge('review')

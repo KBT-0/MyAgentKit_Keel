@@ -25,9 +25,9 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'MYAGENTKIT_TASK_ID', 'MYAGENTKIT_R
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 159, 'test_agent_usage': 30, 'test_codex_quota': 5}
+SUITE_MINIMUMS = {'test_claude_bridge': 169, 'test_agent_usage': 30, 'test_codex_quota': 5}
 # These are executed cases, excluding only the explicitly declared POSIX exclusions.
-WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 135, 'test_agent_usage': 26, 'test_codex_quota': 4}
+WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 143, 'test_agent_usage': 26, 'test_codex_quota': 4}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -45,7 +45,7 @@ review = 'verdict' in args[args.index('--json-schema') + 1]
 bash = review and os.name == 'posix'
 assert args[args.index('--tools') + 1] == ('Read,Glob,Grep,Bash' if bash else 'Read,Glob,Grep')
 assert (args[args.index('--allowed-tools') + 1] == 'Bash') if bash else '--allowed-tools' not in args
-assert (json.loads(args[args.index('--settings') + 1])['sandbox']['failIfUnavailable'] is True) if bash else '--settings' not in args
+assert (json.loads(args[args.index('--settings') + 1])['sandbox']['failIfUnavailable'] is True) if bash else 'sandbox' not in json.loads(args[args.index('--settings') + 1])
 assert args[args.index('--permission-mode') + 1] == 'dontAsk'
 assert '--safe-mode' in args and '--restricted' in args
 assert '--strict-mcp-config' in args and '--no-session-persistence' in args
@@ -415,6 +415,210 @@ class BridgeTests(unittest.TestCase):
         self.commit_fixture('Visible change fixture')
         for scope, ref in (('base', reference), ('commit', 'HEAD')):
             self.assertNotIn(token, bridge.snapshot(self.repo, scope, ref)[2])
+
+    def test_backend_clears_each_claude_credential_and_routing_control(self):
+        from contextlib import redirect_stdout
+        from unittest.mock import patch
+        import review_dispatch
+        self.backend_file(''.join('%s=%s\n' % item for item in self.BACKEND.items()))
+        # Independent of the production list: deleting any entry must fail its subtest.
+        keys = (
+            'CLAUDE_CODE_API_BASE_URL',
+            'CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR',
+            'CLAUDE_CODE_API_KEY_HELPER_TTL_MS',
+            'CLAUDE_CODE_ARTIFACTS_API_BASE_URL',
+            'CLAUDE_CODE_ARTIFACTS_API_TOKEN',
+            'CLAUDE_CODE_ARTIFACT_ASSET_BASE_URL',
+            'CLAUDE_CODE_ARTIFACT_LIVE_BASE_URL',
+            'CLAUDE_CODE_ARTIFACT_SYNC_BASE_URL',
+            'CLAUDE_CODE_ARTIFACT_VIEWER_BASE_URL',
+            'CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL',
+            'CLAUDE_CODE_AUTO_MODE_MODEL',
+            'CLAUDE_CODE_AWS_CHAIN_RESOLVE_TIMEOUT_MS',
+            'CLAUDE_CODE_BG_CLASSIFIER_MODEL',
+            'CLAUDE_CODE_CLIENT_CERT',
+            'CLAUDE_CODE_CLIENT_KEY',
+            'CLAUDE_CODE_CLIENT_KEY_PASSPHRASE',
+            'CLAUDE_CODE_CUSTOM_OAUTH_URL',
+            'CLAUDE_CODE_DESIGN_OAUTH_CLIENT_ID',
+            'CLAUDE_CODE_DISABLE_AUTH_REFRESH_LOCK',
+            'CLAUDE_CODE_ENABLE_PROXY_AUTH_HELPER',
+            'CLAUDE_CODE_GATEWAY_HINT_HEADERS',
+            'CLAUDE_CODE_GATEWAY_TOKEN',
+            'CLAUDE_CODE_GATEWAY_TOKEN_FILE_DESCRIPTOR',
+            'CLAUDE_CODE_GB_BASE_URL',
+            'CLAUDE_CODE_HFI_BEARER_TOKEN',
+            'CLAUDE_CODE_HOST_AUTH_ENV_VAR',
+            'CLAUDE_CODE_HOST_AUTH_REFRESH_TIMEOUT_MS',
+            'CLAUDE_CODE_HOST_GATEWAY_LINEAGE',
+            'CLAUDE_CODE_HOST_HTTP_PROXY_PORT',
+            'CLAUDE_CODE_HOST_SOCKS_PROXY_PORT',
+            'CLAUDE_CODE_HTTPS_PROXY',
+            'CLAUDE_CODE_HTTP_PROXY',
+            'CLAUDE_CODE_MCP_SERVE_AUTH_TOKEN',
+            'CLAUDE_CODE_MEMORY_API_BASE_URL',
+            'CLAUDE_CODE_MEMORY_API_TOKEN',
+            'CLAUDE_CODE_MESSAGING_TOKEN',
+            'CLAUDE_CODE_METRICS_ENDPOINT',
+            'CLAUDE_CODE_MODEL_CATALOG_URL',
+            'CLAUDE_CODE_OAUTH_CLIENT_ID',
+            'CLAUDE_CODE_OAUTH_REFRESH_TOKEN',
+            'CLAUDE_CODE_OAUTH_SCOPES',
+            'CLAUDE_CODE_OAUTH_TOKEN',
+            'CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR',
+            'CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST',
+            'CLAUDE_CODE_PROXY_AUTHENTICATE',
+            'CLAUDE_CODE_PROXY_AUTH_HELPER_TTL_MS',
+            'CLAUDE_CODE_PROXY_HOST',
+            'CLAUDE_CODE_PROXY_RESOLVES_HOSTS',
+            'CLAUDE_CODE_PROXY_URL',
+            'CLAUDE_CODE_SDK_HAS_HOST_AUTH_REFRESH',
+            'CLAUDE_CODE_SDK_HAS_OAUTH_REFRESH',
+            'CLAUDE_CODE_SESSION_ACCESS_TOKEN',
+            'CLAUDE_CODE_SKIP_ANTHROPIC_AWS_AUTH',
+            'CLAUDE_CODE_SKIP_ANTHROPIC_GOOGLE_CLOUD_AUTH',
+            'CLAUDE_CODE_SKIP_AWS_CRED_CACHE',
+            'CLAUDE_CODE_SKIP_BEDROCK_AUTH',
+            'CLAUDE_CODE_SKIP_FOUNDRY_AUTH',
+            'CLAUDE_CODE_SKIP_MANTLE_AUTH',
+            'CLAUDE_CODE_SKIP_VERTEX_AUTH',
+            'CLAUDE_CODE_SLACK_TAG_TOKEN',
+            'CLAUDE_CODE_SUBAGENT_MODEL',
+            'CLAUDE_CODE_SUBAGENT_MODEL_FORCE',
+            'CLAUDE_CODE_USE_ANTHROPIC_AWS',
+            'CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD',
+            'CLAUDE_CODE_USE_BEDROCK',
+            'CLAUDE_CODE_USE_CCR_V',
+            'CLAUDE_CODE_USE_FOUNDRY',
+            'CLAUDE_CODE_USE_GATEWAY',
+            'CLAUDE_CODE_USE_MANTLE',
+            'CLAUDE_CODE_USE_VERTEX',
+            'CLAUDE_CODE_WEBSOCKET_AUTH_FILE_DESCRIPTOR',
+            'CLAUDE_CODE_WORKFLOW_SUBAGENT_MODEL',
+        )
+        with patch.dict(os.environ, self.review_env(), clear=True):
+            os.environ.update(dict.fromkeys(keys, 'lead-control'))
+            def launch(argv, report):
+                for key in keys:
+                    with self.subTest(key=key):
+                        self.assertFalse(key in os.environ, key + " remained inherited")
+                self.assertEqual(os.environ['ANTHROPIC_AUTH_TOKEN'], self.BACKEND['ANTHROPIC_AUTH_TOKEN'])
+                report({'status': 'completed'})
+                return 0
+            with patch.object(review_dispatch.claude_bridge, 'main', launch), redirect_stdout(io.StringIO()):
+                self.assertEqual(review_dispatch.main(['--repo', str(self.repo), '--uncommitted',
+                                                       '--backend', 'glm']), 0)
+            for key in keys:
+                with self.subTest(restored=key):
+                    self.assertEqual(os.environ.get(key), 'lead-control')
+
+    def test_backend_requires_a_nonempty_token(self):
+        import review_dispatch
+        for token in ('', 'ANTHROPIC_AUTH_TOKEN=\n', 'ANTHROPIC_AUTH_TOKEN=   \n'):
+            with self.subTest(token=token):
+                self.backend_file('ANTHROPIC_BASE_URL=https://backend.invalid\nANTHROPIC_MODEL=glm-x\n' + token)
+                with self.assertRaisesRegex(ValueError, 'sets no ANTHROPIC_AUTH_TOKEN'):
+                    review_dispatch.load_backend(self.repo, 'glm')
+
+    def test_backend_rejects_unsafe_model_ids(self):
+        import review_dispatch
+        for model in ('-x', 'x|y', 'x\x1b[2J', 'x y'):
+            with self.subTest(model=model):
+                self.backend_file('ANTHROPIC_BASE_URL=https://backend.invalid\nANTHROPIC_AUTH_TOKEN=fixture\n'
+                                  + 'ANTHROPIC_MODEL=' + model + '\n')
+                with self.assertRaisesRegex(ValueError, 'sets no model'):
+                    review_dispatch.load_backend(self.repo, 'glm')
+        for model in ('glm-x', 'org/model:version@1.2_3'):
+            self.backend_file('ANTHROPIC_BASE_URL=https://backend.invalid\nANTHROPIC_AUTH_TOKEN=fixture\n'
+                              + 'ANTHROPIC_MODEL=' + model + '\n')
+            self.assertEqual(review_dispatch.load_backend(self.repo, 'glm')[1], model)
+
+    def test_backend_case_variant_of_tracked_path_is_refused(self):
+        import review_dispatch
+        self.backend_file(''.join('%s=%s\n' % item for item in self.BACKEND.items()))
+        self.git('add', '-f', '.myagentkit/backends/glm.env')
+        with self.assertRaisesRegex(ValueError, 'Git-ignored and untracked'):
+            review_dispatch.load_backend(self.repo, 'GLM')
+
+    @posix_only
+    def test_backend_nofollow_refuses_a_swapped_symlink(self):
+        from unittest.mock import patch
+        import review_dispatch
+        self.backend_file(''.join('%s=%s\n' % item for item in self.BACKEND.items()))
+        path = self.repo / '.myagentkit/backends/glm.env'
+        target = self.repo / 'tracked.env'
+        path.rename(target)
+        self.git('add', 'tracked.env')
+        path.symlink_to(target)
+        # Simulate replacing the regular leaf after the preliminary checks.
+        with patch.object(Path, 'is_symlink', return_value=False):
+            with self.assertRaisesRegex(ValueError, 'cannot be read'):
+                review_dispatch.load_backend(self.repo, 'glm')
+
+    @posix_only
+    def test_backend_nonblock_refuses_a_swapped_fifo(self):
+        self.backend_file('')
+        path = self.repo / '.myagentkit/backends/glm.env'
+        path.unlink()
+        os.mkfifo(path)
+        code = ('from pathlib import Path; from unittest.mock import patch; import review_dispatch; '
+                'p=patch("review_dispatch.os.path.isfile", return_value=True); p.start(); '
+                'review_dispatch.load_backend(Path(' + repr(str(self.repo)) + '), "glm")')
+        result = subprocess.run([sys.executable, '-B', '-c', code], cwd=ROOT,
+                                capture_output=True, text=True, timeout=5)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('regular file', result.stderr)
+
+    def test_direct_backend_label_requires_an_endpoint(self):
+        from contextlib import redirect_stdout
+        from unittest.mock import patch
+        for mode in ('review', 'propose'):
+            with self.subTest(mode=mode), patch.dict(os.environ, self.review_env(), clear=True):
+                os.environ.pop('ANTHROPIC_BASE_URL', None)
+                out = io.StringIO()
+                with redirect_stdout(out):
+                    self.assertEqual(bridge.main([mode, '--repo', str(self.repo), '--backend', 'glm',
+                                                  '--model', 'claude-opus-5']), 2)
+                self.assertIn('--backend requires ANTHROPIC_BASE_URL', out.getvalue())
+
+    def test_codex_wrapper_ignores_requested_backend(self):
+        for flags, exported in ((('--backend', 'missing'), ''), ((), 'missing')):
+            with self.subTest(flags=flags):
+                result = self.run_wrapper('--uncommitted', '--reviewer', 'codex', *flags,
+                                          MYAGENTKIT_BACKEND=exported, REVIEW_CODEX_MODEL='fixture-codex-model',
+                                          REVIEW_CLI_BIN=str(self.build_fake_codex()))
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(result.stderr.count('--backend is ignored for --reviewer codex'), 1)
+                self.assertNotIn('claude@', result.stdout)
+
+    def test_backend_reviewer_identity_reaches_evidence_and_fallback_banner(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        args = SimpleNamespace(backend='glm', model='glm-fixture', effort='high',
+                               timeout=30, max_turns=2, max_budget_usd=None)
+        with patch.dict(os.environ, MYAGENTKIT_REVIEW_FALLBACK_FROM='codex'):
+            body = bridge.render('s', {'status': 'completed', 'tools': ['Read'], 'scope': 'uncommitted',
+                                       'reference': None, 'head': 'head', 'fingerprint': 'fingerprint',
+                                       'diff_sha256': 'diffsha', 'result': {'verdict': 'Accept',
+                                       'findings': [], 'manual_checks': []}}, args)
+        self.assertIn('| reviewer | claude@glm |', body)
+        self.assertIn('this claude@glm review ran', body)
+        self.assertIn('Check that claude@glm did not author', body)
+
+    def test_claude_settings_deny_relative_and_absolute_backend_reads(self):
+        from types import SimpleNamespace
+        args = SimpleNamespace(repo=self.repo, mode='review', model='claude-opus-5', effort='high',
+                               max_turns=2, max_budget_usd=None)
+        private = str((self.repo / '.myagentkit/backends').resolve()).replace('\\', '/')
+        for sandboxed in (False, True):
+            with self.subTest(sandboxed=sandboxed):
+                command, _ = bridge.claude_command('claude', args, sandboxed)
+                settings = json.loads(command[command.index('--settings') + 1])
+                self.assertIn('Read(.myagentkit/backends/**)', settings['permissions']['deny'])
+                self.assertIn('Read(//' + private.lstrip('/') + '/**)', settings['permissions']['deny'])
+                if sandboxed:
+                    self.assertIn(private, settings['sandbox']['filesystem']['denyRead'])
+                    self.assertIn('.myagentkit/backends', settings['sandbox']['filesystem']['denyRead'])
 
     def test_backend_final_values_cannot_be_emptied_by_duplicate_keys(self):
         import review_dispatch
