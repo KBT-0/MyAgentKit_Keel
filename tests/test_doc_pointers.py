@@ -80,14 +80,15 @@ class SectionPointerTests(unittest.TestCase):
         for rule in ('Start the two reviewers together',
                      'Start the self-test with them only when all three jobs fit within the budget',
                      'With a budget of two, start both reviewers first, then the self-test when one reviewer ends',
-                     'Never reduce the reviews or deliberately run the reviewers one after the other; the self-test waits'):
+                     'Never reduce the reviews; run them one after the other only when the owner is away and at least one job fits the budget, as defined below; the self-test waits'):
             self.assertIn(rule, budget_rule)
         self.assertIn("A review round's floor is the two reviewers", budget_rule)
         self.assertIn('when two slots are free; heavy jobs already running take slots', budget_rule)
         self.assertIn('rather than waiting without limit', budget_rule)
-        self.assertIn('as a recorded exception (the usage note names the budget figure)', budget_rule)
+        self.assertIn("as a recorded exception (a line in the lead's RESULT/notes file names the budget figure)", budget_rule)
         self.assertIn('starts the round only when two jobs fit', budget_rule)
-        self.assertIn('when the owner is away and at least one job fits the budget', budget_rule)
+        self.assertIn('When the owner gives no answer to that question within one review timeout (`REVIEW_TIMEOUT_SECONDS`), the owner is away', budget_rule)
+        self.assertIn('When the owner is away and at least one job fits the budget', budget_rule)
         self.assertIn('When not even one job fits, the review round stays blocked and the lead reports the capacity figure to the owner; nothing heavy starts.', budget_rule)
         self.assertIn('"In parallel" means the reviewers', flat)
         self.assertIn('review rounds run per cluster of related branches', flat)
@@ -100,17 +101,28 @@ class SectionPointerTests(unittest.TestCase):
                      "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine.IndexOf('<checkout>', [StringComparison]::OrdinalIgnoreCase) -ge 0 } | Select ProcessId,CommandLine",
                      "Linux `ps -eo pid,args | grep -F -- '<checkout>'`",
                      "macOS `ps -eww -o pid,args | grep -iF -- '<checkout>'`",
-                     "It ignores its own rows: the `grep`, and the shell or PowerShell that runs the listing",
+                     "Ignore the listing's own rows: the `grep`, and the shell or PowerShell that runs the listing",
                      'The command-line listing is only a shortcut for the jobs it can see',
-                     "the kit's own `check.sh` holds no checkout lock",
-                     'A pending chain record under `.myagentkit/usage/chains/` means a review MAY still run; nothing in the record names its process.',
-                     'After a cut-off, the lead treats every review started less than `REVIEW_TIMEOUT_SECONDS` ago (2 h at most, the value the lead set) as running and does not edit, merge or self-test in that worktree until that window has passed or the chain record has a completed or failed attempt.',
+                     "The project's gate holds `.git/check.lock` and publishes `.git/check-selftest`; find the lock holder as described under ",
+                     "A build server the gate started keeps the gate lock",
+                     "Only a review's own reviewer process holds no checkout lock.",
+                     'For reviews, read the highest-numbered `<chain>-N.json` in `.myagentkit/usage/chains/`; nothing in the record names its process.',
+                     '`<chain>-0.json` always stays pending and is not evidence of a running review.',
+                     'A review is finished only when that latest record has status `completed`, or status `failed` with no further attempt possible (`fallback_blocked` set, two attempts recorded, or `fallback_allowed` false).',
+                     'The number of possible attempts is one without `--fallback`, two with it.',
+                     'Use the mtime of `<chain>-0.json` as the review start time.',
+                     'After a cut-off, treat the review as running for `REVIEW_TIMEOUT_SECONDS` times the number of possible attempts plus overhead (about 4 h with 7200 s and `--fallback`); do not edit, merge or self-test in that worktree until this window has passed or the latest record shows the review is finished as above.',
                      "Git Bash's `/c/x`", 'the `pwd -P` form of a symlinked checkout', '`/private/var` for `/var`',
                      "A checkout path containing an apostrophe cannot go inside the single quotes as is; on Linux/macOS write it as `'\\''` or put the path in a variable and match \"$checkout\"; on Windows double the apostrophe inside the PowerShell single-quoted string.",
                      'The Windows match ignores case because Windows paths do'):
-            self.assertIn(rule, gotchas)
+            with self.subTest(rule=rule):
+                self.assertIn(rule, gotchas)
         self.assertNotIn("grep -v -F 'grep -F'", gotchas)
         self.assertNotIn('every other row is a survivor', gotchas)
+        self.assertNotIn('It ignores its own rows', gotchas)
+        self.assertNotIn("the kit's own `check.sh` holds no checkout lock", gotchas)
+        self.assertNotIn('the chain record has a completed or failed attempt', gotchas)
+        self.assertNotIn('Never reduce the reviews or deliberately run the reviewers one after the other', budget_rule)
         self.assertNotIn('stop them with a reason', gotchas)
         self.assertNotIn('its own process by grepping the listing for `.myagentkit/usage`', gotchas)
         running = ' '.join((ROOT / 'core/docs/REVIEW_RUNNING.md').read_text(encoding='utf-8').split())

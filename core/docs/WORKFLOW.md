@@ -719,13 +719,15 @@ Rules, binding for whoever routes workers:
    (free memory minus a 4 GB reserve) divided by the measured peak of one job.
    Start the two reviewers together when two slots are free; heavy jobs already running take slots. Start the self-test with them only when all three jobs
    fit within the budget. With a budget of two, start both reviewers first, then the self-test
-   when one reviewer ends. Never reduce the reviews or deliberately run the reviewers one
-   after the other; the self-test waits. A review round's floor is the two reviewers. When the budget is below two, the lead first frees memory it owns
+   when one reviewer ends. Never reduce the reviews; run them one after the other only when
+   the owner is away and at least one job fits the budget, as defined below; the self-test waits. A review round's floor is the two reviewers. When the budget is below two, the lead first frees memory it owns
    (waits for or closes its own finished jobs, never ending running work without a reason)
    and starts the round only when two jobs fit; the self-test and every other heavy job wait
-   until a reviewer ends. If two never fit after that, the lead asks the owner; when the owner
-   is away and at least one job fits the budget, it runs the two reviewers one after the other
-   as a recorded exception (the usage note names the budget figure) rather than waiting without limit.
+   until a reviewer ends. If two never fit after that, the lead asks the owner.
+   When the owner gives no answer to that question within one review timeout
+   (`REVIEW_TIMEOUT_SECONDS`), the owner is away. When the owner is away and at least one job fits the
+   budget, the lead runs the two reviewers one after the other as a recorded exception (a line in the lead's
+   RESULT/notes file names the budget figure) rather than waiting without limit.
    When not even one job fits, the review round stays blocked and the lead reports the capacity
    figure to the owner; nothing heavy starts. Read free
    memory with `Get-CimInstance Win32_OperatingSystem | Select FreePhysicalMemory` in

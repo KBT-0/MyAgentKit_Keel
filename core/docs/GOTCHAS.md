@@ -176,10 +176,21 @@ Before resuming work after a cut-off, list the processes whose command line name
 or its worktrees. Quote the checkout path and match it literally:
 Windows `Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine.IndexOf('<checkout>', [StringComparison]::OrdinalIgnoreCase) -ge 0 } | Select ProcessId,CommandLine`;
 Linux `ps -eo pid,args | grep -F -- '<checkout>'`; macOS `ps -eww -o pid,args | grep -iF -- '<checkout>'` (APFS ignores case).
-The listing finds jobs whose arguments name the checkout (a `codex exec` with a brief path, a worker with its worktree). It ignores its own rows: the `grep`, and the shell or PowerShell that runs the listing when an agent runs it through a tool (on Windows, the `powershell` process whose command line holds the query).
-The command-line listing is only a shortcut for the jobs it can see; the kit's own `check.sh` holds no checkout lock.
-A pending chain record under `.myagentkit/usage/chains/` means a review MAY still run; nothing in the record names its process.
-After a cut-off, the lead treats every review started less than `REVIEW_TIMEOUT_SECONDS` ago (2 h at most, the value the lead set) as running and does not edit, merge or self-test in that worktree until that window has passed or the chain record has a completed or failed attempt.
+The listing finds jobs whose arguments name the checkout (a `codex exec` with a brief path, a worker with its worktree). Ignore the listing's own rows: the `grep`, and the shell or PowerShell that runs the listing when an agent runs it through a tool (on Windows, the `powershell` process whose command line holds the query).
+The command-line listing is only a shortcut for the jobs it can see. The project's gate holds
+`.git/check.lock` and publishes `.git/check-selftest`; find the lock holder as described under
+"A build server the gate started keeps the gate lock" above. Only a review's own reviewer process
+holds no checkout lock.
+For reviews, read the highest-numbered `<chain>-N.json` in `.myagentkit/usage/chains/`; nothing in
+the record names its process. `<chain>-0.json` always stays pending and is not evidence of a
+running review. A review is finished only when that latest record has status `completed`, or
+status `failed` with no further attempt possible (`fallback_blocked` set, two attempts recorded,
+or `fallback_allowed` false). A failed first attempt can still be followed by a running fallback.
+Use the mtime of `<chain>-0.json` as the review start time. The number of possible attempts is
+one without `--fallback`, two with it. After a cut-off, treat the review as running for
+`REVIEW_TIMEOUT_SECONDS` times the number of possible attempts plus overhead (about 4 h with
+7200 s and `--fallback`); do not edit, merge or self-test in that worktree until this window has
+passed or the latest record shows the review is finished as above.
 A checkout path containing an apostrophe cannot go inside the single quotes as is; on Linux/macOS write it as `'\''` or put the path in a variable and match "$checkout";
 on Windows double the apostrophe inside the PowerShell single-quoted string.
 The Windows match ignores case because Windows paths do; search for every spelling the launching shell may have used: `C:/x`, `C:\x` and Git Bash's `/c/x` on Windows, the `pwd -P` form of a symlinked checkout on Linux and macOS, and `/private/var` for `/var` on macOS.
