@@ -133,7 +133,8 @@ sync as a `conflict:` before anything is copied.
 ## Requirements
 
 POSIX `sh`, git (2.36 or newer for the worktree clean-up), Python 3.10 or newer for the
-review tooling and the kit's own tests. The kit's own check also needs bash.
+review tooling and the kit's own tests. The kit's own check also needs bash 5.2 or newer for its
+`case` lint (macOS: `brew install bash`; Git for Windows ships one).
 Ubuntu, macOS and native Windows are in CI. The kit is
 developed on native Windows (Git for Windows' `sh` with a python.org CPython), with workers in
 Windows Terminal tabs. The review self-test runs there too; cases that require POSIX signals
