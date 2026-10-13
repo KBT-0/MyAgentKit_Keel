@@ -25,9 +25,9 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'MYAGENTKIT_TASK_ID', 'MYAGENTKIT_R
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 152, 'test_agent_usage': 30, 'test_codex_quota': 5}
+SUITE_MINIMUMS = {'test_claude_bridge': 153, 'test_agent_usage': 30, 'test_codex_quota': 5}
 # These are executed cases, excluding only the explicitly declared POSIX exclusions.
-WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 129, 'test_agent_usage': 26, 'test_codex_quota': 4}
+WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 130, 'test_agent_usage': 26, 'test_codex_quota': 4}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -3912,6 +3912,22 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
             self.assertEqual(usage['task']['behaviour'], 'on')
             fingerprints.append(result['fingerprint'])
         self.assertNotEqual(*fingerprints)
+
+    def test_a_tracked_appendix_reviews_under_autocrlf_and_hashes_the_copy_bytes(self):
+        # Git for Windows turns autocrlf on: git archive then writes the tracked appendix with
+        # CRLF while the checkout keeps LF. The review must not call that stale; the recorded
+        # hash is of the bytes the reviewer saw. Seen live on the kit's own checkout.
+        body = b'Tracked appendix line.\n'
+        (self.repo / 'BEHAVIOUR.md').write_bytes(body)
+        self.commit_fixture('tracked appendix')
+        self.git('config', 'core.autocrlf', 'true')
+        copy_log = self.root / 'appendix.txt'
+        code, result = self.run_bridge(extra=['--commit', 'HEAD'], env_extra={'APPENDIX_LOG': str(copy_log)})
+        self.assertEqual(code, 0, result)
+        seen = bytes.fromhex(copy_log.read_text())
+        self.assertEqual(seen.replace(b'\r\n', b'\n'), body)
+        self.assertEqual(header_of(result['evidence'])['behaviour_sha256'], hashlib.sha256(seen).hexdigest())
+        self.assertEqual((self.repo / 'BEHAVIOUR.md').read_bytes(), body)
 
     def test_an_ignored_behaviour_change_during_commit_review_is_stale(self):
         with (self.repo / '.gitignore').open('a') as stream:

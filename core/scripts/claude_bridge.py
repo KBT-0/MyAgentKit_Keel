@@ -1216,8 +1216,12 @@ def main(argv=None, result_sink=None) -> int:
                         stream.write(source_bytes)
                 behaviour, behaviour_bytes = behaviour_appendix(workdir)
                 preparation_failure = "stale_checkout"
-                if (behaviour, behaviour_bytes) != (source_name, source_bytes):
+                if behaviour != source_name:
                     raise BridgeError("behaviour appendix differs from the reviewed snapshot")
+                # A tracked appendix is bound by the checkout fingerprint; its copy bytes may
+                # legitimately differ from the source (git archive applies autocrlf on Windows).
+                # The hash below is of the bytes the reviewer saw; staleness is checked against
+                # the source bytes read above, so only a source change during review is stale.
                 behaviour_sha256 = hashlib.sha256(behaviour_bytes).hexdigest() if behaviour else None
                 fingerprint = hashlib.sha256(
                     checkout_fingerprint.encode() + b"\0behaviour\0" + (behaviour or "").encode()
@@ -1266,7 +1270,7 @@ def main(argv=None, result_sink=None) -> int:
             # too, as the Codex adapter counts it.
             try:
                 stale = (snapshot(repo, scope, ref)[1] != checkout_fingerprint or
-                         behaviour_appendix(repo) != (behaviour, behaviour_bytes))
+                         behaviour_appendix(repo) != (source_name, source_bytes))
             except BridgeError:
                 stale = True
             if stale:
