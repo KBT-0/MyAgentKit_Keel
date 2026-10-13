@@ -19,15 +19,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import agent_usage
 
 ROOT = Path(__file__).resolve().parent
-INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'MYAGENTKIT_TASK_ID', 'MYAGENTKIT_REVIEW_CHAIN_ID',
+INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'REVIEW_SHADOW', 'MYAGENTKIT_TASK_ID', 'MYAGENTKIT_REVIEW_CHAIN_ID',
                       'MYAGENTKIT_REVIEW_ATTEMPT', 'MYAGENTKIT_REVIEW_FALLBACK_FROM',
                       'MYAGENTKIT_REQUESTER', 'CLAUDE_REVIEW_DOCS', 'MYAGENTKIT_NO_BEHAVIOUR', 'MYAGENTKIT_BACKEND')
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 185, 'test_agent_usage': 30, 'test_codex_quota': 5}
+SUITE_MINIMUMS = {'test_claude_bridge': 187, 'test_agent_usage': 31, 'test_codex_quota': 5}
 # These are executed cases, excluding only the explicitly declared POSIX exclusions.
-WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 159, 'test_agent_usage': 26, 'test_codex_quota': 4}
+WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 161, 'test_agent_usage': 27, 'test_codex_quota': 4}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -54,6 +54,7 @@ assert '--resume' not in args and '--continue' not in args
 assert os.environ['MYAGENTKIT_DELEGATION_DEPTH'] == '1'
 prompt = sys.stdin.read()
 if os.environ.get('PROMPT_LOG'): pathlib.Path(os.environ['PROMPT_LOG']).write_text(prompt)
+if os.environ.get('FIXTURE_UNLINK'): pathlib.Path(os.environ['FIXTURE_UNLINK']).unlink()
 if os.environ.get('ENV_LOG'): pathlib.Path(os.environ['ENV_LOG']).write_text(json.dumps(
     {k: v for k, v in os.environ.items() if k.startswith('ANTHROPIC_')}))
 case = os.environ.get('FIXTURE_CASE', 'accept')
@@ -4455,6 +4456,35 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         self.assertEqual(usage['task']['dispositions'], {'fixed': 2, 'disproved': 1, 'deferred': 1})
         self.assertNotIn('shadow', usage['task'])
 
+    def test_the_dispositions_file_is_read_once_before_the_model_runs(self):
+        # A paid review whose dispositions file vanished meanwhile still gets its record, with
+        # the counts of the bytes the reviewer was shown: nothing reads the file afterwards.
+        task = {'MYAGENTKIT_TASK_ID': 'vanishing-task'}
+        self.assertEqual(self.run_bridge('reject', env_extra=task)[0], 0)
+        notes = self.root / 'dispositions.md'
+        notes.write_text('- a.py:1 fixed: abc123\n- b.py:2 deferred: #3\n')
+        code, result = self.run_bridge(env_extra=dict(task, REVIEW_DISPOSITIONS=str(notes),
+                                                      FIXTURE_UNLINK=str(notes)))
+        self.assertEqual(code, 0, result)
+        self.assertFalse(notes.exists())
+        self.assertEqual(result['status'], 'completed')
+        usage = json.loads(Path(result['usage_record']).read_text())
+        self.assertEqual(usage['task']['dispositions'], {'fixed': 1, 'disproved': 0, 'deferred': 1})
+
+    def test_a_proposal_is_not_measured(self):
+        # Only review rounds are measured: a proposal with the variables still exported
+        # records neither field and is not refused by a keyless file.
+        notes = self.root / 'dispositions.md'
+        notes.write_text('nothing answered here\n')
+        handoff = self.root / 'handoff.md'
+        handoff.write_text('Fix the named function only.')
+        code, result = self.run_bridge('proposal', 'propose', ['--task-file', str(handoff)],
+                                       env_extra={'REVIEW_DISPOSITIONS': str(notes), 'REVIEW_SHADOW': '1'})
+        self.assertEqual(code, 0, result)
+        task = json.loads(Path(result['usage_record']).read_text())['task']
+        self.assertNotIn('dispositions', task)
+        self.assertNotIn('shadow', task)
+
     def test_a_shadow_review_says_so_in_its_evidence_and_record(self):
         # REVIEW_SHADOW=1 measures a configuration: the archive carries the banner above the
         # findings, the record's task says shadow, and the verdict line is still exactly one.
@@ -4467,6 +4497,15 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         code, plain = self.run_bridge('reject', env_extra={'REVIEW_SHADOW': '0'})
         self.assertEqual(code, 0, plain)
         self.assertNotIn('SHADOW REVIEW', Path(plain['evidence']).read_text())
+        # A shadow run under a label is no round of the change: the next real review under
+        # that label carries no earlier round from it, and the reviewer never sees the flag.
+        log = self.root / 'prompt.txt'
+        task = {'MYAGENTKIT_TASK_ID': 'shadowed-task'}
+        self.assertEqual(self.run_bridge('reject', env_extra=dict(task, REVIEW_SHADOW='1'))[0], 0)
+        code, real = self.run_bridge(env_extra=dict(task, PROMPT_LOG=str(log)))
+        self.assertEqual(code, 0, real)
+        self.assertNotIn('Round 1', log.read_text())
+        self.assertNotIn('shadow', json.loads(Path(real['usage_record']).read_text())['task'])
 
     def test_the_behaviour_appendix_follows_the_fixed_prompt_and_the_record_says_on_or_off(self):
         # Issue #74: the kit's BEHAVIOUR.md (core/BEHAVIOUR.md in the kit itself) reaches the

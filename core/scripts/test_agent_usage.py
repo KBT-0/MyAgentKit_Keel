@@ -607,6 +607,16 @@ class UsageTests(unittest.TestCase):
         self.assertEqual((result['exit_code'], result['termination']), (0, None), result)
         self.assertGreaterEqual(len(calls), 2, 'run() did not look again after the cancel')
 
+    def test_dispositions_count_one_key_per_line(self):
+        # Item F: a key quoted inside an answer's evidence is not a second answer; the keys
+        # are case-insensitive; a file answering nothing is refused.
+        counts = agent_usage.dispositions('- a.py:1 Fixed: abc (the guard, not disproved: anything)\n'
+                                          '- b.py:2 disproved: line 4 shows it was fixed: before\n'
+                                          'prose without a key\n- c.py:3 DEFERRED:#12\n')
+        self.assertEqual(counts, {'fixed': 1, 'disproved': 1, 'deferred': 1})
+        with self.assertRaises(ValueError):
+            agent_usage.dispositions('every finding was fixed in the last commit\n')
+
     def test_a_cancel_whose_exit_look_fails_stays_a_cancel(self):
         # The look after a cancel raised OSError past the handler: the owner's cancel was
         # archived as run_failed, cancelled false.

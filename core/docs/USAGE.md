@@ -44,8 +44,9 @@ The summary also measures each reviewer configuration (model, effort, backend):
   zero while the rounds continue is re-reviewing what it already said.
 - `accepted=A/T (rate, author-claimed)` comes from the author's `REVIEW_DISPOSITIONS`
   file of the next round under the same label: each finding is answered with one key,
-  `fixed:<commit>`, `disproved:<evidence>` or `deferred:<issue or decision>` (a file without
-  a key is refused before any model runs). Accepted = fixed + deferred. The counts are
+  `fixed:<commit>`, `disproved:<evidence>` or `deferred:<issue or decision>`, one answer per
+  line (a file without a key is refused before any model runs; the file is read once, before
+  launch, so editing it during the review changes nothing). Accepted = fixed + deferred. The counts are
   credited to the round the dispositions answer, so the rate belongs to the configuration
   that produced the findings. The author rates its own reviewer, as Google's Tricorder has
   the developer click "not useful"; the next round's reviewer verifies every disproved
@@ -55,9 +56,11 @@ The summary also measures each reviewer configuration (model, effort, backend):
   its disproved claims and decides whether to keep, change or retire it.
 - A configuration under trial runs in shadow first: `REVIEW_SHADOW=1` on the review
   archives its verdict with a `SHADOW REVIEW` banner, records `shadow` in the task, and the
-  summary lists it in its own `/ shadow` group and as no round. A shadow verdict counts for
-  no closure; the real review of the change still runs. After ten to twenty shadow runs the
-  owner compares its findings with the real reviewer's and decides whether it goes live.
+  summary lists it in its own `/ shadow` group with its findings and as no round. A shadow
+  run is no round of the change: a later real review under the same label does not carry
+  it, and the lead's closure reading of the summary leaves it out. The real review of the
+  change still runs. After ten to twenty shadow runs the owner compares its findings with
+  the real reviewer's and decides whether it goes live.
 
 Every record includes task, requester, requested callee model, source revision/hash,
 elapsed time, status, failure classification, evidence location, and available usage.

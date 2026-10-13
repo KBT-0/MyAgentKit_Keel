@@ -15,8 +15,8 @@ import uuid
 import agent_process
 import agent_usage
 import codex_quota
-from claude_bridge import (REVIEW_ASKS, REVIEW_RUNS, BridgeError, git, measurement_fields, prior_rounds,
-                           scratch, snapshot, throwaway_copy, review_tmpdir, utf8_output)
+from claude_bridge import (MEASURED, REVIEW_ASKS, REVIEW_RUNS, BridgeError, git, prior_rounds, scratch,
+                           snapshot, throwaway_copy, review_tmpdir, utf8_output)
 
 
 def main(argv=None, result_sink=None):
@@ -233,7 +233,7 @@ def main(argv=None, result_sink=None):
              "scope": scope, "reference": ref, "resolved": resolved, "head": head,
              "fingerprint": fingerprint,
              "diff_sha256": metadata["diff_sha256"],
-             "prompt_sha256": hashlib.sha256(prompt.encode()).hexdigest(), **measurement_fields()},
+             "prompt_sha256": hashlib.sha256(prompt.encode()).hexdigest(), **MEASURED},
             execution, status, reason, archived, report_text.encode())
         def persist_cancel(usage):
             header.update(status="failed", failure_kind="cancelled")

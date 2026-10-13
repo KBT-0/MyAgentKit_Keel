@@ -69,9 +69,11 @@ def evidence_fields(repo, record):
     if match:
         effort = match[1]
     match = re.search(r'^VERDICT: (Accept with Manual Checks|Accept|Reject)[ \t]*$', content, re.M)
-    # One list item per finding under the Findings heading, as both adapters render them.
+    # One severity-first list item per finding under the Findings heading (REVIEW_ASKS asks
+    # both reviewers for exactly that), so a continuation bullet or a note is not a finding.
     findings = re.search(r'^## Findings[ \t]*$(.*?)(?=^## |\Z)', content, re.M | re.S)
-    record['findings'] = len(re.findall(r'^- ', findings[1], re.M)) if findings else 0
+    record['findings'] = len(re.findall(r'^-\s+\**(?:Critical|High|Medium|Low)\b', findings[1],
+                                        re.M | re.I)) if findings else 0
     return effort, match and match[1], None
 
 
@@ -108,7 +110,9 @@ def totals(rows):
     durations = [row['duration_ms'] for row in rows if isinstance(row.get('duration_ms'), (int, float))]
     missing = len(rows) - len(durations)
     rounds = sum(row['round'] for row in rows)
-    findings = sum(row['findings'] for row in rows if row['round'])
+    # Findings per measured run: every round, and every completed shadow run in its own group.
+    runs = sum(row['measured'] for row in rows)
+    findings = sum(row['findings'] for row in rows if row['measured'])
     accepted = sum(row['accepted'] for row in rows)
     claimed = sum(row['claimed'] for row in rows)
     return (f'invocations={len(rows)} rounds={rounds}'
@@ -116,7 +120,7 @@ def totals(rows):
             + (f' (+{missing} unknown)' if missing else '')
             + f' rejects={sum(row["verdict"] == "Reject" for row in rows)}'
             + f' findings={findings}'
-            + (f' per_round={findings / rounds:.1f}' if rounds else '')
+            + (f' per_round={findings / runs:.1f}' if runs else '')
             # Author-claimed: fixed + deferred over every answered finding of these rounds.
             + (f' accepted={accepted}/{claimed} ({accepted / claimed:.2f}, author-claimed)'
                if claimed else ''))
@@ -148,8 +152,9 @@ def main():
             if status.split('/')[0] != 'completed':
                 completed, verdict, why = False, None, 'chain ' + status
         shadow = record['task'].get('shadow') == 'yes'
+        measured = completed and record['task'].get('kind') == 'review'
         record.update(effort=effort, verdict=verdict, why=why, shadow=shadow, accepted=0, claimed=0,
-                      round=completed and record['task'].get('kind') == 'review' and not shadow)
+                      measured=measured, round=measured and not shadow)
         rows.append(record)
     rows.sort(key=lambda row: (str(row.get('recorded_at')), row['invocation_id']))
     if not rows:
@@ -169,10 +174,12 @@ def main():
         behaviours[record['task'].get('behaviour') or 'unknown'].append(record)
     for records in tasks.values():
         # The dispositions a round carries answer the round before it under the same label.
+        # Only a round credits: a failed attempt, its fallback and a shadow run carry the same
+        # file and would credit the same answers again.
         previous = None
         for record in records:
             claims = record['task'].get('dispositions')
-            if claims and previous is not None:
+            if claims and previous is not None and record['round']:
                 previous['accepted'] += claims['fixed'] + claims['deferred']
                 previous['claimed'] += sum(claims[key] for key in CLAIM_KEYS)
             if record['round']:

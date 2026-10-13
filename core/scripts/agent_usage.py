@@ -103,12 +103,17 @@ DISPOSITION_KEYS = ("fixed", "disproved", "deferred")
 def dispositions(text: str) -> dict:
     """Count the author's answers to the earlier findings: one key per finding.
 
-    `fixed:<commit>`, `disproved:<evidence>` or `deferred:<issue or decision>`, case-insensitive.
+    `fixed:<commit>`, `disproved:<evidence>` or `deferred:<issue or decision>`, case-insensitive;
+    one answer per line, so a key quoted inside an answer's evidence is not a second answer.
     These are the author's claims (the next round's reviewer verifies them), recorded so the
     usage summary can show each reviewer configuration's author-claimed acceptance rate.
     A file that answers no finding with a key is refused before any model is called.
     """
-    counts = {key: len(re.findall(r"\b%s:" % key, text, re.I)) for key in DISPOSITION_KEYS}
+    counts = dict.fromkeys(DISPOSITION_KEYS, 0)
+    for line in text.splitlines():
+        first = re.search(r"\b(%s):" % "|".join(DISPOSITION_KEYS), line, re.I)
+        if first:
+            counts[first[1].lower()] += 1
     if not any(counts.values()):
         raise ValueError("REVIEW_DISPOSITIONS answers no finding: each finding needs a fixed:, "
                          "disproved: or deferred: key")

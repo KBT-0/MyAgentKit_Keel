@@ -197,8 +197,8 @@ class UsageSummaryTests(unittest.TestCase):
     def test_dispositions_are_credited_to_the_round_they_answer(self):
         # Round 2 carries the author's answers to round 1's findings: the counts belong to
         # round 1's configuration (opus/high), and the rate says it is the author's claim.
-        self.record('a', 'T', b'| effort | high |\nVERDICT: Reject\n\n## Findings\n\n- High x\n- Low y\n'
-                    b'- Low z\n\n## Manual checks\n\n- not a finding\n')
+        self.record('a', 'T', b'| effort | high |\nVERDICT: Reject\n\n## Findings\n\n- High x\n- **Low** y\n'
+                    b'- a continuation bullet, no severity\n- low z\n\n## Manual checks\n\n- High: not a finding\n')
         self.record('b', 'T', b'| effort | medium |\nVERDICT: Accept\n\n## Findings\n\nNone.\n',
                     callee='codex', model='sol', duration=2000,
                     dispositions={'fixed': 1, 'disproved': 1, 'deferred': 1})
@@ -209,6 +209,18 @@ class UsageSummaryTests(unittest.TestCase):
                       'findings=3 per_round=3.0 accepted=2/3 (0.67, author-claimed)', out)
         self.assertIn('Model sol / effort medium: invocations=1 rounds=1 duration=2.000s rejects=0 '
                       'findings=0 per_round=0.0\n', out)
+
+    def test_only_a_round_credits_the_round_before_it(self):
+        # A failed attempt, its fallback and a shadow run carry the same file: one credit.
+        self.record('a', 'T', b'VERDICT: Reject\n')
+        claims = {'fixed': 2, 'disproved': 1, 'deferred': 0}
+        self.record('b', 'T', None, status='failed', reason='timeout', dispositions=claims)
+        self.record('c', 'T', b'VERDICT: Accept\n', shadow='yes', dispositions=claims)
+        self.record('d', 'T', b'VERDICT: Accept\n', callee='codex', model='sol', dispositions=claims)
+        out = self.summary()
+        self.assertIn('accepted=2/3 (0.67, author-claimed)', out)
+        self.assertNotIn('accepted=4/6', out)
+        self.assertNotIn('accepted=6/9', out)
 
     def test_dispositions_without_an_earlier_round_credit_nothing(self):
         # A first round carrying dispositions (another label's rounds) credits no one.
@@ -221,12 +233,14 @@ class UsageSummaryTests(unittest.TestCase):
     def test_a_shadow_run_is_listed_apart_and_is_no_round(self):
         # REVIEW_SHADOW=1 measures a configuration: its verdict is shown, never a round, and
         # its group stands apart from the same model and effort run for real.
-        self.record('a', 'T', b'| effort | low |\nVERDICT: Reject\n', model='sonnet', shadow='yes')
+        self.record('a', 'T', b'| effort | low |\nVERDICT: Reject\n\n## Findings\n\n- High x\n- Medium y\n',
+                    model='sonnet', shadow='yes')
         self.record('b', 'T', b'| effort | low |\nVERDICT: Accept\n', model='sonnet', duration=2000)
         out = self.summary()
         self.assertIn('  not a round kind=review callee=claude model=sonnet effort=low verdict=Reject (shadow)', out)
         self.assertIn('Task T: invocations=2 rounds=1 duration=3.000s rejects=1', out)
-        self.assertIn('Model sonnet / effort low / shadow: invocations=1 rounds=0 duration=1.000s rejects=1', out)
+        self.assertIn('Model sonnet / effort low / shadow: invocations=1 rounds=0 duration=1.000s rejects=1 '
+                      'findings=2 per_round=2.0', out)
         self.assertIn('Model sonnet / effort low: invocations=1 rounds=1 duration=2.000s rejects=0', out)
 
     def test_null_model_is_unknown_and_not_the_label_none(self):

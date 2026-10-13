@@ -791,6 +791,8 @@ def prior_rounds(repo: Path, task_id: str | None, scope: str, resolved: str | No
             raise damaged(path, "has a task without its id, kind, scope, reference or head")
         if task.get("kind") != "review" or task.get("id") != task_id:
             continue
+        if task.get("shadow") == "yes":
+            continue  # a shadow run measures a configuration; it is no round of the change
         if value["status"] != "completed":
             # Never carried, but its archive is checked: a cancel relabel that could not replace
             # the archive left one its record does not match, and later rounds passed it
@@ -838,6 +840,11 @@ def prior_rounds(repo: Path, task_id: str | None, scope: str, resolved: str | No
                               "it or use a new task label" % (task_id, evidence))
         rounds.append((str(value.get("recorded_at")), report.decode()))
     notes = os.environ.get("REVIEW_DISPOSITIONS")
+    claims = Path(notes).read_text() if notes else None
+    try:
+        measure(claims)  # once, before launch: the record never reads the file again
+    except ValueError as error:
+        raise BridgeError(str(error)) from error
     if notes and not rounds:
         raise BridgeError("REVIEW_DISPOSITIONS is set but no earlier completed review has task "
                           "label %r; set MYAGENTKIT_TASK_ID to the earlier rounds' label" % task_id)
@@ -864,11 +871,6 @@ def prior_rounds(repo: Path, task_id: str | None, scope: str, resolved: str | No
     for number, (_, report) in enumerate(sorted(rounds), 1):
         text += "### Round %d\n%s\n" % (number, report)
     if notes:
-        claims = Path(notes).read_text()
-        try:
-            agent_usage.dispositions(claims)
-        except ValueError as error:
-            raise BridgeError(str(error)) from error
         text += "### Author's dispositions (claims to verify, not facts)\n" + claims + "\n"
     # A carried verdict line echoed back would break the reviewer's exactly-one-verdict check.
     text = re.sub(r"^[ \t]*VERDICT[ \t]*:", "Earlier verdict:", text, flags=re.M | re.I)
@@ -878,18 +880,21 @@ def prior_rounds(repo: Path, task_id: str | None, scope: str, resolved: str | No
     return text
 
 
-def measurement_fields() -> dict:
-    """The task fields the usage summary measures a reviewer configuration by.
+# The task fields the usage summary measures a reviewer configuration by: the author's
+# disposition counts and the shadow flag. Filled by measure() from prior_rounds(), before the
+# model runs, from the same bytes the reviewer is shown; the record copies it and never reads
+# the file again, so a file edited or removed during a paid review cannot lose its record.
+# Empty for a record that has neither, so older records read the same.
+MEASURED: dict = {}
 
-    The author's disposition counts (prior_rounds() already refused a file without a key) and
-    the shadow flag; absent from a record that has neither, so older records read the same.
-    """
-    fields, notes = {}, os.environ.get("REVIEW_DISPOSITIONS")
-    if notes:
-        fields["dispositions"] = agent_usage.dispositions(Path(notes).read_text())
+
+def measure(claims: str | None) -> dict:
+    MEASURED.clear()
+    if claims is not None:
+        MEASURED["dispositions"] = agent_usage.dispositions(claims)
     if os.environ.get("REVIEW_SHADOW") == "1":
-        fields["shadow"] = "yes"
-    return fields
+        MEASURED["shadow"] = "yes"
+    return MEASURED
 
 
 def schema(mode: str) -> dict:
@@ -1361,7 +1366,8 @@ def main(argv=None, result_sink=None) -> int:
                  "kind": args.mode, "scope": scope, "reference": ref,
                  "resolved": resolved, "head": head, "behaviour": "on" if behaviour else "off",
                  "behaviour_sha256": behaviour_sha256,
-                 "diff_sha256": evidence["diff_sha256"], **measurement_fields()},
+                 "diff_sha256": evidence["diff_sha256"],
+                 **(MEASURED if args.mode == "review" else {})},
                 execution, evidence["status"], reason,
                 archived_path, published.encode() if archived_path else None, backend=args.backend)
             recovery = usage["recovery"]
