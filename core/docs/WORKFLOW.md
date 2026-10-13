@@ -528,7 +528,9 @@ review and never lowers a risk tier (`docs/REVIEW_GATE.md`, "Risk tiers"); rules
 above hold in every mode, and the worker caps never exceed the worktree ceiling ("Parallel
 work — worktree policy"). The note after the mode name in `docs/STATE.md` names the sides,
 for example `**Working mode:** normal (writes: claude, reviews: codex)` or
-`**Working mode:** saver (low: claude)`; the helper keeps that note across a switch. Every
+`**Working mode:** saver (low: claude)`; a switch to normal or saver sets that note from its
+second argument (`working_mode.py normal "writes: claude, reviews: codex"`) or keeps one of
+the right shape, and solo drops it; a stale note never survives a switch. Every
 Claude worker spends the same Claude allowance: a sub-agent, a spawned session and a tab
 alike. The lead is the session that plans with the owner, whichever side it runs on.
 
@@ -1033,8 +1035,9 @@ The shell stays in the lead's checkout, so its Stop hook runs that checkout's ga
    The self-test runs once per batch, never between worker rounds while
    workers wait for it, because each run locks the checkout and every waiting worker pays
    for the wait. CI runs on the same commit.
-3. Keep one review label per change for its rounds, so that each round carries the earlier
-   ones and the two-round limit holds (`docs/REVIEW_GATE.md`, "Rounds"). The merged diff
+3. Keep one review label per reviewer of a change for its rounds (a high-tier change has two,
+   one per focus), so that each round carries the earlier ones and the two-round limit holds
+   (`docs/REVIEW_GATE.md`, "Rounds"). The merged diff
    then gets ONE final review under a label never used before, at high effort, by a session
    that did not write its larger part.
 4. Fix a Critical or High finding of the final review; a Medium goes to {{OWNER_NAME}} and a

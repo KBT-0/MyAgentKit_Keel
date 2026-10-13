@@ -36,7 +36,10 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   `solo` (default: one family, a fresh session of another tier reviews), `normal` (the
   side the STATE note names writes, the other side reviews) and `saver` (the low side
   reviews within a small budget); `working_mode.py` refuses an old mode name and prints the
-  mapping. Worker and lead prompt caches live one hour
+  mapping, a switch to normal or saver sets the sides note from its second argument
+  (`working_mode.py normal "writes: claude, reviews: codex"`, `saver "low: claude"`) and solo
+  drops it, and `--replace-state` accepts one edit of the mode line: an old name becoming one
+  of the three. A high-tier change takes one label per focus reviewer. Worker and lead prompt caches live one hour
   (`CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL=1h` in `spawn_worker.sh`, `promptCacheTtl` and
   `subagentPromptCacheTtl` in the overlay `settings.json`; the frontmatter `cacheTtl` is
   dropped). `AGENTS.md` is a 165-line map: the review paragraph is three lines and a
@@ -49,9 +52,11 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   kit's `docs/REVIEW_GATE.md`, `docs/REVIEW_RUNNING.md`, `docs/WORKFLOW.md`, `AGENTS.md` and
   `docs/AGENTS.md` and re-apply your project's own lines; BEFORE running `working_mode.py`,
   rewrite the `**Working mode:**` line of `docs/STATE.md` to `solo`, `normal` or `saver`
-  (claude-only and cross-performance become solo; claude-first becomes normal; codex-first,
-  claude-saver and codex-saver become saver, keeping the note after the name) and the mode
-  table of `docs/WORKFLOW.md` to those three rows, since the script refuses the old names;
+  through `--read-state` and `--replace-state` (cross-performance and claude-only become
+  solo; claude-first and codex-first become normal with a `(writes: ..., reviews: ...)`
+  note; cross-saving, claude-saver and codex-saver become saver with a `(low: ...)` note)
+  and the mode table of `docs/WORKFLOW.md` to those three rows, since the script refuses
+  the old names;
   measure your first large review's duration from the chain record's timestamps and, if
   3600 s cut it off, ask the owner whether `MAX_REVIEW_TIMEOUT` rises.
 

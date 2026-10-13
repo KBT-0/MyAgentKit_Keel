@@ -175,11 +175,10 @@ fi
 # current binary on PATH and every review failed with "requires a newer version".
 [ -x "$HOME/.local/bin/codex" ] && { PATH="$PATH:$HOME/.local/bin"; export PATH; }
 
-# The default effort follows the brief's tier (docs/REVIEW_GATE.md, "Risk tiers").
-default_effort=medium
-[ "${REVIEW_RISK:-}" = high ] && default_effort=high
+# Without REVIEW_EFFORT the dispatcher's default follows REVIEW_RISK (docs/REVIEW_GATE.md, "Risk tiers").
+[ -n "${REVIEW_EFFORT:-}" ] && set -- --effort "$REVIEW_EFFORT" "$@"
 # Only with --fallback does the dispatcher make one failover to the other configured pin.
 # Each adapter retains its own evidence and usage; a completed Reject never triggers another call.
 exec $kit_python -B "$script_dir/review_dispatch.py" --repo "$PWD" --reviewer "$reviewer" $fallback \
   --claude-model "${REVIEW_CLAUDE_MODEL:-$CLAUDE_MODEL}" \
-  --codex-model "${REVIEW_CODEX_MODEL:-$CODEX_MODEL}" --effort "${REVIEW_EFFORT:-$default_effort}" "$@"
+  --codex-model "${REVIEW_CODEX_MODEL:-$CODEX_MODEL}" "$@"

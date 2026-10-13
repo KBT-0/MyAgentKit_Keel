@@ -15,16 +15,17 @@ import uuid
 import agent_process
 import agent_usage
 import codex_quota
-from claude_bridge import (MEASURED, REVIEW_PROMPT, REVIEW_RUNS, BridgeError, accept_allows, git,
-                           prior_rounds, review_context, scratch, snapshot, throwaway_copy,
-                           review_tmpdir, utf8_output)
+from claude_bridge import (FINDING_ITEM, FINDINGS_HEADING, MEASURED, REVIEW_PROMPT, REVIEW_RUNS,
+                           BridgeError, accept_allows, default_effort, git, prior_rounds,
+                           review_context, scratch, snapshot, throwaway_copy, review_tmpdir,
+                           utf8_output)
 
 
 def main(argv=None, result_sink=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", type=Path, required=True)
     parser.add_argument("--model", default="")
-    parser.add_argument("--effort", default="high")
+    parser.add_argument("--effort", choices=("low", "medium", "high"), default=default_effort())  # no xhigh for a review
     scopes = parser.add_mutually_exclusive_group()
     scopes.add_argument("--uncommitted", action="store_true")
     scopes.add_argument("--base")
@@ -194,10 +195,8 @@ def main(argv=None, result_sink=None):
             if not reason and verdicts[0] == 'Accept':
                 # The same rule as claude_bridge.validate(): a plain Accept carries Lows and
                 # items outside the diff at most.
-                section = re.search(r'^## Findings[ \t]*\n(.*?)(?=^## |\Z)', final, re.M | re.S)
-                items = [line.lstrip(' \t-*') for line in (section.group(1).splitlines() if section else [])
-                         if line.lstrip().startswith(('-', '*'))]
-                if not accept_allows(items):
+                section = FINDINGS_HEADING.search(final)
+                if not accept_allows(FINDING_ITEM.findall(section.group(1)) if section else []):
                     reason = 'invalid_evidence'
             if not reason and verdicts[0] == 'Accept with Manual Checks':
                 section = re.search(r'^## Manual checks[ \t]*\n(.*?)(?=^## |\Z)', final, re.M | re.S)

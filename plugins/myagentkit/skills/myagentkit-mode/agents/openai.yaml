@@ -1,6 +1,6 @@
 interface:
   display_name: "MyAgentKit: Working mode"
   short_description: "Show or switch the working mode"
-  default_prompt: "Use $myagentkit-mode to show the working mode in force and the seven modes."
+  default_prompt: "Use $myagentkit-mode to show the working mode in force and the three modes."
 policy:
   allow_implicit_invocation: false

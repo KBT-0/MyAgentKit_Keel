@@ -25,9 +25,9 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'REVIEW_SHADOW', 'MYAGENTKIT_TASK_I
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 189, 'test_agent_usage': 31, 'test_codex_quota': 5}
+SUITE_MINIMUMS = {'test_claude_bridge': 191, 'test_agent_usage': 31, 'test_codex_quota': 5}
 # These are executed cases, excluding only the explicitly declared POSIX exclusions.
-WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 163, 'test_agent_usage': 27, 'test_codex_quota': 4}
+WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 165, 'test_agent_usage': 27, 'test_codex_quota': 4}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -2806,6 +2806,67 @@ class BridgeTests(unittest.TestCase):
                 self.assertEqual(len(chain['attempts']), 1)
                 self.assertEqual(verdicts_of(chain['attempts'][0]['evidence']), [])
 
+    def test_codex_accept_reads_top_level_findings_in_every_form_the_prompt_allows(self):
+        # The first Codex Accept check took every bullet at any indent as a finding (a clean
+        # review's `- None.` and a nested continuation bullet failed a paid Accept) and read
+        # only `- ` items under `## Findings` (a numbered or sub-heading High under `### Findings`
+        # was accepted). Both parsers now read the forms usage_summary.py counts.
+        fake = python_cli(self.root / 'codex-forms', PYTHON_SHEBANG +
+                          'import json, os, pathlib, sys\n'
+                          'sys.stdin.read()\n'
+                          'pathlib.Path(sys.argv[sys.argv.index("-o") + 1]).write_text(os.environ["FINAL_RESPONSE"])\n'
+                          'print(json.dumps({"type": "turn.completed", "usage": {}}))\n')
+        completes = ('## Findings\n\n- None.\n\nVERDICT: Accept\n',
+                     '## Findings\n\n- No findings\n\nVERDICT: Accept\n',
+                     '## Findings\n\n- Low: x.py:1 a note.\n  - REASONED: the command.\n\nVERDICT: Accept\n',
+                     '## Findings\n\n- **Low** x.py:1 bold severity.\n- Pre-existing: elsewhere.\n\nVERDICT: Accept\n',
+                     '## Findings\n\n1. Low: x.py:1 numbered.\n\nVERDICT: Accept\n')
+        refused = ('## Findings\n\n1. High: x.py:1 numbered.\n\nVERDICT: Accept\n',
+                   '### Findings\n\n### High: x.py:1 a sub-heading.\n\nVERDICT: Accept\n',
+                   '**Findings**\n\n- High: x.py:1 under a bold heading.\n\nVERDICT: Accept\n',
+                   '## Findings\n\n- **Medium** x.py:1 bold.\n\nVERDICT: Accept\n',
+                   '## Findings\n\n* High: x.py:1 a star item.\n\nVERDICT: Accept\n')
+        for final, completed in [(f, True) for f in completes] + [(f, False) for f in refused]:
+            with self.subTest(final=final):
+                result = self.run_wrapper('--reviewer', 'codex', REVIEW_CLI_BIN=str(fake),
+                                          REVIEW_CODEX_MODEL='fixture-codex-model', FINAL_RESPONSE=final)
+                chain = json.loads(next(s.removeprefix('review dispatch: ') for s in
+                                        result.stdout.splitlines() if s.startswith('review dispatch: ')))
+                self.assertEqual(result.returncode == 0, completed, result.stdout + result.stderr)
+                self.assertEqual(chain['failure_kind'], None if completed else 'invalid_evidence')
+
+    def test_default_effort_follows_the_tier_and_xhigh_is_no_review_choice(self):
+        # review.sh computed the tier default alone: the plugin's direct dispatcher command and
+        # both adapters ran every review at high. The default now lives in claude_bridge.
+        fake = python_cli(self.root / 'codex-effort', PYTHON_SHEBANG +
+                          'import json, pathlib, sys\n'
+                          'sys.stdin.read()\n'
+                          'pathlib.Path(sys.argv[sys.argv.index("-o") + 1]).write_text("VERDICT: Accept\\n")\n'
+                          'print(json.dumps({"type": "turn.completed", "usage": {}}))\n')
+        env = dict(REVIEW_CLI_BIN=str(fake), REVIEW_CODEX_MODEL='fixture-codex-model')
+        for extra, effort in (({}, 'medium'), ({'REVIEW_RISK': 'low'}, 'medium'),
+                              ({'REVIEW_RISK': 'high'}, 'high'), ({'REVIEW_RISK': 'high', 'REVIEW_EFFORT': 'low'}, 'low')):
+            with self.subTest(extra=extra):
+                result = self.run_wrapper('--reviewer', 'codex', **env, **extra)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn('REVIEW [about to run]: codex model fixture-codex-model, effort ' + effort, result.stdout)
+                self.assertEqual(header_of(json.loads(next(
+                    s.removeprefix('review dispatch: ') for s in result.stdout.splitlines()
+                    if s.startswith('review dispatch: ')))['attempts'][0]['evidence'])['effort'], effort)
+        for effort in ('xhigh', 'max'):
+            with self.subTest(effort=effort):
+                result = self.run_wrapper('--reviewer', 'codex', REVIEW_EFFORT=effort, **env)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn('invalid choice', result.stderr)
+                self.assertNotIn('review dispatch: ', result.stdout)
+        for script in (BRIDGE, ROOT / 'codex_bridge.py'):
+            with self.subTest(script=script.name):
+                result = subprocess.run([sys.executable, '-B', str(script), *(['review'] if script is BRIDGE else []),
+                                         '--repo', str(self.repo), '--effort', 'xhigh', '--uncommitted'],
+                                        capture_output=True, text=True)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn('invalid choice', result.stderr)
+
     def test_transcript_accept_cannot_replace_a_missing_final_response(self):
         fake = self.root / 'codex-transcript'
         fake = python_cli(fake, PYTHON_SHEBANG +
@@ -2941,9 +3002,15 @@ class BridgeTests(unittest.TestCase):
     def test_a_plain_accept_may_carry_lows_and_pre_existing_items_only(self):
         # Owner decision 2026-10-13 (E): a Low or an item outside the diff does not block Accept;
         # anything Medium or above still contradicts it (the same rule in codex_bridge).
+        # A bold or dash-prefixed severity is the same item (the Codex parser read it so, the
+        # Claude parser refused it: a paid Accept lost to Markdown); a placeholder is no finding.
         for findings, allowed in (([], True), (['Low: a note'], True), (['Pre-existing: elsewhere'], True),
                                   (['Low: a', 'Pre-existing: b'], True), (['Medium: a defect'], False),
-                                  (['Lowly: not a severity'], False), (['High: wrong'], False)):
+                                  (['Lowly: not a severity'], False), (['High: wrong'], False),
+                                  (['**Low** a.py:1 bold'], True), (['- Low: a dash item'], True),
+                                  (['- **Low**: both'], True), (['None.'], True), (['- No findings'], True),
+                                  (['**High** a.py:1 bold'], False), (['- Medium: a dash item'], False),
+                                  (['Nonexistent file: a defect'], False)):
             with self.subTest(findings=findings):
                 value = {'verdict': 'Accept', 'findings': findings, 'manual_checks': []}
                 envelope = {'type': 'result', 'subtype': 'success', 'is_error': False,
@@ -3404,14 +3471,26 @@ if case == 'archive_failure':
         # Native Windows has no Bash sandbox: there the reviewer reads and reasons instead.
         # The shared prompt (owner decision 2026-10-13, E): a threshold instead of EVERY finding,
         # no fix sketch, a clean review is valid, Pre-existing items stay out of the verdict.
+        # Owner decision 2026-10-13: a Lows-only review is a plain Accept (accept_allows, GATE:
+        # a Low goes to the backlog), so the verdict rule no longer sends a Low to manual checks.
         asks = ('A clean review is a valid result', 'Severity, for this project', 'Pre-existing:',
-                'at most five Low', 'You are in a throwaway copy', 'NOT RUN', 'Never use the network') + (
+                'at most five Low', 'You are in a throwaway copy', 'NOT RUN', 'Never use the network',
+                'Accept with Manual Checks when a Medium or a deferred finding remains',
+                'Accept otherwise, Lows and Pre-existing items included') + (
                     ('You have no shell on this host', 'mark each finding REASONED') if WINDOWS else
                     ('run anything inside this copy', 'Run the suite and reproductions', 'REPRODUCED',
                      'if a run is impossible, mark it REASONED'))
         forbidden = ('Do not run tests', 'run code', 'SHOULD run', 'worktree add --detach',
                      'If your tools can execute', 'edit files in this checkout',
-                     'never change the reviewed checkout', 'Fix sketch:', 'EVERY finding', str(self.repo))
+                     'never change the reviewed checkout', 'Fix sketch:', 'EVERY finding', str(self.repo),
+                     'a Medium, a Low')
+        # The direct adapter's --task-file audit (the review SKILL documents it) silently lost
+        # its brief when the review branch took its Task block from REVIEW_TASK_FILE alone.
+        brief = self.root / 'brief.md'
+        brief.write_text('Audit brief: the money path rounds half up.\n')
+        code, audited = self.run_bridge(extra=['--task-file', str(brief)], env_extra={'PROMPT_LOG': str(log)})
+        self.assertEqual(code, 0, audited)
+        self.assertIn('Task:\nAudit brief: the money path rounds half up.\n', log.read_text())
         task = {'PROMPT_LOG': str(log), 'MYAGENTKIT_TASK_ID': 'rounds-task'}
         code, first = self.run_bridge('reject', env_extra=task)
         self.assertEqual(code, 0, first)

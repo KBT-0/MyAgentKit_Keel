@@ -42,6 +42,8 @@ and automation never authorizes a commit or push.
 ## Rounds, labels and designs
 
 - A design is reviewed under its own label before code exists; dispositions cite its exclusions.
+- A high-tier change's two focus reviewers run under two labels (`<change>-logic` and
+  `<change>-portability`); each label carries its own rounds (`docs/REVIEW_GATE.md`, "Rounds").
 - Start the self-test and two reviewers together only when the memory budget permits
   (`docs/WORKFLOW.md`, "Worker cost", rule 6), each as its own background job. The kit's
   self-test writes a non-ignored file: a second worktree, or after the reviews.

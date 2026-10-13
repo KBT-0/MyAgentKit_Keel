@@ -70,11 +70,13 @@ def evidence_fields(repo, record):
     if match:
         effort = match[1]
     match = re.search(r'^VERDICT: (Accept with Manual Checks|Accept|Reject)[ \t]*$', content, re.M)
-    # One severity-first list item per finding under the Findings heading (REVIEW_PROMPT asks
-    # both reviewers for exactly that), so a continuation bullet or a note is not a finding.
-    findings = re.search(r'^## Findings[ \t]*$(.*?)(?=^## |\Z)', content, re.M | re.S)
-    record['findings'] = len(re.findall(r'^-\s+\**(?:Critical|High|Medium|Low)\b', findings[1],
-                                        re.M | re.I)) if findings else 0
+    # One severity-first top-level item per finding under the Findings heading (REVIEW_PROMPT asks
+    # both reviewers for exactly that; the same forms as claude_bridge.FINDING_ITEM, which the
+    # Codex Accept check reads), so a continuation bullet or a note is not a finding.
+    findings = re.search(r'^(?:#{2,6}[ \t]+|\*\*)Findings(?:\*\*)?[ \t]*:?[ \t]*$(.*?)(?=^#{1,2} |\Z)',
+                         content, re.M | re.S)
+    record['findings'] = len(re.findall(r'^(?:[-*]|\d+\.|#{1,6})[ \t]+\**(?:Critical|High|Medium|Low)\b',
+                                        findings[1], re.M | re.I)) if findings else 0
     return effort, match and match[1], None
 
 

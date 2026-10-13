@@ -63,7 +63,8 @@ REVIEW_PROMPT = (
     "the wrong outcome, and REPRODUCED (the command) or REASONED (the command that would "
     "reproduce it).\n"
     "Verdict: Reject only on a Critical or High finding; Accept with Manual Checks when a "
-    "Medium, a Low or a deferred finding remains, each check a full sentence; Accept otherwise. "
+    "Medium or a deferred finding remains, each check a full sentence; Accept otherwise, Lows "
+    "and Pre-existing items included (they go to the backlog, not to manual checks). "
     "Never claim a run you did not make. An OPEN product decision is a question for the owner, "
     "not a finding.\n")
 # REVIEW_FOCUS narrows one of the two reviewers of a high-tier change (docs/REVIEW_GATE.md).
@@ -75,10 +76,16 @@ REVIEW_FOCUS = {
 }
 
 
-def review_context() -> str:
-    """The brief, tier and focus lines, from REVIEW_TASK_FILE, REVIEW_RISK and REVIEW_FOCUS."""
+def default_effort() -> str:
+    """The default review effort follows the brief's tier (docs/REVIEW_GATE.md, "Risk tiers")."""
+    return "high" if os.environ.get("REVIEW_RISK") == "high" else "medium"
+
+
+def review_context(task_file=None) -> str:
+    """The brief, tier and focus lines, from REVIEW_TASK_FILE (or the adapter's --task-file),
+    REVIEW_RISK and REVIEW_FOCUS."""
     lines = []
-    task = os.environ.get("REVIEW_TASK_FILE")
+    task = task_file or os.environ.get("REVIEW_TASK_FILE")
     if task:
         lines.append("Task:\n" + Path(task).read_text(encoding="utf-8").strip())
     risk = os.environ.get("REVIEW_RISK")
@@ -958,9 +965,20 @@ def schema(mode: str) -> dict:
             "required": list(properties), "additionalProperties": False}
 
 
+# One top-level item per finding, as REVIEW_PROMPT asks: a list item, a numbered item or a
+# sub-heading. An indented continuation bullet is part of the item above it, not a finding.
+FINDING_ITEM = re.compile(r"^(?:[-*]|\d+\.|#{1,6})[ \t]+(.*)$", re.M)
+FINDINGS_HEADING = re.compile(r"^(?:#{2,6}[ \t]+|\*\*)Findings(?:\*\*)?[ \t]*:?[ \t]*$(.*?)(?=^#{1,2} |\Z)",
+                              re.M | re.S)
+# A clean review's placeholder under the heading is no finding.
+EMPTY_ITEMS = {"none", "no findings", "n/a", "not applicable"}
+
+
 def accept_allows(findings: list) -> bool:
-    """A plain Accept may carry Low findings and items outside the diff; nothing else."""
-    return all(re.match(r"\s*(Low\b|Pre-existing:)", item) for item in findings)
+    """A plain Accept may carry Low findings and items outside the diff; nothing else. The
+    severity may be a bold or dash-prefixed list item, the forms both reviewers write."""
+    return all(item.strip(" \t-*.").lower() in EMPTY_ITEMS
+               or re.match(r"\s*(?:[-*]\s+)?\**\s*(Low\b|Pre-existing:)", item) for item in findings)
 
 
 def validate(envelope: object, mode: str, model: str) -> dict:
@@ -1199,7 +1217,7 @@ def main(argv=None, result_sink=None) -> int:
     parser.add_argument("--model", default="claude-opus-5")
     parser.add_argument("--backend", help="The backend whose environment the caller set "
                         "(review_dispatch.py); recorded, and its --model need not be claude-")
-    parser.add_argument("--effort", choices=["low", "medium", "high"], default="high")  # no xhigh for a review
+    parser.add_argument("--effort", choices=["low", "medium", "high"], default=default_effort())  # no xhigh for a review
     parser.add_argument("--timeout", type=int,
                         help="Total wall-clock seconds; defaults to %d for review, 600 for propose"
                         % agent_process.DEFAULT_REVIEW_TIMEOUT)
@@ -1262,7 +1280,7 @@ def main(argv=None, result_sink=None) -> int:
             prompt_suffix = (
                 (REVIEW_RUNS if os.name == "posix" else REVIEW_READS) + "\n"
                 + prior_rounds(repo, args.task_id, scope, resolved, head, diff)
-                + review_context()
+                + review_context(args.task_file)
                 + f"Scope: {scope} {ref or ''}; HEAD: {head}\nDiff:\n{diff}")
         else:
             prompt_prefix = (

@@ -19,6 +19,24 @@ STATE_LINE = re.compile(r'^([^\S\r\n]*(?:[-*+][^\S\r\n]+)?\*\*Working mode:\*\*[
 # per-model names (claude-first, cross-performance, ...), and any other table is a defect.
 MODES = ('solo', 'normal', 'saver')
 OLD_MODES = {'claude-first', 'cross-performance', 'cross-saving', 'codex-first', 'claude-saver', 'codex-saver', 'claude-only'}
+# The one mapping of the old names, printed wherever an old name is met (CHANGELOG.md says the same).
+MAPPING = ('cross-performance and claude-only are solo; claude-first and codex-first are normal with a '
+           '(writes: ..., reviews: ...) note; cross-saving, claude-saver and codex-saver are saver with a '
+           '(low: ...) note')
+# The sides note a mode needs after its name in STATE.md (docs/WORKFLOW.md, "Working modes, by name").
+SIDES = {'normal': re.compile(r'writes: [^(),]+, reviews: [^(),]+'), 'saver': re.compile(r'low: [^(),]+')}
+EXAMPLES = {'normal': 'writes: claude, reviews: codex', 'saver': 'low: claude'}
+
+
+def repairs_old_mode(old_lines, new_lines):
+    """The one edit of the Working mode line that --replace-state accepts: a mode name from
+    before v0.11 becomes one of the three, so the upgrade stays under the compare-and-swap rule."""
+    if len(old_lines) != 1 or len(new_lines) != 1:
+        return False
+    old, new = STATE_LINE.match(old_lines[0]), STATE_LINE.match(new_lines[0])
+    return (old is not None and new is not None
+            and normalized(old[2].partition(' (')[0]) in OLD_MODES
+            and normalized(new[2].partition(' (')[0]) in MODES)
 
 
 def normalized(value):
@@ -141,9 +159,11 @@ def replace_state(project, source, expected):
             with owned.open('rb') as handle:
                 identity = os.fstat(handle.fileno())
                 data = handle.read()
-            if mode_lines(data.decode('utf-8')) != mode_lines(current.decode('utf-8')):
+            old_lines, new_lines = mode_lines(current.decode('utf-8')), mode_lines(data.decode('utf-8'))
+            if old_lines != new_lines and not repairs_old_mode(old_lines, new_lines):
                 raise ValueError('the edit changes the Working mode line of STATE.md; only a mode switch '
-                                 '(working_mode.py NAME) changes it, together with .claude/mode')
+                                 '(working_mode.py NAME) changes it, together with .claude/mode (the one '
+                                 'exception: a mode name from before v0.11 may become solo, normal or saver)')
             pending = prepared(state, data)
             os.replace(pending, state)
             published = True
@@ -161,7 +181,7 @@ def replace_state(project, source, expected):
                 print('mode: the unpublished snapshot is kept at ' + shown(owned), file=sys.stderr)
 
 
-def mode(project, choice=None):
+def mode(project, choice=None, sides=None):
     # Read before the lock is created: a switch never writes WORKFLOW.md.
     workflow = checked(project, 'docs/WORKFLOW.md').read_text(encoding='utf-8')
     if '### Working modes, by name' not in workflow:
@@ -172,10 +192,8 @@ def mode(project, choice=None):
     if len(names) in (6, 7) and set(names) <= OLD_MODES:
         print("ACTION: docs/WORKFLOW.md predates the three modes (solo, normal, saver), so no mode was "
               "shown or switched. Replace its \"Working modes, by name\" section with the kit's "
-              "core/docs/WORKFLOW.md section, set the STATE.md line to the matching mode (cross-performance "
-              "and claude-only are solo, claude-first and codex-first are normal with a (writes: ..., "
-              "reviews: ...) note, the saver modes are saver with a (low: ...) note), sync the core "
-              "scripts (scripts/working_mode.py), then run this again (kit CHANGELOG.md, v0.11).")
+              "core/docs/WORKFLOW.md section, set the STATE.md line to the matching mode (" + MAPPING +
+              "), sync the core scripts (scripts/working_mode.py), then run this again (kit CHANGELOG.md, v0.11).")
         if choice is not None:
             raise ValueError('no mode was switched: docs/WORKFLOW.md predates the three modes')
         return
@@ -184,10 +202,10 @@ def mode(project, choice=None):
     if choice is None:
         return working_mode(project, section, rows)
     with switch_lock(project):
-        return working_mode(project, section, rows, choice)
+        return working_mode(project, section, rows, choice, sides)
 
 
-def working_mode(project, section, rows, choice=None):
+def working_mode(project, section, rows, choice=None, sides=None):
     aliases = {normalized(alias): name for name, label, _ in rows
                for alias in (name, label.removesuffix(' (main mode)').strip())}
     state_path = checked(project, 'docs/STATE.md')
@@ -208,10 +226,9 @@ def working_mode(project, section, rows, choice=None):
         if current is None:
             hint = ''
             if normalized(value) in OLD_MODES:
-                hint = ('; it is a mode name from before v0.11: set the line by hand to solo (for '
-                        'cross-performance or claude-only), normal with a (writes: ..., reviews: ...) note '
-                        '(for claude-first or codex-first) or saver with a (low: ...) note (for a saver mode), '
-                        'then run this again')
+                hint = ('; it is a mode name from before v0.11: repair the line through --read-state and '
+                        '--replace-state (the one edit of that line they accept; ' + MAPPING +
+                        '), then run this again')
             raise ValueError('invalid STATE.md working mode: ' + value + hint)
         note = separator + suffix
     record = checked(project, '.claude/mode')
@@ -232,6 +249,19 @@ def working_mode(project, section, rows, choice=None):
             raise ValueError('missing mode rules: ' + heading)
         return match[0].strip()
     output = rules(selected + ' (')
+    # normal and saver name their sides in the note; a switch sets it from the argument or keeps
+    # a note of the right shape, never a stale one. solo carries no sides note.
+    shape = SIDES.get(selected)
+    given = (sides if sides is not None else note).strip(' ().')
+    if shape:
+        if not shape.fullmatch(given):
+            raise ValueError('a switch to %s names the sides: working_mode.py %s "%s"'
+                             % (selected, selected, EXAMPLES[selected]))
+        note = ' (' + given + ')' + ('.' if note.rstrip().endswith('.') else '')
+    elif sides is not None:
+        raise ValueError('solo has no sides note')
+    elif any(s.fullmatch(given) for s in SIDES.values()):
+        note = ''
     if matches:
         updated = STATE_LINE.sub(lambda m: m[1] + selected + note, state)
     else:
@@ -266,6 +296,8 @@ def main():
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('name', nargs='?')
+    parser.add_argument('sides', nargs='?', metavar='SIDES',
+                        help='the note after the name: "writes: X, reviews: Y" for normal, "low: X" for saver')
     parser.add_argument('--project', type=Path, default=Path.cwd())
     operations = parser.add_mutually_exclusive_group()
     operations.add_argument('--read-state', metavar='OUT',  # a string: a trailing separator names a folder
@@ -294,7 +326,9 @@ def main():
         elif args.replace_state is not None:
             replace_state(project, private(project, args.replace_state), args.expect)
         else:
-            mode(project, args.name)
+            if args.sides is not None and args.name is None:
+                parser.error('SIDES needs a mode name')
+            mode(project, args.name, args.sides)
     except (OSError, ValueError) as error:
         parser.exit(1, 'mode: ' + str(error) + '\n')
 
