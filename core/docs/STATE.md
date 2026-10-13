@@ -7,8 +7,7 @@ true next month, are in `docs/AGENTS.md`, "STATE.md discipline" (the reasons: `d
 
 ---
 
-**Working mode:** solo (`docs/WORKFLOW.md`, "Working modes, by name"; the owner
-names another, and `/myagentkit:mode` sets it).
+**Working mode:** solo (`docs/WORKFLOW.md`, "Working modes, by name"; `/myagentkit:mode` switches it).
 
 ## Active work
 

@@ -205,6 +205,28 @@ class WorkingModeTests(unittest.TestCase):
         self.assertNotEqual(self.run_mode('--replace-state', str(snapshot), '--expect', sha).returncode, 0)
         self.assertIn('codex-first', self.state.read_text(encoding='utf-8'))
 
+    def test_the_shipped_state_template_switches_whole_and_a_wrapped_note_is_refused(self):
+        # The template's note once wrapped onto a second line: STATE_LINE read the first line
+        # only, the sides switch replaced that half and left the tail as an orphan fragment.
+        template = (ROOT / 'core/docs/STATE.md').read_bytes()
+        self.state.write_bytes(template)
+        for mode in ('normal', 'saver', 'solo'):
+            self.assertEqual(self.run_mode(mode).returncode, 0, mode)
+            text = self.state.read_text(encoding='utf-8')
+            self.assertNotIn('names another', text)
+            self.assertEqual(text.count('('), text.count(')'), text)
+        self.assertEqual(self.state.read_bytes(), template.replace(
+            b'solo (`docs/WORKFLOW.md`, "Working modes, by name"; `/myagentkit:mode` switches it).', b'solo'))
+        wrapped = ('**Working mode:** solo (`docs/WORKFLOW.md`, "Working modes, by name"; the owner\n'
+                   'names another, and `/myagentkit:mode` sets it).\n')
+        for mode in ('normal', 'solo'):
+            self.state.write_text(wrapped, encoding='utf-8')
+            result = self.run_mode(mode)
+            self.assertEqual(result.returncode, 1, mode)
+            self.assertIn('wraps onto the next line', result.stderr)
+            self.assertEqual(self.state.read_text(encoding='utf-8'), wrapped)
+        self.assertIn('Current mode: solo', self.run_mode().stdout)
+
     def test_normal_and_saver_need_their_sides_note_and_solo_drops_it(self):
         # A saver→normal switch kept `(low: claude)`, a normal mode naming no sides; the default
         # solo line's pointer note was kept the same way. Now the note is set, never carried.

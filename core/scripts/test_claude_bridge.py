@@ -2821,9 +2821,13 @@ class BridgeTests(unittest.TestCase):
                      '## Findings\n\n- Low: x.py:1 a note.\n  - REASONED: the command.\n\nVERDICT: Accept\n',
                      '## Findings\n\n- **Low** x.py:1 bold severity.\n- Pre-existing: elsewhere.\n\nVERDICT: Accept\n',
                      '## Findings\n\n1. Low: x.py:1 numbered.\n\nVERDICT: Accept\n')
+        completes += ('## Findings\n\n- None.\n\n### Manual checks\n\n- None.\n\n### Notes\n\n- Read only.\n\nVERDICT: Accept\n',)
         refused = ('## Findings\n\n1. High: x.py:1 numbered.\n\nVERDICT: Accept\n',
                    '### Findings\n\n### High: x.py:1 a sub-heading.\n\nVERDICT: Accept\n',
                    '**Findings**\n\n- High: x.py:1 under a bold heading.\n\nVERDICT: Accept\n',
+                   '**Findings:**\n\n- High: x.py:1 colon inside the bold.\n\nVERDICT: Accept\n',
+                   '# Findings\n\n- High: x.py:1 under a level-one heading.\n\nVERDICT: Accept\n',
+                   'Findings:\n\n- High: x.py:1 under a plain heading.\n\nVERDICT: Accept\n',
                    '## Findings\n\n- **Medium** x.py:1 bold.\n\nVERDICT: Accept\n',
                    '## Findings\n\n* High: x.py:1 a star item.\n\nVERDICT: Accept\n')
         for final, completed in [(f, True) for f in completes] + [(f, False) for f in refused]:

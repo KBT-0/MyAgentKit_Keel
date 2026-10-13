@@ -968,8 +968,11 @@ def schema(mode: str) -> dict:
 # One top-level item per finding, as REVIEW_PROMPT asks: a list item, a numbered item or a
 # sub-heading. An indented continuation bullet is part of the item above it, not a finding.
 FINDING_ITEM = re.compile(r"^(?:[-*]|\d+\.|#{1,6})[ \t]+(.*)$", re.M)
-FINDINGS_HEADING = re.compile(r"^(?:#{2,6}[ \t]+|\*\*)Findings(?:\*\*)?[ \t]*:?[ \t]*$(.*?)(?=^#{1,2} |\Z)",
-                              re.M | re.S)
+# The heading in any form (`## Findings`, `# Findings`, `**Findings:**`, `Findings:`); the
+# section ends at the next heading that is not itself a severity-first item.
+FINDINGS_HEADING = re.compile(r"^(?:#{1,6}[ \t]+|\*\*)?Findings:?(?:\*\*)?:?[ \t]*$(.*?)"
+                              r"(?=^(?:#{1,6}[ \t]+|\*\*)(?!(?:Critical|High|Medium|Low)\b)|\Z)",
+                              re.M | re.S | re.I)
 # A clean review's placeholder under the heading is no finding.
 EMPTY_ITEMS = {"none", "no findings", "n/a", "not applicable"}
 

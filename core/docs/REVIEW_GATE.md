@@ -28,8 +28,8 @@ file) gets one light pass, Low cap three, non-blocking.
 
 ## Rounds
 
-At most two rounds under one label (`MYAGENTKIT_TASK_ID`); `scripts/review_dispatch.py`
-refuses a third. A high-tier change takes one label per focus reviewer (`<change>-logic`,
+At most two rounds under one label (`MYAGENTKIT_TASK_ID`); both adapters refuse a third
+(`claude_bridge.prior_rounds`). A high-tier change takes one label per focus reviewer (`<change>-logic`,
 `<change>-portability`), since the limit counts the completed reviews under a label.
 Round 2 confirms every finding the dispositions claim fixed, a Medium
 included, and reports new Critical or High only. A third round needs

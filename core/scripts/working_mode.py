@@ -252,6 +252,11 @@ def working_mode(project, section, rows, choice=None, sides=None):
     # normal and saver name their sides in the note; a switch sets it from the argument or keeps
     # a note of the right shape, never a stale one. solo carries no sides note.
     shape = SIDES.get(selected)
+    # The line is one physical line: a note wrapped onto the next line (the v0.11 template
+    # before a601395 did) would be cut in half, its tail left as an orphan.
+    if note.count('(') != note.count(')'):
+        raise ValueError('the STATE.md Working mode note wraps onto the next line; put the whole line '
+                         'on one line (--read-state / --replace-state keeps the note) and run this again')
     given = (sides if sides is not None else note).strip(' ().')
     if shape:
         if not shape.fullmatch(given):
