@@ -72,6 +72,18 @@ the first large review after the upgrade is timed (the chain record's timestamps
 owner decides whether the cap stays. The automatic retry of a `model at capacity` answer
 stays a backlog line, not a mechanism.
 
+The batch's own review ran under the new rules, Opus 5.5 on native Windows, one label per
+focus reviewer. Round 1: logic (high effort) Reject, 1 High + 4 Medium + 5 Low; portability
+(medium) Accept-MC, 6 Medium + 4 Low; 3–4 minutes each. Round 2, 3–4 minutes each: both
+reviewers found the same regression of a round-1 fix (the shipped STATE template's wrapped
+mode note cut in half by the new sides switch), so the second label caught what the first
+reported only as a Medium. The Codex Findings parser needed two rounds to read every heading
+form the prompt allows. A third round under the portability label alone (`REVIEW_ROUND_EXCEPTION`,
+recorded) ended Accept with Manual Checks and no new finding. Its two manual checks stay open:
+the deferred round-1 High (a label counts completed reviews, answered by one label per focus
+reviewer) is the owner's accepted residual, and the cache-TTL keys are read from
+`agent_cost.py`'s ephemeral_1h share on the first spawned worker after the upgrade.
+
 ### 2026-10-13 — The startup prefix measured (N-1) and the cache-hit column (M-6)
 
 The map conversion of `core/AGENTS.md` (244 lines to 165) was proposed on vendor guidance
