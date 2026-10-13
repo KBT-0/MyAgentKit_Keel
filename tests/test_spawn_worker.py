@@ -213,6 +213,8 @@ ON_WINDOWS = {'test_a_missing_or_failing_watcher_stops_the_spawn', 'test_a_worke
               'test_term_after_tmux_accepts_preserves_the_panes_script',
               'test_int_before_tmux_creates_session_removes_script',
               'test_two_signals_do_not_repeat_cleanup',
+              'test_worker_name_boundary_fits_every_generated_filename',
+              'test_native_windows_generated_path_boundary',
               'test_unsafe_names_are_refused_without_changing_worker_files',
               'test_missing_or_unreadable_brief_is_refused_before_any_session',
               'test_no_error_message_echoes_a_control_character',
@@ -462,6 +464,77 @@ exit 0
                 self.assertIn('refused the worker name', result.stderr)
                 self.assertEqual(snapshot(), before)
                 self.assertIsNone(self.launched())
+
+    def test_worker_name_boundary_fits_every_generated_filename(self):
+        # Exercise the filename rule everywhere, independently of Windows' tighter path rule.
+        result = self.spawn('w' * 241, str(self.brief), choose=False)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn('refused the worker name', result.stderr)
+        self.assertIn('255 bytes', result.stderr)
+        self.assertFalse((self.cwd / '.myagentkit/workers').exists())
+        result = self.spawn('w' * 240, str(self.brief), choose=False)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn('--model is required', result.stderr)
+        if WINDOWS:
+            return  # the full-path test below publishes the hook's file on Windows
+        workers = self.cwd / '.myagentkit/workers'
+        workers.mkdir(parents=True)
+        name = 'w' * 240
+        state = workers / (name + '.state')
+        replace = os.replace
+        def publish(source, target):
+            self.assertEqual(len(os.fsencode(Path(source).name)), 255)
+            replace(source, target)
+        with patch('os.replace', side_effect=publish):
+            run_state_hook(state, {'hook_event_name': 'Stop'})
+        self.assertTrue(state.read_text().startswith('idle '))
+
+    def test_native_windows_generated_path_boundary(self):
+        (self.bin / 'uname').write_text('#!/bin/sh\necho MINGW64_NT-10.0\n')
+        (self.bin / 'ps-empty').write_text('#!/bin/sh\nexit 0\n')
+        (self.bin / 'ps-empty').chmod(0o755)
+        (self.bin / 'wt-refuse').write_text('#!/bin/sh\nexit 99\n')
+        (self.bin / 'wt-refuse').chmod(0o755)
+        if not WINDOWS:
+            (self.bin / 'cygpath').write_text(CYGPATH)
+            (self.bin / 'cygpath').chmod(0o755)
+        workers = self.cwd / '.myagentkit/workers'
+        # Pass the hook its actual physical path, as spawn does after cygpath conversion.
+        workers = Path(os.path.realpath(workers))
+        # Measure the same physical, native spelling that the hook uses.
+        if WINDOWS:
+            native = Path(os.path.realpath(workers)).as_posix()
+        else:
+            native = 'C:' + os.path.realpath(workers)
+        name = 'w' * (259 - len(native + '/.state.XXXXXXXX'))
+        self.assertGreater(len(name), 0)
+        self.assertLessEqual(len(name), 240)
+        result = self.spawn(name + 'w', str(self.brief), KIT_PS=str(self.bin / 'ps-empty'),
+                            KIT_WT=str(self.bin / 'wt-refuse'))
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn('259 characters', result.stderr)
+        for remedy in ('shorter name', 'shorter checkout path', 'LongPathsEnabled'):
+            self.assertIn(remedy, result.stderr)
+        self.assertFalse(workers.exists(), 'an overlong path changed worker files')
+        result = self.spawn(name, str(self.brief), KIT_PS=str(self.bin / 'ps-empty'),
+                            KIT_WT=str(self.bin / 'wt-refuse'))
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn('could not open a tab', result.stderr)
+        self.assertTrue((workers / (name + '.settings.json')).is_file())
+        state = workers / (name + '.state')
+        replace = os.replace
+        def publish(source, target):
+            source_path = Path(source).as_posix()
+            if not WINDOWS:
+                source_path = 'C:' + os.path.realpath(source_path)
+            self.assertEqual(len(source_path), 259)
+            self.assertLessEqual(len(os.fsencode(Path(source).name)), 255)
+            replace(source, target)
+        with patch('os.replace', side_effect=publish):
+            run_state_hook(state, {'hook_event_name': 'Stop'})
+        self.assertTrue(state.read_text().startswith('idle '))
+        self.assertEqual(sorted(p.name for p in workers.iterdir()),
+                         sorted([name + '.state', name + '.settings.json']))
 
     def test_brief_is_delivered_by_path_as_one_typed_instruction(self):
         result = self.spawn('w1', str(self.brief))
