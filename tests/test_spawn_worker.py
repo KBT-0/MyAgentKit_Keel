@@ -11,6 +11,7 @@ import json
 import io
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import shutil
 from contextlib import contextmanager
@@ -98,7 +99,9 @@ elif cmd == 'send-keys':
 CLAUDE = r'''#!/usr/bin/env python3
 import json, os, sys
 with open(os.path.join(os.environ['SPAWN_STATE'], 'claude.json'), 'w') as f:
-    json.dump({'argv': sys.argv[1:], 'cwd': os.getcwd(), 'env': sorted(os.environ)}, f)
+    json.dump({'argv': sys.argv[1:], 'cwd': os.getcwd(), 'env_names': sorted(os.environ),
+               'env': {k: v for k, v in os.environ.items() if k.startswith('ANTHROPIC_') or
+               k in os.environ.get('SPAWN_CONTROL_NAMES', '').split(',')}}, f)
 '''
 
 
@@ -209,18 +212,30 @@ WINDOWS = os.name == 'nt'
 # The cases that run on native Windows (issue #56). Every other case drives the tmux path,
 # which native Windows never takes, through Python stubs whose `sh -c` command line Git for
 # Windows parses again (an apostrophe is a quote there): there each prints NOT RUN.
-ON_WINDOWS = {'test_a_missing_or_failing_watcher_stops_the_spawn', 'test_a_worker_without_its_model_or_effort_is_refused',
-              'test_term_after_tmux_accepts_preserves_the_panes_script',
+ON_WINDOWS = {'test_a_backend_reaches_the_worker_quoted_on_both_paths',
+              'test_a_missing_or_failing_watcher_stops_the_spawn',
+              'test_a_worker_without_its_model_or_effort_is_refused',
+              'test_backend_duplicate_keys_cannot_empty_final_values',
+              'test_backend_nul_and_nonregular_files_refuse_before_launch',
+              'test_backend_replaces_every_inherited_anthropic_variable',
+              'test_backend_requires_nonempty_token_before_worker_launch',
+              'test_backend_secrets_must_be_ignored_and_untracked',
+              'test_backend_token_is_absent_from_recorded_launch_commands',
+              'test_backend_whitespace_lines_use_the_review_grammar',
+              'test_backend_worker_clears_each_claude_credential_and_routing_control',
+              'test_backend_worker_refuses_case_variant_of_tracked_path',
+              'test_backend_worker_refuses_claude_model_id',
               'test_int_before_tmux_creates_session_removes_script',
-              'test_two_signals_do_not_repeat_cleanup',
-              'test_worker_name_boundary_fits_every_generated_filename',
-              'test_native_windows_generated_path_boundary',
-              'test_unsafe_names_are_refused_without_changing_worker_files',
               'test_missing_or_unreadable_brief_is_refused_before_any_session',
+              'test_native_windows_generated_path_boundary',
               'test_no_error_message_echoes_a_control_character',
-              'test_on_native_windows_the_worker_opens_as_a_windows_terminal_tab',
               'test_on_native_windows_the_worker_gets_state_hooks_and_keeps_its_own',
-              'test_the_behaviour_appendix_reaches_the_worker_unless_turned_off'}
+              'test_on_native_windows_the_worker_opens_as_a_windows_terminal_tab',
+              'test_term_after_tmux_accepts_preserves_the_panes_script',
+              'test_the_behaviour_appendix_reaches_the_worker_unless_turned_off',
+              'test_two_signals_do_not_repeat_cleanup',
+              'test_unsafe_names_are_refused_without_changing_worker_files',
+              'test_worker_name_boundary_fits_every_generated_filename'}
 
 
 def tmux_path_cases(cls):
@@ -248,6 +263,12 @@ class SpawnWorkerTests(unittest.TestCase):
                            ('osascript', '#!/bin/sh\nexit 1\n'), ('uname', '#!/bin/sh\necho Linux\n')):
             (self.bin / name).write_text(body)
             (self.bin / name).chmod(0o755)
+        if WINDOWS:
+            # Native Windows' python3 may be an inaccessible WindowsApps alias. Every
+            # shebang fixture uses this runner's interpreter, never a host alias.
+            (self.bin / 'python3').write_text('#!/bin/sh\nexec ' +
+                                            shq(sys.executable.replace('\\', '/')) + ' "$@"\n')
+            (self.bin / 'python3').chmod(0o755)
         self.brief = self.cwd / "it's the brief.md"
         self.brief.write_text('Line one of the brief.\nLine two.\n')
 
@@ -275,12 +296,13 @@ class SpawnWorkerTests(unittest.TestCase):
         if choose:
             args += tuple(a for flag, value in (('--model', 'm'), ('--effort', 'high'))
                           if flag not in args for a in (flag, value))
-        return subprocess.run(['sh', str(SCRIPT), *args], cwd=self.cwd, env=env,
+        return subprocess.run(['sh', str(getattr(self, 'script', SCRIPT)), *args], cwd=self.cwd, env=env,
                               capture_output=True, text=True, timeout=60)
 
     def base_env(self):
         # Never the host's terminal: the WSL name is the test's own, so wt.exe is the stub.
-        env = {k: v for k, v in os.environ.items() if k not in ('TERM_PROGRAM', 'TMUX', 'TMUX_PANE')}
+        env = {k: v for k, v in os.environ.items() if k not in ('TERM_PROGRAM', 'TMUX', 'TMUX_PANE')
+               and not k.startswith('ANTHROPIC_')}
         return dict(env, PATH=f'{self.bin}{os.pathsep}{os.environ["PATH"]}', SPAWN_STATE=str(self.state),
                     WSL_DISTRO_NAME='Test-1', KIT_WT=str(self.bin / 'wt-stub'), **LEAD_ENV)
 
@@ -415,6 +437,248 @@ exit 0
                          (self.cwd / '.claude/worktrees/relative-temp').resolve())
         self.assertIn('sh ' + str(tmpdir.resolve()) + '/', self.tmux_log())
         self.assertEqual(list(tmpdir.iterdir()), [], 'the launched script did not remove itself')
+    def backend_file(self, text):
+        # Exercise the installed layout: the overlay worker and review companions share scripts/.
+        scripts = self.cwd / 'scripts'
+        if not scripts.exists():
+            shutil.copytree(SCRIPT.parent, scripts)
+            for source in (ROOT / 'core/scripts').glob('*.py'):
+                if not source.name.startswith('test_'):
+                    shutil.copyfile(source, scripts / source.name)
+            self.script = scripts / SCRIPT.name
+            subprocess.run(['git', 'init', '-q', str(self.cwd)], check=True, capture_output=True)
+            (self.cwd / '.gitignore').write_bytes((ROOT / 'core/.gitignore').read_bytes())
+        path = self.cwd / '.myagentkit/backends/glm.env'
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(text.encode('utf-8'))
+        return path
+
+    def backend_paths(self):
+        if not WINDOWS:
+            (self.bin / 'uname').write_text('#!/bin/sh\necho Linux\n')
+            yield {}
+        for name, body in (('uname', '#!/bin/sh\necho MINGW64_NT-10.0-26200\n'), ('cygpath', CYGPATH),
+                           ('wt-tab', WT_TAB), ('ps-stub', '#!/bin/sh\n[ ! -f "$SPAWN_STATE/claude.json" ] || '
+                                                          'printf "8 claude.exe -n w1\\r\\n"\n')):
+            if WINDOWS and name == 'cygpath':
+                continue
+            (self.bin / name).write_text(body)
+            (self.bin / name).chmod(0o755)
+        config = self.tmp / 'config'
+        (config / 'sessions').mkdir(parents=True, exist_ok=True)
+        (config / 'sessions/8.json').write_text('{}')
+        yield dict(KIT_WT=str(self.bin / 'wt-tab'), KIT_PS=str(self.bin / 'ps-stub'),
+                   CLAUDE_CONFIG_DIR=str(config))
+
+    def test_backend_secrets_must_be_ignored_and_untracked(self):
+        token = 'backend-private-test-token'
+        self.backend_file('ANTHROPIC_BASE_URL=https://backend.invalid\nANTHROPIC_MODEL=glm-x\n'
+                          'ANTHROPIC_AUTH_TOKEN=' + token + '\n')
+        for tracked in (False, True):
+            (self.cwd / '.gitignore').write_text('/.myagentkit/usage/\n')
+            if tracked:
+                subprocess.run(['git', '-C', str(self.cwd), 'add', '-f', '.myagentkit/backends/glm.env'],
+                               check=True, capture_output=True)
+                (self.cwd / '.gitignore').write_text('/.myagentkit/\n')
+            for tab in self.backend_paths():
+                result = self.spawn('w1', str(self.brief), '--backend', 'glm', **tab)
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn('must be Git-ignored and untracked', result.stderr)
+                self.assertNotIn(token, result.stdout + result.stderr)
+                self.assertIsNone(self.launched())
+                self.assertNotIn('new-session', self.tmux_log())
+                self.assertFalse((self.state / 'wt.json').exists())
+
+    def test_backend_worker_clears_each_claude_credential_and_routing_control(self):
+        self.backend_file('ANTHROPIC_BASE_URL=https://backend.invalid\nANTHROPIC_MODEL=glm-x\n'
+                          'ANTHROPIC_AUTH_TOKEN=fixture\n')
+        # Independent of the production list, including on Windows.
+        keys = (
+            'CLAUDE_CODE_API_BASE_URL',
+            'CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR',
+            'CLAUDE_CODE_API_KEY_HELPER_TTL_MS',
+            'CLAUDE_CODE_ARTIFACTS_API_BASE_URL',
+            'CLAUDE_CODE_ARTIFACTS_API_TOKEN',
+            'CLAUDE_CODE_ARTIFACT_ASSET_BASE_URL',
+            'CLAUDE_CODE_ARTIFACT_LIVE_BASE_URL',
+            'CLAUDE_CODE_ARTIFACT_SYNC_BASE_URL',
+            'CLAUDE_CODE_ARTIFACT_VIEWER_BASE_URL',
+            'CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL',
+            'CLAUDE_CODE_AUTO_MODE_MODEL',
+            'CLAUDE_CODE_AWS_CHAIN_RESOLVE_TIMEOUT_MS',
+            'CLAUDE_CODE_BG_CLASSIFIER_MODEL',
+            'CLAUDE_CODE_CLIENT_CERT',
+            'CLAUDE_CODE_CLIENT_KEY',
+            'CLAUDE_CODE_CLIENT_KEY_PASSPHRASE',
+            'CLAUDE_CODE_CUSTOM_OAUTH_URL',
+            'CLAUDE_CODE_DESIGN_OAUTH_CLIENT_ID',
+            'CLAUDE_CODE_DISABLE_AUTH_REFRESH_LOCK',
+            'CLAUDE_CODE_ENABLE_PROXY_AUTH_HELPER',
+            'CLAUDE_CODE_GATEWAY_HINT_HEADERS',
+            'CLAUDE_CODE_GATEWAY_TOKEN',
+            'CLAUDE_CODE_GATEWAY_TOKEN_FILE_DESCRIPTOR',
+            'CLAUDE_CODE_GB_BASE_URL',
+            'CLAUDE_CODE_HFI_BEARER_TOKEN',
+            'CLAUDE_CODE_HOST_AUTH_ENV_VAR',
+            'CLAUDE_CODE_HOST_AUTH_REFRESH_TIMEOUT_MS',
+            'CLAUDE_CODE_HOST_GATEWAY_LINEAGE',
+            'CLAUDE_CODE_HOST_HTTP_PROXY_PORT',
+            'CLAUDE_CODE_HOST_SOCKS_PROXY_PORT',
+            'CLAUDE_CODE_HTTPS_PROXY',
+            'CLAUDE_CODE_HTTP_PROXY',
+            'CLAUDE_CODE_MCP_SERVE_AUTH_TOKEN',
+            'CLAUDE_CODE_MEMORY_API_BASE_URL',
+            'CLAUDE_CODE_MEMORY_API_TOKEN',
+            'CLAUDE_CODE_MESSAGING_TOKEN',
+            'CLAUDE_CODE_METRICS_ENDPOINT',
+            'CLAUDE_CODE_MODEL_CATALOG_URL',
+            'CLAUDE_CODE_OAUTH_CLIENT_ID',
+            'CLAUDE_CODE_OAUTH_REFRESH_TOKEN',
+            'CLAUDE_CODE_OAUTH_SCOPES',
+            'CLAUDE_CODE_OAUTH_TOKEN',
+            'CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR',
+            'CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST',
+            'CLAUDE_CODE_PROXY_AUTHENTICATE',
+            'CLAUDE_CODE_PROXY_AUTH_HELPER_TTL_MS',
+            'CLAUDE_CODE_PROXY_HOST',
+            'CLAUDE_CODE_PROXY_RESOLVES_HOSTS',
+            'CLAUDE_CODE_PROXY_URL',
+            'CLAUDE_CODE_SDK_HAS_HOST_AUTH_REFRESH',
+            'CLAUDE_CODE_SDK_HAS_OAUTH_REFRESH',
+            'CLAUDE_CODE_SESSION_ACCESS_TOKEN',
+            'CLAUDE_CODE_SKIP_ANTHROPIC_AWS_AUTH',
+            'CLAUDE_CODE_SKIP_ANTHROPIC_GOOGLE_CLOUD_AUTH',
+            'CLAUDE_CODE_SKIP_AWS_CRED_CACHE',
+            'CLAUDE_CODE_SKIP_BEDROCK_AUTH',
+            'CLAUDE_CODE_SKIP_FOUNDRY_AUTH',
+            'CLAUDE_CODE_SKIP_MANTLE_AUTH',
+            'CLAUDE_CODE_SKIP_VERTEX_AUTH',
+            'CLAUDE_CODE_SLACK_TAG_TOKEN',
+            'CLAUDE_CODE_SUBAGENT_MODEL',
+            'CLAUDE_CODE_SUBAGENT_MODEL_FORCE',
+            'CLAUDE_CODE_USE_ANTHROPIC_AWS',
+            'CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD',
+            'CLAUDE_CODE_USE_BEDROCK',
+            'CLAUDE_CODE_USE_CCR_V',
+            'CLAUDE_CODE_USE_FOUNDRY',
+            'CLAUDE_CODE_USE_GATEWAY',
+            'CLAUDE_CODE_USE_MANTLE',
+            'CLAUDE_CODE_USE_VERTEX',
+            'CLAUDE_CODE_WEBSOCKET_AUTH_FILE_DESCRIPTOR',
+            'CLAUDE_CODE_WORKFLOW_SUBAGENT_MODEL',
+        )
+        for tab in self.backend_paths():
+            result = self.spawn('w1', str(self.brief), '--backend', 'glm', **tab,
+                                SPAWN_CONTROL_NAMES=','.join(keys), **dict.fromkeys(keys, 'lead-control'))
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            for key in keys:
+                with self.subTest(key=key, tab=bool(tab)):
+                    self.assertNotIn(key, self.launched()['env'])
+            (self.state / 'claude.json').unlink()
+
+    def test_backend_requires_nonempty_token_before_worker_launch(self):
+        for token in ('', 'ANTHROPIC_AUTH_TOKEN=\n'):
+            self.backend_file('ANTHROPIC_BASE_URL=https://backend.invalid\nANTHROPIC_MODEL=glm-x\n' + token)
+            for tab in self.backend_paths():
+                result = self.spawn('w1', str(self.brief), '--backend', 'glm', **tab)
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn('sets no ANTHROPIC_AUTH_TOKEN', result.stderr)
+                self.assertIsNone(self.launched())
+
+    def test_backend_worker_refuses_claude_model_id(self):
+        self.backend_file('ANTHROPIC_BASE_URL=https://backend.invalid\nANTHROPIC_MODEL=glm-x\n'
+                          'ANTHROPIC_AUTH_TOKEN=fixture\n')
+        for tab in self.backend_paths():
+            result = self.spawn('w1', str(self.brief), '--model', 'claude-opus-5', '--backend', 'glm', **tab)
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('not a claude- model', result.stderr)
+            self.assertIsNone(self.launched())
+
+    def test_backend_worker_refuses_case_variant_of_tracked_path(self):
+        self.backend_file('ANTHROPIC_BASE_URL=https://backend.invalid\nANTHROPIC_MODEL=glm-x\n'
+                          'ANTHROPIC_AUTH_TOKEN=fixture\n')
+        subprocess.run(['git', '-C', str(self.cwd), 'add', '-f', '.myagentkit/backends/glm.env'],
+                       check=True, capture_output=True)
+        for tab in self.backend_paths():
+            result = self.spawn('w1', str(self.brief), '--backend', 'GLM', **tab)
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('Git-ignored and untracked', result.stderr)
+            self.assertIsNone(self.launched())
+
+    def test_backend_replaces_every_inherited_anthropic_variable(self):
+        expected = {'ANTHROPIC_BASE_URL': 'https://backend.invalid', 'ANTHROPIC_MODEL': 'glm-x',
+                    'ANTHROPIC_AUTH_TOKEN': 'backend-token'}
+        self.backend_file(''.join('%s=%s\n' % item for item in expected.items()))
+        inherited = {'ANTHROPIC_API_KEY': 'lead-key', 'ANTHROPIC_CUSTOM_HEADERS': 'lead-header',
+                     'ANTHROPIC_DEFAULT_SONNET_MODEL': 'lead-model', 'ANTHROPIC_FUTURE_SETTING': 'lead-value',
+                     'ANTHROPIC_mixed_case': 'lead-mixed-case',
+                     **({'Anthropic_Api_Key': 'lead-lower-prefix'} if WINDOWS else {})}
+        for tab in self.backend_paths():
+            result = self.spawn('w1', str(self.brief), '--backend', 'glm', **tab, **inherited)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(self.launched()['env'], expected)
+            (self.state / 'claude.json').unlink()
+
+        # If env cannot supply raw names, the child must refuse rather than keep credentials.
+        real_env = shutil.which('env').replace('\\', '/')
+        (self.bin / 'env').write_text('#!/bin/sh\n[ "$1" != -0 ] || exit 1\nexec ' + shq(real_env) + ' "$@"\n')
+        (self.bin / 'env').chmod(0o755)
+        result = self.spawn('w1', str(self.brief), '--backend', 'glm', **tab, **inherited)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('cannot read the child environment names', result.stderr)
+        self.assertIsNone(self.launched())
+
+    def test_backend_token_is_absent_from_recorded_launch_commands(self):
+        token = 'launch-record-secret-token'
+        self.backend_file('ANTHROPIC_BASE_URL=https://backend.invalid\nANTHROPIC_MODEL=glm-x\n'
+                          'ANTHROPIC_AUTH_TOKEN=' + token + '\n')
+        for tab in self.backend_paths():
+            result = self.spawn('w1', str(self.brief), '--backend', 'glm', **tab)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(self.launched()['env']['ANTHROPIC_AUTH_TOKEN'], token)
+            recorded = self.tmux_log()
+            if tab:
+                recorded += (self.state / 'wt.json').read_text()
+            self.assertNotIn(token, recorded + result.stdout + result.stderr)
+            (self.state / 'claude.json').unlink()
+
+    def test_backend_duplicate_keys_cannot_empty_final_values(self):
+        for key, reason in (('ANTHROPIC_BASE_URL', 'sets no ANTHROPIC_BASE_URL'),
+                            ('ANTHROPIC_MODEL', 'sets no model')):
+            self.backend_file('ANTHROPIC_BASE_URL=https://backend.invalid\nANTHROPIC_MODEL=glm-x\n'
+                              + key + '=\n')
+            for tab in self.backend_paths():
+                result = self.spawn('w1', str(self.brief), '--backend', 'glm', **tab)
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn(reason, result.stderr)
+                self.assertIsNone(self.launched())
+
+    def test_backend_whitespace_lines_use_the_review_grammar(self):
+        expected = {'ANTHROPIC_BASE_URL': 'https://backend.invalid', 'ANTHROPIC_MODEL': 'glm-x',
+                    'ANTHROPIC_AUTH_TOKEN': 'backend-token'}
+        self.backend_file(' \t\r\n  # ignored comment\r\n' +
+                          ''.join('  %s=%s  \r\n' % item for item in expected.items()))
+        for tab in self.backend_paths():
+            result = self.spawn('w1', str(self.brief), '--backend', 'glm', **tab)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(self.launched()['env'], expected)
+            (self.state / 'claude.json').unlink()
+
+    def test_backend_nul_and_nonregular_files_refuse_before_launch(self):
+        path = self.backend_file('ANTHROPIC_BASE_URL=https://backend.invalid\nANTHROPIC_MODEL=glm-x\n'
+                                 'ANTHROPIC_AUTH_TOKEN=private\x00value\n')
+        for tab in self.backend_paths():
+            result = self.spawn('w1', str(self.brief), '--backend', 'glm', **tab)
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertNotIn('private', result.stdout + result.stderr)
+            self.assertIsNone(self.launched())
+        path.unlink()
+        path.mkdir()
+        for tab in self.backend_paths():
+            result = self.spawn('w1', str(self.brief), '--backend', 'glm', **tab)
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('regular file', result.stderr)
+            self.assertIsNone(self.launched())
 
     def test_values_with_apostrophes_arrive_intact_and_run_nothing(self):
         marker = self.tmp / 'injected'
@@ -603,8 +867,8 @@ exit 0
         self.assertEqual(Path(launched['cwd']).resolve(), self.cwd.resolve())
         self.assertEqual(self.tmux_log(), '')
         # A worker is no child of the lead: the lead's session markers never reach it.
-        self.assertFalse(MARKERS & set(launched['env']), launched['env'])
-        self.assertIn('CLAUDE_CODE_EXECPATH', launched['env'])
+        self.assertFalse(MARKERS & set(launched['env_names']), launched['env_names'])
+        self.assertIn('CLAUDE_CODE_EXECPATH', launched['env_names'])
         self.assertFalse((self.state / 'wt.log').exists(), 'the tab was shown a second time')
         # Registered (sessions/9.json): the lead is told to subscribe, and no warning.
         (self.state / 'claude.json').unlink()
@@ -730,6 +994,52 @@ exit 0
         self.assertIn('lead?[2J?dir/BEHAVIOUR.md', line)
         # Display sanitization must preserve the actual path handed to Claude.
         self.assertIn(self.physical(self.cwd / 'BEHAVIOUR.md'), self.launched()['argv'])
+
+    def test_a_backend_reaches_the_worker_quoted_on_both_paths(self):
+        # The file's variables reach claude's environment intact, CRLF line ends included, and
+        # a value that would end its quoting runs nothing. The tmux path runs on POSIX only.
+        marker = self.tmp / 'injected'
+        token = "to'k$(touch %s)'en" % marker
+        backend = self.backend_file('# GLM\r\nANTHROPIC_BASE_URL=https://backend.invalid\r\nANTHROPIC_AUTH_TOKEN=%s\r\n'
+                                    'ANTHROPIC_DEFAULT_OPUS_MODEL=glm-x' % token)
+        expected = {'ANTHROPIC_BASE_URL': 'https://backend.invalid', 'ANTHROPIC_AUTH_TOKEN': token,
+                    'ANTHROPIC_DEFAULT_OPUS_MODEL': 'glm-x'}
+
+        def check(result):
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            launched = self.launched()
+            self.assertEqual({k: launched['env'].get(k) for k in expected}, expected)
+            # On the Windows tab path the worker also gets the merged --settings file (state hooks).
+            argv = launched['argv']
+            if '--settings' in argv:
+                at = argv.index('--settings')
+                argv = argv[:at] + argv[at + 2:]
+            self.assertEqual(argv[-6:], ['-n', 'w1', '--model', 'm', '--effort', 'high'])
+            self.assertFalse(marker.exists(), 'a backend value ran as shell')
+            self.assertNotIn(token, result.stdout + result.stderr)
+            (self.state / 'claude.json').unlink()
+        if not WINDOWS:
+            check(self.spawn('w1', str(self.brief), '--backend', 'glm'))
+        for name, body in (('uname', '#!/bin/sh\necho MINGW64_NT-10.0-26200\n'), ('cygpath', CYGPATH),
+                           ('wt-tab', WT_TAB), ('ps-stub', '#!/bin/sh\n[ ! -f "$SPAWN_STATE/claude.json" ] || '
+                                                          'printf "8 claude.exe -n w1\\r\\n"\n')):
+            if WINDOWS and name == 'cygpath':
+                continue
+            (self.bin / name).write_text(body)
+            (self.bin / name).chmod(0o755)
+        config = self.tmp / 'config'
+        (config / 'sessions').mkdir(parents=True)
+        (config / 'sessions' / '8.json').write_text('{}')
+        tab = dict(KIT_WT=str(self.bin / 'wt-tab'), KIT_PS=str(self.bin / 'ps-stub'), CLAUDE_CONFIG_DIR=str(config))
+        check(self.spawn('w1', str(self.brief), '--backend', 'glm', **tab))
+        # A file without the endpoint is refused before any session, and prints no value.
+        backend.write_text('ANTHROPIC_AUTH_TOKEN=%s\n' % token)
+        result = self.spawn('w1', str(self.brief), '--backend', 'glm', **tab)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('sets no ANTHROPIC_BASE_URL', result.stderr)
+        self.assertNotIn(token, result.stderr)
+        self.assertIsNone(self.launched())
+
 
     def assert_refused(self, brief):
         result = self.spawn('w2', str(brief))
@@ -913,7 +1223,7 @@ exit 0
         script = (self.state / 'tmux-script').read_text()
         self.assertIn('exec env -u CLAUDE_CODE_CHILD_SESSION ', script)
         self.assertIn(' claude ', script)
-        env = self.launched()['env']
+        env = self.launched()['env_names']
         self.assertFalse(MARKERS & set(env), env)
         self.assertIn('CLAUDE_CODE_EXECPATH', env)
 

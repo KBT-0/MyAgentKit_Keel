@@ -7,13 +7,28 @@ nothing in this file is part of its prompt.
 ## Running it
 
 ```
-./scripts/review.sh [--uncommitted | --base <ref> | --commit <sha>] [--reviewer codex|claude] [--fallback]
+./scripts/review.sh [--uncommitted | --base <ref> | --commit <sha>] [--reviewer codex|claude] [--fallback] [--backend NAME]
 ```
 
 It collects the change set with git, hands it to a REVIEWER in a throwaway copy, carrying the
 priority order of `docs/REVIEW_GATE.md`, archives the report as evidence under
 `docs/reviews/<UTC-timestamp>-<random>-<reviewer>-review.md` and prints it. Omitting
 `--reviewer` uses the one configured during setup at the top of `scripts/review.sh`.
+
+**A second Claude-compatible backend.** `--backend NAME` (or `MYAGENTKIT_BACKEND=NAME`; the
+flag wins) runs the Claude reviewer against the endpoint that `.myagentkit/backends/NAME.env`
+names (`docs/DEV_SETUP.md`, section 3). The backend must be a regular UTF-8 file of at most
+64 KiB, Git-ignored and untracked. Merge `.myagentkit/backends/` into the root ignore rules
+when upgrading, and preserve existing files locally before untracking them. The loader
+refuses unsafe storage before launch, without printing any configured value.
+The file's variables reach that review's Claude CLI
+only, in place of any inherited `ANTHROPIC_*` variable. The file's model is the pin that
+`modelUsage` attests. The evidence header records `backend NAME, model M`, and the usage
+record carries `backend`, which `usage_summary.py` shows. The sandbox flags stay the same. The
+reviewer identity is `claude@NAME`, so a patch Claude wrote may be reviewed by `claude@glm`,
+and the chain record counts it as another reviewer. The models differ, but the harness and
+the prompt are the same: {{OWNER_NAME}} decides whether that is decorrelated enough to count
+as the second model.
 
 Diff collection disables Git text conversion and external diff commands so repository
 configuration cannot replace source with a filtered rendering. The checkout fingerprint

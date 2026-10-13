@@ -166,7 +166,7 @@ POSIX signal-mask, process-group, FIFO and resource-limit cases report NOT RUN o
 Linux and macOS CI run them. Each platform enforces a minimum of executed tests per suite;
 declared platform skips do not count, and unexpected skips fail the self-test.
 
-Merge `.myagentkit/`
+Merge `.myagentkit/` (including `.myagentkit/backends/`)
 into the root ignore rules. Also merge the raw review/handoff archive exclusions and final
 summary re-include from the kit's `core/.gitignore`. The adapters refuse to launch if
 private storage is not ignored or raw records are already tracked. Preserve any existing
@@ -181,6 +181,60 @@ Verify it end to end before trusting it — one real invocation, on a small diff
 
 A stub or a dry run does not count. A wrapper validated only against a fake CLI is a wrapper
 that has never met the real contract (`docs/GOTCHAS.md`).
+
+**Optional: a second Claude-compatible backend.**
+
+The Claude CLI can talk to another provider's Anthropic-compatible endpoint, such as GLM's.
+A backend is one regular UTF-8 file, `.myagentkit/backends/NAME.env`, at most 64 KiB,
+with one `KEY=VALUE` per line. It must be Git-ignored and untracked; both review and worker
+launch refuse a file that fails either check. Leading and trailing whitespace is stripped;
+blank lines (including whitespace-only lines) and lines starting with `#` are skipped.
+Only these keys are accepted:
+
+```sh
+# .myagentkit/backends/glm.env (the provider's documentation names the URL and the models)
+ANTHROPIC_BASE_URL=<the provider's Anthropic-compatible URL>
+ANTHROPIC_AUTH_TOKEN=<your API key for that provider>
+ANTHROPIC_DEFAULT_OPUS_MODEL=<the provider's model id>
+ANTHROPIC_DEFAULT_SONNET_MODEL=<the provider's model id>
+ANTHROPIC_DEFAULT_HAIKU_MODEL=<the provider's model id>
+# Optional: the model the review is pinned to; without it the OPUS model is the pin.
+ANTHROPIC_MODEL=<the provider's model id>
+```
+
+The token stays in this ignored, untracked file. Bootstrap installs the rules from
+`core/.gitignore`; after sync, merge those rules into the project's own `.gitignore` and
+preserve any existing backend files locally before removing them from Git's index.
+Never export the token in your shell profile. Then run
+`./scripts/review.sh --uncommitted --reviewer claude --backend glm`, or set
+`MYAGENTKIT_BACKEND=glm` for the run. A file without a nonempty `ANTHROPIC_AUTH_TOKEN`,
+`ANTHROPIC_BASE_URL`, or a model fails the review before launch.
+An existing project gets `--backend` only from the updated `review.sh` (the upgrade above); an older `review.sh` keeps working without it.
+`scripts/spawn_worker.sh --backend glm` starts a Claude worker session on the same backend.
+The worker reads the file at start, replacing every inherited `ANTHROPIC_*` variable;
+the terminal script and tmux launch command carry the file path, never its token.
+Both paths clear the Claude credential and provider controls listed in `BACKEND_CLEAR_KEYS`
+in `review_dispatch.py`. Codex reviews ignore `--backend` and `MYAGENTKIT_BACKEND` with a notice.
+With `--backend`, worker `--model` must name the provider's model id or a mapped alias,
+such as `opus` with `ANTHROPIC_DEFAULT_OPUS_MODEL` set. A `claude-` model id is refused.
+The CLI's `--model` flag overrides `ANTHROPIC_MODEL`.
+The stored claude.ai login and `apiKeyHelper` cannot be removed from the environment.
+With a backend, the CLI still prefers `ANTHROPIC_AUTH_TOKEN` for authentication.
+User or managed settings can reintroduce environment values; verify settings before live backend use.
+Claude reviews deny reads of `.myagentkit/backends` through tool permissions and the Bash sandbox.
+The Codex review adapter uses legacy `workspace-write`, which has no per-path read-deny knob.
+On Codex installations supporting managed read denies, administrators should add this to `requirements.toml`:
+
+```toml
+[permissions.filesystem]
+deny_read = ["**/.myagentkit/backends", "**/.myagentkit/backends/**"]
+```
+
+The kit cannot install administrator policy. Without it, Codex can read a backend file by absolute path.
+Do not claim that the throwaway copy alone prevents those reads.
+See the [Codex configuration reference](https://developers.openai.com/codex/config-reference).
+See [Claude environment precedence](https://code.claude.com/docs/en/env-vars)
+and [sandbox filesystem rules](https://code.claude.com/docs/en/sandboxing).
 
 **Optional: the vendor plugin for your host agent.**
 

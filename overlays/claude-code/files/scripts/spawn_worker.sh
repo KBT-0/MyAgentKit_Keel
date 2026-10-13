@@ -14,7 +14,10 @@
 # must fit in 259 characters too, including the checkout's .myagentkit/workers folder.
 #
 # Usage: spawn_worker.sh NAME BRIEF_FILE --model M --effort LEVEL [--settings JSON_OR_FILE]
-#                        [--allowed-tools LIST] [--worktree] [--batch]
+#                        [--allowed-tools LIST] [--worktree] [--batch] [--backend NAME]
+#
+# --backend NAME starts the worker on the Anthropic-compatible endpoint that
+# .myagentkit/backends/NAME.env in the current folder names (docs/DEV_SETUP.md, section 3).
 #
 # Once the worker has its brief, its session is SHOWN: show_workers.sh opens a terminal tab
 # attached to it, because a session nobody sees can wait on a dialog for hours. --batch skips
@@ -107,7 +110,7 @@ ctl "brief path" "$brief"
 [ -n "$windows" ] || command -v tmux >/dev/null || die "tmux is not installed"
 command -v claude >/dev/null || die "claude is not on PATH"
 
-model=""; settings=""; tools=""; worktree=""; effort=""; batch=""
+model=""; settings=""; tools=""; worktree=""; effort=""; batch=""; backend=""
 # Git for Windows' dirname handles both separators, including mixed paths such as D:/p\scripts\x.sh.
 case $0 in *'\'*) kit=$(dirname -- "$0") ;; */*) kit=${0%/*} ;; *) kit=. ;; esac
 while [ $# -gt 0 ]; do
@@ -118,6 +121,7 @@ while [ $# -gt 0 ]; do
     --worktree)      worktree=1; shift ;;
     --effort)        effort=$2; shift 2 ;;
     --batch)         batch=1; shift ;;
+    --backend)       backend=$2; shift 2 ;;
     *) die "unknown option: $1" ;;
   esac
 done
@@ -165,6 +169,56 @@ if [ "${MYAGENTKIT_NO_BEHAVIOUR:-}" != 1 ]; then
     if [ -f "$f" ]; then behaviour=$f; break; fi
   done
 fi
+# The existing Python selector is also used by the backend reader on either platform.
+if python3 -I -c '' </dev/null >/dev/null 2>&1; then kit_python=python3
+elif python -I -c '' </dev/null >/dev/null 2>&1; then kit_python=python
+else kit_python="py -3"; fi   # unquoted at every use
+# Validate here, then read again in the child at start. The launch script/command holds
+# only the reader and paths, never backend values. Both entry points use load_backend's
+# grammar, privacy checks, regular-file check and bounded read.
+if [ -n "$backend" ]; then
+  case "$model" in claude-*) die "--backend requires a backend model id or a mapped alias, not a claude- model" ;; esac
+  backend_repo=$dir
+  backend_scripts=$(CDPATH= cd -P -- "$kit" && pwd -P && echo x) || die "cannot resolve the review companion folder"
+  backend_scripts=${backend_scripts%"${nl}x"}
+  backend_reader='if 1:
+    import os, shlex, subprocess, sys
+    from pathlib import Path
+    if os.name == "nt":
+        sys.argv[1:3] = [subprocess.check_output(["cygpath", "-m", p], text=True).rstrip("\r\n")
+                         for p in sys.argv[1:3]]
+    sys.path.insert(0, sys.argv[1])
+    from review_dispatch import load_backend, BACKEND_CLEAR_KEYS
+    try:
+        values, model = load_backend(Path(sys.argv[2]), sys.argv[3])
+    except (OSError, ValueError) as error:
+        print("spawn_worker: " + str(error), file=sys.stderr)
+        sys.exit(1)
+    if len(sys.argv) > 4:
+        # Captured and evaluated only in the child shell, never put in a launch argument.
+        # Read raw shell names: Windows os.environ uppercases them, so an unset generated
+        # from it missed an inherited mixed-case name in Git Bash.
+        raw = sys.stdin.buffer.read()
+        if not raw.endswith(b"\0"):
+            print("spawn_worker: cannot read the child environment names", file=sys.stderr)
+            sys.exit(1)
+        keys = []
+        for entry in raw.split(b"\0"):
+            key = os.fsdecode(entry.partition(b"=")[0])
+            match = key.upper() if os.name == "nt" else key
+            if match.startswith("ANTHROPIC_") or match in BACKEND_CLEAR_KEYS:
+                keys.append(key)
+        print("unset " + " ".join(shlex.quote(k) for k in keys))
+        for key, value in values.items():
+            print("export " + key + "=" + shlex.quote(value))'
+  $kit_python -I -c "$backend_reader" "$backend_scripts" "$backend_repo" "$backend" || exit 1
+fi
+backend_command() {
+  read_cmd="env -0 | $kit_python -I -c $(q "$backend_reader") $(q "$backend_scripts") $(q "$backend_repo") $(q "$backend") export"
+  # Python ends after reading; the child shell exports the result and execs the TUI, so
+  # no waiting Python process can intercept the worker's Ctrl-C.
+  printf '%s' "sh -c $(q "set -e; backend_values=\$($read_cmd) || exit 1; eval \"\$backend_values\"; unset backend_values; exec $1")"
+}
 # --settings is inline JSON or a file. The tool starts in the worktree, so a relative file is
 # made absolute here, against the caller's folder: resolved there, an untracked settings file
 # was missing and a tracked one of the same name was loaded instead. A relative value that is
@@ -251,9 +305,6 @@ instruction="Read $(q "$brief") and follow it. Do not ask questions in this pane
 # KIT_PS names another lister (the kit's tests), printing "<pid> <command line>" lines as this
 # one does. A command line Windows does not show (another user's process) names nothing. A
 # lister that fails prints its words instead and returns 2.
-if python3 -I -c '' </dev/null >/dev/null 2>&1; then kit_python=python3
-elif python -I -c '' </dev/null >/dev/null 2>&1; then kit_python=python
-else kit_python="py -3"; fi   # unquoted at every use
 sessions() {
   out=$(${KIT_PS:-powershell.exe -NoProfile -NonInteractive -Command} \
     "Get-CimInstance Win32_Process -Filter \"Name='claude.exe' or Name='node.exe'\" | ForEach-Object { \"\$(\$_.ProcessId) \$(\$_.CommandLine)\" }" \
@@ -355,8 +406,10 @@ if s:
   # pass through wt.exe. A claude that ends within ten seconds of its own start, whatever its
   # status, failed to start: the tab then waits for Enter, so its error stays on screen.
   tab=$(mktemp) || die "cannot write the tab's script"
+  tab_cmd="$unmark claude $(q "$instruction") ${cmd#claude }"
+  [ -z "$backend" ] || tab_cmd=$(backend_command "$tab_cmd")
   printf '%s\n' 'rm -f -- "$0"' "cd $(q "$dir") || exit 1" \
-    "t=\$(date +%s); $unmark claude $(q "$instruction") ${cmd#claude }; s=\$?; [ \$((\$(date +%s) - t)) -gt 10 ] || { echo \"claude ended at once (exit \$s); press Enter to close\"; read -r _; }" \
+    "t=\$(date +%s); $tab_cmd; s=\$?; [ \$((\$(date +%s) - t)) -gt 10 ] || { echo \"claude ended at once (exit \$s); press Enter to close\"; read -r _; }" \
     'exit 0' > "$tab" || die "cannot write the tab's script: $tab"
   "$wt" -w 0 new-tab --title "$(semi "$name")" "$(semi "$bash")" -l "$(semi "$(cygpath -w "$tab")")" ||
     { rm -f -- "$tab"; die "$wt could not open a tab for '$name'"; }
@@ -396,6 +449,7 @@ fi
 # `cd` first: tmux hands new sessions the PWD of whichever client last created one, and
 # the tool exits with "the current working directory was deleted" when that folder (a
 # removed worktree, say) is gone, whatever -c says.
+[ -z "$backend" ] || cmd=$(backend_command "$cmd")
 # The reserved script removes itself; tmux receives two plain words for its default shell.
 printf '%s\n' 'rm -f -- "$0"' "cd $(q "$dir") && exec $unmark $cmd" > "$run" || { rm -f -- "$run"; die "cannot write the session's script: $run"; }
 # Keep ownership pending until tmux confirms the session, including in signal cleanup.

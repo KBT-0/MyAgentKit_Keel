@@ -32,6 +32,8 @@ __pycache__/
 /QUESTION-*.md
 *.md.question.md
 /.myagentkit/
+# Backend credentials must be ignored and untracked, like private usage records.
+/.myagentkit/backends/
 # Raw review evidence holds the whole diff and the reviewing CLI's own output. It stays
 # local; publish a deliberately scrubbed `-summary.md` instead (re-included at the bottom).
 /docs/reviews/????????T??????Z-*.md

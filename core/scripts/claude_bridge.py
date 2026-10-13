@@ -32,9 +32,11 @@ VERDICTS = {"Accept", "Accept with Manual Checks", "Reject"}
 # Review archives are excluded from the next review's scope so a report does not recursively
 # embed its predecessors. The pattern covers EVERY reviewer's evidence, not just this
 # adapter's: when the roles swap, the other direction's reports sit in the same folder.
+# Private usage records and backend credentials also stay outside every review scope.
 ARCHIVES = (":(exclude)docs/reviews/*-review.md",
             ":(exclude)docs/reviews/*-claude-review.json",
-            ":(exclude)docs/handoffs/*-claude-propose.json", ":(exclude).myagentkit/usage/**")
+            ":(exclude)docs/handoffs/*-claude-propose.json", ":(exclude).myagentkit/usage/**",
+            ":(exclude).myagentkit/backends/**")
 
 # One wording for both reviewers. Asked only for "file, line, impact", a reviewer reported a
 # different top few on every fresh pass: one medium-size change took more than ten Reject
@@ -67,7 +69,8 @@ REVIEW_READS = (
 # instead of running Bash unsandboxed. --restricted keeps --settings and drops the user,
 # project and local settings files, so a checkout cannot widen it.
 SANDBOX = {"sandbox": {"enabled": True, "failIfUnavailable": True, "allowUnsandboxedCommands": False,
-                       "network": {"allowedDomains": [], "strictAllowlist": True}}}
+                       "network": {"allowedDomains": [], "strictAllowlist": True},
+                       "filesystem": {"denyRead": [".myagentkit/backends"]}}}
 DIFF_LIMIT = 400_000  # bytes of diff, plus any carried rounds, in one review prompt
 
 
@@ -638,7 +641,7 @@ def snapshot(repo: Path, scope: str, reference: str | None) -> tuple[str, str, s
     for raw in git(repo, "ls-files", "--others", "--exclude-standard", "-z").split(b"\0"):
         if raw:
             name = os.fsdecode(raw)
-            if name.startswith(".myagentkit/usage/"):
+            if name.startswith((".myagentkit/usage/", ".myagentkit/backends/")):
                 continue
             if (re.fullmatch(r"docs/reviews/\d{8}T\d{6}Z-.+\.md", name) and not name.endswith('-summary.md')) \
                     or re.fullmatch(r"docs/handoffs/\d{8}T\d{6}Z-[a-f0-9]{12}-claude-propose\.json", name):
@@ -916,7 +919,8 @@ def render(stamp: str, evidence: dict, args) -> str:
     """
     result = evidence.get("result") or {}
     completed = evidence["status"] == "completed"
-    header = {"reviewer": "claude", "model": args.model,
+    model = "backend %s, model %s" % (args.backend, args.model) if args.backend else args.model
+    header = {"reviewer": "claude@" + args.backend if args.backend else "claude", "model": model,
               "model_attested": "yes (CLI modelUsage)" if completed else "no (run did not complete)",
               "effort": args.effort, "sandbox": "throwaway copy, " + (
                   "Claude Code Bash sandbox: writes to the copy and the temporary directory, "
@@ -962,8 +966,15 @@ def claude_command(cli: str, args, sandboxed: bool) -> tuple[list[str], list[str
                "--safe-mode", "--restricted", "--strict-mcp-config", "--mcp-config",
                '{"mcpServers":{}}', "--no-session-persistence",
                "--max-turns", str(args.max_turns)]
+    private = str((args.repo / ".myagentkit/backends").resolve()).replace("\\", "/")
+    settings = json.loads(json.dumps(SANDBOX)) if bash else {}
     if bash:
-        command += ["--allowed-tools", "Bash", "--settings", json.dumps(SANDBOX)]
+        settings["sandbox"]["filesystem"]["denyRead"].append(private)
+        command += ["--allowed-tools", "Bash"]
+    # Tool denies also apply on Windows, where Bash sandboxing is unavailable.
+    settings["permissions"] = {"deny": ["Read(.myagentkit/backends/**)",
+                                         "Read(//" + private.lstrip("/") + "/**)"]}
+    command += ["--settings", json.dumps(settings)]
     if args.max_budget_usd is not None:
         command += ["--max-budget-usd", str(args.max_budget_usd)]
     return command, tools
@@ -983,7 +994,7 @@ def cli_readiness(environ=os.environ) -> str | None:
     agent_process refuses for the review's quoted arguments.
     """
     probe = argparse.Namespace(mode="review", model="claude-probe", effort="low", max_turns=1,
-                               max_budget_usd=1.0)
+                               max_budget_usd=1.0, repo=Path.cwd())
     flags = sorted({part for part in claude_command("claude", probe, sandboxed=True)[0]
                     if part.startswith("--")} - HIDDEN_FLAGS)
     # One budget for every probe: each hung claude on PATH once cost doctor 60 more seconds.
@@ -1089,6 +1100,8 @@ def main(argv=None, result_sink=None) -> int:
     parser.add_argument("--task-id", default=os.environ.get("MYAGENTKIT_TASK_ID"),
                         help="Stable task label for usage accounting across review rounds")
     parser.add_argument("--model", default="claude-opus-5")
+    parser.add_argument("--backend", help="The backend whose environment the caller set "
+                        "(review_dispatch.py); recorded, and its --model need not be claude-")
     parser.add_argument("--effort", choices=["low", "medium", "high", "xhigh", "max"], default="high")
     parser.add_argument("--timeout", type=int,
                         help="Total wall-clock seconds; defaults to %d for review, 600 for propose"
@@ -1106,7 +1119,9 @@ def main(argv=None, result_sink=None) -> int:
     try:
         if os.environ.get("MYAGENTKIT_DELEGATION_DEPTH", "0") != "0":
             raise BridgeError("nested delegation is disabled")
-        if not args.model.startswith("claude-") or any(c.isspace() for c in args.model):
+        if args.backend and not os.environ.get("ANTHROPIC_BASE_URL"):
+            raise BridgeError("--backend requires ANTHROPIC_BASE_URL")
+        if not (args.backend or args.model.startswith("claude-")) or any(c.isspace() for c in args.model):
             raise BridgeError("use an explicit Claude model id, not a moving alias")
         max_timeout = agent_process.MAX_REVIEW_TIMEOUT if args.mode == "review" else 3600
         max_turns = agent_process.MAX_REVIEW_TURNS if args.mode == "review" else 100
@@ -1307,7 +1322,7 @@ def main(argv=None, result_sink=None) -> int:
                  "resolved": resolved, "head": head, "behaviour": "on" if behaviour else "off",
                  "behaviour_sha256": behaviour_sha256,
                  "diff_sha256": evidence["diff_sha256"]}, execution, evidence["status"], reason,
-                archived_path, published.encode() if archived_path else None)
+                archived_path, published.encode() if archived_path else None, backend=args.backend)
             recovery = usage["recovery"]
             if usage["failure_kind"] == "evidence_unavailable":
                 evidence.update(status="failed", error="Review evidence was lost before it was recorded")
