@@ -178,19 +178,32 @@ Windows `Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.C
 Linux `ps -eo pid,args | grep -F -- '<checkout>'`; macOS `ps -eww -o pid,args | grep -iF -- '<checkout>'` (APFS ignores case).
 The listing finds jobs whose arguments name the checkout (a `codex exec` with a brief path, a worker with its worktree). Ignore the listing's own rows: the `grep`, and the shell or PowerShell that runs the listing when an agent runs it through a tool (on Windows, the `powershell` process whose command line holds the query).
 The command-line listing is only a shortcut for the jobs it can see. The project's gate holds
-`.git/check.lock` and publishes `.git/check-selftest`; find the lock holder as described under
-"A build server the gate started keeps the gate lock" above. Only a review's own reviewer process
-holds no checkout lock.
+the lock at `git rev-parse --git-path check.lock` and publishes `check-selftest` beside it;
+find the lock holder as described under "A build server the gate started keeps the gate lock" above.
+A review holds no checkout lock; read its chain record as follows.
 For reviews, read the highest-numbered `<chain>-N.json` in `.myagentkit/usage/chains/`; nothing in
 the record names its process. `<chain>-0.json` always stays pending and is not evidence of a
 running review. A review is finished only when that latest record has status `completed`, or
-status `failed` with no further attempt possible (`fallback_blocked` set, two attempts recorded,
+status `failed` with no further attempt possible (the attempt count equals the number of possible
+attempts, a `failure_kind` outside the dispatcher's unavailable set, `fallback_blocked` set,
 or `fallback_allowed` false). A failed first attempt can still be followed by a running fallback.
 Use the mtime of `<chain>-0.json` as the review start time. The number of possible attempts is
-one without `--fallback`, two with it. After a cut-off, treat the review as running for
+one without `--fallback`, two with it. After a cut-off, treat the review as running for at least
 `REVIEW_TIMEOUT_SECONDS` times the number of possible attempts plus overhead (about 4 h with
-7200 s and `--fallback`); do not edit, merge or self-test in that worktree until this window has
-passed or the latest record shows the review is finished as above.
+7200 s and `--fallback`), unless the latest record shows it is finished as above.
+This window is a lower bound, not proof that an orphaned reviewer stopped.
+After the window, the lead still confirms completion in the process listing.
+On POSIX, the reviewer runs in its own session; a supervisor killed with `SIGKILL` cannot enforce its timeout.
+Look for a `codex` or `claude` process whose arguments name the throwaway copy under the temp folder
+(`myagentkit-codex-*` or `myagentkit-review-*`). Use the same listing commands with the copy path;
+confirm its working directory if the arguments omit that path.
+If a reviewer survives, wait for it or ask the owner before starting any heavy job.
+Never start a heavy job beside a survivor, or edit or merge its worktree.
+The kit's own self-test (`scripts/check.sh` → `scripts/check_kit.py`) holds no checkout lock
+and publishes no checkout self-test marker. It is visible only in the process listing:
+look for a `python` process whose arguments name `check_kit.py` under the checkout.
+If those arguments are relative, confirm the checkout through the process's working directory.
+After a cut-off, look for this self-test before resuming heavy work; wait for any survivor or ask the owner.
 A checkout path containing an apostrophe cannot go inside the single quotes as is; on Linux/macOS write it as `'\''` or put the path in a variable and match "$checkout";
 on Windows double the apostrophe inside the PowerShell single-quoted string.
 The Windows match ignores case because Windows paths do; search for every spelling the launching shell may have used: `C:/x`, `C:\x` and Git Bash's `/c/x` on Windows, the `pwd -P` form of a symlinked checkout on Linux and macOS, and `/private/var` for `/var` on macOS.

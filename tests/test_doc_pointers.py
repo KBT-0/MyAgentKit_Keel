@@ -103,15 +103,26 @@ class SectionPointerTests(unittest.TestCase):
                      "macOS `ps -eww -o pid,args | grep -iF -- '<checkout>'`",
                      "Ignore the listing's own rows: the `grep`, and the shell or PowerShell that runs the listing",
                      'The command-line listing is only a shortcut for the jobs it can see',
-                     "The project's gate holds `.git/check.lock` and publishes `.git/check-selftest`; find the lock holder as described under ",
+                     "The project's gate holds the lock at `git rev-parse --git-path check.lock` and publishes `check-selftest` beside it; find the lock holder as described under ",
                      "A build server the gate started keeps the gate lock",
-                     "Only a review's own reviewer process holds no checkout lock.",
+                     "A review holds no checkout lock; read its chain record as follows.",
+                     "The kit's own self-test (`scripts/check.sh` → `scripts/check_kit.py`) holds no checkout lock and publishes no checkout self-test marker.",
+                     'It is visible only in the process listing: look for a `python` process whose arguments name `check_kit.py` under the checkout.',
+                     "If those arguments are relative, confirm the checkout through the process's working directory.",
+                     'After a cut-off, look for this self-test before resuming heavy work; wait for any survivor or ask the owner.',
                      'For reviews, read the highest-numbered `<chain>-N.json` in `.myagentkit/usage/chains/`; nothing in the record names its process.',
                      '`<chain>-0.json` always stays pending and is not evidence of a running review.',
-                     'A review is finished only when that latest record has status `completed`, or status `failed` with no further attempt possible (`fallback_blocked` set, two attempts recorded, or `fallback_allowed` false).',
+                     'A review is finished only when that latest record has status `completed`, or status `failed` with no further attempt possible (the attempt count equals the number of possible attempts, a `failure_kind` outside the dispatcher\'s unavailable set, `fallback_blocked` set, or `fallback_allowed` false).',
                      'The number of possible attempts is one without `--fallback`, two with it.',
                      'Use the mtime of `<chain>-0.json` as the review start time.',
-                     'After a cut-off, treat the review as running for `REVIEW_TIMEOUT_SECONDS` times the number of possible attempts plus overhead (about 4 h with 7200 s and `--fallback`); do not edit, merge or self-test in that worktree until this window has passed or the latest record shows the review is finished as above.',
+                     'After a cut-off, treat the review as running for at least `REVIEW_TIMEOUT_SECONDS` times the number of possible attempts plus overhead (about 4 h with 7200 s and `--fallback`), unless the latest record shows it is finished as above.',
+                     'This window is a lower bound, not proof that an orphaned reviewer stopped.',
+                     'After the window, the lead still confirms completion in the process listing.',
+                     'On POSIX, the reviewer runs in its own session; a supervisor killed with `SIGKILL` cannot enforce its timeout.',
+                     'Look for a `codex` or `claude` process whose arguments name the throwaway copy under the temp folder (`myagentkit-codex-*` or `myagentkit-review-*`).',
+                     'Use the same listing commands with the copy path; confirm its working directory if the arguments omit that path.',
+                     'If a reviewer survives, wait for it or ask the owner before starting any heavy job.',
+                     'Never start a heavy job beside a survivor, or edit or merge its worktree.',
                      "Git Bash's `/c/x`", 'the `pwd -P` form of a symlinked checkout', '`/private/var` for `/var`',
                      "A checkout path containing an apostrophe cannot go inside the single quotes as is; on Linux/macOS write it as `'\\''` or put the path in a variable and match \"$checkout\"; on Windows double the apostrophe inside the PowerShell single-quoted string.",
                      'The Windows match ignores case because Windows paths do'):
@@ -120,7 +131,8 @@ class SectionPointerTests(unittest.TestCase):
         self.assertNotIn("grep -v -F 'grep -F'", gotchas)
         self.assertNotIn('every other row is a survivor', gotchas)
         self.assertNotIn('It ignores its own rows', gotchas)
-        self.assertNotIn("the kit's own `check.sh` holds no checkout lock", gotchas)
+        self.assertNotIn("Only a review's own reviewer process holds no checkout lock.", gotchas)
+        self.assertNotIn('`.git/check.lock` and publishes `.git/check-selftest`', gotchas)
         self.assertNotIn('the chain record has a completed or failed attempt', gotchas)
         self.assertNotIn('Never reduce the reviews or deliberately run the reviewers one after the other', budget_rule)
         self.assertNotIn('stop them with a reason', gotchas)
