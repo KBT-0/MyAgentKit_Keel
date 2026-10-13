@@ -22,7 +22,7 @@ DESTROYS = ('rm', 'mv', 'cp', 'kill', 'taskkill', 'pkill', 'git reset', 'git cle
 
 class OverlayPermissionsTests(unittest.TestCase):
     def setUp(self):
-        self.permissions = json.loads(SETTINGS.read_text())['permissions']
+        self.permissions = json.loads(SETTINGS.read_text(encoding='utf-8'))['permissions']
 
     def test_no_allowed_rule_names_a_command_that_destroys(self):
         for rule in self.permissions['allow']:
@@ -58,7 +58,7 @@ class OverlayPermissionsTests(unittest.TestCase):
             def git(*args, check=True):
                 return subprocess.run(['git', '-c', 'user.name=t', '-c', 'user.email=t@example.invalid',
                                        '-c', 'core.hooksPath=.git/hooks', *args], cwd=root, env=env,
-                                      capture_output=True, text=True, check=check, timeout=30)
+                                      capture_output=True, text=True, encoding='utf-8', check=check, timeout=30)
             git('init', '-q')
             (root / '.gitattributes').write_bytes(b'data.dat diff=probe\n')
             (root / 'data.dat').write_bytes(b'before\n')

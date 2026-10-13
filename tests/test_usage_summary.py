@@ -21,7 +21,7 @@ class UsageSummaryTests(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         self.repo = Path(tmp.name)
         subprocess.run(['git', 'init', '-q', str(self.repo)], check=True)
-        (self.repo / '.gitignore').write_text('.myagentkit/\ndocs/reviews/\n')
+        (self.repo / '.gitignore').write_text('.myagentkit/\ndocs/reviews/\n', encoding='utf-8')
         (self.repo / 'docs/reviews').mkdir(parents=True)
 
     def record(self, name, task, report=None, kind='review', callee='claude', model='opus',
@@ -47,11 +47,11 @@ class UsageSummaryTests(unittest.TestCase):
         for number, value in enumerate(('pending', status)):
             (chains / f'{chain_id}-{number}.json').write_text(json.dumps(
                 {'chain_id': chain_id, 'task_id': 'T', 'attempts': [{}] * number,
-                 'status': value, 'failure_kind': failure_kind if number else None}))
+                 'status': value, 'failure_kind': failure_kind if number else None}), encoding='utf-8')
 
     def summary(self, env=None):
         command = [sys.executable] + ([] if env else ['-I']) + [str(SCRIPT), '--repo', str(self.repo)]
-        result = subprocess.run(command, capture_output=True, text=True, env=env)
+        result = subprocess.run(command, capture_output=True, text=True, encoding='utf-8', env=env)
         self.assertEqual(result.returncode, 0, result.stderr)
         return result.stdout
 
@@ -105,9 +105,9 @@ class UsageSummaryTests(unittest.TestCase):
     def test_damaged_records_leave_the_rest_of_the_summary(self):
         self.record('g', 'T3', b'\xff\n| effort | high |\nVERDICT: Reject\n')
         usage = self.repo / '.myagentkit/usage'
-        (usage / 'truncated.json').write_text('{"invocation_id": "x"')
-        (usage / 'no-task.json').write_text(json.dumps({'invocation_id': 'y', 'task': None}))
-        (usage / 'no-id.json').write_text(json.dumps({'task': {'id': 'T9', 'kind': 'review'}}))
+        (usage / 'truncated.json').write_text('{"invocation_id": "x"', encoding='utf-8')
+        (usage / 'no-task.json').write_text(json.dumps({'invocation_id': 'y', 'task': None}), encoding='utf-8')
+        (usage / 'no-id.json').write_text(json.dumps({'task': {'id': 'T9', 'kind': 'review'}}), encoding='utf-8')
         out = self.summary()
         self.assertIn('Task T3: invocations=1 rounds=1 duration=1.000s rejects=1', out)
         self.assertIn('effort=high verdict=Reject', out)
@@ -121,11 +121,11 @@ class UsageSummaryTests(unittest.TestCase):
                 self.setUp()
                 self.record('healthy', 'healthy', b'VERDICT: Accept\n')
                 if site == 'record':
-                    (self.repo / '.myagentkit/usage/deep.json').write_text(nested)
+                    (self.repo / '.myagentkit/usage/deep.json').write_text(nested, encoding='utf-8')
                 elif site == 'chain':
                     self.record('deep', 'deep', b'VERDICT: Accept\n', chain='c1')
                     self.chain('c1', 'completed')
-                    (self.repo / '.myagentkit/usage/chains/c1-2.json').write_text(nested)
+                    (self.repo / '.myagentkit/usage/chains/c1-2.json').write_text(nested, encoding='utf-8')
                 else:
                     self.record('deep', 'deep', ('{"effort": %s}' % nested).encode())
                 out = self.summary()
@@ -142,10 +142,10 @@ class UsageSummaryTests(unittest.TestCase):
     def test_bad_chain_id_and_evidence_path_are_damaged_records(self):
         self.record('healthy', 'healthy', b'VERDICT: Accept\n')
         path = self.record('bad', 'damaged', b'VERDICT: Reject\n')
-        original = json.loads(path.read_text())
+        original = json.loads(path.read_text(encoding='utf-8'))
         for field, value in (('review_chain_id', ['c1']), ('evidence', 'bad\0path')):
             with self.subTest(field=field):
-                path.write_text(json.dumps(dict(original, **{field: value})))
+                path.write_text(json.dumps(dict(original, **{field: value})), encoding='utf-8')
                 out = self.summary()
                 self.assertIn('Task healthy: invocations=1 rounds=1', out)
                 self.assertIn('Unreadable records skipped: 1', out)
@@ -154,7 +154,7 @@ class UsageSummaryTests(unittest.TestCase):
     def test_every_consumed_field_rejects_invalid_values(self):
         self.record('healthy', 'healthy', b'VERDICT: Accept\n')
         path = self.record('bad', 'damaged', b'VERDICT: Reject\n')
-        original = json.loads(path.read_text())
+        original = json.loads(path.read_text(encoding='utf-8'))
         cases = [(field, []) for field in (
             'invocation_id', 'recorded_at', 'status', 'failure_kind', 'callee',
             'model_requested', 'review_chain_id', 'evidence', 'evidence_sha256', 'backend', 'task')]
@@ -164,7 +164,7 @@ class UsageSummaryTests(unittest.TestCase):
         cases += [('duration_ms', value) for value in ([], '1000', True, -1, float('nan'), float('inf'), 10 ** 400)]
         for field, value in cases:
             with self.subTest(field=field, value=value):
-                path.write_text(json.dumps(dict(original, **{field: value})))
+                path.write_text(json.dumps(dict(original, **{field: value})), encoding='utf-8')
                 out = self.summary()
                 self.assertIn('Task healthy: invocations=1 rounds=1', out)
                 self.assertIn('Unreadable records skipped: 1', out)

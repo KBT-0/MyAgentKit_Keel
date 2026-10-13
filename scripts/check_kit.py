@@ -75,7 +75,7 @@ ROOT = Path(__file__).resolve().parents[1]
 # The review self-test ships to projects with its own minimums; read them, never copy them.
 BRIDGE_MINIMUMS = next(
     (ast.literal_eval(node.value)
-     for node in ast.parse((ROOT / 'core/scripts/test_claude_bridge.py').read_text()).body
+     for node in ast.parse((ROOT / 'core/scripts/test_claude_bridge.py').read_text(encoding='utf-8')).body
      if isinstance(node, ast.Assign) and getattr(node.targets[0], 'id', None) == ('WINDOWS_SUITE_MINIMUMS' if os.name == 'nt' else 'SUITE_MINIMUMS')),
     None)
 if BRIDGE_MINIMUMS is None:
@@ -275,17 +275,22 @@ LOCALE_SUITES = ('test_working_mode', 'test_usage_summary', 'test_doc_pointers',
 
 
 def locale_matrix(folder=None, suites=LOCALE_SUITES, minimums=None):
-    """Run `suites` again under each locale a reviewer kept finding bugs in; a red one fails.
+    """Run each of `suites` again under each locale a reviewer kept finding bugs in; a red one fails.
 
     PYTHONUTF8=0 everywhere: Python turns UTF-8 mode on by itself under LC_ALL=C, which hid an
-    encoding-less open(). Windows keeps the host's ANSI code page (cp1252, cp1254). A POSIX host
-    also runs a Turkish UTF-8 locale (dotless i in a case fold) when it has one, NOT RUN when not.
+    encoding-less open(). An encoding-less open, read_text, write_text or text subprocess is an
+    error too (EncodingWarning, PEP 597), so the sensor bites on Windows, whose ANSI code page
+    (cp1252, or UTF-8 when the system option is on) decodes most bytes without complaint. A POSIX
+    host also runs a Turkish UTF-8 locale (dotless i in a case fold) when it has one, NOT RUN
+    when not. Skipped tests do not count toward a suite's minimum.
     """
     folder = Path(folder or ROOT / 'tests')
     minimums = minimums or REQUIRED_SUITES['tests']
-    cases = [('the ANSI code page', {})] if os.name == 'nt' else [('LC_ALL=C', {'LC_ALL': 'C', 'LANG': 'C'})]
-    if os.name != 'nt':
-        turkish = sorted(name for name in run(['locale', '-a']).split()
+    if os.name == 'nt':
+        cases = [('the ANSI code page with EncodingWarning an error', {})]
+    else:
+        cases = [('LC_ALL=C', {'LC_ALL': 'C', 'LANG': 'C'})]
+        turkish = sorted(name for name in run(['locale', '-a'], errors='replace').split()
                          if re.fullmatch(r'tr_TR\.utf-?8', name, re.IGNORECASE))
         if turkish:
             cases.append(('LC_ALL=' + turkish[0], {'LC_ALL': turkish[0], 'LANG': turkish[0]}))
@@ -294,15 +299,18 @@ def locale_matrix(folder=None, suites=LOCALE_SUITES, minimums=None):
     for label, extra in cases:
         env = {key: value for key, value in os.environ.items()
                if key not in ('PYTHONIOENCODING', 'LC_CTYPE', 'LC_ALL', 'LANG')}
-        env.update(extra, PYTHONUTF8='0')
-        result = subprocess.run([sys.executable, '-B', '-m', 'unittest', *suites], cwd=folder, env=env,
-                                capture_output=True, text=True, errors='replace', timeout=limit(600))
-        output = result.stdout + result.stderr
-        ran = re.search(r'^Ran (\d+) tests?', output, re.M)
-        need = sum(minimums[name] for name in suites)
-        if result.returncode or not ran or int(ran.group(1)) < need:
-            raise RuntimeError('the locale suites failed under %s (%s tests, %d required):\n%s'
-                               % (label, ran.group(1) if ran else 'no', need, output))
+        env.update(extra, PYTHONUTF8='0', PYTHONWARNDEFAULTENCODING='1', PYTHONWARNINGS='error::EncodingWarning')
+        for name in suites:
+            result = subprocess.run([sys.executable, '-B', '-m', 'unittest', name], cwd=folder, env=env,
+                                    capture_output=True, text=True, encoding='utf-8', errors='replace',
+                                    timeout=limit(600))
+            output = result.stdout + result.stderr
+            ran = re.search(r'^Ran (\d+) tests?', output, re.M)
+            skipped = re.search(r'^(?:OK|FAILED) \(.*skipped=(\d+)', output, re.M)
+            count = int(ran.group(1)) - int(skipped.group(1) if skipped else 0) if ran else 0
+            if result.returncode or count < minimums[name]:
+                raise RuntimeError('%s failed under %s (%d tests run, %d required):\n%s'
+                                   % (name, label, count, minimums[name], output))
     passed('the locale suites ran under %s' % ', '.join(label for label, _ in cases))
 
 
@@ -337,8 +345,8 @@ def path_without(path, drop, links):
 
 def check_release(root):
     """The README's bold release line must name the newest version in the changelog."""
-    readme = re.search(r'^\*\*(v\d+\.\d+)\.\*\*', (root / 'README.md').read_text(), re.M)
-    changelog = re.search(r'^## (v\d+\.\d+)(?=\s|$)', (root / 'CHANGELOG.md').read_text(), re.M)
+    readme = re.search(r'^\*\*(v\d+\.\d+)\.\*\*', (root / 'README.md').read_text(encoding='utf-8'), re.M)
+    changelog = re.search(r'^## (v\d+\.\d+)(?=\s|$)', (root / 'CHANGELOG.md').read_text(encoding='utf-8'), re.M)
     if not readme or not changelog or readme.group(1) != changelog.group(1):
         raise RuntimeError("README's bold version must match CHANGELOG's newest versioned heading")
 
@@ -355,7 +363,7 @@ def check_syntax(root):
     for path in root.rglob("*.py"):
         if ".git" not in path.parts:
             try:
-                ast.parse(path.read_text(), filename=str(path), feature_version=(3, 10))
+                ast.parse(path.read_text(encoding='utf-8'), filename=str(path), feature_version=(3, 10))
             except SyntaxError as error:
                 raise RuntimeError("%s is not Python 3.10 syntax: %s" % (path, error)) from error
     bash_5_2()  # the lint's prerequisite, on every host, whether or not a file needs it
@@ -500,7 +508,7 @@ def acceptance(self_test):
         for path in project.rglob("*"):
             if not path.is_file() or ".git" in path.parts or "setup" in path.parts:
                 continue
-            text = path.read_text()
+            text = path.read_text(encoding='utf-8')
             text = text.replace("{{BUILD_TEST_COMMAND}}", "test -f scripts/claude_bridge.py")
             text = text.replace("{{TOOLCHAIN_PATH_SETUP}}", "")
             text = re.sub(r"\{\{[A-Z0-9_]+\}\}", "fixture", text)
@@ -521,7 +529,7 @@ def acceptance(self_test):
                 # each case rewrites. Restored below; a failure discards the whole copy.
                 build = side / "build.sh"
                 gate = project / "scripts/check.sh"
-                original_gate = gate.read_text()
+                original_gate = gate.read_text(encoding='utf-8')
                 configured = 'build_test_cmd="test -f scripts/claude_bridge.py"'
                 if configured not in original_gate:
                     raise RuntimeError("the synthetic project's build command line was not found")
@@ -540,7 +548,7 @@ def acceptance(self_test):
                           # Real native review fixtures and Git startup take much longer
                           # than POSIX here. Keep a bound, scaled with concurrent units.
                           timeout=1200 if os.name == "nt" else 300).strip())
-                seen = log.read_text().split("==\n")[:-1]
+                seen = log.read_text(encoding='utf-8').split("==\n")[:-1]
                 if not seen or any(s != before for s in seen) or run(status, project) != before:
                     raise RuntimeError("check.sh --self-test changed the working tree:\n"
                                        + "".join(s for s in seen if s != before))
@@ -569,7 +577,7 @@ def acceptance(self_test):
                 # run, it is refused like any other.
                 build.write_text(f'cat .git/check.lock > "{side}/holder"\n')
                 run(["sh", "scripts/check.sh"], project, reason="CHECK: PASS", timeout=60)
-                marker = (side / "holder").read_text()
+                marker = (side / "holder").read_text(encoding='utf-8')
                 # The holder's pid on POSIX; a random token on native Windows.
                 if not (re.fullmatch("[0-9a-f]{32}", marker) if os.name == "nt" else marker.isdigit()):
                     raise RuntimeError(f"the lock file did not name its holder: {marker!r}")
@@ -679,7 +687,7 @@ def acceptance(self_test):
                     (project / name).unlink()
             # The build/test command alone gets the caller's locale back, set or unset.
             gate = project / "scripts/check.sh"
-            original_gate = gate.read_text()
+            original_gate = gate.read_text(encoding='utf-8')
             gate.write_text(original_gate.replace('build_test_cmd="test -f scripts/claude_bridge.py"',
                                                   'build_test_cmd=\'[ "${LC_ALL-unset}" = "$EXPECT_LC" ]\''))
             try:
@@ -788,7 +796,7 @@ def acceptance(self_test):
                 raise RuntimeError("the commit-msg case did not say the rule line is missing:\n" + out)
             if "  ok   — domain/web boundary gate rejects a forbidden import in an existing file" not in out:
                 raise RuntimeError("the existing-file boundary example did not run as a case:\n" + out)
-            if (src / "domain/existing.py").read_text() != "original\n":
+            if (src / "domain/existing.py").read_text(encoding='utf-8') != "original\n":
                 raise RuntimeError("the existing-file boundary example changed its target in the checkout")
             if run(["git", "status", "--porcelain"], project) != status:
                 raise RuntimeError("the existing-file boundary example changed the checkout's git status")
@@ -830,14 +838,14 @@ def posix_lock_cases(project, side, build, own_lock, gate):
                 if time.monotonic() > deadline:
                     raise RuntimeError("the killed gate's build never released the lock")
                 time.sleep(0.1)
-    marker = (side / "holder").read_text()
-    if (project / ".git/check.lock").read_text() != marker:
+    marker = (side / "holder").read_text(encoding='utf-8')
+    if (project / ".git/check.lock").read_text(encoding='utf-8') != marker:
         raise RuntimeError("the killed gate's pid was not left in the lock file")
     build.write_text("false\n")
     run(["sh", "scripts/check.sh"], project, expected=1, timeout=60,
         reason="FAIL [env]: GATE_BUILD_CMD_OVERRIDE is set",
         env=dict(os.environ, GATE_SELFTEST_NESTED=marker, GATE_LOCK_HELD=own_lock,
-                 GATE_LOCK_FD=(side / "fd").read_text().strip(),
+                 GATE_LOCK_FD=(side / "fd").read_text(encoding='utf-8').strip(),
                  GATE_BUILD_CMD_OVERRIDE="true"))
     passed("variables copied out of a gate killed with SIGKILL are refused")
     # Two gate runs sharing one build directory: the second must wait, not race.
@@ -967,9 +975,9 @@ def posix_lock_cases(project, side, build, own_lock, gate):
                              side / "no-python")
     if shutil.which("python3", path=no_python):
         raise RuntimeError("the PATH without python3 still finds one")
-    if 'toolchain_path=""' not in gate.read_text():
+    if 'toolchain_path=""' not in gate.read_text(encoding='utf-8'):
         raise RuntimeError("the synthetic project's toolchain_path line was not found")
-    gate.write_text(gate.read_text().replace('toolchain_path=""', f'toolchain_path="{tc}"'))
+    gate.write_text(gate.read_text(encoding='utf-8').replace('toolchain_path=""', f'toolchain_path="{tc}"'))
     run(["sh", "scripts/check.sh"], project, reason="CHECK: PASS", timeout=60,
         env=dict(os.environ, PATH=no_python))
     passed("a python3 found only through toolchain_path takes the gate lock")
@@ -1066,7 +1074,7 @@ def run_units(units, timing=False, parallel=None):
                 failed.append(name)
             summary.append("%7.1f s  %s%s" % (seconds, name, " (FAILED)" if code else ""))
             if timing_file and os.path.exists(timing_file):
-                summary += Path(timing_file).read_text().splitlines()
+                summary += Path(timing_file).read_text(encoding='utf-8').splitlines()
     if timing:
         print("TIMING (each unit's wall clock; under it, its phases and ten slowest tests):")
         print("\n".join(summary))
@@ -1097,7 +1105,7 @@ def main():
     print("KIT CHECK: %d of %d units at once (%d CPUs)" % (parallel, len(units), cpus))
     check_syntax(ROOT)
     check_release(ROOT)
-    manifest = json.loads((ROOT / "plugins/myagentkit/.codex-plugin/plugin.json").read_text())
+    manifest = json.loads((ROOT / "plugins/myagentkit/.codex-plugin/plugin.json").read_text(encoding='utf-8'))
     if manifest["name"] != "myagentkit" or manifest["skills"] != "./skills/":
         raise RuntimeError("plugin manifest does not expose the expected package")
     print(run([sys.executable, "scripts/package_codex_plugin.py", "--check"]).strip())

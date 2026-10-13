@@ -19,7 +19,7 @@ class PythonFallbackTests(unittest.TestCase):
         # without the hook, and a script that checked `command -v python3` picked it all the same.
         tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, tmp, True)
-        hooks = json.loads((OVERLAY / '.claude/settings.json').read_text())['hooks']
+        hooks = json.loads((OVERLAY / '.claude/settings.json').read_text(encoding='utf-8'))['hooks']
         commands = [h['command'] for entries in hooks.values() for e in entries for h in e['hooks']]
         python_hooks = {Path(c.split('"')[-2]).name: c for c in commands if '.py"' in c}
         self.assertEqual(sorted(python_hooks), ['context_size.py', 'guard_boundaries.py',
@@ -29,7 +29,7 @@ class PythonFallbackTests(unittest.TestCase):
         bin_dir = tmp / 'bin'
         bin_dir.mkdir()
         for name, body in (('python3', 'exit 9009'), ('python', 'exec "%s" "$@"' % Path(sys.executable).as_posix())):
-            (bin_dir / name).write_text('#!/bin/sh\n%s\n' % body)
+            (bin_dir / name).write_text('#!/bin/sh\n%s\n' % body, encoding='utf-8')
             (bin_dir / name).chmod(0o755)
         project = tmp / 'project'
         shutil.copytree(OVERLAY / '.claude/hooks', project / '.claude/hooks')
@@ -39,7 +39,7 @@ class PythonFallbackTests(unittest.TestCase):
         subprocess.run(['git', 'init', '-q', str(project)], check=True, env=env)
         subprocess.run(['git', '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty',
                         '-m', 'x'], cwd=project, check=True, env=env)
-        (project / 'notes.txt').write_text('uncommitted\n')
+        (project / 'notes.txt').write_text('uncommitted\n', encoding='utf-8')
         env.update(PATH=os.pathsep.join([str(bin_dir), env['PATH']]), CLAUDE_PROJECT_DIR=project.as_posix())
 
         def run(args, payload=''):
@@ -59,7 +59,7 @@ class PythonFallbackTests(unittest.TestCase):
         self.assertIn('UNCONFIGURED', unconfigured.stdout)
         transcript = tmp / 'session.jsonl'
         transcript.write_text(json.dumps({'type': 'assistant', 'message': {'usage': {
-            'input_tokens': 210_000, 'cache_read_input_tokens': 0, 'cache_creation_input_tokens': 0}}}) + '\n')
+            'input_tokens': 210_000, 'cache_read_input_tokens': 0, 'cache_creation_input_tokens': 0}}}) + '\n', encoding='utf-8')
         said = run(['sh', '-c', python_hooks['context_size.py']], json.dumps({'transcript_path': str(transcript)}))
         self.assertEqual((said.returncode, said.stderr), (0, ''))
         self.assertIn('Context is 210k tokens', said.stdout)
@@ -72,8 +72,8 @@ class PythonFallbackTests(unittest.TestCase):
         scripts.mkdir()
         for name in ('check.sh', 'doctor.sh', 'review.sh'):
             shutil.copy(ROOT / 'core/scripts' / name, scripts / name)
-        (scripts / 'review_dispatch.py').write_text('import sys; print("dispatched", sys.argv[1])\n')
-        (scripts / 'test_claude_bridge.py').write_text('print("REVIEW SELF-TEST: PASS")\n')
+        (scripts / 'review_dispatch.py').write_text('import sys; print("dispatched", sys.argv[1])\n', encoding='utf-8')
+        (scripts / 'test_claude_bridge.py').write_text('print("REVIEW SELF-TEST: PASS")\n', encoding='utf-8')
         gate = run(['sh', 'scripts/check.sh'])  # unconfigured: it fails, but past the lock's exec
         self.assertIn('CHECK: FAIL', gate.stdout + gate.stderr)
         self.assertNotIn('FAIL [lock]', gate.stdout + gate.stderr)

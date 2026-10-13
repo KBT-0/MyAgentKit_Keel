@@ -70,7 +70,7 @@ def main() -> None:
         ctx, compactions = context(transcript)
         legacy = False
         try:
-            saved = json.loads(state.read_text())
+            saved = json.loads(state.read_text(encoding='utf-8'))
             # Before this version the state held only an integer step.
             legacy = type(saved) is int
             said, previous = (saved, compactions) if legacy else (saved['step'], saved['compactions'])
@@ -83,7 +83,7 @@ def main() -> None:
             said = -1
         now = band(ctx)
         if now > said or previous != compactions or legacy:
-            with tempfile.NamedTemporaryFile(mode='w', dir=state.parent, delete=False) as stream:
+            with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=state.parent, delete=False) as stream:
                 temporary = Path(stream.name)
                 json.dump({'step': max(now, said), 'compactions': compactions}, stream)
             try:

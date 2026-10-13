@@ -25,14 +25,14 @@ class KitOutputTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / 'quiet').mkdir()
-            (root / 'quiet/test_kit_probe_pass.py').write_text(PROBE % 'True')
+            (root / 'quiet/test_kit_probe_pass.py').write_text(PROBE % 'True', encoding='utf-8')
             out = io.StringIO()
             with contextlib.redirect_stdout(out):
                 check_kit.run_tests(root, 'quiet', {'test_kit_probe_pass': 2})
             self.assertEqual(out.getvalue(), 'PASS: quiet ran 2 tests, each suite at or above its'
                                              ' minimum (test_kit_probe_pass 2)\n')
             (root / 'loud').mkdir()
-            (root / 'loud/test_kit_probe_fail.py').write_text(PROBE % 'False')
+            (root / 'loud/test_kit_probe_fail.py').write_text(PROBE % 'False', encoding='utf-8')
             with self.assertRaises(RuntimeError) as raised:
                 check_kit.run_tests(root, 'loud', {'test_kit_probe_fail': 2})
             log = str(raised.exception)

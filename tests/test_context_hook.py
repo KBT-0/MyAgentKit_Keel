@@ -32,10 +32,10 @@ class ContextHookTests(unittest.TestCase):
         self.env = dict(os.environ)
 
     def run_hook(self, records, raw=None, command=None, env=None):
-        self.transcript.write_text(raw if raw is not None else ''.join(json.dumps(r) + '\n' for r in records))
+        self.transcript.write_text(raw if raw is not None else ''.join(json.dumps(r) + '\n' for r in records), encoding='utf-8')
         result = subprocess.run(command or [sys.executable, str(HOOK)],
                                 input=json.dumps({'transcript_path': str(self.transcript)}),
-                                text=True, capture_output=True, timeout=30, env=env or self.env)
+                                text=True, encoding='utf-8', capture_output=True, timeout=30, env=env or self.env)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stderr, '')
         return result.stdout
@@ -65,7 +65,7 @@ class ContextHookTests(unittest.TestCase):
                                            'cache_creation_input_tokens': None}}}]))
 
     def test_legacy_step_after_compaction_is_not_announced_again(self):
-        self.transcript.with_suffix('.context-step').write_text('1')
+        self.transcript.with_suffix('.context-step').write_text('1', encoding='utf-8')
         turns = [{'type': 'system', 'subtype': 'compact_boundary'}, request(260_000)]
         self.assertEqual(self.run_hook(turns), '')
         self.assertIn('Context is 260k tokens', self.run_hook(
@@ -79,7 +79,7 @@ class ContextHookTests(unittest.TestCase):
         for saved in ('{"step": null, "compactions": 0}', '{"step": "0", "compactions": 0}',
                       '{"step": 0, "compactions": true}', 'true'):
             with self.subTest(saved=saved):
-                state.write_text(saved)
+                state.write_text(saved, encoding='utf-8')
                 self.assertIn('Context is 260k tokens', self.run_hook([prompt(), request(260_000)]))
                 self.assertIn('Context is 400k tokens', self.run_hook([prompt(), request(400_000)]))
 
@@ -91,10 +91,10 @@ class ContextHookTests(unittest.TestCase):
                            '    print("held", flush=True)\n'
                            '    time.sleep(60)\n'
                            'hook["main"].__globals__["context"] = held\n'
-                           'hook["main"]()\n' % str(HOOK))
-        self.transcript.write_text(json.dumps(request(260_000)) + '\n')
+                           'hook["main"]()\n' % str(HOOK), encoding='utf-8')
+        self.transcript.write_text(json.dumps(request(260_000)) + '\n', encoding='utf-8')
         holder = subprocess.Popen([sys.executable, str(wrapper)], stdin=subprocess.PIPE,
-                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8')
         try:
             holder.stdin.write(json.dumps({'transcript_path': str(self.transcript)}))
             holder.stdin.close()
@@ -123,9 +123,9 @@ class ContextHookTests(unittest.TestCase):
         self.assertEqual(self.run_hook(turns), '')
 
     def test_concurrent_prompts_announce_a_step_once(self):
-        self.transcript.write_text(json.dumps(request(255_000)) + '\n')
+        self.transcript.write_text(json.dumps(request(255_000)) + '\n', encoding='utf-8')
         state = self.transcript.with_suffix('.context-step')
-        state.write_text('-1')  # the earlier hook's state is also accepted on upgrade
+        state.write_text('-1', encoding='utf-8')  # the earlier hook's state is also accepted on upgrade
         # Slow the read after it got the old value: without a lock, every child announces.
         wrapper = self.tmp / 'slow_hook.py'
         wrapper.write_text('import runpy, time\nfrom pathlib import Path\n'
@@ -135,12 +135,12 @@ class ContextHookTests(unittest.TestCase):
                            '    time.sleep(0.5)\n'
                            '    return value\n'
                            'Path.read_text = slow\n'
-                           'runpy.run_path(%r, run_name="__main__")\n' % str(HOOK))
+                           'runpy.run_path(%r, run_name="__main__")\n' % str(HOOK), encoding='utf-8')
 
         def invoke(_):
             return subprocess.run([sys.executable, str(wrapper)],
                                   input=json.dumps({'transcript_path': str(self.transcript)}),
-                                  capture_output=True, text=True, timeout=30, env=self.env)
+                                  capture_output=True, text=True, encoding='utf-8', timeout=30, env=self.env)
 
         with ThreadPoolExecutor(max_workers=6) as pool:
             results = list(pool.map(invoke, range(6)))
@@ -152,7 +152,7 @@ class ContextHookTests(unittest.TestCase):
     def test_silent_below_the_line_and_on_a_broken_transcript(self):
         self.assertEqual(self.run_hook([prompt(), request(199_000)]), '')
         self.assertEqual(self.run_hook([], raw='not json\n5\n{"type": "assistant", "message": 5}\n'), '')
-        result = subprocess.run([sys.executable, str(HOOK)], input='{}', text=True, capture_output=True,
+        result = subprocess.run([sys.executable, str(HOOK)], input='{}', text=True, encoding='utf-8', capture_output=True,
                                 timeout=30, env=self.env)
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
 

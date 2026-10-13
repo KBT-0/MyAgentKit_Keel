@@ -16,8 +16,14 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 - **The kit check's locale sensor** (`scripts/check_kit.py`, the kit's own check; nothing for a
   project to do): a `locale` unit runs seven fast text suites again with `PYTHONUTF8=0`, under
   `LC_ALL=C` and `tr_TR.UTF-8` on POSIX (NOT RUN without the Turkish locale; CI's Ubuntu job
-  generates it) and under the ANSI code page on Windows. Locale and UTF-8 bugs were the second
-  most frequent review finding class (91 mentions in the v0.11 archives).
+  generates it) and under the ANSI code page on Windows, with an encoding-less `open`,
+  `read_text`, `write_text` or text subprocess an error (`EncodingWarning`, PEP 597); each suite
+  is held to its own minimum, skipped tests not counted. Locale and UTF-8 bugs were the second
+  most frequent review finding class (91 mentions in the v0.11 archives). Its first run found
+  encoding-less reads in the kit check and in the Claude Code overlay's `context_size.py` hook,
+  which now reads and writes its state as UTF-8. **ACTION** (Claude Code overlay): the hook has
+  no KIT-OWNED header, so `sync-kit.sh` does not copy it; copy
+  `overlays/claude-code/files/.claude/hooks/context_size.py` over the project's copy by hand.
 - **One review policy in two files, and one model** (`docs/REVIEW_GATE.md`,
   `docs/REVIEW_RUNNING.md`, `AGENTS.md`, `docs/WORKFLOW.md`; `claude_bridge.py`,
   `codex_bridge.py`, `review_dispatch.py`, `review.sh`, `agent_process.py`, `working_mode.py`,

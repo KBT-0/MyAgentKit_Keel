@@ -141,8 +141,8 @@ class WorkingModeTests(unittest.TestCase):
         self.state.write_text('# State\n---\n**Working mode:** solo (keep this note).\nActive work.\n', encoding='utf-8')
         result = self.run_mode('Tasarruf Modu')
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual((self.project / '.claude/mode').read_text().strip(), 'saver')
-        self.assertEqual(self.state.read_text(), '# State\n---\n**Working mode:** saver (low: claude).\nActive work.\n')
+        self.assertEqual((self.project / '.claude/mode').read_text(encoding='utf-8').strip(), 'saver')
+        self.assertEqual(self.state.read_text(encoding='utf-8'), '# State\n---\n**Working mode:** saver (low: claude).\nActive work.\n')
         self.assertIn('#### saver', result.stdout)
         self.assertNotIn('#### solo', result.stdout)
         self.assertIn('allowance resets', result.stdout)
@@ -152,9 +152,9 @@ class WorkingModeTests(unittest.TestCase):
         for mode in MODES:
             result = self.run_mode(mode)
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertIn('**Working mode:** ' + mode, self.state.read_text())
-            self.assertEqual((self.project / '.claude/mode').read_text().strip(), mode)
-            self.assertIn('Active work stays here.', self.state.read_text())
+            self.assertIn('**Working mode:** ' + mode, self.state.read_text(encoding='utf-8'))
+            self.assertEqual((self.project / '.claude/mode').read_text(encoding='utf-8').strip(), mode)
+            self.assertIn('Active work stays here.', self.state.read_text(encoding='utf-8'))
 
     def test_normal_routes_writes_and_reviews_to_the_sides_the_state_note_names(self):
         result = self.run_mode('Normal Mod')
@@ -257,13 +257,13 @@ class WorkingModeTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(self.state.read_bytes(), before)
         self.assertEqual(self.run_mode('normal').returncode, 0)
-        (self.project / '.claude/mode').write_text('saver\n')
+        (self.project / '.claude/mode').write_text('saver\n', encoding='utf-8')
         self.assertNotEqual(self.run_mode().returncode, 0)
         # An explicit owner choice repairs the disagreement.
         self.assertEqual(self.run_mode('solo').returncode, 0)
 
     def test_old_workflow_and_missing_state_are_refused_without_writes(self):
-        (self.project / 'docs/WORKFLOW.md').write_text('# Old workflow\n')
+        (self.project / 'docs/WORKFLOW.md').write_text('# Old workflow\n', encoding='utf-8')
         self.assertNotEqual(self.run_mode('normal').returncode, 0)
         self.assertFalse((self.project / '.claude/mode').exists())
         (self.project / 'docs/WORKFLOW.md').write_bytes((ROOT / 'core/docs/WORKFLOW.md').read_bytes())
@@ -337,7 +337,7 @@ class WorkingModeTests(unittest.TestCase):
         result = subprocess.run([sys.executable, '-I', '-c', code], capture_output=True, timeout=15)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('işi ağır', result.stdout.decode('utf-8'))
-        self.assertEqual((self.project / '.claude/mode').read_text().strip(), 'normal')
+        self.assertEqual((self.project / '.claude/mode').read_text(encoding='utf-8').strip(), 'normal')
 
     def test_atomic_replacement_copies_original_permissions(self):
         spec = importlib.util.spec_from_file_location('working_mode', SCRIPT)
@@ -386,7 +386,7 @@ class WorkingModeTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'STATE.md changed'):
                 module.mode(self.project, 'normal', SIDES['normal'])
         self.assertEqual(self.state.read_bytes(), concurrent)
-        self.assertEqual((self.project / '.claude/mode').read_text().strip(), 'solo')
+        self.assertEqual((self.project / '.claude/mode').read_text(encoding='utf-8').strip(), 'solo')
         self.assertEqual(self.run_mode('saver').returncode, 0)
 
     def test_failed_record_replace_does_not_roll_back_an_independent_state_edit(self):
@@ -460,7 +460,7 @@ class WorkingModeTests(unittest.TestCase):
                                             encoding='utf-8', timeout=15)
                     self.assertEqual(result.returncode, 0, result.stderr)
                     self.assertIn('**Working mode:** normal', (real / 'docs/STATE.md').read_text(encoding='utf-8'))
-                    self.assertEqual((real / '.claude/mode').read_text().strip(), 'normal')
+                    self.assertEqual((real / '.claude/mode').read_text(encoding='utf-8').strip(), 'normal')
         finally:
             if os.name == 'nt':
                 link.rmdir()
@@ -486,7 +486,7 @@ class WorkingModeTests(unittest.TestCase):
                             module.mode(self.project, 'saver', SIDES['saver'])
                     else:
                         module.mode(self.project, 'normal', SIDES['normal'])
-                        self.assertEqual((self.project / '.claude/mode').read_text().strip(), 'normal')
+                        self.assertEqual((self.project / '.claude/mode').read_text(encoding='utf-8').strip(), 'normal')
         self.assertIn('**Working mode:** normal', self.state.read_text(encoding='utf-8'))
 
     def test_a_workflow_with_the_old_per_model_modes_names_the_update_instead_of_failing(self):
@@ -657,18 +657,18 @@ class WorkingModeTests(unittest.TestCase):
         sha = hashlib.sha256(before).hexdigest()
         private = self.project / '.myagentkit'
         (private / 'workers').mkdir(parents=True)
-        (private / 'workers/w.session').write_text('session\n')
+        (private / 'workers/w.session').write_text('session\n', encoding='utf-8')
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as folder:
             fake = Path(folder).resolve()
-            (fake / 'mine.txt').write_text('the user\'s file\n')
+            (fake / 'mine.txt').write_text('the user\'s file\n', encoding='utf-8')
             for target in (private, private / 'workers', fake):
                 with self.subTest(target=target.name):
                     result = self.run_mode('--replace-state', str(target), '--expect', sha, env=self.temporary(fake))
                     self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
                     self.assertIn('a prepared STATE.md file is a regular file', result.stderr)
-            self.assertEqual((fake / 'mine.txt').read_text(), 'the user\'s file\n')
+            self.assertEqual((fake / 'mine.txt').read_text(encoding='utf-8'), 'the user\'s file\n')
             self.assertEqual([p.name for p in fake.parent.iterdir() if p.name.startswith('.' + fake.name)], [])
-        self.assertEqual((private / 'workers/w.session').read_text(), 'session\n')
+        self.assertEqual((private / 'workers/w.session').read_text(encoding='utf-8'), 'session\n')
         self.assertLessEqual({p.name for p in self.project.iterdir()}, {'.claude', '.myagentkit', 'docs'})
         self.assertEqual([p.name for p in private.iterdir()], ['workers'])
         self.assertEqual(self.state.read_bytes(), before)
@@ -682,12 +682,12 @@ class WorkingModeTests(unittest.TestCase):
             if Path(target).name == 'snapshot':
                 Path(source).unlink()
                 Path(source).mkdir()
-                (Path(source) / 'keep.txt').write_text('keep\n')
+                (Path(source) / 'keep.txt').write_text('keep\n', encoding='utf-8')
             renaming(source, target)
         with mock.patch.object(worker.os, 'rename', swapped):
             with self.assertRaisesRegex(ValueError, 'regular file'):
                 worker.replace_state(self.project, snapshot, sha)
-        self.assertEqual((snapshot / 'keep.txt').read_text(), 'keep\n')
+        self.assertEqual((snapshot / 'keep.txt').read_text(encoding='utf-8'), 'keep\n')
         self.assertEqual([p.name for p in snapshot.parent.iterdir()], [snapshot.name])
         self.assertEqual(self.state.read_bytes(), before)
 
@@ -696,30 +696,30 @@ class WorkingModeTests(unittest.TestCase):
         before = self.state.read_bytes()
         sha = hashlib.sha256(before).hexdigest()
         subprocess.run(['git', 'init', '-q', str(self.project)], check=True, capture_output=True)
-        (self.project / '.gitignore').write_text('/.myagentkit/\n/.claude/\n')
+        (self.project / '.gitignore').write_text('/.myagentkit/\n/.claude/\n', encoding='utf-8')
         source = self.project / '.myagentkit'
         source.write_bytes(before)  # a regular FILE named after the private directory
         source = worker.private(self.project, source)
         initially_visible = subprocess.run(['git', 'ls-files', '--others', '--exclude-standard'], cwd=self.project,
-                                           check=True, capture_output=True, text=True).stdout.splitlines()
+                                           check=True, capture_output=True, text=True, encoding='utf-8').stdout.splitlines()
         renaming = os.rename
         consumed = []
         def swapped(path, target):
             if Path(path) == source:
                 source.unlink()
                 source.mkdir()
-                (source / 'w.session').write_text('private session\n')
+                (source / 'w.session').write_text('private session\n', encoding='utf-8')
                 renaming(path, target)
                 consumed.append(Path(target))
                 source.mkdir()
-                (source / 'successor').write_text('keep the successor\n')
+                (source / 'successor').write_text('keep the successor\n', encoding='utf-8')
             else:
                 renaming(path, target)  # restoration cannot replace the nonempty successor
         with mock.patch.object(worker.os, 'rename', swapped), mock.patch('sys.stderr', io.StringIO()):
             with self.assertRaises((ValueError, OSError)):
                 worker.replace_state(self.project, source, sha)
         visible = subprocess.run(['git', 'ls-files', '--others', '--exclude-standard'], cwd=self.project,
-                                 check=True, capture_output=True, text=True).stdout.splitlines()
+                                 check=True, capture_output=True, text=True, encoding='utf-8').stdout.splitlines()
         self.assertEqual(sorted(visible), sorted(initially_visible),
                          'a failed recovery exposed private contents to git')
         self.assertEqual(consumed, [], 'the recovery parent must be private before consuming FILE')
@@ -742,16 +742,16 @@ class WorkingModeTests(unittest.TestCase):
         before = self.state.read_bytes()
         source, sha = self.snapshot()
         subprocess.run(['git', 'init', '-q', str(self.project)], check=True, capture_output=True)
-        (self.project / '.gitignore').write_text('/.myagentkit/\n/.claude/\n')
+        (self.project / '.gitignore').write_text('/.myagentkit/\n/.claude/\n', encoding='utf-8')
         renaming = os.rename
         def swapped(path, target):
             if Path(path) == source:
                 source.unlink()
                 source.mkdir()
-                (source / 'w.session').write_text('private session\n')
+                (source / 'w.session').write_text('private session\n', encoding='utf-8')
                 renaming(path, target)
                 source.mkdir()
-                (source / 'successor').write_text('keep the successor\n')
+                (source / 'successor').write_text('keep the successor\n', encoding='utf-8')
             else:
                 renaming(path, target)
         errors = io.StringIO()
@@ -760,10 +760,10 @@ class WorkingModeTests(unittest.TestCase):
                 worker.replace_state(self.project, source, sha)
         kept = Path(errors.getvalue().split(' kept at ', 1)[1].strip())
         self.assertTrue(kept.is_relative_to(self.project / '.myagentkit'))
-        self.assertEqual((kept / 'w.session').read_text(), 'private session\n')
-        self.assertEqual((source / 'successor').read_text(), 'keep the successor\n')
+        self.assertEqual((kept / 'w.session').read_text(encoding='utf-8'), 'private session\n')
+        self.assertEqual((source / 'successor').read_text(encoding='utf-8'), 'keep the successor\n')
         visible = subprocess.run(['git', 'ls-files', '--others', '--exclude-standard'], cwd=self.project,
-                                 check=True, capture_output=True, text=True).stdout.splitlines()
+                                 check=True, capture_output=True, text=True, encoding='utf-8').stdout.splitlines()
         self.assertEqual(sorted(visible), ['.gitignore', 'docs/STATE.md', 'docs/WORKFLOW.md'])
         self.assertEqual(self.state.read_bytes(), before)
 

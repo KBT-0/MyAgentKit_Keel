@@ -350,10 +350,10 @@ def main():
 
     def test_readme_version_matches_the_newest_changelog_heading(self):
         check_kit.check_release(ROOT)
-        (self.tmp / 'CHANGELOG.md').write_text('## Unreleased\n\n## v0.11 — 2026-10-09\n\n## v0.10\n')
+        (self.tmp / 'CHANGELOG.md').write_text('## Unreleased\n\n## v0.11 — 2026-10-09\n\n## v0.10\n', encoding='utf-8')
         for version in ('v0.11', 'v0.10', 'v0.9', ''):
             with self.subTest(version=version):
-                (self.tmp / 'README.md').write_text('**%s.** The kit.\n' % version)
+                (self.tmp / 'README.md').write_text('**%s.** The kit.\n' % version, encoding='utf-8')
                 if version == 'v0.11':
                     check_kit.check_release(self.tmp)
                 else:
@@ -363,7 +363,7 @@ def main():
                             contextlib.redirect_stdout(io.StringIO()), \
                             self.assertRaisesRegex(RuntimeError, 'bold version.*newest versioned heading'):
                         check_kit.main()
-        (self.tmp / 'CHANGELOG.md').write_text('## Unreleased\n')
+        (self.tmp / 'CHANGELOG.md').write_text('## Unreleased\n', encoding='utf-8')
         with self.assertRaisesRegex(RuntimeError, 'bold version.*newest versioned heading'):
             check_kit.check_release(self.tmp)
 
@@ -456,17 +456,28 @@ def main():
 
     def test_the_locale_sensor_fails_a_suite_that_needs_utf8_by_default(self):
         utf8 = "__import__('locale').getpreferredencoding(False).lower().replace('-', '') == 'utf8'"
-        (self.tmp / 'test_kit_probe.py').write_text(PROBE % utf8)
+        probe = self.tmp / 'test_kit_probe.py'
         out = io.StringIO()
-        with contextlib.redirect_stdout(out), self.assertRaisesRegex(RuntimeError, 'probe failure message'), \
-                unittest.mock.patch.dict(os.environ, PYTHONUTF8='1'):
-            check_kit.locale_matrix(self.tmp, ('test_kit_probe',), {'test_kit_probe': 2})
-        (self.tmp / 'test_kit_probe.py').write_text(PROBE % 'True')
-        with contextlib.redirect_stdout(out):
+
+        def red(condition, reason, minimum=2, source=PROBE):
+            probe.write_text(source % condition, encoding='utf-8')
+            with contextlib.redirect_stdout(out), self.assertRaisesRegex(RuntimeError, reason), \
+                    unittest.mock.patch.dict(os.environ, PYTHONUTF8='1', PYTHONIOENCODING='utf-8',
+                                             PYTHONWARNINGS='ignore'):
+                check_kit.locale_matrix(self.tmp, ('test_kit_probe',), {'test_kit_probe': minimum})
+
+        on_windows_utf8 = os.name == 'nt' and __import__('locale').getpreferredencoding(False).lower() in ('utf-8', 'cp65001')
+        if not on_windows_utf8:
+            red(utf8, 'probe failure message')
+        red("open(__file__).read()", 'EncodingWarning')
+        red('True', '1 tests run, 2 required',
+            source=PROBE.replace('    def test_maybe', '    @unittest.skip("x")\n    def test_maybe'))
+        red('True', '2 tests run, 3 required', minimum=3)
+        # The caller's PYTHONIOENCODING would hide a non-ASCII print under C; the run drops it.
+        probe.write_text(PROBE % "__import__('os').environ.get('PYTHONIOENCODING') is None", encoding='utf-8')
+        with contextlib.redirect_stdout(out), unittest.mock.patch.dict(os.environ, PYTHONIOENCODING='utf-8'):
             check_kit.locale_matrix(self.tmp, ('test_kit_probe',), {'test_kit_probe': 2})
         self.assertIn('PASS: the locale suites ran under', out.getvalue())
-        with contextlib.redirect_stdout(out), self.assertRaisesRegex(RuntimeError, '2 tests, 3 required'):
-            check_kit.locale_matrix(self.tmp, ('test_kit_probe',), {'test_kit_probe': 3})
 
 
 if __name__ == '__main__':

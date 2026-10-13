@@ -3,6 +3,12 @@
 Low findings of the kit's own reviews are filed here, not fixed in the round (owner decision B,
 2026-10-13). A line leaves when its work starts or when the owner closes it.
 
+## Filed from v0.11 D-1 (Claude review r1, logic label)
+
+- The Turkish-locale branch of `check_kit.locale_matrix` and its NOT RUN line have no test;
+  patch `run` so `locale -a` lists `C POSIX` and assert the line (a regression there cannot
+  produce a false pass: the PASS line names only the cases that ran).
+
 ## Filed from v0.11 item F (Claude review r2, 20261013T164417Z-c2eb9992cc7d)
 
 - The dispositions file is read once per reviewer attempt, not once per review: on a fallback
