@@ -293,6 +293,38 @@ class ShowTests(Base):
 
 
 class WatchTests(Base):
+    def test_legacy_permission_wait_does_not_hide_a_current_wait(self):
+        workers = self.cwd / '.myagentkit/workers'
+        workers.mkdir(parents=True)
+        legacy = workers / 'w1.state'
+        legacy.write_bytes(b'waiting input 2026-10-12T10:00:00\n')
+        (workers / 'w2.state').write_bytes(b'waiting permission 2026-10-13T10:00:00 2\n')
+        result = self.watch('--once', 'w1', 'w2', VIS_UNAME='MINGW64_NT-10.0')
+        self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+        self.assertIn('WAITING: w1, on a permission prompt', result.stdout)
+        self.assertIn('WAITING: w2, on a permission prompt', result.stdout)
+        self.assertEqual(result.stdout.count('w1: its state hook is from an older kit'), 1)
+        self.assertEqual(self.watch('--once', 'w1', 'w2', VIS_UNAME='MINGW64_NT-10.0').stdout, '')
+        legacy.write_bytes(b'waiting input 2026-10-13T10:00:01 3\n')
+        result = self.watch('--once', 'w1', 'w2', VIS_UNAME='MINGW64_NT-10.0')
+        self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+        self.assertIn('WAITING: w1, on a permission prompt', result.stdout)
+        self.assertNotIn('older kit', result.stdout)
+
+    def test_nul_only_state_is_an_observation_failure(self):
+        workers = self.cwd / '.myagentkit/workers'
+        workers.mkdir(parents=True)
+        state = workers / 'w1.state'
+        state.write_bytes(b'')
+        result = self.watch('--once', 'w1', VIS_UNAME='MINGW64_NT-10.0')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
+        state.write_bytes(b'\x00\x00')
+        result = self.watch('--once', 'w1', VIS_UNAME='MINGW64_NT-10.0')
+        self.assertEqual((result.returncode, result.stdout), (3, ''), result.stderr)
+        self.assertIn('state unreadable: invalid state content', result.stderr)
+        self.assertIn('w1.state', result.stderr)
+        self.assertFalse((workers / 'w1.watch-state').exists())
+
     def watch(self, *args, pane='idle.txt', **extra):
         extra.setdefault('VIS_SESSIONS', 'w1')
         return self.run_script(WATCH, *args, VIS_PANE=str(PANES / pane), **extra)

@@ -9,6 +9,8 @@
 # state line, `waiting permission|question TIME ID` or `idle TIME ID`, to .myagentkit/workers/
 # NAME.state, which watch_workers.sh reads in place of a pane. The result file stays the done
 # signal.
+# Worker names use letters, digits, - and _, not starting with -, at most 240 characters:
+# every generated filename, including a hook's temporary state file, fits in 255 bytes.
 #
 # Usage: spawn_worker.sh NAME BRIEF_FILE --model M --effort LEVEL [--settings JSON_OR_FILE]
 #                        [--allowed-tools LIST] [--worktree] [--batch]
@@ -79,6 +81,7 @@ case $name in
   ''|-*|*[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-]*)
     die "refused the worker name: use letters, digits, - and _, not starting with -" ;;
 esac
+[ "${#name}" -le 240 ] || die "refused the worker name: at most 240 characters (generated filenames must fit in 255 bytes)"
 ctl "brief path" "$brief"
 nl='
 '

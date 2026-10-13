@@ -53,11 +53,13 @@
 # Notification and Stop hooks spawn_worker.sh gives it write one line to
 # .myagentkit/workers/NAME.state at the top of this checkout (or this folder outside git):
 # `waiting permission|question TIME ID` or `idle TIME ID`. A waiting line is WAITING, before the
-# result file is read; an idle line, when the result file says nothing new, is IDLE: the worker
+# result file is read. Legacy `waiting input` means a permission wait; once per worker the
+# watcher says its hook is from an older kit.
+# An idle line, when the result file says nothing new, is IDLE: the worker
 # stopped (a question in the tab, a usage limit, an error). Each event (the whole line, id
 # included) is reported once; the once-markers are NAME.watch-* files beside it, which
 # spawn_worker.sh removes. There is no GONE and no context figure there, and no tmux is
-# needed. An invalid state file is an observation failure (exit 3); an absent or empty one
+# needed. An invalid state file is an observation failure (exit 3); an absent or zero-byte one
 # means no signal yet. A session name is letters, digits, - and _, not starting with -
 # (spawn_worker.sh's rule): anything else is a usage error (exit 2).
 set -eu
@@ -310,11 +312,14 @@ tab() {
   [ -e "$state" ] || [ -L "$state" ] || return 1
   reason=""
   if [ ! -f "$state" ]; then reason="not a regular file"
+  elif ! bytes=$(wc -c <"$state" 2>"$err"); then
+    [ -e "$state" ] || return 1
+    reason=$(cat "$err")
+  elif [ "$bytes" -eq 0 ]; then return 1  # an older hook truncates before it writes: no signal yet
   elif ! line=$(cat -- "$state" 2>"$err"); then
     [ -e "$state" ] || return 1  # removed by a re-spawn since the check: no signal yet
     reason=$(cat "$err")
-  elif [ -z "$line" ]; then return 1  # an older hook truncates the file before it writes: no signal yet
-  elif ! printf '%s\n' "$line" | LC_ALL=C grep -Eq '^(waiting (permission|question)|idle) [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}( [0-9]+)?$' ||
+  elif ! printf '%s\n' "$line" | LC_ALL=C grep -Eq '^(waiting (permission|question|input)|idle) [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}( [0-9]+)?$' ||
        [ "$(printf '%s\n' "$line" | wc -l)" -ne 1 ]; then reason="invalid state content"
   fi
   if [ -n "$reason" ]; then
@@ -330,6 +335,12 @@ tab() {
     say "watch_workers: IDLE: $1, its session stopped and waits for input, with no new result report (its state file: $line)" || return 2
   fi
   say "  look at it: its Windows Terminal tab, titled $1" || return 2
+  case $line in "waiting input "*)
+    if [ "$(mark "$1" legacy)" != noted ]; then
+      say "watch_workers: $1: its state hook is from an older kit; waiting input means a permission prompt (re-spawn it to update the hook)" || return 2
+      setmark "$1" legacy noted
+    fi ;;
+  esac
   setmark "$1" state "$line"
 }
 

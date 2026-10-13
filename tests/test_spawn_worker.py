@@ -150,6 +150,7 @@ WINDOWS = os.name == 'nt'
 # which native Windows never takes, through Python stubs whose `sh -c` command line Git for
 # Windows parses again (an apostrophe is a quote there): there each prints NOT RUN.
 ON_WINDOWS = {'test_a_missing_or_failing_watcher_stops_the_spawn', 'test_a_worker_without_its_model_or_effort_is_refused',
+              'test_worker_name_boundary_fits_every_generated_filename',
               'test_unsafe_names_are_refused_without_changing_worker_files',
               'test_missing_or_unreadable_brief_is_refused_before_any_session',
               'test_no_error_message_echoes_a_control_character',
@@ -274,6 +275,39 @@ class SpawnWorkerTests(unittest.TestCase):
                 self.assertIn('refused the worker name', result.stderr)
                 self.assertEqual(snapshot(), before)
                 self.assertIsNone(self.launched())
+
+    def test_worker_name_boundary_fits_every_generated_filename(self):
+        (self.bin / 'uname').write_text('#!/bin/sh\necho MINGW64_NT-10.0\n')
+        (self.bin / 'ps-empty').write_text('#!/bin/sh\nexit 0\n')
+        (self.bin / 'ps-empty').chmod(0o755)
+        (self.bin / 'wt-refuse').write_text('#!/bin/sh\nexit 99\n')
+        (self.bin / 'wt-refuse').chmod(0o755)
+        if not WINDOWS:
+            (self.bin / 'cygpath').write_text(CYGPATH)
+            (self.bin / 'cygpath').chmod(0o755)
+        workers = self.cwd / '.myagentkit/workers'
+        result = self.spawn('w' * 241, str(self.brief), KIT_PS=str(self.bin / 'ps-empty'),
+                            KIT_WT=str(self.bin / 'wt-refuse'))
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn('refused the worker name', result.stderr)
+        self.assertIn('at most 240 characters', result.stderr)
+        self.assertFalse(workers.exists(), 'an overlong name changed worker files')
+        name = 'w' * 240
+        result = self.spawn(name, str(self.brief), KIT_PS=str(self.bin / 'ps-empty'),
+                            KIT_WT=str(self.bin / 'wt-refuse'))
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn('could not open a tab', result.stderr)
+        self.assertTrue((workers / (name + '.settings.json')).is_file())
+        state = workers / (name + '.state')
+        replace = os.replace
+        def publish(source, target):
+            self.assertEqual(len(os.fsencode(Path(source).name)), 255)
+            replace(source, target)
+        with patch('os.replace', side_effect=publish):
+            run_state_hook(state, {'hook_event_name': 'Stop'})
+        self.assertTrue(state.read_text().startswith('idle '))
+        self.assertEqual(sorted(p.name for p in workers.iterdir()),
+                         sorted([name + '.state', name + '.settings.json']))
 
     def test_brief_is_delivered_by_path_as_one_typed_instruction(self):
         result = self.spawn('w1', str(self.brief))
