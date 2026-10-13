@@ -21,8 +21,9 @@
 # every `;` handed to wt.exe escaped, the tab's command in a script because wt.exe drops double
 # quotes, `exit 0` at the tab's end, values quoted with `q`, control bytes refused):
 #   - tmux receives only `sh PATH`, without quotes, for its default shell (fish included).
-#     The temporary script path is made absolute and checked for letters, digits, _, ., / and -.
-#     Set TMPDIR to a safe absolute directory if that check refuses the path.
+#     Before worktree creation, the temporary script path is made absolute and checked for
+#     letters, digits, _, ., / and -. Set TMPDIR to an existing safe absolute directory
+#     and retry if refused; the template honours TMPDIR on macOS and Linux alike.
 #   - The spawning checkout records .myagentkit/workers/NAME.session outside the worker.
 #     A decision is published as QUESTION-NAME.md there. --result FILE chooses another result
 #     and FILE.question.md, both inside the worker. Session and question files are ignored.
@@ -98,13 +99,26 @@ mkdir -p -- "${spawn_lock%/*}" || die "cannot create the worker records director
 took=""
 mkdir -- "$spawn_lock" 2>/dev/null || { [ -n "$resume" ] && rm -- "$spawn_lock/$name" 2>/dev/null && took=1; } ||
   die "spawn in progress or an unrecorded launch at $spawn_lock; retry after it ends. An unrecorded launch has its worker's name inside: answer that worker with spawn_codex.sh NAME ANSWER_FILE ... --resume SESSION_ID, which records it and takes the reservation over; once its tab or tmux session has ended, or its id is written to NAME.session, release it: rm -r -- $(q "$spawn_lock")"
-spawn_launched=""; spawn_recorded=""
-trap 'if [ -n "$spawn_recorded" ] || { [ -z "$spawn_launched" ] && [ -z "$took" ]; }; then rmdir -- "$spawn_lock"; else : > "$spawn_lock/$name"; printf "spawn_codex: unrecorded launch of %s; reservation kept at %s. Answer it with --resume SESSION_ID, which records it and takes the reservation over; once its tab or tmux session has ended, or its id is written to %s, release it: rm -r -- %s\n" "$name" "$spawn_lock" "${spawn_lock%/*}/$name.session" "$(q "$spawn_lock")" >&2; fi' 0
+spawn_launched=""; spawn_recorded=""; run=""
+trap '[ -z "$run" ] || rm -f -- "$run"; if [ -n "$spawn_recorded" ] || { [ -z "$spawn_launched" ] && [ -z "$took" ]; }; then rmdir -- "$spawn_lock"; else : > "$spawn_lock/$name"; printf "spawn_codex: unrecorded launch of %s; reservation kept at %s. Answer it with --resume SESSION_ID, which records it and takes the reservation over; once its tab or tmux session has ended, or its id is written to %s, release it: rm -r -- %s\n" "$name" "$spawn_lock" "${spawn_lock%/*}/$name.session" "$(q "$spawn_lock")" >&2; fi' 0
 trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
 [ -n "$windows" ] || ! tmux has-session -t "=$name" 2>/dev/null ||
   die "tmux session '$name' still runs; a session is resumed or replaced only after it ended"
+
+# Reserve and validate the script before creating a worktree. An explicit template
+# honours TMPDIR on BSD and GNU; resolve relative paths before tmux changes directory.
+if [ -z "$windows" ]; then
+  run=$(mktemp "${TMPDIR:-/tmp}/kit-run.XXXXXX") || die "cannot write the session's script"
+  case "$run" in */*) run_dir=${run%/*}/ ;; *) run_dir=. ;; esac
+  run_dir=$(CDPATH= cd -P -- "$run_dir" && pwd -P && echo x)
+  run=${run_dir%"${nl}x"}/${run##*/}
+  case "$run" in *[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_./-]*)
+    rm -f -- "$run"
+    die "unsafe session script path: set TMPDIR to an absolute directory containing only letters, digits, _, ., / and -" ;;
+  esac
+fi
 if python3 -I -c '' </dev/null >/dev/null 2>&1; then kit_python=python3
 elif python -I -c '' </dev/null >/dev/null 2>&1; then kit_python=python
 else kit_python="py -3"; fi   # unquoted at every use
@@ -260,23 +274,13 @@ if [ -n "$windows" ]; then
   where="in a Windows Terminal tab; watch it there"; view=tab
 else
   # `cd` first: tmux hands a new session the PWD of whichever client last created one.
-  # tmux parses its command with its default shell (fish, say): the quoted command goes into a
-  # script that removes itself, and tmux is handed two plain words. Resolve the path
-  # against this checkout before tmux changes directory, then refuse shell syntax or spaces.
-  run=$(mktemp) || die "cannot write the session's script"
-  case "$run" in */*) run_dir=${run%/*}/ ;; *) run_dir=. ;; esac
-  run_dir=$(CDPATH= cd -P -- "$run_dir" && pwd -P && echo x) ||
-    { rm -f -- "$run"; die "cannot resolve the session script's folder; set TMPDIR to a safe absolute directory"; }
-  run=${run_dir%"${nl}x"}/${run##*/}
-  case "$run" in *[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_./-]*)
-    rm -f -- "$run"
-    die "unsafe session script path: set TMPDIR to an absolute directory containing only letters, digits, _, ., / and -" ;;
-  esac
+  # The reserved script removes itself; tmux receives two plain words for its default shell.
   printf '%s\n' 'rm -f -- "$0"' "cd $(q "$dir") && exec $unmark KIT_WORKER_STARTED=$(q "$start") KIT_WORKER_STALE=$(q "$stale") KIT_WORKER_EXIT=$(q "$exited") KIT_WORKER_RESUME=$(q "$resume") $kit_python $(q "$cworker") $(q "$cquestion") $(q "$cresult") -- sh -c $(q "exec $cmd")" > "$run" ||
     { rm -f -- "$run"; die "cannot write the session's script: $run"; }
   spawn_launched=1
   tmux new-session -d -s "$name" -c "$dir" -x 200 -y 50 "sh $run" ||
     { spawn_launched=""; rm -f -- "$run"; die "tmux could not start '$name'"; }
+  run="" # The launched script now owns its removal.
   where="(tmux attach -t $name to watch)"; view="tmux session"
 fi
 

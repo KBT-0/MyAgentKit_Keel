@@ -286,7 +286,9 @@ updated from then on.
 Both spawn scripts use a quote-free `sh PATH` command for tmux's default shell, including fish.
 Both spawn scripts resolve the temporary script path before tmux changes to the worker's directory.
 They refuse paths containing anything except letters, digits, underscore, dot, slash and dash.
-If refused, set `TMPDIR` to an absolute directory using those characters; spaces are refused too.
+The script is created and checked before any worktree is added, so a refused path leaves no
+worktree or branch. If refused, set `TMPDIR` to an existing absolute directory using those
+characters and retry; spaces are refused too. This remedy works on macOS and Linux alike.
 
 The worker scripts (`spawn_worker.sh`, `spawn_codex.sh`, `codex_worker.py`, `show_workers.sh`, `watch_workers.sh`,
 `waiting_patterns.txt`, `close_worker.sh`) carry the KIT-OWNED header, so a sync updates them

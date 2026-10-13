@@ -273,6 +273,37 @@ class SpawnCodexTests(unittest.TestCase):
         self.assertEqual(self.runs(), [])
         self.assertEqual(list(tmpdir.iterdir()), [])
 
+    def test_refused_tmpdir_with_worktree_leaves_no_worktree_or_branch(self):
+        if WINDOWS:
+            sys.stderr.write('\nNOT RUN: %s (the tmux path, POSIX only)\n' % self.id())
+            return
+        tmpdir = self.tmp / 'refused temp'
+        tmpdir.mkdir()
+        result = self.spawn('refused-temp', str(self.brief), '--model', 'm', '--effort', 'high',
+                            '--worktree', tmux=True, TMPDIR=str(tmpdir))
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('TMPDIR', result.stderr)
+        self.assertFalse((self.repo / '.claude/worktrees/refused-temp').exists())
+        trees = subprocess.run(['git', 'worktree', 'list', '--porcelain'], cwd=self.repo,
+                               capture_output=True, text=True, check=True).stdout
+        self.assertNotIn('refused-temp', trees)
+        branches = subprocess.run(['git', 'branch', '--list', 'worktree-refused-temp'], cwd=self.repo,
+                                  capture_output=True, text=True, check=True).stdout
+        self.assertEqual(branches, '')
+        self.assertEqual(list(tmpdir.iterdir()), [])
+
+    def test_later_validation_failure_removes_the_reserved_session_script(self):
+        if WINDOWS:
+            sys.stderr.write('\nNOT RUN: %s (the tmux path, POSIX only)\n' % self.id())
+            return
+        tmpdir = self.tmp / 'session-temp'
+        tmpdir.mkdir()
+        result = self.spawn('late-failure', str(self.brief), '--model', 'm', '--effort', 'high',
+                            '--result', '../outside.md', tmux=True, TMPDIR=str(tmpdir))
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('invalid result path', result.stderr)
+        self.assertEqual(list(tmpdir.iterdir()), [], 'the reserved script was left behind')
+
     def test_relative_tmpdir_launches_in_a_worktree_with_an_absolute_script_path(self):
         if WINDOWS:
             sys.stderr.write('\nNOT RUN: %s (the tmux path, POSIX only)\n' % self.id())
@@ -827,8 +858,14 @@ pathlib.Path(%r).write_text('a concurrently published report\\n')
 
 class TmuxStubTests(unittest.TestCase):
     def test_tmux_stub_reparses_the_final_command_in_the_start_directory(self):
-        with tempfile.TemporaryDirectory() as folder:
+        # Root the fixture in the checkout, independently of the host's temp folder.
+        with tempfile.TemporaryDirectory(dir=ROOT) as folder:
             state = Path(folder)
+            safe_path = test_spawn_worker.SpawnWorkerTests.physical(state / 'run.sh')
+            if any(c not in 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_./-'
+                   for c in safe_path):
+                sys.stderr.write('\nNOT RUN: %s (fixture path outside the tmux allowlist)\n' % self.id())
+                self.skipTest('fixture path outside the tmux allowlist')
             for segment in ('literal$REVIEW_SEGMENT', 'literal$($REVIEW_PAYLOAD)',
                             'literal`$REVIEW_BACKQUOTE`'):
                 with self.subTest(segment=segment):

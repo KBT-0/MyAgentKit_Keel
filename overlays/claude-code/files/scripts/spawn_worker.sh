@@ -40,8 +40,9 @@
 #     the brief pasted as a block: one model took a pasted brief with no typed sentence of the
 #     user's own for mere content and sat idle for 35 minutes asking for confirmation.
 #   - tmux receives only `sh PATH`, without quotes, for its default shell (fish included).
-#     The temporary script path is made absolute and checked for letters, digits, _, ., / and -.
-#     Set TMPDIR to a safe absolute directory if that check refuses the path.
+#     Before worktree creation, the temporary script path is made absolute and checked for
+#     letters, digits, _, ., / and -. Set TMPDIR to an existing safe absolute directory
+#     and retry if refused; the template honours TMPDIR on macOS and Linux alike.
 #   - Every value that goes into the temporary script's shell command, and the brief path, passes
 #     through `q`: a value with an apostrophe (a --settings JSON string) otherwise
 #     ends its quoting and the rest runs as shell in the new pane.
@@ -121,6 +122,21 @@ done
 [ -n "$effort" ] || die "--effort is required: the lead picks the effort for every worker"
 
 [ -n "$windows" ] || ! tmux has-session -t "=$name" 2>/dev/null || die "tmux session '$name' already exists"
+
+run=""
+trap '[ -z "$run" ] || rm -f -- "$run"' 0
+# Reserve and validate the script before creating a worktree. An explicit template
+# honours TMPDIR on BSD and GNU; resolve relative paths before tmux changes directory.
+if [ -z "$windows" ]; then
+  run=$(mktemp "${TMPDIR:-/tmp}/kit-run.XXXXXX") || die "cannot write the session's script"
+  case "$run" in */*) run_dir=${run%/*}/ ;; *) run_dir=. ;; esac
+  run_dir=$(CDPATH= cd -P -- "$run_dir" && pwd -P && echo x)
+  run=${run_dir%"${nl}x"}/${run##*/}
+  case "$run" in *[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_./-]*)
+    rm -f -- "$run"
+    die "unsafe session script path: set TMPDIR to an absolute directory containing only letters, digits, _, ., / and -" ;;
+  esac
+fi
 
 here=$(pwd -P && echo x) || die "cannot resolve the current folder"
 dir=${here%"${nl}x"}
@@ -356,20 +372,10 @@ fi
 # `cd` first: tmux hands new sessions the PWD of whichever client last created one, and
 # the tool exits with "the current working directory was deleted" when that folder (a
 # removed worktree, say) is gone, whatever -c says.
-# tmux parses its command with its default shell, which may be fish: the quoted command goes
-# into a script that removes itself, and tmux is handed two plain words. Resolve the path
-# against this checkout before tmux changes directory, then refuse shell syntax or spaces.
-run=$(mktemp) || die "cannot write the session's script"
-case "$run" in */*) run_dir=${run%/*}/ ;; *) run_dir=. ;; esac
-run_dir=$(CDPATH= cd -P -- "$run_dir" && pwd -P && echo x) ||
-  { rm -f -- "$run"; die "cannot resolve the session script's folder; set TMPDIR to a safe absolute directory"; }
-run=${run_dir%"${nl}x"}/${run##*/}
-case "$run" in *[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_./-]*)
-  rm -f -- "$run"
-  die "unsafe session script path: set TMPDIR to an absolute directory containing only letters, digits, _, ., / and -" ;;
-esac
+# The reserved script removes itself; tmux receives two plain words for its default shell.
 printf '%s\n' 'rm -f -- "$0"' "cd $(q "$dir") && exec $unmark $cmd" > "$run" || { rm -f -- "$run"; die "cannot write the session's script: $run"; }
 tmux new-session -d -s "$name" -c "$dir" -x 200 -y 50 "sh $run" || { rm -f -- "$run"; die "tmux could not start '$name'"; }
+run="" # The launched script now owns its removal.
 
 # Wait for the input line: the TUI shows its prompt arrow at the start of a line once ready
 # (v2.1.285 follows the arrow with a NO-BREAK space, so the match is on the arrow alone)
