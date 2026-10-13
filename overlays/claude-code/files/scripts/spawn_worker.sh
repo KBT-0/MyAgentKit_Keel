@@ -153,7 +153,8 @@ if [ -n "$behaviour" ]; then
   [ -z "$windows" ] || behaviour=$(cygpath -m "$behaviour") || die "cygpath cannot convert the behaviour appendix's path"
   cmd="$cmd --append-system-prompt-file $(q "$behaviour")"
 fi
-printf '%s\n' "spawn_worker: behaviour appendix: ${behaviour:-off}"
+printf '%s' "spawn_worker: behaviour appendix: ${behaviour:-off}" | LC_ALL=C tr '\001-\037\177' '?'
+printf '\n'
 [ -n "$tools" ]    && cmd="$cmd --allowedTools $(q "$tools")"
 # One line naming the brief by its absolute path, quoted by the same helper so a path with a
 # space or an apostrophe still reads as one path. Its second sentence keeps questions out of

@@ -197,7 +197,10 @@ class SpawnWorkerTests(unittest.TestCase):
 
     def spawn(self, *args, choose=True, **extra):
         # PWD as a lead's shell exports it: with it, a plain `pwd` printed the symlinked spelling.
-        env = dict(self.base_env(), PWD=str(self.cwd), **extra)
+        env = dict(self.base_env(), PWD=str(self.cwd))
+        env.update(extra)
+        for name in [name for name, value in env.items() if value is None]:
+            env.pop(name)
         # The lead chooses model and effort for every worker; a case that is not about them
         # passes both. choose=False sends the arguments exactly as given.
         if choose:
@@ -355,7 +358,8 @@ class SpawnWorkerTests(unittest.TestCase):
         behaviour.write_text('Lead with the answer.\n')
         shown = (subprocess.run(['cygpath', '-m', self.physical(behaviour)], capture_output=True, text=True,
                                 check=True).stdout.rstrip('\n') if WINDOWS else 'C:' + self.physical(behaviour))
-        for env, appended in (({}, ['--append-system-prompt-file', shown]), ({'MYAGENTKIT_NO_BEHAVIOUR': '1'}, [])):
+        for env, appended in (({'MYAGENTKIT_NO_BEHAVIOUR': None}, ['--append-system-prompt-file', shown]),
+                              ({'MYAGENTKIT_NO_BEHAVIOUR': '1'}, [])):
             with self.subTest(env=env):
                 (self.state / 'claude.json').unlink(missing_ok=True)
                 result = self.spawn('wb', str(self.brief), KIT_WT=str(self.bin / 'wt-tab'), KIT_PS=str(self.bin / 'ps-stub'),
@@ -363,6 +367,19 @@ class SpawnWorkerTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertIn('behaviour appendix: ' + (shown if appended else 'off'), result.stdout)
                 self.assertEqual(self.launched()['argv'][1:], ['-n', 'wb', '--model', 'm', '--effort', 'high', *appended])
+
+    def test_the_displayed_behaviour_path_has_no_terminal_control_bytes(self):
+        self.cwd = self.tmp / 'lead\x1b[2J\tdir'
+        self.cwd.mkdir()
+        (self.cwd / 'BEHAVIOUR.md').write_text('An appendix.\n')
+        # The brief lives outside the control-bearing folder, so its input validation passes.
+        result = self.spawn('wc', str(self.brief), '--batch', MYAGENTKIT_NO_BEHAVIOUR='')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        line = next(line for line in result.stdout.splitlines() if 'behaviour appendix:' in line)
+        self.assertNotRegex(line, r'[\x00-\x1f\x7f]')
+        self.assertIn('lead?[2J?dir/BEHAVIOUR.md', line)
+        # Display sanitization must preserve the actual path handed to Claude.
+        self.assertIn(self.physical(self.cwd / 'BEHAVIOUR.md'), self.launched()['argv'])
 
     def assert_refused(self, brief):
         result = self.spawn('w2', str(brief))
