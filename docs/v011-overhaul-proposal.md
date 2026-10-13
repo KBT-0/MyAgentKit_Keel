@@ -2,7 +2,9 @@
 
 Tarih: 2026-10-13. Durum: **ÖNERİ, uygulanmadı.** Her madde sahibin onayıyla, madde madde
 uygulanır (sahip kararı, 2026-10-13: kit sahipsiz elden geçirilmez). Bağlayıcı kaynak:
-`docs/research-ai-review-workflows.md` (master 247e040); her madde raporun numaralı bulgusunu
+`docs/research-ai-review-workflows.md` (master 247e040); M–O maddeleri ayrıca
+`docs/research-token-optimization.md` (T) ve `docs/research-agent-kits-in-practice.md` (P)
+raporlarına (master 733dc54) dayanır; her madde raporun numaralı bulgusunu
 `§x.y` (yönetici özeti maddesi) ve `[n]` (kaynak) ile anar, kanıt olmayan yerde "raporda kanıt
 yok" der. Kit'in amacı sahibin tanımıyla: **AI destekli uzun soluklu proje geliştirme için
 best-practice kiti; review makinesi değil.**
@@ -344,6 +346,70 @@ adını yazmalı (attestation `modelUsage` ile mümkün mü, backend'e bağlı; 
 unattested" — Codex'teki gibi). **Efor.** K (REVIEW_GATE "roles not vendors" paragrafına bir
 cümle) + backend dalındaki kayıt alanı (O, dal zaten açık). **Karar.** Sahibin.
 
+### M. Token ve bağlam tasarrufu (kaynak: `docs/research-token-optimization.md`, bundan sonra T)
+
+Kitin maliyet modeli üç yanlış inanç taşıyor; T bunları ölçülmüş sayılara karşı düzeltiyor.
+Öneri, T §5'in 11 adayından **ölçülmüş kazancı olan altısı**; gerisi düzeltme ya da ret.
+
+| # | Değişiklik | Kanıt (T) | Beklenen | Risk | Efor |
+|---|---|---|---|---|---|
+| M-1 | Worker cache ömrü kova düzeyinde: `CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL=1h` spawn ortamına; frontmatter `cacheTtl` kaldırılır (usage credits'te yok sayılıyor) | T §1 [4][5]; `docs/worker-cost-setups.md` −36–38 % | 5 dk'dan uzun bekleyen worker'larda −%36 | Kısa worker'da 1h yazma 2×; lead <5 dk işte 5m'ye döner | K (spawn_worker.sh bir satır) |
+| M-2 | Gate review effort'u: xhigh yasak, high istisna, **medium varsayılan** (H ile aynı) | T [44] xhigh=high çözüm, 2,4–4,5× maliyet; Codex xhigh 1,76–2,52× [37] | Tier-3 turlarında ~2× | Edge-case recall; E'nin gürültü kontrolü dengeler | K (REVIEW_GATE + review.sh varsayılanı) |
+| M-3 | Lead session'ında `promptCacheTtl: 1h` yazılı; `/usage` "Prompt cache (main)" satırı mod raporuna girer | T [3][4]: plan limiti dolunca ana konuşma sessizce 5 dk'ya düşer | Aradan sonraki tam yeniden yazma (lead ~250k/request) önlenir | Kısa sık session'da 2× yazma | K (settings + WORKFLOW bir paragraf) |
+| M-4 | Kompaksiyon politikası: 200k çizgisi kalır; compact yalnız cache sıcakken; >1 sa aradan sonra resume'da summary; yön değişince `/clear` + hand-off; Codex worker'da `model_auto_compact_token_limit` 200–250k | T [36][4][14][3][28][46]; maliyet ∝ pencere^2,55 | Compaction başına 300–700k uncached okuma kaçınılır | Yok (metin) | K (context-is-a-budget.md) |
+| M-5 | Aynı context gerektiren kısa iş (lead'in kendi diff'inin iç review'u, kısa teşhis) **fork** sub-agent; taze sub-agent yalnız bağımsız iş | T [4][5][15]; P §5-3 | Worker başına bir başlangıç yazması (36–60k × 1,25–2×) | Fork ebeveynin geçmişini taşır; büyük lead'de pahalı → eşik: lead <120k | K (WORKFLOW kural) |
+| M-6 | Ölçüm: her `-p` worker koşusu `total_cost_usd` + `modelUsage` + TTL kovasını rapor dosyasına yazar; `agent_cost.py` cache hit oranını ve miss nedenini gösterir (SLO: hit ≥ %80) | T [12][3][48][49]; P §5-2 (Claude Code ekibi hit oranına alarm koyuyor) | Doğrudan yok; yanlış routing kararını önler; F ile aynı sınıf | Yok | O (agent_cost.py) |
+
+**Düzeltmeler (tasarruf sıfır, yanlış inanç gider):** `docs/context-is-a-budget.md`'deki "oturum
+ortasında always-loaded doküman düzenlenmez, cache bozulur" gerekçesi yanlış (düzenleme oturuma
+uygulanmıyor; T [4]); kural tutarlılık gerekçesiyle kalır, metin düzelir. "Her request'te MCP
+katalog bedeli" iddiası Claude Code için eski (varsayılan ertelemeli; T [9][7]), Codex/gateway
+için geçerli; kural ikiye ayrılır. Effort geçişi 5.5/Fable'da cache'i koruyor (T [4]); model
+routing kural 4'ün "effort değişimi cache bozar" cümlesi silinir (Codex'te kalır).
+**Reddedilenler (T §5):** Batch API, ccusage, keep-alive/poll plugin'leri, tool-çıktı kısaltıcı
+eklentiler (RTK +%7,6 maliyet, Caveman ilan %65 → ölçülen %8,5; P [67][68]).
+**Karar.** Sahibin; M-1/M-3 `settings` dosyasına dokunduğu için ayrı onay.
+
+### N. Talimat dosyalarının yüklenmesi: her session'da tek büyük set yerine koşullu yükleme (kaynak: `docs/research-agent-kits-in-practice.md`, bundan sonra P)
+
+**Bulgu.** Üç vendor da always-loaded dosyayı kısa "harita" tutuyor (Anthropic <200 satır,
+OpenAI ~100 satır TOC + 32 KiB kesme, Cursor <500 satır/kural; P §1). Hakemli ölçüm:
+geliştirici yazımı AGENTS.md süre −%28,6 / token −%16,6 [64]; ama context dosyaları genelde
+başarı artırmadan maliyeti +%20 artırıyor ve "repo özeti" bölümleri faydasız [63]. Bizde
+`ARCHITECTURE.md` ve `PHASES.md` her session yükleniyor; `AGENTS.md`'nin "Review gate" ve
+"STATE.md discipline" blokları yalnız o işi yapan session'a lazım; path-scoped kural yok.
+
+**Öneri.**
+- N-1 Startup prefix'i ölç (`/usage` istek başı cache okuma; `claude -p --output-format json`
+  ilk istek `cache_creation_input_tokens`). Veri yok; ölçmeden kesmek F'nin ilkesine aykırı.
+- N-2 `AGENTS.md`/`CLAUDE.md` = harita (≤150 satır): komutlar, repo adabı, "nerede ne var".
+  Review gate kuralları → reviewer brief'i ve `REVIEW_GATE.md` (zaten var, tekrar silinir);
+  STATE.md disiplini → `.claude/rules/state.md` `paths: [STATE.md]`; riskli alan kuralları →
+  `paths:` ile ilgili ağaca. Codex tarafı: alt dizin `AGENTS.md` (o ağaçtan dosya okununca eklenir).
+- N-3 Salt-okunur teşhis/araştırma sub-agent'ı `omitClaudeMd: true` + Haiku (P §5-7).
+- N-4 Overlay skill/command açıklama toplamı ölçülür (`/skill-doctor`); lead'in çağırmadığı
+  skill'ler `disable-model-invocation: true` (P §5-8).
+**Risk.** Kuralın yüklenmediği session kuralı çiğner; karşı önlem: D'nin sensor'ları (kural
+prose değil check). **Efor.** N-1 K; N-2 O (dört dosya + overlay); N-3/N-4 K.
+**Karar.** Sahibin; N-2 kitin en görünür dosyasını değiştirir.
+
+### O. Emsalsiz pratikler: sahibin kuralıyla kaldırma/değiştirme adayı
+
+P §5 sonu yedi pratiğin hiçbir kitte bulunmadığını kaydediyor. Sahip kuralı (13 Ekim):
+emsalsiz = kötü işaret, savunulmaz. Her biri için gözlenen pratik ve öneri:
+
+| Pratik | Gözlenen pratik (P) | Öneri |
+|---|---|---|
+| Çapraz-vendor review döngüsü (iki model sıfır bulguya kadar) | Tek reviewer, sabit tur (superpowers 5, Stripe 1–2 CI turu); Anthropic: reviewer bulgu üretmeye meyilli, yalnız doğruluk bulguları [1.2] | **Değiştir**: A + B + C zaten bunu yapıyor; iki vendor tek geçişte kalır (rapor §1.3 dekorelasyon), döngü kalkar |
+| Bütçeye göre yedi adlı mod | Model/effort session başında sabitlenir (cache); mod kavramı yok | **Sadeleştir** (K): üç mod (normal / tasarruf / kapalı), effort tablosu T [44]'e göre |
+| Cache-TTL maliyet modeli + "poll etme" kuralı | Vendor dokümanı aynı modeli anlatıyor ama kit kuralı olarak değil (T §1) | **Koru, düzelt** (M): model doğru, üç cümlesi yanlış |
+| `Done:` trailer'ıyla zorunlu silme | OpenAI doc-gardening agent'ı + tech-debt tracker [23]; kimse commit trailer'ı zorlamıyor | **Değiştir**: trailer gate'i kalkar; `check.sh`'e "doc'taki path var mı" + "Done başlığı altı boş mu" sensoru (D sınıfı) |
+| "Gate kırmızı görülmeden bitmiş sayılmaz" | `/goal` evaluator, Stop hook (deterministik), pre-commit [1.2] | **Değiştir**: kural prose'dan çıkar; Stop hook / pre-commit zaten aynı işi yapıyor (D) |
+| Web isteğinde PII yasağı | Vendor gizlilik ayarları; kit kuralı olarak yok | **Koru** (güvenlik; sahip kuralı) |
+| Spawn script'inin model+effort'suz brief'i reddetmesi | superpowers yalnız uyarır [28] | **Koru**: deterministik kontrol prose uyarıdan iyi (P §4, Anthropic "hooks deterministic"); emsal yok ama ilke emsalli |
+
+**Karar.** Sahibin, satır satır.
+
 ## 3. Uygulama sırası (sahip onayından sonra; hiçbiri başlamadı)
 
 | Sıra | Madde | Neden bu sırada |
@@ -354,6 +420,7 @@ cümle) + backend dalındaki kayıt alanı (O, dal zaten açık). **Karar.** Sah
 | 3 | D-1 ve D-2 (locale matrisi, shell lint) | En sık iki sınıf; gate kodu olduğundan A'nın full katmanı |
 | 4 | D-3…D-5 | v0.12 adayı; F'nin verisi sırayı değiştirebilir |
 | 5 | L | Backend dalı merge edilirken |
+| 1b | M (düzeltmeler, M-2, M-4), N-1 (ölçüm), O (kararlar) | Politika belgeleriyle aynı oturum; M-1/M-3/M-5/M-6 ve N-2…N-4 v0.12 adayı, N-1 verisi sırayı belirler |
 
 ## 4. Süren v0.11 işine uygulanışı (sahip kararı gerekir)
 
@@ -380,5 +447,8 @@ cümle) + backend dalındaki kayıt alanı (O, dal zaten açık). **Karar.** Sah
 5. G: final review tek model mi (hangisi), `ultra` mı; dogfood bir gün mü?
 6. H: 2700/3600 s, üç iş tavanı, Codex medium varsayılanı kabul mü?
 7. L: `claude@NAME` ikinci model sayılsın mı (öneri: evet)?
-8. Bu dokümanın kendisi commit edilsin mi (öneri: evet, `docs/` altında; onaylanan maddeler
+8. M: altı tasarruf maddesinden hangileri v0.11'e; M-1/M-3 settings değişikliği onaylı mı?
+9. N: N-2 harita dönüşümü v0.11'de mi, ölçümden (N-1) sonra mı?
+10. O: yedi emsalsiz pratik için tablo kararları kabul mü (özellikle Done trailer ve yedi mod)?
+11. Bu dokümanın kendisi commit edilsin mi (öneri: evet, `docs/` altında; onaylanan maddeler
    uygulandıkça ilgili satırı silinir, kapanınca dosya silinir: living docs never bloat)?
