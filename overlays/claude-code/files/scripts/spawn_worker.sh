@@ -27,8 +27,9 @@
 # Why a separate session and not a sub-agent: a sub-agent's prompt cache lives 5 minutes and
 # a separate session's lives an hour, so a worker that waits on a long job re-writes its
 # whole context after every wait as a sub-agent and does not as a session (docs/WORKFLOW.md,
-# "Worker cost"). A sub-agent with `experimental.cacheTtl: 1h` in its definition costs the
-# same; the session adds visibility (`tmux attach -t NAME`) and survives the lead ending.
+# "Worker cost"). The launch line below sets CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL=1h, and
+# .claude/settings.json sets it for the lead's own sub-agents, so both cost the same; the
+# session adds visibility (`tmux attach -t NAME`) and survives the lead ending.
 #
 # The lead then subscribes once with SendMessage `notify_when_idle` (on native Windows only
 # when the spawn printed "is a peer session"; a tmux worker registers) and reads the result
@@ -264,7 +265,7 @@ fi
 # registration (no sessions/<pid>.json: ListAgents never lists the worker, SendMessage cannot
 # reach it). tmux ignores the marker, a Windows Terminal tab does not, so both paths clear them.
 # CLAUDE_CLI_BIN and CLAUDE_CODE_EXECPATH name the binary and stay.
-unmark="env -u CLAUDE_CODE_CHILD_SESSION -u CLAUDECODE -u CLAUDE_CODE_SESSION_ID -u CLAUDE_PID -u CLAUDE_CODE_MESSAGING_SOCKET -u CLAUDE_CODE_MESSAGING_TOKEN -u CLAUDE_CODE_SESSION_ATTENDED -u CLAUDE_CODE_ENTRYPOINT"
+unmark="env -u CLAUDE_CODE_CHILD_SESSION -u CLAUDECODE -u CLAUDE_CODE_SESSION_ID -u CLAUDE_PID -u CLAUDE_CODE_MESSAGING_SOCKET -u CLAUDE_CODE_MESSAGING_TOKEN -u CLAUDE_CODE_SESSION_ATTENDED -u CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL=1h"
 
 # Variadic flags come LAST and the prompt is never on this line (see the header).
 cmd="claude -n $(q "$name")"

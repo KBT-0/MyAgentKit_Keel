@@ -63,6 +63,11 @@ class AgentCostTests(unittest.TestCase):
             self.assertIn('TOTAL requests 4', text)
             self.assertIn('after >5 min gaps 1.1k (50%)', text)
             self.assertIn('poll-only requests 2', text)
+            # hit = read / (read + write + uncached): lead 1000/3125, worker 3/11, total 1003/3136
+            self.assertEqual(agent_cost.hit(lead_summary), '32%')
+            self.assertEqual(agent_cost.hit(worker), '27%')
+            self.assertIn('cache hit 32% (target 80%)', text)
+            self.assertEqual(agent_cost.hit({'cr': 0, 'cw': 0, 'inp': 0}), '-')
 
     def test_latest_finds_a_project_whose_path_has_an_underscore(self):
         # Claude Code encodes every non-alphanumeric character as '-'; --latest once encoded

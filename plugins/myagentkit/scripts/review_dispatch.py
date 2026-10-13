@@ -213,7 +213,7 @@ def main(argv=None):
     parser.add_argument("--reviewer", choices=("claude", "codex"), default="claude")
     parser.add_argument("--claude-model", default=os.environ.get("REVIEW_CLAUDE_MODEL", ""))
     parser.add_argument("--codex-model", default=os.environ.get("REVIEW_CODEX_MODEL", ""))
-    parser.add_argument("--effort", choices=("low", "medium", "high", "xhigh", "max"), default="high")
+    parser.add_argument("--effort", choices=("low", "medium", "high"), default="high")  # no xhigh for a review
     # Off by default: the requested reviewer is usually chosen because the other model
     # authored the patch, so a silent substitute could be the author reviewing itself.
     parser.add_argument("--allow-fallback", action="store_true")

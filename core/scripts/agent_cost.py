@@ -18,6 +18,9 @@ in the kit's founding project (docs/WORKFLOW.md, "Worker cost"):
               output check): each one re-reads the whole context for nothing.
   1h/5m       which cache lifetime the agent's writes used (`ephemeral_1h` is the
               one-hour cache; a worker meant to run with it must show it here).
+  hit         cache-read share of all input (read / (read + write + uncached)). The
+              target is 80% or more (docs/WORKFLOW.md, "Worker cost"); below it, the
+              cWrite>5m and poll columns say whether waiting or polling caused the misses.
 
 Not covered: the permission classifier and other requests that never reach a transcript.
 """
@@ -91,6 +94,7 @@ def summarize(name: str, rows: list[dict]) -> dict:
     ctx = lambda r: r['inp'] + r['cr'] + r['cw']  # noqa: E731
     return {'agent': name, 'req': len(rows), 'tool': sum(len(r['tools']) for r in rows),
             'cr': sum(r['cr'] for r in rows), 'cw': sum(r['cw'] for r in rows),
+            'inp': sum(r['inp'] for r in rows),
             'cw_gap': gap_cw, 'poll': polls,
             'w1h': sum(r['w1h'] for r in rows), 'w5': sum(r['w5'] for r in rows),
             'ctx0': ctx(rows[0]) if rows else 0, 'ctxN': ctx(rows[-1]) if rows else 0,
@@ -117,17 +121,24 @@ def fmt(n: int) -> str:
     return f'{n / 1e6:.2f}M' if n >= 1e6 else f'{n / 1e3:.1f}k'
 
 
+def hit(s: dict) -> str:
+    total = s['cr'] + s['cw'] + s['inp']
+    return f'{100 * s["cr"] / total:.0f}%' if total else '-'
+
+
 def table(summaries: list[dict]) -> str:
-    head = f'{"agent":40} {"req":>4} {"tool":>4} {"cRead":>8} {"cWrite":>8} {"cWrite>5m":>9} {"poll":>4} {"1h/5m":>13} {"ctx0->ctxN":>14}'
+    head = f'{"agent":40} {"req":>4} {"tool":>4} {"cRead":>8} {"cWrite":>8} {"cWrite>5m":>9} {"poll":>4} {"1h/5m":>13} {"hit":>4} {"ctx0->ctxN":>14}'
     lines = [head]
     for s in sorted(summaries, key=lambda s: -s['cr']):
         bucket = f'{fmt(s["w1h"])}/{fmt(s["w5"])}'
         lines.append(f'{s["agent"][:40]:40} {s["req"]:4} {s["tool"]:4} {fmt(s["cr"]):>8} {fmt(s["cw"]):>8} '
-                     f'{fmt(s["cw_gap"]):>9} {s["poll"]:4} {bucket:>13} {fmt(s["ctx0"]):>6}->{fmt(s["ctxN"]):<6}')
-    tot = {k: sum(s[k] for s in summaries) for k in ('req', 'cr', 'cw', 'cw_gap', 'poll')}
+                     f'{fmt(s["cw_gap"]):>9} {s["poll"]:4} {bucket:>13} {hit(s):>4} '
+                     f'{fmt(s["ctx0"]):>6}->{fmt(s["ctxN"]):<6}')
+    tot = {k: sum(s[k] for s in summaries) for k in ('req', 'cr', 'cw', 'inp', 'cw_gap', 'poll')}
     share = 100 * tot['cw_gap'] / tot['cw'] if tot['cw'] else 0
     lines.append(f'TOTAL requests {tot["req"]}  cRead {fmt(tot["cr"])}  cWrite {fmt(tot["cw"])}  '
-                 f'after >5 min gaps {fmt(tot["cw_gap"])} ({share:.0f}%)  poll-only requests {tot["poll"]}')
+                 f'after >5 min gaps {fmt(tot["cw_gap"])} ({share:.0f}%)  poll-only requests {tot["poll"]}  '
+                 f'cache hit {hit(tot)} (target 80%)')
     return '\n'.join(lines)
 
 

@@ -1,5 +1,5 @@
 ---
-description: The review GATE (not a review command) — a second model reviews the change set in a throwaway copy, then YOU verify every finding instead of relaying it
+description: The review GATE (not a review command) — a fresh session of another tier or family reviews the change set in a throwaway copy, then YOU verify every finding instead of relaying it
 argument-hint: "[--uncommitted | --base <ref> | --commit <sha>] [--reviewer codex|claude]"
 disable-model-invocation: true
 allowed-tools: Read, Glob, Grep, Bash(git:*), Bash(./scripts/review.sh:*), AskUserQuestion
@@ -9,15 +9,17 @@ allowed-tools: Read, Glob, Grep, Bash(git:*), Bash(./scripts/review.sh:*), AskUs
 The project owner must have asked for this in THIS session — it spends another tool's
 budget. Agents do not spend it on their own.
 
-**Needs a second CLI on the machine** — a DIFFERENT model from whichever one authored the
-change. `scripts/review.sh` ships adapters for two, `--reviewer codex` and
-`--reviewer claude`, and the project's configured default is at the top of that script.
-**You may be the author here.** If this session wrote the diff, the reviewer must not be
-your own model, whatever the default says. The wrapper may fail over once to the other
-configured model if the first provider is unavailable. If that fallback authored the patch,
-its findings are advisory, not independent gate approval. Do not install a missing CLI or
-choose an unconfigured model without authorization. The paste-by-hand template in
-`docs/REVIEW_RUNNING.md` remains available for a genuinely fresh non-author review.
+**The reviewer is a fresh session of another tier or family** (`docs/REVIEW_GATE.md`,
+"Invariant"). `scripts/review.sh` ships adapters for `--reviewer claude` and
+`--reviewer codex`; the project's configured default is at the top of that script, and in
+the solo mode `REVIEW_CLAUDE_MODEL` is pinned to the tier that did not write the change. A
+second vendor is pluggable, never required. **You may be the author here.** If this session
+wrote the diff, the reviewer must not be your own tier, whatever the default says. The
+wrapper may fail over once to the other configured reviewer if the first is unavailable. If
+that fallback authored the patch, its findings are advisory, not independent gate approval.
+Do not install a missing CLI or choose an unconfigured model without authorization. The
+paste-by-hand review in `docs/REVIEW_RUNNING.md` remains available for a genuinely fresh
+non-author review.
 
 1. Run `./scripts/review.sh` with the scope asked for: `--uncommitted` (default),
    `--base <ref>` or `--commit <sha>`, optionally with `--reviewer <name>`. Those are the

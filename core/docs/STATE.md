@@ -2,12 +2,12 @@
 
 **If it is not written here, it did not happen.** This file holds current state only: what
 is in flight and what waits on someone. Its rules, and the permanent home for anything still
-true next month, are in `AGENTS.md`, "STATE.md discipline" (the reasons: `docs/WORKFLOW.md`,
+true next month, are in `docs/AGENTS.md`, "STATE.md discipline" (the reasons: `docs/WORKFLOW.md`,
 "The state, backlog and phase files"). Every entry has a tool+model trace.
 
 ---
 
-**Working mode:** cross-performance (`docs/WORKFLOW.md`, "Working modes, by name"; the owner
+**Working mode:** solo (`docs/WORKFLOW.md`, "Working modes, by name"; the owner
 names another, and `/myagentkit:mode` sets it).
 
 ## Active work

@@ -15,8 +15,10 @@ import tempfile
 # The accepted shapes: the bold key, optionally indented or as a list item. Any other line that
 # mentions the key is refused, never taken for a missing line.
 STATE_LINE = re.compile(r'^([^\S\r\n]*(?:[-*+][^\S\r\n]+)?\*\*Working mode:\*\*[^\S\r\n]*)([^\r\n]*)(?=\r?$)', re.M)
-# A WORKFLOW.md from before claude-only has exactly these rows; any other table is a defect.
-SIX_MODES = {'claude-first', 'cross-performance', 'cross-saving', 'codex-first', 'claude-saver', 'codex-saver'}
+# The three modes of v0.11; a WORKFLOW.md from before them has six or seven rows of the old
+# per-model names (claude-first, cross-performance, ...), and any other table is a defect.
+MODES = ('solo', 'normal', 'saver')
+OLD_MODES = {'claude-first', 'cross-performance', 'cross-saving', 'codex-first', 'claude-saver', 'codex-saver', 'claude-only'}
 
 
 def normalized(value):
@@ -167,16 +169,18 @@ def mode(project, choice=None):
     section = workflow.split('### Working modes, by name', 1)[1].split('\n## ', 1)[0]
     rows = re.findall(r'^\| `([a-z-]+)` \| ([^|]+) \| ([^\n]+)$', section, re.M)
     names = [name for name, _, _ in rows]
-    if len(names) == 6 and set(names) == SIX_MODES:
-        print("ACTION: docs/WORKFLOW.md predates the seventh mode, claude-only, so no mode was shown "
-              "or switched. Copy the claude-only table row and subsection from the kit's "
-              "core/docs/WORKFLOW.md into yours and sync the core scripts (scripts/working_mode.py), "
-              "then run this again (kit CHANGELOG.md, v0.11).")
+    if len(names) in (6, 7) and set(names) <= OLD_MODES:
+        print("ACTION: docs/WORKFLOW.md predates the three modes (solo, normal, saver), so no mode was "
+              "shown or switched. Replace its \"Working modes, by name\" section with the kit's "
+              "core/docs/WORKFLOW.md section, set the STATE.md line to the matching mode (cross-performance "
+              "and claude-only are solo, claude-first and codex-first are normal with a (writes: ..., "
+              "reviews: ...) note, the saver modes are saver with a (low: ...) note), sync the core "
+              "scripts (scripts/working_mode.py), then run this again (kit CHANGELOG.md, v0.11).")
         if choice is not None:
-            raise ValueError('no mode was switched: docs/WORKFLOW.md predates claude-only')
+            raise ValueError('no mode was switched: docs/WORKFLOW.md predates the three modes')
         return
-    if len(rows) != 7 or len(set(names)) != 7:
-        raise ValueError('WORKFLOW.md must define all seven modes')
+    if tuple(names) != MODES:
+        raise ValueError('WORKFLOW.md must define the three modes solo, normal and saver')
     if choice is None:
         return working_mode(project, section, rows)
     with switch_lock(project):
@@ -196,13 +200,19 @@ def working_mode(project, section, rows, choice=None):
     if mentions and not matches:
         raise ValueError('unrecognized STATE.md Working mode line (write it as **Working mode:** NAME): '
                          + mentions[0].strip())
-    current = 'cross-performance'
+    current = 'solo'
     note = ''
     if matches:
         value, separator, suffix = matches[0][2].partition(' (')
         current = aliases.get(normalized(value))
         if current is None:
-            raise ValueError('invalid STATE.md working mode: ' + value)
+            hint = ''
+            if normalized(value) in OLD_MODES:
+                hint = ('; it is a mode name from before v0.11: set the line by hand to solo (for '
+                        'cross-performance or claude-only), normal with a (writes: ..., reviews: ...) note '
+                        '(for claude-first or codex-first) or saver with a (low: ...) note (for a saver mode), '
+                        'then run this again')
+            raise ValueError('invalid STATE.md working mode: ' + value + hint)
         note = separator + suffix
     record = checked(project, '.claude/mode')
     if choice is None:
@@ -222,8 +232,6 @@ def working_mode(project, section, rows, choice=None):
             raise ValueError('missing mode rules: ' + heading)
         return match[0].strip()
     output = rules(selected + ' (')
-    if selected in ('claude-saver', 'codex-saver'):
-        output += '\n\n' + rules('The two saver modes')
     if matches:
         updated = STATE_LINE.sub(lambda m: m[1] + selected + note, state)
     else:

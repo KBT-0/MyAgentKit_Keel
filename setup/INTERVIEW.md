@@ -139,31 +139,32 @@ One topic per turn. Suggested order, because each answer informs the next:
    question. Do not infer any of them from which tool you happen to be running in — that
    assumption is exactly what this section exists to stop:
 
-   - **Which model is the AUTHOR?** The one that writes most of the code.
-   - **Which model is the REVIEWER?** It must be a DIFFERENT model. Either direction is
-     supported and neither is the "normal" one.
+   - **Which model family is the AUTHOR?** The one that writes most of the code. The kit's
+     default is one family alone (`solo`, `docs/WORKFLOW.md`, "Working modes, by name"):
+     one tier writes and another tier of the same family reviews, each in a fresh session.
+   - **Is there a SECOND vendor?** Only then is the REVIEWER a different model
+     (`normal`). Either direction is supported and neither is the usual one.
    - **Which budget is scarce, and which is generous?** This fills the model-routing table,
      and it is often what decides the two answers above. A capable model on a nearly
-     exhausted plan makes a better reviewer than an author.
+     exhausted plan makes a better reviewer than an author (`saver`).
 
    Record the answers where the tooling reads them: the `DEFAULT_REVIEWER`, `CODEX_MODEL`
-   and `CLAUDE_MODEL` values at the top of `scripts/review.sh`. **Both models must be pinned
-   by name** — an unpinned reviewer archives whatever default its CLI had that day, and the
-   wrapper refuses to run rather than record something no later review can be compared
-   against. Say plainly that the roles can be swapped later by editing those three values,
-   and that swapping them does not change the evidence format.
+   and `CLAUDE_MODEL` values at the top of `scripts/review.sh`. **The reviewer must be
+   pinned by name** — an unpinned reviewer archives whatever default its CLI had that day,
+   and the wrapper refuses to run rather than record something no later review can be
+   compared against. Say plainly that the roles can be swapped later by editing those three
+   values, and that swapping them does not change the evidence format.
 
-   Then ask specifically about **cross-model review**, because it is the one part of this
-   kit that needs software the owner may not have. `scripts/review.sh` shells out to a
-   SECOND CLI, and it ships with adapters for two: `--reviewer codex` and
-   `--reviewer claude`. So:
+   Then ask specifically about the **review CLI**, because it is the one part of this kit
+   that needs software the owner may not have. `scripts/review.sh` shells out to a CLI in a
+   fresh session, and it ships with adapters for two: `--reviewer claude` and
+   `--reviewer codex`. So:
 
-   - Check which are installed: `command -v codex`, `command -v claude`. Do not assume
-     either way — report what you found. If only one is present, the OTHER one is the
-     reviewer only if the owner installs it; the review gate needs two models. An owner with
-     only a Claude subscription can work in the `claude-only` mode instead: a second Claude
-     tier reviews through `--reviewer claude` (`docs/WORKFLOW.md`, "Working modes, by name").
-   - If it is missing, explain the trade: without a second model, the review protocol
+   - Check which are installed: `command -v claude`, `command -v codex`. Do not assume
+     either way — report what you found. One is enough: in `solo` a second tier of the same
+     family reviews through `--reviewer claude` with `REVIEW_CLAUDE_MODEL` pinned to the
+     tier that did not write. A second vendor is pluggable, never required.
+   - If neither is installed, explain the trade: without a review CLI, the review protocol
      becomes the paste-the-template-by-hand version in `docs/REVIEW_RUNNING.md`. That is a
      genuine fallback, and the kit works without it. With it, `/myagentkit:cross-review`
      runs the whole thing in-session.
@@ -381,8 +382,8 @@ placeholder is either a quoted value or a whole file.
 
 **Model routing ships filled.** `docs/WORKFLOW.md`, "Model routing", carries the kit's tier
 table and its working modes. Replace the table's model names with what the owner's
-subscriptions offer today, and ask which working mode starts (cross-performance unless the
-owner names another). Run `scripts/working_mode.py <name>` with the host's Python to record
+subscriptions offer today, and ask which working mode starts (solo unless the owner names
+another). Run `scripts/working_mode.py <name>` with the host's Python to record
 the choice in both `.claude/mode` and the "Working mode:" line of `docs/STATE.md`.
 
 ### Then, in this order

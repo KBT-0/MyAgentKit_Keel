@@ -21,6 +21,88 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-10-13 — The review policy rewritten: the kit's own numbers, and fourteen rules deleted
+
+The v0.11 overhaul (`docs/v011-overhaul-proposal.md`, items A, B, C, E, H, I, J, K, M, N, P,
+Q) was decided against the kit's own review records of 12–13 October (master and eight
+worktrees, `.myagentkit/usage` and `docs/reviews`), the first measurement the research
+report asked for:
+
+| Measure | Value |
+|---|---|
+| Completed review archives | 39 (33 Reject, 6 Accept with Manual Checks, 0 Accept) |
+| Findings | 0 Critical, 10 High, 77 Medium, 104 Low (High = 5%) |
+| The docs branch (7 kB of document changes) | 10 rounds, all Reject; Codex 5 rounds 16,603 s (mean 55 min), Claude 5 rounds 455 s (mean 1.5 min) |
+| Codex high-effort review duration | 37–58 min |
+| Claude review duration (native Windows, no Bash, REASONED) | 1–9 min |
+| Reviewer attempts without a verdict | 3 timeouts (2 × 7,198 s, 5,398 s), 5 content_flagged, 6 cli_error: 35,074 s, about 9.7 hours |
+| master finals r3–r6 | Reject, Accept-MC, Reject, Accept-MC |
+| Most frequent finding classes (archive keywords) | Windows 273, locale/UTF-8 91, quoting/echo/dash 80, mktemp/TMPDIR 64, trap/signal 64, symlink 44, no killing test 39, mode bits 39, MAX_PATH 24 |
+
+No Critical, few High, many Medium and Low, and never a plain Accept: the "until clean" loop
+did not converge by its own definition. The three timeouts came from six heavy jobs started
+together, our observation, not the report's.
+
+Of the 89 review rules inventoried (`docs/research-review-rules-inventory.md`), 44 stay, 31
+merge into one place and 14 are deleted; the owner approved the list as written. The
+deletions and why, so that no later pass re-adds them:
+
+- "Report EVERY finding… Fix sketch:" — replaced by the finding threshold, the completeness
+  sentence ("continue until every qualifying finding is listed") and no fix sketch: a prompt
+  that asks for explanation plus fix raises the false-reject rate.
+- "Round n re-reviews the whole diff" — round two confirms the first round's Critical and
+  High fixes and reports new Critical or High only; iteration past that was measured as
+  noise (Self-Refine, Reflexion's signal falling from 5.1 to 1.95).
+- "The other model's round accepts the last fix" and the two-model final closure (also the
+  prompt's copy) — one final, one model; closure is written once in REVIEW_GATE.md.
+- The closure rule's copies in REVIEW_GATE, REVIEW_RUNNING, AGENTS and WORKFLOW — one place.
+- The 380-word hand-paste template — REVIEW_RUNNING points at the prompt constant and the diff.
+- The Codex xhigh row of the tier table — xhigh is banned for reviews (2.4–4.5× the cost of
+  high for the same resolution).
+- Routing rule 4 (escalate after the second dirty round) — there is no third round; the
+  exception is `REVIEW_ROUND_EXCEPTION`, recorded.
+- "In codex-first the Opus lead only manages" in REVIEW_RUNNING — the mode definition in
+  WORKFLOW is the one place.
+- The SKILL.md round limit (two rounds, the host counts) — the limit is code; the skill points.
+
+The review timeout fell from 3600/7200 to 2700/3600 at the same time. A review the timeout
+kills returns nothing and its quota is spent, which is why the old 1800 s cap had been
+removed; the mitigation is `REVIEW_TIMEOUT_SECONDS=3600` for a run known to be large, and
+the first large review after the upgrade is timed (the chain record's timestamps) before the
+owner decides whether the cap stays. The automatic retry of a `model at capacity` answer
+stays a backlog line, not a mechanism.
+
+### 2026-10-13 — The startup prefix measured (N-1) and the cache-hit column (M-6)
+
+The map conversion of `core/AGENTS.md` (244 lines to 165) was proposed on vendor guidance
+alone; the number it saves was measured before it went in. Method: one Haiku request,
+`claude -p "Reply with the single word ok." --model claude-haiku-5-5 --output-format json
+--no-session-persistence --max-turns 1`, and the first request's `cache_creation_input_tokens`
+is everything loaded before any work. Same host, same user CLAUDE.md, within one hour:
+
+| Working directory | cache write | cache read |
+|---|---|---|
+| empty directory (the global prefix alone) | 16,393 | 16,157 |
+| the 244-line constitution of 74012c6 as `CLAUDE.md` | 22,221 | 16,157 |
+| the 165-line map as `CLAUDE.md` | 20,517 | 16,157 |
+| the kit repository itself (no project file; memory index) | 18,790 before, 19,441 after | 15,764 / 16,157 |
+
+- The constitution alone cost 5,828 tokens per cold session; the map costs 4,124 (−29%).
+  Both are small beside the 16k the owner does not control (system prompt, tool catalogue,
+  skill descriptions, user CLAUDE.md), and the 16k read is the shared system prompt. So the
+  dollar saving is a few cents a day; the reason the map stays short is adherence
+  (`docs/research-token-optimization.md` §5, finding 5), and the owner's cap of 200 lines
+  stands because the next cut would remove rules.
+- The kit-repository rows moved by 651 tokens between the two runs with nothing in the kit
+  changed (memory index, skill list): a prefix figure is a delta against an empty directory
+  on the same day, never an absolute to compare across days.
+- Haiku was the model because the prefix token count does not depend on the model and the
+  four runs cost under two cents together.
+- `agent_cost.py` prints `hit` (cache reads over all input) per agent and in the total, with
+  an 80% target (`docs/research-agent-kits-in-practice.md` §5-2: the Claude Code team alarms
+  on the hit rate). The record half of M-6 needed no change: `agent_usage.normalize` already
+  keeps `total_cost_usd`, `modelUsage` and the `ephemeral_1h/5m` buckets in `usage_raw`.
+
 ### 2026-10-13 — Merging seven v0.11 branches on native Windows: what the kit lacked
 
 Seven branches (watch, peer, behaviour, backend, triage, lint, docs) each passed two to ten

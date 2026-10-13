@@ -869,6 +869,8 @@ exit 0
         # A worker is no child of the lead: the lead's session markers never reach it.
         self.assertFalse(MARKERS & set(launched['env_names']), launched['env_names'])
         self.assertIn('CLAUDE_CODE_EXECPATH', launched['env_names'])
+        # Its cache outlives its waits (docs/WORKFLOW.md, "Worker cost", rule 1).
+        self.assertIn('CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL', launched['env_names'])
         self.assertFalse((self.state / 'wt.log').exists(), 'the tab was shown a second time')
         # Registered (sessions/9.json): the lead is told to subscribe, and no warning.
         (self.state / 'claude.json').unlink()
@@ -1226,6 +1228,7 @@ exit 0
         env = self.launched()['env_names']
         self.assertFalse(MARKERS & set(env), env)
         self.assertIn('CLAUDE_CODE_EXECPATH', env)
+        self.assertIn('CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL', env)
 
     def test_a_started_worker_is_shown_unless_batch(self):
         # A session nobody sees can wait on a dialog for hours: it opens in a terminal tab

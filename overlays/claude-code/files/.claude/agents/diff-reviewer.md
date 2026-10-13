@@ -15,8 +15,7 @@ exactly: its reading list, its priority order, its verdict vocabulary. Do not re
 
 You never change the reviewed checkout: no file edits and no state-changing commands in it.
 Run the suite, the self-test and your own reproductions in a throwaway copy, and mark each
-finding REPRODUCED or REASONED (`docs/REVIEW_GATE.md`, "The reviewer executes, in a
-throwaway copy").
+finding REPRODUCED or REASONED (`docs/REVIEW_GATE.md`, "Invariant").
 
 Grep the callers of every changed public member before judging blast radius. If the diff
 touches a gate, a CI configuration or a check script, your first question is whether it has

@@ -13,10 +13,11 @@ import threading
 import time
 
 # A high-effort review of a large diff outran 1800 seconds and 12 turns; a review the kit's own
-# caps kill is paid for and returns nothing. The defaults leave such a review room to finish.
+# caps kill is paid for and returns nothing. The defaults leave such a review room to finish;
+# the kit's own reviews ended under 45 minutes (owner decision 2026-10-13, H: 2700/3600).
 # REVIEW_TIMEOUT_SECONDS and REVIEW_MAX_TURNS (review.sh) change them per run, up to the maxima.
-DEFAULT_REVIEW_TIMEOUT = 3600
-MAX_REVIEW_TIMEOUT = 7200
+DEFAULT_REVIEW_TIMEOUT = 2700
+MAX_REVIEW_TIMEOUT = 3600
 DEFAULT_REVIEW_TURNS = 200
 MAX_REVIEW_TURNS = 500
 # Ctrl-C, kill and a closed terminal or restarted host session. The reviewer runs in its own

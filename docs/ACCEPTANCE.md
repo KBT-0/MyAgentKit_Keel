@@ -99,6 +99,9 @@ Decision — 2026-10-11: the owner approved that the reviewing model fixes its o
 and a verdict counts only for parts it did not write. Once both models have written parts,
 closure requires one fresh NEW-label final review per model over the parts it did not write;
 both must return without a High or Medium finding.
+Superseded — 2026-10-13: the kit runs on one model family (`docs/REVIEW_GATE.md`,
+"Invariant"): the session that wrote a patch never reviews it, a fresh session of another tier
+reviews, a label carries at most two rounds, and only a Critical or High blocks.
 
 ## v0.9 — 2026-10-03
 

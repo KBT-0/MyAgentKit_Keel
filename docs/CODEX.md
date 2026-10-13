@@ -125,14 +125,14 @@ The adapter's timestamped JSON archives are excluded from subsequent review diff
 recursively embedding prior transcripts; source and ordinary documentation are not excluded.
 Reference reviews require a clean checkout, and commit mode requires the checked-out HEAD.
 
-Default review limits are 3600 seconds per attempt (maximum 7200) and 200 Claude turns (maximum 500);
+Default review limits are 2700 seconds per attempt (maximum 3600) and 200 Claude turns (maximum 500);
 `REVIEW_TIMEOUT_SECONDS` and `REVIEW_MAX_TURNS` change them per run. Reviews have no default monetary cap; the
 adapter passes `--max-budget-usd` only when explicitly specified. Patch proposals retain
 their separate $3 default. Omitting a cap does not remove provider/account limits.
 The wall-clock timeout kills the child process group. These limits are not a promise of
 precise subscription quota accounting. The wrapper and packaged dispatcher visibly fail
 over once to the other configured model on operational failure. Direct adapters do not.
-Both wrapper attempts use `REVIEW_TIMEOUT_SECONDS` (3600 by default) independently. This
+Both wrapper attempts use `REVIEW_TIMEOUT_SECONDS` (2700 by default) independently. This
 measures total elapsed time, not inactivity or connection setup. Output does not reset it;
 two full-length attempts may take about two hours plus local overhead. Claude's final-JSON
 mode does not reliably expose whether silent work has started. Proposal mode retains its

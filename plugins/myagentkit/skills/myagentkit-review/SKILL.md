@@ -19,12 +19,13 @@ when authorization is absent. A review-only request does not authorize source ed
 fix findings only when the user also asked for implementation or review-and-fix.
 
 Use the project's configured model pins and the user's explicit overrides, never infer a
-fallback model from the host's identity. Defaults are high effort, 200 Claude turns, and
-3600 seconds per attempt. Choose effort from `docs/WORKFLOW.md`, "Model routing", and pass
-`--effort medium` for a small fix re-review; risky diffs and mechanism changes use high.
+fallback model from the host's identity. Defaults are medium effort (high when
+`REVIEW_RISK=high`), 200 Claude turns, and 2700 seconds per attempt. Choose effort from
+`docs/WORKFLOW.md`, "Model routing"; a gate, hook or review-tooling change and a new
+mechanism's first round use high.
 This is a total wall-clock limit, not a startup or inactivity
-timer; two attempts may take about two hours plus local overhead. Use `REVIEW_TIMEOUT_SECONDS`
-(at most 7200) and `REVIEW_MAX_TURNS` (at most 500) to honor an explicit wrapper/dispatcher limit. Reviews have no default monetary budget cap:
+timer; two attempts may take about ninety minutes plus local overhead. Use `REVIEW_TIMEOUT_SECONDS`
+(at most 3600) and `REVIEW_MAX_TURNS` (at most 500) to honor an explicit wrapper/dispatcher limit. Reviews have no default monetary budget cap:
 omit `--max-budget-usd` unless the owner explicitly specifies a cap. An explicit dollar
 cap does not promise equivalent subscription quota accounting. Do not automatically raise
 limits or choose an unconfigured model when a run fails. With `--allow-fallback` (the wrapper's
@@ -49,13 +50,8 @@ Set `MYAGENTKIT_REQUESTER=codex/ACTUAL_MODEL` when known, otherwise `codex/unkno
 This is reported metadata, not independent attestation. Set `MYAGENTKIT_TASK_ID` to the
 same stable task label across rounds: earlier completed reviews with that label are carried
 into the next round's prompt, and `REVIEW_DISPOSITIONS=<file>` adds your answer to each
-finding as a claim the reviewer verifies. Once both models have written parts, the final
-Accept requires one fresh NEW-label final review per model over parts it did not write.
-The change closes when both return without a High or Medium finding. When model B's final
-review finds a High or Medium, model B fixes its own findings and model A reviews B's fix under
-a fresh label; B's final review counts as clean for every other part, and closure requires no
-open High or Medium finding on any part by a model that did not write that part. If only one model
-wrote the change, one fresh NEW-label final review by the other model closes it.
+finding as a claim the reviewer verifies. At most two rounds run under one label; a third
+needs `REVIEW_ROUND_EXCEPTION=<reason>` (`docs/REVIEW_GATE.md`, "Rounds").
 Environment overrides `REVIEW_CLAUDE_MODEL` and
 `REVIEW_CODEX_MODEL` are supported by both entry points. Missing primary pins stop before
 launch; an unconfigured alternate is never replaced with an invented default.

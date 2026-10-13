@@ -13,6 +13,57 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## v0.11 — 2026-10-09
 
+- **One review policy in two files, and one model** (`docs/REVIEW_GATE.md`,
+  `docs/REVIEW_RUNNING.md`, `AGENTS.md`, `docs/WORKFLOW.md`; `claude_bridge.py`,
+  `codex_bridge.py`, `review_dispatch.py`, `review.sh`, `agent_process.py`, `working_mode.py`,
+  `agent_cost.py`; the Claude Code overlay): the review rules that lived in eight files live
+  in two, each rule once, and the kit runs on one model family with a second vendor
+  pluggable. A brief's `Risk:` line picks the tier: low gets the gate and one light review,
+  medium one reviewer in one pass, high two reviewers at once with narrow prompts
+  (`REVIEW_FOCUS`); the session that wrote a patch never reviews it. Reject needs a Critical
+  or High; a Medium is fixed in the round only when the fix is one place with a test, else
+  filed; Low is filed, and an Accept may carry Lows and pre-existing items. A label carries
+  two rounds: the second confirms the first round's Critical and High fixes and reports new
+  Critical or High only; a third attempt stops with exit 2 unless
+  `REVIEW_ROUND_EXCEPTION=<reason>` is set, and the record keeps the reason. The one review
+  prompt (`claude_bridge.REVIEW_PROMPT`, both adapters) states the finding threshold, the
+  severities for this kit, what not to report, the Low ceiling and the round-two narrowing,
+  and reads the brief (`REVIEW_TASK_FILE`), the tier (`REVIEW_RISK`) and the focus from the
+  environment, which the wrapper passes. Default effort follows the tier (high for a high
+  tier, else medium; xhigh and max are not review choices). `REVIEW_TIMEOUT_SECONDS`
+  defaults to 2700 and is capped at 3600; a timed-out review returns no verdict and its
+  quota is spent. The routing escalation rule is gone. The seven working modes are three:
+  `solo` (default: one family, a fresh session of another tier reviews), `normal` (the
+  side the STATE note names writes, the other side reviews) and `saver` (the low side
+  reviews within a small budget); `working_mode.py` refuses an old mode name and prints the
+  mapping. Worker and lead prompt caches live one hour
+  (`CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL=1h` in `spawn_worker.sh`, `promptCacheTtl` and
+  `subagentPromptCacheTtl` in the overlay `settings.json`; the frontmatter `cacheTtl` is
+  dropped). `AGENTS.md` is a 165-line map: the review paragraph is three lines and a
+  pointer, the STATE discipline moved to `docs/AGENTS.md` with the path-scoped
+  `.claude/rules/state.md` pointing at it. `agent_cost.py` prints the cache-hit share
+  per agent with an 80% target, and `docs/context-is-a-budget.md` corrects the cache and
+  MCP-catalogue claims and states the compaction rule. **ACTION:** copy the listed scripts
+  and the overlay files (`.claude/agents/worker.md`, `diff-reviewer.md`,
+  `.claude/settings.json`, `.claude/rules/state.md`, `scripts/spawn_worker.sh`); take the
+  kit's `docs/REVIEW_GATE.md`, `docs/REVIEW_RUNNING.md`, `docs/WORKFLOW.md`, `AGENTS.md` and
+  `docs/AGENTS.md` and re-apply your project's own lines; BEFORE running `working_mode.py`,
+  rewrite the `**Working mode:**` line of `docs/STATE.md` to `solo`, `normal` or `saver`
+  (claude-only and cross-performance become solo; claude-first becomes normal; codex-first,
+  claude-saver and codex-saver become saver, keeping the note after the name) and the mode
+  table of `docs/WORKFLOW.md` to those three rows, since the script refuses the old names;
+  measure your first large review's duration from the chain record's timestamps and, if
+  3600 s cut it off, ask the owner whether `MAX_REVIEW_TIMEOUT` rises.
+
+- **Two ordinary accidents named** (issues #75, #76; `AGENTS.md` task discipline,
+  `docs/REVIEW_GATE.md` attack list): a script's recursive delete of a directory chosen by a
+  variable or a setting proves ownership by a marker it wrote and refuses roots, ancestors
+  and unresolved links; a freshness stamp is bound to the fingerprints taken before the work,
+  re-checked before it is published. Both were found by a downstream review in that
+  project's own tooling, not in the kit, whose scratch folders and review snapshots already
+  follow the pattern; the kit records them as guidance, not as a new gate. **ACTION:** copy
+  the two sentences into your `AGENTS.md` and `docs/REVIEW_GATE.md`.
+
 - **Reviewer configurations are measured** (`claude_bridge.py`, `codex_bridge.py`,
   `agent_usage.py`, `usage_summary.py`): each answer in `REVIEW_DISPOSITIONS` carries one
   key, `fixed:<commit>`, `disproved:<evidence>` or `deferred:<issue or decision>`; a file

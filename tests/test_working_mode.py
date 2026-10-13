@@ -15,7 +15,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / 'core/scripts/working_mode.py'
 PLUGIN = ROOT / 'plugins/myagentkit/scripts/working_mode.py'
-MODES = ('claude-first', 'cross-performance', 'cross-saving', 'codex-first', 'claude-saver', 'codex-saver', 'claude-only')
+MODES = ('solo', 'normal', 'saver')
 
 
 class WorkingModeTests(unittest.TestCase):
@@ -122,26 +122,26 @@ class WorkingModeTests(unittest.TestCase):
         self.assertEqual(reads[0].read_bytes(), b'A successor at the consumed name.\n')
         self.assertIn('kept at ' + str(reads[0]), errors.getvalue())
 
-    def test_show_defaults_without_writing_and_lists_all_seven(self):
+    def test_show_defaults_without_writing_and_lists_all_three(self):
         before = self.state.read_bytes()
         result = self.run_mode()
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn('Current mode: cross-performance', result.stdout)
+        self.assertIn('Current mode: solo', result.stdout)
         for name in MODES:
             self.assertIn(name, result.stdout)
         self.assertEqual(self.state.read_bytes(), before)
         self.assertFalse((self.project / '.claude/mode').exists())
 
     def test_switch_records_both_files_preserves_state_and_prints_saver_rules(self):
-        self.state.write_text('# State\n---\n**Working mode:** cross-performance (keep this note).\nActive work.\n', encoding='utf-8')
-        result = self.run_mode('Claude Tasarruf Modu')
+        self.state.write_text('# State\n---\n**Working mode:** solo (keep this note).\nActive work.\n', encoding='utf-8')
+        result = self.run_mode('Tasarruf Modu')
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual((self.project / '.claude/mode').read_text().strip(), 'claude-saver')
-        self.assertEqual(self.state.read_text(), '# State\n---\n**Working mode:** claude-saver (keep this note).\nActive work.\n')
-        self.assertIn('#### claude-saver', result.stdout)
-        self.assertIn('#### The two saver modes', result.stdout)
+        self.assertEqual((self.project / '.claude/mode').read_text().strip(), 'saver')
+        self.assertEqual(self.state.read_text(), '# State\n---\n**Working mode:** saver (keep this note).\nActive work.\n')
+        self.assertIn('#### saver', result.stdout)
+        self.assertNotIn('#### solo', result.stdout)
         self.assertIn('allowance resets', result.stdout)
-        self.assertIn('Current mode: claude-saver', self.run_mode().stdout)
+        self.assertIn('Current mode: saver', self.run_mode().stdout)
 
     def test_every_mode_switches_and_missing_line_is_added(self):
         for mode in MODES:
@@ -151,38 +151,48 @@ class WorkingModeTests(unittest.TestCase):
             self.assertEqual((self.project / '.claude/mode').read_text().strip(), mode)
             self.assertIn('Active work stays here.', self.state.read_text())
 
-    def test_codex_first_routes_implementation_and_review_fixes_to_codex(self):
-        result = self.run_mode('Codex Öncelikli Mod')
+    def test_normal_routes_writes_and_reviews_to_the_sides_the_state_note_names(self):
+        result = self.run_mode('Normal Mod')
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn('Claude Opus lead plans, briefs, routes and reviews', result.stdout)
-        self.assertIn('Codex workers write all implementation and all fixes', result.stdout)
-        self.assertIn("including fixes of Claude's review findings", result.stdout)
-        self.assertIn('too heavy or too important for Codex', result.stdout)
-        self.assertIn('Codex reviews that work', result.stdout)
-        self.assertIn("that Opus worker fixes Codex's findings on it, so no model reviews its own fix", result.stdout)
-        self.assertNotIn('not yet confirmed', result.stdout)
-        saver = self.run_mode('codex-saver')
-        self.assertIn("Codex's allowance is low", saver.stdout)
-        self.assertIn('Claude workers implement every errand and fix every finding', saver.stdout)
+        self.assertIn('Current mode: normal', result.stdout)
+        self.assertIn('(writes: claude, reviews: codex)', result.stdout)
+        self.assertIn('the other side reviews every tiered diff in a fresh session', result.stdout)
+        self.assertIn("findings go to a fresh worker of the author's side", result.stdout)
+        self.assertNotIn('#### saver', result.stdout)
+        saver = self.run_mode('saver')
+        self.assertIn("One side's allowance is low", saver.stdout)
+        self.assertIn('the side that is not low implements every errand and fixes every finding', saver.stdout)
+        self.assertIn('the low side reviews within a small budget', saver.stdout)
+        self.assertIn("it goes to the other side only with the owner's yes", saver.stdout)
+
+    def test_an_old_state_mode_name_is_refused_with_the_mapping_not_mapped(self):
+        self.state.write_text('**Working mode:** codex-first (set by hand).\n', encoding='utf-8')
+        for args in ((), ('solo',)):
+            result = self.run_mode(*args)
+            self.assertEqual(result.returncode, 1)
+            self.assertIn('invalid STATE.md working mode: codex-first; it is a mode name from before v0.11', result.stderr)
+            self.assertIn('normal with a (writes: ..., reviews: ...) note', result.stderr)
+        self.assertIn('codex-first', self.state.read_text(encoding='utf-8'))
+        self.assertFalse((self.project / '.claude/mode').exists())
 
     def test_invalid_name_or_disagreeing_records_never_silently_switches(self):
         before = self.state.read_bytes()
         result = self.run_mode('unknown')
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(self.state.read_bytes(), before)
-        self.assertEqual(self.run_mode('claude-first').returncode, 0)
-        (self.project / '.claude/mode').write_text('codex-first\n')
+        self.assertEqual(self.run_mode('normal').returncode, 0)
+        (self.project / '.claude/mode').write_text('saver\n')
         self.assertNotEqual(self.run_mode().returncode, 0)
         # An explicit owner choice repairs the disagreement.
-        self.assertEqual(self.run_mode('cross-performance').returncode, 0)
+        self.assertEqual(self.run_mode('solo').returncode, 0)
 
     def test_old_workflow_and_missing_state_are_refused_without_writes(self):
         (self.project / 'docs/WORKFLOW.md').write_text('# Old workflow\n')
-        self.assertNotEqual(self.run_mode('claude-first').returncode, 0)
+        self.assertNotEqual(self.run_mode('normal').returncode, 0)
         self.assertFalse((self.project / '.claude/mode').exists())
         (self.project / 'docs/WORKFLOW.md').write_bytes((ROOT / 'core/docs/WORKFLOW.md').read_bytes())
         self.state.unlink()
-        self.assertNotEqual(self.run_mode('claude-first').returncode, 0)
+        self.assertNotEqual(self.run_mode('normal').returncode, 0)
 
     def test_linked_mode_directory_is_refused(self):
         target = self.project / 'elsewhere'
@@ -194,7 +204,7 @@ class WorkingModeTests(unittest.TestCase):
             link.symlink_to(target, target_is_directory=True)
         try:
             before = self.state.read_bytes()
-            self.assertNotEqual(self.run_mode('codex-saver').returncode, 0)
+            self.assertNotEqual(self.run_mode('saver').returncode, 0)
             self.assertFalse((target / 'mode').exists())
             self.assertEqual(self.state.read_bytes(), before)
         finally:
@@ -204,54 +214,54 @@ class WorkingModeTests(unittest.TestCase):
                 link.unlink()
 
     def test_state_accepts_case_and_turkish_labels_without_adding_a_line(self):
-        for value in ('Codex-first', 'Codex Öncelikli Mod'):
+        for value in ('Saver', 'Tasarruf Modu'):
             self.state.write_text('**Working mode:** ' + value + ' (manual).\n', encoding='utf-8')
-            self.assertIn('Current mode: codex-first', self.run_mode().stdout)
-            self.assertEqual(self.run_mode('claude-first').returncode, 0)
+            self.assertIn('Current mode: saver', self.run_mode().stdout)
+            self.assertEqual(self.run_mode('normal').returncode, 0)
             text = self.state.read_text(encoding='utf-8')
             self.assertEqual(text.count('**Working mode:**'), 1)
-            self.assertIn('claude-first (manual)', text)
+            self.assertIn('normal (manual)', text)
             (self.project / '.claude/mode').unlink()
 
     def test_list_item_and_indented_state_lines_are_read_and_switched_in_place(self):
-        for line in ('- **Working mode:** codex-first (set by hand).', '  **Working mode:** Codex-first'):
+        for line in ('- **Working mode:** saver (set by hand).', '  **Working mode:** Saver'):
             with self.subTest(line=line):
                 self.state.write_text('# State\n---\n' + line + '\nActive.\n', encoding='utf-8')
-                self.assertIn('Current mode: codex-first', self.run_mode().stdout)
-                self.assertEqual(self.run_mode('claude-first').returncode, 0)
+                self.assertIn('Current mode: saver', self.run_mode().stdout)
+                self.assertEqual(self.run_mode('normal').returncode, 0)
                 text = self.state.read_text(encoding='utf-8')
                 self.assertEqual(text.count('Working mode:'), 1, text)
-                self.assertIn(line.split('**Working mode:**')[0] + '**Working mode:** claude-first', text)
+                self.assertIn(line.split('**Working mode:**')[0] + '**Working mode:** normal', text)
                 (self.project / '.claude/mode').unlink()
 
     def test_unknown_and_duplicate_state_lines_are_refused_before_writes(self):
         for text in ('**Working mode:** mystery\n',
-                     '**Working mode:** codex-first\n**Working mode:** Claude-first\n',
-                     '- **Working mode:** codex-first\n**Working mode:** claude-first\n',
-                     'Working mode: codex-first\n', '> **Working mode:** codex-first\n'):
+                     '**Working mode:** saver\n**Working mode:** Normal\n',
+                     '- **Working mode:** saver\n**Working mode:** normal\n',
+                     'Working mode: saver\n', '> **Working mode:** saver\n'):
             self.state.write_text(text, encoding='utf-8')
-            for args in ((), ('claude-first',)):
+            for args in ((), ('normal',)):
                 result = self.run_mode(*args)
                 self.assertNotEqual(result.returncode, 0, result.stdout)
                 self.assertEqual(self.state.read_text(encoding='utf-8'), text)
             self.assertFalse((self.project / '.claude/mode').exists())
 
-    def test_uppercase_turkish_dotted_i_label(self):
-        result = self.run_mode('CLAUDE ÖNCELİKLİ MOD')
+    def test_uppercase_turkish_label(self):
+        result = self.run_mode('TEK MODEL MODU')
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn('Current mode: claude-first', result.stdout)
+        self.assertIn('Current mode: solo', result.stdout)
 
     def test_cp1252_pipe_switch_prints_utf8_rules_after_writes(self):
         workflow = self.project / 'docs/WORKFLOW.md'
         workflow.write_text(workflow.read_text(encoding='utf-8').replace(
-            '#### claude-first (', '#### claude-first (işi ağır: '), encoding='utf-8')
+            '#### normal (', '#### normal (işi ağır: '), encoding='utf-8')
         code = ('import sys,runpy; sys.stdout.reconfigure(encoding="cp1252"); '
-                'sys.argv=[%r,"--project",%r,"claude-first"]; runpy.run_path(%r,run_name="__main__")') % (
+                'sys.argv=[%r,"--project",%r,"normal"]; runpy.run_path(%r,run_name="__main__")') % (
                     str(SCRIPT), str(self.project), str(SCRIPT))
         result = subprocess.run([sys.executable, '-I', '-c', code], capture_output=True, timeout=15)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('işi ağır', result.stdout.decode('utf-8'))
-        self.assertEqual((self.project / '.claude/mode').read_text().strip(), 'claude-first')
+        self.assertEqual((self.project / '.claude/mode').read_text().strip(), 'normal')
 
     def test_atomic_replacement_copies_original_permissions(self):
         spec = importlib.util.spec_from_file_location('working_mode', SCRIPT)
@@ -260,7 +270,7 @@ class WorkingModeTests(unittest.TestCase):
         import shutil
         with mock.patch.object(shutil, 'copymode', wraps=shutil.copymode) as copy:
             with mock.patch('sys.stdout', new=io.StringIO()):
-                module.mode(self.project, 'claude-first')
+                module.mode(self.project, 'normal')
             self.assertTrue(any(call.args[0] == self.state for call in copy.call_args_list),
                             'STATE replacement must inherit its original permissions')
 
@@ -273,17 +283,17 @@ class WorkingModeTests(unittest.TestCase):
         def interrupted(source, target):
             replace(source, target)
             if target == self.state:
-                competitors.append(self.run_mode('codex-first'))
+                competitors.append(self.run_mode('saver'))
         with mock.patch.object(module.os, 'replace', side_effect=interrupted), \
                 mock.patch('sys.stdout', new=io.StringIO()):
-            module.mode(self.project, 'claude-first')
+            module.mode(self.project, 'normal')
         self.assertNotEqual(competitors[0].returncode, 0, 'overlapping switch was allowed')
         self.assertIn('mode switch in progress', competitors[0].stderr)
-        self.assertIn('Current mode: claude-first', self.run_mode().stdout)
-        self.assertEqual(self.run_mode('codex-first').returncode, 0, 'switch lock was not released')
+        self.assertIn('Current mode: normal', self.run_mode().stdout)
+        self.assertEqual(self.run_mode('saver').returncode, 0, 'switch lock was not released')
 
     def test_state_edit_during_preparation_is_refused_without_losing_work(self):
-        self.assertEqual(self.run_mode('cross-performance').returncode, 0)
+        self.assertEqual(self.run_mode('solo').returncode, 0)
         spec = importlib.util.spec_from_file_location('working_mode', SCRIPT)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
@@ -298,13 +308,13 @@ class WorkingModeTests(unittest.TestCase):
         with mock.patch.object(module, 'prepared', side_effect=interrupted), \
                 mock.patch('sys.stdout', new=io.StringIO()):
             with self.assertRaisesRegex(ValueError, 'STATE.md changed'):
-                module.mode(self.project, 'claude-first')
+                module.mode(self.project, 'normal')
         self.assertEqual(self.state.read_bytes(), concurrent)
-        self.assertEqual((self.project / '.claude/mode').read_text().strip(), 'cross-performance')
-        self.assertEqual(self.run_mode('codex-first').returncode, 0)
+        self.assertEqual((self.project / '.claude/mode').read_text().strip(), 'solo')
+        self.assertEqual(self.run_mode('saver').returncode, 0)
 
     def test_failed_record_replace_does_not_roll_back_an_independent_state_edit(self):
-        self.assertEqual(self.run_mode('cross-performance').returncode, 0)
+        self.assertEqual(self.run_mode('solo').returncode, 0)
         spec = importlib.util.spec_from_file_location('working_mode', SCRIPT)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
@@ -318,12 +328,12 @@ class WorkingModeTests(unittest.TestCase):
             replace(source, target)
         with mock.patch.object(module.os, 'replace', side_effect=interrupted):
             with self.assertRaises(OSError):
-                module.mode(self.project, 'claude-first')
+                module.mode(self.project, 'normal')
         self.assertEqual(self.state.read_bytes(), concurrent[0])
         self.assertIn('disagree', self.run_mode().stderr)
 
     def test_rollback_cancellation_never_truncates_state(self):
-        self.assertEqual(self.run_mode('cross-performance').returncode, 0)
+        self.assertEqual(self.run_mode('solo').returncode, 0)
         spec = importlib.util.spec_from_file_location('working_mode', SCRIPT)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
@@ -347,12 +357,12 @@ class WorkingModeTests(unittest.TestCase):
         with mock.patch.object(module.os, 'replace', side_effect=interrupted), \
                 mock.patch.object(Path, 'open', cancelled_open):
             with self.assertRaises(KeyboardInterrupt):
-                module.mode(self.project, 'claude-first')
+                module.mode(self.project, 'normal')
         self.assertEqual(self.state.read_bytes(), published[0])
         self.assertIn(b'Active work stays here.', self.state.read_bytes())
         self.assertNotEqual(self.state.read_bytes(), before)
         self.assertIn('disagree', self.run_mode().stderr)
-        self.assertEqual(self.run_mode('codex-first').returncode, 0)
+        self.assertEqual(self.run_mode('saver').returncode, 0)
 
     def test_a_root_named_through_a_link_is_resolved_once_and_written_where_it_leads(self):
         # macOS /tmp and a linked home are ordinary ways to name a project; links below it are not.
@@ -370,11 +380,11 @@ class WorkingModeTests(unittest.TestCase):
             for root, real in ((link, self.project), (link / 'child', child)):
                 with self.subTest(root=root):
                     result = subprocess.run([sys.executable, '-X', 'utf8', str(SCRIPT), '--project',
-                                             str(root), 'claude-first'], capture_output=True, text=True,
+                                             str(root), 'normal'], capture_output=True, text=True,
                                             encoding='utf-8', timeout=15)
                     self.assertEqual(result.returncode, 0, result.stderr)
-                    self.assertIn('**Working mode:** claude-first', (real / 'docs/STATE.md').read_text(encoding='utf-8'))
-                    self.assertEqual((real / '.claude/mode').read_text().strip(), 'claude-first')
+                    self.assertIn('**Working mode:** normal', (real / 'docs/STATE.md').read_text(encoding='utf-8'))
+                    self.assertEqual((real / '.claude/mode').read_text().strip(), 'normal')
         finally:
             if os.name == 'nt':
                 link.rmdir()
@@ -397,42 +407,48 @@ class WorkingModeTests(unittest.TestCase):
                 with mock.patch.object(Path, 'lstat', fake), mock.patch('sys.stdout', new=io.StringIO()):
                     if refused:
                         with self.assertRaisesRegex(ValueError, 'linked path refused'):
-                            module.mode(self.project, 'codex-first')
+                            module.mode(self.project, 'saver')
                     else:
-                        module.mode(self.project, 'claude-first')
-                        self.assertEqual((self.project / '.claude/mode').read_text().strip(), 'claude-first')
-        self.assertIn('**Working mode:** claude-first', self.state.read_text(encoding='utf-8'))
+                        module.mode(self.project, 'normal')
+                        self.assertEqual((self.project / '.claude/mode').read_text().strip(), 'normal')
+        self.assertIn('**Working mode:** normal', self.state.read_text(encoding='utf-8'))
 
-    def test_a_workflow_without_the_seventh_mode_names_the_update_instead_of_failing(self):
+    def test_a_workflow_with_the_old_per_model_modes_names_the_update_instead_of_failing(self):
         workflow = self.project / 'docs/WORKFLOW.md'
         lines = workflow.read_bytes().decode('utf-8').split('\n')
-        workflow.write_bytes('\n'.join(l for l in lines if not l.startswith('| `claude-only` |')).encode('utf-8'))
+        old = ['| `%s` | Old | - | - | - |' % name for name in
+               ('claude-first', 'cross-performance', 'cross-saving', 'codex-first', 'claude-saver', 'codex-saver')]
+        start = next(i for i, l in enumerate(lines) if l.startswith('| `solo` |'))
+        seven = lines[:start] + old + ['| `claude-only` | Old | - | - | - |'] + lines[start + 3:]
+        workflow.write_bytes('\n'.join(lines[:start] + old + lines[start + 3:]).encode('utf-8'))
         before = self.state.read_bytes()
         # A show succeeds; a requested switch that did not happen fails. Neither creates the lock.
-        for args, status in (((), 0), (('claude-first',), 1)):
+        for args, status in (((), 0), (('normal',), 1)):
             with self.subTest(args=args):
                 result = subprocess.run([sys.executable, '-X', 'utf8', str(PLUGIN), '--project', str(self.project),
                                          *args], capture_output=True, text=True, encoding='utf-8', timeout=15)
                 self.assertEqual(result.returncode, status, result.stderr)
-                self.assertIn('ACTION: docs/WORKFLOW.md predates the seventh mode, claude-only', result.stdout)
+                self.assertIn('ACTION: docs/WORKFLOW.md predates the three modes (solo, normal, saver)', result.stdout)
                 self.assertIn('sync the core scripts (scripts/working_mode.py)', result.stdout)
                 self.assertEqual(self.state.read_bytes(), before)
                 self.assertFalse((self.project / '.claude').exists())
-        # Any other incomplete table is still refused, a misspelled six-row one too.
-        misspelled = [l.replace('| `codex-saver` |', '| `codex-savr` |') for l in lines
-                      if not l.startswith('| `claude-only` |')]
-        for table in ([l for l in lines if not l.startswith('| `codex-saver` |')], misspelled):
+        # The seven-row table of v0.11 before the three modes is the same case.
+        workflow.write_bytes('\n'.join(seven).encode('utf-8'))
+        self.assertIn('ACTION: docs/WORKFLOW.md predates the three modes', self.run_mode().stdout)
+        # Any other incomplete table is still refused, a misspelled one too.
+        misspelled = [l.replace('| `saver` |', '| `savr` |') for l in lines]
+        for table in ([l for l in lines if not l.startswith('| `saver` |')], misspelled):
             workflow.write_bytes('\n'.join(table).encode('utf-8'))
-            for args in ((), ('codex-first',)):
+            for args in ((), ('saver',)):
                 with self.subTest(args=args):
                     result = self.run_mode(*args)
                     self.assertEqual(result.returncode, 1, result.stdout)
                     self.assertNotIn('ACTION', result.stdout)
-                    self.assertIn('must define all seven modes', result.stderr)
+                    self.assertIn('must define the three modes', result.stderr)
                     self.assertFalse((self.project / '.claude').exists())
 
     def test_interrupted_switch_reports_repair_and_releases_the_lock(self):
-        self.assertEqual(self.run_mode('cross-performance').returncode, 0)
+        self.assertEqual(self.run_mode('solo').returncode, 0)
         spec = importlib.util.spec_from_file_location('working_mode', SCRIPT)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
@@ -443,13 +459,13 @@ class WorkingModeTests(unittest.TestCase):
             replace(source, target)
         with mock.patch.object(module.os, 'replace', side_effect=interrupted):
             with self.assertRaises(KeyboardInterrupt):
-                module.mode(self.project, 'claude-first')
+                module.mode(self.project, 'normal')
         result = self.run_mode()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('.claude/mode and STATE.md disagree', result.stderr)
         self.assertIn('choose a mode explicitly to repair', result.stderr)
-        self.assertEqual(self.run_mode('codex-first').returncode, 0)
-        self.assertIn('Current mode: codex-first', self.run_mode().stdout)
+        self.assertEqual(self.run_mode('saver').returncode, 0)
+        self.assertIn('Current mode: saver', self.run_mode().stdout)
 
     def test_junction_is_refused_without_the_python_312_path_api(self):
         if os.name != 'nt':
@@ -468,30 +484,23 @@ class WorkingModeTests(unittest.TestCase):
                     mock.patch('sys.stdout', new=io.StringIO()):
                 del Path.is_junction  # Python 3.10/3.11 have no such API.
                 with self.assertRaisesRegex(ValueError, 'linked path refused'):
-                    module.mode(self.project, 'codex-first')
+                    module.mode(self.project, 'saver')
             self.assertFalse((target / 'mode').exists())
             self.assertEqual(self.state.read_bytes(), before)
         finally:
             link.rmdir()
 
-    def test_claude_only_reviews_with_another_claude_tier_and_no_codex(self):
-        result = self.run_mode('Sadece Claude Modu')
+    def test_solo_reviews_with_another_tier_of_the_same_family_and_no_second_vendor(self):
+        result = self.run_mode('Tek Model Modu')
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn('Current mode: claude-only', result.stdout)
-        self.assertIn('different Claude tiers', result.stdout)
-        self.assertIn('fresh bridged session with no shared context', result.stdout)
+        self.assertIn('Current mode: solo', result.stdout)
+        self.assertIn('the author and the reviewer are different tiers', result.stdout)
+        self.assertIn('fresh\n  bridged session with no shared context', result.stdout)
         self.assertIn('REVIEW_CLAUDE_MODEL', result.stdout)
-        self.assertIn('no Codex worker and no Codex review', result.stdout)
-        self.assertIn('Cross review stays mandatory', result.stdout)
-        self.assertNotIn('The two saver modes', result.stdout)
-        # codex-saver stays its own mode: Codex still reviews there.
-        self.assertIn('Codex reviews within a small budget', self.run_mode('codex-saver').stdout)
-
-    def test_codex_saver_has_no_codex_lead_or_worker(self):
-        result = self.run_mode('codex-saver')
-        self.assertIn('no Codex worker; Codex reviews only', result.stdout)
-        self.assertNotIn('a Codex lead', result.stdout)
-        self.assertIn('Claude leads in both saver modes', result.stdout)
+        self.assertIn("A second session of the author's own tier\n  is never the review", result.stdout)
+        self.assertIn('no second vendor runs', result.stdout)
+        self.assertNotIn('#### saver', result.stdout)
+        self.assertNotIn('#### normal', result.stdout)
 
     def test_read_state_writes_the_snapshot_with_its_sha_without_a_lock(self):
         before = b'# State\r\nAn active task.\r\n'
@@ -524,9 +533,9 @@ class WorkingModeTests(unittest.TestCase):
         self.assertEqual(self.state.read_bytes(), stale + b'Task B.\nTask C.\n')
 
     def test_an_edit_that_changes_the_working_mode_line_is_refused(self):
-        self.assertEqual(self.run_mode('cross-performance').returncode, 0)
+        self.assertEqual(self.run_mode('solo').returncode, 0)
         before = self.state.read_bytes()
-        for edited in (before.replace(b'cross-performance', b'claude-first'),
+        for edited in (before.replace(b'solo', b'normal'),
                        b''.join(line for line in before.splitlines(True) if b'Working mode' not in line)):
             with self.subTest(edited=edited):
                 snapshot, sha = self.snapshot()
@@ -536,7 +545,7 @@ class WorkingModeTests(unittest.TestCase):
                 self.assertIn('Working mode line', result.stderr)
                 self.assertIn('mode switch', result.stderr)
                 self.assertEqual(self.state.read_bytes(), before)
-        self.assertIn('Current mode: cross-performance', self.run_mode().stdout)
+        self.assertIn('Current mode: solo', self.run_mode().stdout)
 
     def test_state_operations_stay_in_the_project_and_its_private_folder(self):
         before = self.state.read_bytes()
@@ -705,10 +714,10 @@ class WorkingModeTests(unittest.TestCase):
         self.assertEqual(list((self.project / '.myagentkit').iterdir()), [])
 
     def test_a_refused_edit_that_cannot_go_back_names_where_its_draft_is_kept(self):
-        self.assertEqual(self.run_mode('cross-performance').returncode, 0)
+        self.assertEqual(self.run_mode('solo').returncode, 0)
         worker = self.module()
         snapshot, sha = self.snapshot()
-        edited = snapshot.read_bytes().replace(b'cross-performance', b'claude-first')
+        edited = snapshot.read_bytes().replace(b'solo', b'normal')
         snapshot.write_bytes(edited)
         renaming = os.rename
         def rename(source, target):
@@ -755,7 +764,7 @@ class WorkingModeTests(unittest.TestCase):
         self.assertFalse((self.project / '.claude/mode').exists())
 
     def state_writer_race(self, rollback):
-        self.assertEqual(self.run_mode('cross-performance').returncode, 0)
+        self.assertEqual(self.run_mode('solo').returncode, 0)
         spec = importlib.util.spec_from_file_location('working_mode', SCRIPT)
         worker = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(worker)
@@ -783,9 +792,9 @@ class WorkingModeTests(unittest.TestCase):
                 mock.patch.object(worker.os, 'replace', replace), mock.patch('sys.stdout', new=io.StringIO()):
             if rollback:
                 with self.assertRaisesRegex(OSError, 'record replacement failed'):
-                    worker.mode(self.project, 'claude-first')
+                    worker.mode(self.project, 'normal')
             else:
-                worker.mode(self.project, 'claude-first')
+                worker.mode(self.project, 'normal')
         self.assertEqual(len(refusals), 1, 'the intended STATE race was not scheduled')
         self.assertNotEqual(refusals[0].returncode, 0)
         self.assertIn('mode switch in progress', refusals[0].stderr)
@@ -799,7 +808,7 @@ class WorkingModeTests(unittest.TestCase):
         retry = self.run_mode('--replace-state', str(proposed), '--expect', hashlib.sha256(current).hexdigest())
         self.assertEqual(retry.returncode, 0, retry.stderr)
         self.assertEqual(self.state.read_bytes(), current + b'An independent active task.\n')
-        self.assertIn('Current mode: ' + ('cross-performance' if rollback else 'claude-first'),
+        self.assertIn('Current mode: ' + ('solo' if rollback else 'normal'),
                       self.run_mode().stdout)
 
     def test_state_race_refuses_the_writer_then_preserves_its_retried_edit(self):
@@ -820,7 +829,7 @@ class WorkingModeTests(unittest.TestCase):
         def publishing(source, target):
             if target == self.state:
                 self.assertEqual(self.state.read_bytes(), before, 'STATE was truncated before publication')
-                attempts.append(self.run_mode('claude-first'))
+                attempts.append(self.run_mode('normal'))
             replace(source, target)
         with mock.patch.object(worker.os, 'replace', publishing), \
                 mock.patch.object(worker.Path, 'cwd', return_value=self.project), \
@@ -830,7 +839,7 @@ class WorkingModeTests(unittest.TestCase):
         self.assertEqual(len(attempts), 1)
         self.assertNotEqual(attempts[0].returncode, 0)
         self.assertIn('mode switch in progress', attempts[0].stderr)
-        self.assertEqual(self.run_mode('claude-first').returncode, 0)
+        self.assertEqual(self.run_mode('normal').returncode, 0)
         self.assertIn(b'An independent active task.', self.state.read_bytes())
 
 

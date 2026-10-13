@@ -9,18 +9,32 @@ This is not a readability preference dressed up in economics. It is the largest 
 lever in a repeated-session workflow, and it is the one people never look at because it does
 not appear on any one invoice line.
 
-## Keep the prefix small AND stable
+## Keep the prefix small, and change it deliberately
 
-Cached input tokens are discounted heavily on the providers this kit assumes. That discount
-applies to a STABLE prefix — and every edit to an always-loaded file invalidates the cache
-for every session after it.
+Cached input tokens are discounted heavily on the providers this kit assumes: the
+always-loaded files are written to the cache once per session and read at a tenth of the
+price or less on every turn after. The per-session bill is real but small. Measured on
+2026-10-13 (first request of `claude -p`, see `RESEARCH_LOG.md`): the kit's 244-line
+constitution cost 5.8k cache-write tokens per cold session and its 165-line successor 4.1k,
+beside 16k written and 16k read for the prefix the owner does not control (system prompt,
+tool catalogue, skill descriptions, user-level instructions).
 
-Two consequences that feel unnatural and are worth following anyway:
+The larger cost is adherence. Every vendor keeps the always-loaded file under about 200
+lines because a long one makes the model skip the rules it contains. The map is short so
+that it is followed, not so that it is cheap.
 
-- **Do not edit the constitution or the architecture map in the middle of a session** unless
-  the task IS that document. A one-line clarification, made in passing, costs the cache.
-- **Batch documentation edits into their own task and their own session.** Then the
-  invalidation happens once, deliberately.
+Two rules that feel unnatural and stand anyway:
+
+- **Edit the constitution or the architecture map in their own task, not in passing.** Not
+  because an edit breaks the cache: in Claude Code it does not, the file is read once at
+  start and the edit is not even applied until `/clear`, `/compact` or a restart. A rule
+  changed in passing is a rule nobody reviewed, and the session that changed it keeps
+  running on the old text.
+- **Batch documentation edits into their own task and their own session**, so the change
+  lands once, reviewed, and every later session starts on the same text.
+
+What does invalidate a running session's cache: changing the model or fast mode, adding or
+removing an MCP server, denying a whole tool, compaction, and a Claude Code upgrade.
 
 And keep the volatile things out of the stable files: current status belongs in the state
 file, which is read on demand and expected to churn.
@@ -42,9 +56,13 @@ would be a tax on every task that never touches it.
 
 ## Tools have to earn their place
 
-An MCP server injects its entire tool catalogue into every request whether or not you call a
-tool. A skill costs its description in every session. A dozen of each is thousands of tokens
-before anyone types anything.
+What an MCP server costs depends on the tool. In Claude Code its tools are deferred by
+default: a session pays the tool names and the server's instructions, about a hundred
+tokens per server, and a schema is loaded only when the tool is called. Behind an
+`ANTHROPIC_BASE_URL` gateway, on a provider without tool search, and in Codex, the whole
+catalogue is still injected into every request, and seven servers have cost a third of a
+200k window. A skill costs its description in every session in every tool. And adding or
+removing a server mid-session invalidates a running session's cache, which a skill does not.
 
 Hence the default verdict of REJECT in `setup/RESEARCH_PROTOCOL.md`, and hence a new server
 needing the same approval as a new dependency. The question is never "is this useful?" —
@@ -64,6 +82,18 @@ But **written artifacts are the exact opposite** and the distinction is not nego
 state file, handoff prompts and review reports are always full explicit sentences, because
 the next reader is a tool with no context and no idea what shorthand you had in mind. Terse
 where it is repeated; complete where it is the only record.
+
+## Compaction is a purchase too
+
+The line is 200k tokens of context. Past it every request re-reads the whole window, and
+the measured cost of a session grows faster than its window does, so a summary at the line
+is cheaper than ten more turns at full size. But compaction itself re-reads the window
+uncached, which is why the rule has three parts: compact only while the cache is warm; a
+session resumed after more than an hour writes its summary into the handoff first, since
+its next request is re-written at full price anyway; and when the work changes direction,
+`/clear` with a handoff instead of a summary that carries finished detail. A Codex worker
+sets `model_auto_compact_token_limit` to 200k–250k for the same line. The procedure, with
+the measured numbers, is rule 8 of "Worker cost" in `core/docs/WORKFLOW.md`.
 
 ## The failure mode it prevents
 

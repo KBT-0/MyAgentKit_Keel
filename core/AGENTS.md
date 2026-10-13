@@ -1,48 +1,42 @@
 # {{PROJECT_NAME}} — Agent Constitution
 
-Every agent — **any CLI tool, any model** — reads this file FIRST, every session. Every line
-is binding.
+Every agent — **any CLI tool, any model** — reads this file FIRST, every session. Every line is
+binding. It is a map: rules that apply only when one tree is edited live in that tree's
+`AGENTS.md` (`docs/AGENTS.md` for `docs/`), loaded with it.
 
 ## What this project is
 
 {{PROJECT_DESCRIPTION}}
 
-**Design authority is `docs/PROJECT.md`** — what this project is and every decision that
-shaped it, each marked DECIDED or OPEN. It is read by section only (reading order, item 6).
+**Design authority is `docs/PROJECT.md`** — what this project is and every decision that shaped
+it, each marked DECIDED or OPEN. It is read by section only (reading order, item 6).
 
 ## Multi-tool project
 
-- **This file is canonical.** Tool-specific instruction files are pointers, never a second
-  copy.
+- **This file is canonical.** Tool-specific instruction files are pointers, never a second copy.
 - **Cross-tool memory is `docs/STATE.md`, and only STATE.md.** Chat memory does not transfer
-  between tools or sessions. If it is not in STATE.md, it did not happen.
-- **Tool-specific memory features are scratch, never canonical.** Per-tool goals, IDE
-  session memory, auto-memory and the like are private conveniences of one tool; the next
-  tool cannot read them.
-- **Gates are tool-agnostic:** CI runs the same `./scripts/check.sh` you run. A single
-  tool's hooks, skills or agent definitions are convenience; the system works without them.
-- **Cross-tool task transfer:** use the `docs/HANDOFF.md` template.
+  between tools or sessions. If it is not in STATE.md, it did not happen. Per-tool memory
+  features (goals, IDE session memory, auto-memory) are scratch, never canonical.
+- **Gates are tool-agnostic:** CI runs the same `./scripts/check.sh` you run. One tool's hooks,
+  skills or agent definitions are convenience. Cross-tool task transfer: `docs/HANDOFF.md`.
 
 ## Reading order (new session)
 
-0. Run `./scripts/doctor.sh` (it changes nothing in the project). If it prints `MISSING:`, tell {{OWNER_NAME}} and
-   offer each fix before touching code: a red gate on an unready machine is not a code bug.
+0. Run `./scripts/doctor.sh` (it changes nothing). If it prints `MISSING:`, tell {{OWNER_NAME}}
+   and offer each fix before touching code: a red gate on an unready machine is not a code bug.
 1. This file, which you are reading now. Do not open it again.
-2. `docs/PHASES.md` — what we are building now, and what is deliberately OUT of scope
-   (short; read EVERY session).
-3. `docs/STATE.md` — cross-session work state (small; read EVERY session). Updating it at
-   session end is YOUR job, not {{OWNER_NAME}}'s.
-4. `docs/ARCHITECTURE.md` — module map and boundaries
-5. The target folder's `AGENTS.md` / module `README.md`
-6. IF NEEDED, the relevant SECTION of `docs/PROJECT.md` — find it through that file's
-   Contents and cite it by number (`PROJECT §4.2`). Never load the whole file, and never
-   copy its text elsewhere: a quotation is a duplicate, a citation is not.
+2. `docs/PHASES.md` — what we are building now, and what is deliberately OUT of scope.
+3. `docs/STATE.md` — cross-session work state. Updating it at session end is YOUR job.
+4. `docs/ARCHITECTURE.md` — module map and boundaries.
+5. The target folder's `AGENTS.md` / module `README.md`.
+6. IF NEEDED, the relevant SECTION of `docs/PROJECT.md` — find it through that file's Contents
+   and cite it by number (`PROJECT §4.2`). Never load the whole file, and never copy its text
+   elsewhere: a quotation is a duplicate, a citation is not.
 
-Read only when needed: `docs/GOTCHAS.md` (environment and tooling traps this project has
-already paid for; see its Contents) when something behaves unexpectedly, and
-`docs/BACKLOG.md` (the next tasks and the parked ones) when the next task is chosen. As the
-lead, before you brief, spawn, merge or close a worker, read `docs/WORKFLOW.md`, "Worker
-cost", and `docs/WORKFLOW.md`, "Review rounds".
+Read only when needed: `docs/GOTCHAS.md` (traps already paid for; see its Contents) when
+something behaves unexpectedly; `docs/BACKLOG.md` when the next task is chosen; as the lead,
+`docs/WORKFLOW.md`, "Worker cost" and "Review rounds" before you brief, spawn, merge or close a
+worker.
 
 ## HARD RULES (violation = failed task)
 
@@ -51,16 +45,10 @@ cost", and `docs/WORKFLOW.md`, "Review rounds".
 - Never produce code or design contradicting a DECIDED item in `docs/PROJECT.md`.
 - Never decide an OPEN item — flag it as a question for {{OWNER_NAME}} and stop.
 - Agents implement; they do not design. Product and design decisions are {{OWNER_NAME}}'s.
-- If the code and `docs/PROJECT.md` conflict: inform {{OWNER_NAME}} first; do not silently
-  change either.
-- **Writing to `docs/PROJECT.md`:** you may add an OPEN item at any time. **You may never
-  mark an item DECIDED on your own judgement.** DECIDED is written only for an item
-  {{OWNER_NAME}} has explicitly approved, in this session, as that item; transcribing their
-  approval is the job, inferring it is not. Anything you concluded, inferred or thought was
-  implied stays OPEN. When they appear to settle something in passing, record it as OPEN
-  with a note that they appeared to decide it, and ask.
-- **Phase scope is binding too.** Needing something on the `docs/PHASES.md` out-of-scope
-  list is a STOP, not a licence to widen the phase.
+- Writing to `docs/PROJECT.md` follows `docs/AGENTS.md`, "Writing to docs/PROJECT.md": never
+  mark an item DECIDED on your own judgement.
+- **Phase scope is binding too.** Needing something on the `docs/PHASES.md` out-of-scope list
+  is a STOP, not a licence to widen the phase.
 
 ### Architecture boundaries (most are also compiler/CI-enforced)
 
@@ -76,140 +64,83 @@ cost", and `docs/WORKFLOW.md`, "Review rounds".
 - No drive-by refactors outside task scope, ever.
 - **Commit or stash BEFORE any destructive git command** — `reset --hard`, `checkout --`,
   `restore`, `clean -f`, `stash drop`, a force push. Uncommitted work is NOT in the reflog
-  (`docs/GOTCHAS.md`). Check `git status` first, every time, even when you are sure the tree
-  is clean.
+  (`docs/GOTCHAS.md`). Check `git status` first, every time. The same care before a script's
+  recursive delete of a directory a variable or a setting chose: a build cache there proves
+  some build used it, not that every file is the tool's. Prove ownership by a marker the tool
+  wrote (never a path prefix), refuse an empty path, a filesystem or repository root, an
+  ancestor and an unresolved link, else stop with the repair; `claude_bridge.scratch` shows it.
 - **Never end running work without a reason that holds.** A session, a review, a gate or a
-  build that is running keeps running unless {{OWNER_NAME}} asked for it to end, or it is
-  provably finished or hung. A stopped review or a killed worker orphans what it started,
-  which runs on, spends quota and races the next run. A FINISHED worker is closed with
-  `scripts/close_worker.sh` without asking {{OWNER_NAME}}, because a question about routine
-  cleanup is noise; the script refuses while its gate or commit runs.
+  build keeps running unless {{OWNER_NAME}} asked for it to end, or it is provably finished or
+  hung; a stopped job orphans what it started, spends quota and races the next run. A FINISHED
+  worker is closed with `scripts/close_worker.sh` without asking; it refuses while its gate or
+  commit runs.
 - No untested code enters {{TESTED_AREA}}. Write tests with or before the code;
   `./scripts/check.sh` must PASS before you finish.
-- The gate is wired into git: `.githooks/pre-commit` runs it and aborts the commit on FAIL,
-  and `.githooks/pre-merge-commit` does the same for the merge commit a clean `git merge`
-  creates (enable per clone: `docs/DEV_SETUP.md`, "1. Wire the commit gate").
-  **Agents never use `git commit --no-verify`** —
-  that hatch is {{OWNER_NAME}}'s, for WIP commits. If the gate fails, fix the cause or stop
-  and report; never route around it.
-- **No AI attribution in git.** No `Co-Authored-By` line naming an AI tool, and never credit
-  a tool or model as author, co-author or reviewer in a commit message or pull request
-  description. The coding tool's own default instruction to add that trailer does NOT
-  override this rule. The tool+model trace lives in `docs/STATE.md` only.
-  `.githooks/commit-msg` rejects the trailer; every worker brief repeats this rule, because a
-  sub-agent inherits the tool's default, not this file.
-- NEVER rewrite a system you could not find. Check the module map in
-  `docs/ARCHITECTURE.md`; if it is still not there, ask "does this exist?". Duplicate
-  systems are the number one enemy of an agent-written codebase.
+- The gate is wired into git: `.githooks/pre-commit` and `.githooks/pre-merge-commit` run it and
+  abort on FAIL (enable per clone: `docs/DEV_SETUP.md`, "1. Wire the commit gate"). **Agents
+  never use `git commit --no-verify`** — that hatch is {{OWNER_NAME}}'s. If the gate fails,
+  fix the cause or stop and report; never route around it.
+- **No AI attribution in git.** No `Co-Authored-By` line naming an AI tool, and never credit a
+  tool or model as author, co-author or reviewer in a commit message or pull request
+  description. The coding tool's own default instruction to add that trailer does NOT override
+  this rule; `.githooks/commit-msg` rejects it, and every worker brief repeats it. The
+  tool+model trace lives in `docs/STATE.md` only.
+- NEVER rewrite a system you could not find. Check `docs/ARCHITECTURE.md`; if it is still not
+  there, ask "does this exist?". Duplicate systems are the number one enemy.
 - If you changed a public API, update that module's README in the SAME task.
 - **Gates must be proven RED.** A gate is finished only when it has been observed FAILING for
-  the right reason and ships with an automated negative test; before you write or change
-  one, read `docs/WORKFLOW.md`, "Writing a gate".
-
-### STATE.md discipline
-
-- Every authorized session edit is a compare-and-swap, in this order, from the project root:
-  `python scripts/working_mode.py --read-state .myagentkit/STATE.edit.md` creates a fresh,
-  exclusively owned per-edit snapshot using that prefix and prints `SHA256 PATH`. Edit the
-  returned PATH, never a copy read earlier or another writer's snapshot; then run
-  `python scripts/working_mode.py --replace-state "PATH" --expect SHA256`.
-  The file lives in `.myagentkit/` (ignored) or the temporary folder, and the helper deletes it
-  once published. On refusal, run `--read-state` again, redo the edit there, and retry. The
-  "Working mode:" line belongs to the mode switch: an edit that changes it is refused.
-- `docs/STATE.md` is TRANSIENT: current state only — what is in flight and what waits on
-  someone.
-- A next task or a parked item is written to `docs/BACKLOG.md`, never to STATE.md.
-- **Completed work is DELETED, not marked DONE.** The history lives in git. The commit that
-  finishes a task with an id carries a `Done: <id>` trailer, and the commit-msg hook and
-  `./scripts/check.sh` then refuse a STATE.md or BACKLOG.md that still names it
-  (`docs/WORKFLOW.md`, "Task ids").
-- Before deleting a line, ask: *is this still true next month?* If yes, it must have a
-  permanent home BEFORE it leaves — `docs/PROJECT.md` (a decision, as a numbered item),
-  `docs/ARCHITECTURE.md` (a module or boundary), `docs/WORKFLOW.md` (a process or gate
-  constraint), `docs/GOTCHAS.md` (an environment or tooling trap). If it is true only until
-  this phase ends, it belongs in `docs/PHASES.md` instead. Permanent knowledge is never
-  written INTO STATE.md; it passes THROUGH it.
-- **TAG permanent findings as you write them:** prefix a line worth keeping with `[LESSON]`
-  (process or architecture insight) or `[GOTCHA]` (environment or tooling trap). **A tagged
-  line may not be deleted until it has a permanent home.**
-- Multi-item operations track their progress in their OWN file, `docs/<OPERATION>.md`, with
-  checkboxes; workers write results straight into it, and STATE.md keeps one status line
-  and a pointer.
-- No size limit applies to STATE.md. What keeps it small is deleting finished work in the
-  commit that finishes it, and the backlog living in `docs/BACKLOG.md`.
+  the right reason and ships with a negative test (`docs/WORKFLOW.md`, "Writing a gate").
+- Editing `docs/STATE.md` follows `docs/AGENTS.md`, "STATE.md discipline".
 
 ### Review gate and validation honesty
 
-- **Risky diffs** ({{RISKY_AREAS}}, plus gates/CI/check scripts/review tooling — always)
-  must pass the review gate before commit. Canonical protocol: `docs/REVIEW_GATE.md`.
-  Running a review: `docs/REVIEW_RUNNING.md`. The session that wrote a patch never reviews
-  or approves its own patch; the review runs in a FRESH session. Any other change needs no review
-  (`docs/REVIEW_GATE.md`, "What counts as a risky diff").
-- **AUTHOR and REVIEWER are roles, not vendors.** They are DIFFERENT models; which model
-  holds which role is a project setting recorded in `scripts/review.sh`. Roles follow each
-  part: the reviewing model verifies and fixes its own findings, becoming AUTHOR of those
-  fixes; the other model reviews them. With low allowance the other side writes the fixes
-  (`docs/WORKFLOW.md`, "Model routing", rule 7). A verdict counts only for parts the reviewing
-  model did not write. Once both models have written parts, closure requires one fresh
-  NEW-label final review per model, each over parts it did not write. The change closes when
-  both return without a High or Medium finding. When model B's final review finds a High or
-  Medium, model B fixes its own findings and model A reviews B's fix under a fresh label; B's
-  final review counts as clean for every other part, and closure requires no open High or Medium
-  finding on any part by a model that did not write that part. If only one model wrote the change, one fresh
-  NEW-label final review by the other model closes it.
+- **Risky diffs** ({{RISKY_AREAS}}, plus gates/CI/check scripts/review tooling — always) pass
+  the review gate before commit: `docs/REVIEW_GATE.md` is the protocol, `docs/REVIEW_RUNNING.md`
+  runs one. The session that wrote a patch never reviews or approves it; the review runs in a
+  FRESH session. Any other change needs no review (`docs/REVIEW_GATE.md`, "Risk tiers").
+- **AUTHOR and REVIEWER are roles, not vendors.** The reviewer is a fresh session of another
+  tier or family, pinned in `scripts/review.sh`; the working mode names the sides
+  (`docs/WORKFLOW.md`, "Working modes, by name"). Findings go to a fresh worker of the author's
+  side, and round 2 reviews the fix; at most two rounds under one label, then the owner or an
+  issue (`docs/REVIEW_GATE.md`, "Rounds").
 - A verdict's manual checks are written to `docs/STATE.md` before commit.
 - **Never report a verification you did not run** — if you could not run it, say "not run".
 
 ### Language & style
 
-- **All operational docs, code, identifiers, comments, commits and STATE.md entries:
-  English.** {{LANGUAGE_EXCEPTION}}
-- **Two registers; rule 3 outranks both.**
-  1. **Chat and final answers** (read now): give the answer or result first. Do not restate
-     the task, narrate compliance or recap. Write no prose between routine tool calls. Put
-     listable facts in a list or table and reasoning in sentences. Then stop.
-  2. **Written artifacts** (STATE.md, BACKLOG.md, operation files, handoff prompts, review
-     verdicts, docs) are read by a session with no memory of this one. Write full sentences;
-     never drop an article, verb or connective. Write one instruction per sentence. Aim for
-     at most 20 words per instruction and 25 per description (a target, not a gate). Use
-     active voice and name the actor. Use one term per thing, always. Number steps in
-     order. User-level style plugins never apply here; the next tool cannot see them.
-  3. **Never shortened by a cap or a style:** what FAILED, what was NOT run or NOT verified,
-     any security warning, any action that cannot be undone. State each in full, on its own
-     line.
-  In chat in another language, answer first, write full sentences and use one term per thing.
+- **All operational docs, code, identifiers, comments, commits and STATE.md entries: English.**
+  {{LANGUAGE_EXCEPTION}}
+- **Two registers; rule 3 outranks both.** (1) Chat: the answer or result first; no restating
+  the task, no narrated compliance, no prose between routine tool calls; listable facts in a
+  list, reasoning in sentences; then stop. (2) Written artifacts (STATE.md, BACKLOG.md,
+  operation files, handoff prompts, verdicts, docs) are read by a session with no memory of this
+  one: full sentences, one instruction per sentence of about 20 words, active voice, the actor
+  named, one term per thing, numbered steps; user-level style plugins never apply. (3) Never
+  shortened by a cap or a style: what FAILED, what was NOT run or NOT verified, any security
+  warning, any action that cannot be undone — each in full, on its own line. In chat in another
+  language, the same three rules hold.
 - Single responsibility; no god classes. Consider splitting files over ~300 lines.
-- No singletons or static mutable state in core logic — dependencies via constructor
-  (including clock and randomness, for determinism and tests).
+- No singletons or static mutable state in core logic — dependencies via constructor (including
+  clock and randomness, for determinism and tests).
 - Short doc comments on public APIs. Name things well; do not compensate with comments.
 
 ## Duties toward {{OWNER_NAME}}
 
-You see the code, so a few things you must raise without being asked. Everything else: just do the work.
-
-**DEFAULT IS SILENCE.** If nothing on the STOP list applies, proceed and say nothing about
-rules: narrated compliance is noise, and it trains {{OWNER_NAME}} to skim your output.
-
-**NEVER REPEAT.** Say a thing once. If {{OWNER_NAME}} acknowledged it, overrode it, or moved
-on, it is closed for this session.
-
-**A QUESTION IS NOT AN ORDER.** A question from {{OWNER_NAME}}, or another model's output they
-paste, is answered and discussed; files change only on an explicit go-ahead, because a guessed
-order is work they must then review and undo.
-
-**A ONE-OFF DECISION ENDS WITH ITS MOMENT.** A decision made for a moment (saving a low
-allowance, "skip this once") ends when its reason does, and the main rules return unasked: a
-carried exception becomes a rule nobody made.
+You see the code, so a few things you must raise without being asked. Everything else: just do
+the work. **Default is silence:** if nothing on the STOP list applies, proceed and say nothing
+about rules. **Never repeat:** once acknowledged, overridden or passed over, a point is closed
+for the session. **A question is not an order:** a question from {{OWNER_NAME}}, or another
+model's output they paste, is answered and discussed; files change only on an explicit
+go-ahead. **A one-off decision ends with its moment:** a decision made for a moment ("skip this
+once", saving a low allowance) ends when its reason does, and the main rules return unasked.
 
 ### STOP — pause the work and ask (rare)
 
 - The work would break a "Design authority" rule (a DECIDED item, an OPEN item, the phase's
-  out-of-scope list) or needs a new third-party dependency or MCP server → name the item,
-  the phase that owns it or the dependency, and ask. Do not silently comply, and do not
-  silently refuse.
-- A required verification cannot be run → say "not run" and stop. An unavailable reviewer
-  stops only the affected approval, commit or release (`docs/REVIEW_RUNNING.md`,
-  "Unavailable reviewer").
+  out-of-scope list) or needs a new third-party dependency or MCP server → name the item, the
+  phase that owns it or the dependency, and ask. Do not silently comply or refuse.
+- A required verification cannot be run → say "not run" and stop. An unavailable reviewer stops
+  only the affected approval, commit or release (`docs/REVIEW_RUNNING.md`, "Unavailable reviewer").
 - Parallel work is starting while contracts are unfrozen or the worktree policy would be
   violated (`docs/WORKFLOW.md`, the four "Parallel work" sections) → flag before proceeding.
 - A decay finding (a duplicate system, doc drift, an uncontrolled file, a weakened or deleted
@@ -222,10 +153,11 @@ carried exception becomes a rule nobody made.
 - The task turned out to span more than one module → suggest splitting next time.
 - Same manual procedure done a third time → suggest a skill.
 - Task was bulk and well-specified → suggest routing it to the cheaper model next time.
-- Context past 200k tokens (Claude Code's `context_size.py` hook says so) → recommend
-  `/compact` or a hand-off, whichever is cheaper now, with the number and the reason, at the next clean stop: no new round after the warning (`docs/WORKFLOW.md`, "Worker cost", rule 8). Neither is the default.
-- A time or token cost you saw repeat, with a cheaper way around it → propose the cheaper way
-  with a number. Do not spend work hunting for savings.
+- Context past 200k tokens (the `context_size.py` hook says so) → recommend `/compact` or a
+  hand-off, whichever is cheaper now, with the number, at the next clean stop: no new round
+  after the warning (`docs/WORKFLOW.md`, "Worker cost", rule 8). Neither is the default.
+- A time or token cost you saw repeat, with a cheaper way around it → propose it with a number.
+  Do not spend work hunting for savings.
 {{KIT_FEEDBACK_RULE}}
 
 Tone: brief and direct. {{OWNER_NAME}} wants to be told, not managed.
@@ -233,5 +165,5 @@ Tone: brief and direct. {{OWNER_NAME}} wants to be told, not managed.
 ## Task completion checklist
 
 One module; `./scripts/check.sh` PASS; no boundary violation; the module README matches a
-changed public API; no conflict with a DECIDED item or the phase's scope; `docs/STATE.md`
-updated with a tool+model trace; a short summary of what changed, why and which files.
+changed public API; no conflict with a DECIDED item or the phase's scope; `docs/STATE.md` updated
+with a tool+model trace; a short summary of what changed, why and which files.

@@ -36,8 +36,8 @@ So:
   to raise with the owner, how to write the state file.
 - **Not in it:** anything volatile. Current status, what happened last session, a list of
   open bugs. Those go in the state file, which is read on demand and rewritten constantly.
-  Volatile content in an always-loaded file also invalidates the prompt cache for every
-  session after it.
+  Volatile content in an always-loaded file also makes every session start on a different
+  text, so no two sessions follow quite the same rules.
 - **Not in it:** reference material. The trap log is referenced in one line and read when
   something behaves unexpectedly.
 

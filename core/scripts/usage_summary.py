@@ -70,7 +70,7 @@ def evidence_fields(repo, record):
     if match:
         effort = match[1]
     match = re.search(r'^VERDICT: (Accept with Manual Checks|Accept|Reject)[ \t]*$', content, re.M)
-    # One severity-first list item per finding under the Findings heading (REVIEW_ASKS asks
+    # One severity-first list item per finding under the Findings heading (REVIEW_PROMPT asks
     # both reviewers for exactly that), so a continuation bullet or a note is not a finding.
     findings = re.search(r'^## Findings[ \t]*$(.*?)(?=^## |\Z)', content, re.M | re.S)
     record['findings'] = len(re.findall(r'^-\s+\**(?:Critical|High|Medium|Low)\b', findings[1],

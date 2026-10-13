@@ -1,206 +1,88 @@
 # Review Gate — Tool-Agnostic (CANONICAL)
 
-Risky diffs pass this gate before commit.
+A risky diff passes this gate before commit. The reviewer reads this file; running a review
+is `docs/REVIEW_RUNNING.md`.
 
 ## Invariant
 
-**The session that wrote a patch never reviews or approves it.** Review happens in a FRESH
-session — preferably a different tool and the strongest available model, because the value
-of a second opinion is that it is decorrelated. A passing compile is not a review;
-`scripts/check.sh` PASS is necessary but not sufficient; implementer self-reports ("0
-errors", "all tests green") are never validation.
+**The session that wrote a patch never reviews or approves it.** The review runs in a FRESH
+session, preferably another model tier or family. One family is enough; a second vendor
+(`--reviewer codex`, a `claude@NAME` backend) is pluggable, never required. A green gate is
+necessary, not sufficient. The reviewer works in a throwaway copy without network or paid
+model calls and marks each finding REPRODUCED or REASONED; its runs are evidence for
+findings, not for acceptance, which is the self-test on the reviewed head.
 
-## AUTHOR and REVIEWER are roles, not vendors
+## Risk tiers
 
-This document names two roles and never a product:
+The brief's `Risk:` line (`docs/HANDOFF.md`) names the tier; the lead proposes it,
+{{OWNER_NAME}} may change it, a working mode never lowers it.
 
-- **AUTHOR** — the session that writes a part of the patch, including a review fix. It
-  owns that part and never approves its own work.
-- **REVIEWER** — a fresh session running a DIFFERENT model. It produces findings and one
-  verdict, which are input the calling agent verifies, not an approval it relays. Afterwards
-  the reviewing model verifies and fixes its own findings, becoming AUTHOR of those fixes;
-  the other model reviews them. When its allowance is low, the other side writes the fixes
-  instead (`docs/WORKFLOW.md`, "Model routing", rule 7).
+| Tier | What | Review |
+|---|---|---|
+| low | documentation, tests only, one file outside the rows below | one light reviewer, medium effort |
+| medium | code in {{RISKY_AREAS}} outside the high row | one reviewer, medium effort |
+| high | gates, hooks, check scripts, review tooling, the STATE helper, deleting or moving files, concurrency, CI, tool settings | two fresh reviewers in parallel, `REVIEW_FOCUS=portability` and `logic`, one at high effort; {{OWNER_NAME}} reads the diff or a ten-line summary before the merge |
 
-Which model holds which role is a project configuration, set during setup and recorded in
-`scripts/review.sh`. It is expected to change: the roles follow the budget, and the budget
-moves. A project that runs out of the AUTHOR's quota mid-phase swaps the two and keeps
-working — the invariant is that each verdict counts only for parts the reviewing model did
-not write, never that a particular vendor sits on a particular side.
+A documentation change that alters a behaviour rule (`AGENTS.md`, `docs/WORKFLOW.md`, this
+file) gets one light pass, Low cap three, non-blocking.
 
-Because the roles swap, **both directions publish the same evidence format** (same header
-table, same one-line verdict contract, same `docs/reviews/<stamp>-<reviewer>-review.md`
-naming). Records made before and after a swap line up against each other. Two formats would
-mean each reader — and the self-test — had to learn both, which is how one of them stops
-being checked.
+## Rounds
 
-## What counts as a risky diff
+At most two rounds under one label (`MYAGENTKIT_TASK_ID`); `scripts/review_dispatch.py`
+refuses a third. Round 2 confirms every finding the dispositions claim fixed, a Medium
+included, and reports new Critical or High only. A third round needs
+`REVIEW_ROUND_EXCEPTION=<reason>`, kept in the record; what remains goes to {{OWNER_NAME}}
+or an issue. A release gets one fresh NEW-label final review, high effort, by a session
+that did not write its larger part (`docs/WORKFLOW.md`, "The lead's steps when a branch is
+ready").
 
-Independence is judged per part: a fresh round may review the whole cumulative diff (`--base`)
-for context, but each verdict counts only for the parts the reviewing model did not write.
-Afterwards the reviewing model verifies and fixes its own findings (the named codex-first
-and saver-mode exceptions are in `docs/REVIEW_RUNNING.md`, "Rounds, labels and designs"); its last fix round is
-accepted only by the other model's next round. The reviewer never changes the checkout during
-its review run. No model approves its own work. Once both models have written parts of a
-change, closure requires one fresh NEW-label final review per model, each over parts it
-did not write. The change closes when both return without a High or Medium finding.
-When model B's final review finds a High or Medium, model B fixes its own findings and model A
-reviews B's fix under a fresh label; B's final review counts as clean for every other part, and
-closure requires no open High or Medium finding on any part by a model that did not write that part.
-If only one model wrote the change, one fresh NEW-label final review by the other model closes it.
-An existing local commit without review is still unreviewed work, not an exception that
-moves this gate to push time.
+## Verdicts and who decides
 
-A diff is risky when a silent bug in it is expensive, hard to attribute, or slow to
-surface. For this project:
+`Accept` / `Accept with Manual Checks` / `Reject`. Reject only on an open Critical or High.
+A Medium is fixed in the round only when the fix is one place and tested; otherwise it is an
+issue {{OWNER_NAME}} sees at the merge, at once when the fix adds a mechanism. A Low goes to
+`docs/BACKLOG.md` or an issue, never fixed in the round. Manual checks go into
+`docs/STATE.md` before the commit. **A Reject is not closed by its fixes.** Round 2 reviews them.
 
-{{RISKY_AREAS}}
+The reviewer's output is unverified INPUT: the lead verifies every finding against the code
+and owns the technical verdict; a verdict relayed verbatim is a failed review.
+{{OWNER_NAME}} decides whether a change ships, a Medium's fate, "enough" after round 2,
+taste, product direction and every OPEN item of `docs/PROJECT.md`; away, the lead files an
+issue and goes on.
 
-**Always, in every project, whatever the project does:**
+## Findings and dispositions
 
-- **Gates, CI configuration, check scripts and review tooling.** A broken gate silently
-  disables every other protection in the repository. That makes gate code the
-  highest-leverage place a defect can land, and the place where nobody notices for the
-  longest. The project this kit came from shipped three gates that printed PASS while
-  protecting nothing.
-  The observation worth keeping: **the session that wrote a gate could not validate its own
-  gate.** It ran the script, saw PASS, and reported success while the gate was structurally
-  incapable of failing; a fresh session found it in minutes. That is this document's
-  invariant demonstrated on the review machinery itself.
-  A gate diff is reviewed for one question above all others: *has this been observed going
-  RED, and does an automated negative test keep it that way?*
+A finding opens with its severity (defined in `scripts/claude_bridge.py`, `REVIEW_PROMPT`)
+and names file and line, trigger and wrong outcome. The author answers round 1 in
+`REVIEW_DISPOSITIONS`, one line per finding: `<id> fixed:<commit>`, `disproved:<evidence>`
+or `deferred:<issue or decision>`. They are claims: a disproved finding counts only after
+the reviewer has checked it against the code, and a deferred one stays open under Manual
+checks, so it rules out a plain Accept. A design reviewed under its own label
+(`docs/WORKFLOW.md`, "Design before code") supplies the exclusions a disposition cites.
 
-**A change outside this list does not require a review.** {{OWNER_NAME}}'s own check, or the
-manual check that the brief names, is its acceptance. A lead does not send such a change
-through this gate by default. When a lead asks for a review anyway, it states the specific
-doubt the review is to settle. In one project a change outside the list went through review
-although no rule required it.
+## Priorities, in order
 
-## What the reviewer reads
-
-Root `AGENTS.md` → `docs/ARCHITECTURE.md` → the diff → ALL callers of every changed public
-member (grep them; do not assume). Design authority is `docs/PROJECT.md` — its DECIDED items
-are law, and the reviewer never decides an OPEN one.
-
-## The reviewer executes, in a throwaway copy
-
-A reviewer that only read the diff returned findings that a worker had to reproduce first,
-and some were false; a reviewer that executed found decisive, reproducible defects.
-
-- You may run the test suite, the self-test and your own reproductions, and you should.
-- Run them only in a throwaway copy of the checkout, never in the reviewed checkout.
-- A bridged reviewer (`scripts/review.sh`) already runs in one: its adapter copies HEAD with
-  `git archive` (the checkout's bytes for uncommitted work) and removes the copy afterwards.
-- The bridged Claude reviewer has no shell on native Windows, where Claude Code cannot
-  sandbox one: there it reads the copy and marks each finding REASONED.
-- Any other reviewer makes the copy with `git archive <commit> | tar -x -C "$(mktemp -d)"`,
-  then runs `git init` there if the suite needs a repository.
-- Never make it with `git worktree add`, which writes into the reviewed repository.
-- Apply the uncommitted part of the diff to that copy with `git apply`.
-- Never use the network, and never call a paid model.
-- Mark each finding REPRODUCED, with the command that shows it, or REASONED.
-- A REASONED Critical or High finding names the command or input that would reproduce it.
-- A finding whose run was impossible is REASONED and names the command that would
-  reproduce it.
-- List as NOT RUN what you could not run, and why.
+1. **{{TOP_RISK_PRIORITY}}**: any doubt is a Reject.
+2. Boundary violations across modules or layers.
+3. State: nothing half-written, duplicated or lost on a crash or retry.
+4. Determinism: no ambient clock, randomness or hidden global state.
+5. Test integrity: a weakened, skipped or deleted test, or untested core logic, is a Reject.
+6. Gate integrity: observed RED, kept so by a negative test.
+7. Blast radius: every caller of every changed public member.
+8. Scope creep: "Pre-existing", never fixed by the reviewer.
+9. Design conformance with `docs/PROJECT.md` and `docs/PHASES.md`.
 
 ## What a reviewer attacks first
 
-These classes produced most findings in one week of review rounds, and later rounds found them
-again in the fixes. Check each against the diff, one line at a time. The worker runs the same
-list before it reports.
+Classes `scripts/check.sh` does not cover yet; one leaves when its sensor lands. The worker
+runs the list before reporting.
 
-- Check-then-act windows (TOCTOU) on files, refs and processes: what changes in between?
-- Trust in git's stat cache: `core.checkStat`, `core.trustctime`, `core.fileMode`, filters
-  and `core.autocrlf` can hide a change from `git status` and `git diff`.
-- Reflog parsing that reads the message text instead of the fixed columns.
-- Case: an id or trailer scanner that is case-sensitive where git or the file system is not.
-- Locale: `grep -I` under UTF-8 skips invalid UTF-8 as binary; byte work runs under `LC_ALL=C`.
-- Symlinks anywhere in a path (not only the leaf), hard links, FIFOs and devices.
-- `PATH_MAX` and deeply nested paths.
-- Platforms: Apple `mktemp` and `TMPDIR`, `/var` as `/private/var`, dash as `sh`, Python
-  3.10 `Path.exists` raising on `EACCES`, no `/proc` on macOS, and `lsof` exit codes.
-- `echo` with a backslash in its argument (dash interprets it); use `printf '%s\n'`.
-- Shell quoting of every interpolated value, and control bytes printed to a terminal.
-- A file ending in `.exe` that a test executes under WSL.
-- A hollow test: the fixture stops before the code the test claims to cover.
-- A guard with no killing test: remove the guard, and no test fails (mutation).
-- A fix that adds a mechanism where removing an operation would close the defect.
-
-## Review priorities (in order)
-
-1. **{{TOP_RISK_PRIORITY}}** — the project's own worst failure mode goes first. Any doubt
-   here is a Reject.
-2. **Boundary violations:** a forbidden dependency crossing a layer; a module reaching into
-   another module's internals instead of through its contract.
-3. **State and persistence correctness:** an operation that must be atomic actually is —
-   state may never end up half-written, duplicated, or lost on a crash or a retry.
-4. **Determinism in core logic:** no ambient clock, no static randomness, no hidden global
-   state. Clock and randomness are injected, or the code cannot be tested.
-5. **Test integrity:** untested changes to core logic, or tests weakened, skipped or
-   deleted to make a build pass — automatic Reject.
-6. **Gate integrity:** if the diff touches a gate, CI or review tooling — was it proven to
-   go RED, and did it ship with a negative test?
-7. **Regression blast radius:** every caller of every changed public member.
-8. **Scope creep:** changes the task did not require. Flag them; do not fix them.
-9. **Design conformance:** conflicts with a DECIDED item in `docs/PROJECT.md`, or work
-   the current phase in `docs/PHASES.md` puts out of scope.
-
-## Verdicts
-
-`Accept` / `Accept with Manual Checks` / `Reject`.
-
-Manual checks are written to `docs/STATE.md` BEFORE the commit, as full explicit sentences.
-Questions of taste, feel, balance or product direction go to {{OWNER_NAME}} — the reviewer
-proposes, never decides.
-
-**A Reject is not closed by its fixes.** The fixes go through this gate too, in a fresh
-session, and a risky-area diff stays risky when the diff is the remediation. This is not
-ceremony: the reviewing model writes the fixes of its findings; with low allowance, the
-other side writes them instead (`docs/WORKFLOW.md`, "Model routing", rule 7). A fix lands in the
-code that was already subtle enough to get wrong once, and it ships beside a document
-asserting the problem is now solved — which is what the next reader trusts instead of the
-code. This kit's own first remediation replaced a fail-open scanner with a differently
-fail-open scanner, and wrote "enforced by construction" in two places while it was false.
-
-For the same reason, **"enforced by construction" is a claim that needs a negative test**,
-exactly like any other. Where a construction genuinely cannot be tested, say so in the
-acceptance record instead of asserting the guarantee.
-
-## Findings, earlier rounds and dispositions
-
-Asked only for "file, line, impact", a reviewer reports a different top few on every fresh
-pass; one medium-size change took more than ten Reject rounds, each finding two or three new
-Medium problems, many in code the previous fix had added. The reviewer therefore reports
-every finding the pass can establish, each opening with a severity (Critical, High, Medium or
-Low) and ending with a `Fix sketch:` — a direction whoever fixes it verifies, never a patch to
-paste.
-
-When the prompt carries earlier rounds of the same change, the reviewer says for each earlier
-finding whether it is fixed or still present, then reviews the whole diff again for context,
-with its verdict limited to parts it did not write. The
-fixer's dispositions (fixed in a commit, disproved with evidence, deferred to the owner) are
-claims for the other model to verify, because no model approves its own work: a disproved finding counts
-only after the reviewer has checked it against the code, and a deferred one stays open under
-Manual checks, so it rules out a plain Accept.
-
-## A review loop: threat model, stopping rule, evidence
-
-- **Write the threat model before a hardening or review loop starts.** It names what the
-  change protects and what is excluded by decision. Agree the stopping rule with
-  {{OWNER_NAME}} before the first round. A finding outside the threat model, such as a race
-  with another process or a hostile file the model excludes, is recorded as an accepted
-  limit with a disposition, not fixed. Without a threat model, a loop over an adversarial
-  reviewer has no edge: one project ran twelve rounds in one day.
-- **A stopping rule ends the hunt for new classes of finding.** It does not excuse
-  unreviewed code: every fix merged after a loop ends is still reviewed.
-- **A platform the project claims is a platform it is run on** (in CI or by hand) before
-  anything is called accepted. "NOT RUN: <platform>" repeated across rounds is a finding,
-  not a footnote. One release passed on the development machine a dozen times and failed
-  all four CI jobs on its first run.
-- **A reviewer's runs are evidence for its findings, not for acceptance.** The evidence that
-  the tests pass is the self-test, run by the author or the lead on the reviewed head and
-  named in the acceptance record.
-
-Running a review, an unavailable reviewer and the paste-by-hand template are for the caller,
-not the reviewer: `docs/REVIEW_RUNNING.md`.
+- Check-then-act windows: a freshness stamp hashed after the work certifies inputs edited
+  meanwhile (fingerprint before, re-check before publishing, publish atomically, as
+  `claude_bridge` binds the reviewed snapshot); a recursive delete of a directory that
+  configuration chose, without proof the tool owns it (`AGENTS.md`, task discipline); trust
+  in git's stat cache (`core.checkStat`, `core.autocrlf`, filters).
+- Reflog message text; case-sensitive scans where git is not; byte work outside `LC_ALL=C`.
+- Symlinks, hard links, FIFOs, `PATH_MAX`; Apple `mktemp`, dash as `sh`, `echo` with a
+  backslash, unquoted interpolation, a `.exe` under WSL.
+- A hollow test; a guard with no killing test; a mechanism added where removing an operation would do.

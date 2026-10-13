@@ -1,8 +1,7 @@
 # Running a review — for the caller
 
-This file is for the session that requests a review: the AUTHOR or the lead. The reviewer
-reads `docs/REVIEW_GATE.md`, which holds the contract, the priorities and the verdicts;
-nothing in this file is part of its prompt.
+For the session that requests a review. The reviewer reads `docs/REVIEW_GATE.md`; nothing
+here is part of its prompt.
 
 ## Running it
 
@@ -10,331 +9,58 @@ nothing in this file is part of its prompt.
 ./scripts/review.sh [--uncommitted | --base <ref> | --commit <sha>] [--reviewer codex|claude] [--fallback] [--backend NAME]
 ```
 
-It collects the change set with git, hands it to a REVIEWER in a throwaway copy, carrying the
-priority order of `docs/REVIEW_GATE.md`, archives the report as evidence under
-`docs/reviews/<UTC-timestamp>-<random>-<reviewer>-review.md` and prints it. Omitting
-`--reviewer` uses the one configured during setup at the top of `scripts/review.sh`.
+It runs the reviewer over the change set in a throwaway copy, archives the report under
+`docs/reviews/` and prints it. Mechanism and threat model: the header of `scripts/review.sh`
+and `scripts/claude_bridge.py`, `throwaway_copy`; accounting: `docs/USAGE.md`; a second
+backend (`--backend NAME`, reviewer `claude@NAME`): `docs/DEV_SETUP.md`.
 
-**A second Claude-compatible backend.** `--backend NAME` (or `MYAGENTKIT_BACKEND=NAME`; the
-flag wins) runs the Claude reviewer against the endpoint that `.myagentkit/backends/NAME.env`
-names (`docs/DEV_SETUP.md`, section 3). The backend must be a regular UTF-8 file of at most
-64 KiB, Git-ignored and untracked. Merge `.myagentkit/backends/` into the root ignore rules
-when upgrading, and preserve existing files locally before untracking them. The loader
-refuses unsafe storage before launch, without printing any configured value.
-The file's variables reach that review's Claude CLI
-only, in place of any inherited `ANTHROPIC_*` variable. The file's model is the pin that
-`modelUsage` attests. The evidence header records `backend NAME, model M`, and the usage
-record carries `backend`, which `usage_summary.py` shows. The sandbox flags stay the same. The
-reviewer identity is `claude@NAME`, so a patch Claude wrote may be reviewed by `claude@glm`,
-and the chain record counts it as another reviewer. The models differ, but the harness and
-the prompt are the same: {{OWNER_NAME}} decides whether that is decorrelated enough to count
-as the second model.
+| Variable | Meaning |
+|---|---|
+| `MYAGENTKIT_TASK_ID` | the change's label; rounds under it carry the earlier ones, two at most |
+| `REVIEW_DISPOSITIONS` | answers to round 1, one line per finding: `fixed:` / `disproved:` / `deferred:` |
+| `REVIEW_ROUND_EXCEPTION` | reason for a third round, kept in the record |
+| `REVIEW_RISK` | `low` / `medium` / `high`, the brief's tier |
+| `REVIEW_FOCUS` | `portability` or `logic`, one reviewer each on a high tier |
+| `REVIEW_TASK_FILE` | the brief the prompt quotes |
+| `REVIEW_EFFORT` | `low` / `medium` / `high`; default high on a high tier, else medium |
+| `REVIEW_TIMEOUT_SECONDS` | per attempt, default 2700, at most 3600 |
+| `REVIEW_MAX_TURNS` | Claude turns per attempt |
+| `REVIEW_SHADOW` | `1` measures a reviewer configuration; its verdict closes nothing |
+| `REVIEW_CLAUDE_MODEL`, `REVIEW_CODEX_MODEL`, `MYAGENTKIT_BACKEND` | pins and backend for one run |
 
-Diff collection disables Git text conversion and external diff commands so repository
-configuration cannot replace source with a filtered rendering. The checkout fingerprint
-also hashes readable source bytes independently of Git's change detection and binds the
-resolved reference and collected diff. A moving base reference invalidates an in-flight
-review. Commit scope uses the delta against the first parent, including merge commits.
-Scopes containing assume-unchanged or skip-worktree index entries are rejected before
-launch; clear those flags and use a complete checkout so Git can expose every source change.
-Paths with an effective Git clean filter (a `filter` attribute whose driver has a `clean` or
-`process` command) or the `ident` attribute are rejected the same way: Git converts
-working-tree bytes before diffing them, so a filter could drop a file or single lines from
-the reviewer's payload while the fingerprint still hashed the raw bytes. No Git flag turns
-that conversion off for diff. A repository that relies on a filter (Git LFS included) reviews
-by hand with the template below, or removes the attribute for the review.
-Codex manual-check verdicts require a nonempty `## Manual checks` section describing the
-remaining checks; an absent section or a placeholder such as `None` is invalid evidence.
-The verdict declaration itself never counts as a manual check.
-
-**The two directions are interchangeable, not merely both present.** Each archives the same
-header table — reviewer, model, whether the model is attested, effort, sandbox, limits,
-scope, reference, HEAD, checkout fingerprint, diff hash, behaviour appendix SHA-256,
-status, failure kind — followed by
-exactly one `VERDICT:` line, or none at all when the run failed. The renderer refuses a
-header that has drifted, and refuses to print a verdict for a run that did not complete, so
-"same format" is enforced rather than agreed.
-The `behaviour_sha256` header names the exact appendix bytes in the Claude review copy.
-An ignored appendix is included in that copy and bound into the fingerprint.
-A source appendix change before the verdict fails as `stale_checkout`.
-An unsafe appendix fails as `unsafe_behaviour_appendix` before the reviewer launches.
-Codex and disabled Claude reviews record no appendix hash.
-
-**Both models are pinned by name, in both directions.** An unpinned run archives whatever
-default the CLI happened to have that week, which no later record can be compared against;
-the wrapper stops rather than record it. Claude's model is additionally ATTESTED — the
-adapter matches the pin against the CLI's own `modelUsage` — while Codex publishes no model
-identity in its output, so its record says the pin is requested but unattested. The
-evidence says which of the two it is instead of implying a check that did not happen.
-
-The script accepts no flags beyond those above: the reviewer is matched against a closed
-list and arbitrary user flags are not passed through to the underlying CLI. Both adapters
-require Python 3.10+ and do not resume an author session. Claude gets Read, Glob, Grep and
-Bash, with Bash allowed by name (`dontAsk` refuses unapproved tools), and disables
-customizations and MCP. Codex requests its `workspace-write` sandbox with the network off and
-the never-approve policy; it does not implement Claude's tool allowlist or customization
-isolation. A shared evidence format does not imply identical permission mechanisms.
-
-**The bridged reviewers execute in a throwaway copy made by the adapter `scripts/review.sh`
-starts** (`docs/REVIEW_GATE.md`, "The reviewer executes, in a throwaway copy"). Each attempt
-gets a fresh tree containing tracked and untracked-not-ignored checkout bytes for uncommitted
-reviews, including staged and unstaged deletions and file type changes. Committed reviews use
-`git archive` of HEAD. Construction rejects symlink destination ancestors and verifies files
-with bounded buffers. The reviewer runs with the copy as its working directory, and the
-prompt tells it to run anything there. The copy is removed when the attempt ends, on a cancel
-too, and a `--fallback` attempt gets a fresh one. The reviewer is not told the repository's
-path: the prompt names relative paths only, and its environment sets `PWD` to the copy and
-drops `OLDPWD`, `REVIEW_REPO_ROOT` and every `GIT_*` variable. A reviewer that finds the
-repository anyway can still read it, but neither reviewer's shell can write outside the copy
-and the temporary directories or reach the network. Codex's sandbox blocks both. Claude's
-Bash runs in Claude Code's own sandbox on macOS, Linux and WSL2 (Linux and WSL2 need
-`bubblewrap` and `socat`); a host where that sandbox cannot start fails the review at
-startup instead of running Bash unsandboxed. Claude Code has no sandbox on native Windows, so
-there the Claude reviewer gets no Bash at all: it reads the copy and marks its findings
-REASONED. A write that reaches the checkout anyway fails the review as `stale_checkout`;
-one that reaches only a file Git ignores is not detected, an accepted limit. The
-evidence's sandbox field records `workspace-write (throwaway copy)` for Codex, and for Claude
-either the Bash sandbox or `no Bash: native Windows`. A copy that a killed adapter left in
-the temporary directory is removed by a later run once it is older than the longest review.
-A `propose` run stays read-only in the checkout and makes no copy. The threat model is in
-`scripts/claude_bridge.py`, `throwaway_copy`.
-Reference reviews require matching clean checkout context. Both share scope collection and
-checkout fingerprint validation, so a change while the reviewer runs invalidates its
-result, and evidence is published exclusively before usage can say completed.
-
-**Every round asks for the whole list, and a later round sees the earlier ones.** Both
-adapters ask for every finding the pass can establish (`docs/REVIEW_GATE.md`, "Findings,
-earlier rounds and dispositions"). When `MYAGENTKIT_TASK_ID` names the same task label as
-earlier completed reviews, the prompt carries those reviews oldest first, exactly as archived
-(their verdict lines rewritten as `Earlier verdict:`). `REVIEW_DISPOSITIONS=<file>` adds the
-author's answer to each finding as claims to verify, because the author never approves its
-own work; each answer carries one key, `fixed:<commit>`, `disproved:<evidence>` or
-`deferred:<issue or decision>`, and the usage record keeps the counts for the summary's
-author-claimed acceptance rate (`docs/USAGE.md`). `REVIEW_SHADOW=1` marks a review that
-measures a reviewer configuration: its verdict is archived with a banner and counts for no
-closure. The review stops (exit 2) rather than carry a wrong record: when a dispositions
-file answers no finding with a key, when an earlier archive is missing, lies
-outside `docs/reviews` or no longer matches the sha256 its usage record stored (an archive
-edited after the reviewer wrote it), when an earlier round has another scope, a reference
-that resolved to another commit (`--commit HEAD` one commit later is another change), another
-HEAD for a `--commit` or `--uncommitted` round (an uncommitted diff committed since is
-replaced by the next one), or for `--base` a head that is not an ancestor of the current HEAD
-(a reused label from another change), or when the diff plus the carried rounds and
-dispositions exceed the 400000-byte guard. A round recorded before these checks existed
-carries neither the resolved reference nor the sha256 and is refused the same way. A fresh
-label starts at round 1.
-
-A round may review the whole cumulative diff (`--base`) for context, but its verdict counts
-only for parts the reviewing model did not write (`docs/REVIEW_GATE.md`, "What counts as a risky diff").
-The reviewing model fixes its own findings; only the other model's next round accepts that fix.
-In codex-first, the Claude Opus lead only leads and reviews: Codex writes all implementation
-and fixes, including Claude's findings. Only work the lead judges too heavy or too important
-goes to an Opus worker, and Codex reviews that work and its fixes.
-The owner's named saver mode (`docs/WORKFLOW.md`, "Working modes, by name") routes fixes
-to the side with available allowance instead. The low side reviews those fixes; the same
-independent stopping rule and fresh NEW-label final review still apply.
-
-**The final Accept requires one fresh NEW-label final review per model once both models have written parts of the change.**
-Each reviews the parts it did not write. The change closes when both return without a High or Medium finding;
-when model B's final review finds a High or Medium, B fixes its own findings and model A reviews B's fix
-under a fresh label; B's final counts as clean for every other part.
-If only one model wrote the change, one fresh NEW-label final review by the other model closes it.
-Carried rounds and dispositions help the loop converge, but they also steer the reviewer toward what was
-already said. When the rounds under one label stop finding anything, run the final reviews
-under labels never used before: each sees no earlier round and no disposition.
-
-**A checkout that changes while the review runs fails it with `stale_checkout`.** That is
-correct, not a flake: the reviewer reads files while it runs, so its findings may describe a
-tree that the archived diff and fingerprint do not. An edit, a staged change, a new untracked
-file Git does not ignore, a moved HEAD or a moved base all count; a file Git ignores (bytecode,
-`.myagentkit/`) does not. Leave the checkout alone until `review.sh` exits — keep working in
-another worktree — and run the review again.
-
-`./scripts/review.sh --self-test` exercises both adapters' offline failure cases and is
-included in `./scripts/check.sh --self-test`; these self-tests require Python 3.10+ for
-both providers. Missing tests or missing completion evidence fail, and so does any one of
-its suites running fewer than its minimum number of tests: a combined total let an emptied
-suite hide behind a grown one. Exit 0 from a reviewer means collection
-completed, not that the verdict is Accept. Missing final evidence fails closed.
-
-**The output is unverified INPUT.** The requesting agent verifies every finding against the
-code, drops what it disproves, keeps what it confirms, and owns the verdict. Relaying a
-reviewer's verdict verbatim — in either direction — is a failed review. A confirmed
-critical finding is a stop signal.
-
-Reviews cost budget: {{OWNER_NAME}} must have asked in this session or explicitly authorized
-a bounded automatic-review policy in the project's canonical instructions. Installing a
-plugin or having the skill selected automatically does not grant spending permission.
-The host must stop review-and-fix automation at its round limit and on unresolved owner
-decisions. This is an agent instruction, not an adapter-enforced session counter or
-authorization check. The adapter enforces per-invocation limits only. Automation never
-authorizes a commit, push, deployment, or an author-only approval. The host is responsible
-for choosing a different reviewing model; `--requester` is reported metadata, not attestation.
+Exit 2 means a wrong round was refused: keyless dispositions, an earlier archive missing or
+edited, a round that does not continue its label, a diff over 400000 bytes with its rounds,
+an index entry or attribute (`filter`, `ident`, assume-unchanged) that could hide a change;
+each refusal names its fix, and a repository that needs a filter (Git LFS) reviews by hand.
+Codex's `Accept with Manual Checks` needs a filled `## Manual checks` section. **A label is bound to its base:** every
+round uses the `--base` of round 1; another base or change takes a new label. **A checkout
+that changes during the review fails it with `stale_checkout`**, correctly: work in another
+worktree and run it again. **The output is unverified INPUT**: the requester verifies every
+finding and owns the verdict. Reviews cost budget: {{OWNER_NAME}} must have asked for them,
+and automation never authorizes a commit or push.
 
 ## Rounds, labels and designs
 
-When the rounds start and what runs in parallel is the lead's part, in `docs/WORKFLOW.md`,
-"Review rounds — early, inside the worker, in parallel". This section says how to run them. ("In parallel" means the reviewers; the self-test follows
-"Worker cost", rule 6.)
-
-- Review a design under its own label, such as `<feature>-design`, before any code exists.
-  Commit the design on the feature's branch, so that every code round's diff carries it.
-- In the code rounds, answer a finding inside one of the design's exclusions with that
-  exclusion as its disposition ("deferred by decision", naming the design's section). Pass
-  it in `REVIEW_DISPOSITIONS` from the second round on; the first round has no earlier round
-  to attach it to, and the reviewer reads the exclusion in the diff.
+- A design is reviewed under its own label before code exists; dispositions cite its exclusions.
 - Start the self-test and two reviewers together only when the memory budget permits
-  (`docs/WORKFLOW.md`, "Worker cost", rule 6 defines the launch sequence). Each runs as its
-  own background job; when all three fit, for example, run
-  `./scripts/check.sh --self-test`, then `MYAGENTKIT_TASK_ID=<feature> ./scripts/review.sh
-  --base <base> --reviewer codex` and the same with `--reviewer claude`. Concurrent reviews
-  write archives with unique names that lie outside the review scope. A self-test may share
-  the reviews' worktree only when every one of its cases writes nothing but files Git
-  ignores (owner decision, 2026-10-12): its end check proves only that the tree ends
-  unchanged, and a temporary non-ignored file, such as the shipped boundary example's,
-  fails a concurrent review as `stale_checkout` even when removed. Such a self-test runs
-  in a second worktree of the same commit, or after the reviews.
-- Each reviewer runs once per tree at a time, and nobody edits a tree under review: a second
-  run of the same reviewer there buys the same verdict twice, and an edit fails every running
-  review with `stale_checkout`.
-- Every round of one feature uses the same `MYAGENTKIT_TASK_ID`, so that later rounds carry
-  the earlier ones. Only the final reviews (one per model, each over the parts it did
-  not write) take a label never used before. When model B's final review finds a High or Medium,
-  model B fixes its own findings, and model A reviews B's fix under a fresh label.
-  B's final review counts as clean for every other part.
-  Closure requires no open High or Medium finding on any part by a model that did not write that part.
-  A label is bound to its base: the wrapper refuses a round whose scope, resolved reference
-  or head does not continue the label's earlier rounds (exit 2, above), so another base or
-  another change takes a new label.
+  (`docs/WORKFLOW.md`, "Worker cost", rule 6), each as its own background job. The kit's
+  self-test writes a non-ignored file: a second worktree, or after the reviews.
+- Nobody edits a tree under review; one run per reviewer per tree.
 
 ## Unavailable reviewer
 
-Reviews have no default monetary budget cap. Pass a supported monetary-cap option only
-when the owner explicitly specifies one. This does not remove timeout, turn, output,
-authorization, or provider-account limits; it does not authorize automatic retries.
-
-A reviewer's sandbox can make a test fail for its own reasons: Codex's can deny process
-termination (`taskkill`) and writes under the user's profile, and its `python3` may not run.
-A failure in the reviewer's run is set aside only when its diagnostic names such a
-restriction AND the same test passes in the author's run outside the sandbox on the same
-platform; the author records both. Any other failure, including one the author's platform
-skips, is a finding or a manual check, never dismissed.
-
-If a reviewing CLI cannot finish because of quota, context exhaustion, timeout,
-authentication, or missing final evidence, do not treat that failure as Accept. Both
-adapters return a failure with a local usage record. Codex uses `REVIEW_TIMEOUT_SECONDS`
-(3600 by default, maximum 7200); Claude reviews use `--timeout` (3600 by default) and `--max-turns`
-(200 by default, maximum 500). Timeout stops the reviewer and its descendants and preserves
-captured partial output. Through the wrapper, `REVIEW_TIMEOUT_SECONDS`
-sets the timeout for each provider, with the same 3600-second default, and `REVIEW_MAX_TURNS`
-sets the Claude turn limit. The old 1800 seconds and 12 turns killed high-effort reviews. Copy preparation and
-reviewer execution share one deadline; execution receives only the remaining seconds, including
-fractional seconds. This is a total
-wall-clock deadline, not an idle timer: active work can continue beyond ten minutes, but
-is still stopped at sixty minutes by default. Claude's final-JSON output does not provide
-reliable startup/activity detection. With `--fallback`, two timed-out default
-attempts can take about two hours plus local processing and quota-observation overhead. There is no purchase
-of extra credits and no retry of the same provider.
-
-**A Codex capacity error is transient.** When Codex reports that the model is at capacity,
-the lead runs the same review again by hand after about ten minutes, because the capacity
-returns and the review's judgement is still needed. The lead passes `--fallback`, or hands the
-review to the other side, only with {{OWNER_NAME}}'s yes: the substitute may be the author.
-
-**The requested reviewer is never silently replaced.** The reviewer is usually requested
-because the other model wrote the patch, so a substitute can be the author reviewing its own
-work under a record that looks valid. Without `--fallback` (dispatcher: `--allow-fallback`),
-a reviewer that cannot run fails the review: nonzero exit, its `failure_kind`, and a
-`FAIL [review]: requested reviewer ... did not produce a review` line. With `--fallback`,
-the wrapper and bundled `review_dispatch.py` try the other configured model once after an
-operational failure: quota, authentication, timeout, missing CLI, CLI error, context
-exhaustion, turn/budget exhaustion, output limit, or a provider's content classifier
-stopping the turn (`content_flagged`: a run may pass on a retry or with a smaller scope). The substitute's archived evidence
-then opens with a `FALLBACK REVIEWER:` line naming the requested reviewer and its failure,
-its usage record carries `review_fallback_from`, and the run prints a `FALLBACK [review]`
-line. A CLI that rejects a flag the review requires (`cli_unsupported`, typically an
-outdated CLI) fails every run the same way; it is a setup fault, never routed to the other
-reviewer even with `--fallback`, and the fix is upgrading the CLI, not dropping the flag. A
-Claude Code Bash sandbox that cannot start (`sandbox_unavailable`: `bubblewrap` or `socat`
-missing on Linux or WSL2, or WSL1) is the same kind of setup fault. Both model pins remain owned
-by project setup (`REVIEW_CLAUDE_MODEL` / `REVIEW_CODEX_MODEL` override them). An absent or
-invalid alternate pin stops failover rather than choosing a model. Direct adapter calls
-remain single-provider. A completed Reject or manual-check verdict is a result, not an
-availability failure; it never triggers another provider. Invalid evidence, wrong model
-attestation, invalid scope, missing guidance, changed checkout, and evidence/usage storage
-failures stop the chain. The original scope is checked between attempts and at completion.
-
-**Cancelling a review stops the reviewer.** Ctrl-C, SIGTERM and SIGHUP (a closed terminal
-or a restarted host session on POSIX) stop the reviewer and its descendants, record the attempt
-as `cancelled` with its partial output in a usage record, and never fail over. That is
-cancelling an active reviewer, or an attempt that failed anyway. A signal that lands while
-an already completed review is being finalised (the closing quota read, the final snapshot,
-the records) keeps it `completed` with its verdict: the paid result exists, and discarding
-it would only buy the same review again. On POSIX, a SIGKILL to
-the review process itself cannot be handled, and the wall-clock timeout lives in that process
-(the supervisor), so it is lost with it: the reviewer then runs to its own end, bounded only
-by its own CLI.
-
-On Linux and macOS, each launched process inherits a unique environment marker. Cleanup
-stops the original process group and scans for that marker, so a descendant that calls
-`setsid` or Python's `start_new_session=True` is still stopped, even after its parent exits.
-Nested launches retain outer markers. A descendant whose environment cleanup cannot read is
-outside this mechanism. That covers a descendant that clears its environment. On Linux it
-also covers a non-dumpable descendant (`prctl(PR_SET_DUMPABLE, 0)`, as ssh-agent does) and
-one running a setuid, setgid or file-capability program. On macOS it covers a process
-whose environment `ps -E` does not show. SIGKILL of the POSIX supervisor still prevents cleanup.
-On native Windows, pipe readers run in threads and a Job Object contains every descendant,
-including one that detaches its console or starts a new process group; breakaway is refused.
-Closing the job also stops them if the supervisor dies. Redirected adapter output is UTF-8,
-so review text outside the Windows console code page does not lose a completed result.
-
-Each attempt retains separate evidence and usage. Immutable checkpoints under
-`.myagentkit/usage/chains/<chain-id>-<attempt-count>.json` link the attempts; these are not
-additional token records. The final `review dispatch:` JSON names the selected reviewer or
-failure. At most two provider attempts occur per invocation. If both fail, leave review
-pending and continue independent authorized work; never restart an exhausted chain
-automatically. A review-and-fix round is separate from a provider attempt and may consume
-two calls; hosts must account for that when applying task-level authorization.
-
-The host must check authorship per part: a fallback verdict counts only for parts that model
-did not write. Neither a new process nor automatic failover grants approval of its own work.
-
-Record the affected task, evidence path, and pending review in current project state. Then
-continue independent authorized implementation, tests, or documentation. When Claude was
-providing an optional implementation proposal, the host can implement the task itself;
-this is not independent review. Do not commit or push a protected diff before its required
-review is satisfied. If no independent work remains, hand off the blocker instead of
-waiting indefinitely. Accounting details live in `docs/USAGE.md`.
+A reviewer that cannot finish (quota, timeout, authentication, missing evidence) is never
+an Accept: the review fails with a usage record. The requested reviewer is never silently
+replaced; with `--fallback` the other configured model runs once after an operational
+failure (quota, timeout, a CLI error, `content_flagged`), its evidence opening with a `FALLBACK REVIEWER:` line. A substitute may be the
+author, so `--fallback` needs {{OWNER_NAME}}'s yes. A setup fault (`cli_unsupported`,
+`sandbox_unavailable`) is fixed, never failed over. With `--fallback`, two timed-out default
+attempts can take about ninety minutes. A Codex capacity error is transient: run the same
+review again after about ten minutes. An exhausted chain goes into `docs/STATE.md` as a
+pending review; independent work continues. A test the reviewer's sandbox fails for its own
+reasons (`taskkill` denied, no `python3`) is set aside only when the diagnostic names the
+restriction and the author's run passes; any other failure is a finding or a manual check.
 
 ## Template to paste (tools without a wrapper)
 
-```
-You are the safety diff reviewer for {{PROJECT_NAME}}. You never change the reviewed
-checkout: no file edits and no state-changing commands in it. Run the suite, the self-test
-and your own reproductions in a throwaway copy made with `git archive`, never with
-`git worktree add` (it writes into the reviewed repository), never with network access and
-never with a paid model call; mark each finding REPRODUCED (with the command) or REASONED.
-
-Read AGENTS.md, docs/ARCHITECTURE.md and docs/REVIEW_GATE.md, then review the diff below
-in the REVIEW_GATE.md priority order. Grep the callers of every changed public member.
-
-Report EVERY finding you can establish, not only the first few, ranked by severity. Start
-each with its severity (Critical, High, Medium or Low), then the file, the line, why it is
-wrong and how it fails concretely, so the calling agent can verify or disprove it
-independently, and end it with "Fix sketch:" and a short fix direction (not a patch). In a
-later round, paste the earlier rounds' findings and verdicts and the author's disposition of
-each as claims to verify (a disproved finding counts only once checked against the code; a
-deferred one stays open under Manual checks), and ask which are fixed before reviewing the
-whole cumulative diff for context. Your verdict counts only for parts you did not write;
-your last fix round is accepted only by the other model's next round. Once both models have
-written parts, closure requires one fresh NEW-label final review per model over parts it
-did not write. The change closes when both return without a High or Medium finding. When model
-B's final review finds a High or Medium, model B fixes its own findings and model A reviews B's
-fix under a fresh label; B's final review counts as clean for every other part, and closure
-requires no open High or Medium finding on any part by a model that did not write that part. If only
-one model wrote the change, one fresh NEW-label final review by the other model closes it. Finish with a line
-"VERDICT: Accept" / "VERDICT: Accept with Manual Checks" / "VERDICT: Reject", followed by
-any manual checks written as full sentences ready to paste into docs/STATE.md.
-
-[DIFF HERE]
-```
+Paste `REVIEW_PROMPT` from `scripts/claude_bridge.py`, then the diff.

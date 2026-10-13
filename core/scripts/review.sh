@@ -62,8 +62,12 @@
 #   MYAGENTKIT_BACKEND   the backend for one run when --backend is not given
 #   REVIEW_CODEX_MODEL   override the pinned Codex model for one run
 #   REVIEW_CLAUDE_MODEL  override the pinned Claude model for one run
-#   REVIEW_EFFORT    reasoning effort             (default: high)
-#   REVIEW_TIMEOUT_SECONDS  wall clock per attempt (default: 3600, at most 7200)
+#   REVIEW_RISK      the brief's tier, low|medium|high; sets the default effort
+#   REVIEW_EFFORT    reasoning effort low|medium|high (default: high when REVIEW_RISK=high, else medium)
+#   REVIEW_FOCUS     portability | logic: one reviewer each on a high-tier change
+#   REVIEW_TASK_FILE the brief the prompt quotes
+#   REVIEW_ROUND_EXCEPTION  the recorded reason for a third round under one label
+#   REVIEW_TIMEOUT_SECONDS  wall clock per attempt (default: 2700, at most 3600)
 #   REVIEW_MAX_TURNS        Claude turns per attempt (default: 200, at most 500)
 #   REVIEW_CLI_BIN   the Codex binary             (default: codex)
 #   CLAUDE_CLI_BIN   the Claude binary            (default: claude)
@@ -171,8 +175,11 @@ fi
 # current binary on PATH and every review failed with "requires a newer version".
 [ -x "$HOME/.local/bin/codex" ] && { PATH="$PATH:$HOME/.local/bin"; export PATH; }
 
+# The default effort follows the brief's tier (docs/REVIEW_GATE.md, "Risk tiers").
+default_effort=medium
+[ "${REVIEW_RISK:-}" = high ] && default_effort=high
 # Only with --fallback does the dispatcher make one failover to the other configured pin.
 # Each adapter retains its own evidence and usage; a completed Reject never triggers another call.
 exec $kit_python -B "$script_dir/review_dispatch.py" --repo "$PWD" --reviewer "$reviewer" $fallback \
   --claude-model "${REVIEW_CLAUDE_MODEL:-$CLAUDE_MODEL}" \
-  --codex-model "${REVIEW_CODEX_MODEL:-$CODEX_MODEL}" --effort "${REVIEW_EFFORT:-high}" "$@"
+  --codex-model "${REVIEW_CODEX_MODEL:-$CODEX_MODEL}" --effort "${REVIEW_EFFORT:-$default_effort}" "$@"

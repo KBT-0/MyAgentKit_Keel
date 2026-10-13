@@ -49,17 +49,17 @@ class ReviewerDocumentTests(unittest.TestCase):
                         self.assertFalse(heading in text, '%s (%s) carries the caller section %s' % (doc, where, heading))
         gate = (ROOT / 'core/docs/REVIEW_GATE.md').read_text()
         policy = ' '.join(gate.split())
-        self.assertIn('each verdict counts only for the parts the reviewing model did not write', policy)
-        self.assertIn('one fresh NEW-label final review per model', policy)
-        self.assertIn('both return without a High or Medium finding', policy)
+        self.assertIn('The session that wrote a patch never reviews or approves it', policy)
+        self.assertIn('At most two rounds under one label', policy)
+        self.assertIn('Report new Critical or High findings', (ROOT / 'core/scripts/claude_bridge.py').read_text())
         worker = ' '.join((ROOT / 'overlays/claude-code/files/.claude/agents/worker.md').read_text().split())
-        self.assertIn('Inner same-model checks stay with the worker', worker)
-        self.assertIn('cross-model gate findings go to the model that found them', worker)
+        self.assertIn('Inner checks stay with the worker', worker)
+        self.assertIn("a gate finding goes to a fresh worker of the author's side", worker)
         for needed in ('`Accept` / `Accept with Manual Checks` / `Reject`',
-                       'a disproved finding counts\nonly after the reviewer has checked it against the code',
-                       'a deferred one stays open under\nManual checks, so it rules out a plain Accept',
+                       'a disproved finding counts only after the reviewer has checked it against the code',
+                       'a deferred one stays open under Manual checks, so it rules out a plain Accept',
                        '**A Reject is not closed by its fixes.**'):
-            self.assertIn(needed, gate)
+            self.assertIn(needed, policy)
         running = (ROOT / 'core/docs/REVIEW_RUNNING.md').read_text()
         for heading in CALLER_HEADINGS:
             self.assertIn(heading, running)
@@ -68,7 +68,6 @@ class ReviewerDocumentTests(unittest.TestCase):
 class SectionPointerTests(unittest.TestCase):
     def test_routing_and_closure_rules_agree(self):
         workflow = (ROOT / 'core/docs/WORKFLOW.md').read_text(encoding='utf-8')
-        self.assertIn('after the second dirty round', workflow)
         self.assertIn('python3 scripts/usage_summary.py', workflow)
         flat = ' '.join(workflow.split())
         for rule in ('two at a time until the lead has measured its host', '4 GB reserve',
@@ -91,9 +90,7 @@ class SectionPointerTests(unittest.TestCase):
         self.assertIn('When the owner is away and at least one job fits the budget', budget_rule)
         self.assertIn('When not even one job fits, the review round stays blocked and the lead reports the capacity figure to the owner; nothing heavy starts.', budget_rule)
         self.assertIn('"In parallel" means the reviewers', flat)
-        self.assertIn('review rounds run per cluster of related branches', flat)
-        self.assertIn('After their first round, merge branches touching the same files into one integration branch', flat)
-        self.assertIn('remaining rounds run on the cluster', flat)
+        self.assertIn('then gets ONE final review under a label never used before', flat)
         gotchas = ' '.join((ROOT / 'core/docs/GOTCHAS.md').read_text(encoding='utf-8').split())
         for rule in ("lead's tool shell", 'on most hosts', '`&` under `sh -c`',
                      '`nohup`', 'Windows Terminal tab', 'command line names the checkout or its worktrees',
@@ -115,7 +112,7 @@ class SectionPointerTests(unittest.TestCase):
                      'A review is finished only when that latest record has status `completed`, or status `failed` with no further attempt possible (the attempt count equals the number of possible attempts, a `failure_kind` outside the dispatcher\'s unavailable set, `fallback_blocked` set, or `fallback_allowed` false, or the failed attempt has no `evidence` or `usage_record`: the dispatcher never falls over from such an attempt).',
                      'The number of possible attempts is one without `--fallback`, two with it.',
                      'Use the mtime of `<chain>-0.json` as the review start time.',
-                     'After a cut-off, treat the review as running for at least `REVIEW_TIMEOUT_SECONDS` (3600 s when unset; the record does not store it) times the number of possible attempts plus overhead (about 4 h with 7200 s and `--fallback`), unless the latest record shows it is finished as above.',
+                     'After a cut-off, treat the review as running for at least `REVIEW_TIMEOUT_SECONDS` (2700 s when unset, 3600 at most; the record does not store it) times the number of possible attempts plus overhead (about two hours with 3600 s and `--fallback`), unless the latest record shows it is finished as above.',
                      'This window is a lower bound, not proof that an orphaned reviewer stopped.',
                      'After the window, the lead still confirms completion in the process listing.',
                      'On POSIX, the reviewer runs in its own session; a supervisor killed with `SIGKILL` cannot enforce its timeout.',
@@ -146,7 +143,6 @@ class SectionPointerTests(unittest.TestCase):
                            'Start the self-test and the review together, on the same commit, never one after the other',
                            'Start the self-test and two reviewers at once'):
             self.assertNotIn(old_launch, flat + ' ' + running)
-        self.assertIn('Independent reviews follow the launch sequence in "Worker cost", rule 6', flat)
         self.assertIn('The launch sequence follows "Worker cost", rule 6', flat)
         self.assertIn('Start the self-test and the reviews on the same commit, following "Worker cost", rule 6', flat)
         self.assertNotIn("Where-Object CommandLine -like '*<checkout>*'", gotchas)
@@ -166,24 +162,18 @@ class SectionPointerTests(unittest.TestCase):
             self.assertEqual(flat.count(rule), 1, rule)
         self.assertIn('**Prevention over detection.**', workflow.split('## Review rounds')[1].split('\n\n')[1])
         self.assertIn('| Mechanical work and re-review of a small fix round | medium |', workflow)
-        for name in ('core/docs/REVIEW_RUNNING.md', 'core/docs/WORKFLOW.md',
-                     'core/docs/REVIEW_GATE.md', 'core/AGENTS.md'):
-            policy = ' '.join((ROOT / name).read_text(encoding='utf-8').split())
-            for rule in ('model B fixes its own findings',
-                         'model A reviews B\'s fix under a fresh label',
-                         'B\'s final review counts as clean for every other part',
-                         'no open High or Medium finding on any part by a model that did not write that part'):
-                self.assertIn(rule, policy, name)
         handoff = (ROOT / 'core/docs/HANDOFF.md').read_text(encoding='utf-8')
         self.assertIn('Route: quick|build|deep · Risk: low|medium|high · Checks: ...', handoff)
-        for name in ('core/docs/REVIEW_RUNNING.md', 'core/docs/REVIEW_GATE.md', 'core/AGENTS.md'):
+        # The per-model closure rules of v0.10 are gone with the single-model default: one
+        # round limit and one final review, said in the gate and nowhere else.
+        for name in ('core/docs/REVIEW_RUNNING.md', 'core/docs/WORKFLOW.md', 'core/docs/REVIEW_GATE.md',
+                     'core/AGENTS.md', 'core/scripts/claude_bridge.py'):
             policy = ' '.join((ROOT / name).read_text(encoding='utf-8').split())
-            self.assertIn('one fresh NEW-label final review per model', policy, name)
-            self.assertIn('both return without a High or Medium finding', policy, name)
+            for old in ('model B fixes its own findings', 'one fresh NEW-label final review per model',
+                        'both return without a High or Medium finding', 'after the second dirty round'):
+                self.assertNotIn(old, policy, name)
         bridge = (ROOT / 'core/scripts/claude_bridge.py').read_text(encoding='utf-8')
-        self.assertIn('one fresh NEW-label final review per model', bridge)
         self.assertNotIn('model did not write the latest fix; the final Accept', bridge)
-        # A single closing review contradicts the per-model final reviews wherever it is said.
         for path in [ROOT / 'core/AGENTS.md', *sorted((ROOT / 'core/docs').glob('*.md'))]:
             self.assertNotIn('closing review', path.read_text(encoding='utf-8').lower(), path)
 
@@ -192,8 +182,7 @@ class SectionPointerTests(unittest.TestCase):
         workflow = (ROOT / 'core/docs/WORKFLOW.md').read_text(encoding='utf-8')
         table = workflow.split('### Working modes, by name')[1].split('####')[0]
         rows = re.findall(r'^\| `([a-z-]+)` \| ([^|(]+?)(?: \(main mode\))? \|', table, re.M)
-        self.assertEqual(sorted(m for m, _ in rows), ['claude-first', 'claude-only', 'claude-saver', 'codex-first',
-                                                       'codex-saver', 'cross-performance', 'cross-saving'])
+        self.assertEqual(sorted(m for m, _ in rows), ['normal', 'saver', 'solo'])
         command = (ROOT / 'plugin/commands/mode.md').read_text(encoding='utf-8')
         skill = (ROOT / 'plugins/myagentkit/skills/myagentkit-mode/SKILL.md').read_text(encoding='utf-8')
         # The command may run its helper unprompted, never any Python code.
@@ -209,7 +198,7 @@ class SectionPointerTests(unittest.TestCase):
                 for text in (command, skill):
                     self.assertIn(mode, text)
                     self.assertIn(turkish, text)
-        self.assertIn('**Working mode:** cross-performance', (ROOT / 'core/docs/STATE.md').read_text())
+        self.assertIn('**Working mode:** solo', (ROOT / 'core/docs/STATE.md').read_text())
         for name in ('core/docs/WORKFLOW.md', 'setup/INTERVIEW.md'):
             self.assertNotIn('{{MODEL_ROUTING}}', (ROOT / name).read_text(encoding='utf-8'))
         handoff = (ROOT / 'core/docs/HANDOFF.md').read_text(encoding='utf-8')

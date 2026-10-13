@@ -25,9 +25,9 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'REVIEW_SHADOW', 'MYAGENTKIT_TASK_I
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 188, 'test_agent_usage': 31, 'test_codex_quota': 5}
+SUITE_MINIMUMS = {'test_claude_bridge': 189, 'test_agent_usage': 31, 'test_codex_quota': 5}
 # These are executed cases, excluding only the explicitly declared POSIX exclusions.
-WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 162, 'test_agent_usage': 27, 'test_codex_quota': 4}
+WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 163, 'test_agent_usage': 27, 'test_codex_quota': 4}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -778,15 +778,15 @@ class BridgeTests(unittest.TestCase):
             raise CapturedLaunch()  # No CLI or wall-clock wait is needed.
 
         default = agent_process.DEFAULT_REVIEW_TIMEOUT
-        self.assertGreaterEqual(default, 3600)  # 1800 killed real high-effort reviews
+        self.assertGreaterEqual(default, 2700)  # 1800 killed real high-effort reviews
         cases = [(bridge.main, ['review'], None, default),
                  (bridge.main, ['review', '--timeout', '77'], None, 77),
                  (codex_bridge.main, ['--model', 'fixture-codex-model'], None, default),
                  (codex_bridge.main, ['--model', 'fixture-codex-model'], '88', 88),
-                 (codex_bridge.main, ['--model', 'fixture-codex-model'], '7200', 7200),
+                 (codex_bridge.main, ['--model', 'fixture-codex-model'], '3600', 3600),
                  (review_dispatch.main, ['--reviewer', 'claude'], None, default),
                  (review_dispatch.main, ['--reviewer', 'codex'], None, default),
-                 (review_dispatch.main, ['--reviewer', 'claude'], '7200', 7200),
+                 (review_dispatch.main, ['--reviewer', 'claude'], '3600', 3600),
                  (review_dispatch.main, ['--reviewer', 'claude'], '99', 99),
                  (review_dispatch.main, ['--reviewer', 'codex'], '99', 99)]
         for main, argv, override, expected in cases:
@@ -915,9 +915,9 @@ class BridgeTests(unittest.TestCase):
     def test_fallback_duration_matches_default_attempt_budgets(self):
         import agent_process
         guide = (ROOT.parent / 'docs/REVIEW_RUNNING.md').read_text()
-        duration = re.search(r'two timed-out default\s+attempts can take about (\w+) hours?', guide)
+        duration = re.search(r'two timed-out default\s+attempts can take about (\w+) minutes', guide)
         self.assertIsNotNone(duration)
-        self.assertEqual({'one': 1, 'two': 2}[duration[1]] * 3600,
+        self.assertEqual({'sixty': 60, 'ninety': 90}[duration[1]] * 60,
                          2 * agent_process.DEFAULT_REVIEW_TIMEOUT)
 
     def test_review_has_no_default_budget_but_honors_an_explicit_limit(self):
@@ -2938,6 +2938,22 @@ class BridgeTests(unittest.TestCase):
                     self.assertEqual((usage['status'], usage['failure_kind']),
                                      (result['status'], result['failure_kind']))
 
+    def test_a_plain_accept_may_carry_lows_and_pre_existing_items_only(self):
+        # Owner decision 2026-10-13 (E): a Low or an item outside the diff does not block Accept;
+        # anything Medium or above still contradicts it (the same rule in codex_bridge).
+        for findings, allowed in (([], True), (['Low: a note'], True), (['Pre-existing: elsewhere'], True),
+                                  (['Low: a', 'Pre-existing: b'], True), (['Medium: a defect'], False),
+                                  (['Lowly: not a severity'], False), (['High: wrong'], False)):
+            with self.subTest(findings=findings):
+                value = {'verdict': 'Accept', 'findings': findings, 'manual_checks': []}
+                envelope = {'type': 'result', 'subtype': 'success', 'is_error': False,
+                            'modelUsage': {'claude-opus-5': {}}, 'structured_output': value}
+                if allowed:
+                    self.assertEqual(bridge.validate(envelope, 'review', 'claude-opus-5'), value)
+                else:
+                    with self.assertRaisesRegex(bridge.BridgeError, 'Accept contradicts'):
+                        bridge.validate(envelope, 'review', 'claude-opus-5')
+
     def test_the_pin_is_attested_by_its_exact_id_or_a_dated_one_only(self):
         # Matched as a prefix, the usage key claude-opus-5-5, another model, attested the pin
         # claude-opus-5. Only the pinned id itself, or it with a -YYYYMMDD date, attests it.
@@ -3244,6 +3260,7 @@ if case == 'archive_failure':
                            MYAGENTKIT_CAPTURE_QUOTA="0", MYAGENTKIT_DELEGATION_DEPTH="0",
                            REVIEW_TIMEOUT_SECONDS="1" if case == "timeout" else "30",
                            MYAGENTKIT_REQUESTER="claude/fixture", MYAGENTKIT_TASK_ID="fixture-review",
+                           REVIEW_ROUND_EXCEPTION="fixture: every case runs under one label",
                            REVIEW_DOCS="AGENTS.md, docs/ARCHITECTURE.md and docs/REVIEW_GATE.md")
                 result = subprocess.run(["sh", str(scripts / "review.sh"), "--uncommitted",
                                          "--reviewer", "codex"],
@@ -3385,14 +3402,16 @@ if case == 'archive_failure':
         # The bridged reviewers now execute, in a throwaway copy the adapter made: the ask is
         # unconditional, and the prompt never names the reviewed repository's path.
         # Native Windows has no Bash sandbox: there the reviewer reads and reasons instead.
-        asks = ('EVERY finding', 'Critical, High, Medium or Low', 'Fix sketch:',
-                'You are in a throwaway copy', 'NOT RUN', 'Never use the network') + (
+        # The shared prompt (owner decision 2026-10-13, E): a threshold instead of EVERY finding,
+        # no fix sketch, a clean review is valid, Pre-existing items stay out of the verdict.
+        asks = ('A clean review is a valid result', 'Severity, for this project', 'Pre-existing:',
+                'at most five Low', 'You are in a throwaway copy', 'NOT RUN', 'Never use the network') + (
                     ('You have no shell on this host', 'mark each finding REASONED') if WINDOWS else
                     ('run anything inside this copy', 'Run the suite and reproductions', 'REPRODUCED',
                      'if a run is impossible, mark it REASONED'))
         forbidden = ('Do not run tests', 'run code', 'SHOULD run', 'worktree add --detach',
                      'If your tools can execute', 'edit files in this checkout',
-                     'never change the reviewed checkout', str(self.repo))
+                     'never change the reviewed checkout', 'Fix sketch:', 'EVERY finding', str(self.repo))
         task = {'PROMPT_LOG': str(log), 'MYAGENTKIT_TASK_ID': 'rounds-task'}
         code, first = self.run_bridge('reject', env_extra=task)
         self.assertEqual(code, 0, first)
@@ -3406,12 +3425,22 @@ if case == 'archive_failure':
         self.assertIn('### Round 1', log.read_text())
         self.assertIn('file.py:1: concrete defect', log.read_text())
         self.assertIn('Earlier verdict: Reject', log.read_text())
-        # Round 3 through the wrapper, by the other reviewer: both rounds, oldest first.
+        # Round 3 through the wrapper, by the other reviewer: both rounds, oldest first. Two
+        # rounds are the limit under one label; a third needs its reason, kept in the record.
         notes = self.root / 'dispositions.md'
-        notes.write_text('file.py:1 DISPROVED_BY_AUTHOR: the defect needs input the caller rejects.\n')
+        notes.write_text('file.py:1 disproved: the defect needs input the caller rejects.\n')
+        refused = self.run_wrapper('--reviewer', 'codex', REVIEW_CLI_BIN=str(self.build_fake_codex()),
+                                   REVIEW_CODEX_MODEL='fixture-codex-model',
+                                   REVIEW_DISPOSITIONS=str(notes), **task)
+        self.assertEqual(refused.returncode, 2, refused.stdout + refused.stderr)
+        self.assertIn('REVIEW_ROUND_EXCEPTION', refused.stdout + refused.stderr)
         result = self.run_wrapper('--reviewer', 'codex', REVIEW_CLI_BIN=str(self.build_fake_codex()),
                                   REVIEW_CODEX_MODEL='fixture-codex-model',
-                                  REVIEW_DISPOSITIONS=str(notes), **task)
+                                  REVIEW_DISPOSITIONS=str(notes),
+                                  REVIEW_ROUND_EXCEPTION='fixture: a third round', **task)
+        chain = json.loads(result.stdout.split('review dispatch: ', 1)[1].splitlines()[0])
+        third = json.loads(Path(chain['attempts'][-1]['usage_record']).read_text())
+        self.assertEqual(third['task']['round_exception'], 'fixture: a third round')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         prompt = log.read_text()
         for ask in asks:
@@ -3425,7 +3454,7 @@ if case == 'archive_failure':
         self.assertIn('Earlier verdict: Accept\n', rounds[2])
         # A carried "VERDICT:" line, echoed by Codex, would break its exactly-one-verdict check.
         self.assertEqual(re.findall(r'^[ \t]*VERDICT[ \t]*:.*$', prompt, re.M), [])
-        self.assertIn('DISPROVED_BY_AUTHOR', prompt)
+        self.assertIn('disproved: the defect needs input', prompt)
         # Another task label carries nothing; dispositions with no earlier round are refused.
         code, other = self.run_bridge(env_extra=dict(task, MYAGENTKIT_TASK_ID='other-task'))
         self.assertEqual(code, 0, other)
@@ -4226,7 +4255,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         prompt = ' '.join(log.read_text().split())
         for wording in ("the author's claims to verify",
                         'counts only after you have checked it against the code',
-                        'your verdict counts only for the parts you did not write',
+                        'Report new Critical or High findings only',
                         'stays open: list it under Manual checks', 'never a plain Accept'):
             self.assertIn(wording, prompt)
         for wording in ("the author's disposition answers it", 'only with a new argument'):
@@ -4478,7 +4507,8 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         def newest():
             return json.loads(max(usage.glob('*.json')).read_text())
         env = dict(REVIEW_CODEX_MODEL='fixture-codex-model', REVIEW_CLI_BIN=str(self.build_fake_codex()),
-                   MYAGENTKIT_TASK_ID='codex-measured')
+                   MYAGENTKIT_TASK_ID='codex-measured',
+                   REVIEW_ROUND_EXCEPTION='fixture: the measured rounds exceed two')
         result = self.run_wrapper('--uncommitted', '--reviewer', 'codex', **env)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         first = newest()
@@ -4550,7 +4580,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                 self.assertEqual(code, 0, result)
                 prompt = log.read_text()
                 if side == 'on':
-                    self.assertIn('is a question.\nLead with the answer, synthetic.\n', prompt)
+                    self.assertIn('not a finding.\nLead with the answer, synthetic.\n', prompt)
                 else:
                     self.assertNotIn('Lead with the answer', prompt)
                 usage = json.loads(Path(result['usage_record']).read_text())
@@ -4709,7 +4739,8 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                                           ANTHROPIC_API_KEY='lead-key', MYAGENTKIT_BACKEND=chosen)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertEqual(json.loads(log.read_text()), self.BACKEND)
-                self.assertIn('REVIEW [about to run]: claude@glm model glm-fixture, effort high', result.stdout)
+                # The wrapper's default effort is medium; REVIEW_RISK=high raises it (review.sh).
+                self.assertIn('REVIEW [about to run]: claude@glm model glm-fixture, effort medium', result.stdout)
                 self.assertNotIn('tok=en', result.stdout)
                 chain = json.loads(next(line.removeprefix('review dispatch: ') for line in result.stdout.splitlines()
                                         if line.startswith('review dispatch: ')))
@@ -4812,7 +4843,8 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
     def dispatch_result(self, primary='claude', fallback=True, **extra):
         env = dict(CLAUDE_CLI_BIN=str(self.fixture), REVIEW_CLAUDE_MODEL='claude-opus-5',
                    REVIEW_CODEX_MODEL='fixture-codex-model', REVIEW_CLI_BIN=str(self.build_fake_codex()),
-                   MYAGENTKIT_REQUESTER='codex/fixture-codex-model', MYAGENTKIT_TASK_ID='fallback-task')
+                   MYAGENTKIT_REQUESTER='codex/fixture-codex-model', MYAGENTKIT_TASK_ID='fallback-task',
+                   REVIEW_ROUND_EXCEPTION='fixture: the chain tests run more than two rounds')
         env.update(extra)
         result = self.run_wrapper('--reviewer', primary, *(['--fallback'] if fallback else []), **env)
         line = next((s.removeprefix('review dispatch: ') for s in result.stdout.splitlines()

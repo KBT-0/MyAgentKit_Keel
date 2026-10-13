@@ -202,9 +202,9 @@ dispatcher never falls over from such an attempt). A failed first attempt can st
 by a running fallback.
 Use the mtime of `<chain>-0.json` as the review start time. The number of possible attempts is
 one without `--fallback`, two with it. After a cut-off, treat the review as running for at least
-`REVIEW_TIMEOUT_SECONDS` (3600 s when unset; the record does not store it) times the number of
-possible attempts plus overhead (about 4 h with 7200 s and `--fallback`), unless the latest
-record shows it is finished as above.
+`REVIEW_TIMEOUT_SECONDS` (2700 s when unset, 3600 at most; the record does not store it) times
+the number of possible attempts plus overhead (about two hours with 3600 s and `--fallback`),
+unless the latest record shows it is finished as above.
 This window is a lower bound, not proof that an orphaned reviewer stopped.
 After the window, the lead still confirms completion in the process listing.
 On POSIX, the reviewer runs in its own session; a supervisor killed with `SIGKILL` cannot enforce its timeout.
