@@ -175,8 +175,8 @@ directions"). Windows'ta `shellcheck` kurulu değilse yalnız CI'da koşar.
 **Efor.** O × 5 (her sensor ayrı görev; ilk ikisi en değerli). **Dosyalar.** `scripts/check_kit.py`,
 `core/scripts/check.sh`, `core/scripts/boundary_selftests.sh`, `tests/`, `.github/workflows/ci.yml`,
 `core/docs/REVIEW_GATE.md` (liste kısalır), `core/docs/WORKFLOW.md` "Writing a gate".
-**Karar.** Beş sensor'un sırası ve hangilerinin v0.11'e (bence 1 ve 2), hangilerinin v0.12'ye
-kalacağı.
+**Karar (sahip, 13 Ekim).** Beş sensor da v0.11'e; sıra 1→5 (sıklık); her biri ayrı görev,
+high katman review.
 
 ### E. Reviewer prompt'u yeniden yazılır: alt eşik, severity tanımı, "Do not report", Low tavanı, tur 2 daraltma, görev/risk bağlamı (kaynak: `docs/research-review-prompts-and-rules.md`, bundan sonra R)
 
@@ -209,7 +209,10 @@ D (sensor'lar) ve F (ölçüm: precision görülmeden ikinci prompt değişikli�
 Karşı kanıt R §3: Cursor "aggressive" prompt + validator katmanı; bizde validator lead'dir.
 **Efor.** O (prompt + fixture + wrapper'a üç env/arg). **Dosyalar.** `core/scripts/claude_bridge.py`,
 `codex_bridge.py`, `review.sh`, `review_dispatch.py`, testler, plugin kopyası.
-**Karar.** R §4.1 taslağı temel alınsın mı; severity tanım metni; Low tavanı sayısı.
+**Karar (sahip, 13 Ekim).** Kabul: R §4.1 taslağı temel; Fix sketch kalkar; Low tavanı 5; alt
+eşiğin yanına Codex'in tamlık cümlesi eklenir ("Do not stop at the first qualifying finding;
+continue until every qualifying finding is listed" [W5]) ki araç kullanan reviewer susmasın
+(Cursor [W8] itirazı). Son prompt metni uygulama öncesi sahibe gösterilir.
 
 ### P. Review kural dosyaları 8–9 dosyadan 2'ye iner (kaynak: R §4.2, envanter I)
 
@@ -226,8 +229,8 @@ karakter sınırı, "very long instruction files may result in some instructions
 P raporu §1 kısa harita dosyaları; living-docs-never-bloat (sahip kuralı). **Risk.** Silinen bir
 cümlenin bir vakayı koruduğu sonradan anlaşılır; karşılığı: envanter I.B'deki 89 kuralın her biri
 için "kalır / birleşir / silinir" satırı, silinenlerin gerekçesi RESEARCH_LOG'a. **Efor.** K
-(belge; lead yazar). **Dosyalar.** yukarıdakiler. **Karar.** Hedef kelime sınırları; kural
-envanterinin satır satır kararı sahiple mi, lead'in önerisi üzerine toplu onay mı.
+(belge; lead yazar). **Dosyalar.** yukarıdakiler. **Karar (sahip, 13 Ekim).** Kabul: REVIEW_GATE ≤ 600, REVIEW_RUNNING ≤ 500 kelime; lead 89 kural
+için kalır/birleşir/silinir listesini çıkarır, sahip listeyi bir kerede onaylar.
 
 ### F. Ölçüm: bulgu kabul oranı (precision) kayda girer; eşik altı reviewer konfigürasyonu kapanır; yeni konfigürasyon shadow'da başlar
 
@@ -280,8 +283,8 @@ toplanan minimumlar) okur. Dogfood günü takvimde bir gün; sahip kabul ederse.
 
 **Efor.** K. **Dosyalar.** `core/docs/WORKFLOW.md` ("The lead's steps" 3, "The strong review
 cycle" dokunulmaz), `core/docs/REVIEW_GATE.md` (closure paragrafı), `core/docs/REVIEW_RUNNING.md`,
-`core/AGENTS.md`, `docs/ACCEPTANCE.md` şablonu. **Karar.** Final'i hangi model; ultra kabul mü;
-dogfood bir gün mü yarım gün mü.
+`core/AGENTS.md`, `docs/ACCEPTANCE.md` şablonu. **Karar (sahip, 13 Ekim).** Kabul: tek final, merged diff'in daha az kısmını yazan taraf
+(v0.11'de Claude), high, NEW label; ultra yalnız sahip ayrıca isterse; dogfood bir iş günü.
 
 ### H. Review zaman kutusu ve yük: 45 dakika tavan, en çok üç ağır iş, Codex varsayılanı medium
 
@@ -305,7 +308,9 @@ verisi yok, [39] Codex #13/15. Bizim sayılar: docs'ta Codex medium bile 55 dk; 
 `REVIEW_TIMEOUT_SECONDS` yükseltmesi. **Efor.** K + O (varsayılanlar + retry sınıfı).
 **Dosyalar.** `core/scripts/review.sh`, `review_dispatch.py`, `codex_bridge.py`,
 `core/docs/REVIEW_RUNNING.md` "Unavailable reviewer", `core/docs/WORKFLOW.md` "Worker cost".
-**Karar.** 2700/3600 değerleri; üç iş tavanı; Codex medium varsayılanı.
+**Karar (sahip, 13 Ekim).** 2700/3600 kabul; iş tavanı YOK, bellek tek sınır kalır (üç-iş
+maddesi düşer; retry sınıfı kalır); effort: xhigh yasak, high katman high, low/medium katman
+medium (review.sh varsayılanı REVIEW_RISK'e bağlanır; M-2 ile aynı karar).
 
 ### I. Kod dışı değişiklik (docs, CHANGELOG, RESEARCH_LOG, brief'ler): LLM review döngüsü yok
 
@@ -320,8 +325,8 @@ daralt, nit 5; "çok turlu LLM review for docs: kanıt yok"). Bizim sayılar: do
 10 tur, 17.058 s reviewer süresi, hâlâ Reject.
 
 **Risk.** Yanlış bir talimat gözden kaçar; karşılığı belge gate'leri ve dogfood günü.
-**Efor.** K. **Dosyalar.** `core/docs/REVIEW_GATE.md`, `core/docs/HANDOFF.md`. **Karar.** Davranış
-kuralı değiştiren belgelerde tek geçiş kalsın mı, o da kalksın mı.
+**Efor.** K. **Dosyalar.** `core/docs/REVIEW_GATE.md`, `core/docs/HANDOFF.md`. **Karar (sahip, 13 Ekim).** Kabul: davranış kuralı değiştiren belgede tek Claude low/medium
+geçişi, Low tavanı 3, bloklamaz; diğer belgeler gate + okuma.
 
 ### J. İnsan "on the loop": karar noktaları adlandırılır
 
@@ -366,7 +371,8 @@ başka bir ailedir; aynı Claude CLI'dan geçmesi bağımsızlığı azaltmaz, �
 olsa da ağırlıklar farklıdır. Kayıt tarafı: usage kaydı `model` alanına backend'in gerçek model
 adını yazmalı (attestation `modelUsage` ile mümkün mü, backend'e bağlı; mümkün değilse "requested,
 unattested" — Codex'teki gibi). **Efor.** K (REVIEW_GATE "roles not vendors" paragrafına bir
-cümle) + backend dalındaki kayıt alanı (O, dal zaten açık). **Karar.** Sahibin.
+cümle) + backend dalındaki kayıt alanı (O, dal zaten açık). **Karar (sahip, 13 Ekim).** EVET;
+gerçek model adı kayda girer, attest edilemezse "requested, unattested".
 
 ### M. Token ve bağlam tasarrufu (kaynak: `docs/research-token-optimization.md`, bundan sonra T)
 
@@ -376,7 +382,7 @@ Kitin maliyet modeli üç yanlış inanç taşıyor; T bunları ölçülmüş sa
 | # | Değişiklik | Kanıt (T) | Beklenen | Risk | Efor |
 |---|---|---|---|---|---|
 | M-1 | Worker cache ömrü kova düzeyinde: `CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL=1h` spawn ortamına; frontmatter `cacheTtl` kaldırılır (usage credits'te yok sayılıyor) | T §1 [4][5]; `docs/worker-cost-setups.md` −36–38 % | 5 dk'dan uzun bekleyen worker'larda −%36 | Kısa worker'da 1h yazma 2×; lead <5 dk işte 5m'ye döner | K (spawn_worker.sh bir satır) |
-| M-2 | Gate review effort'u: xhigh yasak, high istisna, **medium varsayılan** (H ile aynı) | T [44] xhigh=high çözüm, 2,4–4,5× maliyet; Codex xhigh 1,76–2,52× [37] | Tier-3 turlarında ~2× | Edge-case recall; E'nin gürültü kontrolü dengeler | K (REVIEW_GATE + review.sh varsayılanı) |
+| M-2 | Gate review effort'u: xhigh yasak; high katman high, low/medium katman medium (H ile aynı; **sahip kabul etti, 13 Ekim**) | T [44] xhigh=high çözüm, 2,4–4,5× maliyet; Codex xhigh 1,76–2,52× [37] | Tier-3 turlarında ~2× | Edge-case recall; E'nin gürültü kontrolü dengeler | K (REVIEW_GATE + review.sh varsayılanı) |
 | M-3 | Lead session'ında `promptCacheTtl: 1h` yazılı; `/usage` "Prompt cache (main)" satırı mod raporuna girer | T [3][4]: plan limiti dolunca ana konuşma sessizce 5 dk'ya düşer | Aradan sonraki tam yeniden yazma (lead ~250k/request) önlenir | Kısa sık session'da 2× yazma | K (settings + WORKFLOW bir paragraf) |
 | M-4 | Kompaksiyon politikası: 200k çizgisi kalır; compact yalnız cache sıcakken; >1 sa aradan sonra resume'da summary; yön değişince `/clear` + hand-off; Codex worker'da `model_auto_compact_token_limit` 200–250k | T [36][4][14][3][28][46]; maliyet ∝ pencere^2,55 | Compaction başına 300–700k uncached okuma kaçınılır | Yok (metin) | K (context-is-a-budget.md) |
 | M-5 | Aynı context gerektiren kısa iş (lead'in kendi diff'inin iç review'u, kısa teşhis) **fork** sub-agent; taze sub-agent yalnız bağımsız iş | T [4][5][15]; P §5-3 | Worker başına bir başlangıç yazması (36–60k × 1,25–2×) | Fork ebeveynin geçmişini taşır; büyük lead'de pahalı → eşik: lead <120k | K (WORKFLOW kural) |
@@ -390,7 +396,8 @@ için geçerli; kural ikiye ayrılır. Effort geçişi 5.5/Fable'da cache'i koru
 routing kural 4'ün "effort değişimi cache bozar" cümlesi silinir (Codex'te kalır).
 **Reddedilenler (T §5):** Batch API, ccusage, keep-alive/poll plugin'leri, tool-çıktı kısaltıcı
 eklentiler (RTK +%7,6 maliyet, Caveman ilan %65 → ölçülen %8,5; P [67][68]).
-**Karar.** Sahibin; M-1/M-3 `settings` dosyasına dokunduğu için ayrı onay.
+**Karar (sahip, 13 Ekim).** M-1…M-6 altısı da v0.11'e; M-1 ve M-3 settings değişikliği onaylı;
+düzeltmeler ve retler aynen.
 
 ### N. Talimat dosyalarının yüklenmesi: her session'da tek büyük set yerine koşullu yükleme (kaynak: `docs/research-agent-kits-in-practice.md`, bundan sonra P)
 
@@ -413,7 +420,8 @@ başarı artırmadan maliyeti +%20 artırıyor ve "repo özeti" bölümleri fayd
   skill'ler `disable-model-invocation: true` (P §5-8).
 **Risk.** Kuralın yüklenmediği session kuralı çiğner; karşı önlem: D'nin sensor'ları (kural
 prose değil check). **Efor.** N-1 K; N-2 O (dört dosya + overlay); N-3/N-4 K.
-**Karar.** Sahibin; N-2 kitin en görünür dosyasını değiştirir.
+**Karar (sahip, 13 Ekim).** N-1 ölçüm + N-2 harita dönüşümü v0.11'de, P ile aynı oturumda;
+N-3/N-4 v0.12.
 
 ### O. Emsalsiz pratikler: sahibin kuralıyla kaldırma/değiştirme adayı
 
@@ -433,7 +441,30 @@ emsalsiz = kötü işaret, savunulmaz. Her biri için gözlenen pratik ve öneri
 **Karar (sahip, 13 Ekim batch).** "Emsalsiz = kötü" sözü anlık yorumdu, kalıcı kural değil.
 "Daha az review önerme" ve "Done'lar silinsin" kuralları aynen kalır. Emsal yokluğu tek başına
 kaldırma gerekçesi değildir; tablonun her satırı kendi raporu ve kanıtıyla ayrı karar alır
-(satır kararları aşağıya işlenir).
+Satır kararları (sahip, 13 Ekim): çapraz-vendor döngüsü → A+B+C (karar verildi); yedi mod →
+**üç mod** (normal / tasarruf / kapalı; claude-only ve codex-first ayrı mod değil, "kim yazar /
+kim inceler" satırı); cache-TTL modeli → M; Done trailer → `check.sh` sensoru (silme yine
+zorlanır); gate-red kuralı → D-5 sensoru; PII yasağı ve spawn'ın model/effort zorunluluğu
+korunur.
+
+### Q. Mandate (sahip, 13 Ekim, O-2 cevabında): kit ana hatta TEK MODELLE çalışır
+
+"Bu noktadan sonra odağımız iki model değil; ağırlıklı olarak sadece Claude ile çalışacağız.
+Codex ya da Kimi gibi diğer modeller dahil olabilsin, ama kit kesinlikle ikinci modele bağımlı
+olmasın; ana mevzusu tek modelde çalışabilecek şekilde olsun." Sonuçları:
+- Her review/gate/release mekanizması tek modelle tanımlanır: "diğer model" = **taze oturum,
+  tercihen farklı tier** (bugünkü claude-only modu varsayılan olur; L ile GLM/Kimi backend'i
+  ikinci model sayılabilir ama şart değil).
+- A'nın high katmanı: iki paralel dar reviewer = iki taze Claude oturumu (farklı odak), ikinci
+  vendor varsa onlardan biri olabilir.
+- G'nin final'i: merged diff'i yazmayan taze Claude oturumu (high); Codex varsa tercih edilebilir.
+- Codex adaptörü, codex-first modu ve `claude@NAME` kalır, "takılabilir" statüsünde; hiçbir
+  gate ikisinin birden varlığını istemez.
+- Kaynak: Anthropic Writer/Reviewer ayrı oturum [W2]; Adversarial Review [W21] ikinci bağımsız
+  reviewer'ın kazanç sağlamadığı; Nine Judges [26] bağımsızlık model ailesine göre (yani ikinci
+  aile olursa iyidir, zorunlu değil).
+**Uygulama.** 1. sıradaki politika belgeleriyle aynı oturumda; E'nin prompt'u ve P'nin iki
+dosyası tek-model dilinde yazılır.
 
 ## 3. Uygulama sırası (sahip onayından sonra; hiçbiri başlamadı)
 
@@ -443,9 +474,9 @@ kaldırma gerekçesi değildir; tablonun her satırı kendi raporu ve kanıtıyl
 | 1 | A, B, C, G, H, I, J, K (politika belgeleri) | Tek belge görevi, tek oturum, tek low/medium geçiş (I'ya göre); worker değil lead yazar, çünkü kuralların gerekçesi bu dokümanda |
 | 2 | E (prompt) + P (kural dosyaları) | Politika oturduktan sonra prompt ve iki kısa dosya onu söyler; P'nin envanter kararı E ile aynı oturum |
 | 3 | D-1 ve D-2 (locale matrisi, shell lint) | En sık iki sınıf; gate kodu olduğundan A'nın full katmanı |
-| 4 | D-3…D-5 | v0.12 adayı; F'nin verisi sırayı değiştirebilir |
+| 4 | D-3…D-5 | v0.11 (sahip kararı); sıra sıklığa göre |
 | 5 | L | Backend dalı merge edilirken |
-| 1b | M (düzeltmeler, M-2, M-4), N-1 (ölçüm), O (kararlar) | Politika belgeleriyle aynı oturum; M-1/M-3/M-5/M-6 ve N-2…N-4 v0.12 adayı, N-1 verisi sırayı belirler |
+| 1b | M-1…M-6, N-1 (ölçüm), N-2 (harita, P ile), O (kararlar) | Politika belgeleriyle aynı oturum; N-3/N-4 v0.12 |
 
 ## 4. Süren v0.11 işine uygulanışı (sahip kararı gerekir)
 
@@ -465,13 +496,5 @@ kaldırma gerekçesi değildir; tablonun her satırı kendi raporu ve kanıtıyl
 
 ## 5. Sahibe sorular (cevaplananlar silinir)
 
-4. D: hangi sensor'lar v0.11'e (öneri: locale matrisi + shell lint), hangileri v0.12'ye?
-5. G: final review tek model mi (hangisi), `ultra` mı; dogfood bir gün mü?
-6. H: 2700/3600 s, üç iş tavanı, Codex medium varsayılanı kabul mü?
-7. L: `claude@NAME` ikinci model sayılsın mı (öneri: evet)?
-8. M: altı tasarruf maddesinden hangileri v0.11'e; M-1/M-3 settings değişikliği onaylı mı?
-9. N: N-2 harita dönüşümü v0.11'de mi, ölçümden (N-1) sonra mı?
-10. O: tablo satır kararları (özellikle Done trailer ve yedi mod); ön soru cevaplandı, emsal yokluğu tek başına gerekçe değil.
-10b. E: R §4.1 taslağı temel mi; severity tanım metni; Low tavanı. P: kelime sınırları; 89 kuralın satır satır kararı nasıl verilecek?
-11. Bu dokümanın kendisi commit edilsin mi (öneri: evet, `docs/` altında; onaylanan maddeler
-   uygulandıkça ilgili satırı silinir, kapanınca dosya silinir: living docs never bloat)?
+Hepsi cevaplandı (13 Ekim batch). Doküman yaşam döngüsü: uygulanan madde silinir, kapanınca
+dosya silinir (sahip kararı, soru 11).
