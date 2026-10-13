@@ -408,7 +408,12 @@ emsalsiz = kötü işaret, savunulmaz. Her biri için gözlenen pratik ve öneri
 | Web isteğinde PII yasağı | Vendor gizlilik ayarları; kit kuralı olarak yok | **Koru** (güvenlik; sahip kuralı) |
 | Spawn script'inin model+effort'suz brief'i reddetmesi | superpowers yalnız uyarır [28] | **Koru**: deterministik kontrol prose uyarıdan iyi (P §4, Anthropic "hooks deterministic"); emsal yok ama ilke emsalli |
 
-**Karar.** Sahibin, satır satır.
+**Önce karar gereken ön soru.** "Emsalsiz = kötü" sözü sahibin iki eski kuralıyla çarpışıyor:
+"daha az review önerme, hızlandır" (review-speed-not-less-review) ve "canlı dosyalar şişmesin,
+Done'lar silinsin" (living-docs-never-bloat). P raporu "emsal yok, yanlış değil" dedi; incelenen
+kitler birkaç aylık, emsal yokluğu alanın yeniliğinden de gelebilir. Tablo bu yüzden kaldırma
+değil **gözlenen alternatif** sunar; sahip önce kuralın kalıcı olup olmadığını ve hangi eski
+kuralın geri çekildiğini söyler. **Karar.** Sahibin, önce ön soru, sonra satır satır.
 
 ## 3. Uygulama sırası (sahip onayından sonra; hiçbiri başlamadı)
 
@@ -449,6 +454,6 @@ emsalsiz = kötü işaret, savunulmaz. Her biri için gözlenen pratik ve öneri
 7. L: `claude@NAME` ikinci model sayılsın mı (öneri: evet)?
 8. M: altı tasarruf maddesinden hangileri v0.11'e; M-1/M-3 settings değişikliği onaylı mı?
 9. N: N-2 harita dönüşümü v0.11'de mi, ölçümden (N-1) sonra mı?
-10. O: yedi emsalsiz pratik için tablo kararları kabul mü (özellikle Done trailer ve yedi mod)?
+10. O: "emsalsiz = kötü" kalıcı kural mı, anlık yorum mu; kalıcıysa "daha az review önerme" ve "Done'lar silinsin" kurallarından hangisi geri çekiliyor? Sonra tablo kararları (özellikle Done trailer ve yedi mod).
 11. Bu dokümanın kendisi commit edilsin mi (öneri: evet, `docs/` altında; onaylanan maddeler
    uygulandıkça ilgili satırı silinir, kapanınca dosya silinir: living docs never bloat)?
