@@ -92,7 +92,7 @@ REQUIRED_SUITES = {
               'test_sync_kit': 30, 'test_doctor': 4, 'test_git_hooks': 30, 'test_stop_hook': 8, 'test_context_hook': 10, 'test_overlay_permissions': 6,
               'test_spawn_worker': 50, 'test_spawn_codex': 48, 'test_codex_worker': 47, 'test_working_mode': 47, 'test_worker_visibility': 66, 'test_doc_pointers': 9,
               'test_usage_summary': 16,
-              'test_kit_output': 1, 'test_kit_runner': 24, 'test_clean_worktrees': 137, 'test_clean_worktrees_windows': 10, 'test_close_worker_windows': 20,
+              'test_kit_output': 1, 'test_kit_runner': 25, 'test_clean_worktrees': 137, 'test_clean_worktrees_windows': 10, 'test_close_worker_windows': 20,
               'test_review_windows': 22, 'test_claude_sandbox': 24, 'test_worker_paths_windows': 10,
               'test_close_worker': 22, 'test_python_fallback': 1, 'test_selftest_status': 7},
 }
@@ -266,6 +266,44 @@ def utf8_locale(have=None):
         raise RuntimeError("NOT RUN: the locale cases need a UTF-8 locale and `locale -a` lists none: "
                            + " ".join(have))
     return found[0][1]
+
+
+# The locale sensor (proposal D-1): suites that read and write text, and run in seconds, again
+# where the default encoding is not UTF-8. A slow suite stays out; its text paths are here.
+LOCALE_SUITES = ('test_working_mode', 'test_usage_summary', 'test_doc_pointers', 'test_kit_output',
+                 'test_python_fallback', 'test_overlay_permissions', 'test_context_hook')
+
+
+def locale_matrix(folder=None, suites=LOCALE_SUITES, minimums=None):
+    """Run `suites` again under each locale a reviewer kept finding bugs in; a red one fails.
+
+    PYTHONUTF8=0 everywhere: Python turns UTF-8 mode on by itself under LC_ALL=C, which hid an
+    encoding-less open(). Windows keeps the host's ANSI code page (cp1252, cp1254). A POSIX host
+    also runs a Turkish UTF-8 locale (dotless i in a case fold) when it has one, NOT RUN when not.
+    """
+    folder = Path(folder or ROOT / 'tests')
+    minimums = minimums or REQUIRED_SUITES['tests']
+    cases = [('the ANSI code page', {})] if os.name == 'nt' else [('LC_ALL=C', {'LC_ALL': 'C', 'LANG': 'C'})]
+    if os.name != 'nt':
+        turkish = sorted(name for name in run(['locale', '-a']).split()
+                         if re.fullmatch(r'tr_TR\.utf-?8', name, re.IGNORECASE))
+        if turkish:
+            cases.append(('LC_ALL=' + turkish[0], {'LC_ALL': turkish[0], 'LANG': turkish[0]}))
+        else:
+            print('NOT RUN: the locale suites under tr_TR.UTF-8: `locale -a` lists no Turkish UTF-8 locale')
+    for label, extra in cases:
+        env = {key: value for key, value in os.environ.items()
+               if key not in ('PYTHONIOENCODING', 'LC_CTYPE', 'LC_ALL', 'LANG')}
+        env.update(extra, PYTHONUTF8='0')
+        result = subprocess.run([sys.executable, '-B', '-m', 'unittest', *suites], cwd=folder, env=env,
+                                capture_output=True, text=True, errors='replace', timeout=limit(600))
+        output = result.stdout + result.stderr
+        ran = re.search(r'^Ran (\d+) tests?', output, re.M)
+        need = sum(minimums[name] for name in suites)
+        if result.returncode or not ran or int(ran.group(1)) < need:
+            raise RuntimeError('the locale suites failed under %s (%s tests, %d required):\n%s'
+                               % (label, ran.group(1) if ran else 'no', need, output))
+    passed('the locale suites ran under %s' % ', '.join(label for label, _ in cases))
 
 
 def path_without(path, drop, links):
@@ -945,6 +983,8 @@ def unit(name, self_test, timing_file=None):
     try:
         if name == "acceptance":
             acceptance(self_test)
+        elif name == "locale":
+            locale_matrix()
         else:
             run_tests(ROOT, name, REQUIRED_SUITES[name])
         # The completion line run_units requires: a unit that exited 0 before this point (a
@@ -1051,7 +1091,7 @@ def main():
     if args.unit:
         return unit(args.unit, args.self_test, args.timing_file)
     started = time.monotonic()
-    units = [*REQUIRED_SUITES, "acceptance"]
+    units = [*REQUIRED_SUITES, "acceptance", "locale"]
     cpus = os.cpu_count() or 1
     parallel = degree(cpus, len(units))
     print("KIT CHECK: %d of %d units at once (%d CPUs)" % (parallel, len(units), cpus))

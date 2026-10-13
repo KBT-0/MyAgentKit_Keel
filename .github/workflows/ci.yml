@@ -27,6 +27,9 @@ jobs:
       - name: bash 5.2 for the case lint (macOS ships 3.2; the image's Homebrew bash is relied on)
         if: runner.os == 'macOS'
         run: brew list bash >/dev/null 2>&1 || brew install bash
+      - name: tr_TR.UTF-8 for the locale suites (macOS ships it; the Ubuntu image does not)
+        if: runner.os == 'Linux'
+        run: sudo locale-gen tr_TR.UTF-8
       - name: Run the full offline acceptance gate and negative tests
         run: ./scripts/check.sh --self-test
 

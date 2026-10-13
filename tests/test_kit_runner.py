@@ -454,6 +454,20 @@ def main():
         self.assertEqual(os.path.realpath(shutil.which('other', path=path)), str((mixed / 'other').resolve()))
         self.assertEqual(sorted(os.listdir(entries[1])), ['other'])
 
+    def test_the_locale_sensor_fails_a_suite_that_needs_utf8_by_default(self):
+        utf8 = "__import__('locale').getpreferredencoding(False).lower().replace('-', '') == 'utf8'"
+        (self.tmp / 'test_kit_probe.py').write_text(PROBE % utf8)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), self.assertRaisesRegex(RuntimeError, 'probe failure message'), \
+                unittest.mock.patch.dict(os.environ, PYTHONUTF8='1'):
+            check_kit.locale_matrix(self.tmp, ('test_kit_probe',), {'test_kit_probe': 2})
+        (self.tmp / 'test_kit_probe.py').write_text(PROBE % 'True')
+        with contextlib.redirect_stdout(out):
+            check_kit.locale_matrix(self.tmp, ('test_kit_probe',), {'test_kit_probe': 2})
+        self.assertIn('PASS: the locale suites ran under', out.getvalue())
+        with contextlib.redirect_stdout(out), self.assertRaisesRegex(RuntimeError, '2 tests, 3 required'):
+            check_kit.locale_matrix(self.tmp, ('test_kit_probe',), {'test_kit_probe': 3})
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -13,6 +13,11 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## v0.11 — 2026-10-09
 
+- **The kit check's locale sensor** (`scripts/check_kit.py`, the kit's own check; nothing for a
+  project to do): a `locale` unit runs seven fast text suites again with `PYTHONUTF8=0`, under
+  `LC_ALL=C` and `tr_TR.UTF-8` on POSIX (NOT RUN without the Turkish locale; CI's Ubuntu job
+  generates it) and under the ANSI code page on Windows. Locale and UTF-8 bugs were the second
+  most frequent review finding class (91 mentions in the v0.11 archives).
 - **One review policy in two files, and one model** (`docs/REVIEW_GATE.md`,
   `docs/REVIEW_RUNNING.md`, `AGENTS.md`, `docs/WORKFLOW.md`; `claude_bridge.py`,
   `codex_bridge.py`, `review_dispatch.py`, `review.sh`, `agent_process.py`, `working_mode.py`,
