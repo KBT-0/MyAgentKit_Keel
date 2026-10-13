@@ -123,8 +123,16 @@ done
 
 [ -n "$windows" ] || ! tmux has-session -t "=$name" 2>/dev/null || die "tmux session '$name' already exists"
 
-run=""
-cleanup() { [ -z "$run" ] || rm -f -- "$run" || :; }
+run=""; launch_pending=""; cleaned=""
+cleanup() {
+  [ -z "$cleaned" ] || return 0
+  cleaned=1
+  trap - EXIT HUP INT TERM
+  # A signal may arrive before new-session returns. Only a confirmed session owns the script.
+  # The session can end between this check and handoff; its pane removes the script itself.
+  if [ -n "$launch_pending" ] && tmux has-session -t "=$name" 2>/dev/null; then run=""; fi
+  [ -z "$run" ] || rm -f -- "$run" || :
+}
 trap 'cleanup' 0
 trap 'trap - 0; cleanup; exit 129' HUP
 trap 'trap - 0; cleanup; exit 130' INT
@@ -378,9 +386,11 @@ fi
 # removed worktree, say) is gone, whatever -c says.
 # The reserved script removes itself; tmux receives two plain words for its default shell.
 printf '%s\n' 'rm -f -- "$0"' "cd $(q "$dir") && exec $unmark $cmd" > "$run" || { rm -f -- "$run"; die "cannot write the session's script: $run"; }
-# Transfer ownership before tmux can accept; an interrupted parent must not delete it.
-launch_run=$run; run=""
-tmux new-session -d -s "$name" -c "$dir" -x 200 -y 50 "sh $launch_run" || { rm -f -- "$launch_run" || :; die "tmux could not start '$name'"; }
+# Keep ownership pending until tmux confirms the session, including in signal cleanup.
+launch_pending=1
+tmux new-session -d -s "$name" -c "$dir" -x 200 -y 50 "sh $run" || { launch_pending=""; die "tmux could not start '$name'"; }
+tmux has-session -t "=$name" 2>/dev/null || { launch_pending=""; die "tmux could not start '$name'"; }
+run=""; launch_pending=""
 
 # Wait for the input line: the TUI shows its prompt arrow at the start of a line once ready
 # (v2.1.285 follows the arrow with a NO-BREAK space, so the match is on the arrow alone)

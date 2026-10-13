@@ -81,6 +81,8 @@ if args[0] == 'new-session':
     text = subprocess.run(['sh', '-c', 'cat "$1"', 'sh', words[1]], capture_output=True, text=True).stdout
     with open(os.path.join(state, 'tmux-script'), 'w') as g:
         g.write(text)
+    # The accepted session must be visible to the launcher's ownership confirmation.
+    open(os.path.join(state, 'live'), 'w').close()
     directory = args[args.index('-c') + 1]
     if os.name == 'nt':
         directory = subprocess.run(['cygpath', '-m', directory], capture_output=True,
@@ -335,13 +337,77 @@ class SpawnCodexTests(unittest.TestCase):
         tmpdir.mkdir()
         env = dict(os.environ, PATH=f'{self.bin}{os.pathsep}{os.environ["PATH"]}',
                    SPAWN_STATE=str(self.state), CODEX_HOME=str(self.home), TMPDIR=str(tmpdir))
-        result = subprocess.run(['dash', str(SCRIPT), 'interrupted', str(self.brief),
+        result = test_spawn_worker.run_with_launcher_pid('dash', SCRIPT, ['interrupted', str(self.brief),
                                  '--model', 'm', '--effort', 'high'], cwd=self.repo, env=env,
                                 capture_output=True, text=True, timeout=20)
         self.assertEqual(result.returncode, 143, result.stdout + result.stderr)
         self.assertEqual(list(tmpdir.iterdir()), [])
         self.assertFalse((self.repo / '.myagentkit/workers/spawn.lock').exists())
         self.assertEqual(self.runs(), [])
+
+    def test_int_before_tmux_creates_session_removes_script_and_reservation(self):
+        (self.bin / 'uname').write_text('#!/bin/sh\necho Linux\n', newline='\n')
+        (self.bin / 'tmux').write_text(test_spawn_worker.FAIL_THEN_INT, newline='\n')
+        tmpdir = self.tmp / 'session-temp'
+        tmpdir.mkdir()
+        env = dict(os.environ, PATH=f'{self.bin}{os.pathsep}{os.environ["PATH"]}',
+                   SPAWN_STATE=str(self.state), CODEX_HOME=str(self.home), TMPDIR=str(tmpdir))
+        result = test_spawn_worker.run_with_launcher_pid('sh', SCRIPT, ['interrupted', str(self.brief),
+                                 '--model', 'm', '--effort', 'high'], cwd=self.repo, env=env,
+                                capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 130, result.stdout + result.stderr)
+        self.assertEqual(list(tmpdir.iterdir()), [])
+        self.assertFalse((self.repo / '.myagentkit/workers/spawn.lock').exists())
+        self.assertEqual(self.runs(), [])
+
+    def test_two_signals_never_remove_a_replacement_reservation(self):
+        (self.bin / 'uname').write_text('#!/bin/sh\necho Linux\n', newline='\n')
+        (self.bin / 'rmdir').write_text('''#!/bin/sh
+for path do :; done
+case "$path" in */spawn.lock)
+  echo release >> "$SPAWN_STATE/cleanup.log"
+  /bin/rmdir "$@" || exit 1
+  /bin/mkdir "$path"
+  if [ "$(wc -l < "$SPAWN_STATE/cleanup.log")" -eq 1 ]; then
+    kill -INT "$(cat "$SPAWN_STATE/launcher.pid")"
+    kill -TERM "$(cat "$SPAWN_STATE/launcher.pid")"
+  fi
+  ;; *) /bin/rmdir "$@" ;;
+esac
+''', newline='\n')
+        (self.bin / 'rmdir').chmod(0o755)
+        env = dict(os.environ, PATH=f'{self.bin}{os.pathsep}{os.environ["PATH"]}',
+                   SPAWN_STATE=str(self.state), CODEX_HOME=str(self.home))
+        result = test_spawn_worker.run_with_launcher_pid('sh', SCRIPT, ['interrupted', str(self.brief),
+                                 '--model', 'm', '--effort', 'high', '--result', '../outside.md'],
+                                cwd=self.repo, env=env, capture_output=True, text=True, timeout=60)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual((self.state / 'cleanup.log').read_text().splitlines(), ['release'])
+        self.assertTrue((self.repo / '.myagentkit/workers/spawn.lock').is_dir())
+
+    def test_cleanup_does_not_release_another_spawners_reservation(self):
+        # Replace ownership while validation is interrupted; cleanup must leave the new lock alone.
+        (self.bin / 'uname').write_text('#!/bin/sh\necho Linux\n', newline='\n')
+        (self.bin / 'rmdir').write_text('#!/bin/sh\nprintf "%s\\n" "$@" >> "$SPAWN_STATE/rmdir.log"\n/bin/rmdir "$@"\n',
+                                     newline='\n')
+        (self.bin / 'rmdir').chmod(0o755)
+        (self.bin / 'python3').write_text('''#!/bin/sh
+lock="$PWD/.myagentkit/workers/spawn.lock"
+/bin/rmdir "$lock"/.owner-*
+/bin/mkdir "$lock/.owner-other"
+kill -TERM "$(cat "$SPAWN_STATE/launcher.pid")"
+exit 1
+''', newline='\n')
+        (self.bin / 'python3').chmod(0o755)
+        env = dict(os.environ, PATH=f'{self.bin}{os.pathsep}{os.environ["PATH"]}',
+                   SPAWN_STATE=str(self.state), CODEX_HOME=str(self.home))
+        result = test_spawn_worker.run_with_launcher_pid('sh', SCRIPT, ['interrupted', str(self.brief),
+                                 '--model', 'm', '--effort', 'high'], cwd=self.repo, env=env,
+                                capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 143, result.stdout + result.stderr)
+        self.assertEqual([p.name for p in (self.repo / '.myagentkit/workers/spawn.lock').iterdir()],
+                         ['.owner-other'])
+        self.assertFalse((self.state / 'rmdir.log').exists(), 'cleanup tried to release another owner\'s lock')
 
     def test_later_validation_failure_removes_the_reserved_session_script(self):
         if WINDOWS:
@@ -910,8 +976,12 @@ pathlib.Path(%r).write_text('a concurrently published report\\n')
 class TmuxStubTests(unittest.TestCase):
     def test_tmux_stub_reparses_the_final_command_in_the_start_directory(self):
         # A checkout with spaces must not force a skip when system scratch is safe.
-        with patch(__name__ + '.ROOT', ROOT / 'checkout space'), \
-                patch.object(test_spawn_worker, 'ROOT', ROOT), test_spawn_worker.safe_tmux_scratch() as folder:
+        codex_root, worker_root = ROOT, test_spawn_worker.ROOT
+        with test_spawn_worker.safe_tmux_scratch() as scratch, \
+                patch('tempfile.tempdir', scratch), \
+                patch(__name__ + '.ROOT', codex_root / 'checkout space'), \
+                patch.object(test_spawn_worker, 'ROOT', worker_root / 'checkout space'), \
+                test_spawn_worker.safe_tmux_scratch() as folder:
             state = Path(folder)
             for segment in ('literal$REVIEW_SEGMENT', 'literal$($REVIEW_PAYLOAD)',
                             'literal`$REVIEW_BACKQUOTE`'):

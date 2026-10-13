@@ -167,7 +167,7 @@ def shq(value):
 
 
 @contextmanager
-def safe_tmux_scratch():
+def safe_tmux_scratch(checkout=ROOT):
     """Use physical allowlisted scratch paths, independently of checkout spelling."""
     allowed = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_./-'
     def safe(folder):
@@ -176,7 +176,7 @@ def safe_tmux_scratch():
     if not safe(folder):
         shutil.rmtree(folder)
         folder = None
-        for base in (ROOT, Path(tempfile.gettempdir()) / 'kit-safe'):
+        for base in (checkout,):
             if not safe(base):
                 continue
             base.mkdir(parents=True, exist_ok=True)
@@ -193,9 +193,16 @@ def safe_tmux_scratch():
         shutil.rmtree(folder)
 
 # The stub accepts a launch, signals its parent, and leaves consumption to the test.
-ACCEPT_THEN_TERM = '#!/bin/sh\n[ "$1" = new-session ] || exit 1\nfor arg do command=$arg; done\nprintf "%s\\n" "$command" > "$SPAWN_STATE/accepted"\nkill -TERM "$PPID"\n/bin/sleep .1\nexit 0\n'
+ACCEPT_THEN_TERM = '#!/bin/sh\nif [ "$1" = has-session ]; then [ -f "$SPAWN_STATE/accepted" ]; exit $?; fi\n[ "$1" = new-session ] || exit 1\nfor arg do command=$arg; done\nprintf "%s\\n" "$command" > "$SPAWN_STATE/accepted"\nkill -TERM "$PPID"\n/bin/sleep .1\nexit 0\n'
 # Interrupt after mktemp, during validation, before any launch has been accepted.
-PRELAUNCH_TERM = '#!/bin/sh\nkill -TERM "$PPID"\n/bin/sleep .1\nexit 1\n'
+PRELAUNCH_TERM = '#!/bin/sh\nkill -TERM "$(cat "$SPAWN_STATE/launcher.pid")"\n/bin/sleep .1\nexit 1\n'
+FAIL_THEN_INT = '#!/bin/sh\n[ "$1" = new-session ] || exit 1\nkill -INT "$(cat "$SPAWN_STATE/launcher.pid")"\nkill -INT "$$"\nexit 1\n'
+
+
+def run_with_launcher_pid(shell, script, args, **kwargs):
+    # $$ is the launcher's shell pid even when the signaller runs in a command substitution.
+    return subprocess.run([shell, '-c', 'printf "%s\\n" "$$" > "$SPAWN_STATE/launcher.pid"; . "$0"',
+                           str(script).replace('\\', '/'), *args], **kwargs)
 
 
 WINDOWS = os.name == 'nt'
@@ -204,6 +211,8 @@ WINDOWS = os.name == 'nt'
 # Windows parses again (an apostrophe is a quote there): there each prints NOT RUN.
 ON_WINDOWS = {'test_a_missing_or_failing_watcher_stops_the_spawn', 'test_a_worker_without_its_model_or_effort_is_refused',
               'test_term_after_tmux_accepts_preserves_the_panes_script',
+              'test_int_before_tmux_creates_session_removes_script',
+              'test_two_signals_do_not_repeat_cleanup',
               'test_unsafe_names_are_refused_without_changing_worker_files',
               'test_missing_or_unreadable_brief_is_refused_before_any_session',
               'test_no_error_message_echoes_a_control_character',
@@ -292,17 +301,53 @@ class SpawnWorkerTests(unittest.TestCase):
         self.assertEqual(list(tmpdir.iterdir()), [])
 
     def test_dash_term_before_launch_removes_the_reserved_script(self):
-        (self.bin / 'git').write_text(PRELAUNCH_TERM, newline='\n')
+        # Keep an extra parent between git's signaller and the command-substitution shell.
+        (self.bin / 'git').write_text('#!/bin/sh\nsh -c ' + shq(PRELAUNCH_TERM) + '\nexit 1\n', newline='\n')
         (self.bin / 'git').chmod(0o755)
         tmpdir = self.tmp / 'session-temp'
         tmpdir.mkdir()
-        result = subprocess.run(['dash', str(SCRIPT), 'interrupted', str(self.brief),
+        result = run_with_launcher_pid('dash', SCRIPT, ['interrupted', str(self.brief),
                                  '--model', 'm', '--effort', 'high', '--worktree'],
                                 cwd=self.cwd, env=dict(self.base_env(), TMPDIR=str(tmpdir)),
                                 capture_output=True, text=True, timeout=20)
         self.assertEqual(result.returncode, 143, result.stdout + result.stderr)
         self.assertEqual(list(tmpdir.iterdir()), [])
         self.assertIsNone(self.launched())
+
+    def test_int_before_tmux_creates_session_removes_script(self):
+        (self.bin / 'tmux').write_text(FAIL_THEN_INT, newline='\n')
+        tmpdir = self.tmp / 'session-temp'
+        tmpdir.mkdir()
+        result = run_with_launcher_pid('sh', SCRIPT, ['interrupted', str(self.brief),
+                                      '--model', 'm', '--effort', 'high'], cwd=self.cwd,
+                                      env=dict(self.base_env(), TMPDIR=str(tmpdir)),
+                                      capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 130, result.stdout + result.stderr)
+        self.assertEqual(list(tmpdir.iterdir()), [])
+        self.assertIsNone(self.launched())
+
+    def test_two_signals_do_not_repeat_cleanup(self):
+        (self.bin / 'git').write_text(PRELAUNCH_TERM, newline='\n')
+        (self.bin / 'git').chmod(0o755)
+        (self.bin / 'rm').write_text('''#!/bin/sh
+echo unlink >> "$SPAWN_STATE/cleanup.log"
+/bin/rm "$@"
+if [ "$(wc -l < "$SPAWN_STATE/cleanup.log")" -eq 1 ]; then
+  kill -INT "$(cat "$SPAWN_STATE/launcher.pid")"
+  kill -TERM "$(cat "$SPAWN_STATE/launcher.pid")"
+fi
+exit 0
+''', newline='\n')
+        (self.bin / 'rm').chmod(0o755)
+        tmpdir = self.tmp / 'session-temp'
+        tmpdir.mkdir()
+        result = run_with_launcher_pid('sh', SCRIPT, ['interrupted', str(self.brief),
+                                      '--model', 'm', '--effort', 'high', '--worktree'], cwd=self.cwd,
+                                      env=dict(self.base_env(), TMPDIR=str(tmpdir)),
+                                      capture_output=True, text=True, timeout=20)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual((self.state / 'cleanup.log').read_text().splitlines(), ['unlink'])
+        self.assertEqual(list(tmpdir.iterdir()), [])
 
     def test_unsafe_tmpdir_is_refused_before_tmux_can_expand_it(self):
         for folder in ('temp$(touch INJECTED)', 'temp`touch INJECTED`', 'temp$REVIEW_SEGMENT'):
@@ -895,9 +940,20 @@ class WorkerStateHookTests(unittest.TestCase):
 
 
 class TmuxStubTests(unittest.TestCase):
+    def test_unsafe_system_temp_uses_the_original_checkout_fallback(self):
+        with safe_tmux_scratch() as checkout:
+            unsafe = Path(checkout) / 'temp space'
+            unsafe.mkdir()
+            with patch('tempfile.tempdir', str(unsafe)), \
+                    patch(__name__ + '.ROOT', Path(checkout) / 'checkout space'), \
+                    safe_tmux_scratch(checkout=Path(checkout)) as folder:
+                self.assertEqual(Path(folder).parent, Path(checkout))
+            self.assertEqual(list(unsafe.iterdir()), [])
+
     def test_tmux_stub_reparses_the_final_command_in_the_start_directory(self):
         # A checkout with spaces must not force a skip when system scratch is safe.
-        with patch(__name__ + '.ROOT', ROOT / 'checkout space'), safe_tmux_scratch() as folder:
+        with safe_tmux_scratch() as scratch, patch('tempfile.tempdir', scratch), \
+                patch(__name__ + '.ROOT', ROOT / 'checkout space'), safe_tmux_scratch() as folder:
             state = Path(folder)
             for segment in ('literal$REVIEW_SEGMENT', 'literal$($REVIEW_PAYLOAD)',
                             'literal`$REVIEW_BACKQUOTE`'):

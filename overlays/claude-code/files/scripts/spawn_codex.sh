@@ -99,10 +99,23 @@ mkdir -p -- "${spawn_lock%/*}" || die "cannot create the worker records director
 took=""
 mkdir -- "$spawn_lock" 2>/dev/null || { [ -n "$resume" ] && rm -- "$spawn_lock/$name" 2>/dev/null && took=1; } ||
   die "spawn in progress or an unrecorded launch at $spawn_lock; retry after it ends. An unrecorded launch has its worker's name inside: answer that worker with spawn_codex.sh NAME ANSWER_FILE ... --resume SESSION_ID, which records it and takes the reservation over; once its tab or tmux session has ended, or its id is written to NAME.session, release it: rm -r -- $(q "$spawn_lock")"
-spawn_launched=""; spawn_recorded=""; run=""
+spawn_owner=$spawn_lock/.owner-$$
+mkdir -- "$spawn_owner" || die "cannot mark the spawn reservation owner"
+spawn_launched=""; spawn_recorded=""; run=""; launch_pending=""; cleaned=""
 cleanup() {
+  [ -z "$cleaned" ] || return 0
+  cleaned=1
+  trap - EXIT HUP INT TERM
+  # A signal can precede the client's return. Confirm the session before handing ownership over.
+  # The session can end between this check and handoff; its pane removes the script itself.
+  if [ -n "$launch_pending" ] && tmux has-session -t "=$name" 2>/dev/null; then
+    run=""; spawn_launched=1
+  fi
   [ -z "$run" ] || rm -f -- "$run" || :
   # Reservation cleanup must run even when unlinking the temporary script fails.
+  # A replaced reservation belongs to another spawner. The owner directory avoids rm failures.
+  [ -d "$spawn_owner" ] || return 0
+  rmdir -- "$spawn_owner" || return 0
   if [ -n "$spawn_recorded" ] || { [ -z "$spawn_launched" ] && [ -z "$took" ]; }; then
     rmdir -- "$spawn_lock" || :
   else
@@ -287,11 +300,13 @@ else
   # The reserved script removes itself; tmux receives two plain words for its default shell.
   printf '%s\n' 'rm -f -- "$0"' "cd $(q "$dir") && exec $unmark KIT_WORKER_STARTED=$(q "$start") KIT_WORKER_STALE=$(q "$stale") KIT_WORKER_EXIT=$(q "$exited") KIT_WORKER_RESUME=$(q "$resume") $kit_python $(q "$cworker") $(q "$cquestion") $(q "$cresult") -- sh -c $(q "exec $cmd")" > "$run" ||
     { rm -f -- "$run"; die "cannot write the session's script: $run"; }
-  spawn_launched=1
-  # Transfer ownership before tmux can accept; an interrupted parent must not delete it.
-  launch_run=$run; run=""
-  tmux new-session -d -s "$name" -c "$dir" -x 200 -y 50 "sh $launch_run" ||
-    { spawn_launched=""; rm -f -- "$launch_run" || :; die "tmux could not start '$name'"; }
+  # Keep ownership pending until tmux confirms the session, including in signal cleanup.
+  launch_pending=1
+  tmux new-session -d -s "$name" -c "$dir" -x 200 -y 50 "sh $run" ||
+    { launch_pending=""; die "tmux could not start '$name'"; }
+  tmux has-session -t "=$name" 2>/dev/null ||
+    { launch_pending=""; die "tmux could not start '$name'"; }
+  run="" launch_pending="" spawn_launched=1
   where="(tmux attach -t $name to watch)"; view="tmux session"
 fi
 
