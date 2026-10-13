@@ -21,6 +21,117 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-10-13 — Merging seven v0.11 branches on native Windows: what the kit lacked
+
+Seven branches (watch, peer, behaviour, backend, triage, lint, docs) each passed two to ten
+review rounds in their worktrees and were merged into master by hand, with the full kit check
+run once at the end (36 min, green). Lessons the branches did not record:
+
+- A test chained to its commit with `;` hides a red result; two merge commits went in red and
+  needed a follow-up. The test runs in its own call and the commit follows a read result.
+- `git merge --abort` during a dry-run merge of another branch wiped an in-progress
+  resolution. Dry-run merges happen only on a clean tree, never beside a resolved merge.
+- Fixtures that write a file and compare its bytes fail by hand on a checkout with
+  `core.autocrlf=true` (test_sync_kit's mid-write case) and pass under `check_kit`, which
+  clears the environment. A hand run of one suite is not evidence against the gate.
+- `codex exec` outlives its session on Windows; an orphaned reviewer must be found by its
+  copy path (`docs/GOTCHAS.md`), and a `model at capacity` answer is a retry, not a failure.
+- Under load the review timeout must be capped below the owner's patience: with two
+  reviewers and a self-test running, a 7200 s window exceeds the memory budget's slot time.
+- Three merges resolved the same hunk of `review_dispatch.py` (the attempt loop); the
+  dispatcher's result-decides structure and the backend's environment swap in a `finally`
+  compose, but only one branch's test suite saw both. The regenerated plugin copy is checked
+  with `package_codex_plugin.py --check` after every merge that touches `core/scripts`.
+
+### 2026-10-13 — Worker state snapshots and native Windows path limits
+
+The older hook's `waiting input` record described the idle prompt. Reporting it as a
+permission wait sent the lead toward an approval that did not exist; treating it as no state
+event preserves result-file observation, and a once-per-worker notice asks for the current
+hook through a re-spawn. Shell redirections apply left to right, so a failed input open before
+stderr capture lost the watcher's exit-3 diagnostic, and a size read followed by a second live
+read observed two states when a legacy hook truncated its file. One byte snapshot decides
+empty, NUL-only and valid-line states consistently. A filename-only bound did not protect
+Python hook publication under native Windows MAX_PATH: the longest generated name is
+`NAME.state.XXXXXXXX`; spawn checks it against 255 bytes and the full native path against 259
+characters, and the regression publishes a real hook file at 259 and refuses 260.
+
+### 2026-10-13 — Worker launch ownership, signal cleanup, and tmux under fish
+
+A tmux client can accept a pane before returning to its spawning shell; the parent's EXIT
+trap then deleted the pane's unconsumed script when a signal interrupted the spawner. Moving
+ownership before the tmux call leaked the script and the Codex reservation when the same
+signal killed the client before session creation. Ownership stays pending until `has-session`
+confirms the session; the pane removes its own accepted script, an absent session leaves
+cleanup with the parent. A failed `rm` inside `set -e` cleanup once kept `rmdir` from releasing
+the reservation; unlink failure is tolerated, the reservation's owner marker goes with rmdir,
+cleanup runs once and clears every trap so a second signal cannot release a reservation another
+spawner acquired. The dash prelaunch fixture used `$PPID` inside a command substitution, whose
+extra fork can belong to a subshell; the harness now supplies the launcher's pid.
+
+Spawn on tmux with fish as the default shell broke the first command string: `unset` is not
+fish syntax and a q-quoted command with an escaped quote inside single quotes reads differently
+under fish than under sh (Claude review r2). The command now goes through a mktemp script that
+removes itself and tmux runs `sh SCRIPT`; any default shell parses that. Verified by hand on
+Windows: `env -u` starts both the npm claude shim and claude.exe.
+
+### 2026-10-13 — Behaviour appendix disclosure and snapshot binding (#74)
+
+The review adapter read the appendix before tool restrictions could protect external files; a
+symlinked appendix disclosed synthetic private bytes outside the snapshot. An ignored appendix
+also influenced a commit review without appearing in its copy or fingerprint, and changing it
+during the review still returned a completed verdict. The adapter now reads regular appendix
+bytes from the review copy, validates containment (realpath, lstat/fstat identity, O_NOFOLLOW
+where available), records their SHA-256, and rejects later source changes. The worker A/B
+fixture inherited the owner's opt-out into its enabled subcase; each subcase selects its own
+environment. The disclosure, ignored-mutation and inherited-toggle failures were observed RED
+before the fix and GREEN after; POSIX display coverage stays with CI.
+
+### 2026-10-13 — Backend credential and reviewer isolation
+
+An endpoint override without a provider token can reuse the lead's Anthropic credential;
+backend loading refuses a missing or empty token. Both launch paths replace inherited Anthropic
+variables and remove Claude credential descriptors, OAuth, gateway, host authentication,
+provider selection and routing controls through one shared list of 72 names, so a credential
+or provider switch cannot silently change a backend request; on Windows the raw names are
+compared case-insensitively. An exported backend contaminated synthetic reviews and changed
+Codex routing: the gate and upgrade fixtures clear the variable, and the Codex wrapper ignores
+a backend with one notice. Backend model ids reject argument-like prefixes, control bytes and
+evidence-table delimiters; case-normalised tracked-path checks, symlink refusal, O_NOFOLLOW and
+O_NONBLOCK keep committed or swapped non-regular backend files out of the loader. Evidence
+names the backend reviewer in its header and fallback banner; Claude settings deny backend
+reads through native tools and the Bash sandbox; Codex's legacy sandbox needs the documented
+administrator read-deny policy. Stored login, apiKeyHelper and settings precedence still need a
+live backend validation; offline fixtures do not prove CLI authentication precedence.
+
+### 2026-10-13 — The case lint's locale, and a prerequisite checked without a reason
+
+The bash version probe matched the English word `version`, so a Spanish `versión 5.2.15`
+banner failed the 5.2 prerequisite; the probe and the `--posix -n` parser now run with
+`LC_ALL=C LANG=C`, and the version is parsed after the comma whatever the word. A diagnostic
+that still arrives translated is kept as bash's own reason. The prerequisite is checked even
+when no kit file contains a `case`, since a missing bash 5.2 was otherwise discovered only by
+the first file that needed it.
+
+### 2026-10-13 — Review launch capacity and cut-off recovery (rounds 8–10)
+
+Five heavy jobs started together were reaped and their work lost; survivors also take
+capacity. Reviewers start together within the measured memory budget, with the self-test
+scheduled when capacity permits; if two jobs still do not fit after freeing owned memory, the
+lead asks the owner, and no answer within one `REVIEW_TIMEOUT_SECONDS` defines "owner away".
+The sequential exception needs capacity for one job and a budget line in the lead's notes;
+zero capacity blocks the round. Command-line listings can miss survivors and include their own
+grep and shell rows. The project gate holds the lock at `git rev-parse --git-path check.lock`
+and publishes `check-selftest` beside it, linked worktrees included; reviews hold no lock and
+neither does the kit's own `scripts/check.sh` self-test, which is visible only as a python
+running `check_kit.py`. `review_dispatch.py` writes numbered chain checkpoints: `-0` stays
+pending and `-1` can show a failed primary while the fallback runs, so the highest-numbered
+one is read. The recovery window (timeout times possible attempts, about 4 h at 7200 s with
+fallback) is only a lower bound: `agent_process.py` launches POSIX reviewers in their own
+session, and a supervisor killed with SIGKILL cannot enforce its timeout, so completion is
+confirmed in the process listing by the copy path. The pointer tests prove the wording, not
+live process detection.
+
 ### 2026-10-12 — The existing-file probe on native Windows: threat model and port (#60)
 
 Fixing the environment (#60: under `env -i` the Python install manager's alias found no

@@ -13,6 +13,87 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## v0.11 — 2026-10-09
 
+- **Windows worker observation and generated paths corrected** (`spawn_worker.sh`,
+  `watch_workers.sh`): an older hook's `waiting input` line means an idle prompt, never a
+  permission WAIT; the watcher prints one older-kit notice per worker and asks for a re-spawn.
+  State is read once as bytes: a zero-byte file is no signal yet, a NUL-only file is invalid,
+  an unreadable one is an observation failure (exit 3). Spawn bounds every generated filename
+  at 255 bytes (240 name characters) and the longest native Windows path at 259 characters
+  before any worker file or worktree is made. **ACTION:** sync both scripts and re-spawn
+  workers that still run the older hook; shorten the worker name or the checkout path when
+  spawn refuses a generated path.
+
+- **Worker launch cleanup follows confirmed session ownership** (`spawn_worker.sh`,
+  `spawn_codex.sh`): an accepted tmux pane keeps its temporary script when its spawner is
+  interrupted; a failed or interrupted launch without a confirmed session removes the script
+  and releases the Codex reservation even when unlinking fails. Cleanup runs once, clears its
+  traps and releases only its own reservation, so a repeated signal cannot remove a lock
+  another spawner took meanwhile. **ACTION:** sync both launcher scripts.
+
+- **Spawned workers register as peers** (`spawn_worker.sh`, `spawn_codex.sh`,
+  `docs/WORKFLOW.md`): the lead's session markers are cleared with an `env -u` prefix on the
+  worker's command; on the tmux path the command goes into a self-removing temporary script
+  that tmux runs as `sh SCRIPT`, so tmux's default shell (fish included) parses two plain
+  words. The lead subscribes with `notify_when_idle` conditionally on native Windows only; a
+  tmux worker always registers. **ACTION:** sync both launcher scripts.
+
+- **The behaviour appendix belongs to the reviewed snapshot** (issue #74; `claude_bridge.py`,
+  `agent_usage.py`, `spawn_worker.sh`): a Claude review refuses a symlinked, non-regular or
+  escaping appendix before launch. The appendix bytes reach the review copy, the fingerprint,
+  the evidence and the usage record as `behaviour_sha256`; a change during the review fails as
+  `stale_checkout`. The worker's appendix status line strips terminal control bytes, and the
+  enabled and disabled lead launches are separate commands in `docs/WORKFLOW.md`. **ACTION:**
+  sync the core scripts and the Claude worker overlay; start a fresh lead with the enabled or
+  the disabled command.
+
+- **Named Claude-compatible backends** (`review_dispatch.py`, `claude_bridge.py`, `review.sh`,
+  `spawn_worker.sh`, `usage_summary.py`, `docs/DEV_SETUP.md`): `.myagentkit/backends/NAME.env`
+  (Git-ignored, untracked, a regular file) holds a non-empty provider token and an explicit
+  model id; `--backend NAME` or `MYAGENTKIT_BACKEND=NAME` routes a Claude review or worker
+  through it. The launch clears every inherited Claude credential and routing control (one
+  shared list) and restores it afterwards; a backend worker refuses a `claude-` model id; a
+  Codex review ignores a backend request with one notice; the evidence records the reviewer as
+  `claude@NAME`; Claude reviews deny reads of the backends folder. The usage summary groups by
+  model, effort and backend. **ACTION:** sync the review and worker scripts; create the
+  backend file by hand where a backend is wanted; configure the documented Codex administrator
+  read-deny policy where supported.
+
+- **Review results survive a late failure; the self-test and the check gate on native
+  Windows** (issues #41 #53 #60 #71; `review_dispatch.py`, both adapters, `check.sh`,
+  `check_kit.py`): the dispatcher's attempt loop keeps a handed-over result when printing or
+  recording fails afterwards (`error_after_result`, the delivered exit code); each adapter's
+  NOTE says whether the result completed, failed, or its evidence was never written. The tree
+  check in both `check.sh` wrappers hashes every path in one batched `git hash-object` call
+  under the run directory and fails by the first uncovered path. Self-test status, the check
+  gate, boundary restore and `clean_worktrees` carry Windows-only suites. **ACTION:** sync
+  `scripts/check.sh`; Git 2.42 or newer is required (`docs/DEV_SETUP.md`).
+
+- **The shell case lint runs under bash 5.2** (issue #40; `scripts/check_kit.py`): every
+  kit shell file is parsed with `bash --posix -n` by a bash of 5.2 or newer, found on PATH or
+  through `MYAGENTKIT_BASH`; the prerequisite is checked even when no file needs it, scripts
+  are decoded as UTF-8, and the version probe and the parser run in the C locale, so a
+  translated version banner still satisfies the prerequisite and a syntax failure keeps bash's
+  own reason. The macOS CI job installs Homebrew bash before the gate. **ACTION:** a kit
+  checkout on macOS needs `brew install bash` before `scripts/check.sh` passes.
+
+- **Review launch and cut-off guidance corrected** (`docs/WORKFLOW.md`, `docs/REVIEW_RUNNING.md`,
+  `docs/GOTCHAS.md`, `docs/REVIEW_GATE.md`, `docs/HANDOFF.md`, `AGENTS.md`): reviewers start
+  together within the measured memory budget and the self-test is scheduled when capacity
+  permits; running jobs take slots; never fewer reviews. When two jobs still do not fit, the
+  lead asks the owner; no answer within one `REVIEW_TIMEOUT_SECONDS` permits a sequential
+  exception only when one job fits, recorded with the budget in the lead's notes. After a
+  cut-off, inspect the project gate lock at `git rev-parse --git-path check.lock` and the
+  `check-selftest` marker beside it; reviews and the kit's own self-test hold no lock. Read the
+  highest-numbered review chain checkpoint: a completed record is finished; a failed one is
+  finished when its attempts equal the possible attempts, its `failure_kind` is outside the
+  dispatcher's unavailable set, or no fallback is allowed; a failed attempt without evidence or
+  a usage record ends the chain. Otherwise wait from the first checkpoint's mtime for the
+  timeout (3600 s when the record stores none) times the possible attempts, then still confirm
+  completion in the process listing by the reviewer copy (`myagentkit-codex-*` /
+  `myagentkit-review-*`; on Windows `Get-Process -Id N | Select-Object Path` when CIM hides
+  the working directory). Wait for survivors or ask the owner; never start heavy work beside
+  them. **ACTION:** sync these docs or apply the launch and recovery rules by hand.
+
 - **The existing-file boundary probe runs on native Windows** (issue #60;
   `scripts/boundary_selftests.sh`): under `env -i` the Python install manager's `python3`
   alias, missing LOCALAPPDATA, found no Python and downloaded and installed one on every
