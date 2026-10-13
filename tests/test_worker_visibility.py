@@ -797,6 +797,42 @@ class CaseLintTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "rejects the file as it is.*unexpected token `then'"):
                     self.gate.case_in_substitution(text)
 
+    def test_a_localized_bash_version_is_accepted_but_4_4_is_rejected(self):
+        with unittest.mock.patch.dict(os.environ, LC_ALL='es_ES.UTF-8', LANG='es_ES.UTF-8'), \
+                unittest.mock.patch.object(self.gate.shutil, 'which', return_value='/stub/sh'):
+            for version in ('5.2.15', '4.4.23'):
+                self.gate.bash_5_2.cache_clear()
+                banner = subprocess.CompletedProcess([], 0, 'GNU bash, versión %s(1)-release\n' % version, '')
+                with self.subTest(version=version), \
+                        unittest.mock.patch.object(self.gate.subprocess, 'run', return_value=banner) as probe:
+                    if version.startswith('5.2'):
+                        self.assertTrue(self.gate.bash_5_2())
+                    else:
+                        with self.assertRaisesRegex(RuntimeError, r'needs bash 5\.2 or later'):
+                            self.gate.bash_5_2()
+                    for call in probe.call_args_list:
+                        self.assertEqual(call.args[0][1:], ['--version'])
+                        self.assertEqual(call.kwargs['env']['LC_ALL'], 'C')
+                        self.assertEqual(call.kwargs['env']['LANG'], 'C')
+            self.assertEqual(os.environ['LC_ALL'], 'es_ES.UTF-8')
+            self.assertEqual(os.environ['LANG'], 'es_ES.UTF-8')
+
+    def test_a_french_syntax_diagnostic_is_reported_and_the_file_is_rejected(self):
+        reason = "erreur de syntaxe près du symbole inattendu « then »"
+        rejected = subprocess.CompletedProcess([], 2, b'', reason.encode('utf-8'))
+        with unittest.mock.patch.dict(os.environ, LC_ALL='fr_FR.UTF-8', LANG='fr_FR.UTF-8'), \
+                unittest.mock.patch.object(self.gate, 'bash_5_2', return_value='/stub/bash'), \
+                unittest.mock.patch.object(self.gate.subprocess, 'run', return_value=rejected) as parser:
+            with self.assertRaisesRegex(RuntimeError, 'bash --posix -n rejects the file as it is') as error:
+                self.gate.case_in_substitution('x=$(echo case; then)\n')
+            self.assertIn(reason, str(error.exception))
+            parser.assert_called_once()
+            self.assertEqual(parser.call_args.args[0], ['/stub/bash', '--posix', '-n'])
+            self.assertEqual(parser.call_args.kwargs['env']['LC_ALL'], 'C')
+            self.assertEqual(parser.call_args.kwargs['env']['LANG'], 'C')
+            self.assertEqual(os.environ['LC_ALL'], 'fr_FR.UTF-8')
+            self.assertEqual(os.environ['LANG'], 'fr_FR.UTF-8')
+
     def test_a_bash_that_cannot_start_or_is_too_old_fails_by_name(self):
         with tempfile.TemporaryDirectory() as tmp, \
                 unittest.mock.patch.object(self.gate, 'bash_5_2', return_value=os.path.join(tmp, 'no-bash')):

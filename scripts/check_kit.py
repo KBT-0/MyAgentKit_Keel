@@ -89,7 +89,7 @@ REQUIRED_SUITES = {
               'test_boundary_example': 3, 'test_scan_gate': 1,
               'test_check_gate': 24, 'test_check_gate_windows': 23, 'test_boundary_restore': 39,
               'test_sync_kit': 29, 'test_doctor': 4, 'test_git_hooks': 30, 'test_stop_hook': 8, 'test_context_hook': 10, 'test_overlay_permissions': 6,
-              'test_spawn_worker': 18, 'test_spawn_codex': 36, 'test_codex_worker': 47, 'test_working_mode': 44, 'test_worker_visibility': 60, 'test_doc_pointers': 9,
+              'test_spawn_worker': 18, 'test_spawn_codex': 36, 'test_codex_worker': 47, 'test_working_mode': 44, 'test_worker_visibility': 62, 'test_doc_pointers': 9,
               'test_usage_summary': 9,
               'test_kit_output': 1, 'test_kit_runner': 24, 'test_clean_worktrees': 137, 'test_clean_worktrees_windows': 9, 'test_close_worker_windows': 20,
               'test_review_windows': 22, 'test_claude_sandbox': 24, 'test_worker_paths_windows': 3,
@@ -348,10 +348,11 @@ def bash_5_2():
         tried = [path for path in (shutil.which("bash"), "/opt/homebrew/bin/bash", "/usr/local/bin/bash") if path]
     for path in tried:
         try:
-            version = subprocess.run([path, "--version"], capture_output=True, text=True, timeout=10).stdout
+            version = subprocess.run([path, "--version"], capture_output=True, text=True, timeout=10,
+                                     env=dict(os.environ, LC_ALL="C", LANG="C")).stdout
         except (OSError, subprocess.TimeoutExpired):
             continue
-        found = re.search(r"version (\d+)\.(\d+)", version)
+        found = re.search(r",\s*\S+\s+(\d+)\.(\d+)", version)
         if found and (int(found[1]), int(found[2])) >= (5, 2):
             return path
     raise RuntimeError("the kit check's case lint needs bash 5.2 or later (macOS: brew install bash); "
@@ -435,7 +436,7 @@ def case_in_substitution(text):
         # Bytes: a text pipe on Windows writes CRLF; bash must read the file's own bytes.
         try:
             return subprocess.run([bash, "--posix", "-n"], input=source.encode(),
-                                  capture_output=True, timeout=10)
+                                  capture_output=True, timeout=10, env=dict(os.environ, LC_ALL="C", LANG="C"))
         except (OSError, subprocess.TimeoutExpired) as error:
             raise RuntimeError("cannot run %s --posix -n: %s" % (bash, error)) from error
 
