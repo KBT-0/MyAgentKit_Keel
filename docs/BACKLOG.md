@@ -8,6 +8,11 @@ Low findings of the kit's own reviews are filed here, not fixed in the round (ow
 - The Turkish-locale branch of `check_kit.locale_matrix` and its NOT RUN line have no test;
   patch `run` so `locale -a` lists `C POSIX` and assert the line (a regression there cannot
   produce a false pass: the PASS line names only the cases that ran).
+- Text paths the locale sensor does not see (pre-existing, both r2 reviewers):
+  `guard_destructive_git.py` runs a text subprocess without an encoding inside `except
+  Exception`, so the sensor's EncodingWarning is swallowed (it fails safe: it blocks);
+  `agent_usage.py` reads records with a bare `read_text()`; `check_kit.utf8_locale` decodes
+  `locale -a` strictly. Name UTF-8 in each and add the suites that reach them to the sensor.
 
 ## Filed from v0.11 item F (Claude review r2, 20261013T164417Z-c2eb9992cc7d)
 
