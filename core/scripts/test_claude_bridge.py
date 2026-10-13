@@ -2189,20 +2189,30 @@ class BridgeTests(unittest.TestCase):
         # handed over (printing it), printed a "failed" line after the "completed" one and
         # exited 2; the Codex adapter raised it, and its caller printed FAIL and exited 5.
         # The handed-over status decides; the failure is a NOTE on stderr.
-        from contextlib import redirect_stderr, redirect_stdout
+        from contextlib import nullcontext, redirect_stderr, redirect_stdout
         from io import StringIO
         from unittest.mock import patch
         import codex_bridge
 
+        write_evidence = agent_usage.write_evidence
+
+        def archive_failure(repo, path, *args, **kwargs):
+            if Path(path).suffix == '.md':
+                raise OSError('archive unavailable')
+            return write_evidence(repo, path, *args, **kwargs)
+
         def execution(command, prompt, repo, timeout, into=None, noted=None):
             if '-o' in command:
                 Path(command[command.index('-o') + 1]).write_bytes(b'VERDICT: Accept\n')
-                return {'exit_code': 0, 'stdout': json.dumps({'type': 'turn.completed', 'usage': {}}),
+                return {'exit_code': 1 if case == 'failed' else 0,
+                        'stdout': 'quota exceeded' if case == 'failed' else json.dumps({'type': 'turn.completed', 'usage': {}}),
                         'stderr': '', 'termination': None, 'duration_ms': 1}
             value = {'type': 'result', 'subtype': 'success', 'is_error': False,
                      'modelUsage': {'claude-opus-5': {}}, 'structured_output':
                      {'verdict': 'Accept', 'findings': [], 'manual_checks': []}}
-            return {'exit_code': 0, 'stdout': json.dumps(value), 'stderr': '',
+            if case == 'failed':
+                value.update(is_error=True, api_error_status=429)
+            return {'exit_code': 1 if case == 'failed' else 0, 'stdout': json.dumps(value), 'stderr': '',
                     'termination': None, 'duration_ms': 1}
 
         class Console(StringIO):
@@ -2212,19 +2222,31 @@ class BridgeTests(unittest.TestCase):
                     raise UnicodeEncodeError('cp1252', '→', 0, 1, 'character maps to <undefined>')
                 return super().write(text)
 
-        for name, main, prefix in (('claude', bridge.main, ['review']),
-                                   ('codex', codex_bridge.main, ['--model', 'fixture-codex-model'])):
-            failed, out, err, received = [], Console(), StringIO(), []
-            with self.subTest(adapter=name), patch.dict(os.environ, self.review_env()),                     patch('agent_process.run', side_effect=execution), redirect_stdout(out), redirect_stderr(err):
-                code = main([*prefix, '--repo', str(self.repo), '--uncommitted'], received.append)
-                self.assertTrue(failed)
-                self.assertEqual(code, 0, out.getvalue() + err.getvalue())
-                self.assertNotIn('"failed"', out.getvalue())
-                self.assertNotIn('FAIL', out.getvalue())
-                self.assertEqual(received[0]['status'], 'completed')
-                self.assertIn('cp1252', received[0]['error_after_result'])
-                self.assertIn('NOTE [review]: %s failed after it handed over its result' % name, err.getvalue())
-                self.assertIn(received[0]['evidence'], err.getvalue())
+        for case in ('completed', 'failed', 'evidence-not-written'):
+            for name, main, prefix in (('claude', bridge.main, ['review']),
+                                       ('codex', codex_bridge.main, ['--model', 'fixture-codex-model'])):
+                failed, out, err, received = [], Console(), StringIO(), []
+                archive = (patch('agent_usage.write_evidence', side_effect=archive_failure)
+                           if case == 'evidence-not-written' else nullcontext())
+                with self.subTest(adapter=name, case=case), patch.dict(os.environ, self.review_env()), \
+                        patch('agent_process.run', side_effect=execution), archive, \
+                        redirect_stdout(out), redirect_stderr(err):
+                    code = main([*prefix, '--repo', str(self.repo), '--uncommitted'], received.append)
+                    self.assertTrue(failed)
+                    self.assertEqual(code, 0 if case == 'completed' else 5, out.getvalue() + err.getvalue())
+                    if case == 'completed':
+                        self.assertNotIn('"failed"', out.getvalue())
+                        self.assertNotIn('FAIL', out.getvalue())
+                    self.assertEqual(received[0]['status'], 'completed' if case == 'completed' else 'failed')
+                    self.assertIn('cp1252', received[0]['error_after_result'])
+                    self.assertIn('NOTE [review]: %s failed after it handed over its result' % name, err.getvalue())
+                    if case == 'evidence-not-written':
+                        self.assertIsNone(received[0]['evidence'])
+                        self.assertIn('evidence was not written', err.getvalue())
+                        self.assertNotIn('None', err.getvalue())
+                    else:
+                        self.assertIn(received[0]['evidence'], err.getvalue())
+                        self.assertIn('its %s result is recorded in' % case, err.getvalue())
 
     def test_hidden_checkout_changes_reject_before_either_adapter_launches(self):
         from contextlib import redirect_stdout

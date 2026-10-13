@@ -291,8 +291,10 @@ def main(argv=None, result_sink=None):
             except (OSError, ValueError):
                 sys.stdout = open(os.devnull, "w")
             with contextlib.suppress(OSError, ValueError):
-                print("NOTE [review]: codex failed after it handed over its result (%s); the result "
-                      "stands as recorded in %s" % (error, archived), file=sys.stderr, flush=True)
+                note = ("its %s result is recorded in %s" % (result["status"], archived)
+                        if archived else "its %s result has no archive; evidence was not written" % result["status"])
+                print("NOTE [review]: codex failed after it handed over its result (%s); %s"
+                      % (error, note), file=sys.stderr, flush=True)
         return 5 if reason else 0
     finally:
         # A cancel noted while the result printed, or held while the caller's handlers went

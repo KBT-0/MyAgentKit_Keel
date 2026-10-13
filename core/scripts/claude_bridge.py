@@ -1310,8 +1310,10 @@ def main(argv=None, result_sink=None) -> int:
             except (OSError, ValueError):
                 sys.stdout = open(os.devnull, "w")
             with contextlib.suppress(OSError, ValueError):
-                print("NOTE [review]: claude failed after it handed over its result (%s); the result "
-                      "stands as recorded in %s" % (error, result["evidence"]), file=sys.stderr, flush=True)
+                note = ("its %s result is recorded in %s" % (result["status"], result["evidence"])
+                        if result["evidence"] else "its %s result has no archive; evidence was not written" % result["status"])
+                print("NOTE [review]: claude failed after it handed over its result (%s); %s"
+                      % (error, note), file=sys.stderr, flush=True)
             return 0 if result["status"] == "completed" else 5
         print(json.dumps({"status": "failed", "error": str(error)}))
         return 2

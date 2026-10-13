@@ -60,9 +60,10 @@ its cases and compares them after; a difference fails the self-test and names th
 is a FAIL rule in every project, not only the kit, although an upgraded project whose cases
 leave an untracked file turns red without a code change; the CHANGELOG names the remedy.
 Excluded by decision: paths `.gitignore` covers, and a concurrent process changing the tree
-(the gate lock serialises gates). A hash of `git diff --binary HEAD` is compared too (decided
-by the owner 2026-10-12): `git status` names a tracked file modified before the run the same
-way after another edit, and the review's fingerprint would see that edit.
+(the gate lock serialises gates). Per-file content hashes of every tracked and untracked
+non-ignored file are compared too, using `git hash-object --no-filters --stdin-paths` (owner
+decision, 2026-10-12): `git status` names a tracked file modified before the run the same way
+after another edit, and the review's fingerprint would see that edit.
 
 ### 2026-10-12 — A handed-over review result stands; sparse rules decide a missing file (#71, #53)
 

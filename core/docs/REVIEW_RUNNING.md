@@ -165,9 +165,13 @@ When the rounds start and what runs in parallel is the lead's part, in `docs/WOR
   That check proves only that the tree ends unchanged. A self-test may share the reviews'
   worktree only when every one of its cases writes nothing but files Git ignores (owner
   decision, 2026-10-12). A temporary injection, such as `src/domain/.selftest.py`, can fail a
-  concurrent review as `stale_checkout` even when removed, and the kit's own boundary example
-  writes exactly that, so the kit's self-test runs in another worktree of the same commit or
-  after the reviews.
+  concurrent review as `stale_checkout` even when removed; any self-test whose case writes a
+  non-ignored file, such as the shipped boundary example, runs in another worktree of the
+  same commit or after the reviews.
+  Permission changes beyond Git's executable bit (or all mode changes with
+  `core.fileMode=false`) are outside this end check.
+  The check reads every tracked and untracked non-ignored file twice, which can cost minutes
+  for large binaries; ignore large assets or keep them out of the tree.
 - Every round of one feature uses the same `MYAGENTKIT_TASK_ID`, so that later rounds carry
   the earlier ones. Only the final reviews (one per model, each over the parts it did
   not write) take a label never used before. When model B's final review finds a High or Medium,

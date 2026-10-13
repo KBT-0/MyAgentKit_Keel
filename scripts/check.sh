@@ -33,23 +33,35 @@ trap 'cancel TERM 143' TERM
 # 2026-10-12). Ignored files may change.
 git_view() {
   git rev-parse --verify -q HEAD || :; git ls-files -s; git status --porcelain --untracked-files=all
-  # One ls-files and ONE git hash-object for the whole tree (a process per file cost minutes on a
-  # large project). The list is newline-separated, so a path holding a newline is not hashed
-  # correctly; the kit refuses such paths elsewhere (#41). Only readable regular files are listed:
-  # hash-object stops at the first path it cannot read, and `git status` already covers deletions.
-  # Each path goes in as ./path, since hash-object unquotes a line that starts with a double quote.
-  paths=$(mktemp) || return 1
+  # One ls-files and ONE hash-object for the whole tree; Git status covers deletions.
+  # Newline-separated paths are safe because the kit refuses names holding newlines (#41).
+  # Prefix ./ because hash-object unquotes a line starting with a double quote.
+  paths="${work:-$passed}/git-paths"
+  hashes="$paths.hashes"
+  errors="$paths.errors"
   git -c core.quotePath=false ls-files -z --cached --others --exclude-standard | tr '\0' '\n' |
     LC_ALL=C sort -u | while IFS= read -r path; do
       if [ -f "$path" ] && [ -r "$path" ]; then printf '%s\n' "$path"; fi
     done > "$paths"
-  sed 's|^|./|' "$paths" | git hash-object --no-filters --stdin-paths 2>/dev/null | paste -d ' ' - "$paths"
-  rm -f "$paths"
+  hash_failed=0
+  sed 's|^|./|' "$paths" | git hash-object --no-filters --stdin-paths > "$hashes" 2> "$errors" || hash_failed=1
+  hash_count=$(wc -l < "$hashes")
+  path_count=$(wc -l < "$paths")
+  if [ "$hash_failed" -ne 0 ] || [ "$hash_count" -ne "$path_count" ]; then
+    path=$(sed -n "$((hash_count + 1))p" "$paths")
+    [ -n "$path" ] || path=$(tail -n 1 "$paths")
+    echo "FAIL — could not hash $path; the tree check is incomplete"
+    cat "$errors"
+    return 1
+  fi
+  paste -d ' ' "$hashes" "$paths"
+  rm -f "$paths" "$hashes" "$errors"
 }
 view=""
 case " $* " in
   *" --self-test "*) if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-                       view="$passed/git-view"; git_view > "$view.before" 2>&1
+                       view="$passed/git-view"
+                       git_view > "$view.before" 2>&1 || { cat "$view.before" >&2; exit 1; }
                      fi ;;
 esac
 status=0

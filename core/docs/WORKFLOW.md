@@ -969,9 +969,13 @@ The shell stays in the lead's checkout, so its Stop hook runs that checkout's ga
 1. Start the self-test and the reviews together, on the same commit. A self-test may share the
    reviews' worktree only when every one of its cases writes nothing but files Git ignores
    (owner decision, 2026-10-12). Its tree check at the end cannot catch a non-ignored file that
-   a case writes and removes meanwhile, and the kit's own boundary example does exactly that,
-   so the kit's self-test runs in its own worktree of that commit, started with the reviews, or
-   after them (`docs/REVIEW_RUNNING.md`, "Rounds, labels and designs").
+   a case writes and removes meanwhile; any self-test whose case writes a non-ignored file,
+   such as the shipped boundary example, runs in its own worktree of that commit, started
+   with the reviews, or after them (`docs/REVIEW_RUNNING.md`, "Rounds, labels and designs").
+   Permission changes beyond Git's executable bit (or all mode changes with
+   `core.fileMode=false`) are outside this end check.
+   The check reads every tracked and untracked non-ignored file twice, which can cost minutes
+   for large binaries; ignore large assets or keep them out of the tree.
 2. Run two reviewers at the same time, never one after the other.
 3. Keep one review label for the whole feature, so that each round carries the earlier ones.
    Only the final reviews (one per model, each over the parts it did not write) take a label

@@ -345,13 +345,15 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   the cone marked skip-worktree by hand and deleted was a deletion the diff omitted. Only a
   path the sparse rules exclude may be missing now, asked of `git sparse-checkout check-rules`
   in one call; a Git older than 2.42, or a failed check, refuses the review. **ACTION:** copy
-  the core scripts.
+  the core scripts, and copy the Git 2.42 requirement in `docs/DEV_SETUP.md`.
 - **The self-test fails when it changes the worktree** (`scripts/check.sh --self-test`, and the
   kit's own wrapper): it compares HEAD, the index, `git status --porcelain
-  --untracked-files=all` and a hash of `git diff --binary HEAD` (tracked files already
-  modified before the run) before and after, and a difference FAILS it, naming each path. Files
-  Git ignores may change. A review running in the same worktree would have failed as
-  `stale_checkout` on that change, so sharing a worktree is now enforced, not only stated.
+  --untracked-files=all` and per-file content hashes of every tracked and untracked non-ignored
+  file, using `git hash-object --no-filters --stdin-paths`, before and after; a difference FAILS
+  it, naming each path. Files Git ignores may change. This proves only the end state is unchanged:
+  sharing a review's worktree is allowed only when every case writes nothing but ignored files
+  (`docs/WORKFLOW.md`, step 1); a non-ignored file written and removed can still fail the review
+  as `stale_checkout`.
   **Your self-test can turn red after this upgrade without any code change:** a case, a
   build or a test that leaves an untracked file Git does not ignore now fails it. Make that
   case remove what it writes, or ignore its output path in `.gitignore`. **ACTION:** copy

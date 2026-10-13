@@ -156,6 +156,37 @@ class KitWrapperTests(unittest.TestCase):
             # Once for the view before the run and once after it; the old loop made one per file.
             self.assertEqual(len(calls.read_text().split()), 2, out)
 
+    def test_an_unopenable_path_or_short_hash_output_fails_by_path(self):
+        # Run each shipped git_view itself: no gate or plugin generation is needed.
+        for script in ('scripts/check.sh', 'core/scripts/check.sh'):
+            source = (ROOT / script).read_text(encoding='utf-8')
+            start = source.index('git_view() {')
+            end = source.index('\n}', start) if script == 'scripts/check.sh' else source.index('\n  }', start)
+            function = source[start:end] + '\n}\n'
+            for case in ('directory', 'short-output'):
+                with self.subTest(script=script, case=case), tempfile.TemporaryDirectory() as tmp:
+                    kit, scratch = Path(tmp) / 'kit', Path(tmp) / 'scratch'
+                    kit.mkdir()
+                    scratch.mkdir()
+                    subprocess.run(['git', 'init', '-q', str(kit)], check=True)
+                    write(kit / 'a.txt', 'first\n')
+                    write(kit / 'b.txt', 'second\n')
+                    real_git = Path(shutil.which('git')).as_posix()
+                    inject = ('rm a.txt && mkdir a.txt' if case == 'directory' else
+                              'IFS= read -r first; printf "%%s\\n" "$first" | "%s" "$@"; return 0' % real_git)
+                    wrapper = ('git() {\nif [ "$1" = hash-object ]; then\n%s\nfi\n'
+                               '"%s" "$@"\n}\n' % (inject, real_git))
+                    runner = scratch / 'run.sh'
+                    write(runner, 'set -eu\nwork="%s"\npassed="$work"\n' % scratch.as_posix() +
+                          wrapper + function +
+                          'git_view > "$work/view" 2>&1 || { cat "$work/view"; exit 1; }\n')
+                    result = subprocess.run(['sh', str(runner)], cwd=kit, capture_output=True,
+                                            text=True, encoding='utf-8', errors='replace', timeout=30)
+                    out = result.stdout + result.stderr
+                    self.assertEqual(result.returncode, 1, out)
+                    missing = 'a.txt' if case == 'directory' else 'b.txt'
+                    self.assertIn('could not hash %s; the tree check is incomplete' % missing, out)
+
     def test_the_kit_self_test_fails_on_a_file_it_leaves_and_passes_an_ignored_one(self):
         with tempfile.TemporaryDirectory() as tmp:
             kit = Path(tmp) / 'kit'
