@@ -13,6 +13,14 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## v0.11 — 2026-10-09
 
+- **The kit check's shell sensor** (`scripts/check_kit.py`; the shipped `check.sh`, `doctor.sh`,
+  `watch_workers.sh` and the Unity overlay's `unity_gate.sh` change only in how they print): over
+  the `.sh` files git tracks, the kit's own lint refuses `echo` of a variable (dash reads a
+  backslash in it as an escape; 54 lines now use `printf '%s
+'`) and GNU-only `mktemp -p`,
+  `--suffix`, `--tmpdir`, and `shellcheck -s sh` refuses a bashism (SC3xxx) or an error; its
+  warnings stay a reviewer's. Without shellcheck the step is NOT RUN, except on CI's Linux job.
+  REVIEW_GATE's attack list drops the three classes the sensor now covers.
 - **The kit check's locale sensor** (`scripts/check_kit.py`, the kit's own check; nothing for a
   project to do): a `locale` unit runs seven fast text suites again with `PYTHONUTF8=0`, under
   `LC_ALL=C` and `tr_TR.UTF-8` on POSIX (NOT RUN without the Turkish locale; CI's Ubuntu job

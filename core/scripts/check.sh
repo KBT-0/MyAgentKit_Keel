@@ -197,7 +197,7 @@ if [ -z "$inherited" ] || [ -z "${GATE_SELFTEST_NESTED:-}" ] ||
               BOUNDARY_SELFTESTS_FILE GATE_SELFTEST_EXTRA_FILE GATE_SELFTEST_BREAK_SCANNER \
               GATE_SELFTEST_HISTORY GATE_SELFTEST_COMMIT_REPO; do
     eval "seam_value=\${$seam:-}"
-    [ -z "$seam_value" ] || { echo "FAIL [env]: $seam is set; self-test overrides are not honoured outside --self-test"; fail=1; }
+    [ -z "$seam_value" ] || { printf '%s\n' "FAIL [env]: $seam is set; self-test overrides are not honoured outside --self-test"; fail=1; }
   done
 fi
 [ "$fail" -eq 0 ] || exit 1
@@ -482,7 +482,7 @@ finally:
     if [ "$hash_failed" -ne 0 ] || [ "$hash_count" -ne "$path_count" ]; then
       path=$(sed -n "$((hash_count + 1))p" "$paths")
       [ -n "$path" ] || path=$(tail -n 1 "$paths")
-      echo "FAIL — could not hash $path; the tree check is incomplete"
+      printf '%s\n' "FAIL — could not hash $path; the tree check is incomplete"
       cat "$errors"
       return 1
     fi
@@ -510,18 +510,18 @@ finally:
   expect_fail() {
     label="$1"; shift
     if env "$@" sh "$0" >/dev/null 2>&1; then
-      echo "  FAIL — $label: the gate stayed GREEN with its failure condition present."
+      printf '%s\n' "  FAIL — $label: the gate stayed GREEN with its failure condition present."
       st_fail=1
     else
-      echo "  ok   — $label"
+      printf '%s\n' "  ok   — $label"
     fi
   }
   expect_pass() {
     label="$1"; shift
     if env "$@" sh "$0" >/dev/null 2>&1; then
-      echo "  ok   — $label"
+      printf '%s\n' "  ok   — $label"
     else
-      echo "  FAIL — $label: the gate fired when it should have stayed quiet (false positive)."
+      printf '%s\n' "  FAIL — $label: the gate fired when it should have stayed quiet (false positive)."
       st_fail=1
     fi
   }
@@ -540,7 +540,7 @@ finally:
   {
     echo "# STATE"; echo; echo "## Active work"; echo
     echo "## Notes"
-    i=0; while [ "$i" -lt 500 ]; do echo "line $i"; i=$((i + 1)); done
+    i=0; while [ "$i" -lt 500 ]; do printf '%s\n' "line $i"; i=$((i + 1)); done
   } > "$long"
   sed 's/^## Active work/## Current things/' "$long" > "$noheading"
 
@@ -596,9 +596,9 @@ finally:
     out=$(env GATE_SELFTEST_STATE_FILE="$work/strong-report/STATE.md" GATE_SELFTEST_HISTORY="$repo" sh "$0" 2>&1)
     rc=$?; said=$(printf '%s\n' "$out" | grep -F 'NOTE [strong-review]')
     if [ "$rc" -ne 0 ]; then
-      echo "  FAIL — the strong review reminder case turned the gate red ($repo)"; reminder_ok=0
+      printf '%s\n' "  FAIL — the strong review reminder case turned the gate red ($repo)"; reminder_ok=0
     elif [ -n "$want" ] && ! printf '%s\n' "$said" | grep -qF "$want"; then
-      echo "  FAIL — the strong review reminder did not say '$want' ($repo)"; reminder_ok=0
+      printf '%s\n' "  FAIL — the strong review reminder did not say '$want' ($repo)"; reminder_ok=0
     elif [ -z "$want" ] && [ -n "$said" ]; then
       echo "  FAIL — the strong review reminder fired for a report added today"; reminder_ok=0
     fi
@@ -979,7 +979,7 @@ LOCKCASE
                     print "[ -z \"${LOCKCASE_BUILD:-}\" ] || { python3 -I -c \"import os, sys, time; f = os.open(sys.argv[1] + chr(46) + chr(116), os.O_WRONLY | os.O_CREAT); os.write(f, str(os.getpid()).encode()); os.close(f); os.replace(sys.argv[1] + chr(46) + chr(116), sys.argv[1]); time.sleep(60)\" \"$LOCKCASE_BUILD\"; exit 0; }"
                     print "echo \"lockcase: the copy of the gate got past the lock\"; exit 0" }
                   { print }' "$0" > "$case_dir/scripts/check.sh"; }; then
-        echo "  FAIL — could not build the throwaway repository for the Windows lock case: $label"
+        printf '%s\n' "  FAIL — could not build the throwaway repository for the Windows lock case: $label"
         st_fail=1; continue
       fi
       # The lock path as the copy computes its own (pwd -P, then cygpath -m): a TMPDIR given as
@@ -990,9 +990,9 @@ LOCKCASE
               "$(cygpath -m "$case_dir/scripts/check.sh")" 2>&1); status=$?
       if [ "$status" -eq "$code" ] && printf '%s\n' "$out" | grep -q "$want" &&
          { [ -z "$also" ] || printf '%s\n' "$out" | grep -q "$also"; }; then
-        echo "  ok   — $label"
+        printf '%s\n' "  ok   — $label"
       else
-        echo "  FAIL — $label: not refused (exit $status, $code wanted), or the case could not run:"
+        printf '%s\n' "  FAIL — $label: not refused (exit $status, $code wanted), or the case could not run:"
         printf '%s\n' "$out" | tail -3 | sed 's/^/           /'
         st_fail=1
       fi
@@ -1045,16 +1045,16 @@ LOCKCASE
   # tree, so that hook is held to the same two cases.
   for hook in .githooks/pre-commit .githooks/pre-merge-commit; do
     if [ ! -f "$hook" ]; then
-      echo "  FAIL — $hook is missing: nothing enforces the gate on those commits."
+      printf '%s\n' "  FAIL — $hook is missing: nothing enforces the gate on those commits."
       st_fail=1
     elif ! sh "$hook" >/dev/null 2>&1; then
-      echo "  FAIL — $hook rejected a GREEN tree; every such commit would be blocked."
+      printf '%s\n' "  FAIL — $hook rejected a GREEN tree; every such commit would be blocked."
       st_fail=1
     elif env GATE_SELFTEST_EXTRA_FILE="$inj" sh "$hook" >/dev/null 2>&1; then
-      echo "  FAIL — $hook exited 0 while the gate was RED. It is blocking nothing."
+      printf '%s\n' "  FAIL — $hook exited 0 while the gate was RED. It is blocking nothing."
       st_fail=1
     else
-      echo "  ok   — $hook passes a green tree and aborts on a red one"
+      printf '%s\n' "  ok   — $hook passes a green tree and aborts on a red one"
     fi
   done
 
@@ -1098,15 +1098,15 @@ LOCKCASE
       printf '# STATE\n\n## Active work\n- K4: still listed\n' > "$done_repo/docs/STATE.md"
       ( fixture_env; git -C "$done_repo" add -A )
       if (fixture_env; CDPATH= cd -- "$done_repo" && sh "$msg_hook" "$work/msg_done") >/dev/null 2>&1; then
-        echo "  FAIL — commit-msg hook accepted Done: K4 while the staged STATE.md names K4 (rule line $rule)"
+        printf '%s\n' "  FAIL — commit-msg hook accepted Done: K4 while the staged STATE.md names K4 (rule line $rule)"
         st_fail=1; continue
       fi
       printf '# STATE\n\n## Active work\n' > "$done_repo/docs/STATE.md"
       ( fixture_env; git -C "$done_repo" add -A )
       if (fixture_env; CDPATH= cd -- "$done_repo" && sh "$msg_hook" "$work/msg_done") >/dev/null 2>&1; then
-        echo "  ok   — commit-msg hook refuses Done: K4 until the staged STATE.md drops it (rule line $rule)"
+        printf '%s\n' "  ok   — commit-msg hook refuses Done: K4 until the staged STATE.md drops it (rule line $rule)"
       else
-        echo "  FAIL — commit-msg hook rejected Done: K4 after the line was deleted (rule line $rule; false positive)"
+        printf '%s\n' "  FAIL — commit-msg hook rejected Done: K4 after the line was deleted (rule line $rule; false positive)"
         st_fail=1
       fi
     done
@@ -1117,10 +1117,10 @@ LOCKCASE
       printf -- '- K4: a finding\n' > "$done_repo/docs/$f"
       ( fixture_env; git -C "$done_repo" -c core.autocrlf=false add -A )
       if (fixture_env; CDPATH= cd -- "$done_repo" && sh "$msg_hook" "$work/msg_done") >/dev/null 2>&1; then
-        echo "  FAIL — commit-msg hook accepted Done: K4 while the staged docs/$f names K4"
+        printf '%s\n' "  FAIL — commit-msg hook accepted Done: K4 while the staged docs/$f names K4"
         st_fail=1
       else
-        echo "  ok   — commit-msg hook refuses Done: K4 while the staged docs/$f names K4"
+        printf '%s\n' "  ok   — commit-msg hook refuses Done: K4 while the staged docs/$f names K4"
       fi
       ( fixture_env; git -C "$done_repo" rm -q --cached "docs/$f" ) && rm -f "$done_repo/docs/$f"
     done
@@ -1132,7 +1132,7 @@ LOCKCASE
   # hid them, and a CI-only failure had to be fixed blind. The failure must be named, its
   # chain must reach the output, and the whole log must be kept. On CI the log in .git
   # vanishes with the runner, so there the whole log is printed instead of the tail.
-  build_fail='i=0; while [ $i -lt 300 ]; do echo "build line $i"; i=$((i + 1)); done
+  build_fail='i=0; while [ $i -lt 300 ]; do printf "build line %s\n" "$i"; i=$((i + 1)); done
     echo "src/x.c: In function f:"; echo "src/x.c:3:5: error: bad"; echo "src/x.c:2:1: note: declared here"; exit 1'
   out=$(env CI= GATE_BUILD_CMD_OVERRIDE="$build_fail" sh "$0" 2>&1)
   ci_out=$(env CI=true GATE_BUILD_CMD_OVERRIDE="$build_fail" sh "$0" 2>&1)
@@ -1164,9 +1164,9 @@ LOCKCASE
     eval "$(grep '^docs_only_skip_build=' "$0" | head -n 1)"
     if [ "${docs_only_skip_build:-}" != 1 ]; then
       if printf '%s\n' "$out" | grep -q '^FAIL \[build\]' && ! printf '%s\n' "$out" | grep -q 'build not run'; then
-        echo "  ok   — docs_only_skip_build=$docs_only_skip_build: a commit of two documents runs the build"
+        printf '%s\n' "  ok   — docs_only_skip_build=$docs_only_skip_build: a commit of two documents runs the build"
       else
-        echo "  FAIL — docs_only_skip_build=$docs_only_skip_build, and a commit of two documents skipped the build."
+        printf '%s\n' "  FAIL — docs_only_skip_build=$docs_only_skip_build, and a commit of two documents skipped the build."
         st_fail=1
       fi
     elif printf '%s\n' "$out" | grep -qx 'CHECK: PASS (build not run: documentation-only commit, 2 files)'; then
@@ -1226,12 +1226,12 @@ LOCKCASE
     cat "$work/boundary_selftests.out"
     if grep -v '^[[:space:]]*#' "$BOUNDARY_CHECKS_FILE" 2>/dev/null | grep -q '[^[:space:]]' &&
        ! grep -q '^  ok   — ' "$work/boundary_selftests.out"; then
-      echo "  FAIL — $BOUNDARY_CHECKS_FILE has checks but $BOUNDARY_SELFTESTS_FILE ran no case"
+      printf '%s\n' "  FAIL — $BOUNDARY_CHECKS_FILE has checks but $BOUNDARY_SELFTESTS_FILE ran no case"
       echo "         (none printed '  ok   — <label>'). A self-test that did not run is not a pass."
       st_fail=1
     fi
   else
-    echo "  FAIL — $BOUNDARY_SELFTESTS_FILE is missing: the project's boundary checks have"
+    printf '%s\n' "  FAIL — $BOUNDARY_SELFTESTS_FILE is missing: the project's boundary checks have"
     echo "         no negative tests, so they have never been observed rejecting anything."
     st_fail=1
   fi
@@ -1451,11 +1451,11 @@ fi
 # A missing file or a renamed heading is a FAILURE, not a skip. Skipping there meant the
 # whole check could be disabled by deleting one file or editing one line.
 if [ ! -f "$GATE_SELFTEST_STATE_FILE" ]; then
-  echo "FAIL [state]: $GATE_SELFTEST_STATE_FILE does not exist. It is the cross-session memory; without it"
+  printf '%s\n' "FAIL [state]: $GATE_SELFTEST_STATE_FILE does not exist. It is the cross-session memory; without it"
   echo "              this check proves nothing."
   fail=1
 elif ! grep -q "^## Active work" "$GATE_SELFTEST_STATE_FILE"; then
-  echo "FAIL [state]: $GATE_SELFTEST_STATE_FILE has no '## Active work' heading. Restore the heading"
+  printf '%s\n' "FAIL [state]: $GATE_SELFTEST_STATE_FILE has no '## Active work' heading. Restore the heading"
   echo "              rather than removing the check."
   fail=1
 fi
@@ -1528,7 +1528,7 @@ if [ -f "$strong_list" ] && hgit rev-parse -q --verify HEAD >/dev/null 2>&1; the
     echo "NOTE [strong-review]: no strong review report yet (docs/reviews/strong-*.md); the cycle runs"
     echo "                      at least every 10 days (docs/WORKFLOW.md, \"The strong review cycle\")."
   elif [ $(( $(date +%s) - added )) -gt $(( 10 * 86400 )) ]; then
-    echo "NOTE [strong-review]: the newest strong review report was added $(( ($(date +%s) - added) / 86400 )) days ago;"
+    printf '%s\n' "NOTE [strong-review]: the newest strong review report was added $(( ($(date +%s) - added) / 86400 )) days ago;"
     echo "                      the cycle is due (docs/WORKFLOW.md, \"The strong review cycle\")."
   fi
 fi
@@ -1547,11 +1547,11 @@ fi
 # project, not a broken one.
 GATE_SELFTEST_PROJECT_FILE="${GATE_SELFTEST_PROJECT_FILE:-docs/PROJECT.md}"
 if [ ! -f "$GATE_SELFTEST_PROJECT_FILE" ]; then
-  echo "FAIL [project]: $GATE_SELFTEST_PROJECT_FILE does not exist. It is where permanent decisions live;"
+  printf '%s\n' "FAIL [project]: $GATE_SELFTEST_PROJECT_FILE does not exist. It is where permanent decisions live;"
   echo "                without it they end up in docs/STATE.md and are pruned away."
   fail=1
 elif ! grep -q "^## Contents" "$GATE_SELFTEST_PROJECT_FILE"; then
-  echo "FAIL [project]: $GATE_SELFTEST_PROJECT_FILE has no '## Contents' section, so it cannot be read"
+  printf '%s\n' "FAIL [project]: $GATE_SELFTEST_PROJECT_FILE has no '## Contents' section, so it cannot be read"
   echo "                selectively and every reader will load the whole file."
   fail=1
 else
@@ -1575,7 +1575,7 @@ else
   - $h"
   done < "$work/heads"
   if [ -n "$missing" ]; then
-    echo "FAIL [project]: $GATE_SELFTEST_PROJECT_FILE has numbered sections missing from its Contents:$missing"
+    printf '%s\n' "FAIL [project]: $GATE_SELFTEST_PROJECT_FILE has numbered sections missing from its Contents:$missing"
     echo "                Add them, or renumber. Citations elsewhere point at these numbers."
     fail=1
   fi
@@ -1595,7 +1595,7 @@ fi
 if [ -f "$BOUNDARY_CHECKS_FILE" ]; then
   . "./$BOUNDARY_CHECKS_FILE"
 else
-  echo "FAIL [boundary]: $BOUNDARY_CHECKS_FILE is missing. Boundary enforcement is not"
+  printf '%s\n' "FAIL [boundary]: $BOUNDARY_CHECKS_FILE is missing. Boundary enforcement is not"
   echo "                 optional; if this project genuinely has no enforceable boundary,"
   echo "                 say so IN that file rather than deleting it."
   fail=1
@@ -1670,7 +1670,7 @@ print(len(fields) // 2)
     if [ -n "$docs_only" ]; then
       if [ "$docs_only" = 1 ]; then unit=file; else unit=files; fi
       pass_note=" (build not run: documentation-only commit, $docs_only $unit)"
-      echo "NOTE [build]: not run: every path this commit changes is documentation ($docs_only $unit)."
+      printf '%s\n' "NOTE [build]: not run: every path this commit changes is documentation ($docs_only $unit)."
     else
       # Quiet when it passes; on failure the summary line, then the TAIL, never a filter. The
       # lines that locate a compile error ("In function", "required from", "note:") do not
@@ -1684,12 +1684,12 @@ print(len(fields) // 2)
         exec sh -c "$build_test_cmd" ) > "$build_log" 2>&1
       rc=$?
       if [ "$rc" -ne 0 ] && [ -n "${CI:-}" ]; then
-        echo "FAIL [build]: the build/test command exited $rc. Its whole output follows (CI)."
+        printf '%s\n' "FAIL [build]: the build/test command exited $rc. Its whole output follows (CI)."
         cat "$build_log"
         fail=1
       elif [ "$rc" -ne 0 ]; then
-        echo "FAIL [build]: the build/test command exited $rc. Its last $build_tail lines follow;"
-        echo "              the whole output is in $build_log"
+        printf '%s\n' "FAIL [build]: the build/test command exited $rc. Its last $build_tail lines follow;"
+        printf '%s\n' "              the whole output is in $build_log"
         tail -n "$build_tail" "$build_log"
         fail=1
       fi
@@ -1708,4 +1708,4 @@ if [ -e "$work/scan_failed" ]; then
   fail=1
 fi
 
-if [ "$fail" -eq 0 ]; then echo "CHECK: PASS${pass_note:-}"; else echo "CHECK: FAIL"; exit 1; fi
+if [ "$fail" -eq 0 ]; then printf '%s\n' "CHECK: PASS${pass_note:-}"; else echo "CHECK: FAIL"; exit 1; fi

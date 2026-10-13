@@ -37,14 +37,14 @@ run_gate() {
         echo "FAIL [unity]: a Windows Unity.exe needs wslpath to translate paths."
         return 1
       fi
-      proj=$(wslpath -w "$proj" 2>/dev/null || echo "$proj")
-      logs=$(wslpath -w "$logs" 2>/dev/null || echo "$logs")
+      proj=$(wslpath -w "$proj" 2>/dev/null || printf '%s\n' "$proj")
+      logs=$(wslpath -w "$logs" 2>/dev/null || printf '%s\n' "$logs")
       ;;
   esac
 
   cases=0
   for platform in EditMode PlayMode; do
-    echo "unity: running $platform tests..."
+    printf '%s\n' "unity: running $platform tests..."
     results="$project_dir/Logs/test-results-$platform.xml"
     rm -f "$results"
     # -nographics is required on a headless machine; drop it if a test needs a real device.
@@ -52,14 +52,14 @@ run_gate() {
       -testPlatform "$platform" \
       -testResults "$logs/test-results-$platform.xml" \
       -logFile - || {
-        echo "FAIL [unity]: $platform tests failed — see $results"
+        printf '%s\n' "FAIL [unity]: $platform tests failed — see $results"
         fail=1
       }
 
     # A gate must not pass on ABSENT evidence. Unity exits 0 for a run that executed
     # nothing, so the results file has to exist, be real, and be counted properly.
     if [ ! -f "$results" ]; then
-      echo "FAIL [unity]: $platform produced no results file at $results — the run proved nothing."
+      printf '%s\n' "FAIL [unity]: $platform produced no results file at $results — the run proved nothing."
       fail=1
       continue
     fi
@@ -68,7 +68,7 @@ run_gate() {
     # containing the substring we count would otherwise satisfy this gate without running
     # a single test.
     if ! grep -q "<test-run\|<test-results" "$results"; then
-      echo "FAIL [unity]: $results is not an NUnit result document. Refusing to count it."
+      printf '%s\n' "FAIL [unity]: $results is not an NUnit result document. Refusing to count it."
       fail=1
       continue
     fi
@@ -80,15 +80,15 @@ run_gate() {
     skipped=$(grep -o 'result="Skipped"' "$results" 2>/dev/null | grep -c .)
     failed=$(grep -o 'result="Failed"' "$results" 2>/dev/null | grep -c .)
     case "$total$skipped$failed" in
-      *[!0-9]*|"") echo "FAIL [unity]: could not count test cases in $results."; fail=1; continue ;;
+      *[!0-9]*|"") printf '%s\n' "FAIL [unity]: could not count test cases in $results."; fail=1; continue ;;
     esac
     executed=$((total - skipped))
-    echo "unity: $platform — $total case(s), $skipped skipped, $failed failed, $executed executed."
+    printf '%s\n' "unity: $platform — $total case(s), $skipped skipped, $failed failed, $executed executed."
 
     # Skipped is not executed. An all-skipped run is the absent-evidence case wearing a
     # results file, and it is what a misconfigured test assembly produces.
     if [ "$failed" -gt 0 ]; then
-      echo "FAIL [unity]: $platform reports $failed failed test(s) — see $results"
+      printf '%s\n' "FAIL [unity]: $platform reports $failed failed test(s) — see $results"
       fail=1
     fi
     cases=$((cases + executed))
@@ -120,13 +120,13 @@ self_test() {
     # result files, and an earlier version left that litter in the project tree.
     out=$(UNITY_PATH="$stub" UNITY_PROJECT="$d/proj" sh "$0" 2>&1)
     if [ $? -eq 0 ]; then
-      echo "  FAIL — $label: the gate PASSED."
+      printf '%s\n' "  FAIL — $label: the gate PASSED."
       st_fail=1
       return
     fi
     case "$out" in
-      *"$want"*) echo "  ok   — $label" ;;
-      *) echo "  FAIL — $label: it failed, but not for the expected reason ($want):"
+      *"$want"*) printf '%s\n' "  ok   — $label" ;;
+      *) printf '%s\n' "  FAIL — $label: it failed, but not for the expected reason ($want):"
          printf '%s\n' "$out" | tail -4 | sed 's/^/         /'
          st_fail=1 ;;
     esac

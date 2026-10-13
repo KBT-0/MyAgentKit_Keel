@@ -215,7 +215,7 @@ elif [ "$reviewer" = claude ]; then
     help=$(cat "$help_out")
     rm -f "$help_out"
     if [ -z "$help_status" ] || [ "$help_status" -eq 124 ] || [ "$help_status" -eq 137 ]; then
-      echo "NOTE: the Claude CLI '$reviewer_cli' did not answer --help within 5 s; --effort was not checked"
+      printf '%s\n' "NOTE: the Claude CLI '$reviewer_cli' did not answer --help within 5 s; --effort was not checked"
     elif [ "$help_status" -ne 0 ] || ! printf '%s\n' "$help" | grep -Eq -- '(^|[[:space:],])--effort([[:space:]=,]|$)'; then
       miss "the Claude CLI '$reviewer_cli' does not support --effort (an old CLI earlier on PATH can shadow the current installation)" "update that CLI, reorder PATH, or set CLAUDE_CLI_BIN to the current executable"
     fi
@@ -358,7 +358,7 @@ elif [ -n "${SHELL:-}" ]; then
 fi
 
 if [ "$missing" -gt 0 ]; then
-  echo "DOCTOR: setup incomplete ($missing)"
+  printf '%s\n' "DOCTOR: setup incomplete ($missing)"
   exit 1
 fi
 echo "DOCTOR: ready"

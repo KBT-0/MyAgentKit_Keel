@@ -50,7 +50,7 @@ git_view() {
   if [ "$hash_failed" -ne 0 ] || [ "$hash_count" -ne "$path_count" ]; then
     path=$(sed -n "$((hash_count + 1))p" "$paths")
     [ -n "$path" ] || path=$(tail -n 1 "$paths")
-    echo "FAIL — could not hash $path; the tree check is incomplete"
+    printf '%s\n' "FAIL — could not hash $path; the tree check is incomplete"
     cat "$errors"
     return 1
   fi

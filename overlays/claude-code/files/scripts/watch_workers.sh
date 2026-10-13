@@ -193,7 +193,7 @@ classify() {
     case $hits in *" $k:near:"*) ;; *) continue ;; esac
     s=UNVERIFIED
     case $hits in *" $k:last:VERIFIED:"*) case $hits in *" $k:near:VERIFIED:"*) s=VERIFIED ;; esac ;; esac
-    echo "WAITING $k $s ${h##*:}"
+    printf '%s\n' "WAITING $k $s ${h##*:}"
     return 0
   done
 }

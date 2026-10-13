@@ -84,7 +84,7 @@ REQUIRED_SUITES = {
     'core/scripts': dict(BRIDGE_MINIMUMS, test_agent_cost=3),
     # Each suite's current count: a minimum far below it (1 of 30) let a suite lose almost
     # every test with the kit check green. A new test raises its suite's number here.
-    'tests': {'test_packaging': 1, 'test_bootstrap': 36, 'test_acceptance': 10,
+    'tests': {'test_packaging': 1, 'test_bootstrap': 36, 'test_acceptance': 12,
               'test_review_upgrade': 4 if os.name == 'nt' else 5,
               'test_boundary_example': 1 if os.name == 'nt' else 3, 'test_scan_gate': 1,
               'test_check_gate': 24, 'test_check_gate_windows': 33,
@@ -380,6 +380,61 @@ def check_syntax(root):
                                    "pattern's `)` as the end of the $( ); move it out"
                                    % (path, lines[0]))
             run(["sh", "-n", str(path)])
+    shell_portability(root)
+
+
+# The shell sensor (proposal D-2). `echo` of a variable: dash, Ubuntu's sh, reads a backslash in
+# it as an escape, so a Windows path printed C:<newline>ew. GNU-only mktemp options fail on macOS.
+ECHO_VARIABLE = re.compile(r'(?:^|[;&|({\s])echo\s+(?:-\S+\s+)?(?:"[^"]*(?<!\\)\$|\$)')
+GNU_MKTEMP = re.compile(r'\bmktemp\b[^;|&\n]*\s(?:-p\b|--suffix|--tmpdir)')
+
+
+def shell_lint(text):
+    """(line, reason) for each line of a POSIX sh script the kit's own shell rules refuse."""
+    found = []
+    for number, line in enumerate(text.splitlines(), 1):
+        if line.lstrip().startswith('#'):
+            continue
+        if ECHO_VARIABLE.search(line):
+            found.append((number, "`echo` of a variable: dash reads a backslash in it as an escape; "
+                                  "use printf '%s\\n'"))
+        if GNU_MKTEMP.search(line):
+            found.append((number, '`mktemp -p/--suffix/--tmpdir` is GNU-only; macOS refuses it'))
+    return found
+
+
+def shell_portability(root):
+    """The kit's shell lint and `shellcheck -s sh` over the .sh files git tracks.
+
+    Tracked files only: a worktree under .claude/worktrees holds an older copy of every script.
+    shellcheck fails only on SC3xxx (undefined in POSIX sh, a bashism) and on errors; its
+    warnings and notes stay a reviewer's. Without shellcheck the check is NOT RUN, except on
+    CI's Linux job, whose image has it, where its absence fails.
+    """
+    if (root / '.git').exists():
+        listed = run(['git', '-C', str(root), 'ls-files', '-z', '--', '*.sh'], encoding='utf-8')
+        paths = [root / name for name in listed.split('\0') if name]
+    else:
+        paths = [path for path in root.rglob('*.sh') if '.git' not in path.parts]
+    found = ['%s:%d: %s' % (path.relative_to(root).as_posix(), number, reason)
+             for path in paths for number, reason in shell_lint(path.read_text(encoding='utf-8'))]
+    if found:
+        raise RuntimeError('shell lint:\n' + '\n'.join(found))
+    tool = shutil.which('shellcheck')
+    if not tool:
+        if os.environ.get('CI') and sys.platform.startswith('linux'):
+            raise RuntimeError('shellcheck is not on PATH; CI\'s Linux image has it')
+        print('NOT RUN: shellcheck -s sh (not installed); CI\'s Linux job runs it')
+        return
+    if not paths:
+        return
+    result = subprocess.run([tool, '-s', 'sh', '-f', 'gcc', *map(str, paths)], capture_output=True,
+                            text=True, encoding='utf-8', errors='replace', timeout=limit(300))
+    refused = [line for line in result.stdout.splitlines()
+               if ': error:' in line or re.search(r'\[SC3\d{3}\]$', line)]
+    if refused or result.returncode not in (0, 1):
+        raise RuntimeError('shellcheck -s sh: a bashism or an error:\n'
+                           + '\n'.join(refused or [result.stdout + result.stderr]))
 
 
 @functools.lru_cache(maxsize=None)
@@ -512,9 +567,9 @@ def acceptance(self_test):
             text = text.replace("{{BUILD_TEST_COMMAND}}", "test -f scripts/claude_bridge.py")
             text = text.replace("{{TOOLCHAIN_PATH_SETUP}}", "")
             text = re.sub(r"\{\{[A-Z0-9_]+\}\}", "fixture", text)
-            path.write_text(text)
-        (project / "scripts/boundary_checks.sh").write_text("# Synthetic project has no domain boundaries.\n")
-        (project / "scripts/boundary_selftests.sh").write_text("# Domain gates are project-specific.\n")
+            path.write_text(text, encoding='utf-8')
+        (project / "scripts/boundary_checks.sh").write_text("# Synthetic project has no domain boundaries.\n", encoding='utf-8')
+        (project / "scripts/boundary_selftests.sh").write_text("# Domain gates are project-specific.\n", encoding='utf-8')
         run(["git", "add", "."], project)
         run(["sh", "scripts/check.sh"], project, reason="CHECK: PASS")
         # With CDPATH exported, `cd scripts` printed the directory into the gate's own path,
@@ -535,13 +590,13 @@ def acceptance(self_test):
                     raise RuntimeError("the synthetic project's build command line was not found")
                 fixture_gate = original_gate.replace(
                     configured, f'build_test_cmd="sh {shlex.quote(str(build))}"')
-                gate.write_text(fixture_gate)
+                gate.write_text(fixture_gate, encoding='utf-8')
                 status = ["git", "status", "--porcelain", "--untracked-files=all"]
                 before = run(status, project)
                 # Every nested gate run records the tree through the build command, so a case
                 # that writes into the tree and cleans up afterwards is still caught.
                 log = side / "status.log"
-                build.write_text(f'{{ git status --porcelain --untracked-files=all; echo ==; }} >> "{log}"\n')
+                build.write_text(f'{{ git status --porcelain --untracked-files=all; echo ==; }} >> "{log}"\n', encoding='utf-8')
                 # GATE_LOCK_WAIT: a nested run that does not inherit the lock stops in seconds.
                 print(run(["sh", "scripts/check.sh", "--self-test"], project,
                           env=dict(os.environ, GATE_LOCK_WAIT="5"), reason="SELF-TEST: PASS",
@@ -561,7 +616,7 @@ def acceptance(self_test):
                          "BOUNDARY_SELFTESTS_FILE": "scripts/boundary_selftests.sh",
                          "GATE_SELFTEST_EXTRA_FILE": "docs/STATE.md",
                          "GATE_SELFTEST_BREAK_SCANNER": "1", "GATE_SELFTEST_HISTORY": "."}
-                build.write_text("false\n")
+                build.write_text("false\n", encoding='utf-8')
                 own_lock = os.path.realpath(project) + "/.git/check.lock"
                 for name, value in seams.items():
                     refused = f"FAIL [env]: {name} is set; self-test overrides are not honoured"
@@ -575,7 +630,7 @@ def acceptance(self_test):
                 passed("every self-test override exported into a normal run fails it by name")
                 # The marker a self-test run exports dies with that run: copied out of a finished
                 # run, it is refused like any other.
-                build.write_text(f'cat .git/check.lock > "{side}/holder"\n')
+                build.write_text(f'cat .git/check.lock > "{side}/holder"\n', encoding='utf-8')
                 run(["sh", "scripts/check.sh"], project, reason="CHECK: PASS", timeout=60)
                 marker = (side / "holder").read_text(encoding='utf-8')
                 # The holder's pid on POSIX; a random token on native Windows.
@@ -591,10 +646,10 @@ def acceptance(self_test):
                           " proves the gate lock there)")
                 else:
                     posix_lock_cases(project, side, build, own_lock, gate)
-                gate.write_text(original_gate)
+                gate.write_text(original_gate, encoding='utf-8')
             # The scanners read untracked files too (git ls-files --others), not only the index.
             marker = project / "untracked-marker.md"
-            marker.write_text("{{SELF_TEST" + "_TOKEN}}\n")
+            marker.write_text("{{SELF_TEST" + "_TOKEN}}\n", encoding='utf-8')
             try:
                 run(["sh", "scripts/check.sh"], project, expected=1, reason="CHECK: FAIL")
             finally:
@@ -603,7 +658,7 @@ def acceptance(self_test):
             # A tracked file deleted without `git rm` fails the gate under its own name,
             # not as a scanner that failed to run.
             gone = project / "deleted-unstaged.md"
-            gone.write_text("tracked, then deleted without git rm\n")
+            gone.write_text("tracked, then deleted without git rm\n", encoding='utf-8')
             run(["git", "add", gone.name], project)
             gone.unlink()
             try:
@@ -689,7 +744,7 @@ def acceptance(self_test):
             gate = project / "scripts/check.sh"
             original_gate = gate.read_text(encoding='utf-8')
             gate.write_text(original_gate.replace('build_test_cmd="test -f scripts/claude_bridge.py"',
-                                                  'build_test_cmd=\'[ "${LC_ALL-unset}" = "$EXPECT_LC" ]\''))
+                                                  'build_test_cmd=\'[ "${LC_ALL-unset}" = "$EXPECT_LC" ]\''), encoding='utf-8')
             try:
                 for value in (utf8, None):
                     env = {k: v for k, v in os.environ.items() if k != "LC_ALL"}
@@ -698,7 +753,7 @@ def acceptance(self_test):
                         env["LC_ALL"] = value
                     run(["sh", "scripts/check.sh"], project, reason="CHECK: PASS", env=env)
             finally:
-                gate.write_text(original_gate)
+                gate.write_text(original_gate, encoding='utf-8')
             passed("a marker on a non-UTF-8 line or link fails the gate in a UTF-8 locale; the build keeps the caller's locale")
             # A failed append of link text (a full disk, a lost permission) was ignored: the
             # link's marker went unscanned and the gate could pass. Here a stand-in readlink
@@ -714,14 +769,14 @@ def acceptance(self_test):
                 (shim / "mktemp").write_text(
                     "#!/bin/sh\n"
                     "case \"$*\" in \"\"|-d) TMPDIR=" + shlex.quote(str(Path(side) / "elsewhere")) + "; export TMPDIR ;; esac\n"
-                    "d=$(" + shlex.quote(shutil.which("mktemp")) + " \"$@\") && printf '%s\\n' \"$d\" >> " + made + " && printf '%s\\n' \"$d\"\n")
+                    "d=$(" + shlex.quote(shutil.which("mktemp")) + " \"$@\") && printf '%s\\n' \"$d\" >> " + made + " && printf '%s\\n' \"$d\"\n", encoding='utf-8')
                 (shim / "mktemp").chmod(0o755)
                 (shim / "readlink").write_text(
                     "#!/bin/sh\n"
                     "while IFS= read -r d; do\n"
                     "  if [ -f \"$d/symlink-text\" ]; then rm -f \"$d/symlink-text\" && mkdir \"$d/symlink-text\"; fi\n"
                     "done < " + made + "\n"
-                    "exec " + shlex.quote(shutil.which("readlink")) + " \"$@\"\n")
+                    "exec " + shlex.quote(shutil.which("readlink")) + " \"$@\"\n", encoding='utf-8')
                 (shim / "readlink").chmod(0o755)
                 links = ("a-link", "b-link")
                 for name in links:
@@ -750,24 +805,24 @@ def acceptance(self_test):
             wrapper = project / "scripts/review.sh"
             original_wrapper = wrapper.read_bytes()
             for stub in ["exit 1\n", "exit 0\n"]:
-                wrapper.write_text(stub)
+                wrapper.write_text(stub, encoding='utf-8')
                 run(["sh", "scripts/check.sh", "--self-test"], project, expected=1,
                     reason="review adapter negative tests failed or did not run")
             wrapper.write_bytes(original_wrapper)
             # One emptied suite must fail on its own, not hide inside a combined test total.
             quota_tests = project / "scripts/test_codex_quota.py"
             original_quota = quota_tests.read_bytes()
-            quota_tests.write_text("import unittest\nclass QuotaTests(unittest.TestCase):\n    pass\n")
+            quota_tests.write_text("import unittest\nclass QuotaTests(unittest.TestCase):\n    pass\n", encoding='utf-8')
             run(["sh", "scripts/review.sh", "--self-test"], project, expected=2,
                 reason="QuotaTests has 0 of at least %d tests" % BRIDGE_MINIMUMS["test_codex_quota"])
             quota_tests.write_bytes(original_quota)
             # Boundary checks whose self-test file runs no case are skipped, not passed. The
             # stubbed review run keeps this case to the boundary branch alone.
-            wrapper.write_text("echo 'REVIEW SELF-TEST: PASS'\n")
+            wrapper.write_text("echo 'REVIEW SELF-TEST: PASS'\n", encoding='utf-8')
             checks = project / "scripts/boundary_checks.sh"
             selftests = project / "scripts/boundary_selftests.sh"
             original_checks, original_selftests = checks.read_bytes(), selftests.read_bytes()
-            checks.write_text(": synthetic boundary check\n")
+            checks.write_text(": synthetic boundary check\n", encoding='utf-8')
             run(["sh", "scripts/check.sh", "--self-test"], project, expected=1, reason="ran no case")
             # The shipped existing-file example, run by the enclosing self-test against a check
             # it can trip: it counts as a case only by printing its ok line.
@@ -775,12 +830,12 @@ def acceptance(self_test):
             if src.exists():
                 raise RuntimeError("the synthetic project already has src/")
             (src / "domain").mkdir(parents=True)
-            (src / "domain/existing.py").write_text("original\n")
+            (src / "domain/existing.py").write_text("original\n", encoding='utf-8')
             # Tracked, so the case can show the example leaves the checkout's status unchanged.
             run(["git", "add", "src"], project)
             checks.write_text("! grep -q myapp.web src/domain/existing.py ||\n"
                               "  { echo 'FAIL [boundary]: the domain layer imports the web layer:'; fail=1; }\n",
-                              newline="\n")
+                              newline="\n", encoding='utf-8')
             example = (ROOT / "core/scripts/boundary_selftests.sh").read_text(encoding="utf-8").splitlines()
             # LF and UTF-8 on every host: Windows Python writes CRLF by default, which sh misreads.
             selftests.write_text("\n".join(line[4:] for line in example if line.startswith("# | ")) + "\n",
@@ -819,7 +874,7 @@ def posix_lock_cases(project, side, build, own_lock, gate):
     # killed run name it exactly: refused, never honoured as a self-test's seams.
     build.write_text(f'cat .git/check.lock > "{side}/holder"\n'
                      f'echo "$GATE_LOCK_FD" > "{side}/fd.tmp"\nmv "{side}/fd.tmp" "{side}/fd"\n'
-                     'sleep 1\n')
+                     'sleep 1\n', encoding='utf-8')
     killed = subprocess.Popen(["sh", "scripts/check.sh"], cwd=project,
                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     deadline = time.monotonic() + limit(60)
@@ -841,7 +896,7 @@ def posix_lock_cases(project, side, build, own_lock, gate):
     marker = (side / "holder").read_text(encoding='utf-8')
     if (project / ".git/check.lock").read_text(encoding='utf-8') != marker:
         raise RuntimeError("the killed gate's pid was not left in the lock file")
-    build.write_text("false\n")
+    build.write_text("false\n", encoding='utf-8')
     run(["sh", "scripts/check.sh"], project, expected=1, timeout=60,
         reason="FAIL [env]: GATE_BUILD_CMD_OVERRIDE is set",
         env=dict(os.environ, GATE_SELFTEST_NESTED=marker, GATE_LOCK_HELD=own_lock,
@@ -849,7 +904,7 @@ def posix_lock_cases(project, side, build, own_lock, gate):
                  GATE_BUILD_CMD_OVERRIDE="true"))
     passed("variables copied out of a gate killed with SIGKILL are refused")
     # Two gate runs sharing one build directory: the second must wait, not race.
-    build.write_text(f'mkdir "{side}/build" && sleep 2 && rmdir "{side}/build"\n')
+    build.write_text(f'mkdir "{side}/build" && sleep 2 && rmdir "{side}/build"\n', encoding='utf-8')
     pair = [subprocess.Popen(["sh", "scripts/check.sh"], cwd=project,
                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                              text=True) for _ in range(2)]
@@ -862,7 +917,7 @@ def posix_lock_cases(project, side, build, own_lock, gate):
     # none of three waiters builds until it exits. The build directory is the proof:
     # a waiter whose build overlapped the orphaned one fails on "File exists".
     build.write_text(f'mkdir "{side}/build" || exit 1\nsleep "${{HOLD:-1}}"\n'
-                     f'rmdir "{side}/build"\n')
+                     f'rmdir "{side}/build"\n', encoding='utf-8')
     killed = subprocess.Popen(["sh", "scripts/check.sh"], cwd=project,
                               env=dict(os.environ, HOLD="6"),
                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -894,7 +949,7 @@ def posix_lock_cases(project, side, build, own_lock, gate):
         lock.unlink(missing_ok=True)
     # A live holder: a bounded wait gives up with its own code, and only a run
     # given this checkout's own lock path skips the lock.
-    build.write_text("true\n")
+    build.write_text("true\n", encoding='utf-8')
     with open(lock, "a") as held:
         fcntl.flock(held, fcntl.LOCK_EX)
         run(["sh", "scripts/check.sh"], project, expected=75, reason="NOT RUN [lock]",
@@ -953,7 +1008,7 @@ def posix_lock_cases(project, side, build, own_lock, gate):
         "#!%s\nimport os, sys\nargs = sys.argv[1:]\n"
         "if '-c' in args:\n"
         "    args[args.index('-c') + 1] = %r + args[args.index('-c') + 1]\n"
-        "os.execv(%r, [%r] + args)\n" % (sys.executable, prelude, sys.executable, sys.executable))
+        "os.execv(%r, [%r] + args)\n" % (sys.executable, prelude, sys.executable, sys.executable), encoding='utf-8')
     (fake / "python3").chmod(0o755)
     fake_path = str(fake) + os.pathsep + os.environ["PATH"]
     run(["sh", "scripts/check.sh"], project, reason="CHECK: PASS", timeout=60,
@@ -977,7 +1032,7 @@ def posix_lock_cases(project, side, build, own_lock, gate):
         raise RuntimeError("the PATH without python3 still finds one")
     if 'toolchain_path=""' not in gate.read_text(encoding='utf-8'):
         raise RuntimeError("the synthetic project's toolchain_path line was not found")
-    gate.write_text(gate.read_text(encoding='utf-8').replace('toolchain_path=""', f'toolchain_path="{tc}"'))
+    gate.write_text(gate.read_text(encoding='utf-8').replace('toolchain_path=""', f'toolchain_path="{tc}"'), encoding='utf-8')
     run(["sh", "scripts/check.sh"], project, reason="CHECK: PASS", timeout=60,
         env=dict(os.environ, PATH=no_python))
     passed("a python3 found only through toolchain_path takes the gate lock")
@@ -1006,7 +1061,7 @@ def unit(name, self_test, timing_file=None):
         if timing_file:
             rows = ["%7.1f s    %s" % (seconds, label) for label, seconds in TIMES]
             rows += ["%7.1f s    test %s" % item for item in sorted(SLOWEST, reverse=True)[:10]]
-            Path(timing_file).write_text("".join(row + "\n" for row in rows))
+            Path(timing_file).write_text("".join(row + "\n" for row in rows), encoding='utf-8')
 
 
 def run_units(units, timing=False, parallel=None):

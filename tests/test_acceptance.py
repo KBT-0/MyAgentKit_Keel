@@ -51,6 +51,38 @@ class AcceptanceTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, 'is not Python 3.10 syntax'):
                 gate.check_syntax(Path(tmp))
 
+    def test_the_shell_lint_refuses_echo_of_a_variable_and_gnu_mktemp(self):
+        refused = ['echo "$x"', 'echo $x', 'x=1; echo "a $x b" >&2', 'echo -n "$x"',
+                   't=$(mktemp -p "$d")', 'mktemp --suffix .txt', 'mktemp --tmpdir x.XXXXXX']
+        allowed = ['# echo "$x"', "echo '$x'", 'echo "no variable"', "printf '%s\\n' \"$x\"",
+                   'echo \\"in a string $x\\"', 't=$(mktemp "${TMPDIR:-/tmp}/x.XXXXXX")', 'mktemp -d']
+        for line in refused:
+            with self.subTest(line=line):
+                self.assertEqual([number for number, _ in gate.shell_lint(line + '\n')], [1])
+        for line in allowed:
+            with self.subTest(line=line):
+                self.assertEqual(gate.shell_lint(line + '\n'), [])
+
+    def test_shell_portability_fails_on_a_lint_hit_and_on_a_bashism(self):
+        with tempfile.TemporaryDirectory() as tmp, contextlib.redirect_stdout(io.StringIO()) as out:
+            script = Path(tmp) / 'a.sh'
+            script.write_text('#!/bin/sh\nx=1\nprintf \'%s\\n\' "$x"\n', encoding='utf-8')
+            gate.shell_portability(Path(tmp))
+            script.write_text('#!/bin/sh\nx=1\necho "$x"\n', encoding='utf-8')
+            with self.assertRaisesRegex(RuntimeError, r'a\.sh:3: `echo` of a variable'):
+                gate.shell_portability(Path(tmp))
+            script.write_text('#!/bin/sh\nx=1\nif [[ $x = 1 ]]; then :; fi\n', encoding='utf-8')
+            if shutil.which('shellcheck'):
+                with self.assertRaisesRegex(RuntimeError, r'SC3010'):
+                    gate.shell_portability(Path(tmp))
+            with unittest.mock.patch.object(gate.shutil, 'which', return_value=None):
+                gate.shell_portability(Path(tmp))
+                self.assertIn('NOT RUN: shellcheck -s sh', out.getvalue())
+                with unittest.mock.patch.dict(os.environ, CI='true'), \
+                        unittest.mock.patch.object(gate.sys, 'platform', 'linux'), \
+                        self.assertRaisesRegex(RuntimeError, 'shellcheck is not on PATH'):
+                    gate.shell_portability(Path(tmp))
+
     def test_the_case_lint_passes_an_argument_case_on_this_host(self):
         # On Windows a bare `bash` is WSL's launcher, and a text pipe writes CRLF: either could make
         # this argument a finding. The bash used there is Git's, beside the gate's sh.
