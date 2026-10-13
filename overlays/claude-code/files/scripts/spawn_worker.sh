@@ -124,7 +124,11 @@ done
 [ -n "$windows" ] || ! tmux has-session -t "=$name" 2>/dev/null || die "tmux session '$name' already exists"
 
 run=""
-trap '[ -z "$run" ] || rm -f -- "$run"' 0
+cleanup() { [ -z "$run" ] || rm -f -- "$run" || :; }
+trap 'cleanup' 0
+trap 'trap - 0; cleanup; exit 129' HUP
+trap 'trap - 0; cleanup; exit 130' INT
+trap 'trap - 0; cleanup; exit 143' TERM
 # Reserve and validate the script before creating a worktree. An explicit template
 # honours TMPDIR on BSD and GNU; resolve relative paths before tmux changes directory.
 if [ -z "$windows" ]; then
@@ -374,8 +378,9 @@ fi
 # removed worktree, say) is gone, whatever -c says.
 # The reserved script removes itself; tmux receives two plain words for its default shell.
 printf '%s\n' 'rm -f -- "$0"' "cd $(q "$dir") && exec $unmark $cmd" > "$run" || { rm -f -- "$run"; die "cannot write the session's script: $run"; }
-tmux new-session -d -s "$name" -c "$dir" -x 200 -y 50 "sh $run" || { rm -f -- "$run"; die "tmux could not start '$name'"; }
-run="" # The launched script now owns its removal.
+# Transfer ownership before tmux can accept; an interrupted parent must not delete it.
+launch_run=$run; run=""
+tmux new-session -d -s "$name" -c "$dir" -x 200 -y 50 "sh $launch_run" || { rm -f -- "$launch_run" || :; die "tmux could not start '$name'"; }
 
 # Wait for the input line: the TUI shows its prompt arrow at the start of a line once ready
 # (v2.1.285 follows the arrow with a NO-BREAK space, so the match is on the arrow alone)

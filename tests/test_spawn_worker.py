@@ -12,6 +12,8 @@ import io
 import os
 from pathlib import Path
 import subprocess
+import shutil
+from contextlib import contextmanager
 import sys
 import tempfile
 import unittest
@@ -164,11 +166,44 @@ def shq(value):
     return "'" + value.replace("'", "'\\''") + "'"
 
 
+@contextmanager
+def safe_tmux_scratch():
+    """Use physical allowlisted scratch paths, independently of checkout spelling."""
+    allowed = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_./-'
+    def safe(folder):
+        return all(c in allowed for c in SpawnWorkerTests.physical(Path(folder) / 'run.sh'))
+    folder = tempfile.mkdtemp(prefix='kit-tmux-')
+    if not safe(folder):
+        shutil.rmtree(folder)
+        folder = None
+        for base in (ROOT, Path(tempfile.gettempdir()) / 'kit-safe'):
+            if not safe(base):
+                continue
+            base.mkdir(parents=True, exist_ok=True)
+            candidate = tempfile.mkdtemp(prefix='kit-tmux-', dir=base)
+            if safe(candidate):
+                folder = candidate
+                break
+            shutil.rmtree(candidate)
+        if folder is None:
+            raise AssertionError('Cannot allocate tmux fixture: system temp and scratch fallbacks are outside the path allowlist')
+    try:
+        yield folder
+    finally:
+        shutil.rmtree(folder)
+
+# The stub accepts a launch, signals its parent, and leaves consumption to the test.
+ACCEPT_THEN_TERM = '#!/bin/sh\n[ "$1" = new-session ] || exit 1\nfor arg do command=$arg; done\nprintf "%s\\n" "$command" > "$SPAWN_STATE/accepted"\nkill -TERM "$PPID"\n/bin/sleep .1\nexit 0\n'
+# Interrupt after mktemp, during validation, before any launch has been accepted.
+PRELAUNCH_TERM = '#!/bin/sh\nkill -TERM "$PPID"\n/bin/sleep .1\nexit 1\n'
+
+
 WINDOWS = os.name == 'nt'
 # The cases that run on native Windows (issue #56). Every other case drives the tmux path,
 # which native Windows never takes, through Python stubs whose `sh -c` command line Git for
 # Windows parses again (an apostrophe is a quote there): there each prints NOT RUN.
 ON_WINDOWS = {'test_a_missing_or_failing_watcher_stops_the_spawn', 'test_a_worker_without_its_model_or_effort_is_refused',
+              'test_term_after_tmux_accepts_preserves_the_panes_script',
               'test_unsafe_names_are_refused_without_changing_worker_files',
               'test_missing_or_unreadable_brief_is_refused_before_any_session',
               'test_no_error_message_echoes_a_control_character',
@@ -242,6 +277,32 @@ class SpawnWorkerTests(unittest.TestCase):
     def tmux_log(self):
         path = self.state / 'tmux.log'
         return path.read_text() if path.exists() else ''
+
+    def test_term_after_tmux_accepts_preserves_the_panes_script(self):
+        (self.bin / 'tmux').write_text(ACCEPT_THEN_TERM, newline='\n')
+        tmpdir = self.tmp / 'session-temp'
+        tmpdir.mkdir()
+        result = self.spawn('accepted', str(self.brief), TMPDIR=str(tmpdir))
+        self.assertEqual(len(list(tmpdir.iterdir())), 1, 'parent deleted the accepted script')
+        self.assertEqual(result.returncode, 143, result.stdout + result.stderr)
+        pane = subprocess.run(['sh', '-c', (self.state / 'accepted').read_text()],
+                              cwd=self.cwd, env=self.base_env(), capture_output=True, text=True, timeout=20)
+        self.assertEqual(pane.returncode, 0, pane.stdout + pane.stderr)
+        self.assertIsNotNone(self.launched(), 'the delayed pane could not start')
+        self.assertEqual(list(tmpdir.iterdir()), [])
+
+    def test_dash_term_before_launch_removes_the_reserved_script(self):
+        (self.bin / 'git').write_text(PRELAUNCH_TERM, newline='\n')
+        (self.bin / 'git').chmod(0o755)
+        tmpdir = self.tmp / 'session-temp'
+        tmpdir.mkdir()
+        result = subprocess.run(['dash', str(SCRIPT), 'interrupted', str(self.brief),
+                                 '--model', 'm', '--effort', 'high', '--worktree'],
+                                cwd=self.cwd, env=dict(self.base_env(), TMPDIR=str(tmpdir)),
+                                capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 143, result.stdout + result.stderr)
+        self.assertEqual(list(tmpdir.iterdir()), [])
+        self.assertIsNone(self.launched())
 
     def test_unsafe_tmpdir_is_refused_before_tmux_can_expand_it(self):
         for folder in ('temp$(touch INJECTED)', 'temp`touch INJECTED`', 'temp$REVIEW_SEGMENT'):
@@ -835,14 +896,9 @@ class WorkerStateHookTests(unittest.TestCase):
 
 class TmuxStubTests(unittest.TestCase):
     def test_tmux_stub_reparses_the_final_command_in_the_start_directory(self):
-        # Root the fixture in the checkout, independently of the host's temp folder.
-        with tempfile.TemporaryDirectory(dir=ROOT) as folder:
+        # A checkout with spaces must not force a skip when system scratch is safe.
+        with patch(__name__ + '.ROOT', ROOT / 'checkout space'), safe_tmux_scratch() as folder:
             state = Path(folder)
-            safe_path = SpawnWorkerTests.physical(state / 'run.sh')
-            if any(c not in 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_./-'
-                   for c in safe_path):
-                sys.stderr.write('\nNOT RUN: %s (fixture path outside the tmux allowlist)\n' % self.id())
-                self.skipTest('fixture path outside the tmux allowlist')
             for segment in ('literal$REVIEW_SEGMENT', 'literal$($REVIEW_PAYLOAD)',
                             'literal`$REVIEW_BACKQUOTE`'):
                 with self.subTest(segment=segment):

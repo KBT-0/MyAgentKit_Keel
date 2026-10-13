@@ -100,10 +100,20 @@ took=""
 mkdir -- "$spawn_lock" 2>/dev/null || { [ -n "$resume" ] && rm -- "$spawn_lock/$name" 2>/dev/null && took=1; } ||
   die "spawn in progress or an unrecorded launch at $spawn_lock; retry after it ends. An unrecorded launch has its worker's name inside: answer that worker with spawn_codex.sh NAME ANSWER_FILE ... --resume SESSION_ID, which records it and takes the reservation over; once its tab or tmux session has ended, or its id is written to NAME.session, release it: rm -r -- $(q "$spawn_lock")"
 spawn_launched=""; spawn_recorded=""; run=""
-trap '[ -z "$run" ] || rm -f -- "$run"; if [ -n "$spawn_recorded" ] || { [ -z "$spawn_launched" ] && [ -z "$took" ]; }; then rmdir -- "$spawn_lock"; else : > "$spawn_lock/$name"; printf "spawn_codex: unrecorded launch of %s; reservation kept at %s. Answer it with --resume SESSION_ID, which records it and takes the reservation over; once its tab or tmux session has ended, or its id is written to %s, release it: rm -r -- %s\n" "$name" "$spawn_lock" "${spawn_lock%/*}/$name.session" "$(q "$spawn_lock")" >&2; fi' 0
-trap 'exit 129' HUP
-trap 'exit 130' INT
-trap 'exit 143' TERM
+cleanup() {
+  [ -z "$run" ] || rm -f -- "$run" || :
+  # Reservation cleanup must run even when unlinking the temporary script fails.
+  if [ -n "$spawn_recorded" ] || { [ -z "$spawn_launched" ] && [ -z "$took" ]; }; then
+    rmdir -- "$spawn_lock" || :
+  else
+    : > "$spawn_lock/$name" || :
+    printf "spawn_codex: unrecorded launch of %s; reservation kept at %s. Answer it with --resume SESSION_ID, which records it and takes the reservation over; once its tab or tmux session has ended, or its id is written to %s, release it: rm -r -- %s\n" "$name" "$spawn_lock" "${spawn_lock%/*}/$name.session" "$(q "$spawn_lock")" >&2 || :
+  fi
+}
+trap 'cleanup' 0
+trap 'trap - 0; cleanup; exit 129' HUP
+trap 'trap - 0; cleanup; exit 130' INT
+trap 'trap - 0; cleanup; exit 143' TERM
 [ -n "$windows" ] || ! tmux has-session -t "=$name" 2>/dev/null ||
   die "tmux session '$name' still runs; a session is resumed or replaced only after it ended"
 
@@ -278,9 +288,10 @@ else
   printf '%s\n' 'rm -f -- "$0"' "cd $(q "$dir") && exec $unmark KIT_WORKER_STARTED=$(q "$start") KIT_WORKER_STALE=$(q "$stale") KIT_WORKER_EXIT=$(q "$exited") KIT_WORKER_RESUME=$(q "$resume") $kit_python $(q "$cworker") $(q "$cquestion") $(q "$cresult") -- sh -c $(q "exec $cmd")" > "$run" ||
     { rm -f -- "$run"; die "cannot write the session's script: $run"; }
   spawn_launched=1
-  tmux new-session -d -s "$name" -c "$dir" -x 200 -y 50 "sh $run" ||
-    { spawn_launched=""; rm -f -- "$run"; die "tmux could not start '$name'"; }
-  run="" # The launched script now owns its removal.
+  # Transfer ownership before tmux can accept; an interrupted parent must not delete it.
+  launch_run=$run; run=""
+  tmux new-session -d -s "$name" -c "$dir" -x 200 -y 50 "sh $launch_run" ||
+    { spawn_launched=""; rm -f -- "$launch_run" || :; die "tmux could not start '$name'"; }
   where="(tmux attach -t $name to watch)"; view="tmux session"
 fi
 

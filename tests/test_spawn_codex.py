@@ -13,6 +13,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 from concurrent.futures import ThreadPoolExecutor
 
 import test_spawn_worker
@@ -291,6 +292,56 @@ class SpawnCodexTests(unittest.TestCase):
                                   capture_output=True, text=True, check=True).stdout
         self.assertEqual(branches, '')
         self.assertEqual(list(tmpdir.iterdir()), [])
+
+    def test_term_after_tmux_accepts_preserves_the_panes_script(self):
+        (self.bin / 'tmux').write_text(test_spawn_worker.ACCEPT_THEN_TERM, newline='\n')
+        tmpdir = self.tmp / 'session-temp'
+        tmpdir.mkdir()
+        result = self.spawn('accepted', str(self.brief), '--model', 'm', '--effort', 'high',
+                            tmux=True, TMPDIR=str(tmpdir))
+        self.assertEqual(result.returncode, 143, result.stdout + result.stderr)
+        self.assertEqual(len(list(tmpdir.iterdir())), 1, 'parent deleted the accepted script')
+        lock = self.repo / '.myagentkit/workers/spawn.lock'
+        self.assertTrue((lock / 'accepted').exists(), 'accepted launch lost its recovery reservation')
+        env = dict(os.environ, PATH=f'{self.bin}{os.pathsep}{os.environ["PATH"]}',
+                   SPAWN_STATE=str(self.state), CODEX_HOME=str(self.home))
+        pane = subprocess.run(['sh', '-c', (self.state / 'accepted').read_text()], cwd=self.repo,
+                              env=env, capture_output=True, text=True, timeout=20)
+        self.assertEqual(pane.returncode, 0, pane.stdout + pane.stderr)
+        self.assertEqual(len(self.runs()), 1, 'the delayed pane could not start')
+        self.assertEqual(list(tmpdir.iterdir()), [])
+
+    def test_unlink_failure_does_not_prevent_reservation_release(self):
+        (self.bin / 'rm').write_text('#!/bin/sh\necho injected-unlink-failure >&2\nexit 1\n', newline='\n')
+        (self.bin / 'rm').chmod(0o755)
+        tmpdir = self.tmp / 'session-temp'
+        tmpdir.mkdir()
+        result = self.spawn('unlink', str(self.brief), '--model', 'm', '--effort', 'high',
+                            '--result', '../outside.md', tmux=True, TMPDIR=str(tmpdir))
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('injected-unlink-failure', result.stderr)
+        self.assertEqual(len(list(tmpdir.iterdir())), 1, 'unlink failure was not exercised')
+        self.assertFalse((self.repo / '.myagentkit/workers/spawn.lock').exists())
+        self.assertEqual(self.runs(), [])
+
+    def test_dash_term_before_launch_removes_script_and_reservation(self):
+        if WINDOWS:
+            sys.stderr.write('\nNOT RUN: %s (dash signal handling, POSIX only)\n' % self.id())
+            return
+        (self.bin / 'uname').write_text('#!/bin/sh\necho Linux\n', newline='\n')
+        (self.bin / 'python3').write_text(test_spawn_worker.PRELAUNCH_TERM, newline='\n')
+        (self.bin / 'python3').chmod(0o755)
+        tmpdir = self.tmp / 'session-temp'
+        tmpdir.mkdir()
+        env = dict(os.environ, PATH=f'{self.bin}{os.pathsep}{os.environ["PATH"]}',
+                   SPAWN_STATE=str(self.state), CODEX_HOME=str(self.home), TMPDIR=str(tmpdir))
+        result = subprocess.run(['dash', str(SCRIPT), 'interrupted', str(self.brief),
+                                 '--model', 'm', '--effort', 'high'], cwd=self.repo, env=env,
+                                capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 143, result.stdout + result.stderr)
+        self.assertEqual(list(tmpdir.iterdir()), [])
+        self.assertFalse((self.repo / '.myagentkit/workers/spawn.lock').exists())
+        self.assertEqual(self.runs(), [])
 
     def test_later_validation_failure_removes_the_reserved_session_script(self):
         if WINDOWS:
@@ -858,14 +909,10 @@ pathlib.Path(%r).write_text('a concurrently published report\\n')
 
 class TmuxStubTests(unittest.TestCase):
     def test_tmux_stub_reparses_the_final_command_in_the_start_directory(self):
-        # Root the fixture in the checkout, independently of the host's temp folder.
-        with tempfile.TemporaryDirectory(dir=ROOT) as folder:
+        # A checkout with spaces must not force a skip when system scratch is safe.
+        with patch(__name__ + '.ROOT', ROOT / 'checkout space'), \
+                patch.object(test_spawn_worker, 'ROOT', ROOT), test_spawn_worker.safe_tmux_scratch() as folder:
             state = Path(folder)
-            safe_path = test_spawn_worker.SpawnWorkerTests.physical(state / 'run.sh')
-            if any(c not in 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_./-'
-                   for c in safe_path):
-                sys.stderr.write('\nNOT RUN: %s (fixture path outside the tmux allowlist)\n' % self.id())
-                self.skipTest('fixture path outside the tmux allowlist')
             for segment in ('literal$REVIEW_SEGMENT', 'literal$($REVIEW_PAYLOAD)',
                             'literal`$REVIEW_BACKQUOTE`'):
                 with self.subTest(segment=segment):
