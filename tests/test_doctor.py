@@ -29,7 +29,7 @@ import claude_bridge  # noqa: E402
 
 # A ready reviewer CLI: its --help names every flag the review passes (doctor reads it).
 _flags = sorted({part for part in claude_bridge.claude_command(
-    'claude', __import__('argparse').Namespace(mode='review', model='claude-x', effort='low',
+    'claude', __import__('argparse').Namespace(mode='review', model='claude-x', effort='low', repo=ROOT,
                                                max_turns=1, max_budget_usd=1.0), True)[0]
     if part.startswith('--')})
 CLI_STUB = '#!/bin/sh\necho "%s"\n' % ' '.join(_flags)
