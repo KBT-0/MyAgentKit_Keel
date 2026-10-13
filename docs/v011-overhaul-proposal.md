@@ -50,7 +50,7 @@ satırıyla seçer; yeni alan yok.
 
 | Katman | Ne girer | Review |
 |---|---|---|
-| low (trivial) | yalnız belge, yalnız test, tek dosya, risk listesi dışı | LLM review yok; gate + sahibin ya da brief'in manuel kontrolü (bugünkü "What counts as a risky diff" kuralı zaten bu; uygulamada aşılıyordu) |
+| low (trivial) | yalnız belge, yalnız test, tek dosya, risk listesi dışı | gate + **bir** hafif reviewer (medium effort, daraltılmış Important tanımı, nit tavanı); emsal: Cloudflare trivial = 2 hafif agent [7], Anthropic docs repo'da review'u daraltır, kaldırmaz [2] |
 | medium (lite) | risk listesindeki alanlara dokunan ama gate/hook/review araçlarına dokunmayan kod | **bir** reviewer, **bir** geçiş, yazarın karşı tarafı; yalnız High bloklar |
 | high (full) | gate, hook, check script, review araçları, STATE helper, dosya silen/taşıyan mekanizma, eşzamanlılık | **iki** reviewer **aynı anda** (zaten WORKFLOW "The lead's steps" 2. adım), **dar prompt'larla**: biri taşınabilirlik/edge (Windows, locale, mktemp, trap, symlink), biri mantık/durum/test bütünlüğü; lead birleştirir ve dedup eder |
 
@@ -74,8 +74,9 @@ daha kısa prompt).
 `core/docs/REVIEW_RUNNING.md`, `core/docs/HANDOFF.md`, `core/AGENTS.md`, `core/docs/WORKFLOW.md`
 ("Review rounds"), `core/scripts/claude_bridge.py`, `core/scripts/codex_bridge.py` (prompt).
 
-**Karar.** Katmanlar kabul mü? high katmanın tanımı (gate/hook/review/STATE/silme/eşzamanlılık)
-yeterli mi, proje başına `{{RISKY_AREAS}}` ile genişler.
+**Karar (sahip, 13 Ekim).** Üç katman kabul; low katmanda LLM review sıfır değil, tek hafif
+reviewer. high tanımı (gate/hook/review/STATE/silme/eşzamanlılık) kabul, proje başına
+`{{RISKY_AREAS}}` ile genişler. Uygulama onayı ayrı.
 
 ### B. Blocking eşiği: High bloklar, Medium karar ister, Low dosyalanır
 
@@ -101,8 +102,8 @@ Karşılığı: D ile sensor'a giren sınıflar artık reviewer'a değil teste d
 bir taşınabilirlik bulgusu reviewer prompt'unda **High** sayılır (E'deki "Important tanımı").
 
 **Efor.** K. **Dosyalar.** `core/docs/REVIEW_GATE.md`, `core/AGENTS.md`, iki adaptörün prompt
-metni. **Karar.** Sahibin 2026-10-13 kararı ("Low'lar yine fix edilir") v0.11'in süren işine
-aitti; ileriye dönük kural için yeni karar gerekir. Önerim: Low = dosyala.
+metni. **Karar (sahip, 13 Ekim).** Kabul: ileriye dönük kural High bloklar, Medium koşullu
+fix, Low dosyalanır. Süren v0.11 işi için eski "Low'lar fix edilir" kararı geçerli kalır.
 
 ### C. Yakınsama kuralı: bir etiket altında en çok iki tur, ikinci tur daralmış kapsamla
 
@@ -133,8 +134,8 @@ kelimesiyle açılır; D'nin sensor'ları tekrar eden sınıfı zaten yakalar.
 
 **Efor.** K (+O için dispatcher limiti). **Dosyalar.** `core/docs/REVIEW_RUNNING.md`,
 `core/docs/WORKFLOW.md`, `core/docs/REVIEW_GATE.md`, adaptör prompt'ları, (`review_dispatch.py`).
-**Karar.** İki tur sınırı mı, üç mü? Dispatcher sınırı kodda mı, yalnız belgede mi (rules-that-
-enforce: kodda olmayan kural ricadır; önerim kodda).
+**Karar (sahip, 13 Ekim).** İki tur; sınır `review_dispatch.py`'de kod olarak (üçüncü tur
+`exit 2`, yalnız `REVIEW_ROUND_EXCEPTION=neden` ile açılır, kayıtlı). Routing kural 4 kalkar.
 
 ### D. Verification-first: tekrar eden bulgu sınıfları deterministik sensor olur
 
@@ -177,35 +178,56 @@ directions"). Windows'ta `shellcheck` kurulu değilse yalnız CI'da koşar.
 **Karar.** Beş sensor'un sırası ve hangilerinin v0.11'e (bence 1 ve 2), hangilerinin v0.12'ye
 kalacağı.
 
-### E. Reviewer prompt'una gürültü kontrolü: "What NOT to flag", nit tavanı, Important tanımı, kanıt çıtası
+### E. Reviewer prompt'u yeniden yazılır: alt eşik, severity tanımı, "Do not report", Low tavanı, tur 2 daraltma, görev/risk bağlamı (kaynak: `docs/research-review-prompts-and-rules.md`, bundan sonra R)
 
-**Ne değişir.** İki adaptörün sabit prompt'una ve `REVIEW_GATE.md`'ye dört kural:
-- **What NOT to flag:** D'nin sensor'ladığı sınıflar; stil/format (lint CI'da); diff dışı önceden
-  var olan sorunlar ("Pre-existing" etiketiyle ayrı listelenir, verdict'e girmez); tasarım
-  dışlamaları (zaten var).
-- **Nit tavanı:** Low en çok 5 madde + "ve N benzeri"; docs değişikliğinde Low en çok 3.
-- **Important (High) tanımı projeye göre:** bu kit için "sensor'u olmayan bir platformda yanlış
-  davranış, veri kaybı, gate'in sessiz geçmesi, güvenlik sınırı". Bir docs repo'da daraltılır
-  (yalnız yanlış ya da çelişkili talimat).
-- **Kanıt çıtası (var olanı sertleştirme):** REASONED bir Medium da reproduce komutunu yazar;
-  yazamıyorsa Low'a düşer. "Olabilir/muhtemelen" ile başlayan bulgu verdict'e sayılmaz.
-- **Harness'i düzelt, artefact'ı değil:** aynı sınıftan bulgu iki ayrı review'da çıkarsa lead
-  bunu D'ye (sensor) ya da E'ye ("What NOT to flag" / brief kuralı) işler; üçüncü kez LLM
-  tarafından bulunması bir kit hatasıdır (RESEARCH_LOG'a girer).
+**Ne değişir.** Bugünkü prompt "Report EVERY finding you can establish in this pass" ile başlar;
+yayınlanmış hiçbir reviewer prompt'u böyle başlamaz (R §1-1: Codex "prefer outputting no findings"
+[W5], Anthropic plugin "not certain → do not flag" [W3], ECC "a clean review is a valid review"
+[W16]). İki köprüye tek paylaşılan sabit (R §4.1 taslağı, ≤ 350 kelime):
+- **Alt eşik + kanıt üçlüsü:** bulgu = dosya/satır + tetikleyen girdi/durum + yanlış sonuç; üçü
+  yoksa Low'a düşer ya da yazılmaz [W16][W5][W1].
+- **Severity tanımı** bir cümleyle, bu kit için (Critical = veri kaybı, sessiz gate geçişi,
+  güvenlik sınırı, sensor'suz platformda yanlış davranış; High = reproduce/caller ile izlenen
+  yanlış davranış; Medium = adlandırılabilen girdiyle gerçek defect; Low = kalan) [W5][W7][W16].
+- **"Do not report" listesi:** pre-existing (ayrı başlık, verdict'e girmez [W1]); check.sh/lint'in
+  zorladıkları; stil/ad/refactor; olasılıksız ön koşullu teorik risk; "consider X"; dispositions'taki
+  tasarım dışlamaları [W7][W3][W1].
+- **Low tavanı 5 + "plus N similar"** [W1].
+- **Tur ≥ 2:** önceki Critical/High için fixed/not + kanıt; yeni yalnız Critical/High [W1][W7]
+  (C ile aynı).
+- **Görev/risk/odak satırları** prompt'a girer: `--task-file` wrapper'dan geçer, `REVIEW_RISK`,
+  `REVIEW_FOCUS` env (A'nın dar reviewer'ı burada) [W2][W7].
+- **"Fix sketch" zorunluluğu kalkar** (açıklama+düzeltme isteyen prompt yanlış-ret oranını
+  yükseltir [W22]; Codex "Do not generate a PR fix" [W5]).
+- **Dispositions satır biçimi** tanımlanır: `<id> fixed|disproved|deferred|wont-fix — <kanıt>`;
+  reviewer `wont-fix`/`deferred`'i Manual checks'e taşır, yeniden şiddetlendirmez [W7][W21].
+- `validate()` Low bulguyla Accept'e izin verir (Codex ile eşitlenir; I.C.2 madde 2).
 
-**Nasıl.** Prompt metni iki adaptörde ortak bir Python sabiti (bugün de öyle mi, kontrol edilir;
-değilse `review_test_support.py`'ye taşınır). Nit tavanı ve Important tanımı
-`REVIEW_GATE.md`'de `{{REVIEW_IMPORTANT}}` benzeri bir yer tutucu değil, düz metin; proje
-setup'ta kendi listesini yazar.
+**Nasıl.** Prompt sabitleri tek modüle (`review_prompt.py`), iki köprü ve plugin kopyası aynı
+baytları taşır (`package --check`). Test fixture'ları güncellenir. **Risk.** Recall düşer; karşılığı
+D (sensor'lar) ve F (ölçüm: precision görülmeden ikinci prompt değişikliği yok, Cursor [W8]).
+Karşı kanıt R §3: Cursor "aggressive" prompt + validator katmanı; bizde validator lead'dir.
+**Efor.** O (prompt + fixture + wrapper'a üç env/arg). **Dosyalar.** `core/scripts/claude_bridge.py`,
+`codex_bridge.py`, `review.sh`, `review_dispatch.py`, testler, plugin kopyası.
+**Karar.** R §4.1 taslağı temel alınsın mı; severity tanım metni; Low tavanı sayısı.
 
-**Neden.** §1.1 ([1] boşluk bulması istenen reviewer bulgu üretir; [2] REVIEW.md: nit cap,
-Important daraltma, verification bar, re-review convergence), [7] "en çok gürültü azaltan şey
-'What NOT to flag'", [27] judgment'ı yürütülebilir kanıta bağla, [21] insan on the loop, §5-E.
+### P. Review kural dosyaları 8–9 dosyadan 2'ye iner (kaynak: R §4.2, envanter I)
 
-**Risk.** Düşük: prompt değişikliği; test `test_claude_bridge`/`test_codex_quota` prompt
-fixture'larını günceller. **Efor.** K + O (prompt + fixture). **Dosyalar.** adaptörler,
-`core/docs/REVIEW_GATE.md`, `core/docs/HANDOFF.md`. **Karar.** Nit tavanı sayıları; Important
-tanımı metni.
+**Ne değişir.** Review ile ilgili ~14 000 kelime, 8–9 dosya; kapanış kuralı 8 yerde kopya; tur
+limiti üç dosyada üç cevap; 12 çelişki (I.C). Hedef: `REVIEW_GATE.md` ≤ 600 kelime (riskli diff
+katmanları A, roller, verdict eşiği B, tur sınırı C, dispositions biçimi, kapanış kuralı **bir
+kez**) ve `REVIEW_RUNNING.md` ≤ 500 kelime (komut, env, limitler, fallback, arşiv). AGENTS.md'de
+üç satır + işaretçi; WORKFLOW'da yalnız routing tablosu; SKILL.md ve cross-review.md işaretçi
+[W19]. 12 çelişkinin her biri tek cevapla kapanır (R §4.2 tablosu).
+
+**Neden.** [W1] "a long REVIEW.md dilutes the rules that matter most"; [W13] Copilot 4 000
+karakter sınırı, "very long instruction files may result in some instructions being overlooked";
+[W7] 200 satır üstü AGENTS.md "context bloat"; resmi örnek REVIEW.md'ler 90–110 kelime [W1][W14];
+P raporu §1 kısa harita dosyaları; living-docs-never-bloat (sahip kuralı). **Risk.** Silinen bir
+cümlenin bir vakayı koruduğu sonradan anlaşılır; karşılığı: envanter I.B'deki 89 kuralın her biri
+için "kalır / birleşir / silinir" satırı, silinenlerin gerekçesi RESEARCH_LOG'a. **Efor.** K
+(belge; lead yazar). **Dosyalar.** yukarıdakiler. **Karar.** Hedef kelime sınırları; kural
+envanterinin satır satır kararı sahiple mi, lead'in önerisi üzerine toplu onay mı.
 
 ### F. Ölçüm: bulgu kabul oranı (precision) kayda girer; eşik altı reviewer konfigürasyonu kapanır; yeni konfigürasyon shadow'da başlar
 
@@ -408,12 +430,10 @@ emsalsiz = kötü işaret, savunulmaz. Her biri için gözlenen pratik ve öneri
 | Web isteğinde PII yasağı | Vendor gizlilik ayarları; kit kuralı olarak yok | **Koru** (güvenlik; sahip kuralı) |
 | Spawn script'inin model+effort'suz brief'i reddetmesi | superpowers yalnız uyarır [28] | **Koru**: deterministik kontrol prose uyarıdan iyi (P §4, Anthropic "hooks deterministic"); emsal yok ama ilke emsalli |
 
-**Önce karar gereken ön soru.** "Emsalsiz = kötü" sözü sahibin iki eski kuralıyla çarpışıyor:
-"daha az review önerme, hızlandır" (review-speed-not-less-review) ve "canlı dosyalar şişmesin,
-Done'lar silinsin" (living-docs-never-bloat). P raporu "emsal yok, yanlış değil" dedi; incelenen
-kitler birkaç aylık, emsal yokluğu alanın yeniliğinden de gelebilir. Tablo bu yüzden kaldırma
-değil **gözlenen alternatif** sunar; sahip önce kuralın kalıcı olup olmadığını ve hangi eski
-kuralın geri çekildiğini söyler. **Karar.** Sahibin, önce ön soru, sonra satır satır.
+**Karar (sahip, 13 Ekim batch).** "Emsalsiz = kötü" sözü anlık yorumdu, kalıcı kural değil.
+"Daha az review önerme" ve "Done'lar silinsin" kuralları aynen kalır. Emsal yokluğu tek başına
+kaldırma gerekçesi değildir; tablonun her satırı kendi raporu ve kanıtıyla ayrı karar alır
+(satır kararları aşağıya işlenir).
 
 ## 3. Uygulama sırası (sahip onayından sonra; hiçbiri başlamadı)
 
@@ -421,7 +441,7 @@ kuralın geri çekildiğini söyler. **Karar.** Sahibin, önce ön soru, sonra s
 |---|---|---|
 | 0 | F (ölçüm) | Ölçmeden değiştirmek raporun kendi uyarısına aykırı (§4); küçük kod, hemen veri üretir |
 | 1 | A, B, C, G, H, I, J, K (politika belgeleri) | Tek belge görevi, tek oturum, tek low/medium geçiş (I'ya göre); worker değil lead yazar, çünkü kuralların gerekçesi bu dokümanda |
-| 2 | E (prompt) | Politika oturduktan sonra prompt onu söyler |
+| 2 | E (prompt) + P (kural dosyaları) | Politika oturduktan sonra prompt ve iki kısa dosya onu söyler; P'nin envanter kararı E ile aynı oturum |
 | 3 | D-1 ve D-2 (locale matrisi, shell lint) | En sık iki sınıf; gate kodu olduğundan A'nın full katmanı |
 | 4 | D-3…D-5 | v0.12 adayı; F'nin verisi sırayı değiştirebilir |
 | 5 | L | Backend dalı merge edilirken |
@@ -445,15 +465,13 @@ kuralın geri çekildiğini söyler. **Karar.** Sahibin, önce ön soru, sonra s
 
 ## 5. Sahibe sorular (cevaplananlar silinir)
 
-1. A: üç katman ve high katman tanımı kabul mü?
-2. B: ileriye dönük Low = dosyala, Medium = koşullu fix kuralı kabul mü?
-3. C: iki tur sınırı; dispatcher'da kod olarak mı?
 4. D: hangi sensor'lar v0.11'e (öneri: locale matrisi + shell lint), hangileri v0.12'ye?
 5. G: final review tek model mi (hangisi), `ultra` mı; dogfood bir gün mü?
 6. H: 2700/3600 s, üç iş tavanı, Codex medium varsayılanı kabul mü?
 7. L: `claude@NAME` ikinci model sayılsın mı (öneri: evet)?
 8. M: altı tasarruf maddesinden hangileri v0.11'e; M-1/M-3 settings değişikliği onaylı mı?
 9. N: N-2 harita dönüşümü v0.11'de mi, ölçümden (N-1) sonra mı?
-10. O: "emsalsiz = kötü" kalıcı kural mı, anlık yorum mu; kalıcıysa "daha az review önerme" ve "Done'lar silinsin" kurallarından hangisi geri çekiliyor? Sonra tablo kararları (özellikle Done trailer ve yedi mod).
+10. O: tablo satır kararları (özellikle Done trailer ve yedi mod); ön soru cevaplandı, emsal yokluğu tek başına gerekçe değil.
+10b. E: R §4.1 taslağı temel mi; severity tanım metni; Low tavanı. P: kelime sınırları; 89 kuralın satır satır kararı nasıl verilecek?
 11. Bu dokümanın kendisi commit edilsin mi (öneri: evet, `docs/` altında; onaylanan maddeler
    uygulandıkça ilgili satırı silinir, kapanınca dosya silinir: living docs never bloat)?
