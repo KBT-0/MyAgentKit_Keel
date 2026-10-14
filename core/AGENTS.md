@@ -74,8 +74,13 @@ worker.
   hung; a stopped job orphans what it started, spends quota and races the next run. A FINISHED
   worker is closed with `scripts/close_worker.sh` without asking; it refuses while its gate or
   commit runs.
+- **A bug you can fix now is fixed now.** A defect you find inside the task's module and scope
+  goes into the task's commit, not into an issue; an issue or a `docs/BACKLOG.md` line is for
+  what is out of the task's reach or what {{OWNER_NAME}} deferred.
 - No untested code enters {{TESTED_AREA}}. Write tests with or before the code;
-  `./scripts/check.sh` must PASS before you finish.
+  `./scripts/check.sh` must PASS before you finish. A test runs in its own command and its
+  result is read before a commit: never `test; git commit`, never a test piped through a
+  filter (`| grep`, `| tail`) ahead of the commit, since both hide a red result.
 - The gate is wired into git: `.githooks/pre-commit` and `.githooks/pre-merge-commit` run it and
   abort on FAIL (enable per clone: `docs/DEV_SETUP.md`, "1. Wire the commit gate"). **Agents
   never use `git commit --no-verify`** — that hatch is {{OWNER_NAME}}'s. If the gate fails,
@@ -135,6 +140,9 @@ for the session. **A question is not an order:** a question from {{OWNER_NAME}},
 model's output they paste, is answered and discussed; files change only on an explicit
 go-ahead. **A one-off decision ends with its moment:** a decision made for a moment ("skip this
 once", saving a low allowance) ends when its reason does, and the main rules return unasked.
+**A short yes to a proposed hand-off is the hand-off:** after you propose one, "go on" or a
+model name means update STATE, write the handoff and stop; new work in that session needs
+an explicit "start it here".
 
 ### STOP — pause the work and ask (rare)
 
@@ -174,3 +182,8 @@ Tone: brief and direct. {{OWNER_NAME}} wants to be told, not managed.
 One module; `./scripts/check.sh` PASS; no boundary violation; the module README matches a
 changed public API; no conflict with a DECIDED item or the phase's scope; `docs/STATE.md` updated
 with a tool+model trace; a short summary of what changed, why and which files.
+
+## Compact instructions
+
+When the conversation is compacted, by `/compact` or automatically, keep the open decisions,
+the binding rules, the changed files, the next step and {{OWNER_NAME}}'s words verbatim.

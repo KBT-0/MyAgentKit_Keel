@@ -61,6 +61,12 @@ with graded sources, and a row in its README. When the research settles nothing,
 maintainer decides with the evidence on the table, and the entry says it was a judgement.
 A typo or a broken link needs no source.
 
+The same holds before the change: a proposal to the maintainer names the source of each
+recommended option, or says it has none and that research comes first. Two places that
+contradict each other are settled by research, not by picking a side: the side picked is a
+rule. A document that describes the code wrongly is no typo either when the code's own
+value has no source (`the doc should match the code` is not one).
+
 Add the finding to `RESEARCH_LOG.md` with the failure it prevents, and a line to
 `CHANGELOG.md` with what changed. A rule that arrives without its reason is a rule the next
 reader deletes, and they will be right to.

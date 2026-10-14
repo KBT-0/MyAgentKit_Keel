@@ -477,7 +477,11 @@ Rules for whoever routes work, binding with any table:
    re-reviews go to the cheaper model (Sonnet) or a Codex worker at medium; the strongest
    model at high is for a new mechanism's or a gate change's first round only. Every brief
    names the model, the effort and the table row, because an unnamed choice drifts to the
-   expensive default.
+   expensive default. Before a batch of more than one paid run (workers, reviews, `codex
+   exec` errands), the lead tells the owner in one line how many, which model and which
+   effort, and runs them one after another unless the owner asks for parallel: the
+   allowance is a limit as real as memory (in one session, twelve parallel reviews spent
+   63% of a five-hour allowance in about 25 minutes).
 2. **The top models are the lead's pick, and only where the subscription has them.** A model
    above the strongest routine one (for example Codex Astra or Claude Fable) is never a
    default. The lead picks it for one errand when the errand needs it, without asking the
@@ -485,7 +489,10 @@ Rules for whoever routes work, binding with any table:
    plan does not, and then the strongest routine model takes the errand. While that side's
    allowance is low (a saver mode, below), the top model and the highest effort need the
    owner's yes.
-3. **A failed mechanical errand is rerun one tier up**, never retried at the same tier.
+3. **A failed mechanical errand is rerun one tier up**, never retried at the same tier. A
+   step up moves the model only: the effort is chosen again from the work table, and the
+   stronger model's lower effort comes before its higher one. Carrying an effort along
+   (a cheaper model's xhigh to the top model's xhigh) is the costliest step there is.
 4. **Model versions are kept current.** A lead that learns of a newer Codex or Claude model
    switches to it: the reviewer pins in `scripts/review.sh` and the machine's Codex
    configuration (`~/.codex/config.toml`). The lead then reports the switch to the kit, so

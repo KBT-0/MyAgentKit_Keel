@@ -64,6 +64,12 @@ tool calls passed without a visible line; the threshold is a starting value.
   how long, how to undo); a line marked "Recommendation" with its reason; what happens with
   no answer. Several decisions are separate numbered questions, never "A and B?". An
   internal id or a section title never stands in for the question.
+- While the owner is present, a decision goes through the tool's question feature (multiple
+  choice, recommended option first), not as a question buried in chat text.
+- While the owner is away (overnight, or said so), nothing waits on a question. The agent
+  decides what the rules already settle or what is reversible and reports it later; else it
+  does the work so that the owner's answer in the morning changes one named spot; else it
+  parks the task with a `docs/STATE.md` line holding the question, and moves on to other work.
 - An approval covers what was shown. Nothing the owner did not see is "approved"; the
   agent's own call is reported as its own, a guess as a guess.
 

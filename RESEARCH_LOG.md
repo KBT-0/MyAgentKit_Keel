@@ -21,6 +21,35 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-10-15 — lessons the kit's own development paid for, written into the kit
+
+The owner corrected the lead on eight points while building v0.11; each was kept in the
+lead's private memory, where no project and no other tool sees it. The owner (2026-10-15):
+not memory only, apply each one in the kit where it belongs. The lessons and what they cost:
+a proposal without a source (2026-10-13; again 2026-10-15, when an audit's contradictions
+were "fixed" by picking a side and by making a document match unsourced code); twelve
+parallel Opus reviews that spent 63% of a five-hour allowance in about 25 minutes
+(2026-10-14); a step up from `gpt-6.1-sol` xhigh straight to `gpt-6-astra` xhigh, the effort
+carried along (2026-10-12); two merge commits made while a test was red, the test and the
+commit chained with `;` and the test filtered through `grep` (2026-10-13); every bug filed
+as an issue instead of fixed ("if you file everything, how do we finish", 2026-10-08); a
+lead that stopped at the context band while the owner slept, and the night was lost
+(2026-10-12); a short "go on" after a proposed hand-off read as "start the next round here"
+(2026-10-14); decisions asked inside chat text. The owner added two limits: questions go
+through the question tool only while the owner is present, and while the owner is away no
+work waits on a question (decide, or make the answer change one spot, or park the task).
+Where they went: `AGENTS.md` (fix now, test before commit, the hand-off yes), `docs/COMMUNICATION.md`
+(questions present and away), `docs/WORKFLOW.md` "Model routing" rules 1 and 3 (cost line
+before a batch, effort chosen again on a step up), `CONTRIBUTING.md` (proposals and
+contradictions need sources; owner decision 2026-10-15: a doc that describes unsourced code
+wrongly is researched, not treated as a typo). Projects keep the source rule as the
+recommendation they already have (owner, 2026-10-15). The `AGENTS.md` "Compact
+instructions" section follows the vendor document (code.claude.com/docs/en/costs, "Manage
+context proactively", read 2026-10-15): instructions in CLAUDE.md, which imports
+`AGENTS.md`, steer compaction; whether automatic compaction reads them is to be confirmed
+in the dogfood. These lessons go through the audit's web research too (owner decision
+2026-10-15: a lesson proves the problem, not the fix).
+
 ### 2026-10-15 — cross: a second family writes beside the Claude lead
 
 The owner's words (2026-10-14): in the old way of working Codex wrote code too, Claude

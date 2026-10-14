@@ -13,6 +13,17 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## v0.11 — 2026-10-09
 
+- **Lessons from the kit's own development, written where they apply** (`AGENTS.md`,
+  `docs/COMMUNICATION.md`, `docs/WORKFLOW.md` "Model routing" rules 1 and 3,
+  `CONTRIBUTING.md`; `RESEARCH_LOG.md` 2026-10-15). A bug the task can fix is fixed in it,
+  not filed; a test runs in its own command and is read before a commit, never chained with
+  `;` or filtered; a short yes to a proposed hand-off is the hand-off; while the owner is
+  present decisions go through the question tool, while away no work waits on a question;
+  a batch of paid runs is announced (how many, model, effort) and runs one after another;
+  a step to a stronger model chooses the effort again. A new `AGENTS.md` section, "Compact
+  instructions", tells `/compact` and automatic compaction what to keep (vendor:
+  code.claude.com/docs/en/costs). **ACTION:** take the new `AGENTS.md` lines and section,
+  the two `docs/COMMUNICATION.md` bullets and the two "Model routing" additions.
 - **cross: both model families write, and each reviews the other** (`docs/WORKFLOW.md`,
   "Working modes, by name" and "Model routing" rule 7; `docs/HANDOFF.md`, "The brief";
   `scripts/owns_check.py`, `scripts/review.sh`, `scripts/spawn_codex.sh`). With a second
