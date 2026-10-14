@@ -18,6 +18,10 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   lead upgrading one of them is extra careful with the upgrade and with the kit afterwards:
   every problem, surprise or doubt about MyAgentKit, and about this release above all, goes
   upstream through `/myagentkit:kit-feedback` (an issue), not only into the project's notes.
+- **The kit check asks for a killing test** (`scripts/check_kit.py`, a NOTE, never a failure):
+  when the change against the upstream branch adds a refusal (a `raise`, a nonzero exit, `die`,
+  a FAIL line) and no file under `tests/` changes, a NOTE names the line and asks which test
+  fails if it is removed. Without an upstream branch the note is NOT RUN.
 - **Symlinks, junctions and long paths in the kit check** (tests only; nothing for a project to
   do): the symlink and junction classes were already held by required suites
   (`test_boundary_restore`, `test_check_gate`, `test_check_gate_windows` and `check.sh

@@ -70,6 +70,42 @@ class AcceptanceTests(unittest.TestCase):
             with self.subTest(line=line):
                 self.assertEqual(gate.shell_lint(line + '\n'), [])
 
+    def test_a_refusal_added_without_a_test_change_gets_a_note(self):
+        with tempfile.TemporaryDirectory() as tmp, contextlib.redirect_stdout(io.StringIO()) as out:
+            root = Path(tmp)
+            env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1')
+            git = lambda *args: subprocess.run(['git', '-C', tmp, *args], env=env, check=True,
+                                               capture_output=True)
+            git('init', '-q', '-b', 'main')
+            git('-c', 'user.name=t', '-c', 'user.email=t@x', 'commit', '-q', '--allow-empty', '-m', 'base')
+            with unittest.mock.patch.dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1'):
+                self.assertEqual(gate.untested_guards(root), [])
+                self.assertIn('NOT RUN: the killing-test note', out.getvalue())
+                git('branch', 'upstream')
+                git('branch', '-q', '--set-upstream-to=upstream')
+                (root / 'tool.py').write_text('x = 1\nif x:\n    raise ValueError(x)\nsys.exit(0)\n',
+                                              encoding='utf-8')
+                (root / 'gate.sh').write_text('[ -n "$x" ] || exit 2\n', encoding='utf-8')
+                (root / 'README.md').write_text('raise ValueError\n', encoding='utf-8')
+                git('add', '-A')
+                notes = gate.untested_guards(root)
+                self.assertEqual([note.split(' adds')[0] for note in notes],
+                                 ['NOTE [killing test]: gate.sh:1', 'NOTE [killing test]: tool.py:3'])
+                self.assertIn(notes[0], out.getvalue())
+                (root / 'tests').mkdir()
+                (root / 'tests/test_tool.py').write_text('', encoding='utf-8')
+                git('add', '-A')
+                self.assertEqual(gate.untested_guards(root), [])
+        # The wiring: the kit check asks, not only this test.
+        with unittest.mock.patch.object(gate, 'untested_guards') as asked, \
+                unittest.mock.patch.object(gate, 'check_syntax'), \
+                unittest.mock.patch.object(gate, 'run', return_value=''), \
+                unittest.mock.patch.object(gate, 'run_units', return_value=False), \
+                unittest.mock.patch.object(gate.sys, 'argv', ['check_kit.py']), \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(gate.main(), 1)
+        asked.assert_called_once_with(gate.ROOT)
+
     def test_shell_portability_fails_on_a_lint_hit_and_on_a_bashism(self):
         with tempfile.TemporaryDirectory() as tmp, contextlib.redirect_stdout(io.StringIO()) as out, \
                 unittest.mock.patch.dict(os.environ):

@@ -84,7 +84,7 @@ REQUIRED_SUITES = {
     'core/scripts': dict(BRIDGE_MINIMUMS, test_agent_cost=3),
     # Each suite's current count: a minimum far below it (1 of 30) let a suite lose almost
     # every test with the kit check green. A new test raises its suite's number here.
-    'tests': {'test_packaging': 1, 'test_bootstrap': 36, 'test_acceptance': 12,
+    'tests': {'test_packaging': 1, 'test_bootstrap': 36, 'test_acceptance': 13,
               'test_review_upgrade': 4 if os.name == 'nt' else 5,
               'test_boundary_example': 1 if os.name == 'nt' else 3, 'test_scan_gate': 1,
               'test_check_gate': 24, 'test_check_gate_windows': 33,
@@ -349,6 +349,42 @@ def check_release(root):
     changelog = re.search(r'^## (v\d+\.\d+)(?=\s|$)', (root / 'CHANGELOG.md').read_text(encoding='utf-8'), re.M)
     if not readme or not changelog or readme.group(1) != changelog.group(1):
         raise RuntimeError("README's bold version must match CHANGELOG's newest versioned heading")
+
+
+# A refusal a diff adds (proposal D-5): a raise, an exit with a nonzero status, die, a FAIL line.
+GUARD = re.compile(r'\braise\s+\w|\bsys\.exit\(\s*[^0)\s]|\bexit\s+[1-9]|\bdie\b|FAIL')
+
+
+def untested_guards(root):
+    """A NOTE, never a failure, for each refusal the change against upstream adds while no file
+    under tests/ changes: which test fails if it is removed? Mutation-lite; the uncommitted
+    tree counts, an untracked test file does not."""
+    git = ['git', '-C', str(root)]
+    found = subprocess.run(git + ['merge-base', 'HEAD', '@{upstream}'], capture_output=True, text=True,
+                           encoding='utf-8', errors='replace')
+    if found.returncode != 0:
+        print('NOT RUN: the killing-test note (no upstream branch to compare with)')
+        return []
+    base = found.stdout.strip()
+    names = run(git + ['diff', '--name-only', '--no-renames', base], encoding='utf-8').splitlines()
+    if any(name.startswith('tests/') for name in names):
+        return []
+    diff = run(git + ['diff', '-U0', '--no-color', '--no-ext-diff', '--no-renames', base, '--', '.',
+                      ':(exclude)*.md'], encoding='utf-8', errors='replace')
+    notes, path, number = [], None, 0
+    for line in diff.splitlines():
+        if line.startswith('+++ '):
+            path = line[6:] if line.startswith('+++ b/') else None
+        elif line.startswith('@@'):
+            number = int(re.search(r'\+(\d+)', line).group(1))
+        elif line.startswith('+') and path:
+            if GUARD.search(line):
+                notes.append('NOTE [killing test]: %s:%d adds a refusal and no file under tests/ changed '
+                             'against upstream; which test fails if it is removed?' % (path, number))
+            number += 1
+    for note in notes:
+        print(note)
+    return notes
 
 
 def check_syntax(root):
@@ -1236,6 +1272,7 @@ def main():
     print("KIT CHECK: %d of %d units at once (%d CPUs)" % (parallel, len(units), cpus))
     check_syntax(ROOT)
     check_release(ROOT)
+    untested_guards(ROOT)
     manifest = json.loads((ROOT / "plugins/myagentkit/.codex-plugin/plugin.json").read_text(encoding='utf-8'))
     if manifest["name"] != "myagentkit" or manifest["skills"] != "./skills/":
         raise RuntimeError("plugin manifest does not expose the expected package")
