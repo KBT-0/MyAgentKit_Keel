@@ -85,7 +85,9 @@ directions"). Windows'ta `shellcheck` kurulu değilse yalnız CI'da koşar.
 `core/scripts/check.sh`, `core/scripts/boundary_selftests.sh`, `tests/`, `.github/workflows/ci.yml`,
 `core/docs/REVIEW_GATE.md` (liste kısalır), `core/docs/WORKFLOW.md` "Writing a gate".
 **Karar (sahip, 13 Ekim).** Beş sensor da v0.11'e; sıra 1→5 (sıklık); her biri ayrı görev,
-high katman review.
+high katman review. **Karar (sahip, 14 Ekim).** 3 zaten zorunlu suite'lerde (boundary_restore,
+check_gate, check_gate_windows, `check.sh --self-test`), yeni fixture yok; 4 yalnız eksik olan
+tek test: 260+ karakterlik cwd'deki süreç worktree'sini korur (`\\?\` öneki).
 
 ### E. Reviewer prompt'u — UYGULANDI (13 Ekim)
 

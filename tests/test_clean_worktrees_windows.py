@@ -143,6 +143,32 @@ class CleanWorktreesOnWindows(unittest.TestCase):
         self.assertProcessKept(path, out, child.pid)
 
     @windows_only
+    def test_a_process_working_past_260_characters_keeps_it(self):
+        # The PEB's handle is named as \\?\C:\..., the only form that holds a path past MAX_PATH
+        # (proposal D-4); the audit compares it without the prefix.
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r'SYSTEM\CurrentControlSet\Control\FileSystem') as key:
+            self.assertEqual(winreg.QueryValueEx(key, 'LongPathsEnabled')[0], 1,
+                             'the case needs LongPathsEnabled=1, as GitHub-hosted Windows runners have')
+        path = self.worktree('long')
+        deep = path / ('d' * 120) / ('e' * 120)
+        deep.mkdir(parents=True)
+        self.assertGreater(len(str(deep)), 260)
+        # CreateProcess refuses a working directory past MAX_PATH; the process enters it itself,
+        # from outside the worktree, so only the long path can keep it.
+        child = self.start_inside([sys.executable, '-c', 'import os, sys; os.chdir(sys.argv[1]); sys.stdin.read()',
+                                   str(deep)], self.tmp)
+
+        def remove_deep():
+            # cmd's rmdir stops at MAX_PATH; the child must leave first.
+            child.kill()
+            child.wait()
+            shutil.rmtree(path / ('d' * 120), ignore_errors=True)
+        self.addCleanup(remove_deep)
+        out = self.run_script('--apply')
+        self.assertProcessKept(path, out, child.pid)
+
+    @windows_only
     def test_a_process_that_entered_through_a_junction_keeps_it(self):
         # Codex review: the PEB names the junction's path, the audit compared the resolved
         # worktree path, and the worktree was removed while the process worked in it.

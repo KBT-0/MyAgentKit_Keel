@@ -18,6 +18,13 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   lead upgrading one of them is extra careful with the upgrade and with the kit afterwards:
   every problem, surprise or doubt about MyAgentKit, and about this release above all, goes
   upstream through `/myagentkit:kit-feedback` (an issue), not only into the project's notes.
+- **Symlinks, junctions and long paths in the kit check** (tests only; nothing for a project to
+  do): the symlink and junction classes were already held by required suites
+  (`test_boundary_restore`, `test_check_gate`, `test_check_gate_windows` and `check.sh
+  --self-test`), so no new fixture was written. One gap is closed: on native Windows a process
+  whose working directory lies past 260 characters keeps its worktree from `clean_worktrees`
+  (the `\\?\` form its handle is named in is compared without the prefix);
+  `test_clean_worktrees_windows` minimum 11.
 - **The kit check's shell sensor** (`scripts/check_kit.py`; the shipped `check.sh`, `doctor.sh`,
   `watch_workers.sh`, `boundary_selftests.sh`, the `commit-msg` and `post-merge` hooks and the
   Unity overlay's `unity_gate.sh` change only in how they print): over the sh scripts git tracks
