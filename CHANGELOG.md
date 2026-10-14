@@ -22,8 +22,7 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   do): the symlink and junction classes were already held by required suites
   (`test_boundary_restore`, `test_check_gate`, `test_check_gate_windows` and `check.sh
   --self-test`), so no new fixture was written. One gap is closed: on native Windows a process
-  whose working directory lies past 260 characters keeps its worktree from `clean_worktrees`
-  (the `\\?\` form its handle is named in is compared without the prefix);
+  whose working directory lies past 260 characters keeps its worktree from `clean_worktrees`;
   `test_clean_worktrees_windows` minimum 11.
 - **The kit check's shell sensor** (`scripts/check_kit.py`; the shipped `check.sh`, `doctor.sh`,
   `watch_workers.sh`, `boundary_selftests.sh`, the `commit-msg` and `post-merge` hooks and the

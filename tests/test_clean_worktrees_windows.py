@@ -144,8 +144,8 @@ class CleanWorktreesOnWindows(unittest.TestCase):
 
     @windows_only
     def test_a_process_working_past_260_characters_keeps_it(self):
-        # The PEB's handle is named as \\?\C:\..., the only form that holds a path past MAX_PATH
-        # (proposal D-4); the audit compares it without the prefix.
+        # A working directory past MAX_PATH (proposal D-4): the handle's name comes back whole
+        # (\\?\C:\..., as every name does) and the audit still finds the worktree in it.
         import winreg
         with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r'SYSTEM\CurrentControlSet\Control\FileSystem') as key:
             self.assertEqual(winreg.QueryValueEx(key, 'LongPathsEnabled')[0], 1,
