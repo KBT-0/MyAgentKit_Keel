@@ -383,39 +383,110 @@ def check_syntax(root):
     shell_portability(root)
 
 
-# The shell sensor (proposal D-2). `echo` of a variable: dash, Ubuntu's sh, reads a backslash in
-# it as an escape, so a Windows path printed C:<newline>ew. GNU-only mktemp options fail on macOS.
-ECHO_VARIABLE = re.compile(r'(?:^|[;&|({\s])echo\s+(?:-\S+\s+)?(?:"[^"]*(?<!\\)\$|\$)')
-GNU_MKTEMP = re.compile(r'\bmktemp\b[^;|&\n]*\s(?:-p\b|--suffix|--tmpdir)')
+# The shell sensor (proposal D-2). An `echo` argument that expands, or that reaches echo with a
+# backslash: dash, Ubuntu's sh, reads the backslash as an escape, so a Windows path printed
+# C:<newline>ew. mktemp -p/--suffix/--tmpdir are GNU-only and -t means another thing on macOS.
+ECHO_COMMAND = re.compile(r'(?:^|(?<=[;&|({`\s!]))echo(?=[\s;&|)`]|$)')
+MKTEMP = re.compile(r'\bmktemp\b[^;|&\n]*\s(?:-[a-zA-Z]*[pt]|--suffix|--tmpdir)')
+# A comment line, except the `# | ` example code boundary_selftests.sh ships and acceptance runs.
+COMMENT = re.compile(r'^[ \t]*#(?! \|( |$)).*$', re.M)
+
+
+def echo_hazard(text, i):
+    """True when the echo whose arguments start at text[i] prints an expansion or a backslash.
+
+    A small sh word reader: quotes, escapes and backslash-newline as sh reads them; the command
+    ends at an unquoted newline, ; | & ) or `. A redirection and its target are not printed.
+    """
+    words, word, quote, target = [], None, None, False
+    while i < len(text):
+        c, nxt = text[i], text[i + 1:i + 2]
+        if word is None and (quote or c not in ' \t'):
+            word = {'hazard': False, 'redirect': target, 'operator_only': False}
+            target = False
+        if quote == "'":
+            quote = None if c == "'" else quote
+            word['hazard'] |= c == '\\'
+        elif quote == '"':
+            if c == '"':
+                quote = None
+            elif c == '\\':
+                word['hazard'] |= nxt not in ('"', '$', '`', '\n')
+                i += 1
+            else:
+                word['hazard'] |= c in '$`'
+        elif c == '\\':
+            if word is not None:
+                word['hazard'] |= nxt == '\\'
+            i += 2
+            continue
+        elif c in ' \t':
+            if word is not None:
+                words.append(word)
+                target = word['redirect'] and word['operator_only']
+                word = None
+        elif c in '\n;|&)`':
+            break
+        elif c in '<>':
+            # `>&2` names its target itself; a bare `>` takes the next word.
+            word['redirect'] = word['operator_only'] = True
+            while text[i + 1:i + 2] in ('<', '>', '&', '|'):
+                i += 1
+                word['operator_only'] = text[i] != '&'
+        else:
+            word['operator_only'] = False
+            word['hazard'] |= c == '$'
+            if c in '\'"':
+                quote, word['operator_only'] = c, False
+        i += 1
+    words.append(word or {'hazard': False, 'redirect': False})
+    return any(w['hazard'] and not w['redirect'] for w in words)
 
 
 def shell_lint(text):
-    """(line, reason) for each line of a POSIX sh script the kit's own shell rules refuse."""
+    """(line, reason) for each place in a POSIX sh script the kit's own shell rules refuse."""
+    text = COMMENT.sub('', text)
+    line_of = lambda position: text.count('\n', 0, position) + 1
+    found = [(line_of(m.start()), "`echo` of an expansion or a backslash: dash reads a backslash as "
+                                  "an escape; use printf '%s\\n'")
+             for m in ECHO_COMMAND.finditer(text) if echo_hazard(text, m.end())]
+    # Two characters for the two of a backslash-newline: positions, and so line numbers, hold.
+    joined = text.replace('\\\n', '  ')
+    found += [(line_of(m.start()), '`mktemp -p/-t/--suffix/--tmpdir`: GNU-only, or -t means '
+                                   'another thing on macOS')
+              for m in MKTEMP.finditer(joined)]
+    return sorted(found)
+
+
+def shell_scripts(root):
+    """The sh scripts git tracks: each .sh file and each file whose first line runs sh (the
+    hooks in .githooks have no extension). A worktree under .claude/worktrees holds an older
+    copy of every script, so untracked files are never read."""
+    if (root / '.git').exists():
+        listed = run(['git', '-C', str(root), 'ls-files', '-z'], encoding='utf-8')
+        candidates = [root / name for name in listed.split('\0') if name]
+    else:
+        candidates = [path for path in root.rglob('*') if '.git' not in path.parts]
     found = []
-    for number, line in enumerate(text.splitlines(), 1):
-        if line.lstrip().startswith('#'):
-            continue
-        if ECHO_VARIABLE.search(line):
-            found.append((number, "`echo` of a variable: dash reads a backslash in it as an escape; "
-                                  "use printf '%s\\n'"))
-        if GNU_MKTEMP.search(line):
-            found.append((number, '`mktemp -p/--suffix/--tmpdir` is GNU-only; macOS refuses it'))
+    for path in candidates:
+        if path.suffix == '.sh':
+            found.append(path)
+        elif path.is_file() and not path.is_symlink():
+            with path.open('rb') as handle:
+                if re.match(rb'#!.*[/ ]sh(?:\s|$)', handle.readline(200)):
+                    found.append(path)
     return found
 
 
 def shell_portability(root):
-    """The kit's shell lint and `shellcheck -s sh` over the .sh files git tracks.
+    """The kit's shell lint and `shellcheck -s sh` over the sh scripts git tracks.
 
-    Tracked files only: a worktree under .claude/worktrees holds an older copy of every script.
     shellcheck fails only on SC3xxx (undefined in POSIX sh, a bashism) and on errors; its
-    warnings and notes stay a reviewer's. Without shellcheck the check is NOT RUN, except on
-    CI's Linux job, whose image has it, where its absence fails.
+    warnings and notes stay a reviewer's. It reads no rc file and no SHELLCHECK_OPTS, so a
+    developer's settings cannot hide a code. Without shellcheck the check is NOT RUN, except
+    on CI's Linux job, whose image has it, where its absence fails.
     """
-    if (root / '.git').exists():
-        listed = run(['git', '-C', str(root), 'ls-files', '-z', '--', '*.sh'], encoding='utf-8')
-        paths = [root / name for name in listed.split('\0') if name]
-    else:
-        paths = [path for path in root.rglob('*.sh') if '.git' not in path.parts]
+    paths = shell_scripts(root)
     found = ['%s:%d: %s' % (path.relative_to(root).as_posix(), number, reason)
              for path in paths for number, reason in shell_lint(path.read_text(encoding='utf-8'))]
     if found:
@@ -428,8 +499,9 @@ def shell_portability(root):
         return
     if not paths:
         return
-    result = subprocess.run([tool, '-s', 'sh', '-f', 'gcc', *map(str, paths)], capture_output=True,
-                            text=True, encoding='utf-8', errors='replace', timeout=limit(300))
+    env = {k: v for k, v in os.environ.items() if k != 'SHELLCHECK_OPTS'}
+    result = subprocess.run([tool, '--norc', '-s', 'sh', '-f', 'gcc', *map(str, paths)], capture_output=True,
+                            text=True, encoding='utf-8', errors='replace', timeout=limit(300), env=env)
     refused = [line for line in result.stdout.splitlines()
                if ': error:' in line or re.search(r'\[SC3\d{3}\]$', line)]
     if refused or result.returncode not in (0, 1):

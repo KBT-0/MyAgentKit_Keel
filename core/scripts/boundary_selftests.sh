@@ -255,8 +255,8 @@
 # |   trap 'probe_exit=$?; probe_delete || [ "$probe_exit" -ne 0 ] || exit 1' EXIT
 # |   trap 'exit 130' INT
 # |   trap 'exit 143' TERM
-# |   probe_fail() { echo "  FAIL — existing-file probe: $*"; exit 1; }
-# |   probe_skip() { echo "  NOT RUN — existing-file probe: $*"; exit 1; }
+# |   probe_fail() { printf '%s\n' "  FAIL — existing-file probe: $*"; exit 1; }
+# |   probe_skip() { printf '%s\n' "  NOT RUN — existing-file probe: $*"; exit 1; }
 # |   # One folder for both copies, resolved before any `cd` (after `cd /`, a relative TMPDIR
 # |   # named another one), and outside the checkout.
 # |   probe_base=$(CDPATH= cd -P "${TMPDIR:-/tmp}" && pwd -P) ||

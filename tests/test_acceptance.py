@@ -52,10 +52,17 @@ class AcceptanceTests(unittest.TestCase):
                 gate.check_syntax(Path(tmp))
 
     def test_the_shell_lint_refuses_echo_of_a_variable_and_gnu_mktemp(self):
-        refused = ['echo "$x"', 'echo $x', 'x=1; echo "a $x b" >&2', 'echo -n "$x"',
-                   't=$(mktemp -p "$d")', 'mktemp --suffix .txt', 'mktemp --tmpdir x.XXXXXX']
-        allowed = ['# echo "$x"', "echo '$x'", 'echo "no variable"', "printf '%s\\n' \"$x\"",
-                   'echo \\"in a string $x\\"', 't=$(mktemp "${TMPDIR:-/tmp}/x.XXXXXX")', 'mktemp -d']
+        refused = [r'echo "$x"', r'echo $x', r'x=1; echo "a $x b" >&2', r'echo -n "$x"',
+                   r'echo -n -e "$x"', r'echo FAIL: "$x"', r'echo "a" "$x"', r'echo >&2 "$x"',
+                   r'x=`echo "$y"`', r'echo "$(cmd)"', r'echo \"in a string $x\"', 'echo \\\n  "$x"',
+                   'echo "text \\\n$x"', r'echo "C:\new"', r"echo 'a\nb'", r'echo a\\b',
+                   r'# |   probe_fail() { echo "  FAIL: $*"; exit 1; }',
+                   r't=$(mktemp -p "$d")', r'mktemp --suffix .txt', r'mktemp --tmpdir x.XXXXXX',
+                   r't=$(mktemp -dp "$d")', 'mktemp -d \\\n  -p "$d"', r'mktemp -t x']
+        allowed = [r'# echo "$x"', r"echo '$x'", r'echo "no variable"', r"printf '%s\n' "'"$x"',
+                   r'echo report > "$repo/x"', r'echo hi >&2', r'echo "a" 2>"$log"', r'echo',
+                   r'echo "\$HOME"', r'echo "a \"q\" b"', r'echo x; y="$z"',
+                   r't=$(mktemp "${TMPDIR:-/tmp}/x.XXXXXX")', r'mktemp -d']
         for line in refused:
             with self.subTest(line=line):
                 self.assertEqual([number for number, _ in gate.shell_lint(line + '\n')], [1])
@@ -64,16 +71,32 @@ class AcceptanceTests(unittest.TestCase):
                 self.assertEqual(gate.shell_lint(line + '\n'), [])
 
     def test_shell_portability_fails_on_a_lint_hit_and_on_a_bashism(self):
-        with tempfile.TemporaryDirectory() as tmp, contextlib.redirect_stdout(io.StringIO()) as out:
+        with tempfile.TemporaryDirectory() as tmp, contextlib.redirect_stdout(io.StringIO()) as out, \
+                unittest.mock.patch.dict(os.environ):
+            # CI=true on GitHub's runners: the NOT RUN case below is a developer's host.
+            os.environ.pop('CI', None)
             script = Path(tmp) / 'a.sh'
             script.write_text('#!/bin/sh\nx=1\nprintf \'%s\\n\' "$x"\n', encoding='utf-8')
+            # A hook has no extension; its sh shebang brings it in, a bash one does not.
+            (Path(tmp) / 'hook').write_text('#!/usr/bin/env sh\nprintf x\n', encoding='utf-8')
+            (Path(tmp) / 'tool').write_text('#!/bin/bash\necho "$x"\n', encoding='utf-8')
             gate.shell_portability(Path(tmp))
             script.write_text('#!/bin/sh\nx=1\necho "$x"\n', encoding='utf-8')
-            with self.assertRaisesRegex(RuntimeError, r'a\.sh:3: `echo` of a variable'):
+            with self.assertRaisesRegex(RuntimeError, r'a\.sh:3: `echo` of an expansion'):
                 gate.shell_portability(Path(tmp))
+            # The wiring: the kit check runs the sensor, not only this test.
+            with self.assertRaisesRegex(RuntimeError, r'a\.sh:3: `echo` of an expansion'):
+                gate.check_syntax(Path(tmp))
+            script.write_text('#!/bin/sh\nx=1\nprintf x\n', encoding='utf-8')
+            (Path(tmp) / 'hook').write_text('#!/usr/bin/env sh\nx=1\necho "$x"\n', encoding='utf-8')
+            with self.assertRaisesRegex(RuntimeError, r'hook:3: `echo` of an expansion'):
+                gate.shell_portability(Path(tmp))
+            (Path(tmp) / 'hook').unlink()
             script.write_text('#!/bin/sh\nx=1\nif [[ $x = 1 ]]; then :; fi\n', encoding='utf-8')
             if shutil.which('shellcheck'):
-                with self.assertRaisesRegex(RuntimeError, r'SC3010'):
+                # A developer's SHELLCHECK_OPTS (or rc file) cannot hide the code.
+                with unittest.mock.patch.dict(os.environ, SHELLCHECK_OPTS='-S error -e SC3010'), \
+                        self.assertRaisesRegex(RuntimeError, r'SC3010'):
                     gate.shell_portability(Path(tmp))
             with unittest.mock.patch.object(gate.shutil, 'which', return_value=None):
                 gate.shell_portability(Path(tmp))
