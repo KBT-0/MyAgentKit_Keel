@@ -1,4 +1,4 @@
-<!-- RESEARCH: how comparable agent-development kits are used in practice, what they do differently from this kit, and what token-saving practices they measured. Companion to docs/research-ai-review-workflows.md (review loops). Owner decides what, if anything, becomes a proposal. 2026-10-13. -->
+<!-- RESEARCH: how comparable agent-development kits are used in practice, what they do differently from this kit, and what token-saving practices they measured. Companion to docs/research/ai-review-workflows.md (review loops). Owner decides what, if anything, becomes a proposal. 2026-10-13. -->
 
 # Agent geliştirme kit'leri pratikte (2025–2026): kanıta dayalı araştırma raporu
 

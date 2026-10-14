@@ -271,6 +271,17 @@ class SectionPointerTests(unittest.TestCase):
             if heading != 'Contents':
                 self.assertIn(heading, contents)
 
+    def test_the_research_index_lists_every_report(self):
+        # The reports are the kit's bibliography (CONTRIBUTING.md): one missing from the index
+        # is a source nobody finds, so every report needs a row that links it.
+        folder = ROOT / 'docs/research'
+        index = (folder / 'README.md').read_text(encoding='utf-8')
+        reports = sorted(p.name for p in folder.glob('*.md') if p.name != 'README.md')
+        self.assertTrue(reports)
+        for name in reports:
+            with self.subTest(report=name):
+                self.assertIn('](%s)' % name, index)
+
 
 if __name__ == '__main__':
     unittest.main()

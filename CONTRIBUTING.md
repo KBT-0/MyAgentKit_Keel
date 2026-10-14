@@ -46,9 +46,24 @@ runs on every commit. If your PR touches `check.sh`, a boundary check, `review.s
 adds the case to `--self-test` that constructs the failure and asserts the gate rejects it —
 and you should have watched it go red before and green after.
 
-**A behavioural change carries its reasoning.** Add the finding to `RESEARCH_LOG.md` with
-the failure it prevents, and a line to `CHANGELOG.md` with what changed. A rule that arrives
-without its reason is a rule the next reader deletes, and they will be right to.
+**Every change cites its source.** The kit gathers what people, AI vendors and the projects
+using it have learned about building software with AI, and stays current with it; nothing
+in it is made up on the spot. A rule, a workflow step, a default or a decision you add,
+change or delete names its source, in the commit message and in its `RESEARCH_LOG.md` entry:
+
+- a numbered finding of a report in [`docs/research/`](docs/research/README.md), by file and
+  finding;
+- an official vendor document (Anthropic, OpenAI, the tool's own docs), by URL and date;
+- a lesson a project paid for, by its `RESEARCH_LOG.md` entry or issue.
+
+When no source covers the point, research comes first: a new report in `docs/research/`
+with graded sources, and a row in its README. When the research settles nothing, the
+maintainer decides with the evidence on the table, and the entry says it was a judgement.
+A typo or a broken link needs no source.
+
+Add the finding to `RESEARCH_LOG.md` with the failure it prevents, and a line to
+`CHANGELOG.md` with what changed. A rule that arrives without its reason is a rule the next
+reader deletes, and they will be right to.
 
 For a release, match README's bold version to the newest versioned heading in `CHANGELOG.md`.
 

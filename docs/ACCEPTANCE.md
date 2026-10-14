@@ -13,7 +13,7 @@ what was run and what was found.
   hook sees the transcript a message behind, and some visible lines are stored as thinking),
   so it is read beside the owner's marks, never alone.
 - The context band (`docs/WORKFLOW.md`, "Worker cost", rule 8: 200k, 300k, 400k) is a
-  judgement, tested over the same one and a half weeks (`docs/research-context-limit.md`,
+  judgement, tested over the same one and a half weeks (`docs/research/context-limit.md`,
   öneri 7). Observational only: the scope is fixed and no review round opens from it.
   `scripts/context_buckets.py --since <adoption day>` in each project prints the counts
   below except the scripted rule checks that need a reader; the owner marks a correction by

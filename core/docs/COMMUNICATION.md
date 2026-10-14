@@ -6,7 +6,7 @@ worker results, `docs/STATE.md`) keep their own format and are not covered. `AGE
 "Language & style", rule 3 outranks everything here: what failed, what was not run and what
 cannot be undone is never shortened.
 
-The evidence behind each rule is in the kit's `docs/research-communication-style.md`.
+The evidence behind each rule is in the kit's `docs/research/communication-style.md`.
 
 ## Principle
 

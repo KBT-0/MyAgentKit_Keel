@@ -161,12 +161,14 @@ yes. [CONTRIBUTING.md](CONTRIBUTING.md) is the same process by hand, and
 | `plugin/`, `plugins/myagentkit/` | The Claude Code plugin and the Codex plugin, installed once per machine. |
 | `patterns/` | Optional reading on specific designs. |
 | `docs/` | The rationale for each rule, the acceptance record, the review archive. |
+| `docs/research/` | The research reports every kit decision cites: the kit's bibliography. |
 | `scripts/`, `tests/` | The kit's own check and its test suites. |
 | `CHANGELOG.md`, `RESEARCH_LOG.md`, `CONTRIBUTING.md` | What changed and how to upgrade; why; how to send something back. |
 
 ## Origin
 
-Every rule here is in the kit because something broke without it; the failures are
-written up in `RESEARCH_LOG.md`.
+Every rule here is in the kit because something broke without it, or because published
+evidence showed a better way; the failures are written up in `RESEARCH_LOG.md`, the
+evidence in [`docs/research/`](docs/research/README.md).
 
 MIT licensed.

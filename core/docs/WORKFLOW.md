@@ -726,7 +726,7 @@ Rules, binding for whoever routes workers:
    (Anthropic names no number); practitioners cut between 120k and 400k; at today's cache
    prices a fresh session pays itself back in about 25 requests from 200k (Opus, Sonnet) or
    49 (Fable). The numbers are a judgement, not a measurement (the kit's
-   `docs/research-context-limit.md`). A symptom cuts at any size: the owner corrected the
+   `docs/research/context-limit.md`). A symptom cuts at any size: the owner corrected the
    same rule twice, or the worker-route hook refused twice. The Claude Code overlay's
    `context_size.py` hook names the band once per 50k step past 200k; the lead then
    recommends one of two, with the number and the reason. The overlay's `autoCompactWindow`
@@ -1146,3 +1146,8 @@ one names what would have to change before it is worth reopening.
   module table IS the navigation. If agents start failing to find things through it, the
   first reading of that signal is architectural decay, not a missing tool.
 - These files are worth more than the code: code can be regenerated, context cannot.
+- A process rule or decision should name its source: a vendor document, a research report, or
+  a lesson this project paid for (a `[LESSON]` line, a `docs/GOTCHAS.md` entry). A rule
+  without one is the first a later session deletes. When nothing covers the point, research
+  it first; when the research settles nothing, {{OWNER_NAME}} decides. The kit works this way
+  itself (its `CONTRIBUTING.md` and `docs/research/`).

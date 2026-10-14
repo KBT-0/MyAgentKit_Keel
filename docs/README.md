@@ -19,6 +19,9 @@ you should be deleted, and a rule you cannot find a failure mode for was never l
 | [delegation-is-not-symmetric](delegation-is-not-symmetric.md) | The review roles swap; the plumbing under them does not |
 | [worker-cost-setups](worker-cost-setups.md) | A worker that waits pays for its whole context again; six setups measured, and which to use when the first choice is unavailable |
 
+The evidence behind these pages and every later decision: [research/](research/README.md),
+the kit's bibliography.
+
 Operational pages: [UPDATING](UPDATING.md) (how a project takes kit changes, and how it
 sends lessons back), [RETROFIT](RETROFIT.md) (installing into a project already under way),
 [ACCEPTANCE](ACCEPTANCE.md) (what was verified in this release, and how).

@@ -13,6 +13,13 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## v0.11 — 2026-10-09
 
+- **Every kit change cites its source** (`CONTRIBUTING.md`): a numbered finding of a report
+  in `docs/research/`, an official vendor document, or a lesson a project paid for; with no
+  source, research comes first, and the maintainer decides only when research settles
+  nothing. The research reports moved from `docs/research-*.md` to `docs/research/` with an
+  index, the kit's bibliography (`docs/research/README.md`); a report without a row fails
+  `tests/test_doc_pointers.py`. Projects get the same idea as a recommendation in
+  `docs/WORKFLOW.md`, "Documentation maintenance contract".
 - **A `claude@NAME` review of another model family counts as the second model**
   (`docs/REVIEW_GATE.md`, "Invariant"; `docs/WORKFLOW.md`): independence comes from the model
   family, not the CLI. Its evidence header now says `model_attested: no (requested,
@@ -50,7 +57,7 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   AI-attribution refusals, pushes, owner prompts marked `#fix`, the 20 requests around each
   compaction): the dogfood data that keeps or moves the band. The old
   reason ("pays back in under ten turns") was wrong at today's cache prices. Evidence:
-  `docs/research-context-limit.md`. Claude Code overlay: `context_size.py` names the band,
+  `docs/research/context-limit.md`. Claude Code overlay: `context_size.py` names the band,
   `.claude/settings.json` sets `autoCompactWindow` to 450000 (a safety valve; the default is
   about 967k), and a `SessionStart` hook (matcher `compact`) prints
   `.claude/hooks/after_compact.txt`, what to re-read after a lossy summary. **ACTION** (Claude

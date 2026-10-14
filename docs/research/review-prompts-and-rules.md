@@ -1,13 +1,13 @@
 # Araştırma: review prompt'u ve kural dosyaları — kit ile yayınlanmış pratik yan yana
 
 Tarih: 2026-10-13. Sahip sorusu: "review yöntemlerimiz, prompt'larımız, MD'lerimiz bana yanlış
-geliyor; bunun ar-ge'si yapıldı mı?" Cevap: iş akışı `docs/research-ai-review-workflows.md`'de
+geliyor; bunun ar-ge'si yapıldı mı?" Cevap: iş akışı `docs/research/ai-review-workflows.md`'de
 (bağlayıcı) araştırıldı; prompt metni ve kural dosyaları araştırılmamıştı. Bu rapor o boşluğu
 kapatır. İki ek dosya kanıt tabanıdır:
 
-- `docs/research-review-prompts-sources.md` (W): 24 kaynaktan reviewer prompt ve kural
+- `docs/research/review-prompts-sources.md` (W): 24 kaynaktan reviewer prompt ve kural
   metinleri, birebir alıntı. Numaralar `[W n]`.
-- `docs/research-review-rules-inventory.md` (I): kitin reviewer'a ve lead'e verdiği her kuralın
+- `docs/research/review-rules-inventory.md` (I): kitin reviewer'a ve lead'e verdiği her kuralın
   envanteri (89 kural, 8 kopya sınıfı, 12 çelişki, boşluk listesi). Bölümler `I.A`…`I.E`.
 
 Her satırın kaynağı var; kaynaksız öneri yok (sahip kuralı, 13 Ekim).
@@ -158,6 +158,6 @@ ikinci prompt değişikliği yapılmaz (Cursor: "Many changes, surprisingly, reg
 
 ## 5. Kaynaklar
 
-W = `docs/research-review-prompts-sources.md` §4 (24 kaynak, R/B/P/S etiketli).
-I = `docs/research-review-rules-inventory.md` (kit envanteri, 2026-10-13, master ec5f534).
-Bağlayıcı iş akışı raporu: `docs/research-ai-review-workflows.md`.
+W = `docs/research/review-prompts-sources.md` §4 (24 kaynak, R/B/P/S etiketli).
+I = `docs/research/review-rules-inventory.md` (kit envanteri, 2026-10-13, master ec5f534).
+Bağlayıcı iş akışı raporu: `docs/research/ai-review-workflows.md`.

@@ -21,9 +21,25 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-10-14 — Every kit change cites a source; the reports become the bibliography
+
+The owner's decision (Q&A, 2026-10-14), recorded as its own source: the kit exists to gather
+what people, AI vendors and the projects using it have learned about building software with
+AI, and to keep itself current with it, so no rule, step, default or decision enters it
+without a source. Until now the eight research reports sat in `docs/` with no index, and the
+rule that kit work must cite them lived only in one lead's private memory, where no other
+contributor or session could see it. The owner chose: every change cites a report finding,
+a vendor document or a paid lesson; with no source, research comes first; when research
+settles nothing, the owner decides with the evidence (`CONTRIBUTING.md`, "Every change cites
+its source"). The reports moved to `docs/research/` with an index that names the decisions
+each one backs, and `tests/test_doc_pointers.py` fails on a report without a row. Projects
+receive the same idea as a recommendation, not a duty (`core/docs/WORKFLOW.md`,
+"Documentation maintenance contract"). Next, by the same decision: an audit of the kit's
+existing rules against published evidence, which either sources each rule or changes it.
+
 ### 2026-10-14 — Communication rules from the report, all sixteen, with the measurement
 
-`docs/research-communication-style.md` (14 findings, 101 sources) answered the owner's
+`docs/research/communication-style.md` (14 findings, 101 sources) answered the owner's
 complaint that reports arrived full of the agents' own labels. The owner put all sixteen
 recommendations into v0.11 (`docs/v011-overhaul-proposal.md`, item R), knowing the report's
 own verdicts: the label-bouncing Stop hook and the progress reminder rest on one vendor
@@ -75,7 +91,7 @@ No Critical, few High, many Medium and Low, and never a plain Accept: the "until
 did not converge by its own definition. The three timeouts came from six heavy jobs started
 together, our observation, not the report's.
 
-Of the 89 review rules inventoried (`docs/research-review-rules-inventory.md`), 44 stay, 31
+Of the 89 review rules inventoried (`docs/research/review-rules-inventory.md`), 44 stay, 31
 merge into one place and 14 are deleted; the owner approved the list as written. The
 deletions and why, so that no later pass re-adds them:
 
@@ -135,7 +151,7 @@ is everything loaded before any work. Same host, same user CLAUDE.md, within one
   Both are small beside the 16k the owner does not control (system prompt, tool catalogue,
   skill descriptions, user CLAUDE.md), and the 16k read is the shared system prompt. So the
   dollar saving is a few cents a day; the reason the map stays short is adherence
-  (`docs/research-token-optimization.md` §5, finding 5), and the owner's cap of 200 lines
+  (`docs/research/token-optimization.md` §5, finding 5), and the owner's cap of 200 lines
   stands because the next cut would remove rules.
 - The kit-repository rows moved by 651 tokens between the two runs with nothing in the kit
   changed (memory index, skill list): a prefix figure is a delta against an empty directory
@@ -143,7 +159,7 @@ is everything loaded before any work. Same host, same user CLAUDE.md, within one
 - Haiku was the model because the prefix token count does not depend on the model and the
   four runs cost under two cents together.
 - `agent_cost.py` prints `hit` (cache reads over all input) per agent and in the total, with
-  an 80% target (`docs/research-agent-kits-in-practice.md` §5-2: the Claude Code team alarms
+  an 80% target (`docs/research/agent-kits-in-practice.md` §5-2: the Claude Code team alarms
   on the hit rate). The record half of M-6 needed no change: `agent_usage.normalize` already
   keeps `total_cost_usd`, `modelUsage` and the `ephemeral_1h/5m` buckets in `usage_raw`.
 

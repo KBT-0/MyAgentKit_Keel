@@ -2,8 +2,8 @@
 
 Tarih: 2026-10-13. Durum: **ÖNERİ, uygulanmadı.** Her madde sahibin onayıyla, madde madde
 uygulanır (sahip kararı, 2026-10-13: kit sahipsiz elden geçirilmez). Bağlayıcı kaynak:
-`docs/research-ai-review-workflows.md` (master 247e040); M–O maddeleri ayrıca
-`docs/research-token-optimization.md` (T) ve `docs/research-agent-kits-in-practice.md` (P)
+`docs/research/ai-review-workflows.md` (master 247e040); M–O maddeleri ayrıca
+`docs/research/token-optimization.md` (T) ve `docs/research/agent-kits-in-practice.md` (P)
 raporlarına (master 733dc54) dayanır; her madde raporun numaralı bulgusunu
 `§x.y` (yönetici özeti maddesi) ve `[n]` (kaynak) ile anar, kanıt olmayan yerde "raporda kanıt
 yok" der. Kit'in amacı sahibin tanımıyla: **AI destekli uzun soluklu proje geliştirme için
@@ -214,7 +214,7 @@ solo modu, prompt ve iki kural dosyası tek-model dilinde.
 
 ### R. Sahiple iletişim kuralları — UYGULANDI ve REVIEW KAPANDI (14 Ekim: logic r2, portability r3 Accept-MC)
 
-`docs/research-communication-style.md` raporunun 16 önerisinin hepsi v0.11'e (sahip kararı,
+`docs/research/communication-style.md` raporunun 16 önerisinin hepsi v0.11'e (sahip kararı,
 14 Ekim; v0.12 sonradan açılan issue'lar için). Tek kural dosyası `core/docs/COMMUNICATION.md`
 (AGENTS.md "Language & style" oraya işaret eder; output style dosyası yok, tek stil sahibi
 AGENTS.md); `core/docs/GLOSSARY.md` iki liste (sahibin bildiği terimler mülakat sorusu 12'den,
