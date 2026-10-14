@@ -52,8 +52,8 @@ assert '--strict-mcp-config' in args and '--no-session-persistence' in args
 assert '--dangerously-skip-permissions' not in args
 assert '--resume' not in args and '--continue' not in args
 assert os.environ['MYAGENTKIT_DELEGATION_DEPTH'] == '1'
-prompt = sys.stdin.read()
-if os.environ.get('PROMPT_LOG'): pathlib.Path(os.environ['PROMPT_LOG']).write_text(prompt)
+prompt = sys.stdin.buffer.read().decode('utf-8')  # the bridge sends UTF-8
+if os.environ.get('PROMPT_LOG'): pathlib.Path(os.environ['PROMPT_LOG']).write_text(prompt, encoding='utf-8')
 if os.environ.get('FIXTURE_UNLINK'): pathlib.Path(os.environ['FIXTURE_UNLINK']).unlink()
 if os.environ.get('ENV_LOG'): pathlib.Path(os.environ['ENV_LOG']).write_text(json.dumps(
     {k: v for k, v in os.environ.items() if k.startswith('ANTHROPIC_')}))
@@ -3287,7 +3287,7 @@ class BridgeTests(unittest.TestCase):
         fake = self.root / "codex"
         fake = python_cli(fake, PYTHON_SHEBANG + '''import json, os, pathlib, sys, time
 if '--version' in sys.argv: print('offline codex'); sys.exit(0)
-prompt = sys.stdin.read()
+prompt = sys.stdin.buffer.read().decode('utf-8')  # the bridge sends UTF-8
 assert 'PRIVATE_PREVIOUS_REVIEW' not in prompt
 last = pathlib.Path(sys.argv[sys.argv.index('-o') + 1])
 case = os.environ['FIXTURE_CASE']
@@ -3367,8 +3367,8 @@ if case == 'archive_failure':
         fake = self.root / "codex-accept"
         fake = python_cli(fake, PYTHON_SHEBANG +
                         "import json, os, pathlib, sys\n"
-                        "prompt = sys.stdin.read()\n"
-                        "if os.environ.get('PROMPT_LOG'): pathlib.Path(os.environ['PROMPT_LOG']).write_text(prompt)\n"
+                        "prompt = sys.stdin.buffer.read().decode('utf-8')\n"
+                        "if os.environ.get('PROMPT_LOG'): pathlib.Path(os.environ['PROMPT_LOG']).write_text(prompt, encoding='utf-8')\n"
                         "case = os.environ.get('CODEX_FIXTURE_CASE', 'accept')\n"
                         "assert os.environ['MYAGENTKIT_DELEGATION_DEPTH'] == '1'\n"
                         "if os.environ.get('CWD_LOG'):\n"
@@ -4332,10 +4332,12 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         task = {'PROMPT_LOG': str(log), 'MYAGENTKIT_TASK_ID': 'claims-task'}
         self.assertEqual(self.run_bridge('reject', env_extra=task)[0], 0)
         notes = self.root / 'dispositions.md'
-        notes.write_text('file.py:1 deferred: to the owner.\n')
+        # UTF-8 whatever the host's code page: the bridge once read it in cp1252 and refused.
+        notes.write_text('file.py:1 deferred: to the owner (Şimdi ❌).\n', encoding='utf-8')
         code, result = self.run_bridge(env_extra=dict(task, REVIEW_DISPOSITIONS=str(notes)))
         self.assertEqual(code, 0, result)
-        prompt = ' '.join(log.read_text().split())
+        prompt = ' '.join(log.read_text(encoding='utf-8').split())
+        self.assertIn('Şimdi ❌', prompt)
         for wording in ("the author's claims to verify",
                         'counts only after you have checked it against the code',
                         'Report new Critical or High findings only',

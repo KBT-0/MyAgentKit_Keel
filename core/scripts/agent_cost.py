@@ -110,7 +110,7 @@ def session_agents(session: Path) -> list[tuple[str, Path]]:
         name = os.path.basename(f)[:-6]
         if meta.exists():
             try:
-                name = (json.loads(meta.read_text()).get('description') or name)[:40]
+                name = (json.loads(meta.read_text(encoding="utf-8")).get('description') or name)[:40]
             except ValueError:
                 pass
         out.append((name, Path(f)))

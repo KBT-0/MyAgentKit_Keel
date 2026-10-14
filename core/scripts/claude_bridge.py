@@ -828,7 +828,7 @@ def prior_rounds(repo: Path, task_id: str | None, scope: str, resolved: str | No
         # damaged one stops every labelled round, whatever its label: that is intended, and
         # a new label does not get past it.
         try:
-            value = json.loads(path.read_text())
+            value = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError) as error:
             raise damaged(path, "cannot be read (%s)" % error) from error
         task = value.get("task") if isinstance(value, dict) else None
@@ -895,7 +895,7 @@ def prior_rounds(repo: Path, task_id: str | None, scope: str, resolved: str | No
                               "it or use a new task label" % (task_id, evidence))
         rounds.append((str(value.get("recorded_at")), report.decode()))
     notes = os.environ.get("REVIEW_DISPOSITIONS")
-    claims = Path(notes).read_text() if notes else None
+    claims = Path(notes).read_text(encoding="utf-8") if notes else None
     try:
         measure(claims)  # once, before launch: the record never reads the file again
     except ValueError as error:
@@ -1260,7 +1260,7 @@ def main(argv=None, result_sink=None) -> int:
         head, fingerprint, diff, resolved = snapshot(repo, scope, ref)
         if args.mode == "review" and not diff.strip():
             raise BridgeError("empty diff: nothing was reviewed")
-        task = args.task_file.read_text() if args.task_file else ""
+        task = args.task_file.read_text(encoding="utf-8") if args.task_file else ""
         if args.mode == "propose" and not task.strip():
             raise BridgeError("propose requires a nonempty --task-file handoff")
         docs = ["AGENTS.md", "docs/PHASES.md", "docs/ARCHITECTURE.md", "docs/REVIEW_GATE.md"]

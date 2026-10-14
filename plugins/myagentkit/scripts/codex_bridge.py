@@ -265,7 +265,7 @@ def main(argv=None, result_sink=None):
             if not cancel_noted() or not usage["failure_kind"]:
                 return
             try:
-                if json.loads(path.read_text()).get("failure_kind") == "cancelled":
+                if json.loads(path.read_text(encoding="utf-8")).get("failure_kind") == "cancelled":
                     return
             except (OSError, ValueError):
                 pass

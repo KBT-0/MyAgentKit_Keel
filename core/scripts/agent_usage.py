@@ -315,7 +315,7 @@ def relabel_cancelled(repo: Path, usage_path: Path, evidence: str | None, text: 
     old sha256 and was not replaced, and the old archive put back later matched a record
     that said cancelled. A recorded archive always gets the new sha256 and is written anew.
     """
-    value = json.loads(usage_path.read_text())
+    value = json.loads(usage_path.read_text(encoding="utf-8"))
     archived = bool(evidence)
     if archived:
         value["evidence_sha256"] = hashlib.sha256(text.encode()).hexdigest()
@@ -349,7 +349,7 @@ def main():
     args = parser.parse_args()
     rows = []
     for path in sorted((args.repo / ".myagentkit/usage").glob("*.json")):
-        value = json.loads(path.read_text())
+        value = json.loads(path.read_text(encoding="utf-8"))
         if args.task_id and value["task"].get("id") != args.task_id:
             continue
         rows.append({k: v for k, v in value.items() if not k.startswith("raw_")})
