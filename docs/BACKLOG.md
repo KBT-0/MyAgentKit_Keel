@@ -19,6 +19,10 @@ Low findings of the kit's own reviews are filed here, not fixed in the round (ow
 - Pre-existing: `check_kit` repeats in its final summary only the NOT RUN lines of unit outputs;
   the killing-test note's own NOT RUN line (no upstream branch, e.g. a detached CI checkout) is
   printed by `main()` early and not repeated, so it can be lost in a long output.
+- Pre-existing (logic r2, v011-d5fix-logic): an added line whose content starts with `++ `
+  shows in the `-U0` diff as `+++ ...` and is read as a file header, so the file's later
+  refusals get no note or name the wrong file. Read `+++ ` as a header only outside a hunk
+  (reset at `diff --git`).
 
 ## Filed from v0.11 R (Claude review r2, portability, 20261014T131242Z-d60c67ef7f45)
 

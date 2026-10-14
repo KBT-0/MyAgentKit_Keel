@@ -359,8 +359,8 @@ GUARD = re.compile(r'\braise\s+\w|\bsys\.exit\(\s*[^0)\s]|\bexit\s+(?:[1-9]|"?\$
 def untested_guards(root):
     """A NOTE, never a failure, for each refusal the change against upstream adds while no file
     under tests/ changes: which test fails if it is removed? Mutation-lite; staged and unstaged
-    changes count, an untracked file does not (git diff does not list it; the commit-time run
-    sees it staged). The owner's diff.noprefix, diff.mnemonicPrefix and core.quotePath do not
+    changes count, an untracked file does not (git diff does not list it; once added or
+    committed it is noted on the next run). The owner's diff.noprefix, diff.mnemonicPrefix and core.quotePath do not
     change the paths read here."""
     git = ['git', '-C', str(root), '-c', 'core.quotePath=false']
     found = subprocess.run(git + ['merge-base', 'HEAD', '@{upstream}'], capture_output=True, text=True,

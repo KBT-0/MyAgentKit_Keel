@@ -45,7 +45,13 @@ were stored as thinking blocks, so the same count was seen twice and a nudge cam
 late. A state file beside the transcript now keeps the count at the last nudge. Manual
 check carried to the dogfood day: after a label bounce the gate's Stop hook steps aside on
 the continued stop (and the reverse); the pre-commit gate still holds, so the residual is
-accepted.
+accepted. Review mechanics seen the same day: a review run while the lead edited the
+checkout ended `stale_checkout` (the guard worked; the run was paid for nothing), so parallel
+work moved to worktrees; a `--commit` round runs only on the checked-out HEAD and its second
+round, on the fix commit, needs a new label, so the round-1 findings went into the brief; and
+two of the day's runs answered a plain Accept beside claim-by-claim confirmations listed as
+findings, which the bridge refused as invalid evidence. Both came after a brief asking "say
+for each claim fixed or not"; a brief line that puts claim checks under Manual checks fixed it.
 
 ### 2026-10-13 — The review policy rewritten: the kit's own numbers, and fourteen rules deleted
 
