@@ -674,7 +674,7 @@ Rules, binding for whoever routes workers:
    lead session's effort unless its definition sets `effort:` (the Claude Code overlay's
    `worker.md` and `diff-reviewer.md` do, as a fallback), and nothing in its output shows
    which one it got. The lead passes `model` and `effort` on every Agent call; the Claude Code
-   overlay's `guard_worker_route.py` hook refuses one that names neither (a fork excepted, it
+   overlay's `guard_worker_route.py` hook refuses one that lacks either (a fork excepted, it
    cannot change them). A separate
    session takes `scripts/spawn_worker.sh --model --effort`, which refuses a spawn without
    them; a Codex errand (`codex exec`) takes the model and `-c model_reasoning_effort`, and
