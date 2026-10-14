@@ -610,6 +610,18 @@ class BridgeTests(unittest.TestCase):
         self.assertIn('| model_attested | no (requested, unattested', body)
         self.assertIn('this claude@glm review ran', body)
         self.assertIn('Check that claude@glm did not author', body)
+        # Only a completed review without a backend is attested; a failed run never is.
+        for backend, status, attested in ((None, 'completed', 'yes (CLI modelUsage)'),
+                                          (None, 'failed', 'no (run did not complete)'),
+                                          ('glm', 'failed', 'no (run did not complete)')):
+            with self.subTest(backend=backend, status=status):
+                body = bridge.render('s', {'status': status, 'tools': ['Read'], 'scope': 'uncommitted',
+                                           'reference': None, 'head': 'head', 'fingerprint': 'fingerprint',
+                                           'diff_sha256': 'diffsha', 'error': 'cli failed',
+                                           'failure_kind': 'cli_error', 'result': {'verdict': 'Accept',
+                                           'findings': [], 'manual_checks': []}},
+                                     SimpleNamespace(**dict(vars(args), backend=backend)))
+                self.assertIn('| model_attested | %s |' % attested, body)
 
     def test_claude_settings_deny_relative_and_absolute_backend_reads(self):
         from types import SimpleNamespace

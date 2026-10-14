@@ -1032,8 +1032,9 @@ def render(stamp: str, evidence: dict, args) -> str:
 
     A reviewer that invented its own layout would make the two directions incomparable, so
     the header is built here and the shared renderer rejects it if a field drifts. Claude
-    DOES attest its model — validate() has already matched the pin against the CLI's own
-    modelUsage — which is the one field where the two directions honestly differ.
+    attests its model — validate() has already matched the pin against the CLI's own
+    modelUsage — except through a backend, where modelUsage names the model the CLI asked
+    for; that and Codex's requested pin are the honest differences between directions.
     """
     result = evidence.get("result") or {}
     completed = evidence["status"] == "completed"
