@@ -13,8 +13,27 @@ what was run and what was found.
   hook sees the transcript a message behind, and some visible lines are stored as thinking),
   so it is read beside the owner's marks, never alone.
 - The context band (`docs/WORKFLOW.md`, "Worker cost", rule 8: 200k, 300k, 400k) is a
-  judgement: at each owner correction the lead notes the context size, and the band moves
-  only if the corrections per band show it (`docs/research-context-limit.md`, öneri 7).
+  judgement, tested over the same one and a half weeks (`docs/research-context-limit.md`,
+  öneri 7). Observational only: the scope is fixed and no review round opens from it.
+  - Buckets: 0–100k, 100–200k, 200–300k, 300–400k, 400k+, the context read the way
+    `context_size.py` reads it (the last request's input plus cache read plus cache write).
+  - Per bucket, per 100 assistant messages, the lead's own errors: `guard_worker_route`
+    refusals (model or effort forgotten), `commit-msg` AI-attribution refusals, the owner's
+    explicit corrections (marked by hand: "no", "I said this already"), and the written rules
+    a script can check (chat language, identifiers in backticks, a bare session label like
+    D-1, a push or a new round nobody asked for).
+  - Around each compaction, the same counts for the 20 messages before and the 20 after; a
+    second compaction in one session is marked apart.
+  - Cost: `scripts/agent_cost.py --latest` and the `/usage` "Prompt cache (main)" line: the
+    cache hit rate, the cost per request by bucket, the real cost of a compaction and of a
+    hand-off.
+  - A note of the bucket and the symptom (a re-read, a contradicting status) whenever the
+    owner wanted to cut the lead.
+  - Decision rule, written before the data: if the 200–300k error rate is at least twice the
+    0–100k rate (with more than a few events), yellow moves to 150k; if 300–400k shows no
+    difference either, red moves to 400k and the ceiling to 500k; otherwise the band stays.
+    The event counts will be small: the result is a sign, not proof, and it moves the band
+    at most one step.
 
 ## v0.11 — 2026-10-09: live Claude adapter checks (#6) and the reviewer sandbox (#39)
 

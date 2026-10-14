@@ -43,7 +43,9 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 - **The lead's context line is a band, set by quality as well as cost** (`docs/WORKFLOW.md`,
   "Worker cost", rule 8; `AGENTS.md`, "MENTION ONCE"): yellow at 200k (plan the cut, no new
   round), red at 300k (cut at the next clean stop), ceiling at 400k (stop now), the same for
-  every model; a rule corrected twice or two worker-route refusals cut at any size. The old
+  every model; a rule corrected twice or two worker-route refusals cut at any size. A
+  `/compact` carries a fixed instruction, never bare, and a second compaction in one session
+  is a hand-off instead (the hook then recommends only a hand-off). The old
   reason ("pays back in under ten turns") was wrong at today's cache prices. Evidence:
   `docs/research-context-limit.md`. Claude Code overlay: `context_size.py` names the band,
   `.claude/settings.json` sets `autoCompactWindow` to 450000 (a safety valve; the default is

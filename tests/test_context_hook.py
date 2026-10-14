@@ -126,6 +126,16 @@ class ContextHookTests(unittest.TestCase):
         self.assertIn('Context is 210k tokens', self.run_hook(turns))
         self.assertEqual(self.run_hook(turns), '')
 
+    def test_after_a_compaction_only_a_hand_off_is_recommended(self):
+        turns = [request(210_000)]
+        said = self.run_hook(turns)
+        self.assertIn('"/compact keep the open decisions', said)  # never a bare /compact
+        turns += [{'type': 'system', 'subtype': 'compact_boundary'}, request(210_000)]
+        said = self.run_hook(turns)
+        self.assertIn('compacted already', said)
+        self.assertIn('recommend a hand-off', said)
+        self.assertNotIn('/compact keep', said)
+
     def test_a_drop_without_compaction_does_not_rearm(self):
         turns = [request(255_000)]
         self.assertIn('Context is 255k tokens', self.run_hook(turns))

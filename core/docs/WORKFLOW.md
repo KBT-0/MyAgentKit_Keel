@@ -736,6 +736,9 @@ Rules, binding for whoever routes workers:
    flight continues: one summary turn is cheaper than a handoff note plus a cold start, but
    only while the cache is warm; a session resumed after more than an hour writes a summary into the
    handoff first, since its context is re-written at full price on the next request anyway.
+   Never a bare `/compact`: `/compact keep the open decisions, the binding rules, the changed
+   files, the next step and the owner's words verbatim`. A session compacted once hands off
+   instead of compacting again, since a summary of a summary drifts.
    **Hand off** (update STATE, write the handoff, `/clear`, start fresh) when the work
    changes direction, a batch has just closed, or most of the context is the detail of
    finished work that a summary would still carry. A Codex lead sets

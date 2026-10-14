@@ -13,7 +13,7 @@ user's own Claude folder, not a shared temporary one), so a retried prompt or on
 reached no request does not repeat it. A compaction boundary arms it again; a smaller
 context alone does not. Which of /compact and a hand-off is cheaper depends on what STATE
 holds and where the work goes next, which a hook cannot see, so the agent chooses and says
-so. Silent on any error: a broken transcript must never block a prompt.
+so; after a compaction it can only be a hand-off, since a second summary drifts. Silent on any error: a broken transcript must never block a prompt.
 """
 import json
 import os
@@ -30,6 +30,8 @@ BANDS = ((CEILING, 'ceiling (400k): stop now and secure the work (commit, STATE,
          (RED, 'red (300k): cut at the next clean stop; start no new round'),
          (LINE, 'yellow (200k): plan the cut; start no new round, let the running batch finish, '
                 'commit, and keep docs/STATE.md and the handoff current'))
+COMPACT = ("/compact keep the open decisions, the binding rules, the changed files, the next step "
+           "and the owner's words verbatim")
 
 
 def band(ctx: int) -> int:
@@ -99,14 +101,20 @@ def main() -> None:
             finally:
                 temporary.unlink(missing_ok=True)
     if now > said:
+        if compactions:
+            advice = ('This session was compacted already, and a summary of a summary drifts: in this '
+                      "turn's closing summary, recommend a hand-off (update STATE, write the handoff, "
+                      'fresh session) to the owner in one line with this number, never a second /compact')
+        else:
+            advice = ("In this turn's closing summary, recommend ONE to the owner in one line with this "
+                      'number and the reason: /compact when docs/STATE.md and the open operation files '
+                      'already hold what matters and the work in flight continues, never bare but as '
+                      f'"{COMPACT}"; a hand-off (update STATE, write the handoff, fresh session) when the '
+                      'work changes direction, a batch has just closed, or most of the context is detail '
+                      'of finished work. Neither is the default')
         print(f'Context is {ctx // 1000}k tokens, ' + next(text for floor, text in BANDS if ctx >= floor)
-              + '. Every turn re-sends it, and accuracy falls as it grows. In this '
-              "turn's closing summary, recommend ONE to the owner in one line with this number and the "
-              'reason: /compact when docs/STATE.md and the open operation files already hold what '
-              'matters and the work in flight continues; a hand-off (update STATE, write the handoff, '
-              'fresh session) when the work changes direction, a batch has just closed, or most of '
-              'the context is detail of finished work. Neither is the default (docs/WORKFLOW.md, '
-              '"Worker cost", rule 8).')
+              + '. Every turn re-sends it, and accuracy falls as it grows. ' + advice
+              + ' (docs/WORKFLOW.md, "Worker cost", rule 8).')
 
 
 if __name__ == '__main__':
