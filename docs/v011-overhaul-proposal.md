@@ -209,7 +209,7 @@ Kit tek model ailesiyle çalışır; "diğer model" = taze oturum, tercihen baş
 (Codex, `claude@NAME`) takılabilir, hiçbir gate ikisini birden istemez. GATE "Invariant", WORKFLOW
 solo modu, prompt ve iki kural dosyası tek-model dilinde.
 
-### R. Sahiple iletişim kuralları — UYGULANDI (14 Ekim), review bekliyor
+### R. Sahiple iletişim kuralları — UYGULANDI ve REVIEW KAPANDI (14 Ekim: logic r2, portability r3 Accept-MC)
 
 `docs/research-communication-style.md` raporunun 16 önerisinin hepsi v0.11'e (sahip kararı,
 14 Ekim; v0.12 sonradan açılan issue'lar için). Tek kural dosyası `core/docs/COMMUNICATION.md`
@@ -234,7 +234,7 @@ Risk: high (hook + settings); etiketler v011-comm-logic / v011-comm-portability,
 | 2 | E + P — UYGULANDI | Politika oturduktan sonra prompt ve iki kısa dosya onu söyler; P'nin envanter kararı E ile aynı oturum |
 | 3 | D-1 ve D-2 (locale matrisi, shell lint) | En sık iki sınıf; gate kodu olduğundan A'nın full katmanı |
 | 4 | D-3…D-5 | v0.11 (sahip kararı); sıra sıklığa göre |
-| 4b | R (iletişim) — UYGULANDI, review bekliyor | Rapor 14 Ekim'de geldi; D-5 review ile aynı günde |
+| 4b | R (iletişim) — UYGULANDI, review kapandı | Rapor 14 Ekim'de geldi; D-5 review ile aynı günde |
 | 5 | L | Backend dalı merge edilirken |
 | 1b | M, N-1, N-2, O — UYGULANDI; N-3/N-4 v0.12 | Politika belgeleriyle aynı oturum; N-3/N-4 v0.12 |
 
