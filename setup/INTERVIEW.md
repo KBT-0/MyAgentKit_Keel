@@ -268,6 +268,20 @@ One topic per turn. Suggested order, because each answer informs the next:
     (a project setting overrides a user-level install, so this turns it off here too) and
     delete the `ponytail` marketplace entry; say so.
 
+12. **In which language does the owner want to be talked to, and which terms need no
+    explanation?** Two answers. The language goes into `{{CHAT_LANGUAGE}}` in `AGENTS.md`
+    (identifiers stay English in backticks whatever the answer; `docs/COMMUNICATION.md` has
+    the rules). The terms go into `docs/GLOSSARY.md`, the first list: ask for the owner's
+    field (a Unity developer knows C# and the editor; a security engineer knows other
+    things) and the tools they use daily, and write those as the terms an agent never
+    explains. Everything else is explained at first use, and the glossary grows with every
+    "what does this mean". The reason to ask: in the kit's founding project the owner read
+    reports full of the agents' own labels ("D-1", "r2", "Accept-MC") and the most common
+    Claude complaint of 2026 is this invented jargon. If the Claude Code overlay is
+    installed, say that `.claude/hooks/plain_report.py` bounces a final message that still
+    carries such a label and that its `LABELS` list is where a project adds its own
+    shapes.
+
 ## Phase 3 — PROJECT.md and PHASES.md
 
 Both files ship as skeletons and both are LIVING documents. Do not fill them in from a
@@ -316,6 +330,8 @@ above is what catches them, and the overlay's own document explains each one.
 | `{{PROJECT_DESCRIPTION}}` | The one-paragraph answer from Phase 2, tightened |
 | `{{OWNER_NAME}}` | Who decides. Used throughout the duties section |
 | `{{LANGUAGE_EXCEPTION}}` | Empty if everything is in English. If a document is deliberately in another language, name it and say why |
+| `{{CHAT_LANGUAGE}}` | The language the owner is talked to in (question 12), e.g. `English` or `Turkish`; identifiers stay English |
+| `{{KNOWN_TERMS}}` | In `docs/GLOSSARY.md`: the terms from question 12 an agent never explains, one per line, or `(none yet)` |
 
 ### The current phase (`docs/PHASES.md`)
 

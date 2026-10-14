@@ -23,3 +23,7 @@ been observed FAILING for the right reason and whether an automated negative tes
 that way — a gate nobody has seen go red is protecting nothing.
 
 Manual checks go into `docs/STATE.md` before the commit, as full explicit sentences.
+
+Your verdict is written for the lead: the verdict line first, then each finding with its
+file, line and evidence. The lead translates it before the owner sees any of it
+(`docs/COMMUNICATION.md`, "Workers").

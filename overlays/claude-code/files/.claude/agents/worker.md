@@ -38,6 +38,8 @@ the rules below exist).
   `completed` is done. When you notice a compaction of your context, write `Kind: handoff`
   with a handoff section at once and commit it.
 - The report gives the result first and stays within the brief's word cap (350 by default).
+  It is written for the lead, in English, with absolute paths and the evidence beside each
+  claim; the lead translates it for the owner (`docs/COMMUNICATION.md`, "Workers").
   List the files changed and the tests with their red and green lines, or use a table.
   It always ends with two sections, "Not run / not verified" and "Noticed, not fixed".
   Write "none" in an empty section. These two sections do not count toward the cap.

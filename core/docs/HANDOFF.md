@@ -5,6 +5,18 @@ target has NO chat memory: if it is not in the prompt or in `docs/STATE.md`, it 
 exist. A brief is a written artifact (`AGENTS.md`, "Language & style", rule 2): full
 sentences, one instruction per sentence, one term per thing. State each requirement once.
 
+## Owner summary
+
+A handoff between sessions opens with a few lines for {{OWNER_NAME}}, in the chat language,
+before the technical brief (`docs/COMMUNICATION.md`, "Handoff"): the state in one word (on
+track, at risk, blocked); what finished, each marked verified or not verified; what is open
+and whose it is (the agent's or the owner's); known risks as "if X, do Y"; the one decision
+wanted from the owner. No session labels in this layer. The next session reads the summary
+back to the owner in two or three lines before it starts, so a misreading is caught first.
+The technical brief below keeps the six things a compaction summary keeps: open problems,
+approaches tried and dropped with why, the owner's decisions in their own words, the current
+state, open work, and details that are hard to reproduce.
+
 ## The brief
 
 Every brief includes `Route: quick|build|deep · Risk: low|medium|high · Checks: ...`.

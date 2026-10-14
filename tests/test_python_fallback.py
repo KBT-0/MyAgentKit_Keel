@@ -22,8 +22,8 @@ class PythonFallbackTests(unittest.TestCase):
         hooks = json.loads((OVERLAY / '.claude/settings.json').read_text(encoding='utf-8'))['hooks']
         commands = [h['command'] for entries in hooks.values() for e in entries for h in e['hooks']]
         python_hooks = {Path(c.split('"')[-2]).name: c for c in commands if '.py"' in c}
-        self.assertEqual(sorted(python_hooks), ['context_size.py', 'guard_boundaries.py',
-                                                'guard_destructive_git.py', 'guard_worker_route.py'], commands)
+        self.assertEqual(sorted(python_hooks), ['context_size.py', 'guard_boundaries.py', 'guard_destructive_git.py',
+                                                'guard_worker_route.py', 'plain_report.py', 'progress_reminder.py'], commands)
         for command in python_hooks.values():
             self.assertTrue(command.startswith('sh "$CLAUDE_PROJECT_DIR/.claude/hooks/py.sh" '), command)
         bin_dir = tmp / 'bin'
@@ -72,6 +72,14 @@ class PythonFallbackTests(unittest.TestCase):
         said = run(['sh', '-c', python_hooks['context_size.py']], json.dumps({'transcript_path': str(transcript)}))
         self.assertEqual((said.returncode, said.stderr), (0, ''))
         self.assertIn('Context is 210k tokens', said.stdout)
+        bounced = run(['sh', '-c', python_hooks['plain_report.py']], json.dumps({'last_assistant_message': 'D-5 is done.'}))
+        self.assertEqual(bounced.returncode, 2, bounced.stderr)
+        self.assertIn('BLOCKED', bounced.stderr)
+        transcript.write_text(''.join(json.dumps({'type': 'assistant', 'message': {'content': [
+            {'type': 'tool_use', 'name': 'Read'}]}}) + '\n' for _ in range(5)), encoding='utf-8')
+        nudged = run(['sh', '-c', python_hooks['progress_reminder.py']], json.dumps({'transcript_path': str(transcript)}))
+        self.assertEqual((nudged.returncode, nudged.stderr), (0, ''))
+        self.assertIn('additionalContext', nudged.stdout)
         # A gate script that execs its resolved Python.
         cleaned = run(['sh', str(OVERLAY / 'scripts/clean_worktrees.sh')])
         self.assertEqual(cleaned.returncode, 0, cleaned.stdout + cleaned.stderr)

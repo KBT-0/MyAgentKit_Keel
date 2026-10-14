@@ -110,14 +110,16 @@ worker.
 
 - **All operational docs, code, identifiers, comments, commits and STATE.md entries: English.**
   {{LANGUAGE_EXCEPTION}}
-- **Two registers; rule 3 outranks both.** (1) Chat: the answer or result first; no restating
-  the task, no narrated compliance, no prose between routine tool calls; listable facts in a
-  list, reasoning in sentences; then stop. (2) Written artifacts (STATE.md, BACKLOG.md,
+- **Two registers; rule 3 outranks both.** (1) Chat, in {{CHAT_LANGUAGE}}: the answer or
+  result first; no restating the task, no narrated compliance, no prose between routine tool
+  calls; listable facts in a list, reasoning in sentences; then stop. Identifiers stay English
+  in backticks, a term is explained at its first use, and a session label never stands alone:
+  `docs/COMMUNICATION.md` is binding for every message {{OWNER_NAME}} reads. (2) Written artifacts (STATE.md, BACKLOG.md,
   operation files, handoff prompts, verdicts, docs) are read by a session with no memory of this
   one: full sentences, one instruction per sentence of about 20 words, active voice, the actor
   named, one term per thing, numbered steps; user-level style plugins never apply. (3) Never
   shortened by a cap or a style: what FAILED, what was NOT run or NOT verified, any security
-  warning, any action that cannot be undone — each in full, on its own line. In chat in another
+  warning, any action that cannot be undone — each in full, on its own line. In chat in any
   language, the same three rules hold.
 - Single responsibility; no god classes. Consider splitting files over ~300 lines.
 - No singletons or static mutable state in core logic — dependencies via constructor (including

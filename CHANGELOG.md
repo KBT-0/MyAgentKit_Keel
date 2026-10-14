@@ -13,6 +13,22 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## v0.11 — 2026-10-09
 
+- **How an agent talks to the owner is now one document** (`docs/COMMUNICATION.md`, pointed
+  at from `AGENTS.md`, "Language & style"): the chat language with English identifiers in
+  backticks, every term explained at first use, no bare session label (`D-1`, `r2`,
+  `Accept-MC`) toward the owner, a final report that opens with the outcome and any failed
+  step, a three-step confidence scale, one decision per question with a marked
+  recommendation, a two-layer handoff (`docs/HANDOFF.md`, "Owner summary"), no compression
+  modes. New `docs/GLOSSARY.md`: the terms the owner knows and the kit terms an agent
+  explains. **ACTION:** copy both files from the kit's `core/docs/`, fill `{{CHAT_LANGUAGE}}`
+  in `AGENTS.md` and `{{KNOWN_TERMS}}` in the glossary (setup interview question 12). Claude
+  Code overlay: two new hooks, `.claude/hooks/plain_report.py` (Stop: bounces a final
+  message that names a bare label outside code, once per turn) and
+  `.claude/hooks/progress_reminder.py` (PostToolUse: one line of context after five tool
+  calls with no visible text); **ACTION:** copy both and their entries from the overlay's
+  `.claude/settings.json`; hooks are not synced. The worker and reviewer definitions say
+  their reports are for the lead, who translates. The dogfood day measures the rules
+  (`docs/COMMUNICATION.md`, "Measuring the rules").
 - **ACTION — v0.11 is used for real in its first projects; report every kit problem.** leeway
   and labricore-web take v0.11 straight away, and their daily work is part of its dogfood. A
   lead upgrading one of them is extra careful with the upgrade and with the kit afterwards:

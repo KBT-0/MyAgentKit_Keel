@@ -12,6 +12,28 @@
         ]
       }
     ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"$CLAUDE_PROJECT_DIR/overlays/claude-code/files/.claude/hooks/py.sh\" \"$CLAUDE_PROJECT_DIR/overlays/claude-code/files/.claude/hooks/progress_reminder.py\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"$CLAUDE_PROJECT_DIR/overlays/claude-code/files/.claude/hooks/py.sh\" \"$CLAUDE_PROJECT_DIR/overlays/claude-code/files/.claude/hooks/plain_report.py\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
     "UserPromptSubmit": [
       {
         "hooks": [

@@ -21,6 +21,22 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-10-14 — Communication rules from the report, all sixteen, with the measurement
+
+`docs/research-communication-style.md` (14 findings, 101 sources) answered the owner's
+complaint that reports arrived full of the agents' own labels. The owner put all sixteen
+recommendations into v0.11 (`docs/v011-overhaul-proposal.md`, item R), knowing the report's
+own verdicts: the label-bouncing Stop hook and the progress reminder rest on one vendor
+measurement and community anecdote, nobody measured the enforcement layers side by side,
+and no study measured whether a non-technical owner understands a terse report. That gap is
+why the measurement (recommendation 15) ships too: the dogfood day records the owner's
+mark per report and the hook counts, and a rule that moves no number is deleted. Two
+choices against the report: no output-style file (the kit's one-canonical-file principle;
+`AGENTS.md` stays the style owner, with a pointer) and no language re-injecting hook (its
+cost is a prompt on every turn; the Stop hook catches the visible symptom instead).
+Observed while building: the progress hook, registered in the kit's own settings, fired
+during this very session after ten silent tool calls, which is the first live trigger.
+
 ### 2026-10-13 — The review policy rewritten: the kit's own numbers, and fourteen rules deleted
 
 The v0.11 overhaul (`docs/v011-overhaul-proposal.md`, items A, B, C, E, H, I, J, K, M, N, P,
