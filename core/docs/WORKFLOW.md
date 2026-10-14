@@ -511,7 +511,8 @@ there as reviewer `claude@NAME` (`docs/REVIEW_RUNNING.md`). `scripts/spawn_worke
 --backend NAME` starts a Claude worker session there. The backend changes neither the tiers
 above nor the sandbox. The lead measures it before routing work to it: run a few real reviews
 on it, then compare rejects and rework in `usage_summary.py`, which shows the backend column.
-The owner decides whether a `claude@NAME` review counts as the second model.
+A `claude@NAME` review of another model family counts as the second model (`docs/REVIEW_GATE.md`,
+"Invariant").
 
 ### Working modes, by name
 
@@ -574,7 +575,7 @@ names who writes and who reviews: `(writes: claude, reviews: codex)` or the reve
   go to the other side when its tier row is cheaper.
 - **Reviews and fixes:** the other side reviews every tiered diff in a fresh session, and
   findings go to a fresh worker of the author's side ("Worker cost", rule 2); the next round
-  reviews the fix. The owner decides whether a `claude@NAME` review counts as the other side.
+  reviews the fix. A `claude@NAME` review of another model family counts as the other side.
 - **Workers:** up to the worktree ceiling, both sides together.
 - **Effort:** the tier and effort tables as written.
 - **Ends:** when the owner names another mode.

@@ -1039,7 +1039,11 @@ def render(stamp: str, evidence: dict, args) -> str:
     completed = evidence["status"] == "completed"
     model = "backend %s, model %s" % (args.backend, args.model) if args.backend else args.model
     header = {"reviewer": "claude@" + args.backend if args.backend else "claude", "model": model,
-              "model_attested": "yes (CLI modelUsage)" if completed else "no (run did not complete)",
+              # Through a backend the CLI names the model it asked for; the backend's answer is
+              # not proof of the weights that served it (docs/REVIEW_GATE.md, "Invariant").
+              "model_attested": "no (run did not complete)" if not completed else
+                                "no (requested, unattested: the CLI names the model it asked the backend for)"
+                                if args.backend else "yes (CLI modelUsage)",
               "effort": args.effort, "sandbox": "throwaway copy, " + (
                   "Claude Code Bash sandbox: writes to the copy and the temporary directory, "
                   "no network" if "Bash" in evidence["tools"] else "no Bash: native Windows, "

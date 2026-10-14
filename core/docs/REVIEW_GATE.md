@@ -7,7 +7,9 @@ is `docs/REVIEW_RUNNING.md`.
 
 **The session that wrote a patch never reviews or approves it.** The review runs in a FRESH
 session, preferably another model tier or family. One family is enough; a second vendor
-(`--reviewer codex`, a `claude@NAME` backend) is pluggable, never required. A green gate is
+(`--reviewer codex`, a `claude@NAME` backend) is pluggable, never required. Independence
+comes from the model family, not the CLI: a `claude@NAME` review of another family counts as
+the second model; its record says the model was requested, unattested. A green gate is
 necessary, not sufficient. The reviewer works in a throwaway copy without network or paid
 model calls and marks each finding REPRODUCED or REASONED; its runs are evidence for
 findings, not for acceptance, which is the self-test on the reviewed head.

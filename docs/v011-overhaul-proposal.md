@@ -167,7 +167,7 @@ ve Medium'un kaderi sahibin.
 `working_mode.py` eski adı reddeder ve eşlemeyi basar). "A mode never lowers a change's tier";
 routing kural 4 silindi, effort tablosu review satırı H'ye göre.
 
-### L. Açık soru: `claude@NAME` (GLM gibi Anthropic-uyumlu backend) ikinci model sayılır mı?
+### L. `claude@NAME` (GLM gibi Anthropic-uyumlu backend) ikinci model sayılır — UYGULANDI (14 Ekim)
 
 **Öneri: EVET.** Dekorelasyonun kaynağı model ailesidir, CLI değil ([26] Nine Judges: etkin
 bağımsızlık model ailesine göre; [8] "farklı agent'lar ortak kör noktayı paylaşmaz"). GLM/Kimi

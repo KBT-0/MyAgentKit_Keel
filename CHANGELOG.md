@@ -13,6 +13,11 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## v0.11 — 2026-10-09
 
+- **A `claude@NAME` review of another model family counts as the second model**
+  (`docs/REVIEW_GATE.md`, "Invariant"; `docs/WORKFLOW.md`): independence comes from the model
+  family, not the CLI. Its evidence header now says `model_attested: no (requested,
+  unattested ...)`, because through a backend the CLI names the model it asked for, not the
+  weights that answered.
 - **How an agent talks to the owner is now one document** (`docs/COMMUNICATION.md`, pointed
   at from `AGENTS.md`, "Language & style"): the chat language with English identifiers in
   backticks, every term explained at first use, no bare session label (`D-1`, `r2`,

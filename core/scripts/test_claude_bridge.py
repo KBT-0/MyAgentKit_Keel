@@ -607,6 +607,7 @@ class BridgeTests(unittest.TestCase):
                                        'diff_sha256': 'diffsha', 'result': {'verdict': 'Accept',
                                        'findings': [], 'manual_checks': []}}, args)
         self.assertIn('| reviewer | claude@glm |', body)
+        self.assertIn('| model_attested | no (requested, unattested', body)
         self.assertIn('this claude@glm review ran', body)
         self.assertIn('Check that claude@glm did not author', body)
 
