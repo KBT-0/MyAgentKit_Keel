@@ -11,15 +11,22 @@ Low findings of the kit's own reviews are filed here, not fixed in the round (ow
 - Text paths the locale sensor does not see (pre-existing, both r2 reviewers):
   `guard_destructive_git.py` runs a text subprocess without an encoding inside `except
   Exception`, so the sensor's EncodingWarning is swallowed (it fails safe: it blocks);
-  `agent_usage.py` reads records with a bare `read_text()`; `check_kit.utf8_locale` decodes
+  `check_kit.utf8_locale` decodes
   `locale -a` strictly. Name UTF-8 in each and add the suites that reach them to the sensor.
+
+## Filed from v0.11 R (Claude review r2, portability, 20261014T131242Z-d60c67ef7f45)
+
+- `plain_report.py` CODE regex: a fence closes at any later fence of either kind, so a
+  four-backtick fence holding a ``` line, or a ``` fence holding a `~~~` line, ends early and a
+  label after it is bounced. Match the closing run to the opening one (same character, at least
+  as long).
 
 ## Filed from v0.11 item F (Claude review r2, 20261013T164417Z-c2eb9992cc7d)
 
 - The dispositions file is read once per reviewer attempt, not once per review: on a fallback
   the second adapter reads it again. Read the bytes once in `review_dispatch.py` and hand them on.
 - A missing or non-UTF-8 `REVIEW_DISPOSITIONS` path raises a raw OSError/UnicodeDecodeError before
-  the "no earlier rounds" message; read with `encoding='utf-8'` and wrap it in a BridgeError.
+  the "no earlier rounds" message; wrap it in a BridgeError.
 - Unkeyed answer lines are not counted; record `unkeyed: n` so the summary can show them.
 - The Task, Total and Behaviour lines of `usage_summary.py` mix shadow runs into `rejects`,
   `findings` and `per_round`; report them there as a separate `shadow=` count.

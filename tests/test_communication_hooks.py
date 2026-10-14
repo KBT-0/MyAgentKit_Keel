@@ -146,7 +146,9 @@ class ProgressReminderTests(unittest.TestCase):
         self.assertIn('5 tool calls', self.nudge(calls + [assistant(tool())])['additionalContext'])
 
     def test_a_broken_state_file_counts_as_none_and_a_turkish_path_works(self):
-        folder = self.transcript.parent / 'Şimdi ❌'
+        # LC_ALL=C on Linux leaves an ASCII file system encoding, where no such name exists.
+        utf8 = sys.getfilesystemencoding().lower().replace('-', '') == 'utf8'
+        folder = self.transcript.parent / ('Şimdi ❌' if utf8 else 'plain')
         folder.mkdir()
         self.transcript = folder / 'session.jsonl'
         for broken in ('{broken', 'null', '{"said": "5", "mark": null}', '{"said": 5}'):
