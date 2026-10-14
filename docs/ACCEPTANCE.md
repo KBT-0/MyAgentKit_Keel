@@ -15,6 +15,9 @@ what was run and what was found.
 - The context band (`docs/WORKFLOW.md`, "Worker cost", rule 8: 200k, 300k, 400k) is a
   judgement, tested over the same one and a half weeks (`docs/research-context-limit.md`,
   öneri 7). Observational only: the scope is fixed and no review round opens from it.
+  `scripts/context_buckets.py --since <adoption day>` in each project prints the counts
+  below except the scripted rule checks that need a reader; the owner marks a correction by
+  putting `#fix` in the prompt.
   - Buckets: 0–100k, 100–200k, 200–300k, 300–400k, 400k+, the context read the way
     `context_size.py` reads it (the last request's input plus cache read plus cache write).
   - Per bucket, per 100 assistant messages, the lead's own errors: `guard_worker_route`

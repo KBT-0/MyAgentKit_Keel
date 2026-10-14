@@ -142,10 +142,14 @@ def table(summaries: list[dict]) -> str:
     return '\n'.join(lines)
 
 
-def latest_session(project_dir: Path) -> Path:
+def project_folder(project_dir: Path) -> Path:
     # Claude Code turns every character but a letter or digit into '-': D:\_x and /a_b alike.
     encoded = re.sub(r'[^A-Za-z0-9]', '-', str(project_dir.resolve()))
-    folder = Path.home() / '.claude' / 'projects' / encoded
+    return Path.home() / '.claude' / 'projects' / encoded
+
+
+def latest_session(project_dir: Path) -> Path:
+    folder = project_folder(project_dir)
     files = sorted(folder.glob('*.jsonl'), key=lambda p: p.stat().st_mtime)
     if not files:
         raise SystemExit(f'agent_cost: no transcripts under {folder}')
