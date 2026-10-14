@@ -469,7 +469,10 @@ Rules for whoever routes work, binding with any table:
    mechanical work (renames, figure fixes, data fetches, proof runs, summaries);
    detail-bearing errands and ordinary reviews; risky and gate reviews and design
    consultations. The lead picks the model from its tier and effort from the work table above.
-   It writes both into the brief. Neither is left to a default or to inheritance.
+   It writes both into the brief, and before the start tells the owner in one plain line which
+   model and effort and why ("Sonnet, medium: web research and notes, tier 1"); a skill
+   whose template names no model is no exception. Neither is left to a default or to
+   inheritance.
    Both start at the cheapest table row that fits: mechanical work, docs, small fixes and
    re-reviews go to the cheaper model (Sonnet) or a Codex worker at medium; the strongest
    model at high is for a new mechanism's or a gate change's first round only. Every brief
@@ -670,7 +673,9 @@ Rules, binding for whoever routes workers:
    to inheritance: a sub-agent runs at its
    lead session's effort unless its definition sets `effort:` (the Claude Code overlay's
    `worker.md` and `diff-reviewer.md` do, as a fallback), and nothing in its output shows
-   which one it got. The lead passes `model` and `effort` on every Agent call. A separate
+   which one it got. The lead passes `model` and `effort` on every Agent call; the Claude Code
+   overlay's `guard_worker_route.py` hook refuses one that names neither (a fork excepted, it
+   cannot change them). A separate
    session takes `scripts/spawn_worker.sh --model --effort`, which refuses a spawn without
    them; a Codex errand (`codex exec`) takes the model and `-c model_reasoning_effort`, and
    `scripts/spawn_codex.sh --model --effort` refuses a Codex worker without them. The brief states model and

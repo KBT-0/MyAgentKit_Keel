@@ -1,5 +1,17 @@
 {
   "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Agent|Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"$CLAUDE_PROJECT_DIR/overlays/claude-code/files/.claude/hooks/py.sh\" \"$CLAUDE_PROJECT_DIR/overlays/claude-code/files/.claude/hooks/guard_worker_route.py\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
     "UserPromptSubmit": [
       {
         "hooks": [

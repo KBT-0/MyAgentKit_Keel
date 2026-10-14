@@ -18,6 +18,13 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   lead upgrading one of them is extra careful with the upgrade and with the kit afterwards:
   every problem, surprise or doubt about MyAgentKit, and about this release above all, goes
   upstream through `/myagentkit:kit-feedback` (an issue), not only into the project's notes.
+- **No worker starts without a stated model and effort** (`docs/WORKFLOW.md`, "Model routing"
+  rule 1 and "Worker cost" rule 5; Claude Code overlay). Before every worker the lead tells the
+  owner in one plain line which model, which effort and why; a skill whose template names no
+  model is no exception. The new `.claude/hooks/guard_worker_route.py` refuses an Agent call
+  that names no model or no effort (a fork excepted). **ACTION** (Claude Code overlay): copy
+  `.claude/hooks/guard_worker_route.py` and add its `PreToolUse` entry (matcher `Agent|Task`)
+  from the overlay's `.claude/settings.json`; hooks are not synced.
 - **The kit check asks for a killing test** (`scripts/check_kit.py`, a NOTE, never a failure):
   when the change against the upstream branch adds a refusal (a `raise`, a nonzero exit, `die`,
   a FAIL line) and no file under `tests/` changes, a NOTE names the line and asks which test
