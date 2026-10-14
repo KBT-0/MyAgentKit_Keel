@@ -674,6 +674,9 @@ class BootstrapTests(unittest.TestCase):
             self.assertEqual(subprocess.run(['git', '-C', str(project), 'config', 'core.hooksPath'],
                                             capture_output=True, text=True).stdout.strip(), '.husky')
             self.assertFalse((project / 'docs/kit/.kit-version').exists())
+            # The kit's scripts were staged before this stop: the next unrelated commit took them.
+            self.assertEqual(subprocess.run(['git', '-C', str(project), 'ls-files'],
+                                            capture_output=True, text=True).stdout, '')
 
     def test_a_hooks_path_in_another_scope_stops_the_install_and_a_project_hook_runs_beside_the_kit_s(self):
         # The guard read only the local scope: with extensions.worktreeConfig and a worktree

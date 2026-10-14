@@ -34,8 +34,9 @@ Name the model and effort from `docs/WORKFLOW.md`, "Model routing", alongside th
    For an incremental-build planner, include inputs read by always-run steps in every stage's dependency set.
    The driver script that holds the stage commands must invalidate every stage when it changes.
 4. **Acceptance:** what the diff must and must NOT contain, and which gate follows (a risky
-   area means `docs/REVIEW_GATE.md`, fresh session). Any other change needs no review;
-   {{OWNER_NAME}}'s check or the manual check named here accepts it.
+   area means `docs/REVIEW_GATE.md`, fresh session). Any other change gets one light review
+   (`docs/REVIEW_GATE.md`, "Risk tiers"); {{OWNER_NAME}}'s check or the manual check named here
+   accepts it.
    **Review:** the brief says which of two cases it expects. A worker in a separate session
    reviews its own diff with fresh sub-agents before it reports; a sub-agent worker says it
    could not, and the lead starts the review when the branch exists (`docs/WORKFLOW.md`,
@@ -187,7 +188,7 @@ REVIEW: <inner: you review your diff with fresh sub-agents before reporting | le
 
 If this task touches {{RISKY_AREAS}}, or any gate/CI/check script: before commit, run the
 review gate per docs/REVIEW_RUNNING.md in a FRESH session, preferably a different tool.
-Any other change needs no review unless this brief names the doubt a review is to settle.
+Any other change gets one light review (docs/REVIEW_GATE.md, "Risk tiers").
 
 When finishing: update docs/STATE.md with a tool+model trace (a follow-up task goes to
 docs/BACKLOG.md), then a short summary.

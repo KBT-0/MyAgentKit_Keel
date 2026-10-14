@@ -97,7 +97,7 @@ worker.
 - **Risky diffs** ({{RISKY_AREAS}}, plus gates/CI/check scripts/review tooling — always) pass
   the review gate before commit: `docs/REVIEW_GATE.md` is the protocol, `docs/REVIEW_RUNNING.md`
   runs one. The session that wrote a patch never reviews or approves it; the review runs in a
-  FRESH session. Any other change needs no review (`docs/REVIEW_GATE.md`, "Risk tiers").
+  FRESH session. Any other change gets one light review (`docs/REVIEW_GATE.md`, "Risk tiers").
 - **AUTHOR and REVIEWER are roles, not vendors.** The reviewer is a fresh session of another
   tier or family, pinned in `scripts/review.sh`; the working mode names the sides
   (`docs/WORKFLOW.md`, "Working modes, by name"). Findings go to a fresh worker of the author's

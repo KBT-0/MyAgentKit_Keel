@@ -360,7 +360,7 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   retried, up to 20 scans, and a give-up is reported; a `ps` that cannot list environments
   is tried once per stop, and a pid that exits mid-scan is no failure. **ACTION:** copy
   `core/scripts/agent_process.py`.
-- **Routing sets effort, risk checks and second-round escalation.** Briefs name route,
+- **Routing sets effort and risk checks.** Briefs name route,
   risk, checks, model and effort. `scripts/usage_summary.py` (kit-owned, synced) reports
   review rounds, verdicts and rejects per task and per model and effort; worker errands
   write no record and are not in it. Every printed label is escaped, the backslash included,
@@ -372,11 +372,6 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   `$KIT/core/docs/USAGE.md` into `docs/USAGE.md`, and
   `$KIT/overlays/claude-code/files/.claude/agents/worker.md` into `.claude/agents/worker.md`,
   preserving project settings.
-- **Two models writing requires two final reviews.** Each model runs a fresh NEW-label
-  review over parts it did not write; both must return without a High or Medium finding.
-  **ACTION:** reconcile `$KIT/core/docs/REVIEW_RUNNING.md` into `docs/REVIEW_RUNNING.md`,
-  `$KIT/core/docs/REVIEW_GATE.md` into `docs/REVIEW_GATE.md`, and `$KIT/core/AGENTS.md`
-  into `AGENTS.md`; copy `$KIT/core/scripts/claude_bridge.py` to `scripts/claude_bridge.py`.
 - **Refused moves leave no marker** (owner decision): a report move refused before the report left its path (a Windows sharing violation, EACCES or EXDEV from `renameat2`, a failed probe link, "no-overwrite guarantee unavailable") exits 3 and clears `NAME.report-move`; the close keeps the worktree without the audit, and the next close runs normally. **ACTION:** sync `close_worker.sh` from the Claude Code overlay.
 - **Stale markers are named**: when `NAME.report-move` cannot be removed after a publication, the close prints the published path and says only the marker is stale, instead of reporting a failed publication.
 - **Clearer marker refusals**: the refusal says the session is not ended and prints the recorded source and target on lines of their own; the header lists a marker among the reasons a dry run exits 1.
@@ -441,23 +436,6 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   and add the "Working mode:" line to `docs/STATE.md`. Sync the core scripts to install
   `scripts/working_mode.py` and the updated doctor check; copy the `/.claude/mode.lock`
   ignore rule from `core/.gitignore`.
-- **`claude-only` (Sadece Claude Modu), a seventh working mode** (owner's decision of
-  2026-10-11; `docs/WORKFLOW.md`, "Working modes, by name"): for a subscription with only
-  Claude. Claude workers write; a different Claude tier reviews in a fresh bridged session
-  with no shared context (Opus authors and Fable or Sonnet reviews, or the reverse, picked by
-  the tier table), and the reviewing tier fixes its findings. Cross review stays mandatory,
-  and the escalation and closure rules are those of every mode. The second reviewer is
-  `scripts/review.sh --reviewer claude` with `REVIEW_CLAUDE_MODEL` set for the run to the
-  tier that did not write the change: the existing per-reviewer Claude pin, so
-  `review_dispatch.py` is unchanged. Codex-saver stays a separate mode, in which Codex still
-  reviews. `scripts/working_mode.py` now requires all seven modes in `docs/WORKFLOW.md`.
-  **ACTION:** copy the `claude-only` table row and subsection from the kit's
-  `core/docs/WORKFLOW.md` into yours, and sync `scripts/working_mode.py` with it: for a
-  WORKFLOW.md whose table is exactly the six earlier modes the helper prints this ACTION,
-  switches nothing, and exits 1 when a switch was asked for.
-  **ACTION:** a project on claude-only sets `DEFAULT_REVIEWER="claude"` in
-  `scripts/review.sh`, leaves `CODEX_MODEL` empty, and passes `REVIEW_CLAUDE_MODEL=<the
-  reviewing tier>` on every review run.
 - **A stopped worker is answered in its own session** (issue #57; `docs/WORKFLOW.md`,
   "Worker cost"; `docs/HANDOFF.md`, rule 7): never by a fresh session. The handoff names
   the sidecars and publishes the blocked result atomically with the ready end marker before
@@ -715,21 +693,9 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 - **A low allowance ends** (`docs/WORKFLOW.md`, "Model routing", rule 7; a v0.10 rule): the
   rule said when a low allowance starts and not when it ends, so a lead kept the low side
   reviewing only after its allowance had reset. It now ends when that side's allowance resets
-  or the owner says otherwise; then the reviewing model fixes its own findings again. A
+  or the owner says otherwise; then the mode before it applies again. A
   decision made for a moment never outlives its reason. **ACTION:** replace rule 7's ending in
   your `docs/WORKFLOW.md` with these closing sentences.
-- **The reviewing model fixes its own findings** (`docs/REVIEW_GATE.md`; the review prompt in
-  `scripts/claude_bridge.py`): the gate said an author fixes what a review found. The reviewer
-  still never changes the checkout during its review run; afterwards it fixes its own
-  findings, and the fix goes to a review by the other model, so no model approves its own
-  work. A round may review the whole cumulative diff for context; its verdict counts only
-  for parts it did not write. Its last fix is accepted only by the other model's next round.
-  The loop ends at the first round with no High or Medium finding whose reviewer did not write the latest fix.
-  Inner same-model checks stay with the worker; cross-model gate findings go to a fresh
-  worker of the model that found them, since a gate reviewer cannot be resumed.
-  **ACTION:** update `docs/REVIEW_GATE.md`, `docs/REVIEW_RUNNING.md` and the review-fix rules
-  in `docs/WORKFLOW.md`, and copy the Claude Code overlay's `.claude/agents/worker.md`; copy `claude_bridge.py` as listed in the first ACTION above.
-
 ## v0.10 — 2026-10-07
 
 Native Windows (Git for Windows' `sh` with python.org CPython) becomes a host the kit runs on,

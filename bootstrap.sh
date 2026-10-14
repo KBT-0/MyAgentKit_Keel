@@ -346,7 +346,7 @@ if git -C "$target" rev-parse --git-dir >/dev/null 2>&1; then
   # Repair modes before a customized gate stops the install. Only kit-named regular
   # files reach this list; tracked bytes stay staged as they were, differing untracked
   # files and ignored files stay out of the index. New scripts are staged only at the
-  # repository top level, and only after the stop below: a stopped install leaves nothing
+  # repository top level, and only once the stamp is written: a stopped install leaves nothing
   # new in the owner's index. A subfolder install prints the command for the owner instead.
   stage=""
   while IFS= read -r f; do
@@ -429,17 +429,6 @@ if [ -n "$gates$stops" ]; then
   exit 1
 fi
 
-if [ -n "${stage:-}" ]; then
-  while IFS= read -r f; do
-    [ -n "$f" ] || continue
-    git -C "$target" add --chmod=+x -- "$f"
-    printf 'bootstrap: staged %s\n' "$f"
-  done <<STAGE
-$stage
-STAGE
-  echo "bootstrap: other kit files were not staged by bootstrap."
-fi
-
 if [ -n "$note" ]; then
   put "$target/docs/kit/BOOTSTRAP_NOTE.md" <<EOF
 # Bootstrap note — the owner's agenda for this setup
@@ -501,6 +490,17 @@ if git -C "$target" rev-parse --git-dir >/dev/null 2>&1; then
 fi
 mv -f "$part" "$target/docs/kit/.kit-version"
 part=""
+
+if [ -n "${stage:-}" ]; then
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    git -C "$target" add --chmod=+x -- "$f"
+    printf 'bootstrap: staged %s\n' "$f"
+  done <<STAGE
+$stage
+STAGE
+  echo "bootstrap: other kit files were not staged by bootstrap."
+fi
 
 if [ -n "$repo" ]; then
   echo "bootstrap: wired core.hooksPath -> .githooks"

@@ -156,6 +156,16 @@ class WorkingModeTests(unittest.TestCase):
             self.assertEqual((self.project / '.claude/mode').read_text(encoding='utf-8').strip(), mode)
             self.assertIn('Active work stays here.', self.state.read_text(encoding='utf-8'))
 
+    def test_a_missing_line_is_added_with_the_sides_the_switch_names(self):
+        # The added line had a fixed text: STATE never said who writes, and a bare switch
+        # later refused the kept note.
+        for mode in ('normal', 'saver'):
+            with self.subTest(mode=mode):
+                self.state.write_text('# State\n---\nActive.\n', encoding='utf-8')
+                self.assertEqual(self.run_mode(mode).returncode, 0)
+                self.assertIn('**Working mode:** %s (%s).' % (mode, SIDES[mode]), self.state.read_text(encoding='utf-8'))
+                self.assertEqual(self.run_mode(mode.title()).returncode, 0)
+
     def test_normal_routes_writes_and_reviews_to_the_sides_the_state_note_names(self):
         result = self.run_mode('Normal Mod')
         self.assertEqual(result.returncode, 0, result.stderr)

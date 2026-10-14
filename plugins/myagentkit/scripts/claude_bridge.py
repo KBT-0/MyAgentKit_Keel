@@ -53,7 +53,8 @@ REVIEW_PROMPT = (
     "security boundary, or wrong behaviour on a supported platform that no automated check "
     "covers; High = wrong behaviour you reproduced or traced through a caller; Medium = a real "
     "defect that needs a specific input or state you can name; Low = anything else worth a "
-    "note. A finding you cannot trigger is Low at most.\n"
+    "note. A finding you cannot trigger is Low at most, except a doubt in the project's first "
+    "priority (docs/REVIEW_GATE.md, \"Priorities\"), which is Medium.\n"
     "Do not report: anything scripts/check.sh or a linter already enforces; style, naming or "
     "refactoring; theoretical risks behind unlikely preconditions; \"consider X\" suggestions; a "
     "design exclusion the author's dispositions name. List an issue outside the diff as an item "
@@ -980,7 +981,11 @@ EMPTY_ITEMS = {"none", "no findings", "n/a", "not applicable"}
 def accept_allows(findings: list) -> bool:
     """A plain Accept may carry Low findings and items outside the diff; nothing else. The
     severity may be a bold or dash-prefixed list item, the forms both reviewers write."""
+    # "Plus N similar" is what REVIEW_PROMPT asks for past five Lows; "no qualifying findings"
+    # is a placeholder like "none". Refused, a clean paid review was recorded as failed.
     return all(item.strip(" \t-*.").lower() in EMPTY_ITEMS
+               or re.fullmatch(r"(?i)\s*(?:[-*]\s+)?\**\s*(?:plus \d+ similar(?: low)?(?: findings?)?|no(?: \w+)? findings?)"
+                               r"[\s.*]*", item)
                or re.match(r"\s*(?:[-*]\s+)?\**\s*(Low\b|Pre-existing:)", item) for item in findings)
 
 

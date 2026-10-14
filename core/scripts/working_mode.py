@@ -271,7 +271,9 @@ def working_mode(project, section, rows, choice=None, sides=None):
         updated = STATE_LINE.sub(lambda m: m[1] + selected + note, state)
     else:
         newline = '\r\n' if '\r\n' in state else '\n'
-        line = '**Working mode:** ' + selected + ' (docs/WORKFLOW.md, "Working modes, by name").' + newline
+        # The sides a switch names are the note; without it, STATE never said who writes.
+        line = '**Working mode:** ' + selected + (note.rstrip('.') + '.' if shape else
+                                                  ' (docs/WORKFLOW.md, "Working modes, by name").') + newline
         separator = re.search(r'^---\r?\n', state, re.M)
         position = separator.end() if separator else len(state)
         updated = state[:position] + ('' if position == 0 or state[:position].endswith('\n') else newline) + line + state[position:]

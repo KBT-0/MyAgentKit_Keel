@@ -66,11 +66,12 @@ checks, so it rules out a plain Accept. A design reviewed under its own label
 
 ## Priorities, in order
 
-1. **{{TOP_RISK_PRIORITY}}**: any doubt is a Reject.
+1. **{{TOP_RISK_PRIORITY}}**: a doubt here is Medium at least, even one you cannot trigger;
+   {{OWNER_NAME}} decides it.
 2. Boundary violations across modules or layers.
 3. State: nothing half-written, duplicated or lost on a crash or retry.
 4. Determinism: no ambient clock, randomness or hidden global state.
-5. Test integrity: a weakened, skipped or deleted test, or untested core logic, is a Reject.
+5. Test integrity: a weakened, skipped or deleted test, or untested core logic, is High at least.
 6. Gate integrity: observed RED, kept so by a negative test.
 7. Blast radius: every caller of every changed public member.
 8. Scope creep: "Pre-existing", never fixed by the reviewer.

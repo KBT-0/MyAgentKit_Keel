@@ -65,4 +65,13 @@ restriction and the author's run passes; any other failure is a finding or a man
 
 ## Template to paste (tools without a wrapper)
 
-Paste `REVIEW_PROMPT` from `scripts/claude_bridge.py`, then the diff.
+Run the reviewer in a throwaway copy of the checkout, never in the checkout itself. Paste
+`REVIEW_PROMPT` from `scripts/claude_bridge.py` with its `%s` replaced by `AGENTS.md,
+docs/ARCHITECTURE.md and docs/REVIEW_GATE.md`, then `REVIEW_RUNS` from the same file, then
+this, then the diff:
+
+```text
+Write exactly one line: VERDICT: Accept / VERDICT: Accept with Manual Checks / VERDICT: Reject.
+Put the findings under a '## Findings' heading, one '- ' list item per finding that starts
+with its severity, and the manual checks under a '## Manual checks' heading.
+```

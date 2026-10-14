@@ -8,6 +8,7 @@ line), and the terminal stub runs the tab's script as Windows Terminal would.
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -102,6 +103,10 @@ class SpawnCodexTests(unittest.TestCase):
                  'show_workers': '#!/bin/sh\nexit 0\n', 'ps-stub': '#!/bin/sh\ncat "$SPAWN_STATE/ps" 2>/dev/null\nexit 0\n'}
         if not WINDOWS:
             stubs.update(cygpath=CYGPATH, uname='#!/bin/sh\necho MINGW64_NT-10.0-26200\n')
+        if WINDOWS:
+            # Native Windows' python3 may be an inaccessible WindowsApps alias, and the stubs'
+            # shebang names it: every stub runs on this runner's interpreter instead.
+            stubs['python3'] = '#!/bin/sh\nexec ' + shq(sys.executable.replace('\\', '/')) + ' "$@"\n'
         for name, body in stubs.items():
             (self.bin / name).write_text(body, newline='\n')
             (self.bin / name).chmod(0o755)
@@ -327,8 +332,8 @@ class SpawnCodexTests(unittest.TestCase):
         self.assertEqual(self.runs(), [])
 
     def test_dash_term_before_launch_removes_script_and_reservation(self):
-        if WINDOWS:
-            sys.stderr.write('\nNOT RUN: %s (dash signal handling, POSIX only)\n' % self.id())
+        if WINDOWS or not shutil.which('dash'):  # Fedora, Arch and FreeBSD ship no dash
+            sys.stderr.write('\nNOT RUN: %s (dash signal handling, POSIX with dash only)\n' % self.id())
             return
         (self.bin / 'uname').write_text('#!/bin/sh\necho Linux\n', newline='\n')
         (self.bin / 'python3').write_text(test_spawn_worker.PRELAUNCH_TERM, newline='\n')

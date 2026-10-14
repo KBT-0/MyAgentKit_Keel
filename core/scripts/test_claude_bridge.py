@@ -177,7 +177,9 @@ class ReviewPreflightTests(unittest.TestCase):
         environment = patch.dict(os.environ)
         environment.start()
         self.addCleanup(environment.stop)
-        os.environ.pop('MYAGENTKIT_BACKEND', None)
+        # A review loop's shell exports these; they must not reach the fixtures (as in BridgeTests).
+        for name in INHERITED_CONTROLS:
+            os.environ.pop(name, None)
 
     def git(self, repo, *args):
         return subprocess.run(['git', '-C', str(repo), *args], check=True, capture_output=True).stdout
@@ -3027,7 +3029,11 @@ class BridgeTests(unittest.TestCase):
                                   (['**Low** a.py:1 bold'], True), (['- Low: a dash item'], True),
                                   (['- **Low**: both'], True), (['None.'], True), (['- No findings'], True),
                                   (['**High** a.py:1 bold'], False), (['- Medium: a dash item'], False),
-                                  (['Nonexistent file: a defect'], False)):
+                                  (['Nonexistent file: a defect'], False),
+                                  # REVIEW_PROMPT asks for "plus N similar" past five Lows.
+                                  (['Low: a', 'Plus 3 similar Low findings.'], True), (['- Plus 3 similar.'], True),
+                                  (['No qualifying findings.'], True), (['High: a', 'Plus 2 similar'], False),
+                                  (['Plus 3 similar, and High: y is broken'], False)):
             with self.subTest(findings=findings):
                 value = {'verdict': 'Accept', 'findings': findings, 'manual_checks': []}
                 envelope = {'type': 'result', 'subtype': 'success', 'is_error': False,
@@ -4603,7 +4609,9 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         # dropping **MEASURED from its record would pass every Claude-fixture test.
         usage = self.repo / '.myagentkit/usage'
         def newest():
-            return json.loads(max(usage.glob('*.json')).read_text())
+            # By the recorded time: names share a second and a random suffix decides between them.
+            records = [json.loads(p.read_text()) for p in usage.glob('*.json')]
+            return max(records, key=lambda r: r['recorded_at'])
         env = dict(REVIEW_CODEX_MODEL='fixture-codex-model', REVIEW_CLI_BIN=str(self.build_fake_codex()),
                    MYAGENTKIT_TASK_ID='codex-measured',
                    REVIEW_ROUND_EXCEPTION='fixture: the measured rounds exceed two')
