@@ -428,7 +428,11 @@ def echo_hazard(text, i):
         elif c in '\n;|&)`':
             break
         elif c in '<>':
-            # `>&2` names its target itself; a bare `>` takes the next word.
+            # `>&2` names its target itself; a bare `>` takes the next word. What stands before
+            # the operator (`"$x">&2`) is an argument; an fd number never sets hazard.
+            if word['hazard'] and not word['redirect']:
+                words.append(dict(word))
+                word['hazard'] = False
             word['redirect'] = word['operator_only'] = True
             while text[i + 1:i + 2] in ('<', '>', '&', '|'):
                 i += 1

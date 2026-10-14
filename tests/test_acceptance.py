@@ -53,14 +53,14 @@ class AcceptanceTests(unittest.TestCase):
 
     def test_the_shell_lint_refuses_echo_of_a_variable_and_gnu_mktemp(self):
         refused = [r'echo "$x"', r'echo $x', r'x=1; echo "a $x b" >&2', r'echo -n "$x"',
-                   r'echo -n -e "$x"', r'echo FAIL: "$x"', r'echo "a" "$x"', r'echo >&2 "$x"',
+                   r'echo -n -e "$x"', r'echo FAIL: "$x"', r'echo "a" "$x"', r'echo >&2 "$x"', r'echo "$x">&2',
                    r'x=`echo "$y"`', r'echo "$(cmd)"', r'echo \"in a string $x\"', 'echo \\\n  "$x"',
                    'echo "text \\\n$x"', r'echo "C:\new"', r"echo 'a\nb'", r'echo a\\b',
                    r'# |   probe_fail() { echo "  FAIL: $*"; exit 1; }',
                    r't=$(mktemp -p "$d")', r'mktemp --suffix .txt', r'mktemp --tmpdir x.XXXXXX',
                    r't=$(mktemp -dp "$d")', 'mktemp -d \\\n  -p "$d"', r'mktemp -t x']
         allowed = [r'# echo "$x"', r"echo '$x'", r'echo "no variable"', r"printf '%s\n' "'"$x"',
-                   r'echo report > "$repo/x"', r'echo hi >&2', r'echo "a" 2>"$log"', r'echo',
+                   r'echo report > "$repo/x"', r'echo hi >&2', r'echo "a" 2>"$log"', r'echo a>"$log"', r'echo',
                    r'echo "\$HOME"', r'echo "a \"q\" b"', r'echo x; y="$z"',
                    r't=$(mktemp "${TMPDIR:-/tmp}/x.XXXXXX")', r'mktemp -d']
         for line in refused:
