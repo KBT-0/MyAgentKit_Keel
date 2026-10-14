@@ -36,7 +36,8 @@ what was run and what was found.
     0–100k rate (with more than a few events), yellow moves to 150k; if 300–400k shows no
     difference either, red moves to 400k and the ceiling to 500k; otherwise the band stays.
     The event counts will be small: the result is a sign, not proof, and it moves the band
-    at most one step.
+    at most one step. The release that applies the decision deletes the `#fix` reminder
+    from `core/AGENTS.md`, "MENTION ONCE".
 
 ## v0.11 — 2026-10-09: live Claude adapter checks (#6) and the reviewer sandbox (#39)
 

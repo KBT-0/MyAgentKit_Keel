@@ -158,7 +158,11 @@ once", saving a low allowance) ends when its reason does, and the main rules ret
 - Context past 200k tokens (the `context_size.py` hook names the band) → no new round; at
   300k recommend `/compact` or a hand-off, whichever is cheaper now, with the number, at the
   next clean stop; at 400k stop now (`docs/WORKFLOW.md`, "Worker cost", rule 8). Neither is
-  the default.
+  the default; a session compacted once hands off.
+- v0.11 dogfood only (the next release deletes this line): {{OWNER_NAME}} corrected you and
+  the prompt has no `#fix` → once per session, say that `#fix` in a correcting prompt lets
+  `scripts/context_buckets.py` count it by context size, the data that keeps or moves the
+  context band.
 - A time or token cost you saw repeat, with a cheaper way around it → propose it with a number.
   Do not spend work hunting for savings.
 {{KIT_FEEDBACK_RULE}}
