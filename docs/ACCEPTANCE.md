@@ -1,5 +1,16 @@
 # Acceptance evidence
 
+## v0.11 — dogfood day (not yet run)
+
+The kit is used on itself for one working day; this block records the commands run and the
+problems found. The projects leeway and labricore-web adopt v0.11 directly, so their use is
+part of the dogfood: their kit problems arrive through `/myagentkit:kit-feedback` issues.
+
+- The owner marks each report "understood / one part unclear / asked again". The
+  `progress_reminder.py` trigger count is not a measure on its own: it can over-fire (the
+  hook sees the transcript a message behind, and some visible lines are stored as thinking),
+  so it is read beside the owner's marks, never alone.
+
 ## v0.11 — 2026-10-09: live Claude adapter checks (#6) and the reviewer sandbox (#39)
 
 Run on native Windows 11 with Claude Code 2.1.295 (subscription login; the npm package's
