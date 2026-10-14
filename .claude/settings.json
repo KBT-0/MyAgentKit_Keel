@@ -1,4 +1,5 @@
 {
+  "autoCompactWindow": 450000,
   "hooks": {
     "PreToolUse": [
       {
@@ -40,6 +41,18 @@
           {
             "type": "command",
             "command": "sh \"$CLAUDE_PROJECT_DIR/overlays/claude-code/files/.claude/hooks/py.sh\" \"$CLAUDE_PROJECT_DIR/overlays/claude-code/files/.claude/hooks/context_size.py\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cat \"$CLAUDE_PROJECT_DIR/overlays/claude-code/files/.claude/hooks/after_compact.txt\"",
             "timeout": 10
           }
         ]

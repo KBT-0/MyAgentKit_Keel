@@ -15,7 +15,7 @@ whenever the owner asks what a term means.
 - **compaction**: the tool summarising a long conversation to free space; details are lost.
 - **context**: everything the model reads on each request; it grows all session and is paid
   for on every turn.
-- **dogfood**: using the kit on itself for a day before a release.
+- **dogfood**: using a new kit release in real project work, with extra care, before it is trusted.
 - **effort**: the model's thinking-depth setting (low, medium, high).
 - **gate**: an automatic check that must pass before a commit or merge (`scripts/check.sh`).
 - **handoff**: the note one session leaves so the next can continue without chat memory.

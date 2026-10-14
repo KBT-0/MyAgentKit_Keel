@@ -83,6 +83,18 @@ class ContextHookTests(unittest.TestCase):
                 self.assertIn('Context is 260k tokens', self.run_hook([prompt(), request(260_000)]))
                 self.assertIn('Context is 400k tokens', self.run_hook([prompt(), request(400_000)]))
 
+    def test_each_band_names_itself(self):
+        for ctx, band, others in ((210_000, 'yellow (200k)', ('red', 'ceiling')),
+                                  (299_000, 'yellow (200k)', ('red', 'ceiling')),
+                                  (300_000, 'red (300k)', ('yellow', 'ceiling')),
+                                  (420_000, 'ceiling (400k)', ('yellow', 'red'))):
+            with self.subTest(ctx=ctx):
+                self.transcript.with_suffix('.context-step').unlink(missing_ok=True)
+                said = self.run_hook([prompt(), request(ctx), prompt()])
+                self.assertIn('Context is %dk tokens, %s' % (ctx // 1000, band), said)
+                for other in others:
+                    self.assertNotIn(other, said)
+
     def test_killing_a_lock_holder_allows_the_next_prompt(self):
         wrapper = self.tmp / 'held_hook.py'
         wrapper.write_text('import runpy, time\n'

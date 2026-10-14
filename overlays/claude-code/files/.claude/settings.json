@@ -4,6 +4,7 @@
   "env": {
     "CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL": "1h"
   },
+  "autoCompactWindow": 450000,
   "extraKnownMarketplaces": {
     "ponytail": {
       "source": {
@@ -121,6 +122,18 @@
           {
             "type": "command",
             "command": "sh \"$CLAUDE_PROJECT_DIR/.claude/hooks/py.sh\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/plain_report.py\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cat \"$CLAUDE_PROJECT_DIR/.claude/hooks/after_compact.txt\"",
             "timeout": 10
           }
         ]

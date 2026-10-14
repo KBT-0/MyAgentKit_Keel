@@ -91,7 +91,7 @@ and an anti-format rule can suppress structure it needs.
 
 ## Measuring the rules
 
-The release's dogfood day (`docs/ACCEPTANCE.md`) is the measurement: the owner marks each
+The release's dogfood period (`docs/ACCEPTANCE.md`) is the measurement: the owner marks each
 report *understood*, *one part unclear* or *had to ask again*; the lead counts how often
 each hook fired and how many "what does this mean" questions came. The numbers go to
 `RESEARCH_LOG.md`. A rule that moves no number is deleted.

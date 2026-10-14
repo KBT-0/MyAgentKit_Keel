@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """UserPromptSubmit: tell the agent when the session's context has grown past the hand-off line.
 
-Every request re-sends the whole context, so a lead at 450k pays several times what a fresh
-one at 60k pays, on every turn (`docs/WORKFLOW.md`, "Worker cost", rule 8). The context is the
-last API request's input plus cache read plus cache write, read from the transcript; a
+Every request re-sends the whole context, and accuracy falls as it grows (`docs/WORKFLOW.md`,
+"Worker cost", rule 8: a band, yellow at 200k, red at 300k, ceiling at 400k). The context is
+the last API request's input plus cache read plus cache write, read from the transcript; a
 compaction boundary resets it until the next request.
 
-Past LINE the hook adds one line to the agent's context, once per STEP: at 200k, 250k, 300k...
+Past LINE the hook adds one line to the agent's context, once per STEP: at 200k, 250k, 300k...,
+opening with the band the size is in.
 The last step it named is kept beside the transcript (`<session>.context-step`, in the
 user's own Claude folder, not a shared temporary one), so a retried prompt or one that
 reached no request does not repeat it. A compaction boundary arms it again; a smaller
@@ -20,8 +21,15 @@ from pathlib import Path
 import sys
 import tempfile
 
-LINE = 200_000  # a fresh session (~60k) pays back a hand-off in under ten turns from here
+LINE = 200_000  # yellow: plan the cut
+RED = 300_000  # cut at the next clean stop
+CEILING = 400_000  # stop now
 STEP = 50_000
+BANDS = ((CEILING, 'ceiling (400k): stop now and secure the work (commit, STATE, handoff) '
+                   'without waiting for a clean stop'),
+         (RED, 'red (300k): cut at the next clean stop; start no new round'),
+         (LINE, 'yellow (200k): plan the cut; start no new round, let the running batch finish, '
+                'commit, and keep docs/STATE.md and the handoff current'))
 
 
 def band(ctx: int) -> int:
@@ -91,7 +99,8 @@ def main() -> None:
             finally:
                 temporary.unlink(missing_ok=True)
     if now > said:
-        print(f'Context is {ctx // 1000}k tokens (line {LINE // 1000}k); every turn re-sends it. In this '
+        print(f'Context is {ctx // 1000}k tokens, ' + next(text for floor, text in BANDS if ctx >= floor)
+              + '. Every turn re-sends it, and accuracy falls as it grows. In this '
               "turn's closing summary, recommend ONE to the owner in one line with this number and the "
               'reason: /compact when docs/STATE.md and the open operation files already hold what '
               'matters and the work in flight continues; a hand-off (update STATE, write the handoff, '

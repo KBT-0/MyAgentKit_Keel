@@ -155,9 +155,10 @@ once", saving a low allowance) ends when its reason does, and the main rules ret
 - The task turned out to span more than one module → suggest splitting next time.
 - Same manual procedure done a third time → suggest a skill.
 - Task was bulk and well-specified → suggest routing it to the cheaper model next time.
-- Context past 200k tokens (the `context_size.py` hook says so) → recommend `/compact` or a
-  hand-off, whichever is cheaper now, with the number, at the next clean stop: no new round
-  after the warning (`docs/WORKFLOW.md`, "Worker cost", rule 8). Neither is the default.
+- Context past 200k tokens (the `context_size.py` hook names the band) → no new round; at
+  300k recommend `/compact` or a hand-off, whichever is cheaper now, with the number, at the
+  next clean stop; at 400k stop now (`docs/WORKFLOW.md`, "Worker cost", rule 8). Neither is
+  the default.
 - A time or token cost you saw repeat, with a cheaper way around it → propose it with a number.
   Do not spend work hunting for savings.
 {{KIT_FEEDBACK_RULE}}

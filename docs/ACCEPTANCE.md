@@ -1,15 +1,20 @@
 # Acceptance evidence
 
-## v0.11 — dogfood day (not yet run)
+## v0.11 — dogfood period (not yet run)
 
-The kit is used on itself for one working day; this block records the commands run and the
-problems found. The projects leeway and labricore-web adopt v0.11 directly, so their use is
-part of the dogfood: their kit problems arrive through `/myagentkit:kit-feedback` issues.
+The dogfood is real work, not a test day on the kit itself: the projects leeway and
+labricore-web adopt v0.11 directly, and their first one and a half weeks on it are the
+dogfood period. Their leads work with extra care in that time and report every kit problem,
+surprise or doubt upstream through `/myagentkit:kit-feedback` (an issue). This block records
+what was run and what was found.
 
 - The owner marks each report "understood / one part unclear / asked again". The
   `progress_reminder.py` trigger count is not a measure on its own: it can over-fire (the
   hook sees the transcript a message behind, and some visible lines are stored as thinking),
   so it is read beside the owner's marks, never alone.
+- The context band (`docs/WORKFLOW.md`, "Worker cost", rule 8: 200k, 300k, 400k) is a
+  judgement: at each owner correction the lead notes the context size, and the band moves
+  only if the corrections per band show it (`docs/research-context-limit.md`, öneri 7).
 
 ## v0.11 — 2026-10-09: live Claude adapter checks (#6) and the reviewer sandbox (#39)
 

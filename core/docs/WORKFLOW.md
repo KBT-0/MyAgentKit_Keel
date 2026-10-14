@@ -719,22 +719,29 @@ Rules, binding for whoever routes workers:
    writes both into the handoff, so the next routing decision is made from a number. The
    table's `hit` column (cache reads over all input) is the figure to watch: 80% or more
    is the target, and below it the `cWrite>5m` and `poll` columns name the cause. The line
-   is 200k tokens of context: a lead measured at 52k to 449k over 248 requests re-read about
-   250k per request, and a fresh session (about 60k, its cache written at up to twice the
-   input price) pays itself back in under ten turns from 200k. The Claude Code overlay's
-   `context_size.py` hook says the size once per 50k step past the line; the lead then
-   recommends one of two, with the number and the reason. **Compact** when `docs/STATE.md`
-   and the open operation files already hold what matters and the work in flight continues:
-   one summary turn is cheaper than a handoff note plus a cold start, but only while the
-   cache is warm; a session resumed after more than an hour writes a summary into the
+   is a band of context, the same for every model: **yellow at 200k** (plan the cut: no new
+   round, let the running batch finish, commit, keep STATE and the handoff current), **red at
+   300k** (cut at the next clean stop), **ceiling at 400k** (stop now and secure the work).
+   Quality, not only cost, sets it: accuracy falls as context grows and compaction is lossy
+   (Anthropic names no number); practitioners cut between 120k and 400k; at today's cache
+   prices a fresh session pays itself back in about 25 requests from 200k (Opus, Sonnet) or
+   49 (Fable). The numbers are a judgement, not a measurement (the kit's
+   `docs/research-context-limit.md`). A symptom cuts at any size: the owner corrected the
+   same rule twice, or the worker-route hook refused twice. The Claude Code overlay's
+   `context_size.py` hook names the band once per 50k step past 200k; the lead then
+   recommends one of two, with the number and the reason. The overlay's `autoCompactWindow`
+   of 450k is only a safety valve for a session nobody stops, never the cut; after any
+   compaction its `after_compact.txt` hook names what to re-read. **Compact** when
+   `docs/STATE.md` and the open operation files already hold what matters and the work in
+   flight continues: one summary turn is cheaper than a handoff note plus a cold start, but
+   only while the cache is warm; a session resumed after more than an hour writes a summary into the
    handoff first, since its context is re-written at full price on the next request anyway.
    **Hand off** (update STATE, write the handoff, `/clear`, start fresh) when the work
    changes direction, a batch has just closed, or most of the context is the detail of
    finished work that a summary would still carry. A Codex lead sets
    `model_auto_compact_token_limit` to 200k–250k in `~/.codex/config.toml` for the same
-   line. After the warning the lead starts no new round: it lets the running batch finish,
-   commits what is done, updates STATE and the handoff, then stops and proposes a hand-off or
-   `/compact`, because a session end kills the background jobs started from its tool shell (survivors:
+   line. At red the lead stops at the next clean point and proposes a hand-off or `/compact`,
+   because a session end kills the background jobs started from its tool shell (survivors:
    `docs/GOTCHAS.md`, "Background jobs die with the session and in a low-memory reap"); the owner
    decides at that stop, never mid-flow.
    The lead keeps big output out of its own context: logs, diffs and images go to

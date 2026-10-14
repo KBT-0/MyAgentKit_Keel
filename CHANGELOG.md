@@ -32,13 +32,25 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   `.claude/hooks/progress_reminder.py` (PostToolUse: one line of context after five tool
   calls with no visible text); **ACTION:** copy both and their entries from the overlay's
   `.claude/settings.json`; hooks are not synced. The worker and reviewer definitions say
-  their reports are for the lead, who translates. The dogfood day measures the rules
+  their reports are for the lead, who translates. The dogfood period measures the rules
   (`docs/COMMUNICATION.md`, "Measuring the rules").
 - **ACTION — v0.11 is used for real in its first projects; report every kit problem.** leeway
-  and labricore-web take v0.11 straight away, and their daily work is part of its dogfood. A
-  lead upgrading one of them is extra careful with the upgrade and with the kit afterwards:
-  every problem, surprise or doubt about MyAgentKit, and about this release above all, goes
-  upstream through `/myagentkit:kit-feedback` (an issue), not only into the project's notes.
+  and labricore-web take v0.11 straight away, and their first one and a half weeks on it are
+  its dogfood period (`docs/ACCEPTANCE.md`). A lead upgrading one of them is extra careful
+  with the upgrade and with the kit afterwards: every problem, surprise or doubt about
+  MyAgentKit, and about this release above all, goes upstream through
+  `/myagentkit:kit-feedback` (an issue), not only into the project's notes.
+- **The lead's context line is a band, set by quality as well as cost** (`docs/WORKFLOW.md`,
+  "Worker cost", rule 8; `AGENTS.md`, "MENTION ONCE"): yellow at 200k (plan the cut, no new
+  round), red at 300k (cut at the next clean stop), ceiling at 400k (stop now), the same for
+  every model; a rule corrected twice or two worker-route refusals cut at any size. The old
+  reason ("pays back in under ten turns") was wrong at today's cache prices. Evidence:
+  `docs/research-context-limit.md`. Claude Code overlay: `context_size.py` names the band,
+  `.claude/settings.json` sets `autoCompactWindow` to 450000 (a safety valve; the default is
+  about 967k), and a `SessionStart` hook (matcher `compact`) prints
+  `.claude/hooks/after_compact.txt`, what to re-read after a lossy summary. **ACTION** (Claude
+  Code overlay): copy `context_size.py` and `after_compact.txt`, and add `autoCompactWindow`
+  and the `SessionStart` entry from the overlay's `.claude/settings.json`; hooks are not synced.
 - **No worker starts without a stated model and effort** (`docs/WORKFLOW.md`, "Model routing"
   rule 1 and "Worker cost" rule 5; Claude Code overlay). Before every worker the lead tells the
   owner in one plain line which model, which effort and why; a skill whose template names no
