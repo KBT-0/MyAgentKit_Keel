@@ -84,7 +84,7 @@ REQUIRED_SUITES = {
     'core/scripts': dict(BRIDGE_MINIMUMS, test_agent_cost=3),
     # Each suite's current count: a minimum far below it (1 of 30) let a suite lose almost
     # every test with the kit check green. A new test raises its suite's number here.
-    'tests': {'test_packaging': 1, 'test_bootstrap': 36, 'test_acceptance': 13,
+    'tests': {'test_packaging': 1, 'test_bootstrap': 36, 'test_acceptance': 14,
               'test_review_upgrade': 4 if os.name == 'nt' else 5,
               'test_boundary_example': 1 if os.name == 'nt' else 3, 'test_scan_gate': 1,
               'test_check_gate': 24, 'test_check_gate_windows': 33,
@@ -353,29 +353,35 @@ def check_release(root):
 
 
 # A refusal a diff adds (proposal D-5): a raise, an exit with a nonzero status, die, a FAIL line.
-GUARD = re.compile(r'\braise\s+\w|\bsys\.exit\(\s*[^0)\s]|\bexit\s+[1-9]|\bdie\b|FAIL')
+GUARD = re.compile(r'\braise\s+\w|\bsys\.exit\(\s*[^0)\s]|\bexit\s+(?:[1-9]|"?\$)|\bdie\b|FAIL')
 
 
 def untested_guards(root):
     """A NOTE, never a failure, for each refusal the change against upstream adds while no file
-    under tests/ changes: which test fails if it is removed? Mutation-lite; the uncommitted
-    tree counts, an untracked test file does not."""
-    git = ['git', '-C', str(root)]
+    under tests/ changes: which test fails if it is removed? Mutation-lite; staged and unstaged
+    changes count, an untracked file does not (git diff does not list it; the commit-time run
+    sees it staged). The owner's diff.noprefix, diff.mnemonicPrefix and core.quotePath do not
+    change the paths read here."""
+    git = ['git', '-C', str(root), '-c', 'core.quotePath=false']
     found = subprocess.run(git + ['merge-base', 'HEAD', '@{upstream}'], capture_output=True, text=True,
                            encoding='utf-8', errors='replace')
     if found.returncode != 0:
         print('NOT RUN: the killing-test note (no upstream branch to compare with)')
         return []
     base = found.stdout.strip()
-    names = run(git + ['diff', '--name-only', '--no-renames', base], encoding='utf-8').splitlines()
+    names = run(git + ['diff', '--name-only', '--no-renames', base], encoding='utf-8',
+                errors='replace').splitlines()
     if any(name.startswith('tests/') for name in names):
         return []
-    diff = run(git + ['diff', '-U0', '--no-color', '--no-ext-diff', '--no-renames', base, '--', '.',
-                      ':(exclude)*.md'], encoding='utf-8', errors='replace')
+    # A moved file adds no refusal: renames on, so its old lines are not shown as new.
+    diff = run(git + ['diff', '-U0', '--no-color', '--no-ext-diff', '--no-textconv', '-M',
+                      '--src-prefix=a/', '--dst-prefix=b/', base, '--', '.', ':(exclude)*.md'],
+               encoding='utf-8', errors='replace')
     notes, path, number = [], None, 0
     for line in diff.splitlines():
         if line.startswith('+++ '):
-            path = line[6:] if line.startswith('+++ b/') else None
+            # A name with a space ends in a tab.
+            path = line[6:].rstrip('\t') if line.startswith('+++ b/') else None
         elif line.startswith('@@'):
             number = int(re.search(r'\+(\d+)', line).group(1))
         elif line.startswith('+') and path:

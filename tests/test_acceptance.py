@@ -106,6 +106,32 @@ class AcceptanceTests(unittest.TestCase):
             self.assertEqual(gate.main(), 1)
         asked.assert_called_once_with(gate.ROOT)
 
+    def test_a_moved_file_and_the_owners_diff_config_change_no_note(self):
+        with tempfile.TemporaryDirectory() as tmp, contextlib.redirect_stdout(io.StringIO()):
+            root = Path(tmp)
+            env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1')
+            git = lambda *args: subprocess.run(['git', '-C', tmp, *args], env=env, check=True,
+                                               capture_output=True)
+            git('init', '-q', '-b', 'main')
+            (root / 'tool.py').write_text('x = 1\nraise ValueError(x)\n', encoding='utf-8')
+            git('add', '-A')
+            git('-c', 'user.name=t', '-c', 'user.email=t@x', 'commit', '-q', '-m', 'base')
+            git('branch', 'upstream')
+            git('branch', '-q', '--set-upstream-to=upstream')
+            with unittest.mock.patch.dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1'):
+                # A move adds no refusal; its old lines are not new ones.
+                git('mv', 'tool.py', 'moved.py')
+                self.assertEqual(gate.untested_guards(root), [])
+                # The owner's prefixes and quoting change no path; a name with a space ends in a tab.
+                git('config', 'diff.noprefix', 'true')
+                git('config', 'diff.mnemonicPrefix', 'true')
+                utf8 = sys.getfilesystemencoding().lower().replace('-', '') == 'utf8'
+                name = 'my tööl.sh' if utf8 else 'my tool.sh'
+                (root / name).write_text('x=1\n[ -n "$x" ] || exit "$rc"\n', encoding='utf-8')
+                git('add', '-A')
+                self.assertEqual([note.split(' adds')[0] for note in gate.untested_guards(root)],
+                                 ['NOTE [killing test]: %s:2' % name])
+
     def test_shell_portability_fails_on_a_lint_hit_and_on_a_bashism(self):
         with tempfile.TemporaryDirectory() as tmp, contextlib.redirect_stdout(io.StringIO()) as out, \
                 unittest.mock.patch.dict(os.environ):

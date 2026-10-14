@@ -14,6 +14,12 @@ Low findings of the kit's own reviews are filed here, not fixed in the round (ow
   `check_kit.utf8_locale` decodes
   `locale -a` strictly. Name UTF-8 in each and add the suites that reach them to the sensor.
 
+## Filed from v0.11 D-5 (Claude review r1, portability, 20261014T131347Z-b5b427332134)
+
+- Pre-existing: `check_kit` repeats in its final summary only the NOT RUN lines of unit outputs;
+  the killing-test note's own NOT RUN line (no upstream branch, e.g. a detached CI checkout) is
+  printed by `main()` early and not repeated, so it can be lost in a long output.
+
 ## Filed from v0.11 R (Claude review r2, portability, 20261014T131242Z-d60c67ef7f45)
 
 - `plain_report.py` CODE regex: a fence closes at any later fence of either kind, so a
