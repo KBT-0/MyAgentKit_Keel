@@ -89,6 +89,9 @@ high katman review. **Karar (sahip, 14 Ekim).** 3 zaten zorunlu suite'lerde (bou
 check_gate, check_gate_windows, `check.sh --self-test`), yeni fixture yok; 4 yalnız eksik olan
 tek test: 260+ karakterlik cwd'deki süreç worktree'sini korur. 5 upstream'e karşı diff'te,
 `tests/` değişmeden eklenen ret satırı için NOTE.
+**Durum (14 Ekim).** D-1…D-5 UYGULANDI, review'ları kapandı (D-5: r1 iki etiket, düzeltme 7ce9b10,
+r2 `v011-d5fix-*` ikisi de Accept-MC). REVIEW_GATE'teki "killing test" satırı kalır: sensor yalnız
+kitte koşar ve yalnız soru sorar; liste projenin `check.sh`'ında olmayanı tutar (D-2 kararı).
 
 ### E. Reviewer prompt'u — UYGULANDI (13 Ekim)
 
