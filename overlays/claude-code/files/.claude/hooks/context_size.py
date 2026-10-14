@@ -55,7 +55,7 @@ def context(path: Path) -> tuple[int, int]:
 
 
 def main() -> None:
-    transcript = Path(json.load(sys.stdin)['transcript_path'])
+    transcript = Path(json.loads(sys.stdin.buffer.read().decode('utf-8'))['transcript_path'])
     state = transcript.with_suffix('.context-step')
     # A competing prompt stays silent. Closing the file releases the lock, even on a kill.
     # Keep the lock file: unlinking it lets overlapping prompts lock different files.

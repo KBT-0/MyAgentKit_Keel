@@ -77,7 +77,8 @@ carries no bare labels.
 
 A worker's or reviewer's report is written for the lead and may stay technical. The lead
 translates it before anything reaches the owner; worker labels and verdict codes are never
-pasted through. A sub-agent's output shape comes from its definition
+pasted through. A worker session started by `scripts/spawn_worker.sh` carries
+`MYAGENTKIT_ROLE=worker`, and the label hook steps aside for it. A sub-agent's output shape comes from its definition
 (`.claude/agents/*.md` in the Claude Code overlay), not from a style setting, which does
 not reach sub-agents.
 

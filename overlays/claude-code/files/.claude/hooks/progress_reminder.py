@@ -6,19 +6,27 @@ long silence. Anthropic measured that a reminder after about five silent steps h
 share of tasks with long silences; the threshold is a starting value for this kit.
 
 The hook counts the tool calls in the transcript since the agent's last non-empty text block
-and adds one line of context when a tool batch crosses a multiple of STEP (a parallel batch
-may jump from four to seven). No state file: the transcript is the state. It reads only the
-tail of the transcript, because it runs on every tool call. Silent on any error.
+(or the last compaction) and adds one line of context each time that count passes a multiple
+of STEP. Claude Code writes one record per content block, a parallel batch runs this hook once
+per call, and a sub-agent's calls may see the lead's frozen transcript; so the count at the
+last nudge is kept beside the transcript (`<session>.progress-step`, with the id of the record
+the count started from) and the same count never nudges twice. A competing call stays silent.
+The transcript may lag the turn by a record or two, so a nudge can come one call late.
+It reads only the tail of the transcript, because it runs on every tool call. Silent on any
+error.
 """
 import json
+import os
+from pathlib import Path
 import sys
+import tempfile
 
 STEP = 5
 TAIL = 512 * 1024  # bytes; a turn with five tool calls fits many times over
 
 
-def silent_calls(path: str) -> tuple[int, int]:
-    """Tool calls since the last visible text, and how many came in the last assistant record."""
+def silent_calls(path: Path) -> tuple[int, object]:
+    """Tool calls since the last visible text or compaction, and the id of that record."""
     with open(path, 'rb') as stream:
         stream.seek(0, 2)
         size = stream.tell()
@@ -26,33 +34,62 @@ def silent_calls(path: str) -> tuple[int, int]:
         lines = stream.read().decode('utf-8', errors='replace').splitlines()
     if size > TAIL:
         lines = lines[1:]  # the first line is cut
-    total = last = 0
+    total, mark = 0, None
     for line in lines:
         try:
             rec = json.loads(line)
         except ValueError:
             continue
-        if not isinstance(rec, dict) or rec.get('type') != 'assistant' or rec.get('isSidechain'):
+        if not isinstance(rec, dict) or rec.get('isSidechain'):
             continue
-        content = (rec.get('message') or {}).get('content')
+        if rec.get('type') == 'system' and rec.get('subtype') == 'compact_boundary':
+            total, mark = 0, rec.get('uuid')
+            continue
+        content = (rec.get('message') or {}).get('content') if rec.get('type') == 'assistant' else None
         if not isinstance(content, list):
             continue
         if any(b.get('type') == 'text' and (b.get('text') or '').strip() for b in content if isinstance(b, dict)):
-            total = 0  # the owner saw a line; a tool call in the same record comes after it
-        last = sum(1 for b in content if isinstance(b, dict) and b.get('type') == 'tool_use')
-        total += last
-    return total, last
+            total, mark = 0, rec.get('uuid')  # the owner saw a line; a tool call in the same record comes after it
+        total += sum(1 for b in content if isinstance(b, dict) and b.get('type') == 'tool_use')
+    return total, mark
 
 
 def main() -> None:
-    data = json.load(sys.stdin)
-    total, last = silent_calls(data['transcript_path'])
-    if total >= STEP and total // STEP > (total - last) // STEP:
-        print(json.dumps({'hookSpecificOutput': {
-            'hookEventName': 'PostToolUse',
-            'additionalContext': '%d tool calls since the owner last saw a line from you. Say in one plain '
-                                 'sentence, in the chat language, what you are doing now and what you found, '
-                                 'then continue (docs/COMMUNICATION.md, "Progress").' % total}}))
+    transcript = Path(json.loads(sys.stdin.buffer.read().decode('utf-8'))['transcript_path'])
+    state = transcript.with_suffix('.progress-step')
+    # The context_size.py lock: closing the file releases it, even on a kill.
+    with open(transcript.with_suffix('.progress-lock'), 'a+b') as lock:
+        if os.name == 'nt':
+            import msvcrt
+            lock.seek(0)
+            msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        total, mark = silent_calls(transcript)
+        try:
+            saved = json.loads(state.read_text(encoding='utf-8'))
+            said = saved['said']
+            if type(said) is not int or saved['mark'] != mark or said > total:
+                raise TypeError(saved)  # a visible line or a compaction started a new count
+        except (OSError, ValueError, KeyError, TypeError):
+            said = None
+        nudge = total // STEP > (said or 0) // STEP
+        if nudge or said is None:
+            with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=state.parent, delete=False) as stream:
+                temporary = Path(stream.name)
+                json.dump({'said': total if nudge else 0, 'mark': mark}, stream)
+            try:
+                os.replace(temporary, state)
+            finally:
+                temporary.unlink(missing_ok=True)
+    if not nudge:
+        return
+    print(json.dumps({'hookSpecificOutput': {
+        'hookEventName': 'PostToolUse',
+        'additionalContext': '%d tool calls since the owner last saw a line from you. Say in one plain '
+                             'sentence, in the chat language, what you are doing now and what you found, '
+                             'then continue (docs/COMMUNICATION.md, "Progress"; core/docs/ in the kit).' % total}}))
 
 
 if __name__ == '__main__':

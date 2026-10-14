@@ -14,7 +14,7 @@ Exit 2 blocks the call and returns the message to the agent (Claude Code hook pr
 import json
 import sys
 
-data = json.load(sys.stdin)
+data = json.loads(sys.stdin.buffer.read().decode("utf-8"))
 if data.get("tool_name") not in ("Agent", "Task"):
     sys.exit(0)
 call = data.get("tool_input") or {}

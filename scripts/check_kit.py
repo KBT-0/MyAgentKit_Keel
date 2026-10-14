@@ -89,7 +89,7 @@ REQUIRED_SUITES = {
               'test_boundary_example': 1 if os.name == 'nt' else 3, 'test_scan_gate': 1,
               'test_check_gate': 24, 'test_check_gate_windows': 33,
               'test_boundary_restore': 35 if os.name == 'nt' else 40,
-              'test_sync_kit': 30, 'test_doctor': 4, 'test_git_hooks': 30, 'test_stop_hook': 8, 'test_context_hook': 10, 'test_overlay_permissions': 6,
+              'test_sync_kit': 30, 'test_doctor': 4, 'test_git_hooks': 30, 'test_stop_hook': 8, 'test_context_hook': 10, 'test_communication_hooks': 15, 'test_overlay_permissions': 6,
               'test_spawn_worker': 50, 'test_spawn_codex': 48, 'test_codex_worker': 47, 'test_working_mode': 47, 'test_worker_visibility': 66, 'test_doc_pointers': 9,
               'test_usage_summary': 16,
               'test_kit_output': 1, 'test_kit_runner': 25, 'test_clean_worktrees': 137, 'test_clean_worktrees_windows': 11, 'test_close_worker_windows': 20,
@@ -271,7 +271,8 @@ def utf8_locale(have=None):
 # The locale sensor (proposal D-1): suites that read and write text, and run in seconds, again
 # where the default encoding is not UTF-8. A slow suite stays out; its text paths are here.
 LOCALE_SUITES = ('test_working_mode', 'test_usage_summary', 'test_doc_pointers', 'test_kit_output',
-                 'test_python_fallback', 'test_overlay_permissions', 'test_context_hook')
+                 'test_python_fallback', 'test_overlay_permissions', 'test_context_hook',
+                 'test_communication_hooks')
 
 
 def locale_matrix(folder=None, suites=LOCALE_SUITES, minimums=None):

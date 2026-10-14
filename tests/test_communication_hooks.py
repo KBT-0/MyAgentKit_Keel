@@ -1,5 +1,7 @@
 """The two communication hooks: bounce a bare label once, nudge after five silent calls, never block a turn."""
+import itertools
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -9,13 +11,18 @@ import unittest
 HOOKS = Path(__file__).resolve().parents[1] / 'overlays/claude-code/files/.claude/hooks'
 
 
-def run(hook, payload):
+IDS = itertools.count()
+
+
+def run(hook, payload, **env):
+    # Claude Code sends UTF-8 whatever the host's code page; MYAGENTKIT_ROLE is the worker marker.
+    env = {**{k: v for k, v in os.environ.items() if k != 'MYAGENTKIT_ROLE'}, **env}
     return subprocess.run([sys.executable, str(HOOKS / hook)], input=payload, text=True, encoding='utf-8',
-                          capture_output=True, timeout=30)
+                          capture_output=True, timeout=30, env=env)
 
 
 def assistant(*blocks):
-    return {'type': 'assistant', 'message': {'content': list(blocks)}}
+    return {'type': 'assistant', 'uuid': 'u%d' % next(IDS), 'message': {'content': list(blocks)}}
 
 
 def tool(name='Read'):
@@ -27,8 +34,9 @@ def text(s='Found it.'):
 
 
 class PlainReportTests(unittest.TestCase):
-    def stop(self, message, active=False):
-        return run('plain_report.py', json.dumps({'last_assistant_message': message, 'stop_hook_active': active}))
+    def stop(self, message, active=False, **env):
+        return run('plain_report.py', json.dumps({'last_assistant_message': message, 'stop_hook_active': active},
+                                                 ensure_ascii=False), **env)
 
     def test_a_bare_label_is_bounced_with_every_label_named_once(self):
         result = self.stop('D-5 review done, r2 clean, r2 archived: Accept-MC. D-5 next.')
@@ -39,13 +47,36 @@ class PlainReportTests(unittest.TestCase):
 
     def test_labels_inside_code_paths_versions_and_hashes_pass(self):
         for message in ('The archive is `docs/reviews/r2-D-5.md`.',
+                        'The archive is docs/reviews/r2-D-5.md, on Windows docs\\reviews\\r2-D-5.md.',
                         'Run:\n```\nREVIEW_LABEL=v011-d5 sh review.sh  # r2\n```\nthen stop.',
+                        'Run:\n~~~\nsh review.sh  # r2\n~~~\nthen stop.',
+                        'The span ``r2 `D-5` here`` is code.',
+                        'An unclosed block:\n```\nD-5 r2',
+                        'The second review round (r2) is clean.',
                         'master is at a62e282, v0.11, issue #75; the `Accept-MC` verdict is in the file.',
                         'İkinci inceleme turu temiz; kabul, iki küçük not ile.',
                         ''):
             with self.subTest(message=message):
                 result = self.stop(message)
                 self.assertEqual((result.returncode, result.stderr), (0, ''), message)
+
+    def test_a_second_label_in_parentheses_is_bounced(self):
+        result = self.stop('The second review round (r2) is clean; the next one follows it (r2).')
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn(': r2.', result.stderr)
+
+    def test_turkish_and_emoji_are_read_under_any_code_page(self):
+        # The ANSI code page decoded stdin before: a Turkish letter or an emoji raised and the
+        # silent fallback turned the hook off.
+        for page in ('cp1252', 'cp1254'):
+            with self.subTest(page=page):
+                result = self.stop('Şimdi ❌ D-5 bitti.', PYTHONIOENCODING=page)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn('D-5', result.stderr)
+
+    def test_a_worker_session_is_not_checked(self):
+        result = self.stop('D-5 done, r2 clean.', MYAGENTKIT_ROLE='worker')
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
 
     def test_a_continued_turn_is_not_bounced_again(self):
         result = self.stop('D-5 is still here.', active=True)
@@ -63,10 +94,11 @@ class ProgressReminderTests(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         self.transcript = Path(tmp.name) / 'session.jsonl'
 
-    def nudge(self, records, raw=None):
+    def nudge(self, records, raw=None, **env):
         self.transcript.write_text(raw if raw is not None else ''.join(json.dumps(r) + '\n' for r in records),
                                    encoding='utf-8')
-        result = run('progress_reminder.py', json.dumps({'transcript_path': str(self.transcript)}))
+        result = run('progress_reminder.py', json.dumps({'transcript_path': str(self.transcript)},
+                                                        ensure_ascii=False), **env)
         self.assertEqual((result.returncode, result.stderr), (0, ''))
         if not result.stdout:
             return None
@@ -97,6 +129,31 @@ class ProgressReminderTests(unittest.TestCase):
                  assistant(tool()), assistant(tool())]
         self.assertIsNone(self.nudge(calls))
         self.assertIn('5 tool calls', self.nudge(calls + [assistant(tool())])['additionalContext'])
+
+    def test_the_same_count_seen_again_never_nudges_twice(self):
+        # Claude Code writes one record per content block; a parallel batch runs the hook once
+        # per call, and a sub-agent's calls may all see the lead's frozen transcript.
+        calls = [assistant(text())] + [assistant(tool()) for _ in range(4)] + [assistant(tool()) for _ in range(3)]
+        self.assertIn('7 tool calls', self.nudge(calls)['additionalContext'])
+        for _ in range(3):
+            self.assertIsNone(self.nudge(calls))
+        self.assertTrue(self.transcript.with_suffix('.progress-step').exists())
+
+    def test_a_compaction_starts_a_new_count(self):
+        calls = [assistant(tool()) for _ in range(4)]
+        calls += [{'type': 'system', 'subtype': 'compact_boundary', 'uuid': 'c1'}] + calls
+        self.assertIsNone(self.nudge(calls))
+        self.assertIn('5 tool calls', self.nudge(calls + [assistant(tool())])['additionalContext'])
+
+    def test_a_broken_state_file_counts_as_none_and_a_turkish_path_works(self):
+        folder = self.transcript.parent / 'Şimdi ❌'
+        folder.mkdir()
+        self.transcript = folder / 'session.jsonl'
+        for broken in ('{broken', 'null', '{"said": "5", "mark": null}', '{"said": 5}'):
+            with self.subTest(state=broken):
+                self.transcript.with_suffix('.progress-step').write_text(broken, encoding='utf-8')
+                said = self.nudge([assistant(tool()) for _ in range(5)], PYTHONIOENCODING='cp1252')
+                self.assertIn('5 tool calls', said['additionalContext'])
 
     def test_only_the_tail_of_a_large_transcript_is_read(self):
         padding = json.dumps({'type': 'user', 'message': {'content': 'x' * 10_000}}) + '\n'

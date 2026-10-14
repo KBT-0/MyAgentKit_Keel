@@ -29,7 +29,9 @@
 # whole context after every wait as a sub-agent and does not as a session (docs/WORKFLOW.md,
 # "Worker cost"). The launch line below sets CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL=1h, and
 # .claude/settings.json sets it for the lead's own sub-agents, so both cost the same; the
-# session adds visibility (`tmux attach -t NAME`) and survives the lead ending.
+# session adds visibility (`tmux attach -t NAME`) and survives the lead ending. It also sets
+# MYAGENTKIT_ROLE=worker: the worker's report is for the lead, so the plain-words Stop hook
+# (plain_report.py) steps aside (docs/COMMUNICATION.md, "Workers").
 #
 # The lead then subscribes once with SendMessage `notify_when_idle` (on native Windows only
 # when the spawn printed "is a peer session"; a tmux worker registers) and reads the result
@@ -265,7 +267,7 @@ fi
 # registration (no sessions/<pid>.json: ListAgents never lists the worker, SendMessage cannot
 # reach it). tmux ignores the marker, a Windows Terminal tab does not, so both paths clear them.
 # CLAUDE_CLI_BIN and CLAUDE_CODE_EXECPATH name the binary and stay.
-unmark="env -u CLAUDE_CODE_CHILD_SESSION -u CLAUDECODE -u CLAUDE_CODE_SESSION_ID -u CLAUDE_PID -u CLAUDE_CODE_MESSAGING_SOCKET -u CLAUDE_CODE_MESSAGING_TOKEN -u CLAUDE_CODE_SESSION_ATTENDED -u CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL=1h"
+unmark="env -u CLAUDE_CODE_CHILD_SESSION -u CLAUDECODE -u CLAUDE_CODE_SESSION_ID -u CLAUDE_PID -u CLAUDE_CODE_MESSAGING_SOCKET -u CLAUDE_CODE_MESSAGING_TOKEN -u CLAUDE_CODE_SESSION_ATTENDED -u CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL=1h MYAGENTKIT_ROLE=worker"
 
 # Variadic flags come LAST and the prompt is never on this line (see the header).
 cmd="claude -n $(q "$name")"

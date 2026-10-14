@@ -871,6 +871,8 @@ exit 0
         self.assertIn('CLAUDE_CODE_EXECPATH', launched['env_names'])
         # Its cache outlives its waits (docs/WORKFLOW.md, "Worker cost", rule 1).
         self.assertIn('CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL', launched['env_names'])
+        # Its report is for the lead: the plain-words Stop hook steps aside.
+        self.assertIn('MYAGENTKIT_ROLE', launched['env_names'])
         self.assertFalse((self.state / 'wt.log').exists(), 'the tab was shown a second time')
         # Registered (sessions/9.json): the lead is told to subscribe, and no warning.
         (self.state / 'claude.json').unlink()
@@ -1229,6 +1231,7 @@ exit 0
         self.assertFalse(MARKERS & set(env), env)
         self.assertIn('CLAUDE_CODE_EXECPATH', env)
         self.assertIn('CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL', env)
+        self.assertIn('MYAGENTKIT_ROLE', env)
 
     def test_a_started_worker_is_shown_unless_batch(self):
         # A session nobody sees can wait on a dialog for hours: it opens in a terminal tab

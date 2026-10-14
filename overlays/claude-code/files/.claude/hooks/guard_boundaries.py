@@ -23,7 +23,7 @@ BOUNDARIES = [
 # an empty list that guards nothing while looking configured. As a string it is instead
 # caught below, loudly, on every edit until setup finishes.
 
-data = json.load(sys.stdin)
+data = json.loads(sys.stdin.buffer.read().decode("utf-8"))
 tool_input = data.get("tool_input", {})
 path = tool_input.get("file_path", "")
 # Write sends `content`; Edit sends `new_string`. An earlier version read `new_str` — a

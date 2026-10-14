@@ -36,6 +36,16 @@ choices against the report: no output-style file (the kit's one-canonical-file p
 cost is a prompt on every turn; the Stop hook catches the visible symptom instead).
 Observed while building: the progress hook, registered in the kit's own settings, fired
 during this very session after ten silent tool calls, which is the first live trigger.
+The first review round (two reviewers, no shell, both Reject) found that every kit hook read
+its input in the ANSI code page, so a Turkish letter or an emoji switched it off silently;
+all six now decode UTF-8 from the byte stream. The next session watched the progress hook
+live and saw why a transcript is a weak state: Claude Code writes one record per content
+block, the hook often runs before the current message is written, and some visible lines
+were stored as thinking blocks, so the same count was seen twice and a nudge came a call
+late. A state file beside the transcript now keeps the count at the last nudge. Manual
+check carried to the dogfood day: after a label bounce the gate's Stop hook steps aside on
+the continued stop (and the reverse); the pre-commit gate still holds, so the residual is
+accepted.
 
 ### 2026-10-13 — The review policy rewritten: the kit's own numbers, and fourteen rules deleted
 

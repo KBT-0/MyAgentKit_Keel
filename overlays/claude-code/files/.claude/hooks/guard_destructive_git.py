@@ -31,7 +31,7 @@ DESTRUCTIVE = [
     (r"\bgit\s+push\b[^|;&]*(--force(?!-with-lease)|\s-f\b)", "a force push can discard remote commits"),
 ]
 
-data = json.load(sys.stdin)
+data = json.loads(sys.stdin.buffer.read().decode("utf-8"))
 if data.get("tool_name") != "Bash":
     sys.exit(0)
 command = data.get("tool_input", {}).get("command", "") or ""
