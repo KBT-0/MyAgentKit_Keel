@@ -21,7 +21,7 @@ use the kit are recorded in `RESEARCH_LOG.md`, the third kind of source.
 | [review-rules-inventory](review-rules-inventory.md) | Companion: every review rule the kit gave, with copies and conflicts | 2026-10-13 | the kit itself | Evidence for the report above |
 | [communication-style](communication-style.md) | How should an AI agent talk to the person it works for? | 2026-10-14 | 101 | `core/docs/COMMUNICATION.md`, `GLOSSARY.md`, the two communication hooks (proposal item R) |
 | [context-limit](context-limit.md) | At what context size should a lead session hand off or compact? | 2026-10-14 | 47 | The context band in WORKFLOW "Worker cost" rule 8 |
-| [claude-lead-codex](claude-lead-codex.md) | How do people run a second model (Codex) beside a Claude lead: routing, cross review, cost, failures? | 2026-10-14 | 57 | Pending: the working mode where both models write |
+| [claude-lead-codex](claude-lead-codex.md) | How do people run a second model (Codex) beside a Claude lead: routing, cross review, cost, failures? | 2026-10-14 | 57 | The cross working mode and the `Owns:` check (WORKFLOW "Working modes, by name"); Model routing rule 7 |
 
 A new report goes in this folder and gets a row here; `tests/test_doc_pointers.py` fails
 when a report has no row.

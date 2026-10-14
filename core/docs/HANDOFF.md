@@ -26,6 +26,11 @@ Name the model and effort from `docs/WORKFLOW.md`, "Model routing", alongside th
 2. **Files:** full paths and member names — verified to exist RIGHT NOW with grep or a
    read, never from memory. A path that has moved sends the implementer somewhere else and
    the diff comes back in the wrong place.
+   **Owns:** one line, `Owns: src/combat/, tests/test_combat_*.py`: the paths the worker may
+   change, a folder ending in `/` or an fnmatch pattern, comma-separated; `docs/STATE.md` and
+   `docs/BACKLOG.md` are always allowed. With the brief as `REVIEW_TASK_FILE`,
+   `scripts/review.sh` refuses a diff that leaves them (`scripts/owns_check.py`). In cross
+   mode every brief has it, and the two sides never own the same path.
 3. **Constraints:** restate the relevant `AGENTS.md` rules verbatim — the one-module rule,
    the boundary that applies here, no untested core code, no drive-by refactors. Do not
    write "follow AGENTS.md"; the target will not weigh a pointer the same as a quoted rule.

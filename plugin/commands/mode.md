@@ -1,6 +1,6 @@
 ---
 description: Show the working mode in force and the three modes, or switch to one by name and print its rules for the lead
-argument-hint: "[solo | normal \"writes: X, reviews: Y\" | saver \"low: X\"]"
+argument-hint: "[solo [\"family: X\"] | cross | saver \"low: X\"]"
 allowed-tools: Read, Grep, Bash(python scripts/working_mode.py:*), Bash(python3 scripts/working_mode.py:*), Bash(py -3 scripts/working_mode.py:*)
 ---
 # /myagentkit:mode [name]
@@ -22,7 +22,7 @@ and executes no writer command. It runs the STATE operations only from the proje
 without another `--project`, with the snapshot in `.myagentkit/` or the temporary folder, never
 an OUT or FILE that names a folder, and
 refuses an edit that changes the "Working mode:" line, which only a switch changes, with one
-exception: a mode name from before v0.11 may become `solo`, `normal` or `saver` this way.
+exception: a mode name from before v0.11 may become `solo`, `cross` or `saver` this way.
 
 If `docs/WORKFLOW.md` has no "Working modes, by name" section, or the helper prints an ACTION
 line because the table still has the per-model modes, the project predates the kit's v0.11
@@ -34,17 +34,18 @@ the three modes from the section's table, one line each: the English name, the T
 name, and who writes, reviews and fixes the findings.
 
 **A name.** Accept the English name or the Turkish one:
-Tek Model Modu, Normal Mod, Tasarruf Modu. Refuse any other name and list the three. The owner switches modes; switch only when the owner asked for it in this session.
+Tek Model Modu, Çapraz Mod, Tasarruf Modu. Refuse any other name and list the three. The owner switches modes; switch only when the owner asked for it in this session.
 
 1. Run `python scripts/working_mode.py "<name>"` with the requested name as one quoted
-   argument. normal and saver name their sides in a second quoted argument, `"writes: X,
-   reviews: Y"` or `"low: X"`, taken from the owner's words; the helper refuses the switch
-   without it unless the STATE note already has that shape. With no argument, run the helper
+   argument. saver names its low side in a second quoted argument, `"low: X"`, and solo may
+   name its family, `"family: codex"` (none means claude), taken from the owner's words; cross
+   takes no note. The helper refuses saver without it unless the STATE note already has
+   that shape. With no argument, run the helper
    without a name. Never execute raw arguments as shell code. If the helper is missing,
    request the v0.11 core-script update.
 2. Print the helper's output, the selected mode's subsection. These are your rules as the
    lead from now on.
 3. For saver, add one line: it ends when the low side's allowance resets or the owner
-   says otherwise, and then the mode before it returns without being asked.
+   says otherwise, and then the mode its note's `after:` names returns without being asked.
 
 Raw arguments: `$ARGUMENTS`

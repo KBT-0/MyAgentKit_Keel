@@ -13,6 +13,24 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## v0.11 — 2026-10-09
 
+- **cross: both model families write, and each reviews the other** (`docs/WORKFLOW.md`,
+  "Working modes, by name" and "Model routing" rule 7; `docs/HANDOFF.md`, "The brief";
+  `scripts/owns_check.py`, `scripts/review.sh`, `scripts/spawn_codex.sh`). With a second
+  family plugged in beside the Claude lead, Codex takes tasks with written acceptance
+  criteria inside one module (`gpt-6-luna` medium for mechanical work, `gpt-6.1-sol`
+  medium or high, never xhigh), and Claude takes the rest. Claude reviews every Codex
+  change; Codex reviews a Claude change at medium and high tier, one pass, report only, and
+  the lead checks each finding. Critical work is written by Opus until the owner says
+  otherwise, and the strongest Claude tier reviews it. Every brief names the paths its
+  worker may change on an `Owns:` line, and `review.sh` refuses a diff outside them when
+  the brief is `REVIEW_TASK_FILE`. A Codex worker opens at most two sub-agents at once
+  (`agents.max_concurrent_threads_per_session=2`). solo may name its family
+  (`solo "family: codex"`), and a switch to saver records the mode it interrupts in its
+  note (`low: claude, after: cross`), so the return to it survives a hand-off. The `normal` mode of earlier v0.11 drafts was never released;
+  cross replaces it. **ACTION:** copy `scripts/owns_check.py`, `scripts/review.sh` and the
+  Claude Code overlay's `scripts/spawn_codex.sh`; take the kit's "Working modes, by name"
+  section and rule 7 into `docs/WORKFLOW.md` and the `Owns:` paragraph into
+  `docs/HANDOFF.md`.
 - **Every kit change cites its source** (`CONTRIBUTING.md`): a numbered finding of a report
   in `docs/research/`, an official vendor document, or a lesson a project paid for; with no
   source, research comes first, and the maintainer decides only when research settles
@@ -121,13 +139,13 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   tier, else medium; xhigh and max are not review choices). `REVIEW_TIMEOUT_SECONDS`
   defaults to 2700 and is capped at 3600; a timed-out review returns no verdict and its
   quota is spent. The routing escalation rule is gone. The seven working modes are three:
-  `solo` (default: one family, a fresh session of another tier reviews), `normal` (the
-  side the STATE note names writes, the other side reviews) and `saver` (the low side
-  reviews within a small budget); `working_mode.py` refuses an old mode name and prints the
-  mapping, a switch to normal or saver sets the sides note from its second argument
-  (`working_mode.py normal "writes: claude, reviews: codex"`, `saver "low: claude"`) and solo
-  drops it, and `--replace-state` accepts one edit of the mode line: an old name becoming one
-  of the three. A high-tier change takes one label per focus reviewer. Worker and lead prompt caches live one hour
+  `solo` (default: one family, Claude unless the note says `family: codex`; a fresh session
+  of another tier reviews), `cross` (both families write, each task by fit, and each
+  reviews the other; entry below) and `saver` (the low side reviews within a small budget);
+  `working_mode.py` refuses an old mode name and prints the mapping, a switch sets the note
+  from its second argument (`saver "low: claude"` is required, `solo "family: codex"` is
+  optional, cross takes none), and `--replace-state` accepts one edit of the mode line: an
+  old name becoming one of the three. A high-tier change takes one label per focus reviewer. Worker and lead prompt caches live one hour
   (`CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL=1h` in `spawn_worker.sh`, `promptCacheTtl` and
   `subagentPromptCacheTtl` in the overlay `settings.json`; the frontmatter `cacheTtl` is
   dropped). `AGENTS.md` is a 165-line map: the review paragraph is three lines and a
@@ -139,10 +157,10 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   `.claude/settings.json`, `.claude/rules/state.md`, `scripts/spawn_worker.sh`); take the
   kit's `docs/REVIEW_GATE.md`, `docs/REVIEW_RUNNING.md`, `docs/WORKFLOW.md`, `AGENTS.md` and
   `docs/AGENTS.md` and re-apply your project's own lines; BEFORE running `working_mode.py`,
-  rewrite the `**Working mode:**` line of `docs/STATE.md` to `solo`, `normal` or `saver`
-  through `--read-state` and `--replace-state` (cross-performance and claude-only become
-  solo; claude-first and codex-first become normal with a `(writes: ..., reviews: ...)`
-  note; cross-saving, claude-saver and codex-saver become saver with a `(low: ...)` note)
+  rewrite the `**Working mode:**` line of `docs/STATE.md` to `solo`, `cross` or `saver`
+  through `--read-state` and `--replace-state` (claude-only becomes solo;
+  cross-performance, claude-first and codex-first become cross; cross-saving, claude-saver
+  and codex-saver become saver with a `(low: ...)` note)
   and the mode table of `docs/WORKFLOW.md` to those three rows, since the script refuses
   the old names;
   measure your first large review's duration from the chain record's timestamps and, if

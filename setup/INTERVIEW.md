@@ -142,8 +142,9 @@ One topic per turn. Suggested order, because each answer informs the next:
    - **Which model family is the AUTHOR?** The one that writes most of the code. The kit's
      default is one family alone (`solo`, `docs/WORKFLOW.md`, "Working modes, by name"):
      one tier writes and another tier of the same family reviews, each in a fresh session.
-   - **Is there a SECOND vendor?** Only then is the REVIEWER a different model
-     (`normal`). Either direction is supported and neither is the usual one.
+     The family is Claude unless the owner names another (`solo "family: codex"`).
+   - **Is there a SECOND vendor?** Only then do both families write, each task by fit,
+     and each reviews the other (`cross`), with Claude as the lead.
    - **Which budget is scarce, and which is generous?** This fills the model-routing table,
      and it is often what decides the two answers above. A capable model on a nearly
      exhausted plan makes a better reviewer than an author (`saver`).

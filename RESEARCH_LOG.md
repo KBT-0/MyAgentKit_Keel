@@ -21,6 +21,28 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-10-15 — cross: a second family writes beside the Claude lead
+
+The owner's words (2026-10-14): in the old way of working Codex wrote code too, Claude
+reviewed what Codex wrote and Codex what Claude wrote, but under the new rules and with no
+endless review loops; Claude can work alone without always being alone, stays the lead,
+routes the plugged model by task with the same care as Sonnet, Haiku and Opus, and Opus
+does the most critical work until the owner says otherwise. v0.11 had folded the old
+both-write mode into solo and kept Codex to "exact, bounded, mechanical errands", so that
+way of working had no mode. The report `docs/research/claude-lead-codex.md` (57 sources)
+backs the split: Codex for tasks with written acceptance criteria and tests, Claude for
+design and instruction-sensitive work (recommendations 1 to 3); Claude always reviews Codex,
+Codex reviews Claude only at medium and high tier and report-only, so the loop stays bounded
+(4, 6); file ownership in the brief, checked, because two writers on one file was the old
+mode's most common failure (5); `codex exec` stays, since `codex mcp-server` left upstream
+(8); measure the first ten errands before fixing the routing (10). No source measured
+routing by criticality (finding 9), so rule 7 ("critical work by Opus, the strongest tier
+reviews") is the owner's judgement, measured like the tiers. The `normal` name of the
+drafts never shipped and is gone. A side session found that saver recorded nothing of the
+mode it interrupted, so the return lived only in the lead's session and a Codex-family solo
+came back as Claude after a hand-off; the owner chose to record it in the saver note
+(`after: cross`, `after: solo, family: codex`), from where a switch to solo restores it.
+
 ### 2026-10-14 — Every kit change cites a source; the reports become the bibliography
 
 The owner's decision (Q&A, 2026-10-14), recorded as its own source: the kit exists to gather

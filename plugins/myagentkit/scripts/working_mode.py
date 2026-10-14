@@ -17,15 +17,18 @@ import tempfile
 STATE_LINE = re.compile(r'^([^\S\r\n]*(?:[-*+][^\S\r\n]+)?\*\*Working mode:\*\*[^\S\r\n]*)([^\r\n]*)(?=\r?$)', re.M)
 # The three modes of v0.11; a WORKFLOW.md from before them has six or seven rows of the old
 # per-model names (claude-first, cross-performance, ...), and any other table is a defect.
-MODES = ('solo', 'normal', 'saver')
+MODES = ('solo', 'cross', 'saver')
 OLD_MODES = {'claude-first', 'cross-performance', 'cross-saving', 'codex-first', 'claude-saver', 'codex-saver', 'claude-only'}
 # The one mapping of the old names, printed wherever an old name is met (CHANGELOG.md says the same).
-MAPPING = ('cross-performance and claude-only are solo; claude-first and codex-first are normal with a '
-           '(writes: ..., reviews: ...) note; cross-saving, claude-saver and codex-saver are saver with a '
-           '(low: ...) note')
-# The sides note a mode needs after its name in STATE.md (docs/WORKFLOW.md, "Working modes, by name").
-SIDES = {'normal': re.compile(r'writes: [^(),]+, reviews: [^(),]+'), 'saver': re.compile(r'low: [^(),]+')}
-EXAMPLES = {'normal': 'writes: claude, reviews: codex', 'saver': 'low: claude'}
+MAPPING = ('claude-only is solo; cross-performance, claude-first and codex-first are cross; cross-saving, '
+           'claude-saver and codex-saver are saver with a (low: ...) note')
+# The note a mode takes after its name in STATE.md (docs/WORKFLOW.md, "Working modes, by name"):
+# solo may name its family (none means claude), saver must name the low side, cross takes none.
+# saver also records the mode it interrupted, so the return to it survives a hand-off.
+AFTER = re.compile(r', after: ((?:solo|cross)(?:, family: [^(),]+)?)$')
+SIDES = {'solo': re.compile(r'family: [^(),]+'), 'saver': re.compile(r'low: [^(),]+(?:' + AFTER.pattern[:-1] + ')?')}
+REQUIRED = {'saver'}
+EXAMPLES = {'solo': 'family: codex', 'saver': 'low: claude'}
 
 
 def repairs_old_mode(old_lines, new_lines):
@@ -163,7 +166,7 @@ def replace_state(project, source, expected):
             if old_lines != new_lines and not repairs_old_mode(old_lines, new_lines):
                 raise ValueError('the edit changes the Working mode line of STATE.md; only a mode switch '
                                  '(working_mode.py NAME) changes it, together with .claude/mode (the one '
-                                 'exception: a mode name from before v0.11 may become solo, normal or saver)')
+                                 'exception: a mode name from before v0.11 may become solo, cross or saver)')
             pending = prepared(state, data)
             os.replace(pending, state)
             published = True
@@ -190,7 +193,7 @@ def mode(project, choice=None, sides=None):
     rows = re.findall(r'^\| `([a-z-]+)` \| ([^|]+) \| ([^\n]+)$', section, re.M)
     names = [name for name, _, _ in rows]
     if len(names) in (6, 7) and set(names) <= OLD_MODES:
-        print("ACTION: docs/WORKFLOW.md predates the three modes (solo, normal, saver), so no mode was "
+        print("ACTION: docs/WORKFLOW.md predates the three modes (solo, cross, saver), so no mode was "
               "shown or switched. Replace its \"Working modes, by name\" section with the kit's "
               "core/docs/WORKFLOW.md section, set the STATE.md line to the matching mode (" + MAPPING +
               "), sync the core scripts (scripts/working_mode.py), then run this again (kit CHANGELOG.md, v0.11).")
@@ -198,7 +201,7 @@ def mode(project, choice=None, sides=None):
             raise ValueError('no mode was switched: docs/WORKFLOW.md predates the three modes')
         return
     if tuple(names) != MODES:
-        raise ValueError('WORKFLOW.md must define the three modes solo, normal and saver')
+        raise ValueError('WORKFLOW.md must define the three modes solo, cross and saver')
     if choice is None:
         return working_mode(project, section, rows)
     with switch_lock(project):
@@ -235,7 +238,9 @@ def working_mode(project, section, rows, choice=None, sides=None):
     if choice is None:
         if record.exists() and record.read_text(encoding='utf-8').strip() != current:
             raise ValueError('.claude/mode and STATE.md disagree; choose a mode explicitly to repair them')
-        print('Current mode: ' + current + ('' if matches else ' (STATE.md line missing; main mode)'))
+        back = AFTER.search(note.strip(' ().')) if current == 'saver' else None
+        print('Current mode: ' + current + ('' if matches else ' (STATE.md line missing; main mode)')
+              + (' (returns to ' + back[1] + ')' if back else ''))
         for name, label, rules in rows:
             print(name + ' — ' + label + ' | ' + rules)
         return
@@ -249,22 +254,34 @@ def working_mode(project, section, rows, choice=None, sides=None):
             raise ValueError('missing mode rules: ' + heading)
         return match[0].strip()
     output = rules(selected + ' (')
-    # normal and saver name their sides in the note; a switch sets it from the argument or keeps
-    # a note of the right shape, never a stale one. solo carries no sides note.
+    # saver names its low side and solo may name its family; a switch sets the note from the
+    # argument or keeps one of the right shape, never a stale one. cross takes no note.
     shape = SIDES.get(selected)
     # The line is one physical line: a note wrapped onto the next line (the v0.11 template
     # before a601395 did) would be cut in half, its tail left as an orphan.
     if note.count('(') != note.count(')'):
         raise ValueError('the STATE.md Working mode note wraps onto the next line; put the whole line '
                          'on one line (--read-state / --replace-state keeps the note) and run this again')
-    given = (sides if sides is not None else note).strip(' ().')
-    if shape:
-        if not shape.fullmatch(given):
-            raise ValueError('a switch to %s names the sides: working_mode.py %s "%s"'
-                             % (selected, selected, EXAMPLES[selected]))
+    old = note.strip(' ().')
+    given = (sides if sides is not None else old).strip(' ().')
+    # A switch to saver appends the mode it leaves (a solo family with it); leaving saver for
+    # solo brings that family back, unless the switch names another note.
+    back = AFTER.search(old) if current == 'saver' else None
+    if selected == 'saver' and shape.fullmatch(given) and not AFTER.search(given):
+        if back:
+            given += back[0]
+        elif current != 'saver':
+            given += ', after: ' + current + (', ' + old if current == 'solo' and SIDES['solo'].fullmatch(old) else '')
+    elif selected == 'solo' and sides is None and back and back[1].startswith('solo, '):
+        given = back[1][len('solo, '):]
+    named = bool(shape and shape.fullmatch(given))
+    if named:
         note = ' (' + given + ')' + ('.' if note.rstrip().endswith('.') else '')
+    elif shape and (selected in REQUIRED or sides is not None):
+        raise ValueError('a switch to %s takes its note: working_mode.py %s "%s"'
+                         % (selected, selected, EXAMPLES[selected]))
     elif sides is not None:
-        raise ValueError('solo has no sides note')
+        raise ValueError('%s takes no note' % selected)
     elif any(s.fullmatch(given) for s in SIDES.values()):
         note = ''
     if matches:
@@ -272,7 +289,7 @@ def working_mode(project, section, rows, choice=None, sides=None):
     else:
         newline = '\r\n' if '\r\n' in state else '\n'
         # The sides a switch names are the note; without it, STATE never said who writes.
-        line = '**Working mode:** ' + selected + (note.rstrip('.') + '.' if shape else
+        line = '**Working mode:** ' + selected + (note.rstrip('.') + '.' if named else
                                                   ' (docs/WORKFLOW.md, "Working modes, by name").') + newline
         separator = re.search(r'^---\r?\n', state, re.M)
         position = separator.end() if separator else len(state)
@@ -304,7 +321,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('name', nargs='?')
     parser.add_argument('sides', nargs='?', metavar='SIDES',
-                        help='the note after the name: "writes: X, reviews: Y" for normal, "low: X" for saver')
+                        help='the note after the name: "family: X" for solo (default claude), "low: X" for saver')
     parser.add_argument('--project', type=Path, default=Path.cwd())
     operations = parser.add_mutually_exclusive_group()
     operations.add_argument('--read-state', metavar='OUT',  # a string: a trailing separator names a folder

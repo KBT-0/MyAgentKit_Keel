@@ -33,6 +33,9 @@
 #     while the decision file exists, and moves an uncommitted RESULT-NAME.md to NAME.result.md.
 #   - A session is resumed only once its own tab or tmux session has ended: two clients on
 #     one session were never tried.
+#   - agents.max_concurrent_threads_per_session=2 caps the sub-agents a worker opens at once
+#     (docs/WORKFLOW.md, "cross"); each one spends the same Codex allowance, and the key
+#     must be at least 1 (codex-cli 0.162.1).
 #   - workspace-write protects Git metadata, including a linked worktree's resolved git
 #     directory, even when --add-dir names it. The worker leaves all work uncommitted and
 #     lists the exact files in its result. The lead cross-reviews the diff and commits with
@@ -211,7 +214,7 @@ instruction="Read $(q "$shown") and follow it. The brief carries its Route: quic
 # Claude Code session markers, which hooks the worker starts would otherwise inherit.
 unmark="env -u CLAUDE_CODE_CHILD_SESSION -u CLAUDECODE -u CLAUDE_CODE_SESSION_ID -u CLAUDE_PID -u CLAUDE_CODE_MESSAGING_SOCKET -u CLAUDE_CODE_MESSAGING_TOKEN -u CLAUDE_CODE_SESSION_ATTENDED -u CLAUDE_CODE_ENTRYPOINT"
 cmd="codex${resume:+ resume $(q "$session")} $(q "$instruction") -m $(q "$model") -c $(q "model_reasoning_effort=$effort")"
-cmd="$cmd -s workspace-write -a never --no-daemon -C $(q "$cdir")"
+cmd="$cmd -c agents.max_concurrent_threads_per_session=2 -s workspace-write -a never --no-daemon -C $(q "$cdir")"
 
 [ -r "$kit/codex_worker.py" ] || die "codex_worker.py is missing beside this script"
 # found START: the id of the newest Codex session started at or after START whose working

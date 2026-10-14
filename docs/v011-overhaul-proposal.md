@@ -166,7 +166,7 @@ ve Medium'un kaderi sahibin.
 
 ### K. Çalışma modları ve routing — UYGULANDI (13 Ekim)
 
-Üç mod: solo (varsayılan) / normal / saver (`WORKFLOW.md` "Working modes, by name";
+Üç mod: solo (varsayılan) / cross (S'de) / saver (`WORKFLOW.md` "Working modes, by name";
 `working_mode.py` eski adı reddeder ve eşlemeyi basar). "A mode never lowers a change's tier";
 routing kural 4 silindi, effort tablosu review satırı H'ye göre.
 
@@ -227,6 +227,25 @@ tetiklenme ve "bu ne demek" sayısı RESEARCH_LOG'a. Rapor kendi kanıt boşluğ
 (hook'ların yan yana ölçümü yok, sahip anlayışı ölçülmemiş): bu yüzden ölçüm de v0.11'de.
 Risk: high (hook + settings); etiketler v011-comm-logic / v011-comm-portability, brief
 `.myagentkit/comm-brief.md`.
+
+### S. cross modu: iki aile de yazar, biri ötekini review eder — UYGULANDI (15 Ekim)
+
+Sahibin sözleri (14 Ekim): "bizim eski çalışma biçimimizde codex'e de kod yazdırabiliyorduk.
+... Yine codex'in yazdığını claude, claude'un yazdığını codex review eder ama eski şekilde
+değil yeni kurallara/şartlara göre ... sonsuz review döngüleri istemiyorum ... claude lead
+olacak ... takılı olan model içinde (şu an için codex) göreve göre o modeli de
+çalıştırabilmeliyiz. ama kritik işlerde ben/kullanıcı/proje geliştiricisi aksini belirtene
+kadar opus en kritik ve önemli işleri o yapar." Kanıt: `docs/research/claude-lead-codex.md`
+(öneri 1-11). Kararlar (soru-cevap, 14-15 Ekim): taslaklardaki `normal` yerine `cross`
+(yayınlanmadı, göç yok); solo'ya isteğe bağlı `family: codex` notu; Codex kabul ölçütü yazılı,
+testle doğrulanan, tek modüllük işi alır (Luna medium / Sol 6.1 medium / Sol 6.1 high / Astra
+lead'in tek seçimi, xhigh yok); Claude, Codex'in her işini review eder; Codex, Claude'un işini
+yalnız medium/high tier'da, tek geçiş, yalnız rapor, medium effort ile review eder ve lead her
+bulguyu doğrular; kritik işi Opus yazar, en güçlü tier (bugün Fable) review eder, Codex ikinci
+etiket; brief'te `Owns:` alanı ve `owns_check.py` kontrolü; Codex alt-ajan sınırı 2; geçişte
+kota okunur; ilk 10 iş ölçülür; `codex exec` kalır; saver notu yarıda kestiği modu kaydeder
+(`low: claude, after: cross`; yan oturumun bulgusu, sahip kararı 15 Ekim). Risk: high (yeni gate); kapsamlı Codex
+review'unda (aşağıdaki sıra) birlikte bakılır.
 
 ## 3. Uygulama sırası (sahip onayı 13 Ekim)
 

@@ -15,10 +15,10 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / 'core/scripts/working_mode.py'
 PLUGIN = ROOT / 'plugins/myagentkit/scripts/working_mode.py'
-MODES = ('solo', 'normal', 'saver')
-# normal and saver name their sides (owner decision 2026-10-13); the helper supplies the example note.
-SIDES = {'normal': 'writes: claude, reviews: codex', 'saver': 'low: claude'}
-TURKISH = {'Normal Mod': 'normal', 'Tasarruf Modu': 'saver', 'Saver': 'saver'}
+MODES = ('solo', 'cross', 'saver')
+# saver must name its low side (owner decision 2026-10-13); the helper supplies the example note.
+SIDES = {'saver': 'low: claude'}
+TURKISH = {'Çapraz Mod': 'cross', 'Tasarruf Modu': 'saver', 'Saver': 'saver'}
 
 
 class WorkingModeTests(unittest.TestCase):
@@ -142,11 +142,37 @@ class WorkingModeTests(unittest.TestCase):
         result = self.run_mode('Tasarruf Modu')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual((self.project / '.claude/mode').read_text(encoding='utf-8').strip(), 'saver')
-        self.assertEqual(self.state.read_text(encoding='utf-8'), '# State\n---\n**Working mode:** saver (low: claude).\nActive work.\n')
+        self.assertEqual(self.state.read_text(encoding='utf-8'), '# State\n---\n**Working mode:** saver (low: claude, after: solo).\nActive work.\n')
         self.assertIn('#### saver', result.stdout)
         self.assertNotIn('#### solo', result.stdout)
         self.assertIn('allowance resets', result.stdout)
-        self.assertIn('Current mode: saver', self.run_mode().stdout)
+        self.assertIn('Current mode: saver (returns to solo)', self.run_mode().stdout)
+
+    def test_saver_records_the_mode_it_interrupted_and_solo_gets_its_family_back(self):
+        # Only the lead's session knew which mode saver interrupted: a hand-off or a compaction
+        # lost it, and a Codex-family solo came back as a Claude one.
+        self.state.write_text('**Working mode:** solo (family: codex).\n', encoding='utf-8')
+        self.assertEqual(self.run_mode('saver', 'low: codex').returncode, 0)
+        self.assertEqual(self.state.read_text(encoding='utf-8'),
+                         '**Working mode:** saver (low: codex, after: solo, family: codex).\n')
+        self.assertIn('Current mode: saver (returns to solo, family: codex)', self.run_mode().stdout)
+        # A second saver switch changes the low side and keeps what it interrupted.
+        self.assertEqual(self.run_mode('saver', 'low: claude').returncode, 0)
+        self.assertIn('saver (low: claude, after: solo, family: codex).', self.state.read_text(encoding='utf-8'))
+        self.assertEqual(self.run_mode('solo').returncode, 0)
+        self.assertEqual(self.state.read_text(encoding='utf-8'), '**Working mode:** solo (family: codex).\n')
+        for mode, line in (('cross', 'cross\n'), ('solo', 'solo\n')):
+            with self.subTest(mode=mode):
+                self.state.write_text('**Working mode:** %s' % line, encoding='utf-8')
+                self.assertEqual(self.run_mode(mode).returncode, 0)
+                self.assertEqual(self.run_mode('saver').returncode, 0)
+                self.assertIn('saver (low: claude, after: %s)' % mode, self.state.read_text(encoding='utf-8'))
+                self.assertEqual(self.run_mode(mode).returncode, 0)
+                self.assertEqual(self.state.read_text(encoding='utf-8'), '**Working mode:** ' + line)
+        # The owner may name the return by hand, and a note naming another mode is refused.
+        self.assertEqual(self.run_mode('saver', 'low: claude, after: cross').returncode, 0)
+        self.assertIn('saver (low: claude, after: cross)', self.state.read_text(encoding='utf-8'))
+        self.assertNotEqual(self.run_mode('saver', 'low: claude, after: saver').returncode, 0)
 
     def test_every_mode_switches_and_missing_line_is_added(self):
         for mode in MODES:
@@ -156,23 +182,26 @@ class WorkingModeTests(unittest.TestCase):
             self.assertEqual((self.project / '.claude/mode').read_text(encoding='utf-8').strip(), mode)
             self.assertIn('Active work stays here.', self.state.read_text(encoding='utf-8'))
 
-    def test_a_missing_line_is_added_with_the_sides_the_switch_names(self):
+    def test_a_missing_line_is_added_with_the_note_the_switch_names(self):
         # The added line had a fixed text: STATE never said who writes, and a bare switch
         # later refused the kept note.
-        for mode in ('normal', 'saver'):
-            with self.subTest(mode=mode):
+        pointer = ' (docs/WORKFLOW.md, "Working modes, by name").'
+        for args, line in ((('saver',), 'saver (low: claude, after: solo).'),(('solo', 'family: codex'), 'solo (family: codex).'),
+                           (('cross',), 'cross' + pointer), (('solo',), 'solo' + pointer)):
+            with self.subTest(args=args):
                 self.state.write_text('# State\n---\nActive.\n', encoding='utf-8')
-                self.assertEqual(self.run_mode(mode).returncode, 0)
-                self.assertIn('**Working mode:** %s (%s).' % (mode, SIDES[mode]), self.state.read_text(encoding='utf-8'))
-                self.assertEqual(self.run_mode(mode.title()).returncode, 0)
+                self.assertEqual(self.run_mode(*args).returncode, 0)
+                self.assertIn('**Working mode:** ' + line, self.state.read_text(encoding='utf-8'))
+                self.assertEqual(self.run_mode(args[0].title()).returncode, 0)
+                self.assertIn('**Working mode:** ' + line, self.state.read_text(encoding='utf-8'))
 
-    def test_normal_routes_writes_and_reviews_to_the_sides_the_state_note_names(self):
-        result = self.run_mode('Normal Mod')
+    def test_cross_routes_each_task_by_fit_and_reviews_by_the_direction_rule(self):
+        result = self.run_mode('Çapraz Mod')
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn('Current mode: normal', result.stdout)
-        self.assertIn('(writes: claude, reviews: codex)', result.stdout)
-        self.assertIn('the other side reviews every tiered diff in a fresh session', result.stdout)
-        self.assertIn("findings go to a fresh worker of the author's side", result.stdout)
+        self.assertIn('Current mode: cross', result.stdout)
+        self.assertIn('Claude reviews what Codex wrote, at every tier.', result.stdout)
+        self.assertIn('Claude wrote at medium and high tier, one pass, report only, at medium effort', result.stdout)
+        self.assertIn('agents.max_concurrent_threads_per_session=2', result.stdout)
         self.assertNotIn('#### saver', result.stdout)
         saver = self.run_mode('saver')
         self.assertIn("One side's allowance is low", saver.stdout)
@@ -188,8 +217,7 @@ class WorkingModeTests(unittest.TestCase):
             self.assertIn('invalid STATE.md working mode: codex-first; it is a mode name from before v0.11', result.stderr)
             # One mapping, every old name in it, and the sanctioned repair path named.
             self.assertIn('--replace-state', result.stderr)
-            self.assertIn('cross-performance and claude-only are solo', result.stderr)
-            self.assertIn('claude-first and codex-first are normal with a (writes: ..., reviews: ...) note', result.stderr)
+            self.assertIn('claude-only is solo; cross-performance, claude-first and codex-first are cross', result.stderr)
             self.assertIn('cross-saving, claude-saver and codex-saver are saver with a (low: ...) note', result.stderr)
         self.assertIn('codex-first', self.state.read_text(encoding='utf-8'))
         self.assertFalse((self.project / '.claude/mode').exists())
@@ -205,7 +233,7 @@ class WorkingModeTests(unittest.TestCase):
         self.assertIn('**Working mode:** saver (low: codex).', self.state.read_text(encoding='utf-8'))
         self.assertIn('Current mode: saver', self.run_mode().stdout)
         # Only that repair: a new name to a new name, or an old name to another old name, is refused.
-        for old, new in ((b'saver (low: codex)', b'normal (low: codex)'),):
+        for old, new in ((b'saver (low: codex)', b'cross (low: codex)'),):
             snapshot, sha = self.snapshot()
             snapshot.write_bytes(snapshot.read_bytes().replace(old, new))
             self.assertNotEqual(self.run_mode('--replace-state', str(snapshot), '--expect', sha).returncode, 0)
@@ -220,7 +248,7 @@ class WorkingModeTests(unittest.TestCase):
         # only, the sides switch replaced that half and left the tail as an orphan fragment.
         template = (ROOT / 'core/docs/STATE.md').read_bytes()
         self.state.write_bytes(template)
-        for mode in ('normal', 'saver', 'solo'):
+        for mode in ('cross', 'saver', 'solo'):
             self.assertEqual(self.run_mode(mode).returncode, 0, mode)
             text = self.state.read_text(encoding='utf-8')
             self.assertNotIn('names another', text)
@@ -229,7 +257,7 @@ class WorkingModeTests(unittest.TestCase):
             b'solo (`docs/WORKFLOW.md`, "Working modes, by name"; `/myagentkit:mode` switches it).', b'solo'))
         wrapped = ('**Working mode:** solo (`docs/WORKFLOW.md`, "Working modes, by name"; the owner\n'
                    'names another, and `/myagentkit:mode` sets it).\n')
-        for mode in ('normal', 'solo'):
+        for mode in ('cross', 'solo'):
             self.state.write_text(wrapped, encoding='utf-8')
             result = self.run_mode(mode)
             self.assertEqual(result.returncode, 1, mode)
@@ -237,36 +265,49 @@ class WorkingModeTests(unittest.TestCase):
             self.assertEqual(self.state.read_text(encoding='utf-8'), wrapped)
         self.assertIn('Current mode: solo', self.run_mode().stdout)
 
-    def test_normal_and_saver_need_their_sides_note_and_solo_drops_it(self):
-        # A saver→normal switch kept `(low: claude)`, a normal mode naming no sides; the default
+    def test_saver_needs_its_note_solo_may_name_its_family_and_cross_takes_none(self):
+        # A saver→cross switch kept `(low: claude)`, a note cross does not take; the default
         # solo line's pointer note was kept the same way. Now the note is set, never carried.
         self.state.write_text('**Working mode:** saver (low: claude).\n', encoding='utf-8')
-        for args in (('normal',), ('normal', 'low: claude'), ('saver', 'writes: a, reviews: b'),
-                     ('solo', 'low: claude')):
+        for args, error in ((('saver', 'family: codex'), 'takes its note'),
+                            (('solo', 'low: claude'), 'takes its note'), (('cross', 'low: claude'), 'cross takes no note'),
+                            (('cross', 'family: codex'), 'cross takes no note')):
             with self.subTest(args=args):
                 result = subprocess.run([sys.executable, '-X', 'utf8', str(SCRIPT), '--project', str(self.project),
                                          *args], capture_output=True, text=True, encoding='utf-8', timeout=15)
                 self.assertEqual(result.returncode, 1, result.stdout)
-                self.assertIn('sides' if args[0] != 'solo' else 'solo has no sides note', result.stderr)
+                self.assertIn(error, result.stderr)
                 self.assertIn('(low: claude).', self.state.read_text(encoding='utf-8'))
-        self.assertEqual(self.run_mode('normal', '(writes: codex, reviews: claude)').returncode, 0)
-        self.assertIn('**Working mode:** normal (writes: codex, reviews: claude).', self.state.read_text(encoding='utf-8'))
+        self.assertEqual(self.run_mode('solo', '(family: codex)').returncode, 0)
+        self.assertIn('**Working mode:** solo (family: codex).', self.state.read_text(encoding='utf-8'))
+        self.assertEqual(self.run_mode('cross').returncode, 0)
+        self.assertEqual(self.state.read_text(encoding='utf-8'), '**Working mode:** cross\n')
+        # saver keeps a low note of the right shape, but from cross a bare saver names no low side.
+        bare = subprocess.run([sys.executable, '-X', 'utf8', str(SCRIPT), '--project', str(self.project), 'saver'],
+                              capture_output=True, text=True, encoding='utf-8', timeout=15)
+        self.assertEqual(bare.returncode, 1, bare.stdout)
+        self.assertIn('takes its note', bare.stderr)
+        self.assertEqual(self.state.read_text(encoding='utf-8'), '**Working mode:** cross\n')
+        self.assertEqual(self.run_mode('saver').returncode, 0)
+        self.assertIn('**Working mode:** saver (low: claude, after: cross)', self.state.read_text(encoding='utf-8'))
         self.assertEqual(self.run_mode('solo').returncode, 0)
         self.assertEqual(self.state.read_text(encoding='utf-8'), '**Working mode:** solo\n')
-        # A note that is not a sides note stays with solo, and a sides note of the right shape is kept.
-        self.state.write_text('**Working mode:** normal (writes: a, reviews: b).\n', encoding='utf-8')
-        self.assertEqual(self.run_mode('normal', 'writes: a, reviews: b').returncode, 0)
-        self.assertIn('normal (writes: a, reviews: b).', self.state.read_text(encoding='utf-8'))
-        self.state.write_text('**Working mode:** solo (docs/WORKFLOW.md, "Working modes, by name").\n', encoding='utf-8')
+        # A note of the right shape is kept, and a note that is not a mode note stays with solo and cross.
+        self.state.write_text('**Working mode:** solo (family: codex).\n', encoding='utf-8')
         self.assertEqual(self.run_mode('solo').returncode, 0)
-        self.assertIn('solo (docs/WORKFLOW.md, "Working modes, by name").', self.state.read_text(encoding='utf-8'))
+        self.assertIn('solo (family: codex).', self.state.read_text(encoding='utf-8'))
+        for mode in ('solo', 'cross'):
+            self.state.write_text('**Working mode:** solo (docs/WORKFLOW.md, "Working modes, by name").\n', encoding='utf-8')
+            self.assertEqual(self.run_mode(mode).returncode, 0)
+            self.assertIn(mode + ' (docs/WORKFLOW.md, "Working modes, by name").', self.state.read_text(encoding='utf-8'))
+            self.assertEqual(self.run_mode('solo').returncode, 0)
 
     def test_invalid_name_or_disagreeing_records_never_silently_switches(self):
         before = self.state.read_bytes()
         result = self.run_mode('unknown')
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(self.state.read_bytes(), before)
-        self.assertEqual(self.run_mode('normal').returncode, 0)
+        self.assertEqual(self.run_mode('cross').returncode, 0)
         (self.project / '.claude/mode').write_text('saver\n', encoding='utf-8')
         self.assertNotEqual(self.run_mode().returncode, 0)
         # An explicit owner choice repairs the disagreement.
@@ -274,11 +315,11 @@ class WorkingModeTests(unittest.TestCase):
 
     def test_old_workflow_and_missing_state_are_refused_without_writes(self):
         (self.project / 'docs/WORKFLOW.md').write_text('# Old workflow\n', encoding='utf-8')
-        self.assertNotEqual(self.run_mode('normal').returncode, 0)
+        self.assertNotEqual(self.run_mode('cross').returncode, 0)
         self.assertFalse((self.project / '.claude/mode').exists())
         (self.project / 'docs/WORKFLOW.md').write_bytes((ROOT / 'core/docs/WORKFLOW.md').read_bytes())
         self.state.unlink()
-        self.assertNotEqual(self.run_mode('normal').returncode, 0)
+        self.assertNotEqual(self.run_mode('cross').returncode, 0)
 
     def test_linked_mode_directory_is_refused(self):
         target = self.project / 'elsewhere'
@@ -303,10 +344,10 @@ class WorkingModeTests(unittest.TestCase):
         for value in ('Saver', 'Tasarruf Modu'):
             self.state.write_text('**Working mode:** ' + value + ' (manual).\n', encoding='utf-8')
             self.assertIn('Current mode: saver', self.run_mode().stdout)
-            self.assertEqual(self.run_mode('normal').returncode, 0)
+            self.assertEqual(self.run_mode('cross').returncode, 0)
             text = self.state.read_text(encoding='utf-8')
             self.assertEqual(text.count('**Working mode:**'), 1)
-            self.assertIn('normal (writes: claude, reviews: codex).', text)
+            self.assertIn('cross (manual).', text)
             (self.project / '.claude/mode').unlink()
 
     def test_list_item_and_indented_state_lines_are_read_and_switched_in_place(self):
@@ -314,19 +355,19 @@ class WorkingModeTests(unittest.TestCase):
             with self.subTest(line=line):
                 self.state.write_text('# State\n---\n' + line + '\nActive.\n', encoding='utf-8')
                 self.assertIn('Current mode: saver', self.run_mode().stdout)
-                self.assertEqual(self.run_mode('normal').returncode, 0)
+                self.assertEqual(self.run_mode('cross').returncode, 0)
                 text = self.state.read_text(encoding='utf-8')
                 self.assertEqual(text.count('Working mode:'), 1, text)
-                self.assertIn(line.split('**Working mode:**')[0] + '**Working mode:** normal', text)
+                self.assertIn(line.split('**Working mode:**')[0] + '**Working mode:** cross', text)
                 (self.project / '.claude/mode').unlink()
 
     def test_unknown_and_duplicate_state_lines_are_refused_before_writes(self):
         for text in ('**Working mode:** mystery\n',
-                     '**Working mode:** saver\n**Working mode:** Normal\n',
-                     '- **Working mode:** saver\n**Working mode:** normal\n',
+                     '**Working mode:** saver\n**Working mode:** Cross\n',
+                     '- **Working mode:** saver\n**Working mode:** cross\n',
                      'Working mode: saver\n', '> **Working mode:** saver\n'):
             self.state.write_text(text, encoding='utf-8')
-            for args in ((), ('normal',)):
+            for args in ((), ('cross',)):
                 result = self.run_mode(*args)
                 self.assertNotEqual(result.returncode, 0, result.stdout)
                 self.assertEqual(self.state.read_text(encoding='utf-8'), text)
@@ -340,14 +381,14 @@ class WorkingModeTests(unittest.TestCase):
     def test_cp1252_pipe_switch_prints_utf8_rules_after_writes(self):
         workflow = self.project / 'docs/WORKFLOW.md'
         workflow.write_text(workflow.read_text(encoding='utf-8').replace(
-            '#### normal (', '#### normal (işi ağır: '), encoding='utf-8')
+            '#### cross (', '#### cross (işi ağır: '), encoding='utf-8')
         code = ('import sys,runpy; sys.stdout.reconfigure(encoding="cp1252"); '
-                'sys.argv=[%r,"--project",%r,"normal",%r]; runpy.run_path(%r,run_name="__main__")') % (
-                    str(SCRIPT), str(self.project), SIDES['normal'], str(SCRIPT))
+                'sys.argv=[%r,"--project",%r,"cross"]; runpy.run_path(%r,run_name="__main__")') % (
+                    str(SCRIPT), str(self.project), str(SCRIPT))
         result = subprocess.run([sys.executable, '-I', '-c', code], capture_output=True, timeout=15)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('işi ağır', result.stdout.decode('utf-8'))
-        self.assertEqual((self.project / '.claude/mode').read_text(encoding='utf-8').strip(), 'normal')
+        self.assertEqual((self.project / '.claude/mode').read_text(encoding='utf-8').strip(), 'cross')
 
     def test_atomic_replacement_copies_original_permissions(self):
         spec = importlib.util.spec_from_file_location('working_mode', SCRIPT)
@@ -356,7 +397,7 @@ class WorkingModeTests(unittest.TestCase):
         import shutil
         with mock.patch.object(shutil, 'copymode', wraps=shutil.copymode) as copy:
             with mock.patch('sys.stdout', new=io.StringIO()):
-                module.mode(self.project, 'normal', SIDES['normal'])
+                module.mode(self.project, 'cross')
             self.assertTrue(any(call.args[0] == self.state for call in copy.call_args_list),
                             'STATE replacement must inherit its original permissions')
 
@@ -372,10 +413,10 @@ class WorkingModeTests(unittest.TestCase):
                 competitors.append(self.run_mode('saver'))
         with mock.patch.object(module.os, 'replace', side_effect=interrupted), \
                 mock.patch('sys.stdout', new=io.StringIO()):
-            module.mode(self.project, 'normal', SIDES['normal'])
+            module.mode(self.project, 'cross')
         self.assertNotEqual(competitors[0].returncode, 0, 'overlapping switch was allowed')
         self.assertIn('mode switch in progress', competitors[0].stderr)
-        self.assertIn('Current mode: normal', self.run_mode().stdout)
+        self.assertIn('Current mode: cross', self.run_mode().stdout)
         self.assertEqual(self.run_mode('saver').returncode, 0, 'switch lock was not released')
 
     def test_state_edit_during_preparation_is_refused_without_losing_work(self):
@@ -394,7 +435,7 @@ class WorkingModeTests(unittest.TestCase):
         with mock.patch.object(module, 'prepared', side_effect=interrupted), \
                 mock.patch('sys.stdout', new=io.StringIO()):
             with self.assertRaisesRegex(ValueError, 'STATE.md changed'):
-                module.mode(self.project, 'normal', SIDES['normal'])
+                module.mode(self.project, 'cross')
         self.assertEqual(self.state.read_bytes(), concurrent)
         self.assertEqual((self.project / '.claude/mode').read_text(encoding='utf-8').strip(), 'solo')
         self.assertEqual(self.run_mode('saver').returncode, 0)
@@ -414,7 +455,7 @@ class WorkingModeTests(unittest.TestCase):
             replace(source, target)
         with mock.patch.object(module.os, 'replace', side_effect=interrupted):
             with self.assertRaises(OSError):
-                module.mode(self.project, 'normal', SIDES['normal'])
+                module.mode(self.project, 'cross')
         self.assertEqual(self.state.read_bytes(), concurrent[0])
         self.assertIn('disagree', self.run_mode().stderr)
 
@@ -443,7 +484,7 @@ class WorkingModeTests(unittest.TestCase):
         with mock.patch.object(module.os, 'replace', side_effect=interrupted), \
                 mock.patch.object(Path, 'open', cancelled_open):
             with self.assertRaises(KeyboardInterrupt):
-                module.mode(self.project, 'normal', SIDES['normal'])
+                module.mode(self.project, 'cross')
         self.assertEqual(self.state.read_bytes(), published[0])
         self.assertIn(b'Active work stays here.', self.state.read_bytes())
         self.assertNotEqual(self.state.read_bytes(), before)
@@ -466,11 +507,11 @@ class WorkingModeTests(unittest.TestCase):
             for root, real in ((link, self.project), (link / 'child', child)):
                 with self.subTest(root=root):
                     result = subprocess.run([sys.executable, '-X', 'utf8', str(SCRIPT), '--project',
-                                             str(root), 'normal', SIDES['normal']], capture_output=True, text=True,
+                                             str(root), 'cross'], capture_output=True, text=True,
                                             encoding='utf-8', timeout=15)
                     self.assertEqual(result.returncode, 0, result.stderr)
-                    self.assertIn('**Working mode:** normal', (real / 'docs/STATE.md').read_text(encoding='utf-8'))
-                    self.assertEqual((real / '.claude/mode').read_text(encoding='utf-8').strip(), 'normal')
+                    self.assertIn('**Working mode:** cross', (real / 'docs/STATE.md').read_text(encoding='utf-8'))
+                    self.assertEqual((real / '.claude/mode').read_text(encoding='utf-8').strip(), 'cross')
         finally:
             if os.name == 'nt':
                 link.rmdir()
@@ -495,9 +536,9 @@ class WorkingModeTests(unittest.TestCase):
                         with self.assertRaisesRegex(ValueError, 'linked path refused'):
                             module.mode(self.project, 'saver', SIDES['saver'])
                     else:
-                        module.mode(self.project, 'normal', SIDES['normal'])
-                        self.assertEqual((self.project / '.claude/mode').read_text(encoding='utf-8').strip(), 'normal')
-        self.assertIn('**Working mode:** normal', self.state.read_text(encoding='utf-8'))
+                        module.mode(self.project, 'cross')
+                        self.assertEqual((self.project / '.claude/mode').read_text(encoding='utf-8').strip(), 'cross')
+        self.assertIn('**Working mode:** cross', self.state.read_text(encoding='utf-8'))
 
     def test_a_workflow_with_the_old_per_model_modes_names_the_update_instead_of_failing(self):
         workflow = self.project / 'docs/WORKFLOW.md'
@@ -509,12 +550,12 @@ class WorkingModeTests(unittest.TestCase):
         workflow.write_bytes('\n'.join(lines[:start] + old + lines[start + 3:]).encode('utf-8'))
         before = self.state.read_bytes()
         # A show succeeds; a requested switch that did not happen fails. Neither creates the lock.
-        for args, status in (((), 0), (('normal',), 1)):
+        for args, status in (((), 0), (('cross',), 1)):
             with self.subTest(args=args):
                 result = subprocess.run([sys.executable, '-X', 'utf8', str(PLUGIN), '--project', str(self.project),
                                          *args], capture_output=True, text=True, encoding='utf-8', timeout=15)
                 self.assertEqual(result.returncode, status, result.stderr)
-                self.assertIn('ACTION: docs/WORKFLOW.md predates the three modes (solo, normal, saver)', result.stdout)
+                self.assertIn('ACTION: docs/WORKFLOW.md predates the three modes (solo, cross, saver)', result.stdout)
                 self.assertIn('sync the core scripts (scripts/working_mode.py)', result.stdout)
                 self.assertEqual(self.state.read_bytes(), before)
                 self.assertFalse((self.project / '.claude').exists())
@@ -545,7 +586,7 @@ class WorkingModeTests(unittest.TestCase):
             replace(source, target)
         with mock.patch.object(module.os, 'replace', side_effect=interrupted):
             with self.assertRaises(KeyboardInterrupt):
-                module.mode(self.project, 'normal', SIDES['normal'])
+                module.mode(self.project, 'cross')
         result = self.run_mode()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('.claude/mode and STATE.md disagree', result.stderr)
@@ -586,7 +627,7 @@ class WorkingModeTests(unittest.TestCase):
         self.assertIn("A second session of the author's own tier\n  is never the review", result.stdout)
         self.assertIn('no second vendor runs', result.stdout)
         self.assertNotIn('#### saver', result.stdout)
-        self.assertNotIn('#### normal', result.stdout)
+        self.assertNotIn('#### cross', result.stdout)
 
     def test_read_state_writes_the_snapshot_with_its_sha_without_a_lock(self):
         before = b'# State\r\nAn active task.\r\n'
@@ -621,7 +662,7 @@ class WorkingModeTests(unittest.TestCase):
     def test_an_edit_that_changes_the_working_mode_line_is_refused(self):
         self.assertEqual(self.run_mode('solo').returncode, 0)
         before = self.state.read_bytes()
-        for edited in (before.replace(b'solo', b'normal'),
+        for edited in (before.replace(b'solo', b'cross'),
                        b''.join(line for line in before.splitlines(True) if b'Working mode' not in line)):
             with self.subTest(edited=edited):
                 snapshot, sha = self.snapshot()
@@ -803,7 +844,7 @@ class WorkingModeTests(unittest.TestCase):
         self.assertEqual(self.run_mode('solo').returncode, 0)
         worker = self.module()
         snapshot, sha = self.snapshot()
-        edited = snapshot.read_bytes().replace(b'solo', b'normal')
+        edited = snapshot.read_bytes().replace(b'solo', b'cross')
         snapshot.write_bytes(edited)
         renaming = os.rename
         def rename(source, target):
@@ -878,9 +919,9 @@ class WorkingModeTests(unittest.TestCase):
                 mock.patch.object(worker.os, 'replace', replace), mock.patch('sys.stdout', new=io.StringIO()):
             if rollback:
                 with self.assertRaisesRegex(OSError, 'record replacement failed'):
-                    worker.mode(self.project, 'normal', SIDES['normal'])
+                    worker.mode(self.project, 'cross')
             else:
-                worker.mode(self.project, 'normal', SIDES['normal'])
+                worker.mode(self.project, 'cross')
         self.assertEqual(len(refusals), 1, 'the intended STATE race was not scheduled')
         self.assertNotEqual(refusals[0].returncode, 0)
         self.assertIn('mode switch in progress', refusals[0].stderr)
@@ -894,7 +935,7 @@ class WorkingModeTests(unittest.TestCase):
         retry = self.run_mode('--replace-state', str(proposed), '--expect', hashlib.sha256(current).hexdigest())
         self.assertEqual(retry.returncode, 0, retry.stderr)
         self.assertEqual(self.state.read_bytes(), current + b'An independent active task.\n')
-        self.assertIn('Current mode: ' + ('solo' if rollback else 'normal'),
+        self.assertIn('Current mode: ' + ('solo' if rollback else 'cross'),
                       self.run_mode().stdout)
 
     def test_state_race_refuses_the_writer_then_preserves_its_retried_edit(self):
@@ -915,7 +956,7 @@ class WorkingModeTests(unittest.TestCase):
         def publishing(source, target):
             if target == self.state:
                 self.assertEqual(self.state.read_bytes(), before, 'STATE was truncated before publication')
-                attempts.append(self.run_mode('normal'))
+                attempts.append(self.run_mode('cross'))
             replace(source, target)
         with mock.patch.object(worker.os, 'replace', publishing), \
                 mock.patch.object(worker.Path, 'cwd', return_value=self.project), \
@@ -925,7 +966,7 @@ class WorkingModeTests(unittest.TestCase):
         self.assertEqual(len(attempts), 1)
         self.assertNotEqual(attempts[0].returncode, 0)
         self.assertIn('mode switch in progress', attempts[0].stderr)
-        self.assertEqual(self.run_mode('normal').returncode, 0)
+        self.assertEqual(self.run_mode('cross').returncode, 0)
         self.assertIn(b'An independent active task.', self.state.read_bytes())
 
 

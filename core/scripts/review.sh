@@ -65,7 +65,7 @@
 #   REVIEW_RISK      the brief's tier, low|medium|high; sets the default effort
 #   REVIEW_EFFORT    reasoning effort low|medium|high (default: high when REVIEW_RISK=high, else medium)
 #   REVIEW_FOCUS     portability | logic: one reviewer each on a high-tier change
-#   REVIEW_TASK_FILE the brief the prompt quotes
+#   REVIEW_TASK_FILE the brief the prompt quotes; its Owns: line bounds the diff (owns_check.py)
 #   REVIEW_ROUND_EXCEPTION  the recorded reason for a third round under one label
 #   REVIEW_TIMEOUT_SECONDS  wall clock per attempt (default: 2700, at most 3600)
 #   REVIEW_MAX_TURNS        Claude turns per attempt (default: 200, at most 500)
@@ -163,6 +163,12 @@ esac
 
 set -- "$scope_flag"
 [ -n "$scope_arg" ] && set -- "$scope_flag" "$scope_arg"
+# A brief's Owns: line names the paths its worker may change (docs/HANDOFF.md, "The brief");
+# in cross mode the two sides never share a file, so a diff outside them is not reviewed.
+if [ -n "${REVIEW_TASK_FILE:-}" ]; then
+  python3 -B "$script_dir/owns_check.py" "$REVIEW_TASK_FILE" "$@" ||
+    die "the diff leaves the brief's Owns: paths, or they could not be checked (above)"
+fi
 # The dispatcher checks the name and reads the file; without a backend its argv is unchanged.
 if [ -n "$backend" ] && [ "$reviewer" = codex ]; then
   printf '%s\n' 'review: --backend is ignored for --reviewer codex' >&2

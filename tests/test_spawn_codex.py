@@ -154,7 +154,8 @@ class SpawnCodexTests(unittest.TestCase):
         self.assertIn('CLAUDE_CODE_EXECPATH', run['env'])
         # Git metadata remains read-only even with --add-dir (issue #43); the lead commits.
         brief, cresult, cquestion = (shq(self.win(p, '-m')) for p in (self.brief, tree / 'RESULT-w1.md', tree / 'QUESTION-w1.md'))
-        self.assertEqual(run['argv'], [INSTRUCTION % (brief, cresult, self.publisher(result.stdout), cquestion), '-m', 'gpt-x', '-c', 'model_reasoning_effort=high', '-s', 'workspace-write',
+        self.assertEqual(run['argv'], [INSTRUCTION % (brief, cresult, self.publisher(result.stdout), cquestion), '-m', 'gpt-x', '-c', 'model_reasoning_effort=high',
+                                       '-c', 'agents.max_concurrent_threads_per_session=2', '-s', 'workspace-write',
                                        '-a', 'never', '--no-daemon', '-C', self.win(tree)])
         self.assertEqual(Path(run['cwd']).resolve(), tree.resolve())
         branch = subprocess.run(['git', '-C', str(tree), 'branch', '--show-current'], capture_output=True, text=True)

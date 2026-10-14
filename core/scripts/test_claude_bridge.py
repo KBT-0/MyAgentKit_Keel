@@ -25,9 +25,9 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'REVIEW_SHADOW', 'MYAGENTKIT_TASK_I
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 191, 'test_agent_usage': 31, 'test_codex_quota': 5}
+SUITE_MINIMUMS = {'test_claude_bridge': 192, 'test_agent_usage': 31, 'test_codex_quota': 5}
 # These are executed cases, excluding only the explicitly declared POSIX exclusions.
-WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 165, 'test_agent_usage': 27, 'test_codex_quota': 4}
+WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 166, 'test_agent_usage': 27, 'test_codex_quota': 4}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -193,6 +193,7 @@ class ReviewPreflightTests(unittest.TestCase):
         repo = Path(tmp)
         (repo / 'scripts').mkdir()
         shutil.copyfile(ROOT / 'review.sh', repo / 'scripts/review.sh')
+        shutil.copyfile(ROOT / 'owns_check.py', repo / 'scripts/owns_check.py')
         shutil.copyfile(ROOT.parent / '.gitignore', repo / '.gitignore')
         # Only the paid adapter boundary is replaced. The wrapper, dispatcher, snapshot,
         # scope validation and chain storage all run their shipped implementations.
@@ -240,6 +241,23 @@ except ValueError as error:
                     spend = 'REVIEW [about to run]: %s model %s, effort medium' % (provider, model)
                     self.assertIn(spend, result.stdout)
                     self.assertLess(result.stdout.index(spend), result.stdout.index('REVIEWER RAN: ' + provider))
+
+    def test_a_diff_outside_the_brief_owns_paths_reaches_no_reviewer(self):
+        # cross mode: the two sides never share a file, and nothing checked a worker's diff
+        # against the paths its brief gave it (docs/WORKFLOW.md, "cross").
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as briefs:
+            repo = self.project(tmp)
+            (repo / 'real.txt').write_bytes(b'changed\n')
+            brief = Path(briefs) / 'brief.md'
+            for owns, code in (('Owns: real.txt', 0), ('Owns: src/', 2), ('No paths named.', 0)):
+                with self.subTest(owns=owns):
+                    brief.write_text('Task: fixture.\n' + owns + '\n')
+                    result = self.review(repo, '--reviewer', 'claude', REVIEW_TASK_FILE=str(brief))
+                    self.assertEqual(result.returncode, code, result.stdout + result.stderr)
+                    self.assertEqual('REVIEWER RAN: claude' in result.stdout, code == 0, result.stdout)
+                    if code:
+                        self.assertIn("FAIL [review]: the diff leaves the brief's Owns: paths", result.stdout)
+                        self.assertIn('  real.txt\n', result.stderr)
 
     def test_line_ending_only_files_fail_before_any_reviewer_in_the_selected_scope(self):
         for scope in ('unstaged', 'staged', 'base', 'commit', 'outside scope', 'real edit'):

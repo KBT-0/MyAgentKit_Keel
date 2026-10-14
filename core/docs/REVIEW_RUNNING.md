@@ -21,7 +21,7 @@ backend (`--backend NAME`, reviewer `claude@NAME`): `docs/DEV_SETUP.md`.
 | `REVIEW_ROUND_EXCEPTION` | reason for a third round, kept in the record |
 | `REVIEW_RISK` | `low` / `medium` / `high`, the brief's tier |
 | `REVIEW_FOCUS` | `portability` or `logic`, one reviewer each on a high tier |
-| `REVIEW_TASK_FILE` | the brief the prompt quotes |
+| `REVIEW_TASK_FILE` | the brief the prompt quotes; a diff outside its `Owns:` line is refused |
 | `REVIEW_EFFORT` | `low` / `medium` / `high`; default high on a high tier, else medium |
 | `REVIEW_TIMEOUT_SECONDS` | per attempt, default 2700, at most 3600 |
 | `REVIEW_MAX_TURNS` | Claude turns per attempt |

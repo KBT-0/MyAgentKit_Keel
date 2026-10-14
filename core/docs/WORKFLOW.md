@@ -500,6 +500,12 @@ Rules for whoever routes work, binding with any table:
    one side's allowance is low, the saver mode is in force (below), naming that side. It
    lasts until the allowance resets or the owner says otherwise; then the mode before it is
    back at once, unasked (`AGENTS.md`, "Duties toward {{OWNER_NAME}}").
+7. **Critical work is written by Opus until {{OWNER_NAME}} says otherwise** (owner decision,
+   2026-10-15): architecture, a gate's or the review tooling's design, a security boundary.
+   It never goes to the plugged family. When the subscription has a stronger Claude tier
+   (Fable today), that tier reviews it; in cross, Codex takes the second label. No source
+   measured routing by criticality (`docs/research/claude-lead-codex.md`, finding 9): the
+   rule is the owner's judgement and is measured like the tiers (rule 5).
 
 ### A second Claude-compatible backend
 
@@ -528,26 +534,30 @@ by habit. A name is one word, and a lesson one project learns improves the mode 
 project through the kit.
 
 A mode decides who writes, who reviews and who fixes the findings. It never removes a
-review and never lowers a risk tier (`docs/REVIEW_GATE.md`, "Risk tiers"); rules 1 to 6
+review and never lowers a risk tier (`docs/REVIEW_GATE.md`, "Risk tiers"); rules 1 to 7
 above hold in every mode, and the worker caps never exceed the worktree ceiling ("Parallel
-work — worktree policy"). The note after the mode name in `docs/STATE.md` names the sides,
-for example `**Working mode:** normal (writes: claude, reviews: codex)` or
-`**Working mode:** saver (low: claude)`; a switch to normal or saver sets that note from its
-second argument (`working_mode.py normal "writes: claude, reviews: codex"`) or keeps one of
-the right shape, and solo drops it; a stale note never survives a switch. Every
+work — worktree policy"). The note after the mode name in `docs/STATE.md` names what the
+mode needs: `**Working mode:** solo (family: codex)` (no note means `family: claude`) or
+`**Working mode:** saver (low: claude, after: cross)`; cross takes none. A switch to saver
+adds the `after:` part itself: the mode it interrupts, with a solo family (`after: solo,
+family: codex`). A switch sets the note from its
+second argument (`working_mode.py saver "low: claude"`, `working_mode.py solo "family:
+codex"`) or keeps one of the right shape; a stale note never survives a switch. Every
 Claude worker spends the same Claude allowance: a sub-agent, a spawned session and a tab
 alike. The lead is the session that plans with the owner, whichever side it runs on.
 
 | Mode | Turkish name | Writes | Reviews | Fixes the findings |
 |---|---|---|---|---|
 | `solo` | Tek Model Modu (main mode) | one model family's workers, by tier | a fresh session of another tier of the same family | a fresh worker of the author's tier |
-| `normal` | Normal Mod | the side the STATE note names, by tier | the other side, in a fresh session | a fresh worker of the author's side |
+| `cross` | Çapraz Mod | both families, each task by fit | the other family by the direction rule, in a fresh session | a fresh worker of the author's side |
 | `saver` | Tasarruf Modu | the side that is not low | the low side, within a small budget | the side that is not low |
 
 #### solo (Tek Model Modu), the main mode
 
 For a subscription with one model family, which is the kit's default (owner decision,
-2026-10-13): one family is enough, and a second vendor is pluggable, never required.
+2026-10-13): one family is enough, and a second vendor is pluggable, never required. The
+family is Claude unless the note names another (owner decision, 2026-10-15): `family:
+codex` runs the same rules on Codex's tiers.
 
 - **Writes:** the family's workers do all the implementation, at the tier table's column
   for that family.
@@ -561,23 +571,48 @@ For a subscription with one model family, which is the kit's default (owner deci
   with `REVIEW_CLAUDE_MODEL` set for that run to the tier that did not write the change. It
   is the existing per-reviewer Claude pin, so the review records stay in one format.
   `CODEX_MODEL` stays empty: `--fallback` then has no other reviewer to hand the review to.
+  With `family: codex`, the same holds with `--reviewer codex` and `REVIEW_CODEX_MODEL`.
 - **Workers:** up to the worktree ceiling; no second vendor runs.
 - **Effort:** the tier and effort tables as written.
 - **Ends:** when the owner names another mode, for example once a second vendor is added.
 - **Lessons:** none yet.
 
-#### normal (Normal Mod)
+#### cross (Çapraz Mod)
 
-A second vendor is present (`--reviewer codex`, or a `claude@NAME` backend). The STATE note
-names who writes and who reviews: `(writes: claude, reviews: codex)` or the reverse.
+A second family is plugged in beside the Claude lead (Codex today, through `codex exec`;
+a `claude@NAME` backend counts as a family too). Both families write, each reviews the
+other, and the lead routes every task by the rules below (owner decisions, 2026-10-15;
+evidence: `docs/research/claude-lead-codex.md`, recommendations 1 to 11).
 
-- **Writes:** the writing side's workers, by tier; an exact, bounded, mechanical errand may
-  go to the other side when its tier row is cheaper.
-- **Reviews and fixes:** the other side reviews every tiered diff in a fresh session, and
-  findings go to a fresh worker of the author's side ("Worker cost", rule 2); the next round
-  reviews the fix. A `claude@NAME` review of another model family counts as the other side.
+- **Writes, Codex:** a task with written acceptance criteria, checkable by tests, inside one
+  module: mechanical work on `gpt-6-luna` at medium; bounded implementation and bug fixes
+  on `gpt-6.1-sol` at medium; multi-file work, or work whose tests are easy to miss, on
+  `gpt-6.1-sol` at high; `gpt-6-astra` only as the lead's one-errand pick (rule 2); never
+  xhigh, max or ultra. A Codex worker opens at most two sub-agents of its own
+  (`spawn_codex.sh` sets `agents.max_concurrent_threads_per_session=2`).
+- **Writes, Claude:** everything else: a task whose acceptance criteria are not written
+  yet, a design decision, instruction-sensitive work, and critical work (rule 7).
+- **Owns:** every brief names the paths its worker may change (`docs/HANDOFF.md`, "The
+  brief"), the two sides never share a file, and `scripts/review.sh` refuses a review whose
+  diff leaves them. Each author works in its own short-lived worktree; one side lands, the
+  other rebases.
+- **Direction rule:** Claude reviews what Codex wrote, at every tier. Codex reviews what
+  Claude wrote at medium and high tier, one pass, report only, at medium effort, and the
+  lead checks each Codex finding before it enters a fix round; a low-tier Claude change gets
+  its light review from another Claude tier, as in solo. A high-tier change has two labels
+  (`docs/REVIEW_GATE.md`, "Risk tiers"): for critical work Claude wrote, the strongest
+  Claude tier takes one and Codex the other. Findings go to a fresh worker of the author's
+  side, and at most two rounds run under one label.
+- **Quota:** before the switch to cross and before a large Codex errand, the lead reads
+  Codex's allowance (`python3 scripts/codex_quota.py`). A Codex worker stopped by its quota
+  leaves its session id in the task's STATE line, and `spawn_codex.sh ... --resume`
+  continues it once the allowance resets.
+- **Measured before it is fixed:** the split above is provisional. For the first ten Codex
+  errands the lead records the task type, model, effort, review verdict, fix rounds and
+  quota draw in this mode's Lessons; on three to five real tasks it runs the same task on
+  both sides and compares (rule 5). What the numbers do not support is deleted.
 - **Workers:** up to the worktree ceiling, both sides together.
-- **Effort:** the tier and effort tables as written.
+- **Effort:** the tier and effort tables, with the Codex rows above.
 - **Ends:** when the owner names another mode.
 - **Lessons:** a lead that sends every errand to its own side spends its allowance on
   volume: one Opus lead routed no implementation to Codex and spent five Opus sessions on
@@ -585,7 +620,8 @@ names who writes and who reviews: `(writes: claude, reviews: codex)` or the reve
 
 #### saver (Tasarruf Modu)
 
-One side's allowance is low. The STATE note names it: `(low: claude)` or `(low: codex)`.
+One side's allowance is low. The STATE note names it: `(low: claude)` or `(low: codex)` in
+cross, a tier such as `(low: opus)` in solo.
 
 - **Writes:** the side that is not low implements every errand and fixes every finding, the
   low side's findings included.
@@ -601,8 +637,9 @@ One side's allowance is low. The STATE note names it: `(low: claude)` or `(low: 
   writes and the scarce one reviews.
 - **Effort:** the writing side by the tier table; the low side by the rule above.
 - **Ends:** the low side's allowance resets, or the owner says otherwise. Then the mode
-  before it is back at once, unasked: the lead runs `scripts/working_mode.py <mode>` to
-  update both records.
+  before it is back at once, unasked: the lead runs `scripts/working_mode.py <mode>` for
+  the mode the note's `after:` names, which a hand-off keeps; a switch to solo brings the
+  recorded family back.
 - **Lessons:** every Claude worker counts against the low side: a sub-agent spends the same
   allowance as a spawned session.
 

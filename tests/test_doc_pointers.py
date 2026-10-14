@@ -182,7 +182,7 @@ class SectionPointerTests(unittest.TestCase):
         workflow = (ROOT / 'core/docs/WORKFLOW.md').read_text(encoding='utf-8')
         table = workflow.split('### Working modes, by name')[1].split('####')[0]
         rows = re.findall(r'^\| `([a-z-]+)` \| ([^|(]+?)(?: \(main mode\))? \|', table, re.M)
-        self.assertEqual(sorted(m for m, _ in rows), ['normal', 'saver', 'solo'])
+        self.assertEqual(sorted(m for m, _ in rows), ['cross', 'saver', 'solo'])
         command = (ROOT / 'plugin/commands/mode.md').read_text(encoding='utf-8')
         skill = (ROOT / 'plugins/myagentkit/skills/myagentkit-mode/SKILL.md').read_text(encoding='utf-8')
         # The command may run its helper unprompted, never any Python code.

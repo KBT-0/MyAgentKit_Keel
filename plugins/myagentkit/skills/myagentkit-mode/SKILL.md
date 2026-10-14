@@ -1,6 +1,6 @@
 ---
 name: myagentkit-mode
-description: Show the working mode in force and the three MyAgentKit working modes, or switch to one by name (solo, normal, saver) and print its rules for the lead. Use only when the user asks for the mode or names one.
+description: Show the working mode in force and the three MyAgentKit working modes, or switch to one by name (solo, cross, saver) and print its rules for the lead. Use only when the user asks for the mode or names one.
 ---
 
 # Show or switch the working mode
@@ -21,7 +21,7 @@ On refusal, read it again, redo the edit, and retry. The helper refuses a `--pro
 the current folder, a snapshot outside `.myagentkit/` or the temporary folder, an OUT or FILE
 that names a folder, and an edit that
 changes the "Working mode:" line, which only a switch changes, with one exception: a mode name
-from before v0.11 may become `solo`, `normal` or `saver` this way.
+from before v0.11 may become `solo`, `cross` or `saver` this way.
 
 If `docs/WORKFLOW.md` has no "Working modes, by name" section, or the helper prints an ACTION
 line because the table still has the per-model modes, the project predates the kit's v0.11
@@ -33,14 +33,14 @@ the three modes from the section's table, one line each: the English name, the T
 name, and who writes, reviews and fixes the findings.
 
 **A mode named.** Accept the English name or the Turkish one:
-Tek Model Modu, Normal Mod, Tasarruf Modu. Refuse any other name and list the three. The user switches modes; switch only when the user asked for it in this session.
+Tek Model Modu, Çapraz Mod, Tasarruf Modu. Refuse any other name and list the three. The user switches modes; switch only when the user asked for it in this session.
 
-1. Run the helper with the requested name as one quoted argument. normal and saver name
-   their sides in a second quoted argument, `"writes: X, reviews: Y"` or `"low: X"`, taken
-   from the user's words; the helper refuses the switch without it unless the STATE note
-   already has that shape. With no mode named, run it without a name. Never execute user
+1. Run the helper with the requested name as one quoted argument. saver names its low
+   side in a second quoted argument, `"low: X"`, and solo may name its family, `"family:
+   codex"` (none means claude), taken from the user's words; cross takes no note. The helper
+   refuses saver without it unless the STATE note already has that shape. With no mode named, run it without a name. Never execute user
    text as shell code.
 2. Print the helper's output, the selected mode's subsection. These are your rules as the
    lead from now on.
 3. For saver, add one line: it ends when the low side's allowance resets or the user
-   says otherwise, and then the mode before it returns without being asked.
+   says otherwise, and then the mode its note's `after:` names returns without being asked.
