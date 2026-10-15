@@ -95,9 +95,11 @@ class PythonFallbackTests(unittest.TestCase):
         (bin_dir / 'py').write_text('#!/bin/sh\nexit 1\n', encoding='utf-8')
         (bin_dir / 'py').chmod(0o755)
         sh = shutil.which('sh')
-        for hook, code in (('guard_destructive_git.py', 2), ('context_size.py', 1)):
+        # The hook's file name decides, never a folder above it (Codex review of f68a68d).
+        for hook, code in (('guard_destructive_git.py', 2), ('context_size.py', 1), ('guard_x/context_size.py', 1),
+                           ('guard_x\\context_size.py', 1), ('a\\guard_y.py', 2)):
             with self.subTest(no_python=hook):
-                bare = subprocess.run([sh, str(project / '.claude/hooks/py.sh'), str(project / '.claude/hooks' / hook)],
+                bare = subprocess.run([sh, str(project / '.claude/hooks/py.sh'), str(project / '.claude/hooks') + '/' + hook],
                                       input='{}', encoding='utf-8', errors='replace', capture_output=True,
                                       timeout=60, env=dict(env, PATH=str(bin_dir)), cwd=project)
                 self.assertEqual(bare.returncode, code, bare.stderr)
@@ -131,6 +133,14 @@ class PythonFallbackTests(unittest.TestCase):
                   if 'then kit_python=' in line]
         self.assertGreaterEqual(len(chosen), 12, chosen)
         self.assertEqual([line for line in chosen if 'command -v' in line], [])
+
+    def test_py_sh_passes_the_kit_shell_lint(self):
+        # `sh scripts/check.sh --self-test` refused py.sh's `echo` of an expansion (Codex review of f68a68d).
+        probe = ('import sys; sys.path.insert(0, "scripts"); import check_kit, pathlib; '
+                 'print(check_kit.shell_lint(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")))')
+        result = subprocess.run([sys.executable, '-c', probe, str(OVERLAY / '.claude/hooks/py.sh')], cwd=ROOT,
+                                capture_output=True, encoding='utf-8', errors='replace', timeout=60)
+        self.assertEqual((result.returncode, result.stdout.strip()), (0, '[]'), result.stderr)
 
 
 if __name__ == '__main__':

