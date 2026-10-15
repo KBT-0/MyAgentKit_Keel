@@ -42,10 +42,13 @@ Name the model and effort from `docs/WORKFLOW.md`, "Model routing", alongside th
    area means `docs/REVIEW_GATE.md`, fresh session). Any other change gets one light review
    (`docs/REVIEW_GATE.md`, "Risk tiers"); {{OWNER_NAME}}'s check or the manual check named here
    accepts it.
-   **Review:** the brief says which of two cases it expects. A worker in a separate session
-   reviews its own diff with fresh sub-agents before it reports; a sub-agent worker says it
-   could not, and the lead starts the review when the branch exists (`docs/WORKFLOW.md`,
-   "Review rounds — early, inside the worker, in parallel").
+   **Review:** a worker reviews its own diff with fresh sub-agents before it reports, whether
+   it runs as a session or as a sub-agent: Claude Code nests sub-agents three layers deep by
+   default (code.claude.com/docs/en/sub-agents, "Nesting"; checked 2026-10-15 on 2.1.300,
+   where a sub-agent worker was offered the Agent tool). Where
+   `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH` is 1, it says it could not, and the lead starts the
+   review when the branch exists (`docs/WORKFLOW.md`, "Review rounds — early, inside the
+   worker, in parallel"). The fresh sub-agent is a reviewer, not the author.
    **Design:** the brief carries a design of five to ten lines, or tells the worker to write
    one at the top of its result before any code (the same section).
 5. **Routing check:** does this task belong on the model it is being sent to? Judgement work
@@ -56,8 +59,13 @@ Name the model and effort from `docs/WORKFLOW.md`, "Model routing", alongside th
    gate/hook/review-tooling changes and risky diffs. Only the lead chooses xhigh/max and
    writes the reason in the brief. The brief names the model AND the effort level, and the
    lead verifies both after the run from the transcript (Claude Code: the `"effort"` field;
-   Codex: the `reasoning effort:` header of its log). A delegated agent that was never told
-   its effort runs at whatever its parent had (`docs/WORKFLOW.md`, "Worker cost").
+   Codex: the `reasoning effort:` header of its log). An unnamed choice drifts to the lead's
+   own model and effort: Claude Code resolves an omitted sub-agent model to the main
+   conversation's (code.claude.com/docs/en/sub-agents; `docs/WORKFLOW.md`, "Worker cost").
+   Prefer a named sub-agent definition whose frontmatter fixes `model` and `effort`; the
+   guard remains for calls that name a generic agent. `CLAUDE_CODE_EFFORT_LEVEL`, if set,
+   overrides the definition's effort, so the lead checks it is unset before relying on the
+   field.
 6. **Definition of Done — verifiable:** the exact command or observation that proves the
    task is finished, e.g. "`./scripts/check.sh` prints `CHECK: PASS` with the new test
    visible in the run". Not "it works", not "tests added" — something the implementer can
@@ -148,18 +156,23 @@ fixed" follow as always.
 
 - Only `Kind: completed` is done. `blocked`, `handoff` and `progress` are not done, and an
   idle notice is a hint, never the done signal.
-- A worker that notices a compaction of its context writes `Kind: handoff` at once, with a
-  handoff section in the shape of this file. A Codex worker leaves it uncommitted for the
-  lead; a Claude worker commits it when its brief permits.
+- `blocked` means the worker waits on a decision, or failed: the worker could not finish and
+  says why.
+- A worker whose context was compacted once finishes only if its `Remaining:` line is short;
+  it writes `Kind: handoff` at the second compaction, or at once when much work remains,
+  with a handoff section in the shape of this file. The `SessionStart` (compact) hook reminds
+  it. This is the lead's rule too (`docs/WORKFLOW.md`, "Worker cost", rule 8). A Codex
+  worker leaves the handoff uncommitted for the lead; a Claude worker commits it when its
+  brief permits.
 - `Task:` and `Attempt:` name the work the file reports on, so a result left by an earlier
   task of a reused session is never taken for the current one.
 
 The Claude Code overlay's `scripts/watch_workers.sh --result NAME=PATH` reads this head once
 the file is committed on a clean tree, and reports the open questions with their text.
 
-A handoff written at the end of a working day also carries the cost: the tool's cost screen
-(`/cost` in Claude Code) and the table from `scripts/agent_cost.py --latest`, next to the number
-of tasks done, so the next lead routes from a number (`docs/WORKFLOW.md`, "Worker cost").
+A handoff written at the end of a working day also carries the cost figures that
+`docs/WORKFLOW.md`, "Worker cost", rule 8 names, next to the number of tasks done, so the
+next lead routes from a number.
 
 ## Sizing the task before you write the brief
 
@@ -188,8 +201,9 @@ DO NOT: <explicit non-goals — and everything docs/PHASES.md puts out of scope>
 PROOF:  <the cheapest check beyond the commit gate that proves this change; none: the gate>
         — never report a check you did not run
 DONE:   <the command or observation that proves it>
-REVIEW: <inner: you review your diff with fresh sub-agents before reporting | lead: you
-        cannot start sub-agents; say so, and the lead reviews your branch>
+REVIEW: <inner: you review your diff with fresh sub-agents before reporting, as a session or
+        as a sub-agent | lead: CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH is 1, so you cannot
+        start sub-agents; say so, and the lead reviews your branch>
 
 If this task touches {{RISKY_AREAS}}, or any gate/CI/check script: before commit, run the
 review gate per docs/REVIEW_RUNNING.md in a FRESH session, preferably a different tool.

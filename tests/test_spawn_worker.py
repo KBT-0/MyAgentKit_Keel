@@ -213,6 +213,7 @@ WINDOWS = os.name == 'nt'
 # which native Windows never takes, through Python stubs whose `sh -c` command line Git for
 # Windows parses again (an apostrophe is a quote there): there each prints NOT RUN.
 ON_WINDOWS = {'test_a_backend_reaches_the_worker_quoted_on_both_paths',
+              'test_a_worker_worktree_is_locked_from_spawn',
               'test_a_missing_or_failing_watcher_stops_the_spawn',
               'test_a_worker_without_its_model_or_effort_is_refused',
               'test_backend_duplicate_keys_cannot_empty_final_values',
@@ -697,7 +698,8 @@ exit 0
         launched = self.launched()
         self.assertIsNotNone(launched, result.stderr)
         self.assertEqual(launched['argv'], ['-n', name, '--model', model, '--effort', effort,
-                                            '--settings', settings, '--allowedTools', tools])
+                                            '--settings', settings, '--allowedTools', tools,
+                                            '--disallowedTools', 'AskUserQuestion'])
         self.assertEqual(Path(launched['cwd']).resolve(), self.cwd.resolve())
         self.assertEqual(result.returncode, 0, result.stderr)
 
@@ -840,6 +842,8 @@ exit 0
                             KIT_WT=str(self.bin / 'wt-tab'), KIT_PS=ps, CLAUDE_CONFIG_DIR=str(config))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn('Windows Terminal tab', result.stdout)
+        # The spend line comes before the start (issue #68).
+        self.assertIn("spawn_worker: about to run 'w1': model m, effort high\n", result.stdout)
         # Not registered as a peer (no sessions/8.json): the lead is told it will hear nothing.
         self.assertIn("WARNING: 'w1' (process 8) is not registered as a peer session", result.stdout)
         self.assertIn('scripts/close_worker.sh w1', result.stdout)
@@ -866,7 +870,8 @@ exit 0
         merged = json.loads(Path(self.windows_path(argv[8])).read_text())
         self.assertEqual(merged['permissions'], {'defaultMode': 'auto'})
         self.assertEqual(argv[:8] + argv[9:], [INSTRUCTION % shq(shown), '-n', 'w1', '--model', 'm', '--effort',
-                                               'high', '--settings', '--allowedTools', tools])
+                                               'high', '--settings', '--allowedTools', tools,
+                                               '--disallowedTools', 'AskUserQuestion'])
         self.assertEqual(Path(launched['cwd']).resolve(), self.cwd.resolve())
         self.assertEqual(self.tmux_log(), '')
         # A worker is no child of the lead: the lead's session markers never reach it.
@@ -987,7 +992,8 @@ exit 0
                 # On native Windows the worker also gets the merged --settings file (the state hooks).
                 argv = self.launched()['argv'][1:]
                 self.assertEqual(argv[6], '--settings')
-                self.assertEqual(argv[:6] + argv[8:], ['-n', 'wb', '--model', 'm', '--effort', 'high', *appended])
+                self.assertEqual(argv[:6] + argv[8:], ['-n', 'wb', '--model', 'm', '--effort', 'high', *appended,
+                                                       '--disallowedTools', 'AskUserQuestion'])
 
     def test_the_displayed_behaviour_path_has_no_terminal_control_bytes(self):
         self.cwd = self.tmp / 'lead\x1b[2J\tdir'
@@ -1021,7 +1027,8 @@ exit 0
             if '--settings' in argv:
                 at = argv.index('--settings')
                 argv = argv[:at] + argv[at + 2:]
-            self.assertEqual(argv[-6:], ['-n', 'w1', '--model', 'm', '--effort', 'high'])
+            self.assertEqual(argv[-8:], ['-n', 'w1', '--model', 'm', '--effort', 'high',
+                                         '--disallowedTools', 'AskUserQuestion'])
             self.assertFalse(marker.exists(), 'a backend value ran as shell')
             self.assertNotIn(token, result.stdout + result.stderr)
             (self.state / 'claude.json').unlink()
@@ -1223,6 +1230,31 @@ exit 0
         self.assertNotEqual(again.returncode, 0)
         self.assertIn('worktree-w3', again.stderr)
         self.assertNotIn('new-session', self.tmux_log())
+
+    def test_a_worker_worktree_is_locked_from_spawn(self):
+        # The audit never removes a locked worktree (clean_worktrees.py, check a); close_worker.sh
+        # unlocks it. Run on the native Windows path, with a long name for Windows' path limits.
+        for name, body in (('uname', '#!/bin/sh\necho MINGW64_NT-10.0-26200\n'), ('cygpath', CYGPATH),
+                           ('wt-tab', WT_TAB),
+                           ('ps-stub', '#!/bin/sh\n[ ! -f "$SPAWN_STATE/claude.json" ] || '
+                                       'printf "8 claude.exe -n %s\\r\\n" "$(cat "$SPAWN_STATE/name")"\n')):
+            if WINDOWS and name == 'cygpath':
+                continue
+            (self.bin / name).write_text(body)
+            (self.bin / name).chmod(0o755)
+        git = lambda *a: subprocess.run(['git', *a], cwd=self.cwd, check=True, capture_output=True,
+                                        text=True).stdout.strip()
+        git('init', '-q')
+        git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'a')
+        for name in ('lk', 'l' * 100):
+            with self.subTest(length=len(name)):
+                (self.state / 'name').write_text(name)
+                (self.state / 'claude.json').unlink(missing_ok=True)
+                result = self.spawn(name, str(self.brief), '--worktree', KIT_WT=str(self.bin / 'wt-tab'),
+                                    KIT_PS=str(self.bin / 'ps-stub'))
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                gitdir = git('-C', str(self.cwd / '.claude/worktrees' / name), 'rev-parse', '--absolute-git-dir')
+                self.assertEqual(Path(gitdir, 'locked').read_text().rstrip('\n'), 'kit worker ' + name)
 
     def test_the_tmux_worker_does_not_inherit_the_leads_session_markers(self):
         result = self.spawn('w1', str(self.brief))

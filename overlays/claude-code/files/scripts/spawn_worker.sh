@@ -20,9 +20,11 @@
 # .myagentkit/backends/NAME.env in the current folder names (docs/DEV_SETUP.md, section 3).
 #
 # Once the worker has its brief, its session is SHOWN: show_workers.sh opens a terminal tab
-# attached to it, because a session nobody sees can wait on a dialog for hours. --batch skips
+# attached to it, because a session nobody sees can wait on a dialog for hours (Claude Code's
+# agent teams and agent view surface a waiting session the same way). --batch skips
 # that, for a lead that starts several and then shows them together in one call:
-# `scripts/show_workers.sh NAME1 NAME2 ...`. A failure to show never fails the spawn.
+# `scripts/show_workers.sh NAME1 NAME2 ...`. A failure to show never fails the spawn: a kit
+# design principle (the view is a side effect, the worker is the job), not a sourced rule.
 #
 # Why a separate session and not a sub-agent: a sub-agent's prompt cache lives 5 minutes and
 # a separate session's lives an hour, so a worker that waits on a long job re-writes its
@@ -41,13 +43,22 @@
 # end by itself.
 #
 # Pitfalls this script encodes (each one cost a session):
-#   - The prompt is typed AFTER the TUI is up, never passed on the command line after a
-#     variadic flag such as --allowedTools, which would swallow it as one more value and
-#     leave the session idle at an empty input line.
-#   - The prompt is ONE typed line, "Read '<brief path>' and follow it." and a second sentence
+#   - The prompt is never placed after a variadic flag (--allowedTools, --disallowedTools,
+#     --tools, --add-dir, --mcp-config, --plugin-dir, --betas): it would be swallowed as one
+#     more value and leave the session idle at an empty input line (claude-code issue #25978).
+#     Those flags come LAST. On native Windows the prompt is the first positional argument,
+#     ahead of every flag, in the script the tab runs (`claude "query"`, Claude Code CLI
+#     reference). On tmux it is typed once the TUI is up: whether a first-argument prompt is
+#     taken after the folder-trust dialog is not documented and untried here, so typing stays
+#     until a tmux host tests it (docs/BACKLOG.md).
+#   - The prompt is ONE line, "Read '<brief path>' and follow it." and a second sentence
 #     telling it to write questions into its result file instead of asking in the pane, not
 #     the brief pasted as a block: one model took a pasted brief with no typed sentence of the
 #     user's own for mere content and sat idle for 35 minutes asking for confirmation.
+#     --disallowedTools AskUserQuestion enforces the second sentence.
+#   - Every wait below (60 s for the input line, 30 s for the line to land, 3 s before a second
+#     Enter, 30 s for a Windows process and its registration, 10 s for a quick exit) is a
+#     bound, not a measurement: the poll ends as soon as its condition holds (owner's choice).
 #   - tmux receives only `sh PATH`, without quotes, for its default shell (fish included).
 #     Before worktree creation, the temporary script path is made absolute and checked for
 #     letters, digits, _, ., / and -. Set TMPDIR to an existing safe absolute directory
@@ -57,7 +68,9 @@
 #     ends its quoting and the rest runs as shell in the new pane.
 #   - --worktree makes the worktree here with `git worktree add` from the commit the lead's
 #     checkout is on now. Passing `-w` to the tool built it from a stale base, and workers
-#     started without fixes the lead had already merged.
+#     started without fixes the lead had already merged: `-w` branches from the remote default
+#     branch unless `worktree.baseRef: head` is set, and that has had bugs across versions
+#     (code.claude.com/docs/en/worktrees, "Choose the base branch").
 #   - Readiness is detected from the pane text, not from `pgrep -f`, which matches its own
 #     command line.
 #   - The folder must already be trusted by Claude Code; an untrusted folder blocks the
@@ -245,13 +258,22 @@ if [ -n "$windows" ]; then
   [ "${#longest_path}" -le 259 ] ||
     die "refused the worker path: generated paths must fit in 259 characters on native Windows (MAX_PATH 260); use a shorter name or a shorter checkout path, or enable LongPathsEnabled for long-path tooling"
 fi
+# The spend line, as review.sh prints its own before a review: the owner sees what each worker
+# costs before it runs (issue #68; docs/WORKFLOW.md, "Model routing").
+printf '%s\n' "spawn_worker: about to run '$name': model $model, effort $effort" | LC_ALL=C tr '\001-\011\013-\037\177' '?'
 if [ -n "$worktree" ]; then
   top=$(git rev-parse --show-toplevel) || die "--worktree needs a git repository"
   dir=$top/.claude/worktrees/$name
   ! git show-ref --verify --quiet "refs/heads/worktree-$name" ||
     die "branch worktree-$name already exists and may be stale; delete it or pick another name"
   [ ! -e "$dir" ] || die "worktree path already exists: $dir"
-  git worktree add -q "$dir" -b "worktree-$name" HEAD >&2 || die "git worktree add failed: $dir"
+  # Locked from spawn to close_worker.sh, which unlocks it: the worktree audit never removes a
+  # locked worktree, so no clean-up races a live worker, as Claude Code locks its own agents'
+  # worktrees while they run (code.claude.com/docs/en/worktrees). The quiet period stays as the
+  # second check for worktrees no kit script locked. `add --lock --reason` needs git 2.33
+  # (its release notes); the audit already needs 2.36.
+  git worktree add -q --lock --reason "kit worker $name" "$dir" -b "worktree-$name" HEAD >&2 ||
+    die "git worktree add failed: $dir"
 fi
 
 # Native Windows: nothing can read the tab's pane, so the worker gets a Notification and a Stop
@@ -281,6 +303,10 @@ fi
 printf '%s' "spawn_worker: behaviour appendix: ${behaviour:-off}" | LC_ALL=C tr '\001-\037\177' '?'
 printf '\n'
 [ -n "$tools" ]    && cmd="$cmd --allowedTools $(q "$tools")"
+# No question dialog in a pane nobody may watch: the result file is the question channel (the
+# instruction's second sentence says so; this enforces it). Permission prompts are not tools and
+# stay. AskUserQuestion is the tool's name in Claude Code 2.1.300 (code.claude.com/docs/en/sub-agents).
+cmd="$cmd --disallowedTools AskUserQuestion"
 # One line naming the brief by its absolute path, quoted by the same helper so a path with a
 # space or an apostrophe still reads as one path. Its second sentence keeps questions out of
 # the pane, where nobody may be looking. On native Windows the path is Windows' own spelling:

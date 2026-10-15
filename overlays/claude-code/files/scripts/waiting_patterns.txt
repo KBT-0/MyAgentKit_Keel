@@ -9,7 +9,10 @@
 #            last 15 non-empty lines.
 #   STATUS   VERIFIED: written from a real pane captured on VERSION (the capture is a test
 #            fixture under tests/fixtures/panes/ in the kit). UNVERIFIED: a guess nobody has
-#            seen on a real pane; it ships because a missed wait costs more than a false one.
+#            seen on a real pane; it ships because a missed wait costs more than a false one
+#            (a cost-sensitive threshold: scikit-learn, "Post-tuning the decision threshold
+#            for cost-sensitive learning"). Claude Code's Notification hook (permission_prompt,
+#            idle_prompt) has no matcher for the folder-trust dialog, which is why panes are read.
 #   WHERE    last | near (above), or status: the context rule below, which never makes a
 #            session WAITING.
 #   ERE      grep -E, matched byte by byte (LC_ALL=C) on the line with control bytes removed
@@ -22,7 +25,9 @@
 #
 # A new Claude Code version can change any of this. When a session blocked and the watcher
 # said nothing, capture its pane (`tmux capture-pane -p -J -t =NAME:`), add it as a fixture,
-# and add or correct the rule here with that version.
+# and add or correct the rule here with that version. Not re-captured since 2.1.285: on
+# 2026-10-15 the installed Claude Code was 2.1.300, and native Windows, the kit's host, has no
+# tmux pane to capture (docs/BACKLOG.md).
 
 # The folder-trust dialog (also what spawn_worker.sh stops on).
 trust       VERIFIED    2.1.285  last  ^ *Enter to confirm · Esc to cancel$

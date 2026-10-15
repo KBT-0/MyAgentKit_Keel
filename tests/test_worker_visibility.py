@@ -910,20 +910,42 @@ class ContextTests(Base):
                                path_first=path_first)
 
     def test_the_figure_is_reported_past_the_warning_line(self):
-        for status, warn, out in (('58k/1.0M', '50', ''), ('58k/1.0M', '5', '58k/1.0M is 5%'),
-                                  ('113k/1.0M', '50', ''), ('113k/1.0M', '10', '113k/1.0M is 11%'),
-                                  ('1.2M/1.0M', '50', '1.2M/1.0M is 120%'), ('36k/200k', '17', '36k/200k is 18%')):
-            with self.subTest(status=status, warn=warn):
+        # The line is the smaller of an absolute count (default 200k, the lead's band) and a
+        # share of the window (default 50%): a bare number is a share, as before.
+        for status, args, out, line in (
+                ('58k/1.0M', ('--context-warn', '50'), '', ''),
+                ('58k/1.0M', ('--context-warn', '5'), '58k/1.0M is 5%', '50k'),
+                ('113k/1.0M', ('--context-warn', '50'), '', ''),
+                ('113k/1.0M', ('--context-warn', '10%'), '113k/1.0M is 11%', '100k'),
+                ('1.2M/1.0M', ('--context-warn', '50'), '1.2M/1.0M is 120%', '200k'),
+                ('36k/200k', ('--context-warn', '17'), '36k/200k is 18%', '34k'),
+                # The default: 200k on a 1M window (50% would be 500k, past the 400k ceiling),
+                # half of a 200k window.
+                ('250k/1.0M', (), '250k/1.0M is 25%', '200k'),
+                ('120k/200k', (), '120k/200k is 60%', '100k'),
+                ('190k/1.0M', (), '', ''),
+                # An absolute line replaces the 200k; the share still applies.
+                ('250k/1.0M', ('--context-warn', '300k'), '', ''),
+                ('120k/1.0M', ('--context-warn', '100k'), '120k/1.0M is 12%', '100k'),
+                ('120k/200k', ('--context-warn', '300k'), '120k/200k is 60%', '100k')):
+            with self.subTest(status=status, args=args):
                 for f in self.state.glob('opt-*'):
                     f.unlink()
-                result = self.watch(status, '--once', '--context-warn', warn)
+                result = self.watch(status, '--once', *args)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 if out:
-                    self.assertEqual(result.stdout, 'watch_workers: CONTEXT: w1, %s of its context window, past the '
-                                     '%s%% warning line (finish, compact or hand off: read its Remaining: line)\n'
-                                     % (out, warn))
+                    self.assertEqual(result.stdout, 'watch_workers: CONTEXT: w1, %s of its context window, past its '
+                                     '%s warning line (finish, compact or hand off: read its Remaining: line; '
+                                     'docs/WORKFLOW.md, "Worker cost", rule 8)\n' % (out, line))
                 else:
                     self.assertEqual(result.stdout, '')
+
+    def test_a_context_warning_value_is_a_count_or_a_share(self):
+        for value in ('k', '%', '20x', '1.5k', '-3', ''):
+            with self.subTest(value=value):
+                result = self.watch(STATUS, '--once', '--context-warn', value)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn('--context-warn takes NNNk (tokens) or NN% (of the window)', result.stderr)
 
     def test_a_figure_in_the_output_is_not_the_status_line(self):
         # Output quoting `800k/1.0M` gave a false 80% warning and set the once-marker that

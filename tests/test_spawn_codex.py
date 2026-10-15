@@ -164,6 +164,10 @@ class SpawnCodexTests(unittest.TestCase):
         self.assertEqual(Path(run['cwd']).resolve(), tree.resolve())
         branch = subprocess.run(['git', '-C', str(tree), 'branch', '--show-current'], capture_output=True, text=True)
         self.assertEqual(branch.stdout.strip(), 'worktree-w1')
+        # Locked until close_worker.sh: the audit never removes a locked worktree.
+        self.assertEqual(self.lock(tree), 'kit worker w1')
+        # The spend line comes before the start (issue #68).
+        self.assertIn("spawn_codex: about to run 'w1': model gpt-x, effort high\n", result.stdout)
         # The tab's script ends with `exit 0` and is deleted.
         tab = json.loads((self.state / 'wt.json').read_text())
         self.assertTrue(tab[-1].endswith('\nexit 0\n'), tab[-1])
@@ -590,6 +594,14 @@ exit 1
         self.assertFalse(record.with_suffix('.exit').exists())
         self.assertEqual(self.spawn('w16', str(self.brief), *args).returncode, 0)
 
+    @staticmethod
+    def lock(tree):
+        """The worktree's lock reason, or None when it is not locked."""
+        gitdir = subprocess.run(['git', '-C', str(tree), 'rev-parse', '--absolute-git-dir'],
+                                capture_output=True, text=True, check=True).stdout.strip()
+        locked = Path(gitdir, 'locked')
+        return locked.read_text().rstrip('\n') if locked.exists() else None
+
     def close(self, name):
         env = dict(os.environ, PATH=f'{self.bin}{os.pathsep}{os.environ["PATH"]}',
                    SPAWN_STATE=str(self.state), KIT_PS=str(self.bin / 'ps-stub'))
@@ -613,6 +625,7 @@ exit 1
         self.assertIn('(process 4242)', closed.stdout)
         self.assertTrue(record.exists(), 'the only resume id of a running session was deleted')
         self.assertTrue(tree.exists())
+        self.assertEqual(self.lock(tree), 'kit worker w18', 'a running worker lost its lock')
 
     def test_close_keeps_the_record_of_a_kept_worktree(self):
         result = self.spawn('w19', str(self.brief), '--model', 'm', '--effort', 'high', '--worktree')
@@ -625,6 +638,8 @@ exit 1
         self.assertTrue(tree.exists())
         self.assertTrue((self.repo / '.myagentkit/workers/w19.session').exists(),
                         'a kept, possibly unfinished worker lost its resume id')
+        # A closed worker leaves no locked worktree: the audit after a later merge decides.
+        self.assertIsNone(self.lock(tree))
 
     def test_invalid_result_does_not_create_a_worktree_or_branch_and_retry_succeeds(self):
         (self.repo / 'docs').mkdir()

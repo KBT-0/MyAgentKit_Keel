@@ -20,14 +20,21 @@
 #      close with tmux's words, as the session may still run. Then it waits, up to 15 s, until
 #      `tmux has-session` no longer finds it and, where /proc exists, no process works inside
 #      the worktree: the tool inside takes a moment to exit, and the audit would see it. A tmux
-#      that still cannot answer at the end of the wait fails the close with its words.
-#   3. `clean_worktrees.sh --apply --only=NAME --no-quiet`: the post-merge hook's audit, every
+#      that still cannot answer at the end of the wait fails the close with its words. The 15 s
+#      is a bound, not a measurement (owner's choice), between `docker stop`'s 10 s and
+#      Kubernetes' 30 s grace periods; a value too short only costs a second close.
+#   3. The worktree's spawn lock (`git worktree lock`, reason `kit worker NAME`, set by
+#      spawn_worker.sh and spawn_codex.sh) is lifted, then
+#      `clean_worktrees.sh --apply --only=NAME --no-quiet`: the post-merge hook's audit, every
 #      proof, for .claude/worktrees/NAME alone, without the quiet period: that margin stands in
 #      for "no worker is still in it", and here the lead has just ended the session and decided
 #      the work is finished (the hook never lifts it). No --assume-idle: a process still inside
 #      keeps the worktree, as does anything else the audit cannot prove; the hook after a later
 #      merge, or this script again, removes it then.
 #   4. The branch worktree-NAME is never deleted; the line says how to delete merged branches.
+#      `git gc` keeps everything under refs/* (git-gc(1)), so the branch holds every commit
+#      the worker made; a merge done on a detached main and undone left them on no other ref
+#      (RESEARCH_LOG 2026-10-03).
 # Native Windows has no tmux: step 2 ends the Claude Code session named NAME instead, the
 # claude.exe whose command line holds `-n NAME`, with `taskkill /T /F` (its tree), and waits up
 # to 15 s until no such process is left; its Windows Terminal tab closes by itself, because the
@@ -40,7 +47,9 @@
 # records, else QUESTION-NAME.md at its top) still exists is refused before step 2: the lead
 # answers it with spawn_codex.sh --resume, or deletes it to abandon the worker. Before step 3 an
 # untracked RESULT-NAME.md at the worker's top moves to .myagentkit/workers/NAME.result.md:
-# the lead read it and committed the files it lists. An earlier report there stays, a
+# the lead read it and committed the files it lists (the numbered, never-overwritten archive is
+# a kit design, owner decision 2026-10-12; a move is refused rather than retried by name
+# because Windows renames race: MoveFile check-then-rename, sharing violations). An earlier report there stays, a
 # byte-identical one from another run too, and this one takes the number above the highest
 # there (NAME.result-2.md, -3, ...), so a newer report never has a lower number; a worktree the
 # audit keeps gets its result back. Only a retry of an interrupted older move, whose source is
@@ -452,6 +461,15 @@ for name; do
     fail "$name: tmux kill-session -t =$name failed; the session may still run"
   fi
 
+  # The spawn's lock (`kit worker NAME`) ends with the session: a closed worker leaves no locked
+  # worktree, whether the audit below removes it or keeps it for a later merge's audit. A lock
+  # with another reason is someone's choice to keep the worktree, and stays.
+  if [ "$wt_dir" != "$top" ] && gd=$(git -C "$wt_dir" rev-parse --absolute-git-dir 2>/dev/null) &&
+     [ "$(cat -- "$gd/locked" 2>/dev/null)" = "kit worker $name" ]; then
+    if [ -n "$dry" ]; then say "$name: dry run: would unlock its worktree (kit worker $name)"
+    elif git worktree unlock "$wt_dir" 2>/dev/null; then say "$name: worktree unlocked (kit worker $name)"
+    else fail "$name: could not unlock its worktree; the audit below keeps it"; fi
+  fi
   # The default result reports on the work and is not project content: once the lead committed
   # the files it lists, it is all the audit would keep the worktree for. It moves beside the
   # records instead. A custom --result is a project file: the lead commits it or removes it.

@@ -36,6 +36,14 @@
 #   - agents.max_concurrent_threads_per_session=2 caps the sub-agents a worker opens at once
 #     (docs/WORKFLOW.md, "cross"); each one spends the same Codex allowance, and the key
 #     must be at least 1 (codex-cli 0.162.1).
+#   - `-s workspace-write -a never` is the unattended sandboxed use Codex documents
+#     (learn.chatgpt.com/docs/agent-approvals-security). `--no-daemon` keeps Codex 0.157+'s
+#     shared background server out of this worker's life; it is not in the official docs
+#     (secondary sources only), so check it with `codex --help` when Codex changes version.
+#   - The result file lies inside the worker's folder: workspace-write and Claude Code's
+#     worktree isolation both refuse writes outside it. The `.md` suffix and the QUESTION-NAME.md
+#     name are the kit's contract.
+#   - KIT_SESSION_WAIT (60 s) and the 10 s flush are bounds, not measurements (owner's choice).
 #   - workspace-write protects Git metadata, including a linked worktree's resolved git
 #     directory, even when --add-dir names it. The worker leaves all work uncommitted and
 #     lists the exact files in its result. The lead cross-reviews the diff and commits with
@@ -195,8 +203,12 @@ if [ -n "$resume" ] && [ -z "$session" ]; then
   ctl "session id" "$session"
 fi
 [ -z "$resume" ] || [ -n "$session" ] || die "--resume: the recorded session id is empty; never open a fresh picker"
+# The spend line, as review.sh prints its own before a review (issue #68).
+printf '%s\n' "spawn_codex: about to run '$name': model $model, effort $effort"
+# Locked from spawn to close_worker.sh, as spawn_worker.sh locks its worktree (the reason there).
 if [ -n "$worktree" ] && [ -z "$resume" ]; then
-  git worktree add -q "$dir" -b "worktree-$name" HEAD >&2 || die "git worktree add failed: $dir"
+  git worktree add -q --lock --reason "kit worker $name" "$dir" -b "worktree-$name" HEAD >&2 ||
+    die "git worktree add failed: $dir"
 fi
 
 # Codex is a native program on Windows: every path it is handed is Windows' own spelling.

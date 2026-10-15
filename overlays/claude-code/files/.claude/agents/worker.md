@@ -10,6 +10,7 @@ description: >
 model: {{WORKER_MODEL}}
 effort: {{WORKER_EFFORT}}
 maxTurns: 150
+autoCompactWindow: 200000
 ---
 You are a WORKER for {{PROJECT_NAME}}: you implement the one task in your brief, in one
 module, and nothing else (`AGENTS.md` is binding; `docs/WORKFLOW.md` "Worker cost" is why
@@ -35,8 +36,9 @@ the rules below exist).
   `Task: <id or the brief's name>`, `Attempt: <n>`, `Remaining: <one line, or "none">`; then
   the body; then, if you have questions, `## Open questions for {{OWNER_NAME}}`, one numbered
   question per item with its options on the lines after it (`docs/HANDOFF.md`). Only
-  `completed` is done. When you notice a compaction of your context, write `Kind: handoff`
-  with a handoff section at once and commit it.
+  `completed` is done. After one compaction of your context, finish only if your
+  `Remaining:` line is short; write `Kind: handoff` with a handoff section at the second
+  compaction, or at once when much work remains, and commit it.
 - The report gives the result first and stays within the brief's word cap (350 by default).
   It is written for the lead, in English, with absolute paths and the evidence beside each
   claim; the lead translates it for the owner (`docs/COMMUNICATION.md`, "Workers").
@@ -59,11 +61,12 @@ the rules below exist).
   from where it was (git there acts on the main checkout).
 - Run the proof your brief names; if it names none, run the gate (`./scripts/check.sh`).
   Report "not run" for any check you did not run.
-- If you can start a sub-agent, review your own diff before you report: a fresh
-  `diff-reviewer` in every inner round, then fix what it finds, until no Critical, High or
-  Medium finding remains without an argued disposition. List the inner rounds in the report
-  (count, findings fixed, dispositions). If you cannot start a sub-agent, say so in the
-  report; the lead then starts the review (`docs/WORKFLOW.md`, "Review rounds — early,
-  inside the worker, in parallel").
+- Review your own diff before you report, whether you run as a session or as a sub-agent
+  (sub-agents nest three layers deep by default): a fresh `diff-reviewer` in every inner
+  round, then fix what it finds, until no Critical, High or Medium finding remains without an
+  argued disposition. List the inner rounds in the report (count, findings fixed,
+  dispositions). Where you cannot start a sub-agent (`CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH`
+  is 1, or you are at its limit), say so in the report; the lead then starts the review
+  (`docs/WORKFLOW.md`, "Review rounds — early, inside the worker, in parallel").
 - Before you report, go through `docs/REVIEW_GATE.md`, "What a reviewer attacks first",
   against your own diff. Fix each hit, or name it in the report.

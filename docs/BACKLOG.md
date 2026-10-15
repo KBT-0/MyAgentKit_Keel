@@ -70,3 +70,11 @@ Low findings of the kit's own reviews are filed here, not fixed in the round (ow
   with backslashes, the `windows()` cases meet the Codex process lister, the gate-lock case holds
   `fcntl.flock`, the lingering-session case sends SIGKILL, and the bad-name case finds a tmux call.
   Porting it is its own task; the suite stays excluded on Windows until then.
+
+## Filed from v0.11 close-out batch 6 (need a tmux host: macOS, Linux, or WSL with the owner's OK)
+
+- Worker signals on tmux (KARARLAR D02 inv3#63, inv3#30): re-capture the `waiting_patterns.txt`
+  fixtures on the current Claude Code (last 2.1.285; 2.1.300 installed on 2026-10-15); try the
+  `Notification`/`Stop` state hooks as the watcher's first signal there (their delay, about six
+  seconds, and the folder-trust dialog untried); try the instruction as claude's first
+  positional argument instead of `send-keys` (is it taken after the trust dialog?).

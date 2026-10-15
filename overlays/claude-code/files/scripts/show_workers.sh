@@ -19,7 +19,9 @@
 #     opens a second tab.
 #   - Opens the rest, by the first backend that fits:
 #       WSL + Windows Terminal: `wt.exe -w 0 new-tab ...`, one tab per session in the window
-#         used last, the one the lead runs in: a window named after the project opened a
+#         used last (`-w 0` is the most recently used window: learn.microsoft.com/windows/
+#         terminal/command-line-arguments), which is the lead's as long as the owner did not
+#         switch windows during the spawn: a window named after the project opened a
 #         second window beside it, which the owner did not want. Run from the drive's root: from a WSL path wt.exe warns about a UNC
 #         working directory. KIT_WT names the launcher instead of the wt.exe found on PATH or
 #         under /mnt/c/Users; the kit's tests point it at a stub, because under WSL any file
@@ -30,9 +32,12 @@
 #       anything else: opens nothing and prints `attach by hand: tmux attach -t NAME`.
 #   - Proves it: a session counts as shown only once `tmux list-clients` lists a client for
 #     it within 8 seconds; for any other it prints the attach line. Every launch is bounded
-#     (5 seconds). Closing a tab detaches; the session keeps running.
+#     (5 seconds, then SIGTERM, then SIGKILL 2 seconds later: the stop pattern of `timeout -k`
+#     and `docker stop`). The 8, 5 and 2 seconds are bounds, not measurements (owner's choice).
+#     Closing a tab detaches; the session keeps running.
 # Exit status: 1 for a refused or missing session (nothing opened), 0 otherwise, including
-# when no terminal could be opened (the lines say so).
+# when no terminal could be opened (the lines say so): a view that fails never fails the
+# spawn that asked for it (a kit design principle, not a sourced rule).
 set -eu
 
 say() { printf 'show_workers: %s\n' "$1" | LC_ALL=C tr '\001-\011\013-\037\177' '?'; }

@@ -3,7 +3,9 @@
 """Remove the finished worktrees under .claude/worktrees, and only what is proven safe to lose.
 
 Run through scripts/clean_worktrees.sh, which says why this exists. It needs git 2.36 or newer
-(`git worktree list --porcelain -z`). With no option it is a dry run; --apply removes. It never deletes a branch: the branch keeps every commit it had whatever
+(`git worktree list --porcelain -z`, new in Git 2.36.0's release notes; git-worktree(1) pairs -z
+with --porcelain). Claude Code's own sweep covers only worktrees it created; the lead's `git
+worktree add` worktrees are outside it (code.claude.com/docs/en/worktrees). With no option it is a dry run; --apply removes. It never deletes a branch: the branch keeps every commit it had whatever
 happens to main later (a merge undone, a reset), and the disk is in the worktree, not in the
 branch. Nothing is removed while the main worktree's HEAD is detached: "merged" is tested
 against its branch. A worktree is removed only when every check below holds; a check that
@@ -62,7 +64,12 @@ all):
      compares names, and a disposable entry byte for byte: either only ever keeps more.
 
 Proven: a, b, d, f, g, h's accounting. The quiet period (c, h) is a margin, not a proof: it
-covers a worker whose process the scan in e cannot see. e is read afresh for every worktree
+covers a worker whose process the scan in e cannot see. A worker the kit spawns holds `git
+worktree lock` from spawn_worker.sh or spawn_codex.sh until close_worker.sh, so a keeps it while
+it runs, as Claude Code locks its own agents' worktrees; the quiet period is the second check,
+for worktrees no kit script locked (sub-agents, hand-made). A ref under refs/kit/saved/ (f)
+holds its commit because `git gc` keeps everything under refs/* (git-gc(1)), where a reflog
+entry expires. e is read afresh for every worktree
 and twice more right before removal. Not guarded, by the owner's decision: a process that
 changes a worktree's files, or main's copies of them, between its audit and its removal, files planted to attack this
 script, and a SIGKILL between two removal steps. Lost with a removal and never restored: the
@@ -239,7 +246,8 @@ ENV = None
 # `git status` compares by its stat cache; these make it compare every stat field and the mode.
 # Windows keeps no executable bit: a tracked 100755 script read as modified there, and every
 # worktree holding one was kept. Its mode is still proven where Windows keeps it, in the index
-# against HEAD (g); its bytes are compared on every host.
+# against HEAD (g); its bytes are compared on every host. git-config(1), core.fileMode: a file
+# system that loses the bit may need it false; here only per command, never in the config.
 NO_EXEC_BIT = os.name == 'nt'
 STAT = ('-c', 'core.checkStat=default', '-c', 'core.trustctime=true',
         '-c', 'core.fileMode=%s' % ('false' if NO_EXEC_BIT else 'true'))

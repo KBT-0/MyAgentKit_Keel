@@ -2,7 +2,7 @@
 # KIT-OWNED: do not edit locally; change it in the kit and re-sync.
 # Watch worker sessions; return as soon as one is GONE, WAITING on a person, has a result.
 #
-# Usage: watch_workers.sh [--interval S] [--max-minutes M] [--context-warn P]
+# Usage: watch_workers.sh [--interval S] [--max-minutes M] [--context-warn NNNk|NN%]
 #                         [--result NAME=PATH]... NAME [NAME...]
 #        watch_workers.sh --once [the same options] NAME [NAME...]
 #        watch_workers.sh --list-patterns
@@ -19,7 +19,12 @@
 # waiting_patterns.txt beside this script (the rules and why they look at the last line only
 # are explained there). It prints one block per session that is GONE or WAITING, with the
 # last pane lines for a WAITING one, and exits 0. Nothing waiting after --max-minutes
-# (default 110) prints one line saying so and exits 0. --once checks once and prints nothing
+# (default 110) prints one line saying so and exits 0. The 45 s, the 10 s floor and the 110
+# minutes are the owner's choice, not measurements; so are the display limits (the last 15
+# pane lines, 200 bytes a line, six question lines). A local interactive lead has no limit on a
+# background command; an unattended one (`-p`, the Agent SDK, CI) stops it after 30 minutes
+# unless started with a `timeout` (at most two hours): pass one there (Claude Code tools
+# reference, "Time limit for background commands"). --once checks once and prints nothing
 # when nothing waits (spawn_worker.sh uses it). Exit 2 is a usage error. Exit 3: a pane of
 # a session that exists could not be read, or tmux could not say whether it exists
 # (`watch_workers: NAME: capture failed: ...` on stderr), or a committed result could not be
@@ -42,8 +47,12 @@
 #   the pane's status line: the line right under the input box's bottom rule (a line of `─`
 #   only), which is the second or third line from the bottom (the mode line may follow), with
 #   two or more ` │ ` separators. A figure anywhere else in the pane, a quoted status line too,
-#   is output, not the status. Past --context-warn percent (default 50) it
-#   is CONTEXT, once per session. A status line without the figure, or none, is CONTEXT once too, and the figure is
+#   is output, not the status. Past the warning line it is CONTEXT, once per session. The
+#   line is the smaller of an absolute count (default 200k, the lead's band: docs/WORKFLOW.md,
+#   "Worker cost", rule 8) and a share of the window (default 50%): on a 1M window 50% is 500k,
+#   past the band's 400k ceiling, and context rot grows with tokens, not with the share
+#   (Anthropic, "Context windows"). `--context-warn NNNk` sets the count, `--context-warn NN%`
+#   (or a bare NN) the share. A status line without the figure, or none, is CONTEXT once too, and the figure is
 #   never guessed; --once skips that note, as spawn_worker.sh runs it before the status line
 #   is drawn.
 # The once-markers are user options of the tmux session, so they end with it. Every report
@@ -84,13 +93,19 @@ plain() {
     die "a session name or result path contains a control character or a newline; it is not printed"
 }
 
-interval=45; max=110; warn=50; once=""; results=""
+interval=45; max=110; warn_abs=200000; warn_pct=50; once=""; results=""
 while [ $# -gt 0 ]; do
   case $1 in
-    --interval|--max-minutes|--context-warn)
+    --context-warn)
+      [ $# -ge 2 ] || die "$1 needs a value"
+      v=${2%[k%]}
+      case $v in ""|*[!0-9]*) die "$1 takes NNNk (tokens) or NN% (of the window): $2" ;; esac
+      case $2 in *k) warn_abs=$((v * 1000)) ;; *) warn_pct=$v ;; esac
+      shift 2 ;;
+    --interval|--max-minutes)
       [ $# -ge 2 ] || die "$1 needs a value"
       case $2 in ""|*[!0-9]*) die "$1 takes a whole number: $2" ;; esac
-      case $1 in --interval) interval=$2 ;; --max-minutes) max=$2 ;; *) warn=$2 ;; esac
+      case $1 in --interval) interval=$2 ;; *) max=$2 ;; esac
       shift 2 ;;
     --result)
       [ $# -ge 2 ] || die "$1 needs a value"
@@ -352,7 +367,7 @@ tab() {
 # or (not with --once) when there is none; once per session. Return 1 when nothing is said,
 # 2 when the report could not be written (and no marker is queued).
 context() {
-  fig=$(CTX_RE=$ctx_re LC_ALL=C awk -v warn="$warn" '
+  fig=$(CTX_RE=$ctx_re LC_ALL=C awk -v abs="$warn_abs" -v pct="$warn_pct" '
     function num(s) { return substr(s, 1, length(s) - 1) * (s ~ /M$/ ? 1000000 : 1000) }
     { l[NR] = $0 }
     END { row = ""; tok = ""
@@ -362,14 +377,15 @@ context() {
           if (tok == "") { print (bar ? "unparsable" : "absent"); exit }
           split(tok, p, "/"); u = num(p[1]); w = num(p[2])
           if (w <= 0) { print "unparsable"; exit }
-          printf "%s %d %s\n", (u * 100 > warn * w ? "over" : "under"), u * 100 / w, tok }
+          line = pct * w / 100; if (abs < line) line = abs
+          printf "%s %d %s %dk\n", (u > line ? "over" : "under"), u * 100 / w, tok, line / 1000 }
   ' "$win") || fig=""
   set -- "$1" ${fig:-absent}
   [ "$2" != under ] || return 1
   said=$(mark "$1" context)
   [ "$said" != over ] || return 1
   if [ "$2" = over ]; then
-    say "watch_workers: CONTEXT: $1, $4 is $3% of its context window, past the $warn% warning line (finish, compact or hand off: read its Remaining: line)" || return 2
+    say "watch_workers: CONTEXT: $1, $4 is $3% of its context window, past its $5 warning line (finish, compact or hand off: read its Remaining: line; docs/WORKFLOW.md, \"Worker cost\", rule 8)" || return 2
     setmark "$1" context over
     return 0
   fi
