@@ -32,11 +32,12 @@ VERDICTS = {"Accept", "Accept with Manual Checks", "Reject"}
 # Review archives are excluded from the next review's scope so a report does not recursively
 # embed its predecessors. The pattern covers EVERY reviewer's evidence, not just this
 # adapter's: when the roles swap, the other direction's reports sit in the same folder.
-# Private usage records and backend credentials also stay outside every review scope.
+# Private usage records and backend credentials also stay outside every review scope, in any
+# case: Windows and macOS fold it, so `.MYAGENTKIT/Backends/` is the same credential store.
 ARCHIVES = (":(exclude)docs/reviews/*-review.md",
             ":(exclude)docs/reviews/*-claude-review.json",
-            ":(exclude)docs/handoffs/*-claude-propose.json", ":(exclude).myagentkit/usage/**",
-            ":(exclude).myagentkit/backends/**")
+            ":(exclude)docs/handoffs/*-claude-propose.json", ":(exclude,icase).myagentkit/usage/**",
+            ":(exclude,icase).myagentkit/backends/**")
 
 # One prompt for both reviewers (owner decision 2026-10-13, E). Asked only for "file, line,
 # impact", a reviewer reported a different top few on every fresh pass; asked for each and every finding
@@ -719,7 +720,7 @@ def snapshot(repo: Path, scope: str, reference: str | None) -> tuple[str, str, s
     for raw in git(repo, "ls-files", "--others", "--exclude-standard", "-z").split(b"\0"):
         if raw:
             name = os.fsdecode(raw)
-            if name.startswith((".myagentkit/usage/", ".myagentkit/backends/")):
+            if name.casefold().startswith((".myagentkit/usage/", ".myagentkit/backends/")):
                 continue
             if (re.fullmatch(r"docs/reviews/\d{8}T\d{6}Z-.+\.md", name) and not name.endswith('-summary.md')) \
                     or re.fullmatch(r"docs/handoffs/\d{8}T\d{6}Z-[a-f0-9]{12}-claude-propose\.json", name):
@@ -1235,7 +1236,8 @@ def main(argv=None, result_sink=None) -> int:
     parser.add_argument("--model", default="claude-opus-5")
     parser.add_argument("--backend", help="The backend whose environment the caller set "
                         "(review_dispatch.py); recorded, and its --model need not be claude-")
-    parser.add_argument("--effort", choices=["low", "medium", "high"], default=default_effort())  # no xhigh for a review
+    parser.add_argument("--effort", choices=["low", "medium", "high"],  # no xhigh for a review
+                        help="Defaults to the review tier (REVIEW_RISK) for review, high for propose")
     parser.add_argument("--timeout", type=int,
                         help="Total wall-clock seconds; defaults to %d for review, 600 for propose"
                         % agent_process.DEFAULT_REVIEW_TIMEOUT)
@@ -1244,6 +1246,9 @@ def main(argv=None, result_sink=None) -> int:
     parser.add_argument("--max-budget-usd", type=float,
                         help="Optional API-cost cap; review has no default, propose defaults to 3 USD")
     args = parser.parse_args(argv)
+    if args.effort is None:
+        # The tier is a review's; the myagentkit-delegate skill documents a proposal at high.
+        args.effort = default_effort() if args.mode == "review" else "high"
     if args.timeout is None:
         args.timeout = agent_process.DEFAULT_REVIEW_TIMEOUT if args.mode == "review" else 600
     if args.max_turns is None:

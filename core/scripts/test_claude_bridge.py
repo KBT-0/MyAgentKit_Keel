@@ -21,13 +21,15 @@ import agent_usage
 ROOT = Path(__file__).resolve().parent
 INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'REVIEW_SHADOW', 'MYAGENTKIT_TASK_ID', 'MYAGENTKIT_REVIEW_CHAIN_ID',
                       'MYAGENTKIT_REVIEW_ATTEMPT', 'MYAGENTKIT_REVIEW_FALLBACK_FROM',
-                      'MYAGENTKIT_REQUESTER', 'CLAUDE_REVIEW_DOCS', 'MYAGENTKIT_NO_BEHAVIOUR', 'MYAGENTKIT_BACKEND')
+                      'MYAGENTKIT_REQUESTER', 'CLAUDE_REVIEW_DOCS', 'MYAGENTKIT_NO_BEHAVIOUR', 'MYAGENTKIT_BACKEND',
+                      # A worker's brief: review.sh checked every fixture diff against its Owns: line.
+                      'REVIEW_TASK_FILE')
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 192, 'test_agent_usage': 31, 'test_codex_quota': 5}
+SUITE_MINIMUMS = {'test_claude_bridge': 194, 'test_agent_usage': 33, 'test_codex_quota': 5}
 # These are executed cases, excluding only the explicitly declared POSIX exclusions.
-WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 166, 'test_agent_usage': 27, 'test_codex_quota': 4}
+WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 168, 'test_agent_usage': 29, 'test_codex_quota': 4}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -440,6 +442,24 @@ class BridgeTests(unittest.TestCase):
         self.commit_fixture('Visible change fixture')
         for scope, ref in (('base', reference), ('commit', 'HEAD')):
             self.assertNotIn(token, bridge.snapshot(self.repo, scope, ref)[2])
+
+    def test_a_backend_in_another_case_stays_out_of_every_review_scope(self):
+        # Windows and macOS fold case: `.MYAGENTKIT/Backends/` is the backend store. Untracked
+        # where no ignore rule matched it (core.ignorecase false), or deleted in the reviewed
+        # commit, a case-sensitive exclusion put its token in the diff.
+        token = 'backend-private-case-token'
+        name = '.MYAGENTKIT/Backends/glm.env'
+        self.git('config', 'core.ignorecase', 'false')
+        path = self.repo / name
+        path.parent.mkdir(parents=True)
+        path.write_text('ANTHROPIC_AUTH_TOKEN=' + token + '\n')
+        self.assertNotIn(token, bridge.snapshot(self.repo, 'uncommitted', None)[2])
+        self.git('config', 'core.ignorecase', 'true')
+        self.git('add', '-f', '--', name)
+        self.commit_fixture('Historical backend fixture')
+        self.git('rm', '--cached', '-q', '--', name)
+        self.commit_fixture('Untrack backend fixture')
+        self.assertNotIn(token, bridge.snapshot(self.repo, 'commit', 'HEAD')[2])
 
     def test_backend_clears_each_claude_credential_and_routing_control(self):
         from contextlib import redirect_stdout
@@ -2734,8 +2754,10 @@ class BridgeTests(unittest.TestCase):
         from contextlib import redirect_stdout
         from io import StringIO
 
+        # tracked_backend_case: Windows and macOS fold case, so the store in another case is the
+        # store; a case-sensitive pathspec once sent its credential to the reviewer.
         for case in ('missing_ignore', 'tracked_usage', 'tracked_review', 'unignored_review',
-                     'unignored_backend', 'tracked_backend'):
+                     'unignored_backend', 'tracked_backend', 'tracked_backend_case'):
             with self.subTest(case=case):
                 (self.repo / '.gitignore').write_bytes((ROOT.parent / '.gitignore').read_bytes())
                 if case == 'missing_ignore':
@@ -2753,6 +2775,7 @@ class BridgeTests(unittest.TestCase):
                 else:
                     name = ('.myagentkit/usage/old.json' if case == 'tracked_usage' else
                             '.myagentkit/backends/glm.env' if case == 'tracked_backend' else
+                            '.MYAGENTKIT/Backends/glm.env' if case == 'tracked_backend_case' else
                             'docs/reviews/20260101T000000Z-000000000000-codex-review.md')
                     path = self.repo / name
                     path.parent.mkdir(parents=True, exist_ok=True)
@@ -4665,6 +4688,16 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         task = json.loads(Path(result['usage_record']).read_text())['task']
         self.assertNotIn('dispositions', task)
         self.assertNotIn('shadow', task)
+
+    def test_a_proposal_keeps_the_documented_high_effort(self):
+        # The tier default is the review's: a proposal without --effort ran at medium while
+        # the myagentkit-delegate skill, its only caller, documents high.
+        os.environ.pop('REVIEW_RISK', None)
+        handoff = self.root / 'handoff.md'
+        handoff.write_text('Fix the named function only.')
+        code, result = self.run_bridge('proposal', 'propose', ['--task-file', str(handoff)])
+        self.assertEqual(code, 0, result)
+        self.assertEqual(json.loads(Path(result['evidence']).read_text())['effort'], 'high')
 
     def test_a_shadow_review_says_so_in_its_evidence_and_record(self):
         # REVIEW_SHADOW=1 measures a configuration: the archive carries the banner above the

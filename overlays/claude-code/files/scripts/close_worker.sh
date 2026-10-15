@@ -64,7 +64,8 @@ set -u
 # Every line of this script is printed with its control bytes as `?` (a name is an argument).
 say() { { printf 'close_worker: %s' "$1" | LC_ALL=C tr '\001-\037\177' '?'; echo; }; }
 first=""
-fail() { say "$1"; [ -n "$first" ] || first=$1; }
+# failed: this name's close failed; its Codex session records are then kept (a resume handle).
+fail() { say "$1"; [ -n "$first" ] || first=$1; failed=1; }
 # Print the archive actually used; 2 is a collision, 3 a refusal before the source was
 # consumed (it is untouched), 1 any other failure, with
 # only its errno and text on stderr (a path can hold control bytes), after the private path of
@@ -351,6 +352,7 @@ dry=""
 [ $# -ge 1 ] || { sed -n '6,7p' "$0"; exit 2; }
 
 for name; do
+  failed=""
   case $name in
     ''|-*|*[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-]*)
       fail "refused the name '$name' (a control character shows as ?): a worker name is letters, digits, - and _, not starting with -; nothing done for it"
@@ -532,7 +534,9 @@ for name; do
       else fail "$name: could not move its result back from $saved to the kept worktree"; kept=1; break; fi
     done
   fi
-  if [ -z "$dry" ] && [ "$rc" -eq 0 ] && [ -z "$kept" ] && [ -n "$top" ] &&
+  # Any failure above (a tmux that could not answer) keeps them: a worker without a worktree
+  # gives the audit nothing to keep, so its success proved no shutdown.
+  if [ -z "$dry" ] && [ -z "$failed" ] && [ "$rc" -eq 0 ] && [ -z "$kept" ] && [ -n "$top" ] &&
      [ ! -e "$record.report-move" ] && [ ! -L "$record.report-move" ]; then
     rm -f -- "$record.session" "$record.exit" "$record.live" "$record.question" || fail "$name: could not remove its Codex session records"
   fi

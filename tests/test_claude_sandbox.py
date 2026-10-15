@@ -20,6 +20,9 @@ import unittest
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
+# Run inside a worker, the suite inherits the caller's brief: the bridge then put it in the
+# fixture's prompt, or failed on a path that is not there. A case that needs one sets it.
+os.environ.pop('REVIEW_TASK_FILE', None)
 sys.path.insert(0, str(ROOT / 'core/scripts'))
 import claude_bridge  # noqa: E402
 import codex_bridge  # noqa: E402

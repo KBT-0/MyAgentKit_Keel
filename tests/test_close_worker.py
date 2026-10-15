@@ -357,6 +357,24 @@ class CloseWorkerTests(unittest.TestCase):
                                  'still run: %s' % (name, name, denied), out)
         self.assertTrue(path.is_dir())
 
+    def test_a_failed_tmux_lookup_keeps_the_codex_session_record(self):
+        # No worktree, so the audit found nothing to keep and the record removal ran: the close
+        # failed on the lookup alone, yet it deleted the worker's only resume handle. The stubs
+        # take the tmux path on every host (uname says Linux, tmux runs through sh).
+        denied = 'error connecting to /tmp/tmux-1000/default (Permission denied)'
+        (self.tmp / 'bin/tmux.py').write_text(TMUX)
+        (self.tmp / 'bin/tmux').write_text('#!/bin/sh\nexec "%s" "%s" "$@"\n' % (
+            Path(sys.executable).as_posix(), (self.tmp / 'bin/tmux.py').as_posix()))
+        (self.tmp / 'bin/uname').write_text('#!/bin/sh\necho Linux\n')
+        (self.tmp / 'bin/uname').chmod(0o755)
+        records = self.main / '.myagentkit/workers'
+        records.mkdir(parents=True)
+        (records / 'w1.session').write_text('fixture-session-id\n')
+        out = self.close('w1', code=1, CLOSE_TMUX_ERROR=denied)
+        self.assertIn('tmux could not say whether session w1 exists', out)
+        self.assertIn('no worktree at .claude/worktrees/w1', out)
+        self.assertTrue((records / 'w1.session').exists(), out)
+
     def absent(self, wording):
         # Each wording tmux gives for an absent session or server is proof of absence: before
         # the kill (nothing to end) and after it (the wait ends at once).

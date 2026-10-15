@@ -88,3 +88,20 @@ class AgentCostTests(unittest.TestCase):
         self.assertTrue(agent_cost.is_poll('BashOutput', {}))
         self.assertFalse(agent_cost.is_poll('Bash', {'command': 'python3 generate.py --stage city'}))
         self.assertFalse(agent_cost.is_poll('Read', {'file_path': 'docs/STATE.md'}))
+
+    def test_a_unicode_worker_description_prints_on_a_legacy_stdout(self):
+        # A Windows pipe is cp1252 unless UTF-8 mode is on: `İstanbul worker` raised there.
+        import os, subprocess, sys
+        with tempfile.TemporaryDirectory() as tmp:
+            session = Path(tmp) / 'abc.jsonl'
+            session.write_text(rec('2026-10-03T10:00:00Z', 'r1', {'input_tokens': 1, 'output_tokens': 1}) + '\n')
+            sub = Path(tmp) / 'abc' / 'subagents'
+            sub.mkdir(parents=True)
+            (sub / 'agent-1.jsonl').write_text(rec('2026-10-03T10:01:00Z', 's1', {'input_tokens': 1}) + '\n')
+            (sub / 'agent-1.meta.json').write_text(json.dumps({'description': 'İstanbul worker'}), encoding='utf-8')
+            env = {k: v for k, v in os.environ.items() if k != 'PYTHONUTF8'}
+            env['PYTHONIOENCODING'] = 'cp1252'
+            run = subprocess.run([sys.executable, agent_cost.__file__, str(session)],
+                                 capture_output=True, env=env, timeout=30)
+            self.assertEqual(run.returncode, 0, run.stderr.decode('utf-8', 'replace'))
+            self.assertIn('İstanbul worker', run.stdout.decode('utf-8'))

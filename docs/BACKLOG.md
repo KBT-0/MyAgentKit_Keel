@@ -47,3 +47,18 @@ Low findings of the kit's own reviews are filed here, not fixed in the round (ow
   retries. Owner decision 2026-10-13: a backlog line, not a mechanism in this batch.
 - `claude_bridge.MEASURED` is module-level mutable state filled by `prior_rounds()`; return it
   from `prior_rounds()` instead and pass it to the record (AGENTS.md: no static mutable state).
+
+## Filed from v0.11 final Codex review r1 (labels v011-codex-code, v011-codex-docs)
+
+- `core/scripts/context_buckets.py:100`: when the twentieth post-compaction request is a refusal,
+  the forward window stops after counting the request and omits its refusal; the backward window
+  counts it, so the comparison is biased.
+- `core/docs/WORKFLOW.md:482` requires sequential review runs unless parallel is asked, while
+  Worker cost rule 6 and REVIEW_GATE require parallel reviewers for an authorized high-risk review.
+- `core/docs/WORKFLOW.md:735`: the unconditional two-reviewer floor contradicts the risk table's
+  one reviewer for a low- or medium-risk change.
+- `docs/context-is-a-budget.md:90` still argues compaction at 200k with the retracted ten-turn
+  cost figure; WORKFLOW gives about 25-49 requests.
+- `core/docs/USAGE.md:111`: two default attempts are 2 x 2700 s = 90 minutes, not 120.
+- `core/docs/DEV_SETUP.md:125` (pre-existing) says the review self-test needs POSIX, against the
+  native Windows support at line 164.

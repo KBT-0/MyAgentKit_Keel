@@ -10,6 +10,9 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 OVERLAY = ROOT / 'overlays/claude-code/files'
+# Run inside a worker, the suite inherits the caller's brief: review.sh then checked the
+# fixture's diff against the caller's Owns: line. A case that needs one sets it explicitly.
+os.environ.pop('REVIEW_TASK_FILE', None)
 
 
 class PythonFallbackTests(unittest.TestCase):

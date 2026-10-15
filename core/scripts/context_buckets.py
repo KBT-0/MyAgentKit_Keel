@@ -151,4 +151,7 @@ def main(argv: list[str]) -> int:
 
 
 if __name__ == '__main__':
+    # A Windows pipe is cp1252 unless UTF-8 mode is on: a transcript name outside it raised.
+    for stream in (sys.stdout, sys.stderr):
+        stream.reconfigure(encoding='utf-8', errors='backslashreplace')
     sys.exit(main(sys.argv[1:]))

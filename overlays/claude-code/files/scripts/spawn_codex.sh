@@ -335,10 +335,17 @@ record.with_suffix(".question").write_text(sys.argv[3] + "\n", encoding="utf-8")
   spawn_recorded=1
   printf '%s\n' "spawn_codex: session $session recorded in $record"
   printf '%s\n' "spawn_codex: to answer a question it stops on, once its session has ended: $answer $(q "$session")"
-else
+elif [ -z "$session" ]; then
   # The worker runs anyway: the lead still waits on it, and answers it once it finds the id.
   printf '%s\n' "$waiter"
   die "no Codex session for '$name' showed within $session_wait s; nothing is recorded. Look at its $view; do not replace it with a fresh session. Once its id is found (in $codex_home/sessions), answer a question it stops on with: $answer SESSION_ID"
+else
+  # A record written before the failure stays: it is the resume handle. close_worker.sh keeps
+  # it while NAME.question is empty, and without NAME.question looks only for QUESTION-NAME.md.
+  printf '%s\n' "$waiter"
+  qrecord=${record%.session}.question; left=""
+  for f in "$record" "$qrecord"; do [ ! -e "$f" ] || left="$left $f"; done
+  die "session $session was found, but writing its records failed; left:${left:- nothing}. Write $session into $record and the decision file's path $question into $qrecord, then answer a question it stops on with: $answer $(q "$session")"
 fi
 printf '%s\n' "spawn_codex: leave all work uncommitted and ready for the lead, with the exact files in the result; the lead cross-reviews the diff, then commits with the usual gate (issue #43)"
 [ -n "$windows" ] || sh "$kit/show_workers.sh" "$name" || printf '%s\n' "spawn_codex: '$name' was not shown and runs anyway; attach by hand: tmux attach -t $name"

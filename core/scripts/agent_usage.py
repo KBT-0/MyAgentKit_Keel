@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 import uuid
 import tempfile
 
@@ -32,12 +33,15 @@ def require_private_storage(repo: Path, archive: Path | None = None) -> None:
         if ignored.returncode != 0:
             raise ValueError('private evidence must be Git-ignored before review: ' + relative
                              + '; merge the ignore rules documented in docs/DEV_SETUP.md')
+    # icase: Windows and macOS fold case, so `.MYAGENTKIT/Backends/x.env` is the same store; a
+    # case-sensitive pathspec let a tracked credential through to the reviewer's prompt.
     tracked = subprocess.run(['git', '-C', str(repo), 'ls-files', '-z', '--',
-                              '.myagentkit/usage', '.myagentkit/backends', 'docs/reviews/*-review.md',
-                              'docs/reviews/????????T??????Z-*.md',
-                              'docs/reviews/*-claude-review.json',
-                              'docs/handoffs/*-claude-propose.json',
-                              ':(exclude)docs/reviews/*-summary.md'], capture_output=True)
+                              *(':(icase)' + spec for spec in (
+                                  '.myagentkit/usage', '.myagentkit/backends', 'docs/reviews/*-review.md',
+                                  'docs/reviews/????????T??????Z-*.md',
+                                  'docs/reviews/*-claude-review.json',
+                                  'docs/handoffs/*-claude-propose.json')),
+                              ':(exclude,icase)docs/reviews/*-summary.md'], capture_output=True)
     if tracked.returncode != 0 or tracked.stdout:
         raise ValueError('private evidence is tracked or Git could not verify storage; '
                          'untrack private records before review')
@@ -378,4 +382,7 @@ def main():
 
 
 if __name__ == "__main__":
+    # A Windows pipe is cp1252 unless UTF-8 mode is on: a task label outside it raised.
+    for stream in (sys.stdout, sys.stderr):
+        stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     main()

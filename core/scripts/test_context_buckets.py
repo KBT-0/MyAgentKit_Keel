@@ -59,6 +59,20 @@ class ContextBucketsTests(unittest.TestCase):
         self.assertIn('compaction 1: route 1/0  attrib 0/0  push 0/0  fix 0/1  (before/after, 20/1 requests)', out)
         self.assertIn('compaction 2 (second or later):', out)
 
+    def test_a_unicode_transcript_name_prints_on_a_legacy_stdout(self):
+        # A Windows pipe is cp1252 unless UTF-8 mode is on: `session-İ.jsonl` raised there.
+        import os, subprocess, sys
+        with tempfile.TemporaryDirectory() as tmp:
+            session = Path(tmp) / 'session-İ.jsonl'
+            records = [request('a', 50_000), {'type': 'system', 'subtype': 'compact_boundary'}]
+            session.write_text(''.join(json.dumps(r) + '\n' for r in records), encoding='utf-8')
+            env = {k: v for k, v in os.environ.items() if k != 'PYTHONUTF8'}
+            env['PYTHONIOENCODING'] = 'cp1252'
+            run = subprocess.run([sys.executable, context_buckets.__file__, str(session)],
+                                 capture_output=True, env=env, timeout=30)
+            self.assertEqual(run.returncode, 0, run.stderr.decode('utf-8', 'replace'))
+            self.assertIn('session-İ compaction 1', run.stdout.decode('utf-8'))
+
 
 if __name__ == '__main__':
     unittest.main()

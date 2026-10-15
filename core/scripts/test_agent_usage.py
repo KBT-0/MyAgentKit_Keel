@@ -313,6 +313,37 @@ class UsageTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'symlinked storage'):
                 agent_usage.require_private_storage(repo)
 
+    def test_a_tracked_private_path_in_another_case_is_refused(self):
+        # Windows and macOS fold case: `.MYAGENTKIT/Backends/demo.env` is the backend store, but
+        # a case-sensitive pathspec missed it and its credential reached the reviewer's prompt.
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            subprocess.run(['git', 'init', '-q', str(repo)], check=True)
+            (repo / '.gitignore').write_text('/.myagentkit/\n')
+            secret = repo / '.MYAGENTKIT/Backends/demo.env'
+            secret.parent.mkdir(parents=True)
+            secret.write_text('TOKEN=fixture\n')
+            subprocess.run(['git', '-C', str(repo), 'add', '-f', '--', '.MYAGENTKIT/Backends/demo.env'],
+                           check=True)
+            with self.assertRaisesRegex(ValueError, 'tracked'):
+                agent_usage.require_private_storage(repo)
+
+    def test_a_unicode_task_label_prints_on_a_legacy_stdout(self):
+        # A Windows pipe is cp1252 unless UTF-8 mode is on: a task labelled `İstanbul` raised there.
+        import os
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            subprocess.run(['git', 'init', '-q', str(repo)], check=True)
+            (repo / '.gitignore').write_text('/.myagentkit/\n')
+            agent_usage.record(repo, 'codex', 'fixture', 'tester', {'id': 'İstanbul'},
+                               {'stdout': ''}, 'failed', 'quota', None)
+            env = {k: v for k, v in os.environ.items() if k != 'PYTHONUTF8'}
+            env['PYTHONIOENCODING'] = 'cp1252'
+            run = subprocess.run([sys.executable, agent_usage.__file__, '--repo', str(repo)],
+                                 capture_output=True, env=env, timeout=30)
+            self.assertEqual(run.returncode, 0, run.stderr.decode('utf-8', 'replace'))
+            self.assertIn(' İstanbul ', run.stdout.decode('utf-8'))
+
     def test_evidence_cannot_overwrite_or_escape_repository(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp) / 'repo'

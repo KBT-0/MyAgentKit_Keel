@@ -23,6 +23,10 @@ from test_spawn_worker import MARKERS, WT_TAB, shq
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / 'overlays/claude-code/files/scripts/spawn_codex.sh'
 WINDOWS = os.name == 'nt'
+# Run inside a Codex worker, the suite inherits its supervisor's KIT_WORKER_* settings; a
+# fixture supervisor must never write the caller's records. A case sets its own explicitly.
+for _name in [n for n in os.environ if n.startswith('KIT_WORKER_')]:
+    del os.environ[_name]
 INSTRUCTION = ("Read %s and follow it. The brief carries its Route: quick|build|deep · Risk: low|medium|high "
                "· Checks: ... line; run the checks it names. Write your result to %s. Leave all work uncommitted and ready for the lead; "
                "list the exact changed and added files in the result. The lead reviews the diff through the normal "
@@ -212,6 +216,19 @@ class SpawnCodexTests(unittest.TestCase):
         # The worker runs anyway: the lead still gets its wait command and the resume form.
         self.assertIn('background command for the uncommitted handoff: ', result.stdout)
         self.assertIn('--resume SESSION_ID', result.stderr)
+
+    def test_a_session_whose_decision_record_fails_says_what_is_left(self):
+        # NAME.session written, then NAME.question refused (a folder in its place): the message
+        # said "nothing is recorded" while the session record stayed.
+        records = self.repo / '.myagentkit/workers'
+        (records / 'w5.question').mkdir(parents=True)
+        result = self.spawn('w5', str(self.brief), '--model', 'm', '--effort', 'high')
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertNotIn('nothing is recorded', result.stderr)
+        self.assertEqual((records / 'w5.session').read_text().strip(), 'sess-0')
+        self.assertIn('session sess-0 was found', result.stderr)
+        self.assertIn('left: ' + str(records / 'w5.session').replace('\\', '/'), result.stderr.replace('\\', '/'))
+        self.assertIn("--resume 'sess-0'", result.stderr)
 
     def test_a_worker_without_its_model_or_effort_or_brief_is_refused(self):
         for args, message in ((('--effort', 'high'), '--model is required'), (('--model', 'm'), '--effort is required'),
@@ -972,6 +989,17 @@ pathlib.Path(%r).write_text('a concurrently published report\\n')
                 closed = self.close(name)
                 self.assertEqual(closed.returncode, 0, closed.stdout + closed.stderr)
                 self.assertNotIn('a decision waits for its answer', closed.stdout)
+
+    def test_the_suite_never_writes_the_exit_record_of_the_worker_it_runs_in(self):
+        # Inside a Codex worker the suite inherits KIT_WORKER_EXIT: a fixture supervisor wrote
+        # it, and the lead's waiter reported EXITED while that worker still ran.
+        record = self.tmp / 'caller.exit'
+        run = subprocess.run([sys.executable, '-B', str(Path(__file__).resolve()),
+                              'SpawnCodexTests.test_a_resumed_worker_that_published_and_then_failed_can_be_closed'],
+                             capture_output=True, text=True, timeout=120,
+                             env=dict(os.environ, KIT_WORKER_EXIT=str(record)))
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertFalse(record.exists(), "a fixture wrote the calling worker's exit record")
 
     def test_close_numbers_a_new_report_above_every_earlier_one(self):
         workers = self.repo / '.myagentkit/workers'
