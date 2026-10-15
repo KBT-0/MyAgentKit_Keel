@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import shutil
 import sys
 import tempfile
 import unittest
@@ -34,7 +35,45 @@ def text(s='Found it.'):
 
 
 class PlainReportTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.project = Path(tmp.name)
+        (self.project / 'docs').mkdir()
+        (self.project / 'docs/STATE.md').write_text('r2: second review round\n', encoding='utf-8')
+
+    def test_task_ids_and_unregistered_rounds(self):
+        for label in ('K4', 'L1b', 'K7-a'):
+            self.assertEqual(self.stop(label + ' finished.').returncode, 2, label)
+        (self.project / 'docs/STATE.md').write_text('K4: active\n', encoding='utf-8')
+        self.assertEqual(self.stop('The r2 value is ordinary prose.').returncode, 0)
+        (self.project / 'docs/BACKLOG.md').write_text('r2: pending\n', encoding='utf-8')
+        self.assertEqual(self.stop('r2 finished.').returncode, 2)
+        self.assertEqual(self.stop('r20 finished.').returncode, 0)
+
+    def test_fences_close_only_with_the_same_character_and_length(self):
+        for message in ('````\n```\nK4 D-5\n````', '```\n~~~\nK4 D-5\n```',
+                        '~~~~\n~~~\nK4 D-5\n~~~~~'):
+            self.assertEqual(self.stop(message).returncode, 0, message)
+            self.assertEqual(self.stop(message + '\nK4 finished.').returncode, 2, message)
+
+    def test_installed_hook_reads_the_commit_hooks_canonical_grammar(self):
+        hooks = self.project / '.claude/hooks'
+        hooks.mkdir(parents=True)
+        shutil.copyfile(HOOKS / 'plain_report.py', hooks / 'plain_report.py')
+        git_hooks = self.project / '.githooks'
+        git_hooks.mkdir()
+        source = HOOKS.parents[4] / 'core/.githooks/commit-msg'
+        grammar = source.read_text(encoding='utf-8').replace("TASK_ID_PATTERN='[A-Za-z]", "TASK_ID_PATTERN='Z")
+        (git_hooks / 'commit-msg').write_text(grammar, encoding='utf-8')
+        for label, expected in (('K4', 0), ('Z4', 2)):
+            result = subprocess.run([sys.executable, str(hooks / 'plain_report.py')],
+                                    input=json.dumps({'last_assistant_message': label}),
+                                    text=True, capture_output=True, timeout=30)
+            self.assertEqual(result.returncode, expected, result.stderr)
+
     def stop(self, message, active=False, **env):
+        env.setdefault('CLAUDE_PROJECT_DIR', str(self.project))
         return run('plain_report.py', json.dumps({'last_assistant_message': message, 'stop_hook_active': active},
                                                  ensure_ascii=False), **env)
 
@@ -116,6 +155,16 @@ class ProgressReminderTests(unittest.TestCase):
         calls += [assistant(text(), tool())]  # a visible line: the count restarts
         self.assertIsNone(self.nudge(calls + [assistant(tool()) for _ in range(3)]))
         self.assertIn('5 tool calls', self.nudge(calls + [assistant(tool()) for _ in range(4)])['additionalContext'])
+
+    def test_three_nudges_per_silence_then_text_and_compaction_rearm(self):
+        calls = []
+        for count in range(1, 26):
+            calls.append(assistant(tool()))
+            nudge = self.nudge(calls)
+            self.assertEqual(nudge is not None, count in (5, 10, 15), count)
+        for reset in (assistant(text()), {'type': 'system', 'subtype': 'compact_boundary', 'uuid': 'reset'}):
+            calls += [reset] + [assistant(tool()) for _ in range(5)]
+            self.assertIsNotNone(self.nudge(calls))
 
     def test_a_parallel_batch_that_jumps_over_the_threshold_still_nudges_once(self):
         calls = [assistant(tool()) for _ in range(4)] + [assistant(tool(), tool(), tool())]

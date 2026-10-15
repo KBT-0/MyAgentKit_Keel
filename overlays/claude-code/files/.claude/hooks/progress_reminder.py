@@ -12,6 +12,7 @@ per call, and a sub-agent's calls may see the lead's frozen transcript; so the c
 last nudge is kept beside the transcript (`<session>.progress-step`, with the id of the record
 the count started from) and the same count never nudges twice. A competing call stays silent.
 The transcript may lag the turn by a record or two, so a nudge can come one call late.
+At most three nudges are emitted per silent interval; text or compaction resets the limit.
 It reads only the tail of the transcript, because it runs on every tool call. Silent on any
 error.
 """
@@ -21,6 +22,9 @@ from pathlib import Path
 import sys
 import tempfile
 
+# KARARLAR B08 inv1#253: Sonnet 5.5 prompting guide and Claude Code costs
+# (2026-10-15): stop after the second or third reminder; five is a starting value.
+MAX_NUDGES = 3
 STEP = 5
 TAIL = 512 * 1024  # bytes; a turn with five tool calls fits many times over
 
@@ -70,15 +74,20 @@ def main() -> None:
         try:
             saved = json.loads(state.read_text(encoding='utf-8'))
             said = saved['said']
-            if type(said) is not int or saved['mark'] != mark or said > total:
+            if type(said) is not int:
+                raise TypeError(saved)
+            nudges = saved.get('nudges', min(said // STEP, MAX_NUDGES))
+            if (type(nudges) is not int or not 0 <= nudges <= MAX_NUDGES
+                    or saved['mark'] != mark or said > total):
                 raise TypeError(saved)  # a visible line or a compaction started a new count
         except (OSError, ValueError, KeyError, TypeError):
-            said = None
-        nudge = total // STEP > (said or 0) // STEP
+            said, nudges = None, 0
+        nudge = nudges < MAX_NUDGES and total // STEP > (said or 0) // STEP
         if nudge or said is None:
             with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=state.parent, delete=False) as stream:
                 temporary = Path(stream.name)
-                json.dump({'said': total if nudge else 0, 'mark': mark}, stream)
+                json.dump({'said': total if nudge else 0, 'mark': mark,
+                           'nudges': nudges + int(nudge)}, stream)
             try:
                 os.replace(temporary, state)
             finally:

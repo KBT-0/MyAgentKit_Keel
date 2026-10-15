@@ -22,13 +22,6 @@ Low findings of the kit's own reviews are filed here, not fixed in the round (ow
   refusals get no note or name the wrong file. Read `+++ ` as a header only outside a hunk
   (reset at `diff --git`).
 
-## Filed from v0.11 R (Claude review r2, portability, 20261014T131242Z-d60c67ef7f45)
-
-- `plain_report.py` CODE regex: a fence closes at any later fence of either kind, so a
-  four-backtick fence holding a ``` line, or a ``` fence holding a `~~~` line, ends early and a
-  label after it is bounced. Match the closing run to the opening one (same character, at least
-  as long).
-
 ## Filed from v0.11 item F (Claude review r2, 20261013T164417Z-c2eb9992cc7d)
 
 - The dispositions file is read once per reviewer attempt, not once per review: on a fallback
@@ -48,9 +41,6 @@ Low findings of the kit's own reviews are filed here, not fixed in the round (ow
 
 ## Filed from v0.11 final Codex review r1 (labels v011-codex-code, v011-codex-docs)
 
-- `core/scripts/context_buckets.py:100`: when the twentieth post-compaction request is a refusal,
-  the forward window stops after counting the request and omits its refusal; the backward window
-  counts it, so the comparison is biased.
 - `core/docs/WORKFLOW.md:482` requires sequential review runs unless parallel is asked, while
   Worker cost rule 6 and REVIEW_GATE require parallel reviewers for an authorized high-risk review.
 - `core/docs/WORKFLOW.md:735`: the unconditional two-reviewer floor contradicts the risk table's

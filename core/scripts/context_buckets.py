@@ -15,23 +15,33 @@ Counted per bucket (0-100k, 100-200k, 200-300k, 300-400k, 400k+), per 100 lead r
   attrib  commit-msg refusals of an AI-attribution trailer
   push    `git push` commands; the owner judges which were not asked for
   fix     owner prompts carrying the hand mark `#fix`: the owner's explicit corrections
-Then, for each compaction, the same counts over the 20 requests before and the 20 after.
+  phrase  informational phrase-matched correction proxy beside the explicit mark
+Then, for each compaction, report 20 requests before/after plus 5- and 30-request cuts.
 Not counted: the chat language, identifiers in backticks and bare labels need a reader,
 not a pattern. Cost: agent_cost.py.
 """
 from __future__ import annotations
 import collections
 import json
+import re
 from pathlib import Path
 import sys
 
 from agent_cost import project_folder
 
-KINDS = ('route', 'attrib', 'push', 'fix')
+KINDS = ('route', 'attrib', 'push', 'fix', 'phrase')
 BUCKETS = ('0-100k', '100-200k', '200-300k', '300-400k', '400k+')
 SIGNS = {'route': 'this Agent call names no', 'attrib': 'crediting an AI tool'}
 MARK = '#fix'
+# B07 inv2#131: 20 is a judgement; 5 and 30 match LangWatch's published cuts:
+# https://langwatch.ai/research/finding-the-optimal-context-window (2026-10-15).
 WINDOW = 20
+SLICES = (5, 30)
+# B07 inv2#132: informational proxy, never a gate or a replacement for #fix.
+# These English/Turkish phrases are a heuristic, not a measured classifier.
+CORRECTION = re.compile(r"\b(?:no[,!]?\s+i\s+said|i\s+(?:already\s+)?(?:said|asked)|"
+                        r"that(?:'s| is)\s+(?:wrong|incorrect)|you\s+(?:forgot|ignored)|"
+                        r"hayır|yanlış|söylemiştim|demiştim)\b", re.I)
 
 
 def bucket(ctx: int) -> str:
@@ -92,16 +102,24 @@ def events(path: Path, since: str) -> list[tuple[str, int]]:
                 if not rec.get('isMeta') and not rec.get('isCompactSummary') and \
                         isinstance(msg.get('content'), str) and MARK in msg['content']:
                     out.append(('fix', ctx))
+                if not rec.get('isMeta') and not rec.get('isCompactSummary') and \
+                        isinstance(msg.get('content'), str) and CORRECTION.search(msg['content']):
+                    out.append(('phrase', ctx))
     return out
 
 
-def window(evs: list[tuple[str, int]], start: int, step: int) -> collections.Counter:
+def window(evs: list[tuple[str, int]], start: int, step: int, limit: int = WINDOW) -> collections.Counter:
     counts, i = collections.Counter(), start
-    while 0 <= i < len(evs) and counts['request'] < WINDOW:
-        if evs[i][0] == 'compact':
+    while 0 <= i < len(evs):
+        kind = evs[i][0]
+        if kind == 'compact' or (kind == 'request' and counts['request'] >= limit):
             break
-        counts[evs[i][0]] += 1
+        counts[kind] += 1
         i += step
+        # Backward, results precede their request. Forward, include the last
+        # request's results before stopping at the next request (BACKLOG B13).
+        if step < 0 and counts['request'] >= limit:
+            break
     return counts
 
 
@@ -117,14 +135,17 @@ def report(sessions: list[Path], since: str) -> str:
         for kind, ctx in evs:
             total[bucket(ctx)][kind] += 1
         for n, i in enumerate((i for i, (kind, _) in enumerate(evs) if kind == 'compact'), 1):
-            before, after = window(evs, i - 1, -1), window(evs, i + 1, 1)
-            lines.append(f'{session.stem} compaction {n}{" (second or later)" if n > 1 else ""}: '
-                         + '  '.join(f'{k} {before[k]}/{after[k]}' for k in KINDS)
-                         + f'  (before/after, {before["request"]}/{after["request"]} requests)')
+            for size in (WINDOW, *SLICES):
+                before, after = window(evs, i - 1, -1, size), window(evs, i + 1, 1, size)
+                cut = '' if size == WINDOW else f' window {size}'
+                lines.append(f'{session.stem} compaction {n}{" (second or later)" if n > 1 else ""}{cut}: '
+                             + '  '.join(f'{k} {before[k]}/{after[k]}' for k in KINDS)
+                             + f'  (before/after, {before["request"]}/{after["request"]} requests)')
     head = f'{"bucket":<10}{"requests":>10}' + ''.join(f'{k:>14}' for k in KINDS)
     rows = [f'{b:<10}{c["request"]:>10}' + ''.join(f'{per100(c[k], c["request"]):>14}' for k in KINDS)
             for b, c in total.items()]
-    return '\n'.join([head] + rows + ['count (per 100 requests)'] + (lines or ['no compaction']))
+    return '\n'.join([head] + rows + ['count (per 100 requests); phrase is an informational correction proxy']
+                     + (lines or ['no compaction']))
 
 
 def main(argv: list[str]) -> int:

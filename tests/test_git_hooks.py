@@ -381,8 +381,9 @@ class GitHookTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root, git = self.repo(tmp)
             (root / 'AGENTS.md').write_text('AI tools may be credited.\n')
-            result = self.commit(root, git, 'Co-Authored-By: Claude <noreply@anthropic.com>\n')
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            for trailer in ('Co-Authored-By: Claude <noreply@anthropic.com>', 'Assisted-by: Claude:claude-opus', 'Assisted-by: LLM [Claude]'):
+                result = self.commit(root, git, trailer)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def docs(self, root, git, state='', backlog=''):
         (root / 'docs').mkdir(exist_ok=True)

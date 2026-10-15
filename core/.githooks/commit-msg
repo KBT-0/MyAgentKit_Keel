@@ -7,6 +7,9 @@
 # hold: sessions carried it into most commits of a project whose owner had forbidden it,
 # and removing it later meant rewriting every commit and a force-push. The trailer is
 # written into the message file git passes here, so this is the only place to catch it.
+# The Stop reminder allows one continuation deliberately; the vendor limit is eight
+# (https://code.claude.com/docs/en/hooks, 2026-10-15; B10 inv3#7).
+# The real check gate runs in pre-commit; this hook separately checks the message.
 # A human passes, even one whose name contains a tool's ("Claude Monet", "Ana Raider"):
 # a trailer is rejected only when its whole name is a tool or model name, its address is
 # a tool vendor's or a [bot], or a "Generated with" line names a tool.
@@ -60,12 +63,17 @@ if printf '%s\n' "$trailers" | grep -qi '^Done:'; then
 $reviews
 REVIEWS
 fi
+# Owner-chosen format (KARARLAR B10 inv1#93, inv2#151). The digit avoids
+# treating ordinary words as ids; one inner dash keeps ids short.
+# plain_report.py reads these POSIX/Python-compatible patterns as its single source.
+TASK_ID_PATTERN='[A-Za-z][A-Za-z0-9]*(-[A-Za-z0-9]+)?'
+TASK_ID_DIGIT_PATTERN='[0-9]'
 mentioned=0
 while IFS= read -r line; do
   case $line in [Dd][Oo][Nn][Ee]:*) ;; *) continue ;; esac
   id=$(printf '%s\n' "${line#*:}" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
-  if ! printf '%s\n' "$id" | grep -qE '^[A-Za-z][A-Za-z0-9]*(-[A-Za-z0-9]+)?$' ||
-     ! printf '%s\n' "$id" | grep -q '[0-9]'; then
+  if ! printf '%s\n' "$id" | grep -qE "^$TASK_ID_PATTERN$" ||
+     ! printf '%s\n' "$id" | grep -q "$TASK_ID_DIGIT_PATTERN"; then
     printf '%s\n' "commit-msg: 'Done: $id' does not name a task id: exactly one id, a letter, then letters" >&2
     echo "            and digits with at least one digit and at most one inner '-' (K4, L1b, K7-a)." >&2
     echo "            One trailer per id." >&2
@@ -94,7 +102,8 @@ $trailers
 EOF
 [ "$mentioned" -eq 0 ] || exit 1
 # The owner decides (setup interview): without the rule line in AGENTS.md, AI tools may be
-# credited. A missing AGENTS.md is a broken setup, not a choice: the hook stays on, and so
+# credited, including Assisted-by (KARARLAR D07 inv3#108 b; Q9 Yes).
+# A missing AGENTS.md is a broken setup, not a choice: the hook stays on, and so
 # does an AGENTS.md that is not a readable file: an error is not the owner's choice either.
 # (A directory is tested here, not left to grep: GNU grep exits 2 on one, but a grep set to
 # skip directories exits 1, which would read as the owner's choice.)
