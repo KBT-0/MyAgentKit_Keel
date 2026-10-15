@@ -28,6 +28,7 @@ A new entry adds its heading to this list.
 - A build server the gate started keeps the gate lock
 - A worker spawned from a lead's shell inherits its child-session markers
 - Background jobs die with the session and in a low-memory reap
+- An incremental build misses its always-run inputs
 
 ---
 
@@ -38,8 +39,10 @@ somewhere, and none of them depends on a particular language or stack.
 
 `git reset --hard`, `git checkout -- <path>`, `git restore`, `git clean -f` and
 `git stash drop` discard the working tree, and the reflog does not save you: it records
-COMMITS. Anything never committed is gone the moment one of these runs — no message, no
-trace, and the next `git status` looks clean.
+COMMITS. Uncommitted edits and untracked files are not in the reflog and cannot be
+recovered; content you had staged may survive as a loose object for a while
+(`git fsck --lost-found`), but do not count on it. No message, no trace, and the next
+`git status` looks clean.
 
 This kit exists because of failures like it, and it still happened during the kit's own
 development: a `git reset --hard HEAD~1`, run to drop a throwaway test commit, also took a
@@ -49,8 +52,17 @@ unrecoverable and had to be reconstructed from a chat transcript.
 **Commit or stash first, every time**, including — especially — when you are sure the tree
 is clean. `git stash push -u -m '...'` costs two seconds and is reversible.
 
-The Claude Code overlay ships `guard_destructive_git.py`, which blocks these commands while
-the tree is dirty and prints what would be lost. In any other tool the rule is yours to keep.
+The Claude Code overlay ships `guard_destructive_git.py`. It refuses `stash drop`/`clear`, a
+force push, `remote set-url`/`add` and amending a pushed commit whatever the tree's state, and
+`reset --hard`, `checkout --`/`-f`, `restore` and `clean -f` while the tree is dirty, printing
+what would be lost. A hook refuses the loss-certain subset; the rule still covers every
+destructive command, and in any other tool it is yours to keep.
+
+**If it already happened.** Stop writing to the repository. Content you had staged, and a
+dropped stash, may still be in the object database: `git fsck --lost-found` (staged blobs)
+or `git fsck --unreachable` (dropped stash) lists them, and `git gc` removes them after about
+two weeks. Edits you never staged are gone. (Sources: https://git-scm.com/docs/git-fsck,
+https://git-scm.com/docs/git-stash.)
 
 ## `.gitignore` — the LAST matching rule wins
 
@@ -60,7 +72,9 @@ file reads top-to-bottom like a list of exceptions and behaves bottom-to-top.
 
 Keep any re-include block at the very END of `.gitignore` and mark it as such. Never verify
 by reading the file and reasoning about it: run `git check-ignore -v <path>`, which names
-the winning rule and its line number.
+the winning rule and its line number. A pattern cannot re-include a file whose parent
+directory is excluded; write `dir/*` instead of `dir/` when you need an exception inside it.
+(Sources: https://git-scm.com/docs/gitignore, https://git-scm.com/docs/git-check-ignore.)
 
 A trailing slash matters too: `node_modules/` matches directories only, and git does not
 count a symlink as one. A `node_modules` symlinked into a throwaway worktree is then an
@@ -79,7 +93,9 @@ fine locally and CI dies on it with `Permission denied`, exit 126.
 That exact failure kept a CI pipeline red for weeks in this kit's founding project, because
 a local `CHECK: PASS` was mistaken for evidence about CI. Anyone adding a script runs
 `git update-index --chmod=+x <path>`, confirms with `git ls-files -s`, and checks the
-pipeline after pushing rather than assuming.
+pipeline after pushing rather than assuming. For a new file `git add --chmod=+x <path>` does
+it in one step. (Sources: https://git-scm.com/docs/git-update-index,
+https://git-scm.com/docs/git-add.)
 
 ## A fake-CLI test harness cannot catch what the real CLI rejects
 
@@ -89,7 +105,9 @@ custom instructions, never both.
 
 A stub validates YOUR argument handling. Only a live run validates the CONTRACT. Budget one
 real invocation before declaring any CLI wrapper done, and say "not run" until you have
-spent it.
+spent it. A cheap probe such as `--help` is a double too (a CLI's help need not list every
+flag it takes); one real call is the contract test. (Sources: Fowler, "Contract Test",
+https://martinfowler.com/bliki/ContractTest.html; https://code.claude.com/docs/en/cli-reference.)
 
 ## A tool's relative output path resolves against ITS working directory, not yours
 
@@ -101,7 +119,10 @@ exit code reported PASS for a run that had executed nothing.
 Pass absolute paths to any tool you will read output back from, and make the gate **fail
 when the evidence is absent** — no results file is a FAIL, not a pass. An exit code is not
 evidence that work was done. (`scripts/check.sh` carries this rule and a negative test for
-it.)
+it; failing closed is Saltzer and Schroeder's fail-safe default.) Unity's manual does not say
+which directory a relative `-logFile` or results path is resolved against, so pass absolute
+paths and treat a missing results file as FAIL
+(https://docs.unity3d.com/Manual/EditorCommandLineArguments.html).
 
 ## Waiting on your own process: `pgrep -f` and shell wait loops match themselves
 
@@ -110,7 +131,9 @@ pattern also appears in the loop's own command line, because `pgrep -f` matches 
 that runs the loop. It happened three times in one day in the founding project before the
 rule was written. Match on the process name (`pgrep -x`), on a pid, or on a file the job
 writes; never on text that is also in your command. The same holds for "wait until the
-screen shows DONE" when the task text itself contains DONE.
+screen shows DONE" when the task text itself contains DONE. `pgrep` never reports itself, but
+it does report the shell around it; `pgrep -A` also skips the loop's own ancestors
+(https://man7.org/linux/man-pages/man1/pgrep.1.html).
 
 Better still, do not wait at all: an agent that starts the job in the background is told
 when it exits, and every waiting turn costs a full read of its context
@@ -123,19 +146,22 @@ has the owner's e-mail address in its session context uses it. In one project fi
 agents did, in up to thirteen requests each, before a rule was added to their briefs. The
 address then sits in a third party's logs and cannot be recalled.
 
-No personal data in any web request: when an API wants contact details, send a generic
-project User-Agent or stop and ask. A brief that sends an agent to the web repeats the rule
-and names that User-Agent (`docs/WORKFLOW.md`, "Web requests carry no personal data").
+No personal data in any web request. Some APIs refuse a generic User-Agent outright
+(Wikimedia answers 403; SEC EDGAR and OpenStreetMap's Nominatim want the application named):
+for those, use the project contact in `docs/PROJECT.md` ("Web contact": a role address or
+project URL the owner chose); if it is empty, ask the owner once and record the answer there.
+Otherwise send the generic project User-Agent. Never the owner's own address. A brief that
+sends an agent to the web repeats the rule and names that contact (`docs/WORKFLOW.md`, "Web
+requests carry no personal data"). In the Claude Code overlay, `guard_private_email.py`
+refuses a web request that carries the owner's address. (Sources:
+https://foundation.wikimedia.org/wiki/Policy:Wikimedia_Foundation_User-Agent_Policy,
+https://www.sec.gov/search-filings/edgar-search-assistance/accessing-edgar-data,
+https://operations.osmfoundation.org/policies/nominatim/.)
 
 ## A red gate that passes on re-run is a finding, not a pass
 
-A full gate run failed on a deadline assertion in one test; the file passed alone and the
-next full gate passed with no change. Re-running until `CHECK: PASS` deletes the failing
-test, its error line and the load it ran under, so a real race is never seen again until it
-bites in CI. Run it once more, and write down what failed, the retry count, what else was
-running (another gate, a self-test, a review) and the suspected cause in `docs/STATE.md` or
-the operation file before committing (`docs/WORKFLOW.md`, "A red gate that passes on
-re-run").
+A gate that failed once and passed on a re-run with no change has found a race, not a fluke:
+write the `[GOTCHA]` line and follow `docs/WORKFLOW.md`, "A red gate that passes on re-run".
 
 ## A checkout under `/mnt/<drive>` in WSL
 
@@ -143,15 +169,21 @@ A repository on a Windows drive seen from WSL gets CRLF line endings from git's 
 (scripts then die with `\r: command not found` or a bad interpreter), installs
 Windows-native binaries into `node_modules`, and runs its gate many times slower than on the
 Linux filesystem. Clone into the WSL home instead. `scripts/doctor.sh` names the path and
-flags a CR in a script.
+flags a CR in a script. (Source for the speed and the advice: Microsoft,
+https://learn.microsoft.com/en-us/windows/wsl/filesystems; the CRLF and binary effects are
+this kit's own observation.)
 
 ## Under WSL, a file named `*.exe` runs on Windows
 
-WSL hands any executed file whose name ends in `.exe` to Windows, whatever its contents. A
-test stub named like a Windows launcher therefore starts on the Windows side, and Windows
-may show the owner a GUI error dialog in the middle of a test run. A test or an experiment
-never executes a `*.exe` file. Name a stub for a Windows launcher without `.exe`, and reach
-it through an overridable variable (`docs/WORKFLOW.md`, "Writing a gate").
+WSL hands a Windows executable to Windows; the match is on the file's first bytes ('MZ') in
+the binfmt_misc registration, not the name - verify on the target WSL before relying on the
+name alone (not verified here yet). In one run a test stub named like a Windows launcher
+started on the Windows side, and Windows may show the owner a GUI error dialog in the middle
+of a test run. A test or an experiment never executes a `*.exe` file. Name a stub for a
+Windows launcher without `.exe`, and reach it through an overridable variable
+(`docs/WORKFLOW.md`, "Writing a gate"). (Sources:
+https://learn.microsoft.com/en-us/windows/wsl/filesystems,
+https://docs.kernel.org/admin-guide/binfmt-misc.html.)
 
 ## A build server the gate started keeps the gate lock
 
@@ -164,7 +196,13 @@ the server off in the build command (`dotnet build -nodeReuse:false
 -p:UseSharedCompilation=false`, `gradle --no-daemon`, `sccache --stop-server` at the end).
 The gate's waiting `NOTE [lock]` line names the lock file; `fuser -v <lock file>` or
 `lsof <lock file>` shows which process holds it. On native Windows, search for `check.lock`
-under Associated Handles on the CPU tab of Resource Monitor (`resmon`).
+under Associated Handles on the CPU tab of Resource Monitor (`resmon`). Gradle itself
+recommends the daemon on CI; `--no-daemon` costs a JVM start per gate. The lock is inherited
+on purpose so a running build keeps it after its holder dies; a server that outlives the
+build is the price, which is why the list above is per tool. (Sources:
+https://learn.microsoft.com/en-us/visualstudio/msbuild/msbuild-command-line-reference,
+https://docs.gradle.org/current/userguide/gradle_daemon.html,
+https://man7.org/linux/man-pages/man1/flock.1.html.)
 
 ## A worker spawned from a lead's shell inherits its child-session markers
 
@@ -182,7 +220,11 @@ A job started from the lead's tool shell ends with the session on most hosts: a 
 in the middle of a batch killed three Codex jobs in one evening. Observed to survive on
 native Windows (2026-10-12): a separate Windows Terminal tab and a `codex exec` run in it.
 `&` under `sh -c` and `nohup` are unverified there (a Job Object may kill them;
-`RESEARCH_LOG.md` 2026-10-10).
+`RESEARCH_LOG.md` 2026-10-10). Others report the same: Claude Code issues on background Bash
+tasks cleaned up at session end (claudeissues.com 25188, 27959).
+Candidate, untested: `claude --bg --exec '<command>'` runs the job under the
+Claude Code supervisor instead of the lead's shell (https://code.claude.com/docs/en/agent-view);
+its survival of a session end on native Windows is not documented - test before relying on it.
 Before resuming work after a cut-off, list the processes whose command line names the checkout
 or its worktrees. Quote the checkout path and match it literally:
 Windows `Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine.IndexOf('<checkout>', [StringComparison]::OrdinalIgnoreCase) -ge 0 } | Select ProcessId,CommandLine`;
@@ -229,3 +271,13 @@ When the machine runs low on memory, the host can reap jobs: five heavy jobs sta
 were killed at once, and their work was lost. Follow the memory budget and finish jobs before
 ending their session (`docs/WORKFLOW.md`, "Worker cost", rules 6 and 8). A Codex or Claude
 session that was cut off is resumed, not restarted (`docs/WORKFLOW.md`, "Worker cost").
+
+## An incremental build misses its always-run inputs
+
+An incremental-build planner in a downstream project skipped stages whose real inputs had
+changed: steps that run every time read files no stage declared, and the driver script that
+holds the stage commands was in no stage's dependency set (kit CHANGELOG v0.11, "An
+incremental-build brief names both shared dependencies"). Include the inputs read by
+always-run steps in every stage's dependency set, and make the driver script invalidate
+every stage when it changes. A build tool has no reason to invalidate a cached result when
+an undeclared input changes (Bazel, hermeticity: https://bazel.build/basics/hermeticity).
