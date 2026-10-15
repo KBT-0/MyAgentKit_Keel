@@ -14,8 +14,9 @@ Another model matters too: two agents of the same model share their blind spots,
 three of them gives one opinion with error bars, not three opinions. A second family is
 welcome, never required: it reduces correlated blind spots but does not remove them, and the
 one controlled measurement found the direction asymmetric (`docs/research/claude-lead-codex.md`,
-finding 4). No published measurement says how much another tier of the same family adds, so
-every review record names the author's and the reviewer's model, and the kit compares them.
+finding 4). No published measurement says how much another tier of the same family adds. Today
+every review record names the reviewer's model only; the author's independence is the
+lead's choice of reviewer pin, and a default that excludes the author's tier is planned work.
 
 ## The cleanest evidence for this rule
 

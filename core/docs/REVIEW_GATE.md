@@ -43,9 +43,12 @@ file) gets one light pass, non-blocking; its Lows are capped as `REVIEW_PROMPT` 
 ## Rounds
 
 At most two rounds under one label (`MYAGENTKIT_TASK_ID`); both adapters refuse a third
-(`claude_bridge.prior_rounds`). A high-tier change keeps one label: the limit counts every
-completed review under it, whether `REVIEW_FOCUS` is set or unset. The prompt carries only
-the current focus's earlier reports and legacy reports without a focus.
+(`claude_bridge.prior_rounds`). A high-tier change keeps one label and rounds count per
+`REVIEW_FOCUS`, so its logic and portability reviewers each get round 1 and round 2. A review
+without a focus counts toward every focus. The rounds used are the current focus's count; an
+unset or never-seen focus takes the highest count under the label, so unsetting or renaming
+the focus never opens a fresh budget. The prompt's "round N" is that count plus one, and it
+carries only the current focus's earlier reports and reports without a focus.
 Round 2 confirms every finding the dispositions claim fixed, a Medium
 included, and reports new Critical or High only. A third round needs
 `REVIEW_ROUND_EXCEPTION=<reason>`, kept in the record; what remains goes to {{OWNER_NAME}}

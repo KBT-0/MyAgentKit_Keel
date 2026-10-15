@@ -15,9 +15,11 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 - **Review budget and round-limit fixes** (`scripts/claude_bridge.py`, core and packaged copies).
   An old pathname containing ` b/` cannot disguise source as a vendored diff. Unreadable
-  destination markers count toward the budget. Every completed review counts toward its
-  label's two-round limit, even when the focus changes or is unset; legacy reports without
-  a focus still reach the reviewer. Author independence requires the lead's model selection,
+  destination markers count toward the budget; a deleted lock or vendored file is named by
+  its old path and spends none. Rounds count per `REVIEW_FOCUS`, so a high-tier change's two
+  focus reviewers each get two rounds; a review without a focus counts toward every focus, and
+  an unset or new focus takes the label's highest count. Author independence requires the
+  lead's model selection,
   and the docs no longer promise automatic author exclusion or Codex capacity retries.
   **ACTION:** refresh the review runtime and `docs/REVIEW_GATE.md` / `docs/REVIEW_RUNNING.md`;
   record `REVIEW_ROUND_EXCEPTION` before a third completed review under a label.

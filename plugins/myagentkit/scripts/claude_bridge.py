@@ -164,6 +164,9 @@ def budgeted(diff: bytes) -> tuple[int, int]:
         # the destination marker before the hunk names this part unambiguously.
         header = part.partition(b"\n@@")[0]
         named = re.search(rb'(?m)^\+\+\+ (?:b/([^\n]*?)\t?|"b/([^"\\\n]*)")$', header)
+        if not named and re.search(rb"(?m)^\+\+\+ /dev/null$", header):
+            # A deletion has no destination: its old name on the --- line names it.
+            named = re.search(rb'(?m)^--- (?:a/([^\n]*?)\t?|"a/([^"\\\n]*)")$', header)
         path = next((name for name in named.groups() if name is not None), b"") if named else b""
         parts = os.fsdecode(path).split("/")
         if parts[-1] in NOISE_NAMES or parts[-1].endswith(NOISE_SUFFIXES) or NOISE_DIRS & set(parts[:-1]):
@@ -839,11 +842,11 @@ def prior_rounds(repo: Path, task_id: str | None, scope: str, resolved: str | No
     deferred and sampled the previous fixes again, so the loop never converged. The record
     comes from the reviewer's own archive, not from the author, so nothing can be left out;
     the author's dispositions (REVIEW_DISPOSITIONS, a file) ride along as claims to verify.
-    Every completed round counts under its label, regardless of focus. Carry only the
-    current focus and legacy rounds without a focus (batch3-fix-brief, finding 2).
+    Rounds count per REVIEW_FOCUS (KARARLAR B02 inv2#10); a round without a focus counts
+    toward every focus. Carry only the current focus and rounds without a focus.
     """
     rounds = []
-    completed = 0
+    counts, unfocused = {}, 0
     focus = os.environ.get("REVIEW_FOCUS") or None
     # The split hint, once per review: the dispatcher's preflight runs before it sets the chain
     # id, and an adapter inside its chain stays quiet.
@@ -949,11 +952,16 @@ def prior_rounds(repo: Path, task_id: str | None, scope: str, resolved: str | No
             raise BridgeError("earlier review evidence for task %s was changed after it was "
                               "archived (its sha256 differs from the usage record): %s; restore "
                               "it or use a new task label" % (task_id, evidence))
-        # Counting is independent of prompt filtering: changing or unsetting focus must
-        # never reopen the label's budget. Legacy rounds apply to every focus.
-        completed += 1
+        # Counted before the prompt filter below, so a round no prompt carries still counts.
+        if isinstance(task.get("focus"), str) and task["focus"]:
+            counts[task["focus"]] = counts.get(task["focus"], 0) + 1
+        else:
+            unfocused += 1
         if not task.get("focus") or task.get("focus") == focus:
             rounds.append((str(value.get("recorded_at")), report.decode()))
+    # A focus seen under the label uses its own count; an unset or new focus takes the highest,
+    # so unsetting or renaming the focus never opens a fresh budget.
+    completed = unfocused + (counts[focus] if focus in counts else max(counts.values(), default=0))
     notes = os.environ.get("REVIEW_DISPOSITIONS")
     claims = Path(notes).read_text(encoding="utf-8") if notes else None
     try:
@@ -963,7 +971,7 @@ def prior_rounds(repo: Path, task_id: str | None, scope: str, resolved: str | No
     if notes and not rounds:
         raise BridgeError("REVIEW_DISPOSITIONS is set but no earlier completed review has task "
                           "label %r; set MYAGENTKIT_TASK_ID to the earlier rounds' label" % task_id)
-    # At most two rounds under one label (docs/REVIEW_GATE.md, "Rounds"): a third needs a
+    # At most two rounds per focus and label (docs/REVIEW_GATE.md, "Rounds"): a third needs a
     # recorded reason, so a loop that stops converging is seen instead of paid for again.
     if completed >= 2:
         exception = os.environ.get("REVIEW_ROUND_EXCEPTION", "").strip()

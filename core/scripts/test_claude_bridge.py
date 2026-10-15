@@ -30,9 +30,9 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'REVIEW_SHADOW', 'MYAGENTKIT_TASK_I
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 205, 'test_agent_usage': 33, 'test_codex_quota': 5}
+SUITE_MINIMUMS = {'test_claude_bridge': 206, 'test_agent_usage': 33, 'test_codex_quota': 5}
 # These are executed cases, excluding only the explicitly declared POSIX exclusions.
-WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 179, 'test_agent_usage': 29, 'test_codex_quota': 4}
+WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 180, 'test_agent_usage': 29, 'test_codex_quota': 4}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -4676,6 +4676,26 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
             with self.subTest(header=header):
                 self.assertEqual(bridge.budgeted(diff), (len(diff), 2))
 
+    def test_a_deleted_file_is_budgeted_by_its_old_path(self):
+        # A deletion has "+++ /dev/null": its path comes from "--- a/", so a deleted vendored
+        # file spends no budget while a deleted source file still does.
+        for name, refused in (('vendor/lib.js', False), ('src/big.py', True)):
+            with self.subTest(name=name):
+                path = self.repo / name
+                path.parent.mkdir(exist_ok=True)
+                path.write_text('x' * 410_000 + '\n')
+                self.commit_fixture('Add ' + name)
+                self.git('rm', '-q', name)
+                diff = self.git('diff', '--cached').stdout
+                self.assertIn(b'+++ /dev/null', diff)
+                if refused:
+                    with self.assertRaisesRegex(bridge.BridgeError, '400000 bytes'):
+                        bridge.snapshot(self.repo, 'uncommitted', None)
+                else:
+                    self.assertEqual(bridge.budgeted(diff), (0, 0))
+                    bridge.snapshot(self.repo, 'uncommitted', None)
+                self.commit_fixture('Remove ' + name)
+
     def test_author_documentation_describes_the_current_manual_selection(self):
         gate = ' '.join((ROOT.parent / 'docs/REVIEW_GATE.md').read_text(encoding='utf-8').split())
         running = ' '.join((ROOT.parent / 'docs/REVIEW_RUNNING.md').read_text(encoding='utf-8').split())
@@ -4683,6 +4703,10 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         self.assertIn('does not exclude the author\'s tier automatically', gate)
         self.assertIn('`MYAGENTKIT_AUTHOR` is not read or recorded', running)
         self.assertNotIn('refuses a reviewer pinned to the author\'s model', gate)
+        page = ' '.join((ROOT.parent.parent / 'docs/decorrelated-review.md').read_text(encoding='utf-8').split())
+        self.assertNotIn('names the author\'s and the reviewer\'s model', page)
+        self.assertIn('every review record names the reviewer\'s model', page)
+        self.assertIn('the lead\'s choice of reviewer pin', page)
 
     def test_capacity_documentation_does_not_promise_unimplemented_retries(self):
         running = ' '.join((ROOT.parent / 'docs/REVIEW_RUNNING.md').read_text(encoding='utf-8').split())
@@ -4777,8 +4801,10 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         self.assertEqual(names['claude'], list(bridge.REVIEW_DOCS))
         self.assertEqual(names['codex'], names['claude'])
 
-    def test_focus_reviewers_share_the_limit_but_carry_only_their_own_reports(self):
-        # The fix brief requires one label-wide limit; a focus still filters prompt history.
+    def test_focus_reviewers_each_get_two_rounds_but_carry_only_their_own_reports(self):
+        # KARARLAR B02 inv2#10: rounds count per REVIEW_FOCUS, so a high-tier change's logic and
+        # portability reviewers each get round 1 and round 2; a third of either, or an unfocused
+        # or new-focus review after that, needs REVIEW_ROUND_EXCEPTION.
         log = self.root / 'prompt.txt'
         base = {'PROMPT_LOG': str(log), 'MYAGENTKIT_TASK_ID': 'focus-task'}
         logic, portability = dict(base, REVIEW_FOCUS='logic'), dict(base, REVIEW_FOCUS='portability')
@@ -4787,19 +4813,20 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         self.assertEqual(json.loads(Path(first['usage_record']).read_text())['task']['focus'], 'logic')
         self.assertEqual(self.run_bridge('reject', env_extra=portability)[0], 0)
         self.assertNotIn('### Round', log.read_text())
-        code, refused = self.run_bridge(env_extra=logic)
-        self.assertEqual(code, 2, refused)
-        self.assertIn('REVIEW_ROUND_EXCEPTION', refused['error'])
+        for focus in (logic, portability):
+            code, second = self.run_bridge('accept', env_extra=focus)
+            self.assertEqual(code, 0, second)
+            self.assertEqual(log.read_text().count('### Round '), 1, log.read_text())
+            self.assertIn('This is review round 2', log.read_text())
+        for env in (logic, portability, base, dict(base, REVIEW_FOCUS='security')):
+            code, refused = self.run_bridge(env_extra=env)
+            self.assertEqual(code, 2, refused)
+            self.assertIn('REVIEW_ROUND_EXCEPTION', refused['error'])
         exception = {'REVIEW_ROUND_EXCEPTION': 'Owner requested focus follow-up'}
-        code, second = self.run_bridge('accept', env_extra=dict(logic, **exception))
-        self.assertEqual(code, 0, second)
-        self.assertEqual(log.read_text().count('### Round '), 1, log.read_text())
+        code, third = self.run_bridge('accept', env_extra=dict(logic, **exception))
+        self.assertEqual(code, 0, third)
+        self.assertEqual(log.read_text().count('### Round '), 2, log.read_text())
         self.assertIn('This is review round 3', log.read_text())
-        self.assertEqual(self.run_bridge('accept', env_extra=dict(portability, **exception))[0], 0)
-        self.assertEqual(log.read_text().count('### Round '), 1, log.read_text())
-        code, refused = self.run_bridge(env_extra=logic)
-        self.assertEqual(code, 2, refused)
-        self.assertIn('REVIEW_ROUND_EXCEPTION', refused['error'])
 
     def test_dispositions_without_a_key_are_refused_before_any_model_runs(self):
         # Item F: the usage summary counts the author's answers, so a file that answers no

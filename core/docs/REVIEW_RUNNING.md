@@ -20,7 +20,7 @@ backend (`--backend NAME`, reviewer `claude@NAME`): `docs/DEV_SETUP.md`.
 | `REVIEW_DISPOSITIONS` | answers to round 1, one line per finding: `fixed:` / `disproved:` / `deferred:` |
 | `REVIEW_ROUND_EXCEPTION` | reason for a third round, kept in the record |
 | `REVIEW_RISK` | `low` / `medium` / `high`, the brief's tier |
-| `REVIEW_FOCUS` | `portability` or `logic`, one reviewer each on a high tier; every completed review counts toward the label's two-round limit |
+| `REVIEW_FOCUS` | `portability` or `logic`, one reviewer each on a high tier; each focus gets the label's two rounds; a review without a focus counts toward every focus |
 | `REVIEW_TASK_FILE` | the brief the prompt quotes; a diff outside its `Owns:` line is refused |
 | `REVIEW_EFFORT` | `low` / `medium` / `high`; default high on a high tier, else medium |
 | `REVIEW_TIMEOUT_SECONDS` | per attempt, default 2700, at most 3600 |
@@ -33,7 +33,8 @@ the reviewer pin before launch (`docs/REVIEW_GATE.md`, "Invariant").
 
 Exit 2 means a wrong round was refused: keyless dispositions, an earlier archive missing or
 edited, a round that does not continue its label, a diff over 400000 bytes with its rounds
-(lock files, vendored trees and minified bundles reach the reviewer but are not counted; past
+(lock files, vendored trees and minified bundles reach the reviewer but are not counted, a
+deleted one by its old name; a part whose path cannot be read is counted; past
 about 400 changed lines a hint asks to split the task),
 an index entry or attribute (`filter`, `ident`, assume-unchanged) that could hide a change;
 each refusal names its fix, and a repository that needs a filter (Git LFS) reviews by hand.
@@ -49,7 +50,7 @@ Automation never authorizes a commit or push.
 ## Rounds, labels and designs
 
 - A design is reviewed under its own label before code exists; dispositions cite its exclusions.
-- A high-tier change's two focus reviewers share its one label and round limit; each
+- A high-tier change's two focus reviewers share its one label and get two rounds each; each
   `REVIEW_FOCUS` carries its own reports plus legacy reports without a focus
   (`docs/REVIEW_GATE.md`, "Rounds").
 - The two reviewers run one after the other unless {{OWNER_NAME}} allows parallel; start the

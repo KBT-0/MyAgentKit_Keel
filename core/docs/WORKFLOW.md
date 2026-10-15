@@ -612,7 +612,7 @@ evidence: `docs/research/claude-lead-codex.md`, recommendations 1 to 11).
   switch in the task's STATE line and reports it. A high-tier change has two focus reviewers
   under one label (`docs/REVIEW_GATE.md`, "Risk tiers"): for critical work Claude wrote, the
   strongest Claude tier takes one focus and Codex the other. Findings go to the author's side
-  ("Worker cost", rule 2), and all completed reviews share the label's two-round limit
+  ("Worker cost", rule 2), and each focus gets the label's two rounds
   (`docs/REVIEW_GATE.md`, "Rounds").
 - **Quota:** before the switch to cross and before a large Codex errand, the lead reads
   Codex's allowance (`python3 scripts/codex_quota.py`). A Codex worker stopped by its quota
@@ -1104,7 +1104,7 @@ The shell stays in the lead's checkout, so its Stop hook runs that checkout's ga
    workers wait for it, because each run locks the checkout and every waiting worker pays
    for the wait. CI runs on the same commit.
 3. Keep one review label per change for its rounds (a high-tier change's two focus reviewers
-   share its two-round limit), so that each round carries the matching earlier reports
+   get two rounds each under it), so that each round carries the matching earlier reports
    (`docs/REVIEW_GATE.md`, "Rounds"). The merged diff
    then gets ONE final review under a label never used before, at high effort, by a session
    that did not write its larger part.
