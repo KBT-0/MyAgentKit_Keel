@@ -187,6 +187,22 @@ class KitWrapperTests(unittest.TestCase):
                     missing = 'a.txt' if case == 'directory' else 'b.txt'
                     self.assertIn('could not hash %s; the tree check is incomplete' % missing, out)
 
+    def test_every_self_test_seam_carries_the_prefix_the_gate_refuses(self):
+        # The gate refuses GATE_SELFTEST_* outside the self-test by prefix (KARARLAR D03
+        # inv2#161): a seam without it would pass an exported copy into a normal run.
+        source = (ROOT / 'core/scripts/check.sh').read_text(encoding='utf-8')
+        read = set(re.findall(r'\$\{([A-Z][A-Z0-9_]*)[:+-]', source))
+        legacy = {'GATE_BUILD_CMD_OVERRIDE', 'BOUNDARY_CHECKS_FILE', 'BOUNDARY_SELFTESTS_FILE'}
+        # Not seams: they change when a run starts or what CI prints, not what it checks; the
+        # marker; the caller's locale; the lock case script's own fixture variables.
+        other = {'CI', 'GATE_LOCK_FD', 'GATE_LOCK_HELD', 'GATE_LOCK_WAIT', 'GATE_SELFTEST_NESTED', 'LC_ALL'}
+        unprefixed = sorted(name for name in read - legacy - other
+                            if not name.startswith(('GATE_SELFTEST_', 'LOCKCASE_')))
+        self.assertEqual(unprefixed, [], 'a seam without the GATE_SELFTEST_ prefix')
+        for name in legacy:
+            self.assertIn(name, read)
+            self.assertRegex(source, r'for seam in [^\n]*%s' % name)
+
     def test_an_inherited_work_variable_never_chooses_the_scratch_folder(self):
         # An exported `work` once named the folder git_view wrote and deleted git-paths* in
         # (round-3 Codex Critical): the scratch folder is the caller's argument, nothing else.

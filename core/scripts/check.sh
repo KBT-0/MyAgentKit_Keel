@@ -4,7 +4,12 @@
 # here — which is NOT the same as a promise that local and CI always agree. Same script,
 # different machine: file modes, installed tools and locale can all differ (docs/GOTCHAS.md
 # has the exit-126 case that kept a pipeline red for weeks). Check the pipeline after
-# pushing; do not infer it from a local pass.
+# pushing; do not infer it from a local pass. The git hooks are the local backstop, and a
+# hook can be skipped (`--no-verify`); the check that holds is this gate in CI, set as a
+# required status check on the protected branch (docs/DEV_SETUP.md; git-scm.com/docs/githooks,
+# anthropics/claude-code#40117). CI runs it on every pull request with no path filter: a
+# workflow skipped by path leaves a required check Pending (GitHub, "Troubleshooting required
+# status checks"), and this script already decides what a documentation-only change skips.
 #
 # Usage: check.sh [--self-test | --for-commit]
 #   default       run the gates
@@ -14,8 +19,10 @@
 #
 # ADDING A GATE: add the check, AND add a case to self_test(). A gate without a negative
 # test has not been proven to fail — it has only been seen passing, which is not the same
-# thing and never was. A gate that reads an override for its case adds that variable to the
-# SELF-TEST SEAMS list below, or an exported copy of it turns the gate green in a normal run.
+# thing and never was. A gate that reads an override for its case names it GATE_SELFTEST_<x>:
+# the SELF-TEST SEAMS block below refuses every variable with that prefix outside the self-test,
+# so a new seam needs no list entry, and an exported copy cannot turn the gate green in a normal
+# run. A test fails on a seam without the prefix (tests/test_selftest_status.py).
 #
 # EXIT CODES: 0 pass, 1 fail, 2 usage, 75 NOT RUN — another gate run held this checkout's
 # lock for longer than GATE_LOCK_WAIT=<seconds> allowed (unset: wait without limit, which is
@@ -29,16 +36,14 @@
 # at its end. A self-test may run beside a review in the same worktree only when every one of its
 # cases writes nothing but files Git ignores (owner decision, 2026-10-12): this check cannot catch
 # a non-ignored file that a case writes and removes meanwhile, which fails the review as
-# stale_checkout: any self-test whose case writes a non-ignored file, such as the shipped boundary
-# example, runs in another worktree or after the review. Point the gate at a synthetic file
-# outside the tree through a self-test seam (GATE_SELFTEST_STATE_FILE,
-# GATE_SELFTEST_EXTRA_FILE below; honoured only in the self-test's own nested runs,
-# so the case passes it to expect_fail or expect_pass), or run the case against
-# a disposable copy of the tree. A file injected into the tree is seen by a concurrent
-# `git add -A` and by another session's edits, and a killed self-test leaves it behind. The
-# gate lock below keeps other gate runs from seeing it; nothing else does. A case that must
-# place a file where the project's own globs find it removes it, interrupted or not
-# (scripts/boundary_selftests.sh shows how).
+# stale_checkout. So no case writes one: point the gate at a synthetic file outside the tree
+# through a self-test seam (GATE_SELFTEST_STATE_FILE, GATE_SELFTEST_EXTRA_FILE below; honoured
+# only in the self-test's own nested runs, so the case passes it to expect_fail or
+# expect_pass), or run the case against a disposable copy of the tree outside it. A file
+# injected into the tree is seen by a concurrent `git add -A` and by another session's edits,
+# and a killed self-test leaves it behind. A case that must place a file where the project's
+# own globs find it, a new file or an edited one, does so in the copy
+# (scripts/boundary_selftests.sh shows how; KARARLAR B02 inv2#39).
 #
 # EVERY CHECK BELOW MUST FAIL ON ABSENT EVIDENCE. A missing input file, a scanner that could
 # not run, a command that was never configured: all FAIL. Silence is not success. Five
@@ -94,7 +99,7 @@ else kit_python="py -3"; fi   # the launcher, told which Python: unquoted at eve
 # with SIGKILL never clears its pid, so variables copied out of it named the lock file's pid
 # exactly and an override passed without its build; a copied variable carries no descriptor.
 # It stops an accidental export, not a deliberate forgery by someone who holds the lock.
-# A NEW SEAM JOINS THIS LIST.
+# A NEW SEAM IS NAMED GATE_SELFTEST_<x>; the prefix alone refuses it outside the self-test.
 # GATE_LOCK_WAIT, GATE_LOCK_HELD and GATE_LOCK_FD are not seams: they change when a run
 # starts, not what it checks.
 lock_path=$(git rev-parse --git-path check.lock 2>/dev/null) || lock_path=.check.lock
@@ -193,9 +198,12 @@ fcntl.flock(int(sys.argv[1]), fcntl.LOCK_EX | fcntl.LOCK_NB)
 fi
 if [ -z "$inherited" ] || [ -z "${GATE_SELFTEST_NESTED:-}" ] ||
    [ "$(cat "$lock_path" 2>/dev/null)" != "$GATE_SELFTEST_NESTED" ]; then
-  for seam in GATE_BUILD_CMD_OVERRIDE GATE_SELFTEST_STATE_FILE GATE_SELFTEST_PROJECT_FILE BOUNDARY_CHECKS_FILE \
-              BOUNDARY_SELFTESTS_FILE GATE_SELFTEST_EXTRA_FILE GATE_SELFTEST_BREAK_SCANNER \
-              GATE_SELFTEST_HISTORY GATE_SELFTEST_COMMIT_REPO; do
+  # Every GATE_SELFTEST_ variable but the marker itself, found by prefix: a list of names missed
+  # the next seam someone added (a denylist cannot name what it has not seen; KARARLAR D03
+  # inv2#161). The three names before them are the legacy seams without the prefix, kept so no
+  # project has to rename them.
+  for seam in GATE_BUILD_CMD_OVERRIDE BOUNDARY_CHECKS_FILE BOUNDARY_SELFTESTS_FILE \
+              $(env | LC_ALL=C sed -n 's/^\(GATE_SELFTEST_[A-Za-z0-9_]*\)=.*/\1/p' | grep -vx GATE_SELFTEST_NESTED); do
     eval "seam_value=\${$seam:-}"
     [ -z "$seam_value" ] || { printf '%s\n' "FAIL [env]: $seam is set; self-test overrides are not honoured outside --self-test"; fail=1; }
   done
@@ -374,6 +382,10 @@ fi
 # Only the self-test sets them (the seam block above).
 GATE_SELFTEST_STATE_FILE="${GATE_SELFTEST_STATE_FILE:-docs/STATE.md}"
 
+# The strong review cycle's cadence (section 2 says why): owner choices, not measured values.
+STRONG_REVIEW_DAYS=10
+STRONG_REVIEW_TASKS=20
+
 # Overridable so the self-test can prove these branches without mutating the repository.
 # Only the self-test sets them (the seam block above).
 BOUNDARY_CHECKS_FILE="${BOUNDARY_CHECKS_FILE:-scripts/boundary_checks.sh}"
@@ -498,7 +510,9 @@ finally:
     git_view "$work" > "$view_before" 2>&1 || { cat "$view_before"; return 1; }
   fi
 
-  # A red tree cannot prove that a gate turns red: everything would "fail correctly".
+  # A red tree cannot prove that a gate turns red: everything would "fail correctly". Each
+  # case below is a planted fault the gate must catch, as a mutant a test suite must kill
+  # (Petrović et al., ICSE 2021, arxiv.org/abs/2103.07189).
   if ! baseline=$(sh "$0" 2>&1); then
     echo "SELF-TEST INCONCLUSIVE: the baseline gate run exited nonzero on this tree."
     echo "  Every case below would then pass for the wrong reason. Note that this only"
@@ -593,8 +607,17 @@ finally:
         commit -q -m 'strong review' ) ||
       { echo "  FAIL — could not build the synthetic history for the strong review reminder"; st_fail=1; }
   done
+  # A report added today, then as many closed tasks as the cycle allows.
+  ( fixture_env; repo="$work/strong-tasks"; git clone -q "$work/strong-0" "$repo" && n=0 &&
+    while [ "$n" -lt "$STRONG_REVIEW_TASKS" ]; do
+      n=$((n + 1))
+      git -C "$repo" -c user.name=t -c user.email=t@example.invalid -c core.hooksPath=/dev/null \
+        -c commit.gpgsign=false commit -q --allow-empty -m "task $n" -m "Done: T$n" || exit 1
+    done ) ||
+    { echo "  FAIL — could not build the synthetic history for the strong review task count"; st_fail=1; }
   reminder_ok=1
-  for case in "$work/strong-30|days ago" "$work/strong-0|" "$hist|no strong review report yet"; do
+  for case in "$work/strong-30|days ago" "$work/strong-0|" "$hist|no strong review report yet" \
+              "$work/strong-tasks|$STRONG_REVIEW_TASKS tasks"; do
     repo=${case%%|*}; want=${case#*|}
     out=$(env GATE_SELFTEST_STATE_FILE="$work/strong-report/STATE.md" GATE_SELFTEST_HISTORY="$repo" sh "$0" 2>&1)
     rc=$?; said=$(printf '%s\n' "$out" | grep -F 'NOTE [strong-review]')
@@ -607,7 +630,7 @@ finally:
     fi
   done
   if [ "$reminder_ok" -eq 1 ]; then
-    echo "  ok   — the strong review reminder names a report older than 10 days, or none, and is quiet otherwise"
+    echo "  ok   — the strong review reminder names a report older than $STRONG_REVIEW_DAYS days, $STRONG_REVIEW_TASKS closed tasks, or none, and is quiet otherwise"
   else
     st_fail=1
   fi
@@ -1040,6 +1063,21 @@ LOCKCASE
   expect_fail "PROJECT gate rejects a MISSING project file"                    GATE_SELFTEST_PROJECT_FILE="$work/absent.md"
   expect_pass "PROJECT gate stays quiet on a young file with no sections yet"  GATE_SELFTEST_PROJECT_FILE="$proj_young"
 
+  # --- the module map names every module folder ------------------------------
+  # The project's own top-level folders stand in for modules (root "."): a map naming them all
+  # passes, the same map without its first one fails, and a root holding no file fails.
+  { echo "# Architecture"; echo; echo "## Module map"; echo
+    git ls-files --cached --others --exclude-standard | sed -n 's|/.*||p' | LC_ALL=C sort -u | sed 's/^/- /'
+    echo; echo "## Boundary enforcement"; } > "$work/arch-full.md"
+  first_module=$(sed -n 's/^- //p' "$work/arch-full.md" | head -1)
+  grep -vxF -- "- $first_module" "$work/arch-full.md" > "$work/arch-missing.md"
+  expect_pass "module map gate accepts a map that names every module folder" \
+    GATE_SELFTEST_MODULE_ROOTS=. GATE_SELFTEST_ARCHITECTURE_FILE="$work/arch-full.md"
+  expect_fail "module map gate rejects a module folder the map does not name" \
+    GATE_SELFTEST_MODULE_ROOTS=. GATE_SELFTEST_ARCHITECTURE_FILE="$work/arch-missing.md"
+  expect_fail "module map gate rejects a module root that holds no file" \
+    GATE_SELFTEST_MODULE_ROOTS=no-such-root GATE_SELFTEST_ARCHITECTURE_FILE="$work/arch-full.md"
+
   # --- the commit hook --------------------------------------------------------
   # The hook is the gate that actually holds, for every tool, and until now nothing proved
   # it carries a red gate out to a nonzero exit. It is four lines, which is exactly the kind
@@ -1246,8 +1284,8 @@ LOCKCASE
     echo "  ok   — the self-test left HEAD, the index, git status and the tracked changes as it found them"
   else
     echo "  FAIL — the self-test changed this worktree: a review running here meanwhile fails"
-    echo "         as stale_checkout. Make the case remove what it writes, or ignore its output"
-    echo "         path in .gitignore. Or another process edited the checkout meanwhile (a second session, an editor)."
+    echo "         as stale_checkout. Run that case in a disposable copy (scripts/boundary_selftests.sh),"
+    echo "         or ignore its output path in .gitignore. Or another process edited the checkout meanwhile (a second session, an editor)."
     echo "         Lines before (-) and after (+): HEAD, index, status, content hashes by path:"
     diff "$view_before" "$work/git-view.after" | sed -n 's/^< /    - /p; s/^> /    + /p' | head -40
     st_fail=1
@@ -1515,24 +1553,59 @@ if hgit rev-parse -q --verify HEAD >/dev/null 2>&1; then
   fi
 fi
 
-# The strong review cycle runs at least every ten days, and its reminder must not depend on
-# anyone remembering it (docs/WORKFLOW.md, "The strong review cycle"). A project that keeps
-# docs/STRONG_REVIEW.md is told, never failed, when no strong review report was added in
-# that time. The date is the commit that added the newest docs/reviews/strong-*.md, so a
-# report deleted once its last item closed still counts. A shallow clone may not hold it.
+# A [LESSON] or [GOTCHA] line in docs/STATE.md may not be deleted until it has a
+# permanent home (docs/AGENTS.md). Written only, the rule held nowhere: a commit that deletes
+# such a line from STATE.md and adds no line to any other file is told so, never failed, since
+# the home may be a later commit (owner decision 2026-10-15, KARARLAR D05 inv1#76, lead
+# decision 7; RL 2026-10-03: a rule without a mechanism did not hold). Only the commit hook's
+# run (--for-commit) has a commit to read: the staged diff against HEAD.
+if [ -n "$for_commit" ]; then
+  # GATE_SELFTEST_COMMIT_REPO: the self-test's throwaway repository, read with no inherited routing.
+  sgit() {
+    if [ -n "${GATE_SELFTEST_COMMIT_REPO:-}" ]; then ( fixture_env; git -C "$GATE_SELFTEST_COMMIT_REPO" "$@" )
+    else git "$@"; fi
+  }
+  dropped=$(sgit diff --cached --no-renames --no-ext-diff -U0 HEAD -- docs/STATE.md 2>/dev/null |
+            grep -v '^--- ' | grep -E '^-.*\[(LESSON|GOTCHA)\]')
+  if [ -n "$dropped" ] &&
+     ! sgit diff --cached --no-renames --no-ext-diff -U0 HEAD -- . ':(exclude)docs/STATE.md' 2>/dev/null |
+       grep -v '^+++ ' | grep -q '^+.'; then
+    echo "NOTE [state]: this commit deletes a tagged line from docs/STATE.md and adds nothing to any other"
+    echo "             file. A [LESSON] or [GOTCHA] line keeps until it has a permanent home (docs/AGENTS.md):"
+    printf '%s\n' "$dropped" | sed 's/^-/               /' | head -10
+  fi
+fi
+
+# The strong review cycle runs at least every STRONG_REVIEW_DAYS days or after
+# STRONG_REVIEW_TASKS closed tasks, whichever comes first, and its reminder must not depend on
+# anyone remembering it (docs/WORKFLOW.md, "The strong review cycle"). Both are owner choices,
+# not a measured cadence: 10 days is the owner's request (v0.10, issue #61), 20 tasks the
+# figure already proposed for the audit (KARARLAR B11 inv1#119, inv2#152). A project that keeps
+# docs/STRONG_REVIEW.md is told, never failed, when either is reached. The date is the commit
+# that added the newest docs/reviews/strong-*.md, so a report deleted once its last item closed
+# still counts; the tasks are the Done: trailers of the commits after it. A shallow clone may
+# not hold it. The two values are set near the top, where the self-test reads them too.
 strong_list="$(dirname "$GATE_SELFTEST_STATE_FILE")/STRONG_REVIEW.md"
+strong_rule="at least every $STRONG_REVIEW_DAYS days or after $STRONG_REVIEW_TASKS closed tasks, whichever comes first"
 if [ -f "$strong_list" ] && hgit rev-parse -q --verify HEAD >/dev/null 2>&1; then
   # No wildcard pathspec (GIT_LITERAL_PATHSPECS would turn it off), no rename detection (a
   # new report beside a deleted one reads as a rename), no signature text in the output.
   added=$(hgit -c core.quotePath=false log --no-renames --no-show-signature --diff-filter=A \
-            --format=@%ct --name-only HEAD -- docs/reviews 2>/dev/null |
+            --format='@%ct %H' --name-only HEAD -- docs/reviews 2>/dev/null |
           awk '/^@/ { t = substr($0, 2); next } /^docs\/reviews\/strong-[^\/]*\.md$/ { print t; exit }')
   if [ -z "$added" ]; then
     echo "NOTE [strong-review]: no strong review report yet (docs/reviews/strong-*.md); the cycle runs"
-    echo "                      at least every 10 days (docs/WORKFLOW.md, \"The strong review cycle\")."
-  elif [ $(( $(date +%s) - added )) -gt $(( 10 * 86400 )) ]; then
-    printf '%s\n' "NOTE [strong-review]: the newest strong review report was added $(( ($(date +%s) - added) / 86400 )) days ago;"
-    echo "                      the cycle is due (docs/WORKFLOW.md, \"The strong review cycle\")."
+    printf '%s\n' "                      $strong_rule (docs/WORKFLOW.md, \"The strong review cycle\")."
+  else
+    added_commit=${added#* }; added=${added%% *}
+    closed=$(hgit log --no-show-signature --format='%(trailers:key=Done,valueonly,unfold)' \
+               "$added_commit..HEAD" 2>/dev/null | grep -c .)
+    days=$(( ($(date +%s) - added) / 86400 ))
+    if [ $(( $(date +%s) - added )) -gt $(( STRONG_REVIEW_DAYS * 86400 )) ] || [ "$closed" -ge "$STRONG_REVIEW_TASKS" ]; then
+      printf '%s\n' "NOTE [strong-review]: the newest strong review report was added $days days ago, and $closed tasks"
+      printf '%s\n' "                      closed since; the cycle is due: it runs $strong_rule"
+      echo "                      (docs/WORKFLOW.md, \"The strong review cycle\")."
+    fi
   fi
 fi
 
@@ -1582,6 +1655,47 @@ else
     echo "                Add them, or renumber. Citations elsewhere point at these numbers."
     fail=1
   fi
+fi
+
+# ---------------------------------------------------------------------------
+# 2c) ARCHITECTURE.md names every module folder
+# ---------------------------------------------------------------------------
+# The map is coarse and an agent finds code by searching, but a module the map does not name
+# is one an agent may rebuild beside it ("NEVER rewrite a system you could not find"). Prefer
+# a check to a promise (KARARLAR B10 inv1#239): every direct subfolder of a module root that
+# holds a file in the scan list must be named, as a whole word, in the "## Module map" section
+# of docs/ARCHITECTURE.md. module_roots is a VALUE: the folders whose subfolders are modules,
+# space-separated, e.g. "src packages". Empty, nothing is checked and a NOTE says so: a
+# single-module project has no module folders. A root with no file at all FAILS: a check over a
+# missing folder finds nothing, which looks like a clean result.
+module_roots=""
+module_roots="${GATE_SELFTEST_MODULE_ROOTS:-$module_roots}"
+architecture_file="${GATE_SELFTEST_ARCHITECTURE_FILE:-docs/ARCHITECTURE.md}"
+if [ -z "$module_roots" ]; then
+  echo "NOTE [architecture]: module_roots is empty in scripts/check.sh; no module folder is checked against"
+  echo "                     the module map in docs/ARCHITECTURE.md."
+elif ! grep -q '^## Module map' "$architecture_file" 2>/dev/null; then
+  printf '%s\n' "FAIL [architecture]: $architecture_file has no '## Module map' section, so module_roots cannot be checked."
+  fail=1
+else
+  awk '/^## Module map/ { f = 1; next } /^## / { f = 0 } f' "$architecture_file" > "$work/module-map"
+  for root in $module_roots; do
+    case "$root" in .) prefix="" ;; *) prefix="${root%/}/" ;; esac
+    tr '\0' '\n' < "$filelist" | awk -v p="$prefix" '
+      index($0, p) == 1 { rest = substr($0, length(p) + 1); j = index(rest, "/"); found = 1
+                          if (j > 1) print substr(rest, 1, j - 1) }
+      END { exit !found }' > "$work/modules" || {
+      printf '%s\n' "FAIL [architecture]: the module root $root in scripts/check.sh holds no file the gate sees."
+      fail=1; continue; }
+    sort -u "$work/modules" | while IFS= read -r module; do
+      grep -qwF -- "$module" "$work/module-map" || {
+        printf '%s\n' "FAIL [architecture]: $prefix$module is a module folder that the '## Module map' of $architecture_file does not name."
+        echo "                     Add its line in the same task (one line: module, responsibility)."
+        : > "$work/module-unnamed"; }
+    done
+  done
+  # The loop above runs in a pipeline's subshell: a file carries its verdict out.
+  [ ! -e "$work/module-unnamed" ] || fail=1
 fi
 
 # ---------------------------------------------------------------------------
