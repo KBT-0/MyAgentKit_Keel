@@ -21,6 +21,14 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-10-15 — v0.11 close-out batch 9b: core templates re-sourced
+
+The templates now carry a source beside each rule (KARARLAR rows in batch9b-report.md). Not
+verified here: the WSL claim that dispatch reads the MZ header rather than the `.exe` name
+(owner-hands, WSL), and whether `claude --bg --exec` survives a session end on native Windows
+(GOTCHAS marks it "Candidate, untested"). The Bazel hermeticity page stands in for the
+evidence row's secondary VirtusLab page and was not fetched in this batch.
+
 ### 2026-10-15 — v0.11 close-out batch 1: a precise guard needs the coarse floor under it
 
 The guard hook was rewritten to read commands as the shell does. Five review rounds (Codex 1,

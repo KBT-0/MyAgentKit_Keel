@@ -13,6 +13,18 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## v0.11 — 2026-10-09
 
+- **Core templates re-sourced** (`core/docs/ARCHITECTURE.md`, `PHASES.md`, `PROJECT.md`,
+  `STATE.md`, `GOTCHAS.md`, `STRONG_REVIEW.md`). ARCHITECTURE.md aims for about 100 lines, says
+  what it holds and finds a contract change's consumers mechanically; PHASES.md asks what the
+  phase must find out; PROJECT.md has a `Web contact` line, supersedes rather than changes a
+  DECIDED item, stamps `Decided: date, approved by`, and an OPEN item stops only that item;
+  GOTCHAS.md says how to recover a dropped stash or staged content, corrects the WSL `.exe`
+  claim (unverified), names the guard hooks, and gains "An incremental build misses its
+  always-run inputs"; sources beside each rule (KARARLAR B09, B10, B11, D03, D05, D08, D09,
+  D10; owner answer 9). **ACTION:** these templates are project-owned, so sync does not touch
+  them: add `**Web contact:**` near the top of `docs/PROJECT.md` (the e-mail guard points at
+  it), change the PROJECT.md rights row to "Supersede ...", optionally copy the new GOTCHAS
+  paragraphs.
 - **Git and e-mail guard hooks** (`.claude/hooks/guard_destructive_git.py`,
   `guard_private_email.py`, `guard_boundaries.py`, `py.sh`, `.claude/settings.json`,
   `core/.githooks/pre-commit`). The destructive-git hook keeps the base rule as a floor (a
