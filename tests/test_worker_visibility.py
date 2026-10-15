@@ -96,6 +96,38 @@ def shq(value):
     return "'" + value.replace("'", "'\\''") + "'"
 
 
+_POSIX = {}
+
+
+def posix(path):
+    """The path as the scripts print it. Native Windows (Git Bash) maps the temp folder to /tmp
+    and C:\\x to /c/x, the form `command -v` and PATH lookups give; elsewhere the path as is."""
+    path = str(path)
+    if os.name != 'nt':
+        return path
+    if path not in _POSIX:
+        _POSIX[path] = subprocess.run(['sh', '-c', 'cygpath -u "$0"', path], capture_output=True,
+                                      text=True, check=True).stdout.strip()
+    return _POSIX[path]
+
+
+def sh_argv(script, args, env, redirect=''):
+    """`sh SCRIPT ARGS...`. On native Windows the command line is re-parsed by the MSYS runtime
+    (a single quote quotes, a newline splits an argument, an empty one can vanish), so an odd
+    argument would reach the script changed: the arguments travel in the environment, quoted.
+    REDIRECT is a shell redirection of the script's output (native Windows only)."""
+    if os.name != 'nt':
+        return ['sh', str(script), *args]
+    env['VIS_ARGV'] = ' '.join(map(shq, args))
+    return ['sh', '-c', 'eval "set -- $VIS_ARGV"; exec sh "$0" "$@"' + redirect, str(script)]
+
+
+# run_script(stdout=DEV_FULL): the script's stdout is a device that refuses every write. Native
+# Windows has no such file for Python to open, but Git Bash has /dev/full, so the shell opens it.
+DEV_FULL = object()
+HAS_DEV_FULL = os.name == 'nt' or os.path.exists('/dev/full')
+
+
 class Base(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -119,12 +151,18 @@ class Base(unittest.TestCase):
         env = {k: v for k, v in os.environ.items()
                if k not in ('WSL_DISTRO_NAME', 'TERM_PROGRAM', 'TMUX', 'TMUX_PANE', 'KIT_WT')}
         path = os.pathsep.join([*map(str, path_first), str(self.bin), os.environ['PATH']])
-        env.update(PATH=path, VIS_STATE=str(self.state), KIT_WT=str(self.bin / 'wt-stub'), **extra)
+        env.update(PATH=path, VIS_STATE=str(self.state), KIT_WT=posix(self.bin / 'wt-stub'), **extra)
+        redirect = ''
+        if stdout is DEV_FULL and os.name == 'nt':
+            stdout, redirect = None, ' >/dev/full'
+        elif stdout is DEV_FULL:
+            stdout = open('/dev/full', 'w')
+            self.addCleanup(stdout.close)
+        argv = sh_argv(script, args, env, redirect)
         if stdout is not None:
-            return subprocess.run(['sh', str(script), *args], cwd=self.cwd, env=env, stdout=stdout,
+            return subprocess.run(argv, cwd=self.cwd, env=env, stdout=stdout,
                                   stderr=subprocess.PIPE, text=True, timeout=60)
-        return subprocess.run(['sh', str(script), *args], cwd=self.cwd, env=env, capture_output=True,
-                              text=True, timeout=60)
+        return subprocess.run(argv, cwd=self.cwd, env=env, capture_output=True, text=True, timeout=60)
 
     def log(self, name):
         path = self.state / (name + '.log')
@@ -157,15 +195,15 @@ class ShowTests(Base):
     WSL = dict(WSL_DISTRO_NAME='Test-1', VIS_SESSIONS='a b-2 c_3')
 
     def wt_line(self, window, *names):
-        args = [str(self.bin / 'wt-stub'), '-w', window]
+        args = [posix(self.bin / 'wt-stub'), '-w', window]
         for i, n in enumerate(names):
             args += [';'] if i else []
-            args += ['new-tab', '--title', n, 'wsl.exe', '-d', 'Test-1', '--exec', str(self.bin / 'tmux'),
+            args += ['new-tab', '--title', n, 'wsl.exe', '-d', 'Test-1', '--exec', posix(self.bin / 'tmux'),
                      'attach', '-t', '=' + n]
-        return 'cd %s && %s' % (shq(str(self.bin)), ' '.join(map(shq, args)))
+        return 'cd %s && %s' % (shq(posix(self.bin)), ' '.join(map(shq, args)))
 
     def osa_line(self, app, *names):
-        cmd = lambda n: '"exec %s attach -t %s"' % (shq(str(self.bin / 'tmux')), shq('=' + n))
+        cmd = lambda n: '"exec %s attach -t %s"' % (shq(posix(self.bin / 'tmux')), shq('=' + n))
         if app == 'iTerm':
             lines = ['tell application "iTerm"', 'activate', 'set w to (create window with default profile)']
             for i, n in enumerate(names):
@@ -197,7 +235,7 @@ class ShowTests(Base):
         for where in ('.', 'sub', '.claude/worktrees/w'):
             with self.subTest(where=where):
                 env = dict(os.environ, PATH=os.pathsep.join([str(self.bin), os.environ['PATH']]),
-                           VIS_STATE=str(self.state), KIT_WT=str(self.bin / 'wt-stub'), **self.WSL)
+                           VIS_STATE=str(self.state), KIT_WT=posix(self.bin / 'wt-stub'), **self.WSL)
                 result = subprocess.run(['sh', str(SHOW), '--print', 'a'], cwd=self.cwd / where, env=env,
                                         capture_output=True, text=True, timeout=60)
                 self.assertIn("'-w' '0' 'new-tab'", result.stdout, result.stderr)
@@ -629,14 +667,14 @@ class ResultTests(Base):
         self.assertIn('  | 1. Approve?', self.watch().stdout)
 
     def test_a_report_that_stdout_refuses_exits_3(self):
-        if not os.path.exists('/dev/full'):
+        if not HAS_DEV_FULL:
             print('NOT RUN: no /dev/full on this host: a report refused by stdout is not tested')
             return
         self.commit(HEAD % ('completed', 'none'))
         for sessions, pane, word in (('w1', 'working-auto.txt', 'DONE'), ('', 'working-auto.txt', 'GONE'),
                                      ('w1', 'permission.txt', 'WAITING')):
-            with self.subTest(word=word), open('/dev/full', 'w') as full:
-                result = self.run_script(WATCH, '--once', '--result', 'w1=docs/w1.md', 'w1', stdout=full,
+            with self.subTest(word=word):
+                result = self.run_script(WATCH, '--once', '--result', 'w1=docs/w1.md', 'w1', stdout=DEV_FULL,
                                          VIS_SESSIONS=sessions, VIS_PANE=str(PANES / pane))
                 self.assertEqual(result.returncode, 3, result.stderr)
                 self.assertIn('could not write its report', result.stderr)

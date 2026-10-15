@@ -4,10 +4,17 @@ tmux is a stub on PATH that records every call, so no real session is touched; t
 is a real one in a throwaway repository, and its removal is clean_worktrees.sh's own, every
 proof included (no --assume-idle: the process listing is the host's). The clock is set two
 hours ahead (CLEAN_WORKTREES_NOW), so the quiet period holds. No branch is ever deleted.
+
+On native Windows the real script takes its Claude Code path, never tmux. The tmux path is
+logic of the same script, so a `uname` stub that says Linux (and a tmux stub) takes it there,
+as the round-2 stubs did; `windows()` says MINGW again for the Claude Code path. What that
+needs from the host is shaped in the helpers below: a Python stub is started through `sh`
+(no `python3` on PATH is assumed), arguments reach the script through the environment (the
+MSYS runtime re-parses a command line), and the audit prints a Windows path with its
+backslashes doubled (clean_worktrees.py show()).
 """
 import os
 from pathlib import Path
-import signal
 import shutil
 import subprocess
 import sys
@@ -18,6 +25,10 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / 'overlays/claude-code/files/scripts/close_worker.sh'
 PROC = os.path.exists('/proc/self/cwd')
+NT = os.name == 'nt'
+# A worktree as the audit prints it: `.claude/worktrees/w1`, on Windows with the escaped
+# backslashes of its show().
+WT_DIR = '.claude\\\\worktrees\\\\' if NT else '.claude/worktrees/'
 
 # Sessions live in a file, one name per line; every call is logged. Every target is exact.
 TMUX = r'''#!/usr/bin/env python3
@@ -63,13 +74,14 @@ if args[0] == 'kill-session':
 
 # Native Windows: the session lister (KIT_PS) prints "<pid> <command line>" for each claude.exe,
 # from the file `claude-procs` in the state folder; taskkill removes the pid it is given (its
-# tree), and logs the call. CLOSE_PS_ERROR: a lister that cannot answer.
+# tree), and logs the call. CLOSE_PS_ERROR: a lister that cannot answer, for the queries that
+# name CLOSE_PS_ERROR_ON (the Codex lister and the session lister are asked separately).
 PS = r"""#!/usr/bin/env python3
 import os, sys
-if os.environ.get('CLOSE_PS_ERROR'):
+query = ' '.join(sys.argv[1:])
+if os.environ.get('CLOSE_PS_ERROR') and os.environ.get('CLOSE_PS_ERROR_ON', '') in query:
     sys.exit(os.environ['CLOSE_PS_ERROR'])
 path = os.path.join(os.environ['CLOSE_STATE'], 'claude-procs')
-query = ' '.join(sys.argv[1:])
 if os.path.exists(path):
     # As Win32_Process's filter does: only the processes whose image name the query names.
     for line in open(path).read().splitlines():
@@ -92,13 +104,58 @@ open(path, 'w').write(''.join(line + '\n' for line in lines if line.split(' ')[0
 """
 
 
+def stub(path, body, python=False, cmd=False):
+    """A program on PATH. Python source (`python`) is started through sh by the interpreter
+    running this suite on native Windows, where a `#!/usr/bin/env python3` line may find none.
+    `cmd`: a program that Python looks up too (the audit's shutil.which); on native Windows
+    that finds only a name with an extension of PATHEXT, so a NAME.cmd shim is written beside it."""
+    path = Path(path)
+    if python and NT:
+        source = path.with_name(path.name + '.stub.py')
+        source.write_text(body, newline='\n')
+        body = '#!/bin/sh\nexec "%s" "%s" "$@"\n' % (Path(sys.executable).as_posix(), source.as_posix())
+        if cmd:
+            path.with_name(path.name + '.cmd').write_text('@"%s" "%s" %%*\r\n' % (sys.executable, source), newline='')
+    path.write_text(body, newline='\n')
+    path.chmod(0o755)
+
+
+def sh_argv(script, args, env):
+    """`sh SCRIPT ARGS...`. The MSYS runtime re-parses a native Windows command line (a single
+    quote quotes, a newline splits an argument), so there the arguments travel in the
+    environment, shell-quoted, and sh rebuilds them."""
+    if not NT:
+        return ['sh', str(script), *args]
+    env['CLOSE_ARGV'] = ' '.join("'" + a.replace("'", "'\\''") + "'" for a in args)
+    return ['sh', '-c', 'eval "set -- $CLOSE_ARGV"; exec sh "$0" "$@"', str(script)]
+
+
+# check.lock held as a gate holds it, by another process: flock on POSIX; on native Windows
+# CreateFileW for read and write, shared for reading only (as check.sh takes it).
+HOLD_FLOCK = ('import fcntl, sys, time\n'
+              'f = open(sys.argv[1], "a"); fcntl.flock(f, fcntl.LOCK_EX)\n'
+              'print("held", flush=True); time.sleep(60)')
+HOLD_WINDOWS = r'''import ctypes, sys, time
+k = ctypes.WinDLL("kernel32", use_last_error=True)
+k.CreateFileW.restype = ctypes.c_void_p
+k.CreateFileW.argtypes = (ctypes.c_wchar_p, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_void_p,
+                          ctypes.c_ulong, ctypes.c_ulong, ctypes.c_void_p)
+h = k.CreateFileW(sys.argv[1], 0xC0000000, 1, None, 4, 0x200080, None)
+assert h not in (None, ctypes.c_void_p(-1).value), ctypes.get_last_error()
+print("held", flush=True)
+time.sleep(60)
+'''
+HOLD = HOLD_WINDOWS if NT else HOLD_FLOCK
+
+
 class CloseWorkerTests(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
         (self.tmp / 'bin').mkdir()
-        (self.tmp / 'bin/tmux').write_text(TMUX)
-        (self.tmp / 'bin/tmux').chmod(0o755)
+        stub(self.tmp / 'bin/tmux', TMUX, python=True, cmd=True)
+        if NT:  # the tmux path of the script; windows() says MINGW again
+            stub(self.tmp / 'bin/uname', '#!/bin/sh\necho Linux\n')
         self.env = dict(os.environ, PATH=str(self.tmp / 'bin') + os.pathsep + os.environ['PATH'],
                         CLOSE_STATE=str(self.tmp), CLEAN_WORKTREES_NOW=str(time.time() + 7200),
                         GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1', LC_ALL='C',
@@ -136,8 +193,8 @@ class CloseWorkerTests(unittest.TestCase):
         return path
 
     def close(self, *args, code=0, **extra):
-        result = subprocess.run(['sh', str(SCRIPT), *args], cwd=self.main, env=dict(self.env, **extra),
-                                capture_output=True)
+        env = dict(self.env, **extra)
+        result = subprocess.run(sh_argv(SCRIPT, args, env), cwd=self.main, env=env, capture_output=True)
         out = (result.stdout + result.stderr).decode('utf-8', 'replace')
         self.assertEqual(result.returncode, code, out)
         return out
@@ -158,9 +215,9 @@ class CloseWorkerTests(unittest.TestCase):
         self.assertEqual(self.sessions(), [])
         self.assertIn('close_worker: w1: tmux session ended; the terminal tab attached to it closes by itself\n', out)
         self.assertFalse(path.exists(), out)
-        self.assertIn('remove .claude/worktrees/w1', out)
+        self.assertIn('remove ' + WT_DIR + 'w1', out)
         log = (self.main / '.git/kit-worktree-removals.log').read_text().splitlines()
-        self.assertEqual(log[-1].split('\t')[2:], ['outcome', os.path.realpath(path), 'removed'])
+        self.assertEqual(log[-1].split('\t')[2:], ['outcome', os.path.realpath(path).replace('\\', '\\\\'), 'removed'])  # the log escapes a backslash
         self.assertIn('close_worker: w1: worktree removed through the audit', out)
         self.assertEqual(self.git('rev-parse', 'worktree-w1'), tip)
         self.assertIn('close_worker: w1: branch worktree-w1 is kept, never deleted here; ', out)
@@ -174,16 +231,15 @@ class CloseWorkerTests(unittest.TestCase):
         index_lock = Path(self.git('rev-parse', '--path-format=absolute', '--git-path', 'index.lock', cwd=path))
         index_lock.write_text('')
         out = self.close('w1', code=1)
-        self.assertIn('close_worker: w1: a git operation holds ' + str(index_lock), out)
+        self.assertIn('close_worker: w1: a git operation holds ' + index_lock.as_posix(), out)
         self.assertEqual(self.calls(), [])
         self.assertTrue(path.exists(), out)
         index_lock.unlink()
-        # check.lock held as check.sh holds it (flock), by another process.
+        # check.lock held as check.sh holds it (flock; on Windows a write handle shared for
+        # reading only), by another process.
         lock = self.git('rev-parse', '--path-format=absolute', '--git-path', 'check.lock', cwd=path)
-        holder = subprocess.Popen([sys.executable, '-c', 'import fcntl, sys, time\n'
-                                   'f = open(sys.argv[1], "a"); fcntl.flock(f, fcntl.LOCK_EX)\n'
-                                   'print("held", flush=True); time.sleep(60)', lock],
-                                  stdout=subprocess.PIPE, text=True)
+        holder = subprocess.Popen([sys.executable, '-c', HOLD, lock], stdout=subprocess.PIPE, text=True)
+        self.addCleanup(holder.stdout.close)
         self.addCleanup(holder.kill)
         self.assertEqual(holder.stdout.readline(), 'held\n')
         out = self.close('w1', code=1)
@@ -202,7 +258,8 @@ class CloseWorkerTests(unittest.TestCase):
             f.write('w1\n')
         outside = self.tmp / 'outside'
         outside.mkdir()
-        result = subprocess.run(['sh', str(SCRIPT), 'w1'], cwd=outside, env=self.env, capture_output=True)
+        env = dict(self.env)
+        result = subprocess.run(sh_argv(SCRIPT, ['w1'], env), cwd=outside, env=env, capture_output=True)
         out = (result.stdout + result.stderr).decode('utf-8', 'replace')
         self.assertEqual(result.returncode, 1, out)
         self.assertIn("the worker's checkout cannot be established here", out)
@@ -212,12 +269,11 @@ class CloseWorkerTests(unittest.TestCase):
     def windows(self, *procs):
         """Native Windows as close_worker.sh sees it: uname says MINGW, no tmux, PROCS (lines of
         "<pid> <command line>") the claude.exe processes running."""
-        for name, body in (('uname', '#!/bin/sh\necho MINGW64_NT-10.0-26200\n'), ('ps-stub', PS),
-                           ('taskkill', TASKKILL)):
-            (self.tmp / 'bin' / name).write_text(body)
-            (self.tmp / 'bin' / name).chmod(0o755)
-        (self.tmp / 'claude-procs').write_text(''.join(line + '\n' for line in procs))
-        return {'KIT_PS': str(self.tmp / 'bin/ps-stub')}
+        stub(self.tmp / 'bin/uname', '#!/bin/sh\necho MINGW64_NT-10.0-26200\n')
+        stub(self.tmp / 'bin/ps-stub', PS, python=True)
+        stub(self.tmp / 'bin/taskkill', TASKKILL, python=True)
+        (self.tmp / 'claude-procs').write_text(''.join(line + '\n' for line in procs), newline='\n')
+        return {'KIT_PS': (self.tmp / 'bin/ps-stub').as_posix()}
 
     def test_on_native_windows_the_claude_session_is_ended_and_the_worktree_removed(self):
         path = self.worker('w1', session=False)
@@ -277,7 +333,13 @@ class CloseWorkerTests(unittest.TestCase):
         self.assertIn('close_worker: w1: the Claude Code session still runs after taskkill (process 100); its worktree is not touched', out)
         self.assertNotIn('clean_worktrees', out)
         self.assertTrue(path.is_dir(), out)
-        out = self.close('w1', code=1, CLOSE_PS_ERROR='Get-CimInstance: access denied', **env)
+        # With a worktree the Codex lister is asked first (its own words); the session lister
+        # fails next. Each can fail alone: the stub answers an error to the queries naming one.
+        out = self.close('w1', code=1, CLOSE_PS_ERROR='Get-CimInstance: access denied', CLOSE_PS_ERROR_ON='codex.exe', **env)
+        self.assertIn('close_worker: FAILED: w1: could not list the Codex processes, so its Codex session may still '
+                      'run: Get-CimInstance: access denied; nothing is done for w1', out)
+        self.assertTrue(path.is_dir(), out)
+        out = self.close('w1', code=1, CLOSE_PS_ERROR='Get-CimInstance: access denied', CLOSE_PS_ERROR_ON='claude.exe', **env)
         self.assertIn('close_worker: FAILED: w1: could not list the Claude Code sessions, so w1 may still run: '
                       'Get-CimInstance: access denied; its worktree is not touched', out)
         self.assertTrue(path.is_dir(), out)
@@ -295,7 +357,7 @@ class CloseWorkerTests(unittest.TestCase):
         out = self.close('w1', code=1)
         self.assertEqual(self.sessions(), [])
         self.assertTrue((path / 'notes.txt').is_file(), out)
-        self.assertIn('keep   .claude/worktrees/w1', out)
+        self.assertIn('keep   ' + WT_DIR + 'w1', out)
         self.assertIn('close_worker: w1: worktree kept: ', out)
         last = out.rstrip('\n').split('\n')[-1]
         self.assertTrue(last.startswith('close_worker: FAILED: w1: worktree kept: '), out)
@@ -322,16 +384,19 @@ class CloseWorkerTests(unittest.TestCase):
                       '(--no-quiet), every other proof stays', out)
         self.assertIn('--only=\'w1\' --no-quiet', out)
         out = self.close('w1', **now)
-        self.assertIn('clean_worktrees: --no-quiet: the quiet period is not applied to .claude/worktrees/w1', out)
+        self.assertIn('clean_worktrees: --no-quiet: the quiet period is not applied to ' + WT_DIR + 'w1', out)
         self.assertFalse(path.exists(), out)
         self.git('rev-parse', '--verify', 'worktree-w1')
 
     def test_the_close_waits_for_a_lingering_session_and_its_processes_before_the_audit(self):
         path = self.worker('w1')
         # A process inside that exits by itself, after the session is gone, like the tool inside it.
-        busy = subprocess.Popen(['sleep', '5'], cwd=path)
+        # Where /proc is polled it must exit within the close's wait. Elsewhere the audit's own
+        # listing has to find it: it runs after seconds of process starts (native Windows is
+        # slow at them), so it outlasts the close and the cleanup kills it.
+        busy = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(%d)' % (5 if PROC else 60)], cwd=path)
         self.addCleanup(busy.wait)
-        self.addCleanup(lambda: busy.poll() is None and busy.send_signal(signal.SIGKILL))
+        self.addCleanup(lambda: busy.poll() is None and busy.kill())
         out = self.close('w1', CLOSE_LINGER='2', code=0 if PROC else 1)
         has = [c for c in self.calls() if c.startswith("['has-session'")]
         self.assertGreaterEqual(len(has), 4, out)  # before the kill, two lingering, one gone
@@ -426,8 +491,7 @@ class CloseWorkerTests(unittest.TestCase):
         with open(self.tmp / 'sessions', 'a') as f:
             f.write('w1\n')
         # The 15 one-second waits pass at once: a `sleep` that returns, first on PATH.
-        (self.tmp / 'bin/sleep').write_text('#!/bin/sh\nexit 0\n')
-        (self.tmp / 'bin/sleep').chmod(0o755)
+        stub(self.tmp / 'bin/sleep', '#!/bin/sh\nexit 0\n')
         out = self.close('w1', code=1, CLOSE_ERROR_AFTER_KILL=denied)
         self.assertIn('close_worker: w1: no worktree at .claude/worktrees/w1; nothing to remove', out)
         self.assertEqual(out.rstrip('\n').split('\n')[-1], 'close_worker: FAILED: w1: could not establish that '

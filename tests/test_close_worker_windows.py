@@ -18,20 +18,9 @@ import time
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from test_close_worker import PS, SCRIPT  # noqa: E402
+from test_close_worker import HOLD_WINDOWS as HOLD, PS, SCRIPT  # noqa: E402
 
 WINDOWS = os.name == 'nt'
-HOLD = r'''import ctypes, sys, time
-k = ctypes.WinDLL("kernel32", use_last_error=True)
-k.CreateFileW.restype = ctypes.c_void_p
-k.CreateFileW.argtypes = (ctypes.c_wchar_p, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_void_p,
-                          ctypes.c_ulong, ctypes.c_ulong, ctypes.c_void_p)
-# As check.sh takes it: read and write, shared for reading only.
-h = k.CreateFileW(sys.argv[1], 0xC0000000, 1, None, 4, 0x200080, None)
-assert h not in (None, ctypes.c_void_p(-1).value), ctypes.get_last_error()
-print("held", flush=True)
-time.sleep(60)
-'''
 
 
 # Forces the archive move's POSIX path on every host, its exclusive rename failing as one the
