@@ -10,9 +10,9 @@ codebase grows.
   and `docs/ARCHITECTURE.md`.
   Produces the task brief (`docs/HANDOFF.md`). Decides model routing. Does not implement.
 - **WORKER** — implements one task in one module. Bound by `AGENTS.md`, the gates, the tests.
-- **REVIEWER** — `docs/REVIEW_GATE.md`. A fresh session that did not write the patch,
-  preferably another model tier or family; one family is enough. Its findings go back to
-  the author's side, to a fresh worker ("Worker cost", rule 2).
+- **REVIEWER** — `docs/REVIEW_GATE.md`. A fresh session that did not write the patch; the
+  working mode names who takes it (`docs/REVIEW_GATE.md`, "Invariant"). Its findings go back
+  to the author's side ("Worker cost", rule 2).
 
 {{OWNER_NAME}} alone decides: OPEN design items, taste and balance calls, scope, and whether
 a risky change ships. Agents propose; {{OWNER_NAME}} decides.
@@ -48,7 +48,7 @@ so an A/B counts only sessions started fresh on its side.
    backstop, not the plan, and agents never bypass it with `--no-verify`.
 5. **Review by tier:** the brief's `Risk:` line names the tier, and the tier names the
    review (`docs/REVIEW_GATE.md`, "Risk tiers"): one light reviewer for low, one for medium,
-   two in parallel for high ({{RISKY_AREAS}}, gates, hooks, check scripts, review tooling).
+   two for high ({{RISKY_AREAS}}, gates, hooks, check scripts, review tooling).
    It runs before commit, in a FRESH session. The author never approves their own patch.
 6. **Document:** if a public API changed, update that module's README in the same task.
 7. **Update `docs/STATE.md`:** active work and what waits on {{OWNER_NAME}}, with a
@@ -191,12 +191,9 @@ disposable, and neither one is ever tracked inside the other.
 Gates get their own rules because they fail differently from ordinary code: when a gate
 breaks, everything keeps looking green.
 
-- **Prove it RED before you call it done.** Construct the failure condition, watch the gate
-  reject it, then undo it. A gate observed only passing is an untested branch that runs on
-  every commit.
-- **Ship a negative test with it** — `./scripts/check.sh --self-test`. A new gate adds its
-  case there in the same task. A manual proof rots the moment someone edits the script; the
-  automated one does not.
+- **Prove it RED, and keep it red with a negative test.** Construct the failure condition,
+  watch the gate reject it, undo it, and add the case to `./scripts/check.sh --self-test` in
+  the same task (the kit's `docs/gates-must-be-proven-red.md`).
 - **A self-test case never changes a tracked file**, and leaves nothing in the working tree
   but files Git ignores: the self-test fails when HEAD, the index, `git status --porcelain
   --untracked-files=all` or content hashes of tracked and untracked non-ignored files differ
@@ -342,17 +339,21 @@ anyone remembering it.
 - **Gates are tool-agnostic:** `scripts/check.sh` runs the same everywhere. Any tool's own
   hooks are early feedback, never the rule itself; `.githooks/pre-commit` is the gate that
   actually holds, for every tool.
-- **Cross-tool review is preferred:** author and reviewer being different tools reduces
-  correlated blind spots. Which tool takes which role is configuration, not doctrine — when
-  the author's budget runs short, swap them rather than dropping the review.
+- **A second tool or family is welcome, never required:** it reduces correlated blind spots
+  but does not remove them, and the one controlled measurement found the direction asymmetric
+  (the kit's `docs/research/claude-lead-codex.md`, finding 4). Which tool takes which role is
+  configuration, not doctrine — when the author's budget runs short, swap them rather than
+  dropping the review.
 - **A second agent's output is untrusted INPUT to a decision the calling agent owns**, never
   a verdict to relay verbatim. Verify each finding against the code: drop what is disproved,
   keep what is confirmed, and treat a confirmed critical finding as a stop signal.
 - **A worker's "not done" or "noticed, not fixed" line about something the brief asked for
   is a finding.** The lead has it fixed before the merge. A worker's list of new ideas is a
   question for {{OWNER_NAME}}, never an automatic next round.
-- Agents do not spend another tool's budget on their own initiative. {{OWNER_NAME}} asks for
-  it in the session, or it does not happen.
+- The review gate the brief's `Risk:` tier requires starts without asking, in the family
+  the working mode names. An extra review beyond it (another family, a higher effort, a paid
+  backend) spends budget the gate did not plan: {{OWNER_NAME}} asks for it in the session, or
+  it does not happen (`/myagentkit:cross-review`).
 
 ## Parallel work — worktree policy
 
@@ -430,8 +431,8 @@ a few errands per model) and move the tiers by it (rule 5).
 
 The principle behind whatever the table says: **spend the scarce budget on judgement and the
 generous one on volume.** The review of a risky diff stays mandatory, in a fresh session
-with no shared context: that is what decorrelates its judgement from the author's. Another
-tier of the same family is enough; a second vendor adds more distance and is pluggable.
+with no shared context: that is what decorrelates its judgement from the author's
+(`docs/REVIEW_GATE.md`, "Invariant", says who takes it).
 
 The table decides the AUTHOR and REVIEWER roles, and it is allowed to change its mind. If
 the generous budget is the stronger model this month, it authors and the scarcer one
@@ -555,8 +556,8 @@ alike. The lead is the session that plans with the owner, whichever side it runs
 
 | Mode | Turkish name | Writes | Reviews | Fixes the findings |
 |---|---|---|---|---|
-| `solo` | Tek Model Modu (main mode) | one model family's workers, by tier | a fresh session of another tier of the same family | a fresh worker of the author's tier |
-| `cross` | Çapraz Mod | both families, each task by fit | the other family by the direction rule, in a fresh session | a fresh worker of the author's side |
+| `solo` | Tek Model Modu (main mode) | one model family's workers, by tier | a fresh session of another tier of the same family | the author's side ("Worker cost", rule 2) |
+| `cross` | Çapraz Mod | both families, each task by fit | the other family by the direction rule, in a fresh session | the author's side ("Worker cost", rule 2) |
 | `saver` | Tasarruf Modu | the side that is not low | the low side, within a small budget | the side that is not low |
 
 #### solo (Tek Model Modu), the main mode
@@ -571,8 +572,8 @@ codex` runs the same rules on Codex's tiers.
 - **Reviews and fixes:** the author and the reviewer are different tiers, each in a fresh
   bridged session with no shared context: Opus authors and Fable or Sonnet reviews, or the
   reverse; the lead picks both by the tier table. A second session of the author's own tier
-  is never the review. Findings go to a fresh worker of the author's side ("Worker cost",
-  rule 2), and the next round reviews the fix. Two tiers decorrelate less than two vendors;
+  is never the review. Findings go to the author's side ("Worker cost", rule 2), and the
+  next round reviews the fix. Two tiers decorrelate less than two vendors;
   fresh sessions with no shared context are what keeps the review independent.
 - **The reviewer:** `scripts/review.sh --reviewer claude` (or `DEFAULT_REVIEWER="claude"`)
   with `REVIEW_CLAUDE_MODEL` set for that run to the tier that did not write the change. It
@@ -603,13 +604,15 @@ evidence: `docs/research/claude-lead-codex.md`, recommendations 1 to 11).
   brief"), the two sides never share a file, and `scripts/review.sh` refuses a review whose
   diff leaves them. Each author works in its own short-lived worktree; one side lands, the
   other rebases.
-- **Direction rule:** Claude reviews what Codex wrote, at every tier. Codex reviews what
-  Claude wrote at medium and high tier, one pass, report only, at medium effort, and the
-  lead checks each Codex finding before it enters a fix round; a low-tier Claude change gets
-  its light review from another Claude tier, as in solo. A high-tier change has two labels
-  (`docs/REVIEW_GATE.md`, "Risk tiers"): for critical work Claude wrote, the strongest
-  Claude tier takes one and Codex the other. Findings go to a fresh worker of the author's
-  side, and at most two rounds run under one label.
+- **Direction rule:** the family that did not write a change reviews it, at every tier
+  (owner decision, 2026-10-15). Claude reviews what Codex wrote. Codex reviews what Claude
+  wrote, a low-tier change's light pass included, one pass, report only, at medium effort, and
+  the lead checks each Codex finding before it enters a fix round. When Codex's allowance is
+  exhausted, another Claude tier than the author's takes the review, and the lead records the
+  switch in the task's STATE line and reports it. A high-tier change has two focus reviewers
+  under one label (`docs/REVIEW_GATE.md`, "Risk tiers"): for critical work Claude wrote, the
+  strongest Claude tier takes one focus and Codex the other. Findings go to the author's side
+  ("Worker cost", rule 2), and each focus has at most two rounds.
 - **Quota:** before the switch to cross and before a large Codex errand, the lead reads
   Codex's allowance (`python3 scripts/codex_quota.py`). A Codex worker stopped by its quota
   leaves its session id in the task's STATE line, and `spawn_codex.sh ... --resume`
@@ -700,14 +703,15 @@ Rules, binding for whoever routes workers:
    that waits on long jobs or must outlive the lead; an ordinary errand runs as a sub-agent,
    and the lead never opens visible sessions to show the workflow, because each one is a
    full session's bill.
-2. **Gate findings go to a fresh worker of the author's side**, briefed with the findings,
-   the branch and the files to read; in saver mode, to the side that is not low. The gate's
-   reviewer is a headless process in a throwaway copy, so it cannot be resumed. Only inner
-   rounds ("Review inside the worker") go back to the worker that wrote the change (a
-   resumed sub-agent, or the same separate session) while its context is not spent: a fresh
-   worker re-reads the whole context to change a few lines. A fresh worker takes such a
-   round when the context is spent (near rule 3's limit) or the fix is a redesign. The
-   gate's reviewer is fresh in every round; no session reviews its own change.
+2. **Gate findings go to the author's side**; in saver mode, that is the side that is not
+   low. A small, local fix goes back to the worker that wrote the change (a SendMessage
+   resume, or the same separate session) while its context is under the context band (rule 8)
+   and the fix is not a redesign: a fresh worker re-reads the whole context to change a few
+   lines. Otherwise (context past the band, a redesign, or two failed corrections of the same
+   finding) a fresh worker takes it, briefed with the findings, the branch and the files to
+   read. Inner rounds ("Review inside the worker") follow the same rule. The gate's reviewer
+   is a headless process in a throwaway copy, fresh in every round; no session reviews its
+   own change, and sending a fix back to its author is routing, not review.
 3. **One small task per worker**, sized to end under roughly 150 requests (`maxTurns` in the
    worker definition enforces it). Split before starting: a mechanism first, then its uses.
 4. **The lead does not poll either.** It waits for task notifications or an idle notice from
@@ -728,20 +732,16 @@ Rules, binding for whoever routes workers:
 6. **Parallel workers only for independent modules**; each one multiplies the bill. The lead
    runs heavy background jobs (a gate, a self-test, a review, a build, a `codex exec`
    errand) within a memory budget: two at a time until the lead has measured its host, then
-   (free memory minus a 4 GB reserve) divided by the measured peak of one job.
-   Start the two reviewers together when two slots are free; heavy jobs already running take slots. Start the self-test with them only when all three jobs
-   fit within the budget. With a budget of two, start both reviewers first, then the self-test
-   when one reviewer ends. Never reduce the reviews; run them one after the other only when
-   the owner is away and at least one job fits the budget, as defined below; the self-test waits. A review round's floor is the two reviewers. When the budget is below two, the lead first frees memory it owns
-   (waits for or closes its own finished jobs, never ending running work without a reason)
-   and starts the round only when two jobs fit; the self-test and every other heavy job wait
-   until a reviewer ends. If two never fit after that, the lead asks the owner.
-   When the owner gives no answer to that question within one review timeout
-   (`REVIEW_TIMEOUT_SECONDS`), the owner is away. When the owner is away and at least one job fits the
-   budget, the lead runs the two reviewers one after the other as a recorded exception (a line in the lead's
-   RESULT/notes file names the budget figure) rather than waiting without limit.
-   When not even one job fits, the review round stays blocked and the lead reports the capacity
-   figure to the owner; nothing heavy starts. Read free
+   (free memory minus a 4 GB reserve) divided by the measured peak of one job; heavy jobs
+   already running take slots. Paid reviews run one after the other (rule 1); the two
+   reviewers of a high-tier round run together only when {{OWNER_NAME}} allows it for that
+   round and two slots are free. The self-test starts beside a review when the budget has a
+   slot for it, otherwise when the review ends. Never reduce a tier's reviews: a high-tier
+   round's floor is its two reviewers, a low or medium round's its one (`docs/REVIEW_GATE.md`,
+   "Risk tiers"). When not even one job fits, the lead first frees memory it owns (waits for or
+   closes its own finished jobs, never ending running work without a reason); if one still does
+   not fit, the review round stays blocked and the lead reports the capacity figure to the
+   owner; nothing heavy starts. Read free
    memory with `Get-CimInstance Win32_OperatingSystem | Select FreePhysicalMemory` in
    PowerShell on Windows, `free -g` on Linux, `vm_stat` or `memory_pressure` on macOS. Measure
    a job's peak on your host; one measured example: a review or gate took 1–2 GB on native
@@ -1022,12 +1022,15 @@ reviews are never reduced (`docs/REVIEW_GATE.md`, "Risk tiers"); prevention
 is what lets its first round find nothing. A project or a kit that spends its budget
 reviewing itself fails at its purpose, which is the product.
 
-"In parallel" means the reviewers; the self-test follows "Worker cost", rule 6.
+"In parallel" means the review inside the worker and the self-test beside a review; the gate's
+reviewers run one after the other unless {{OWNER_NAME}} allows parallel ("Worker cost", rule 6).
 
 In one project a feature took five fix rounds in about seven hours. Each round cost a fresh
 worker re-reading 100k to 300k tokens (20 to 60 minutes), a ten-minute self-test, reviews of
 5 to 15 minutes and a merge with another self-test. Most findings of rounds 2 to 5 sat in code
-the previous fix had added, in classes the reviewers had already shown once. The rules below
+the previous fix had added, in classes the reviewers had already shown once. A fix is new,
+unreviewed code: 15 to 24 percent of fixes in large systems were themselves wrong (Yin et al.
+2011). The rules below
 move the review into the worker's warm context and run together what can run together. They
 remove no review.
 
@@ -1037,7 +1040,9 @@ remove no review.
   deletes or moves files, rewrites history, or changes a gate.
 - The design names what the mechanism protects, what it excludes by decision, its rules, and
   the cases in which it still loses data or fails: the threat model every review loop needs
-  before its first round, with the stopping rule (`docs/REVIEW_GATE.md`, "Rounds").
+  before its first round, with the stopping rule (`docs/REVIEW_GATE.md`, "Rounds"). The design
+  page writes the stopping rule as a line: the loop ends at the first round with no High
+  inside this model.
 - The design is reviewed under its own review label (`docs/REVIEW_RUNNING.md`, "Rounds,
   labels and designs"). Code starts after that review.
 - The design's exclusions are the dispositions for later code rounds. A finding inside an
@@ -1045,8 +1050,8 @@ remove no review.
 - The kit repository's `docs/worker-lifecycle-options.md` shows the shape: the facts, the
   options with their costs, and what a second model should attack.
 
-A design round on one page takes about fifteen minutes, and the same flaw found in code
-costs a fix round.
+In the kit's own two observed cases a one-page design round took about fifteen minutes where
+the same flaws cost hours of code rounds (the kit's RESEARCH_LOG, 2026-10-03).
 
 ### Review inside the worker
 
@@ -1055,7 +1060,7 @@ costs a fix round.
   `diff-reviewer`), fixes what the review finds, and starts a new fresh reviewer on the
   result. This inner pass is the author's side's early check; the gate's review in a fresh
   session follows `docs/REVIEW_GATE.md` and `docs/REVIEW_RUNNING.md`, and its findings go
-  to a fresh worker of the author's side ("Worker cost", rule 2).
+  to the author's side ("Worker cost", rule 2).
 - Each inner round's prompt carries the earlier inner rounds' findings and the worker's
   dispositions (`docs/REVIEW_GATE.md`, "Findings and dispositions").
 - The reviewer is a new sub-agent in every inner round, because the author never reviews its
@@ -1069,14 +1074,16 @@ costs a fix round.
 - The inner rounds do not replace the lead's review. A risky diff still passes
   `docs/REVIEW_GATE.md` before the merge, and the inner rounds make that review shorter.
 
-A fix in the worker's warm context, in an inner round, costs minutes. The same finding left
+A fix in the worker's warm context, in an inner round, costs minutes while the cache is warm.
+The same finding left
 for the gate's review goes to a fresh worker, which pays the whole re-read. The brief states which of the two cases it expects (`docs/HANDOFF.md`,
 "The brief").
 
 ### Before you report
 
 A worker goes through `docs/REVIEW_GATE.md`, "What a reviewer attacks first", against its own
-diff before it reports. It fixes each hit or names it in the report. A class the reviewer has
+diff before it reports. It fixes each hit or names it in the report. The same list goes into
+the inner reviewer's prompt ("Review inside the worker"). A class the reviewer has
 already shown once costs a whole round when the worker leaves it for the reviewer to find again.
 
 ### The lead's steps when a branch is ready
@@ -1095,9 +1102,9 @@ The shell stays in the lead's checkout, so its Stop hook runs that checkout's ga
    The self-test runs once per batch, never between worker rounds while
    workers wait for it, because each run locks the checkout and every waiting worker pays
    for the wait. CI runs on the same commit.
-3. Keep one review label per reviewer of a change for its rounds (a high-tier change has two,
-   one per focus), so that each round carries the earlier ones and the two-round limit holds
-   (`docs/REVIEW_GATE.md`, "Rounds"). The merged diff
+3. Keep one review label per change for its rounds (a high-tier change's two focus reviewers
+   share it, two rounds each), so that each round carries the earlier ones and the two-round
+   limit holds (`docs/REVIEW_GATE.md`, "Rounds"). The merged diff
    then gets ONE final review under a label never used before, at high effort, by a session
    that did not write its larger part.
 4. Fix a Critical or High finding of the final review; a Medium goes to {{OWNER_NAME}} and a
@@ -1109,7 +1116,8 @@ The shell stays in the lead's checkout, so its Stop hook runs that checkout's ga
    fails, tell the next worker to rebase onto the fix.
 
 Each step that waits on another adds its whole duration to the round. No step needs another
-step's result before it starts; the memory budget can still require a wait.
+step's result before it starts; the memory budget can still require a wait, and paid reviews
+run one after the other ("Worker cost", rule 6).
 
 What the watcher reports decides the lead's next step for a spawned worker:
 

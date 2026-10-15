@@ -30,9 +30,9 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'REVIEW_SHADOW', 'MYAGENTKIT_TASK_I
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 195, 'test_agent_usage': 33, 'test_codex_quota': 5}
+SUITE_MINIMUMS = {'test_claude_bridge': 199, 'test_agent_usage': 33, 'test_codex_quota': 5}
 # These are executed cases, excluding only the explicitly declared POSIX exclusions.
-WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 169, 'test_agent_usage': 29, 'test_codex_quota': 4}
+WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 173, 'test_agent_usage': 29, 'test_codex_quota': 4}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -971,8 +971,10 @@ class BridgeTests(unittest.TestCase):
     def test_fallback_duration_matches_default_attempt_budgets(self):
         import agent_process
         guide = (ROOT.parent / 'docs/REVIEW_RUNNING.md').read_text()
-        duration = re.search(r'two timed-out default\s+attempts can take about (\w+) minutes', guide)
+        duration = re.search(r'two timed-out attempts\s+take about 2 x `REVIEW_TIMEOUT_SECONDS`\s+'
+                             r'\(about (\w+) minutes at the default (\d+) s\)', guide)
         self.assertIsNotNone(duration)
+        self.assertEqual(int(duration[2]), agent_process.DEFAULT_REVIEW_TIMEOUT)
         self.assertEqual({'sixty': 60, 'ninety': 90}[duration[1]] * 60,
                          2 * agent_process.DEFAULT_REVIEW_TIMEOUT)
 
@@ -3585,9 +3587,12 @@ if case == 'archive_failure':
         # no fix sketch, a clean review is valid, Pre-existing items stay out of the verdict.
         # Owner decision 2026-10-13: a Lows-only review is a plain Accept (accept_allows, GATE:
         # a Low goes to the backlog), so the verdict rule no longer sends a Low to manual checks.
+        # KARARLAR B01-2 inv2#25: a doubt with no file, line and trigger is no finding, even in
+        # the first priority; it goes under Manual checks for the owner.
         asks = ('A clean review is a valid result', 'Severity, for this project', 'Pre-existing:',
+                'is no finding: write it under Manual checks',
                 'at most five Low', 'You are in a throwaway copy', 'NOT RUN', 'Never use the network',
-                'Accept with Manual Checks when a Medium or a deferred finding remains',
+                'Accept with Manual Checks when a Medium, a deferred finding or a first-priority doubt remains',
                 'Accept otherwise, Lows and Pre-existing items included') + (
                     ('You have no shell on this host', 'mark each finding REASONED') if WINDOWS else
                     ('run anything inside this copy', 'Run the suite and reproductions', 'REPRODUCED',
@@ -3595,7 +3600,7 @@ if case == 'archive_failure':
         forbidden = ('Do not run tests', 'run code', 'SHOULD run', 'worktree add --detach',
                      'If your tools can execute', 'edit files in this checkout',
                      'never change the reviewed checkout', 'Fix sketch:', 'EVERY finding', str(self.repo),
-                     'a Medium, a Low')
+                     'a Medium, a Low', 'which is Medium')
         # The direct adapter's --task-file audit (the review SKILL documents it) silently lost
         # its brief when the review branch took its Task block from REVIEW_TASK_FILE alone.
         brief = self.root / 'brief.md'
@@ -4648,6 +4653,82 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         self.assertEqual(code, 2, refused)
         self.assertIn('400000 bytes', refused['error'])
         self.assertIn('fresh MYAGENTKIT_TASK_ID', refused['error'])
+
+    def test_lock_and_vendored_files_spend_no_diff_budget(self):
+        # KARARLAR B02 inv2#34: a lock file or a vendored tree counts toward no budget (Cloudflare and
+        # Anthropic's REVIEW.md skip them); it still reaches the reviewer, and code alone is limited.
+        (self.repo / 'package-lock.json').write_text('{"x": "' + 'y' * 410_000 + '"}\n')
+        code, result = self.run_bridge()
+        self.assertEqual(code, 0, result)
+        (self.repo / 'package-lock.json').unlink()
+        (self.repo / 'big.py').write_text('z' * 410_000 + '\n')
+        code, refused = self.run_bridge()
+        self.assertEqual(code, 2, refused)
+        self.assertIn('400000 bytes', refused['error'])
+        noise = (b'diff --git a/vendor/lib.py b/vendor/lib.py\n@@ -0,0 +1 @@\n+v\n'
+                 b'diff --git "a/x y/yarn.lock" "b/x y/yarn.lock"\n@@ -1 +1 @@\n-a\n+b\n')
+        code_part = b'diff --git a/file.py b/file.py\n@@ -1 +1 @@\n-original\n+changed\n'
+        self.assertEqual(bridge.budgeted(noise + code_part), (len(code_part), 2))
+
+    def test_a_large_diff_gets_a_split_hint_once_before_the_hard_limit(self):
+        # KARARLAR B02 inv2#34: a soft "split the task" hint before the byte refusal, printed once
+        # per review: by the dispatcher's preflight or a direct adapter, not again inside a chain.
+        from contextlib import redirect_stderr
+        head = self.git('rev-parse', 'HEAD').stdout.decode().strip()
+        big = 'diff --git a/file.py b/file.py\n@@ -0,0 +1,401 @@\n' + '+x\n' * 401
+        lock = 'diff --git a/Cargo.lock b/Cargo.lock\n@@ -0,0 +1,900 @@\n' + '+x\n' * 900
+        for diff, chain, hinted in ((big, None, True), (big, 'a-chain', False), (lock, None, False),
+                                    (big[:200], None, False)):
+            with self.subTest(diff=diff[:40], chain=chain):
+                os.environ.pop('MYAGENTKIT_REVIEW_CHAIN_ID', None)
+                if chain:
+                    os.environ['MYAGENTKIT_REVIEW_CHAIN_ID'] = chain
+                err = io.StringIO()
+                with redirect_stderr(err):
+                    self.assertEqual(bridge.prior_rounds(self.repo, None, 'uncommitted', None, head, diff), '')
+                self.assertEqual('split the task' in err.getvalue(), hinted, err.getvalue())
+
+    def test_both_reviewers_read_one_list(self):
+        # KARARLAR B01 inv2#112/#120: one reading list, one constant, for both reviewers;
+        # docs/PROJECT.md and docs/PHASES.md join it only for a change to design or phases.
+        names = {}
+        for adapter in ('claude', 'codex'):
+            log = self.root / (adapter + '-prompt.txt')
+            if adapter == 'claude':
+                code, result = self.run_bridge(env_extra={'PROMPT_LOG': str(log)})
+                self.assertEqual(code, 0, result)
+            else:
+                run = subprocess.run(
+                    [sys.executable, '-B', str(ROOT / 'codex_bridge.py'), '--repo', str(self.repo),
+                     '--model', 'fixture-codex-model', '--uncommitted'],
+                    env=dict(os.environ, REVIEW_CLI_BIN=str(self.build_fake_codex()), PROMPT_LOG=str(log),
+                             MYAGENTKIT_DELEGATION_DEPTH='0'), capture_output=True, text=True)
+                self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+            prompt = log.read_text(encoding='utf-8')
+            names[adapter] = re.split(r',\s*|\s+and\s+', re.search(r'Read (.*?) first', prompt).group(1))
+            self.assertIn('docs/PROJECT.md and docs/PHASES.md', prompt)
+        self.assertEqual(names['claude'], list(bridge.REVIEW_DOCS))
+        self.assertEqual(names['codex'], names['claude'])
+
+    def test_each_focus_reviewer_of_one_label_has_its_own_two_rounds(self):
+        # KARARLAR B02 inv2#10: a high-tier change keeps one label; the round limit and the
+        # carried rounds belong to the pair (label, REVIEW_FOCUS), two rounds for each focus.
+        log = self.root / 'prompt.txt'
+        base = {'PROMPT_LOG': str(log), 'MYAGENTKIT_TASK_ID': 'focus-task'}
+        logic, portability = dict(base, REVIEW_FOCUS='logic'), dict(base, REVIEW_FOCUS='portability')
+        code, first = self.run_bridge('reject', env_extra=logic)
+        self.assertEqual(code, 0, first)
+        self.assertEqual(json.loads(Path(first['usage_record']).read_text())['task']['focus'], 'logic')
+        self.assertEqual(self.run_bridge('reject', env_extra=portability)[0], 0)
+        self.assertNotIn('### Round', log.read_text())
+        code, second = self.run_bridge('accept', env_extra=logic)
+        self.assertEqual(code, 0, second)
+        self.assertEqual(log.read_text().count('### Round '), 1, log.read_text())
+        self.assertIn('This is review round 2', log.read_text())
+        self.assertEqual(self.run_bridge('accept', env_extra=portability)[0], 0)
+        code, refused = self.run_bridge(env_extra=logic)
+        self.assertEqual(code, 2, refused)
+        self.assertIn('REVIEW_ROUND_EXCEPTION', refused['error'])
 
     def test_dispositions_without_a_key_are_refused_before_any_model_runs(self):
         # Item F: the usage summary counts the author's answers, so a file that answers no
