@@ -10,6 +10,9 @@ import time
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
+# The hook gates CLAUDE_PROJECT_DIR when it is set; a suite run from a Claude Code session
+# would otherwise gate that session's project instead of each test's repository.
+os.environ.pop('CLAUDE_PROJECT_DIR', None)
 HOOK = ROOT / 'overlays/claude-code/files/.claude/hooks/gate_on_stop.sh'
 
 
@@ -228,6 +231,22 @@ class StopHookTests(unittest.TestCase):
                                     env=dict(os.environ, PATH=str(shim) + os.pathsep + os.environ['PATH']))
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertFalse((root / 'looked').exists())
+
+    def test_a_cd_into_another_checkout_still_gates_the_session_project(self):
+        # Claude Code runs a hook in the current directory, which follows a `cd`: a lead that
+        # cd'd into a clean worker worktree finished its turn with its own red change ungated.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            hook = gated_repo(root, 'echo ran > gate-ran\nexit 1\n')
+            worker = root / '.claude/worktrees/w1'
+            worker.mkdir(parents=True)
+            subprocess.run(['git', 'init', '-q', str(worker)], check=True)
+            result = subprocess.run(['sh', str(hook)], cwd=worker, input='{}', text=True,
+                                    capture_output=True, timeout=60,
+                                    env=dict(os.environ, CLAUDE_PROJECT_DIR=str(root)))
+            self.assertEqual(result.returncode, 2, result.stderr)
+            self.assertIn('GATE FAILED', result.stderr)
+            self.assertTrue((root / 'gate-ran').exists())
 
     def test_worker_and_ignored_sentinels_do_not_skip_the_leads_gate(self):
         with tempfile.TemporaryDirectory() as tmp:

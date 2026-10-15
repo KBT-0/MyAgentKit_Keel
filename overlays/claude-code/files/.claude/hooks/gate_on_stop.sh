@@ -17,7 +17,9 @@ case "$input" in
   *'"stop_hook_active":true'*|*'"stop_hook_active": true'*) exit 0 ;;
 esac
 
-root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+# Claude Code runs a hook in the current directory, which follows a `cd`; CLAUDE_PROJECT_DIR
+# stays at the session's root (code.claude.com/docs/en/hooks).
+root=$(git -C "${CLAUDE_PROJECT_DIR:-.}" rev-parse --show-toplevel 2>/dev/null) || exit 0
 CDPATH= cd -- "$root" || exit 0
 
 # Only work in these paths needs the gate; documentation and tooling turns skip it, which is
