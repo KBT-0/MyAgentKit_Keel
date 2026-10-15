@@ -21,6 +21,16 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-10-15 — v0.11 close-out batch 12: Unity overlay facts
+
+The MCP for Unity v10.3.0 source shows GameObject delete is not undoable (its comment says
+"delete isn't undoable"), and ManageAsset (delete, move) and ManageScript (File.WriteAllText)
+record no Undo, so the evidence's "undoable for scene/GameObject edits" was too broad. Unity's
+manual answers the open `-quit` question: with `-runTests` it quits the Editor before tests in
+progress finish. `-logFile -` is documented. The IvanMurzak MCP README now says 70+ tools (the
+evidence said 100+). Unity's manual says nothing on `-nographics` with PlayMode tests; forum
+claims were not written.
+
 ### 2026-10-15 — v0.11 close-out batch 6: worker lifecycle facts
 
 Claude Code 2.1.300 offers a sub-agent the Agent tool (nesting on; the vendor default is

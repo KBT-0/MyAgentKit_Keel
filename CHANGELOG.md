@@ -13,6 +13,18 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## v0.11 — 2026-10-09
 
+- **Unity overlay re-checked against Unity's docs and the MCP for Unity v10.3.0 source**
+  (`overlays/unity/`, `patterns/pure-core-plus-engine.md`). UnityYAMLMerge is set up as a
+  mergetool, not a merge driver (Unity documents only the mergetool); a `file:` package path is
+  relative to `Packages/`; the assembly whitelist names its precompiled-DLL and `autoReferenced`
+  holes; the concurrency rule covers serialized files only; MCP cost depends on the client; only
+  some MCP edits are Undo steps (delete, asset delete/move and script edits are not), so git is
+  the undo that always works; `-logFile` and the results path are absolute; `-quit` is not used
+  with `-runTests` (Unity's manual: it quits before tests finish); the gate's comments no longer
+  claim undocumented Unity behaviour, and `unity_gate.sh --self-test` runs from a relative path.
+  Sources: KARARLAR B13, B12 inv3#147, B14 inv3#153, D09 inv3#72, D10 inv3#148-149.
+  **ACTION:** a Unity project takes the overlay's updated `AGENTS.md`, `UNITY_SETUP.md`,
+  `unity_gate.sh` and the `.gitignore` fragment.
 - **Worker lifecycle** (`scripts/spawn_worker.sh`, `spawn_codex.sh`, `close_worker.sh`,
   `watch_workers.sh`, `clean_worktrees.py`, `.claude/agents/worker.md`, `docs/HANDOFF.md`).
   A spawned worker's worktree is locked (`git worktree lock`, reason `kit worker NAME`) until
