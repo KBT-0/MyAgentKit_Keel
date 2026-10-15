@@ -380,10 +380,15 @@ class GitHookTests(unittest.TestCase):
     def test_the_owner_may_allow_ai_attribution(self):
         with tempfile.TemporaryDirectory() as tmp:
             root, git = self.repo(tmp)
-            (root / 'AGENTS.md').write_text('AI tools may be credited.\n')
-            for trailer in ('Co-Authored-By: Claude <noreply@anthropic.com>', 'Assisted-by: Claude:claude-opus', 'Assisted-by: LLM [Claude]'):
-                result = self.commit(root, git, trailer)
-                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            trailers = ('Co-Authored-By: Claude <noreply@anthropic.com>', 'Assisted-by: Claude:claude-opus',
+                        'Assisted-by: LLM [Claude]')
+            # Each case is refused under the rule, so only the opt-in lets it through.
+            for agents, expected in (('No AI attribution in git.\n', 1), ('AI tools may be credited.\n', 0)):
+                (root / 'AGENTS.md').write_text(agents)
+                for trailer in trailers:
+                    with self.subTest(agents=agents, trailer=trailer):
+                        result = self.commit(root, git, trailer)
+                        self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
 
     def docs(self, root, git, state='', backlog=''):
         (root / 'docs').mkdir(exist_ok=True)

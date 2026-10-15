@@ -13,8 +13,8 @@ last nudge is kept beside the transcript (`<session>.progress-step`, with the id
 the count started from) and the same count never nudges twice. A competing call stays silent.
 The transcript may lag the turn by a record or two, so a nudge can come one call late.
 At most three nudges are emitted per silent interval; text or compaction resets the limit.
-It reads only the tail of the transcript, because it runs on every tool call. Silent on any
-error.
+It reads only the tail of the transcript, because it runs on every tool call; a silence whose
+start has left the tail keeps its saved count and limit. Silent on any error.
 """
 import json
 import os
@@ -29,8 +29,9 @@ STEP = 5
 TAIL = 512 * 1024  # bytes; a turn with five tool calls fits many times over
 
 
-def silent_calls(path: Path) -> tuple[int, object]:
-    """Tool calls since the last visible text or compaction, and the id of that record."""
+def silent_calls(path: Path) -> tuple[int, object, bool]:
+    """Tool calls since the last visible text or compaction, the id of that record, and whether
+    that record lies before the tail (then the count covers only the tail)."""
     with open(path, 'rb') as stream:
         stream.seek(0, 2)
         size = stream.tell()
@@ -38,7 +39,7 @@ def silent_calls(path: Path) -> tuple[int, object]:
         lines = stream.read().decode('utf-8', errors='replace').splitlines()
     if size > TAIL:
         lines = lines[1:]  # the first line is cut
-    total, mark = 0, None
+    total, mark, seen = 0, None, False
     for line in lines:
         try:
             rec = json.loads(line)
@@ -47,15 +48,15 @@ def silent_calls(path: Path) -> tuple[int, object]:
         if not isinstance(rec, dict) or rec.get('isSidechain'):
             continue
         if rec.get('type') == 'system' and rec.get('subtype') == 'compact_boundary':
-            total, mark = 0, rec.get('uuid')
+            total, mark, seen = 0, rec.get('uuid'), True
             continue
         content = (rec.get('message') or {}).get('content') if rec.get('type') == 'assistant' else None
         if not isinstance(content, list):
             continue
         if any(b.get('type') == 'text' and (b.get('text') or '').strip() for b in content if isinstance(b, dict)):
-            total, mark = 0, rec.get('uuid')  # the owner saw a line; a tool call in the same record comes after it
+            total, mark, seen = 0, rec.get('uuid'), True  # the owner saw a line; a tool call in the same record comes after it
         total += sum(1 for b in content if isinstance(b, dict) and b.get('type') == 'tool_use')
-    return total, mark
+    return total, mark, size > TAIL and not seen
 
 
 def main() -> None:
@@ -70,13 +71,15 @@ def main() -> None:
         else:
             import fcntl
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        total, mark = silent_calls(transcript)
+        total, mark, cut = silent_calls(transcript)
         try:
             saved = json.loads(state.read_text(encoding='utf-8'))
             said = saved['said']
             if type(said) is not int:
                 raise TypeError(saved)
             nudges = saved.get('nudges', min(said // STEP, MAX_NUDGES))
+            if cut:  # the silence began before the tail: the same silence, at least `said` calls long
+                mark, total = saved['mark'], max(total, said)
             if (type(nudges) is not int or not 0 <= nudges <= MAX_NUDGES
                     or saved['mark'] != mark or said > total):
                 raise TypeError(saved)  # a visible line or a compaction started a new count

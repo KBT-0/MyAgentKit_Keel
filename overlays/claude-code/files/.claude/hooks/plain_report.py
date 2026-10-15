@@ -37,7 +37,9 @@ def task_patterns() -> tuple[str, str]:
 
 # Projects extend the task grammar in commit-msg (B10 inv3/(f), inv2#151).
 LABELS = (r'\bAccept-MC\b',)
-FENCE = re.compile(r'^ {0,3}(`{3,}|~{3,})[^\n]*$')
+# Any indent or blockquote marker: a fence inside a list item sits four or more spaces in.
+# A backtick fence's info string has no backtick (CommonMark), so "```sh``` is" is a span.
+FENCE = re.compile(r'[ \t>]*(`{3,}(?=[^`]*$)|~{3,}).*')
 SPAN = re.compile(r'(`+)[^\n]*?(?<!`)\1(?!`)')
 PARENS = re.compile(r'\([^()]*\)')
 
@@ -53,13 +55,13 @@ def without_code(text: str) -> str:
                 lines.append(' ')
             else:
                 lines.append(line)
-        elif re.fullmatch(r' {0,3}' + re.escape(opener[0]) + '{' + str(len(opener)) + r',}[ \t]*',
+        elif re.fullmatch(r'[ \t>]*' + re.escape(opener[0]) + '{' + str(len(opener)) + r',}[ \t]*',
                           line.rstrip('\r\n')):
             opener = None
     return SPAN.sub(' ', ''.join(lines))
 
 
-def known_round(label: str) -> bool:
+def known_label(label: str) -> bool:
     root = Path(os.environ.get('CLAUDE_PROJECT_DIR') or os.getcwd())
     for name in ('STATE.md', 'BACKLOG.md'):
         try:
@@ -75,10 +77,17 @@ def bare_labels(text: str) -> list[str]:
     task, digit = task_patterns()
     patterns = (rf'(?<![A-Za-z0-9_.-]){task}(?![A-Za-z0-9_-]|\.\d)', *LABELS)
     def is_label(label):
-        if re.fullmatch(r'[a-f0-9]{7,}', label):
+        if label == 'Accept-MC':
+            return True
+        if not re.search(digit, label) or re.fullmatch(r'[a-f0-9]{7,}', label):
             return False  # abbreviated git hashes are not session labels
-        return label == 'Accept-MC' or (re.search(digit, label) and
-               (not re.fullmatch(r'r\d+', label) or known_round(label)))
+        # Prose is not a commit trailer: a label has one letter before its first digit or dash
+        # (K4, L1b, K7-a, D-5, v011-d5); UTF-8, SHA-256, win32, cp1252, Python3, IPv6 are words.
+        if not re.match(r'[A-Za-z][^A-Za-z]', label):
+            return False
+        # Lowercase without a lettered dash part (x86, e2e, i18n, r2) counts only when the
+        # project's STATE.md or BACKLOG.md names it.
+        return label[0].isupper() or bool(re.search(r'-.*[A-Za-z]', label)) or known_label(label)
 
     prose = ' '.join(word for word in without_code(text).split() if '/' not in word and '\\' not in word)
     found, explained = [], []

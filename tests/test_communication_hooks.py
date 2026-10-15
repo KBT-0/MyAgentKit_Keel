@@ -56,6 +56,17 @@ class PlainReportTests(unittest.TestCase):
                         '~~~~\n~~~\nK4 D-5\n~~~~~'):
             self.assertEqual(self.stop(message).returncode, 0, message)
             self.assertEqual(self.stop(message + '\nK4 finished.').returncode, 2, message)
+        # A backtick fence's info string has no backtick: this line is an inline span, not a fence.
+        self.assertEqual(self.stop('```sh``` is the tag.\nK4 finished.').returncode, 2)
+
+    def test_common_technical_words_pass_and_labels_are_still_caught(self):
+        for word in ('UTF-8', 'SHA-256', 'win32', 'cp1252', 'x86', 'Python3', 'IPv6', 'GPT-5',
+                     'e2e', 'i18n', 'SHA256', 'IPv4', 'x86-64', 'base64', 'Win11', 'v1'):
+            with self.subTest(word=word):
+                result = self.stop('Decoding is %s now.' % word)
+                self.assertEqual((result.returncode, result.stderr), (0, ''), word)
+        for label in ('K4', 'L1b', 'K7-a', 'v011-d5', 'D-5'):
+            self.assertEqual(self.stop('Decoding is %s now.' % label).returncode, 2, label)
 
     def test_installed_hook_reads_the_commit_hooks_canonical_grammar(self):
         hooks = self.project / '.claude/hooks'
@@ -67,9 +78,7 @@ class PlainReportTests(unittest.TestCase):
         grammar = source.read_text(encoding='utf-8').replace("TASK_ID_PATTERN='[A-Za-z]", "TASK_ID_PATTERN='Z")
         (git_hooks / 'commit-msg').write_text(grammar, encoding='utf-8')
         for label, expected in (('K4', 0), ('Z4', 2)):
-            result = subprocess.run([sys.executable, str(hooks / 'plain_report.py')],
-                                    input=json.dumps({'last_assistant_message': label}),
-                                    text=True, capture_output=True, timeout=30)
+            result = run(hooks / 'plain_report.py', json.dumps({'last_assistant_message': label}))
             self.assertEqual(result.returncode, expected, result.stderr)
 
     def stop(self, message, active=False, **env):
@@ -91,6 +100,9 @@ class PlainReportTests(unittest.TestCase):
                         'Run:\n~~~\nsh review.sh  # r2\n~~~\nthen stop.',
                         'The span ``r2 `D-5` here`` is code.',
                         'An unclosed block:\n```\nD-5 r2',
+                        '- step\n  - sub\n    ```\n    git commit -m "Done: K4"\n    ```\n',
+                        '- Run:\n    ```\n    REVIEW_LABEL=v011-d5 sh review.sh\n    ```\nthen stop.',
+                        '> ```\n> K4\n> ```\nthen stop.',
                         'The second review round (r2) is clean.',
                         'master is at a62e282, v0.11, issue #75; the `Accept-MC` verdict is in the file.',
                         'İkinci inceleme turu temiz; kabul, iki küçük not ile.',
@@ -212,6 +224,17 @@ class ProgressReminderTests(unittest.TestCase):
         self.assertIn('5 tool calls', self.nudge(None, raw=raw)['additionalContext'])
         raw = padding * 120 + json.dumps(assistant(text())) + '\n' + ''.join(json.dumps(assistant(tool())) + '\n' for _ in range(4))
         self.assertIsNone(self.nudge(None, raw=raw))
+
+    def test_a_silence_longer_than_the_tail_keeps_the_three_nudge_cap(self):
+        calls = [assistant(text())]
+        for count in range(1, 16):
+            calls.append(assistant(tool()))
+            self.assertEqual(self.nudge(calls) is not None, count in (5, 10, 15), count)
+        raw = ''.join(json.dumps(r) + '\n' for r in calls)
+        raw += (json.dumps({'type': 'user', 'message': {'content': 'x' * 10_000}}) + '\n') * 120
+        for count in range(1, 6):
+            raw += json.dumps(assistant(tool())) + '\n'
+            self.assertIsNone(self.nudge(None, raw=raw), count)
 
     def test_a_missing_or_broken_transcript_never_blocks(self):
         result = run('progress_reminder.py', json.dumps({'transcript_path': str(self.transcript / 'missing')}))

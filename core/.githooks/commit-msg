@@ -194,9 +194,11 @@ text=$(awk '{ line[NR] = $0; folded[NR] = /^[[:space:]]+[^[:space:]]/ }
 # A display name may be quoted ("GitHub Copilot" or 'Claude'): the opening quote is skipped
 # and the closing one is a separator, so the whole-name check sees the bare name.
 sep="[[:space:]:_/().,\"'-]"
+# The kernel's "Assisted-by: AGENT [TOOL]" form names the tool in brackets ("LLM [Claude]").
 printf '%s\n' "$text" | grep -iE \
   -e "${trailer}[[:space:]]*[\"']?((github|google|openai)[[:space:]]+)?($tools)([0-9][a-z0-9.]*)?($sep+($words))*$sep*(<|\$)" \
   -e "$trailer.*(\\[bot\\]|@([a-z0-9-]+\\.)*($domains)>)" \
+  -e "$trailer.*\\[[[:space:]]*((github|google|openai)[[:space:]]+)?($tools)([^[:alnum:]]|\$)" \
   -e "${prefix}generated (with|by)[[:space:]]*\\[?((github|google|openai)[[:space:]]+)?($tools)([^[:alnum:]]|\$)" \
   >&2
 case $? in
