@@ -20,7 +20,7 @@ backend (`--backend NAME`, reviewer `claude@NAME`): `docs/DEV_SETUP.md`.
 | `REVIEW_DISPOSITIONS` | answers to round 1, one line per finding: `fixed:` / `disproved:` / `deferred:` |
 | `REVIEW_ROUND_EXCEPTION` | reason for a third round, kept in the record |
 | `REVIEW_RISK` | `low` / `medium` / `high`, the brief's tier |
-| `REVIEW_FOCUS` | `portability` or `logic`, one reviewer each on a high tier |
+| `REVIEW_FOCUS` | `portability` or `logic`, one reviewer each on a high tier; each focus gets the label's two rounds; a review without a focus counts toward every focus |
 | `REVIEW_TASK_FILE` | the brief the prompt quotes; a diff outside its `Owns:` line is refused |
 | `REVIEW_EFFORT` | `low` / `medium` / `high`; default high on a high tier, else medium |
 | `REVIEW_TIMEOUT_SECONDS` | per attempt, default 2700, at most 3600 |
@@ -28,40 +28,56 @@ backend (`--backend NAME`, reviewer `claude@NAME`): `docs/DEV_SETUP.md`.
 | `REVIEW_SHADOW` | `1` measures a reviewer configuration; its verdict closes nothing |
 | `REVIEW_CLAUDE_MODEL`, `REVIEW_CODEX_MODEL`, `MYAGENTKIT_BACKEND` | pins and backend for one run |
 
+`MYAGENTKIT_AUTHOR` is not read or recorded. The lead checks the author's model and sets
+the reviewer pin before launch (`docs/REVIEW_GATE.md`, "Invariant").
+
 Exit 2 means a wrong round was refused: keyless dispositions, an earlier archive missing or
-edited, a round that does not continue its label, a diff over 400000 bytes with its rounds,
+edited, a round that does not continue its label, a diff over 400000 bytes with its rounds
+(lock files, vendored trees and minified bundles reach the reviewer but are not counted, a
+deleted one by its old name; a part whose path cannot be read is counted; past
+about 400 changed lines a hint asks to split the task),
 an index entry or attribute (`filter`, `ident`, assume-unchanged) that could hide a change;
 each refusal names its fix, and a repository that needs a filter (Git LFS) reviews by hand.
 Codex's `Accept with Manual Checks` needs a filled `## Manual checks` section. **A label is bound to its base:** every
 round uses the `--base` of round 1; another base or change takes a new label. **A checkout
 that changes during the review fails it with `stale_checkout`**, correctly: work in another
 worktree and run it again. **The output is unverified INPUT**: the requester verifies every
-finding and owns the verdict. Reviews cost budget: {{OWNER_NAME}} must have asked for them,
-and automation never authorizes a commit or push.
+finding and owns the verdict. The review gate the brief's `Risk:` tier requires starts
+without asking; an extra review beyond it (another family, a higher effort, a paid backend)
+spends budget the gate did not plan, so {{OWNER_NAME}} asks for it in the session.
+Automation never authorizes a commit or push.
 
 ## Rounds, labels and designs
 
 - A design is reviewed under its own label before code exists; dispositions cite its exclusions.
-- A high-tier change's two focus reviewers run under two labels (`<change>-logic` and
-  `<change>-portability`); each label carries its own rounds (`docs/REVIEW_GATE.md`, "Rounds").
-- Start the self-test and two reviewers together only when the memory budget permits
-  (`docs/WORKFLOW.md`, "Worker cost", rule 6), each as its own background job. The kit's
+- A high-tier change's two focus reviewers share its one label and get two rounds each; each
+  `REVIEW_FOCUS` carries its own reports plus legacy reports without a focus
+  (`docs/REVIEW_GATE.md`, "Rounds").
+- The two reviewers run one after the other unless {{OWNER_NAME}} allows parallel; start the
+  self-test beside a review only when the memory budget permits (`docs/WORKFLOW.md`, "Worker
+  cost", rule 6), each as its own background job. The kit's
   self-test writes a non-ignored file: a second worktree, or after the reviews.
 - Nobody edits a tree under review; one run per reviewer per tree.
 
 ## Unavailable reviewer
 
 A reviewer that cannot finish (quota, timeout, authentication, missing evidence) is never
-an Accept: the review fails with a usage record. The requested reviewer is never silently
+an Accept: the review fails with a usage record. Vendor reviews are advisory and never block
+a merge; this review is a gate, so no result means not passed, as a required status check
+that never reports keeps a merge blocked. The requested reviewer is never silently
 replaced; with `--fallback` the other configured model runs once after an operational
 failure (quota, timeout, a CLI error, `content_flagged`), its evidence opening with a `FALLBACK REVIEWER:` line. A substitute may be the
 author, so `--fallback` needs {{OWNER_NAME}}'s yes. A setup fault (`cli_unsupported`,
-`sandbox_unavailable`) is fixed, never failed over. With `--fallback`, two timed-out default
-attempts can take about ninety minutes. A Codex capacity error is transient: run the same
-review again after about ten minutes. An exhausted chain goes into `docs/STATE.md` as a
-pending review; independent work continues. A test the reviewer's sandbox fails for its own
-reasons (`taskkill` denied, no `python3`) is set aside only when the diagnostic names the
-restriction and the author's run passes; any other failure is a finding or a manual check.
+`sandbox_unavailable`) is fixed, never failed over. With `--fallback`, two timed-out attempts
+take about 2 x `REVIEW_TIMEOUT_SECONDS` (about ninety minutes at the default 2700 s).
+A Codex capacity error fails the attempt as `cli_error`. The dispatcher does not retry
+that reviewer automatically; `--fallback` permits the other configured model as described
+above. A quota or spend-cap error is never retried. An exhausted chain goes
+into `docs/STATE.md` as a pending review; independent work continues. A test that needs a
+capability the host may lack (`taskkill`, `python3`) probes for it and skips with a reason
+that names it; the author's unrestricted run must show zero skips for that test. The
+reviewer's sandbox failure of any other test is a finding or a manual check, unless its
+diagnostic names the restriction and the author's run passes.
 
 ## Template to paste (tools without a wrapper)
 

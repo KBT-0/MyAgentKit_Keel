@@ -24,8 +24,8 @@ def reviewer_doc_lists():
     """Every default list of documents a reviewer is told to read, by where it is set."""
     lists = {}
     bridge = (ROOT / 'core/scripts/claude_bridge.py').read_text(encoding='utf-8')
-    for i, found in enumerate(re.findall(r'docs = (\[[^\]]*\])', bridge)):
-        lists['claude_bridge.py list %d' % i] = re.findall(r'"([^"]+)"', found)
+    for i, found in enumerate(re.findall(r'^REVIEW_DOCS = (\([^)]*\))|docs = (\[[^\]]*\])', bridge, re.M)):
+        lists['claude_bridge.py list %d' % i] = re.findall(r'"([^"]+)"', ''.join(found))
     codex = (ROOT / 'core/scripts/codex_bridge.py').read_text(encoding='utf-8')
     for name, text in (('codex_bridge.py', re.search(r'"REVIEW_DOCS", "([^"]+)"', codex)),
                        ('scripts/review.sh', re.search(r'REVIEW_DOCS:-([^}]+)\}',
@@ -76,20 +76,19 @@ class SectionPointerTests(unittest.TestCase):
                      'rebuilding the integration branch without it', 'kills the background jobs started from its tool shell'):
             self.assertIn(rule, flat)
         budget_rule = ' '.join(workflow.split('6. **Parallel workers only for independent modules**')[1].split('7. **Worker reports are short**')[0].split())
-        for rule in ('Start the two reviewers together',
-                     'Start the self-test with them only when all three jobs fit within the budget',
-                     'With a budget of two, start both reviewers first, then the self-test when one reviewer ends',
-                     'Never reduce the reviews; run them one after the other only when the owner is away and at least one job fits the budget, as defined below; the self-test waits'):
+        # Paid reviews run one after the other unless the owner allows parallel (v0.11 close-out
+        # decision 9, BACKLOG B14); a tier's floor is its own reviewer count (KARARLAR B01 (3), B15).
+        for rule in ('Paid reviews run one after the other (rule 1)',
+                     'run together only when {{OWNER_NAME}} allows it for that round and two slots are free',
+                     "heavy jobs already running take slots",
+                     'The self-test starts beside a review when the budget has a slot for it',
+                     "Never reduce a tier's reviews: a high-tier round's floor is its two reviewers, a low or medium round's its one",
+                     'the review round stays blocked and the lead reports the capacity figure to the owner; nothing heavy starts.'):
             self.assertIn(rule, budget_rule)
-        self.assertIn("A review round's floor is the two reviewers", budget_rule)
-        self.assertIn('when two slots are free; heavy jobs already running take slots', budget_rule)
-        self.assertIn('rather than waiting without limit', budget_rule)
-        self.assertIn("as a recorded exception (a line in the lead's RESULT/notes file names the budget figure)", budget_rule)
-        self.assertIn('starts the round only when two jobs fit', budget_rule)
-        self.assertIn('When the owner gives no answer to that question within one review timeout (`REVIEW_TIMEOUT_SECONDS`), the owner is away', budget_rule)
-        self.assertIn('When the owner is away and at least one job fits the budget', budget_rule)
-        self.assertIn('When not even one job fits, the review round stays blocked and the lead reports the capacity figure to the owner; nothing heavy starts.', budget_rule)
-        self.assertIn('"In parallel" means the reviewers', flat)
+        for old in ("A review round's floor is the two reviewers", 'Start the two reviewers together',
+                    'the owner is away', 'as a recorded exception'):
+            self.assertNotIn(old, budget_rule)
+        self.assertIn("the gate's reviewers run one after the other unless {{OWNER_NAME}} allows parallel", flat)
         self.assertIn('then gets ONE final review under a label never used before', flat)
         gotchas = ' '.join((ROOT / 'core/docs/GOTCHAS.md').read_text(encoding='utf-8').split())
         for rule in ("lead's tool shell", 'on most hosts', '`&` under `sh -c`',
@@ -135,7 +134,8 @@ class SectionPointerTests(unittest.TestCase):
         self.assertNotIn('stop them with a reason', gotchas)
         self.assertNotIn('its own process by grepping the listing for `.myagentkit/usage`', gotchas)
         running = ' '.join((ROOT / 'core/docs/REVIEW_RUNNING.md').read_text(encoding='utf-8').split())
-        self.assertIn('Start the self-test and two reviewers together only when the memory budget permits', running)
+        self.assertIn('The two reviewers run one after the other unless {{OWNER_NAME}} allows parallel', running)
+        self.assertIn('start the self-test beside a review only when the memory budget permits', running)
         self.assertIn('memory budget', running)
         self.assertIn('"Worker cost", rule 6', running)
         for old_launch in ('Independent reviews run at the same time, with each other and with the self-test',

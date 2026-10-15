@@ -5,13 +5,18 @@ is careless — because it is inside the assumption. The reasoning that produced
 still in its context, still looking correct, and asking it to check its own work mostly
 produces a confident restatement of the same reasoning.
 
-So: **review happens in a FRESH session, and preferably a different model.**
+So: **review happens in a FRESH session, never on the author's own model.** Who takes it is
+the working mode's call (`core/docs/REVIEW_GATE.md`, "Invariant"): another tier of the same
+family in solo, the other family in cross.
 
 Fresh matters because a new session reads the diff as evidence rather than as a memory.
-Different model matters more than most people expect: two agents of the same model share
-their blind spots. Running three of them does not give you three opinions, it gives you one
-opinion with error bars. The value of a second model is that its mistakes are uncorrelated
-with the first's.
+Another model matters too: two agents of the same model share their blind spots, so running
+three of them gives one opinion with error bars, not three opinions. A second family is
+welcome, never required: it reduces correlated blind spots but does not remove them, and the
+one controlled measurement found the direction asymmetric (`docs/research/claude-lead-codex.md`,
+finding 4). No published measurement says how much another tier of the same family adds. Today
+every review record names the reviewer's model only; the author's independence is the
+lead's choice of reviewer pin, and a default that excludes the author's tier is planned work.
 
 ## The cleanest evidence for this rule
 
@@ -48,10 +53,12 @@ tell which ones were real.
 
 ## Keeping it affordable
 
-Review costs budget, so it is scoped rather than universal. Risky diffs get it: the areas
-the owner named, plus gates, CI and check scripts in every project. Everything else relies
-on the automated gate. And no agent spends the review budget on its own initiative — the
-owner asks for it in the session, or it does not happen.
+Review costs budget, so its depth follows the risk tier: one light pass for a low-risk
+change, one reviewer for a medium one, two for the areas the owner named and for gates, CI
+and check scripts in every project. The review a change's tier requires starts without
+asking; that is what the owner approved with the task. An extra review beyond it (another
+family, a higher effort, a paid backend) is the owner's call in the session, never an
+agent's own initiative.
 
 ## The failure mode it prevents
 

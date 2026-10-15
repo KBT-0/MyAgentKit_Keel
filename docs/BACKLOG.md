@@ -51,15 +51,18 @@ Low findings of the kit's own reviews are filed here, not fixed in the round (ow
 - `core/scripts/context_buckets.py:100`: when the twentieth post-compaction request is a refusal,
   the forward window stops after counting the request and omits its refusal; the backward window
   counts it, so the comparison is biased.
-- `core/docs/WORKFLOW.md:482` requires sequential review runs unless parallel is asked, while
-  Worker cost rule 6 and REVIEW_GATE require parallel reviewers for an authorized high-risk review.
-- `core/docs/WORKFLOW.md:735`: the unconditional two-reviewer floor contradicts the risk table's
-  one reviewer for a low- or medium-risk change.
 - `docs/context-is-a-budget.md:90` still argues compaction at 200k with the retracted ten-turn
   cost figure; WORKFLOW gives about 25-49 requests.
 - `core/docs/USAGE.md:111`: two default attempts are 2 x 2700 s = 90 minutes, not 120.
 - `core/docs/DEV_SETUP.md:125` (pre-existing) says the review self-test needs POSIX, against the
   native Windows support at line 164.
+
+## Filed from v0.11 close-out batch 3 (KARARLAR D04 inv2#26)
+
+- The project gate `core/scripts/check.sh` runs no ShellCheck, so the attack list in
+  `core/docs/REVIEW_GATE.md` still carries classes a static rule sees (SC2028 `echo` with a
+  backslash, SC2086 unquoted expansion). Add a ShellCheck step to the gate (NOT RUN when it is
+  not installed, as the kit's own `check_kit` does) and drop those classes from the list.
 
 ## Filed from v0.11 close-out batch 6 (need a tmux host: macOS, Linux, or WSL with the owner's OK)
 

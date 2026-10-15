@@ -1,22 +1,28 @@
 ---
-description: The review GATE (not a review command) — a fresh session of another tier or family reviews the change set in a throwaway copy, then YOU verify every finding instead of relaying it
+description: An extra review the owner asks for in this session, beyond the review gate — a fresh non-author session reviews the change set in a throwaway copy, then YOU verify every finding instead of relaying it
 argument-hint: "[--uncommitted | --base <ref> | --commit <sha>] [--reviewer codex|claude]"
 disable-model-invocation: true
 allowed-tools: Read, Glob, Grep, Bash(git:*), Bash(./scripts/review.sh:*), AskUserQuestion
 ---
 # /myagentkit:cross-review [--uncommitted | --base \<ref\> | --commit \<sha\>] [--reviewer codex|claude]
 
-The project owner must have asked for this in THIS session — it spends another tool's
-budget. Agents do not spend it on their own.
+The review gate of a risky diff (`AGENTS.md`, `docs/REVIEW_GATE.md`) starts on the brief's
+`Risk:` tier or the lead's routine, without asking. This command is for an extra review the
+project owner asks for in THIS session — a second family, a higher effort or a paid backend —
+because it spends budget beyond the gate. Agents do not start it on their own.
 
-**The reviewer is a fresh session of another tier or family** (`docs/REVIEW_GATE.md`,
-"Invariant"). `scripts/review.sh` ships adapters for `--reviewer claude` and
+**The author never reviews its own patch; who reviews is the working mode's table**
+(`docs/REVIEW_GATE.md`, "Invariant"). `scripts/review.sh` ships adapters for `--reviewer claude` and
 `--reviewer codex`; the project's configured default is at the top of that script, and in
 the solo mode `REVIEW_CLAUDE_MODEL` is pinned to the tier that did not write the change. A
 second vendor is pluggable, never required. **You may be the author here.** If this session
-wrote the diff, the reviewer must not be your own tier, whatever the default says. The
-wrapper may fail over once to the other configured reviewer if the first is unavailable. If
-that fallback authored the patch, its findings are advisory, not independent gate approval.
+wrote the diff, the reviewer must not be your own tier, whatever the default says: set
+the reviewer model pin to another tier and check it before launch. The wrapper does not
+check or record `MYAGENTKIT_AUTHOR`. Failing
+over to the other configured reviewer happens only when the owner asked for it and
+`--fallback` is passed; the default is no failover. Without `--fallback` the review simply
+fails; record it and continue. If a fallback authored the patch, its findings are advisory,
+not independent gate approval.
 Do not install a missing CLI or choose an unconfigured model without authorization. The
 paste-by-hand review in `docs/REVIEW_RUNNING.md` remains available for a genuinely fresh
 non-author review.
@@ -49,15 +55,16 @@ Raw arguments: `$ARGUMENTS`
 
 ## Unavailable reviewer
 
-The wrapper tries each configured provider at most once on operational failures, including
-quota, context/turn limits, timeout, authentication, missing CLI, or CLI errors. Read its
-final `review dispatch:` JSON and both attempts' evidence and usage paths. Reject and
-manual-check results never trigger failover. Invalid evidence, changed scope, or storage
+This command passes no `--fallback`, so the requested reviewer either completes or the
+review fails. Only when the owner asks for a fallback does the lead run `scripts/review.sh
+--fallback` itself; the dispatcher then tries the other configured provider once after an
+operational failure. Read its final `review dispatch:` JSON and every attempt's evidence and
+usage paths. Reject and manual-check results never trigger failover. Invalid evidence, changed scope, or storage
 failure stops the chain. An unconfigured alternate is not permission to invent a model.
 
 If neither provider completes, record both attempts and leave the review pending. Continue
 other independent authorized work. Do not wait indefinitely, restart the exhausted chain,
-or approve the patch yourself. Each review invocation can consume two provider calls;
-count them when enforcing the owner's task-level limits. The blocked review still
+or approve the patch yourself. With `--fallback`, each review invocation can consume two provider
+calls; count them when enforcing the owner's task-level limits. The blocked review still
 prevents committing or pushing its protected diff. If nothing independent remains, return
 the blocker to the owner. `docs/USAGE.md` describes the local per-call accounting records.

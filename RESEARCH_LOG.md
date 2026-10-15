@@ -42,6 +42,26 @@ Verified locally (red then green): `git clean -nd` and `git restore --staged f` 
 a dirty tree before the rewrite; an EncodingWarning in `git status` made a clean tree read as
 dirty; a backslash `file_path` was never matched by `guard_boundaries.py`.
 
+### 2026-10-15 — v0.11 batch 3: reproduced review-gate bypasses and documentation drift
+
+The round-1 logic and portability reviews (20261015T175842Z-cbb8d261c9b9 and
+20261015T175843Z-1a2f2f88e0c6) reproduced two bypasses. A rename whose old pathname
+contains ` b/vendor/` made the header parser exempt a source patch over 400000 bytes.
+Unsetting the review focus dropped completed rounds from the limit. The batch3-fix-brief
+required an unambiguous destination marker and a label-wide count. Round 2 (labels
+v011-b3-logic and v011-b3-portability) showed that a label-wide count spends both rounds of
+a high-tier change's two focus reviewers in round 1. The lead restored KARARLAR B02
+inv2#10's per-focus counter: a review without a focus counts toward every focus, and an unset
+or new focus takes the highest count, so neither opens a fresh budget. Round 2 also found a
+deleted vendored file counted, because it has no `+++ b/` line; its `--- a/` line now names it.
+
+The same reviews reproduced documentation promises absent from the runtime: author identity
+refusal and recording, and bounded Codex capacity retries. The fix brief permits describing
+the current manual author selection instead of adding the safeguard here. KARARLAR B01 (1)
+calls for default author-tier exclusion; that implementation remains outside this fix.
+KARARLAR B01 (6)'s capacity retries belong to batch 4. The docs describe the current
+`cli_error` failure and opt-in fallback, without promising those retries before they exist.
+
 ### 2026-10-15 — v0.11 close-out batch 12: Unity overlay facts
 
 The MCP for Unity v10.3.0 source shows GameObject delete is not undoable (its comment says

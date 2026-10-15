@@ -12,10 +12,11 @@ also author any of the patch. Do not substitute an author-only verdict when a re
 
 ## Authorization and scope
 
-A user request to ask Claude for a review authorizes that review. Automatic invocation
-needs explicit project or session authorization to spend the second model's budget.
-Discovering this skill or encountering risky code is not that authorization. Ask once
-when authorization is absent. A review-only request does not authorize source edits;
+The review gate of a risky diff (`AGENTS.md`, `docs/REVIEW_GATE.md`) starts on the brief's
+`Risk:` tier or the lead's routine, without asking. An extra review beyond it — a second
+family, a higher effort or a paid backend — spends budget beyond the gate, so it runs only
+when the user asks for it in this session. Discovering this skill or encountering risky
+code is not that request. A user request to ask Claude for a review authorizes that review. A review-only request does not authorize source edits;
 fix findings only when the user also asked for implementation or review-and-fix.
 
 Use the project's configured model pins and the user's explicit overrides, never infer a
