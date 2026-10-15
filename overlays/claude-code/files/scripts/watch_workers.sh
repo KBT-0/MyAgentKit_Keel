@@ -100,12 +100,14 @@ while [ $# -gt 0 ]; do
       [ $# -ge 2 ] || die "$1 needs a value"
       v=${2%[k%]}
       case $v in ""|*[!0-9]*) die "$1 takes NNNk (tokens) or NN% (of the window): $2" ;; esac
+      v=${v#"${v%%[!0]*}"}; v=${v:-0}  # decimal: shell arithmetic reads a leading 0 as octal
       case $2 in *k) warn_abs=$((v * 1000)) ;; *) warn_pct=$v ;; esac
       shift 2 ;;
     --interval|--max-minutes)
       [ $# -ge 2 ] || die "$1 needs a value"
       case $2 in ""|*[!0-9]*) die "$1 takes a whole number: $2" ;; esac
-      case $1 in --interval) interval=$2 ;; *) max=$2 ;; esac
+      v=${2#"${2%%[!0]*}"}; v=${v:-0}  # decimal, as above
+      case $1 in --interval) interval=$v ;; *) max=$v ;; esac
       shift 2 ;;
     --result)
       [ $# -ge 2 ] || die "$1 needs a value"

@@ -463,10 +463,12 @@ for name; do
 
   # The spawn's lock (`kit worker NAME`) ends with the session: a closed worker leaves no locked
   # worktree, whether the audit below removes it or keeps it for a later merge's audit. A lock
-  # with another reason is someone's choice to keep the worktree, and stays.
+  # with another reason is someone's choice to keep the worktree, and stays. A close that failed
+  # above may leave the session running, so the lock stays and the audit keeps the worktree.
   if [ "$wt_dir" != "$top" ] && gd=$(git -C "$wt_dir" rev-parse --absolute-git-dir 2>/dev/null) &&
      [ "$(cat -- "$gd/locked" 2>/dev/null)" = "kit worker $name" ]; then
-    if [ -n "$dry" ]; then say "$name: dry run: would unlock its worktree (kit worker $name)"
+    if [ -n "$failed" ]; then say "$name: its worktree stays locked (kit worker $name): the close failed above"
+    elif [ -n "$dry" ]; then say "$name: dry run: would unlock its worktree (kit worker $name)"
     elif git worktree unlock "$wt_dir" 2>/dev/null; then say "$name: worktree unlocked (kit worker $name)"
     else fail "$name: could not unlock its worktree; the audit below keeps it"; fi
   fi

@@ -947,6 +947,23 @@ class ContextTests(Base):
                 self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
                 self.assertIn('--context-warn takes NNNk (tokens) or NN% (of the window)', result.stderr)
 
+    def test_a_leading_zero_is_decimal_not_octal(self):
+        # Shell arithmetic reads 08 as a bad octal number and the script died after the value
+        # had passed the digit check (Codex review of batch 6, finding 2).
+        result = self.watch('120k/1.0M', '--once', '--context-warn', '080k')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('past its 80k warning line', result.stdout)
+        for f in self.state.glob('opt-*'):
+            f.unlink()
+        result = self.watch('120k/1.0M', '--once', '--context-warn', '09%')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('past its 90k warning line', result.stdout)
+        for args in (('--once', '--max-minutes', '08'), ('--max-minutes', '0', '--interval', '019')):
+            with self.subTest(args=args):
+                result = self.watch(STATUS, *args)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stderr, '')
+
     def test_a_figure_in_the_output_is_not_the_status_line(self):
         # Output quoting `800k/1.0M` gave a false 80% warning and set the once-marker that
         # then hid a real warning. Only the status line's figure counts.

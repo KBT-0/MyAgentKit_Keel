@@ -375,6 +375,24 @@ class CloseWorkerTests(unittest.TestCase):
         self.assertIn('no worktree at .claude/worktrees/w1', out)
         self.assertTrue((records / 'w1.session').exists(), out)
 
+    def test_a_failed_tmux_lookup_keeps_the_spawn_lock(self):
+        # The session may still run, so the spawn's lock (`kit worker NAME`) is the one guard a
+        # later clean_worktrees run honours: a failed close must not lift it. Same stubs as above.
+        denied = 'error connecting to /tmp/tmux-1000/default (Permission denied)'
+        (self.tmp / 'bin/tmux.py').write_text(TMUX)
+        (self.tmp / 'bin/tmux').write_text('#!/bin/sh\nexec "%s" "%s" "$@"\n' % (
+            Path(sys.executable).as_posix(), (self.tmp / 'bin/tmux.py').as_posix()))
+        (self.tmp / 'bin/uname').write_text('#!/bin/sh\necho Linux\n')
+        (self.tmp / 'bin/uname').chmod(0o755)
+        path = self.worker('w1')
+        self.git('worktree', 'lock', '--reason', 'kit worker w1', str(path))
+        locked = Path(self.git('rev-parse', '--absolute-git-dir', cwd=path)) / 'locked'
+        out = self.close('w1', code=1, CLOSE_TMUX_ERROR=denied)
+        self.assertIn('tmux could not say whether session w1 exists', out)
+        self.assertNotIn('worktree unlocked', out)
+        self.assertTrue(path.is_dir(), out)
+        self.assertEqual(locked.read_text().strip(), 'kit worker w1', out)
+
     def absent(self, wording):
         # Each wording tmux gives for an absent session or server is proof of absence: before
         # the kill (nothing to end) and after it (the wait ends at once).
