@@ -463,12 +463,15 @@ finally:
   # A review running in this worktree meanwhile fails as stale_checkout when HEAD, the index,
   # a tracked file or an untracked file Git does not ignore changes, so the self-test leaves
   # them as it found them: compared at the end, a difference fails it. Ignored files may change.
+  # git_view <scratch folder>: the caller names the folder its scratch files go in. An exported
+  # `work` once chose it, and the files of that name in an unrelated folder were overwritten
+  # and deleted (round-3 review, 2026-10-15): no inherited variable decides a scratch path.
   git_view() {
     git rev-parse --verify -q HEAD || :; git ls-files -s; git status --porcelain --untracked-files=all
     # One ls-files and ONE hash-object for the whole tree; Git status covers deletions.
     # Newline-separated paths are safe because the kit refuses names holding newlines (#41).
     # Prefix ./ because hash-object unquotes a line starting with a double quote.
-    paths="${work:-$passed}/git-paths"
+    paths="$1/git-paths"
     hashes="$paths.hashes"
     errors="$paths.errors"
     git -c core.quotePath=false ls-files -z --cached --others --exclude-standard | tr '\0' '\n' |
@@ -492,7 +495,7 @@ finally:
   view_before=""
   if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     view_before="$work/git-view.before"
-    git_view > "$view_before" 2>&1 || { cat "$view_before"; return 1; }
+    git_view "$work" > "$view_before" 2>&1 || { cat "$view_before"; return 1; }
   fi
 
   # A red tree cannot prove that a gate turns red: everything would "fail correctly".
@@ -1239,7 +1242,7 @@ LOCKCASE
   # --- the self-test leaves the worktree as it found it ---------------------------
   if [ -z "$view_before" ]; then
     echo "  NOTE — not a Git worktree: the self-test's leftovers were not compared."
-  elif git_view > "$work/git-view.after" 2>&1 && cmp -s "$view_before" "$work/git-view.after"; then
+  elif git_view "$work" > "$work/git-view.after" 2>&1 && cmp -s "$view_before" "$work/git-view.after"; then
     echo "  ok   — the self-test left HEAD, the index, git status and the tracked changes as it found them"
   else
     echo "  FAIL — the self-test changed this worktree: a review running here meanwhile fails"
