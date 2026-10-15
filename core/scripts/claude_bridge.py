@@ -967,16 +967,56 @@ def schema(mode: str) -> dict:
             "required": list(properties), "additionalProperties": False}
 
 
-# One top-level item per finding, as REVIEW_PROMPT asks: a list item, a numbered item or a
-# sub-heading. An indented continuation bullet is part of the item above it, not a finding.
-FINDING_ITEM = re.compile(r"^(?:[-*]|\d+\.|#{1,6})[ \t]+(.*)$", re.M)
-# The heading in any form (`## Findings`, `# Findings`, `**Findings:**`, `Findings:`); the
-# section ends at the next heading that is not itself a severity-first item.
-FINDINGS_HEADING = re.compile(r"^(?:#{1,6}[ \t]+|\*\*)?Findings:?(?:\*\*)?:?[ \t]*$(.*?)"
-                              r"(?=^(?:#{1,6}[ \t]+|\*\*)(?!(?:Critical|High|Medium|Low)\b)|\Z)",
-                              re.M | re.S | re.I)
+# A section starts at a line naming it in any markup (`## Findings`, `### **Manual checks:**`,
+# `__Findings__`, `Findings:`) and only another named section ends it: an unknown or
+# severity-first heading under Findings stays in it and is read as an item. A section that
+# ended at the first heading it did not expect once passed an Accept over a `### **High**`.
+SECTIONS = ("findings", "manual checks", "notes", "summary", "verdict")
+# A list marker, a heading's hashes and emphasis, removed from the front of an item.
+MARKUP = re.compile(r"^[ \t]*(?:(?:[-+*]|\d+[.)]|#{1,6})[ \t]+)?[*_ \t]*")
+SEVERITY_FIRST = re.compile(r"(?i)(?:critical|high|medium|low|pre-existing)\b")
 # A clean review's placeholder under the heading is no finding.
 EMPTY_ITEMS = {"none", "no findings", "n/a", "not applicable"}
+
+
+def review_parts(text: str) -> tuple[list, list]:
+    """A text review's findings and manual checks, read the same way by every caller.
+
+    A finding is each top-level block (list item, heading or paragraph, its continuation lines
+    joined) and each line at any indent that starts with a severity, its markup removed;
+    accept_allows() then admits only Lows, Pre-existing items and whole-block placeholders, so
+    an item the reviewer wrote in a form nobody expected refuses the Accept instead of
+    vanishing. Without a Findings heading the text before the first named section is read as
+    the findings. A manual check is each non-placeholder line of its section, a heading
+    included. VERDICT lines belong to neither.
+    """
+    sections, current = {}, None
+    for line in text.splitlines():
+        if re.match(r"[ \t]*VERDICT[ \t]*:", line, re.I):
+            continue
+        name = re.sub(r"^#{1,6}[ \t]+", "", line.strip()).strip("*_ \t").rstrip(":").strip("*_ \t").lower()
+        if name in SECTIONS:
+            current = name
+            sections.setdefault(name, [])
+        else:
+            sections.setdefault(current, []).append(line)
+    findings, prior = [], ""
+    for line in sections.get("findings", sections.get(None, [])):
+        item = MARKUP.sub("", line)
+        if not line.strip():
+            pass
+        elif not findings or SEVERITY_FIRST.match(item) or (
+                line[0] not in " \t" and (not prior.strip() or MARKUP.match(line).group().strip())):
+            findings.append(item)
+        else:
+            # A continuation line belongs to its block: `No findings` wrapped onto `were
+            # resolved: x.py:1 ...` is no placeholder, and a check only of its first line was.
+            findings[-1] += " " + item
+        prior = line
+    # Every other line is a check, a heading included: `### Verify the deployment.` once vanished.
+    checks = [line for line in sections.get("manual checks", [])
+              if MARKUP.sub("", line).rstrip(" \t.*_").lower() not in {"", "none", "n/a", "not applicable", "not run"}]
+    return findings, checks
 
 
 def accept_allows(findings: list) -> bool:

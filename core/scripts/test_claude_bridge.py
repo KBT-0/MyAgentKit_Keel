@@ -30,9 +30,9 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'REVIEW_SHADOW', 'MYAGENTKIT_TASK_I
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 194, 'test_agent_usage': 33, 'test_codex_quota': 5}
+SUITE_MINIMUMS = {'test_claude_bridge': 195, 'test_agent_usage': 33, 'test_codex_quota': 5}
 # These are executed cases, excluding only the explicitly declared POSIX exclusions.
-WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 168, 'test_agent_usage': 29, 'test_codex_quota': 4}
+WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 169, 'test_agent_usage': 29, 'test_codex_quota': 4}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -2429,7 +2429,7 @@ class BridgeTests(unittest.TestCase):
 
         def execution(command, prompt, repo, timeout, into=None, noted=None):
             if '-o' in command:
-                Path(command[command.index('-o') + 1]).write_bytes(b'A \xe2\x86\x92 B.\n\nVERDICT: Accept\n')
+                Path(command[command.index('-o') + 1]).write_bytes(b'Low: A \xe2\x86\x92 B.\n\nVERDICT: Accept\n')
                 value = {'type': 'turn.completed', 'usage': {}}
             else:
                 value = {'type': 'result', 'subtype': 'success', 'is_error': False,
@@ -2826,7 +2826,7 @@ class BridgeTests(unittest.TestCase):
                           'import json, pathlib, sys\n'
                           'sys.stdin.read()\n'
                           'pathlib.Path(sys.argv[sys.argv.index("-o") + 1]).write_text('
-                          '"## Findings\\n\\nA \\u2192 B.\\n\\nVERDICT: Accept\\n", encoding="utf-8")\n'
+                          '"## Findings\\n\\nLow: A \\u2192 B.\\n\\nVERDICT: Accept\\n", encoding="utf-8")\n'
                           'print(json.dumps({"type": "turn.completed", "usage": {}}))\n')
         result = self.run_wrapper('--reviewer', 'codex', REVIEW_CLI_BIN=str(fake),
                                   REVIEW_CODEX_MODEL='fixture-codex-model')
@@ -2890,6 +2890,23 @@ class BridgeTests(unittest.TestCase):
                    'Findings:\n\n- High: x.py:1 under a plain heading.\n\nVERDICT: Accept\n',
                    '## Findings\n\n- **Medium** x.py:1 bold.\n\nVERDICT: Accept\n',
                    '## Findings\n\n* High: x.py:1 a star item.\n\nVERDICT: Accept\n')
+        # Round 3: a heading in other markup ended the section before its finding, and a
+        # paragraph finding (Codex's usual form) was no item, so each Accept completed.
+        refused += ('## Findings\n\n### **High**\n\nx.py:1 a bold sub-heading.\n\nVERDICT: Accept\n',
+                    '## Findings\n\n### *High*: x.py:1 an italic sub-heading.\n\nVERDICT: Accept\n',
+                    '## Findings\n\n#### __Medium__ x.py:1 a deeper heading.\n\nVERDICT: Accept\n',
+                    '## **Findings:**\n\n- High: x.py:1 a bold heading with a colon.\n\nVERDICT: Accept\n',
+                    '## Findings\n\n**High — x.py:1.** A bold paragraph.\n\nVERDICT: Accept\n',
+                    '## Findings\n\nHigh: x.py:1 a plain paragraph.\n\nVERDICT: Accept\n',
+                    '## Findings\n\n- None.\n  - Medium: x.py:1 nested under a placeholder.\n\nVERDICT: Accept\n',
+                    '## Findings\n\n- None.\n\n### Round 2 notes\n\n- High: x.py:1 under an unknown heading.\n\n'
+                    'VERDICT: Accept\n',
+                    # fix4 review: a placeholder counts only as a whole block, continuation joined.
+                    '## Findings\n\nNo findings\nwere resolved: x.py:1 still drops records.\n\nVERDICT: Accept\n',
+                    '## Findings\n\n- None.\n  x.py:1 still drops records.\n\nVERDICT: Accept\n')
+        completes += ('## Findings\n\nNone.\n\n## Verdict\n\nVERDICT: Accept\n',
+                      '## **Findings**\n\n**Low** — x.py:1 a bold paragraph.\n\nVERDICT: Accept\n',
+                      '## Findings\n\nLow: x.py:1 a note that\nwraps onto a second line.\n\nVERDICT: Accept\n')
         for final, completed in [(f, True) for f in completes] + [(f, False) for f in refused]:
             with self.subTest(final=final):
                 result = self.run_wrapper('--reviewer', 'codex', REVIEW_CLI_BIN=str(fake),
@@ -2898,6 +2915,33 @@ class BridgeTests(unittest.TestCase):
                                         result.stdout.splitlines() if s.startswith('review dispatch: ')))
                 self.assertEqual(result.returncode == 0, completed, result.stdout + result.stderr)
                 self.assertEqual(chain['failure_kind'], None if completed else 'invalid_evidence')
+
+    def test_codex_accept_with_a_manual_check_is_refused_as_on_the_claude_side(self):
+        # Round 3: the manual checks were read only for the other verdict, so an Accept that
+        # kept a check completed. claude_bridge.validate() already refuses it.
+        fake = python_cli(self.root / 'codex-accept-manual', PYTHON_SHEBANG +
+                          'import json, os, pathlib, sys\n'
+                          'sys.stdin.read()\n'
+                          'pathlib.Path(sys.argv[sys.argv.index("-o") + 1]).write_text(os.environ["FINAL_RESPONSE"])\n'
+                          'print(json.dumps({"type": "turn.completed", "usage": {}}))\n')
+        for final, completed in (
+                ('## Findings\n\n- None.\n\n## Manual checks\n\n- Verify deployment before release.\n\n'
+                 'VERDICT: Accept\n', False),
+                ('## Findings\n\n- None.\n\n**Manual checks:**\n\nVerify deployment before release.\n\n'
+                 'VERDICT: Accept\n', False),
+                # fix4 review: a check written as a heading is still a check.
+                ('## Findings\n\n- None.\n\n## Manual checks\n\n### Verify deployment before release.\n\n'
+                 'VERDICT: Accept\n', False),
+                ('## Findings\n\n- None.\n\n## Manual checks\n\n- None.\n\nVERDICT: Accept\n', True)):
+            with self.subTest(final=final):
+                result = self.run_wrapper('--reviewer', 'codex', REVIEW_CLI_BIN=str(fake),
+                                          REVIEW_CODEX_MODEL='fixture-codex-model', FINAL_RESPONSE=final)
+                chain = json.loads(next(s.removeprefix('review dispatch: ') for s in
+                                        result.stdout.splitlines() if s.startswith('review dispatch: ')))
+                self.assertEqual(result.returncode == 0, completed, result.stdout + result.stderr)
+                self.assertEqual(chain['failure_kind'], None if completed else 'invalid_evidence')
+                if not completed:
+                    self.assertEqual(verdicts_of(chain['attempts'][0]['evidence']), [])
 
     def test_default_effort_follows_the_tier_and_xhigh_is_no_review_choice(self):
         # review.sh computed the tier default alone: the plugin's direct dispatcher command and
@@ -3457,8 +3501,8 @@ if case == 'archive_failure':
                         "if case == 'mcp_quota':\n"
                         "    print(json.dumps({'type': 'error', 'message': 'usage limit reached'})); sys.exit(0)\n"
                         "verdict = 'Reject' if case == 'reject' else 'Accept'\n"
-                        "text = '## Findings\\n\\nFixture finding.\\n\\nVERDICT: ' + verdict + '\\n'\n"
-                        "text = {'mcp_no_verdict': '## Findings\\n\\nFixture finding.\\n',\n"
+                        "text = '## Findings\\n\\nLow: fixture finding.\\n\\nVERDICT: ' + verdict + '\\n'\n"
+                        "text = {'mcp_no_verdict': '## Findings\\n\\nLow: fixture finding.\\n',\n"
                         "        'mcp_two_verdicts': text + 'VERDICT: Reject\\n'}.get(case, text)\n"
                         "pathlib.Path(sys.argv[sys.argv.index('-o') + 1]).write_text(text)\n"
                         "if case == 'mcp_failed_turn': print(json.dumps({'type': 'turn.failed', 'error': {}}))\n"
