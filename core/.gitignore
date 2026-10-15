@@ -31,7 +31,9 @@ __pycache__/
 # moves the default RESULT-NAME.md under .myagentkit/workers/, beside the worker's records.
 /QUESTION-*.md
 *.md.question.md
-/.myagentkit/
+# The private store in any case: Windows and macOS fold case, so `.MYAGENTKIT/` is the same
+# folder, and with core.ignorecase false a lowercase-only rule let `git add -A` stage it.
+/.[Mm][Yy][Aa][Gg][Ee][Nn][Tt][Kk][Ii][Tt]/
 # Backend credentials must be ignored and untracked, like private usage records.
 /.myagentkit/backends/
 # Raw review evidence holds the whole diff and the reviewing CLI's own output. It stays

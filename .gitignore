@@ -18,7 +18,9 @@ __pycache__/
 .claude/worktrees/
 
 # Private invocation diagnostics and subscription usage never belong in a public push.
-/.myagentkit/
+# Any case: Windows and macOS fold case, and with core.ignorecase false a lowercase-only
+# rule let `git add -A` stage `.MYAGENTKIT/`.
+/.[Mm][Yy][Aa][Gg][Ee][Nn][Tt][Kk][Ii][Tt]/
 # Raw review evidence holds the whole diff and the reviewing CLI's own output. It stays
 # local; publish a deliberately scrubbed `-summary.md` instead (re-included at the bottom).
 /docs/reviews/????????T??????Z-*.md

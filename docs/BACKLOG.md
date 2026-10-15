@@ -62,3 +62,11 @@ Low findings of the kit's own reviews are filed here, not fixed in the round (ow
 - `core/docs/USAGE.md:111`: two default attempts are 2 x 2700 s = 90 minutes, not 120.
 - `core/docs/DEV_SETUP.md:125` (pre-existing) says the review self-test needs POSIX, against the
   native Windows support at line 164.
+
+## Filed from the v0.11 round-2 fix worker's notes (fix brief 3)
+
+- `tests/test_close_worker.py` on native Windows (issue #56): the round-2 stubs (`uname` says
+  Linux, tmux through `sh`) take the tmux path, but 17 of 23 tests still fail there: paths print
+  with backslashes, the `windows()` cases meet the Codex process lister, the gate-lock case holds
+  `fcntl.flock`, the lingering-session case sends SIGKILL, and the bad-name case finds a tmux call.
+  Porting it is its own task; the suite stays excluded on Windows until then.

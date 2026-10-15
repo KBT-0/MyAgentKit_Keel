@@ -23,7 +23,10 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'REVIEW_SHADOW', 'MYAGENTKIT_TASK_I
                       'MYAGENTKIT_REVIEW_ATTEMPT', 'MYAGENTKIT_REVIEW_FALLBACK_FROM',
                       'MYAGENTKIT_REQUESTER', 'CLAUDE_REVIEW_DOCS', 'MYAGENTKIT_NO_BEHAVIOUR', 'MYAGENTKIT_BACKEND',
                       # A worker's brief: review.sh checked every fixture diff against its Owns: line.
-                      'REVIEW_TASK_FILE')
+                      'REVIEW_TASK_FILE',
+                      # A review loop's tier, focus and effort: REVIEW_RISK=high changed the default
+                      # effort the effort tests assert. A test that needs one passes it.
+                      'REVIEW_RISK', 'REVIEW_FOCUS', 'REVIEW_EFFORT')
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
@@ -2771,6 +2774,7 @@ class BridgeTests(unittest.TestCase):
                     # ignore the backend too, so it did not represent exposed storage.
                     (self.repo / '.gitignore').write_bytes(
                         ignore.replace('/.myagentkit/\n', '/.myagentkit/usage/\n')
+                        .replace('/.[Mm][Yy][Aa][Gg][Ee][Nn][Tt][Kk][Ii][Tt]/\n', '/.myagentkit/usage/\n')
                         .replace('/.myagentkit/backends/\n', '').encode('utf-8'))
                 else:
                     name = ('.myagentkit/usage/old.json' if case == 'tracked_usage' else
@@ -4692,7 +4696,6 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
     def test_a_proposal_keeps_the_documented_high_effort(self):
         # The tier default is the review's: a proposal without --effort ran at medium while
         # the myagentkit-delegate skill, its only caller, documents high.
-        os.environ.pop('REVIEW_RISK', None)
         handoff = self.root / 'handoff.md'
         handoff.write_text('Fix the named function only.')
         code, result = self.run_bridge('proposal', 'propose', ['--task-file', str(handoff)])

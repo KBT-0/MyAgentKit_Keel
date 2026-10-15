@@ -611,6 +611,22 @@ class GitHookTests(unittest.TestCase):
                           result.stderr)
             self.assertNotIn('FAILED', result.stderr)
 
+    def test_the_private_store_in_another_case_never_reaches_a_commit(self):
+        # Windows and macOS fold case, so `.MYAGENTKIT/` is the private store; with
+        # core.ignorecase false a lowercase-only ignore rule missed it and `git add -A`
+        # committed its credential. The kit's rule and the project rule it ships match any case.
+        for ignore in ('.gitignore', 'core/.gitignore'):
+            with self.subTest(ignore=ignore), tempfile.TemporaryDirectory() as tmp:
+                root, git = self.repo(tmp)
+                shutil.copyfile(ROOT / ignore, root / '.gitignore')
+                git('config', 'core.ignorecase', 'false')
+                for name in ('.MYAGENTKIT/Backends/glm.env', '.MyAgentKit/usage/r.json'):
+                    (root / name).parent.mkdir(parents=True)
+                    (root / name).write_text('ANTHROPIC_AUTH_TOKEN=fixture\n')
+                git('add', '-A')
+                git('commit', '-q', '-m', 'everything')
+                self.assertEqual(git('ls-files', ':(icase).myagentkit').stdout, '')
+
     def test_an_unreadable_agents_file_fails_closed(self):
         # A grep that could not read the rule is not an owner's choice to allow AI credit.
         # A directory cannot be read by any user, root included. Mode 000 does not stop root,
