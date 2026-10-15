@@ -13,6 +13,14 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## v0.11 — 2026-10-09
 
+- **A Codex Accept is read as strictly as a Claude one** (`scripts/claude_bridge.py`
+  `review_parts`, used by `scripts/codex_bridge.py` and `scripts/usage_summary.py`). The
+  Findings section ends only at another named section, so a `### **High**` sub-heading, a
+  bold or plain paragraph finding and a nested severity line are read as findings, and a
+  plain Accept that carries one fails as `invalid_evidence`; so does one whose Findings hold
+  prose that is neither a Low, a `Pre-existing:` item nor a placeholder such as `None.`. A
+  plain Accept that keeps a manual check fails too: it is an Accept with Manual Checks.
+  **ACTION:** copy the three scripts.
 - **Lessons from the kit's own development, written where they apply** (`AGENTS.md`,
   `docs/COMMUNICATION.md`, `docs/WORKFLOW.md` "Model routing" rules 1 and 3,
   `CONTRIBUTING.md`; `RESEARCH_LOG.md` 2026-10-15). A bug the task can fix is fixed in it,

@@ -15,9 +15,9 @@ import uuid
 import agent_process
 import agent_usage
 import codex_quota
-from claude_bridge import (FINDING_ITEM, FINDINGS_HEADING, MEASURED, REVIEW_PROMPT, REVIEW_RUNS,
+from claude_bridge import (MEASURED, REVIEW_PROMPT, REVIEW_RUNS,
                            BridgeError, accept_allows, default_effort, git, prior_rounds,
-                           review_context, scratch, snapshot, throwaway_copy, review_tmpdir,
+                           review_context, review_parts, scratch, snapshot, throwaway_copy, review_tmpdir,
                            utf8_output)
 
 
@@ -192,19 +192,12 @@ def main(argv=None, result_sink=None):
             if not reason and (len(verdicts) != 1 or len(declarations) != 1
                                or not any(v.get("type") == "turn.completed" for v in values)):
                 reason = "invalid_evidence"
-            if not reason and verdicts[0] == 'Accept':
-                # The same rule as claude_bridge.validate(): a plain Accept carries Lows and
-                # items outside the diff at most.
-                section = FINDINGS_HEADING.search(final)
-                if not accept_allows(FINDING_ITEM.findall(section.group(1)) if section else []):
-                    reason = 'invalid_evidence'
-            if not reason and verdicts[0] == 'Accept with Manual Checks':
-                section = re.search(r'^## Manual checks[ \t]*\n(.*?)(?=^## |\Z)', final, re.M | re.S)
-                checks = [line.strip(' \t-*').rstrip('.').lower() for line in
-                          (section.group(1).splitlines() if section else [])]
-                if not any(check and check not in {'none', 'n/a', 'not applicable', 'not run'}
-                           and not check.startswith(('#', 'verdict:')) for check in checks):
-                    reason = 'invalid_evidence'
+            # The same rules as claude_bridge.validate(): a plain Accept carries Lows and items
+            # outside the diff at most and no manual check; the other Accept names one.
+            findings, checks = review_parts(final)
+            if not reason and (verdicts[0] == 'Accept' and (checks or not accept_allows(findings))
+                               or verdicts[0] == 'Accept with Manual Checks' and not checks):
+                reason = 'invalid_evidence'
             if recovered and reason:
                 reason = recovered
             # A failed attempt that was cancelled is cancelled: its eligible failure once let

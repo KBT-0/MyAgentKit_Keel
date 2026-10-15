@@ -20,6 +20,10 @@ from pathlib import Path
 import re
 import sys
 
+# The findings parser the review gate uses, found beside this file under `python -I` too.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from claude_bridge import review_parts  # noqa: E402
+
 CLAIM_KEYS = ('fixed', 'disproved', 'deferred')
 
 
@@ -70,14 +74,10 @@ def evidence_fields(repo, record):
     if match:
         effort = match[1]
     match = re.search(r'^VERDICT: (Accept with Manual Checks|Accept|Reject)[ \t]*$', content, re.M)
-    # One severity-first top-level item per finding under the Findings heading (REVIEW_PROMPT asks
-    # both reviewers for exactly that; the same forms as claude_bridge.FINDING_ITEM, which the
-    # Codex Accept check reads), so a continuation bullet or a note is not a finding.
-    findings = re.search(r'^(?:#{1,6}[ \t]+|\*\*)?Findings:?(?:\*\*)?:?[ \t]*$(.*?)'
-                         r'(?=^(?:#{1,6}[ \t]+|\*\*)(?!(?:Critical|High|Medium|Low)\b)|\Z)',
-                         content, re.M | re.S | re.I)
-    record['findings'] = len(re.findall(r'^(?:[-*]|\d+\.|#{1,6})[ \t]+\**(?:Critical|High|Medium|Low)\b',
-                                        findings[1], re.M | re.I)) if findings else 0
+    # The findings the Accept check reads (claude_bridge.review_parts), counted when they
+    # name a severity, so a placeholder or a note is not a finding.
+    record['findings'] = sum(bool(re.match(r'(?i)(?:Critical|High|Medium|Low)\b', item))
+                             for item in review_parts(content)[0])
     return effort, match and match[1], None
 
 
