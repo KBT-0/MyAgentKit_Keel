@@ -5,6 +5,10 @@
     "CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL": "1h"
   },
   "autoCompactWindow": 450000,
+  "attribution": {
+    "commit": "",
+    "pr": ""
+  },
   "extraKnownMarketplaces": {
     "ponytail": {
       "source": {
@@ -64,7 +68,19 @@
           {
             "type": "command",
             "command": "sh \"$CLAUDE_PROJECT_DIR/.claude/hooks/py.sh\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard_destructive_git.py\"",
-            "timeout": 15
+            "timeout": 15,
+            "onFailure": "block"
+          }
+        ]
+      },
+      {
+        "matcher": "WebFetch|WebSearch|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"$CLAUDE_PROJECT_DIR/.claude/hooks/py.sh\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard_private_email.py\"",
+            "timeout": 10,
+            "onFailure": "block"
           }
         ]
       },
@@ -74,7 +90,8 @@
           {
             "type": "command",
             "command": "sh \"$CLAUDE_PROJECT_DIR/.claude/hooks/py.sh\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard_worker_route.py\"",
-            "timeout": 10
+            "timeout": 10,
+            "onFailure": "block"
           }
         ]
       }

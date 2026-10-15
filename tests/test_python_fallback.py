@@ -26,7 +26,8 @@ class PythonFallbackTests(unittest.TestCase):
         commands = [h['command'] for entries in hooks.values() for e in entries for h in e['hooks']]
         python_hooks = {Path(c.split('"')[-2]).name: c for c in commands if '.py"' in c}
         self.assertEqual(sorted(python_hooks), ['context_size.py', 'guard_boundaries.py', 'guard_destructive_git.py',
-                                                'guard_worker_route.py', 'plain_report.py', 'progress_reminder.py'], commands)
+                                                'guard_private_email.py', 'guard_worker_route.py', 'plain_report.py',
+                                                'progress_reminder.py'], commands)
         for command in python_hooks.values():
             self.assertTrue(command.startswith('sh "$CLAUDE_PROJECT_DIR/.claude/hooks/py.sh" '), command)
         bin_dir = tmp / 'bin'
@@ -55,6 +56,10 @@ class PythonFallbackTests(unittest.TestCase):
                       json.dumps({'tool_name': 'Bash', 'tool_input': {'command': 'git reset --hard'}}))
         self.assertEqual(blocked.returncode, 2, blocked.stderr)
         self.assertIn('BLOCKED', blocked.stderr)
+        subprocess.run(['git', 'config', 'user.email', 'owner@example.com'], cwd=project, check=True, env=env)
+        mailed = run(['sh', '-c', python_hooks['guard_private_email.py']],
+                     json.dumps({'tool_name': 'WebFetch', 'tool_input': {'url': 'https://x.example/?m=owner@example.com'}}))
+        self.assertEqual(mailed.returncode, 2, mailed.stderr)
         # A subagent names its model and effort, or it inherits the lead's; a fork cannot.
         route = python_hooks['guard_worker_route.py']
         for call, code in (({'prompt': 'x'}, 2), ({'model': 'sonnet'}, 2), ({'effort': 'medium'}, 2),
@@ -83,6 +88,21 @@ class PythonFallbackTests(unittest.TestCase):
         nudged = run(['sh', '-c', python_hooks['progress_reminder.py']], json.dumps({'transcript_path': str(transcript)}))
         self.assertEqual((nudged.returncode, nudged.stderr), (0, ''))
         self.assertIn('additionalContext', nudged.stdout)
+        # No interpreter runs at all: a guard blocks (exit 2) and says why; any other hook only
+        # reports, since exit 2 from UserPromptSubmit or Stop would erase every prompt or refuse
+        # every stop.
+        (bin_dir / 'python').write_text('#!/bin/sh\nexit 9009\n', encoding='utf-8')
+        (bin_dir / 'py').write_text('#!/bin/sh\nexit 1\n', encoding='utf-8')
+        (bin_dir / 'py').chmod(0o755)
+        sh = shutil.which('sh')
+        for hook, code in (('guard_destructive_git.py', 2), ('context_size.py', 1)):
+            with self.subTest(no_python=hook):
+                bare = subprocess.run([sh, str(project / '.claude/hooks/py.sh'), str(project / '.claude/hooks' / hook)],
+                                      input='{}', encoding='utf-8', errors='replace', capture_output=True,
+                                      timeout=60, env=dict(env, PATH=str(bin_dir)), cwd=project)
+                self.assertEqual(bare.returncode, code, bare.stderr)
+                self.assertIn('no Python found; install it or run doctor', bare.stderr)
+        (bin_dir / 'python').write_text('#!/bin/sh\nexec "%s" "$@"\n' % Path(sys.executable).as_posix(), encoding='utf-8')
         # A gate script that execs its resolved Python.
         cleaned = run(['sh', str(OVERLAY / 'scripts/clean_worktrees.sh')])
         self.assertEqual(cleaned.returncode, 0, cleaned.stdout + cleaned.stderr)

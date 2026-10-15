@@ -9,7 +9,8 @@
 #
 # Enable once per clone:  git config core.hooksPath .githooks   (docs/DEV_SETUP.md)
 # WIP escape hatch:       git commit --no-verify
-#   That hatch belongs to the owner. Agents must NOT use it (AGENTS.md).
+#   That hatch belongs to the owner. Agents must NOT use it (AGENTS.md); in the Claude Code
+#   overlay a PreToolUse hook (.claude/hooks/guard_destructive_git.py) refuses it to them.
 #
 # A gate wired into git is the only kind that survives: one that depends on discipline
 # erodes the first time someone is in a hurry.
@@ -55,5 +56,5 @@ if [ "$status" -eq 75 ]; then
   echo "pre-commit: check.sh did NOT RUN (another gate run holds the lock); commit blocked. Commit again when it finishes." >&2
   exit 1
 fi
-echo "pre-commit: check.sh FAILED — commit aborted. Fix it, or use --no-verify for a WIP commit." >&2
+echo "pre-commit: check.sh FAILED — commit aborted. Fix the failure. Only the owner bypasses this gate." >&2
 exit 1

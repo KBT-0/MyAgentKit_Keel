@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""PostToolUse(Edit|Write): catch a forbidden import the moment it is written.
+"""PostToolUse(Edit|Write): warn about a forbidden import the moment it is written.
+
+It warns after the write; scripts/check.sh is the gate (a PostToolUse hook cannot block, the
+tool already ran: https://code.claude.com/docs/en/hooks).
 
 CI catches it too. This hook only shortens the feedback loop from "next commit" to "next
 second", which is the difference between a one-line fix and an argument with a rebase.
@@ -25,7 +28,8 @@ BOUNDARIES = [
 
 data = json.loads(sys.stdin.buffer.read().decode("utf-8"))
 tool_input = data.get("tool_input", {})
-path = tool_input.get("file_path", "")
+# Native Windows sends the path with backslashes; the fragments use "/" (hooks reference).
+path = tool_input.get("file_path", "").replace("\\", "/")
 # Write sends `content`; Edit sends `new_string`. An earlier version read `new_str` — a
 # field no tool sends — so everything written through Edit went uninspected while the hook
 # looked installed. If these names drift, this hook is inert again: verify them against the
