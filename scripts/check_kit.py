@@ -94,7 +94,7 @@ REQUIRED_SUITES = {
               'test_usage_summary': 16,
               'test_kit_output': 1, 'test_kit_runner': 25, 'test_clean_worktrees': 137, 'test_clean_worktrees_windows': 11, 'test_close_worker_windows': 21,
               'test_review_windows': 22, 'test_claude_sandbox': 25, 'test_worker_paths_windows': 10,
-              'test_close_worker': 23, 'test_python_fallback': 1, 'test_selftest_status': 7},
+              'test_close_worker': 24, 'test_python_fallback': 1, 'test_selftest_status': 7},
 }
 # Suites that do not run on native Windows, each with the reason. There each one prints one
 # NOT RUN line and is not imported; CI's Linux and macOS jobs run every one of them. A suite
@@ -102,9 +102,7 @@ REQUIRED_SUITES = {
 NOT_ON_WINDOWS = {
     'core/scripts': {},
     'tests': {'test_check_gate': 'the flock gate lock; tests/test_check_gate_windows proves the Windows lock',
-              'test_clean_worktrees': 'POSIX process liveness; tests/test_clean_worktrees_windows proves Windows',
-              'test_close_worker': 'the tmux path and its Windows stand-ins, not yet ported (issue #56)',
-              'test_worker_visibility': 'tmux panes, not yet ported (issue #56)'},
+              'test_clean_worktrees': 'POSIX process liveness; tests/test_clean_worktrees_windows proves Windows'},
 } if os.name == 'nt' else {}
 # test_bootstrap passes on native Windows but starts thousands of processes there: about twelve
 # minutes. A local check leaves it to CI, whose Windows job runs it (CI is set there).
