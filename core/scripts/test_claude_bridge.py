@@ -30,9 +30,9 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'REVIEW_SHADOW', 'MYAGENTKIT_TASK_I
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 199, 'test_agent_usage': 33, 'test_codex_quota': 5}
+SUITE_MINIMUMS = {'test_claude_bridge': 205, 'test_agent_usage': 33, 'test_codex_quota': 5}
 # These are executed cases, excluding only the explicitly declared POSIX exclusions.
-WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 173, 'test_agent_usage': 29, 'test_codex_quota': 4}
+WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 179, 'test_agent_usage': 29, 'test_codex_quota': 4}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -4654,6 +4654,73 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         self.assertIn('400000 bytes', refused['error'])
         self.assertIn('fresh MYAGENTKIT_TASK_ID', refused['error'])
 
+    def test_renamed_source_cannot_borrow_a_vendor_path_from_the_old_name(self):
+        old = self.repo / 'old b/vendor/lib.py'
+        old.parent.mkdir(parents=True)
+        old.write_text('x' * 410_000 + '\nold\n')
+        self.commit_fixture('Ambiguous old pathname')
+        new = self.repo / 'src/big.py'
+        new.parent.mkdir()
+        old.rename(new)
+        new.write_text('x' * 410_000 + '\nnew\n')
+        self.git('add', '-A')
+        diff = self.git('diff', '--cached').stdout
+        self.assertGreater(bridge.budgeted(diff)[0], bridge.DIFF_LIMIT)
+        with self.assertRaisesRegex(bridge.BridgeError, '400000 bytes'):
+            bridge.snapshot(self.repo, 'uncommitted', None)
+
+    def test_unreadable_diff_paths_stay_in_the_budget(self):
+        for header in (b'diff --git a/old b/vendor/lib.py b/src/real.py',
+                       b'diff --git a/vendor/lib.py b/vendor/lib.py'):
+            diff = header + b'\n@@ -1 +1 @@\n-old\n+new\n'
+            with self.subTest(header=header):
+                self.assertEqual(bridge.budgeted(diff), (len(diff), 2))
+
+    def test_author_documentation_describes_the_current_manual_selection(self):
+        gate = ' '.join((ROOT.parent / 'docs/REVIEW_GATE.md').read_text(encoding='utf-8').split())
+        running = ' '.join((ROOT.parent / 'docs/REVIEW_RUNNING.md').read_text(encoding='utf-8').split())
+        self.assertIn('The lead selects a reviewer outside the author\'s tier', gate)
+        self.assertIn('does not exclude the author\'s tier automatically', gate)
+        self.assertIn('`MYAGENTKIT_AUTHOR` is not read or recorded', running)
+        self.assertNotIn('refuses a reviewer pinned to the author\'s model', gate)
+
+    def test_capacity_documentation_does_not_promise_unimplemented_retries(self):
+        running = ' '.join((ROOT.parent / 'docs/REVIEW_RUNNING.md').read_text(encoding='utf-8').split())
+        self.assertIn('A Codex capacity error fails the attempt as `cli_error`', running)
+        self.assertIn('The dispatcher does not retry that reviewer automatically', running)
+        self.assertNotIn('capacity error is transient and is retried', running)
+
+    def test_changing_or_unsetting_focus_cannot_open_a_third_round(self):
+        from unittest.mock import patch
+        task = {'MYAGENTKIT_TASK_ID': 'focus-limit', 'REVIEW_FOCUS': 'logic'}
+        for _ in range(2):
+            code, result = self.run_bridge('reject', env_extra=task)
+            self.assertEqual(code, 0, result)
+        head = self.git('rev-parse', 'HEAD').stdout.decode().strip()
+        for focus in (None, 'portability', 'logic'):
+            with self.subTest(focus=focus), patch.dict(os.environ):
+                os.environ.pop('REVIEW_FOCUS', None)
+                if focus:
+                    os.environ['REVIEW_FOCUS'] = focus
+                with self.assertRaisesRegex(bridge.BridgeError, 'REVIEW_ROUND_EXCEPTION'):
+                    bridge.prior_rounds(self.repo, task['MYAGENTKIT_TASK_ID'], 'uncommitted', None, head, '')
+                os.environ['REVIEW_ROUND_EXCEPTION'] = 'Owner requested another pass'
+                carried = bridge.prior_rounds(self.repo, task['MYAGENTKIT_TASK_ID'], 'uncommitted', None, head, '')
+                self.assertEqual('### Round ' in carried, focus == 'logic')
+                self.assertEqual(bridge.MEASURED['round_exception'], 'Owner requested another pass')
+
+    def test_legacy_rounds_are_carried_and_counted_when_focus_is_added(self):
+        log = self.root / 'prompt.txt'
+        task = {'MYAGENTKIT_TASK_ID': 'legacy-focus', 'PROMPT_LOG': str(log)}
+        self.assertEqual(self.run_bridge('reject', env_extra=task)[0], 0)
+        code, result = self.run_bridge('accept', env_extra=dict(task, REVIEW_FOCUS='logic'))
+        self.assertEqual(code, 0, result)
+        self.assertIn('### Round 1', log.read_text())
+        self.assertIn('concrete defect', log.read_text())
+        code, result = self.run_bridge(env_extra=dict(task, REVIEW_FOCUS='portability'))
+        self.assertEqual(code, 2, result)
+        self.assertIn('REVIEW_ROUND_EXCEPTION', result['error'])
+
     def test_lock_and_vendored_files_spend_no_diff_budget(self):
         # KARARLAR B02 inv2#34: a lock file or a vendored tree counts toward no budget (Cloudflare and
         # Anthropic's REVIEW.md skip them); it still reaches the reviewer, and code alone is limited.
@@ -4665,8 +4732,8 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         code, refused = self.run_bridge()
         self.assertEqual(code, 2, refused)
         self.assertIn('400000 bytes', refused['error'])
-        noise = (b'diff --git a/vendor/lib.py b/vendor/lib.py\n@@ -0,0 +1 @@\n+v\n'
-                 b'diff --git "a/x y/yarn.lock" "b/x y/yarn.lock"\n@@ -1 +1 @@\n-a\n+b\n')
+        noise = (b'diff --git a/vendor/lib.py b/vendor/lib.py\n+++ b/vendor/lib.py\n@@ -0,0 +1 @@\n+v\n'
+                 b'diff --git "a/x y/yarn.lock" "b/x y/yarn.lock"\n+++ "b/x y/yarn.lock"\n@@ -1 +1 @@\n-a\n+b\n')
         code_part = b'diff --git a/file.py b/file.py\n@@ -1 +1 @@\n-original\n+changed\n'
         self.assertEqual(bridge.budgeted(noise + code_part), (len(code_part), 2))
 
@@ -4676,7 +4743,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         from contextlib import redirect_stderr
         head = self.git('rev-parse', 'HEAD').stdout.decode().strip()
         big = 'diff --git a/file.py b/file.py\n@@ -0,0 +1,401 @@\n' + '+x\n' * 401
-        lock = 'diff --git a/Cargo.lock b/Cargo.lock\n@@ -0,0 +1,900 @@\n' + '+x\n' * 900
+        lock = 'diff --git a/Cargo.lock b/Cargo.lock\n+++ b/Cargo.lock\n@@ -0,0 +1,900 @@\n' + '+x\n' * 900
         for diff, chain, hinted in ((big, None, True), (big, 'a-chain', False), (lock, None, False),
                                     (big[:200], None, False)):
             with self.subTest(diff=diff[:40], chain=chain):
@@ -4710,9 +4777,8 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         self.assertEqual(names['claude'], list(bridge.REVIEW_DOCS))
         self.assertEqual(names['codex'], names['claude'])
 
-    def test_each_focus_reviewer_of_one_label_has_its_own_two_rounds(self):
-        # KARARLAR B02 inv2#10: a high-tier change keeps one label; the round limit and the
-        # carried rounds belong to the pair (label, REVIEW_FOCUS), two rounds for each focus.
+    def test_focus_reviewers_share_the_limit_but_carry_only_their_own_reports(self):
+        # The fix brief requires one label-wide limit; a focus still filters prompt history.
         log = self.root / 'prompt.txt'
         base = {'PROMPT_LOG': str(log), 'MYAGENTKIT_TASK_ID': 'focus-task'}
         logic, portability = dict(base, REVIEW_FOCUS='logic'), dict(base, REVIEW_FOCUS='portability')
@@ -4721,11 +4787,16 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         self.assertEqual(json.loads(Path(first['usage_record']).read_text())['task']['focus'], 'logic')
         self.assertEqual(self.run_bridge('reject', env_extra=portability)[0], 0)
         self.assertNotIn('### Round', log.read_text())
-        code, second = self.run_bridge('accept', env_extra=logic)
+        code, refused = self.run_bridge(env_extra=logic)
+        self.assertEqual(code, 2, refused)
+        self.assertIn('REVIEW_ROUND_EXCEPTION', refused['error'])
+        exception = {'REVIEW_ROUND_EXCEPTION': 'Owner requested focus follow-up'}
+        code, second = self.run_bridge('accept', env_extra=dict(logic, **exception))
         self.assertEqual(code, 0, second)
         self.assertEqual(log.read_text().count('### Round '), 1, log.read_text())
-        self.assertIn('This is review round 2', log.read_text())
-        self.assertEqual(self.run_bridge('accept', env_extra=portability)[0], 0)
+        self.assertIn('This is review round 3', log.read_text())
+        self.assertEqual(self.run_bridge('accept', env_extra=dict(portability, **exception))[0], 0)
+        self.assertEqual(log.read_text().count('### Round '), 1, log.read_text())
         code, refused = self.run_bridge(env_extra=logic)
         self.assertEqual(code, 2, refused)
         self.assertIn('REVIEW_ROUND_EXCEPTION', refused['error'])

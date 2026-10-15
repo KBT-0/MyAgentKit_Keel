@@ -160,8 +160,12 @@ def budgeted(diff: bytes) -> tuple[int, int]:
     that names no path is counted: an unreadable name never leaves the budget."""
     size = lines = 0
     for part in re.split(rb"(?m)^(?=diff --git )", diff):
-        named = re.search(rb' "?b/(.*?)"?$', part.split(b"\n", 1)[0])
-        parts = os.fsdecode(named.group(1)).split("/") if named else [""]
+        # The diff --git header is ambiguous when the old name contains " b/". Only
+        # the destination marker before the hunk names this part unambiguously.
+        header = part.partition(b"\n@@")[0]
+        named = re.search(rb'(?m)^\+\+\+ (?:b/([^\n]*?)\t?|"b/([^"\\\n]*)")$', header)
+        path = next((name for name in named.groups() if name is not None), b"") if named else b""
+        parts = os.fsdecode(path).split("/")
         if parts[-1] in NOISE_NAMES or parts[-1].endswith(NOISE_SUFFIXES) or NOISE_DIRS & set(parts[:-1]):
             continue
         size += len(part)
@@ -835,9 +839,11 @@ def prior_rounds(repo: Path, task_id: str | None, scope: str, resolved: str | No
     deferred and sampled the previous fixes again, so the loop never converged. The record
     comes from the reviewer's own archive, not from the author, so nothing can be left out;
     the author's dispositions (REVIEW_DISPOSITIONS, a file) ride along as claims to verify.
-    Each REVIEW_FOCUS of one label has its own rounds (KARARLAR B02 inv2#10).
+    Every completed round counts under its label, regardless of focus. Carry only the
+    current focus and legacy rounds without a focus (batch3-fix-brief, finding 2).
     """
     rounds = []
+    completed = 0
     focus = os.environ.get("REVIEW_FOCUS") or None
     # The split hint, once per review: the dispatcher's preflight runs before it sets the chain
     # id, and an adapter inside its chain stays quiet.
@@ -943,8 +949,10 @@ def prior_rounds(repo: Path, task_id: str | None, scope: str, resolved: str | No
             raise BridgeError("earlier review evidence for task %s was changed after it was "
                               "archived (its sha256 differs from the usage record): %s; restore "
                               "it or use a new task label" % (task_id, evidence))
-        # Checked above like its own (one label, one change); counted and carried by its focus only.
-        if (task.get("focus") or None) == focus:
+        # Counting is independent of prompt filtering: changing or unsetting focus must
+        # never reopen the label's budget. Legacy rounds apply to every focus.
+        completed += 1
+        if not task.get("focus") or task.get("focus") == focus:
             rounds.append((str(value.get("recorded_at")), report.decode()))
     notes = os.environ.get("REVIEW_DISPOSITIONS")
     claims = Path(notes).read_text(encoding="utf-8") if notes else None
@@ -955,17 +963,17 @@ def prior_rounds(repo: Path, task_id: str | None, scope: str, resolved: str | No
     if notes and not rounds:
         raise BridgeError("REVIEW_DISPOSITIONS is set but no earlier completed review has task "
                           "label %r; set MYAGENTKIT_TASK_ID to the earlier rounds' label" % task_id)
-    if not rounds:
-        return ""
     # At most two rounds under one label (docs/REVIEW_GATE.md, "Rounds"): a third needs a
     # recorded reason, so a loop that stops converging is seen instead of paid for again.
-    if len(rounds) >= 2:
+    if completed >= 2:
         exception = os.environ.get("REVIEW_ROUND_EXCEPTION", "").strip()
         if not exception:
             raise BridgeError("task label %s already has %d completed rounds; a third round needs "
                               "REVIEW_ROUND_EXCEPTION=<reason>, or what remains goes to the owner "
-                              "or an issue" % (task_id, len(rounds)))
+                              "or an issue" % (task_id, completed))
         MEASURED["round_exception"] = exception
+    if not rounds:
+        return ""
     # The author never approves its own work, so a disposition is a claim, never a settlement.
     text = ("This is review round %d of this change. The earlier rounds follow, oldest first, as "
             "archived. For every earlier finding the dispositions claim fixed, a Medium included, "
@@ -973,7 +981,7 @@ def prior_rounds(repo: Path, task_id: str | None, scope: str, resolved: str | No
             "answers: a finding marked disproved counts only after you have checked it against "
             "the code yourself, and a finding marked deferred stays open: list it under Manual "
             "checks, so the verdict is never a plain Accept. Report new Critical or High findings "
-            "only.\n" % (len(rounds) + 1))
+            "only.\n" % (completed + 1))
     for number, (_, report) in enumerate(sorted(rounds), 1):
         text += "### Round %d\n%s\n" % (number, report)
     if notes:
@@ -1001,7 +1009,7 @@ def measure(claims: str | None) -> dict:
     if os.environ.get("REVIEW_SHADOW") == "1":
         MEASURED["shadow"] = "yes"
     if os.environ.get("REVIEW_FOCUS"):
-        MEASURED["focus"] = os.environ["REVIEW_FOCUS"]  # prior_rounds() counts rounds per focus
+        MEASURED["focus"] = os.environ["REVIEW_FOCUS"]  # prior_rounds() filters carried reports by focus
     return MEASURED
 
 

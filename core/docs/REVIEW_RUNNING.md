@@ -20,14 +20,16 @@ backend (`--backend NAME`, reviewer `claude@NAME`): `docs/DEV_SETUP.md`.
 | `REVIEW_DISPOSITIONS` | answers to round 1, one line per finding: `fixed:` / `disproved:` / `deferred:` |
 | `REVIEW_ROUND_EXCEPTION` | reason for a third round, kept in the record |
 | `REVIEW_RISK` | `low` / `medium` / `high`, the brief's tier |
-| `REVIEW_FOCUS` | `portability` or `logic`, one reviewer each on a high tier, two rounds each under the change's one label |
-| `MYAGENTKIT_AUTHOR` | the model id that wrote the change; recorded, and a reviewer pinned to it is refused |
+| `REVIEW_FOCUS` | `portability` or `logic`, one reviewer each on a high tier; every completed review counts toward the label's two-round limit |
 | `REVIEW_TASK_FILE` | the brief the prompt quotes; a diff outside its `Owns:` line is refused |
 | `REVIEW_EFFORT` | `low` / `medium` / `high`; default high on a high tier, else medium |
 | `REVIEW_TIMEOUT_SECONDS` | per attempt, default 2700, at most 3600 |
 | `REVIEW_MAX_TURNS` | Claude turns per attempt |
 | `REVIEW_SHADOW` | `1` measures a reviewer configuration; its verdict closes nothing |
 | `REVIEW_CLAUDE_MODEL`, `REVIEW_CODEX_MODEL`, `MYAGENTKIT_BACKEND` | pins and backend for one run |
+
+`MYAGENTKIT_AUTHOR` is not read or recorded. The lead checks the author's model and sets
+the reviewer pin before launch (`docs/REVIEW_GATE.md`, "Invariant").
 
 Exit 2 means a wrong round was refused: keyless dispositions, an earlier archive missing or
 edited, a round that does not continue its label, a diff over 400000 bytes with its rounds
@@ -47,8 +49,9 @@ Automation never authorizes a commit or push.
 ## Rounds, labels and designs
 
 - A design is reviewed under its own label before code exists; dispositions cite its exclusions.
-- A high-tier change's two focus reviewers share its one label; each `REVIEW_FOCUS` carries
-  its own rounds (`docs/REVIEW_GATE.md`, "Rounds").
+- A high-tier change's two focus reviewers share its one label and round limit; each
+  `REVIEW_FOCUS` carries its own reports plus legacy reports without a focus
+  (`docs/REVIEW_GATE.md`, "Rounds").
 - The two reviewers run one after the other unless {{OWNER_NAME}} allows parallel; start the
   self-test beside a review only when the memory budget permits (`docs/WORKFLOW.md`, "Worker
   cost", rule 6), each as its own background job. The kit's
@@ -65,10 +68,10 @@ replaced; with `--fallback` the other configured model runs once after an operat
 failure (quota, timeout, a CLI error, `content_flagged`), its evidence opening with a `FALLBACK REVIEWER:` line. A substitute may be the
 author, so `--fallback` needs {{OWNER_NAME}}'s yes. A setup fault (`cli_unsupported`,
 `sandbox_unavailable`) is fixed, never failed over. With `--fallback`, two timed-out attempts
-take about 2 x `REVIEW_TIMEOUT_SECONDS` (about ninety minutes at the default 2700 s). A Codex
-capacity error is transient and is retried: after the delay the tool reports, otherwise after
-about ten minutes, doubled, at most twice (the ten minutes is an owner choice; both vendors
-bound their retries). A quota or spend-cap error is never retried. An exhausted chain goes
+take about 2 x `REVIEW_TIMEOUT_SECONDS` (about ninety minutes at the default 2700 s).
+A Codex capacity error fails the attempt as `cli_error`. The dispatcher does not retry
+that reviewer automatically; `--fallback` permits the other configured model as described
+above. A quota or spend-cap error is never retried. An exhausted chain goes
 into `docs/STATE.md` as a pending review; independent work continues. A test that needs a
 capability the host may lack (`taskkill`, `python3`) probes for it and skips with a reason
 that names it; the author's unrestricted run must show zero skips for that test. The

@@ -11,8 +11,9 @@ by name"): in solo, another tier of the same family, never the author's tier; in
 other family by the direction rule. This is the one place the rule is written; other documents
 point here. One family is enough; a second vendor (`--reviewer codex`, a `claude@NAME`
 backend) is pluggable, never required. No published measurement says how much another tier of
-the same family adds, so the review record names the author's model (`MYAGENTKIT_AUTHOR`)
-beside the reviewer's, and `scripts/review.sh` refuses a reviewer pinned to the author's model.
+the same family adds. The lead selects a reviewer outside the author's tier through the
+model pins; `scripts/review.sh` does not exclude the author's tier automatically or record
+the author's model. The lead checks independence before launch.
 Independence comes from the model family, not the CLI: a `claude@NAME` review of another
 family counts as the second model; its record says the model was requested, unattested. A green gate is
 necessary, not sufficient. The reviewer works in a throwaway copy without network or paid
@@ -42,8 +43,9 @@ file) gets one light pass, non-blocking; its Lows are capped as `REVIEW_PROMPT` 
 ## Rounds
 
 At most two rounds under one label (`MYAGENTKIT_TASK_ID`); both adapters refuse a third
-(`claude_bridge.prior_rounds`). A high-tier change keeps one label: the limit counts the
-completed reviews of each `REVIEW_FOCUS` under it, so each focus reviewer has its own two rounds.
+(`claude_bridge.prior_rounds`). A high-tier change keeps one label: the limit counts every
+completed review under it, whether `REVIEW_FOCUS` is set or unset. The prompt carries only
+the current focus's earlier reports and legacy reports without a focus.
 Round 2 confirms every finding the dispositions claim fixed, a Medium
 included, and reports new Critical or High only. A third round needs
 `REVIEW_ROUND_EXCEPTION=<reason>`, kept in the record; what remains goes to {{OWNER_NAME}}

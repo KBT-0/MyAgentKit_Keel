@@ -21,6 +21,23 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-10-15 — v0.11 batch 3: reproduced review-gate bypasses and documentation drift
+
+The round-1 logic and portability reviews (20261015T175842Z-cbb8d261c9b9 and
+20261015T175843Z-1a2f2f88e0c6) reproduced two bypasses. A rename whose old pathname
+contains ` b/vendor/` made the header parser exempt a source patch over 400000 bytes.
+Unsetting the review focus dropped completed rounds from the limit. The batch3-fix-brief
+requires an unambiguous destination marker and a label-wide count, with only prompt history
+filtered by focus; legacy rounds remain visible. This fix brief supersedes KARARLAR B02
+inv2#10's per-focus counter for this patch.
+
+The same reviews reproduced documentation promises absent from the runtime: author identity
+refusal and recording, and bounded Codex capacity retries. The fix brief permits describing
+the current manual author selection instead of adding the safeguard here. KARARLAR B01 (1)
+calls for default author-tier exclusion; that implementation remains outside this fix.
+KARARLAR B01 (6)'s capacity retries belong to batch 4. The docs describe the current
+`cli_error` failure and opt-in fallback, without promising those retries before they exist.
+
 ### 2026-10-15 — v0.11 close-out batch 12: Unity overlay facts
 
 The MCP for Unity v10.3.0 source shows GameObject delete is not undoable (its comment says

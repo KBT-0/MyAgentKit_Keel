@@ -13,6 +13,14 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## v0.11 — 2026-10-09
 
+- **Review budget and round-limit fixes** (`scripts/claude_bridge.py`, core and packaged copies).
+  An old pathname containing ` b/` cannot disguise source as a vendored diff. Unreadable
+  destination markers count toward the budget. Every completed review counts toward its
+  label's two-round limit, even when the focus changes or is unset; legacy reports without
+  a focus still reach the reviewer. Author independence requires the lead's model selection,
+  and the docs no longer promise automatic author exclusion or Codex capacity retries.
+  **ACTION:** refresh the review runtime and `docs/REVIEW_GATE.md` / `docs/REVIEW_RUNNING.md`;
+  record `REVIEW_ROUND_EXCEPTION` before a third completed review under a label.
 - **Unity overlay re-checked against Unity's docs and the MCP for Unity v10.3.0 source**
   (`overlays/unity/`, `patterns/pure-core-plus-engine.md`). UnityYAMLMerge is set up as a
   mergetool, not a merge driver (Unity documents only the mergetool); a `file:` package path is
