@@ -22,7 +22,26 @@ tools/         batch jobs, simulations. Calls the same core.
 ```
 
 The rule that makes it real: **an engine import inside the core is a build failure**, not a
-code review comment. One grep in the gate, with a negative test proving it fires.
+code review comment. One grep in the gate, with a negative test proving it fires. In Unity, the
+core assembly definition sets "No Engine References" (`noEngineReferences: true`): Unity then
+does not add references to `UnityEngine` or `UnityEditor` when it compiles the core, so an
+engine import fails to compile, which is stricter than a grep. Keep the grep for non-Unity
+hosts. Ready-made third-party code never enters the core either: in Unity the core's asmdef
+also has an empty `references` list.
+
+Sources: Alistair Cockburn, "Hexagonal architecture" (an application driven equally by users,
+programs, automated tests or batch scripts, and developed and tested in isolation from its
+run-time devices and databases; logic leaking into the user interface makes automated tests
+hard): https://alistair.cockburn.us/hexagonal-architecture/. Gary Bernhardt, "Boundaries"
+(functional core, imperative shell, the same idea; seen only through secondary summaries):
+https://www.destroyallsoftware.com/talks/boundaries. Unity blog, "Unit testing part 2: Unit
+testing MonoBehaviours" (the Humble Object pattern: logic in a separate, decoupled class, the
+component a very thin layer; a MonoBehaviour cannot be created with `new` or mocked):
+https://unity.com/blog/technology/unit-testing-part-2-unit-testing-monobehaviours. Unity
+Manual, Assembly Definition importer (No Engine References):
+https://docs.unity.com/en-us/engine/6000.0/manual/programming-environment/script-compilation/assembly-definition-files/class-assembly-definition-importer.
+The speed and determinism gains below are the kit's own reasoning from this design, not
+measured by these sources.
 
 ## What you get
 
