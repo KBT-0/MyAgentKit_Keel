@@ -95,7 +95,9 @@ else kit_python="py -3"; fi   # the launcher, told which Python: unquoted at eve
 # --- a checkout on a Windows drive under WSL -----------------------------------------
 # /mnt/<drive> is the Windows filesystem seen from WSL: git converts line endings to CRLF,
 # the scripts then die in sh, node_modules fills with Windows-native binaries, and the gate
-# runs many times slower. DOCTOR_CHECKOUT and DOCTOR_PROC_VERSION exist for the test only.
+# runs many times slower. Microsoft: keep the files in the WSL filesystem for the fastest
+# performance (learn.microsoft.com/en-us/windows/wsl/filesystems); the CRLF and binary parts
+# are the kit's own observation. DOCTOR_CHECKOUT and DOCTOR_PROC_VERSION exist for the test only.
 here=${DOCTOR_CHECKOUT:-$(pwd -P)}
 case "$here" in
   /mnt/[a-zA-Z]|/mnt/[a-zA-Z]/*)

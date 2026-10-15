@@ -58,8 +58,6 @@ Low findings of the kit's own reviews are filed here, not fixed in the round (ow
 - `docs/context-is-a-budget.md:90` still argues compaction at 200k with the retracted ten-turn
   cost figure; WORKFLOW gives about 25-49 requests.
 - `core/docs/USAGE.md:111`: two default attempts are 2 x 2700 s = 90 minutes, not 120.
-- `core/docs/DEV_SETUP.md:125` (pre-existing) says the review self-test needs POSIX, against the
-  native Windows support at line 164.
 
 ## Filed from v0.11 close-out batch 6 (need a tmux host: macOS, Linux, or WSL with the owner's OK)
 
