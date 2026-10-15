@@ -21,6 +21,14 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-10-15 — v0.11 close-out batch 6: worker lifecycle facts
+
+Claude Code 2.1.300 offers a sub-agent the Agent tool (nesting on; the vendor default is
+three layers since 2.1.219), so a sub-agent worker can review its own diff. `git worktree add
+--lock --reason` came in Git 2.33 (release notes). `clean_worktrees.py` keeps ignored files
+outside disposable folders, so the premise of KARARLAR D10 inv3#55 was false and its text was
+not added.
+
 ### 2026-10-15 — lessons the kit's own development paid for, written into the kit
 
 The owner corrected the lead on eight points while building v0.11; each was kept in the

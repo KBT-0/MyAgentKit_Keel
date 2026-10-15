@@ -13,6 +13,21 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## v0.11 — 2026-10-09
 
+- **Worker lifecycle** (`scripts/spawn_worker.sh`, `spawn_codex.sh`, `close_worker.sh`,
+  `watch_workers.sh`, `clean_worktrees.py`, `.claude/agents/worker.md`, `docs/HANDOFF.md`).
+  A spawned worker's worktree is locked (`git worktree lock`, reason `kit worker NAME`) until
+  `close_worker.sh`, which lifts only that lock before its audit and keeps it when the close
+  fails; the audit never removes a locked worktree (KARARLAR B04 inv3#54; Claude Code
+  worktrees doc; `--lock --reason` since Git 2.33). `spawn_worker.sh` starts every worker with
+  `--disallowedTools AskUserQuestion`: the result file is the question channel (D02 inv3#35;
+  Claude Code CLI reference). Both spawn scripts print `about to run 'NAME': model M, effort E`
+  first (issue #68 item 1, B05 inv1#141). `watch_workers.sh --context-warn` takes `NNNk` or
+  `NN%`, default the smaller of 200k and 50% of the window (it was 50%: 500k on a 1M window; a
+  bare number keeps its old meaning), and reads `08k` as decimal (B07 inv3#67). The worker
+  definition sets `autoCompactWindow: 200000`; a worker hands off at its second compaction,
+  reviews its own diff with sub-agents also when it runs as one, and `Kind: blocked` also
+  means failed (D06 inv1#164, D01 inv1#286, #202, D10 inv1#273). **ACTION:** take the
+  updated scripts, `worker.md` and the `docs/HANDOFF.md` sections.
 - **Lessons from the kit's own development, written where they apply** (`AGENTS.md`,
   `docs/COMMUNICATION.md`, `docs/WORKFLOW.md` "Model routing" rules 1 and 3,
   `CONTRIBUTING.md`; `RESEARCH_LOG.md` 2026-10-15). A bug the task can fix is fixed in it,
