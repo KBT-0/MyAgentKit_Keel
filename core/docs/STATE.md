@@ -13,7 +13,7 @@ true next month, are in `docs/AGENTS.md`, "STATE.md discipline" (the reasons: `d
 
 (task + module + status, or one line per operation pointing at its `docs/<OPERATION>.md`;
 delete when done — an EMPTY section means nothing is in flight, so never park closed work
-here)
+here; that meaning is a contract the gate does not check)
 
 ## Blocked / waiting on {{OWNER_NAME}}
 

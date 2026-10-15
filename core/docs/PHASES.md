@@ -1,17 +1,19 @@
 # Phases — what we are building now, and what we are deliberately not
 
 Read every session: the CURRENT phase in full, every later phase in one line. When a phase
-closes, its permanent findings move to their homes and its detail is deleted; the reasons
-are in `docs/WORKFLOW.md`, "The state, backlog and phase files".
+closes, its permanent findings move to their homes and its detail is deleted; its history
+stays in git (other kits archive a finished plan instead; this one harvests and deletes). The
+reasons are in `docs/WORKFLOW.md`, "The state, backlog and phase files".
 
 ---
 
 ## Current phase: {{CURRENT_PHASE}}
 
-**The question it answers:** {{PHASE_QUESTION}}
+**What it must find out:** {{PHASE_QUESTION}}
 
-<!-- One sentence. What do we not know, or what risk are we retiring? If it cannot be put as
-     a question, the phase is a wish list rather than a phase. -->
+<!-- State what the phase must find out or which risk it retires, in one sentence (a
+     question is a good form, not a requirement). If it cannot be put in one sentence, split
+     the phase. A kit choice; no study measured it. -->
 
 **In scope**
 
@@ -23,7 +25,10 @@ are in `docs/WORKFLOW.md`, "The state, backlog and phase files".
 
 <!-- Spend as much effort here as on the list above. Each entry names the phase it belongs to
      instead, so "not yet" does not read as "never". An agent that finds itself needing
-     something on this list STOPS and reports rather than quietly widening the phase. -->
+     something on this list STOPS and reports rather than quietly widening the phase.
+     Sources: non-goals in Google design docs (industrialempathy.com/posts/design-docs-at-google);
+     GitHub Spec Kit, spec-driven.md; Anthropic's prompting guide on overeagerness. Naming
+     the phase each entry belongs to is the kit's addition. -->
 
 **Done when**
 
@@ -38,9 +43,10 @@ are in `docs/WORKFLOW.md`, "The state, backlog and phase files".
 
 ## After this one
 
-<!-- One line per phase, in order, and no more than a line. The question it will answer is
+<!-- One line per phase, in order, and no more than a line. What it will find out is
      enough; scope and criteria are written when it becomes current. Reordering this list is
      a decision and belongs in docs/PROJECT.md with its reasoning — this is the view, not the
-     authority. -->
+     authority. Sources: rolling-wave planning (detail when a stage becomes near); an
+     architecture decision record is superseded, not edited (Nygard, cognitect.com 2011). -->
 
 {{LATER_PHASES}}

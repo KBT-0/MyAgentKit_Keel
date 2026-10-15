@@ -18,6 +18,8 @@ task by the end. Repeating the rule harder does not fix this. Making the build f
 
 - Every boundary that CAN be enforced by a compiler, a project reference whitelist, a type,
   a database constraint or a grep IS enforced that way. Prose is the fallback, not the plan.
+  OpenAI's harness team works the same way: its real gate is custom linters and structural
+  tests, not the written rules (`docs/research/agent-kits-in-practice.md`, §2.2, source 23).
 - The enforcement lives in ONE script that CI, the pre-commit hook and every agent run. One
   definition of green. A local pass means a CI pass, or the arrangement is a lie.
 - The gate is wired into git (`core.hooksPath`), so passing it does not depend on anyone
@@ -28,9 +30,10 @@ task by the end. Repeating the rule harder does not fix this. Making the build f
 
 ## Where it is genuinely hard
 
-Some rules resist mechanisation: "MonoBehaviours stay thin", "no god classes", "one task
-touches one module". These stay in prose, and they decay — which is why the periodic audit
-exists as a scheduled task rather than a good intention. The audit is where unenforceable
+Some rules resist mechanisation: "MonoBehaviours stay thin", "no god classes". (Even "one
+task touches one module" has only a partial check: a brief's `Owns:` line, which
+`scripts/owns_check.py` holds the diff to.) These stay in prose, and they decay — which is
+why the periodic audit exists as a scheduled task rather than a good intention. The audit is where unenforceable
 rules get checked by a human, on a cadence, instead of never.
 
 Do not respond to this by inventing a fragile check. A grep that produces false positives
