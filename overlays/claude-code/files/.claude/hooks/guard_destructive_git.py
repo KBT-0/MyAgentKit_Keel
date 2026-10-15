@@ -66,9 +66,13 @@ FLOOR = [(re.compile(p, re.I), why) for p, why in [
     (r"\bgit(\.exe)?\s+reset\b[^|;&]*--hard", "git reset --hard discards every uncommitted change"),
     (r"\bgit(\.exe)?\s+checkout\b[^|;&]*\s--\s", "git checkout -- <path> overwrites the working copy"),
     (r"\bgit(\.exe)?\s+checkout\s+-f\b", "git checkout -f overwrites the working copy"),
-    (r"\bgit(\.exe)?\s+restore\b(?![^|;&]*(--staged|\s-S\b))", "git restore overwrites the working copy"),
-    (r"\bgit(\.exe)?\s+clean\b(?![^|;&]*(\s-[a-zA-Z]*n|--dry-run))[^|;&]*(\s-[a-zA-Z]*[fdxX]|--force)",
-     "git clean deletes untracked files"),
+    # restore passes only index-only: --staged/-S present AND --worktree/-W absent.
+    (r"\bgit(\.exe)?\s+restore\b(?!(?=[^|;&]*(--staged|(?-i:\s-[a-zA-Z]*S)))(?![^|;&]*(--worktree|(?-i:\s-[a-zA-Z]*W))))",
+     "git restore overwrites the working copy"),
+    # clean passes on a dry run, but not on an -n that -e/--exclude takes as its pattern
+    # (`-e -n`, `--exclude -n`, the cluster `-fen`).
+    (r"\bgit(\.exe)?\s+clean\b(?![^|;&]*(?<=\S)(?<!\s-e)(?<!--exclude)\s+(?-i:-[a-df-zA-Z]*n|--dry-run))"
+     r"[^|;&]*(\s-[a-zA-Z]*[fdxX]|--force)", "git clean deletes untracked files"),
     (r"\bgit(\.exe)?\s+stash\s+(drop|clear)\b", "git stash drop/clear deletes stashed work"),
     (r"\bgit(\.exe)?\s+push\b[^|;&]*(--force(?![\w-])|\s-f\b)", "a force push can discard remote commits"),
 ]]

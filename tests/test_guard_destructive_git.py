@@ -256,6 +256,19 @@ class ReviewRoundThreeTests(GuardCase):
                             # the floor's accepted cost: a mention is refused while the tree is dirty
                             'git commit -m "undo git reset --hard"'], 2)
 
+    def test_the_floor_reads_restore_and_clean_as_git_does(self):
+        # Lead on c3f8427: --staged with --worktree overwrites the working copy, and an -n that
+        # -e/--exclude consumes is a pattern, not a dry run.
+        (self.repo / 'notes.txt').write_text('only copy\n', encoding='utf-8')
+        self.dirty()
+        self.assertVerdict([
+            'echo "git restore --staged --worktree ." > x.sh; sh x.sh', 'echo "git restore -S -W ." > x.sh; sh x.sh',
+            'echo "git restore -SW ." > x.sh; sh x.sh', 'echo "git clean -e -n -f" > x.sh; sh x.sh',
+            'echo "git clean --exclude -n -f" > x.sh; sh x.sh', 'echo "git clean -fen" > x.sh; sh x.sh',
+        ], 2)
+        self.assertVerdict(['echo "git restore --staged f.txt" > x.sh; sh x.sh', 'echo "git clean -nd" > x.sh; sh x.sh',
+                            'echo "git clean -e x -n -f" > x.sh; sh x.sh'], 0)
+
     def test_a_conditional_or_background_cd_never_hides_the_caller(self):
         side = self.tmp / 'b'
         side.mkdir()
