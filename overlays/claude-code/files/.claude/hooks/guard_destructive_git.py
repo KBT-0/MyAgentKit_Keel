@@ -20,9 +20,15 @@ or stash before any command that discards work" still covers every destructive c
   `--worktree`), `git clean` (unless `-n`/`--dry-run`; with `-x`/`-X` ignored files count) and
   an alias the hook cannot read. Uncommitted changes are not in the reflog: once they are gone,
   they are gone. The tree checked is the one the command reaches (`cd X &&`, `git -C`,
-  `--git-dir`, `--work-tree`, `GIT_DIR=`, `GIT_WORK_TREE=`); a `cd` inside parentheses or a
-  pipeline runs in a subshell, so after it both folders are checked. A command after one that
-  changes the tree (anything but `cd`, `echo`, a read-only git command ...) is judged dirty.
+  `--git-dir`, `--work-tree`, `GIT_DIR=`, `GIT_WORK_TREE=`), and the caller's folder is always
+  checked too: a `cd` only adds a folder. A command after one that changes the tree (anything
+  but `cd`, `echo`, a read-only git command ...) is judged dirty.
+
+The floor runs first: the base implementation's patterns (`git reset ... --hard`, `checkout --`,
+`checkout -f`, `restore` without `--staged`, `clean -f/-d/-x` without `-n`, `stash drop/clear`,
+`push --force`/`-f`) anywhere in the raw text, quoted strings and here-document bodies included,
+refused while the caller's tree is dirty. The parser below only adds refusals to it. The cost,
+accepted: a command that only mentions such a pattern is refused while the tree is dirty.
 
 Read as git reads it: option values (`clean -e -n` excludes "-n"), `--` ends the options, the
 last of `--x`/`--no-x` wins, a unique abbreviation (`--no-veri`) counts, an alias is resolved,
@@ -52,7 +58,20 @@ import sys
 
 GIT_WORD = re.compile(r"(?<![\w.\\/-])(?:[\w.:\\/-]*[\\/])?git(?:\.exe)?(?![\w.-])", re.I)
 SEPARATORS = set(";&|\n()")
-SHELLS = {"sh", "bash", "zsh", "dash", "ksh", "fish", "pwsh", "powershell", "cmd"}
+SHELLS = {"sh", "bash", "zsh", "dash", "ksh", "fish", "pwsh", "powershell", "cmd", ".", "source"}
+# The floor: the base implementation's patterns, matched on the raw text (quoted strings and
+# here-document bodies included) and refused while the caller's tree is dirty. It runs first and
+# the parser below only adds refusals. restore --staged and clean -n pass (they lose nothing).
+FLOOR = [(re.compile(p, re.I), why) for p, why in [
+    (r"\bgit(\.exe)?\s+reset\b[^|;&]*--hard", "git reset --hard discards every uncommitted change"),
+    (r"\bgit(\.exe)?\s+checkout\b[^|;&]*\s--\s", "git checkout -- <path> overwrites the working copy"),
+    (r"\bgit(\.exe)?\s+checkout\s+-f\b", "git checkout -f overwrites the working copy"),
+    (r"\bgit(\.exe)?\s+restore\b(?![^|;&]*(--staged|\s-S\b))", "git restore overwrites the working copy"),
+    (r"\bgit(\.exe)?\s+clean\b(?![^|;&]*(\s-[a-zA-Z]*n|--dry-run))[^|;&]*(\s-[a-zA-Z]*[fdxX]|--force)",
+     "git clean deletes untracked files"),
+    (r"\bgit(\.exe)?\s+stash\s+(drop|clear)\b", "git stash drop/clear deletes stashed work"),
+    (r"\bgit(\.exe)?\s+push\b[^|;&]*(--force(?![\w-])|\s-f\b)", "a force push can discard remote commits"),
+]]
 OPAQUE = {"sudo", "xargs", "timeout", "nice", "watch", "stdbuf", "doas", "parallel", "find"}
 TRANSPARENT = {"command", "exec", "builtin", "nohup", "env"}
 KEYWORDS = {"{", "}", "!", "if", "then", "else", "elif", "do", "while", "until", "time"}
@@ -145,8 +164,8 @@ def base(token):
 
 
 def strip_heredocs(text):
-    """The text without here-document bodies. A body that holds git is unreadable when any shell
-    appears on the line: it may read the body (`cat <<EOF | sh`, `tee x.sh <<EOF; sh x.sh`)."""
+    """The text without here-document bodies. A body that holds git is unreadable when any command
+    on the line is a shell: it may read the body (`cat <<EOF | sh`, `tee x.sh <<EOF; . x.sh`)."""
     while True:
         m = re.search(r"(?<!<)<<(?!<)(-?)\s*(['\"]?)([\w.-]+)\2", text)
         if not m:
@@ -161,7 +180,8 @@ def strip_heredocs(text):
             if (line.lstrip("\t") if m.group(1) else line) == m.group(3):
                 break
         body, outside = text[start:end], text[:start] + "\n" + text[end:]
-        if GIT_WORD.search(body) and any(base(w.strip("'\"")) in SHELLS for w in re.split(r"[\s;&|()<>]+", outside)):
+        commands = [(piece.split() or [""])[0] for piece in re.split(r"[;&|()\n]", outside)]
+        if GIT_WORD.search(body) and any(base(w.strip("'\"")) in SHELLS for w in commands):
             raise Unreadable("a here-document a shell on the same line may read")
         text = text[:m.start()] + text[m.end():start] + "\n" + text[end:]
 
@@ -179,8 +199,7 @@ def substitutions(text):
 
 
 def segments(text):
-    """Simple commands of a command line, each (token list, scoped). Scoped: inside parentheses
-    or a pipeline, where a shell runs it in a subshell, so its `cd` does not reach later commands."""
+    """Simple commands of a command line, each a token list."""
     lexer = shlex.shlex(text, posix=True, punctuation_chars=";&|\n()<>")
     lexer.whitespace, lexer.whitespace_split = " \t\r", True
     try:
@@ -189,17 +208,13 @@ def segments(text):
         if GIT_WORD.search(text):
             raise Unreadable("an unbalanced quote")
         return
-    pipe = re.compile(r"(?<!\|)\|(?!\|)")
-    segment, before, depth, start_depth = [], "", 0, 0
+    segment = []
     for token in tokens + [";"]:
         if token and set(token) <= SEPARATORS:
             if segment:
-                yield segment, bool(start_depth or depth or pipe.search(before) or pipe.search(token))
-            segment, before = [], token
-            depth = max(depth + token.count("(") - token.count(")"), 0)
+                yield segment
+            segment = []
         else:
-            if not segment:
-                start_depth = depth
             segment.append(token)
 
 
@@ -383,9 +398,10 @@ def judge(command, cwd):
     text = strip_heredocs(command)
     if any(GIT_WORD.search(s) for s in substitutions(text)):
         raise Unreadable("a command substitution (backticks or $(...))")
-    # Every folder the command may stand in: a scoped `cd` adds one, a plain `cd` moves them all.
+    # Every folder the command may stand in. The caller's folder is always one: a `cd` may not run
+    # (after `||`), may run in a subshell (`( )`, a pipeline, `&`), so it only adds a folder.
     env, changed, cwds = {}, False, [cwd]
-    for seg, scoped in segments(text):
+    for seg in segments(text):
         local, i = {}, 0
         while i < len(seg):
             if seg[i] in KEYWORDS:
@@ -420,7 +436,7 @@ def judge(command, cwd):
             target = os.path.expanduser(os.path.expandvars(rest[1])) if len(rest) > 1 else None
             moved = [None if target is None or "$" in target or target == "-" or c is None else os.path.join(c, target)
                      for c in cwds]
-            cwds = list(dict.fromkeys(cwds + moved if scoped else moved))
+            cwds = list(dict.fromkeys(cwds + moved))
             continue
         if name == "git":
             g = Git(rest[1:], {**env, **local}, cwds)
@@ -440,6 +456,11 @@ def main():
         return f"guard_destructive_git.py could not read the hook input ({exc}), so it cannot tell whether this command loses work. Report this to the owner"
     if not re.search("git", command, re.I):
         return None
+    floor = next((why for pattern, why in FLOOR if pattern.search(command)), None)
+    if floor:  # the base rule, first and never cleared by the parser below
+        dirty = Git([], {}, [os.getcwd()]).dirty()
+        if dirty:
+            return lost(floor, dirty)
     try:
         found = list(judge(command, os.getcwd()))
     except Unreadable as exc:
@@ -453,16 +474,20 @@ def main():
         dirty = ("(an earlier command in this line changes the tree — judged as uncommitted work)"
                  if changed else g.dirty(ignored))
         if dirty:
-            return (f"{why}, and this tree has uncommitted changes:\n\n{dirty}\n\n"
-                    "Uncommitted work is NOT in the reflog. If any of the above is not yours — a file the "
-                    "owner edited by hand, a note written this session — this command is the last moment it "
-                    "exists.\n\n"
-                    "Do one of these first, then re-run:\n"
-                    "  git stash push -u -m 'before <what you are about to do>'   # recoverable\n"
-                    "  git add -A && git commit -m 'wip'      # recoverable; the gate runs, never --no-verify\n\n"
-                    "If you have checked the list above and every entry is disposable, say so to the owner "
-                    "and ask them to run the command themselves")
+            return lost(why, dirty)
     return None
+
+
+def lost(why, dirty):
+    return (f"{why}, and this tree has uncommitted changes:\n\n{dirty}\n\n"
+            "Uncommitted work is NOT in the reflog. If any of the above is not yours — a file the "
+            "owner edited by hand, a note written this session — this command is the last moment it "
+            "exists.\n\n"
+            "Do one of these first, then re-run:\n"
+            "  git stash push -u -m 'before <what you are about to do>'   # recoverable\n"
+            "  git add -A && git commit -m 'wip'      # recoverable; the gate runs, never --no-verify\n\n"
+            "If you have checked the list above and every entry is disposable, say so to the owner "
+            "and ask them to run the command themselves")
 
 
 refusal = main()

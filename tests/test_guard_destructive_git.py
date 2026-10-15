@@ -238,5 +238,38 @@ class ReviewRoundTwoTests(GuardCase):
         self.assertVerdict(['(cd ../b && git reset --hard)'], 2)
 
 
+class ReviewRoundThreeTests(GuardCase):
+    """Opus review round 3: the base floor (a destructive pattern anywhere in the text, on a dirty
+    tree) runs first, and the caller's folder is always checked."""
+
+    def test_a_script_the_current_shell_sources_is_refused(self):
+        self.dirty()
+        self.assertVerdict([
+            "cat <<'EOF' > x.sh\ngit reset --hard\nEOF\n. ./x.sh", "cat <<'EOF' > x.sh\ngit reset --hard\nEOF\nsource x.sh",
+            "cat <<'EOF' | source /dev/stdin\ngit reset --hard\nEOF",
+        ], 2)
+
+    def test_a_shell_with_a_file_operand_is_covered_by_the_floor(self):
+        self.dirty()
+        self.assertVerdict(['echo "git reset --hard" > x.sh; sh x.sh', "printf 'git reset --hard' > x.sh; bash x.sh",
+                            'echo "git stash drop" > x.sh; sh x.sh',
+                            # the floor's accepted cost: a mention is refused while the tree is dirty
+                            'git commit -m "undo git reset --hard"'], 2)
+
+    def test_a_conditional_or_background_cd_never_hides_the_caller(self):
+        side = self.tmp / 'b'
+        side.mkdir()
+        git(side, 'init', '-q', '-b', 'main')
+        self.dirty()
+        self.assertVerdict(['true || cd ../b && git reset --hard', 'cd ../b & git reset --hard',
+                            'false && cd ../b; git -C . checkout -- f.txt'], 2)
+
+    def test_everyday_commands_still_pass_on_a_dirty_tree(self):
+        self.dirty()
+        self.assertVerdict(['git status', 'git diff', 'git log --oneline -n 3', 'git clean -n', 'git clean -nd',
+                            'git restore --staged f.txt', 'git add . && git status',
+                            "git add . && git commit -F - <<'EOF'\nmention git in a message\nEOF"], 0)
+
+
 if __name__ == '__main__':
     unittest.main()
