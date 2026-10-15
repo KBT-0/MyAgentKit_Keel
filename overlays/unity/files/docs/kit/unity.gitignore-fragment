@@ -1,5 +1,10 @@
 # Unity — paste into the "Stack-specific rules" section of .gitignore.
 #
+# Source: compared line by line with GitHub's Unity.gitignore
+# (https://github.com/github/gitignore/blob/main/Unity.gitignore, read 2026-10-15). The one
+# deliberate difference: the Visual Scripting rule below ignores the whole generated folder,
+# where GitHub's template ignores three generated paths inside it.
+#
 # bootstrap.sh copies files; it does not merge into an existing .gitignore, so this is a
 # manual step. Two things to get right:
 #
@@ -16,6 +21,9 @@
 /unity/[Bb]uild/
 /unity/[Bb]uilds/
 /unity/[Ll]ogs/
+/unity/.utmp/
+/unity/.gradle/
+/unity/UIElementsSchema/
 /unity/[Uu]ser[Ss]ettings/
 /unity/[Mm]emoryCaptures/
 /unity/[Rr]ecordings/

@@ -2,14 +2,20 @@
 # Unity Test Framework gate — EditMode + PlayMode in batchmode.
 #
 # Separate from scripts/check.sh on purpose: that one runs on every commit and must stay
-# fast, and a batchmode run takes minutes per platform. Run this when Unity-side work is
-# finished, and on a schedule if CI can host it.
+# fast, and a batchmode run's cost scales with project size (editor start and import). Run
+# this when Unity-side work is finished, and on a schedule if CI can host it.
+#
+# Unity documents no common exit code contract for the components under test, so the verdict
+# comes from the result file, never from the exit code. (Unity Test Framework, "Running tests
+# from the command line"; the other flags below: Unity Manual, "Editor command line
+# arguments"; running both modes together is also GameCI's default.)
 #
 # Usage: unity_gate.sh [--self-test]
 #   UNITY_PATH   the editor executable, if `unity` is not on PATH
 #   UNITY_PROJECT the project folder (default: unity)
 #
-# CLOSE THE EDITOR FIRST. Batchmode cannot open a project that already holds a lock file.
+# CLOSE THE EDITOR FIRST. Unity cannot open a project in batch mode while an Editor has the
+# same project open (Unity Manual, "Editor command line arguments").
 set -u
 CDPATH= cd -- "$(dirname "$0")/.."
 
@@ -25,10 +31,12 @@ run_gate() {
 
   mkdir -p "$project_dir/Logs"
 
-  # Unity resolves a relative -testResults path against ITS OWN working directory, not this
-  # shell's. The file then lands somewhere nobody looks, Unity still exits 0, and a gate
-  # that trusts the exit code reports PASS for a run that executed nothing. So: absolute
-  # paths, translated when a Windows .exe is driven from a POSIX shell. (docs/GOTCHAS.md)
+  # Unity's manual does not say which directory a relative -logFile or -testResults path is
+  # resolved against (it says only that -projectPath may be relative to the current working
+  # directory), so pass absolute paths and treat a missing results file as FAIL: a gate that
+  # trusts the exit code can report PASS for a run whose results landed somewhere nobody
+  # looks. Paths are translated when a Windows .exe is driven from a POSIX shell.
+  # (docs/GOTCHAS.md)
   proj=$(CDPATH= cd -- "$project_dir" && pwd)
   logs="$proj/Logs"
   case "$unity_bin" in
@@ -47,7 +55,11 @@ run_gate() {
     printf '%s\n' "unity: running $platform tests..."
     results="$project_dir/Logs/test-results-$platform.xml"
     rm -f "$results"
-    # -nographics is required on a headless machine; drop it if a test needs a real device.
+    # -nographics is the documented headless flag (Unity does not initialise the graphics
+    # device); `-logFile -` sends the log to the console, which -nographics would otherwise
+    # leave off. Unity's manual does not say whether PlayMode tests run under -nographics:
+    # drop it if they fail to start. -quit is NOT added: the manual says that with -runTests
+    # it makes the Editor quit before in-progress tests complete.
     "$unity_bin" -batchmode -nographics -runTests -projectPath "$proj" \
       -testPlatform "$platform" \
       -testResults "$logs/test-results-$platform.xml" \
@@ -56,8 +68,9 @@ run_gate() {
         fail=1
       }
 
-    # A gate must not pass on ABSENT evidence. Unity exits 0 for a run that executed
-    # nothing, so the results file has to exist, be real, and be counted properly.
+    # A gate must not pass on ABSENT evidence. A run that executed nothing can still exit 0
+    # (the exit code is not a contract, see the header), so the results file has to exist,
+    # be real, and be counted properly.
     if [ ! -f "$results" ]; then
       printf '%s\n' "FAIL [unity]: $platform produced no results file at $results — the run proved nothing."
       fail=1
@@ -112,7 +125,9 @@ self_test() {
   st_fail=0
   d=$(mktemp -d)
 
-  # case: a run that exits clean and writes nothing at all.
+  # case: a run that exits clean and writes nothing at all. The self-test runs in a
+  # temporary directory per run, as test frameworks do (pytest tmp_path:
+  # docs.pytest.org/en/stable/how-to/tmp_path.html), and never touches the real project.
   make_stub() { printf '%s\n' '#!/bin/sh' "$2" > "$1"; chmod +x "$1"; }
   probe() {
     label="$1"; want="$2"; stub="$3"

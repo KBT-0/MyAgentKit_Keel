@@ -15,8 +15,9 @@ Install with `bootstrap.sh . --overlay unity`. This README is NOT copied — onl
 ## Why the Unity gate is a separate script
 
 `scripts/check.sh` stays fast and Unity-free: it runs on every commit through the pre-commit
-hook, and a Unity batchmode run takes minutes per platform. The Unity gate is opt-in and
-runs when Unity-side work is finished, or on a schedule.
+hook, and a Unity batchmode run's cost scales with project size (editor start and import), so
+it is not run on every commit. The Unity gate is opt-in and runs when Unity-side work is
+finished, or on a schedule. (Sources: `docs/UNITY_SETUP.md`, "Sources".)
 
 It is also deliberately not wired into `check.sh`, so installing this overlay does not
 require editing a project-owned file. Ordinary work is unaffected by an overlay you took.
@@ -33,20 +34,23 @@ require editing a project-owned file. Ordinary work is unaffected by an overlay 
 
 ## The MCP server it defaults to
 
-`docs/UNITY_SETUP.md` names one — CoplayDev's [`MCP for Unity`](https://github.com/CoplayDev/unity-mcp)
-(MIT) — because "choose an MCP server" is a research task with a wrong answer, and a default
-you can override beats an empty decision. It is tool-agnostic, which matters more than any
-feature: it configures whichever MCP clients it detects instead of binding the project to
-one vendor's cloud account.
+`docs/UNITY_SETUP.md` names one default, CoplayDev's
+[`MCP for Unity`](https://github.com/CoplayDev/unity-mcp) (MIT), and lists the alternatives
+with their constraints: IvanMurzak's `Unity-MCP` (Apache-2.0, runs in a compiled game too)
+and Unity's own server (Unity 6 or later, Unity Cloud, a Unity AI subscription, open beta
+when read). A default you can override beats an empty decision. The default configures
+whichever MCP clients it detects instead of binding the project to one vendor's editor.
 
-Two things in there are worth reading even if you pick a different server, because both cost
-real time to discover: the always-on tool group contains destructive operations the group
-labels do not suggest, and **a per-tool deny list in the MCP client is bypassable** — scope
-has to be enforced in the editor's own tools window. MCP is also never a gate: it needs a
-live editor, so it cannot run in CI.
+Two findings are worth reading even if you pick a different server, because both cost real
+time to discover and both were re-checked against MCP for Unity v10.3.0 (2026-10-04): the
+always-on `core` tool group contains destructive operations the group labels do not suggest,
+and **a per-tool deny list in the MCP client is bypassable** through the server's batch tool,
+so scope has to be enforced in the editor's own tools window. MCP is also not a gate: it
+needs a running editor and a connected client, so it is not a repeatable one-command run.
 
 ## What this overlay assumes
 
 That the project keeps its game logic in a pure, engine-free core and treats Unity as one
-consumer of it. If the project is Unity all the way down, most of the value here does not
-apply — take `unity/AGENTS.md` and the gate, and skip the rest.
+consumer of it. If the project is Unity all the way down, skip §2 and §3 of
+`docs/UNITY_SETUP.md` (the assembly split and the core wiring), but keep §1 (version control settings), §4 (MCP scope), the
+`unity/AGENTS.md` rules, the gate and the gitignore fragment: none of them depends on a core.
