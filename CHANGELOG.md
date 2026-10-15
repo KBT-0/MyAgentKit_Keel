@@ -45,6 +45,19 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   **ACTION:** re-sync the overlay (new hook file, `settings.json`); update Claude Code to
   2.1.295 or later; if the Claude account's e-mail differs from git's `user.email`, set
   `MYAGENTKIT_PRIVATE_EMAILS` in the user-level settings `env`.
+- **Review gate rules** (`docs/REVIEW_GATE.md`, `docs/REVIEW_RUNNING.md`, `docs/WORKFLOW.md`,
+  `/myagentkit:cross-review`, the review skill). The independence rule is written once, in
+  REVIEW_GATE "Invariant" (solo: another tier, never the author's; cross: the other family);
+  the other documents point there. The risk tier is the higher of the changed files' row and
+  the lead's proposal, and a working mode never lowers it; two focus reviewers only at high,
+  where the owner gets a ten-line summary and the diff before the merge. A doubt the reviewer
+  cannot tie to a file, line and input goes under Manual checks; the Low cap lives only in
+  `REVIEW_PROMPT`; a Medium is fixed in the round when a test can verify it, otherwise an
+  issue; a gate finding goes back to the author's side. `/myagentkit:cross-review` is an
+  extra review the owner asks for; the review its tier requires starts without asking. A diff
+  past about 400 changed lines gets a split hint (KARARLAR B01, B02 inv2#10/#34, D03 inv1#104,
+  D04, D06 inv1#37/#163; BACKLOG B14, B15).
+  **ACTION:** re-sync `docs/REVIEW_GATE.md`, `docs/REVIEW_RUNNING.md`, `docs/WORKFLOW.md`.
 - **Review budget and round-limit fixes** (`scripts/claude_bridge.py`, core and packaged copies).
   An old pathname containing ` b/` cannot disguise source as a vendored diff. Unreadable
   destination markers count toward the budget; a deleted lock or vendored file is named by
