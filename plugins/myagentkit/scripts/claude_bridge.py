@@ -1139,8 +1139,13 @@ def cli_readiness(environ=os.environ) -> str | None:
             starved.append(path)
             return "--help timed out: doctor's %d-second probe budget ran out" % PROBE_BUDGET_SECONDS
         try:
-            shown = subprocess.run([path, "--help"], capture_output=True, text=True, timeout=left,
-                                   stdin=subprocess.DEVNULL, errors="replace").stdout
+            # A file, not a pipe: on Windows run() waits after a timeout for its pipes to close,
+            # and a background child of the launcher could hold them past the budget.
+            with tempfile.TemporaryFile() as out:
+                subprocess.run([path, "--help"], stdout=out, stderr=subprocess.DEVNULL, timeout=left,
+                               stdin=subprocess.DEVNULL)
+                out.seek(0)
+                shown = out.read().decode("utf-8", "replace")
         except subprocess.TimeoutExpired:
             if left < 60:
                 starved.append(path)

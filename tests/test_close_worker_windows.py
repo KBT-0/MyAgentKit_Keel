@@ -606,5 +606,31 @@ os.link = link
         self.assertIn('close_worker: w1: dry run: would end the Claude Code session w1 (process 100', out)
         self.assertNotIn('holds', out)
 
+    def test_an_empty_question_record_keeps_the_session_record(self):
+        # An interrupted launch wrote NAME.session, then left NAME.question empty: the close
+        # must not read that as "no decision" and delete the only way to answer it.
+        if not WINDOWS:
+            sys.stderr.write('\nNOT RUN: %s (native Windows only)\n' % self.id())
+            return
+        tmp = Path(tempfile.mkdtemp(prefix='kit-close-win-'))
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        (tmp / 'bin').mkdir()
+        (tmp / 'bin' / 'ps-stub').write_text(PS)
+        env = dict(os.environ, CLOSE_STATE=str(tmp), PYTHONUTF8='1', GIT_CONFIG_GLOBAL=os.devnull,
+                   KIT_PS='python ' + str(tmp / 'bin/ps-stub').replace('\\', '/'), GIT_CONFIG_NOSYSTEM='1')
+        main = tmp / 'main'
+        main.mkdir()
+        subprocess.run(['git', 'init', '-q', '-b', 'main'], cwd=main, env=env, check=True)
+        records = main / '.myagentkit/workers'
+        records.mkdir(parents=True)
+        (records / 'w2.session').write_text('sess-0\n')
+        (records / 'w2.question').write_text('')
+        (main / 'QUESTION-w2.md').write_text('A or B?\n')
+        result = subprocess.run(['sh', str(SCRIPT), 'w2'], cwd=main, env=env, capture_output=True)
+        out = (result.stdout + result.stderr).decode('utf-8', 'replace')
+        self.assertEqual(result.returncode, 1, out)
+        self.assertTrue((records / 'w2.session').exists(), out)
+
+
 if __name__ == '__main__':
     unittest.main()

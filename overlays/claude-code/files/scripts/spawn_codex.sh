@@ -166,7 +166,8 @@ if [ -n "$result" ]; then
 else
   result=$dir/RESULT-$name.md; question=$dir/QUESTION-$name.md
 fi
-result=$($kit_python -I -c 'import pathlib, subprocess, sys
+# -X utf8: a Windows pipe is cp1252, and -I ignores PYTHONUTF8; a Unicode path must print.
+result=$($kit_python -I -X utf8 -c 'import pathlib, subprocess, sys
 root, target = (pathlib.Path(p).resolve() for p in sys.argv[1:3])
 try:
     target.relative_to(root)

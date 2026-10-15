@@ -132,8 +132,11 @@ class ReviewUpgradeTests(unittest.TestCase):
                        REVIEW_REPO_ROOT=str(project), REVIEW_CODEX_MODEL='fixture-codex-model',
                        REVIEW_CLAUDE_MODEL='', MYAGENTKIT_CAPTURE_QUOTA='0',
                        MYAGENTKIT_DELEGATION_DEPTH='0', REVIEW_TIMEOUT_SECONDS='30',
-                       REVIEW_DOCS='AGENTS.md, docs/ARCHITECTURE.md and docs/REVIEW_GATE.md')
+                       REVIEW_DOCS='AGENTS.md, docs/ARCHITECTURE.md and docs/REVIEW_GATE.md',
+                       REVIEW_TASK_FILE=str(project / 'brief.md'))
             env.pop('MYAGENTKIT_BACKEND', None)
+            # A brief's Owns: line runs owns_check.py, which the list must therefore name.
+            (project / 'brief.md').write_text('Task: fixture.\nOwns: file.py, brief.md, fake-codex*\n')
             result = subprocess.run(['sh', str(scripts / 'review.sh'), '--reviewer', 'codex'],
                                     env=env, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

@@ -165,7 +165,10 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   per agent with an 80% target, and `docs/context-is-a-budget.md` corrects the cache and
   MCP-catalogue claims and states the compaction rule. **ACTION:** copy the listed scripts
   and the overlay files (`.claude/agents/worker.md`, `diff-reviewer.md`,
-  `.claude/settings.json`, `.claude/rules/state.md`, `scripts/spawn_worker.sh`); take the
+  `.claude/rules/state.md`, `scripts/spawn_worker.sh`); add `promptCacheTtl`,
+  `subagentPromptCacheTtl` and the `env` entry `CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL` from
+  the overlay's `.claude/settings.json` to your own (copying the file would drop your own
+  `env` values, deny rules and plugin choices); take the
   kit's `docs/REVIEW_GATE.md`, `docs/REVIEW_RUNNING.md`, `docs/WORKFLOW.md`, `AGENTS.md` and
   `docs/AGENTS.md` and re-apply your project's own lines; BEFORE running `working_mode.py`,
   rewrite the `**Working mode:**` line of `docs/STATE.md` to `solo`, `cross` or `saver`

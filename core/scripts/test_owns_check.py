@@ -71,6 +71,25 @@ class OwnsCheckTests(unittest.TestCase):
         root = self.git('rev-list', '--max-parents=0', 'HEAD').stdout.decode().strip()
         self.assertIn('  other.txt\n', self.check('Owns: src/', '--commit', root)[1])
 
+    def test_merge_commit_and_diverged_base_see_what_the_review_sees(self):
+        # The review diffs a commit against its first parent (merges too) and a base as REF...HEAD.
+        main = self.git('rev-parse', '--abbrev-ref', 'HEAD').stdout.decode().strip()
+        self.git('checkout', '-qb', 'side')
+        self.write('other.txt')
+        self.commit()
+        self.git('checkout', '-q', main)
+        self.write('src/a.py')
+        self.commit()
+        self.git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', '-c', 'core.hooksPath=',
+                 'merge', '-q', '--no-ff', '--no-edit', 'side')
+        self.assertIn('  other.txt\n', self.check('Owns: src/', '--commit', 'HEAD')[1])
+        # A base that made the same out-of-scope edit on its own still leaves it in REF...HEAD.
+        self.git('checkout', '-qb', 'base', 'HEAD~1')
+        self.write('other.txt')
+        self.commit()
+        self.git('checkout', '-q', 'side')
+        self.assertIn('  other.txt\n', self.check('Owns: src/', '--base', 'base')[1])
+
     def test_no_owns_line_checks_nothing_and_a_bad_call_is_an_error(self):
         self.write('other.txt')
         self.assertEqual(self.check('Files: src/')[0], 0)

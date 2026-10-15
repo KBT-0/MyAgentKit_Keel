@@ -538,6 +538,9 @@ def watch(child, question, close_tree, result=None, stale=None, answered=None):
 
 
 if __name__ == '__main__':
+    # A Windows pipe is cp1252 unless UTF-8 mode is on: a Unicode result path must still print.
+    sys.stdout.reconfigure(encoding='utf-8')
+    sys.stderr.reconfigure(encoding='utf-8')
     try:
         raise SystemExit(main())
     except (OSError, ValueError, subprocess.SubprocessError) as error:

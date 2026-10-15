@@ -480,6 +480,13 @@ exit 1
         self.assertEqual(self.runs()[-1]['argv'][:2], ['resume', 'sess-0'])
         self.assertFalse(question.exists())
 
+    def test_a_unicode_result_path_is_accepted(self):
+        # Python's own -I ignores PYTHONUTF8: a cp1252 stdout could not print this path.
+        result_file = self.repo / 'report-Ş-😀.md'
+        result = self.spawn('w19', str(self.brief), '--model', 'm', '--effort', 'high', '--result', str(result_file))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn(self.win(result_file, '-m'), self.runs()[0]['argv'][0])
+
     def test_record_only_refuses_fresh_replacement(self):
         record = self.repo / '.myagentkit/workers/w11.session'
         record.parent.mkdir(parents=True)

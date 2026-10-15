@@ -471,6 +471,23 @@ class ClaudeSandboxTests(unittest.TestCase):
         self.assertIn('retry', fix)
         self.assertNotIn('claude update', fix)
 
+    def test_cli_readiness_timeout_holds_when_a_child_keeps_the_output_open(self):
+        # Native Windows: after a timeout, subprocess.run waits for the output pipes, and a
+        # background child of the launcher held them past doctor's probe budget.
+        launcher = ('import subprocess, sys, time\n'
+                    'subprocess.Popen([sys.executable, "-c", "import time; time.sleep(20)"],'
+                    ' stdout=sys.stdout, stderr=sys.stderr)\n'
+                    'time.sleep(60)\n')
+        real_run = subprocess.run
+        with patch.object(claude_bridge.shutil, 'which', return_value='hung-cli'), \
+                patch.object(claude_bridge, 'PROBE_BUDGET_SECONDS', 1), \
+                patch.object(claude_bridge.subprocess, 'run',
+                             side_effect=lambda command, **kw: real_run([sys.executable, '-c', launcher], **kw)):
+            started = time.monotonic()
+            problem = claude_bridge.cli_readiness({'CLAUDE_CLI_BIN': 'hung-cli', 'PATH': ''})
+        self.assertIn('timed out', problem)
+        self.assertLess(time.monotonic() - started, 10)
+
     def test_sweep_keeps_a_live_copy_with_an_old_directory_timestamp(self):
         old = time.time() - claude_bridge.STALE_SCRATCH_SECONDS - 60
         for prefix in ('myagentkit-review-', 'myagentkit-codex-'):

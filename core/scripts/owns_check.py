@@ -37,8 +37,13 @@ def changed(scope, ref=None):
         # -z porcelain: 'XY path' per entry; --no-renames keeps it one path per entry.
         return [entry[3:] for entry in git('status', '--porcelain', '-z', '-uall', '--no-renames')]
     if scope == '--base':
-        return (git('diff', '--name-only', '--no-renames', '-z', ref)
+        # REF...HEAD, what the review diffs: `diff REF` hides an edit a diverged base also made.
+        return (git('diff', '--name-only', '--no-renames', '-z', ref + '...HEAD')
                 + git('ls-files', '--others', '--exclude-standard', '-z'))
+    # The review diffs a commit against its first parent, merges included (claude_bridge.snapshot).
+    parents = git('rev-list', '--parents', '-n', '1', ref)[0].split()[1:]
+    if parents:
+        return git('diff', '--name-only', '--no-renames', '-z', parents[0], ref)
     return git('diff-tree', '--no-commit-id', '--no-renames', '-r', '-z', '--root', '--name-only', ref)
 
 

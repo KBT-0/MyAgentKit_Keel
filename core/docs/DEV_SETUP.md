@@ -157,7 +157,8 @@ alongside the updated `review.sh`; reapply the project's default reviewer and mo
 
 `review_dispatch.py`, `claude_bridge.py`,
 `codex_bridge.py`, `agent_process.py`, `agent_usage.py`, `test_claude_bridge.py`, and
-`test_agent_usage.py`, plus `codex_quota.py`, `test_codex_quota.py` and `review_test_support.py`.
+`test_agent_usage.py`, plus `codex_quota.py`, `test_codex_quota.py`, `review_test_support.py`
+and `owns_check.py` (`review.sh` runs it on a `REVIEW_TASK_FILE` brief's `Owns:` line).
 
 <!-- REVIEW_COMPANIONS_END -->
 

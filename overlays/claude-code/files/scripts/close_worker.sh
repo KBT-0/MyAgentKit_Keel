@@ -373,6 +373,11 @@ for name; do
   # An unanswered Codex decision: its session record is the only way to answer it, and a fresh
   # spawn of the name is refused while the question exists, so a close would strand both.
   ask=$(cat "$record.question" 2>/dev/null) || ask=$wt_dir/QUESTION-$name.md
+  # An empty record is a launch interrupted after the session id: where its decision lives is unknown.
+  if [ -z "$ask" ]; then
+    fail "$name: its decision record $record.question is empty, so a question it stopped on cannot be found; write the decision file's path into it (or delete it if none waits), then close again; nothing is done for $name"
+    continue
+  fi
   if [ -e "$ask" ]; then
     fail "$name: a decision waits for its answer in $ask; answer it (spawn_codex.sh --resume), or delete it to abandon the worker, then close again; nothing is done for $name"
     continue

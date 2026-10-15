@@ -16,6 +16,10 @@ import unittest
 from unittest import mock
 
 SCRIPT = Path(__file__).resolve().parents[1] / 'overlays/claude-code/files/scripts/codex_worker.py'
+# Run inside a Codex worker, the suite inherits its supervisor's KIT_WORKER_* settings; a
+# fixture supervisor must never write the caller's records. A case sets its own explicitly.
+for _name in [n for n in os.environ if n.startswith('KIT_WORKER_')]:
+    del os.environ[_name]
 READY = '<!-- codex-worker: ready -->'
 
 
@@ -254,6 +258,17 @@ class CodexWorkerTests(unittest.TestCase):
             self.assertEqual(waiter.returncode, 0, waiter.stderr)
             self.assertIn('EXITED (exit 3', waiter.stdout)
 
+    def test_wait_reports_a_unicode_result_path_on_a_legacy_stdout(self):
+        # A Windows pipe is cp1252 unless UTF-8 mode is on; the lead must still see DONE.
+        with tempfile.TemporaryDirectory() as tmp:
+            result = Path(tmp) / 'report-Ş-😀.md'
+            result.write_text('Kind: completed\nTask: w\nAttempt: 1\nRemaining: none\n' + READY, encoding='utf-8')
+            env = {k: v for k, v in os.environ.items() if k not in ('PYTHONUTF8', 'PYTHONIOENCODING')}
+            waiter = subprocess.run([sys.executable, str(SCRIPT), '--wait', str(result), '--since', '0'],
+                                    capture_output=True, timeout=10, env=env)
+            self.assertEqual(waiter.returncode, 0, waiter.stderr)
+            self.assertIn('DONE: ' + str(result), waiter.stdout.decode('utf-8'))
+
     def test_wait_ends_on_a_decision_published_without_a_blocked_result(self):
         with tempfile.TemporaryDirectory() as tmp:
             question, result, record = (Path(tmp) / n for n in ('q.md', 'result.md', 'w.exit'))
@@ -433,6 +448,18 @@ class CodexWorkerTests(unittest.TestCase):
                                     capture_output=True, text=True, timeout=10)
             self.assertEqual(result.returncode, 7, result.stderr)
             self.assertFalse(question.exists())
+
+    def test_the_suite_never_writes_the_exit_record_of_the_worker_it_runs_in(self):
+        # Inside a Codex worker the suite inherits KIT_WORKER_EXIT: a fixture that wrote it
+        # made the lead's waiter report EXITED while that worker still ran.
+        with tempfile.TemporaryDirectory() as tmp:
+            record = Path(tmp) / 'caller.exit'
+            run = subprocess.run([sys.executable, '-B', str(Path(__file__).resolve()),
+                                  'CodexWorkerTests.test_normal_exit_status_is_preserved_and_no_question_is_invented'],
+                                 capture_output=True, text=True, timeout=60,
+                                 env=dict(os.environ, KIT_WORKER_EXIT=str(record)))
+            self.assertEqual(run.returncode, 0, run.stderr)
+            self.assertFalse(record.exists(), 'a fixture wrote the calling worker\'s exit record')
 
     def test_resume_keeps_the_question_when_the_child_fails_to_start(self):
         worker = module()
