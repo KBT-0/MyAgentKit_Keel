@@ -125,5 +125,26 @@ class OverlayPermissionsTests(unittest.TestCase):
         self.assertIn('Bash(git *--out*)', self.permissions['deny'])
 
 
+class OverlaySettingsTests(unittest.TestCase):
+    def setUp(self):
+        self.settings = json.loads(SETTINGS.read_text(encoding='utf-8'))
+
+    def test_every_guard_blocks_when_it_fails(self):
+        # Any exit but 2 (a crash, no interpreter, a timeout) lets the call through unless the hook
+        # says `onFailure: block` (Claude Code v2.1.295+, https://code.claude.com/docs/en/hooks).
+        guards = [h for e in self.settings['hooks']['PreToolUse'] for h in e['hooks']]
+        self.assertEqual(sorted(h['command'].split('/')[-1].rstrip('"') for h in guards),
+                         ['guard_destructive_git.py', 'guard_private_email.py', 'guard_worker_route.py'])
+        for hook in guards:
+            with self.subTest(hook=hook['command']):
+                self.assertEqual(hook.get('onFailure'), 'block')
+        matchers = {e['matcher'] for e in self.settings['hooks']['PreToolUse']}
+        self.assertIn('WebFetch|WebSearch|Bash', matchers)
+
+    def test_the_tool_adds_no_attribution(self):
+        # The trailer is turned off at its source; .githooks/commit-msg stays the backstop.
+        self.assertEqual(self.settings['attribution'], {'commit': '', 'pr': ''})
+
+
 if __name__ == '__main__':
     unittest.main()
