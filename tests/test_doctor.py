@@ -575,18 +575,18 @@ class DoctorTests(unittest.TestCase):
 
             shell.write_text('#!/bin/sh\ncommand() { echo "grep is an alias for ugrep"; }\neval "$2"\n')
             red = doctor()
-            self.assertEqual(red.returncode, 1, red.stdout)
-            self.assertIn('MISSING: grep is shadowed', red.stdout)
-            self.assertEqual(red.stdout.count('MISSING:'), 1, red.stdout)
+            self.assertEqual(red.returncode, 0, red.stdout)
+            self.assertIn('NOTE: grep is shadowed', red.stdout)
 
             # Only colour options are harmless; an alias that changes what matches is not.
             shell.write_text('#!/bin/sh\ncommand() { echo "grep is an alias for grep -v"; }\neval "$2"\n')
             red = doctor()
-            self.assertEqual(red.returncode, 1, red.stdout)
-            self.assertIn('MISSING: grep is shadowed', red.stdout)
+            self.assertEqual(red.returncode, 0, red.stdout)
+            self.assertIn('NOTE: grep is shadowed', red.stdout)
             shell.write_text("#!/bin/sh\ncommand() { echo \"grep is aliased to \\`grep --colour=auto'\"; }\neval \"$2\"\n")
             ready = doctor()
             self.assertEqual(ready.returncode, 0, ready.stdout + ready.stderr)
+            self.assertNotIn('grep is shadowed', ready.stdout)
             # oh-my-zsh's default alias skips directories, which only a recursive grep reads:
             # ready. --exclude skips a NAMED file whose name matches, so a pipeline tried with
             # it lies: shadowed. An allowed option holding shell syntax is no plain option:
@@ -606,16 +606,15 @@ class DoctorTests(unittest.TestCase):
                     shell.write_text("#!/bin/sh\ncommand() { printf '%%s\\n' %s; }\neval \"$2\"\n"
                                      % shlex.quote('grep is an alias for ' + alias))
                     probed = doctor()
-                    self.assertEqual(probed.returncode, expect, probed.stdout + probed.stderr)
-                    if expect:
-                        self.assertIn('MISSING: grep is shadowed', probed.stdout)
+                    self.assertEqual(probed.returncode, 0, probed.stdout + probed.stderr)
+                    self.assertEqual('NOTE: grep is shadowed' in probed.stdout, bool(expect), probed.stdout)
             # An rc file that prints a banner: doctor read the banner as the probe's answer
             # and called a shell that aliases grep to `grep -v` ready.
             shell.write_text('#!/bin/sh\necho Welcome\ncommand() { echo "grep is an alias for grep -v"; }\n'
                              'eval "$2"\n')
             red = doctor()
-            self.assertEqual(red.returncode, 1, red.stdout)
-            self.assertIn('MISSING: grep is shadowed', red.stdout)
+            self.assertEqual(red.returncode, 0, red.stdout)
+            self.assertIn('NOTE: grep is shadowed', red.stdout)
             # Output without the probe's delimiters, or not an answer to `command -V`, is a
             # probe that did not complete, never a clean one.
             for fake in ('echo Welcome\necho "grep is an alias for grep -v"\n',
