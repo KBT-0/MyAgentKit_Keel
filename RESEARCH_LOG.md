@@ -21,6 +21,19 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-10-15 — v0.11 close-out batch 1: a precise guard needs the coarse floor under it
+
+The guard hook was rewritten to read commands as the shell does. Five review rounds (Codex 1,
+Opus 2 and 3; Codex twice stopped by its content classifier, Fable not in the plan) each found
+new ways past the parser: a here-document piped to a shell, `. x.sh`, `echo ... > x.sh; sh x.sh`,
+a `cd` in a subshell, after `||` or with `&`. Every one was a regression against the base,
+whose coarse rule (the pattern anywhere in the text, on a dirty tree) refused them all. The fix
+restored that rule as a floor the parser may only add to, and made the caller's folder always
+checked. Lesson: a guard rewritten for precision keeps its coarse predecessor as a floor.
+Verified locally (red then green): `git clean -nd` and `git restore --staged f` were refused on
+a dirty tree before the rewrite; an EncodingWarning in `git status` made a clean tree read as
+dirty; a backslash `file_path` was never matched by `guard_boundaries.py`.
+
 ### 2026-10-15 — v0.11 close-out batch 12: Unity overlay facts
 
 The MCP for Unity v10.3.0 source shows GameObject delete is not undoable (its comment says

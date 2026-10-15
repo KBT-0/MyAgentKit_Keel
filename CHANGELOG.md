@@ -13,6 +13,26 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## v0.11 — 2026-10-09
 
+- **Git and e-mail guard hooks** (`.claude/hooks/guard_destructive_git.py`,
+  `guard_private_email.py`, `guard_boundaries.py`, `py.sh`, `.claude/settings.json`,
+  `core/.githooks/pre-commit`). The destructive-git hook keeps the base rule as a floor (a
+  loss-certain pattern anywhere in the command text, here-document bodies included, is refused
+  while the tree is dirty) and reads the command as the shell does on top of it (`git -C`,
+  `--git-dir`, `GIT_DIR=`, aliases, `cd` in any form adds the folder it reaches; the caller's
+  folder is always checked). It refuses, whatever the tree's state, `stash drop/clear`, a force
+  push without a lease (`--force`, `-f`, `+ref`, `--mirror`, `--delete`, a bare
+  `--force-with-lease`), `remote set-url/add`, amending a pushed commit and a skipped gate
+  (`--no-verify`, `commit -n`, `-c core.hooksPath=`, `--no-gpg-sign`); `clean -n`, `restore
+  --staged` and a lease push pass. Guard hooks fail closed: `onFailure: block` (Claude Code
+  2.1.295+), an unreadable payload blocks, `py.sh` with no Python blocks a guard. New
+  `guard_private_email.py` refuses a WebFetch, WebSearch or web-client Bash call carrying git's
+  `user.email` or an address in `MYAGENTKIT_PRIVATE_EMAILS` (owner decision 2026-10-15).
+  `.claude/settings.json` sets `attribution` empty; `guard_boundaries.py` matches a Windows
+  path; `pre-commit` no longer suggests `--no-verify`. Sources: KARARLAR B10 inv3/(g), B12
+  inv1#28, inv3/(g), D09 inv3#5/#9/#11/#12, inv1#29/#233, inv3#74, D07 inv3#108, BACKLOG B2.
+  **ACTION:** re-sync the overlay (new hook file, `settings.json`); update Claude Code to
+  2.1.295 or later; if the Claude account's e-mail differs from git's `user.email`, set
+  `MYAGENTKIT_PRIVATE_EMAILS` in the user-level settings `env`.
 - **Unity overlay re-checked against Unity's docs and the MCP for Unity v10.3.0 source**
   (`overlays/unity/`, `patterns/pure-core-plus-engine.md`). UnityYAMLMerge is set up as a
   mergetool, not a merge driver (Unity documents only the mergetool); a `file:` package path is

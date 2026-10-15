@@ -89,12 +89,12 @@ REQUIRED_SUITES = {
               'test_boundary_example': 1 if os.name == 'nt' else 3, 'test_scan_gate': 1,
               'test_check_gate': 24, 'test_check_gate_windows': 33,
               'test_boundary_restore': 35 if os.name == 'nt' else 40,
-              'test_sync_kit': 30, 'test_doctor': 4, 'test_git_hooks': 31, 'test_stop_hook': 8, 'test_context_hook': 12, 'test_communication_hooks': 15, 'test_overlay_permissions': 6,
+              'test_sync_kit': 30, 'test_doctor': 4, 'test_git_hooks': 31, 'test_stop_hook': 8, 'test_context_hook': 12, 'test_communication_hooks': 15, 'test_overlay_permissions': 8, 'test_guard_destructive_git': 26, 'test_guard_boundaries': 1, 'test_guard_private_email': 5,
               'test_spawn_worker': 51, 'test_spawn_codex': 51, 'test_codex_worker': 49, 'test_working_mode': 49, 'test_worker_visibility': 68, 'test_doc_pointers': 10,
               'test_usage_summary': 16,
               'test_kit_output': 1, 'test_kit_runner': 25, 'test_clean_worktrees': 137, 'test_clean_worktrees_windows': 11, 'test_close_worker_windows': 21,
               'test_review_windows': 22, 'test_claude_sandbox': 25, 'test_worker_paths_windows': 10,
-              'test_close_worker': 24, 'test_python_fallback': 1, 'test_selftest_status': 7},
+              'test_close_worker': 24, 'test_python_fallback': 2, 'test_selftest_status': 7},
 }
 # Suites that do not run on native Windows, each with the reason. There each one prints one
 # NOT RUN line and is not imported; CI's Linux and macOS jobs run every one of them. A suite
@@ -270,7 +270,7 @@ def utf8_locale(have=None):
 # where the default encoding is not UTF-8. A slow suite stays out; its text paths are here.
 LOCALE_SUITES = ('test_working_mode', 'test_usage_summary', 'test_doc_pointers', 'test_kit_output',
                  'test_python_fallback', 'test_overlay_permissions', 'test_context_hook',
-                 'test_communication_hooks')
+                 'test_communication_hooks', 'test_guard_destructive_git', 'test_guard_private_email')
 
 
 def locale_matrix(folder=None, suites=LOCALE_SUITES, minimums=None):
