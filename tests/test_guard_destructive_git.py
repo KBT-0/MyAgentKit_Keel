@@ -213,5 +213,30 @@ class ReviewRoundOneTests(GuardCase):
         self.assertVerdict(['git checkout main', 'git checkout -b feature'], 0)
 
 
+class ReviewRoundTwoTests(GuardCase):
+    """Opus review round 2: a here-document a shell reads, and a cd that does not leak out."""
+
+    def test_a_here_document_any_shell_reads_is_refused(self):
+        self.dirty()
+        self.assertVerdict([
+            "cat <<'EOF' | sh\ngit reset --hard\nEOF", "cat <<EOF | bash -s\ngit reset --hard\nEOF",
+            "tee x.sh <<'EOF'\ngit reset --hard\nEOF\nsh x.sh",
+        ], 2)
+        git(self.repo, 'checkout', '--', 'f.txt')
+        self.assertVerdict(["cat <<'EOF' | sh\ngit push --force\nEOF", "cat <<'EOF' | sh\ngit commit --no-verify -m x\nEOF"], 2)
+        self.assertVerdict(["cat <<'EOF' > notes.md\ngit push --force is refused\nEOF"], 0)
+
+    def test_a_cd_inside_a_subshell_or_pipeline_does_not_leak(self):
+        side = self.tmp / 'b'
+        side.mkdir()
+        git(side, 'init', '-q', '-b', 'main')
+        self.dirty()
+        self.assertVerdict([
+            '(cd ../b && git status) && git reset --hard', '(cd ../b) ; git reset --hard',
+            'cd ../b | true; git reset --hard', 'true | cd ../b && git reset --hard',
+        ], 2)
+        self.assertVerdict(['(cd ../b && git reset --hard)'], 2)
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -20,15 +20,17 @@ or stash before any command that discards work" still covers every destructive c
   `--worktree`), `git clean` (unless `-n`/`--dry-run`; with `-x`/`-X` ignored files count) and
   an alias the hook cannot read. Uncommitted changes are not in the reflog: once they are gone,
   they are gone. The tree checked is the one the command reaches (`cd X &&`, `git -C`,
-  `--git-dir`, `--work-tree`, `GIT_DIR=`, `GIT_WORK_TREE=`), and a command after one that
+  `--git-dir`, `--work-tree`, `GIT_DIR=`, `GIT_WORK_TREE=`); a `cd` inside parentheses or a
+  pipeline runs in a subshell, so after it both folders are checked. A command after one that
   changes the tree (anything but `cd`, `echo`, a read-only git command ...) is judged dirty.
 
 Read as git reads it: option values (`clean -e -n` excludes "-n"), `--` ends the options, the
 last of `--x`/`--no-x` wins, a unique abbreviation (`--no-veri`) counts, an alias is resolved,
 `GIT.EXE` is git on Windows. Refused as unreadable when it carries a git word: backticks, `$(...)`,
-`eval`, `sh -c`-style command strings, a shell reading a here-document, here-string or pipe,
-a backslash-newline, `sudo`/`xargs`-style wrappers, and an unbalanced quote. A here-document
-feeding any other command is dropped before parsing, so a commit message may mention git.
+`eval`, `sh -c`-style command strings, a shell reading a here-string or pipe, a here-document on
+a line where any shell appears (`cat <<EOF | sh`), a backslash-newline, `sudo`/`xargs`-style
+wrappers, and an unbalanced quote. Any other here-document is dropped before parsing, so a
+commit message may mention git.
 Sources: the vendor's default auto-mode block list
 (https://code.claude.com/docs/en/permission-modes), Bash rule limits
 (https://code.claude.com/docs/en/permissions), git-push, git-clean, git-restore, git-config,
@@ -143,7 +145,8 @@ def base(token):
 
 
 def strip_heredocs(text):
-    """The text without here-document bodies; a body a shell would run is unreadable."""
+    """The text without here-document bodies. A body that holds git is unreadable when any shell
+    appears on the line: it may read the body (`cat <<EOF | sh`, `tee x.sh <<EOF; sh x.sh`)."""
     while True:
         m = re.search(r"(?<!<)<<(?!<)(-?)\s*(['\"]?)([\w.-]+)\2", text)
         if not m:
@@ -157,11 +160,9 @@ def strip_heredocs(text):
             end += len(line) + 1
             if (line.lstrip("\t") if m.group(1) else line) == m.group(3):
                 break
-        body = text[start:end]
-        before = re.split(r"[;&|(\n]", text[:m.start()])[-1].split()
-        words = [w for w in before if not re.match(r"[A-Za-z_]\w*=", w)]
-        if words and base(words[0]) in SHELLS and GIT_WORD.search(body):
-            raise Unreadable("a here-document run by a shell")
+        body, outside = text[start:end], text[:start] + "\n" + text[end:]
+        if GIT_WORD.search(body) and any(base(w.strip("'\"")) in SHELLS for w in re.split(r"[\s;&|()<>]+", outside)):
+            raise Unreadable("a here-document a shell on the same line may read")
         text = text[:m.start()] + text[m.end():start] + "\n" + text[end:]
 
 
@@ -178,7 +179,8 @@ def substitutions(text):
 
 
 def segments(text):
-    """Simple commands of a command line, each a token list."""
+    """Simple commands of a command line, each (token list, scoped). Scoped: inside parentheses
+    or a pipeline, where a shell runs it in a subshell, so its `cd` does not reach later commands."""
     lexer = shlex.shlex(text, posix=True, punctuation_chars=";&|\n()<>")
     lexer.whitespace, lexer.whitespace_split = " \t\r", True
     try:
@@ -187,13 +189,17 @@ def segments(text):
         if GIT_WORD.search(text):
             raise Unreadable("an unbalanced quote")
         return
-    segment = []
+    pipe = re.compile(r"(?<!\|)\|(?!\|)")
+    segment, before, depth, start_depth = [], "", 0, 0
     for token in tokens + [";"]:
         if token and set(token) <= SEPARATORS:
             if segment:
-                yield segment
-            segment = []
+                yield segment, bool(start_depth or depth or pipe.search(before) or pipe.search(token))
+            segment, before = [], token
+            depth = max(depth + token.count("(") - token.count(")"), 0)
         else:
+            if not segment:
+                start_depth = depth
             segment.append(token)
 
 
@@ -249,8 +255,9 @@ def last(opts, on, off, default=False):
 class Git:
     """One git invocation and how to ask git about the repository it reaches."""
 
-    def __init__(self, tokens, env, cwd):
-        self.env, self.cwd, self.route, self.configs, i = env, cwd, [], [], 0
+    def __init__(self, tokens, env, cwds):
+        self.env, self.cwds, self.route, self.configs, i = env, cwds, [], [], 0
+        self.cwd = next((c for c in reversed(cwds) if c), None)  # where questions other than status go
         while i < len(tokens) and tokens[i].startswith("-"):
             tok, nxt = tokens[i], tokens[i + 1] if i + 1 < len(tokens) else ""
             takes = tok in GIT_VALUE
@@ -267,23 +274,29 @@ class Git:
             i += 2 if takes else 1
         self.sub, self.args = (tokens[i:i + 1] or [""])[0], tokens[i + 1:]
 
-    def ask(self, *args):
+    def ask(self, *args, where=None):
         """git's answer as (exit code, stdout); an OSError or a timeout raises."""
         command = ["git", *self.route, *[x for c in self.configs for x in ("-c", c)], *args]
         run = subprocess.run(command, capture_output=True, encoding="utf-8", errors="replace", timeout=10,
-                             cwd=self.cwd, env=dict(os.environ, **self.env))
+                             cwd=where or self.cwd, env=dict(os.environ, **self.env))
         return run.returncode, run.stdout.strip()
 
     def dirty(self, ignored=False):
-        if self.cwd is None:
-            return "(the command changes to a folder the hook cannot name — assuming uncommitted work)"
-        try:
-            code, out = self.ask("status", "--porcelain", *(["--ignored"] if ignored else []))
-        except Exception:
-            code, out = 1, ""
-        # If we cannot tell whether the tree is dirty, assume it is. Refusing a safe command
-        # costs a sentence; allowing an unsafe one costs the work.
-        return out if code == 0 else "(could not read git status — assuming there is uncommitted work)"
+        """What uncommitted work any folder the command may stand in holds ("" for none)."""
+        for where in self.cwds:
+            if where is None:
+                return "(the command changes to a folder the hook cannot name — assuming uncommitted work)"
+            try:
+                code, out = self.ask("status", "--porcelain", *(["--ignored"] if ignored else []), where=where)
+            except Exception:
+                code, out = 1, ""
+            # If we cannot tell whether the tree is dirty, assume it is. Refusing a safe command
+            # costs a sentence; allowing an unsafe one costs the work.
+            if code != 0:
+                return "(could not read git status — assuming there is uncommitted work)"
+            if out:
+                return out
+        return ""
 
 
 def verdict(g, depth=0):
@@ -370,8 +383,9 @@ def judge(command, cwd):
     text = strip_heredocs(command)
     if any(GIT_WORD.search(s) for s in substitutions(text)):
         raise Unreadable("a command substitution (backticks or $(...))")
-    env, changed = {}, False
-    for seg in segments(text):
+    # Every folder the command may stand in: a scoped `cd` adds one, a plain `cd` moves them all.
+    env, changed, cwds = {}, False, [cwd]
+    for seg, scoped in segments(text):
         local, i = {}, 0
         while i < len(seg):
             if seg[i] in KEYWORDS:
@@ -404,10 +418,12 @@ def judge(command, cwd):
             env.update(dict(t.split("=", 1) for t in rest[1:] if "=" in t))
         if name in ("cd", "pushd"):
             target = os.path.expanduser(os.path.expandvars(rest[1])) if len(rest) > 1 else None
-            cwd = None if target is None or "$" in target or target == "-" or cwd is None else os.path.join(cwd, target)
+            moved = [None if target is None or "$" in target or target == "-" or c is None else os.path.join(c, target)
+                     for c in cwds]
+            cwds = list(dict.fromkeys(cwds + moved if scoped else moved))
             continue
         if name == "git":
-            g = Git(rest[1:], {**env, **local}, cwd)
+            g = Git(rest[1:], {**env, **local}, cwds)
             found = verdict(g)
             if found:
                 yield found[0], found[1], (g, found[2], changed)
