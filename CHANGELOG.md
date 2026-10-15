@@ -19,7 +19,9 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   bold or plain paragraph finding and a nested severity line are read as findings, and a
   plain Accept that carries one fails as `invalid_evidence`; so does one whose Findings hold
   prose that is neither a Low, a `Pre-existing:` item nor a placeholder such as `None.`. A
-  plain Accept that keeps a manual check fails too: it is an Accept with Manual Checks.
+  placeholder counts only as a whole block, its wrapped lines joined. A plain Accept that
+  keeps a manual check, a heading-form check included, fails too: it is an Accept with
+  Manual Checks.
   **ACTION:** copy the three scripts.
 - **Lessons from the kit's own development, written where they apply** (`AGENTS.md`,
   `docs/COMMUNICATION.md`, `docs/WORKFLOW.md` "Model routing" rules 1 and 3,

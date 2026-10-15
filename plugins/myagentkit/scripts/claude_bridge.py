@@ -982,12 +982,13 @@ EMPTY_ITEMS = {"none", "no findings", "n/a", "not applicable"}
 def review_parts(text: str) -> tuple[list, list]:
     """A text review's findings and manual checks, read the same way by every caller.
 
-    A finding is each top-level block (list item, heading or paragraph) and each line at any
-    indent that starts with a severity, its markup removed; accept_allows() then admits only
-    Lows, Pre-existing items and placeholders, so an item the reviewer wrote in a form nobody
-    expected refuses the Accept instead of vanishing. Without a Findings heading the text before
-    the first named section is read as the findings. A manual check is each non-placeholder,
-    non-heading line of its section. VERDICT lines belong to neither.
+    A finding is each top-level block (list item, heading or paragraph, its continuation lines
+    joined) and each line at any indent that starts with a severity, its markup removed;
+    accept_allows() then admits only Lows, Pre-existing items and whole-block placeholders, so
+    an item the reviewer wrote in a form nobody expected refuses the Accept instead of
+    vanishing. Without a Findings heading the text before the first named section is read as
+    the findings. A manual check is each non-placeholder line of its section, a heading
+    included. VERDICT lines belong to neither.
     """
     sections, current = {}, None
     for line in text.splitlines():
@@ -1002,12 +1003,19 @@ def review_parts(text: str) -> tuple[list, list]:
     findings, prior = [], ""
     for line in sections.get("findings", sections.get(None, [])):
         item = MARKUP.sub("", line)
-        if line.strip() and ((line[0] not in " \t" and (not prior.strip() or MARKUP.match(line).group().strip()))
-                             or SEVERITY_FIRST.match(item)):
+        if not line.strip():
+            pass
+        elif not findings or SEVERITY_FIRST.match(item) or (
+                line[0] not in " \t" and (not prior.strip() or MARKUP.match(line).group().strip())):
             findings.append(item)
+        else:
+            # A continuation line belongs to its block: `No findings` wrapped onto `were
+            # resolved: x.py:1 ...` is no placeholder, and a check only of its first line was.
+            findings[-1] += " " + item
         prior = line
-    checks = [line for line in sections.get("manual checks", []) if not line.lstrip().startswith("#")
-              and MARKUP.sub("", line).rstrip(" \t.*_").lower() not in {"", "none", "n/a", "not applicable", "not run"}]
+    # Every other line is a check, a heading included: `### Verify the deployment.` once vanished.
+    checks = [line for line in sections.get("manual checks", [])
+              if MARKUP.sub("", line).rstrip(" \t.*_").lower() not in {"", "none", "n/a", "not applicable", "not run"}]
     return findings, checks
 
 

@@ -2900,9 +2900,13 @@ class BridgeTests(unittest.TestCase):
                     '## Findings\n\nHigh: x.py:1 a plain paragraph.\n\nVERDICT: Accept\n',
                     '## Findings\n\n- None.\n  - Medium: x.py:1 nested under a placeholder.\n\nVERDICT: Accept\n',
                     '## Findings\n\n- None.\n\n### Round 2 notes\n\n- High: x.py:1 under an unknown heading.\n\n'
-                    'VERDICT: Accept\n')
+                    'VERDICT: Accept\n',
+                    # fix4 review: a placeholder counts only as a whole block, continuation joined.
+                    '## Findings\n\nNo findings\nwere resolved: x.py:1 still drops records.\n\nVERDICT: Accept\n',
+                    '## Findings\n\n- None.\n  x.py:1 still drops records.\n\nVERDICT: Accept\n')
         completes += ('## Findings\n\nNone.\n\n## Verdict\n\nVERDICT: Accept\n',
-                      '## **Findings**\n\n**Low** — x.py:1 a bold paragraph.\n\nVERDICT: Accept\n')
+                      '## **Findings**\n\n**Low** — x.py:1 a bold paragraph.\n\nVERDICT: Accept\n',
+                      '## Findings\n\nLow: x.py:1 a note that\nwraps onto a second line.\n\nVERDICT: Accept\n')
         for final, completed in [(f, True) for f in completes] + [(f, False) for f in refused]:
             with self.subTest(final=final):
                 result = self.run_wrapper('--reviewer', 'codex', REVIEW_CLI_BIN=str(fake),
@@ -2924,6 +2928,9 @@ class BridgeTests(unittest.TestCase):
                 ('## Findings\n\n- None.\n\n## Manual checks\n\n- Verify deployment before release.\n\n'
                  'VERDICT: Accept\n', False),
                 ('## Findings\n\n- None.\n\n**Manual checks:**\n\nVerify deployment before release.\n\n'
+                 'VERDICT: Accept\n', False),
+                # fix4 review: a check written as a heading is still a check.
+                ('## Findings\n\n- None.\n\n## Manual checks\n\n### Verify deployment before release.\n\n'
                  'VERDICT: Accept\n', False),
                 ('## Findings\n\n- None.\n\n## Manual checks\n\n- None.\n\nVERDICT: Accept\n', True)):
             with self.subTest(final=final):
