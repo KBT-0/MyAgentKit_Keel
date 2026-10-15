@@ -17,6 +17,9 @@
 # CLOSE THE EDITOR FIRST. Unity cannot open a project in batch mode while an Editor has the
 # same project open (Unity Manual, "Editor command line arguments").
 set -u
+# Resolve this script's own path BEFORE the cd below: the self-test re-invokes it, and a
+# relative $0 stops pointing at the script once the working directory has changed.
+self="$(CDPATH= cd -- "$(dirname "$0")" && pwd)/$(basename "$0")"
 CDPATH= cd -- "$(dirname "$0")/.."
 
 project_dir="${UNITY_PROJECT:-unity}"
@@ -133,7 +136,7 @@ self_test() {
     label="$1"; want="$2"; stub="$3"
     # A THROWAWAY project dir, not the real one: run_gate mkdirs Logs/ and the stubs write
     # result files, and an earlier version left that litter in the project tree.
-    out=$(UNITY_PATH="$stub" UNITY_PROJECT="$d/proj" sh "$0" 2>&1)
+    out=$(UNITY_PATH="$stub" UNITY_PROJECT="$d/proj" sh "$self" 2>&1)
     if [ $? -eq 0 ]; then
       printf '%s\n' "  FAIL — $label: the gate PASSED."
       st_fail=1
