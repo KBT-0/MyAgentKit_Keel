@@ -3596,7 +3596,7 @@ if case == 'archive_failure':
                 'Accept with Manual Checks when a Medium, a deferred finding or a first-priority doubt remains',
                 'Accept otherwise, Lows and Pre-existing items included') + (
                     ('You have no shell on this host', 'mark each finding REASONED') if WINDOWS else
-                    ('run anything inside this copy', 'Run the suite and reproductions', 'REPRODUCED',
+                    ('run anything inside this copy', 'Run the reproductions here', 'REPRODUCED',
                      'if a run is impossible, mark it REASONED'))
         forbidden = ('Do not run tests', 'run code', 'SHOULD run', 'worktree add --detach',
                      'If your tools can execute', 'edit files in this checkout',
@@ -4970,7 +4970,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                 self.assertEqual(code, 0, result)
                 prompt = log.read_text()
                 if side == 'on':
-                    self.assertIn('not a finding.\nLead with the answer, synthetic.\n', prompt)
+                    self.assertIn('runs the full suite.\nLead with the answer, synthetic.\n', prompt)
                 else:
                     self.assertNotIn('Lead with the answer', prompt)
                 usage = json.loads(Path(result['usage_record']).read_text())
@@ -5899,6 +5899,17 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         chain = json.loads(result.stdout.split('review dispatch: ', 1)[1].splitlines()[0])
         self.assertNotIn('shadow', chain)
         self.assertNotIn('REVIEW [shadow]', result.stdout)
+
+    def test_the_reviewer_runs_only_the_narrow_test_never_the_full_suite(self):
+        # Owner decision 2026-10-16: reviewers that ran the 30-minute self-test in their copy
+        # took 40-60 minutes (one cut at the 3600 s cap); told not to, a review took 2.5 minutes.
+        # The lead's gate runs the full suite once (ai-review-workflows.md 1.7 [22], 1.4 [7]).
+        line = ("Do not run the project's full suite (scripts/check.sh --self-test, check_kit or a "
+                "whole test run); run only the narrow test that proves or disproves a finding. The "
+                "lead's gate runs the full suite.")
+        self.assertIn(line, bridge.REVIEW_PROMPT)
+        for text in (bridge.REVIEW_RUNS, bridge.REVIEW_READS):
+            self.assertNotIn('the suite', text)
 
     def test_a_setup_fault_or_failed_authentication_never_fails_over(self):
         # KARARLAR D04 inv2#44: a setup fault (authentication among them) is fixed, never failed

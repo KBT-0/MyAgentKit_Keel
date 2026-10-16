@@ -76,7 +76,13 @@ REVIEW_PROMPT = (
     "Medium, a deferred finding or a first-priority doubt remains, each check a full sentence; Accept otherwise, Lows "
     "and Pre-existing items included (they go to the backlog, not to manual checks). "
     "Never claim a run you did not make. An OPEN product decision is a question for the owner, "
-    "not a finding.\n")
+    "not a finding.\n"
+    # Owner decision 2026-10-16: reviewers that ran the 30-minute self-test took 40-60 minutes;
+    # one final gate is enough (docs/research/ai-review-workflows.md 1.7 [22]) and sector
+    # reviews take minutes (1.4 [7]).
+    "Do not run the project's full suite (scripts/check.sh --self-test, check_kit or a whole "
+    "test run); run only the narrow test that proves or disproves a finding. The lead's gate "
+    "runs the full suite.\n")
 # One reading list for both reviewers (KARARLAR B01 inv2#112/#120); docs/PROJECT.md and
 # docs/PHASES.md join it in REVIEW_PROMPT only for a change to design or phases. codex_bridge's
 # REVIEW_DOCS default names the same files; test_both_reviewers_read_one_list holds them equal.
@@ -120,8 +126,8 @@ def review_context(task_file=None) -> str:
 # Both bridged reviewers now execute, in the copy throwaway_copy() makes (threat model there).
 REVIEW_RUNS = (
     "You are in a throwaway copy of the reviewed checkout (checkout bytes for uncommitted "
-    "work, an archive of HEAD otherwise); run anything inside this copy. Run the suite "
-    "and reproductions here, and mark findings REPRODUCED with the command that shows each; if a "
+    "work, an archive of HEAD otherwise); run anything inside this copy. Run the reproductions "
+    "here, and mark findings REPRODUCED with the command that shows each; if a "
     "run is impossible, mark it REASONED and name the command that would reproduce it; list as "
     "NOT RUN what you could not run and why. Never use the network and never call a paid model.")
 # Native Windows: Claude Code has no Bash sandbox there, so the Claude reviewer gets no shell.
@@ -129,7 +135,7 @@ REVIEW_READS = (
     "You are in a throwaway copy of the reviewed checkout (checkout bytes for uncommitted "
     "work, an archive of HEAD otherwise). You have no shell on this host: Claude Code has no "
     "sandbox for one on native Windows. Read the code, mark each finding REASONED and name "
-    "the command that would reproduce it, and list as NOT RUN the suite and every check you "
+    "the command that would reproduce it, and list as NOT RUN every check you "
     "could not run. Never use the network and never call a paid model.")
 # Claude Code's own Bash sandbox (macOS Seatbelt; bubblewrap and socat on Linux and WSL2).
 # Writes go only to the working directory (the copy) and Claude Code's per-user temporary
