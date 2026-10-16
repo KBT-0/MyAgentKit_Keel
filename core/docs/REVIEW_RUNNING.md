@@ -12,7 +12,10 @@ here is part of its prompt.
 It runs the reviewer over the change set in a throwaway copy, archives the report under
 `docs/reviews/` and prints it. Mechanism and threat model: the header of `scripts/review.sh`
 and `scripts/claude_bridge.py`, `throwaway_copy`; accounting: `docs/USAGE.md`; a second
-backend (`--backend NAME`, reviewer `claude@NAME`): `docs/DEV_SETUP.md`.
+backend (`--backend NAME`, reviewer `claude@NAME`): `docs/DEV_SETUP.md`. Its `NAME.env` lives
+outside the repository, in `MYAGENTKIT_BACKENDS_DIR`, else `%APPDATA%\myagentkit\backends`
+(Windows) or `~/.config/myagentkit/backends`; the old `.myagentkit/backends/` is still read,
+with a note to move it (KARARLAR D09 inv2#80).
 
 | Variable | Meaning |
 |---|---|

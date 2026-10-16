@@ -1011,6 +1011,8 @@ class BridgeTests(unittest.TestCase):
         self.repo = self.root / "project"
         self.repo.mkdir()
         os.environ['FIXTURE_REPO'] = str(self.repo)
+        # The user's own backend folder is never read by a test (KARARLAR D09 inv2#80).
+        os.environ['MYAGENTKIT_BACKENDS_DIR'] = str(self.root / 'user-backends')
         self.fixture = self.root / "claude"
         self.fixture = python_cli(self.fixture, FIXTURE)
         self.git("init", "-q")
@@ -5968,6 +5970,50 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
             (self.repo / name).write_text('TOKEN=\n')
         result = self.run_wrapper('--uncommitted', **env)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_backend_files_live_outside_the_repository_by_default(self):
+        # KARARLAR D09 inv2#80 and LIDER 10: a checkout can never provide or change a backend file,
+        # so it lives in MYAGENTKIT_BACKENDS_DIR (else the user's config folder); the old
+        # .myagentkit/backends/ is still read during the move, with a note.
+        import review_dispatch
+        for key in [key for key in os.environ if key.startswith('ANTHROPIC_')]:
+            del os.environ[key]
+        text = ''.join('%s=%s\n' % item for item in self.BACKEND.items())
+        user = self.root / 'user-backends'
+        user.mkdir()
+        (user / 'glm.env').write_text(text)
+        log = self.root / 'env.json'
+        result = self.run_wrapper('--uncommitted', '--backend', 'glm', CLAUDE_CLI_BIN=str(self.fixture),
+                                  REVIEW_CLAUDE_MODEL='claude-opus-5', ENV_LOG=str(log))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(json.loads(log.read_text()), self.BACKEND)
+        self.assertNotIn('NOTE [review]: backend glm is read from', result.stdout + result.stderr)
+        self.assertEqual(review_dispatch.load_backend(self.repo, 'glm')[1], 'glm-fixture')
+        # The old place, while the new one has no file: read, with the move named.
+        (user / 'glm.env').unlink()
+        self.backend_file(text)
+        result = self.run_wrapper('--uncommitted', '--backend', 'glm', CLAUDE_CLI_BIN=str(self.fixture),
+                                  REVIEW_CLAUDE_MODEL='claude-opus-5', ENV_LOG=str(log))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('NOTE [review]: backend glm is read from', result.stdout + result.stderr)
+        self.assertIn(str(user), result.stdout + result.stderr)
+        # A backend folder inside the checkout is the checkout providing the file: refused.
+        os.environ['MYAGENTKIT_BACKENDS_DIR'] = str(self.repo / 'private')
+        with self.assertRaisesRegex(ValueError, 'outside the repository'):
+            review_dispatch.load_backend(self.repo, 'glm')
+        # The reviewer is denied the folder by its absolute path, as the old one.
+        from types import SimpleNamespace
+        os.environ['MYAGENTKIT_BACKENDS_DIR'] = str(user)
+        args = SimpleNamespace(repo=self.repo, mode='review', model='claude-opus-5', effort='high',
+                               max_turns=2, max_budget_usd=None)
+        folder = str(user.resolve()).replace('\\', '/')
+        for sandboxed in (False, True):
+            with self.subTest(sandboxed=sandboxed):
+                command, _ = bridge.claude_command('claude', args, sandboxed)
+                settings = json.loads(command[command.index('--settings') + 1])
+                self.assertIn('Read(//' + folder.lstrip('/') + '/**)', settings['permissions']['deny'])
+                if sandboxed:
+                    self.assertIn(folder, settings['sandbox']['filesystem']['denyRead'])
 
     def test_the_reviewer_runs_only_the_narrow_test_never_the_full_suite(self):
         # Owner decision 2026-10-16: reviewers that ran the 30-minute self-test in their copy

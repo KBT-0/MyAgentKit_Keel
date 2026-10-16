@@ -15,8 +15,10 @@
 #                     cannot run FAILS the review, it is never replaced. The substitute's
 #                     evidence carries a FALLBACK REVIEWER line.
 #   --backend NAME    the Claude reviewer talks to the Anthropic-compatible endpoint that
-#                     .myagentkit/backends/NAME.env names, with that file's model as the pin,
-#                     and is recorded as reviewer claude@NAME (docs/REVIEW_RUNNING.md).
+#                     NAME.env names, with that file's model as the pin, and is recorded as
+#                     reviewer claude@NAME (docs/REVIEW_RUNNING.md). The file lives outside the
+#                     repository: $MYAGENTKIT_BACKENDS_DIR, else %APPDATA%\myagentkit\backends or
+#                     ~/.config/myagentkit/backends; the old .myagentkit/backends/ is read too.
 #   --allow-secret-file PATH  review a file that looks like a secret (.env, *.pem, *.key,
 #                     .npmrc, .netrc, credentials*) knowingly; without it such a file in scope
 #                     stops the review (claude_bridge.secret_like). Repeat it per path.

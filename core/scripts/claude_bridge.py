@@ -1235,6 +1235,16 @@ def section(title: str, items: list) -> str:
             + "\n")
 
 
+def backends_dir() -> Path:
+    """The folder of backend files (KARARLAR D09 inv2#80): MYAGENTKIT_BACKENDS_DIR, else the
+    user's config folder (%APPDATA% on Windows, $XDG_CONFIG_HOME or ~/.config elsewhere)."""
+    if os.environ.get("MYAGENTKIT_BACKENDS_DIR"):
+        return Path(os.environ["MYAGENTKIT_BACKENDS_DIR"])
+    if os.name == "nt" and os.environ.get("APPDATA"):
+        return Path(os.environ["APPDATA"]) / "myagentkit" / "backends"
+    return Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "myagentkit" / "backends"
+
+
 def claude_command(cli: str, args, sandboxed: bool) -> tuple[list[str], list[str]]:
     """The Claude CLI command for `args`, and the tools it offers.
 
@@ -1250,14 +1260,16 @@ def claude_command(cli: str, args, sandboxed: bool) -> tuple[list[str], list[str
                "--safe-mode", "--restricted", "--strict-mcp-config", "--mcp-config",
                '{"mcpServers":{}}', "--no-session-persistence",
                "--max-turns", str(args.max_turns)]
-    private = str((args.repo / ".myagentkit/backends").resolve()).replace("\\", "/")
+    # The backend folder outside the repository and the old one inside it, by absolute path.
+    folders = [str(path.resolve()).replace("\\", "/")
+               for path in (args.repo / ".myagentkit/backends", backends_dir())]
     settings = json.loads(json.dumps(SANDBOX)) if bash else {}
     if bash:
-        settings["sandbox"]["filesystem"]["denyRead"].append(private)
+        settings["sandbox"]["filesystem"]["denyRead"] += folders
         command += ["--allowed-tools", "Bash"]
     # Tool denies also apply on Windows, where Bash sandboxing is unavailable.
-    settings["permissions"] = {"deny": ["Read(.myagentkit/backends/**)",
-                                         "Read(//" + private.lstrip("/") + "/**)"]}
+    settings["permissions"] = {"deny": ["Read(.myagentkit/backends/**)"]
+                               + ["Read(//" + folder.lstrip("/") + "/**)" for folder in folders]}
     command += ["--settings", json.dumps(settings)]
     if args.max_budget_usd is not None:
         command += ["--max-budget-usd", str(args.max_budget_usd)]

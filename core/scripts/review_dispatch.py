@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import stat
 import subprocess
+import sys
 from time import sleep
 import uuid
 
@@ -126,7 +127,8 @@ def tier(model):
 
 
 def load_backend(repo, name):
-    """The environment and the model pin of backend `name`, from .myagentkit/backends/NAME.env.
+    """The environment and the model pin of backend `name`, from NAME.env in the backend folder
+    (claude_bridge.backends_dir()), else the old .myagentkit/backends/NAME.env.
 
     Fails closed: a file without an endpoint, token or model could send the
     review to Anthropic's own endpoint under a name that claims another. No message prints a
@@ -134,16 +136,27 @@ def load_backend(repo, name):
     """
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", name):
         raise ValueError("backend name must be letters, digits, '.', '_' or '-' (got %r)" % name)
-    path = repo / ".myagentkit/backends" / (name + ".env")
-    relative = path.relative_to(repo).as_posix()
-    tracked = subprocess.run(["git", "-C", str(repo), "ls-files", "-z"],
-                             capture_output=True)
-    ignored = subprocess.run(["git", "-C", str(repo), "check-ignore", "-q", "--", relative],
-                             capture_output=True)
-    if tracked.returncode != 0 or ignored.returncode != 0 or any(
-            os.fsdecode(entry).casefold().startswith(".myagentkit/backends/")
-            for entry in tracked.stdout.split(b"\0") if entry):
-        raise ValueError("backend %s: %s must be Git-ignored and untracked" % (name, path))
+    # KARARLAR D09 inv2#80, LIDER 10: outside the repository by default, so a checkout can never
+    # provide or change the file; the old in-repository place is read while projects move.
+    folder = claude_bridge.backends_dir()
+    if folder.resolve() == repo or repo in folder.resolve().parents:
+        raise ValueError("backend folder %s must be outside the repository (MYAGENTKIT_BACKENDS_DIR)" % folder)
+    path = folder / (name + ".env")
+    if not os.path.lexists(path):
+        path = repo / ".myagentkit/backends" / (name + ".env")
+        relative = path.relative_to(repo).as_posix()
+        tracked = subprocess.run(["git", "-C", str(repo), "ls-files", "-z"],
+                                 capture_output=True)
+        ignored = subprocess.run(["git", "-C", str(repo), "check-ignore", "-q", "--", relative],
+                                 capture_output=True)
+        if tracked.returncode != 0 or ignored.returncode != 0 or any(
+                os.fsdecode(entry).casefold().startswith(".myagentkit/backends/")
+                for entry in tracked.stdout.split(b"\0") if entry):
+            raise ValueError("backend %s: %s must be Git-ignored and untracked" % (name, path))
+        if os.path.lexists(path):
+            print("NOTE [review]: backend %s is read from %s, the old place; move it to %s (the "
+                  "old place is read only while projects move)" % (name, path, folder),
+                  file=sys.stderr, flush=True)
     try:
         if path.is_symlink() or not os.path.isfile(path):
             raise ValueError("backend %s: %s cannot be read: expected a regular file" % (name, path))
