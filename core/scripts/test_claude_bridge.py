@@ -847,6 +847,12 @@ class BridgeTests(unittest.TestCase):
                  (review_dispatch.main, ['--reviewer', 'claude'], '3600', 3600),
                  (review_dispatch.main, ['--reviewer', 'claude'], '99', 99),
                  (review_dispatch.main, ['--reviewer', 'codex'], '99', 99)]
+        # KARARLAR B03 inv2#31: a high-effort Codex review ran 37-58 minutes (RL 2026-10-13), so
+        # its default is the maximum; a Claude review and an explicit value keep theirs.
+        cases += [(codex_bridge.main, ['--model', 'fixture-codex-model', '--effort', 'high'], None, 3600),
+                  (codex_bridge.main, ['--model', 'fixture-codex-model', '--effort', 'high'], '88', 88),
+                  (review_dispatch.main, ['--reviewer', 'codex', '--effort', 'high'], None, 3600),
+                  (review_dispatch.main, ['--reviewer', 'claude', '--effort', 'high'], None, default)]
         for main, argv, override, expected in cases:
             with self.subTest(entry=main.__module__, args=argv, override=override):
                 with patch.dict(os.environ, self.review_env(REVIEW_CLAUDE_MODEL='claude-opus-5',

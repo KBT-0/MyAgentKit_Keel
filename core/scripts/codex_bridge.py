@@ -41,7 +41,9 @@ def main(argv=None, result_sink=None, claims=None):
     # is directly callable, and an unpinned run is a record that names no comparable model.
     if not args.model.strip() or any(c.isspace() for c in args.model):
         raise ValueError("--model must pin one model id; Codex attests none in its output")
-    timeout = int(os.environ.get("REVIEW_TIMEOUT_SECONDS", str(agent_process.DEFAULT_REVIEW_TIMEOUT)))
+    # KARARLAR B03 inv2#31: a high-effort Codex review ran 37-58 minutes (RL 2026-10-13).
+    default = agent_process.MAX_REVIEW_TIMEOUT if args.effort == "high" else agent_process.DEFAULT_REVIEW_TIMEOUT
+    timeout = int(os.environ.get("REVIEW_TIMEOUT_SECONDS", str(default)))
     if not 1 <= timeout <= agent_process.MAX_REVIEW_TIMEOUT:
         raise ValueError("REVIEW_TIMEOUT_SECONDS must be 1..%d" % agent_process.MAX_REVIEW_TIMEOUT)
     repo = args.repo.resolve(strict=True)

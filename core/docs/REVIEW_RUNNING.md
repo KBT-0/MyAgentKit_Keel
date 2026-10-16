@@ -26,7 +26,7 @@ with a note to move it (KARARLAR D09 inv2#80).
 | `REVIEW_FOCUS` | `portability` or `logic`, one reviewer each on a high tier; each focus gets the label's two rounds; a review without a focus counts toward every focus |
 | `REVIEW_TASK_FILE` | the brief the prompt quotes; a diff outside its `Owns:` line is refused |
 | `REVIEW_EFFORT` | `low` / `medium` / `high`; default high on a high tier, else medium |
-| `REVIEW_TIMEOUT_SECONDS` | per attempt, default 2700, at most 3600 |
+| `REVIEW_TIMEOUT_SECONDS` | per attempt, default 2700 (3600 for a high-effort Codex review), at most 3600 |
 | `REVIEW_MAX_TURNS` | Claude turns per attempt |
 | `REVIEW_SHADOW` | `1` measures a reviewer configuration; its verdict closes nothing |
 | `REVIEW_CLAUDE_MODEL`, `REVIEW_CODEX_MODEL`, `MYAGENTKIT_BACKEND` | pins and backend for one run |
