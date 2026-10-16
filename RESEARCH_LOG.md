@@ -27,7 +27,8 @@ which is the part that gets lost.
 (check-rules); 2.42's do not, so DEV_SETUP's 2.42 floor is labelled the kit's own record. The
 permission-layer refusal of a deploy-shaped build command is RESEARCH_LOG's own incident
 (Gates that did not gate), so INTERVIEW keeps that reason. Sources for the rest: the stage-2
-evidence files B14 and D07 (read 2026-10-15).
+evidence files B14 and D07 (read 2026-10-15), and KARARLAR B10 inv3#3, B12 inv3#186,
+D08 inv3#123, D09 inv3#176, D10 inv3#97 for patterns and skills.
 
 The two fix rounds caught fix_crlf.sh rewriting binary hooks and kit-feedback allowing
 `git diff *` (Codex r1), then DEV_SETUP still embedding the repair program and `Bash(git:*)`

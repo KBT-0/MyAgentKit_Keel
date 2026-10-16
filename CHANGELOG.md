@@ -28,8 +28,11 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   D08 inv3#123, D09 inv3#176, D10 inv3#97). The repair skips files with -text/binary attributes
   and content Git detects as binary; kit-feedback pre-approves only exact read-only command
   forms. DEV_SETUP now calls the tested, kit-owned `scripts/fix_crlf.sh` repair; handoff and
-  cross-review no longer pre-approve arbitrary Git commands. **ACTION** — none (fix_crlf.sh
-  arrives as a new kit-owned file; INTERVIEW and RESEARCH_PROTOCOL are kit-owned).
+  cross-review no longer pre-approve arbitrary Git commands. **ACTION:** `docs/DEV_SETUP.md`
+  is project-owned, so sync-kit.sh never rewrites it: in section 1, "Wire the commit gate",
+  replace the embedded line-ending repair program with the `sh scripts/fix_crlf.sh`
+  paragraph from the kit's `core/docs/DEV_SETUP.md`. Update the plugin to the same kit
+  version so kit-feedback, handoff and cross-review carry the tightened permissions.
 - **Source claims corrected after the web source check** (`core/docs/WORKFLOW.md`, `USAGE.md`,
   `DEV_SETUP.md`, `core/scripts/agent_usage.py`, `claude_bridge.py`, `context_buckets.py`,
   `docs/worker-cost-setups.md`, `.claude/hooks/py.sh`). Correct eight source claims about Claude
