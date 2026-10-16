@@ -220,7 +220,9 @@ If the project has no such jobs, delete both files instead of filling them.
   session opens, a brief file that does not exist or cannot be read.
 - **A worker's worktree is made with `git worktree add`, not with `claude -w`.**
   `claude -w` built the worktree from a stale base, so workers spawned after the lead
-  merged fixes started without them. `spawn_worker.sh --worktree` runs
+  merged fixes started without them: `-w` starts from the remote default branch, a local
+  HEAD needs `worktree.baseRef: head`, and reports of stale bases span versions
+  (code.claude.com/docs/en/worktrees; claude-code issue 53025). `spawn_worker.sh --worktree` runs
   `git worktree add .claude/worktrees/NAME -b worktree-NAME HEAD` from the lead's checkout
   and opens the session inside it; a leftover `worktree-NAME` branch is refused by name.
 - **Every value the script puts into the session's shell command is quoted by one helper.**
