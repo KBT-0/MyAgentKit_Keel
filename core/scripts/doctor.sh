@@ -281,6 +281,8 @@ fi
 
 # On native Windows (Git for Windows' sh, MSYS2, Cygwin) spawn_worker.sh opens a Windows
 # Terminal tab instead of a tmux session, which that host cannot run.
+# Sources (D02 inv2#145): code.claude.com/docs/en/agent-teams;
+# learn.microsoft.com/en-us/windows/terminal/command-line-arguments.
 if [ -f scripts/spawn_worker.sh ]; then
   case $(uname -s 2>/dev/null) in
     MINGW*|MSYS*|CYGWIN*)

@@ -13,10 +13,14 @@ Split the build into a handful of STAGES. Each stage:
 - ends in **acceptance criteria someone can run**, not a feeling of completion;
 - is independently useful, so stopping after any stage leaves something real.
 
-The order is by RISK, not by dependency and certainly not by enthusiasm. The stage that
+The order is by RISK (a stage whose assumption cannot be tested before a dependency exists
+waits for it; D10 inv3#164), not by dependency and certainly not by enthusiasm. The stage that
 would hurt most if its assumption turned out wrong goes first, even when it is not the
 foundation. A skeleton plus a gate usually comes before any feature work, because everything
 after it lands on protected ground.
+Sources (D10 inv3#164): the stage-2 report cites the
+[spiral model](https://en.wikipedia.org/wiki/Spiral_model) from a search summary and
+[Claude Code best practices](https://code.claude.com/docs/en/best-practices) for scope and runnable checks.
 
 ## Why the non-goals carry the weight
 

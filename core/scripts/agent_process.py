@@ -1,4 +1,9 @@
-"""Bounded child execution shared by both CLI adapters; preserve partial diagnostics."""
+"""Bounded child execution shared by both CLI adapters; preserve partial diagnostics.
+
+Sources (D01 inv2#66): docs.python.org/3/library/subprocess.html (timeout, start_new_session);
+CPython issue 26534 (bugs.python.org/issue26534); Airflow's reap_process_group
+(airflow.apache.org/docs/apache-airflow/stable/_modules/airflow/utils/process_utils.html).
+"""
 import os
 from pathlib import Path
 import queue
@@ -586,7 +591,7 @@ def _supervise(command, prompt, repo, timeout, started, guard, prior=None, into=
                     # PWD names the working directory, never the caller's: a reviewer in a
                     # throwaway copy is not told the repository's path (claude_bridge.
                     # throwaway_copy). A GIT_DIR from a hook would send its git to the repository.
-                    # denylist: a new GIT_* style variable would pass; an allowlist (PATH, HOME,
+                    # D09 inv2#122: denylist: a new GIT_* style variable would pass; an allowlist (PATH, HOME,
                     # auth, locale) is stricter (Saltzer-Schroeder, fail-safe defaults).
                     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")
                            and k not in ("OLDPWD", "REVIEW_REPO_ROOT", "CLAUDE_PROJECT_DIR",

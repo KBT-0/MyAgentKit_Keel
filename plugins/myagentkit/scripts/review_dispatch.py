@@ -352,6 +352,9 @@ def main(argv=None):
         received = []
         command = ["--repo", str(repo), "--model", pins[provider], "--effort", args.effort,
                    "--" + scope] + ([ref] if ref else [])
+        # Source (D10 inv2#87): www.aiuxplayground.com/pattern/pre-task-cost-estimate.
+        # An optional time range on the "about to run" line comes from usage_summary.py
+        # records, not from the timeout; adding it is a separate behaviour change.
         print("REVIEW [about to run]: %s model %s, effort %s" % (names[provider], pins[provider], args.effort),
               flush=True)
         # The backend's variables reach the Claude CLI of this attempt only, in place of every

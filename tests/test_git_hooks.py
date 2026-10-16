@@ -457,7 +457,7 @@ class GitHookTests(unittest.TestCase):
             shim.mkdir()
             (shim / 'git').write_text(
                 '#!/bin/sh\ncase " $* " in *" ls-files "*)\n'
-                '  case " $* " in *" -- :(icase)docs/reviews "*) ;; *) echo unscoped-index >&2; exit 128 ;; esac ;; esac\n'
+                '  case " $* " in *" -- :(icase)docs/reviews :(icase)docs/audits "*) ;; *) echo unscoped-index >&2; exit 128 ;; esac ;; esac\n'
                 'exec %s "$@"\n' % shlex.quote(shutil.which('git')), encoding='utf-8')
             (shim / 'git').chmod(0o755)
             result = subprocess.run(['sh', '.githooks/commit-msg', str(message)], cwd=root,
@@ -502,7 +502,7 @@ class GitHookTests(unittest.TestCase):
     def test_noncanonical_review_directory_case_is_refused(self):
         for directory in ('docs/Reviews', 'Docs/reviews', 'DOCS/REVIEWS'):
             with self.subTest(directory=directory):
-                self.assertIn('use docs/reviews with this exact case',
+                self.assertIn('use docs/reviews or docs/audits with this exact case',
                               self.check_report_name(directory + '/strong-today.md'))
 
     def test_the_index_is_checked_not_the_working_tree(self):

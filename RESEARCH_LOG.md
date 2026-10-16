@@ -21,6 +21,21 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-10-17 — v0.11 batch 9a and follow-through
+
+2026-10-17 batch 9a: KARARLAR batch 9 text applied to the core rule docs and the Claude Code
+overlay. Sources of AGENTS.md rules sit in WORKFLOW (B11 inv1#241). Two coverage items stay
+open: D01 inv1#194 (248-character path, no Windows test) and D01 inv1#202 (failed vs blocked, owner).
+
+The follow-through measured D01 inv1#194 on native Windows: Python 3.13 `Path.mkdir` and
+`CreateDirectoryW` both created directories at 247, 248, 249, 259, 260, 261 and 300 characters.
+That host does not support the proposed universal limit; the sentence was not added.
+The [Microsoft path documentation](https://learn.microsoft.com/en-us/windows/win32/fileio/maximum-file-path-limitation)
+describes legacy limits and the long-path opt-in, so the host measurement is not a platform-wide guarantee.
+D01 inv1#202 remains the owner's decision. The audit `Done:` checks now reject closed ids
+in history and the staged index (B11 inv1#118 A). Review and proposal prompts use one
+verification rule (D08 inv2#95). The commands and red/green evidence are in `b9alead-tests/`.
+
 ### 2026-10-16 — v0.11 fix7: worktree hooks and context visibility
 
 2026-10-16: Preserve absent worktree settings and expose worker context, preventing silent missing hooks.

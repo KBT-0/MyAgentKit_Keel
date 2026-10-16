@@ -74,3 +74,9 @@ glue: type conversion, wiring, host-specific plumbing.
 
 **Treating the boundary as advice.** If nothing fails when it is crossed, it will be
 crossed — usually at 2am, in a hurry, with a comment saying "temporary".
+
+In a project that already crosses the boundary, record the existing crossings as a baseline
+and fail only on new ones (D10 inv3#154).
+Sources: [architecture fitness functions](https://milanjovanovic.tech/blog/architecture-fitness-functions-archunitnet)
+and [Bernhardt's Boundaries](https://www.destroyallsoftware.com/talks/boundaries), cited by
+the stage-2 report from search summaries; those summaries were not full-source verification.

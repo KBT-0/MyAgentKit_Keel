@@ -35,6 +35,8 @@ These override any habit you have about being efficient.
    Rules 1-3 are the kit's reading of "one question, one decision, your recommendation and
    its reason" (the kit's `docs/research/communication-style.md`, finding 6 and proposal 10)
    and of the vendor's "Let Claude interview you" (code.claude.com/docs/en/best-practices).
+   Sources (D08 inv3#96): [Spec Kit, spec-driven.md](https://github.com/github/spec-kit/blob/main/spec-driven.md)
+   and ["Let Claude interview you"](https://code.claude.com/docs/en/best-practices#let-claude-interview-you).
 4. **Record the RATIONALE for every decision: one sentence next to the rule, and the longer
    reason in `docs/PROJECT.md` (DECIDED) or `RESEARCH_LOG.md`, linked from the rule.** A rule
    without its reason gets deleted by someone who cannot see what it was protecting; a rule

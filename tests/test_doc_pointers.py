@@ -27,10 +27,12 @@ def reviewer_doc_lists():
     for i, found in enumerate(re.findall(r'^REVIEW_DOCS = (\([^)]*\))|docs = (\[[^\]]*\])', bridge, re.M)):
         lists['claude_bridge.py list %d' % i] = re.findall(r'"([^"]+)"', ''.join(found))
     codex = (ROOT / 'core/scripts/codex_bridge.py').read_text(encoding='utf-8')
-    for name, text in (('codex_bridge.py', re.search(r'"REVIEW_DOCS", "([^"]+)"', codex)),
-                       ('scripts/review.sh', re.search(r'REVIEW_DOCS:-([^}]+)\}',
-                                                       (ROOT / 'scripts/review.sh').read_text(encoding='utf-8')))):
-        lists[name] = re.split(r',\s*|\s+and\s+', text.group(1))
+    assert re.search(r'from claude_bridge import \([^)]*\bREVIEW_DOCS\b', codex, re.S), 'Codex must import the shared reading list'
+    assert 'os.environ.get("REVIEW_DOCS", ", ".join(REVIEW_DOCS))' in codex, 'Codex must use the shared default'
+    lists['codex_bridge.py'] = re.findall(r'"([^"]+)"', re.search(r'^REVIEW_DOCS = (\([^)]*\))', bridge, re.M).group(1))
+    text = re.search(r'REVIEW_DOCS:-([^}]+)\}',
+                     (ROOT / 'scripts/review.sh').read_text(encoding='utf-8'))
+    lists['scripts/review.sh'] = re.split(r',\s*|\s+and\s+', text.group(1))
     return lists
 
 
