@@ -1,6 +1,7 @@
 """sync-kit.sh must not stamp a version whose ACTION items the owner has not confirmed."""
 import os
 from pathlib import Path
+import re
 import shlex
 import shutil
 import subprocess
@@ -37,10 +38,11 @@ def cut_short(shims, needle):
 
 
 def textwrap_dedent_dev_setup():
-    """The line-ending repair DEV_SETUP section 1 names: the kit-owned scripts/fix_crlf.sh
-    (KARARLAR D07 inv3#82; it was an embedded block)."""
-    import shlex
-    return 'sh ' + shlex.quote((ROOT / 'core/scripts/fix_crlf.sh').as_posix())
+    """Read DEV_SETUP's repair command, resolving its project path to the kit source."""
+    section = (ROOT / 'core/docs/DEV_SETUP.md').read_text(encoding='utf-8')
+    section = section.split('**Line endings.**', 1)[1].split('## 2.', 1)[0]
+    script = re.search(r'`sh (scripts/[^`\s]+)`', section)[1]
+    return 'sh ' + shlex.quote((ROOT / 'core' / script).as_posix())
 
 class SyncKitTests(unittest.TestCase):
     def sync(self, tmp, entry, *flags, env=None):
@@ -754,6 +756,14 @@ class SyncKitTests(unittest.TestCase):
                 self.assertEqual((project / path).read_bytes(), lf, path)
                 self.assertEqual(git('show', ':' + path), lf, path)
             self.assertEqual((project / 'notes.txt').read_bytes(), b'one\r\n')
+
+    def test_dev_setup_names_the_tested_repair_instead_of_embedding_a_program(self):
+        section = (ROOT / 'core/docs/DEV_SETUP.md').read_text(encoding='utf-8')
+        section = section.split('**Line endings.**', 1)[1].split('## 2.', 1)[0]
+        self.assertIn('`sh scripts/fix_crlf.sh`', section)
+        self.assertNotIn('```', section, 'DEV_SETUP must use the tested kit-owned repair')
+        self.assertEqual(textwrap_dedent_dev_setup(),
+                         'sh ' + shlex.quote((ROOT / 'core/scripts/fix_crlf.sh').as_posix()))
 
     def test_fix_crlf_leaves_binary_hooks_and_scripts_unmodified_and_unstaged(self):
         # A tracked helper executable was corrupted and staged with every other hook.

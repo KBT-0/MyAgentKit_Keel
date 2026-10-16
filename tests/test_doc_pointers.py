@@ -177,14 +177,22 @@ class SectionPointerTests(unittest.TestCase):
         for path in [ROOT / 'core/AGENTS.md', *sorted((ROOT / 'core/docs').glob('*.md'))]:
             self.assertNotIn('closing review', path.read_text(encoding='utf-8').lower(), path)
 
-    def test_kit_feedback_preapproves_only_read_only_commands(self):
+    def test_plugin_commands_preapprove_only_the_commands_they_need(self):
         # A wildcard after git diff also approves --output=FILE, which overwrites a file.
         # Pin exact read-only forms; send commands must still meet the permission prompt.
+        expected = {
+            'kit-feedback': ['Bash(gh auth status)', 'Bash(git status)',
+                             'Bash(git diff)', 'Bash(git diff --stat)'],
+            # Handoff uses reads/searches; cross-review delegates Git access to review.sh.
+            'handoff': [],
+            'cross-review': ['Bash(./scripts/review.sh:*)'],
+        }
+        for name, allowed in expected.items():
+            with self.subTest(command=name):
+                command = (ROOT / ('plugin/commands/%s.md' % name)).read_text(encoding='utf-8')
+                tools = re.search(r'(?m)^allowed-tools: (.*)$', command)[1].split(', ')
+                self.assertEqual([t for t in tools if t.startswith('Bash(')], allowed)
         command = (ROOT / 'plugin/commands/kit-feedback.md').read_text(encoding='utf-8')
-        tools = re.search(r'(?m)^allowed-tools: (.*)$', command)[1].split(', ')
-        self.assertEqual([t for t in tools if t.startswith('Bash(')],
-                         ['Bash(gh auth status)', 'Bash(git status)',
-                          'Bash(git diff)', 'Bash(git diff --stat)'])
         self.assertIn('the permission prompt is the second gate', command)
 
     def test_the_mode_command_and_skill_know_every_mode_the_workflow_defines(self):
