@@ -38,8 +38,8 @@ class PythonFallbackTests(unittest.TestCase):
         project = tmp / 'project'
         shutil.copytree(OVERLAY / '.claude/hooks', project / '.claude/hooks')
         # A dirty repository, so the guard has work to lose. GIT_* from a calling hook would
-        # route git elsewhere.
-        env = {k: v for k, v in os.environ.items() if not k.startswith('GIT_')}
+        # route git elsewhere. Exercise owner-facing hooks even when the caller is a worker.
+        env = {k: v for k, v in os.environ.items() if not k.startswith('GIT_') and k != 'MYAGENTKIT_ROLE'}
         subprocess.run(['git', 'init', '-q', str(project)], check=True, env=env)
         subprocess.run(['git', '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty',
                         '-m', 'x'], cwd=project, check=True, env=env)
@@ -80,7 +80,13 @@ class PythonFallbackTests(unittest.TestCase):
         said = run(['sh', '-c', python_hooks['context_size.py']], json.dumps({'transcript_path': str(transcript)}))
         self.assertEqual((said.returncode, said.stderr), (0, ''))
         self.assertIn('Context is 210k tokens', said.stdout)
-        bounced = run(['sh', '-c', python_hooks['plain_report.py']], json.dumps({'last_assistant_message': 'D-5 is done.'}))
+        report = json.dumps({'last_assistant_message': 'D-5 is done.'})
+        # Missing canonical grammar fails open; an installed project supplies commit-msg.
+        unconfigured = run(['sh', '-c', python_hooks['plain_report.py']], report)
+        self.assertEqual((unconfigured.returncode, unconfigured.stderr), (0, ''))
+        (project / '.githooks').mkdir()
+        shutil.copyfile(ROOT / 'core/.githooks/commit-msg', project / '.githooks/commit-msg')
+        bounced = run(['sh', '-c', python_hooks['plain_report.py']], report)
         self.assertEqual(bounced.returncode, 2, bounced.stderr)
         self.assertIn('BLOCKED', bounced.stderr)
         transcript.write_text(''.join(json.dumps({'type': 'assistant', 'message': {'content': [
