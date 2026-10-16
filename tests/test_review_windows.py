@@ -4,7 +4,8 @@ Native Windows Python has no select() on a pipe and no process group to kill. Th
 reviewer starts suspended, joins a Job Object of its own and only then runs; its pipes are
 read by one thread each; stopping it terminates the job, which reaches a descendant that
 outlived the reviewer and still holds a pipe, and a supervisor that dies takes the job down.
-Every case here runs only on native Windows; elsewhere each prints a NOT RUN line and passes.
+Every case here runs only on native Windows; elsewhere each declares a platform skip,
+reported as NOT RUN by the kit check.
 """
 import ctypes
 import json
@@ -29,13 +30,9 @@ WINDOWS = os.name == 'nt'
 
 
 def windows_only(test):
-    def run(self):
-        if not WINDOWS:
-            sys.stderr.write('\nNOT RUN: %s (native Windows only)\n' % self.id())
-            return
-        return test(self)
-    run.__name__, run.__doc__ = test.__name__, test.__doc__
-    return run
+    wrapped = unittest.skipUnless(WINDOWS, 'native Windows only')(test)
+    wrapped._kit_platform_skip = not WINDOWS
+    return wrapped
 
 
 def alive(pid):

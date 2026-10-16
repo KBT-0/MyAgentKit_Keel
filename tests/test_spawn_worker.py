@@ -223,7 +223,7 @@ def run_with_launcher_pid(shell, script, args, **kwargs):
 WINDOWS = os.name == 'nt'
 # The cases that run on native Windows (issue #56). Every other case drives the tmux path,
 # which native Windows never takes, through Python stubs whose `sh -c` command line Git for
-# Windows parses again (an apostrophe is a quote there): there each prints NOT RUN.
+# Windows parses again (an apostrophe is a quote there): declare those platform skips.
 ON_WINDOWS = {'test_a_backend_reaches_the_worker_quoted_on_both_paths',
               'test_a_worker_worktree_is_locked_from_spawn',
               'test_a_worker_is_resumed_through_the_kit_under_its_name',
@@ -264,10 +264,9 @@ ON_WINDOWS.update({'test_copied_hooks_allow_done_without_hiding_other_changes',
 
 def tmux_path_cases(cls):
     for name in [n for n in vars(cls) if n.startswith('test_') and n not in ON_WINDOWS and WINDOWS]:
-        def not_run(self):
-            sys.stderr.write('\nNOT RUN: %s (the tmux path, POSIX only)\n' % self.id())
-        not_run.__name__ = name
-        setattr(cls, name, not_run)
+        test = unittest.skip('the tmux path, POSIX only')(getattr(cls, name))
+        test._kit_platform_skip = True
+        setattr(cls, name, test)
     return cls
 
 
@@ -1098,6 +1097,7 @@ exit 0
     @unittest.skipUnless(WINDOWS, 'Windows drive-letter path syntax')
     def test_worktree_accepts_backslash_windows_settings(self):
         self.worktree_hooks(tracked=False, absolute='backslash')
+    test_worktree_accepts_backslash_windows_settings._kit_platform_skip = not WINDOWS
 
     def test_worktree_keeps_tracked_project_hooks_without_copying_them(self):
         self.worktree_hooks(tracked=True)
