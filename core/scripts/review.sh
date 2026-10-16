@@ -6,7 +6,7 @@
 # prints it. The gate itself is docs/REVIEW_GATE.md; this script only collects the evidence.
 #
 # Usage: review.sh [--uncommitted | --base <ref> | --commit <sha>] [--reviewer codex|claude]
-#                  [--fallback] [--backend NAME]
+#                  [--fallback] [--backend NAME] [--allow-secret-file PATH]...
 #        review.sh --self-test
 #   default scope     --uncommitted (staged + unstaged + untracked) — the pre-commit case.
 #   default reviewer  the one configured below during setup.
@@ -15,8 +15,13 @@
 #                     cannot run FAILS the review, it is never replaced. The substitute's
 #                     evidence carries a FALLBACK REVIEWER line.
 #   --backend NAME    the Claude reviewer talks to the Anthropic-compatible endpoint that
-#                     .myagentkit/backends/NAME.env names, with that file's model as the pin,
-#                     and is recorded as reviewer claude@NAME (docs/REVIEW_RUNNING.md).
+#                     NAME.env names, with that file's model as the pin, and is recorded as
+#                     reviewer claude@NAME (docs/REVIEW_RUNNING.md). The file lives outside the
+#                     repository: $MYAGENTKIT_BACKENDS_DIR, else %APPDATA%\myagentkit\backends or
+#                     ~/.config/myagentkit/backends; the old .myagentkit/backends/ is read too.
+#   --allow-secret-file PATH  review a file that looks like a secret (.env, *.pem, *.key,
+#                     .npmrc, .netrc, credentials*) knowingly; without it such a file in scope
+#                     stops the review (claude_bridge.secret_like). Repeat it per path.
 #
 # THE KIT TAKES NO POSITION ON WHICH MODEL WRITES AND WHICH REVIEWS. The rule is that the
 # AUTHOR never reviews its own patch and the REVIEWER is a different model — not that a
@@ -46,11 +51,10 @@
 #     script instead. An ordinary edit during a review fails it as stale_checkout. A
 #     self-test may run beside a review in the same worktree only when every one of its cases
 #     writes nothing but files Git ignores (owner decision, 2026-10-12): its final status check
-#     cannot catch a non-ignored file that a case writes and removes meanwhile, and the kit's own
-#     boundary example does that, so the kit's self-test runs in another worktree or after the review.
+#     cannot catch a non-ignored file that a case writes and removes meanwhile.
 #
 # The sandbox is pinned HERE and in the adapters, not assumed of the CLI: the scope forms
-# above, --reviewer, --fallback and --backend are the ONLY accepted arguments, and a backend
+# above, --reviewer, --fallback, --backend and --allow-secret-file are the ONLY accepted arguments, and a backend
 # never relaxes the sandbox flags. There is deliberately no pass-through for further flags —
 # an agent must not be able to talk this script into a run outside the copy or with the
 # sandbox off. "Please be careful" is not a guarantee when the caller is a model.
@@ -67,7 +71,7 @@
 #   REVIEW_FOCUS     portability | logic: one reviewer each on a high-tier change
 #   REVIEW_TASK_FILE the brief the prompt quotes; its Owns: line bounds the diff (owns_check.py)
 #   REVIEW_ROUND_EXCEPTION  the recorded reason for a third round under one label
-#   REVIEW_TIMEOUT_SECONDS  wall clock per attempt (default: 2700, at most 3600)
+#   REVIEW_TIMEOUT_SECONDS  wall clock per attempt (default: 2700, 3600 for high-effort Codex; at most 3600)
 #   REVIEW_MAX_TURNS        Claude turns per attempt (default: 200, at most 500)
 #   REVIEW_CLI_BIN   the Codex binary             (default: codex)
 #   CLAUDE_CLI_BIN   the Claude binary            (default: claude)
@@ -105,7 +109,7 @@ CLAUDE_MODEL=""
 # ---------------------------------------------------------------------------------------
 
 usage() {
-  echo "usage: review.sh [--uncommitted | --base <ref> | --commit <sha>] [--reviewer codex|claude] [--fallback] [--backend NAME]"
+  echo "usage: review.sh [--uncommitted | --base <ref> | --commit <sha>] [--reviewer codex|claude] [--fallback] [--backend NAME] [--allow-secret-file PATH]..."
   echo "       review.sh --self-test"
   exit 2
 }
@@ -121,6 +125,8 @@ if [ "${1:-}" = "--self-test" ]; then
     die "review self-tests failed"
   fi
   cat "$test_log"
+  # No completion line = no pass: an empty run is a failure (pytest exit code 5,
+  # docs.pytest.org/en/stable/reference/exit-codes.html; jest --passWithNoTests is opt-in, jestjs.io/docs/cli).
   grep -qx 'REVIEW SELF-TEST: PASS' "$test_log" || die "review self-tests produced no completion evidence"
   exit 0
 fi
@@ -150,6 +156,13 @@ while [ $# -gt 0 ]; do
     --backend)
       [ $# -ge 2 ] || usage
       backend="$2"; shift 2 ;;
+    --allow-secret-file)
+      [ $# -ge 2 ] || usage
+      case "$2" in -*|"") usage ;; esac
+      case "$2" in *"
+"*) usage ;; esac
+      secret_files="${secret_files:-}$2
+"; shift 2 ;;
     *) usage ;;
   esac
 done
@@ -183,6 +196,14 @@ fi
 
 # Without REVIEW_EFFORT the dispatcher's default follows REVIEW_RISK (docs/REVIEW_GATE.md, "Risk tiers").
 [ -n "${REVIEW_EFFORT:-}" ] && set -- --effort "$REVIEW_EFFORT" "$@"
+# Each secret-looking path the owner reviews knowingly, one argument each (a path may hold a space).
+if [ -n "${secret_files:-}" ]; then
+  while IFS= read -r secret; do
+    [ -n "$secret" ] && set -- "$@" --allow-secret-file "$secret"
+  done <<EOF
+$secret_files
+EOF
+fi
 # Only with --fallback does the dispatcher make one failover to the other configured pin.
 # Each adapter retains its own evidence and usage; a completed Reject never triggers another call.
 exec $kit_python -B "$script_dir/review_dispatch.py" --repo "$PWD" --reviewer "$reviewer" $fallback \

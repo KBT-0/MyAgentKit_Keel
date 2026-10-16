@@ -14,7 +14,10 @@ import time
 
 # A high-effort review of a large diff outran 1800 seconds and 12 turns; a review the kit's own
 # caps kill is paid for and returns nothing. The defaults leave such a review room to finish;
-# the kit's own reviews ended under 45 minutes (owner decision 2026-10-13, H: 2700/3600).
+# the kit's Claude reviews ended in 1-9 minutes, its high-effort Codex reviews in 37-58 (RL
+# 2026-10-13), so a high-effort Codex review defaults to the maximum (codex_bridge; owner
+# decision 2026-10-13, H: 2700/3600; KARARLAR B03 inv2#31). Claude Code's ultrareview
+# --timeout defaults to 45 minutes, the same 2700 s.
 # REVIEW_TIMEOUT_SECONDS and REVIEW_MAX_TURNS (review.sh) change them per run, up to the maxima.
 DEFAULT_REVIEW_TIMEOUT = 2700
 MAX_REVIEW_TIMEOUT = 3600
@@ -583,6 +586,8 @@ def _supervise(command, prompt, repo, timeout, started, guard, prior=None, into=
                     # PWD names the working directory, never the caller's: a reviewer in a
                     # throwaway copy is not told the repository's path (claude_bridge.
                     # throwaway_copy). A GIT_DIR from a hook would send its git to the repository.
+                    # denylist: a new GIT_* style variable would pass; an allowlist (PATH, HOME,
+                    # auth, locale) is stricter (Saltzer-Schroeder, fail-safe defaults).
                     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")
                            and k not in ("OLDPWD", "REVIEW_REPO_ROOT", "CLAUDE_PROJECT_DIR",
                                          "REVIEW_DISPOSITIONS", "REVIEW_SHADOW")}

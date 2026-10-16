@@ -111,14 +111,20 @@ def dispositions(text: str) -> dict:
     one answer per line, so a key quoted inside an answer's evidence is not a second answer.
     These are the author's claims (the next round's reviewer verifies them), recorded so the
     usage summary can show each reviewer configuration's author-claimed acceptance rate.
-    A file that answers no finding with a key is refused before any model is called.
+    A file that answers no finding with a key is refused before any model is called. Other
+    lines (a heading or a blank line excepted) are counted as `unkeyed`, only when there is one,
+    so a record with none reads as before.
     """
-    counts = dict.fromkeys(DISPOSITION_KEYS, 0)
+    counts, unkeyed = dict.fromkeys(DISPOSITION_KEYS, 0), 0
     for line in text.splitlines():
         first = re.search(r"\b(%s):" % "|".join(DISPOSITION_KEYS), line, re.I)
         if first:
             counts[first[1].lower()] += 1
-    if not any(counts.values()):
+        elif line.strip() and not line.lstrip().startswith("#"):
+            unkeyed += 1
+    if unkeyed:
+        counts["unkeyed"] = unkeyed
+    if not any(counts[key] for key in DISPOSITION_KEYS):
         raise ValueError("REVIEW_DISPOSITIONS answers no finding: each finding needs a fixed:, "
                          "disproved: or deferred: key")
     return counts
@@ -155,8 +161,10 @@ def report(stamp: str, header: dict, verdict: str | None, body: str) -> str:
                 "for no closure and the usage summary lists it apart.\n\n" + body)
     fallback = os.environ.get("MYAGENTKIT_REVIEW_FALLBACK_FROM")
     if fallback:
+        why = ("the Codex quota was used up, so the role switched to Claude" if fallback.startswith("codex ")
+               and fallback.endswith("(quota_exhausted)") else "--fallback was passed")
         body = ("FALLBACK REVIEWER: the requested reviewer " + fallback + " did not complete; "
-                "this " + str(header["reviewer"]) + " review ran because --fallback was passed. "
+                "this " + str(header["reviewer"]) + " review ran because " + why + ". "
                 "Check that " + str(header["reviewer"]) + " did not author the patch.\n\n" + body)
     rows = "".join("| %s | %s |\n" % (key, "-" if header[key] in (None, "") else header[key])
                    for key in REVIEW_FIELDS)
@@ -191,6 +199,26 @@ def decode(provider: str, stdout: str) -> list[dict]:
     return values
 
 
+# Error wording of the two quota kinds (KARARLAR D04 inv2#126), checked in this order: Codex says
+# "try again in 3 days" under a used-up plan, which is no passing limit. USAGE.md lists the map.
+EXHAUSTED = ("quota", "usage limit", "session limit", "spend", "billing", "credit", "on_hold", "on hold")
+RATE_LIMITED = ("rate limit", "rate_limit", "429", "529", "overloaded", "at capacity", "too many requests")
+
+
+def retry_after(values: list[dict]) -> float | None:
+    """Seconds an error event says to wait ("try again in 30 seconds", "retry after 2m"), or None."""
+    for value in values:
+        if value.get("type") not in ("error", "turn.failed"):
+            continue
+        found = re.search(r"(?i)(?:try again|retry)(?: in| after)\s+(\d+(?:\.\d+)?)\s*"
+                          r"(ms|s|secs?|seconds?|m|mins?|minutes?)\b", str(value.get("error", value.get("message", ""))))
+        if found:
+            number, unit = float(found[1]), found[2].lower()
+            seconds = number / 1000 if unit == "ms" else number * 60 if unit.startswith("m") else number
+            return int(seconds) if seconds == int(seconds) else seconds
+    return None
+
+
 def failure(provider: str, execution: dict, values: list[dict]) -> str | None:
     """Classify provider errors without searching review findings for error-like words."""
     if execution.get("termination"):
@@ -201,17 +229,23 @@ def failure(provider: str, execution: dict, values: list[dict]) -> str | None:
             or not isinstance(values[0].get('subtype'), str)
             or not values[0]['subtype']):
         return 'invalid_evidence'
-    errors = []
+    errors, limited = [], False
     for value in values:
-        if value.get("api_error_status") == 429:
-            return "quota"
-        if provider == "claude" and (value.get("is_error") or value.get("subtype") != "success"):
+        # 429 rate_limit_error and 529 overloaded_error (Anthropic API errors page).
+        limited |= value.get("api_error_status") in (429, 529)
+        if provider == "claude" and (value.get("is_error") or value.get("subtype") != "success"
+                                     or value.get("api_error_status") in (429, 529)):
             errors.append(str(value.get("result", "")) + " " + str(value.get("subtype", "")))
         if provider == "codex" and value.get("type") in ("error", "turn.failed"):
             errors.append(str(value.get("error", value.get("message", ""))))
     text = " ".join(errors).lower()
-    if any(word in text for word in ("quota", "rate limit", "usage limit", "session limit", "429")):
-        return "quota"
+    # KARARLAR D04 inv2#126: a quota that is used up for now (a plan or session limit, a spend
+    # cap, billing, an account hold, credits) goes to the owner; a rate limit, an overload or a
+    # model at capacity passes and is retried (B01 (6)). USAGE.md maps the vendors' names.
+    if any(word in text for word in EXHAUSTED):
+        return "quota_exhausted"
+    if limited or any(word in text for word in RATE_LIMITED):
+        return "rate_limited"
     if any(word in text for word in ("context", "token limit", "max_tokens")):
         return "context_limit"
     if any(word in text for word in ("max_turns", "budget")):

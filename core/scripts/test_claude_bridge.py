@@ -22,6 +22,8 @@ ROOT = Path(__file__).resolve().parent
 INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'REVIEW_SHADOW', 'MYAGENTKIT_TASK_ID', 'MYAGENTKIT_REVIEW_CHAIN_ID',
                       'MYAGENTKIT_REVIEW_ATTEMPT', 'MYAGENTKIT_REVIEW_FALLBACK_FROM',
                       'MYAGENTKIT_REQUESTER', 'CLAUDE_REVIEW_DOCS', 'MYAGENTKIT_NO_BEHAVIOUR', 'MYAGENTKIT_BACKEND',
+                      # The lead's author claim: an exported one refused the fixtures' reviewer pin.
+                      'MYAGENTKIT_AUTHOR', 'MYAGENTKIT_ALLOW_SECRET_FILES',
                       # A worker's brief: review.sh checked every fixture diff against its Owns: line.
                       'REVIEW_TASK_FILE',
                       # A review loop's tier, focus and effort: REVIEW_RISK=high changed the default
@@ -30,9 +32,9 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'REVIEW_SHADOW', 'MYAGENTKIT_TASK_I
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 206, 'test_agent_usage': 33, 'test_codex_quota': 5}
+SUITE_MINIMUMS = {'test_claude_bridge': 220, 'test_agent_usage': 35, 'test_codex_quota': 5}
 # These are executed cases, excluding only the explicitly declared POSIX exclusions.
-WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 180, 'test_agent_usage': 29, 'test_codex_quota': 4}
+WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 194, 'test_agent_usage': 31, 'test_codex_quota': 4}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -209,10 +211,10 @@ def adapter(provider, args, report):
     print('REVIEWER RAN: ' + provider, flush=True)
     quota = os.environ.get('STUB_QUOTA') == provider
     report({'status': 'failed' if quota else 'completed',
-            'failure_kind': 'quota' if quota else None, 'evidence': 'fixture', 'usage_record': 'fixture'})
+            'failure_kind': 'quota_exhausted' if quota else None, 'evidence': 'fixture', 'usage_record': 'fixture'})
     return 5 if quota else 0
-dispatch.claude_bridge.main = lambda args, report: adapter('claude', args, report)
-dispatch.codex_bridge.main = lambda args, report: adapter('codex', args, report)
+dispatch.claude_bridge.main = lambda args, report, claims=None: adapter('claude', args, report)
+dispatch.codex_bridge.main = lambda args, report, claims=None: adapter('codex', args, report)
 try:
     raise SystemExit(dispatch.main())
 except ValueError as error:
@@ -546,7 +548,7 @@ class BridgeTests(unittest.TestCase):
         )
         with patch.dict(os.environ, self.review_env(), clear=True):
             os.environ.update(dict.fromkeys(keys, 'lead-control'))
-            def launch(argv, report):
+            def launch(argv, report, claims=None):
                 for key in keys:
                     with self.subTest(key=key):
                         self.assertFalse(key in os.environ, key + " remained inherited")
@@ -845,6 +847,12 @@ class BridgeTests(unittest.TestCase):
                  (review_dispatch.main, ['--reviewer', 'claude'], '3600', 3600),
                  (review_dispatch.main, ['--reviewer', 'claude'], '99', 99),
                  (review_dispatch.main, ['--reviewer', 'codex'], '99', 99)]
+        # KARARLAR B03 inv2#31: a high-effort Codex review ran 37-58 minutes (RL 2026-10-13), so
+        # its default is the maximum; a Claude review and an explicit value keep theirs.
+        cases += [(codex_bridge.main, ['--model', 'fixture-codex-model', '--effort', 'high'], None, 3600),
+                  (codex_bridge.main, ['--model', 'fixture-codex-model', '--effort', 'high'], '88', 88),
+                  (review_dispatch.main, ['--reviewer', 'codex', '--effort', 'high'], None, 3600),
+                  (review_dispatch.main, ['--reviewer', 'claude', '--effort', 'high'], None, default)]
         for main, argv, override, expected in cases:
             with self.subTest(entry=main.__module__, args=argv, override=override):
                 with patch.dict(os.environ, self.review_env(REVIEW_CLAUDE_MODEL='claude-opus-5',
@@ -944,7 +952,7 @@ class BridgeTests(unittest.TestCase):
         from unittest.mock import patch
         import review_dispatch
 
-        def complete(argv, report):
+        def complete(argv, report, claims=None):
             report({'status': 'completed', 'failure_kind': None})
             return 0
 
@@ -1009,6 +1017,8 @@ class BridgeTests(unittest.TestCase):
         self.repo = self.root / "project"
         self.repo.mkdir()
         os.environ['FIXTURE_REPO'] = str(self.repo)
+        # The user's own backend folder is never read by a test (KARARLAR D09 inv2#80).
+        os.environ['MYAGENTKIT_BACKENDS_DIR'] = str(self.root / 'user-backends')
         self.fixture = self.root / "claude"
         self.fixture = python_cli(self.fixture, FIXTURE)
         self.git("init", "-q")
@@ -2357,7 +2367,8 @@ class BridgeTests(unittest.TestCase):
                         archive = evidence.read_bytes()
                         replaced = fault is directory_fsync_fails
                         self.assertIn(b'| failure_kind | cancelled |' if replaced
-                                      else b'| failure_kind | quota |', archive)
+                                      else b'| failure_kind | %s |' % (b'rate_limited' if main is bridge.main
+                                                                        else b'quota_exhausted'), archive)
                         self.assertEqual(usage['evidence_sha256'] == hashlib.sha256(archive).hexdigest(),
                                          replaced)
                         self.assertIn('the usage record says cancelled; the archive %s on disk %s; '
@@ -2376,7 +2387,7 @@ class BridgeTests(unittest.TestCase):
                             rounds()
                         evidence.unlink()
                     else:
-                        self.assertEqual(rounds(), '')
+                        self.assertEqual(rounds()[0], '')
 
     def persisted_cancel(self, result):
         # The usage reporter reads the records, not the dispatcher's result: a cancel during
@@ -2423,8 +2434,9 @@ class BridgeTests(unittest.TestCase):
         # Issue #71: a completed Codex review (evidence and usage record both said completed)
         # was reported as adapter_error, because printing the review raised after the result
         # was handed over and the dispatcher replaced it. A checkout changed meanwhile is still
-        # stale_checkout, named as such, never adapter_error.
-        from contextlib import redirect_stdout
+        # stale_checkout, named as such, never adapter_error. The adapter's NOTE goes to stderr,
+        # captured here: uncaptured, it looked like a real cp1252 failure in the suite's log.
+        from contextlib import redirect_stderr, redirect_stdout
         from io import StringIO
         from unittest.mock import patch
         import review_dispatch
@@ -2454,10 +2466,11 @@ class BridgeTests(unittest.TestCase):
         repo = self.repo
         for reviewer in ('codex', 'claude'):
             for change in (False, True):
-                failed, out = [], Console()
+                failed, out, err = [], Console(), StringIO()
                 with self.subTest(reviewer=reviewer, checkout_changed=change), \
                         patch.dict(os.environ, self.review_env()), \
-                        patch('agent_process.run', side_effect=execution), redirect_stdout(out):
+                        patch('agent_process.run', side_effect=execution), redirect_stdout(out), \
+                        redirect_stderr(err):
                     code = review_dispatch.main(['--repo', str(repo), '--uncommitted', '--reviewer', reviewer,
                                                  '--claude-model', 'claude-opus-5',
                                                  '--codex-model', 'fixture-codex-model'])
@@ -2482,9 +2495,10 @@ class BridgeTests(unittest.TestCase):
                         self.assertEqual((chain['status'], chain['selected_reviewer']), ('completed', reviewer))
                         self.assertIn('the result stands as recorded in', out.getvalue())
                     self.assertIn('cp1252', attempt['error_after_result'])
+                    self.assertIn('failed after it handed over its result', err.getvalue())
 
     def test_persistent_stdout_failure_does_not_lose_the_completed_dispatch_attempt(self):
-        from contextlib import redirect_stdout
+        from contextlib import redirect_stderr, redirect_stdout
         from unittest.mock import patch
         import review_dispatch
 
@@ -2510,7 +2524,8 @@ class BridgeTests(unittest.TestCase):
 
         for reviewer in ('claude', 'codex'):
             with self.subTest(reviewer=reviewer), patch.dict(os.environ, self.review_env()), \
-                    patch('agent_process.run', side_effect=execution), redirect_stdout(Console()):
+                    patch('agent_process.run', side_effect=execution), redirect_stdout(Console()), \
+                    redirect_stderr(io.StringIO()):
                 # A permanently closed console can still raise, but its disk result must stand.
                 try:
                     review_dispatch.main(['--repo', str(self.repo), '--uncommitted', '--reviewer', reviewer,
@@ -2906,6 +2921,13 @@ class BridgeTests(unittest.TestCase):
                     # fix4 review: a placeholder counts only as a whole block, continuation joined.
                     '## Findings\n\nNo findings\nwere resolved: x.py:1 still drops records.\n\nVERDICT: Accept\n',
                     '## Findings\n\n- None.\n  x.py:1 still drops records.\n\nVERDICT: Accept\n')
+        # fix4 notes: Codex's real clean-review prose completes; a Reject must name a finding,
+        # as claude_bridge.validate() requires ("Reject has no findings").
+        completes += ('## Findings\n\nNo findings established in this diff.\n\nVERDICT: Accept\n',
+                      '## Findings\n\nNo qualifying defects found.\n\nVERDICT: Accept\n')
+        refused += ('## Findings\n\n- None.\n\nVERDICT: Reject\n',
+                    '## Findings\n\nNo qualifying defects found.\n\nVERDICT: Reject\n',
+                    '## Findings\n\n- Low-level: High defect in x.py:1.\n\nVERDICT: Accept\n')
         completes += ('## Findings\n\nNone.\n\n## Verdict\n\nVERDICT: Accept\n',
                       '## **Findings**\n\n**Low** — x.py:1 a bold paragraph.\n\nVERDICT: Accept\n',
                       '## Findings\n\nLow: x.py:1 a note that\nwraps onto a second line.\n\nVERDICT: Accept\n')
@@ -3017,8 +3039,8 @@ class BridgeTests(unittest.TestCase):
         # that status from the message that ended the turn, never from an error it retried
         # through, so its presence is a failure, whatever the text holds. "error" is is_error
         # with a valid verdict; "accept" is the clean completion.
-        for case, kind in (('api_429', 'quota'), ('api_401', 'invalid_evidence'),
-                           ('api_500', 'invalid_evidence'), ('api_529', 'invalid_evidence'),
+        for case, kind in (('api_429', 'rate_limited'), ('api_401', 'invalid_evidence'),
+                           ('api_500', 'invalid_evidence'), ('api_529', 'rate_limited'),
                            ('error', 'cli_error'), ('accept', None)):
             with self.subTest(case=case):
                 code, result = self.run_bridge(case)
@@ -3037,7 +3059,7 @@ class BridgeTests(unittest.TestCase):
         # fell into a fixture failure and passed as cli_error without reaching their own path.
         claude = {'accept': None, 'reject': None, 'manual': None, 'no_budget': None,
                   'explicit_budget': None, 'kit_docs': None, 'proposal': None, 'questions': None,
-                  'api_429': 'quota', 'api_500': 'invalid_evidence', 'quota': 'quota',
+                  'api_429': 'rate_limited', 'api_500': 'invalid_evidence', 'quota': 'quota_exhausted',
                   'archive_failure': 'evidence_write_failed', 'auth': 'authentication',
                   'context': 'context_limit', 'conflict': 'invalid_evidence', 'error': 'cli_error',
                   'exit': 'cli_error', 'malformed_envelope': 'invalid_evidence',
@@ -3047,13 +3069,13 @@ class BridgeTests(unittest.TestCase):
                   'partial_timeout': 'timeout', 'timeout': 'timeout',
                   'turns': 'budget_or_turn_limit', 'unknown_flag': 'cli_unsupported'}
         codex = {'accept': None, 'reject': None, 'mcp': None, 'mcp_reconnect': None,
-                 'quota': 'quota', 'mcp_quota': 'quota', 'mcp_exit': 'cli_error',
+                 'quota': 'quota_exhausted', 'mcp_quota': 'quota_exhausted', 'mcp_exit': 'cli_error',
                  'mcp_no_completion': 'cli_error', 'mcp_no_verdict': 'cli_error',
                  'mcp_two_verdicts': 'cli_error', 'mcp_failed_turn': 'cli_error',
                  'unknown_flag': 'cli_unsupported'}
         # Only the dispatcher writes the chain and fails a quota on a changed checkout: the
         # attempt's own record, then what the chain says (None: no chain was written).
-        dispatched = {'chain_failure': ('quota', None), 'quota_mutation': ('quota', 'stale_checkout')}
+        dispatched = {'chain_failure': ('rate_limited', None), 'quota_mutation': ('rate_limited', 'stale_checkout')}
         self.assertLessEqual(set(re.findall(r"case == '(\w+)'", FIXTURE)), set(claude) | set(dispatched))
         self.assertLessEqual(set(re.findall(r"case == '(\w+)'", fixture_source(self.build_fake_codex()))),
                              set(codex))
@@ -3124,7 +3146,14 @@ class BridgeTests(unittest.TestCase):
                                   # REVIEW_PROMPT asks for "plus N similar" past five Lows.
                                   (['Low: a', 'Plus 3 similar Low findings.'], True), (['- Plus 3 similar.'], True),
                                   (['No qualifying findings.'], True), (['High: a', 'Plus 2 similar'], False),
-                                  (['Plus 3 similar, and High: y is broken'], False)):
+                                  (['Plus 3 similar, and High: y is broken'], False),
+                                  # fix4 notes: "Low-level" is no severity, an empty Pre-existing
+                                  # is no item, and real Codex prose for a clean review is.
+                                  (['Low-level: High defect in x.py:1'], False), (['Pre-existing:'], False),
+                                  (['No findings established in this diff.'], True),
+                                  (['No qualifying defects found.'], True),
+                                  (['No defects were found in the diff.'], True),
+                                  (['No findings established, but x.py:1 drops records.'], False)):
             with self.subTest(findings=findings):
                 value = {'verdict': 'Accept', 'findings': findings, 'manual_checks': []}
                 envelope = {'type': 'result', 'subtype': 'success', 'is_error': False,
@@ -3171,9 +3200,31 @@ class BridgeTests(unittest.TestCase):
         code, result = self.run_bridge(env_extra={"MYAGENTKIT_DELEGATION_DEPTH": "1"})
         self.assertEqual(code, 2)
         self.assertIn("nested", result["error"])
-        code, result = self.run_bridge(extra=["--model", "opus"])
-        self.assertEqual(code, 2)
-        self.assertIn("explicit", result["error"])
+        # KARARLAR D07 inv3#103: every moving alias of the Claude CLI's --model is refused.
+        for alias in ("opus", "sonnet", "haiku", "opusplan", "default", "best"):
+            with self.subTest(alias=alias):
+                code, result = self.run_bridge(extra=["--model", alias])
+                self.assertEqual(code, 2)
+                self.assertIn("explicit", result["error"])
+        import review_dispatch
+        self.assertFalse(review_dispatch.pin_valid("claude", "sonnet"))
+        self.assertTrue(review_dispatch.pin_valid("claude", "claude-sonnet-5"))
+
+    def test_an_empty_diff_is_empty_output_and_a_binary_or_mode_change_is_not(self):
+        # KARARLAR D04 inv2#85: "empty" means the diff text is empty; a change git shows only as
+        # a binary patch or a mode line still reaches the reviewer.
+        (self.repo / "file.py").write_text("original\n")
+        self.assertEqual(bridge.snapshot(self.repo, "uncommitted", None)[2].strip(), "")
+        (self.repo / "data.bin").write_bytes(b"\x00\x01binary\x00")
+        self.git("add", "data.bin")
+        self.git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+                 "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", "commit", "-qm", "binary")
+        (self.repo / "data.bin").write_bytes(b"\x00\x02binary changed\x00")
+        self.assertIn("data.bin", bridge.snapshot(self.repo, "uncommitted", None)[2])
+        self.git("checkout", "--", "data.bin")
+        self.git("update-index", "--chmod=+x", "file.py")
+        diff = bridge.snapshot(self.repo, "uncommitted", None)[2]
+        self.assertIn("new mode 100755", diff)
 
     def test_proposal_is_returned_but_never_applied(self):
         task = self.root / "handoff.md"
@@ -3250,7 +3301,7 @@ class BridgeTests(unittest.TestCase):
     def test_usage_and_quota_failure_are_recorded(self):
         code, result = self.run_bridge("quota", extra=["--requester", "codex/fixture"])
         self.assertEqual(code, 5, result)
-        self.assertEqual(result["failure_kind"], "quota")
+        self.assertEqual(result["failure_kind"], "quota_exhausted")
         record = json.loads(Path(result["usage_record"]).read_text())
         self.assertEqual(record["requester_reported"], "codex/fixture")
         self.assertEqual(record["usage"]["input_tokens"], 7)
@@ -3461,7 +3512,8 @@ if case == 'archive_failure':
                 self.assertEqual(usage["task"]["id"], "fixture-review")
                 self.assertEqual(usage["requester_reported"], "claude/fixture")
                 if case in ("quota", "timeout"):
-                    self.assertEqual(usage["failure_kind"], case)
+                    # KARARLAR D04 inv2#126: a used-up quota is quota_exhausted, not a bare quota.
+                    self.assertEqual(usage["failure_kind"], 'quota_exhausted' if case == 'quota' else case)
                 if case in ('mutation', 'archive_failure'):
                     self.assertEqual(usage['status'], 'failed')
                     self.assertEqual(usage['failure_kind'], 'stale_checkout' if case == 'mutation' else 'evidence_write_failed')
@@ -3595,7 +3647,7 @@ if case == 'archive_failure':
                 'Accept with Manual Checks when a Medium, a deferred finding or a first-priority doubt remains',
                 'Accept otherwise, Lows and Pre-existing items included') + (
                     ('You have no shell on this host', 'mark each finding REASONED') if WINDOWS else
-                    ('run anything inside this copy', 'Run the suite and reproductions', 'REPRODUCED',
+                    ('run anything inside this copy', 'Run the reproductions here', 'REPRODUCED',
                      'if a run is impossible, mark it REASONED'))
         forbidden = ('Do not run tests', 'run code', 'SHOULD run', 'worktree add --detach',
                      'If your tools can execute', 'edit files in this checkout',
@@ -4696,23 +4748,28 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                     bridge.snapshot(self.repo, 'uncommitted', None)
                 self.commit_fixture('Remove ' + name)
 
-    def test_author_documentation_describes_the_current_manual_selection(self):
+    def test_author_documentation_describes_the_author_tier_refusal(self):
+        # KARARLAR B01 (1): the docs say what review_dispatch now does with MYAGENTKIT_AUTHOR.
         gate = ' '.join((ROOT.parent / 'docs/REVIEW_GATE.md').read_text(encoding='utf-8').split())
         running = ' '.join((ROOT.parent / 'docs/REVIEW_RUNNING.md').read_text(encoding='utf-8').split())
-        self.assertIn('The lead selects a reviewer outside the author\'s tier', gate)
-        self.assertIn('does not exclude the author\'s tier automatically', gate)
-        self.assertIn('`MYAGENTKIT_AUTHOR` is not read or recorded', running)
-        self.assertNotIn('refuses a reviewer pinned to the author\'s model', gate)
+        self.assertIn("`scripts/review.sh` then refuses a reviewer pin of the author's tier", gate)
+        self.assertNotIn("does not exclude the author's tier automatically", gate)
+        self.assertIn("a reviewer pin of the author's tier is refused with exit 2", running)
+        self.assertNotIn('`MYAGENTKIT_AUTHOR` is not read or recorded', running)
         page = ' '.join((ROOT.parent.parent / 'docs/decorrelated-review.md').read_text(encoding='utf-8').split())
-        self.assertNotIn('names the author\'s and the reviewer\'s model', page)
-        self.assertIn('every review record names the reviewer\'s model', page)
-        self.assertIn('the lead\'s choice of reviewer pin', page)
+        self.assertIn("refuses a reviewer of the author's tier", page)
+        self.assertNotIn('planned work', page)
 
-    def test_capacity_documentation_does_not_promise_unimplemented_retries(self):
+    def test_capacity_documentation_says_what_the_dispatcher_retries(self):
+        # KARARLAR B01 (6): the sentence batch 3 took out until the retry existed (RESULT-b3fix.md).
+        import review_dispatch
         running = ' '.join((ROOT.parent / 'docs/REVIEW_RUNNING.md').read_text(encoding='utf-8').split())
-        self.assertIn('A Codex capacity error fails the attempt as `cli_error`', running)
-        self.assertIn('The dispatcher does not retry that reviewer automatically', running)
-        self.assertNotIn('capacity error is transient and is retried', running)
+        self.assertIn('A Codex capacity error is transient and is retried: after the delay the tool '
+                      'reports, otherwise after about ten minutes, doubled, at most twice', running)
+        self.assertIn('A quota or spend-cap error is never retried', running)
+        self.assertNotIn('The dispatcher does not retry that reviewer automatically', running)
+        self.assertEqual((review_dispatch.CAPACITY_RETRY_SECONDS, review_dispatch.CAPACITY_RETRIES), (600, 2))
+        self.assertIn('`authentication`) is fixed, never failed over', running)
 
     def test_changing_or_unsetting_focus_cannot_open_a_third_round(self):
         from unittest.mock import patch
@@ -4729,9 +4786,10 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                 with self.assertRaisesRegex(bridge.BridgeError, 'REVIEW_ROUND_EXCEPTION'):
                     bridge.prior_rounds(self.repo, task['MYAGENTKIT_TASK_ID'], 'uncommitted', None, head, '')
                 os.environ['REVIEW_ROUND_EXCEPTION'] = 'Owner requested another pass'
-                carried = bridge.prior_rounds(self.repo, task['MYAGENTKIT_TASK_ID'], 'uncommitted', None, head, '')
+                carried, measured = bridge.prior_rounds(self.repo, task['MYAGENTKIT_TASK_ID'], 'uncommitted',
+                                                        None, head, '')
                 self.assertEqual('### Round ' in carried, focus == 'logic')
-                self.assertEqual(bridge.MEASURED['round_exception'], 'Owner requested another pass')
+                self.assertEqual(measured['round_exception'], 'Owner requested another pass')
 
     def test_legacy_rounds_are_carried_and_counted_when_focus_is_added(self):
         log = self.root / 'prompt.txt'
@@ -4776,7 +4834,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                     os.environ['MYAGENTKIT_REVIEW_CHAIN_ID'] = chain
                 err = io.StringIO()
                 with redirect_stderr(err):
-                    self.assertEqual(bridge.prior_rounds(self.repo, None, 'uncommitted', None, head, diff), '')
+                    self.assertEqual(bridge.prior_rounds(self.repo, None, 'uncommitted', None, head, diff)[0], '')
                 self.assertEqual('split the task' in err.getvalue(), hinted, err.getvalue())
 
     def test_both_reviewers_read_one_list(self):
@@ -4963,7 +5021,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                 self.assertEqual(code, 0, result)
                 prompt = log.read_text()
                 if side == 'on':
-                    self.assertIn('not a finding.\nLead with the answer, synthetic.\n', prompt)
+                    self.assertIn('runs the full suite.\nLead with the answer, synthetic.\n', prompt)
                 else:
                     self.assertNotIn('Lead with the answer', prompt)
                 usage = json.loads(Path(result['usage_record']).read_text())
@@ -5176,9 +5234,9 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         seen = {}
 
         def adapter(name):
-            def main(argv, report):
+            def main(argv, report, claims=None):
                 seen[name] = {k: v for k, v in os.environ.items() if k.startswith('ANTHROPIC_')}
-                report({'status': 'failed', 'failure_kind': 'quota', 'evidence': 'e', 'usage_record': 'u'})
+                report({'status': 'failed', 'failure_kind': 'quota_exhausted', 'evidence': 'e', 'usage_record': 'u'})
                 return 5
             return main
         with patch.dict(os.environ, self.review_env(ANTHROPIC_API_KEY='lead-key')), \
@@ -5218,7 +5276,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         self.assertEqual(len(reports), 2)
         self.assertEqual({header_of(p)['status'] for p in reports}, {'failed', 'completed'})
         substitute = next(p for p in reports if header_of(p)['reviewer'] == 'codex')
-        self.assertIn('FALLBACK REVIEWER: the requested reviewer claude (quota) did not complete',
+        self.assertIn('FALLBACK REVIEWER: the requested reviewer claude (quota_exhausted) did not complete',
                       substitute.read_text())
         self.assertIn('FALLBACK [review]: this review is by codex, not the requested claude',
                       result.stdout)
@@ -5240,7 +5298,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                 {'FIXTURE_CASE': 'quota'} if primary == 'claude' else {'CODEX_FIXTURE_CASE': 'quota'}))
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertEqual(len(chain['attempts']), 2)
-            self.assertEqual(chain['attempts'][0]['failure_kind'], 'quota')
+            self.assertEqual(chain['attempts'][0]['failure_kind'], 'quota_exhausted')
             self.assertNotEqual(chain['selected_reviewer'], primary)
             self.assertFalse(chain['review_approved'])
             self.assertEqual(chain['independence'], 'host_must_check_all_patch_authors')
@@ -5250,10 +5308,10 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
             self.assertEqual(headers[0]['diff_sha256'], headers[1]['diff_sha256'])
             evidence = [Path(a['evidence']).read_text() for a in chain['attempts']]
             self.assertNotIn('FALLBACK REVIEWER', evidence[0])
-            self.assertIn('FALLBACK REVIEWER: the requested reviewer %s (quota)' % primary, evidence[1])
+            self.assertIn('FALLBACK REVIEWER: the requested reviewer %s (quota_exhausted)' % primary, evidence[1])
             for i, attempt in enumerate(chain['attempts'], 1):
                 usage = json.loads(Path(attempt['usage_record']).read_text())
-                self.assertEqual(usage['review_fallback_from'], None if i == 1 else primary + ' (quota)')
+                self.assertEqual(usage['review_fallback_from'], None if i == 1 else primary + ' (quota_exhausted)')
                 self.assertEqual(usage['review_chain_id'], chain['chain_id'])
                 self.assertEqual(usage['review_attempt'], str(i))
                 self.assertEqual(usage['task']['id'], 'fallback-task')
@@ -5261,7 +5319,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                 self.assertEqual(usage['requester_reported'], 'codex/fixture-codex-model')
 
     def test_operational_failures_try_other_model_once(self):
-        cases = {'auth': 'authentication', 'context': 'context_limit', 'turns': 'budget_or_turn_limit',
+        cases = {'context': 'context_limit', 'turns': 'budget_or_turn_limit',
                  'timeout': 'timeout', 'exit': 'cli_error'}
         for case, kind in cases.items():
             with self.subTest(case=case):
@@ -5283,7 +5341,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         # it silently for the other one can mean the author reviewing itself under a valid-
         # looking record, so without --fallback an unavailable reviewer fails the review.
         for primary, case in (('claude', {'FIXTURE_CASE': 'quota'}),
-                              ('codex', {'CODEX_FIXTURE_CASE': 'quota'})):
+                              ('codex', {'CODEX_FIXTURE_CASE': 'mcp_exit'})):
             with self.subTest(primary=primary):
                 result, chain = self.dispatch_result(primary, fallback=False, **case)
                 self.assertNotEqual(result.returncode, 0, result.stdout)
@@ -5311,10 +5369,11 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         for case, kind in (('mcp', None), ('mcp_reconnect', None), ('mcp_exit', 'cli_error'),
                            ('mcp_no_completion', 'cli_error'), ('mcp_no_verdict', 'cli_error'),
                            ('mcp_two_verdicts', 'cli_error'), ('mcp_failed_turn', 'cli_error'),
-                           ('mcp_quota', 'quota'), ('unknown_flag', 'cli_unsupported')):
+                           ('mcp_quota', 'quota_exhausted'), ('unknown_flag', 'cli_unsupported')):
             with self.subTest(case=case):
+                # No Claude pin: a used-up Codex quota would switch the review to Claude (decision 7).
                 result, chain = self.dispatch_result('codex', fallback=False, CODEX_FIXTURE_CASE=case,
-                                                     MYAGENTKIT_TASK_ID='noise-' + case)
+                                                     MYAGENTKIT_TASK_ID='noise-' + case, REVIEW_CLAUDE_MODEL='')
                 attempt = chain['attempts'][0]
                 self.assertEqual(attempt['failure_kind'], kind, result.stdout)
                 self.assertEqual(result.returncode, 0 if kind is None else 5, result.stdout)
@@ -5328,7 +5387,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         # It once ended the chain as a completed review by claude whose failure_kind was quota.
         result, chain = self.dispatch_result(fallback=False, FIXTURE_CASE='api_429')
         self.assertNotEqual(result.returncode, 0, result.stdout)
-        self.assertEqual((chain['status'], chain['failure_kind']), ('failed', 'quota'))
+        self.assertEqual((chain['status'], chain['failure_kind']), ('failed', 'rate_limited'))
         self.assertEqual([a['reviewer'] for a in chain['attempts']], ['claude'])
         self.assertIn('not requested', chain['fallback_blocked'])
         self.assertNotIn('selected_reviewer', chain)
@@ -5337,7 +5396,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         result, chain = self.dispatch_result(FIXTURE_CASE='api_429', MYAGENTKIT_TASK_ID='api-fallback')
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertEqual([(a['reviewer'], a['status'], a['failure_kind']) for a in chain['attempts']],
-                         [('claude', 'failed', 'quota'), ('codex', 'completed', None)])
+                         [('claude', 'failed', 'rate_limited'), ('codex', 'completed', None)])
         self.assertEqual(chain['selected_reviewer'], 'codex')
         self.assertFalse(chain['review_approved'])
 
@@ -5828,6 +5887,290 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                     offenders.append('%s.py:%d' % (name, node.lineno))
         self.assertEqual(offenders, [])
         self.assertEqual(seam - defined, set())
+
+    # v0.11 close-out batch 4 (BACKLOG item F; KARARLAR B01, B12, D04, D07, D09).
+
+    def test_the_dispositions_are_read_once_per_review_and_handed_to_each_attempt(self):
+        # BACKLOG item F: each attempt read the file again, so a fallback attempt after the file
+        # changed or vanished saw other claims than the first attempt, or failed as adapter_error.
+        label = 'read-once-task'
+        self.assertEqual(self.run_bridge('reject', env_extra={'MYAGENTKIT_TASK_ID': label})[0], 0)
+        notes = self.root / 'once-dispositions.md'
+        notes.write_text('- file.py:1 disproved: the caller rejects that input\n')
+        log = self.root / 'codex-prompt.txt'
+        result, chain = self.dispatch_result('claude', MYAGENTKIT_TASK_ID=label, FIXTURE_CASE='quota',
+                                             FIXTURE_UNLINK=str(notes), REVIEW_DISPOSITIONS=str(notes),
+                                             PROMPT_LOG=str(log))
+        self.assertFalse(notes.exists())
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual([a['reviewer'] for a in chain['attempts']], ['claude', 'codex'])
+        self.assertIn('disproved: the caller rejects that input', log.read_text(encoding='utf-8'))
+        usage = json.loads(Path(chain['attempts'][-1]['usage_record']).read_text())
+        self.assertEqual(usage['task']['dispositions'], {'fixed': 0, 'disproved': 1, 'deferred': 0})
+
+    def test_an_unreadable_dispositions_file_stops_the_review_with_one_message(self):
+        # BACKLOG item F: a missing or non-UTF-8 REVIEW_DISPOSITIONS raised a raw OSError or
+        # UnicodeDecodeError (a traceback) before the "no earlier rounds" message.
+        head = self.git('rev-parse', 'HEAD').stdout.decode().strip()
+        bad = self.root / 'latin1.md'
+        bad.write_bytes(b'- file.py:1 fixed: caf\xe9\n')
+        for path in (self.root / 'absent.md', bad):
+            with self.subTest(path=path.name):
+                os.environ['REVIEW_DISPOSITIONS'] = str(path)
+                with self.assertRaisesRegex(bridge.BridgeError, 'REVIEW_DISPOSITIONS .* cannot be read'):
+                    bridge.prior_rounds(self.repo, 'unreadable-task', 'uncommitted', None, head, 'x')
+                result = self.run_wrapper('--uncommitted', CLAUDE_CLI_BIN=str(self.fixture),
+                                          REVIEW_CLAUDE_MODEL='claude-opus-5',
+                                          MYAGENTKIT_TASK_ID='unreadable-task', REVIEW_DISPOSITIONS=str(path))
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn('FAIL [review]: REVIEW_DISPOSITIONS', result.stdout)
+                self.assertNotIn('Traceback', result.stdout + result.stderr)
+
+    def test_prior_rounds_returns_the_measured_fields_and_keeps_no_module_state(self):
+        # BACKLOG item F (AGENTS.md: no static mutable state): MEASURED was a module dict that
+        # prior_rounds() filled and the record read, so one review's fields could reach another.
+        head = self.git('rev-parse', 'HEAD').stdout.decode().strip()
+        os.environ.update(REVIEW_SHADOW='1', REVIEW_FOCUS='logic')
+        carried, measured = bridge.prior_rounds(self.repo, 'measured-task', 'uncommitted', None, head, 'x')
+        self.assertEqual((carried, measured), ('', {'shadow': 'yes', 'focus': 'logic'}))
+        self.assertFalse(hasattr(bridge, 'MEASURED'))
+
+    def test_a_shadow_review_is_marked_in_the_chain_and_on_the_console(self):
+        # BACKLOG item F: the chain record and the result line did not mark a shadow review, and
+        # a REVIEW_SHADOW left exported silently turned every later review into one.
+        env = dict(CLAUDE_CLI_BIN=str(self.fixture), REVIEW_CLAUDE_MODEL='claude-opus-5')
+        result = self.run_wrapper('--uncommitted', REVIEW_SHADOW='1', **env)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        chain = json.loads(result.stdout.split('review dispatch: ', 1)[1].splitlines()[0])
+        self.assertIs(chain['shadow'], True)
+        self.assertIn('REVIEW [shadow]:', result.stdout)
+        self.assertIn('unset REVIEW_SHADOW', result.stdout)
+        result = self.run_wrapper('--uncommitted', **env)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        chain = json.loads(result.stdout.split('review dispatch: ', 1)[1].splitlines()[0])
+        self.assertNotIn('shadow', chain)
+        self.assertNotIn('REVIEW [shadow]', result.stdout)
+
+    def test_the_author_tier_never_reviews_and_the_record_names_the_author(self):
+        # KARARLAR B01 (1): review.sh's default excludes the author's tier. With MYAGENTKIT_AUTHOR
+        # naming the tier the selected reviewer would run, the review is refused before any
+        # model or record; another tier runs, and the chain and the usage record name the author.
+        env = dict(CLAUDE_CLI_BIN=str(self.fixture), REVIEW_CLAUDE_MODEL='claude-opus-5')
+        for author in ('claude-opus-5', 'claude/claude-opus-5-5', 'CLAUDE-OPUS-5-20261001'):
+            with self.subTest(author=author):
+                result = self.run_wrapper('--uncommitted', MYAGENTKIT_AUTHOR=author, **env)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn("is the author's tier", result.stdout)
+                self.assertIn('docs/REVIEW_GATE.md', result.stdout)
+                self.assertFalse((self.repo / '.myagentkit/usage').exists())
+        result = self.run_wrapper('--uncommitted', MYAGENTKIT_AUTHOR='claude-sonnet-5', **env)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        chain = json.loads(result.stdout.split('review dispatch: ', 1)[1].splitlines()[0])
+        self.assertEqual(chain['author'], 'claude-sonnet-5')
+        usage = json.loads(Path(chain['attempts'][0]['usage_record']).read_text())
+        self.assertEqual(usage['task']['author'], 'claude-sonnet-5')
+        # Without the variable nothing changes: no author field, the lead's check stands.
+        result = self.run_wrapper('--uncommitted', **env)
+        chain = json.loads(result.stdout.split('review dispatch: ', 1)[1].splitlines()[0])
+        self.assertNotIn('author', chain)
+        self.assertNotIn('author', json.loads(Path(chain['attempts'][0]['usage_record']).read_text())['task'])
+
+    def test_a_substitute_of_the_author_tier_is_blocked(self):
+        # KARARLAR B01 (1) with lead decision 7: a used-up Codex quota switches to Claude, but never
+        # to the author's tier; --fallback is blocked the same way.
+        for fallback in (False, True):
+            with self.subTest(fallback=fallback):
+                result, chain = self.dispatch_result('codex', fallback=fallback, CODEX_FIXTURE_CASE='quota',
+                                                     MYAGENTKIT_AUTHOR='claude-opus-5',
+                                                     MYAGENTKIT_TASK_ID='author-sub-%s' % fallback)
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertEqual([a['reviewer'] for a in chain['attempts']], ['codex'])
+                self.assertIn("the author's tier", chain['fallback_blocked'])
+
+    def test_a_secret_looking_file_in_scope_stops_the_review_unless_allowed_by_name(self):
+        # KARARLAR B12 inv2#106: tracked or not, a file that looks like a secret is in the copy the
+        # reviewer reads and in the diff it is sent, so the review is refused before any model
+        # runs; the owner adds it to .gitignore or names it with --allow-secret-file PATH.
+        env = dict(CLAUDE_CLI_BIN=str(self.fixture), REVIEW_CLAUDE_MODEL='claude-opus-5')
+        for name in ('.env', 'config/.env.production', '.dev.vars', 'deploy/server.pem', 'tls/site.key',
+                     '.npmrc', '.netrc', 'aws/credentials', 'credentials.json'):
+            for tracked in (False, True):
+                with self.subTest(name=name, tracked=tracked):
+                    path = self.repo / name
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text('TOKEN=private-value\n')
+                    if tracked:
+                        self.git('add', '--', name)
+                    result = self.run_wrapper('--uncommitted', **env)
+                    self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                    self.assertIn('looks like a secret file', result.stdout)
+                    self.assertIn('--allow-secret-file ' + name, result.stdout)
+                    self.assertFalse((self.repo / '.myagentkit/usage').exists())
+                    allowed = self.run_wrapper('--uncommitted', '--allow-secret-file', name, **env)
+                    self.assertEqual(allowed.returncode, 0, allowed.stdout + allowed.stderr)
+                    if tracked:
+                        self.git('rm', '-q', '--cached', '--', name)
+                    path.unlink()
+                    shutil.rmtree(self.repo / '.myagentkit/usage', ignore_errors=True)
+        # One flag names one path: a line break inside it (the dispatcher and the adapters are
+        # called directly too, past the shell wrapper) widened one allowance to two secrets
+        # (batch 4 round-1 Critical).
+        import claude_bridge
+        import review_dispatch
+        (self.repo / '.env').write_text('TOKEN=private-value\n')
+        (self.repo / 'site.key').write_text('KEY=private-value\n')
+        for joined in ('.env\nsite.key', '.env\rsite.key', '.env\0site.key'):
+            with self.subTest(joined=joined):
+                with self.assertRaisesRegex(ValueError, 'one path per --allow-secret-file'):
+                    claude_bridge.allow_secret_files([joined])
+                with self.assertRaisesRegex(ValueError, 'one path per --allow-secret-file'):
+                    review_dispatch.main(['--repo', str(self.repo), '--uncommitted', '--reviewer', 'claude',
+                                          '--allow-secret-file', joined])
+                self.assertFalse((self.repo / '.myagentkit/usage').exists())
+        (self.repo / '.env').unlink()
+        (self.repo / 'site.key').unlink()
+        # A template is no secret, and a committed one stays reviewable.
+        for name in ('.env.example', '.env.sample', '.env.template'):
+            (self.repo / name).write_text('TOKEN=\n')
+        result = self.run_wrapper('--uncommitted', **env)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_backend_files_live_outside_the_repository_by_default(self):
+        # KARARLAR D09 inv2#80 and LIDER 10: a checkout can never provide or change a backend file,
+        # so it lives in MYAGENTKIT_BACKENDS_DIR (else the user's config folder); the old
+        # .myagentkit/backends/ is still read during the move, with a note.
+        import review_dispatch
+        for key in [key for key in os.environ if key.startswith('ANTHROPIC_')]:
+            del os.environ[key]
+        text = ''.join('%s=%s\n' % item for item in self.BACKEND.items())
+        user = self.root / 'user-backends'
+        user.mkdir()
+        (user / 'glm.env').write_text(text)
+        log = self.root / 'env.json'
+        result = self.run_wrapper('--uncommitted', '--backend', 'glm', CLAUDE_CLI_BIN=str(self.fixture),
+                                  REVIEW_CLAUDE_MODEL='claude-opus-5', ENV_LOG=str(log))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(json.loads(log.read_text()), self.BACKEND)
+        self.assertNotIn('NOTE [review]: backend glm is read from', result.stdout + result.stderr)
+        self.assertEqual(review_dispatch.load_backend(self.repo, 'glm')[1], 'glm-fixture')
+        # The old place, while the new one has no file: read, with the move named.
+        (user / 'glm.env').unlink()
+        self.backend_file(text)
+        result = self.run_wrapper('--uncommitted', '--backend', 'glm', CLAUDE_CLI_BIN=str(self.fixture),
+                                  REVIEW_CLAUDE_MODEL='claude-opus-5', ENV_LOG=str(log))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('NOTE [review]: backend glm is read from', result.stdout + result.stderr)
+        self.assertIn(str(user), result.stdout + result.stderr)
+        # A backend folder inside the checkout is the checkout providing the file: refused.
+        os.environ['MYAGENTKIT_BACKENDS_DIR'] = str(self.repo / 'private')
+        with self.assertRaisesRegex(ValueError, 'outside the repository'):
+            review_dispatch.load_backend(self.repo, 'glm')
+        # The reviewer is denied the folder by its absolute path, as the old one.
+        from types import SimpleNamespace
+        os.environ['MYAGENTKIT_BACKENDS_DIR'] = str(user)
+        args = SimpleNamespace(repo=self.repo, mode='review', model='claude-opus-5', effort='high',
+                               max_turns=2, max_budget_usd=None)
+        folder = str(user.resolve()).replace('\\', '/')
+        for sandboxed in (False, True):
+            with self.subTest(sandboxed=sandboxed):
+                command, _ = bridge.claude_command('claude', args, sandboxed)
+                settings = json.loads(command[command.index('--settings') + 1])
+                self.assertIn('Read(//' + folder.lstrip('/') + '/**)', settings['permissions']['deny'])
+                if sandboxed:
+                    self.assertIn(folder, settings['sandbox']['filesystem']['denyRead'])
+
+    def test_the_codex_prompt_names_the_clean_review_form_the_parser_accepts(self):
+        # fix4 notes: make prompt and allowlist agree, so a clean paid review is not lost as
+        # invalid_evidence for prose the parser does not read as a placeholder.
+        log = self.root / 'codex-prompt.txt'
+        result = self.run_wrapper('--uncommitted', '--reviewer', 'codex', REVIEW_CLI_BIN=str(self.build_fake_codex()),
+                                  REVIEW_CODEX_MODEL='fixture-codex-model', PROMPT_LOG=str(log))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("With no finding, write the one item '- None.' under '## Findings'",
+                      log.read_text(encoding='utf-8'))
+        self.assertTrue(bridge.accept_allows(['- None.']))
+
+    def test_the_reviewer_runs_only_the_narrow_test_never_the_full_suite(self):
+        # Owner decision 2026-10-16: reviewers that ran the 30-minute self-test in their copy
+        # took 40-60 minutes (one cut at the 3600 s cap); told not to, a review took 2.5 minutes.
+        # The lead's gate runs the full suite once (ai-review-workflows.md 1.7 [22], 1.4 [7]).
+        line = ("Do not run the project's full suite (scripts/check.sh --self-test, check_kit or a "
+                "whole test run); run only the narrow test that proves or disproves a finding. The "
+                "lead's gate runs the full suite.")
+        self.assertIn(line, bridge.REVIEW_PROMPT)
+        for text in (bridge.REVIEW_RUNS, bridge.REVIEW_READS):
+            self.assertNotIn('the suite', text)
+
+    def test_a_setup_fault_or_failed_authentication_never_fails_over(self):
+        # KARARLAR D04 inv2#44: a setup fault (authentication among them) is fixed, never failed
+        # over: the other reviewer would only hide it, and it fails the same way next time.
+        for case in ('auth', 'unknown_flag'):
+            with self.subTest(case=case):
+                result, chain = self.dispatch_result(FIXTURE_CASE=case, MYAGENTKIT_TASK_ID='setup-' + case)
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertEqual([a['reviewer'] for a in chain['attempts']], ['claude'])
+                self.assertIn(chain['failure_kind'], ('authentication', 'cli_unsupported'))
+        import review_dispatch
+        self.assertEqual(review_dispatch.UNAVAILABLE, {
+            'rate_limited', 'quota_exhausted', 'timeout', 'unavailable', 'cli_error', 'context_limit',
+            'budget_or_turn_limit', 'output_limit', 'content_flagged'})
+
+    def test_an_exhausted_codex_quota_switches_the_review_to_claude(self):
+        # Lead decision 7 (decisions.md; the single-model mandate): quota_exhausted switches the
+        # role to Claude automatically, recorded and reported; no --fallback is needed for it.
+        result, chain = self.dispatch_result('codex', fallback=False, CODEX_FIXTURE_CASE='quota')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual([(a['reviewer'], a['failure_kind']) for a in chain['attempts']],
+                         [('codex', 'quota_exhausted'), ('claude', None)])
+        self.assertEqual(chain['selected_reviewer'], 'claude')
+        self.assertIn('quota_exhausted', chain['switched'])
+        self.assertIn('SWITCH [review]: codex quota is exhausted', result.stdout)
+        self.assertIn('FALLBACK REVIEWER: the requested reviewer codex (quota_exhausted)',
+                      Path(chain['attempts'][1]['evidence']).read_text())
+        # Claude's own exhausted quota switches nothing: without --fallback the review fails.
+        result, chain = self.dispatch_result('claude', fallback=False, FIXTURE_CASE='quota',
+                                             MYAGENTKIT_TASK_ID='claude-exhausted')
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertEqual([a['reviewer'] for a in chain['attempts']], ['claude'])
+        self.assertIn('quota is exhausted', result.stdout)
+
+    def test_a_codex_capacity_error_is_retried_twice_with_a_doubling_delay(self):
+        # KARARLAR B01 (6) inv2#46: a Codex capacity error passes; it is retried after the delay
+        # the tool reports, else after about ten minutes, doubled, at most twice. A quota is not.
+        from contextlib import redirect_stdout
+        from unittest.mock import patch
+        import review_dispatch
+
+        def execution(command, prompt, repo, timeout, into=None, noted=None):
+            calls.append(1)
+            if len(calls) <= failures:
+                message = 'Selected model is at capacity.' + hint
+                return {'exit_code': 1, 'stdout': json.dumps({'type': 'turn.failed', 'error': {'message': message}}),
+                        'stderr': '', 'termination': None, 'duration_ms': 1}
+            Path(command[command.index('-o') + 1]).write_bytes(b'## Findings\n\n- None.\n\nVERDICT: Accept\n')
+            return {'exit_code': 0, 'stdout': json.dumps({'type': 'turn.completed', 'usage': {}}),
+                    'stderr': '', 'termination': None, 'duration_ms': 1}
+
+        for failures, hint, waits, status in ((1, '', [600], 'completed'),
+                                              (2, ' Please try again in 30 seconds.', [30, 60], 'completed'),
+                                              (3, '', [600, 1200], 'failed'),
+                                              # "0 seconds" is a delay, not a missing one (batch 4 r1 High).
+                                              (1, ' Please try again in 0 seconds.', [0], 'completed')):
+            calls, slept, out = [], [], io.StringIO()
+            with self.subTest(failures=failures, hint=hint), patch.dict(os.environ, self.review_env(
+                    MYAGENTKIT_TASK_ID='capacity-%d' % failures,
+                    REVIEW_ROUND_EXCEPTION='fixture: retries are rounds of one label')), \
+                    patch('agent_process.run', side_effect=execution), \
+                    patch.object(review_dispatch, 'sleep', side_effect=slept.append), redirect_stdout(out):
+                code = review_dispatch.main(['--repo', str(self.repo), '--uncommitted', '--reviewer', 'codex',
+                                             '--claude-model', 'claude-opus-5', '--codex-model', 'fixture-codex-model'])
+                chain = json.loads(out.getvalue().split('review dispatch: ', 1)[1].splitlines()[0])
+                self.assertEqual(slept, waits)
+                self.assertEqual(len(calls), len(waits) + 1)
+                self.assertEqual([a['reviewer'] for a in chain['attempts']], ['codex'] * len(calls))
+                self.assertEqual(chain['status'], status, out.getvalue())
+                self.assertEqual(code, 0 if status == 'completed' else 5)
+                self.assertIn('RETRY [review]: codex is at capacity (rate_limited)', out.getvalue())
 
 
 if __name__ == "__main__":

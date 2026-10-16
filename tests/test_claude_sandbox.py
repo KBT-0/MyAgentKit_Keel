@@ -292,15 +292,17 @@ class ClaudeSandboxTests(unittest.TestCase):
         self.assertIn('reinstall', fix)
 
     def test_cli_readiness_names_a_candidate_the_budget_cut_short(self):
-        # A first claude hangs 60 seconds; the second answers in 40 but has 30 left. It is
-        # named, never hidden behind 'check claude --help'.
+        # A first claude hangs a whole probe; the second answers too late for what is left. It is
+        # named, never hidden behind 'check claude --help'. With a 15-second budget the first
+        # takes its 10-second probe and the second needs 8 of the 5 left.
         clock = [0.0]
 
         def slow(command, timeout, **kw):
-            needed = 1000 if command[0] == 'hung-cli' else 40
+            needed = 1000 if command[0] == 'hung-cli' else 8
             clock[0] += min(timeout, needed)
             raise subprocess.TimeoutExpired(command, timeout)
-        with patch.object(claude_bridge.shutil, 'which',
+        with patch.object(claude_bridge, 'PROBE_BUDGET_SECONDS', 15), \
+                patch.object(claude_bridge.shutil, 'which',
                           side_effect=lambda name, path: 'slow-cli' if path == 'slow' else 'hung-cli'),                 patch.object(claude_bridge.time, 'monotonic', lambda: clock[0]),                 patch.object(claude_bridge.subprocess, 'run', side_effect=slow):
             problem = claude_bridge.cli_readiness({'PATH': os.pathsep.join(['hung', 'slow'])})
         self.assertIn('slow-cli', problem.split('|', 1)[1])
@@ -313,7 +315,36 @@ class ClaudeSandboxTests(unittest.TestCase):
                              side_effect=subprocess.TimeoutExpired('cli', 60)) as run:
             self.assertIn('timed out', claude_bridge.cli_readiness({'PATH': paths}))
         self.assertEqual([call.args[0] for call in run.call_args_list],
-                         [['hung-cli', '--help'], ['later-cli', '--help']])
+                         [['hung-cli', '--version'], ['later-cli', '--version']])
+
+    def test_cli_readiness_reads_the_version_first_and_help_only_without_one(self):
+        # KARARLAR inv2#144: a flag absent from --help is no proof the CLI lacks it, so a claude
+        # of 2.1.248 or newer is ready whatever its --help shows; an older one is named with
+        # the minimum; --help decides only when --version prints no version.
+        everything = ' '.join(sorted({part for part in claude_bridge.claude_command(
+            'claude', argparse.Namespace(mode='review', model='claude-x', effort='low', repo=Path.cwd(),
+                                         max_turns=1, max_budget_usd=1.0), True)[0] if part.startswith('--')}))
+        for version, shown, wanted in (('2.1.250 (Claude Code)\n', 'Usage: claude', None),
+                                       ('2.1.248 (Claude Code)\n', 'Usage: claude', None),
+                                       ('3.0.0\n', '', None),
+                                       ('2.1.218 (Claude Code)\n', everything, 'is version 2.1.218'),
+                                       ('error: unknown option\n', 'Usage: claude', 'lacks --'),
+                                       ('', everything, None)):
+            with self.subTest(version=version, shown=shown[:12]):
+                def answer(command, stdout, **kw):
+                    stdout.write((version if command[1] == '--version' else shown).encode())
+                with patch.object(claude_bridge.shutil, 'which', return_value='the-cli'), \
+                        patch.object(claude_bridge.subprocess, 'run', side_effect=answer) as run:
+                    problem = claude_bridge.cli_readiness({'CLAUDE_CLI_BIN': 'the-cli', 'PATH': ''})
+                if wanted is None:
+                    self.assertIsNone(problem)
+                else:
+                    self.assertIn(wanted, problem)
+                    self.assertIn('claude update', problem.split('|', 1)[1])
+                if version.strip()[:1].isdigit():
+                    self.assertEqual([call.args[0] for call in run.call_args_list], [['the-cli', '--version']])
+                if wanted == 'is version 2.1.218':
+                    self.assertIn('2.1.248', problem)
 
     def test_sweep_keeps_a_young_folder_with_an_unheld_lock(self):
         folder = self.temp / 'myagentkit-review-young'

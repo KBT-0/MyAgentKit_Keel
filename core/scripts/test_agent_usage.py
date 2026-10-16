@@ -400,9 +400,47 @@ class UsageTests(unittest.TestCase):
         self.assertIsNone(agent_usage.failure("claude", execution, good))
         for message, expected in [("context window exceeded", "context_limit"),
                                   ("authentication failed", "authentication"),
-                                  ("rate limit exceeded", "quota")]:
+                                  ("rate limit exceeded", "rate_limited")]:
             self.assertEqual(agent_usage.failure("codex", execution,
                 [{"type": "turn.failed", "error": {"message": message}}]), expected)
+
+    def test_a_passing_rate_limit_is_told_from_an_exhausted_quota(self):
+        # KARARLAR D04 inv2#126: `quota` was one class. A rate limit, an overload or a model at
+        # capacity passes (retried, B01 (6)); a spend cap, a plan limit or a billing hold does
+        # not (the owner's, failover-eligible). The vendors' error names map to the two kinds.
+        failed = {"exit_code": 1, "termination": None}
+        codex = {"Selected model is at capacity. Please try a different model.": "rate_limited",
+                 "stream error: 429 Too Many Requests": "rate_limited",
+                 "Rate limit reached for gpt-5.5 in organization org-x": "rate_limited",
+                 "You've hit your usage limit. Upgrade to Pro or try again in 3 days.": "quota_exhausted",
+                 "You exceeded your current quota, please check your plan and billing details.":
+                     "quota_exhausted"}
+        for message, expected in codex.items():
+            with self.subTest(codex=message):
+                self.assertEqual(agent_usage.failure("codex", failed,
+                    [{"type": "turn.failed", "error": {"message": message}}]), expected)
+        claude = [({"api_error_status": 429}, "rate_limited"),
+                  ({"api_error_status": 529, "result": "Overloaded"}, "rate_limited"),
+                  ({"api_error_status": 429, "result": "Session limit reached; resets 5pm"}, "quota_exhausted"),
+                  ({"result": "Claude AI usage limit reached|1760000000"}, "quota_exhausted"),
+                  ({"result": "billing_error: your credit balance is too low"}, "quota_exhausted"),
+                  ({"result": "account_on_hold"}, "quota_exhausted"),
+                  ({"api_error_status": 429, "result": "credits_required: Fable 5.1 requires usage credits"},
+                   "quota_exhausted")]
+        for fields, expected in claude:
+            with self.subTest(claude=fields):
+                value = dict({"type": "result", "subtype": "success", "is_error": True}, **fields)
+                self.assertEqual(agent_usage.failure("claude", failed, [value]), expected)
+
+    def test_a_tool_reported_retry_delay_is_read_from_the_error(self):
+        # KARARLAR B01 (6): a capacity retry waits the delay the tool reports, when it reports one.
+        def delay(message):
+            return agent_usage.retry_after([{"type": "error", "message": message}])
+        self.assertEqual(delay("Selected model is at capacity. Please try again in 30 seconds."), 30)
+        self.assertEqual(delay("rate limited; retry after 2m"), 120)
+        self.assertEqual(delay("Please try again in 1.5s"), 1.5)
+        self.assertIsNone(delay("Selected model is at capacity. Please try a different model."))
+        self.assertIsNone(agent_usage.retry_after([{"type": "turn.completed"}]))
 
     def test_records_are_unique_and_report_filters_without_exposing_raw_output(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -644,7 +682,11 @@ class UsageTests(unittest.TestCase):
         counts = agent_usage.dispositions('- a.py:1 Fixed: abc (the guard, not disproved: anything)\n'
                                           '- b.py:2 disproved: line 4 shows it was fixed: before\n'
                                           'prose without a key\n- c.py:3 DEFERRED:#12\n')
-        self.assertEqual(counts, {'fixed': 1, 'disproved': 1, 'deferred': 1})
+        # BACKLOG item F: an answer line without a key is counted apart (unkeyed), so the
+        # summary can show it; blank lines and headings are no answers.
+        self.assertEqual(counts, {'fixed': 1, 'disproved': 1, 'deferred': 1, 'unkeyed': 1})
+        self.assertEqual(agent_usage.dispositions('# Round 1\n\n- a.py:1 fixed: abc\n'),
+                         {'fixed': 1, 'disproved': 0, 'deferred': 0})
         with self.assertRaises(ValueError):
             agent_usage.dispositions('every finding was fixed in the last commit\n')
 

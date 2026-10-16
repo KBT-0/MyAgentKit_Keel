@@ -48,7 +48,8 @@ The summary also measures each reviewer configuration (model, effort, backend):
   file of the next round under the same label: each finding is answered with one key,
   `fixed:<commit>`, `disproved:<evidence>` or `deferred:<issue or decision>`, one answer per
   line (a file without a key is refused before any model runs; the file is read once, before
-  launch, so editing it during the review changes nothing). Accepted = fixed + deferred.
+  launch and handed to every attempt, so editing it during the review changes nothing; a
+  line without a key, a heading or blank line excepted, is recorded as `unkeyed`). Accepted = fixed + deferred.
   The answers refer to every earlier round under the label, so the counts are split over
   those rounds by the findings each listed, and the rate belongs to the configurations that
   produced the findings. The author rates its own reviewer, as Google's Tricorder has
@@ -103,7 +104,7 @@ unavailable observation is recorded as unknown and does not prevent the model ta
 
 ## Bounded failure, useful continuation
 
-Each review attempt has a total wall-clock limit (2700 seconds by default, maximum 3600,
+Each review attempt has a total wall-clock limit (2700 seconds by default, 3600 for a high-effort Codex review, maximum 3600,
 `REVIEW_TIMEOUT_SECONDS`) and a Claude review a turn limit (200 by default, maximum 500, `REVIEW_MAX_TURNS`);
 Claude proposals retain their separate 600-second default. This is not an inactivity or
 connection timer: the current Claude final-JSON adapter cannot reliably distinguish silent
@@ -124,15 +125,33 @@ not unknown spend. Reported cost/token accounting remains unchanged. Patch propo
 their separate three-dollar default; timeout, turn and output protections still apply.
 
 Individual adapters never automatically retry, buy credits, switch models, or promote a
-failed review to approval. Only when `--fallback` is passed does the wrapper's
-dispatcher try the other configured model once after operational unavailability; that
-record carries `review_fallback_from`. A cancelled attempt is recorded as `cancelled`. Each attempt keeps its own `.myagentkit/usage/*.json`
+failed review to approval. The wrapper's dispatcher retries a Codex `rate_limited` attempt
+at most twice (the delay Codex names, else ten minutes, doubled). It tries the other
+configured model once after a failover-eligible failure only when `--fallback` is passed,
+with one exception: a Codex `quota_exhausted` switches the role to Claude without it
+(`switched` in the chain). That record carries `review_fallback_from`
+(`docs/REVIEW_RUNNING.md`, "Unavailable reviewer"). A cancelled attempt is recorded as `cancelled`. Each attempt keeps its own `.myagentkit/usage/*.json`
 record, with `review_chain_id` and `review_attempt` linking it to the invocation. Immutable
 checkpoints under `.myagentkit/usage/chains/` contain references to these records, not
 additional token/cost charges. The usage reporter reads only top-level provider records;
 it does not count chain checkpoints as calls. Unknown or partial usage remains unknown or
 partial even when the second provider succeeds. Requested/actual reviewer, failure reason,
 configured pins, and final outcome remain visible in the chain.
+
+### Failure kinds of a provider error
+
+`agent_usage.failure()` reads only the CLI's structured error fields, never the review's
+prose (KARARLAR D04 inv2#126). The two quota kinds:
+
+| `failure_kind` | Meaning | Vendor names and statuses it maps |
+|---|---|---|
+| `rate_limited` | passes; a Codex attempt is retried | HTTP 429 `rate_limit_error`, 529 `overloaded_error` (Anthropic API errors); Claude Code `rate_limit`; Codex "Selected model is at capacity", "Rate limit reached", "429 Too Many Requests" |
+| `quota_exhausted` | used up until a reset or a payment; goes to the owner, never retried | Claude Code "usage limit reached", "Session limit reached", `billing_error`, `account_on_hold`, `credits_required`; Codex "You've hit your usage limit", OpenAI `insufficient_quota` ("exceeded your current quota") |
+
+An error that names a used-up quota is `quota_exhausted` even with status 429 or a
+"try again in" delay: Codex names days there. Sources: Anthropic API errors
+(platform.claude.com/docs/en/api/errors), Claude Code headless error types
+(code.claude.com/docs/en/headless), OpenAI error codes (platform.openai.com/docs/guides/error-codes).
 
 If both providers fail, structured recovery instructs the host to record the blocker and continue
 independent authorized work. Optional coding assistance can fall back to host implementation.

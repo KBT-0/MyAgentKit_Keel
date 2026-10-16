@@ -15,13 +15,15 @@ import uuid
 import agent_process
 import agent_usage
 import codex_quota
-from claude_bridge import (MEASURED, REVIEW_PROMPT, REVIEW_RUNS,
-                           BridgeError, accept_allows, default_effort, git, prior_rounds,
+from claude_bridge import (REVIEW_PROMPT, REVIEW_RUNS,
+                           BridgeError, accept_allows, allow_secret_files, default_effort, git, placeholder,
+                           prior_rounds,
                            review_context, review_parts, scratch, snapshot, throwaway_copy, review_tmpdir,
                            utf8_output)
 
 
-def main(argv=None, result_sink=None):
+def main(argv=None, result_sink=None, claims=None):
+    """`claims`: the dispositions text the dispatcher read once; None reads REVIEW_DISPOSITIONS."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", type=Path, required=True)
     parser.add_argument("--model", default="")
@@ -30,14 +32,18 @@ def main(argv=None, result_sink=None):
     scopes.add_argument("--uncommitted", action="store_true")
     scopes.add_argument("--base")
     scopes.add_argument("--commit")
+    parser.add_argument("--allow-secret-file", action="append", default=[])
     args = parser.parse_args(argv)
+    allow_secret_files(args.allow_secret_file)
     if os.environ.get("MYAGENTKIT_DELEGATION_DEPTH", "0") != "0":
         raise ValueError("nested delegation is disabled")
     # The wrapper already refuses an empty pin; this repeats the refusal because the adapter
     # is directly callable, and an unpinned run is a record that names no comparable model.
     if not args.model.strip() or any(c.isspace() for c in args.model):
         raise ValueError("--model must pin one model id; Codex attests none in its output")
-    timeout = int(os.environ.get("REVIEW_TIMEOUT_SECONDS", str(agent_process.DEFAULT_REVIEW_TIMEOUT)))
+    # KARARLAR B03 inv2#31: a high-effort Codex review ran 37-58 minutes (RL 2026-10-13).
+    default = agent_process.MAX_REVIEW_TIMEOUT if args.effort == "high" else agent_process.DEFAULT_REVIEW_TIMEOUT
+    timeout = int(os.environ.get("REVIEW_TIMEOUT_SECONDS", str(default)))
     if not 1 <= timeout <= agent_process.MAX_REVIEW_TIMEOUT:
         raise ValueError("REVIEW_TIMEOUT_SECONDS must be 1..%d" % agent_process.MAX_REVIEW_TIMEOUT)
     repo = args.repo.resolve(strict=True)
@@ -53,13 +59,16 @@ def main(argv=None, result_sink=None):
     for name in re.split(r",\s*|\s+and\s+", docs):
         if not (repo / name).is_file() or not (repo / name).resolve().is_relative_to(repo):
             raise ValueError("required project guidance is missing or outside repository: " + name)
+    carried, measured = prior_rounds(repo, os.environ.get("MYAGENTKIT_TASK_ID"), scope, resolved, head,
+                                     diff, claims)
     prompt = (
         REVIEW_PROMPT % docs + REVIEW_RUNS + " Write exactly one "
         "line: VERDICT: Accept / VERDICT: Accept with Manual Checks / VERDICT: Reject "
         "(choose one). Put the findings under a '## Findings' heading, one '- ' list item per "
         "finding that starts with its severity, and the explicit manual checks under a "
-        "'## Manual checks' heading, as full sentences.\n"
-        + prior_rounds(repo, os.environ.get("MYAGENTKIT_TASK_ID"), scope, resolved, head, diff)
+        "'## Manual checks' heading, as full sentences. With no finding, write the one item "
+        "'- None.' under '## Findings'.\n"
+        + carried
         + review_context()
         + f"Scope: {scope} {ref or ''}; HEAD: {head}\nDiff:\n{diff}"
     )
@@ -195,8 +204,10 @@ def main(argv=None, result_sink=None):
             # The same rules as claude_bridge.validate(): a plain Accept carries Lows and items
             # outside the diff at most and no manual check; the other Accept names one.
             findings, checks = review_parts(final)
+            # A Reject names a finding, as claude_bridge.validate() requires (fix4 notes).
             if not reason and (verdicts[0] == 'Accept' and (checks or not accept_allows(findings))
-                               or verdicts[0] == 'Accept with Manual Checks' and not checks):
+                               or verdicts[0] == 'Accept with Manual Checks' and not checks
+                               or verdicts[0] == 'Reject' and all(placeholder(f) for f in findings)):
                 reason = 'invalid_evidence'
             if recovered and reason:
                 reason = recovered
@@ -232,7 +243,7 @@ def main(argv=None, result_sink=None):
              "scope": scope, "reference": ref, "resolved": resolved, "head": head,
              "fingerprint": fingerprint,
              "diff_sha256": metadata["diff_sha256"],
-             "prompt_sha256": hashlib.sha256(prompt.encode()).hexdigest(), **MEASURED},
+             "prompt_sha256": hashlib.sha256(prompt.encode()).hexdigest(), **measured},
             execution, status, reason, archived, report_text.encode())
         def persist_cancel(usage):
             header.update(status="failed", failure_kind="cancelled")
@@ -272,6 +283,9 @@ def main(argv=None, result_sink=None):
         status, reason = usage["status"], usage["failure_kind"]
         result = {"status": status, "failure_kind": reason, "evidence": archived,
                   "usage_record": str(path), "recovery": usage["recovery"], "cancelled": was_cancelled}
+        if reason == "rate_limited":
+            # The wait the CLI named, for the dispatcher's capacity retry (KARARLAR B01 (6)).
+            result["retry_after"] = agent_usage.retry_after(values)
         if result_sink is not None:
             result_sink(result)
         try:
