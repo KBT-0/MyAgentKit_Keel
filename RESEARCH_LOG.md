@@ -54,6 +54,21 @@ Lesson from the reviews: a label rule fed by prose registered technical words (r
 fix registered every prose mention (round 2); only the place a file gives a task its id may
 register a label. Red runs saved before each change (batch2-tests/, RESULT-b2fix*.md).
 
+### 2026-10-16 — v0.11 batch 4: review tooling (bridge, dispatcher, usage)
+
+Batch 4 applies KARARLAR D04 inv2#44/#126 (the vendor error pages behind the USAGE map,
+platform.claude.com/docs/en/api/errors, code.claude.com/docs/en/headless and
+platform.openai.com/docs/guides/error-codes, were cited from memory; the release-end web check
+re-fetches them), B01 (6) (Codex capacity retry, owner decision 7: a used-up quota switches to
+Claude), B01 (1) (author's tier refused; the mode table's automatic second-tier pick is not built:
+no second pin exists, the refusal names the conflict), B12 inv2#106 (secret files), D09 inv2#80
+(backend files outside the repository), B03 inv2#31 (Codex high runs 37-58 min, so 3600 s) and
+inv2#144 (doctor reads the version first). D04 inv2#117/#118 (`codex exec --output-schema`) stays a
+BACKLOG trial: it spends paid Codex quota. Lesson from the reviews: an allowance passed through
+an environment variable as lines widened one `--allow-secret-file` value with a line break into
+two secrets (Codex r1 Critical, lead fix 763ee05); a value that crosses a line-based channel must
+refuse the separator, not trust the shell wrapper that happened to.
+
 ### 2026-10-16 — v0.11 batch 7: gate, doctor, boundary example
 
 Batch 7 applies KARARLAR B02 inv2#39 (root fix: the boundary example probes a new file in the

@@ -1808,6 +1808,8 @@ print(len(fields) // 2)
       # that file vanishes with the runner and the first error of a long chain sits above any
       # tail, so CI prints the whole log.
       # ponytail: a fixed tail; raise build_tail if your diagnostic chains run longer.
+      # 150 lines: about the 10000 characters a tool result shows whole; Claude Code cuts a Bash
+      # result at 30000 characters (BASH_MAX_OUTPUT_LENGTH, code.claude.com/docs/en/settings).
       build_tail=150
       ( if [ -n "$caller_lc_all_set" ]; then LC_ALL=$caller_lc_all; else unset LC_ALL; fi
         exec sh -c "$build_test_cmd" ) > "$build_log" 2>&1

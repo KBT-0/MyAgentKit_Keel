@@ -111,7 +111,7 @@ class SectionPointerTests(unittest.TestCase):
                      'A review is finished only when that latest record has status `completed`, or status `failed` with no further attempt possible (the attempt count equals the number of possible attempts, a `failure_kind` outside the dispatcher\'s unavailable set, `fallback_blocked` set, or `fallback_allowed` false, or the failed attempt has no `evidence` or `usage_record`: the dispatcher never falls over from such an attempt).',
                      'The number of possible attempts is one without `--fallback`, two with it.',
                      'Use the mtime of `<chain>-0.json` as the review start time.',
-                     'After a cut-off, treat the review as running for at least `REVIEW_TIMEOUT_SECONDS` (2700 s when unset, 3600 at most; the record does not store it) times the number of possible attempts plus overhead (about two hours with 3600 s and `--fallback`), unless the latest record shows it is finished as above.',
+                     'After a cut-off, treat the review as running for at least `REVIEW_TIMEOUT_SECONDS` (2700 s when unset, 3600 for a high-effort Codex review and at most; the record does not store it) times the number of possible attempts plus overhead (about two hours with 3600 s and `--fallback`), unless the latest record shows it is finished as above.',
                      'This window is a lower bound, not proof that an orphaned reviewer stopped.',
                      'After the window, the lead still confirms completion in the process listing.',
                      'On POSIX, the reviewer runs in its own session; a supervisor killed with `SIGKILL` cannot enforce its timeout.',

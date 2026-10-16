@@ -72,6 +72,24 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   (KARARLAR B08 inv1#253, B10 inv3/(f), inv3#7, inv1#93, inv2#151, B07 inv2#131/#132, D07
   inv3#108 b; BACKLOG B5, B13).
   **ACTION:** re-sync the overlay hooks, `scripts/context_buckets.py` and `.githooks/commit-msg`.
+- **Review tooling: bridge, dispatcher, usage** (`scripts/review.sh`, `scripts/claude_bridge.py`,
+  `scripts/codex_bridge.py`, `scripts/review_dispatch.py`, `scripts/agent_usage.py`,
+  `scripts/agent_process.py`, `docs/REVIEW_GATE.md`, `docs/REVIEW_RUNNING.md`, `docs/USAGE.md`,
+  `docs/GOTCHAS.md`). The reviewer runs only the narrow test that proves a finding, never the
+  full suite; the lead's gate runs it. Quota failures split into `rate_limited` (Codex retried
+  twice, the tool's delay or 600 s, doubled) and `quota_exhausted` (a used-up Codex quota switches
+  the role to Claude, recorded); an authentication error never fails over. With
+  `MYAGENTKIT_AUTHOR` set, review.sh refuses a reviewer of the author's tier and records the
+  author. A secret-looking file in scope (`.env*`, `*.pem`, `*.key`, `.npmrc`, `.netrc`,
+  `credentials*`, `.dev.vars`) stops a review unless `--allow-secret-file PATH` names it, one
+  path per flag. Backend files live outside the repository (`MYAGENTKIT_BACKENDS_DIR` or the
+  user's config folder); the old `.myagentkit/backends/` is read during the move. A high-effort
+  Codex review defaults to a 3600-second limit; doctor reads `claude --version` (2.1.248 or
+  newer) before `--help` (KARARLAR D04 inv2#44/#126/#85, B01 (1)/(6), B12 inv2#106/#81, D07
+  inv3#103, D09 inv2#80/#99/#100, B03 inv2#31, B10 inv2#113, B02 inv2#158, inv2#104/#115/#144).
+  **ACTION:** re-sync `scripts/review.sh`, the review and usage scripts above, `docs/REVIEW_GATE.md`,
+  `docs/REVIEW_RUNNING.md`, `docs/USAGE.md`, `docs/GOTCHAS.md`; move `.myagentkit/backends/*.env`
+  to the user's config folder (or set `MYAGENTKIT_BACKENDS_DIR`).
 - **Gate, doctor, boundary example** (`scripts/check.sh`, `scripts/doctor.sh`,
   `.claude/hooks/gate_on_stop.sh`, `docs/DEV_SETUP.md`, `docs/STRONG_REVIEW.md`, `.gitattributes`).
   The commit gate's self-test no longer writes in the tree: a review can share the worktree.
