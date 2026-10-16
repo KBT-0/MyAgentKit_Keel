@@ -9,9 +9,11 @@ KIT-OWNED: do not edit locally; change it in the kit and re-sync.
 ```
 
 They hold no project content, so `sync-kit.sh` overwrites them wholesale. Today that is a
-short list: the three git hooks (`pre-commit`, `pre-merge-commit`, `commit-msg`),
-`scripts/doctor.sh`, `scripts/agent_cost.py`, `scripts/usage_summary.py`, the module-rules
-template, and the two setup documents.
+short list: the four git hooks (`pre-commit`, `pre-merge-commit`, `commit-msg`,
+`post-merge`), `scripts/doctor.sh`, `scripts/fix_crlf.sh`, `scripts/agent_cost.py`,
+`scripts/usage_summary.py`, `scripts/context_buckets.py`, `scripts/working_mode.py`,
+`BEHAVIOUR.md`, the module-rules template, and the two setup documents
+(`grep -rl '^# KIT-OWNED:\|^<!-- KIT-OWNED:' core setup` in the kit lists them).
 
 **PROJECT-OWNED** is everything else, and that is most of the kit: the constitution, the
 workflow, the review gate, the architecture map, the check script, the boundary checks and
@@ -34,7 +36,10 @@ exactly the habit the review gate exists to prevent.
    kit-owned path WITHOUT the KIT-OWNED header is the project's own (a hook the project
    wrote before the kit owned that path): it is listed as `conflict:`, and the sync stops
    before it copies anything or records a version. Move yours aside, sync again, then carry
-   what yours did into the project by hand (`docs/RETROFIT.md`).
+   what yours did into the project by hand (`docs/RETROFIT.md`). Template and package tools
+   leave that call to a person too (Copier marks conflicts for review before the commit;
+   dpkg asks about a changed configuration file); the sync is stricter and writes nothing,
+   because a half-merged hook can be a gate that silently does not run.
 3. **Prints every `CHANGELOG.md` entry added since your version.** This is the real product.
    From v0.9 on, each version's entry ends with one ordered checklist, "Upgrading a project
    from v<previous>": the files to copy whole, the project-owned files to merge, the lines
@@ -52,7 +57,12 @@ exactly the habit the review gate exists to prevent.
 
    The recorded version therefore means "everything up to here was applied", not "the
    files were copied". Stamping first once let a project skip two versions of hand edits
-   and then read "already current".
+   and then read "already current". Migration tools work the same way: Rails records a
+   migration's version only after it ran and stops while one is pending, Copier runs a
+   migration only for the versions it crosses, and `cruft check` exits non-zero on an
+   out-of-date project. The kit keeps a checklist a person reads instead of automated
+   migrations ("Two tiers of ownership" above: a silent merge of process rules is worse
+   than none).
 
 Then run `./scripts/check.sh` and `./scripts/check.sh --self-test`. A sync that leaves the
 gate red, or leaves a gate that can no longer fail, is not finished.
@@ -63,7 +73,12 @@ overlay's worker scripts (`spawn_worker.sh`, `spawn_codex.sh`, `codex_worker.py`
 `waiting_patterns.txt`, `close_worker.sh`) and its clean-up scripts (`clean_worktrees.sh`,
 `clean_worktrees.py`); the checklist names each other overlay file that changed. Re-run `bootstrap.sh --overlay <name>` if
 you want a new file from one: it adds what is missing, passes over files identical to the
-kit's and lists the ones that differ without touching them.
+kit's and lists the ones that differ without touching them; only `--force` overwrites (as
+Copier's `skip_if_exists` and dpkg's kept configuration file: a tool never overwrites the
+user's change by default). The presence of an overlay file is the record that the project
+took that overlay; Copier and cruft keep that record in a file of answers instead
+(`.copier-answers.yml`, `.cruft.json`), which the kit would only need if a deleted overlay
+file ever had to be told apart from a declined one.
 
 ## What the scripts protect against, and what they do not
 
@@ -71,7 +86,9 @@ The owner runs `sync-kit.sh` and `bootstrap.sh` in the owner's own project. They
 against their own failures and interruptions (a failed write, a full disk, INT, TERM or HUP
 part way, and a retry after any of them) and against honest mistakes in the tree: a file,
 folder, symlink or special file where a script means to write is refused by name, never
-written through. There is no rollback: files already copied stay copied when a later step
+written through (CWE-59, link following: installers are among its real cases), and so is a
+file name holding a line break, which a line-reading loop cannot carry (Wheeler, "Filenames
+and Pathnames in Shell": forbidding it is the simple safe choice). There is no rollback: files already copied stay copied when a later step
 fails, each one whole, and the version is recorded last. By decision they do NOT protect
 against another process changing the tree while they run, files placed in the project to
 attack them, or SIGKILL or power loss between two steps; whoever can do the first two can
