@@ -1134,15 +1134,24 @@ def review_parts(text: str) -> tuple[list, list]:
     return findings, checks
 
 
+def placeholder(item: str) -> bool:
+    """An item that names no finding: "None.", "Plus 3 similar", or a whole clean-review
+    sentence ("No qualifying defects found.", "No findings established in this diff.")."""
+    # "Plus N similar" is what REVIEW_PROMPT asks for past five Lows. The sentence forms are the
+    # ones Codex writes (fix4 notes); refused, a clean paid review was recorded as failed.
+    return (item.strip(" \t-*.").lower() in EMPTY_ITEMS
+            or bool(re.fullmatch(r"(?i)\s*(?:[-*]\s+)?\**\s*(?:plus \d+ similar(?: low)?(?: findings?)?"
+                                 r"|no(?: \w+)? (?:findings?|defects?|issues?)"
+                                 r"(?: (?:were |was )?(?:found|established|identified|reported))?"
+                                 r"(?: in (?:this|the) diff)?)[\s.*]*", item)))
+
+
 def accept_allows(findings: list) -> bool:
     """A plain Accept may carry Low findings and items outside the diff; nothing else. The
     severity may be a bold or dash-prefixed list item, the forms both reviewers write."""
-    # "Plus N similar" is what REVIEW_PROMPT asks for past five Lows; "no qualifying findings"
-    # is a placeholder like "none". Refused, a clean paid review was recorded as failed.
-    return all(item.strip(" \t-*.").lower() in EMPTY_ITEMS
-               or re.fullmatch(r"(?i)\s*(?:[-*]\s+)?\**\s*(?:plus \d+ similar(?: low)?(?: findings?)?|no(?: \w+)? findings?)"
-                               r"[\s.*]*", item)
-               or re.match(r"\s*(?:[-*]\s+)?\**\s*(Low\b|Pre-existing:)", item) for item in findings)
+    # `Low-level: High ...` is no Low, and a bare `Pre-existing:` names nothing (fix4 notes).
+    return all(placeholder(item)
+               or re.match(r"\s*(?:[-*]\s+)?\**\s*(Low(?![-\w])|Pre-existing:\s*[^\s*])", item) for item in findings)
 
 
 def validate(envelope: object, mode: str, model: str) -> dict:
@@ -1179,7 +1188,7 @@ def validate(envelope: object, mode: str, model: str) -> dict:
             raise BridgeError("invalid verdict")
         if verdict == "Accept" and (value["manual_checks"] or not accept_allows(value["findings"])):
             raise BridgeError("Accept contradicts outstanding findings or manual checks")
-        if verdict == "Reject" and not value["findings"]:
+        if verdict == "Reject" and all(placeholder(item) for item in value["findings"]):
             raise BridgeError("Reject has no findings")
         if verdict == "Accept with Manual Checks" and not value["manual_checks"]:
             raise BridgeError("manual-check verdict has no manual checks")

@@ -2911,6 +2911,13 @@ class BridgeTests(unittest.TestCase):
                     # fix4 review: a placeholder counts only as a whole block, continuation joined.
                     '## Findings\n\nNo findings\nwere resolved: x.py:1 still drops records.\n\nVERDICT: Accept\n',
                     '## Findings\n\n- None.\n  x.py:1 still drops records.\n\nVERDICT: Accept\n')
+        # fix4 notes: Codex's real clean-review prose completes; a Reject must name a finding,
+        # as claude_bridge.validate() requires ("Reject has no findings").
+        completes += ('## Findings\n\nNo findings established in this diff.\n\nVERDICT: Accept\n',
+                      '## Findings\n\nNo qualifying defects found.\n\nVERDICT: Accept\n')
+        refused += ('## Findings\n\n- None.\n\nVERDICT: Reject\n',
+                    '## Findings\n\nNo qualifying defects found.\n\nVERDICT: Reject\n',
+                    '## Findings\n\n- Low-level: High defect in x.py:1.\n\nVERDICT: Accept\n')
         completes += ('## Findings\n\nNone.\n\n## Verdict\n\nVERDICT: Accept\n',
                       '## **Findings**\n\n**Low** — x.py:1 a bold paragraph.\n\nVERDICT: Accept\n',
                       '## Findings\n\nLow: x.py:1 a note that\nwraps onto a second line.\n\nVERDICT: Accept\n')
@@ -3129,7 +3136,14 @@ class BridgeTests(unittest.TestCase):
                                   # REVIEW_PROMPT asks for "plus N similar" past five Lows.
                                   (['Low: a', 'Plus 3 similar Low findings.'], True), (['- Plus 3 similar.'], True),
                                   (['No qualifying findings.'], True), (['High: a', 'Plus 2 similar'], False),
-                                  (['Plus 3 similar, and High: y is broken'], False)):
+                                  (['Plus 3 similar, and High: y is broken'], False),
+                                  # fix4 notes: "Low-level" is no severity, an empty Pre-existing
+                                  # is no item, and real Codex prose for a clean review is.
+                                  (['Low-level: High defect in x.py:1'], False), (['Pre-existing:'], False),
+                                  (['No findings established in this diff.'], True),
+                                  (['No qualifying defects found.'], True),
+                                  (['No defects were found in the diff.'], True),
+                                  (['No findings established, but x.py:1 drops records.'], False)):
             with self.subTest(findings=findings):
                 value = {'verdict': 'Accept', 'findings': findings, 'manual_checks': []}
                 envelope = {'type': 'result', 'subtype': 'success', 'is_error': False,
@@ -3466,7 +3480,8 @@ if case == 'archive_failure':
                 self.assertEqual(usage["task"]["id"], "fixture-review")
                 self.assertEqual(usage["requester_reported"], "claude/fixture")
                 if case in ("quota", "timeout"):
-                    self.assertEqual(usage["failure_kind"], case)
+                    # KARARLAR D04 inv2#126: a used-up quota is quota_exhausted, not a bare quota.
+                    self.assertEqual(usage["failure_kind"], 'quota_exhausted' if case == 'quota' else case)
                 if case in ('mutation', 'archive_failure'):
                     self.assertEqual(usage['status'], 'failed')
                     self.assertEqual(usage['failure_kind'], 'stale_checkout' if case == 'mutation' else 'evidence_write_failed')
@@ -6014,6 +6029,17 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                 self.assertIn('Read(//' + folder.lstrip('/') + '/**)', settings['permissions']['deny'])
                 if sandboxed:
                     self.assertIn(folder, settings['sandbox']['filesystem']['denyRead'])
+
+    def test_the_codex_prompt_names_the_clean_review_form_the_parser_accepts(self):
+        # fix4 notes: make prompt and allowlist agree, so a clean paid review is not lost as
+        # invalid_evidence for prose the parser does not read as a placeholder.
+        log = self.root / 'codex-prompt.txt'
+        result = self.run_wrapper('--uncommitted', '--reviewer', 'codex', REVIEW_CLI_BIN=str(self.build_fake_codex()),
+                                  REVIEW_CODEX_MODEL='fixture-codex-model', PROMPT_LOG=str(log))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("With no finding, write the one item '- None.' under '## Findings'",
+                      log.read_text(encoding='utf-8'))
+        self.assertTrue(bridge.accept_allows(['- None.']))
 
     def test_the_reviewer_runs_only_the_narrow_test_never_the_full_suite(self):
         # Owner decision 2026-10-16: reviewers that ran the 30-minute self-test in their copy

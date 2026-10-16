@@ -16,7 +16,8 @@ import agent_process
 import agent_usage
 import codex_quota
 from claude_bridge import (REVIEW_PROMPT, REVIEW_RUNS,
-                           BridgeError, accept_allows, allow_secret_files, default_effort, git, prior_rounds,
+                           BridgeError, accept_allows, allow_secret_files, default_effort, git, placeholder,
+                           prior_rounds,
                            review_context, review_parts, scratch, snapshot, throwaway_copy, review_tmpdir,
                            utf8_output)
 
@@ -63,7 +64,8 @@ def main(argv=None, result_sink=None, claims=None):
         "line: VERDICT: Accept / VERDICT: Accept with Manual Checks / VERDICT: Reject "
         "(choose one). Put the findings under a '## Findings' heading, one '- ' list item per "
         "finding that starts with its severity, and the explicit manual checks under a "
-        "'## Manual checks' heading, as full sentences.\n"
+        "'## Manual checks' heading, as full sentences. With no finding, write the one item "
+        "'- None.' under '## Findings'.\n"
         + carried
         + review_context()
         + f"Scope: {scope} {ref or ''}; HEAD: {head}\nDiff:\n{diff}"
@@ -200,8 +202,10 @@ def main(argv=None, result_sink=None, claims=None):
             # The same rules as claude_bridge.validate(): a plain Accept carries Lows and items
             # outside the diff at most and no manual check; the other Accept names one.
             findings, checks = review_parts(final)
+            # A Reject names a finding, as claude_bridge.validate() requires (fix4 notes).
             if not reason and (verdicts[0] == 'Accept' and (checks or not accept_allows(findings))
-                               or verdicts[0] == 'Accept with Manual Checks' and not checks):
+                               or verdicts[0] == 'Accept with Manual Checks' and not checks
+                               or verdicts[0] == 'Reject' and all(placeholder(f) for f in findings)):
                 reason = 'invalid_evidence'
             if recovered and reason:
                 reason = recovered
