@@ -13,6 +13,26 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## v0.11 — 2026-10-09
 
+- **Setup interview, feedback permissions and line-ending repair** (`setup/INTERVIEW.md`,
+  `setup/RESEARCH_PROTOCOL.md`, `plugin/commands/kit-feedback.md`, `handoff.md`,
+  `cross-review.md`, `core/scripts/fix_crlf.sh`, `core/docs/DEV_SETUP.md`, patterns and skills).
+  Setup interview re-sourced: BOOTSTRAP_NOTE items become a status list in STATE.md with
+  evidence; the reviewer is pinned by its full model id, never an alias; Q9 names Assisted-by
+  and the attribution setting; Ponytail's numbers come from its README (latest version kept,
+  owner's choice); module_roots is asked; Phase 5 goes through /myagentkit:kit-feedback. The
+  research protocol's baseline is a date and the CLI versions. /myagentkit:kit-feedback
+  pre-approves only read-only commands, so sending meets the permission prompt; a PR needs its
+  issue first; scrubbing starts with a mechanical pass. The line-ending repair is
+  `scripts/fix_crlf.sh` (kit-owned, synced; it also repairs `.githooks/<name>.project`).
+  Patterns and skills carry their sources (KARARLAR B14, D07, B10 inv3#3, B12 inv3#186,
+  D08 inv3#123, D09 inv3#176, D10 inv3#97). The repair skips files with -text/binary attributes
+  and content Git detects as binary; kit-feedback pre-approves only exact read-only command
+  forms. DEV_SETUP now calls the tested, kit-owned `scripts/fix_crlf.sh` repair; handoff and
+  cross-review no longer pre-approve arbitrary Git commands. **ACTION:** `docs/DEV_SETUP.md`
+  is project-owned, so sync-kit.sh never rewrites it: in section 1, "Wire the commit gate",
+  replace the embedded line-ending repair program with the `sh scripts/fix_crlf.sh`
+  paragraph from the kit's `core/docs/DEV_SETUP.md`. Update the plugin to the same kit
+  version so kit-feedback, handoff and cross-review carry the tightened permissions.
 - **Source claims corrected after the web source check** (`core/docs/WORKFLOW.md`, `USAGE.md`,
   `DEV_SETUP.md`, `core/scripts/agent_usage.py`, `claude_bridge.py`, `context_buckets.py`,
   `docs/worker-cost-setups.md`, `.claude/hooks/py.sh`). Correct eight source claims about Claude
@@ -965,8 +985,9 @@ reviews. Why each change is safe is in `RESEARCH_LOG.md` (2026-10-06 and 2026-10
   overlay's `.claude/settings.json` turns on `ponytail@ponytail`, which makes sessions and
   workers try the smallest working solution first: reuse, standard library, platform, one
   line, then the minimum code. It comes from `DietrichGebert/ponytail`'s own marketplace at
-  the latest version, the same id as a user-level install, so it loads once. About 1.3k tokens at each session and sub-agent start; it saves
-  most on code-writing workers. Codex installs it with `codex plugin add ponytail@ponytail`. **ACTION:** to
+  the latest version, the same id as a user-level install, so it loads once. Token cost at
+  each session and sub-agent start is not measured; it saves most on code-writing workers.
+  Codex installs it with `codex plugin add ponytail@ponytail`. **ACTION:** to
   turn it on in an existing project, add the overlay's `extraKnownMarketplaces` and
   `enabledPlugins` entries to `.claude/settings.json`.
 - **Model routing rules** (`docs/WORKFLOW.md`, "Model routing"): work is sorted into three
@@ -2052,7 +2073,8 @@ project stable rather than the thing that moves it.
   to the new one.
 - **The plugin is deliberately NOT renamed.** It stays `myagentkit`, so `/myagentkit:handoff`,
   `/myagentkit:cross-review` and `/myagentkit:kit-feedback` are exactly what they were. A
-  command a person has learned to type is a bad thing to rename for cosmetic reasons.
+  command a person has learned to type is a bad thing to rename for cosmetic reasons (the
+  name namespaces every command and `enabledPlugins` key: code.claude.com/docs/en/plugins-reference).
 - Archived review reports under `docs/reviews/` are left untouched. They are dated evidence
   of what was said at the time, and evidence is not edited afterwards — including for a
   rename.
@@ -2153,7 +2175,9 @@ gained a way to be maintained by the projects using it rather than only by its a
 - **Commands are now a Claude Code plugin**, installed once per machine instead of copied
   into every project: `/myagentkit:cross-review`, `/myagentkit:handoff` and the new
   `/myagentkit:kit-feedback`. Namespacing comes from the plugin, which also ends the risk of
-  a bare `handoff` or `cross-review` colliding silently with something else.
+  a bare `handoff` or `cross-review` colliding silently with something else
+  (code.claude.com/docs/en/skills, 'Resolve skills that share a name';
+  anthropics/claude-code issues 12606, 62409, 62500).
 - **`/myagentkit:kit-feedback`** sends a finding upstream as a GitHub issue or pull request.
   It scrubs the project out of the text, shows the exact body, and sends nothing without an
   explicit yes.
