@@ -49,8 +49,8 @@ Name the model and effort from `docs/WORKFLOW.md`, "Model routing", alongside th
    accepts it.
    **Review:** a worker reviews its own diff with fresh sub-agents before it reports, whether
    it runs as a session or as a sub-agent: Claude Code nests sub-agents three layers deep by
-   default (code.claude.com/docs/en/sub-agents, "Nesting"; checked 2026-10-15 on 2.1.300,
-   where a sub-agent worker was offered the Agent tool). Where
+   default (code.claude.com/docs/en/sub-agents, "Let subagents spawn their own subagents";
+   checked 2026-10-15 on 2.1.300, where a sub-agent worker was offered the Agent tool). Where
    `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH` is 1, it says it could not, and the lead starts the
    review when the branch exists (`docs/WORKFLOW.md`, "Review rounds — early, inside the
    worker, in parallel"). The fresh sub-agent is a reviewer, not the author.
@@ -91,8 +91,9 @@ Name the model and effort from `docs/WORKFLOW.md`, "Model routing", alongside th
    widen the task to make an unclear part fit; an unanswered question comes back as a
    question, not as a guess buried in the diff. Sources: Anthropic, "Prompting Claude Opus 5"
    (check in only when readings lead to materially different work); Edwards and Schuster,
-   "Ask or Assume?", arxiv.org/abs/2603.26233 (asking by the ambiguity's impact beats always
-   or never); resuming the same session with the answer keeps its context
+   "Ask or Assume?", arxiv.org/abs/2603.26233 (well-calibrated information-seeking:
+   fewer questions on simple tasks, more on complex tasks); resuming the same session with
+   the answer keeps its context
    (code.claude.com/docs/en/sub-agents, "Resuming subagents"). A spawned session has nobody
    to ask in its pane: it finishes independent work and stops its running jobs before
    publishing the question. It writes `Kind: blocked` and QUESTIONS into its result file, then publishes the question to the
