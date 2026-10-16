@@ -495,14 +495,15 @@ if s:
   # as {permissions:{defaultMode:auto}}, claude refused it, and the tab closed before anyone
   # saw why. So the tab's command goes into a script the tab runs and deletes, and only paths
   # pass through wt.exe. A claude that ends within ten seconds of its own start, whatever its
-  # status, failed to start: the tab then waits for Enter, so its error stays on screen.
+  # status, failed to start: the tab then waits for Enter, so its error stays on screen. One
+  # its supervisor ended on a published result (its exit record says so) closes at once.
   tab=$(mktemp) || die "cannot write the tab's script"
   tab_cmd="$unmark claude $(q "$instruction") ${cmd#claude }"
   [ -z "$backend" ] || tab_cmd=$(backend_command "$tab_cmd")
-  tab_cmd="$supervise $(q "$bash") -c $(q "exec $tab_cmd")"
+  tab_cmd="KIT_WORKER_EXIT=$(q "$(cygpath -m "$tab.exit")") $supervise $(q "$bash") -c $(q "exec $tab_cmd")"
   printf '%s\n' 'rm -f -- "$0"' "cd $(q "$dir") || exit 1" \
-    "t=\$(date +%s); $tab_cmd; s=\$?; [ \$((\$(date +%s) - t)) -gt 10 ] || { echo \"claude ended at once (exit \$s); press Enter to close\"; read -r _; }" \
-    'exit 0' > "$tab" || die "cannot write the tab's script: $tab"
+    "t=\$(date +%s); $tab_cmd; s=\$?; grep -q ' published at ' \"\$0.exit\" 2>/dev/null || [ \$((\$(date +%s) - t)) -gt 10 ] || { echo \"claude ended at once (exit \$s); press Enter to close\"; read -r _; }" \
+    'rm -f -- "$0.exit" "$0.live"' 'exit 0' > "$tab" || die "cannot write the tab's script: $tab"
   "$wt" -w 0 new-tab --title "$(semi "$name")" "$(semi "$bash")" -l "$(semi "$(cygpath -w "$tab")")" ||
     { rm -f -- "$tab"; die "$wt could not open a tab for '$name'"; }
   # The lead can message a worker and hear when it stops (SendMessage notify_when_idle) only

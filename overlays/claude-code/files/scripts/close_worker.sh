@@ -391,14 +391,17 @@ live() {
 # codex_worker.py's rules (beside this script): the path spawn_worker.sh recorded in
 # NAME.result-path, else RESULT-NAME.md at DIR, the default of both spawns. ponytail: a Codex
 # worker given another --result is told finished only by its ended session (its supervisor
-# ends it on that result anyway).
+# ends it on that result anyway). Each spawn, a resume too, rewrites NAME.result-path: only a
+# result published since that write is this run's (a resumed worker keeps its last one).
 completed() {
-  r=$(cat -- "$top/.myagentkit/workers/$2.result-path" 2>/dev/null) && [ -n "$r" ] || r=$1/RESULT-$2.md
+  rec=$top/.myagentkit/workers/$2.result-path
+  r=$(cat -- "$rec" 2>/dev/null) && [ -n "$r" ] || { r=$1/RESULT-$2.md; rec=$r; }
   k=$kit
   [ -f "$r" ] && [ -f "$k/codex_worker.py" ] || return 1
-  [ -z "$windows" ] || { r=$(cygpath -m "$r") && k=$(cygpath -m "$k"); } || return 1
+  [ -z "$windows" ] || { r=$(cygpath -m "$r") && rec=$(cygpath -m "$rec") && k=$(cygpath -m "$k"); } || return 1
   $kit_python -I -c 'import sys; from pathlib import Path; sys.path.insert(0, sys.argv[1]); import codex_worker
-sys.exit(codex_worker.result_kind(Path(sys.argv[2]))[0] != "DONE")' "$k" "$r" 2>/dev/null
+since = 0 if sys.argv[3] == sys.argv[2] else Path(sys.argv[3]).stat().st_mtime
+sys.exit(codex_worker.result_kind(Path(sys.argv[2]), since)[0] != "DONE")' "$k" "$r" "$rec" 2>/dev/null
 }
 dry=""; finished=""
 while :; do

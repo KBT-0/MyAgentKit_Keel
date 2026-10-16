@@ -454,6 +454,25 @@ class CloseWorkerTests(unittest.TestCase):
         self.assertEqual([c for c in self.calls() if 'kill-session' in c], ["['kill-session', '-t', '=w1']"], out)
         self.assertEqual(self.sessions(), ['w2'])
 
+    def test_a_merge_never_ends_a_resumed_worker_on_its_previous_runs_result(self):
+        # Codex r2 (fix56): a resumed worker keeps its last run's Kind: completed result; merging
+        # its next commit read that old result as this run's and killed the working session. Each
+        # spawn rewrites NAME.result-path; only a result published since that write counts.
+        self.hooked()
+        w1 = self.kit_worker('w1')
+        self.result(self.tmp, 'w1', 'Kind: completed')
+        reports = self.main / '.myagentkit/workers'
+        reports.mkdir(parents=True)
+        (reports / 'w1.result-path').write_text((self.tmp / 'RESULT-w1.md').as_posix() + '\n')
+        old = (reports / 'w1.result-path').stat().st_mtime - 60
+        os.utime(self.tmp / 'RESULT-w1.md', (old, old))
+        (w1 / 'more.txt').write_text('more\n')
+        self.git('add', 'more.txt', cwd=w1)
+        self.git('commit', '-q', '-m', 'more', cwd=w1)
+        out = self.merge('worktree-w1')
+        self.assertFalse([c for c in self.calls() if 'kill-session' in c], out)
+        self.assertEqual(self.sessions(), ['w1'])
+
     def test_a_close_the_merge_cannot_make_is_printed_and_the_merge_stands(self):
         self.hooked()
         path = self.kit_worker('w1')

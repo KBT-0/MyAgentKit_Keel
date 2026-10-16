@@ -515,12 +515,14 @@ def record_exit(ended):
 
 
 def locks():
-    """index.lock and check.lock of the checkout this supervisor runs in; none outside git."""
+    """index.lock and check.lock of the checkout this supervisor runs in; none outside git.
+    Git prints UTF-8 paths: read as the locale (cp1252 without UTF-8 mode), a Unicode checkout's
+    lock path is wrong and its lock never seen."""
     paths = []
     for name in ('index.lock', 'check.lock'):
         try:
             paths.append(Path(subprocess.run(['git', 'rev-parse', '--path-format=absolute', '--git-path', name],
-                                             capture_output=True, text=True, check=True).stdout.strip()))
+                                             capture_output=True, encoding='utf-8', check=True).stdout.strip()))
         except (OSError, subprocess.CalledProcessError):
             return []
     return paths

@@ -673,6 +673,10 @@ exit 0
                                         SPAWN_PUBLISH_TO=str(report), SPAWN_LINGER='4', KIT_WORKER_GRACE='0.2')
                     self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                     self.assertEqual((self.state / 'finished').exists(), not ends, result.stdout + result.stderr)
+                    # Codex r2 (fix56): a publication within ten seconds is no failed start; the
+                    # tab closes instead of waiting for Enter (this stub's closed stdin hid it).
+                    self.assertEqual('press Enter to close' in result.stdout + result.stderr, bool(tab) and not ends,
+                                     result.stdout + result.stderr)
                     if tab:
                         self.assertTrue(json.loads((self.state / 'wt.json').read_text())[-1].endswith('\nexit 0\n'))
         # The result path is recorded: close_worker.sh --finished reads it after a merge.
@@ -957,7 +961,7 @@ exit 0
         # The tab measures claude's own run, under its supervisor, and waits for Enter after a
         # quick end of any status.
         tab = json.loads((self.state / 'wt.json').read_text())[-1]
-        self.assertRegex(tab, r"t=\$\(date \+%s\); KIT_WORKER_STARTED='[0-9.]+' \S+ '[^']*/codex_worker\.py' ")
+        self.assertRegex(tab, r"t=\$\(date \+%s\); KIT_WORKER_EXIT='[^']*\.exit' KIT_WORKER_STARTED='[0-9.]+' \S+ '[^']*/codex_worker\.py' ")
         self.assertIn("-c 'exec env -u CLAUDE_CODE_CHILD_SESSION ", tab)
         self.assertIn('press Enter to close', tab)
 

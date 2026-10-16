@@ -90,6 +90,19 @@ class CodexWorkerTests(unittest.TestCase):
             self.assertTrue(unlocked.exists(), 'the worker was ended while a git operation held its index.lock')
             self.assertLess(time.monotonic() - started, 15)
 
+    def test_the_locks_of_a_unicode_checkout_are_found_without_utf8_mode(self):
+        # Codex r2 (fix56): git prints UTF-8 paths; a Windows locale without UTF-8 mode decoded
+        # them as cp1252, the lock was never seen, and the worker ended while a commit ran.
+        with tempfile.TemporaryDirectory() as tmp:
+            checkout = Path(tmp) / 'café'
+            subprocess.run(['git', 'init', '-q', str(checkout)], check=True)
+            code = ('import importlib.util, sys; s = importlib.util.spec_from_file_location("w", sys.argv[1]); '
+                    'w = importlib.util.module_from_spec(s); s.loader.exec_module(w); '
+                    'sys.exit(0 if [p.parent.is_dir() for p in w.locks()] == [True, True] else 1)')
+            done = subprocess.run([sys.executable, '-X', 'utf8=0', '-c', code, str(SCRIPT)], cwd=checkout,
+                                  capture_output=True, text=True, timeout=15)
+            self.assertEqual(done.returncode, 0, done.stderr)
+
     def test_question_stops_the_process_and_preserves_the_question(self):
         with tempfile.TemporaryDirectory() as tmp:
             question = Path(tmp) / 'QUESTION-w.md'
