@@ -23,13 +23,13 @@ def make_project(path):
     """A project the gate passes: every marker filled, the build is $GATE_TEST_BUILD."""
     (path / 'scripts').mkdir(parents=True)
     (path / 'docs').mkdir()
-    text = (ROOT / 'core/scripts/check.sh').read_text()
+    text = (ROOT / 'core/scripts/check.sh').read_text(encoding='utf-8')
     text = text.replace('{{TOOLCHAIN_PATH_SETUP}}', '').replace('{{BUILD_TEST_COMMAND}}',
                                                                 'sh $GATE_TEST_BUILD')
-    (path / 'scripts/check.sh').write_text(re.sub(r'\{\{[A-Z0-9_]+\}\}', 'fixture', text))
-    (path / 'scripts/boundary_checks.sh').write_text('# The fixture has no boundaries.\n')
-    (path / 'docs/STATE.md').write_text('# STATE\n\n## Active work\n')
-    (path / 'docs/PROJECT.md').write_text('# PROJECT\n\n## Contents\n')
+    (path / 'scripts/check.sh').write_text(re.sub(r'\{\{[A-Z0-9_]+\}\}', 'fixture', text), encoding='utf-8')
+    (path / 'scripts/boundary_checks.sh').write_text('# The fixture has no boundaries.\n', encoding='utf-8')
+    (path / 'docs/STATE.md').write_text('# STATE\n\n## Active work\n', encoding='utf-8')
+    (path / 'docs/PROJECT.md').write_text('# PROJECT\n\n## Contents\n', encoding='utf-8')
     subprocess.run(['git', 'init', '-q', str(path)], check=True)
 
 

@@ -21,11 +21,25 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   context size and band, and `watch_workers` shows them.
   Live pane context takes precedence over an older snapshot; notices fire once per band and
   honour `--context-warn`. **ACTION:** sync the overlay and re-spawn existing workers.
-- **Review shard cancellation and mandatory shell diagnostics** (`core/scripts/test_claude_bridge.py`,
-  `core/scripts/check.sh`, `tests/test_kit_runner.py`, `tests/test_selftest_status.py`,
-  `scripts/check_kit.py`). A parent interrupt or exception stops both shard process trees before
-  propagating. ShellCheck receives empty `SHELLCHECK_OPTS`, so ambient severity options cannot
-  suppress mandatory SC2028/SC2086 diagnostics. **ACTION:** none.
+- **Batch 10: kit checks, plugin release and review self-tests** (`scripts/check_kit.py`,
+  `core/scripts/check.sh`, `core/scripts/test_claude_bridge.py`, `scripts/clean_worktrees.sh`,
+  `scripts/close_worker.sh`, `tests/test_kit_runner.py`, `tests/test_selftest_status.py`,
+  `plugins/myagentkit/`). The self-test's scratch folder no longer follows an inherited
+  `work` variable. The kit check names a missing Turkish locale, reads `locale -a` as UTF-8,
+  repeats the early checks' NOT RUN lines under the summary, and no longer takes a `+++`
+  line inside a hunk for a file header. The plugin's version is now the kit's (0.11.0),
+  and the kit check compares it with this file and runs `claude plugin validate --strict`.
+  **ACTION:** after the push, run `claude plugin update` in each dogfood project (leeway,
+  labricore-web) and verify the new version arrived; until now plugin.json said 0.1.0, so
+  an install from GitHub may never have updated. The gate runs ShellCheck (SC2028, SC2086)
+  where it is installed. **ACTION:** a project with ShellCheck installed may go red on its
+  own scripts; fix or disable each with a reason. clean_worktrees and close_worker no longer
+  keep every worktree under core.autocrlf. The review self-test divides bridge and preflight
+  cases between two isolated parallel processes and rejects incomplete or duplicate coverage.
+  A parent interrupt or exception stops both shard process trees before propagating.
+  ShellCheck receives empty `SHELLCHECK_OPTS`, so ambient severity options cannot suppress
+  mandatory SC2028/SC2086 diagnostics. The nested acceptance run still exceeds 1200 s on the
+  kit host; changing the bound is the owner's decision (close-out decisions.md item 29).
 - **Reviewer manual-check verdict instructions** (`core/scripts/claude_bridge.py`,
   `core/scripts/codex_bridge.py`, `core/scripts/test_claude_bridge.py`, plugin runtime).
   Both reviewer prompts classify NOT RUN and "could not verify" lines as manual checks
@@ -1884,6 +1898,7 @@ from, and `5c80c36` is the kit's v0.8 commit.
   README documents the placeholders and the pitfalls. **ACTION:** overlays are not synced;
   copy both files from `overlays/claude-code/files/` by hand, fill the two placeholders, and
   restart any running session before spawning the worker.
+  (Superseded in v0.11: overlay files already in a project are now synced; see docs/UPDATING.md.)
 - `docs/worker-cost-setups.md`: the six measured setups with their figures, a "which setup,
   when" table for projects that cannot use the first choice (the one-hour cache ignored, no
   tmux, CI, a different host), and the alternatives the research pass rejected with their
