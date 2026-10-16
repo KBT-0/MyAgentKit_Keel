@@ -3196,9 +3196,31 @@ class BridgeTests(unittest.TestCase):
         code, result = self.run_bridge(env_extra={"MYAGENTKIT_DELEGATION_DEPTH": "1"})
         self.assertEqual(code, 2)
         self.assertIn("nested", result["error"])
-        code, result = self.run_bridge(extra=["--model", "opus"])
-        self.assertEqual(code, 2)
-        self.assertIn("explicit", result["error"])
+        # KARARLAR D07 inv3#103: every moving alias of the Claude CLI's --model is refused.
+        for alias in ("opus", "sonnet", "haiku", "opusplan", "default", "best"):
+            with self.subTest(alias=alias):
+                code, result = self.run_bridge(extra=["--model", alias])
+                self.assertEqual(code, 2)
+                self.assertIn("explicit", result["error"])
+        import review_dispatch
+        self.assertFalse(review_dispatch.pin_valid("claude", "sonnet"))
+        self.assertTrue(review_dispatch.pin_valid("claude", "claude-sonnet-5"))
+
+    def test_an_empty_diff_is_empty_output_and_a_binary_or_mode_change_is_not(self):
+        # KARARLAR D04 inv2#85: "empty" means the diff text is empty; a change git shows only as
+        # a binary patch or a mode line still reaches the reviewer.
+        (self.repo / "file.py").write_text("original\n")
+        self.assertEqual(bridge.snapshot(self.repo, "uncommitted", None)[2].strip(), "")
+        (self.repo / "data.bin").write_bytes(b"\x00\x01binary\x00")
+        self.git("add", "data.bin")
+        self.git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+                 "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", "commit", "-qm", "binary")
+        (self.repo / "data.bin").write_bytes(b"\x00\x02binary changed\x00")
+        self.assertIn("data.bin", bridge.snapshot(self.repo, "uncommitted", None)[2])
+        self.git("checkout", "--", "data.bin")
+        self.git("update-index", "--chmod=+x", "file.py")
+        diff = bridge.snapshot(self.repo, "uncommitted", None)[2]
+        self.assertIn("new mode 100755", diff)
 
     def test_proposal_is_returned_but_never_applied(self):
         task = self.root / "handoff.md"
