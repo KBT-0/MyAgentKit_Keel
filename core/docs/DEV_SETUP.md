@@ -14,10 +14,16 @@ git config core.hooksPath .githooks
 `.githooks/pre-merge-commit` runs it for the merge commit a clean `git merge` creates, where
 git does not run pre-commit. `.githooks/commit-msg` rejects an AI co-author trailer.
 `core.hooksPath` is local configuration, not repository content, so **a clone without this
-line has NO gate** — the commit succeeds and CI catches the problem later, if at all.
-Git older than 2.24 has no `pre-merge-commit` hook, so a clean merge there is ungated.
+line has NO gate** — the commit succeeds and CI catches the problem later, if at all
+(hooks do not travel with a clone; agents have been seen pointing `core.hooksPath` at
+/dev/null: coder commit dd34e3d, Cursor forum).
+Git older than 2.24 has no `pre-merge-commit` hook, so a clean merge there is ungated
+(Git 2.24 release notes; git-scm.com/docs/githooks).
 A sparse checkout needs Git 2.42 or later for the kit's refusal of a deleted skip-worktree file
-(#53): `git sparse-checkout check-rules` is missing before it, and the review is refused.
+(#53; the 2.42 floor is the kit's own record). Git added `sparse-checkout check-rules` in
+2.41, as its [release notes](https://raw.githubusercontent.com/git/git/v2.41.0/Documentation/RelNotes/2.41.0.txt)
+and [command documentation](https://raw.githubusercontent.com/git/git/v2.41.0/Documentation/git-sparse-checkout.txt)
+show (checked 2026-10-16). If that command is unavailable, the review is refused.
 A hook of the project's own (husky, lefthook, a script of yours) lives in `.githooks` too,
 project-owned and executable: for a name the kit ships (`pre-commit`, `commit-msg`,
 `pre-merge-commit`, `post-merge`) as `.githooks/<name>.project`, which the kit's hook runs
@@ -26,7 +32,8 @@ and cannot veto it); for any other name (`pre-push`, `prepare-commit-msg`, ...) 
 `.githooks/<name>` itself, which git runs directly. A hook that finds its checks by its
 own path (`$0`, its folder) stays where it is, and the `.project` file is one line:
 `exec /its/old/path "$@"`. No other `core.hooksPath` is accepted: `bootstrap.sh` stops on
-one and names this migration.
+one and names this migration. Others refuse too: lefthook will not overwrite a hooks path
+that points elsewhere without `-f`.
 
 Verify it is live:
 
@@ -53,53 +60,7 @@ clone's autocrlf says. Keep those lines. Recommended: `* text=auto` as the first
 every other text file is stored with LF too and a diff never churns on line endings alone (a
 review refuses a line-ending-only diff unless `REVIEW_ALLOW_EOL_ONLY=1`); in a repository that
 already has CRLF files, run `git add --renormalize .` once after adding it and commit that alone
-([gitattributes](https://git-scm.com/docs/gitattributes)). A clone made before they were committed keeps its
-CRLF copies, because a pull does not check out again a file it did not change, until they
-are rewritten once, with no uncommitted change to them: each CRLF becomes LF in a regular
-file (a file that is, or lies below, a symlink or a junction is left alone, with a line
-saying so; a lone CR is kept; each file is replaced whole, with its mode),
-and each file is staged again so that `git status` does not list it as modified for its new
-size. A rewrite that fails stops it before anything is staged, and so does a `git ls-files`
-that fails (a corrupt index); a temporary copy a SIGKILL left (`.crlf-*`) stops the next run.
-
-```sh
-( left=$(git ls-files --others -- ':(glob)**/.crlf-*')
-  [ -z "$left" ] || { echo "STOP: a killed run left $left; delete it, then run this again" >&2; exit 1; }
-  list=$(mktemp) || exit 1
-  trap 'rm -f "$list"' EXIT; trap 'exit 129' HUP; trap 'exit 130' INT; trap 'exit 143' TERM
-  set -- '*.sh' .githooks/pre-commit .githooks/pre-merge-commit .githooks/commit-msg .githooks/post-merge
-  git ls-files -z -- "$@" > "$list" || { echo "STOP: git ls-files failed (above); nothing was changed" >&2; exit 1; }
-  python3 -I -c 'if 1:
-      import os, signal, stat, sys, tempfile
-      signal.signal(signal.SIGTERM, lambda *a: sys.exit(143))
-      def plain(name):
-          # Every folder on the way and the file itself: no symlink, no junction (a reparse
-          # point), or the rewrite wrote into what the link points at, outside the project.
-          parts = name.split(b"/")
-          for i in range(1, len(parts) + 1):
-              info = os.lstat(b"/".join(parts[:i]))
-              if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400:
-                  return False
-          return stat.S_ISREG(info.st_mode)
-      for name in sys.stdin.buffer.read().split(b"\0"):
-          if name and not plain(name):
-              sys.stderr.write("left alone, a link or not a regular file on its way: %r\n" % name)
-          elif name:
-              with open(name, "rb") as script:
-                  data = script.read()
-              if b"\r\n" in data:
-                  handle, new = tempfile.mkstemp(prefix=b".crlf-", dir=os.path.dirname(name) or b".")
-                  try:
-                      with os.fdopen(handle, "wb") as copy:
-                          copy.write(data.replace(b"\r\n", b"\n"))
-                      os.chmod(new, stat.S_IMODE(os.lstat(name).st_mode))
-                      os.replace(new, name)
-                  finally:
-                      if os.path.lexists(new):
-                          os.unlink(new)' < "$list" ||
-    { echo "STOP: a script could not be rewritten (above); nothing was staged" >&2; exit 1; }
-  if [ -s "$list" ]; then xargs -0 git add --renormalize -- < "$list"; fi )
-```
+([gitattributes](https://git-scm.com/docs/gitattributes)). A clone made before they were committed keeps its CRLF copies, because a pull does not check out again a file it did not change. Repair it once, with no uncommitted change to the scripts or hooks: `sh scripts/fix_crlf.sh` (kit-owned; its header says what it rewrites and what it leaves alone). It turns each CRLF script and hook into LF and runs `git add --renormalize` on them; a file added after the attributes, the script itself included, already checks out with LF.
 
 `./scripts/doctor.sh` names any script still checked out with CRLF. The kit's own clone is no
 exception: upgrade from a fresh, full clone of the kit, never an older clone pulled forward,
@@ -278,7 +239,8 @@ commands):
 
 The repository is `openai/codex-plugin-cc`, but its marketplace declares the name
 `openai-codex`; `/plugin install` uses that declared name after `@`, not the repository
-name. The [official marketplace manifest](https://github.com/openai/codex-plugin-cc/blob/main/.claude-plugin/marketplace.json)
+name (the marketplace name is the `name` in its `marketplace.json`:
+code.claude.com/docs/en/plugin-marketplaces). The [official marketplace manifest](https://github.com/openai/codex-plugin-cc/blob/main/.claude-plugin/marketplace.json)
 was checked on 2026-09-06. A successful marketplace-add message names the registered
 marketplace; do not retry registration under an inferred repository name.
 
@@ -288,11 +250,14 @@ restart are yours.
 Two cautions if you install it:
 
 - **Check which of its commands a MODEL can invoke.** If any are model-invocable, a session
-  can spend the other tool's budget without you deciding to. Write the project rule down:
-  no session calls the second tool unless you asked for it in that session.
+  can spend the other tool's budget without you deciding to. Do not rely on a written rule
+  alone: add a deny rule for its model-invocable commands to the project's permissions
+  (`Skill(<name> *)`), or for the whole Skill tool, so the harness blocks the call
+  (code.claude.com/docs/en/skills).
 - **Leave any automatic review gate OFF.** The tempting setting makes the second model
-  review every turn and block until fixes are applied. Unattended agent-to-agent loops burn
-  a budget fast. All review here is manually triggered — record that decision so nobody
+  review every turn and block until fixes are applied. The plugin's README warns that it
+  "can create a long-running Claude/Codex loop and may drain usage limits quickly" and to
+  enable it "only when you plan to actively monitor the session". All review here is manually triggered — record that decision so nobody
   turns it on later as a convenience.
 
 Tool names, install commands and flags all rot. `setup/RESEARCH_PROTOCOL.md` is what keeps
@@ -314,6 +279,7 @@ shell's rc file, so a hook never sees it), an npm cache owned by another user, a
 shadowed by an alias or function in the interactive shell. To see that alias it starts your
 interactive shell once (`$SHELL -ic`), so your rc files run, bounded to 5 s and skipped with a
 NOTE where `timeout` is absent. It is not part of the gate and CI does not run it. When switching machines, this is the first command.
+(The doctor pattern: `claude doctor` and `codex doctor`, code.claude.com/docs/en/cli-reference.)
 
 ## 5. Prove the gate actually works
 

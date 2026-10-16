@@ -7,7 +7,16 @@ retrofit.
 ## Rule 1 — money is an integer type, never a float
 
 Represent money as a value type wrapping an INTEGER count of the smallest unit — cents,
-minor units, whatever the domain's atom is. Forbid floating-point arithmetic on it.
+minor units, whatever the domain's atom is. Forbid floating-point arithmetic on it. Payment
+systems do the same: Stripe takes every amount in the currency's minor unit
+(docs.stripe.com/currencies), TigerBeetle stores amounts as unsigned 128-bit integers
+(docs.tigerbeetle.com/coding/data-modeling), and Fowler's Money pattern rounds to the
+smallest unit in one place (martinfowler.com/eaaCatalog/money.html).
+
+The number of decimal places belongs to the currency, not to the code: never hard-code a
+factor of 100 (a yen has none). Pick the integer width for the largest balance the game can
+reach and use checked arithmetic; an overflow must throw, not wrap (an inference: no source
+measured it for game economies).
 
 **Why.** Binary floating point cannot represent most decimal fractions. Every operation
 rounds a little, the errors accumulate in different directions on different code paths, and
@@ -41,10 +50,11 @@ but the cache must be verifiable against the ledger, and when they disagree the 
 Every transaction writes ALL of its rows inside ONE database transaction. Partial movement
 must be impossible, including across a hand-off between services.
 
-**Why.** Duplication is the top risk in any persistent economy. With a mutable balance a
-duplicate is invisible AND unattributable: the total inflates, and there is nothing to
-inspect — no record of what happened, only the wrong number that resulted. With a ledger,
-the same bug is auditable, traceable and reversible.
+**Why.** Duplication bugs are among the best-documented ways persistent game economies have
+broken (Neverwinter, New World, Elder Scrolls Online, EverQuest): with a mutable balance a
+duplicate leaves no trace; with a ledger it can be found and reversed. Ledger engines work this way: transfers are immutable
+once created and a mistake is corrected by more transfers (TigerBeetle, "Data modeling" and
+"Correcting transfers").
 
 ### Three details that turn out to matter
 
@@ -56,10 +66,14 @@ the same bug is auditable, traceable and reversible.
   mints, a `SINK_*` account burns. Then the total supply is
   `SUM(SOURCE_*) - SUM(SINK_*)` and it must equal the sum of all balances — an invariant a
   test can assert every night. Without this, "money is only created in allowed places" is a
-  sentence in a document rather than a query.
+  sentence in a document rather than a query. Faucets and sinks are the game-design names
+  for these (Lost Garden, "Value chains"); `SOURCE_*`/`SINK_*` is this kit's naming for the
+  system accounts of double-entry bookkeeping, the owner's choice: the invariant is the same
+  as "all balances, system accounts included, sum to zero".
 - **Only one component owns the ledger and its transaction boundary.** Everything else
   computes amounts and produces movement requests. A module that holds an authoritative
-  balance is a second source of truth.
+  balance is a second source of truth (TigerBeetle keeps balances and transfers in the one
+  ledger component, everything else is metadata: "System architecture").
 
 ## The long-run test
 
@@ -70,4 +84,8 @@ no value going negative or unbounded or NaN, no single strategy permanently domi
 slower than a unit test, so run it nightly or on demand, not in the commit gate.
 
 A non-deterministic simulation cannot detect a regression, only produce anecdotes. The seed
-is the whole point.
+is the whole point. On failure print the seed and the commit; replay needs both. Inject the
+clock and the random source, or the replay drifts. (Seeded simulation of real code finds
+logic bugs: TigerBeetle, "Safety"; a simulated economy can show inflation without players:
+Stephens and Exton, ICAART 2021. The bounds on supply and "no dominant strategy" are each
+project's own decision.)

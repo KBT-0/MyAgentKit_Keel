@@ -23,20 +23,30 @@ Check whether you have web access — a real fetch or search tool, not a memory 
 **If you do not: STOP this phase and say so plainly.** Write "no web access; research pass
 skipped" and move on. Do NOT improvise from training data. You cannot tell how stale your
 knowledge is, and a confident summary of an ecosystem that has moved on is worse than an
-honest gap: the owner will make decisions on it, believing it was checked.
+honest gap: the owner will make decisions on it, believing it was checked. (Models lose
+accuracy on API changes made after their cutoff: RustEvo^2, arXiv 2503.16922; the vendor's
+"Minimizing hallucinations in agentic coding", platform.claude.com prompting best practices.)
 
-## The baseline: what date are you researching from?
+## The baseline: what date and which versions are you researching from?
 
 Open `RESEARCH_LOG.md` if the project has one and find the last dated pass. **Your question
-is "what changed since that date?"** — not "what exists?". Without a baseline you will
-rediscover the same things every time, spend the budget re-reading them, and bury the one
-genuinely new item in the noise.
+is "what changed since that date, and since the tool versions recorded in it?"** — not "what
+exists?". Write each pass's date AND the versions of the CLI agents in use (`claude
+--version`, `codex --version`) into the log entry, and read each vendor changelog from that
+version forward: a tool can ship several versions between two passes, so a version is a
+sharper baseline than a date. Without a baseline you will rediscover the same things every
+time, spend the budget re-reading them, and bury the one genuinely new item in the noise.
 
-If there is no log, say so, and set today as the baseline for the next pass.
+If there is no log, say so, and set today's date and today's versions as the baseline for the
+next pass.
 
 ## Scope of the search
 
-Five areas. Nothing else — this is a bounded pass, not a survey of the industry.
+Five areas. Nothing else — this is a bounded pass, not a survey of the industry (an unscoped
+"investigate" fills the context: code.claude.com/docs/en/best-practices, "infinite
+exploration"; Anthropic, "How we built our multi-agent research system": clear task
+boundaries, effort scaled to the question). The five are the kit's choice; extend the list
+when a pass keeps missing something.
 
 1. **Capability changes in the CLI agents actually in use here.** New commands, hooks,
    memory features, context or caching controls, effort settings, sandboxing. Read the
@@ -53,7 +63,8 @@ Five areas. Nothing else — this is a bounded pass, not a survey of the industr
    `docs/WORKFLOW.md`'s "evaluated and rejected" section and ask, item by item, whether the
    reason still holds. A tool rejected for being non-deterministic and unreviewable must be
    reconsidered if it becomes deterministic and git-backed. **A rejection with a dead reason
-   is not a decision any more; it is a habit.**
+   is not a decision any more; it is a habit.** (A decision record keeps its context so that
+   a changed context opens a new record that supersedes it: Nygard's ADR form.)
 
 ## How to report a finding
 
@@ -91,7 +102,7 @@ Reject in particular:
 
 ## Recording the outcome
 
-Append to `RESEARCH_LOG.md`, with today's date:
+Append to `RESEARCH_LOG.md`, with today's date and the CLI versions you read from:
 
 - Every ACCEPTED finding, with what it changed and why it was worth the cost.
 - **Every REJECTED finding, with the reason and what would have to change to reopen it.**
@@ -129,7 +140,9 @@ Not worth sending: anything true only of this project's domain.
 
 If the owner says no, drop it — no follow-up, no rephrasing later in the session. A second
 ask after a no is how a useful offer turns into nagging, and nagging is how the whole
-mechanism gets switched off.
+mechanism gets switched off. `/myagentkit:kit-feedback` stays available whenever the owner
+asks (as a declined permission is not asked again but stays reachable from settings: Android's
+runtime-permission guidance, an analogy, not a source on agents).
 
 ## Cadence
 

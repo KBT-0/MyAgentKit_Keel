@@ -66,7 +66,7 @@ def main(argv=None, result_sink=None, claims=None):
         "line: VERDICT: Accept / VERDICT: Accept with Manual Checks / VERDICT: Reject "
         "(choose one). Put the findings under a '## Findings' heading, one '- ' list item per "
         "finding that starts with its severity, and the explicit manual checks under a "
-        "'## Manual checks' heading, as full sentences. With no finding, write the one item "
+        "'## Manual checks' heading at the end of the response, as full sentences. With no finding, write the one item "
         "'- None.' under '## Findings'.\n"
         + carried
         + review_context()

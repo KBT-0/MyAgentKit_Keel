@@ -21,6 +21,32 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-10-16 — v0.11 batch 11: setup interview, feedback permissions and CRLF repair
+
+2026-10-16 batch 11: Git 2.41's release notes list the sparse-checkout rule debugging aid
+(check-rules); 2.42's do not, so DEV_SETUP's 2.42 floor is labelled the kit's own record. The
+permission-layer refusal of a deploy-shaped build command is RESEARCH_LOG's own incident
+(Gates that did not gate), so INTERVIEW keeps that reason. Sources for the rest: the stage-2
+evidence files B14 and D07 (read 2026-10-15), and KARARLAR B10 inv3#3, B12 inv3#186,
+D08 inv3#123, D09 inv3#176, D10 inv3#97 for patterns and skills.
+
+The two fix rounds caught fix_crlf.sh rewriting binary hooks and kit-feedback allowing
+`git diff *` (Codex r1), then DEV_SETUP still embedding the repair program and `Bash(git:*)`
+in two commands (Opus r2); no round 3, decisions.md 24.
+
+### 2026-10-16 web source check: 60 claims, 50 hold, 8 fixed, 2 unverifiable (source-check.md)
+
+One web-enabled agent re-fetched every source the batch reviews left as NOT RUN
+(`.myagentkit/v011-close/source-check.md`, fetched 2026-10-16). Rows 1.3, 5.2, 5.3, 8.3, E.4/E.5,
+8.5, G.1 and G.10 failed and were corrected (srcfix, cf1aeee): the one-hour cache TTL does not
+apply on usage credits; the cache lifetime, not a fixed hour, bounds session reuse; there is no
+`credits_required` error; the session/weekly/Opus/Sonnet limit messages are exhausted quotas, not
+transient rate limits; `Prompt cache (main)` is the only main-conversation-only cost line;
+`check-rules` arrived in Git 2.41 (the 2.42 floor is the kit's own record); the 20/5/30 request
+cuts are the kit's choice, not LangWatch's; UserPromptSubmit exit 2 blocks the prompt rather
+than erasing it (the batch 1 entry below says "erases"; this line corrects it). Failure prevented:
+retrying an exhausted weekly quota, or presenting unsupported vendor behaviour as documented fact.
+
 ### 2026-10-15 — v0.11 close-out batch 9b: core templates re-sourced
 
 The templates now carry a source beside each rule (KARARLAR rows in batch9b-report.md). Not

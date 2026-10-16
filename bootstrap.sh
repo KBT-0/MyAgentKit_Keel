@@ -453,7 +453,9 @@ fi
 # the version recorded with them disconnected. A rerun of the same version rewrites the stamp
 # all the same: one path, and its commit is the same `mv`.
 # The stamp is the LAST write, so it records only an install whose every write succeeded:
-# sync-kit.sh trusts it, and a stamp over a short install answers "already current".
+# sync-kit.sh trusts it, and a stamp over a short install answers "already current". (The
+# usual completion-marker rule: Rails records a migration's version only after it ran; Mozilla
+# bug 238741, files left by a cancelled install read as installed.)
 stage "$target/docs/kit/.kit-version" <<EOF
 $version
 EOF
@@ -466,7 +468,11 @@ if git -C "$target" rev-parse --git-dir >/dev/null 2>&1; then
   # that one. A hooks path of the project's own (husky, lefthook, a folder of its own) is
   # never replaced in silence: the project's hooks would stop running. The install stops
   # and names the one migration: each of its hooks moves beside the kit's as
-  # .githooks/<name>.project, which the kit's hook runs first.
+  # .githooks/<name>.project, which the kit's hook runs first. The stop comes before the
+  # index, the hooks path or the stamp is touched. Others refuse too: lefthook install will not overwrite a hooksPath that
+  # points elsewhere without -f; Git's own t1350-config-hooks-path shows a changed path can
+  # silence every hook; clig.dev: never change what is not yours without asking. The
+  # .project chain is the kit's own convention.
   effective=$(git -C "$target" config --get core.hooksPath) || effective=""
   if [ -n "$effective" ] && [ "$effective" != ".githooks" ]; then
     rm -f "$part"; part=""

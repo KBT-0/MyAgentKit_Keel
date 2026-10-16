@@ -201,7 +201,11 @@ def decode(provider: str, stdout: str) -> list[dict]:
 
 # Error wording of the two quota kinds (KARARLAR D04 inv2#126), checked in this order: Codex says
 # "try again in 3 days" under a used-up plan, which is no passing limit. USAGE.md lists the map.
-EXHAUSTED = ("quota", "usage limit", "session limit", "spend", "billing", "credit", "on_hold", "on hold")
+# Claude Code's documented session, weekly and model-family plan limits are exhausted
+# quotas, including when reported with HTTP 429 (https://code.claude.com/docs/en/errors,
+# checked 2026-10-16).
+EXHAUSTED = ("quota", "usage limit", "session limit", "weekly limit", "opus limit", "sonnet limit",
+             "spend", "billing", "credit", "on_hold", "on hold")
 RATE_LIMITED = ("rate limit", "rate_limit", "429", "529", "overloaded", "at capacity", "too many requests")
 
 

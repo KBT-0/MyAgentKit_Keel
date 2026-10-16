@@ -33,9 +33,9 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'REVIEW_SHADOW', 'MYAGENTKIT_TASK_I
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 220, 'test_agent_usage': 35, 'test_codex_quota': 5}
+SUITE_MINIMUMS = {'test_claude_bridge': 220, 'test_agent_usage': 36, 'test_codex_quota': 5}
 # These are executed cases, excluding only the explicitly declared POSIX exclusions.
-WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 194, 'test_agent_usage': 31, 'test_codex_quota': 4}
+WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 194, 'test_agent_usage': 32, 'test_codex_quota': 4}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -3042,6 +3042,19 @@ class BridgeTests(unittest.TestCase):
                 # fix4 review: a check written as a heading is still a check.
                 ('## Findings\n\n- None.\n\n## Manual checks\n\n### Verify deployment before release.\n\n'
                  'VERDICT: Accept\n', False),
+                # rvfix: the paid review put a NOT RUN paragraph after a clean placeholder.
+                ('VERDICT: Accept\n\n## Findings\n\n- None.\n\n## Manual checks\n\nNone.\n\n'
+                 '`tests/test_python_fallback.py`: both tests passed. The blocking assertion proves '
+                 'the Python fallback reaches `plain_report`; the copied grammar matches the installed project layout.\n\n'
+                 'NOT RUN: Git comparison; this archive has no Git metadata. '
+                 'Reviewed the supplied diff against checkout files.\n', False),
+                ('VERDICT: Accept\n\n## Findings\n\n- None.\n\n## Manual checks\n\nNone.\n\n'
+                 'I could not verify the Git comparison because this archive has no Git metadata.\n', False),
+                ('VERDICT: Accept with Manual Checks\n\n## Findings\n\n- None.\n\n## Manual checks\n\n'
+                 'NOT RUN: Git comparison; this archive has no Git metadata.\n', True),
+                ('VERDICT: Accept with Manual Checks\n\n## Findings\n\n- None.\n\n## Manual checks\n\n'
+                 'I could not verify the Git comparison because this archive has no Git metadata.\n', True),
+                ('VERDICT: Accept\n\n## Findings\n\n- None.\n\n## Manual checks\n\nNone.\n', True),
                 ('## Findings\n\n- None.\n\n## Manual checks\n\n- None.\n\nVERDICT: Accept\n', True)):
             with self.subTest(final=final):
                 result = self.run_wrapper('--reviewer', 'codex', REVIEW_CLI_BIN=str(fake),
@@ -4474,14 +4487,14 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         # Issue #53 (REPRODUCED): with sparse mode on, every absent skip-marked file was
         # tolerated, so a file inside the cone marked by hand and deleted was a deletion the
         # diff omitted. Only a path the sparse rules exclude may be absent, in cone mode and
-        # non-cone mode alike; without `check-rules` (Git before 2.42) the scope is refused.
+        # non-cone mode alike; without `check-rules` (Git before 2.41) the scope is refused.
         import claude_bridge
         from unittest.mock import patch
         (self.repo / 'src').mkdir(exist_ok=True)
         (self.repo / 'src/a.txt').write_text('a\n')
         (self.repo / 'docs/kept.md').write_text('kept\n')
         self.commit_fixture('A tree with two folders')
-        # The real-Git subtests need `check-rules` (Git 2.42); the usage line names it when present.
+        # The real-Git subtests need `check-rules` (Git 2.41); the usage line names it when present.
         usage = subprocess.run(['git', 'sparse-checkout', '-h'], capture_output=True, text=True)
         if 'check-rules' in usage.stdout + usage.stderr:
             for rules in (['docs'], ['--no-cone', '/*', '!/src/']):
@@ -4497,7 +4510,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                     self.git('checkout', '--', 'docs/kept.md')
         else:
             sys.stderr.write('\nNOT RUN: %s, the real-Git subtests (this Git has no `sparse-checkout '
-                             'check-rules`; it needs Git 2.42 or later)\n' % self.id())
+                             'check-rules`; it needs Git 2.41 or later)\n' % self.id())
             self.git('sparse-checkout', 'set', 'docs')
         real = claude_bridge.git
 
@@ -4506,7 +4519,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                 raise claude_bridge.BridgeError("git sparse-checkout failed: error: unknown subcommand: `check-rules'")
             return real(repo, *args, **kwargs)
         with patch.object(claude_bridge, 'git', old_git), \
-                self.assertRaisesRegex(claude_bridge.BridgeError, r'Git 2\.42 or later'):
+                self.assertRaisesRegex(claude_bridge.BridgeError, r'Git 2\.41 or later'):
             claude_bridge.snapshot(self.repo, 'uncommitted', None)
         self.git('sparse-checkout', 'disable')
 
@@ -6165,12 +6178,21 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
     def test_the_codex_prompt_names_the_clean_review_form_the_parser_accepts(self):
         # fix4 notes: make prompt and allowlist agree, so a clean paid review is not lost as
         # invalid_evidence for prose the parser does not read as a placeholder.
-        log = self.root / 'codex-prompt.txt'
-        result = self.run_wrapper('--uncommitted', '--reviewer', 'codex', REVIEW_CLI_BIN=str(self.build_fake_codex()),
-                                  REVIEW_CODEX_MODEL='fixture-codex-model', PROMPT_LOG=str(log))
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("With no finding, write the one item '- None.' under '## Findings'",
-                      log.read_text(encoding='utf-8'))
+        for reviewer in ('claude', 'codex'):
+            with self.subTest(reviewer=reviewer):
+                log = self.root / (reviewer + '-prompt.txt')
+                result = self.run_wrapper('--uncommitted', '--reviewer', reviewer,
+                                          CLAUDE_CLI_BIN=str(self.fixture),
+                                          REVIEW_CLI_BIN=str(self.build_fake_codex()),
+                                          REVIEW_CLAUDE_MODEL='claude-opus-5',
+                                          REVIEW_CODEX_MODEL='fixture-codex-model', PROMPT_LOG=str(log))
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                prompt = log.read_text(encoding='utf-8')
+                if reviewer == 'codex':
+                    self.assertIn("With no finding, write the one item '- None.' under '## Findings'", prompt)
+                self.assertIn('A NOT RUN or "could not verify" line is a manual check', prompt)
+                self.assertIn("put it under '## Manual checks' and use Accept with Manual Checks", prompt)
+                self.assertIn("For a plain Accept, write None. under '## Manual checks' and nothing after it.", prompt)
         self.assertTrue(bridge.accept_allows(['- None.']))
 
     def test_the_reviewer_runs_only_the_narrow_test_never_the_full_suite(self):

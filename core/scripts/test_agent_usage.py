@@ -421,16 +421,32 @@ class UsageTests(unittest.TestCase):
                     [{"type": "turn.failed", "error": {"message": message}}]), expected)
         claude = [({"api_error_status": 429}, "rate_limited"),
                   ({"api_error_status": 529, "result": "Overloaded"}, "rate_limited"),
-                  ({"api_error_status": 429, "result": "Session limit reached; resets 5pm"}, "quota_exhausted"),
-                  ({"result": "Claude AI usage limit reached|1760000000"}, "quota_exhausted"),
+                  ({"api_error_status": 429, "result": "You've hit your session limit · resets 3:45pm"},
+                   "quota_exhausted"),
+                  ({"result": "You've hit your weekly limit"}, "quota_exhausted"),
                   ({"result": "billing_error: your credit balance is too low"}, "quota_exhausted"),
-                  ({"result": "account_on_hold"}, "quota_exhausted"),
-                  ({"api_error_status": 429, "result": "credits_required: Fable 5.1 requires usage credits"},
-                   "quota_exhausted")]
+                  ({"result": "account_on_hold"}, "quota_exhausted")]
         for fields, expected in claude:
             with self.subTest(claude=fields):
                 value = dict({"type": "result", "subtype": "success", "is_error": True}, **fields)
                 self.assertEqual(agent_usage.failure("claude", failed, [value]), expected)
+
+    def test_documented_claude_plan_limits_are_quota_with_or_without_429(self):
+        # https://code.claude.com/docs/en/errors (checked 2026-10-16): these plan limits
+        # must not become retryable rate limits just because the transcript includes 429.
+        failed = {"exit_code": 1, "termination": None}
+        for message in ("You've hit your session limit · resets 3:45pm",
+                        "You've hit your weekly limit", "You've hit your Opus limit",
+                        "You've hit your Sonnet limit"):
+            for status in (None, 429):
+                with self.subTest(message=message, api_error_status=status):
+                    value = {"type": "result", "subtype": "error_during_execution",
+                             "is_error": True, "result": message}
+                    if status is not None:
+                        value['api_error_status'] = status
+                    transcript = json.dumps(value) + '\n'
+                    self.assertEqual(agent_usage.failure('claude', failed,
+                        agent_usage.decode('claude', transcript)), 'quota_exhausted')
 
     def test_a_tool_reported_retry_delay_is_read_from_the_error(self):
         # KARARLAR B01 (6): a capacity retry waits the delay the tool reports, when it reports one.

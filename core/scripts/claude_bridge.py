@@ -75,6 +75,9 @@ REVIEW_PROMPT = (
     "Verdict: Reject only on a Critical or High finding; Accept with Manual Checks when a "
     "Medium, a deferred finding or a first-priority doubt remains, each check a full sentence; Accept otherwise, Lows "
     "and Pre-existing items included (they go to the backlog, not to manual checks). "
+    "A NOT RUN or \"could not verify\" line is a manual check: put it under '## Manual checks' "
+    "and use Accept with Manual Checks. For a plain Accept, write None. under '## Manual checks' "
+    "and nothing after it. "
     "Never claim a run you did not make. An OPEN product decision is a question for the owner, "
     "not a finding.\n"
     # Owner decision 2026-10-16: reviewers that ran the 30-minute self-test took 40-60 minutes;
@@ -722,7 +725,7 @@ def snapshot(repo: Path, scope: str, reference: str | None) -> tuple[str, str, s
             included = git(repo, 'sparse-checkout', 'check-rules', '-z', stdin=b'\0'.join(absent) + b'\0')
         except BridgeError as error:
             raise BridgeError('review scope has skip-worktree files missing from a sparse checkout, and '
-                              '`git sparse-checkout check-rules` (Git 2.42 or later) could not tell whether '
+                              '`git sparse-checkout check-rules` (Git 2.41 or later) could not tell whether '
                               'the sparse rules exclude them; upgrade Git or use a complete checkout '
                               'before review (%s)' % error) from None
         included = sorted(set(included.split(b'\0')) - {b''})

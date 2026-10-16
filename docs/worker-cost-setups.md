@@ -87,9 +87,10 @@ three times, from 36k to 711k over 377 requests (RESEARCH_LOG, 2026-10-03).
 ## Read the measurements
 
 Run `python3 scripts/agent_cost.py --latest` alongside `/usage` at handoff, with completed
-task counts. `/usage`'s Session block covers only the main conversation; the analyzer also
-reads worker transcripts (KARARLAR D06 inv1#172/#287;
-[Claude Code costs](https://code.claude.com/docs/en/costs), stage-2 review 2026-10-15).
+task counts. `/usage`'s Session block totals the session and includes a separate subagent
+breakdown. Only its `Prompt cache (main)` line covers the main conversation alone;
+the analyzer also reads worker transcripts (KARARLAR D06 inv1#172/#287;
+[Claude Code costs](https://code.claude.com/docs/en/costs), checked 2026-10-16).
 In this kit checkout, the script lives at `core/scripts/agent_cost.py`.
 
 `cWrite>TTL` counts writes after a gap longer than the lifetime reported for that write:

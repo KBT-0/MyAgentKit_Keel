@@ -31,16 +31,25 @@ These override any habit you have about being efficient.
    the answer seems obvious to you.
 3. **Do not invent answers.** If the owner is unsure, explain the tradeoff in two sentences,
    say what you would pick and why, and let them decide.
-4. **Record the RATIONALE for every decision.** A rule without its reason gets deleted six
-   months later by someone who cannot see what it was protecting. When you write a rule into
-   a file, write the reason next to it.
+
+   Rules 1-3 are the kit's reading of "one question, one decision, your recommendation and
+   its reason" (the kit's `docs/research/communication-style.md`, finding 6 and proposal 10)
+   and of the vendor's "Let Claude interview you" (code.claude.com/docs/en/best-practices).
+4. **Record the RATIONALE for every decision: one sentence next to the rule, and the longer
+   reason in `docs/PROJECT.md` (DECIDED) or `RESEARCH_LOG.md`, linked from the rule.** A rule
+   without its reason gets deleted by someone who cannot see what it was protecting; a rule
+   file padded with long reasons gets ignored (Nygard, "Documenting Architecture Decisions";
+   code.claude.com/docs/en/best-practices, the over-specified CLAUDE.md).
 5. **Anything the owner did not explicitly approve is OPEN, not DECIDED.** Never record a
    decision they merely failed to object to.
-6. **Never claim you ran something you did not run.** If a command could not be executed,
-   say "not run". This rule is in the constitution you are installing; break it here and the
-   whole thing is theatre.
-7. **Ask, do not assume, about scale.** A solo hobby project and a five-person team need
-   different answers to the same questions, and the kit's defaults lean solo.
+6. **Never claim you ran something you did not run** (`AGENTS.md`, "Review gate and
+   validation honesty"). If a command could not be executed, say "not run"; break it here and
+   the whole thing is theatre.
+7. **Ask, do not assume, about scale: how many people work on it, and what a mistake costs.**
+   A solo hobby project and a five-person team need different answers to the same questions
+   (Boehm and Turner, "Balancing Agility and Discipline": size and criticality decide the
+   method). The kit's defaults lean solo: the owner's choice, in line with the finding that
+   needless requirements in a context file lower success and raise cost (arXiv 2602.11988).
 
 ---
 
@@ -50,9 +59,14 @@ If `docs/kit/BOOTSTRAP_NOTE.md` exists, read it FIRST. It is the owner's agenda 
 setup, written when they ran the installer: a tool they want added, a model they want to
 try, a problem they hit last time.
 
-Address every item in it explicitly during the interview. If you end up not doing something
-it asks for, say so out loud and say why. Silently ignoring it is the one failure mode this
-phase exists to prevent.
+Copy its items into `docs/STATE.md` as a numbered list, each line with a status: done (with
+the file or command that shows it), not done (with the reason), or open (waiting for the
+owner). Show that list to the owner before Phase 1 ends. Saying an item was handled is not
+handling it: point to the evidence. Once the owner has seen the list, delete the done lines
+(a living file keeps no closed item). Silently ignoring the note is the one failure mode this
+phase exists to prevent. Sources: code.claude.com/docs/en/best-practices ("show evidence
+rather than asserting success"); "The Compliance Gap" (arXiv 2605.01771: a model can say it
+will follow a process and not do it; one author, not peer-reviewed, so low confidence).
 
 If the file does not exist, move on without comment.
 
@@ -78,7 +92,8 @@ Be accurate about what this is. There is **no collection and no telemetry**: not
 gathered anywhere except this project's own `RESEARCH_LOG.md` and docs, nothing is
 transmitted without the owner reading the full body first, and the answer here changes only
 whether the agent OFFERS. Do not present it as a data or privacy setting — describing it as
-scarier than it is would be its own kind of dishonesty.
+scarier than it is would be its own kind of dishonesty. (Ask first, send nothing unasked: the
+opt-in that clig.dev, "Analytics", asks of any command-line tool.)
 
 Then fill `{{KIT_FEEDBACK_RULE}}` in `AGENTS.md` with exactly ONE of the two bullets below,
 whole and unedited.
@@ -109,8 +124,10 @@ recommend later is current rather than remembered.
 
 **If you have no web access, say so plainly and skip this phase.** Do not improvise "what's
 new" from training data — you cannot tell how stale it is, and invented ecosystem news is
-strictly worse than an honest gap. Note the skip in `RESEARCH_LOG.md` if that file is
-present.
+strictly worse than an honest gap (models lose accuracy on API changes after their cutoff:
+RustEvo^2, arXiv 2503.16922; the vendor's "Minimizing hallucinations in agentic coding",
+platform.claude.com prompting best practices). Note the skip in `RESEARCH_LOG.md` if that
+file is present.
 
 Present findings one at a time, each with its COST as well as its benefit. The default
 verdict is REJECT. The owner approves or rejects each one.
@@ -151,9 +168,11 @@ One topic per turn. Suggested order, because each answer informs the next:
 
    Record the answers where the tooling reads them: the `DEFAULT_REVIEWER`, `CODEX_MODEL`
    and `CLAUDE_MODEL` values at the top of `scripts/review.sh`. **The reviewer must be
-   pinned by name** — an unpinned reviewer archives whatever default its CLI had that day,
-   and the wrapper refuses to run rather than record something no later review can be
-   compared against. Say plainly that the roles can be swapped later by editing those three
+   pinned by its FULL model ID, not an alias such as `opus` or `sonnet`:** an alias moves
+   with the vendor's recommended version (code.claude.com/docs/en/model-config), so an
+   archived review could not be compared with a later one. An unpinned reviewer archives
+   whatever default its CLI had that day, and the wrapper refuses to run, an alias included,
+   rather than record something no later review can be compared against. Say plainly that the roles can be swapped later by editing those three
    values, and that swapping them does not change the evidence format; a high-tier change is
    still never reviewed by a weaker tier than its author's (`docs/WORKFLOW.md`, "Model routing").
 
@@ -173,7 +192,8 @@ One topic per turn. Suggested order, because each answer informs the next:
    - **Offer to install it.** You can run the installer; the owner does the login. Say what
      you are about to run before you run it, and do not install anything they did not agree
      to — a new dependency needs their approval, which is a STOP rule in the constitution
-     you are installing.
+     you are installing (clig.dev: ask before changing what is not yours, and say exactly
+     what you did).
    - Mention the OPTIONAL vendor plugin for their host agent (for Claude Code and Codex:
      `openai/codex-plugin-cc`). It is NOT needed by `scripts/review.sh`; it adds in-session
      delegation and review commands. Installing it takes two slash commands that a HUMAN
@@ -184,8 +204,9 @@ One topic per turn. Suggested order, because each answer informs the next:
      /plugin install codex@openai-codex
      ```
      The repository is `openai/codex-plugin-cc`, but its declared marketplace name is
-     `openai-codex`; installation uses the marketplace name after `@`. Do not derive it
-     from the repository name. `docs/DEV_SETUP.md` has the same pair and the cautions about
+     `openai-codex`; installation uses the marketplace name after `@`, which is the `name`
+     in its `marketplace.json` (code.claude.com/docs/en/plugin-marketplaces). Do not derive
+     it from the repository name. `docs/DEV_SETUP.md` has the same pair and the cautions about
      model-invocable commands and automatic review gates.
    - For a Codex host, offer the kit's Codex plugin and its Claude review/delegation skills
      (`docs/CODEX.md` in the kit). `--reviewer claude` selects the Claude adapter from any
@@ -193,13 +214,15 @@ One topic per turn. Suggested order, because each answer informs the next:
      THIRD CLI still needs a separately implemented and live-validated adapter, not merely a
      binary substitution — `--reviewer` deliberately accepts only the two names it has
      adapters for.
-   - In-session delegation is NOT symmetric between the two hosts. Read
-     `docs/delegation-is-not-symmetric.md` before promising it in either direction; the
-     script-based review gate works from both, which is the part the kit guarantees.
+   - Review delegation works from both hosts (`docs/delegation-is-not-symmetric.md`);
+     structured implementation PROPOSALS are shipped only for Codex-as-host calling Claude,
+     so do not promise a Claude-to-Codex proposal path.
 7. **What is the FIRST phase, and what is deliberately not in it?** Not the whole plan —
    the one question the project should answer first, and the things that are tempting but
    must wait. Order by risk: the assumption that would hurt most if it turned out wrong goes
-   first, even when it is not the foundation.
+   first, even when it is not the foundation (Boehm's risk-driven spiral model; the Lean
+   Startup's "leap-of-faith assumptions" tested first). One question per phase is the kit's
+   own choice.
 
 8. **Do your workers wait on anything longer than five minutes (a job, a lock, a person)?**
    A build, a bake, a test suite, a render, a data import, a lock another job holds, a
@@ -224,13 +247,21 @@ One topic per turn. Suggested order, because each answer informs the next:
    default, and in the kit's founding project that put one into most commits against the
    owner's wish; removing it later meant rewriting every commit and a force-push. The answer
    is a hard rule in `AGENTS.md` either way. No (the default): keep the "No AI attribution
-   in git" rule; `.githooks/commit-msg` enforces it. Yes: replace that rule with one saying
-   AI tools may be credited; the hook keys on the rule line, so without it the hook gives
-   way and `check.sh --self-test` reports its case as a `skip` naming the absent rule line
-   (`AGENTS.md has no 'No AI attribution in git' rule line`). If the Claude
-   Code overlay is installed, also delete the block from `<!-- BEGIN attribution rule` to
-   `<!-- END attribution rule -->` in `.claude/agents/worker.md`, and tell the owner you did:
-   left there, it told every worker the opposite of the owner's answer.
+   in git" rule; `.githooks/commit-msg` enforces it, and the Claude Code overlay's
+   `.claude/settings.json` ships `"attribution": {"commit": "", "pr": ""}` so the tool does
+   not add the trailer in the first place (code.claude.com/docs/en/settings-reference; the hook is the
+   backstop). Yes: replace that rule with one saying AI tools may be credited; the hook keys
+   on the rule line, so without it the hook gives way, an `Assisted-by:` trailer included,
+   and `check.sh --self-test` reports its case as a `skip` naming the absent rule line
+   (`AGENTS.md has no 'No AI attribution in git' rule line`). If the project takes outside
+   contributions, check its policy first: the Linux kernel and Fedora ask for an
+   `Assisted-by:` trailer, not a co-author line (docs.kernel.org/process/coding-assistants.html;
+   Fedora's AI-assisted contributions policy). If the Claude Code overlay is installed, also
+   remove the `attribution` block from `.claude/settings.json` and delete the block from
+   `<!-- BEGIN attribution rule` to `<!-- END attribution rule -->` in
+   `.claude/agents/worker.md`, and tell the owner you did: left there, the block told every
+   worker the opposite of the owner's answer, and the setting keeps dropping the credit the
+   owner allowed.
 
 10. **Which folders may a finished worktree lose?** Only if the Claude Code overlay is
     installed. `.githooks/post-merge` removes a merged worker worktree (never its branch) only
@@ -244,19 +275,21 @@ One topic per turn. Suggested order, because each answer informs the next:
     without it the hook does nothing. Ask too whether the quiet period suits them: a worktree
     in which anything changed in the last 60 minutes, build output included, is kept
     (`quiet-minutes=<n>` in the same file, at least 10). The reason to ask: in a project using
-    the kit, merged worktrees piled up to 34 GB before anyone removed them.
+    the kit, merged worktrees piled up to 34 GB before anyone removed them (the kit's
+    `RESEARCH_LOG.md`); Claude Code removes only the worktrees it made itself and never those
+    a lead adds (code.claude.com/docs/en/worktrees), and stale ones are a reported problem
+    (anthropics/claude-code issue 26725).
 
 11. **Should sessions and workers write code in ponytail mode? Default: yes.** Ponytail
     (`DietrichGebert/ponytail`, MIT) makes the agent climb a ladder before writing code: does
     it need to exist, is it already in the codebase, does the standard library or the
     platform do it, an installed dependency, one line, and only then the minimum code. It
-    keeps input validation, error handling and security in. Cost and gain, honestly: its
-    rules add about 1.3k tokens to every session start and every sub-agent start (cached, so
-    a tenth of that on each later request); its own agentic benchmark on a real repository
-    cut code by 60 to 94 percent on tasks with an over-build trap and was even on code that
-    was already minimal, and an independent multi-turn run found it can cost more tool calls
-    on large tasks that force completion. It saves most for workers that write code.
-    It comes from its author's own marketplace at the latest version. Yes: keep
+    keeps input validation, error handling and security in. Cost and gain, honestly: its own
+    benchmark (run by its author, one model, 39 tasks, 5 runs each, Opus 5.5) reports about
+    half the code and 26 percent lower cost than the same agent without it; nobody has checked
+    it independently (its README, github.com/DietrichGebert/ponytail). Its session-start cost
+    was not measured here. It comes from its author's own marketplace at the latest version
+    (the owner's choice: not pinned to a ref or sha). Yes: keep
     `extraKnownMarketplaces` (`ponytail`) and `enabledPlugins` (`ponytail@ponytail`) in
     `.claude/settings.json` (the Claude Code overlay ships them; where bootstrap kept the
     project's own file, add both entries to it and leave the rest as it is);
@@ -284,8 +317,9 @@ One topic per turn. Suggested order, because each answer informs the next:
     reports full of the agents' own labels ("D-1", "r2", "Accept-MC") and the most common
     Claude complaint of 2026 is this invented jargon. If the Claude Code overlay is
     installed, say that `.claude/hooks/plain_report.py` bounces a final message that still
-    carries such a label and that its `LABELS` list is where a project adds its own
-    shapes.
+    carries such a label: task ids come from the task grammar in `.githooks/commit-msg`
+    (where a project extends it), and the hook's `LABELS` list is where a project adds any
+    other shape.
 
 ## Phase 3 — PROJECT.md and PHASES.md
 
@@ -371,11 +405,16 @@ when they become current, never now.
 | `{{BOUNDARY_RULES}}` | The same boundaries stated as rules in the constitution |
 | `{{TESTED_AREA}}` | Which part of the tree may not receive untested code |
 
+One value sits beside them, not a placeholder: ask "Which top-level folders hold modules?"
+and write the answer into `module_roots` in `scripts/check.sh` (space-separated). The gate
+then fails when a subfolder of one is not named in the `## Module map` of
+`docs/ARCHITECTURE.md`; empty, it prints a NOTE and checks nothing (a single-module project).
+
 ### Gates
 
 | Placeholder | What goes in |
 |---|---|
-| `{{BUILD_TEST_COMMAND}}` | One shell command that builds and tests. It runs on every commit — keep it fast. No deploy step, dry runs included: an agent's permission layer may refuse to run the whole gate. No server left running: a compiler server or build daemon the command starts (MSBuild node reuse, VBCSCompiler, the Gradle daemon, sccache) holds the gate lock until it exits, and the commit hook waits for it; turn it off in the command (`docs/GOTCHAS.md`) |
+| `{{BUILD_TEST_COMMAND}}` | One shell command that builds and tests. It runs on every commit — keep it fast: seconds, not minutes; put anything slower in CI (a client hook can be skipped, so CI is the last line anyway). No deploy step, dry runs included: an agent's permission layer may refuse to run the whole gate (it did once: the kit's `RESEARCH_LOG.md`, "Gates that did not gate"). No server left running: a compiler server or build daemon the command starts (MSBuild node reuse, VBCSCompiler, the Gradle daemon, sccache) holds the gate lock until it exits, and the commit hook waits for it; turn it off in the command (`docs/GOTCHAS.md`) |
 | `{{BOUNDARY_CHECKS}}` | **Replace the whole of `scripts/boundary_checks.sh`**: one grep per enforceable boundary, each setting `fail=1` |
 | `{{BOUNDARY_SELF_TESTS}}` | **Replace the whole of `scripts/boundary_selftests.sh`**: one negative test per check above. Not optional — see below |
 | `{{TOOLCHAIN}}` / `{{TOOLCHAIN_PATH_SETUP}}` / `{{TOOLCHAIN_SETUP_NOTES}}` / `{{TOOLCHAIN_SETUP_STEP}}` | What the gate needs on PATH, how to find it in a non-login shell, how CI installs it. `{{TOOLCHAIN_PATH_SETUP}}` is a directory to prepend, not a line of code |
@@ -417,15 +456,22 @@ the choice in both `.claude/mode` and the "Working mode:" line of `docs/STATE.md
    first line, and the entire check sat inert inside a comment while the gate reported PASS.
    For every check you add, add the case that constructs the violation and asserts the gate
    rejects it. A gate you have only seen pass has not been tested; it is an untested branch
-   that runs on every commit. Both files ship with a worked example.
+   that runs on every commit (a test never seen failing does not show what it checks; Google
+   checks the same at scale with mutants in code review: "Practical Mutation Testing at
+   Scale"). Both files ship with a worked example.
 2. **Run `./scripts/check.sh`.** Show the owner the real output. If it fails, fix the cause.
 3. **Run `./scripts/check.sh --self-test`.** Show that output too. If a gate does not go red
    when its failure is injected, it is protecting nothing — fix it before you continue.
+   Output shown, not a claim of success: code.claude.com/docs/en/best-practices, "Give
+   Claude a way to verify its work".
 4. **Initialise `docs/STATE.md`**: what was set up, what is open, what the owner still has to
    do, with a tool+model trace. Full sentences. The first tasks after setup, and anything the
    owner parked, go to `docs/BACKLOG.md`.
 5. **Delete what does not apply.** An overlay or a section for something this project does
-   not have is not harmless — it is a lie the next agent will believe.
+   not have is not harmless — it is a lie the next agent will believe: agents follow what a
+   context file says, and needless requirements in it lower success and raise cost
+   (arXiv 2602.11988; code.claude.com/docs/en/memory, conflicting instructions;
+   code.claude.com/docs/en/best-practices, the over-specified CLAUDE.md).
 6. **Stage and hand off for fresh review before commit.** If the repository has no commit
    gate yet, wire it with `git config core.hooksPath .githooks`. Stage the intended setup
    files and follow `docs/REVIEW_GATE.md` in a fresh reviewer session. This setup writes
@@ -433,6 +479,9 @@ the choice in both `.claude/mode` and the "Working mode:" line of `docs/STATE.md
    manual checks in `docs/STATE.md`; do not commit until the review requirement is met.
    If review cannot run, leave the staged work and an explicit handoff rather than treating
    setup as an exemption. Commit only after verified acceptance and required manual checks.
+   (A fresh context is not biased toward code it just wrote: code.claude.com/docs/en/best-practices,
+   Writer/Reviewer; a pull request's author cannot approve it either: GitHub Docs, required
+   reviews; self-review measured no gain: the kit's `docs/research/ai-review-workflows.md`, S4.)
 
 ## Phase 5 — backflow
 
@@ -445,8 +494,9 @@ Otherwise, ask once:
 
 A rule you had to invent because the kit lacked it, a placeholder that was ambiguous, a
 question you needed that this file does not ask — those are the candidates. If the answer is
-yes, produce a ready-to-apply patch for the kit repository plus a `CHANGELOG.md` entry, and
-tell the owner where to send it. If the answer is no, or a shrug, that is the end of it.
+yes, run `/myagentkit:kit-feedback` with that finding instead of drafting the patch here: it
+confirms the finding in one sentence, scrubs the project out, and shows the exact text before
+anything is sent. If the answer is no, or a shrug, that is the end of it.
 
 The reason the question exists: a foundation only finds out where it is wrong from the
 projects that hit its edges, and this setup is the one moment its gaps are freshly visible.
