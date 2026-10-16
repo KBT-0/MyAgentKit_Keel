@@ -33,8 +33,8 @@ KINDS = ('route', 'attrib', 'push', 'fix', 'phrase')
 BUCKETS = ('0-100k', '100-200k', '200-300k', '300-400k', '400k+')
 SIGNS = {'route': 'this Agent call names no', 'attrib': 'crediting an AI tool'}
 MARK = '#fix'
-# B07 inv2#131: 20 is a judgement; 5 and 30 match LangWatch's published cuts:
-# https://langwatch.ai/research/finding-the-optimal-context-window (2026-10-15).
+# B07 inv2#131: the 20-request window and 5-/30-request cuts are the kit's own
+# diagnostic choices, not measured thresholds.
 WINDOW = 20
 SLICES = (5, 30)
 # B07 inv2#132: informational proxy, never a gate or a replacement for #fix.

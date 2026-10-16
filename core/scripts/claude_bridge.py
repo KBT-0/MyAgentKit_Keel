@@ -722,7 +722,7 @@ def snapshot(repo: Path, scope: str, reference: str | None) -> tuple[str, str, s
             included = git(repo, 'sparse-checkout', 'check-rules', '-z', stdin=b'\0'.join(absent) + b'\0')
         except BridgeError as error:
             raise BridgeError('review scope has skip-worktree files missing from a sparse checkout, and '
-                              '`git sparse-checkout check-rules` (Git 2.42 or later) could not tell whether '
+                              '`git sparse-checkout check-rules` (Git 2.41 or later) could not tell whether '
                               'the sparse rules exclude them; upgrade Git or use a complete checkout '
                               'before review (%s)' % error) from None
         included = sorted(set(included.split(b'\0')) - {b''})

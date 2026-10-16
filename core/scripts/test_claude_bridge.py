@@ -32,9 +32,9 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'REVIEW_SHADOW', 'MYAGENTKIT_TASK_I
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 220, 'test_agent_usage': 35, 'test_codex_quota': 5}
+SUITE_MINIMUMS = {'test_claude_bridge': 220, 'test_agent_usage': 36, 'test_codex_quota': 5}
 # These are executed cases, excluding only the explicitly declared POSIX exclusions.
-WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 194, 'test_agent_usage': 31, 'test_codex_quota': 4}
+WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 194, 'test_agent_usage': 32, 'test_codex_quota': 4}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -4388,14 +4388,14 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         # Issue #53 (REPRODUCED): with sparse mode on, every absent skip-marked file was
         # tolerated, so a file inside the cone marked by hand and deleted was a deletion the
         # diff omitted. Only a path the sparse rules exclude may be absent, in cone mode and
-        # non-cone mode alike; without `check-rules` (Git before 2.42) the scope is refused.
+        # non-cone mode alike; without `check-rules` (Git before 2.41) the scope is refused.
         import claude_bridge
         from unittest.mock import patch
         (self.repo / 'src').mkdir(exist_ok=True)
         (self.repo / 'src/a.txt').write_text('a\n')
         (self.repo / 'docs/kept.md').write_text('kept\n')
         self.commit_fixture('A tree with two folders')
-        # The real-Git subtests need `check-rules` (Git 2.42); the usage line names it when present.
+        # The real-Git subtests need `check-rules` (Git 2.41); the usage line names it when present.
         usage = subprocess.run(['git', 'sparse-checkout', '-h'], capture_output=True, text=True)
         if 'check-rules' in usage.stdout + usage.stderr:
             for rules in (['docs'], ['--no-cone', '/*', '!/src/']):
@@ -4411,7 +4411,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                     self.git('checkout', '--', 'docs/kept.md')
         else:
             sys.stderr.write('\nNOT RUN: %s, the real-Git subtests (this Git has no `sparse-checkout '
-                             'check-rules`; it needs Git 2.42 or later)\n' % self.id())
+                             'check-rules`; it needs Git 2.41 or later)\n' % self.id())
             self.git('sparse-checkout', 'set', 'docs')
         real = claude_bridge.git
 
@@ -4420,7 +4420,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                 raise claude_bridge.BridgeError("git sparse-checkout failed: error: unknown subcommand: `check-rules'")
             return real(repo, *args, **kwargs)
         with patch.object(claude_bridge, 'git', old_git), \
-                self.assertRaisesRegex(claude_bridge.BridgeError, r'Git 2\.42 or later'):
+                self.assertRaisesRegex(claude_bridge.BridgeError, r'Git 2\.41 or later'):
             claude_bridge.snapshot(self.repo, 'uncommitted', None)
         self.git('sparse-checkout', 'disable')
 

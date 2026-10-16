@@ -501,9 +501,8 @@ Rules for whoever routes work, binding with any table:
    above the strongest routine one (for example Codex Astra or Claude Fable) is never a
    default. The lead picks it for one errand when the errand needs it, without asking the
    owner. The lead first checks that the current subscription includes that model; a basic
-   plan does not, and then the strongest routine model takes the errand. A refusal that asks
-   for usage credits (Claude Code: 429 `credits_required`, "requires usage credits") means
-   the plan does not include it. While that side's allowance is low (a saver mode, below),
+   plan does not, and then the strongest routine model takes the errand. While that side's
+   allowance is low (a saver mode, below),
    the top model and the highest effort need the owner's yes. Sources: both vendors name a
    routine default and keep the top model for work it fails (platform.claude.com/docs/en/models/overview:
    start with Opus 5.5, Fable 5.1 where Opus at high effort falls short; learn.chatgpt.com/docs/models:
@@ -754,8 +753,9 @@ Measured in the kit's founding project (one lead session with background workers
 eleven hours, 87 percent of it the workers; the transcripts were then counted request by
 request, and a controlled experiment ran the same task in six setups). What the numbers say:
 
-- **A sub-agent's prompt cache lives five minutes; a main conversation's lives an hour.** A
-  worker that waits longer than its cache re-writes its whole context on the next request, at
+- **Within a subscription's included usage, the default cache lifetime is five minutes for
+  a sub-agent and one hour for the main conversation.** A worker that waits longer than its
+  cache re-writes its whole context on the next request, at
   more than ten times the price of reading it. 87 percent of all cache-write tokens followed
   such a gap: poll loops, a ten-minute job, a wait on a lock, a resume after a handback.
 - **Every request re-reads the whole context**, and context grows by about 2k tokens per
@@ -779,8 +779,11 @@ Rules, binding for whoever routes workers:
    (`scripts/spawn_worker.sh` passes it on the launch line; `.claude/settings.json` sets it
    under `env` for the lead's own sub-agents), so a worker definition needs no cache field.
    The worker starts long jobs in the background and is re-invoked when they exit, and never
-   runs `sleep`, `until`, `pgrep` or tail-the-log loops. Where a one-hour cache is
-   unavailable (it is ignored on usage credits; another host may have no such setting),
+   runs `sleep`, `until`, `pgrep` or tail-the-log loops. Only a worker definition's
+   `experimental.cacheTtl: 1h` is ignored on usage credits; the kit's environment variable
+   still applies ([Claude Code cache controls](https://code.claude.com/docs/en/prompt-caching),
+   checked 2026-10-16). Where a one-hour cache is unavailable (a gateway may not support it,
+   or another host may have no such setting),
    choose the fallback from the measured table in the kit's `docs/worker-cost-setups.md`:
    usually waits split into pieces under five minutes, at the price of a context read per
    piece.
@@ -922,10 +925,14 @@ idle session is a full-context turn. The idle notice also fires on every park on
 background job, and the session does not end with its task. A committed result file of
 `Kind: completed` is therefore the end signal; a file of another kind reports a worker still
 working or waiting, and is never a reason to close it. After reading a completed one, the
-lead decides per task whether the session is reused or closed. It reuses a session that was active within the cache lifetime (one hour) when the
-next task is short or needs most of what the session holds. It closes the session when no
+lead decides per task whether the session is reused or closed. It reuses a session that was
+active within its actual cache lifetime when the next task is short or needs most of what
+the session holds. It closes the session when no
 next task fits what it holds, or when it has been idle past the cache lifetime (nothing warm
-is lost then). Closing is automatic: finished worker tabs stayed open for hours while closing
+is lost then). The main conversation defaults to one hour only within a subscription's
+included usage; usage credits, API keys and cloud providers default to five minutes unless
+explicitly set to one hour ([Claude Code cache lifetime](https://code.claude.com/docs/en/prompt-caching),
+checked 2026-10-16). Closing is automatic: finished worker tabs stayed open for hours while closing
 was a step the lead had to remember (2026-10-16). A worker ends its own session once it
 publishes a `Kind: completed` result or a decision: `codex_worker.py` supervises every Claude
 and Codex worker, so the lead passes `--result FILE` to `spawn_worker.sh` when the brief names
