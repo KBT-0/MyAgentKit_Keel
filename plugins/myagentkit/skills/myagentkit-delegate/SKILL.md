@@ -28,7 +28,10 @@ Also pass `--requester codex/ACTUAL_MODEL` and `--task-id STABLE_TASK_LABEL`. Us
 `codex/unknown` when the model identity is unavailable; do not invent it.
 
 The runner pins Claude Opus 5/high unless the user specifies a model. Defaults are 12 turns,
-600 seconds, and a $3 API budget; subscription accounting may differ. It archives JSON
+600 seconds, and a $3 API budget; subscription accounting may differ. All three are starting
+values, not measured ones: a run that hits `--max-turns` exits with an error and returns no
+proposal, and `--max-budget-usd` stops on a client-side estimate that can overshoot
+(code.claude.com/docs/en/cli-reference). It archives JSON
 under docs/handoffs, has only Read/Glob/Grep tools, disables custom hooks/plugins/MCP,
 and refuses stale or incomplete results. The patch is NEVER automatically applied.
 

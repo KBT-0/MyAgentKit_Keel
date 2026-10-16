@@ -28,7 +28,10 @@ This is a total wall-clock limit, not a startup or inactivity
 timer; two attempts may take about ninety minutes plus local overhead. Use `REVIEW_TIMEOUT_SECONDS`
 (at most 3600) and `REVIEW_MAX_TURNS` (at most 500) to honor an explicit wrapper/dispatcher limit. Reviews have no default monetary budget cap:
 omit `--max-budget-usd` unless the owner explicitly specifies a cap. An explicit dollar
-cap does not promise equivalent subscription quota accounting. Do not automatically raise
+cap does not promise equivalent subscription quota accounting: it stops on an estimate, not
+the bill. Sources: 2700 s is the default `--timeout` of Anthropic's own `claude ultrareview`
+(45 minutes; code.claude.com/docs/en/cli-reference, as is the estimate); 200 turns, 500 and
+3600 s are the owner's choice, not measured. Do not automatically raise
 limits or choose an unconfigured model when a run fails. With `--allow-fallback` (the wrapper's
 `--fallback`), the dispatcher may try the other configured provider once on an operational
 failure; pass it only when the user asked for a fallback. Never delegate from the child.

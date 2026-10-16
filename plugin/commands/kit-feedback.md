@@ -1,7 +1,7 @@
 ---
 description: Send something you learned back to MyAgentKit_Keel as a GitHub issue or pull request — the kit improves from the projects using it
 argument-hint: "[what you learned, or leave empty to use the current conversation]"
-allowed-tools: Read, Glob, Grep, Bash(git:*), Bash(gh:*), AskUserQuestion
+allowed-tools: Read, Glob, Grep, Bash(gh auth status), Bash(git status *), Bash(git diff *), AskUserQuestion
 ---
 # /myagentkit:kit-feedback [what you learned]
 
@@ -24,13 +24,17 @@ that was missing, a gate that was fail-open, a placeholder whose instructions we
 ambiguous, a setup question the interview should have asked, a document that contradicted
 itself, a script that broke on this platform. It does NOT when it only makes sense given
 this project's domain. Say so plainly and stop rather than filing noise upstream — a rejected
-contribution costs the maintainer more than it costs you.
+contribution costs the maintainer more than it costs you (generated contributions now flood
+maintainers: ghostty-org/ghostty CONTRIBUTING.md ties pull requests to an accepted issue;
+"Defending Open Source from AI Slop", EuroPython 2026).
 
 ## 2. Decide the shape
 
 - **Issue** — a problem, a question, or a suggestion you are not implementing. Cheap, and
   the right default when you are unsure.
-- **Pull request** — you have an actual fix. Requires that the change also carry its
+- **Pull request** — you have an actual fix and the issue for it has been opened first (an
+  issue the maintainer has not yet looked at is not a green light for a large PR; Ghostty's
+  CONTRIBUTING.md). A small fix may go straight to a PR. A PR requires that the change also carry its
   reasoning: the kit's own rule is that a rule arriving without the failure it prevents is a
   rule the next reader deletes. So a PR touching behaviour also updates `RESEARCH_LOG.md`
   with the finding, and `CHANGELOG.md` with what changed.
@@ -42,7 +46,13 @@ Ask the owner which one, with a recommendation.
 ## 3. SCRUB — do this before showing anything
 
 The finding is about the kit. Everything specific to this project is both irrelevant
-upstream and the owner's private business. Remove:
+upstream and the owner's private business.
+
+Run a mechanical pass first: replace the absolute paths, the user and machine name, e-mail
+addresses and anything that looks like a token with placeholders; then do the read-through
+for what a pattern cannot see (project names, business terms, code). A pattern finds only the
+kinds of data it knows; a reader misses the routine leaks a pattern would catch (OWASP LLM02,
+CWE-532). Remove:
 
 - Absolute paths, home directories, machine and user names.
 - The project's name, company name, product names, internal codenames, colleague names.
@@ -67,6 +77,11 @@ If `gh` is not installed or not authenticated (`gh auth status`), say so and off
 as text for them to paste by hand. Do not attempt another route.
 
 ## 5. Send
+
+The send command is not pre-approved on purpose; the permission prompt is the second gate.
+Only read-only commands are in this command's `allowed-tools`: a pre-approved tool runs
+without a prompt (code.claude.com/docs/en/skills, `allowed-tools`), and a yes in the chat is
+no permission boundary.
 
 **Issue:**
 

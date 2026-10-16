@@ -31,24 +31,26 @@ verdict to relay. Verify every finding against the code, drop what you disprove,
 you confirm, and say which is which. Pasting another model's verdict through unchecked is a
 failed review in either direction — the false-clean is worse than the false-alarm.
 
-**The human triggers every hop.** Check whether the plugin's commands are model-invocable.
-Some are, which means a session can spend the other tool's budget and delegate work nobody
-decided to delegate. If so, the project rule is: no session calls the other tool unless the
-owner asked for it in that session. That is a rule you write down, not something the plugin
-guarantees.
+**The human triggers every hop.** Check whether the plugin's commands are model-invocable (a
+skill without `disable-model-invocation: true` is). Some are, which means a session can spend
+the other tool's budget and delegate work nobody decided to delegate. If so, the project rule
+is: no session calls the other tool unless the owner asked for it in that session, and do not
+rely on the written rule alone: add a deny rule for those commands to the project's
+permissions (`Skill(<name> *)`), or for the whole Skill tool, so the harness blocks the call
+(code.claude.com/docs/en/skills, "Restrict Claude's skill access"). The kit's own
+`/myagentkit:cross-review` already sets `disable-model-invocation: true`.
 
 **Keep the automatic review gate OFF.** The tempting feature is a stop hook where agent B
-reviews every turn of agent A and blocks until fixes are applied. The plugins' own
-documentation warns that unattended loops burn usage limits fast. On a small budget it is
-the wrong trade: all review manually triggered. Record the decision so nobody enables it
-later as a convenience.
+reviews every turn of agent A and blocks until fixes are applied. The plugin's own README
+warns that it "can create a long-running Claude/Codex loop and may drain usage limits
+quickly" and to enable it "only when you plan to actively monitor the session"
+(github.com/openai/codex-plugin-cc). On a small budget it is the wrong trade: all review
+manually triggered. Record the decision so nobody enables it later as a convenience.
 
-**Route by scarcity, not by capability.** Both budgets are finite and they are not equally
-finite. Spend the scarce one on judgement — planning, architecture, contract design, the
-final review of a risky diff. Spend the generous one on volume — bulk implementation of
-well-specified tasks, mechanical refactors, first-pass review. Then note the caveat: the
-more autonomous tool fills ambiguity by itself instead of asking, and the mitigation is a
-sharper brief plus the gates, never trust.
+**Route by cost per task, and by scarcity where the budgets differ:** the rule and its source
+live in the kit's `core/docs/WORKFLOW.md`, "Model routing". The caveat stays: the more
+autonomous tool fills ambiguity by itself instead of asking, and the mitigation is a sharper
+brief plus the gates, never trust.
 
 ## What actually makes this work
 
