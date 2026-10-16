@@ -47,8 +47,8 @@ class ContextBucketsTests(unittest.TestCase):
             result('commit-msg: crediting an AI tool (above) is not allowed'),
             prompt('no, I said this already #fix'),
         ], '--since', '2026-10-10')
-        self.assertEqual(self.row(out, '0-100k'), ['0-100k', '1', '1', '(100.0)', '0', '(0.0)', '0', '(0.0)', '0', '(0.0)'])
-        self.assertEqual(self.row(out, '200-300k')[1:], ['1', '0', '(0.0)', '1', '(100.0)', '1', '(100.0)', '1', '(100.0)'])
+        self.assertEqual(self.row(out, '0-100k'), ['0-100k', '1', '1', '(100.0)', '0', '(0.0)', '0', '(0.0)', '0', '(0.0)', '0', '(0.0)'])
+        self.assertEqual(self.row(out, '200-300k')[1:], ['1', '0', '(0.0)', '1', '(100.0)', '1', '(100.0)', '1', '(100.0)', '1', '(100.0)'])
         self.assertIn('no compaction', out)
 
     def test_compaction_windows_stop_at_twenty_requests(self):
@@ -56,8 +56,39 @@ class ContextBucketsTests(unittest.TestCase):
         records += [{'type': 'system', 'subtype': 'compact_boundary'}, request('x', 40_000), prompt('#fix')]
         records += [{'type': 'system', 'subtype': 'compact_boundary'}]
         out = self.run_on(records)
-        self.assertIn('compaction 1: route 1/0  attrib 0/0  push 0/0  fix 0/1  (before/after, 20/1 requests)', out)
+        self.assertIn('compaction 1: route 1/0  attrib 0/0  push 0/0  fix 0/1  phrase 0/0  (before/after, 20/1 requests)', out)
         self.assertIn('compaction 2 (second or later):', out)
+
+    def test_final_request_refusals_are_included_in_both_directions(self):
+        evs = [('request', 0)] * 20 + [('route', 0), ('fix', 0)]
+        self.assertEqual(context_buckets.window(evs, 0, 1)['route'], 1)
+        self.assertEqual(context_buckets.window(evs, 21, -1)['route'], 1)
+        evs += [('request', 0), ('attrib', 0)]
+        self.assertEqual(context_buckets.window(evs, 0, 1)['attrib'], 0)
+
+    def test_five_and_thirty_request_slices_and_phrase_proxy(self):
+        records = [{'type': 'system', 'subtype': 'compact_boundary'}]
+        for i in range(31):
+            records += [request(str(i), 40_000), prompt('No, I said keep it. #fix' if i == 4 else 'continue')]
+        records += [prompt('I said this in a tool result')]
+        records[-1]['isMeta'] = True
+        out = self.run_on(records)
+        self.assertIn('window 5:', out)
+        self.assertIn('window 30:', out)
+        self.assertIn('phrase', out)
+        self.assertIn('informational', out)
+        self.assertEqual(self.row(out, '0-100k')[-2:], ['1', '(3.2)'])
+        self.assertIn('window 5: route 0/0  attrib 0/0  push 0/0  fix 0/1  phrase 0/1  (before/after, 0/5 requests)', out)
+        self.assertIn('window 30: route 0/0  attrib 0/0  push 0/0  fix 0/1  phrase 0/1  (before/after, 0/30 requests)', out)
+
+    def test_phrase_proxy_is_separate_and_ignores_metadata_and_tool_results(self):
+        meta = prompt('You forgot the rule')
+        meta['isMeta'] = True
+        summary = prompt('That is wrong')
+        summary['isCompactSummary'] = True
+        out = self.run_on([request('p', 40_000), prompt('You forgot the rule'),
+                           prompt('continue #fix'), meta, summary, result('I said keep it')])
+        self.assertEqual(self.row(out, '0-100k')[-4:], ['1', '(100.0)', '1', '(100.0)'])
 
     def test_a_unicode_transcript_name_prints_on_a_legacy_stdout(self):
         # A Windows pipe is cp1252 unless UTF-8 mode is on: `session-İ.jsonl` raised there.
