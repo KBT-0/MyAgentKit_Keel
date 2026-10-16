@@ -68,7 +68,12 @@ def known_label(label: str) -> bool:
             body = (root / 'docs' / name).read_text(encoding='utf-8')
         except OSError:
             continue
-        if re.search(r'(?<![A-Za-z0-9_-])' + re.escape(label) + r'(?![A-Za-z0-9_-])', body):
+        # An id leads an entry (list, heading or first table cell), or a plain "id:" line.
+        # A mention in the entry's description never registers a label.
+        token = r'(?:`|\*\*)?' + re.escape(label) + r'(?:`|\*\*)?(?![A-Za-z0-9_-])'
+        entry = r'(?:[-*+]|[0-9]+[.)]|#{1,6})[ \t]+(?:\[[ xX]\][ \t]+)?|\|[ \t]*'
+        if re.search(r'^[ \t]*(?:(?:' + entry + r')' + token + r'(?=[ \t:|]|$)|'
+                     + token + r'[ \t]*:)', body, re.M | re.I):
             return True
     return False
 
@@ -79,7 +84,11 @@ def bare_labels(text: str) -> list[str]:
     def is_label(label):
         if label == 'Accept-MC':
             return True
-        if not re.search(digit, label) or re.fullmatch(r'[a-f0-9]{7,}', label):
+        if not re.search(digit, label):
+            return False
+        if known_label(label):
+            return True  # the project may name any canonical task id, including long prefixes
+        if re.fullmatch(r'[a-f0-9]{7,}', label):
             return False  # abbreviated git hashes are not session labels
         # Prose is not a commit trailer: a label has one letter before its first digit or dash
         # (K4, L1b, K7-a, D-5, v011-d5); UTF-8, SHA-256, win32, cp1252, Python3, IPv6 are words.
@@ -87,7 +96,7 @@ def bare_labels(text: str) -> list[str]:
             return False
         # Lowercase without a lettered dash part (x86, e2e, i18n, r2) counts only when the
         # project's STATE.md or BACKLOG.md names it.
-        return label[0].isupper() or bool(re.search(r'-.*[A-Za-z]', label)) or known_label(label)
+        return label[0].isupper() or bool(re.search(r'-.*[A-Za-z]', label))
 
     prose = ' '.join(word for word in without_code(text).split() if '/' not in word and '\\' not in word)
     found, explained = [], []

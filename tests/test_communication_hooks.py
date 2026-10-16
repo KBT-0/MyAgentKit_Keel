@@ -59,6 +59,28 @@ class PlainReportTests(unittest.TestCase):
         # A backtick fence's info string has no backtick: this line is an inline span, not a fence.
         self.assertEqual(self.stop('```sh``` is the tag.\nK4 finished.').returncode, 2)
 
+    def test_project_task_positions_register_every_canonical_prefix(self):
+        entries = ('{id}: active', '- {id}: active', '### {id} — active',
+                   '- [ ] **{id}**: active', '| `{id}` | active |')
+        for name in ('STATE.md', 'BACKLOG.md'):
+            for label in ('AB12', 'abc12', 'ABC-12', 'abc1234', 'UTF8'):
+                for entry in entries:
+                    with self.subTest(file=name, label=label, entry=entry):
+                        (self.project / 'docs' / name).write_text(entry.format(id=label) + '\n', encoding='utf-8')
+                        self.assertEqual(self.stop(label + ' finished.').returncode, 2)
+            (self.project / 'docs' / name).unlink()
+
+    def test_prose_mentions_never_register_technical_words(self):
+        words = ('UTF-8', 'SHA-256', 'win32', 'cp1252', 'x86', 'Python3', 'IPv6', 'GPT-5')
+        for name in ('STATE.md', 'BACKLOG.md'):
+            (self.project / 'docs' / name).write_text('\n'.join(
+                'Verify the %s build on Windows.\n- Verify the %s build.\n| Notes | Verify %s |'
+                % (word, word, word) for word in words), encoding='utf-8')
+            for word in words:
+                with self.subTest(file=name, word=word):
+                    self.assertEqual(self.stop('The %s build passes.' % word).returncode, 0)
+            (self.project / 'docs' / name).unlink()
+
     def test_common_technical_words_pass_and_labels_are_still_caught(self):
         for word in ('UTF-8', 'SHA-256', 'win32', 'cp1252', 'x86', 'Python3', 'IPv6', 'GPT-5',
                      'e2e', 'i18n', 'SHA256', 'IPv4', 'x86-64', 'base64', 'Win11', 'v1'):
@@ -218,7 +240,7 @@ class ProgressReminderTests(unittest.TestCase):
                 said = self.nudge([assistant(tool()) for _ in range(5)], PYTHONIOENCODING='cp1252')
                 self.assertIn('5 tool calls', said['additionalContext'])
 
-    def test_only_the_tail_of_a_large_transcript_is_read(self):
+    def test_a_large_transcript_counts_the_latest_silent_interval(self):
         padding = json.dumps({'type': 'user', 'message': {'content': 'x' * 10_000}}) + '\n'
         raw = padding * 120 + ''.join(json.dumps(assistant(tool())) + '\n' for _ in range(5))
         self.assertIn('5 tool calls', self.nudge(None, raw=raw)['additionalContext'])
@@ -241,6 +263,41 @@ class ProgressReminderTests(unittest.TestCase):
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
         self.assertIsNone(self.nudge(None, raw='{broken\n' * 3))
         self.assertEqual(run('progress_reminder.py', '').returncode, 0)
+
+    def test_visible_text_before_a_large_tool_result_rearms_the_cap(self):
+        calls = []
+        for count in range(1, 16):
+            calls.append(assistant(tool()))
+            self.assertEqual(self.nudge(calls) is not None, count in (5, 10, 15))
+        for reset in (assistant(text('Still working.')),
+                      {'type': 'system', 'subtype': 'compact_boundary', 'uuid': 'large-reset'}):
+            calls += [reset, {'type': 'user', 'message': {'content': [
+                {'type': 'tool_result', 'content': 'x' * 600_000}]}}]
+            self.assertIsNone(self.nudge(calls))
+            for count in range(1, 21):
+                calls.append(assistant(tool()))
+                self.assertEqual(self.nudge(calls) is not None, count in (5, 10, 15), count)
+
+    def test_large_results_preserve_counts_before_the_first_nudge(self):
+        calls = [assistant(tool()), assistant(tool())]
+        self.assertIsNone(self.nudge(calls))
+        calls.append({'type': 'user', 'message': {'content': 'x' * 600_000}})
+        for count in range(3, 21):
+            calls.append(assistant(tool()))
+            self.assertEqual(self.nudge(calls) is not None, count in (5, 10, 15), count)
+
+    def test_a_partial_record_is_read_again_when_complete(self):
+        calls = [assistant(tool()) for _ in range(15)]
+        self.assertIsNotNone(self.nudge(calls))
+        prefix = ''.join(json.dumps(r) + '\n' for r in calls)
+        visible = json.dumps(assistant(text()))
+        self.assertIsNone(self.nudge(None, raw=prefix + visible[:20]))
+        raw = prefix + visible + '\n' + json.dumps({'type': 'user', 'message': {
+            'content': 'x' * 600_000}}) + '\n'
+        self.assertIsNone(self.nudge(None, raw=raw))
+        for count in range(1, 6):
+            raw += json.dumps(assistant(tool())) + '\n'
+            self.assertEqual(self.nudge(None, raw=raw) is not None, count == 5)
 
 
 if __name__ == '__main__':
