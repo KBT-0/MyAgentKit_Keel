@@ -294,7 +294,8 @@ def utf8_locale(have=None):
 # review the Windows ANSI branch.
 LOCALE_SUITES = ('test_working_mode', 'test_usage_summary', 'test_doc_pointers', 'test_kit_output',
                  'test_python_fallback', 'test_overlay_permissions', 'test_context_hook',
-                 'test_communication_hooks', 'test_guard_destructive_git', 'test_guard_private_email')
+                 'test_communication_hooks', 'test_guard_destructive_git', 'test_guard_private_email',
+                 'test_git_hooks')
 
 
 def locale_matrix(folder=None, suites=LOCALE_SUITES, minimums=None):

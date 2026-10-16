@@ -22,7 +22,7 @@ class GitHookTests(unittest.TestCase):
         (root / 'scripts').mkdir()
         # A stub gate: each branch alone is green, the two together are red.
         (root / 'scripts/check.sh').write_text(
-            'echo ran >> .git/gate-runs\n[ ! -e a ] || [ ! -e b ] || { echo "CHECK: FAIL"; exit 1; }\n')
+            'echo ran >> .git/gate-runs\n[ ! -e a ] || [ ! -e b ] || { echo "CHECK: FAIL"; exit 1; }\n', encoding='utf-8')
         (root / 'scripts/check.sh').chmod(0o755)
         # C locale: the hook recognises the English text git writes under the scissors line.
         env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1', GIT_EDITOR='true',
@@ -30,13 +30,13 @@ class GitHookTests(unittest.TestCase):
         git = lambda *args, check=True, **extra: subprocess.run(
             ['git', '-c', 'user.name=t', '-c', 'user.email=t@example.invalid',
              '-c', 'core.hooksPath=.githooks', *args],
-            cwd=root, env=dict(env, **extra), capture_output=True, text=True, check=check)
+            cwd=root, env=dict(env, **extra), capture_output=True, text=True, check=check, encoding='utf-8')
         # init then checkout: `git init -b` needs git 2.28, older than some CI images carry.
         git('init', '-q')
         git('checkout', '-q', '-b', 'main')
-        (root / 'AGENTS.md').write_text('- **No AI attribution in git.**\n')
+        (root / 'AGENTS.md').write_text('- **No AI attribution in git.**\n', encoding='utf-8')
         # A quoted trailer in a tracked file shows up in `git commit -v`'s diff below the scissors.
-        (root / 'notes').write_text('top\nCo-Authored-By: Claude <noreply@anthropic.com>\n')
+        (root / 'notes').write_text('top\nCo-Authored-By: Claude <noreply@anthropic.com>\n', encoding='utf-8')
         git('add', '-A')
         git('commit', '-q', '-m', 'base')
         return root, git
@@ -46,14 +46,14 @@ class GitHookTests(unittest.TestCase):
             root, git = self.repo(tmp)
             for branch in ('a', 'b'):
                 git('checkout', '-q', '-b', branch, 'main')
-                (root / branch).write_text(branch + '\n')
+                (root / branch).write_text(branch + '\n', encoding='utf-8')
                 git('add', branch)
                 git('commit', '-q', '-m', 'add ' + branch)
             git('checkout', '-q', 'a')
-            runs = (root / '.git/gate-runs').read_text().count('ran')
+            runs = (root / '.git/gate-runs').read_text(encoding='utf-8').count('ran')
             merge = git('merge', '-q', '--no-edit', 'b', check=False)
             self.assertNotEqual(merge.returncode, 0, 'a clean merge into a red tree was committed')
-            self.assertGreater((root / '.git/gate-runs').read_text().count('ran'), runs)
+            self.assertGreater((root / '.git/gate-runs').read_text(encoding='utf-8').count('ran'), runs)
             self.assertEqual(git('rev-list', '--count', 'HEAD').stdout.strip(), '2')
 
     def test_a_documentation_only_commit_defers_the_build_to_the_next_code_commit(self):
@@ -68,7 +68,7 @@ class GitHookTests(unittest.TestCase):
             shutil.copytree(ROOT / 'core/.githooks', root / '.githooks')
             (root / 'scripts/check.sh').chmod(0o755)
             mark, build = Path(tmp) / 'built', Path(tmp) / 'build.sh'
-            build.write_text('true\n')
+            build.write_text('true\n', encoding='utf-8')
             env = dict({k: v for k, v in os.environ.items() if not k.startswith(('GATE_', 'BOUNDARY_'))},
                        GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1',
                        # The build command expands it unquoted: a Windows path keeps its `\` only as `/`.
@@ -76,19 +76,19 @@ class GitHookTests(unittest.TestCase):
             git = lambda *args, check=True: subprocess.run(
                 ['git', '-c', 'user.name=t', '-c', 'user.email=t@example.invalid',
                  '-c', 'core.hooksPath=.githooks', *args],
-                cwd=root, env=env, capture_output=True, text=True, check=check)
+                cwd=root, env=env, capture_output=True, text=True, check=check, encoding='utf-8')
             git('checkout', '-q', '-b', 'main')
             git('add', '-A')
             git('-c', 'core.hooksPath=/dev/null', 'commit', '-q', '-m', 'base')
             # From here on the build leaves a mark and fails.
-            build.write_text('echo ran > "%s"; exit 1\n' % mark)
-            (root / 'notes.md').write_text('notes\n')
+            build.write_text('echo ran > "%s"; exit 1\n' % mark, encoding='utf-8')
+            (root / 'notes.md').write_text('notes\n', encoding='utf-8')
             git('add', 'notes.md')
             result = git('commit', '-q', '-m', 'notes', check=False)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertFalse(mark.exists(), result.stdout + result.stderr)
             self.assertIn('build not run: documentation-only commit, 1 file)', result.stdout + result.stderr)
-            (root / 'code.c').write_text('int x;\n')
+            (root / 'code.c').write_text('int x;\n', encoding='utf-8')
             git('add', 'code.c')
             result = git('commit', '-q', '-m', 'code', check=False)
             self.assertNotEqual(result.returncode, 0, 'a code commit skipped the failing build')
@@ -97,7 +97,7 @@ class GitHookTests(unittest.TestCase):
             mark.unlink()
             # A clean merge that brings in only a document still runs the build.
             git('checkout', '-q', '-b', 'side', 'main~1')
-            (root / 'side.md').write_text('side\n')
+            (root / 'side.md').write_text('side\n', encoding='utf-8')
             git('add', 'side.md')
             git('-c', 'core.hooksPath=/dev/null', 'commit', '-q', '-m', 'side')
             git('checkout', '-q', 'main')
@@ -106,7 +106,7 @@ class GitHookTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def commit(self, root, git, message, *opts, **extra):
-        (root / 'c').write_text(message)
+        (root / 'c').write_text(message, encoding='utf-8')
         git('add', 'c')
         return git('commit', '-q', *opts, '-m', 'change c', '-m', message, check=False, **extra)
 
@@ -182,7 +182,7 @@ class GitHookTests(unittest.TestCase):
         # cuts nothing: a credit quoted in the diff below the scissors line fails closed.
         with tempfile.TemporaryDirectory() as tmp:
             root, git = self.repo(tmp)
-            (root / 'notes').write_text('changed\nCo-Authored-By: Claude <noreply@anthropic.com>\n')
+            (root / 'notes').write_text('changed\nCo-Authored-By: Claude <noreply@anthropic.com>\n', encoding='utf-8')
             git('add', 'notes')
             result = git('commit', '-q', '-v', '-e', '-m', 'edit notes', check=False)
             self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -227,7 +227,7 @@ class GitHookTests(unittest.TestCase):
             shim = Path(tmp) / 'shim'
             shim.mkdir()
             (shim / 'git').write_text('#!/bin/sh\n[ "$1" != version ] || { echo "git version 2.45.0"; exit 0; }\n'
-                                      'exec %s "$@"\n' % real_git)
+                                      'exec %s "$@"\n' % real_git, encoding='utf-8')
             (shim / 'git').chmod(0o755)
             glob = Path(tmp) / 'global.gitconfig'
             # (global settings, local settings), each in the order written; x is set last.
@@ -236,19 +236,19 @@ class GitHookTests(unittest.TestCase):
                            ((('commentString', 'y'),), (('commentChar', 'x'),)),
                            ((('commentChar', 'y'),), (('commentString', 'x'),)))):
                 with self.subTest(scopes=scopes):
-                    glob.write_text('')
+                    glob.write_text('', encoding='utf-8')
                     git('config', '--local', '--remove-section', 'core', check=False)
                     for key, value in scopes[0]:
                         git('config', '--file', str(glob), 'core.' + key, value)
                     for key, value in scopes[1]:
                         git('config', '--local', 'core.' + key, value)
                     (root / 'msg').write_text('y%d\n\nx Co-Authored-By: Claude <noreply@anthropic.com>\n'
-                                              % case)
+                                              % case, encoding='utf-8')
                     result = subprocess.run(['sh', '.githooks/commit-msg', 'msg'], cwd=root, text=True,
                                             capture_output=True,
                                             env=dict(os.environ, GIT_CONFIG_GLOBAL=str(glob),
                                                      GIT_CONFIG_NOSYSTEM='1',
-                                                     PATH='%s%s%s' % (shim, os.pathsep, os.environ['PATH'])))
+                                                     PATH='%s%s%s' % (shim, os.pathsep, os.environ['PATH'])), encoding='utf-8')
                     self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
                     self.assertIn('crediting an AI tool', result.stderr)
 
@@ -264,12 +264,12 @@ class GitHookTests(unittest.TestCase):
             shim = Path(tmp) / 'shim'
             shim.mkdir()
             (shim / 'git').write_text('#!/bin/sh\n[ "$1" != version ] || { echo "git version 2.44.0"; exit 0; }\n'
-                                      'exec %s "$@"\n' % real_git)
+                                      'exec %s "$@"\n' % real_git, encoding='utf-8')
             (shim / 'git').chmod(0o755)
-            (root / 'msg').write_text('change c\n\nx Co-Authored-By: Claude <noreply@anthropic.com>\n')
+            (root / 'msg').write_text('change c\n\nx Co-Authored-By: Claude <noreply@anthropic.com>\n', encoding='utf-8')
             result = subprocess.run(['sh', '.githooks/commit-msg', 'msg'], cwd=root, text=True,
                                     capture_output=True,
-                                    env=dict(os.environ, PATH='%s%s%s' % (shim, os.pathsep, os.environ['PATH'])))
+                                    env=dict(os.environ, PATH='%s%s%s' % (shim, os.pathsep, os.environ['PATH'])), encoding='utf-8')
             self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
             self.assertIn('crediting an AI tool', result.stderr)
 
@@ -305,13 +305,13 @@ class GitHookTests(unittest.TestCase):
                 with self.subTest(transformation=key):
                     git('config', key, value)
                     (shim / 'tr').write_text('#!/bin/sh\n[ "$1" != %s ] || exit 1\nexec %s "$@"\n'
-                                             % (flag, real_tr))
+                                             % (flag, real_tr), encoding='utf-8')
                     (shim / 'tr').chmod(0o755)
-                    (root / 'msg').write_text('change c\n\n%s <noreply@anthropic.com>\n' % line)
+                    (root / 'msg').write_text('change c\n\n%s <noreply@anthropic.com>\n' % line, encoding='utf-8')
                     result = subprocess.run(['sh', '.githooks/commit-msg', 'msg'], cwd=root, text=True,
                                             capture_output=True,
                                             env=dict(os.environ, PATH='%s%s%s' % (shim, os.pathsep,
-                                                                                   os.environ['PATH'])))
+                                                                                   os.environ['PATH'])), encoding='utf-8')
                     self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
                     self.assertIn('cannot parse %s' % key, result.stderr)
                     git('config', '--unset', key)
@@ -330,13 +330,13 @@ class GitHookTests(unittest.TestCase):
                                      'x Co-Authored-By: Claude')):
                 with self.subTest(key=key):
                     (shim / 'git').write_text('#!/bin/sh\ncase " $* " in " config "*\'%s\'*) exit 3 ;; esac\n'
-                                              'exec %s "$@"\n' % (read, real_git))
+                                              'exec %s "$@"\n' % (read, real_git), encoding='utf-8')
                     (shim / 'git').chmod(0o755)
-                    (root / 'msg').write_text('change c\n\n%s <noreply@anthropic.com>\n' % line)
+                    (root / 'msg').write_text('change c\n\n%s <noreply@anthropic.com>\n' % line, encoding='utf-8')
                     result = subprocess.run(['sh', '.githooks/commit-msg', 'msg'], cwd=root, text=True,
                                             capture_output=True,
                                             env=dict(os.environ, PATH='%s%s%s' % (shim, os.pathsep,
-                                                                                   os.environ['PATH'])))
+                                                                                   os.environ['PATH'])), encoding='utf-8')
                     self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
                     self.assertIn('cannot read %s' % key, result.stderr)
 
@@ -358,7 +358,7 @@ class GitHookTests(unittest.TestCase):
             root, _ = self.repo(tmp)
             shim = Path(tmp) / 'shim'
             shim.mkdir()
-            (root / 'msg').write_text('change c\n\nCo-Authored-By: Claude <noreply@anthropic.com>\n')
+            (root / 'msg').write_text('change c\n\nCo-Authored-By: Claude <noreply@anthropic.com>\n', encoding='utf-8')
             for tool, broken, message in (
                     ('git', '[ "$1" != version ] || { echo "version unknown"; exit 0; }',
                      'cannot read the git version'),
@@ -367,13 +367,13 @@ class GitHookTests(unittest.TestCase):
                 with self.subTest(tool=tool):
                     for stale in shim.iterdir():
                         stale.unlink()
-                    (shim / tool).write_text('#!/bin/sh\n%s\nexec %s "$@"\n' % (broken, shlex.quote(shutil.which(tool))))
+                    (shim / tool).write_text('#!/bin/sh\n%s\nexec %s "$@"\n' % (broken, shlex.quote(shutil.which(tool))), encoding='utf-8')
                     (shim / tool).chmod(0o755)
                     result = subprocess.run(['sh', '.githooks/commit-msg', 'msg'], cwd=root, text=True,
                                             capture_output=True,
                                             env=dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull,
                                                      GIT_CONFIG_NOSYSTEM='1',
-                                                     PATH='%s%s%s' % (shim, os.pathsep, os.environ['PATH'])))
+                                                     PATH='%s%s%s' % (shim, os.pathsep, os.environ['PATH'])), encoding='utf-8')
                     self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
                     self.assertIn(message, result.stderr)
 
@@ -384,7 +384,7 @@ class GitHookTests(unittest.TestCase):
                         'Assisted-by: LLM [Claude]')
             # Each case is refused under the rule, so only the opt-in lets it through.
             for agents, expected in (('No AI attribution in git.\n', 1), ('AI tools may be credited.\n', 0)):
-                (root / 'AGENTS.md').write_text(agents)
+                (root / 'AGENTS.md').write_text(agents, encoding='utf-8')
                 for trailer in trailers:
                     with self.subTest(agents=agents, trailer=trailer):
                         result = self.commit(root, git, trailer)
@@ -392,8 +392,8 @@ class GitHookTests(unittest.TestCase):
 
     def docs(self, root, git, state='', backlog=''):
         (root / 'docs').mkdir(exist_ok=True)
-        (root / 'docs/STATE.md').write_text('# STATE\n\n## Active work\n' + state)
-        (root / 'docs/BACKLOG.md').write_text('# BACKLOG\n\n## Next tasks\n' + backlog)
+        (root / 'docs/STATE.md').write_text('# STATE\n\n## Active work\n' + state, encoding='utf-8')
+        (root / 'docs/BACKLOG.md').write_text('# BACKLOG\n\n## Next tasks\n' + backlog, encoding='utf-8')
         git('add', 'docs')
 
     def test_a_done_task_the_staged_state_files_still_mention_is_rejected_by_name(self):
@@ -428,18 +428,18 @@ class GitHookTests(unittest.TestCase):
             root, git = self.repo(tmp)
             report = root / 'docs/reviews/strong-today.md'
             report.parent.mkdir(parents=True)
-            report.write_text('- K4: open\n')
+            report.write_text('- K4: open\n', encoding='utf-8')
             git('add', 'docs')
             message = root / 'message'
-            message.write_text('close\n\nDone: K4\n')
+            message.write_text('close\n\nDone: K4\n', encoding='utf-8')
             shim = root / 'shim'
             shim.mkdir()
             (shim / 'git').write_text('#!/bin/sh\ncase " $* " in *" ls-files "*) exit 128 ;; esac\n'
-                                      'exec %s "$@"\n' % shlex.quote(shutil.which('git')))
+                                      'exec %s "$@"\n' % shlex.quote(shutil.which('git')), encoding='utf-8')
             (shim / 'git').chmod(0o755)
             result = subprocess.run(['sh', '.githooks/commit-msg', str(message)], cwd=root,
                                     capture_output=True, text=True,
-                                    env=dict(os.environ, PATH=str(shim) + os.pathsep + os.environ['PATH']))
+                                    env=dict(os.environ, PATH=str(shim) + os.pathsep + os.environ['PATH']), encoding='utf-8')
             self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn('cannot list the index', result.stderr)
 
@@ -449,21 +449,21 @@ class GitHookTests(unittest.TestCase):
             self.docs(root, git, '')
             report = root / 'docs/reviews/strong-today.md'
             report.parent.mkdir()
-            report.write_text('- K4: open\n')
+            report.write_text('- K4: open\n', encoding='utf-8')
             git('add', 'docs/reviews')
             message = root / 'message'
-            message.write_text('close\n\nDone: K4\n')
+            message.write_text('close\n\nDone: K4\n', encoding='utf-8')
             shim = root / 'bin'
             shim.mkdir()
             (shim / 'git').write_text(
                 '#!/bin/sh\ncase " $* " in *" ls-files "*)\n'
                 '  case " $* " in *" -- :(icase)docs/reviews "*) ;; *) echo unscoped-index >&2; exit 128 ;; esac ;; esac\n'
-                'exec %s "$@"\n' % shlex.quote(shutil.which('git')))
+                'exec %s "$@"\n' % shlex.quote(shutil.which('git')), encoding='utf-8')
             (shim / 'git').chmod(0o755)
             result = subprocess.run(['sh', '.githooks/commit-msg', str(message)], cwd=root,
                                     capture_output=True, text=True,
                                     env=dict(os.environ, GIT_LITERAL_PATHSPECS='1',
-                                             PATH=str(shim) + os.pathsep + os.environ['PATH']))
+                                             PATH=str(shim) + os.pathsep + os.environ['PATH']), encoding='utf-8')
             self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
             self.assertIn('still mentions it', result.stderr)
             self.assertNotIn('unscoped-index', result.stderr)
@@ -473,13 +473,13 @@ class GitHookTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root, git = self.repo(tmp)
             blob = subprocess.run(['git', 'hash-object', '-w', '--stdin'], cwd=root,
-                                  input='- K4: open\n', capture_output=True, text=True, check=True).stdout.strip()
+                                  input='- K4: open\n', capture_output=True, text=True, check=True, encoding='utf-8').stdout.strip()
             git('-c', 'core.protectNTFS=false', 'update-index', '--add', '--cacheinfo',
                 '100644,' + blob + ',' + name)
             message = root / 'message'
-            message.write_text(message_text)
+            message.write_text(message_text, encoding='utf-8')
             result = subprocess.run(['sh', '.githooks/commit-msg', str(message)], cwd=root,
-                                    capture_output=True, text=True)
+                                    capture_output=True, text=True, encoding='utf-8')
             self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
             return result.stderr
 
@@ -509,12 +509,12 @@ class GitHookTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root, git = self.repo(tmp)
             self.docs(root, git, '- K4: in flight\n')
-            (root / 'docs/STATE.md').write_text('# STATE\n\n## Active work\n')
+            (root / 'docs/STATE.md').write_text('# STATE\n\n## Active work\n', encoding='utf-8')
             result = self.commit(root, git, 'unstaged\n\nDone: K4\n')
             self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
             self.assertIn('closes K4 but docs/STATE.md', result.stderr)
             self.docs(root, git)
-            (root / 'docs/STATE.md').write_text('# STATE\n\n## Active work\n- K4: in flight\n')
+            (root / 'docs/STATE.md').write_text('# STATE\n\n## Active work\n- K4: in flight\n', encoding='utf-8')
             result = self.commit(root, git, 'staged\n\nDone: K4\n')
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
@@ -556,7 +556,7 @@ class GitHookTests(unittest.TestCase):
     def test_the_done_check_runs_without_the_attribution_rule(self):
         with tempfile.TemporaryDirectory() as tmp:
             root, git = self.repo(tmp)
-            (root / 'AGENTS.md').write_text('AI tools may be credited.\n')
+            (root / 'AGENTS.md').write_text('AI tools may be credited.\n', encoding='utf-8')
             self.docs(root, git, '- K4: in flight\n')
             result = self.commit(root, git, 'Done: K4\n')
             self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
@@ -598,17 +598,17 @@ class GitHookTests(unittest.TestCase):
                 [sys.executable, '-c',
                  'import fcntl, sys, time; f = open(sys.argv[1], "a+"); '
                  'fcntl.flock(f, fcntl.LOCK_EX); print("held", flush=True); time.sleep(60)',
-                 str(root / '.git/check.lock')], stdout=subprocess.PIPE, text=True)
+                 str(root / '.git/check.lock')], stdout=subprocess.PIPE, text=True, encoding='utf-8')
             try:
                 self.assertEqual(holder.stdout.readline().strip(), 'held')
-                (root / 'c').write_text('locked\n')
+                (root / 'c').write_text('locked\n', encoding='utf-8')
                 git('add', 'c')
                 result = subprocess.run(
                     ['git', '-c', 'user.name=t', '-c', 'user.email=t@example.invalid',
                      '-c', 'core.hooksPath=.githooks', 'commit', '-q', '-m', 'locked'],
                     cwd=root, capture_output=True, text=True, timeout=60,
                     env=dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1',
-                             GATE_LOCK_WAIT='1'))
+                             GATE_LOCK_WAIT='1'), encoding='utf-8')
             finally:
                 holder.kill()
                 holder.wait()
@@ -628,7 +628,7 @@ class GitHookTests(unittest.TestCase):
                 git('config', 'core.ignorecase', 'false')
                 for name in ('.MYAGENTKIT/Backends/glm.env', '.MyAgentKit/usage/r.json'):
                     (root / name).parent.mkdir(parents=True)
-                    (root / name).write_text('ANTHROPIC_AUTH_TOKEN=fixture\n')
+                    (root / name).write_text('ANTHROPIC_AUTH_TOKEN=fixture\n', encoding='utf-8')
                 git('add', '-A')
                 git('commit', '-q', '-m', 'everything')
                 self.assertEqual(git('ls-files', ':(icase).myagentkit').stdout, '')
@@ -651,7 +651,7 @@ class GitHookTests(unittest.TestCase):
                     shim = Path(tmp) / 'shim'
                     shim.mkdir()
                     (shim / 'grep').write_text('#!/bin/sh\nfor last; do :; done\n[ "$last" != AGENTS.md ] || exit 2\n'
-                                               'exec %s "$@"\n' % real_grep)
+                                               'exec %s "$@"\n' % real_grep, encoding='utf-8')
                     (shim / 'grep').chmod(0o755)
                     extra['PATH'] = '%s%s%s' % (shim, os.pathsep, os.environ['PATH'])
                 result = self.commit(root, git, 'Co-Authored-By: Claude <noreply@anthropic.com>\n', **extra)

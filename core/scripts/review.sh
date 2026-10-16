@@ -27,6 +27,8 @@
 # AUTHOR never reviews its own patch and the REVIEWER is a different model — not that a
 # particular vendor holds a particular role. Both directions run through this one script and
 # publish the SAME evidence format, so records stay comparable when the roles swap.
+# (Which direction a family may review is the lead's rule, docs/WORKFLOW.md "cross";
+# this script runs every direction.)
 #
 # THE REVIEWER EXECUTES, NEVER IN THIS REPOSITORY. The adapter this script starts gives each
 # reviewer attempt its own throwaway copy (`git archive` of HEAD plus the uncommitted diff) as
@@ -90,6 +92,11 @@ CDPATH= cd -- "${REVIEW_REPO_ROOT:-$script_dir/..}" || exit 2
 
 # ---------------------------------------------------------------------------------------
 # PROJECT-OWNED CONFIGURATION. Set during setup; sync-kit.sh never overwrites this file.
+#
+# Pins are fixed snapshots and per reviewer: Codex's JSONL names no model, so the pin is the only
+# record, and the vendors' id formats differ (platform.claude.com/docs/en/about-claude/models/model-ids-and-versions;
+# learn.chatgpt.com/docs/non-interactive-mode). Critical work (WORKFLOW rule 7): set
+# REVIEW_CLAUDE_MODEL to the strongest tier for that run.
 #
 # Both models are PINNED BY NAME, in both directions. An unpinned run records the reviewing
 # CLI's own default, which is a moving target: two records made a month apart then claim the

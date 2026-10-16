@@ -21,6 +21,22 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-10-16 — v0.11 batch 10: kit checks, plugin release and acceptance timing
+
+2026-10-16 Git 2.47.1 `cat-file --batch --filters` prints the unfiltered blob size in its
+header (demo: `blob 2` then `a\r\n`); clean_worktrees compares through
+`checkout-index --prefix` instead. clean_worktrees strips GIT_CONFIG_COUNT with git's local
+env vars: config given that way does not reach its git calls. test_bootstrap on native
+Windows, i7-12700H: 36 tests in 1580 s (2026-10-16); master e642117 self-test: acceptance
+unit 1938 s, all 1964 s (2026-10-15).
+
+The b10d serial acceptance unit failed in 1397.8 s: its bridge/preflight group reached the
+1200 s limit, while the completed shard of 110 IDs alone took 1051 s. Two shards on this
+20-CPU host cut wall time by about 25%, not half, compared with b10c's serial 1527 s.
+The nested run remains above 1200 s; changing the bound is the owner's decision
+(close-out decisions.md item 29). The fix round addressed round-1 logic findings that
+shards survived SIGINT and SHELLCHECK_OPTS hid SC2028/SC2086; round 2 returned Accept.
+
 ### 2026-10-16 — v0.11 batch 11: setup interview, feedback permissions and CRLF repair
 
 2026-10-16 batch 11: Git 2.41's release notes list the sparse-checkout rule debugging aid
