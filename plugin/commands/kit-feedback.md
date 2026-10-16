@@ -1,7 +1,7 @@
 ---
 description: Send something you learned back to MyAgentKit_Keel as a GitHub issue or pull request — the kit improves from the projects using it
 argument-hint: "[what you learned, or leave empty to use the current conversation]"
-allowed-tools: Read, Glob, Grep, Bash(gh auth status), Bash(git status *), Bash(git diff *), AskUserQuestion
+allowed-tools: Read, Glob, Grep, Bash(gh auth status), Bash(git status), Bash(git diff), Bash(git diff --stat), AskUserQuestion
 ---
 # /myagentkit:kit-feedback [what you learned]
 
@@ -79,7 +79,8 @@ as text for them to paste by hand. Do not attempt another route.
 ## 5. Send
 
 The send command is not pre-approved on purpose; the permission prompt is the second gate.
-Only read-only commands are in this command's `allowed-tools`: a pre-approved tool runs
+Only exact read-only command forms are in this command's `allowed-tools`; other arguments
+require a prompt. A pre-approved tool runs
 without a prompt (code.claude.com/docs/en/skills, `allowed-tools`), and a yes in the chat is
 no permission boundary.
 

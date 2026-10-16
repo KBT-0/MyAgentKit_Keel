@@ -755,6 +755,46 @@ class SyncKitTests(unittest.TestCase):
                 self.assertEqual(git('show', ':' + path), lf, path)
             self.assertEqual((project / 'notes.txt').read_bytes(), b'one\r\n')
 
+    def test_fix_crlf_leaves_binary_hooks_and_scripts_unmodified_and_unstaged(self):
+        # A tracked helper executable was corrupted and staged with every other hook.
+        # Attributes can disable conversion even without NUL; forced text still cannot
+        # make binary content safe to rewrite. Keep an unstaged owner edit, too.
+        env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1')
+        for path, attributes, body in (
+                ('.githooks/helper.exe', b'*.exe binary\n', b'MZ\0one\r\ntwo\r\n'),
+                ('.githooks/helper.exe', b'*.exe -text\n', b'one\r\ntwo\r\n'),
+                ('.githooks/helper.exe', b'', b'MZ\0one\r\ntwo\r\n'),
+                ('.githooks/helper.exe', b'* text eol=lf\n', b'MZ\0one\r\ntwo\r\n'),
+                ('.githooks/helper.exe', b'* text=auto\n', b'MZ\0one\r\ntwo\r\n'),
+                ('scripts/helper.sh', b'*.sh binary\n', b'one\r\ntwo\r\n')):
+            with self.subTest(path=path, attributes=attributes), tempfile.TemporaryDirectory() as tmp:
+                project = Path(tmp)
+                binary = project / path
+                binary.parent.mkdir(parents=True)
+                binary.write_bytes(body)
+                (project / '.gitattributes').write_bytes(attributes)
+                text = project / '.githooks/pre-commit.project'
+                text.parent.mkdir(parents=True, exist_ok=True)
+                text.write_bytes(b'#!/bin/sh\r\necho hook\r\n')
+                git = lambda *args: subprocess.run(
+                    ['git', '-c', 'core.autocrlf=false', *args], cwd=project,
+                    check=True, capture_output=True, env=env).stdout
+                git('init', '-q')
+                git('add', '-A')
+                git('-c', 'user.name=F', '-c', 'user.email=f@example.invalid',
+                    'commit', '-qm', 'fixture')
+                indexed = git('show', ':' + path)
+                binary.write_bytes(body + b'owner edit\r\n')
+                result = subprocess.run(['sh', '-c', textwrap_dedent_dev_setup()], cwd=project,
+                                        capture_output=True, text=True, env=env)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(binary.read_bytes(), body + b'owner edit\r\n')
+                self.assertEqual(git('show', ':' + path), indexed, 'binary owner edit was staged')
+                self.assertNotIn(path.encode(), git('diff', '--cached', '--name-only', '-z').split(b'\0'))
+                self.assertIn('left alone, Git treats as binary', result.stderr)
+                self.assertEqual(text.read_bytes(), b'#!/bin/sh\necho hook\n')
+                self.assertEqual(git('show', ':.githooks/pre-commit.project'), text.read_bytes())
+
     def test_the_line_ending_repair_never_writes_below_a_linked_folder(self):
         # Codex review: only the leaf was checked, so with scripts/ a link to a shared folder the
         # repair rewrote the shared check.sh, outside the project, and exited 0.

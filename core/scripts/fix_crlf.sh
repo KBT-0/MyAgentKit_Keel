@@ -9,8 +9,10 @@
 # so an old clone keeps its CRLF gate and hooks. The core is the documented one: rewrite the
 # working copy, then `git add --renormalize -- '*.sh' '.githooks/*'` (gitattributes, "eol" and
 # --renormalize: git-scm.com/docs/gitattributes; GitHub Docs, "Configuring Git to handle line
-# endings"). Each CRLF becomes LF in a regular file, a lone CR is kept, each file is replaced
-# whole with its mode. A file that is, or lies below, a symlink or a junction is left alone
+# endings"). Only Git text files are rewritten and staged: `-text`/binary attributes and
+# content Git detects as binary are skipped (git ls-files --eol). Each CRLF becomes LF in
+# a regular text file, each file is replaced whole with its mode. A file that is, or lies
+# below, a symlink or a junction is left alone
 # with a line saying so: the rewrite would write outside the project (the kit's own review
 # finding, not a reported incident; harmless, so it stays: KARARLAR D07 inv3#82). A failed
 # rewrite or a failed `git ls-files` (a corrupt index) stops before anything is staged; a
@@ -27,7 +29,7 @@ left=$(git ls-files --others -- ':(glob)**/.crlf-*')
 list=$(mktemp) || exit 1
 trap 'rm -f "$list"' EXIT; trap 'exit 129' HUP; trap 'exit 130' INT; trap 'exit 143' TERM
 set -- '*.sh' '.githooks/*'
-git ls-files -z -- "$@" > "$list" || { echo "STOP: git ls-files failed (above); nothing was changed" >&2; exit 1; }
+git ls-files -z --eol -- "$@" > "$list" || { echo "STOP: git ls-files failed (above); nothing was changed" >&2; exit 1; }
 $kit_python -I -c 'if 1:
     import os, signal, stat, sys, tempfile
     signal.signal(signal.SIGTERM, lambda *a: sys.exit(143))
@@ -40,10 +42,19 @@ $kit_python -I -c 'if 1:
             if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400:
                 return False
         return stat.S_ISREG(info.st_mode)
-    for name in sys.stdin.buffer.read().split(b"\0"):
-        if name and not plain(name):
+    text_files = []
+    for entry in sys.stdin.buffer.read().split(b"\0"):
+        if not entry:
+            continue
+        eol, separator, name = entry.partition(b"\t")
+        if not separator:
+            raise ValueError("git ls-files --eol returned no path")
+        if not plain(name):
             sys.stderr.write("left alone, a link or not a regular file on its way: %r\n" % name)
-        elif name:
+        elif b"attr/-text" in eol.split() or not any(
+                kind in eol.split() for kind in (b"w/lf", b"w/crlf", b"w/mixed", b"w/none")):
+            sys.stderr.write("left alone, Git treats as binary or not text: %r\n" % name)
+        else:
             with open(name, "rb") as script:
                 data = script.read()
             if b"\r\n" in data:
@@ -55,6 +66,9 @@ $kit_python -I -c 'if 1:
                     os.replace(new, name)
                 finally:
                     if os.path.lexists(new):
-                        os.unlink(new)' < "$list" ||
+                        os.unlink(new)
+            text_files.append(name + b"\0")
+    with open(sys.argv[1], "wb") as paths:
+        paths.write(b"".join(text_files))' "$list" < "$list" ||
   { echo "STOP: a script could not be rewritten (above); nothing was staged" >&2; exit 1; }
 if [ -s "$list" ]; then xargs -0 git add --renormalize -- < "$list"; fi
