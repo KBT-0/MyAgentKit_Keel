@@ -146,6 +146,8 @@ runtime-permission guidance, an analogy, not a source on agents).
 
 ## Cadence
 
-At every install, and once inside each project's periodic architecture audit. Not
-continuously: a research pass costs budget too, and running it on a schedule is what stops
-it from being run on a whim.
+At every install, and once inside each project's periodic architecture audit,
+and when a tool the kit relies on ships a major version or a vendor document changes a rule
+the kit follows (the CHANGELOG's ACTIONs are born this way); a pass is proposed to the owner
+with its cost line and never starts by itself. Not continuously: a research pass costs budget
+too, and running it on a schedule is what stops it from being run on a whim.
