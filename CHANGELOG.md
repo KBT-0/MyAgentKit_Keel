@@ -72,6 +72,16 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   (KARARLAR B08 inv1#253, B10 inv3/(f), inv3#7, inv1#93, inv2#151, B07 inv2#131/#132, D07
   inv3#108 b; BACKLOG B5, B13).
   **ACTION:** re-sync the overlay hooks, `scripts/context_buckets.py` and `.githooks/commit-msg`.
+- **Usage and cost measurement** (`scripts/agent_cost.py`, `scripts/usage_summary.py`,
+  `docs/USAGE.md`, `docs/CODEX.md`, `docs/worker-cost-setups.md`). The worker cost analysis reads
+  each cache write's recorded lifetime (one hour or five minutes) instead of treating every write
+  after five minutes as an expiry; an 80% hit rate is an alarm, the owner's choice. The review
+  summary keeps shadow runs out of real-review rates, counts `rate_limited` and
+  `quota_exhausted` (and old `quota`) failures, prints author/reviewer pairs, and shows a Wilson
+  95% interval with the sample floor (30 decided findings, ten rated rounds; the owner's choice).
+  A later answer file replaces an earlier one per label and focus instead of counting the same
+  answers again (KARARLAR B03, D06 inv2#45/#55/#107/#108/#54/#12, inv1#161/#172, D01 inv1#191;
+  BACKLOG B9, B17). **ACTION:** re-sync the two scripts and `docs/USAGE.md`.
 - **Review tooling: bridge, dispatcher, usage** (`scripts/review.sh`, `scripts/claude_bridge.py`,
   `scripts/codex_bridge.py`, `scripts/review_dispatch.py`, `scripts/agent_usage.py`,
   `scripts/agent_process.py`, `docs/REVIEW_GATE.md`, `docs/REVIEW_RUNNING.md`, `docs/USAGE.md`,

@@ -54,6 +54,17 @@ Lesson from the reviews: a label rule fed by prose registered technical words (r
 fix registered every prose mention (round 2); only the place a file gives a task its id may
 register a label. Red runs saved before each change (batch2-tests/, RESULT-b2fix*.md).
 
+### 2026-10-16 — v0.11 batch 5: usage and cost measurement
+
+Batch 5 applies KARARLAR B03 (cache lifetimes per write bucket, code.claude.com/docs/en/prompt-caching;
+the 80% alarm, the first-ten-worker median and the 30-finding / ten-round floors are the owner's
+choices, not measurements) and D06 inv2#45/#55. The interval is the Wilson score interval (NIST/SEMATECH
+handbook, section 7.2.4.1). No proposal records exist yet, so the proposal limits were not retuned:
+the dogfood period (leeway and labricore-web, their first 1.5 weeks on v0.11) collects the first data. Lesson from the reviews: a per-label answer snapshot dropped a
+second focus's answers (Opus r1), and the per-focus fix still let an unfocused round credit focused
+rounds it never saw (Codex r2 High, lead fix c82c6f3): an answer file credits exactly what its
+reviewer was shown (prior_rounds), nothing wider.
+
 ### 2026-10-16 — v0.11 batch 4: review tooling (bridge, dispatcher, usage)
 
 Batch 4 applies KARARLAR D04 inv2#44/#126 (the vendor error pages behind the USAGE map,
