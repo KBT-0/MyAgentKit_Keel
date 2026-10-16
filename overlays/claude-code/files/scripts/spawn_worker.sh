@@ -6,9 +6,12 @@
 # watching and closing a tmux session does not apply there. Nothing can read that tab, so
 # there the worker's --settings gain a Notification and a Stop hook (the owner's settings and
 # hooks are kept; the merged file is .myagentkit/workers/NAME.settings.json) that write its
-# state line, `waiting permission|question TIME ID` or `idle TIME ID`, to .myagentkit/workers/
-# NAME.state, which watch_workers.sh reads in place of a pane. The result file stays the done
-# signal.
+# state line, `waiting permission|question TIME ID [context_tokens=N]` or
+# `idle TIME ID [context_tokens=N]`, to .myagentkit/workers/NAME.state, which watch_workers.sh
+# reads in place of a pane. Worktree workers get these hooks on either platform, and their
+# --settings also carries project settings absent from their checkout. The result file
+# stays the done signal (owner decision 23, 2026-10-16).
+# Copied project hook files enter Git's info/exclude by exact path, keeping result reports clean.
 # Worker names use letters, digits, - and _, not starting with -. The longest generated
 # filename (NAME.state.XXXXXXXX) must fit in 255 bytes; on native Windows its full path
 # must fit in 259 characters too, including the checkout's .myagentkit/workers folder.
@@ -266,10 +269,11 @@ backend_command() {
 # JSON may start with whitespace: only a leading `{` counted, and ' {"model":"x"}' was refused
 # as a file name with --worktree. JSON's four whitespace characters (space, tab, LF, CR)
 # before the `{` mark it inline, and the value is passed on unchanged.
+case $settings in [a-zA-Z]:\\*) settings=$(printf '%s' "$settings" | tr '\\' '/') ;; esac
 ws=" $(printf '\t\r')$nl"
 lead=${settings%%[!$ws]*}
 case "$settings" in
-  ""|"$lead{"*|/*) ;;
+  ""|"$lead{"*|/*|[a-zA-Z]:/*) ;;
   *) [ -f "$settings" ] || [ -z "$worktree" ] ||
        die "--settings is neither inline JSON nor a file here, and the worktree could hold another: $settings"
      [ ! -f "$settings" ] || settings=$dir/$settings ;;
@@ -283,6 +287,7 @@ again="--model $(q "$model") --effort $(q "$effort")${worktree:+ --worktree}"
 [ -z "$result" ]   || again="$again --result $(q "$result")"
 # Validate the lead checkout's generated paths before creating a worktree or worker files.
 wdir=$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)/.myagentkit/workers
+project_settings=$dir/.claude/settings.json
 if [ -n "$windows" ]; then
   longest_path=$(cygpath -m "$wdir/$longest") || die "cygpath cannot convert the path: $wdir"
   [ "${#longest_path}" -le 259 ] ||
@@ -293,6 +298,7 @@ fi
 printf '%s\n' "spawn_worker: about to run '$name': model $model, effort $effort" | LC_ALL=C tr '\001-\011\013-\037\177' '?'
 if [ -n "$worktree" ]; then
   top=$(git rev-parse --show-toplevel) || die "--worktree needs a git repository"
+  project_settings=$top/.claude/settings.json
   dir=$top/.claude/worktrees/$name
   if [ -n "$resume" ]; then
     [ -d "$dir" ] || die "--resume --worktree: no worktree at $dir"
@@ -301,6 +307,10 @@ if [ -n "$worktree" ]; then
       die "branch worktree-$name already exists and may be stale; delete it or pick another name"
     [ ! -e "$dir" ] || die "worktree path already exists: $dir"
   fi
+fi
+prepare_worktree() {
+  [ -n "$worktree" ] || return 0
+  # Settings have been validated before a locked worktree or branch is created.
   # Locked from spawn to close_worker.sh, which unlocks it: the worktree audit never removes a
   # locked worktree, so no clean-up races a live worker, as Claude Code locks its own agents'
   # worktrees while they run (code.claude.com/docs/en/worktrees). The quiet period stays as the
@@ -315,7 +325,29 @@ if [ -n "$worktree" ]; then
        { [ ! -e "$gd/locked" ] && ! git worktree lock --reason "kit worker $name" "$dir"; }; then
     die "--resume --worktree: cannot lock $dir for the resumed worker"
   fi
-fi
+  # Untracked kit installs carry settings and hooks together. Fill missing hook files,
+  # preserving the committed versions already present in the worker's checkout.
+  if [ -d "${project_settings%/*}/hooks" ]; then
+    $kit_python -I -c 'import os, shutil, subprocess, sys
+from pathlib import Path
+root = Path(sys.argv[2]).parents[1]
+copied = []
+def missing(source, destination):
+    if not os.path.lexists(destination):
+        shutil.copy2(source, destination)
+        copied.append(Path(destination).relative_to(root).as_posix())
+shutil.copytree(sys.argv[1], sys.argv[2], dirs_exist_ok=True, copy_function=missing)
+if copied:
+    exclude = Path(subprocess.check_output(["git", "-C", str(root), "rev-parse",
+                   "--path-format=absolute", "--git-path", "info/exclude"], encoding="utf-8").strip())
+    exclude.parent.mkdir(parents=True, exist_ok=True)
+    with exclude.open("a", encoding="utf-8", newline="\n") as stream:
+        for name in copied:
+            pattern = "".join("\\" + ch if ch in "\\*?[ " else ch for ch in name)
+            stream.write("\n/" + pattern + "\n")' \
+      "${project_settings%/*}/hooks" "$dir/.claude/hooks" || die "cannot carry project hooks into $dir"
+  fi
+}
 
 # The result and the supervisor (--result in the header). Absolute paths: the session starts in
 # the worker's folder.
@@ -337,14 +369,81 @@ record_result() {
     die "cannot record the result path in $wdir"
 }
 
-# Native Windows: nothing can read the tab's pane, so the worker gets a Notification and a Stop
-# hook that keep its state line in .myagentkit/workers/NAME.state for watch_workers.sh. Its
-# --settings becomes NAME.settings.json beside it: the owner's settings with the two hooks
-# added, theirs kept. The file is written once the name is known to be free (below).
-if [ -n "$windows" ]; then
-  own=$settings
-  settings=$(cygpath -m "$wdir/$name.settings.json") || die "cygpath cannot convert the path: $wdir"
+# Worktree sessions read shared project settings from their own working directory
+# (https://code.claude.com/docs/en/settings, checked 2026-10-16). Tracked settings arrive
+# with the checkout; absent settings must travel in --settings, with the owner's overrides
+# and hooks kept. Hook commands retain $CLAUDE_PROJECT_DIR and run in the worker.
+# Both worktree sessions and Windows tabs get state telemetry (owner decision 23, 2026-10-16).
+native() { if [ -n "$windows" ]; then cygpath -m "$1"; else printf '%s' "$1"; fi; }
+own=$settings
+if [ -n "$windows$worktree" ]; then
+  settings=$(native "$wdir/$name.settings.json") || die "cannot convert the path: $wdir"
 fi
+prepare_settings() {
+  hook=$kit_python' -I -c '$(q 'import importlib.util, json, os, sys, tempfile, time
+sys.dont_write_bytecode = True  # Loading telemetry must not create untracked hook caches.
+e = json.loads(sys.stdin.buffer.read() or b"{}")
+m = str(e.get("message", "")).lower()
+s = {"permission_prompt": "waiting permission", "elicitation_dialog": "waiting question"}.get(e.get("notification_type"), "")
+if "notification_type" not in e:
+    s = "waiting question" if "question" in m else "waiting permission" if "permission" in m or "approval" in m else ""
+s = "idle" if e.get("hook_event_name") == "Stop" else s
+if s:
+    extra = ""
+    try:
+        spec = importlib.util.spec_from_file_location("context_size", sys.argv[2])
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        tokens, _ = module.context(e["transcript_path"], require_request=True)
+        if type(tokens) is int and tokens >= 0:
+            extra = " context_tokens=" + str(tokens)
+    except Exception:
+        pass  # Telemetry never prevents the state event when the transcript is unavailable.
+    d, b = os.path.split(sys.argv[1])
+    f = tempfile.NamedTemporaryFile(mode="w", dir=d, prefix=b + ".", delete=False, newline="")
+    try:
+        with f:
+            f.write(s + time.strftime(" %Y-%m-%dT%H:%M:%S") + " " + str(time.time_ns()) + extra + chr(10))
+        os.replace(f.name, sys.argv[1])
+    finally:
+        if os.path.exists(f.name): os.unlink(f.name)')' '$(q "$(native "$wdir/$name.state")")' '$(q "${cworker%/*}/../.claude/hooks/context_size.py")
+  project=""
+  # Do not duplicate a tracked project's hooks: Claude Code already loads that file.
+  if [ -n "$worktree" ] && [ -f "$project_settings" ]; then
+    # A fresh checkout does not exist yet: inspect its commit, not the absent folder.
+    if { [ -n "$resume" ] && [ ! -e "$dir/.claude/settings.json" ]; } ||
+       { [ -z "$resume" ] && ! git cat-file -e HEAD:.claude/settings.json 2>/dev/null; }; then
+      project=$(native "$project_settings") || die "cannot convert the project settings path"
+    fi
+  fi
+  mkdir -p -- "$wdir" || die "cannot prepare $wdir"
+  { case $own in "") echo '{}' ;; "$lead{"*) printf '%s' "$own" ;; *) cat -- "$own" ;; esac; } |
+    $kit_python -I -c 'if 1:
+    import json, sys
+    def merge(base, override):
+        for key, value in override.items():
+            if key in base and isinstance(base[key], dict) and isinstance(value, dict):
+                merge(base[key], value)
+            elif key in base and isinstance(base[key], list) and isinstance(value, list):
+                base[key] += [item for item in value if item not in base[key]]
+            else:
+                base[key] = value
+        return base
+    owner = json.loads(sys.stdin.buffer.read())
+    project = json.load(open(sys.argv[2], encoding="utf-8-sig")) if sys.argv[2] else {}
+    if not isinstance(owner, dict) or not isinstance(project, dict):
+        raise ValueError("settings must be JSON objects")
+    d = merge(project, owner)
+    h = d.setdefault("hooks", {})
+    for e in ("Notification", "Stop"):
+        h.setdefault(e, []).append({"hooks": [{"type": "command", "command": sys.argv[1]}]})
+    print(json.dumps(d, indent=2))' "$hook" "$project" >"$wdir/$name.settings.json" ||
+    die "cannot merge the project and worker hooks into --settings (not a JSON object?): $own"
+}
+reset_state() {
+  # All launches, including plain tmux sessions, begin without the previous run's snapshot.
+  rm -f -- "$wdir/$name".state* "$wdir/$name".watch-* || die "cannot clear the previous state in $wdir"
+}
 # A worker is a session of its own, never the lead's child. The lead's shell carries Claude
 # Code's child-session markers, and a claude that sees CLAUDE_CODE_CHILD_SESSION skips its peer
 # registration (no sessions/<pid>.json: ListAgents never lists the worker, SendMessage cannot
@@ -456,36 +555,10 @@ sessions() {
 if [ -n "$windows" ]; then
   running=$(sessions "$name") || die "cannot list the Claude Code sessions to check the name '$name': $running"
   [ -z "$running" ] || die "a Claude Code session named '$name' already runs (process $running)"
+  prepare_settings
+  prepare_worktree
+  reset_state
   record_result
-  # The hook: `waiting permission|question TIME ID` on a Notification asking for input,
-  # `idle TIME ID` on Stop. Python is the interpreter chosen
-  # above by running it, as .claude/hooks/py.sh chooses for the project's hooks.
-  hook=$kit_python' -I -c '$(q 'import json, os, sys, tempfile, time
-e = json.loads(sys.stdin.buffer.read() or b"{}")
-m = str(e.get("message", "")).lower()
-s = {"permission_prompt": "waiting permission", "elicitation_dialog": "waiting question"}.get(e.get("notification_type"), "")
-if "notification_type" not in e:
-    s = "waiting question" if "question" in m else "waiting permission" if "permission" in m or "approval" in m else ""
-s = "idle" if e.get("hook_event_name") == "Stop" else s
-if s:
-    d, b = os.path.split(sys.argv[1])
-    f = tempfile.NamedTemporaryFile(mode="w", dir=d, prefix=b + ".", delete=False, newline="")
-    try:
-        with f:
-            f.write(s + time.strftime(" %Y-%m-%dT%H:%M:%S") + " " + str(time.time_ns()) + chr(10))
-        os.replace(f.name, sys.argv[1])
-    finally:
-        if os.path.exists(f.name): os.unlink(f.name)')' '$(q "$(cygpath -m "$wdir/$name.state")")
-  mkdir -p -- "$wdir" && rm -f -- "$wdir/$name".state* "$wdir/$name".watch-* || die "cannot prepare $wdir"
-  { case $own in "") echo '{}' ;; "$lead{"*) printf '%s' "$own" ;; *) cat -- "$own" ;; esac; } |
-    $kit_python -I -c 'if 1:
-    import json, sys
-    d = json.loads(sys.stdin.buffer.read())
-    h = d.setdefault("hooks", {})
-    for e in ("Notification", "Stop"):
-        h.setdefault(e, []).append({"hooks": [{"type": "command", "command": sys.argv[1]}]})
-    print(json.dumps(d, indent=2))' "$hook" >"$wdir/$name.settings.json" ||
-    die "cannot add the worker's hooks to its --settings (not a JSON object?): $own"
   wt=${KIT_WT:-wt.exe}
   command -v "$wt" >/dev/null || die "Windows Terminal ($wt) is not on PATH; start the worker by hand: $cmd"
   bash=$(command -v bash) || die "bash is not on PATH"
@@ -546,6 +619,9 @@ fi
 # `cd` first: tmux hands new sessions the PWD of whichever client last created one, and
 # the tool exits with "the current working directory was deleted" when that folder (a
 # removed worktree, say) is gone, whatever -c says.
+[ -z "$worktree" ] || prepare_settings
+prepare_worktree
+reset_state
 [ -z "$backend" ] || cmd=$(backend_command "$cmd")
 # The reserved script removes itself; tmux receives two plain words for its default shell.
 record_result
