@@ -26,7 +26,7 @@ class UsageSummaryTests(unittest.TestCase):
 
     def record(self, name, task, report=None, kind='review', callee='claude', model='opus',
                status='completed', reason=None, duration=1000, chain='', behaviour=None, backend=None,
-               dispositions=None, shadow=None):
+               dispositions=None, shadow=None, author=None):
         """One record written by the adapters' own writer, so the schema is production's."""
         evidence = None
         if report is not None:
@@ -36,6 +36,7 @@ class UsageSummaryTests(unittest.TestCase):
             path, _ = agent_usage.record(self.repo, callee, model, 'test',
                                          {'id': task, 'kind': kind, **({'behaviour': behaviour} if behaviour else {}),
                                           **({'dispositions': dispositions} if dispositions else {}),
+                                          **({'author': author} if author is not None else {}),
                                           **({'shadow': shadow} if shadow else {})},
                                          {'duration_ms': duration}, status, reason,
                                          evidence and str(evidence), report, backend=backend)
@@ -161,6 +162,7 @@ class UsageSummaryTests(unittest.TestCase):
         cases += [('task', {'id': [], 'kind': 'review'}),
                   ('task', {'id': 'damaged', 'kind': []}),
                   ('task', {'id': 'damaged', 'kind': 'review', 'behaviour': []})]
+        cases += [('task', {'id': 'damaged', 'kind': 'review', 'author': []})]
         cases += [('duration_ms', value) for value in ([], '1000', True, -1, float('nan'), float('inf'), 10 ** 400)]
         for field, value in cases:
             with self.subTest(field=field, value=value):
@@ -208,7 +210,7 @@ class UsageSummaryTests(unittest.TestCase):
         self.assertIn('Model opus / effort high: invocations=1 rounds=1 duration=1.000s rejects=1 '
                       'findings=3 per_round=3.0 accepted=2/3 (0.67, author-claimed)', out)
         self.assertIn('Model sol / effort medium: invocations=1 rounds=1 duration=2.000s rejects=0 '
-                      'findings=0 per_round=0.0\n', out)
+                      'findings=0 per_round=0.0 n=0 rated_rounds=0 wilson95=unknown decision=insufficient\n', out)
 
     def test_only_a_round_credits_the_round_before_it(self):
         # A failed attempt, its fallback and a shadow run carry the same file: one credit.
@@ -255,10 +257,70 @@ class UsageSummaryTests(unittest.TestCase):
         self.record('b', 'T', b'| effort | low |\nVERDICT: Accept\n', model='sonnet', duration=2000)
         out = self.summary()
         self.assertIn('  not a round kind=review callee=claude model=sonnet effort=low verdict=Reject (shadow)', out)
-        self.assertIn('Task T: invocations=2 rounds=1 duration=3.000s rejects=1', out)
+        self.assertIn('Task T: invocations=2 rounds=1 duration=3.000s rejects=0 findings=0 per_round=0.0 shadow=1', out)
         self.assertIn('Model sonnet / effort low / shadow: invocations=1 rounds=0 duration=1.000s rejects=1 '
                       'findings=2 per_round=2.0', out)
         self.assertIn('Model sonnet / effort low: invocations=1 rounds=1 duration=2.000s rejects=0', out)
+
+    def test_shadow_findings_are_separate_in_every_aggregate(self):
+        self.record('shadow', 'T', b'VERDICT: Reject\n\n## Findings\n\n- High x\n- Medium y\n',
+                    shadow='yes', behaviour='on', author='writer')
+        self.record('real', 'T', b'VERDICT: Reject\n\n## Findings\n\n- Low z\n',
+                    behaviour='on', author='writer')
+        out = self.summary()
+        for prefix in ('Task T', 'Total', 'Behaviour on', 'Pair writer -> opus'):
+            line = next(line for line in out.splitlines() if line.startswith(prefix + ':'))
+            self.assertIn('rejects=1 findings=1 per_round=1.0 shadow=1', line)
+        self.assertIn('Pair writer -> opus / shadow:', out)
+
+    def test_quota_totals_include_both_new_kinds_and_legacy_records(self):
+        for kind in ('quota', 'rate_limited', 'quota_exhausted', 'timeout'):
+            self.record(kind, 'T', status='failed', reason=kind, behaviour='on')
+        out = self.summary()
+        for prefix in ('Task T:', 'Total:', 'Model opus / effort unknown:', 'Behaviour on:'):
+            line = next(line for line in out.splitlines() if line.startswith(prefix))
+            self.assertIn('quota=3 rate_limited=1 quota_exhausted=1 quota_legacy=1', line)
+
+    def test_wilson_interval_and_author_reviewer_pairs(self):
+        self.record('a', 'T', b'VERDICT: Reject\n\n## Findings\n\n- High x\n', author='writer')
+        self.record('b', 'T', b'VERDICT: Accept\n', author='writer', model='sol',
+                    dispositions={'fixed': 20, 'disproved': 10, 'deferred': 0})
+        self.record('unknown', 'U', b'VERDICT: Accept\n')
+        out = self.summary()
+        pair = next(line for line in out.splitlines() if line.startswith('Pair writer -> opus:'))
+        self.assertIn('accepted=20/30 (0.67, author-claimed)', pair)
+        self.assertIn('n=30 rated_rounds=1 wilson95=[0.488,0.808] decision=insufficient', pair)
+        self.assertIn('Pair unknown -> opus:', out)
+        self.assertIn('Pair writer -> sol:', out)
+
+    def test_cumulative_claims_count_once_and_need_ten_distinct_rated_rounds(self):
+        # Each round's file answers all earlier rounds, so the latest snapshot replaces
+        # earlier snapshots; rereading the same findings must not inflate n.
+        for number in range(11):
+            self.record(str(number), 'T', b'VERDICT: Reject\n\n## Findings\n\n- Low a\n- Low b\n- Low c\n',
+                        author='writer', dispositions={'fixed': number * 2, 'disproved': number, 'deferred': 0})
+            if number == 9:
+                line = next(line for line in self.summary().splitlines()
+                            if line.startswith('Pair writer -> opus:'))
+                self.assertIn('n=27 rated_rounds=9', line)
+                self.assertIn('decision=insufficient', line)
+        line = next(line for line in self.summary().splitlines() if line.startswith('Pair writer -> opus:'))
+        self.assertIn('accepted=20/30 (0.67, author-claimed)', line)
+        self.assertIn('n=30 rated_rounds=10 wilson95=[0.488,0.808] decision=eligible', line)
+
+    def test_many_empty_rounds_do_not_satisfy_the_rated_round_floor(self):
+        for number in range(10):
+            self.record(str(number), 'T', b'VERDICT: Accept\n', author='writer')
+        self.record('answer', 'T', b'VERDICT: Accept\n', author='writer',
+                    dispositions={'fixed': 30, 'disproved': 0, 'deferred': 0})
+        line = next(line for line in self.summary().splitlines() if line.startswith('Pair writer -> opus:'))
+        self.assertIn('n=30 rated_rounds=1', line)
+        self.assertIn('decision=insufficient', line)
+
+    def test_unrated_configurations_show_zero_sample_and_unknown_interval(self):
+        self.record('a', 'T', b'VERDICT: Accept\n', shadow='yes')
+        line = next(line for line in self.summary().splitlines() if line.startswith('Model opus'))
+        self.assertIn('n=0 rated_rounds=0 wilson95=unknown decision=insufficient', line)
 
     def test_null_model_is_unknown_and_not_the_label_none(self):
         self.record('a', 'T1', b'VERDICT: Accept\n', model=None)

@@ -61,13 +61,35 @@ class AgentCostTests(unittest.TestCase):
 
             text = agent_cost.table([lead_summary, worker])
             self.assertIn('TOTAL requests 4', text)
-            self.assertIn('after >5 min gaps 1.1k (50%)', text)
+            self.assertIn('after >TTL gaps 1.1k (50%)', text)
             self.assertIn('poll-only requests 2', text)
             # hit = read / (read + write + uncached): lead 1000/3125, worker 3/11, total 1003/3136
             self.assertEqual(agent_cost.hit(lead_summary), '32%')
             self.assertEqual(agent_cost.hit(worker), '27%')
-            self.assertIn('cache hit 32% (target 80%)', text)
+            self.assertIn('cache hit 32% (alarm below 80%; owner\'s choice)', text)
             self.assertEqual(agent_cost.hit({'cr': 0, 'cw': 0, 'inp': 0}), '-')
+
+    def test_gap_writes_follow_each_recorded_ttl_and_legacy_fallback(self):
+        # KARARLAR B03 inv2/(h): mixed TTLs must not turn every >5m write into a miss.
+        cases = [(300, 100, 0, 0, 0), (301, 100, 0, 0, 100),
+                 (600, 100, 100, 0, 0), (3600, 100, 100, 0, 0),
+                 (3601, 100, 100, 0, 100), (600, 120, 100, 20, 20),
+                 (600, 100, 0, 100, 100)]
+        from datetime import datetime, timedelta, timezone
+        start = datetime(2026, 10, 3, tzinfo=timezone.utc)
+        for gap, written, hour, five, expected in cases:
+            with self.subTest(gap=gap, hour=hour, five=five):
+                with tempfile.TemporaryDirectory() as tmp:
+                    session = Path(tmp) / 'ttl.jsonl'
+                    session.write_text('\n'.join([
+                        rec(start.isoformat(), 'a', {'input_tokens': 1}),
+                        rec((start + timedelta(seconds=gap)).isoformat(), 'b', {
+                            'cache_creation_input_tokens': written,
+                            'cache_creation': {'ephemeral_1h_input_tokens': hour,
+                                               'ephemeral_5m_input_tokens': five}})]), encoding='utf-8')
+                    result = agent_cost.summarize('worker', agent_cost.requests(session))
+                    self.assertEqual(result['cw_gap'], expected)
+                    self.assertIn('cWrite>TTL', agent_cost.table([result]))
 
     def test_latest_finds_a_project_whose_path_has_an_underscore(self):
         # Claude Code encodes every non-alphanumeric character as '-'; --latest once encoded
