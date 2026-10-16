@@ -1035,6 +1035,10 @@ def measure(claims: str | None) -> dict:
         measured["shadow"] = "yes"
     if os.environ.get("REVIEW_FOCUS"):
         measured["focus"] = os.environ["REVIEW_FOCUS"]  # prior_rounds() filters carried reports by focus
+    if os.environ.get("MYAGENTKIT_AUTHOR", "").strip():
+        # The lead's claim of who wrote the patch (KARARLAR B01-1: accepted rate per author and
+        # reviewer pair); review_dispatch refuses the author's tier as reviewer.
+        measured["author"] = os.environ["MYAGENTKIT_AUTHOR"].strip()
     return measured
 
 

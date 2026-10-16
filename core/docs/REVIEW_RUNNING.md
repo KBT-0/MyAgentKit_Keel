@@ -28,8 +28,10 @@ backend (`--backend NAME`, reviewer `claude@NAME`): `docs/DEV_SETUP.md`.
 | `REVIEW_SHADOW` | `1` measures a reviewer configuration; its verdict closes nothing |
 | `REVIEW_CLAUDE_MODEL`, `REVIEW_CODEX_MODEL`, `MYAGENTKIT_BACKEND` | pins and backend for one run |
 
-`MYAGENTKIT_AUTHOR` is not read or recorded. The lead checks the author's model and sets
-the reviewer pin before launch (`docs/REVIEW_GATE.md`, "Invariant").
+`MYAGENTKIT_AUTHOR` names the author's model (`claude-opus-5`, or `claude/claude-opus-5`):
+a reviewer pin of the author's tier is refused with exit 2 before any model runs, a substitute
+of that tier is blocked, and the chain and the usage record carry it as `author`. Without it
+the lead checks the author's model before launch (`docs/REVIEW_GATE.md`, "Invariant").
 
 Exit 2 means a wrong round was refused: keyless dispositions, an earlier archive missing or
 edited, a round that does not continue its label, a diff over 400000 bytes with its rounds

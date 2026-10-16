@@ -11,9 +11,10 @@ by name"): in solo, another tier of the same family, never the author's tier; in
 other family by the direction rule. This is the one place the rule is written; other documents
 point here. One family is enough; a second vendor (`--reviewer codex`, a `claude@NAME`
 backend) is pluggable, never required. No published measurement says how much another tier of
-the same family adds. The lead selects a reviewer outside the author's tier through the
-model pins; `scripts/review.sh` does not exclude the author's tier automatically or record
-the author's model. The lead checks independence before launch.
+the same family adds. The lead names the author's model in `MYAGENTKIT_AUTHOR`;
+`scripts/review.sh` then refuses a reviewer pin of the author's tier, blocks a substitute of
+that tier, and records the author in the chain and the usage record. Without the variable the
+lead checks independence before launch.
 Independence comes from the model family, not the CLI: a `claude@NAME` review of another
 family counts as the second model; its record says the model was requested, unattested. A green gate is
 necessary, not sufficient. The reviewer works in a throwaway copy without network or paid

@@ -22,6 +22,8 @@ ROOT = Path(__file__).resolve().parent
 INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'REVIEW_SHADOW', 'MYAGENTKIT_TASK_ID', 'MYAGENTKIT_REVIEW_CHAIN_ID',
                       'MYAGENTKIT_REVIEW_ATTEMPT', 'MYAGENTKIT_REVIEW_FALLBACK_FROM',
                       'MYAGENTKIT_REQUESTER', 'CLAUDE_REVIEW_DOCS', 'MYAGENTKIT_NO_BEHAVIOUR', 'MYAGENTKIT_BACKEND',
+                      # The lead's author claim: an exported one refused the fixtures' reviewer pin.
+                      'MYAGENTKIT_AUTHOR',
                       # A worker's brief: review.sh checked every fixture diff against its Owns: line.
                       'REVIEW_TASK_FILE',
                       # A review loop's tier, focus and effort: REVIEW_RISK=high changed the default
@@ -4697,17 +4699,17 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                     bridge.snapshot(self.repo, 'uncommitted', None)
                 self.commit_fixture('Remove ' + name)
 
-    def test_author_documentation_describes_the_current_manual_selection(self):
+    def test_author_documentation_describes_the_author_tier_refusal(self):
+        # KARARLAR B01 (1): the docs say what review_dispatch now does with MYAGENTKIT_AUTHOR.
         gate = ' '.join((ROOT.parent / 'docs/REVIEW_GATE.md').read_text(encoding='utf-8').split())
         running = ' '.join((ROOT.parent / 'docs/REVIEW_RUNNING.md').read_text(encoding='utf-8').split())
-        self.assertIn('The lead selects a reviewer outside the author\'s tier', gate)
-        self.assertIn('does not exclude the author\'s tier automatically', gate)
-        self.assertIn('`MYAGENTKIT_AUTHOR` is not read or recorded', running)
-        self.assertNotIn('refuses a reviewer pinned to the author\'s model', gate)
+        self.assertIn("`scripts/review.sh` then refuses a reviewer pin of the author's tier", gate)
+        self.assertNotIn("does not exclude the author's tier automatically", gate)
+        self.assertIn("a reviewer pin of the author's tier is refused with exit 2", running)
+        self.assertNotIn('`MYAGENTKIT_AUTHOR` is not read or recorded', running)
         page = ' '.join((ROOT.parent.parent / 'docs/decorrelated-review.md').read_text(encoding='utf-8').split())
-        self.assertNotIn('names the author\'s and the reviewer\'s model', page)
-        self.assertIn('every review record names the reviewer\'s model', page)
-        self.assertIn('the lead\'s choice of reviewer pin', page)
+        self.assertIn("refuses a reviewer of the author's tier", page)
+        self.assertNotIn('planned work', page)
 
     def test_capacity_documentation_says_what_the_dispatcher_retries(self):
         # KARARLAR B01 (6): the sentence batch 3 took out until the retry existed (RESULT-b3fix.md).
@@ -5899,6 +5901,42 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         chain = json.loads(result.stdout.split('review dispatch: ', 1)[1].splitlines()[0])
         self.assertNotIn('shadow', chain)
         self.assertNotIn('REVIEW [shadow]', result.stdout)
+
+    def test_the_author_tier_never_reviews_and_the_record_names_the_author(self):
+        # KARARLAR B01 (1): review.sh's default excludes the author's tier. With MYAGENTKIT_AUTHOR
+        # naming the tier the selected reviewer would run, the review is refused before any
+        # model or record; another tier runs, and the chain and the usage record name the author.
+        env = dict(CLAUDE_CLI_BIN=str(self.fixture), REVIEW_CLAUDE_MODEL='claude-opus-5')
+        for author in ('claude-opus-5', 'claude/claude-opus-5-5', 'CLAUDE-OPUS-5-20261001'):
+            with self.subTest(author=author):
+                result = self.run_wrapper('--uncommitted', MYAGENTKIT_AUTHOR=author, **env)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn("is the author's tier", result.stdout)
+                self.assertIn('docs/REVIEW_GATE.md', result.stdout)
+                self.assertFalse((self.repo / '.myagentkit/usage').exists())
+        result = self.run_wrapper('--uncommitted', MYAGENTKIT_AUTHOR='claude-sonnet-5', **env)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        chain = json.loads(result.stdout.split('review dispatch: ', 1)[1].splitlines()[0])
+        self.assertEqual(chain['author'], 'claude-sonnet-5')
+        usage = json.loads(Path(chain['attempts'][0]['usage_record']).read_text())
+        self.assertEqual(usage['task']['author'], 'claude-sonnet-5')
+        # Without the variable nothing changes: no author field, the lead's check stands.
+        result = self.run_wrapper('--uncommitted', **env)
+        chain = json.loads(result.stdout.split('review dispatch: ', 1)[1].splitlines()[0])
+        self.assertNotIn('author', chain)
+        self.assertNotIn('author', json.loads(Path(chain['attempts'][0]['usage_record']).read_text())['task'])
+
+    def test_a_substitute_of_the_author_tier_is_blocked(self):
+        # KARARLAR B01 (1) with lead decision 7: a used-up Codex quota switches to Claude, but never
+        # to the author's tier; --fallback is blocked the same way.
+        for fallback in (False, True):
+            with self.subTest(fallback=fallback):
+                result, chain = self.dispatch_result('codex', fallback=fallback, CODEX_FIXTURE_CASE='quota',
+                                                     MYAGENTKIT_AUTHOR='claude-opus-5',
+                                                     MYAGENTKIT_TASK_ID='author-sub-%s' % fallback)
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertEqual([a['reviewer'] for a in chain['attempts']], ['codex'])
+                self.assertIn("the author's tier", chain['fallback_blocked'])
 
     def test_the_reviewer_runs_only_the_narrow_test_never_the_full_suite(self):
         # Owner decision 2026-10-16: reviewers that ran the 30-minute self-test in their copy

@@ -116,6 +116,15 @@ def pin_valid(provider, model, backend=None):
         provider != "claude" or bool(backend) or model.startswith("claude-"))
 
 
+def tier(model):
+    """The tier a model id belongs to: `claude-opus` for every Opus id (claude-opus-5,
+    claude-opus-5-5, a dated one), else the id without a -YYYYMMDD date. A `vendor/` prefix,
+    as MYAGENTKIT_REQUESTER writes it, is dropped."""
+    model = model.strip().lower().rpartition("/")[2]
+    family = re.match(r"claude-([a-z]+)", model)
+    return "claude-" + family[1] if family else re.sub(r"-\d{8}$", "", model)
+
+
 def load_backend(repo, name):
     """The environment and the model pin of backend `name`, from .myagentkit/backends/NAME.env.
 
@@ -247,6 +256,14 @@ def main(argv=None):
         raise ValueError("no model pinned for reviewer '%s'" % args.reviewer)
     if not pin_valid(args.reviewer, pins[args.reviewer], args.backend):
         raise ValueError("invalid primary model pin")
+    # KARARLAR B01 (1): the author never reviews its own patch, and the default excludes the
+    # author's tier. Only the lead knows the author; when it says so, the pin is checked here.
+    author = os.environ.get("MYAGENTKIT_AUTHOR", "").strip() or None
+    if author and tier(author) == tier(pins[args.reviewer]):
+        raise ValueError("MYAGENTKIT_AUTHOR %s is the author's tier (%s), which reviewer %s model %s "
+                         "would run: the author never reviews its own patch (docs/REVIEW_GATE.md, "
+                         "\"Invariant\"). Pin another tier (REVIEW_CLAUDE_MODEL) or the other family "
+                         "(--reviewer)" % (author, tier(author), names[args.reviewer], pins[args.reviewer]))
     scope, ref = ("base", args.base) if args.base else (("commit", args.commit) if args.commit else ("uncommitted", None))
     original = claude_bridge.snapshot(repo, scope, ref)
     if not original[2].strip():
@@ -283,6 +300,8 @@ def main(argv=None):
              "fallback_allowed": args.allow_fallback,
              "attempts": [], "status": "pending", "failure_kind": None,
              "review_approved": False, "independence": "host_must_check_all_patch_authors"}
+    if author:
+        chain["author"] = author  # the lead's claim, recorded; the pairs are measured per author
     if os.environ.get("REVIEW_SHADOW") == "1":
         # Marked where a later reader looks: the chain record and the console. A variable left
         # exported after a shadow run turns every later review into one, so the line says so.
@@ -393,6 +412,10 @@ def main(argv=None):
             eligible = False
         if eligible and not pin_valid(other, pins[other], args.backend):
             chain["fallback_blocked"] = "other reviewer has no valid configured model pin"
+            eligible = False
+        if eligible and author and tier(author) == tier(pins[other]):
+            chain["fallback_blocked"] = ("other reviewer %s model %s is the author's tier (MYAGENTKIT_AUTHOR %s)"
+                                         % (names[other], pins[other], author))
             eligible = False
         checkpoint()  # Never spend on the alternate if primary evidence cannot be saved.
         if attempt.get("error_after_result"):  # Save once, before a closed console can raise again.
