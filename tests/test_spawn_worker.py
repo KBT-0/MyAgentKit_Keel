@@ -1414,7 +1414,7 @@ exit 0
         # did not match `watch_workers:`: the brief was typed with no dialog check at all.
         scripts = self.tmp / 'scripts'
         scripts.mkdir()
-        (scripts / 'spawn_worker.sh').write_text(SCRIPT.read_text())
+        (scripts / 'spawn_worker.sh').write_bytes(SCRIPT.read_bytes())
         shutil.copyfile(SCRIPT.with_name('codex_worker.py'), scripts / 'codex_worker.py')  # the session's supervisor
         for body in (None, 'echo "it broke"; exit 1\n'):
             with self.subTest(watcher=body):
