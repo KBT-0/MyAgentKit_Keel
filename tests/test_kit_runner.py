@@ -1,4 +1,5 @@
 """The kit check runs its units at once and reports them in a fixed order, failures in full."""
+import ast
 import contextlib
 import importlib.util
 import io
@@ -275,6 +276,33 @@ runpy.run_path(%r, run_name='__main__')
                 passed, out = runner(('suite', command))
                 self.assertEqual(passed, expected, out)
                 if declared:
+                    self.assertIn('NOT RUN: test_kit_probe.Probe.test_maybe', out)
+
+    def test_platform_wrappers_do_not_satisfy_suite_minimums(self):
+        # Exercise the shipped decorators on cheap probes, including the platform branch
+        # this host cannot run. A print-and-return replacement used to pass a minimum of 2.
+        for module, decorator, windows in (
+                ('test_spawn_worker', 'tmux_path_cases', True),
+                ('test_check_gate_windows', 'windows_only', False),
+                ('test_clean_worktrees_windows', 'windows_only', False),
+                ('test_review_windows', 'windows_only', False)):
+            tree = ast.parse((ROOT / 'tests' / (module + '.py')).read_text(encoding='utf-8'))
+            helper = next(node for node in tree.body
+                          if isinstance(node, ast.FunctionDef) and node.name == decorator)
+            source = ('import shutil, sys, unittest\nWINDOWS = %r\nON_WINDOWS = set()\n'
+                      % windows) + ast.unparse(helper) + '\n' + PROBE % 'False'
+            if decorator == 'tmux_path_cases':
+                # Keep one real passing scenario beside the excluded probe.
+                source = source.replace('ON_WINDOWS = set()', "ON_WINDOWS = {'test_passes'}")
+                source += '\nProbe = tmux_path_cases(Probe)\n'
+            else:
+                source += '\nProbe.test_maybe = windows_only(Probe.test_maybe)\n'
+            for minimum, expected in ((2, False), (1, True)):
+                with self.subTest(module=module, minimum=minimum):
+                    command = self.suite_unit('True', minimum)
+                    (self.tmp / 'suite/test_kit_probe.py').write_text(source)
+                    passed, out = runner(('suite', command))
+                    self.assertEqual(passed, expected, out)
                     self.assertIn('NOT RUN: test_kit_probe.Probe.test_maybe', out)
 
     def test_a_nested_only_failing_module_fails_the_run(self):

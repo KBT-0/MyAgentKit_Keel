@@ -21,6 +21,17 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-10-16 — v0.11 fix7: worktree hooks and context visibility
+
+2026-10-16: Preserve absent worktree settings and expose worker context, preventing silent missing hooks.
+Sources: owner decision 23; https://code.claude.com/docs/en/settings (2026-10-16); fix7 regressions.
+Decision 23's CORRECTION records that the kit's settings were tracked and b10 received the
+yellow and red notices twice but did not act on them; the lead saw nothing. The state line
+and watcher close that visibility gap and also cover projects with untracked settings.
+
+Opus r1 Reject (2 High, 3 Medium) led to fix7fix; Opus r2 found 2 High from the r1 fixes,
+leading to fix7fix2, with no round 3 (decisions.md 25).
+
 ### 2026-10-16 — v0.11 batch 10: kit checks, plugin release and acceptance timing
 
 2026-10-16 Git 2.47.1 `cat-file --batch --filters` prints the unfiltered blob size in its
@@ -35,7 +46,8 @@ The b10d serial acceptance unit failed in 1397.8 s: its bridge/preflight group r
 20-CPU host cut wall time by about 25%, not half, compared with b10c's serial 1527 s.
 The nested run remains above 1200 s; changing the bound is the owner's decision
 (close-out decisions.md item 29). The fix round addressed round-1 logic findings that
-shards survived SIGINT and SHELLCHECK_OPTS hid SC2028/SC2086; round 2 returned Accept.
+shards survived SIGINT and SHELLCHECK_OPTS hid SC2028/SC2086; both round-2 reviews returned
+Accept with Manual Checks.
 
 ### 2026-10-16 — v0.11 batch 11: setup interview, feedback permissions and CRLF repair
 
