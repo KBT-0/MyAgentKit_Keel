@@ -62,8 +62,8 @@ review refuses a line-ending-only diff unless `REVIEW_ALLOW_EOL_ONLY=1`); in a r
 already has CRLF files, run `git add --renormalize .` once after adding it and commit that alone
 ([gitattributes](https://git-scm.com/docs/gitattributes)). A clone made before they were
 committed keeps its CRLF copies, because a pull does not check out again a file it did not
-change. Repair it once, with no uncommitted change to the scripts or hooks: `sh
-scripts/fix_crlf.sh` (kit-owned; its header says what it rewrites and what it leaves
+change. Repair it once, with no uncommitted change to the scripts or hooks:
+`sh scripts/fix_crlf.sh` (kit-owned; its header says what it rewrites and what it leaves
 alone). It turns each CRLF script and hook into LF and runs `git add --renormalize` on
 them; a file added after the attributes, the script itself included, already checks out
 with LF.
