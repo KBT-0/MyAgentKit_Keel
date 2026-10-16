@@ -42,6 +42,18 @@ Verified locally (red then green): `git clean -nd` and `git restore --staged f` 
 a dirty tree before the rewrite; an EncodingWarning in `git status` made a clean tree read as
 dirty; a backslash `file_path` was never matched by `guard_boundaries.py`.
 
+### 2026-10-16 — v0.11 batch 2: reminder hooks and labels
+
+Batch 2 applies KARARLAR B08 inv1#253 (Sonnet 5.5 prompting guide and Claude Code costs: stop
+repetitive reminders), B10 inv3/(f), inv1#93/inv2#151 (one task grammar; avoid unrelated label
+false positives), B10 inv3#7 (Claude Code hooks: eight vendor continuations versus one kit
+continuation; pre-commit remains the real check gate), B07 inv2#131/#132 (LangWatch context
+study: keep the judgement window at 20, add 5/30 comparison cuts and a noisy informational
+phrase proxy), BACKLOG B5/B13, and D07 inv3#108 b (Q9 Assisted-by opt-in already implemented).
+Lesson from the reviews: a label rule fed by prose registered technical words (round 1), and its
+fix registered every prose mention (round 2); only the place a file gives a task its id may
+register a label. Red runs saved before each change (batch2-tests/, RESULT-b2fix*.md).
+
 ### 2026-10-16 — v0.11 batch 8: mode helper version check; review time without the full suite
 
 The mode helper's version check reads the sync stamp (migration tools read their recorded

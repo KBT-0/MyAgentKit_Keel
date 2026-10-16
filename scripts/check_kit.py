@@ -81,7 +81,7 @@ BRIDGE_MINIMUMS = next(
 if BRIDGE_MINIMUMS is None:
     sys.exit('KIT CHECK: FAIL — SUITE_MINIMUMS not found in core/scripts/test_claude_bridge.py')
 REQUIRED_SUITES = {
-    'core/scripts': dict(BRIDGE_MINIMUMS, test_agent_cost=4, test_context_buckets=3, test_owns_check=4),
+    'core/scripts': dict(BRIDGE_MINIMUMS, test_agent_cost=4, test_context_buckets=6, test_owns_check=4),
     # Each suite's current count: a minimum far below it (1 of 30) let a suite lose almost
     # every test with the kit check green. A new test raises its suite's number here.
     'tests': {'test_packaging': 1, 'test_bootstrap': 36, 'test_acceptance': 14,
@@ -89,7 +89,7 @@ REQUIRED_SUITES = {
               'test_boundary_example': 1 if os.name == 'nt' else 3, 'test_scan_gate': 1,
               'test_check_gate': 24, 'test_check_gate_windows': 33,
               'test_boundary_restore': 35 if os.name == 'nt' else 40,
-              'test_sync_kit': 30, 'test_doctor': 4, 'test_git_hooks': 31, 'test_stop_hook': 8, 'test_context_hook': 12, 'test_communication_hooks': 15, 'test_overlay_permissions': 8, 'test_guard_destructive_git': 26, 'test_guard_boundaries': 1, 'test_guard_private_email': 5,
+              'test_sync_kit': 30, 'test_doctor': 4, 'test_git_hooks': 31, 'test_stop_hook': 8, 'test_context_hook': 12, 'test_communication_hooks': 26, 'test_overlay_permissions': 8, 'test_guard_destructive_git': 26, 'test_guard_boundaries': 1, 'test_guard_private_email': 5,
               'test_spawn_worker': 51, 'test_spawn_codex': 51, 'test_codex_worker': 49, 'test_working_mode': 49, 'test_worker_visibility': 68, 'test_doc_pointers': 10,
               'test_usage_summary': 16,
               'test_kit_output': 1, 'test_kit_runner': 25, 'test_clean_worktrees': 137, 'test_clean_worktrees_windows': 11, 'test_close_worker_windows': 21,

@@ -58,6 +58,20 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   past about 400 changed lines gets a split hint (KARARLAR B01, B02 inv2#10/#34, D03 inv1#104,
   D04, D06 inv1#37/#163; BACKLOG B14, B15).
   **ACTION:** re-sync `docs/REVIEW_GATE.md`, `docs/REVIEW_RUNNING.md`, `docs/WORKFLOW.md`.
+- **Reminder hooks, labels, context counters, commit-msg** (`.claude/hooks/plain_report.py`,
+  `.claude/hooks/progress_reminder.py`, `scripts/context_buckets.py`, `.githooks/commit-msg`).
+  Progress reminders stop after three nudges per silent interval and reset on visible text or
+  compaction; a tool result past the read tail no longer loses a visible line (the hook reads
+  from the offset it saved). Final-message labels share the commit task grammar and are
+  registered only from a task-id position in STATE/BACKLOG, never from prose, so UTF-8,
+  SHA-256, win32 or x86 pass and every id the project names is caught whatever its prefix
+  length; code fences need matching characters and lengths, indented and quoted fences
+  included. Context measurements include the last selected request's refusals, add 5/30-request
+  slices, and show a separate informational correction-phrase counter. commit-msg refuses a
+  bracketed `Assisted-by: LLM [Claude]` trailer; the owner's opt-in is regression-tested
+  (KARARLAR B08 inv1#253, B10 inv3/(f), inv3#7, inv1#93, inv2#151, B07 inv2#131/#132, D07
+  inv3#108 b; BACKLOG B5, B13).
+  **ACTION:** re-sync the overlay hooks, `scripts/context_buckets.py` and `.githooks/commit-msg`.
 - **Working modes and model routing** (`scripts/working_mode.py`, `docs/WORKFLOW.md`,
   `/myagentkit:mode`, `/myagentkit:cross-review`, `setup/INTERVIEW.md`, `docs/CODEX.md`).
   Working modes have English names only (solo, cross, saver); the mode helper finds a
