@@ -250,7 +250,7 @@ deny_read = ["**/.myagentkit/backends", "**/.myagentkit/backends/**"]
 
 The kit cannot install administrator policy. Without it, Codex can read a backend file by absolute path.
 Do not claim that the throwaway copy alone prevents those reads.
-See the [Codex configuration reference](https://developers.openai.com/codex/config-reference).
+See the [Codex configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference).
 See [Claude environment precedence](https://code.claude.com/docs/en/env-vars)
 and [sandbox filesystem rules](https://code.claude.com/docs/en/sandboxing).
 

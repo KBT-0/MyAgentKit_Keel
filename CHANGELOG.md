@@ -72,6 +72,18 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   (KARARLAR B08 inv1#253, B10 inv3/(f), inv3#7, inv1#93, inv2#151, B07 inv2#131/#132, D07
   inv3#108 b; BACKLOG B5, B13).
   **ACTION:** re-sync the overlay hooks, `scripts/context_buckets.py` and `.githooks/commit-msg`.
+- **Gate, doctor, boundary example** (`scripts/check.sh`, `scripts/doctor.sh`,
+  `.claude/hooks/gate_on_stop.sh`, `docs/DEV_SETUP.md`, `docs/STRONG_REVIEW.md`, `.gitattributes`).
+  The commit gate's self-test no longer writes in the tree: a review can share the worktree.
+  doctor tells (NOTE) a shadowed grep, Python 3.10 past EOL and Claude Code older than 2.1.295.
+  The Stop hook gates the session's project after a cd. check.sh: module folders must be in
+  ARCHITECTURE's module map; strong review due after 10 days or 20 tasks; NOTE when STATE.md
+  drops a lesson line. DEV_SETUP recommends the gate as a required CI check; `.gitattributes`
+  starts with `* text=auto` (KARARLAR B02 inv2#39/#104/#143/#146/#161, D03 inv1#27/#106,
+  inv2#156/#166, D05 inv1#76, B11 inv1#119/inv2#152, B10 inv1#239, D04 inv2#83).
+  **ACTION:** re-sync `scripts/check.sh`, `scripts/doctor.sh`, the overlay Stop hook,
+  `docs/DEV_SETUP.md`, `docs/STRONG_REVIEW.md`; add `* text=auto` to the project's `.gitattributes`
+  by hand (project-owned) and fill `module_roots` in `scripts/check.sh` if the project has modules.
 - **Working modes and model routing** (`scripts/working_mode.py`, `docs/WORKFLOW.md`,
   `/myagentkit:mode`, `/myagentkit:cross-review`, `setup/INTERVIEW.md`, `docs/CODEX.md`).
   Working modes have English names only (solo, cross, saver); the mode helper finds a
