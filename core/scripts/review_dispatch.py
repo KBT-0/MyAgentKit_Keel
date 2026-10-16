@@ -108,6 +108,8 @@ BACKEND_CLEAR_KEYS = frozenset({
     'CLAUDE_CODE_WEBSOCKET_AUTH_FILE_DESCRIPTOR',
     'CLAUDE_CODE_WORKFLOW_SUBAGENT_MODEL',
 })
+# 64 KiB: a backend file is a few KEY=VALUE lines; the bound only stops a wrong file from being
+# read whole (OWASP ASVS V12, CWE-1284 principle; the number itself is a project choice).
 BACKEND_MAX_BYTES = 64 * 1024
 
 
@@ -196,6 +198,8 @@ def load_backend(repo, name):
 
 
 def reject_line_ending_churn(repo, scope, reference, diff):
+    # Heuristic (KARARLAR B01 inv2#84): factor 2 is an owner choice, no published threshold;
+    # `git diff --ignore-cr-at-eol` is the git-documented way to separate this noise.
     if os.environ.get("REVIEW_ALLOW_EOL_ONLY") == "1":
         return
     # Use the captured scope's paths, including its archive exclusions. `git apply --numstat
@@ -259,6 +263,8 @@ def main(argv=None):
     os.environ.pop(claude_bridge.ALLOW_SECRETS_ENV, None)  # only this run's flags count
     claude_bridge.allow_secret_files(args.allow_secret_file)
     repo = args.repo.resolve(strict=True)
+    # Nesting is bounded by both vendors by default (Claude Code CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH,
+    # Codex agents.max_depth); this guard bounds the kit's own review chain (KARARLAR B01 inv2#77).
     if os.environ.get("MYAGENTKIT_DELEGATION_DEPTH", "0") != "0":
         raise ValueError("nested delegation is disabled")
     if Path(os.fsdecode(claude_bridge.git(repo, "rev-parse", "--show-toplevel")).strip()).resolve() != repo:

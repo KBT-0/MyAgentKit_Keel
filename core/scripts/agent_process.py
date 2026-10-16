@@ -586,6 +586,8 @@ def _supervise(command, prompt, repo, timeout, started, guard, prior=None, into=
                     # PWD names the working directory, never the caller's: a reviewer in a
                     # throwaway copy is not told the repository's path (claude_bridge.
                     # throwaway_copy). A GIT_DIR from a hook would send its git to the repository.
+                    # denylist: a new GIT_* style variable would pass; an allowlist (PATH, HOME,
+                    # auth, locale) is stricter (Saltzer-Schroeder, fail-safe defaults).
                     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")
                            and k not in ("OLDPWD", "REVIEW_REPO_ROOT", "CLAUDE_PROJECT_DIR",
                                          "REVIEW_DISPOSITIONS", "REVIEW_SHADOW")}

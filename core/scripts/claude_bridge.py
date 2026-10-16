@@ -142,7 +142,8 @@ REVIEW_READS = (
 # directory; the network allowlist is empty and strict; a command the sandbox stops cannot
 # be retried outside it; and a host where the sandbox cannot start stops the CLI at startup
 # instead of running Bash unsandboxed. --restricted keeps --settings and drops the user,
-# project and local settings files, so a checkout cannot widen it.
+# project and local settings files, so a checkout cannot widen it. Source for every key:
+# code.claude.com/docs/en/sandboxing and code.claude.com/docs/en/settings (KARARLAR D09 inv2#99).
 SANDBOX = {"sandbox": {"enabled": True, "failIfUnavailable": True, "allowUnsandboxedCommands": False,
                        "network": {"allowedDomains": [], "strictAllowlist": True},
                        "filesystem": {"denyRead": [".myagentkit/backends"]}}}
@@ -1389,6 +1390,8 @@ def cli_readiness(environ=os.environ) -> str | None:
 
 def behaviour_appendix(root: Path) -> tuple[str | None, bytes]:
     """Read only a regular appendix contained in this snapshot, without following a leaf link."""
+    # source: RL 2026-10-13 (#74); appendix value unmeasured: the on/off switch
+    # (MYAGENTKIT_NO_BEHAVIOUR) and the usage record exist so an A/B can decide (KARARLAR inv2#113).
     if os.environ.get("MYAGENTKIT_NO_BEHAVIOUR") == "1":
         return None, b""
     for name in ("BEHAVIOUR.md", "core/BEHAVIOUR.md"):
@@ -1752,6 +1755,8 @@ def utf8_output():
     arrow) raised while printing, failed as adapter_error, and the paid review was lost.
     Errors are escaped, never raised: a bare encoding reset them to strict, and a lone
     surrogate (a non-UTF-8 path) then lost the review the same way. A missing stream stays."""
+    # PEP 686 makes UTF-8 mode the default from Python 3.15; keep this for 3.10-3.14
+    # (peps.python.org/pep-0686; KARARLAR inv2#115).
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="backslashreplace")
