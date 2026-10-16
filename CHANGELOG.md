@@ -13,6 +13,12 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## v0.11 — 2026-10-09
 
+- **Source claims corrected after the web source check** (`core/docs/WORKFLOW.md`, `USAGE.md`,
+  `DEV_SETUP.md`, `core/scripts/agent_usage.py`, `claude_bridge.py`, `context_buckets.py`,
+  `docs/worker-cost-setups.md`, `.claude/hooks/py.sh`). Correct eight source claims about Claude
+  Code cache lifetimes, quota messages, session cost statistics and hook blocking, Git
+  sparse-checkout support, and context-analysis cuts; classify weekly and Opus/Sonnet plan
+  limits as exhausted quotas. Kit docs and scripts only; nothing to do in a project.
 - **Core templates re-sourced** (`core/docs/ARCHITECTURE.md`, `PHASES.md`, `PROJECT.md`,
   `STATE.md`, `GOTCHAS.md`, `STRONG_REVIEW.md`). ARCHITECTURE.md aims for about 100 lines, says
   what it holds and finds a contract change's consumers mechanically; PHASES.md asks what the

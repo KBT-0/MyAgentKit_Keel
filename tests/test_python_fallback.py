@@ -89,7 +89,7 @@ class PythonFallbackTests(unittest.TestCase):
         self.assertEqual((nudged.returncode, nudged.stderr), (0, ''))
         self.assertIn('additionalContext', nudged.stdout)
         # No interpreter runs at all: a guard blocks (exit 2) and says why; any other hook only
-        # reports, since exit 2 from UserPromptSubmit or Stop would erase every prompt or refuse
+        # reports, since exit 2 from UserPromptSubmit or Stop would block every prompt or refuse
         # every stop.
         (bin_dir / 'python').write_text('#!/bin/sh\nexit 9009\n', encoding='utf-8')
         (bin_dir / 'py').write_text('#!/bin/sh\nexit 1\n', encoding='utf-8')

@@ -21,6 +21,19 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-10-16 — v0.11 web source check: 60 claims, 50 hold, 8 fixed, 2 unverifiable
+
+One web-enabled agent re-fetched every source the batch reviews left as NOT RUN
+(`.myagentkit/v011-close/source-check.md`, fetched 2026-10-16). Rows 1.3, 5.2, 5.3, 8.3, E.4/E.5,
+8.5, G.1 and G.10 failed and were corrected (srcfix, cf1aeee): the one-hour cache TTL does not
+apply on usage credits; the cache lifetime, not a fixed hour, bounds session reuse; there is no
+`credits_required` error; the session/weekly/Opus/Sonnet limit messages are exhausted quotas, not
+transient rate limits; `Prompt cache (main)` is the only main-conversation-only cost line;
+`check-rules` arrived in Git 2.41 (the 2.42 floor is the kit's own record); the 20/5/30 request
+cuts are the kit's choice, not LangWatch's; UserPromptSubmit exit 2 blocks the prompt rather
+than erasing it (the batch 1 entry below says "erases"; this line corrects it). Failure prevented:
+retrying an exhausted weekly quota, or presenting unsupported vendor behaviour as documented fact.
+
 ### 2026-10-15 — v0.11 close-out batch 9b: core templates re-sourced
 
 The templates now carry a source beside each rule (KARARLAR rows in batch9b-report.md). Not
