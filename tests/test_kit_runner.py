@@ -101,11 +101,9 @@ if __name__ == '__main__':
         if mode == 'missing_report': path.unlink()
         else: path.write_text(json.dumps(report), encoding='utf-8')
         raise SystemExit(7 if mode == 'exit' else code)
-    if os.environ['PROBE_MODE'] == 'timeout':
-        import agent_process
-        agent_process.run = lambda *a, **kw: dict(exit_code=None, termination='timeout', stdout='', stderr='')
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(Probe)
-    raise SystemExit(0 if run_review_shards(suite, minimum=int(sys.argv[1])) else 1)
+    raise SystemExit(0 if run_review_shards(suite, minimum=int(sys.argv[1]),
+                                          timeout=.01 if os.environ['PROBE_MODE'] == 'timeout' else None) else 1)
 ''', encoding='utf-8')
         for mode, minimum, passes in (('success', 3, True), ('missing', 3, False),
                                       ('duplicate', 3, False), ('exit', 3, False),
@@ -124,6 +122,84 @@ if __name__ == '__main__':
                     self.assertEqual(result.stdout.count('NOT RUN:'), 1, result.stdout)
                 else:
                     self.assertIn('FAIL: review shards', result.stdout, result.stderr)
+
+    def test_review_shards_cancel_both_process_trees_on_parent_exception(self):
+        source = (ROOT / 'core/scripts/test_claude_bridge.py').read_text(encoding='utf-8')
+        source = source.rpartition('if __name__ == "__main__":')[0]
+        source = source.replace('ROOT = Path(__file__).resolve().parent',
+                                'ROOT = Path(%r)' % str(ROOT / 'core/scripts'))
+        probe = self.tmp / 'cancel_probe.py'
+        probe.write_text(('import sys\nsys.path.insert(0, %r)\n' % str(ROOT / 'core/scripts')) + source + '''
+import _thread, threading
+folder = Path(os.environ['PROBE_FOLDER'])
+class Probe(unittest.TestCase):
+    def test_a(self):
+        child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'],
+                                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        (folder / str(os.getpid())).write_text(str(child.pid), encoding='utf-8')
+        time.sleep(8)
+    test_b = test_a
+
+def alive(pid):
+    if os.name == 'nt':
+        import ctypes
+        kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+        kernel.OpenProcess.restype = ctypes.c_void_p
+        kernel.WaitForSingleObject.argtypes = (ctypes.c_void_p, ctypes.c_ulong)
+        kernel.CloseHandle.argtypes = (ctypes.c_void_p,)
+        handle = kernel.OpenProcess(0x100000, False, pid)
+        if not handle:
+            if ctypes.get_last_error() == 87:
+                return False
+            raise ctypes.WinError(ctypes.get_last_error())
+        try:
+            return kernel.WaitForSingleObject(handle, 0) == 258
+        finally:
+            kernel.CloseHandle(handle)
+    status = subprocess.run(['ps', '-o', 'stat=', '-p', str(pid)], capture_output=True, text=True).stdout.strip()
+    return bool(status) and not status.startswith('Z')
+
+if __name__ == '__main__':
+    if sys.argv[1:2] == ['--review-shard']:
+        raise SystemExit(run_review_shard(*sys.argv[2:]))
+    def interrupt():
+        until = time.monotonic() + 10
+        while len(list(folder.iterdir())) < 2 and time.monotonic() < until:
+            time.sleep(.01)
+        _thread.interrupt_main()
+    def fail(signum, frame):
+        raise RuntimeError('parent failure')
+    expected = KeyboardInterrupt if sys.argv[1] == 'interrupt' else RuntimeError
+    if expected is RuntimeError:
+        signal.signal(signal.SIGINT, fail)
+    timer = threading.Thread(target=interrupt)
+    timer.start()
+    started = time.monotonic()
+    try:
+        run_review_shards(unittest.defaultTestLoader.loadTestsFromTestCase(Probe))
+    except expected:
+        elapsed = time.monotonic() - started
+    else:
+        raise AssertionError('parent exception was swallowed')
+    finally:
+        timer.join(timeout=12)
+    assert elapsed < 4, 'parent exception took %.3f seconds' % elapsed
+    markers = list(folder.iterdir())
+    assert len(markers) == 2, 'both shards must have started'
+    pids = [int(value) for path in markers for value in (path.name, path.read_text(encoding='utf-8'))]
+    until = time.monotonic() + 2
+    while any(alive(pid) for pid in pids) and time.monotonic() < until:
+        time.sleep(.02)
+    assert not any(alive(pid) for pid in pids), 'shard or descendant survived parent exception'
+''', encoding='utf-8')
+        for mode in ('interrupt', 'error'):
+            folder = self.tmp / mode
+            folder.mkdir()
+            with self.subTest(mode=mode):
+                result = subprocess.run([sys.executable, '-B', str(probe), mode],
+                                        env=dict(os.environ, PROBE_FOLDER=str(folder)),
+                                        capture_output=True, text=True, timeout=25)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_empty_review_companion_is_refused_before_shards_start(self):
         code = '''import runpy, sys, unittest

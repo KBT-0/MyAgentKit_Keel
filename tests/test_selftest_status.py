@@ -59,6 +59,25 @@ class ProjectSelfTestTests(unittest.TestCase):
                                 encoding='utf-8', errors='replace', timeout=900)
         return result.returncode, result.stdout + result.stderr
 
+    def test_shellcheck_drops_ambient_options(self):
+        tools = self.tmp / 'bin'
+        tools.mkdir()
+        calls = self.tmp / 'shellcheck-env'
+        write(tools / 'shellcheck', '#!/bin/sh\n'
+              'printf "%s\\n" "${SHELLCHECK_OPTS-}" >> "%s"\n' % ('%s', calls.as_posix()) +
+              '[ -n "${SHELLCHECK_OPTS-}" ] && exit 0\n'
+              'printf "fixture.sh:1:1: note: Double quote [SC2086]\\n"\nexit 1\n')
+        (tools / 'shellcheck').chmod(0o755)
+        env = environment(self.build, PATH=str(tools) + os.pathsep + os.environ['PATH'],
+                          SHELLCHECK_OPTS='--severity=error')
+        result = subprocess.run(['sh', 'scripts/check.sh'], cwd=self.project, env=env,
+                                capture_output=True, text=True, encoding='utf-8', timeout=60)
+        self.assertTrue(calls.exists(), result.stdout + result.stderr)
+        self.assertEqual(calls.read_text(encoding='utf-8'), '\n', result.stdout + result.stderr)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('FAIL [shellcheck]', result.stdout)
+        self.assertIn('[SC2086]', result.stdout)
+
     def test_shellcheck_runs_normally_and_only_in_its_own_nested_case(self):
         # Count actual process launches with a lint test double. The injected unquoted
         # file still has to turn its dedicated case red; other nested cases need no lint.

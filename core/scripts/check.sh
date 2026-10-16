@@ -1758,7 +1758,7 @@ else
     ( IFS='
 '; set -f; set --
       for f in $shell_files; do [ -f "$f" ] && set -- "$@" "$f"; done
-      [ "$#" -eq 0 ] || shellcheck --norc -e SC2148 -f gcc -- "$@" ) > "$work/shellcheck" 2>&1 || sc_status=$?
+      [ "$#" -eq 0 ] || SHELLCHECK_OPTS= shellcheck --norc -e SC2148 -f gcc -- "$@" ) > "$work/shellcheck" 2>&1 || sc_status=$?
   fi
   if [ "$sc_status" -gt 1 ]; then
     printf '%s\n' "FAIL [shellcheck]: shellcheck could not check the shell scripts (exit $sc_status):"

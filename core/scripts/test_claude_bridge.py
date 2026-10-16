@@ -6,7 +6,7 @@ import json
 import os
 import re
 from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor
+from contextlib import ExitStack
 import shlex
 import shutil
 import signal
@@ -187,7 +187,7 @@ def run_review_shard(manifest, report):
     return 0 if result.wasSuccessful() else 1
 
 
-def run_review_shards(suite, out=sys.stdout, minimum=0):
+def run_review_shards(suite, out=sys.stdout, minimum=0, timeout=None):
     """Run alternating sorted IDs in two processes; require complete, unique coverage."""
     import agent_process
     ids = sorted(test.id() for test in test_cases(suite))
@@ -201,21 +201,49 @@ def run_review_shards(suite, out=sys.stdout, minimum=0):
         for index, assigned in enumerate(shards):
             (folder / ('%d-input.json' % index)).write_text(json.dumps(assigned), encoding='utf-8')
 
-        def run(index):
-            command = [sys.executable, '-B', str(Path(__file__).resolve()), '--review-shard',
-                       str(folder / ('%d-input.json' % index)), str(folder / ('%d-result.json' % index))]
-            # Supervisors share no test state. The existing process seam owns timeout cleanup,
-            # including descendants; only the fresh children run tests that patch os.environ.
-            return agent_process.run(command, '', ROOT, 1200 if WINDOWS else 300)
-
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            futures = [pool.submit(run, index) for index in range(2)]
-            results = []
-            for future in futures:
+        # The parent owns both handles. Threaded supervisors cannot receive its SIGINT,
+        # and executor shutdown would wait for their entire timeout before re-raising it.
+        with ExitStack() as streams:
+            children, outputs, exited = [], [], []
+            deadline = time.monotonic() + (timeout if timeout is not None else 1200 if WINDOWS else 300)
+            try:
+                for index in range(2):
+                    stdout = streams.enter_context(tempfile.TemporaryFile())
+                    stderr = streams.enter_context(tempfile.TemporaryFile())
+                    outputs.append((stdout, stderr))
+                    command = [sys.executable, '-B', str(Path(__file__).resolve()), '--review-shard',
+                               str(folder / ('%d-input.json' % index)), str(folder / ('%d-result.json' % index))]
+                    mask = agent_process.block_cancels()
+                    try:
+                        children.append(agent_process.launch(command, mask, cwd=ROOT,
+                                        stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr))
+                    finally:
+                        agent_process.restore_mask(mask)
+                for child in children:
+                    # Poll the seam's non-reaping wait so Python can deliver a parent cancel
+                    # on Windows too; files keep either shard's output from blocking a pipe.
+                    while not agent_process._exited_unreaped(child, 0.1):
+                        if time.monotonic() >= deadline:
+                            exited.append(False)
+                            break
+                    else:
+                        exited.append(True)
+            finally:
+                mask = agent_process.block_cancels()
                 try:
-                    results.append(future.result())
-                except Exception as error:
-                    results.append(dict(exit_code=None, termination=str(error), stdout='', stderr=''))
+                    # ExitStack attempts both tree cleanups even if one cleanup raises.
+                    with ExitStack() as cleanup:
+                        for child in children:
+                            cleanup.callback(agent_process.stop_group, child, child.pid)
+                finally:
+                    agent_process.restore_mask(mask)
+            results = []
+            for child, (stdout, stderr), done in zip(children, outputs, exited):
+                stdout.seek(0)
+                stderr.seek(0)
+                results.append(dict(exit_code=child.returncode, termination=None if done else 'timeout',
+                                    stdout=stdout.read().decode(errors='replace'),
+                                    stderr=stderr.read().decode(errors='replace')))
         executed, seen, skipped = 0, [], []
         try:
             for index, (assigned, result) in enumerate(zip(shards, results)):
