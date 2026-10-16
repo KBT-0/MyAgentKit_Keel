@@ -75,6 +75,9 @@ REVIEW_PROMPT = (
     "Verdict: Reject only on a Critical or High finding; Accept with Manual Checks when a "
     "Medium, a deferred finding or a first-priority doubt remains, each check a full sentence; Accept otherwise, Lows "
     "and Pre-existing items included (they go to the backlog, not to manual checks). "
+    "A NOT RUN or \"could not verify\" line is a manual check: put it under '## Manual checks' "
+    "and use Accept with Manual Checks. For a plain Accept, write None. under '## Manual checks' "
+    "and nothing after it. "
     "Never claim a run you did not make. An OPEN product decision is a question for the owner, "
     "not a finding.\n"
     # Owner decision 2026-10-16: reviewers that ran the 30-minute self-test took 40-60 minutes;

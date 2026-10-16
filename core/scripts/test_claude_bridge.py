@@ -2956,6 +2956,19 @@ class BridgeTests(unittest.TestCase):
                 # fix4 review: a check written as a heading is still a check.
                 ('## Findings\n\n- None.\n\n## Manual checks\n\n### Verify deployment before release.\n\n'
                  'VERDICT: Accept\n', False),
+                # rvfix: the paid review put a NOT RUN paragraph after a clean placeholder.
+                ('VERDICT: Accept\n\n## Findings\n\n- None.\n\n## Manual checks\n\nNone.\n\n'
+                 '`tests/test_python_fallback.py`: both tests passed. The blocking assertion proves '
+                 'the Python fallback reaches `plain_report`; the copied grammar matches the installed project layout.\n\n'
+                 'NOT RUN: Git comparison; this archive has no Git metadata. '
+                 'Reviewed the supplied diff against checkout files.\n', False),
+                ('VERDICT: Accept\n\n## Findings\n\n- None.\n\n## Manual checks\n\nNone.\n\n'
+                 'I could not verify the Git comparison because this archive has no Git metadata.\n', False),
+                ('VERDICT: Accept with Manual Checks\n\n## Findings\n\n- None.\n\n## Manual checks\n\n'
+                 'NOT RUN: Git comparison; this archive has no Git metadata.\n', True),
+                ('VERDICT: Accept with Manual Checks\n\n## Findings\n\n- None.\n\n## Manual checks\n\n'
+                 'I could not verify the Git comparison because this archive has no Git metadata.\n', True),
+                ('VERDICT: Accept\n\n## Findings\n\n- None.\n\n## Manual checks\n\nNone.\n', True),
                 ('## Findings\n\n- None.\n\n## Manual checks\n\n- None.\n\nVERDICT: Accept\n', True)):
             with self.subTest(final=final):
                 result = self.run_wrapper('--reviewer', 'codex', REVIEW_CLI_BIN=str(fake),
@@ -6082,12 +6095,21 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
     def test_the_codex_prompt_names_the_clean_review_form_the_parser_accepts(self):
         # fix4 notes: make prompt and allowlist agree, so a clean paid review is not lost as
         # invalid_evidence for prose the parser does not read as a placeholder.
-        log = self.root / 'codex-prompt.txt'
-        result = self.run_wrapper('--uncommitted', '--reviewer', 'codex', REVIEW_CLI_BIN=str(self.build_fake_codex()),
-                                  REVIEW_CODEX_MODEL='fixture-codex-model', PROMPT_LOG=str(log))
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("With no finding, write the one item '- None.' under '## Findings'",
-                      log.read_text(encoding='utf-8'))
+        for reviewer in ('claude', 'codex'):
+            with self.subTest(reviewer=reviewer):
+                log = self.root / (reviewer + '-prompt.txt')
+                result = self.run_wrapper('--uncommitted', '--reviewer', reviewer,
+                                          CLAUDE_CLI_BIN=str(self.fixture),
+                                          REVIEW_CLI_BIN=str(self.build_fake_codex()),
+                                          REVIEW_CLAUDE_MODEL='claude-opus-5',
+                                          REVIEW_CODEX_MODEL='fixture-codex-model', PROMPT_LOG=str(log))
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                prompt = log.read_text(encoding='utf-8')
+                if reviewer == 'codex':
+                    self.assertIn("With no finding, write the one item '- None.' under '## Findings'", prompt)
+                self.assertIn('A NOT RUN or "could not verify" line is a manual check', prompt)
+                self.assertIn("put it under '## Manual checks' and use Accept with Manual Checks", prompt)
+                self.assertIn("For a plain Accept, write None. under '## Manual checks' and nothing after it.", prompt)
         self.assertTrue(bridge.accept_allows(['- None.']))
 
     def test_the_reviewer_runs_only_the_narrow_test_never_the_full_suite(self):
