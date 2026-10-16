@@ -258,6 +258,34 @@ class CodexWorkerTests(unittest.TestCase):
             self.assertEqual(waiter.returncode, 0, waiter.stderr)
             self.assertIn('EXITED (exit 3', waiter.stdout)
 
+    def test_wait_reports_a_settled_file_that_is_not_a_result(self):
+        # v0.11: a free-form report (no header, no ready marker) kept the wait silent forever.
+        with tempfile.TemporaryDirectory() as tmp:
+            report = Path(tmp) / 'report.md'
+            report.write_text('# Batch report\n\nAll done.\n', encoding='utf-8')
+            settled = time.time() - 120
+            os.utime(report, (settled, settled))
+            waiter = subprocess.run([sys.executable, str(SCRIPT), '--wait', str(report), '--since', str(settled - 1)],
+                                    capture_output=True, text=True, timeout=10)
+            self.assertEqual(waiter.returncode, 0, waiter.stderr)
+            self.assertIn('NOT A RESULT: ' + str(report), waiter.stdout)
+
+    def test_wait_stays_quiet_on_a_fresh_draft_and_on_the_stale_result(self):
+        # A draft still being written, and the reported result a follow-up wait names by its
+        # hash, are not alarms however long they sit.
+        with tempfile.TemporaryDirectory() as tmp:
+            draft, old = Path(tmp) / 'draft.md', Path(tmp) / 'old.md'
+            draft.write_text('# half written', encoding='utf-8')
+            text = 'Kind: progress\nTask: w\nAttempt: 1\nRemaining: more\n' + READY
+            old.write_text(text, encoding='utf-8')
+            settled = time.time() - 120
+            os.utime(old, (settled, settled))
+            stale = 'sha256:' + hashlib.sha256(text.encode('utf-8')).hexdigest()
+            for args in (['--wait', str(draft), '--since', '0'],
+                         ['--wait', str(old), '--since', str(settled - 1), '--stale', stale]):
+                with self.assertRaises(subprocess.TimeoutExpired):
+                    subprocess.run([sys.executable, str(SCRIPT)] + args, capture_output=True, timeout=2)
+
     def test_wait_reports_a_unicode_result_path_on_a_legacy_stdout(self):
         # A Windows pipe is cp1252 unless UTF-8 mode is on; the lead must still see DONE.
         with tempfile.TemporaryDirectory() as tmp:

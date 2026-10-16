@@ -17,6 +17,8 @@ import time
 READY = '<!-- codex-worker: ready -->'
 REFUSALS = 50  # consecutive Windows refusals of one path a poller waits through, about five seconds
 REFUSED = {}  # path: its consecutive refusals
+SETTLED = 60  # seconds a changed file sits unchanged before --wait calls it NOT A RESULT
+CHECKED = {}  # path: (id, size, mtime_ns) last read by not_a_result, and its verdict
 
 
 def tolerated(path, error):
@@ -104,6 +106,21 @@ def result_kind(path, since=0, stale=None):
     REFUSED.pop(path, None)
     SEEN[path] = (info.st_ino, info.st_size, info.st_mtime_ns, since, stale), parse(text, info, since, stale)
     return SEEN[path][1]
+
+
+def not_a_result(path, since, stale):
+    """A file changed in this run, unchanged for SETTLED seconds, that is not in the result
+    format: a free-form report. Without this the wait read it as unpublished forever."""
+    try:
+        info = path.stat()
+        if not since <= info.st_mtime <= time.time() - SETTLED or info.st_ino == stale:
+            return False
+        key = info.st_ino, info.st_size, info.st_mtime_ns
+        if CHECKED.get(path, (None,))[0] != key:  # read once per change: Windows refuses a rename over an open file
+            CHECKED[path] = key, not parse(path.read_text(encoding='utf-8', errors='replace').strip(), info, 0, None)[0]
+        return CHECKED[path][1]
+    except OSError:
+        return False
 
 
 def parse(text, info, since, stale):
@@ -339,6 +356,11 @@ def main():
                     return 0
             except FileNotFoundError:
                 pass
+            if not_a_result(result, since, stale):
+                print('codex_worker: NOT A RESULT: ' + str(result) + ' changed in this run and sat unchanged '
+                      + str(SETTLED) + ' s without the result header (Kind/Task/Attempt/Remaining) and '
+                      + READY + '; read it by hand', flush=True)
+                return 0
             if ended:
                 print('codex_worker: EXITED (its supervisor ended without an exit record: its tab closed '
                       'or it was killed) without publishing a new result: ' + str(result), flush=True)
