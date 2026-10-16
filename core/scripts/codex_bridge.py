@@ -15,13 +15,14 @@ import uuid
 import agent_process
 import agent_usage
 import codex_quota
-from claude_bridge import (MEASURED, REVIEW_PROMPT, REVIEW_RUNS,
+from claude_bridge import (REVIEW_DOCS, REVIEW_PROMPT, REVIEW_RUNS,
                            BridgeError, accept_allows, default_effort, git, prior_rounds,
                            review_context, review_parts, scratch, snapshot, throwaway_copy, review_tmpdir,
                            utf8_output)
 
 
-def main(argv=None, result_sink=None):
+def main(argv=None, result_sink=None, claims=None):
+    """`claims`: the dispositions text the dispatcher read once; None reads REVIEW_DISPOSITIONS."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", type=Path, required=True)
     parser.add_argument("--model", default="")
@@ -49,17 +50,19 @@ def main(argv=None, result_sink=None):
     head, fingerprint, diff, resolved = snapshot(repo, scope, ref)
     if not diff.strip():
         raise ValueError("empty diff: nothing was reviewed")
-    docs = os.environ.get("REVIEW_DOCS", "AGENTS.md, docs/ARCHITECTURE.md and docs/REVIEW_GATE.md")
+    docs = os.environ.get("REVIEW_DOCS", ", ".join(REVIEW_DOCS[:-1]) + " and " + REVIEW_DOCS[-1])
     for name in re.split(r",\s*|\s+and\s+", docs):
         if not (repo / name).is_file() or not (repo / name).resolve().is_relative_to(repo):
             raise ValueError("required project guidance is missing or outside repository: " + name)
+    carried, measured = prior_rounds(repo, os.environ.get("MYAGENTKIT_TASK_ID"), scope, resolved, head,
+                                     diff, claims)
     prompt = (
         REVIEW_PROMPT % docs + REVIEW_RUNS + " Write exactly one "
         "line: VERDICT: Accept / VERDICT: Accept with Manual Checks / VERDICT: Reject "
         "(choose one). Put the findings under a '## Findings' heading, one '- ' list item per "
         "finding that starts with its severity, and the explicit manual checks under a "
         "'## Manual checks' heading, as full sentences.\n"
-        + prior_rounds(repo, os.environ.get("MYAGENTKIT_TASK_ID"), scope, resolved, head, diff)
+        + carried
         + review_context()
         + f"Scope: {scope} {ref or ''}; HEAD: {head}\nDiff:\n{diff}"
     )
@@ -232,7 +235,7 @@ def main(argv=None, result_sink=None):
              "scope": scope, "reference": ref, "resolved": resolved, "head": head,
              "fingerprint": fingerprint,
              "diff_sha256": metadata["diff_sha256"],
-             "prompt_sha256": hashlib.sha256(prompt.encode()).hexdigest(), **MEASURED},
+             "prompt_sha256": hashlib.sha256(prompt.encode()).hexdigest(), **measured},
             execution, status, reason, archived, report_text.encode())
         def persist_cancel(usage):
             header.update(status="failed", failure_kind="cancelled")

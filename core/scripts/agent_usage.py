@@ -111,14 +111,20 @@ def dispositions(text: str) -> dict:
     one answer per line, so a key quoted inside an answer's evidence is not a second answer.
     These are the author's claims (the next round's reviewer verifies them), recorded so the
     usage summary can show each reviewer configuration's author-claimed acceptance rate.
-    A file that answers no finding with a key is refused before any model is called.
+    A file that answers no finding with a key is refused before any model is called. Other
+    lines (a heading or a blank line excepted) are counted as `unkeyed`, only when there is one,
+    so a record with none reads as before.
     """
-    counts = dict.fromkeys(DISPOSITION_KEYS, 0)
+    counts, unkeyed = dict.fromkeys(DISPOSITION_KEYS, 0), 0
     for line in text.splitlines():
         first = re.search(r"\b(%s):" % "|".join(DISPOSITION_KEYS), line, re.I)
         if first:
             counts[first[1].lower()] += 1
-    if not any(counts.values()):
+        elif line.strip() and not line.lstrip().startswith("#"):
+            unkeyed += 1
+    if unkeyed:
+        counts["unkeyed"] = unkeyed
+    if not any(counts[key] for key in DISPOSITION_KEYS):
         raise ValueError("REVIEW_DISPOSITIONS answers no finding: each finding needs a fixed:, "
                          "disproved: or deferred: key")
     return counts

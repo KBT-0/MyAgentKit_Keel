@@ -211,8 +211,8 @@ def adapter(provider, args, report):
     report({'status': 'failed' if quota else 'completed',
             'failure_kind': 'quota' if quota else None, 'evidence': 'fixture', 'usage_record': 'fixture'})
     return 5 if quota else 0
-dispatch.claude_bridge.main = lambda args, report: adapter('claude', args, report)
-dispatch.codex_bridge.main = lambda args, report: adapter('codex', args, report)
+dispatch.claude_bridge.main = lambda args, report, claims=None: adapter('claude', args, report)
+dispatch.codex_bridge.main = lambda args, report, claims=None: adapter('codex', args, report)
 try:
     raise SystemExit(dispatch.main())
 except ValueError as error:
@@ -546,7 +546,7 @@ class BridgeTests(unittest.TestCase):
         )
         with patch.dict(os.environ, self.review_env(), clear=True):
             os.environ.update(dict.fromkeys(keys, 'lead-control'))
-            def launch(argv, report):
+            def launch(argv, report, claims=None):
                 for key in keys:
                     with self.subTest(key=key):
                         self.assertFalse(key in os.environ, key + " remained inherited")
@@ -944,7 +944,7 @@ class BridgeTests(unittest.TestCase):
         from unittest.mock import patch
         import review_dispatch
 
-        def complete(argv, report):
+        def complete(argv, report, claims=None):
             report({'status': 'completed', 'failure_kind': None})
             return 0
 
@@ -2376,7 +2376,7 @@ class BridgeTests(unittest.TestCase):
                             rounds()
                         evidence.unlink()
                     else:
-                        self.assertEqual(rounds(), '')
+                        self.assertEqual(rounds()[0], '')
 
     def persisted_cancel(self, result):
         # The usage reporter reads the records, not the dispatcher's result: a cancel during
@@ -4729,9 +4729,10 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                 with self.assertRaisesRegex(bridge.BridgeError, 'REVIEW_ROUND_EXCEPTION'):
                     bridge.prior_rounds(self.repo, task['MYAGENTKIT_TASK_ID'], 'uncommitted', None, head, '')
                 os.environ['REVIEW_ROUND_EXCEPTION'] = 'Owner requested another pass'
-                carried = bridge.prior_rounds(self.repo, task['MYAGENTKIT_TASK_ID'], 'uncommitted', None, head, '')
+                carried, measured = bridge.prior_rounds(self.repo, task['MYAGENTKIT_TASK_ID'], 'uncommitted',
+                                                        None, head, '')
                 self.assertEqual('### Round ' in carried, focus == 'logic')
-                self.assertEqual(bridge.MEASURED['round_exception'], 'Owner requested another pass')
+                self.assertEqual(measured['round_exception'], 'Owner requested another pass')
 
     def test_legacy_rounds_are_carried_and_counted_when_focus_is_added(self):
         log = self.root / 'prompt.txt'
@@ -4776,7 +4777,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                     os.environ['MYAGENTKIT_REVIEW_CHAIN_ID'] = chain
                 err = io.StringIO()
                 with redirect_stderr(err):
-                    self.assertEqual(bridge.prior_rounds(self.repo, None, 'uncommitted', None, head, diff), '')
+                    self.assertEqual(bridge.prior_rounds(self.repo, None, 'uncommitted', None, head, diff)[0], '')
                 self.assertEqual('split the task' in err.getvalue(), hinted, err.getvalue())
 
     def test_both_reviewers_read_one_list(self):
@@ -5176,7 +5177,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         seen = {}
 
         def adapter(name):
-            def main(argv, report):
+            def main(argv, report, claims=None):
                 seen[name] = {k: v for k, v in os.environ.items() if k.startswith('ANTHROPIC_')}
                 report({'status': 'failed', 'failure_kind': 'quota', 'evidence': 'e', 'usage_record': 'u'})
                 return 5
@@ -5828,6 +5829,69 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                     offenders.append('%s.py:%d' % (name, node.lineno))
         self.assertEqual(offenders, [])
         self.assertEqual(seam - defined, set())
+
+    # v0.11 close-out batch 4 (BACKLOG item F; KARARLAR B01, B12, D04, D07, D09).
+
+    def test_the_dispositions_are_read_once_per_review_and_handed_to_each_attempt(self):
+        # BACKLOG item F: each attempt read the file again, so a fallback attempt after the file
+        # changed or vanished saw other claims than the first attempt, or failed as adapter_error.
+        label = 'read-once-task'
+        self.assertEqual(self.run_bridge('reject', env_extra={'MYAGENTKIT_TASK_ID': label})[0], 0)
+        notes = self.root / 'once-dispositions.md'
+        notes.write_text('- file.py:1 disproved: the caller rejects that input\n')
+        log = self.root / 'codex-prompt.txt'
+        result, chain = self.dispatch_result('claude', MYAGENTKIT_TASK_ID=label, FIXTURE_CASE='quota',
+                                             FIXTURE_UNLINK=str(notes), REVIEW_DISPOSITIONS=str(notes),
+                                             PROMPT_LOG=str(log))
+        self.assertFalse(notes.exists())
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual([a['reviewer'] for a in chain['attempts']], ['claude', 'codex'])
+        self.assertIn('disproved: the caller rejects that input', log.read_text(encoding='utf-8'))
+        usage = json.loads(Path(chain['attempts'][-1]['usage_record']).read_text())
+        self.assertEqual(usage['task']['dispositions'], {'fixed': 0, 'disproved': 1, 'deferred': 0})
+
+    def test_an_unreadable_dispositions_file_stops_the_review_with_one_message(self):
+        # BACKLOG item F: a missing or non-UTF-8 REVIEW_DISPOSITIONS raised a raw OSError or
+        # UnicodeDecodeError (a traceback) before the "no earlier rounds" message.
+        head = self.git('rev-parse', 'HEAD').stdout.decode().strip()
+        bad = self.root / 'latin1.md'
+        bad.write_bytes(b'- file.py:1 fixed: caf\xe9\n')
+        for path in (self.root / 'absent.md', bad):
+            with self.subTest(path=path.name):
+                os.environ['REVIEW_DISPOSITIONS'] = str(path)
+                with self.assertRaisesRegex(bridge.BridgeError, 'REVIEW_DISPOSITIONS .* cannot be read'):
+                    bridge.prior_rounds(self.repo, 'unreadable-task', 'uncommitted', None, head, 'x')
+                result = self.run_wrapper('--uncommitted', CLAUDE_CLI_BIN=str(self.fixture),
+                                          REVIEW_CLAUDE_MODEL='claude-opus-5',
+                                          MYAGENTKIT_TASK_ID='unreadable-task', REVIEW_DISPOSITIONS=str(path))
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn('FAIL [review]: REVIEW_DISPOSITIONS', result.stdout)
+                self.assertNotIn('Traceback', result.stdout + result.stderr)
+
+    def test_prior_rounds_returns_the_measured_fields_and_keeps_no_module_state(self):
+        # BACKLOG item F (AGENTS.md: no static mutable state): MEASURED was a module dict that
+        # prior_rounds() filled and the record read, so one review's fields could reach another.
+        head = self.git('rev-parse', 'HEAD').stdout.decode().strip()
+        os.environ.update(REVIEW_SHADOW='1', REVIEW_FOCUS='logic')
+        carried, measured = bridge.prior_rounds(self.repo, 'measured-task', 'uncommitted', None, head, 'x')
+        self.assertEqual((carried, measured), ('', {'shadow': 'yes', 'focus': 'logic'}))
+        self.assertFalse(hasattr(bridge, 'MEASURED'))
+
+    def test_a_shadow_review_is_marked_in_the_chain_and_on_the_console(self):
+        # BACKLOG item F: the chain record and the result line did not mark a shadow review, and
+        # a REVIEW_SHADOW left exported silently turned every later review into one.
+        env = dict(CLAUDE_CLI_BIN=str(self.fixture), REVIEW_CLAUDE_MODEL='claude-opus-5')
+        result = self.run_wrapper('--uncommitted', REVIEW_SHADOW='1', **env)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        chain = json.loads(result.stdout.split('review dispatch: ', 1)[1].splitlines()[0])
+        self.assertIs(chain['shadow'], True)
+        self.assertIn('REVIEW [shadow]:', result.stdout)
+        self.assertIn('unset REVIEW_SHADOW', result.stdout)
+        result = self.run_wrapper('--uncommitted', **env)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        chain = json.loads(result.stdout.split('review dispatch: ', 1)[1].splitlines()[0])
+        self.assertNotIn('shadow', chain)
+        self.assertNotIn('REVIEW [shadow]', result.stdout)
 
 
 if __name__ == "__main__":

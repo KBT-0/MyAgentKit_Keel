@@ -644,7 +644,11 @@ class UsageTests(unittest.TestCase):
         counts = agent_usage.dispositions('- a.py:1 Fixed: abc (the guard, not disproved: anything)\n'
                                           '- b.py:2 disproved: line 4 shows it was fixed: before\n'
                                           'prose without a key\n- c.py:3 DEFERRED:#12\n')
-        self.assertEqual(counts, {'fixed': 1, 'disproved': 1, 'deferred': 1})
+        # BACKLOG item F: an answer line without a key is counted apart (unkeyed), so the
+        # summary can show it; blank lines and headings are no answers.
+        self.assertEqual(counts, {'fixed': 1, 'disproved': 1, 'deferred': 1, 'unkeyed': 1})
+        self.assertEqual(agent_usage.dispositions('# Round 1\n\n- a.py:1 fixed: abc\n'),
+                         {'fixed': 1, 'disproved': 0, 'deferred': 0})
         with self.assertRaises(ValueError):
             agent_usage.dispositions('every finding was fixed in the last commit\n')
 

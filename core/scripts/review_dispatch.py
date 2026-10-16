@@ -247,8 +247,11 @@ def main(argv=None):
     reject_line_ending_churn(repo, scope, original[3], original[2])
     # Once for either reviewer: a missing, foreign or oversized earlier round stops the review
     # here, exit 2 with one message, before a chain is recorded or any model is called.
+    # The dispositions file is read here once and its text handed to every attempt: a
+    # fallback attempt never reads a file that changed meanwhile.
+    claims = claude_bridge.dispositions_text()
     claude_bridge.prior_rounds(repo, os.environ.get("MYAGENTKIT_TASK_ID"), scope, original[3],
-                               original[0], original[2])
+                               original[0], original[2], claims)
     timeout = int(os.environ.get("REVIEW_TIMEOUT_SECONDS", str(agent_process.DEFAULT_REVIEW_TIMEOUT)))
     if not 1 <= timeout <= agent_process.MAX_REVIEW_TIMEOUT:
         raise ValueError("REVIEW_TIMEOUT_SECONDS must be 1..%d" % agent_process.MAX_REVIEW_TIMEOUT)
@@ -270,6 +273,13 @@ def main(argv=None):
              "fallback_allowed": args.allow_fallback,
              "attempts": [], "status": "pending", "failure_kind": None,
              "review_approved": False, "independence": "host_must_check_all_patch_authors"}
+    if os.environ.get("REVIEW_SHADOW") == "1":
+        # Marked where a later reader looks: the chain record and the console. A variable left
+        # exported after a shadow run turns every later review into one, so the line says so.
+        chain["shadow"] = True
+        print("REVIEW [shadow]: this run measures a reviewer configuration; its verdict closes "
+              "nothing. REVIEW_SHADOW=1 is set: unset REVIEW_SHADOW after the shadow run, or "
+              "every later review is a shadow too.", flush=True)
 
     def checkpoint():
         # Separate from provider records: usage reporting must not double-count a chain.
@@ -305,9 +315,10 @@ def main(argv=None):
                 os.environ.update(backend_env)
             if provider == "claude":
                 exit_code = claude_bridge.main(["review", "--timeout", str(timeout), "--max-turns", str(turns), *command]
-                                               + (["--backend", args.backend] if backend else []), received.append)
+                                               + (["--backend", args.backend] if backend else []), received.append,
+                                               claims=claims)
             else:
-                exit_code = codex_bridge.main(command, received.append)
+                exit_code = codex_bridge.main(command, received.append, claims=claims)
         except (OSError, ValueError, claude_bridge.BridgeError, subprocess.SubprocessError) as caught:
             exit_code, error = 5, caught
         finally:

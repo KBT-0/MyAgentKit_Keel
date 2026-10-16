@@ -834,14 +834,28 @@ def snapshot(repo: Path, scope: str, reference: str | None) -> tuple[str, str, s
     return head, fingerprint, diff.decode("utf-8", errors="strict"), resolved
 
 
+def dispositions_text() -> str | None:
+    """The REVIEW_DISPOSITIONS file's text, or None when it is unset. The dispatcher reads it
+    once and hands the text to each attempt, so a fallback never reads a changed file."""
+    notes = os.environ.get("REVIEW_DISPOSITIONS")
+    if not notes:
+        return None
+    try:
+        return Path(notes).read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as error:
+        raise BridgeError("REVIEW_DISPOSITIONS %s cannot be read as UTF-8 text (%s)" % (notes, error)) from error
+
+
 def prior_rounds(repo: Path, task_id: str | None, scope: str, resolved: str | None,
-                 head: str, diff: str) -> str:
-    """The earlier completed reviews of this change, oldest first, as archived.
+                 head: str, diff: str, claims: str | None = None) -> tuple[str, dict]:
+    """The earlier completed reviews of this change, oldest first, as archived, and the task
+    fields the usage record measures (measure()).
 
     A fresh pass blind to earlier rounds re-raised findings the author had disproved or
     deferred and sampled the previous fixes again, so the loop never converged. The record
     comes from the reviewer's own archive, not from the author, so nothing can be left out;
-    the author's dispositions (REVIEW_DISPOSITIONS, a file) ride along as claims to verify.
+    the author's dispositions (`claims`, else the REVIEW_DISPOSITIONS file) ride along as
+    claims to verify.
     Rounds count per REVIEW_FOCUS (KARARLAR B02 inv2#10); a round without a focus counts
     toward every focus. Carry only the current focus and rounds without a focus.
     """
@@ -962,13 +976,13 @@ def prior_rounds(repo: Path, task_id: str | None, scope: str, resolved: str | No
     # A focus seen under the label uses its own count; an unset or new focus takes the highest,
     # so unsetting or renaming the focus never opens a fresh budget.
     completed = unfocused + (counts[focus] if focus in counts else max(counts.values(), default=0))
-    notes = os.environ.get("REVIEW_DISPOSITIONS")
-    claims = Path(notes).read_text(encoding="utf-8") if notes else None
+    if claims is None:
+        claims = dispositions_text()
     try:
-        measure(claims)  # once, before launch: the record never reads the file again
+        measured = measure(claims)  # once, before launch: the record never reads the file again
     except ValueError as error:
         raise BridgeError(str(error)) from error
-    if notes and not rounds:
+    if claims is not None and not rounds:
         raise BridgeError("REVIEW_DISPOSITIONS is set but no earlier completed review has task "
                           "label %r; set MYAGENTKIT_TASK_ID to the earlier rounds' label" % task_id)
     # At most two rounds per focus and label (docs/REVIEW_GATE.md, "Rounds"): a third needs a
@@ -979,9 +993,9 @@ def prior_rounds(repo: Path, task_id: str | None, scope: str, resolved: str | No
             raise BridgeError("task label %s already has %d completed rounds; a third round needs "
                               "REVIEW_ROUND_EXCEPTION=<reason>, or what remains goes to the owner "
                               "or an issue" % (task_id, completed))
-        MEASURED["round_exception"] = exception
+        measured["round_exception"] = exception
     if not rounds:
-        return ""
+        return "", measured
     # The author never approves its own work, so a disposition is a claim, never a settlement.
     text = ("This is review round %d of this change. The earlier rounds follow, oldest first, as "
             "archived. For every earlier finding the dispositions claim fixed, a Medium included, "
@@ -992,33 +1006,30 @@ def prior_rounds(repo: Path, task_id: str | None, scope: str, resolved: str | No
             "only.\n" % (completed + 1))
     for number, (_, report) in enumerate(sorted(rounds), 1):
         text += "### Round %d\n%s\n" % (number, report)
-    if notes:
+    if claims is not None:
         text += "### Author's dispositions (claims to verify, not facts)\n" + claims + "\n"
     # A carried verdict line echoed back would break the reviewer's exactly-one-verdict check.
     text = re.sub(r"^[ \t]*VERDICT[ \t]*:", "Earlier verdict:", text, flags=re.M | re.I)
     if budgeted(diff.encode())[0] + len(text.encode()) > DIFF_LIMIT:
         raise BridgeError("the diff plus earlier rounds and dispositions exceed %d bytes; start "
                           "a fresh MYAGENTKIT_TASK_ID label" % DIFF_LIMIT)
-    return text
-
-
-# The task fields the usage summary measures a reviewer configuration by: the author's
-# disposition counts, the shadow flag and the focus. Filled by measure() from prior_rounds(), before the
-# model runs, from the same bytes the reviewer is shown; the record copies it and never reads
-# the file again, so a file edited or removed during a paid review cannot lose its record.
-# Empty for a record that has neither, so older records read the same.
-MEASURED: dict = {}
+    return text, measured
 
 
 def measure(claims: str | None) -> dict:
-    MEASURED.clear()
+    """The task fields the usage summary measures a reviewer configuration by: the author's
+    disposition counts, the shadow flag and the focus. Built in prior_rounds(), before the model
+    runs, from the same bytes the reviewer is shown; the record copies it and never reads the
+    file again, so a file edited or removed during a paid review cannot lose its record. Empty
+    for a record that has neither, so older records read the same."""
+    measured = {}
     if claims is not None:
-        MEASURED["dispositions"] = agent_usage.dispositions(claims)
+        measured["dispositions"] = agent_usage.dispositions(claims)
     if os.environ.get("REVIEW_SHADOW") == "1":
-        MEASURED["shadow"] = "yes"
+        measured["shadow"] = "yes"
     if os.environ.get("REVIEW_FOCUS"):
-        MEASURED["focus"] = os.environ["REVIEW_FOCUS"]  # prior_rounds() filters carried reports by focus
-    return MEASURED
+        measured["focus"] = os.environ["REVIEW_FOCUS"]  # prior_rounds() filters carried reports by focus
+    return measured
 
 
 def schema(mode: str) -> dict:
@@ -1328,7 +1339,8 @@ def behaviour_appendix(root: Path) -> tuple[str | None, bytes]:
     return None, b""
 
 
-def main(argv=None, result_sink=None) -> int:
+def main(argv=None, result_sink=None, claims=None) -> int:
+    """`claims`: the dispositions text the dispatcher read once; None reads REVIEW_DISPOSITIONS."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("mode", choices=["review", "propose"])
     parser.add_argument("--repo", type=Path, default=Path.cwd())
@@ -1406,11 +1418,13 @@ def main(argv=None, result_sink=None) -> int:
             raise BridgeError("required project guidance is missing: " + ", ".join(missing))
         behaviour, behaviour_bytes, behaviour_sha256 = None, b"", None
         checkout_fingerprint = fingerprint
+        measured = {}
         if args.mode == "review":
             prompt_prefix = REVIEW_PROMPT % ", ".join(docs)
+            carried, measured = prior_rounds(repo, args.task_id, scope, resolved, head, diff, claims)
             prompt_suffix = (
                 (REVIEW_RUNS if os.name == "posix" else REVIEW_READS) + "\n"
-                + prior_rounds(repo, args.task_id, scope, resolved, head, diff)
+                + carried
                 + review_context(args.task_file)
                 + f"Scope: {scope} {ref or ''}; HEAD: {head}\nDiff:\n{diff}")
         else:
@@ -1570,7 +1584,7 @@ def main(argv=None, result_sink=None) -> int:
                  "resolved": resolved, "head": head, "behaviour": "on" if behaviour else "off",
                  "behaviour_sha256": behaviour_sha256,
                  "diff_sha256": evidence["diff_sha256"],
-                 **(MEASURED if args.mode == "review" else {})},
+                 **measured},
                 execution, evidence["status"], reason,
                 archived_path, published.encode() if archived_path else None, backend=args.backend)
             recovery = usage["recovery"]
