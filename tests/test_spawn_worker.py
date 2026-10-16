@@ -249,7 +249,11 @@ ON_WINDOWS = {'test_a_backend_reaches_the_worker_quoted_on_both_paths',
               'test_unsafe_names_are_refused_without_changing_worker_files',
               'test_worker_name_boundary_fits_every_generated_filename'}
 ON_WINDOWS.update({'test_worktree_inherits_untracked_project_hooks',
-                   'test_worktree_keeps_tracked_project_hooks_without_copying_them'})
+                   'test_worktree_keeps_tracked_project_hooks_without_copying_them',
+                   'test_worktree_inherits_untracked_hooks_and_bom_settings',
+                   'test_worktree_accepts_absolute_windows_settings',
+                   'test_bad_settings_leave_no_worktree_or_branch',
+                   'test_plain_tmux_spawn_clears_stale_state_before_readiness'})
 
 
 def tmux_path_cases(cls):
@@ -317,7 +321,7 @@ class SpawnWorkerTests(unittest.TestCase):
     def base_env(self):
         # Never the host's terminal: the WSL name is the test's own, so wt.exe is the stub.
         env = {k: v for k, v in os.environ.items() if k not in ('TERM_PROGRAM', 'TMUX', 'TMUX_PANE')
-               and not k.startswith('ANTHROPIC_')}
+               and not k.startswith(('ANTHROPIC_', 'KIT_WORKER_'))}
         return dict(env, PATH=f'{self.bin}{os.pathsep}{os.environ["PATH"]}', SPAWN_STATE=str(self.state),
                     WSL_DISTRO_NAME='Test-1', KIT_WT=str(self.bin / 'wt-stub'), **LEAD_ENV)
 
@@ -971,7 +975,7 @@ exit 0
         # A path as the cygpath stub gives it (C: + the POSIX path), or the real one on Windows.
         return path if WINDOWS else path[2:]
 
-    def worktree_hooks(self, tracked):
+    def worktree_hooks(self, tracked, hooks_tracked=True, bom=False, absolute=False):
         # Exercise both tracked hooks with untracked settings and native project loading.
         git = lambda *a: subprocess.run(['git', *a], cwd=self.cwd, check=True, capture_output=True)
         git('init', '-q')
@@ -982,11 +986,18 @@ exit 0
         source = {'hooks': hooks, 'permissions': {'allow': ['Bash(project-command)']},
                   'env': {'PROJECT_SETTING': 'kept'}}
         settings = project / 'settings.json'
-        settings.write_text(json.dumps(source))
-        git('add', '.claude/hooks')
+        settings.write_text(json.dumps(source), encoding='utf-8-sig' if bom else 'utf-8')
+        (self.cwd / 'seed').write_text('seed')
+        git('add', 'seed')
+        if hooks_tracked:
+            git('add', '.claude/hooks')
         if tracked:
             git('add', '.claude/settings.json')
         git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'project hooks')
+        committed_hooks = {p.name: p.read_bytes() for p in (project / 'hooks').iterdir() if p.is_file()}
+        if hooks_tracked:
+            with (project / 'hooks/context_size.py').open('a', encoding='utf-8') as stream:
+                stream.write('\n# An uncommitted lead edit must not replace the worker commit.\n')
         owner = {'permissions': {'allow': ['Bash(owner-command)']},
                  'hooks': {'Stop': [{'hooks': [{'type': 'command', 'command': 'echo owner-hook'}]}]}}
         (self.cwd / 'own.json').write_text(json.dumps(owner))
@@ -1000,7 +1011,8 @@ exit 0
             (self.tmp / 'config/sessions/8.json').write_text('{}')
             extra = dict(KIT_WT=str(self.bin / 'wt-tab'), KIT_PS=str(self.bin / 'ps-stub'),
                          CLAUDE_CONFIG_DIR=str(self.tmp / 'config'))
-        result = self.spawn('w1', str(self.brief), '--worktree', '--settings', 'own.json', **extra)
+        own = str((self.cwd / 'own.json').resolve()).replace('\\', '/') if absolute else 'own.json'
+        result = self.spawn('w1', str(self.brief), '--worktree', '--settings', own, **extra)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         tree = self.cwd / '.claude/worktrees/w1'
         generated = json.loads((self.cwd / '.myagentkit/workers/w1.settings.json').read_text())
@@ -1017,7 +1029,15 @@ exit 0
             self.assertEqual(generated['env']['PROJECT_SETTING'], 'kept')
             effective = generated['hooks']
         self.assertIn(owner['hooks']['Stop'][0], generated['hooks']['Stop'])
-        self.assertEqual(json.loads(settings.read_text()), source, 'spawn changed the lead settings')
+        self.assertEqual(json.loads(settings.read_text(encoding='utf-8-sig')), source, 'spawn changed the lead settings')
+        for hook_file in (project / 'hooks').iterdir():
+            if hook_file.is_file():
+                expected = committed_hooks[hook_file.name] if hooks_tracked else hook_file.read_bytes()
+                actual = (tree / '.claude/hooks' / hook_file.name).read_bytes()
+                if hooks_tracked:  # Git's checkout may convert LF to CRLF.
+                    self.assertEqual(actual.replace(b'\r\n', b'\n'), expected.replace(b'\r\n', b'\n'))
+                else:
+                    self.assertEqual(actual, expected)
         transcript = self.tmp / 'request.jsonl'
         transcript.write_text(json.dumps({'type': 'assistant', 'message': {'usage': {'input_tokens': 250001}}}) + '\n')
         env = dict(self.base_env(), CLAUDE_PROJECT_DIR=str(tree).replace('\\', '/'))
@@ -1037,10 +1057,58 @@ exit 0
         self.assertIn('context_tokens=250001', (self.cwd / '.myagentkit/workers/w1.state').read_text())
 
     def test_worktree_inherits_untracked_project_hooks(self):
-        self.worktree_hooks(tracked=False)
+        self.worktree_hooks(tracked=False, hooks_tracked=False)
 
     def test_worktree_keeps_tracked_project_hooks_without_copying_them(self):
         self.worktree_hooks(tracked=True)
+
+    def test_worktree_inherits_untracked_hooks_and_bom_settings(self):
+        self.worktree_hooks(tracked=False, hooks_tracked=False, bom=True)
+
+    def test_worktree_accepts_absolute_windows_settings(self):
+        self.worktree_hooks(tracked=False, absolute=True)
+
+    def tmux_checkout(self):
+        # Keep the launch command free of apostrophes on Git for Windows too.
+        self.cwd = self.tmp / 'tmux-lead'
+        self.cwd.mkdir()
+        self.brief = self.cwd / 'brief.md'
+        self.brief.write_text('brief')
+        subprocess.run(['git', 'init', '-q'], cwd=self.cwd, check=True, capture_output=True)
+        subprocess.run(['git', 'add', 'brief.md'], cwd=self.cwd, check=True, capture_output=True)
+        subprocess.run(['git', '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'seed'],
+                       cwd=self.cwd, check=True, capture_output=True)
+
+    def test_bad_settings_leave_no_worktree_or_branch(self):
+        self.tmux_checkout()
+        project = self.cwd / '.claude'
+        project.mkdir()
+        with safe_tmux_scratch() as scratch:
+            for i, (source, owner) in enumerate((('broken', '{}'), ('[]', '{}'), ('{}', '[]'), ('{}', 'broken'))):
+                with self.subTest(project=source, owner=owner):
+                    name = 'w1-' + str(i)
+                    (project / 'settings.json').write_text(source)
+                    (self.cwd / 'own.json').write_text(owner)
+                    result = self.spawn(name, str(self.brief), '--worktree', '--settings', 'own.json', TMPDIR=scratch)
+                    self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertFalse((project / 'worktrees' / name).exists(), result.stderr)
+                    branch = subprocess.run(['git', 'show-ref', '--verify', '--quiet', 'refs/heads/worktree-' + name],
+                                            cwd=self.cwd)
+                    self.assertNotEqual(branch.returncode, 0)
+                    self.assertIsNone(self.launched())
+
+    def test_plain_tmux_spawn_clears_stale_state_before_readiness(self):
+        self.tmux_checkout()
+        workers = self.cwd / '.myagentkit/workers'
+        workers.mkdir(parents=True)
+        (workers / 'w1.state').write_text('idle 2026-10-16T12:00:00 1 context_tokens=314000\n')
+        (workers / 'w1.watch-state-context').write_text('red\n')
+        with safe_tmux_scratch() as scratch:
+            result = self.spawn('w1', str(self.brief), '--batch', TMPDIR=scratch)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse((workers / 'w1.state').exists())
+        self.assertFalse((workers / 'w1.watch-state-context').exists())
+        self.assertIn('Read ', (self.state / 'submitted').read_text())
 
     def test_on_native_windows_the_worker_gets_state_hooks_and_keeps_its_own(self):
         # Nothing reads a Windows Terminal tab: a Notification and a Stop hook keep the worker's
@@ -1522,6 +1590,47 @@ def run_state_hook(state, payload):
 
 
 class WorkerStateHookTests(unittest.TestCase):
+    def test_tmux_context_notices_once_per_band_and_respects_override(self):
+        with tempfile.TemporaryDirectory(prefix='tmux-context-') as tmp:
+            repo = Path(tmp)
+            subprocess.run(['git', 'init', '-q'], cwd=repo, check=True, capture_output=True)
+            workers, bin_dir = repo / '.myagentkit/workers', repo / 'bin'
+            workers.mkdir(parents=True)
+            bin_dir.mkdir()
+            pane_file = repo / 'pane.txt'
+            pane_file.write_text((PANES / 'working-auto.txt').read_text(encoding='utf-8'), encoding='utf-8')
+            pane = str(pane_file).replace('\\', '/')
+            tmux = ('#!/bin/sh\ncase $1 in\nhas-session) exit 0 ;;\n'
+                    'show-options) cat "$WATCH_MARK" 2>/dev/null ;;\n'
+                    'set-option) for v do :; done; printf "%s\\n" "$v" > "$WATCH_MARK" ;;\n'
+                    'capture-pane) cat ' + shq(pane) + ' ;;\n*) exit 1 ;;\nesac\n')
+            for name, body in (('uname', '#!/bin/sh\necho Linux\n'), ('tmux', tmux),
+                               ('python3', '#!/bin/sh\nexec ' + shq(sys.executable.replace('\\', '/')) + ' "$@"\n')):
+                (bin_dir / name).write_text(body, newline='\n')
+                (bin_dir / name).chmod(0o755)
+            env = dict(os.environ, PATH=str(bin_dir) + os.pathsep + os.environ['PATH'],
+                       WATCH_MARK=str(repo / 'mark').replace('\\', '/'))
+            def watch(count, *options):
+                (workers / 'w1.state').write_text(f'idle 2026-10-16T12:00:00 {count} context_tokens={count}\n')
+                result = subprocess.run(['sh', str(SCRIPT.with_name('watch_workers.sh')), '--once', *options, 'w1'],
+                                        cwd=repo, env=env, capture_output=True, text=True, timeout=30)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                return result.stdout
+            for count, notice in ((200000, True), (250000, False), (300000, True),
+                                  (315000, False), (250001, False), (400000, True), (401000, False)):
+                with self.subTest(count=count):
+                    self.assertEqual('CONTEXT:' in watch(count), notice)
+            (repo / 'mark').unlink(missing_ok=True)
+            self.assertEqual(watch(250000, '--context-warn', '300k'), '')
+            self.assertIn('red', watch(310000, '--context-warn', '300k'))
+            (repo / 'mark').unlink(missing_ok=True)
+            self.assertEqual(watch(90000, '--context-warn', '10%'), '')
+            self.assertIn('CONTEXT:', watch(110000, '--context-warn', '10%'))
+            (repo / 'mark').unlink(missing_ok=True)
+            pane_file.write_text('No status window figure\n', encoding='utf-8')
+            self.assertEqual(watch(310000, '--context-warn', '10%'), '')
+            self.assertIn('CONTEXT:', watch(310000, '--context-warn', '300k'))
+
     def test_tmux_watcher_reports_the_hook_context_when_the_pane_is_below_the_band(self):
         with tempfile.TemporaryDirectory(prefix='tmux context ') as tmp:
             repo = Path(tmp)

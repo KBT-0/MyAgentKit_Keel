@@ -271,7 +271,7 @@ backend_command() {
 ws=" $(printf '\t\r')$nl"
 lead=${settings%%[!$ws]*}
 case "$settings" in
-  ""|"$lead{"*|/*) ;;
+  ""|"$lead{"*|/*|[a-zA-Z]:/*) ;;
   *) [ -f "$settings" ] || [ -z "$worktree" ] ||
        die "--settings is neither inline JSON nor a file here, and the worktree could hold another: $settings"
      [ ! -f "$settings" ] || settings=$dir/$settings ;;
@@ -305,6 +305,10 @@ if [ -n "$worktree" ]; then
       die "branch worktree-$name already exists and may be stale; delete it or pick another name"
     [ ! -e "$dir" ] || die "worktree path already exists: $dir"
   fi
+fi
+prepare_worktree() {
+  [ -n "$worktree" ] || return 0
+  # Settings have been validated before a locked worktree or branch is created.
   # Locked from spawn to close_worker.sh, which unlocks it: the worktree audit never removes a
   # locked worktree, so no clean-up races a live worker, as Claude Code locks its own agents'
   # worktrees while they run (code.claude.com/docs/en/worktrees). The quiet period stays as the
@@ -319,7 +323,17 @@ if [ -n "$worktree" ]; then
        { [ ! -e "$gd/locked" ] && ! git worktree lock --reason "kit worker $name" "$dir"; }; then
     die "--resume --worktree: cannot lock $dir for the resumed worker"
   fi
-fi
+  # Untracked kit installs carry settings and hooks together. Fill missing hook files,
+  # preserving the committed versions already present in the worker's checkout.
+  if [ -d "${project_settings%/*}/hooks" ]; then
+    $kit_python -I -c 'import os, shutil, sys
+def missing(source, destination):
+    if not os.path.lexists(destination):
+        shutil.copy2(source, destination)
+shutil.copytree(sys.argv[1], sys.argv[2], dirs_exist_ok=True, copy_function=missing)' \
+      "${project_settings%/*}/hooks" "$dir/.claude/hooks" || die "cannot carry project hooks into $dir"
+  fi
+}
 
 # The result and the supervisor (--result in the header). Absolute paths: the session starts in
 # the worker's folder.
@@ -344,7 +358,7 @@ record_result() {
 # Worktree sessions read shared project settings from their own working directory
 # (https://code.claude.com/docs/en/settings, checked 2026-10-16). Tracked settings arrive
 # with the checkout; absent settings must travel in --settings, with the owner's overrides
-# and hooks kept. Hook commands retain $CLAUDE_PROJECT_DIR: tracked hooks run in the worker.
+# and hooks kept. Hook commands retain $CLAUDE_PROJECT_DIR and run in the worker.
 # Both worktree sessions and Windows tabs get state telemetry (owner decision 23, 2026-10-16).
 native() { if [ -n "$windows" ]; then cygpath -m "$1"; else printf '%s' "$1"; fi; }
 own=$settings
@@ -380,10 +394,14 @@ if s:
         if os.path.exists(f.name): os.unlink(f.name)')' '$(q "$(native "$wdir/$name.state")")' '$(q "${cworker%/*}/../.claude/hooks/context_size.py")
   project=""
   # Do not duplicate a tracked project's hooks: Claude Code already loads that file.
-  if [ -n "$worktree" ] && [ ! -e "$dir/.claude/settings.json" ] && [ -f "$project_settings" ]; then
-    project=$(native "$project_settings") || die "cannot convert the project settings path"
+  if [ -n "$worktree" ] && [ -f "$project_settings" ]; then
+    # A fresh checkout does not exist yet: inspect its commit, not the absent folder.
+    if { [ -n "$resume" ] && [ ! -e "$dir/.claude/settings.json" ]; } ||
+       { [ -z "$resume" ] && ! git cat-file -e HEAD:.claude/settings.json 2>/dev/null; }; then
+      project=$(native "$project_settings") || die "cannot convert the project settings path"
+    fi
   fi
-  mkdir -p -- "$wdir" && rm -f -- "$wdir/$name".state* "$wdir/$name".watch-* || die "cannot prepare $wdir"
+  mkdir -p -- "$wdir" || die "cannot prepare $wdir"
   { case $own in "") echo '{}' ;; "$lead{"*) printf '%s' "$own" ;; *) cat -- "$own" ;; esac; } |
     $kit_python -I -c 'if 1:
     import json, sys
@@ -397,13 +415,19 @@ if s:
                 base[key] = value
         return base
     owner = json.loads(sys.stdin.buffer.read())
-    project = json.load(open(sys.argv[2], encoding="utf-8")) if sys.argv[2] else {}
+    project = json.load(open(sys.argv[2], encoding="utf-8-sig")) if sys.argv[2] else {}
+    if not isinstance(owner, dict) or not isinstance(project, dict):
+        raise ValueError("settings must be JSON objects")
     d = merge(project, owner)
     h = d.setdefault("hooks", {})
     for e in ("Notification", "Stop"):
         h.setdefault(e, []).append({"hooks": [{"type": "command", "command": sys.argv[1]}]})
     print(json.dumps(d, indent=2))' "$hook" "$project" >"$wdir/$name.settings.json" ||
     die "cannot merge the project and worker hooks into --settings (not a JSON object?): $own"
+}
+reset_state() {
+  # All launches, including plain tmux sessions, begin without the previous run's snapshot.
+  rm -f -- "$wdir/$name".state* "$wdir/$name".watch-* || die "cannot clear the previous state in $wdir"
 }
 # A worker is a session of its own, never the lead's child. The lead's shell carries Claude
 # Code's child-session markers, and a claude that sees CLAUDE_CODE_CHILD_SESSION skips its peer
@@ -516,8 +540,10 @@ sessions() {
 if [ -n "$windows" ]; then
   running=$(sessions "$name") || die "cannot list the Claude Code sessions to check the name '$name': $running"
   [ -z "$running" ] || die "a Claude Code session named '$name' already runs (process $running)"
-  record_result
   prepare_settings
+  prepare_worktree
+  reset_state
+  record_result
   wt=${KIT_WT:-wt.exe}
   command -v "$wt" >/dev/null || die "Windows Terminal ($wt) is not on PATH; start the worker by hand: $cmd"
   bash=$(command -v bash) || die "bash is not on PATH"
@@ -579,6 +605,8 @@ fi
 # the tool exits with "the current working directory was deleted" when that folder (a
 # removed worktree, say) is gone, whatever -c says.
 [ -z "$worktree" ] || prepare_settings
+prepare_worktree
+reset_state
 [ -z "$backend" ] || cmd=$(backend_command "$cmd")
 # The reserved script removes itself; tmux receives two plain words for its default shell.
 record_result

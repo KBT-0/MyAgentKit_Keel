@@ -129,7 +129,9 @@ def main() -> None:
 
 if __name__ == '__main__':
     try:
-        if len(sys.argv) == 3 and sys.argv[1] == '--band':
+        if sys.argv[1:] == ['--line']:
+            print(LINE)
+        elif len(sys.argv) == 3 and sys.argv[1] == '--band':
             print(band_word(int(sys.argv[2])))
         else:
             main()

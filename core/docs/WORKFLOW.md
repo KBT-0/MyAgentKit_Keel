@@ -953,13 +953,20 @@ too (on Windows: Resource Monitor, CPU tab, Associated Handles, search for `chec
 before any gate runs in that worktree. On native Windows a worker in a Windows Terminal tab
 may not be registered as a peer session; `spawn_worker.sh` then says so, and no idle notice
 comes when it stops on a question, a usage limit or an error. Nothing can read the tab's
-pane either, so there `spawn_worker.sh` adds a Notification and a Stop hook to the worker's
+pane either. `spawn_worker.sh` adds a Notification and a Stop hook to Windows tabs and
+worktree workers on either platform through the worker's
 `--settings` (the owner's settings and hooks are kept, merged into
 `.myagentkit/workers/NAME.settings.json`); they write its state line to
-`.myagentkit/workers/NAME.state`: `waiting permission|question TIME ID` when it asks for a
-permission, an approval or an answer, `idle TIME ID` when it stops (ID tells two events of
-the same second apart). `scripts/watch_workers.sh --result NAME=PATH NAME`, run from the same
-checkout, reads that file in place of a pane: WAITING, then the result file as on tmux, then
+`.myagentkit/workers/NAME.state`: `waiting permission|question TIME ID [context_tokens=N]` when it asks for a
+permission, an approval or an answer, `idle TIME ID [context_tokens=N]` when it stops (ID tells two events of
+the same second apart). The optional count comes from the last request; compaction resets it
+to zero. The watcher labels it using `context_size.py`'s yellow, red and ceiling thresholds.
+On tmux it reports each band once per session, including a higher band reached later.
+`--context-warn NNNk` changes the snapshot warning count; a percentage also needs a pane
+window figure, so a snapshot alone cannot establish it. These notices advise the lead;
+they never end a worker. Every spawn clears the previous run's state before launch.
+`scripts/watch_workers.sh --result NAME=PATH NAME`, run from the same
+checkout, reads that file in place of a pane on Windows: WAITING, then the result file as on tmux, then
 IDLE (it stopped with no new result), each event once. Legacy `waiting input` means an idle
 prompt, with no state event; the watcher never reports WAITING for it. Once per worker it
 prints "hook is from an older kit; re-spawn to install the current one".

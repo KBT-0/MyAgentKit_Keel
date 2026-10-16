@@ -55,6 +55,8 @@
 #   (or a bare NN) the share. A status line without the figure, or none, is CONTEXT once too, and the figure is
 #   never guessed; --once skips that note, as spawn_worker.sh runs it before the status line
 #   is drawn.
+#   Worktree hook snapshots use the same override; a percentage needs a pane window figure.
+#   Without an override their bands come from context_size.py, once per band per session.
 # The once-markers are user options of the tmux session, so they end with it. Every report
 # exits 0; its first line is `watch_workers: KIND: NAME, ...`.
 #
@@ -96,7 +98,7 @@ plain() {
     die "a session name or result path contains a control character or a newline; it is not printed"
 }
 
-interval=45; max=110; warn_abs=200000; warn_pct=50; once=""; results=""
+interval=45; max=110; warn_abs=""; warn_pct=50; warn_set=""; once=""; results=""
 while [ $# -gt 0 ]; do
   case $1 in
     --context-warn)
@@ -104,7 +106,7 @@ while [ $# -gt 0 ]; do
       v=${2%[k%]}
       case $v in ""|*[!0-9]*) die "$1 takes NNNk (tokens) or NN% (of the window): $2" ;; esac
       v=${v#"${v%%[!0]*}"}; v=${v:-0}  # decimal: shell arithmetic reads a leading 0 as octal
-      case $2 in *k) warn_abs=$((v * 1000)) ;; *) warn_pct=$v ;; esac
+      case $2 in *k) warn_abs=$((v * 1000)); warn_set=abs ;; *) warn_pct=$v; warn_set=pct ;; esac
       shift 2 ;;
     --interval|--max-minutes)
       [ $# -ge 2 ] || die "$1 needs a value"
@@ -385,17 +387,10 @@ tab() {
 # or (not with --once) when there is none; once per session. Return 1 when nothing is said,
 # 2 when the report could not be written (and no marker is queued).
 context() {
-  # A Stop/Notification snapshot is also available for worktree workers on tmux.
-  # Prefer its API token count to a stale or rounded pane status figure.
-  snapshot=""
-  if [ -f "$wdir/$1.state" ]; then snapshot=$(cat -- "$wdir/$1.state" 2>/dev/null) || snapshot=""; fi
-  label=$(context_label "$snapshot")
-  case $label in *', yellow'|*', red'|*', ceiling')
-    [ "$(mark "$1" state-context)" != "$snapshot" ] || return 1
-    say "watch_workers: CONTEXT: $1$label (its state hook; docs/WORKFLOW.md, \"Worker cost\", rule 8)" || return 2
-    setmark "$1" state-context "$snapshot"
-    return 0 ;;
-  esac
+  if [ -z "$warn_abs" ]; then
+    warn_abs=$(sh "$here/../.claude/hooks/py.sh" "$here/../.claude/hooks/context_size.py" --line 2>/dev/null) || warn_abs=""
+    case $warn_abs in ''|*[!0-9]*) die "cannot read the context warning threshold from context_size.py" ;; esac
+  fi
   fig=$(CTX_RE=$ctx_re LC_ALL=C awk -v abs="$warn_abs" -v pct="$warn_pct" '
     function num(s) { return substr(s, 1, length(s) - 1) * (s ~ /M$/ ? 1000000 : 1000) }
     { l[NR] = $0 }
@@ -407,9 +402,39 @@ context() {
           split(tok, p, "/"); u = num(p[1]); w = num(p[2])
           if (w <= 0) { print "unparsable"; exit }
           line = pct * w / 100; if (abs < line) line = abs
-          printf "%s %d %s %dk\n", (u > line ? "over" : "under"), u * 100 / w, tok, line / 1000 }
+          printf "%s %d %s %dk %d\n", (u > line ? "over" : "under"), u * 100 / w, tok, line / 1000, w }
   ' "$win") || fig=""
   set -- "$1" ${fig:-absent}
+  # Prefer the API token count to a stale or rounded pane figure. A percentage override
+  # can only be evaluated when the pane supplies a window; no window is guessed.
+  snapshot=""; tokens=""
+  if [ -f "$wdir/$1.state" ]; then snapshot=$(cat -- "$wdir/$1.state" 2>/dev/null) || snapshot=""; fi
+  case $snapshot in *' context_tokens='*) tokens=${snapshot##* context_tokens=} ;; esac
+  case $tokens in ''|*[!0-9]*) ;;
+    *)
+      label=$(context_label "$snapshot")
+      level=0
+      case $label in *', yellow') level=2 ;; *', red') level=3 ;; *', ceiling') level=4 ;; esac
+      eligible=""
+      case $warn_set in
+        abs|pct) if [ -n "${6:-}" ]; then
+               eligible=$(LC_ALL=C awk -v t="$tokens" -v w="$6" -v p="$warn_pct" -v a="$warn_abs" \
+                 'BEGIN { line = p * w / 100; if (a < line) line = a; if (t >= line) print 1 }')
+             elif [ "$warn_set" = abs ] && [ "$tokens" -ge "$warn_abs" ]; then eligible=1
+             fi ;;
+        *) [ "$level" -eq 0 ] || eligible=1 ;;
+      esac
+      if [ -n "$eligible" ]; then
+        [ "$level" -gt 0 ] || level=1
+        said=$(mark "$1" state-context)
+        case $said in 1|2|3|4) [ "$said" -lt "$level" ] || return 1 ;; esac
+        say "watch_workers: CONTEXT: $1$label (its state hook; docs/WORKFLOW.md, \"Worker cost\", rule 8)" || return 2
+        setmark "$1" state-context "$level"
+        return 0
+      fi
+      # A known snapshot below the threshold also takes precedence over the pane.
+      [ "$warn_set" = pct ] && [ -z "${6:-}" ] || return 1 ;;
+  esac
   [ "$2" != under ] || return 1
   said=$(mark "$1" context)
   [ "$said" != over ] || return 1
