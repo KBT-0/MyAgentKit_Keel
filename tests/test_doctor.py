@@ -260,6 +260,16 @@ class DoctorTests(unittest.TestCase):
                     self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                     self.assertIn('DOCTOR: ready', result.stdout)
                     (self.assertIn if told else self.assertNotIn)(note, result.stdout)
+            # --version exits but leaves a child holding its stdout: the 10 s bound still holds and the
+            # version is read (b7 review, round 1: a pipe made doctor wait for the child's EOF).
+            (tools / 'claude').write_text('#!/bin/sh\ncase "$1" in --version) (cd / && exec sleep 15) &'
+                                          ' echo "2.1.218 (Claude Code)" ;; *) echo "--effort <level>" ;; esac\n')
+            started = time.monotonic()
+            result = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=root, env=env,
+                                    capture_output=True, text=True, timeout=60)
+            elapsed = time.monotonic() - started
+            self.assertLess(elapsed, 12, 'doctor.sh waited %.2f s for the --version child' % elapsed)
+            self.assertIn(note, result.stdout)
             # A Python that is 3.10: ready, with the end-of-life note.
             old_python = root / 'old-python'
             old_python.mkdir()

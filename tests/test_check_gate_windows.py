@@ -1121,7 +1121,10 @@ class GateRuleTests(unittest.TestCase):
         self.assertIn('FAIL [scan]: the file list is EMPTY', result.stdout)
 
     def test_a_tagged_state_line_deleted_with_nothing_added_elsewhere_is_noted(self):
-        # KARARLAR D05 inv1#76, lead decision 7: told at commit time, never failed.
+        # KARARLAR D05 inv1#76, lead decision 7: told at commit time, never failed. A colour the
+        # user's config forces on every diff must not hide the deleted line (b7 review, round 1).
+        self.git('config', 'color.ui', 'always')
+        self.git('config', 'color.diff', 'always')
         self.write('docs/STATE.md', '# STATE\n\n## Active work\n- [LESSON] keep the lock inherited\n')
         self.git('commit', '-q', '-am', 'lesson')
         self.write('docs/STATE.md', '# STATE\n\n## Active work\n')
@@ -1146,6 +1149,8 @@ class GateRuleTests(unittest.TestCase):
         self.git('commit', '-q', '-m', 'strong review')
         for n in range(1, tasks):
             self.git('commit', '-q', '--allow-empty', '-m', 'task %d' % n, '-m', 'Done: T%d' % n)
+        # A malformed trailer closes nothing for the state parser, so it is no closed task here.
+        self.git('commit', '-q', '--allow-empty', '-m', 'bypassed hook', '-m', 'Done: two ids')
         code, out = self.run_gate()
         self.assertEqual(code, 0, out)
         self.assertNotIn('NOTE [strong-review]', out)
@@ -1178,6 +1183,14 @@ class GateRuleTests(unittest.TestCase):
                                            '- ledger: the books\n')
         code, out = self.run_gate()
         self.assertEqual(code, 0, out)
+        # Outside a Git repository the find fallback names the same files (b7 review, round 1).
+        away = self.tmp / 'git-away'
+        (self.project / '.git').rename(away)
+        try:
+            code, out = self.run_gate()
+        finally:
+            away.rename(self.project / '.git')
+        self.assertNotIn('FAIL [architecture]', out)
         gate_file.write_text(source.replace('\nmodule_roots=""\n', '\nmodule_roots="lib"\n', 1),
                              encoding='utf-8', newline='\n')
         code, out = self.run_gate()

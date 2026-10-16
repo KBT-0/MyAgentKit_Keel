@@ -1370,6 +1370,7 @@ if ! xargs -0 sh -c '
   escape_lines=$2
   shift 2
   for p do
+    p=${p#./}  # the find fallback names ./src/a, git names src/a: every reader gets the git form
     if [ -L "$p" ]; then
       if t=$(readlink "./$p"); then
         printf "%s:1:symlink %s -> %s\n" "$p" "$p" "$t" | awk "$escape_lines" >> "$scan_work/symlink-text" || {
@@ -1514,9 +1515,12 @@ fi
 # part of the history: a NOTE says so, and the part it holds is checked.
 history_repo="${GATE_SELFTEST_HISTORY:-.}"
 # The self-test's synthetic history is read with no inherited GIT_DIR routing it elsewhere.
+# Colour-free whatever the user's config says (color.ui or color.diff = always): the gate parses
+# what these helpers print, and an escape code before "-" hid a deleted line (b7 review, round 1).
+nocolor="-c color.ui=never -c color.diff=never"
 hgit() {
-  if [ -n "${GATE_SELFTEST_HISTORY:-}" ]; then ( fixture_env; git -C "$history_repo" "$@" )
-  else git -C "$history_repo" "$@"; fi
+  if [ -n "${GATE_SELFTEST_HISTORY:-}" ]; then ( fixture_env; git $nocolor -C "$history_repo" "$@" )
+  else git $nocolor -C "$history_repo" "$@"; fi
 }
 if hgit rev-parse -q --verify HEAD >/dev/null 2>&1; then
   [ "$(hgit rev-parse --is-shallow-repository)" != true ] ||
@@ -1562,8 +1566,8 @@ fi
 if [ -n "$for_commit" ]; then
   # GATE_SELFTEST_COMMIT_REPO: the self-test's throwaway repository, read with no inherited routing.
   sgit() {
-    if [ -n "${GATE_SELFTEST_COMMIT_REPO:-}" ]; then ( fixture_env; git -C "$GATE_SELFTEST_COMMIT_REPO" "$@" )
-    else git "$@"; fi
+    if [ -n "${GATE_SELFTEST_COMMIT_REPO:-}" ]; then ( fixture_env; git $nocolor -C "$GATE_SELFTEST_COMMIT_REPO" "$@" )
+    else git $nocolor "$@"; fi
   }
   dropped=$(sgit diff --cached --no-renames --no-ext-diff -U0 HEAD -- docs/STATE.md 2>/dev/null |
             grep -v '^--- ' | grep -E '^-.*\[(LESSON|GOTCHA)\]')
@@ -1598,8 +1602,15 @@ if [ -f "$strong_list" ] && hgit rev-parse -q --verify HEAD >/dev/null 2>&1; the
     printf '%s\n' "                      $strong_rule (docs/WORKFLOW.md, \"The strong review cycle\")."
   else
     added_commit=${added#* }; added=${added%% *}
-    closed=$(hgit log --no-show-signature --format='%(trailers:key=Done,valueonly,unfold)' \
-               "$added_commit..HEAD" 2>/dev/null | grep -c .)
+    # The ids the state parser above accepted (done-ids), of the commits after the report: a
+    # malformed Done: value closes nothing there, so it is no closed task here (b7 review, round 1).
+    hgit log --no-show-signature --format=%h "$added_commit..HEAD" > "$work/strong-range" 2>/dev/null
+    closed=$(awk -v range="$work/strong-range" '
+      FILENAME == range { keep[$0]; next }
+      /^@/ { on = substr($0, 2) in keep; next }
+      on { n++ }
+      END { print n + 0 }' "$work/strong-range" "$work/done-ids" 2>/dev/null)
+    closed=${closed:-0}
     days=$(( ($(date +%s) - added) / 86400 ))
     if [ $(( $(date +%s) - added )) -gt $(( STRONG_REVIEW_DAYS * 86400 )) ] || [ "$closed" -ge "$STRONG_REVIEW_TASKS" ]; then
       printf '%s\n' "NOTE [strong-review]: the newest strong review report was added $days days ago, and $closed tasks"

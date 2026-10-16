@@ -264,9 +264,11 @@ fi
 # is no evidence of what a CLI supports (code.claude.com/docs/en/cli-reference).
 if [ -f .claude/settings.json ] && grep -q '"onFailure"' .claude/settings.json 2>/dev/null &&
    command -v claude >/dev/null 2>&1; then
-  if command -v timeout >/dev/null 2>&1; then
-    host_version=$(timeout -k 1 "$probe_seconds" claude --version </dev/null 2>/dev/null |
-                   sed -n '1s/^[^0-9]*\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\).*/\1/p')
+  # Into a file, as the --help probe: a child that keeps a pipe open made sed wait past the bound.
+  if command -v timeout >/dev/null 2>&1 && help_out=$(mktemp); then
+    timeout -k 1 "$probe_seconds" claude --version </dev/null >"$help_out" 2>/dev/null
+    host_version=$(sed -n '1s/^[^0-9]*\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\).*/\1/p' "$help_out")
+    rm -f "$help_out"
   else
     host_version=""
   fi
