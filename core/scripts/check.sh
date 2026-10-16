@@ -1390,7 +1390,8 @@ if ! xargs -0 sh -c '
         printf "%s\n" "NOTE [scan]: skipped $p, a symlink whose target is missing; its link text is scanned instead." >&3
       fi
     elif [ -f "$p" ]; then
-      printf "%s\0" "$p"
+      # grep reads a bare "-" as stdin even after "--": a marker in a file named "-" passed.
+      case $p in -*) printf "./%s\0" "$p" ;; *) printf "%s\0" "$p" ;; esac
     elif [ -d "$p" ] && { case "$p" in */) true ;; *) false ;; esac ||
                           [ "$(git ls-files -s -- ":(literal)$p" | cut -c1-6)" = 160000 ]; }; then
       printf "%s\n" "NOTE [scan]: skipped $p, a submodule or a repository inside this one; its files belong to that repository." >&3

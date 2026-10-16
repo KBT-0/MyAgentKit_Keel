@@ -1101,6 +1101,22 @@ class GateRuleTests(unittest.TestCase):
         code, out = self.run_gate(GATE_BUILD_CMD_OVERRIDE='true')
         self.assertIn('FAIL [env]: GATE_BUILD_CMD_OVERRIDE is set', out)
 
+    def test_a_file_named_dash_is_scanned_inside_and_outside_git(self):
+        # grep takes a bare "-" as stdin, so a marker in a file named "-" passed (b7 review, round 2).
+        self.write('-', '{{BUILD_TEST_COMMAND}}\n')
+        self.git('add', '--', '-')
+        code, out = self.run_gate()
+        self.assertEqual(code, 1, out)
+        self.assertIn('FAIL [setup]', out)
+        away = self.tmp / 'git-away'
+        (self.project / '.git').rename(away)
+        try:
+            code, out = self.run_gate()
+        finally:
+            away.rename(self.project / '.git')
+        self.assertEqual(code, 1, out)
+        self.assertIn('FAIL [setup]', out)
+
     def test_a_deletion_only_commit_is_scanned_and_only_an_empty_tree_is_refused(self):
         # The empty-list FAIL counts files in the tree, not in the commit (KARARLAR D03 inv2#159).
         self.write('docs/old.md', 'old\n')
