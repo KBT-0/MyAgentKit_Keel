@@ -102,6 +102,14 @@ with open(os.path.join(os.environ['SPAWN_STATE'], 'claude.json'), 'w') as f:
     json.dump({'argv': sys.argv[1:], 'cwd': os.getcwd(), 'env_names': sorted(os.environ),
                'env': {k: v for k, v in os.environ.items() if k.startswith('ANTHROPIC_') or
                k in os.environ.get('SPAWN_CONTROL_NAMES', '').split(',')}}, f)
+# SPAWN_PUBLISH: a worker that writes that text to SPAWN_PUBLISH_TO, then works on for
+# SPAWN_LINGER seconds; the file `finished` says it was not ended meanwhile.
+if os.environ.get('SPAWN_PUBLISH'):
+    import time
+    with open(os.environ['SPAWN_PUBLISH_TO'], 'w') as f:
+        f.write(os.environ['SPAWN_PUBLISH'])
+    time.sleep(float(os.environ['SPAWN_LINGER']))
+    open(os.path.join(os.environ['SPAWN_STATE'], 'finished'), 'w').close()
 '''
 
 
@@ -214,6 +222,7 @@ WINDOWS = os.name == 'nt'
 # Windows parses again (an apostrophe is a quote there): there each prints NOT RUN.
 ON_WINDOWS = {'test_a_backend_reaches_the_worker_quoted_on_both_paths',
               'test_a_worker_worktree_is_locked_from_spawn',
+              'test_a_worker_is_resumed_through_the_kit_under_its_name',
               'test_a_missing_or_failing_watcher_stops_the_spawn',
               'test_a_worker_without_its_model_or_effort_is_refused',
               'test_backend_duplicate_keys_cannot_empty_final_values',
@@ -233,6 +242,8 @@ ON_WINDOWS = {'test_a_backend_reaches_the_worker_quoted_on_both_paths',
               'test_on_native_windows_the_worker_gets_state_hooks_and_keeps_its_own',
               'test_on_native_windows_the_worker_opens_as_a_windows_terminal_tab',
               'test_term_after_tmux_accepts_preserves_the_panes_script',
+              'test_the_printed_resume_restores_the_launch',
+              'test_a_worker_that_publishes_its_result_ends_and_its_tab_closes',
               'test_the_behaviour_appendix_reaches_the_worker_unless_turned_off',
               'test_two_signals_do_not_repeat_cleanup',
               'test_unsafe_names_are_refused_without_changing_worker_files',
@@ -262,7 +273,8 @@ class SpawnWorkerTests(unittest.TestCase):
             folder.mkdir()
         for name, body in (('tmux', TMUX), ('claude', CLAUDE), ('sleep', SLEEP), ('wt-stub', WT),
                            ('osascript', '#!/bin/sh\nexit 1\n'), ('uname', '#!/bin/sh\necho Linux\n')):
-            (self.bin / name).write_text(body)
+            # UTF-8: the tmux stub holds the prompt arrow, which cp1252 (native Windows) cannot write.
+            (self.bin / name).write_text(body, encoding='utf-8')
             (self.bin / name).chmod(0o755)
         if WINDOWS:
             # Native Windows' python3 may be an inaccessible WindowsApps alias. Every
@@ -646,6 +658,47 @@ exit 0
             self.assertNotIn(token, recorded + result.stdout + result.stderr)
             (self.state / 'claude.json').unlink()
 
+    def test_a_worker_that_publishes_its_result_ends_and_its_tab_closes(self):
+        # Owner 2026-10-16: a Claude worker's session and tab close when it publishes Kind:
+        # completed, as a Codex worker's do (codex_worker.py), not only at the merge. A progress
+        # result or a free-form file never ends it. The tab's script then runs on to `exit 0`.
+        report = self.tmp / 'report.md'
+        done = 'Kind: completed\nTask: t\nAttempt: 1\nRemaining: none\n<!-- codex-worker: ready -->\n'
+        for tab in self.backend_paths():
+            for text, ends in ((done, True), (done.replace('completed', 'progress'), False), ('# notes\n', False)):
+                with self.subTest(windows=bool(tab), text=text[:15]):
+                    for path in (self.state / 'finished', self.state / 'claude.json', report):
+                        path.unlink(missing_ok=True)
+                    result = self.spawn('w1', str(self.brief), '--result', str(report), **tab, SPAWN_PUBLISH=text,
+                                        SPAWN_PUBLISH_TO=str(report), SPAWN_LINGER='4', KIT_WORKER_GRACE='0.2')
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertEqual((self.state / 'finished').exists(), not ends, result.stdout + result.stderr)
+                    # Codex r2 (fix56): a publication within ten seconds is no failed start; the
+                    # tab closes instead of waiting for Enter (this stub's closed stdin hid it).
+                    self.assertEqual('press Enter to close' in result.stdout + result.stderr, bool(tab) and not ends,
+                                     result.stdout + result.stderr)
+                    if tab:
+                        self.assertTrue(json.loads((self.state / 'wt.json').read_text())[-1].endswith('\nexit 0\n'))
+        # The result path is recorded: close_worker.sh --finished reads it after a merge.
+        (record,) = (self.tmp / 'real').rglob('w1.result-path')
+        self.assertTrue(record.read_text().strip().endswith('/report.md'), record.read_text())
+
+    def test_the_printed_resume_restores_the_launch(self):
+        # Codex r1 (fix56): the printed resume dropped --backend; followed, the worker went on
+        # against the default provider without its endpoint, model mapping or settings.
+        self.backend_file('ANTHROPIC_BASE_URL=https://backend.invalid\nANTHROPIC_MODEL=glm-x\n'
+                          'ANTHROPIC_AUTH_TOKEN=fixture\n')
+        settings, tools = '{"permissions": {"defaultMode": "auto"}}', 'Bash(git status:*)'
+        for tab in self.backend_paths():
+            result = self.spawn('w1', str(self.brief), '--backend', 'glm', '--model', 'glm-x',
+                                '--settings', settings, '--allowed-tools', tools, '--result', 'report.md', **tab)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            line = next(l for l in result.stdout.splitlines() if 'to answer it in its own session' in l)
+            for words in ("--model 'glm-x'", "--backend 'glm'", '--settings ' + shq(settings),
+                          '--allowed-tools ' + shq(tools), "--result 'report.md'"):
+                self.assertIn(words, line)
+            (self.state / 'claude.json').unlink()
+
     def test_backend_duplicate_keys_cannot_empty_final_values(self):
         for key, reason in (('ANTHROPIC_BASE_URL', 'sets no ANTHROPIC_BASE_URL'),
                             ('ANTHROPIC_MODEL', 'sets no model')):
@@ -806,7 +859,7 @@ exit 0
             run_state_hook(state, {'hook_event_name': 'Stop'})
         self.assertTrue(state.read_text().startswith('idle '))
         self.assertEqual(sorted(p.name for p in workers.iterdir()),
-                         sorted([name + '.state', name + '.settings.json']))
+                         sorted([name + '.state', name + '.settings.json', name + '.result-path']))
 
     def test_brief_is_delivered_by_path_as_one_typed_instruction(self):
         result = self.spawn('w1', str(self.brief))
@@ -905,9 +958,11 @@ exit 0
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("the Claude Code session 'w5' ended right after it started", result.stderr)
         self.assertNotIn('started with', result.stdout)
-        # The tab measures claude's own run, and waits for Enter after a quick end of any status.
+        # The tab measures claude's own run, under its supervisor, and waits for Enter after a
+        # quick end of any status.
         tab = json.loads((self.state / 'wt.json').read_text())[-1]
-        self.assertIn('t=$(date +%s); env -u CLAUDE_CODE_CHILD_SESSION ', tab)
+        self.assertRegex(tab, r"t=\$\(date \+%s\); KIT_WORKER_EXIT='[^']*\.exit' KIT_WORKER_STARTED='[0-9.]+' \S+ '[^']*/codex_worker\.py' ")
+        self.assertIn("-c 'exec env -u CLAUDE_CODE_CHILD_SESSION ", tab)
         self.assertIn('press Enter to close', tab)
 
     def windows_path(self, path):
@@ -1256,6 +1311,55 @@ exit 0
                 gitdir = git('-C', str(self.cwd / '.claude/worktrees' / name), 'rev-parse', '--absolute-git-dir')
                 self.assertEqual(Path(gitdir, 'locked').read_text().rstrip('\n'), 'kit worker ' + name)
 
+    def test_a_worker_is_resumed_through_the_kit_under_its_name(self):
+        # 2026-10-16: the lead resumed a worker by hand (`wt -w 0 nt ... claude --resume ID`); that tab
+        # had no name, nothing could close it, and the lead ended it with Stop-Process. Resumed
+        # through the kit, the session keeps `-n NAME`, so close_worker.sh finds and ends it.
+        for name, body in (('uname', '#!/bin/sh\necho MINGW64_NT-10.0-26200\n'), ('cygpath', CYGPATH),
+                           ('wt-tab', WT_TAB),
+                           ('ps-stub', '#!/bin/sh\n[ ! -f "$SPAWN_STATE/claude.json" ] || printf "8 claude.exe -n rw\\r\\n"\n')):
+            if WINDOWS and name == 'cygpath':
+                continue
+            (self.bin / name).write_text(body)
+            (self.bin / name).chmod(0o755)
+        git = lambda *a: subprocess.run(['git', *a], cwd=self.cwd, check=True, capture_output=True,
+                                        text=True).stdout.strip()
+        git('init', '-q')
+        git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'a')
+        config = self.tmp / 'config'
+        (config / 'sessions').mkdir(parents=True)
+        (config / 'sessions' / '8.json').write_text('{"sessionId": "sid-1", "name": "rw"}')
+        env = dict(KIT_WT=str(self.bin / 'wt-tab'), KIT_PS=str(self.bin / 'ps-stub'), CLAUDE_CONFIG_DIR=str(config))
+        result = self.spawn('rw', str(self.brief), '--worktree', **env)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        # The spawn names the id a resume needs.
+        self.assertRegex(result.stdout, r'scripts/spawn_worker.sh rw ANSWER_FILE --model .* --worktree --resume sid-1\n')
+        tree = self.cwd / '.claude/worktrees/rw'
+        git('worktree', 'unlock', str(tree))
+        (self.state / 'claude.json').unlink()
+        answer = self.cwd / 'answer.md'
+        answer.write_text('Go on with A.\n')
+        # A resume without the id, or of a worktree that is not there, is refused before any tab.
+        for args, words in ((('--worktree', '--resume'), '--resume needs the session id'),
+                            (('--resume', '--worktree'), '--resume needs the session id'),
+                            (('--worktree', '--resume', 'sid-1'), None)):
+            with self.subTest(args=args):
+                name = 'gone' if words is None else 'rw'
+                (self.state / 'wt.json').unlink(missing_ok=True)
+                result = self.spawn(name, str(answer), *args, **env)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn(words or '--resume --worktree: no worktree at', result.stderr)
+                self.assertFalse((self.state / 'wt.json').exists())
+        result = self.spawn('rw', str(answer), '--worktree', '--resume', 'sid-1', **env)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        argv = self.launched()['argv']
+        self.assertEqual(argv[1:5], ['-n', 'rw', '--resume', 'sid-1'])
+        self.assertIn('answer.md', argv[0])
+        self.assertEqual(Path(self.launched()['cwd']).resolve(), tree.resolve())
+        # Locked again for its new run: the audit never removes it under the session.
+        gitdir = git('-C', str(tree), 'rev-parse', '--absolute-git-dir')
+        self.assertEqual(Path(gitdir, 'locked').read_text().rstrip('\n'), 'kit worker rw')
+
     def test_the_tmux_worker_does_not_inherit_the_leads_session_markers(self):
         result = self.spawn('w1', str(self.brief))
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -1310,7 +1414,8 @@ exit 0
         # did not match `watch_workers:`: the brief was typed with no dialog check at all.
         scripts = self.tmp / 'scripts'
         scripts.mkdir()
-        (scripts / 'spawn_worker.sh').write_text(SCRIPT.read_text())
+        (scripts / 'spawn_worker.sh').write_bytes(SCRIPT.read_bytes())
+        shutil.copyfile(SCRIPT.with_name('codex_worker.py'), scripts / 'codex_worker.py')  # the session's supervisor
         for body in (None, 'echo "it broke"; exit 1\n'):
             with self.subTest(watcher=body):
                 if body:

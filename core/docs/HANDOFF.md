@@ -116,7 +116,9 @@ Publish the blocked result with this same protocol before publishing the questio
 End the turn immediately; the wrapper allows ten seconds to flush (overridden by
 `KIT_WORKER_GRACE`) before closing the worker's process tree. A question reaches the lead
 through its sidecar without a commit, and the recorded session is resumed with the answer.
-For Claude the lead uses SendMessage or records the separate session's id for `claude --resume`.
+For Claude the lead uses SendMessage or records the separate session's id for
+`scripts/spawn_worker.sh NAME ANSWER_FILE ... --resume SESSION_ID`; the lead never opens a
+worker tab by hand, which nothing could close.
 For Codex, the brief says to leave all work uncommitted and ready for the lead; the result
 lists the exact changed and added files. The lead reads that uncommitted result and reviews
 the diff through the normal cross-review, then commits in the worker's worktree with the
@@ -126,7 +128,9 @@ For Codex the lead runs the `codex_worker.py --wait FILE --since START --stale F
 printed by spawn as a background command; it reports DONE for a published uncommitted
 `Kind: completed` result from this run. A previous task's result cannot signal the new run,
 and neither can an in-place edit of it: spawn captures FILE_ID before launch, and a new result
-is published by the rename. Other result
+is published by the rename. A file that changed in the run but sat unchanged for 60 s
+without the result header and ready marker (a free-form report) ends the wait with NOT A
+RESULT instead of a silent wait; the lead reads it by hand. Other result
 kinds report BLOCKED, HANDOFF or PROGRESS, and leave the worker running: only a decision or a
 completed result closes it. After PROGRESS or HANDOFF, `--wait` also prints its exact follow-up
 command: the same wait with `--stale` set to the reported result's content hash, and
@@ -137,7 +141,11 @@ since spawn's command would return the same result at once. A worker that stops 
 from the `.myagentkit/workers/NAME.exit` record the wrapper writes on every way out, a decision
 without a blocked result included, or from its `NAME.live` lock once the wrapper itself was
 killed. For Claude the committed `Kind: completed` result is
-the watcher's done signal (`scripts/close_worker.sh NAME`).
+the watcher's done signal, and its supervisor ends the session on it, as it ends a Codex
+worker's (`spawn_worker.sh --result FILE` names it). Merging a worker's branch closes the rest
+(the post-merge hook runs `scripts/close_worker.sh --finished NAME`, which leaves a session
+still running without a completed result); the lead runs `scripts/close_worker.sh NAME`
+itself only for a session it finishes without a merge.
 An idle notice or a question sidecar reports a waiting worker, never completion.
 
 The result file starts with four lines, exact keys, in this order:
