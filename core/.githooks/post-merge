@@ -85,7 +85,7 @@ if [ -f scripts/close_worker.sh ] && orig=$(git rev-parse -q --verify ORIG_HEAD 
     [ "$tip" = "$head" ] || { [ -z "$(git for-each-ref --points-at HEAD 'refs/heads/worktree-*')" ] &&
       case $merged in *" $tip "*) true ;; *) false ;; esac; } || continue
     sh scripts/close_worker.sh --finished "$name" </dev/null ||
-      echo "post-merge: close_worker.sh did not close $name; the merge is complete, the lines above say why" >&2
+      printf '%s\n' "post-merge: close_worker.sh did not close $name; the merge is complete, the lines above say why" >&2
   done
 fi
 ./scripts/clean_worktrees.sh --apply --quiet </dev/null ||

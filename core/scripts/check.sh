@@ -641,7 +641,7 @@ finally:
     fi
   done
   if [ "$reminder_ok" -eq 1 ]; then
-    echo "  ok   — the strong review reminder names a report older than $STRONG_REVIEW_DAYS days, $STRONG_REVIEW_TASKS closed tasks, or none, and is quiet otherwise"
+    printf '%s\n' "  ok   — the strong review reminder names a report older than $STRONG_REVIEW_DAYS days, $STRONG_REVIEW_TASKS closed tasks, or none, and is quiet otherwise"
   else
     st_fail=1
   fi
