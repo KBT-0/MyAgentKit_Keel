@@ -243,6 +243,8 @@ class WorkerPathsOnWindows(unittest.TestCase):
         paths = self.paths('spawn_worker.sh')
         if not paths:
             return
+        # Installed launchers have their session supervisor beside them on both paths.
+        shutil.copyfile(SCRIPTS / 'codex_worker.py', self.scripts / 'codex_worker.py')
         # Reach the tmux branch under Git for Windows without starting a session or terminal.
         self.stub(self.bin / 'uname', 'echo Linux\n')
         self.stub(self.bin / 'claude', 'exit 99\n')
