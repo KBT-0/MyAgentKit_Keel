@@ -184,7 +184,10 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   `codex_worker.py --wait` judges NOT A RESULT on the age and bytes of one open file, and a file
   replaced while read is no verdict. `spawn_codex.sh`'s instruction names
   the four result header lines its wrapper needs: a `Kind: completed` result without them never
-  closed its worker. `spawn_worker.sh --resume SESSION_ID` continues a worker's conversation
+  closed its worker. A merge counts only a result published since the worker's latest spawn
+  (a resumed worker keeps its last one); a tab ended on its published result closes at once;
+  the supervisor finds the locks of a checkout with a non-ASCII name on any Windows locale.
+  `spawn_worker.sh --resume SESSION_ID` continues a worker's conversation
   under the same NAME (and worktree, locked again), so a resumed tab can be closed; the lead
   never opens a worker tab by hand. **ACTION:** take the updated hook, scripts and the
   `docs/WORKFLOW.md` and `docs/HANDOFF.md` sections.

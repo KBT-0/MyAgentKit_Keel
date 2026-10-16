@@ -54,6 +54,18 @@ Lesson from the reviews: a label rule fed by prose registered technical words (r
 fix registered every prose mention (round 2); only the place a file gives a task its id may
 register a label. Red runs saved before each change (batch2-tests/, RESULT-b2fix*.md).
 
+### 2026-10-16 — v0.11 fix5/fix6: finished workers close themselves
+
+Owner decision (2026-10-16): finished Claude and Codex worker tabs stayed open for hours, so a
+published `Kind: completed` result ends the worker and a merge closes the worker it merged. No
+outside source; the evidence is the owner's report and the fixtures. Lessons from the reviews: a
+merge hook must take only the merged tip (round 1: a dependency still at work was closed), and
+"completed" means completed by this run: a resumed worker keeps its last result, so only a
+result published since the spawn's own record counts (round 2). Git prints paths in UTF-8 on
+every platform: read in the Windows locale, a checkout named `café` hid its lock files. A tab's
+"ended at once" pause must ask whether the run failed, not only how long it took. Lead
+remainder de5f720, no round 3.
+
 ### 2026-10-16 — v0.11 batch 5: usage and cost measurement
 
 Batch 5 applies KARARLAR B03 (cache lifetimes per write bucket, code.claude.com/docs/en/prompt-caching;
