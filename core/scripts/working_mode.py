@@ -15,8 +15,10 @@ import tempfile
 # The accepted shapes: the bold key, optionally indented or as a list item. Any other line that
 # mentions the key is refused, never taken for a missing line.
 STATE_LINE = re.compile(r'^([^\S\r\n]*(?:[-*+][^\S\r\n]+)?\*\*Working mode:\*\*[^\S\r\n]*)([^\r\n]*)(?=\r?$)', re.M)
-# The three modes of v0.11; a WORKFLOW.md from before them has six or seven rows of the old
-# per-model names (claude-first, cross-performance, ...), and any other table is a defect.
+# The three modes of v0.11: a few named modes the user switches, as Aider's chat modes and Roo
+# Code's modes are (aider.chat/docs/usage/modes.html, roocodeinc.github.io/Roo-Code/basic-usage/using-modes).
+# A project from before them records an older kit version (kit_version), and any other table is a
+# defect. An old name is refused with the mapping, never migrated by guess (the kit's own choice).
 MODES = ('solo', 'cross', 'saver')
 OLD_MODES = {'claude-first', 'cross-performance', 'cross-saving', 'codex-first', 'claude-saver', 'codex-saver', 'claude-only'}
 # The one mapping of the old names, printed wherever an old name is met (CHANGELOG.md says the same).
@@ -24,7 +26,10 @@ MAPPING = ('claude-only is solo; cross-performance, claude-first and codex-first
            'claude-saver and codex-saver are saver with a (low: ...) note')
 # The note a mode takes after its name in STATE.md (docs/WORKFLOW.md, "Working modes, by name"):
 # solo may name its family (none means claude), saver must name the low side, cross takes none.
-# saver also records the mode it interrupted, so the return to it survives a hand-off.
+# saver also records the mode it interrupted, so the return to it survives a hand-off (a
+# temporary mode that returns, as Aider's one-message switch does; the record that outlives the
+# session is the kit's own). saver must name its side: which allowance runs low differs by side
+# (Claude: session, weekly or a model's own limit, code.claude.com/docs/en/errors).
 AFTER = re.compile(r', after: ((?:solo|cross)(?:, family: [^(),]+)?)$')
 SIDES = {'solo': re.compile(r'family: [^(),]+'), 'saver': re.compile(r'low: [^(),]+(?:' + AFTER.pattern[:-1] + ')?')}
 REQUIRED = {'saver'}
@@ -116,6 +121,11 @@ def shown(path):
     return re.sub(r'[\x00-\x1f\x7f]', '?', str(path))
 
 
+# Why a compare-and-swap: two writers of one file lose an update unless the write checks what
+# was read, as HTTP If-Match does (developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/If-Match);
+# Claude Code's shared memory file loses updates this way (anthropics/claude-code#24130). Why
+# mkstemp: it creates the file exclusively, readable by its creator only (docs.python.org/3/library/tempfile.html;
+# CWE-377, insecure temporary file).
 def read_state(project, out):
     """Create an exclusive per-edit snapshot with OUT as its prefix; return its path and hash.
     The snapshot is created in OUT's folder, so that folder is private too: OUT naming
@@ -184,22 +194,38 @@ def replace_state(project, source, expected):
                 print('mode: the unpublished snapshot is kept at ' + shown(owned), file=sys.stderr)
 
 
+def kit_version(project):
+    """The kit version the project's sync recorded (docs/kit/.kit-version, written by bootstrap.sh
+    and sync-kit.sh) as (major, minor), or None without one. A migration tool reads the version it
+    recorded, as Alembic and Flyway do, never the shape of a document (KARARLAR D10 inv2#136)."""
+    stamp = checked(project, 'docs/kit/.kit-version')
+    if not stamp.is_file():
+        return None
+    text = stamp.read_text(encoding='utf-8').strip()
+    match = re.fullmatch(r'(\d+)\.(\d+)', text)
+    if match is None:
+        raise ValueError('unreadable kit version in docs/kit/.kit-version: ' + shown(text))
+    return int(match[1]), int(match[2])
+
+
 def mode(project, choice=None, sides=None):
+    version = kit_version(project)
+    if version is not None and version < (0, 11):
+        print('ACTION: this project records kit v%d.%d (docs/kit/.kit-version), before the three working '
+              'modes (solo, cross, saver) of v0.11, so no mode was shown or switched. Run the kit\'s '
+              'sync-kit.sh and apply its v0.11 ACTION items (kit CHANGELOG.md, v0.11): replace the "Working '
+              'modes, by name" section of docs/WORKFLOW.md with the kit\'s, and set the STATE.md line to the '
+              'matching mode (%s); then run this again.' % (version + (MAPPING,)))
+        if choice is not None:
+            raise ValueError('no mode was switched: the project predates the three modes')
+        return
     # Read before the lock is created: a switch never writes WORKFLOW.md.
     workflow = checked(project, 'docs/WORKFLOW.md').read_text(encoding='utf-8')
     if '### Working modes, by name' not in workflow:
-        raise ValueError('project predates v0.11 working modes; see the kit CHANGELOG.md')
+        raise ValueError('WORKFLOW.md has no "Working modes, by name" section')
     section = workflow.split('### Working modes, by name', 1)[1].split('\n## ', 1)[0]
-    rows = re.findall(r'^\| `([a-z-]+)` \| ([^|]+) \| ([^\n]+)$', section, re.M)
-    names = [name for name, _, _ in rows]
-    if len(names) in (6, 7) and set(names) <= OLD_MODES:
-        print("ACTION: docs/WORKFLOW.md predates the three modes (solo, cross, saver), so no mode was "
-              "shown or switched. Replace its \"Working modes, by name\" section with the kit's "
-              "core/docs/WORKFLOW.md section, set the STATE.md line to the matching mode (" + MAPPING +
-              "), sync the core scripts (scripts/working_mode.py), then run this again (kit CHANGELOG.md, v0.11).")
-        if choice is not None:
-            raise ValueError('no mode was switched: docs/WORKFLOW.md predates the three modes')
-        return
+    rows = re.findall(r'^\| `([a-z-]+)` \|([^\n]+)$', section, re.M)
+    names = [name for name, _ in rows]
     if tuple(names) != MODES:
         raise ValueError('WORKFLOW.md must define the three modes solo, cross and saver')
     if choice is None:
@@ -209,8 +235,8 @@ def mode(project, choice=None, sides=None):
 
 
 def working_mode(project, section, rows, choice=None, sides=None):
-    aliases = {normalized(alias): name for name, label, _ in rows
-               for alias in (name, label.removesuffix(' (main mode)').strip())}
+    # A mode has its English name only (owner, KARARLAR B06 inv3#178); case does not matter.
+    aliases = {normalized(name): name for name, _ in rows}
     state_path = checked(project, 'docs/STATE.md')
     state_bytes = state_path.read_bytes()
     state = state_bytes.decode('utf-8')
@@ -241,19 +267,19 @@ def working_mode(project, section, rows, choice=None, sides=None):
         back = AFTER.search(note.strip(' ().')) if current == 'saver' else None
         print('Current mode: ' + current + ('' if matches else ' (STATE.md line missing; main mode)')
               + (' (returns to ' + back[1] + ')' if back else ''))
-        for name, label, rules in rows:
-            print(name + ' — ' + label + ' | ' + rules)
+        for name, cells in rows:
+            print(name + ' |' + cells)
         return
     selected = aliases.get(normalized(choice))
     if selected is None:
-        raise ValueError('unknown mode; choose ' + ', '.join(name for name, _, _ in rows))
+        raise ValueError('unknown mode; choose ' + ', '.join(name for name, _ in rows))
     # Validate and extract the rules before making either edit.
-    def rules(heading):
-        match = re.search(r'^#### ' + re.escape(heading) + r'[^\n]*\n.*?(?=^#### |\Z)', section, re.M | re.S)
+    def rules(name):
+        match = re.search(r'^#### ' + re.escape(name) + r'(?![\w-])[^\n]*\n.*?(?=^#### |\Z)', section, re.M | re.S)
         if match is None:
-            raise ValueError('missing mode rules: ' + heading)
+            raise ValueError('missing mode rules: ' + name)
         return match[0].strip()
-    output = rules(selected + ' (')
+    output = rules(selected)
     # saver names its low side and solo may name its family; a switch sets the note from the
     # argument or keeps one of the right shape, never a stale one. cross takes no note.
     shape = SIDES.get(selected)

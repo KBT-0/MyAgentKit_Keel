@@ -5,9 +5,12 @@ The owner-selected default reviewer is Claude. Once model pins are configured,
 Codex. Setup may change the default for another project. A co-authored diff still needs
 a non-authoring reviewer rather than blindly using the configured default.
 
-This page documents ONE of the two directions. It is not the kit's default arrangement —
-the kit has none. For the reverse, and for what in-session delegation does and does not
-exist on each side, see [delegation-is-not-symmetric.md](delegation-is-not-symmetric.md).
+This page documents ONE of the two directions, a Codex session managing the project. It is
+not the kit's default: the main mode is `solo`, one family, and in `cross` the lead is
+Claude and Codex reviews every change Claude wrote, a low-tier one included
+([core/docs/WORKFLOW.md](../core/docs/WORKFLOW.md), "Working modes, by name"). For the
+reverse, and for what in-session delegation does and does not exist on each side, see
+[delegation-is-not-symmetric.md](delegation-is-not-symmetric.md).
 
 The Codex plugin packages two skills, both standard-library-only review adapters, and
 their shared failover dispatcher.
@@ -84,7 +87,11 @@ Claude's normal CLI authentication is retained; `--bare` is intentionally not us
 it bypasses subscription login. The machine must still authorize launching the CLI.
 
 `propose` returns a patch or questions. Codex is the ONLY writer and runs validation. This
-does not claim unrestricted autonomous Claude coding in a shared working directory.
+does not claim unrestricted autonomous Claude coding in a shared working directory. The
+propose prompt's "do not delegate, commit, or access external services" is a reminder, not
+the safeguard: the tool restriction above is what holds, as Claude Code's own guidance puts
+prompt-injection defence in permissions and the sandbox
+([Security](https://code.claude.com/docs/en/security)).
 
 Source: [Claude programmatic usage](https://code.claude.com/docs/en/headless) and
 [CLI options](https://code.claude.com/docs/en/cli-reference), checked on 2026-09-05.

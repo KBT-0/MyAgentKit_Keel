@@ -154,7 +154,8 @@ One topic per turn. Suggested order, because each answer informs the next:
    pinned by name** — an unpinned reviewer archives whatever default its CLI had that day,
    and the wrapper refuses to run rather than record something no later review can be
    compared against. Say plainly that the roles can be swapped later by editing those three
-   values, and that swapping them does not change the evidence format.
+   values, and that swapping them does not change the evidence format; a high-tier change is
+   still never reviewed by a weaker tier than its author's (`docs/WORKFLOW.md`, "Model routing").
 
    Then ask specifically about the **review CLI**, because it is the one part of this kit
    that needs software the owner may not have. `scripts/review.sh` shells out to a CLI in a
@@ -200,21 +201,24 @@ One topic per turn. Suggested order, because each answer informs the next:
    must wait. Order by risk: the assumption that would hurt most if it turned out wrong goes
    first, even when it is not the foundation.
 
-8. **Will workers run jobs longer than five minutes?** A build, a bake, a test suite, a
-   render, a data import — anything an agent starts and then has to wait for. Ask for the
-   job names and their typical lengths, and what a worker must know BEFORE running them (a
-   lock that serialises them, a memory ceiling, an environment variable, a copy step), which
-   goes into the worker definition's body under its project rules. The reason: a sub-agent's prompt cache lives five
-   minutes, so a worker that waits longer re-writes its whole context after every wait; in
-   the kit's founding project that was 87 percent of all cache-write tokens
-   (`docs/WORKFLOW.md`, "Worker cost"). If the answer is yes and the Claude Code overlay is
-   installed, fill `{{WORKER_MODEL}}`, `{{WORKER_EFFORT}}` and `{{LONG_JOBS}}` in
-   `.claude/agents/worker.md` with the author model, its effort (`high` when the workers'
-   tasks bear design, lower when they are mechanical; without the field a sub-agent runs at
-   whatever effort its lead session has) and those job names, and tell the owner that workers for such tasks are
-   spawned with that definition instead of the general-purpose one. If the answer is no,
-   delete `.claude/agents/worker.md` and `scripts/spawn_worker.sh` (Phase 4, "Delete what
-   does not apply"). Either way the rules in that section bind the lead from day one.
+8. **Do your workers wait on anything longer than five minutes (a job, a lock, a person)?**
+   A build, a bake, a test suite, a render, a data import, a lock another job holds, a
+   permission prompt nobody answers — anything a worker starts or meets and then has to wait
+   for. Ask for the job names and their typical lengths, and what a worker must know BEFORE
+   running them (a lock that serialises them, a memory ceiling, an environment variable, a
+   copy step), which goes into the worker definition's body under its project rules. The
+   reason: a sub-agent's prompt cache lives five minutes (code.claude.com/docs/en/prompt-caching),
+   so a worker that waits longer re-writes its whole context after every wait; in the kit's
+   founding project that was 87 percent of all cache-write tokens (`docs/WORKFLOW.md`,
+   "Worker cost"). If the Claude Code overlay is installed, fill `{{WORKER_MODEL}}`,
+   `{{WORKER_EFFORT}}` and `{{LONG_JOBS}}` in `.claude/agents/worker.md` with the author
+   model, its effort (`high` when the workers' tasks bear design, lower when they are
+   mechanical; without the field a sub-agent runs at whatever effort its lead session has)
+   and those job names, and tell the owner that workers are spawned with that definition
+   instead of the general-purpose one. If the answer is no, keep `.claude/agents/worker.md`
+   (it pins model, effort and the turn cap) with `{{LONG_JOBS}}` set to `none`, and delete
+   only `scripts/spawn_worker.sh` (Phase 4, "Delete what does not apply"). Either way the
+   rules in that section bind the lead from day one.
 
 9. **May AI tools be credited in commit messages?** Coding tools add a co-author trailer by
    default, and in the kit's founding project that put one into most commits against the

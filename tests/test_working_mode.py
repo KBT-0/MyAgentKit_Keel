@@ -18,7 +18,6 @@ PLUGIN = ROOT / 'plugins/myagentkit/scripts/working_mode.py'
 MODES = ('solo', 'cross', 'saver')
 # saver must name its low side (owner decision 2026-10-13); the helper supplies the example note.
 SIDES = {'saver': 'low: claude'}
-TURKISH = {'Çapraz Mod': 'cross', 'Tasarruf Modu': 'saver', 'Saver': 'saver'}
 
 
 class WorkingModeTests(unittest.TestCase):
@@ -34,8 +33,8 @@ class WorkingModeTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def run_mode(self, *args, cwd=None, env=None):
-        if len(args) == 1 and TURKISH.get(args[0], args[0]) in SIDES:
-            args = (args[0], SIDES[TURKISH.get(args[0], args[0])])
+        if len(args) == 1 and args[0].casefold() in SIDES:
+            args = (args[0], SIDES[args[0].casefold()])
         return subprocess.run([sys.executable, '-X', 'utf8', str(SCRIPT), '--project', str(self.project), *args],
                               capture_output=True, text=True, encoding='utf-8', timeout=15, cwd=cwd or self.project,
                               env=env)
@@ -139,7 +138,7 @@ class WorkingModeTests(unittest.TestCase):
 
     def test_switch_records_both_files_preserves_state_and_prints_saver_rules(self):
         self.state.write_text('# State\n---\n**Working mode:** solo (keep this note).\nActive work.\n', encoding='utf-8')
-        result = self.run_mode('Tasarruf Modu')
+        result = self.run_mode('Saver')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual((self.project / '.claude/mode').read_text(encoding='utf-8').strip(), 'saver')
         self.assertEqual(self.state.read_text(encoding='utf-8'), '# State\n---\n**Working mode:** saver (low: claude, after: solo).\nActive work.\n')
@@ -196,11 +195,11 @@ class WorkingModeTests(unittest.TestCase):
                 self.assertIn('**Working mode:** ' + line, self.state.read_text(encoding='utf-8'))
 
     def test_cross_routes_each_task_by_fit_and_reviews_by_the_direction_rule(self):
-        result = self.run_mode('Çapraz Mod')
+        result = self.run_mode('CROSS')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('Current mode: cross', result.stdout)
-        self.assertIn('Claude reviews what Codex wrote, at every tier.', result.stdout)
-        self.assertIn('Claude wrote at medium and high tier, one pass, report only, at medium effort', result.stdout)
+        self.assertIn('the family that did not write a change reviews it, at every tier', result.stdout)
+        self.assertIn("Codex reviews what Claude\n  wrote, a low-tier change's light pass included, one pass, report only, at medium effort", result.stdout)
         self.assertIn('agents.max_concurrent_threads_per_session=2', result.stdout)
         self.assertNotIn('#### saver', result.stdout)
         saver = self.run_mode('saver')
@@ -340,8 +339,8 @@ class WorkingModeTests(unittest.TestCase):
             else:
                 link.unlink()
 
-    def test_state_accepts_case_and_turkish_labels_without_adding_a_line(self):
-        for value in ('Saver', 'Tasarruf Modu'):
+    def test_state_accepts_case_without_adding_a_line(self):
+        for value in ('Saver', 'SAVER'):
             self.state.write_text('**Working mode:** ' + value + ' (manual).\n', encoding='utf-8')
             self.assertIn('Current mode: saver', self.run_mode().stdout)
             self.assertEqual(self.run_mode('cross').returncode, 0)
@@ -373,15 +372,27 @@ class WorkingModeTests(unittest.TestCase):
                 self.assertEqual(self.state.read_text(encoding='utf-8'), text)
             self.assertFalse((self.project / '.claude/mode').exists())
 
-    def test_uppercase_turkish_label(self):
-        result = self.run_mode('TEK MODEL MODU')
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn('Current mode: solo', result.stdout)
+    def test_a_mode_has_its_english_name_only(self):
+        # The owner named the modes solo, cross and saver; the Turkish names left every surface
+        # (KARARLAR B06 inv3#178). A name the helper does not know is refused, never mapped.
+        self.assertIn('Current mode: solo', self.run_mode('SOLO').stdout)
+        for name in ('Tek Model Modu', 'TEK MODEL MODU', 'Çapraz Mod', 'Tasarruf Modu'):
+            with self.subTest(name=name):
+                before = self.state.read_bytes()
+                result = self.run_mode(name)
+                self.assertEqual(result.returncode, 1, result.stdout)
+                self.assertIn('unknown mode; choose solo, cross, saver', result.stderr)
+                self.assertEqual(self.state.read_bytes(), before)
+        self.state.write_text('**Working mode:** Tasarruf Modu (manual).\n', encoding='utf-8')
+        result = self.run_mode()
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn('invalid STATE.md working mode: Tasarruf Modu', result.stderr)
 
     def test_cp1252_pipe_switch_prints_utf8_rules_after_writes(self):
         workflow = self.project / 'docs/WORKFLOW.md'
+        # A heading may carry a note after the name, as the v0.11 drafts' headings did.
         workflow.write_text(workflow.read_text(encoding='utf-8').replace(
-            '#### cross (', '#### cross (işi ağır: '), encoding='utf-8')
+            '#### cross\n', '#### cross (işi ağır)\n'), encoding='utf-8')
         code = ('import sys,runpy; sys.stdout.reconfigure(encoding="cp1252"); '
                 'sys.argv=[%r,"--project",%r,"cross"]; runpy.run_path(%r,run_name="__main__")') % (
                     str(SCRIPT), str(self.project), str(SCRIPT))
@@ -540,39 +551,57 @@ class WorkingModeTests(unittest.TestCase):
                         self.assertEqual((self.project / '.claude/mode').read_text(encoding='utf-8').strip(), 'cross')
         self.assertIn('**Working mode:** cross', self.state.read_text(encoding='utf-8'))
 
-    def test_a_workflow_with_the_old_per_model_modes_names_the_update_instead_of_failing(self):
+    def test_a_project_below_v0_11_is_named_by_its_kit_version_not_by_its_table(self):
+        # The helper once recognized a pre-v0.11 project by counting the rows of WORKFLOW.md's
+        # mode table, a proxy (KARARLAR D10 inv2#136): it reads the version the sync recorded.
         workflow = self.project / 'docs/WORKFLOW.md'
-        lines = workflow.read_bytes().decode('utf-8').split('\n')
+        current = workflow.read_bytes()
+        lines = current.decode('utf-8').split('\n')
         old = ['| `%s` | Old | - | - | - |' % name for name in
                ('claude-first', 'cross-performance', 'cross-saving', 'codex-first', 'claude-saver', 'codex-saver')]
         start = next(i for i, l in enumerate(lines) if l.startswith('| `solo` |'))
-        seven = lines[:start] + old + ['| `claude-only` | Old | - | - | - |'] + lines[start + 3:]
-        workflow.write_bytes('\n'.join(lines[:start] + old + lines[start + 3:]).encode('utf-8'))
+        six = '\n'.join(lines[:start] + old + lines[start + 3:]).encode('utf-8')
+        stamp = self.project / 'docs/kit/.kit-version'
+        stamp.parent.mkdir()
         before = self.state.read_bytes()
-        # A show succeeds; a requested switch that did not happen fails. Neither creates the lock.
-        for args, status in (((), 0), (('cross',), 1)):
-            with self.subTest(args=args):
-                result = subprocess.run([sys.executable, '-X', 'utf8', str(PLUGIN), '--project', str(self.project),
-                                         *args], capture_output=True, text=True, encoding='utf-8', timeout=15)
-                self.assertEqual(result.returncode, status, result.stderr)
-                self.assertIn('ACTION: docs/WORKFLOW.md predates the three modes (solo, cross, saver)', result.stdout)
-                self.assertIn('sync the core scripts (scripts/working_mode.py)', result.stdout)
-                self.assertEqual(self.state.read_bytes(), before)
-                self.assertFalse((self.project / '.claude').exists())
-        # The seven-row table of v0.11 before the three modes is the same case.
-        workflow.write_bytes('\n'.join(seven).encode('utf-8'))
-        self.assertIn('ACTION: docs/WORKFLOW.md predates the three modes', self.run_mode().stdout)
-        # Any other incomplete table is still refused, a misspelled one too.
-        misspelled = [l.replace('| `saver` |', '| `savr` |') for l in lines]
-        for table in ([l for l in lines if not l.startswith('| `saver` |')], misspelled):
-            workflow.write_bytes('\n'.join(table).encode('utf-8'))
+        # Below 0.11 (0.9 too: the comparison is numeric), whatever the table: a show succeeds,
+        # a requested switch that did not happen fails, and neither creates the lock.
+        for version, table in (('0.10', current), ('0.10', six), ('0.9\n', current)):
+            stamp.write_text(version, encoding='utf-8')
+            workflow.write_bytes(table)
+            for args, status in (((), 0), (('cross',), 1)):
+                with self.subTest(version=version, rows=table.count(b'| `'), args=args):
+                    result = subprocess.run([sys.executable, '-X', 'utf8', str(PLUGIN), '--project', str(self.project),
+                                             *args], capture_output=True, text=True, encoding='utf-8', timeout=15)
+                    self.assertEqual(result.returncode, status, result.stderr)
+                    self.assertIn('ACTION: this project records kit v' + version.strip() + ' (docs/kit/.kit-version)', result.stdout)
+                    self.assertIn('sync-kit.sh', result.stdout)
+                    self.assertEqual(self.state.read_bytes(), before)
+                    self.assertFalse((self.project / '.claude').exists())
+        # At 0.11 or later, or with no recorded version, an old or incomplete table is a defect,
+        # refused as one; the table's rows never decide the version.
+        misspelled = current.replace(b'| `saver` |', b'| `savr` |')
+        for version, table in (('0.11', six), ('1.0', misspelled), (None, six)):
+            if version is None:
+                stamp.unlink()
+            else:
+                stamp.write_text(version, encoding='utf-8')
+            workflow.write_bytes(table)
             for args in ((), ('saver',)):
-                with self.subTest(args=args):
+                with self.subTest(version=version, args=args):
                     result = self.run_mode(*args)
                     self.assertEqual(result.returncode, 1, result.stdout)
                     self.assertNotIn('ACTION', result.stdout)
                     self.assertIn('must define the three modes', result.stderr)
                     self.assertFalse((self.project / '.claude').exists())
+        stamp.write_text('v0.11-beta', encoding='utf-8')
+        workflow.write_bytes(current)
+        result = self.run_mode('cross')
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn('unreadable kit version in docs/kit/.kit-version', result.stderr)
+        self.assertFalse((self.project / '.claude').exists())
+        stamp.write_text('0.11\n', encoding='utf-8')
+        self.assertEqual(self.run_mode('cross').returncode, 0)
 
     def test_interrupted_switch_reports_repair_and_releases_the_lock(self):
         self.assertEqual(self.run_mode('solo').returncode, 0)
@@ -618,7 +647,7 @@ class WorkingModeTests(unittest.TestCase):
             link.rmdir()
 
     def test_solo_reviews_with_another_tier_of_the_same_family_and_no_second_vendor(self):
-        result = self.run_mode('Tek Model Modu')
+        result = self.run_mode('solo')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('Current mode: solo', result.stdout)
         self.assertIn('the author and the reviewer are different tiers', result.stdout)
