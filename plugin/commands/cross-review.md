@@ -48,8 +48,8 @@ non-author review.
 party that just accepted the criticism, landing in code already subtle enough to get wrong
 once. They go through this gate too.
 
-Note the naming: not `review`, because most CLI tools ship a built-in command by that name
-and the collision is silent.
+Note the naming: not `review`, because Claude Code ships a built-in `/review` and the
+collision is silent (code.claude.com/docs/en/skills, "Resolve skills that share a name").
 
 Raw arguments: `$ARGUMENTS`
 

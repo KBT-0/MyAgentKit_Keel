@@ -341,9 +341,10 @@ anyone remembering it.
   actually holds, for every tool.
 - **A second tool or family is welcome, never required:** it reduces correlated blind spots
   but does not remove them, and the one controlled measurement found the direction asymmetric
-  (the kit's `docs/research/claude-lead-codex.md`, finding 4). Which tool takes which role is
-  configuration, not doctrine — when the author's budget runs short, swap them rather than
-  dropping the review.
+  (the kit's `docs/research/claude-lead-codex.md`, finding 4). The reviewer's model family,
+  not its CLI, makes it independent (`docs/REVIEW_GATE.md`, "Invariant"), and the working
+  mode says which family takes which role ("Working modes, by name"): when the author's
+  budget runs short, saver applies and the review is never dropped.
 - **A second agent's output is untrusted INPUT to a decision the calling agent owns**, never
   a verdict to relay verbatim. Verify each finding against the code: drop what is disproved,
   keep what is confirmed, and treat a confirmed critical finding as a stop signal.
@@ -410,7 +411,7 @@ snapshot of a file another process may be editing right now.
 - If they are there, stop and ask rather than re-applying: a second application costs budget
   and can overwrite the first.
 
-## Model routing — by scarcity, not by capability
+## Model routing — by cost per task and by scarcity
 
 The tiers below sort the work; the working mode in force ("Working modes, by name") says
 which side takes each tier. The model names are this kit's as of 2026-10-08: replace them
@@ -429,16 +430,23 @@ provisional**: API token prices say nothing about how much each model draws from
 subscription's five-hour and weekly allowance. Measure that draw (`/status` before and after
 a few errands per model) and move the tiers by it (rule 5).
 
-The principle behind whatever the table says: **spend the scarce budget on judgement and the
-generous one on volume.** The review of a risky diff stays mandatory, in a fresh session
-with no shared context: that is what decorrelates its judgement from the author's
-(`docs/REVIEW_GATE.md`, "Invariant", says who takes it).
+The principle behind whatever the table says: **route by cost per completed task, and by
+scarcity where the owner's subscriptions differ.** Send volume to the cheaper model only when
+the output is checkable (tests, a compiler, a diff the lead reads) and the work either has a
+long cost tail or does not fit one context; a single dependent chain stays with one model at
+lower effort. Source: Anthropic, "Optimizing for cost and intelligence"
+(platform.claude.com/docs/en/about-claude/models/optimizing-for-cost-and-intelligence: compare
+models by cost per completed task; delegation saved only on those two work shapes). The
+scarcity half is the owner's judgement, measured by rule 5. The review of a risky diff stays
+mandatory, in a fresh session with no shared context: that is what decorrelates its judgement
+from the author's (`docs/REVIEW_GATE.md`, "Invariant", says who takes it).
 
-The table decides the AUTHOR and REVIEWER roles, and it is allowed to change its mind. If
-the generous budget is the stronger model this month, it authors and the scarcer one
-reviews; if that reverses, so do the roles. Record the swap in `scripts/review.sh` and in
-`docs/STATE.md` — the review records themselves stay comparable across the change because
-both directions publish one format.
+The table decides the AUTHOR and REVIEWER roles and may change its mind each month. A swap is
+recorded in `scripts/review.sh` and in `docs/STATE.md`; the review records stay comparable
+across it because both directions publish one format. **Limit:** a high-tier or critical
+change is never reviewed by a weaker tier than its author's, so a budget swap moves only the
+low and medium tier roles (`docs/research/claude-lead-codex.md`, findings 4 and 9: a weaker
+reviewer of a stronger author measured worse than the author alone).
 
 Caveat worth stating once: a more autonomous model fills ambiguity by itself instead of
 asking. The mitigations are sharper briefs (`docs/HANDOFF.md`) and the gates, not trust.
@@ -455,6 +463,9 @@ and review. Running everything high spends the scarce budget on work that did no
 
 Effort is chosen anew for every round from this table: effort is never carried up from the
 round before, and a `REVIEW_ROUND_EXCEPTION` round picks its model and effort here again.
+Anthropic's guide does the same: a step up to a stronger model starts at that model's
+default effort, and effort levels are compared in separate sessions ("Optimizing for cost and
+intelligence"; code.claude.com/docs/en/model-config, "Adjust effort level").
 
 Every brief carries `Route: quick|build|deep · Risk: low|medium|high · Checks: ...`, plus
 the chosen model and effort. Route describes the task; risk determines the check list and
@@ -472,13 +483,16 @@ Rules for whoever routes work, binding with any table:
    consultations. The lead picks the model from its tier and effort from the work table above.
    It writes both into the brief, and before the start tells the owner in one plain line which
    model and effort and why ("Sonnet, medium: web research and notes, tier 1"); a skill
-   whose template names no model is no exception. Neither is left to a default or to
-   inheritance.
+   whose template names no model is no exception. The line is the owner's decision (v0.11)
+   and keeps the spend visible: a multi-agent run uses about 15 times the tokens of a chat
+   (Anthropic, "How we built our multi-agent research system"). Neither is left to a default
+   or to inheritance.
    Both start at the cheapest table row that fits: mechanical work, docs, small fixes and
    re-reviews go to the cheaper model (Sonnet) or a Codex worker at medium; the strongest
    model at high is for a new mechanism's or a gate change's first round only. Every brief
    names the model, the effort and the table row, because an unnamed choice drifts to the
-   expensive default. Before a batch of more than one paid run (workers, reviews, `codex
+   lead's own model and effort (Claude Code resolves an omitted sub-agent model to the main
+   conversation's, code.claude.com/docs/en/sub-agents, "Choose a model"). Before a batch of more than one paid run (workers, reviews, `codex
    exec` errands), the lead tells the owner in one line how many, which model and which
    effort, and runs them one after another unless the owner asks for parallel: the
    allowance is a limit as real as memory (in one session, twelve parallel reviews spent
@@ -487,9 +501,14 @@ Rules for whoever routes work, binding with any table:
    above the strongest routine one (for example Codex Astra or Claude Fable) is never a
    default. The lead picks it for one errand when the errand needs it, without asking the
    owner. The lead first checks that the current subscription includes that model; a basic
-   plan does not, and then the strongest routine model takes the errand. While that side's
-   allowance is low (a saver mode, below), the top model and the highest effort need the
-   owner's yes.
+   plan does not, and then the strongest routine model takes the errand. A refusal that asks
+   for usage credits (Claude Code: 429 `credits_required`, "requires usage credits") means
+   the plan does not include it. While that side's allowance is low (a saver mode, below),
+   the top model and the highest effort need the owner's yes. Sources: both vendors name a
+   routine default and keep the top model for work it fails (platform.claude.com/docs/en/models/overview:
+   start with Opus 5.5, Fable 5.1 where Opus at high effort falls short; learn.chatgpt.com/docs/models:
+   Sol where the plan has it, and some paid plans lack Astra Extra High). "Without asking" and
+   "the owner's yes" are the owner's policy, with no source.
 3. **A failed mechanical errand is rerun one tier up**, never retried at the same tier. A
    step up moves the model only: the effort is chosen again from the work table, and the
    stronger model's lower effort comes before its higher one. Carrying an effort along
@@ -497,7 +516,11 @@ Rules for whoever routes work, binding with any table:
 4. **Model versions are kept current.** A lead that learns of a newer Codex or Claude model
    switches to it: the reviewer pins in `scripts/review.sh` and the machine's Codex
    configuration (`~/.codex/config.toml`). The lead then reports the switch to the kit, so
-   that the kit and every project built from it follow.
+   that the kit and every project built from it follow. A pin is a fixed snapshot with its
+   own retirement date, and an alias such as `opus` moves between versions
+   (platform.claude.com/docs/en/about-claude/models/model-ids-and-versions;
+   code.claude.com/docs/en/model-config, "Version history"); Codex models retire from
+   ChatGPT sign-in too (learn.chatgpt.com/docs/models).
 5. **The tier boundaries are measured, not guessed.** After about ten errands in a tier, the
    lead counts review rejects and rework per tier and moves the boundaries where they show.
    `python3 scripts/usage_summary.py` gives the review side: rounds, verdicts, rejects and
@@ -510,8 +533,13 @@ Rules for whoever routes work, binding with any table:
    back at once, unasked (`AGENTS.md`, "Duties toward {{OWNER_NAME}}").
 7. **Critical work is written by Opus until {{OWNER_NAME}} says otherwise** (owner decision,
    2026-10-15): architecture, a gate's or the review tooling's design, a security boundary.
-   It never goes to the plugged family. When the subscription has a stronger Claude tier
-   (Fable today), that tier reviews it; in cross, Codex takes the second label. No source
+   It never goes to the plugged family, in saver too. In solo, the subscription's stronger
+   Claude tier (Fable today, rule 2's check) reviews it. In cross, Codex reviews it, and the
+   strongest Claude tier takes the other focus ("cross", direction rule). When Codex cannot
+   review it (its content classifier stopped the review, `content_flagged`), the strongest
+   Claude tier the plan has reviews it in a fresh session, at high effort, one round; on a plan
+   without Fable that is Opus, the author's tier, in a fresh session (owner decisions,
+   2026-10-15). No source
    measured routing by criticality (`docs/research/claude-lead-codex.md`, finding 9): the
    rule is the owner's judgement and is measured like the tiers (rule 5).
 
@@ -530,7 +558,9 @@ A `claude@NAME` review of another model family counts as the second model (`docs
 
 ### Working modes, by name
 
-The owner switches the working mode by its name, in English or Turkish. The "Working mode:"
+The owner switches the working mode by its name: `solo`, `cross` or `saver`. The lead never
+switches it on its own initiative; the one standing exception is saver's return, which the
+owner granted when choosing saver ("saver", Ends). The "Working mode:"
 line of `docs/STATE.md` and the small `.claude/mode` file name the mode in force.
 `/myagentkit:mode` uses `scripts/working_mode.py` to show or set both records, preserving
 the rest of STATE.md. Reads refuse disagreeing records; an explicit owner choice repairs
@@ -539,10 +569,15 @@ them. A project without either record works in **solo**, the main mode.
 Without names, the owner explained the same situation in a long prompt at the start of every
 session ("Claude is low today, let Codex write and fix"), and a lead that was not told routed
 by habit. A name is one word, and a lesson one project learns improves the mode for every
-project through the kit.
+project through the kit. A few named modes the user switches are common practice (Aider's
+chat modes, aider.chat/docs/usage/modes.html; Roo Code's modes,
+roocodeinc.github.io/Roo-Code/basic-usage/using-modes); what each mode here decides is the
+kit's own.
 
 A mode decides who writes, who reviews and who fixes the findings. It never removes a
-review and never lowers a risk tier (`docs/REVIEW_GATE.md`, "Risk tiers"); rules 1 to 7
+review and never lowers a risk tier (`docs/REVIEW_GATE.md`, "Risk tiers"): the longer agents
+work unattended, the more an independent check matters (code.claude.com/docs/en/best-practices).
+Rules 1 to 7
 above hold in every mode, and the worker caps never exceed the worktree ceiling ("Parallel
 work — worktree policy"). The note after the mode name in `docs/STATE.md` names what the
 mode needs: `**Working mode:** solo (family: codex)` (no note means `family: claude`) or
@@ -551,33 +586,48 @@ adds the `after:` part itself: the mode it interrupts, with a solo family (`afte
 family: codex`). A switch sets the note from its
 second argument (`working_mode.py saver "low: claude"`, `working_mode.py solo "family:
 codex"`) or keeps one of the right shape; a stale note never survives a switch. Every
-Claude worker spends the same Claude allowance: a sub-agent, a spawned session and a tab
-alike. The lead is the session that plans with the owner, whichever side it runs on.
+Claude worker (a sub-agent, a spawned session, a tab) draws on the same plan limits; a
+model-specific cap, where the plan has one, applies on top (code.claude.com/docs/en/sub-agents:
+a sub-agent's requests count toward the same usage limits as the main conversation;
+code.claude.com/docs/en/errors: the session and weekly limits are shared by every model, and
+Opus and Sonnet have their own). The lead is the session that plans with the owner, whichever
+side it runs on.
 
-| Mode | Turkish name | Writes | Reviews | Fixes the findings |
-|---|---|---|---|---|
-| `solo` | Tek Model Modu (main mode) | one model family's workers, by tier | a fresh session of another tier of the same family | the author's side ("Worker cost", rule 2) |
-| `cross` | Çapraz Mod | both families, each task by fit | the other family by the direction rule, in a fresh session | the author's side ("Worker cost", rule 2) |
-| `saver` | Tasarruf Modu | the side that is not low | the low side, within a small budget | the side that is not low |
+| Mode | Writes | Reviews | Fixes the findings |
+|---|---|---|---|
+| `solo` | one model family's workers, by tier | a fresh session of another tier of the same family | the author's side ("Worker cost", rule 2) |
+| `cross` | both families, each task by fit | the other family by the direction rule, in a fresh session | the author's side ("Worker cost", rule 2) |
+| `saver` | the side that is not low | the low side, within a small budget, at low and medium tier; a high or critical change as in cross | the side that is not low |
 
-#### solo (Tek Model Modu), the main mode
+#### solo, the main mode
 
 For a subscription with one model family, which is the kit's default (owner decision,
 2026-10-13): one family is enough, and a second vendor is pluggable, never required. The
 family is Claude unless the note names another (owner decision, 2026-10-15): `family:
-codex` runs the same rules on Codex's tiers.
+codex` runs the same rules on Codex's tiers. One family reviewing in a fresh session is the
+vendor's own pattern: its `/code-review` is a fresh sub-agent of the same family
+(code.claude.com/docs/en/code-review), and the one controlled measurement gives no case for
+requiring a second vendor (`docs/research/claude-lead-codex.md`, findings 4 and 7: cross
+review cost 1.7 to 2.3 times, and its gain depends on the direction).
 
 - **Writes:** the family's workers do all the implementation, at the tier table's column
   for that family.
 - **Reviews and fixes:** the author and the reviewer are different tiers, each in a fresh
-  bridged session with no shared context: Opus authors and Fable or Sonnet reviews, or the
-  reverse; the lead picks both by the tier table. A second session of the author's own tier
+  bridged session with no shared context: Opus authors and Fable reviews it, or Sonnet for a
+  low or medium tier change, or the reverse. The lead picks both by the tier table; a
+  high-tier or critical change is never reviewed by a weaker tier than its author's ("Model
+  routing", the limit). A second session of the author's own tier
   is never the review. Findings go to the author's side ("Worker cost", rule 2), and the
-  next round reviews the fix. Two tiers decorrelate less than two vendors;
-  fresh sessions with no shared context are what keeps the review independent.
+  next round reviews the fix. Two tiers decorrelate less than two vendors (Goel et al.,
+  ICML 2025, arxiv.org/abs/2502.04313: model errors overlap more as capability grows; one
+  measured Claude-to-Claude review added 0 points at 1.7 times the cost,
+  `docs/research/claude-lead-codex.md`, finding 4); fresh sessions with no shared context
+  are what keeps the review independent, since a fresh context is not biased toward code it
+  just wrote (code.claude.com/docs/en/best-practices).
 - **The reviewer:** `scripts/review.sh --reviewer claude` (or `DEFAULT_REVIEWER="claude"`)
   with `REVIEW_CLAUDE_MODEL` set for that run to the tier that did not write the change. It
-  is the existing per-reviewer Claude pin, so the review records stay in one format.
+  is the existing per-reviewer Claude pin, so the review records stay in one format, and
+  `--model` applies only to the session it starts (code.claude.com/docs/en/model-config).
   `CODEX_MODEL` stays empty: `--fallback` then has no other reviewer to hand the review to.
   With `family: codex`, the same holds with `--reviewer codex` and `REVIEW_CODEX_MODEL`.
 - **Workers:** up to the worktree ceiling; no second vendor runs.
@@ -585,7 +635,7 @@ codex` runs the same rules on Codex's tiers.
 - **Ends:** when the owner names another mode, for example once a second vendor is added.
 - **Lessons:** none yet.
 
-#### cross (Çapraz Mod)
+#### cross
 
 A second family is plugged in beside the Claude lead (Codex today, through `codex exec`;
 a `claude@NAME` backend counts as a family too). Both families write, each reviews the
@@ -595,9 +645,16 @@ evidence: `docs/research/claude-lead-codex.md`, recommendations 1 to 11).
 - **Writes, Codex:** a task with written acceptance criteria, checkable by tests, inside one
   module: mechanical work on `gpt-6-luna` at medium; bounded implementation and bug fixes
   on `gpt-6.1-sol` at medium; multi-file work, or work whose tests are easy to miss, on
-  `gpt-6.1-sol` at high; `gpt-6-astra` only as the lead's one-errand pick (rule 2); never
-  xhigh, max or ultra. A Codex worker opens at most two sub-agents of its own
-  (`spawn_codex.sh` sets `agents.max_concurrent_threads_per_session=2`).
+  `gpt-6.1-sol` at high; `gpt-6-astra` only as the lead's one-errand pick (rule 2). xhigh is
+  the effort table's last row: the lead's reasoned exception, written in the brief, never a
+  default and never a review; max and ultra are not used (`spawn_codex.sh` refuses them).
+  Codex's own guide asks most tasks for neither Max nor Ultra (learn.chatgpt.com/docs/models),
+  and xhigh measured 2.4 to 4.5 times the cost of high with no significant gain
+  (`docs/research/token-optimization.md`, 1.10). A Codex worker opens at most two sub-agents
+  of its own (`spawn_codex.sh` sets `agents.max_concurrent_threads_per_session=2`; Codex has
+  the cap setting and says sub-agents spend more tokens,
+  learn.chatgpt.com/docs/agent-configuration/subagents; the number two is the kit's choice
+  until measured).
 - **Writes, Claude:** everything else: a task whose acceptance criteria are not written
   yet, a design decision, instruction-sensitive work, and critical work (rule 7).
 - **Owns:** every brief names the paths its worker may change (`docs/HANDOFF.md`, "The
@@ -629,10 +686,18 @@ evidence: `docs/research/claude-lead-codex.md`, recommendations 1 to 11).
   volume: one Opus lead routed no implementation to Codex and spent five Opus sessions on
   review rounds.
 
-#### saver (Tasarruf Modu)
+#### saver
 
 One side's allowance is low. The STATE note names it: `(low: claude)` or `(low: codex)` in
-cross, a tier such as `(low: opus)` in solo.
+cross, a tier such as `(low: opus)` in solo. A session or weekly limit is shared by every
+Claude model, so `low: opus` or `low: sonnet` applies only when the CLI reports that model's
+own limit. When the shared limit is low, the whole family is low: stop at a clean point, and
+Claude Code's automatic continue resumes an interactive session after the reset
+(code.claude.com/docs/en/errors; code.claude.com/docs/en/interactive-mode, "Wait for a usage
+limit to reset"), or switch to cross with the owner's yes. saver saves at low and medium tier
+only: critical work never goes to the plugged family (rule 7), a high-tier or critical change
+gets the reviews cross gives it, and the strongest Claude tier reviews a high-tier or
+critical Claude change.
 
 - **Writes:** the side that is not low implements every errand and fixes every finding, the
   low side's findings included.
@@ -642,15 +707,25 @@ cross, a tier such as `(low: opus)` in solo.
   effort needs the owner's yes. A running review is not cancelled to lower its effort, since
   what it spent is gone. A review that fails on quota leaves its rerun command in the task's
   issue or STATE line and waits; it goes to the other side only with the owner's yes,
-  because the independent judgement is the point of it.
+  because the independent judgement is the point of it. When the low side is Codex, its
+  review follows cross's direction rule (one pass, report only, at medium effort, the lead
+  checks each finding before a fix round; `docs/research/claude-lead-codex.md`,
+  recommendation 2). Sources: a top model may draw on usage credits
+  (code.claude.com/docs/en/model-config); cross review costs 1.7 to 2.3 times, and a quota
+  stop needs its rerun command (`docs/research/claude-lead-codex.md`, findings 4 and 7).
+  "Not cancelled" has no source.
 - **Workers:** none on the low side, and no implementing sub-agent there; the other side's
   workers up to the worktree ceiling. In solo, the low side is a tier: the cheaper tier
-  writes and the scarce one reviews.
+  writes and the scarce one reviews. Set the sub-agents' model explicitly there (`model:` in
+  the definition, or `CLAUDE_CODE_SUBAGENT_MODEL`): an unset sub-agent runs on the lead's
+  model, which may be the low tier (code.claude.com/docs/en/sub-agents, "Choose a model").
 - **Effort:** the writing side by the tier table; the low side by the rule above.
 - **Ends:** the low side's allowance resets, or the owner says otherwise. Then the mode
   before it is back at once, unasked: the lead runs `scripts/working_mode.py <mode>` for
   the mode the note's `after:` names, which a hand-off keeps; a switch to solo brings the
-  recorded family back.
+  recorded family back. The `after:` return is the owner's standing permission, given when
+  choosing saver, and holds in a later session too; Claude Code resumes after a limit reset
+  the same way, unasked (code.claude.com/docs/en/interactive-mode).
 - **Lessons:** every Claude worker counts against the low side: a sub-agent spends the same
   allowance as a spawned session.
 
@@ -662,7 +737,10 @@ early), the lead adds one line to that mode's list: the failure, with a number w
 one, and the rule that prevents it. The lead then offers it to the kit with
 `/myagentkit:kit-feedback`, so every project's copy of the mode learns it. A lesson that the
 mode's own rules come to state leaves the list, and a lesson a later one supersedes is
-deleted: the list holds only what is not yet a rule.
+deleted: the list holds only what is not yet a rule. Written lessons kept for later attempts
+measurably help (Shinn et al., Reflexion, arxiv.org/abs/2303.11366), while a context file that
+grows hurts (Gloaguen et al., arxiv.org/abs/2602.11988; code.claude.com/docs/en/best-practices:
+cut any line whose removal would not cause a mistake), so a lesson that became a rule leaves.
 
 ## Worker cost — waits and long lives are what you pay for
 

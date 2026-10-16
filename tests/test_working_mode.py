@@ -390,8 +390,9 @@ class WorkingModeTests(unittest.TestCase):
 
     def test_cp1252_pipe_switch_prints_utf8_rules_after_writes(self):
         workflow = self.project / 'docs/WORKFLOW.md'
+        # A heading may carry a note after the name, as the v0.11 drafts' headings did.
         workflow.write_text(workflow.read_text(encoding='utf-8').replace(
-            '#### cross (', '#### cross (işi ağır: '), encoding='utf-8')
+            '#### cross\n', '#### cross (işi ağır)\n'), encoding='utf-8')
         code = ('import sys,runpy; sys.stdout.reconfigure(encoding="cp1252"); '
                 'sys.argv=[%r,"--project",%r,"cross"]; runpy.run_path(%r,run_name="__main__")') % (
                     str(SCRIPT), str(self.project), str(SCRIPT))

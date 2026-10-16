@@ -71,3 +71,13 @@ Low findings of the kit's own reviews are filed here, not fixed in the round (ow
   `Notification`/`Stop` state hooks as the watcher's first signal there (their delay, about six
   seconds, and the folder-trust dialog untried); try the instruction as claude's first
   positional argument instead of `send-keys` (is it taken after the trust dialog?).
+
+## Parked for the owner's answer (v0.11 close-out batch 8, decisions.md 1)
+
+- Solo on a plan with no Claude tier stronger than the author's (no Fable): who reviews Opus's
+  high-tier or critical work is OPEN; WORKFLOW states no rule for it until the owner decides.
+  Recommendation: Opus in a fresh session at high effort, one round, as the owner already
+  decided for the Codex-blocked case, plus the owner's own diff read the high tier already
+  requires; never Sonnet (a weaker reviewer of a stronger author measured worse than the
+  author alone: `docs/research/claude-lead-codex.md`, findings 4 and 9; a fresh context is the
+  vendor's review pattern: code.claude.com/docs/en/best-practices).
