@@ -445,8 +445,10 @@ class CloseWorkerTests(unittest.TestCase):
         # named it, outside the worktree, as spawn_worker.sh --result records it.
         reports = self.main / '.myagentkit/workers'
         reports.mkdir(parents=True)
-        self.result(self.tmp, 'w1', 'Kind: completed')
         (reports / 'w1.result-path').write_text((self.tmp / 'RESULT-w1.md').as_posix() + '\n')
+        # Spawn records the run before its worker can publish a result. Reversing these
+        # writes makes a finished result stale on filesystems with subsecond timestamps.
+        self.result(self.tmp, 'w1', 'Kind: completed')
         (w1 / 'more.txt').write_text('more\n')
         self.git('add', 'more.txt', cwd=w1)
         self.git('commit', '-q', '-m', 'more', cwd=w1)

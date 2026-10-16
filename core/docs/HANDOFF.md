@@ -172,6 +172,9 @@ fixed" follow as always.
   it. This is the lead's rule too (`docs/WORKFLOW.md`, "Worker cost", rule 8). A Codex
   worker leaves the handoff uncommitted for the lead; a Claude worker commits it when its
   brief permits.
+  A worktree worker carries the project's hooks, and at red the lead sends
+  "finish the item, commit, Kind: handoff" (owner decision 23, 2026-10-16; Claude Code project settings:
+  https://code.claude.com/docs/en/settings, checked 2026-10-16).
 - `Task:` and `Attempt:` name the work the file reports on, so a result left by an earlier
   task of a reused session is never taken for the current one.
 

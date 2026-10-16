@@ -61,13 +61,16 @@
 # Native Windows: a worker is a Windows Terminal tab whose pane nothing can read. The
 # Notification and Stop hooks spawn_worker.sh gives it write one line to
 # .myagentkit/workers/NAME.state at the top of this checkout (or this folder outside git):
-# `waiting permission|question TIME ID` or `idle TIME ID`. A waiting line is WAITING, before the
+# `waiting permission|question TIME ID [context_tokens=N]` or `idle TIME ID [context_tokens=N]`.
+# The optional count is the last request's context, zero after a compaction boundary;
+# context_size.py supplies its yellow/red/ceiling label (owner decision 23, 2026-10-16).
+# A waiting line is WAITING, before the
 # result file is read. Legacy `waiting input` means idle, with no state event; once per worker
 # the watcher says its hook is from an older kit and asks for a re-spawn.
 # An idle line, when the result file says nothing new, is IDLE: the worker
 # stopped (a question in the tab, a usage limit, an error). Each event (the whole line, id
 # included) is reported once; the once-markers are NAME.watch-* files beside it, which
-# spawn_worker.sh removes. There is no GONE and no context figure there, and no tmux is
+# spawn_worker.sh removes. There is no GONE and no pane context figure there, and no tmux is
 # needed. An invalid state file is an observation failure (exit 3); an absent or zero-byte one
 # means no signal yet. A session name is letters, digits, - and _, not starting with -
 # (spawn_worker.sh's rule): anything else is a usage error (exit 2).
@@ -140,9 +143,8 @@ set -f; IFS=$nl; set -- $seen; unset IFS; set +f
 # Native Windows (Git for Windows' sh, MSYS2, Cygwin) has no tmux: a worker is a Windows Terminal
 # tab, and the hooks spawn_worker.sh gives it keep its state line in $wdir/NAME.state.
 case $(uname -s 2>/dev/null) in MINGW*|MSYS*|CYGWIN*) windows=1 ;; *) windows="" ;; esac
-if [ -n "$windows" ]; then
-  wdir=$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)/.myagentkit/workers
-else command -v tmux >/dev/null || die "tmux is not installed"; fi
+wdir=$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)/.myagentkit/workers
+[ -n "$windows" ] || command -v tmux >/dev/null || die "tmux is not installed"
 win=$(mktemp) || die "cannot make a temporary file"
 qs=$(mktemp) || { rm -f "$win"; die "cannot make a temporary file"; }
 body=$(mktemp) || { rm -f "$win" "$qs"; die "cannot make a temporary file"; }
@@ -215,6 +217,20 @@ classify() {
   done
 }
 
+# Only a validated numeric field reaches the companion hook. Its constants remain the
+# single source of the band; an older installation without it still shows the raw count.
+context_label() {
+  case $1 in *' context_tokens='*) tokens=${1##* context_tokens=} ;; *) return 0 ;; esac
+  case $tokens in ''|*[!0-9]*) return 0 ;; esac
+  word=$(sh "$here/../.claude/hooks/py.sh" "$here/../.claude/hooks/context_size.py" --band "$tokens" 2>/dev/null) || word=""
+  printf '; context %s tokens%s' "$tokens" "${word:+, $word}"
+}
+pane_context() {
+  [ -f "$wdir/$1.state" ] || return 0
+  saved=$(cat -- "$wdir/$1.state" 2>/dev/null) || return 0
+  context_label "$saved"
+}
+
 # Return 2 when the report could not be written.
 report() {
   name=$1; shift
@@ -232,7 +248,7 @@ report() {
     question) what="a question" ;;
     *) what="a choice ($2)" ;;
   esac
-  say "watch_workers: WAITING: $name, on $what (rule $3, Claude Code $4)" || return 2
+  say "watch_workers: WAITING: $name, on $what (rule $3, Claude Code $4)$(pane_context "$name")" || return 2
   say "  the last lines of its pane:" || return 2
   # The writing command last, so the pipeline's status is the write's.
   tail -n 12 "$win" | cutb | sed 's/^/  | /' | LC_ALL=C tr '\001-\011\013-\037\177' '?' || return 2
@@ -338,7 +354,7 @@ tab() {
     elif ! bytes=$(wc -c 2>"$err" <"$win") || ! line=$(cat -- "$win" 2>"$err"); then
       reason=$(cat "$err"); reason=${reason:-"could not read the state snapshot"}
     elif [ "$bytes" -eq 0 ]; then return 1  # an older hook truncates before it writes
-    elif ! printf '%s\n' "$line" | LC_ALL=C grep -Eq '^(waiting (permission|question|input)|idle) [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}( [0-9]+)?$' ||
+    elif ! printf '%s\n' "$line" | LC_ALL=C grep -Eq '^(waiting (permission|question|input)|idle) [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}( [0-9]+)?( context_tokens=[0-9]+)?$' ||
          [ "$(printf '%s\n' "$line" | wc -l)" -ne 1 ]; then reason="invalid state content"
     fi
     if [ -n "$reason" ]; then
@@ -357,9 +373,9 @@ tab() {
   [ "$(mark "$1" state)" != "$line" ] || return 1
   if [ "$2" = waiting ]; then
     case $line in "waiting question "*) what="a question" ;; *) what="a permission prompt" ;; esac
-    say "watch_workers: WAITING: $1, on $what (its state file: $line)" || return 2
+    say "watch_workers: WAITING: $1, on $what (its state file: $line)$(context_label "$line")" || return 2
   else
-    say "watch_workers: IDLE: $1, its session stopped and waits for input, with no new result report (its state file: $line)" || return 2
+    say "watch_workers: IDLE: $1, its session stopped and waits for input, with no new result report (its state file: $line)$(context_label "$line")" || return 2
   fi
   say "  look at it: its Windows Terminal tab, titled $1" || return 2
   setmark "$1" state "$line"
@@ -369,6 +385,17 @@ tab() {
 # or (not with --once) when there is none; once per session. Return 1 when nothing is said,
 # 2 when the report could not be written (and no marker is queued).
 context() {
+  # A Stop/Notification snapshot is also available for worktree workers on tmux.
+  # Prefer its API token count to a stale or rounded pane status figure.
+  snapshot=""
+  if [ -f "$wdir/$1.state" ]; then snapshot=$(cat -- "$wdir/$1.state" 2>/dev/null) || snapshot=""; fi
+  label=$(context_label "$snapshot")
+  case $label in *', yellow'|*', red'|*', ceiling')
+    [ "$(mark "$1" state-context)" != "$snapshot" ] || return 1
+    say "watch_workers: CONTEXT: $1$label (its state hook; docs/WORKFLOW.md, \"Worker cost\", rule 8)" || return 2
+    setmark "$1" state-context "$snapshot"
+    return 0 ;;
+  esac
   fig=$(CTX_RE=$ctx_re LC_ALL=C awk -v abs="$warn_abs" -v pct="$warn_pct" '
     function num(s) { return substr(s, 1, length(s) - 1) * (s ~ /M$/ ? 1000000 : 1000) }
     { l[NR] = $0 }
@@ -387,7 +414,7 @@ context() {
   said=$(mark "$1" context)
   [ "$said" != over ] || return 1
   if [ "$2" = over ]; then
-    say "watch_workers: CONTEXT: $1, $4 is $3% of its context window, past its $5 warning line (finish, compact or hand off: read its Remaining: line; docs/WORKFLOW.md, \"Worker cost\", rule 8)" || return 2
+    say "watch_workers: CONTEXT: $1, $4 is $3% of its context window, past its $5 warning line (finish, compact or hand off: read its Remaining: line; docs/WORKFLOW.md, \"Worker cost\", rule 8)$(pane_context "$1")" || return 2
     setmark "$1" context over
     return 0
   fi
@@ -411,8 +438,8 @@ while :; do
       # A report that could not be written ends the run like a failed capture; w stays x
       # when the buffer cannot even be opened.
       w=x
-      # On Windows: the state line's WAITING first, then the result, then its IDLE; no pane, so
-      # no context figure.
+      # On Windows: the state line's WAITING first, then the result, then its IDLE;
+      # the optional API context count is part of either state report.
       { w=1; [ -z "$windows" ] || { w=0; tab "$n" waiting || w=$?; }
         [ "$w" -ne 1 ] || { w=0; result "$n" || w=$?; }
         [ "$w" -ne 1 ] || { w=0; if [ -n "$windows" ]; then tab "$n" idle; else context "$n"; fi || w=$?; }

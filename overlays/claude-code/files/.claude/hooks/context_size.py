@@ -38,9 +38,15 @@ def band(ctx: int) -> int:
     return -1 if ctx < LINE else (ctx - LINE) // STEP
 
 
-def context(path: Path) -> tuple[int, int]:
+def band_word(ctx: int) -> str:
+    """The watcher's label uses the notice's thresholds and words."""
+    return next((text.split()[0] for floor, text in BANDS if ctx >= floor), '')
+
+
+def context(path: Path, *, require_request: bool = False) -> tuple[int, int]:
     """The last request's context (0 after a boundary), and the compaction count."""
     last = compactions = 0
+    known = False
     with open(path, encoding='utf-8', errors='replace') as stream:
         for line in stream:
             try:
@@ -52,6 +58,7 @@ def context(path: Path) -> tuple[int, int]:
             if rec.get('type') == 'system' and rec.get('subtype') == 'compact_boundary':
                 last = 0
                 compactions += 1
+                known = True
                 continue
             msg = rec.get('message')
             usage = msg.get('usage') if isinstance(msg, dict) else None
@@ -61,6 +68,9 @@ def context(path: Path) -> tuple[int, int]:
             # The API may send null for a counter it did not use.
             last = sum(usage.get(k) or 0 for k in
                        ('input_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens'))
+            known = True
+    if require_request and not known:
+        raise ValueError('no request or compaction boundary in transcript')
     return last, compactions
 
 
@@ -119,6 +129,9 @@ def main() -> None:
 
 if __name__ == '__main__':
     try:
-        main()
+        if len(sys.argv) == 3 and sys.argv[1] == '--band':
+            print(band_word(int(sys.argv[2])))
+        else:
+            main()
     except Exception:  # noqa: BLE001 - see the docstring
         pass

@@ -821,6 +821,7 @@ p.write_text(p.read_text().replace('Kind: blocked', 'Kind: completed'))
         command = next(line.partition('handoff: ')[2] for line in started.stdout.splitlines()
                        if 'background command for the uncommitted handoff: ' in line)
         waited = subprocess.run(['sh', '-c', command], cwd=self.repo, capture_output=True,
+                                env=dict(os.environ, PATH=str(self.bin) + os.pathsep + os.environ['PATH']),
                                 text=True, timeout=15)
         self.assertEqual(waited.returncode, 0, waited.stdout + waited.stderr)
         self.assertIn('EXITED', waited.stdout)

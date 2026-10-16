@@ -876,6 +876,9 @@ Rules, binding for whoever routes workers:
    because a session end kills the background jobs started from its tool shell (survivors:
    `docs/GOTCHAS.md`, "Background jobs die with the session and in a low-memory reap"); the owner
    decides at that stop, never mid-flow.
+   A worktree worker carries the project's hooks, and at red the lead sends
+   "finish the item, commit, Kind: handoff" (owner decision 23, 2026-10-16; Claude Code project settings:
+   https://code.claude.com/docs/en/settings, checked 2026-10-16).
    The lead keeps big output out of its own context: logs, diffs and images go to
    files and it reads the summary line; long reads go to a worker that returns conclusions;
    independent calls go out in one turn.
