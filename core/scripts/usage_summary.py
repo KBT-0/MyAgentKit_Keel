@@ -142,8 +142,8 @@ def totals(rows, shadow_only=False):
     if claimed:
         low, high = wilson(accepted, claimed)
         eligible = claimed >= MIN_DECIDED_FINDINGS and rated_rounds >= MIN_RATED_ROUNDS
-        acceptance = (f' accepted={accepted:.3g}/{claimed:.3g} ({accepted / claimed:.2f}, author-claimed)'
-                      f' n={claimed:.3g} rated_rounds={rated_rounds} wilson95=[{low:.3f},{high:.3f}]'
+        acceptance = (f' accepted={round(accepted, 2):g}/{round(claimed, 2):g} ({accepted / claimed:.2f}, author-claimed)'
+                      f' n={round(claimed, 2):g} rated_rounds={rated_rounds} wilson95=[{low:.3f},{high:.3f}]'
                       f' decision={"eligible" if eligible else "insufficient"}')
     quota = {kind: sum(row.get('failure_kind') == kind for row in rows)
              for kind in ('quota', 'rate_limited', 'quota_exhausted')}
@@ -159,6 +159,11 @@ def totals(rows, shadow_only=False):
             + (f' shadow={sum(row["shadow"] for row in rows)}'
                if not shadow_only and any(row['shadow'] for row in rows) else '')
             + acceptance + quota_text)
+
+
+def focus_of(record):
+    focus = record['task'].get('focus')
+    return focus if isinstance(focus, str) and focus else None
 
 
 def main():
@@ -214,16 +219,20 @@ def main():
         # findings each listed; rounds that listed none share nothing, and when none did,
         # the last round takes the answers. Only a round credits: a failed attempt, its
         # fallback and a shadow run carry the same file and would credit the answers again.
-        earlier, answered, latest_claims = [], [], None
+        # Each REVIEW_FOCUS keeps its own snapshot: a focused reviewer saw only its own focus's
+        # rounds and the unfocused ones (claude_bridge.prior_rounds), and its file answers those.
+        earlier, snapshots = [], {}
         for record in records:
             claims = record['task'].get('dispositions')
-            if claims and earlier and record['round']:
+            focus = focus_of(record)
+            seen = [round_ for round_ in earlier if focus is None or focus_of(round_) in (None, focus)]
+            if claims and seen and record['round']:
                 # The file answers all earlier rounds, not just new findings. Use its
                 # latest cumulative snapshot once, or n grows on each re-review.
-                answered, latest_claims = list(earlier), claims
+                snapshots[focus] = (seen, claims)
             if record['round']:
                 earlier.append(record)
-        if latest_claims:
+        for answered, latest_claims in snapshots.values():
             weights = [round_['findings'] for round_ in answered]
             if not sum(weights):
                 weights = [0] * (len(answered) - 1) + [1]

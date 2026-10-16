@@ -26,7 +26,7 @@ class UsageSummaryTests(unittest.TestCase):
 
     def record(self, name, task, report=None, kind='review', callee='claude', model='opus',
                status='completed', reason=None, duration=1000, chain='', behaviour=None, backend=None,
-               dispositions=None, shadow=None, author=None):
+               dispositions=None, shadow=None, author=None, focus=None):
         """One record written by the adapters' own writer, so the schema is production's."""
         evidence = None
         if report is not None:
@@ -37,6 +37,7 @@ class UsageSummaryTests(unittest.TestCase):
                                          {'id': task, 'kind': kind, **({'behaviour': behaviour} if behaviour else {}),
                                           **({'dispositions': dispositions} if dispositions else {}),
                                           **({'author': author} if author is not None else {}),
+                                          **({'focus': focus} if focus else {}),
                                           **({'shadow': shadow} if shadow else {})},
                                          {'duration_ms': duration}, status, reason,
                                          evidence and str(evidence), report, backend=backend)
@@ -307,6 +308,28 @@ class UsageSummaryTests(unittest.TestCase):
         line = next(line for line in self.summary().splitlines() if line.startswith('Pair writer -> opus:'))
         self.assertIn('accepted=20/30 (0.67, author-claimed)', line)
         self.assertIn('n=30 rated_rounds=10 wilson95=[0.488,0.808] decision=eligible', line)
+
+    def test_each_focus_keeps_its_own_latest_answers(self):
+        # A high-tier label runs a logic and a portability reviewer; each focus's round 2
+        # answers only its own round 1 (prior_rounds carries one focus), so neither answer
+        # file may replace the other's.
+        self.record('l1', 'T', b'VERDICT: Reject\n\n## Findings\n\n- High a\n- High b\n- Low c\n', focus='logic')
+        self.record('p1', 'T', b'VERDICT: Reject\n\n## Findings\n\n- High d\n- Low e\n', model='sol',
+                    focus='portability')
+        self.record('l2', 'T', b'VERDICT: Accept\n', focus='logic',
+                    dispositions={'fixed': 3, 'disproved': 0, 'deferred': 0})
+        self.record('p2', 'T', b'VERDICT: Accept\n', model='sol', focus='portability',
+                    dispositions={'fixed': 1, 'disproved': 1, 'deferred': 0})
+        out = self.summary()
+        opus = next(line for line in out.splitlines() if line.startswith('Pair unknown -> opus:'))
+        sol = next(line for line in out.splitlines() if line.startswith('Pair unknown -> sol:'))
+        self.assertIn('accepted=3/3 (1.00, author-claimed)', opus)
+        self.assertIn('accepted=1/2 (0.50, author-claimed)', sol)
+
+    def test_a_large_sample_prints_whole_numbers(self):
+        self.record('a', 'T', b'VERDICT: Reject\n\n## Findings\n\n- Low a\n')
+        self.record('b', 'T', b'VERDICT: Accept\n', dispositions={'fixed': 1234, 'disproved': 0, 'deferred': 0})
+        self.assertIn('accepted=1234/1234 (1.00, author-claimed) n=1234 ', self.summary())
 
     def test_many_empty_rounds_do_not_satisfy_the_rated_round_floor(self):
         for number in range(10):
