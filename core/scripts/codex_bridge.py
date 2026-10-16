@@ -15,7 +15,7 @@ import uuid
 import agent_process
 import agent_usage
 import codex_quota
-from claude_bridge import (REVIEW_DOCS, REVIEW_PROMPT, REVIEW_RUNS,
+from claude_bridge import (REVIEW_PROMPT, REVIEW_RUNS,
                            BridgeError, accept_allows, default_effort, git, prior_rounds,
                            review_context, review_parts, scratch, snapshot, throwaway_copy, review_tmpdir,
                            utf8_output)
@@ -50,7 +50,7 @@ def main(argv=None, result_sink=None, claims=None):
     head, fingerprint, diff, resolved = snapshot(repo, scope, ref)
     if not diff.strip():
         raise ValueError("empty diff: nothing was reviewed")
-    docs = os.environ.get("REVIEW_DOCS", ", ".join(REVIEW_DOCS[:-1]) + " and " + REVIEW_DOCS[-1])
+    docs = os.environ.get("REVIEW_DOCS", "AGENTS.md, docs/ARCHITECTURE.md and docs/REVIEW_GATE.md")
     for name in re.split(r",\s*|\s+and\s+", docs):
         if not (repo / name).is_file() or not (repo / name).resolve().is_relative_to(repo):
             raise ValueError("required project guidance is missing or outside repository: " + name)
@@ -275,6 +275,9 @@ def main(argv=None, result_sink=None, claims=None):
         status, reason = usage["status"], usage["failure_kind"]
         result = {"status": status, "failure_kind": reason, "evidence": archived,
                   "usage_record": str(path), "recovery": usage["recovery"], "cancelled": was_cancelled}
+        if reason == "rate_limited":
+            # The wait the CLI named, for the dispatcher's capacity retry (KARARLAR B01 (6)).
+            result["retry_after"] = agent_usage.retry_after(values)
         if result_sink is not None:
             result_sink(result)
         try:

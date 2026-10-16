@@ -209,7 +209,7 @@ def adapter(provider, args, report):
     print('REVIEWER RAN: ' + provider, flush=True)
     quota = os.environ.get('STUB_QUOTA') == provider
     report({'status': 'failed' if quota else 'completed',
-            'failure_kind': 'quota' if quota else None, 'evidence': 'fixture', 'usage_record': 'fixture'})
+            'failure_kind': 'quota_exhausted' if quota else None, 'evidence': 'fixture', 'usage_record': 'fixture'})
     return 5 if quota else 0
 dispatch.claude_bridge.main = lambda args, report, claims=None: adapter('claude', args, report)
 dispatch.codex_bridge.main = lambda args, report, claims=None: adapter('codex', args, report)
@@ -2357,7 +2357,8 @@ class BridgeTests(unittest.TestCase):
                         archive = evidence.read_bytes()
                         replaced = fault is directory_fsync_fails
                         self.assertIn(b'| failure_kind | cancelled |' if replaced
-                                      else b'| failure_kind | quota |', archive)
+                                      else b'| failure_kind | %s |' % (b'rate_limited' if main is bridge.main
+                                                                        else b'quota_exhausted'), archive)
                         self.assertEqual(usage['evidence_sha256'] == hashlib.sha256(archive).hexdigest(),
                                          replaced)
                         self.assertIn('the usage record says cancelled; the archive %s on disk %s; '
@@ -3017,8 +3018,8 @@ class BridgeTests(unittest.TestCase):
         # that status from the message that ended the turn, never from an error it retried
         # through, so its presence is a failure, whatever the text holds. "error" is is_error
         # with a valid verdict; "accept" is the clean completion.
-        for case, kind in (('api_429', 'quota'), ('api_401', 'invalid_evidence'),
-                           ('api_500', 'invalid_evidence'), ('api_529', 'invalid_evidence'),
+        for case, kind in (('api_429', 'rate_limited'), ('api_401', 'invalid_evidence'),
+                           ('api_500', 'invalid_evidence'), ('api_529', 'rate_limited'),
                            ('error', 'cli_error'), ('accept', None)):
             with self.subTest(case=case):
                 code, result = self.run_bridge(case)
@@ -3037,7 +3038,7 @@ class BridgeTests(unittest.TestCase):
         # fell into a fixture failure and passed as cli_error without reaching their own path.
         claude = {'accept': None, 'reject': None, 'manual': None, 'no_budget': None,
                   'explicit_budget': None, 'kit_docs': None, 'proposal': None, 'questions': None,
-                  'api_429': 'quota', 'api_500': 'invalid_evidence', 'quota': 'quota',
+                  'api_429': 'rate_limited', 'api_500': 'invalid_evidence', 'quota': 'quota_exhausted',
                   'archive_failure': 'evidence_write_failed', 'auth': 'authentication',
                   'context': 'context_limit', 'conflict': 'invalid_evidence', 'error': 'cli_error',
                   'exit': 'cli_error', 'malformed_envelope': 'invalid_evidence',
@@ -3047,13 +3048,13 @@ class BridgeTests(unittest.TestCase):
                   'partial_timeout': 'timeout', 'timeout': 'timeout',
                   'turns': 'budget_or_turn_limit', 'unknown_flag': 'cli_unsupported'}
         codex = {'accept': None, 'reject': None, 'mcp': None, 'mcp_reconnect': None,
-                 'quota': 'quota', 'mcp_quota': 'quota', 'mcp_exit': 'cli_error',
+                 'quota': 'quota_exhausted', 'mcp_quota': 'quota_exhausted', 'mcp_exit': 'cli_error',
                  'mcp_no_completion': 'cli_error', 'mcp_no_verdict': 'cli_error',
                  'mcp_two_verdicts': 'cli_error', 'mcp_failed_turn': 'cli_error',
                  'unknown_flag': 'cli_unsupported'}
         # Only the dispatcher writes the chain and fails a quota on a changed checkout: the
         # attempt's own record, then what the chain says (None: no chain was written).
-        dispatched = {'chain_failure': ('quota', None), 'quota_mutation': ('quota', 'stale_checkout')}
+        dispatched = {'chain_failure': ('rate_limited', None), 'quota_mutation': ('rate_limited', 'stale_checkout')}
         self.assertLessEqual(set(re.findall(r"case == '(\w+)'", FIXTURE)), set(claude) | set(dispatched))
         self.assertLessEqual(set(re.findall(r"case == '(\w+)'", fixture_source(self.build_fake_codex()))),
                              set(codex))
@@ -3250,7 +3251,7 @@ class BridgeTests(unittest.TestCase):
     def test_usage_and_quota_failure_are_recorded(self):
         code, result = self.run_bridge("quota", extra=["--requester", "codex/fixture"])
         self.assertEqual(code, 5, result)
-        self.assertEqual(result["failure_kind"], "quota")
+        self.assertEqual(result["failure_kind"], "quota_exhausted")
         record = json.loads(Path(result["usage_record"]).read_text())
         self.assertEqual(record["requester_reported"], "codex/fixture")
         self.assertEqual(record["usage"]["input_tokens"], 7)
@@ -4708,11 +4709,16 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         self.assertIn('every review record names the reviewer\'s model', page)
         self.assertIn('the lead\'s choice of reviewer pin', page)
 
-    def test_capacity_documentation_does_not_promise_unimplemented_retries(self):
+    def test_capacity_documentation_says_what_the_dispatcher_retries(self):
+        # KARARLAR B01 (6): the sentence batch 3 took out until the retry existed (RESULT-b3fix.md).
+        import review_dispatch
         running = ' '.join((ROOT.parent / 'docs/REVIEW_RUNNING.md').read_text(encoding='utf-8').split())
-        self.assertIn('A Codex capacity error fails the attempt as `cli_error`', running)
-        self.assertIn('The dispatcher does not retry that reviewer automatically', running)
-        self.assertNotIn('capacity error is transient and is retried', running)
+        self.assertIn('A Codex capacity error is transient and is retried: after the delay the tool '
+                      'reports, otherwise after about ten minutes, doubled, at most twice', running)
+        self.assertIn('A quota or spend-cap error is never retried', running)
+        self.assertNotIn('The dispatcher does not retry that reviewer automatically', running)
+        self.assertEqual((review_dispatch.CAPACITY_RETRY_SECONDS, review_dispatch.CAPACITY_RETRIES), (600, 2))
+        self.assertIn('`authentication`) is fixed, never failed over', running)
 
     def test_changing_or_unsetting_focus_cannot_open_a_third_round(self):
         from unittest.mock import patch
@@ -5179,7 +5185,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         def adapter(name):
             def main(argv, report, claims=None):
                 seen[name] = {k: v for k, v in os.environ.items() if k.startswith('ANTHROPIC_')}
-                report({'status': 'failed', 'failure_kind': 'quota', 'evidence': 'e', 'usage_record': 'u'})
+                report({'status': 'failed', 'failure_kind': 'quota_exhausted', 'evidence': 'e', 'usage_record': 'u'})
                 return 5
             return main
         with patch.dict(os.environ, self.review_env(ANTHROPIC_API_KEY='lead-key')), \
@@ -5219,7 +5225,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         self.assertEqual(len(reports), 2)
         self.assertEqual({header_of(p)['status'] for p in reports}, {'failed', 'completed'})
         substitute = next(p for p in reports if header_of(p)['reviewer'] == 'codex')
-        self.assertIn('FALLBACK REVIEWER: the requested reviewer claude (quota) did not complete',
+        self.assertIn('FALLBACK REVIEWER: the requested reviewer claude (quota_exhausted) did not complete',
                       substitute.read_text())
         self.assertIn('FALLBACK [review]: this review is by codex, not the requested claude',
                       result.stdout)
@@ -5241,7 +5247,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                 {'FIXTURE_CASE': 'quota'} if primary == 'claude' else {'CODEX_FIXTURE_CASE': 'quota'}))
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertEqual(len(chain['attempts']), 2)
-            self.assertEqual(chain['attempts'][0]['failure_kind'], 'quota')
+            self.assertEqual(chain['attempts'][0]['failure_kind'], 'quota_exhausted')
             self.assertNotEqual(chain['selected_reviewer'], primary)
             self.assertFalse(chain['review_approved'])
             self.assertEqual(chain['independence'], 'host_must_check_all_patch_authors')
@@ -5251,10 +5257,10 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
             self.assertEqual(headers[0]['diff_sha256'], headers[1]['diff_sha256'])
             evidence = [Path(a['evidence']).read_text() for a in chain['attempts']]
             self.assertNotIn('FALLBACK REVIEWER', evidence[0])
-            self.assertIn('FALLBACK REVIEWER: the requested reviewer %s (quota)' % primary, evidence[1])
+            self.assertIn('FALLBACK REVIEWER: the requested reviewer %s (quota_exhausted)' % primary, evidence[1])
             for i, attempt in enumerate(chain['attempts'], 1):
                 usage = json.loads(Path(attempt['usage_record']).read_text())
-                self.assertEqual(usage['review_fallback_from'], None if i == 1 else primary + ' (quota)')
+                self.assertEqual(usage['review_fallback_from'], None if i == 1 else primary + ' (quota_exhausted)')
                 self.assertEqual(usage['review_chain_id'], chain['chain_id'])
                 self.assertEqual(usage['review_attempt'], str(i))
                 self.assertEqual(usage['task']['id'], 'fallback-task')
@@ -5262,7 +5268,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                 self.assertEqual(usage['requester_reported'], 'codex/fixture-codex-model')
 
     def test_operational_failures_try_other_model_once(self):
-        cases = {'auth': 'authentication', 'context': 'context_limit', 'turns': 'budget_or_turn_limit',
+        cases = {'context': 'context_limit', 'turns': 'budget_or_turn_limit',
                  'timeout': 'timeout', 'exit': 'cli_error'}
         for case, kind in cases.items():
             with self.subTest(case=case):
@@ -5284,7 +5290,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         # it silently for the other one can mean the author reviewing itself under a valid-
         # looking record, so without --fallback an unavailable reviewer fails the review.
         for primary, case in (('claude', {'FIXTURE_CASE': 'quota'}),
-                              ('codex', {'CODEX_FIXTURE_CASE': 'quota'})):
+                              ('codex', {'CODEX_FIXTURE_CASE': 'mcp_exit'})):
             with self.subTest(primary=primary):
                 result, chain = self.dispatch_result(primary, fallback=False, **case)
                 self.assertNotEqual(result.returncode, 0, result.stdout)
@@ -5312,10 +5318,11 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         for case, kind in (('mcp', None), ('mcp_reconnect', None), ('mcp_exit', 'cli_error'),
                            ('mcp_no_completion', 'cli_error'), ('mcp_no_verdict', 'cli_error'),
                            ('mcp_two_verdicts', 'cli_error'), ('mcp_failed_turn', 'cli_error'),
-                           ('mcp_quota', 'quota'), ('unknown_flag', 'cli_unsupported')):
+                           ('mcp_quota', 'quota_exhausted'), ('unknown_flag', 'cli_unsupported')):
             with self.subTest(case=case):
+                # No Claude pin: a used-up Codex quota would switch the review to Claude (decision 7).
                 result, chain = self.dispatch_result('codex', fallback=False, CODEX_FIXTURE_CASE=case,
-                                                     MYAGENTKIT_TASK_ID='noise-' + case)
+                                                     MYAGENTKIT_TASK_ID='noise-' + case, REVIEW_CLAUDE_MODEL='')
                 attempt = chain['attempts'][0]
                 self.assertEqual(attempt['failure_kind'], kind, result.stdout)
                 self.assertEqual(result.returncode, 0 if kind is None else 5, result.stdout)
@@ -5329,7 +5336,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         # It once ended the chain as a completed review by claude whose failure_kind was quota.
         result, chain = self.dispatch_result(fallback=False, FIXTURE_CASE='api_429')
         self.assertNotEqual(result.returncode, 0, result.stdout)
-        self.assertEqual((chain['status'], chain['failure_kind']), ('failed', 'quota'))
+        self.assertEqual((chain['status'], chain['failure_kind']), ('failed', 'rate_limited'))
         self.assertEqual([a['reviewer'] for a in chain['attempts']], ['claude'])
         self.assertIn('not requested', chain['fallback_blocked'])
         self.assertNotIn('selected_reviewer', chain)
@@ -5338,7 +5345,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         result, chain = self.dispatch_result(FIXTURE_CASE='api_429', MYAGENTKIT_TASK_ID='api-fallback')
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertEqual([(a['reviewer'], a['status'], a['failure_kind']) for a in chain['attempts']],
-                         [('claude', 'failed', 'quota'), ('codex', 'completed', None)])
+                         [('claude', 'failed', 'rate_limited'), ('codex', 'completed', None)])
         self.assertEqual(chain['selected_reviewer'], 'codex')
         self.assertFalse(chain['review_approved'])
 
@@ -5892,6 +5899,75 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         chain = json.loads(result.stdout.split('review dispatch: ', 1)[1].splitlines()[0])
         self.assertNotIn('shadow', chain)
         self.assertNotIn('REVIEW [shadow]', result.stdout)
+
+    def test_a_setup_fault_or_failed_authentication_never_fails_over(self):
+        # KARARLAR D04 inv2#44: a setup fault (authentication among them) is fixed, never failed
+        # over: the other reviewer would only hide it, and it fails the same way next time.
+        for case in ('auth', 'unknown_flag'):
+            with self.subTest(case=case):
+                result, chain = self.dispatch_result(FIXTURE_CASE=case, MYAGENTKIT_TASK_ID='setup-' + case)
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertEqual([a['reviewer'] for a in chain['attempts']], ['claude'])
+                self.assertIn(chain['failure_kind'], ('authentication', 'cli_unsupported'))
+        import review_dispatch
+        self.assertEqual(review_dispatch.UNAVAILABLE, {
+            'rate_limited', 'quota_exhausted', 'timeout', 'unavailable', 'cli_error', 'context_limit',
+            'budget_or_turn_limit', 'output_limit', 'content_flagged'})
+
+    def test_an_exhausted_codex_quota_switches_the_review_to_claude(self):
+        # Lead decision 7 (decisions.md; the single-model mandate): quota_exhausted switches the
+        # role to Claude automatically, recorded and reported; no --fallback is needed for it.
+        result, chain = self.dispatch_result('codex', fallback=False, CODEX_FIXTURE_CASE='quota')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual([(a['reviewer'], a['failure_kind']) for a in chain['attempts']],
+                         [('codex', 'quota_exhausted'), ('claude', None)])
+        self.assertEqual(chain['selected_reviewer'], 'claude')
+        self.assertIn('quota_exhausted', chain['switched'])
+        self.assertIn('SWITCH [review]: codex quota is exhausted', result.stdout)
+        self.assertIn('FALLBACK REVIEWER: the requested reviewer codex (quota_exhausted)',
+                      Path(chain['attempts'][1]['evidence']).read_text())
+        # Claude's own exhausted quota switches nothing: without --fallback the review fails.
+        result, chain = self.dispatch_result('claude', fallback=False, FIXTURE_CASE='quota',
+                                             MYAGENTKIT_TASK_ID='claude-exhausted')
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertEqual([a['reviewer'] for a in chain['attempts']], ['claude'])
+        self.assertIn('quota is exhausted', result.stdout)
+
+    def test_a_codex_capacity_error_is_retried_twice_with_a_doubling_delay(self):
+        # KARARLAR B01 (6) inv2#46: a Codex capacity error passes; it is retried after the delay
+        # the tool reports, else after about ten minutes, doubled, at most twice. A quota is not.
+        from contextlib import redirect_stdout
+        from unittest.mock import patch
+        import review_dispatch
+
+        def execution(command, prompt, repo, timeout, into=None, noted=None):
+            calls.append(1)
+            if len(calls) <= failures:
+                message = 'Selected model is at capacity.' + hint
+                return {'exit_code': 1, 'stdout': json.dumps({'type': 'turn.failed', 'error': {'message': message}}),
+                        'stderr': '', 'termination': None, 'duration_ms': 1}
+            Path(command[command.index('-o') + 1]).write_bytes(b'## Findings\n\n- None.\n\nVERDICT: Accept\n')
+            return {'exit_code': 0, 'stdout': json.dumps({'type': 'turn.completed', 'usage': {}}),
+                    'stderr': '', 'termination': None, 'duration_ms': 1}
+
+        for failures, hint, waits, status in ((1, '', [600], 'completed'),
+                                              (2, ' Please try again in 30 seconds.', [30, 60], 'completed'),
+                                              (3, '', [600, 1200], 'failed')):
+            calls, slept, out = [], [], io.StringIO()
+            with self.subTest(failures=failures, hint=hint), patch.dict(os.environ, self.review_env(
+                    MYAGENTKIT_TASK_ID='capacity-%d' % failures,
+                    REVIEW_ROUND_EXCEPTION='fixture: retries are rounds of one label')), \
+                    patch('agent_process.run', side_effect=execution), \
+                    patch.object(review_dispatch, 'sleep', side_effect=slept.append), redirect_stdout(out):
+                code = review_dispatch.main(['--repo', str(self.repo), '--uncommitted', '--reviewer', 'codex',
+                                             '--claude-model', 'claude-opus-5', '--codex-model', 'fixture-codex-model'])
+                chain = json.loads(out.getvalue().split('review dispatch: ', 1)[1].splitlines()[0])
+                self.assertEqual(slept, waits)
+                self.assertEqual(len(calls), len(waits) + 1)
+                self.assertEqual([a['reviewer'] for a in chain['attempts']], ['codex'] * len(calls))
+                self.assertEqual(chain['status'], status, out.getvalue())
+                self.assertEqual(code, 0 if status == 'completed' else 5)
+                self.assertIn('RETRY [review]: codex is at capacity (rate_limited)', out.getvalue())
 
 
 if __name__ == "__main__":

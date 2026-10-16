@@ -55,8 +55,7 @@ Automation never authorizes a commit or push.
   (`docs/REVIEW_GATE.md`, "Rounds").
 - The two reviewers run one after the other unless {{OWNER_NAME}} allows parallel; start the
   self-test beside a review only when the memory budget permits (`docs/WORKFLOW.md`, "Worker
-  cost", rule 6), each as its own background job. The kit's
-  self-test writes a non-ignored file: a second worktree, or after the reviews.
+  cost", rule 6), each as its own background job.
 - Nobody edits a tree under review; one run per reviewer per tree.
 
 ## Unavailable reviewer
@@ -65,14 +64,19 @@ A reviewer that cannot finish (quota, timeout, authentication, missing evidence)
 an Accept: the review fails with a usage record. Vendor reviews are advisory and never block
 a merge; this review is a gate, so no result means not passed, as a required status check
 that never reports keeps a merge blocked. The requested reviewer is never silently
-replaced; with `--fallback` the other configured model runs once after an operational
-failure (quota, timeout, a CLI error, `content_flagged`), its evidence opening with a `FALLBACK REVIEWER:` line. A substitute may be the
+replaced; with `--fallback` the other configured model runs once after a failover-eligible
+failure, its evidence opening with a `FALLBACK REVIEWER:` line. A substitute may be the
 author, so `--fallback` needs {{OWNER_NAME}}'s yes. A setup fault (`cli_unsupported`,
-`sandbox_unavailable`) is fixed, never failed over. With `--fallback`, two timed-out attempts
+`sandbox_unavailable`, `authentication`) is fixed, never failed over; only `rate_limited`,
+`quota_exhausted`, `timeout`, `unavailable`, `cli_error`, `context_limit`,
+`budget_or_turn_limit`, `output_limit` and `content_flagged` are failover-eligible.
+`quota_exhausted` switches the role to Claude automatically, recorded and reported
+(`switched` in the chain record, a `SWITCH [review]:` line): the kit runs on Claude alone
+(lead decision, 2026-10-15; KARARLAR D04 inv2#44, inv2#126). With `--fallback`, two timed-out attempts
 take about 2 x `REVIEW_TIMEOUT_SECONDS` (about ninety minutes at the default 2700 s).
-A Codex capacity error fails the attempt as `cli_error`. The dispatcher does not retry
-that reviewer automatically; `--fallback` permits the other configured model as described
-above. A quota or spend-cap error is never retried. An exhausted chain goes
+A Codex capacity error is transient and is retried: after the delay the tool reports, otherwise after about ten minutes, doubled, at most twice (the ten minutes is an owner choice; both vendors bound their retries).
+A quota or spend-cap error is never retried. The vendors' error names behind `rate_limited`
+and `quota_exhausted` are mapped in `docs/USAGE.md`. An exhausted chain goes
 into `docs/STATE.md` as a pending review; independent work continues. A test that needs a
 capability the host may lack (`taskkill`, `python3`) probes for it and skips with a reason
 that names it; the author's unrestricted run must show zero skips for that test. The

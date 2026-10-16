@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import stat
 import subprocess
+from time import sleep
 import uuid
 
 import agent_usage
@@ -14,10 +15,16 @@ import agent_process
 import claude_bridge
 import codex_bridge
 
-# Operational failures only. Invalid evidence, configuration, changed scope and storage
-# failures must not be laundered into success by trying another reviewer.
-UNAVAILABLE = frozenset({"quota", "authentication", "timeout", "unavailable", "cli_error",
+# Operational failures only (KARARLAR D04 inv2#44). Invalid evidence, configuration, changed
+# scope and storage failures must not be laundered into success by trying another reviewer, and
+# a setup fault (cli_unsupported, sandbox_unavailable, authentication) is fixed, never failed over.
+UNAVAILABLE = frozenset({"rate_limited", "quota_exhausted", "timeout", "unavailable", "cli_error",
                          "context_limit", "budget_or_turn_limit", "output_limit", "content_flagged"})
+# A Codex capacity error passes (KARARLAR B01 (6) inv2#46): retried after the delay the tool
+# reports, else after about ten minutes, doubled, at most twice. Ten minutes is an owner choice;
+# both vendors bound their own retries. A used-up quota is never retried.
+CAPACITY_RETRY_SECONDS = 600
+CAPACITY_RETRIES = 2
 # Set only while a substitute reviewer runs, so its archived evidence says so in its body.
 FALLBACK_ENV = "MYAGENTKIT_REVIEW_FALLBACK_FROM"
 # What a backend file may set: the endpoint, its token and the model names Claude Code maps.
@@ -255,11 +262,14 @@ def main(argv=None):
     timeout = int(os.environ.get("REVIEW_TIMEOUT_SECONDS", str(agent_process.DEFAULT_REVIEW_TIMEOUT)))
     if not 1 <= timeout <= agent_process.MAX_REVIEW_TIMEOUT:
         raise ValueError("REVIEW_TIMEOUT_SECONDS must be 1..%d" % agent_process.MAX_REVIEW_TIMEOUT)
-    # Claude only: Codex has no turn limit to set.
-    if args.reviewer == "claude" or args.allow_fallback:
+    def review_turns():
         turns = int(os.environ.get("REVIEW_MAX_TURNS", str(agent_process.DEFAULT_REVIEW_TURNS)))
         if not 1 <= turns <= agent_process.MAX_REVIEW_TURNS:
             raise ValueError("REVIEW_MAX_TURNS must be 1..%d" % agent_process.MAX_REVIEW_TURNS)
+        return turns
+    # Claude only: Codex has no turn limit to set. A Codex review that switches to Claude on a
+    # used-up quota checks it then.
+    turns = review_turns() if args.reviewer == "claude" or args.allow_fallback else None
     agent_usage.require_private_storage(repo)
     chain_id = uuid.uuid4().hex
     os.environ["MYAGENTKIT_REVIEW_CHAIN_ID"] = chain_id
@@ -293,7 +303,9 @@ def main(argv=None):
     other = "codex" if args.reviewer == "claude" else "claude"
     exit_code = 5
     os.environ.pop(FALLBACK_ENV, None)
-    for provider in (args.reviewer, other):
+    queue, retries = [args.reviewer], 0
+    while queue:
+        provider = queue.pop(0)
         os.environ["MYAGENTKIT_REVIEW_ATTEMPT"] = str(len(chain["attempts"]) + 1)
         received = []
         command = ["--repo", str(repo), "--model", pins[provider], "--effort", args.effort,
@@ -362,9 +374,21 @@ def main(argv=None):
             chain["status"] = "failed"
         # A cancel at any point after launch ends the chain: both adapters relabel a cancelled
         # failure "cancelled", which is not in UNAVAILABLE, before they return.
+        recorded = bool(result.get("evidence")) and bool(result.get("usage_record"))
+        retry = (chain["status"] != "completed" and provider == "codex" and recorded
+                 and chain["failure_kind"] == "rate_limited" and retries < CAPACITY_RETRIES)
         eligible = (chain["status"] != "completed" and provider == args.reviewer and chain["failure_kind"] in UNAVAILABLE
-                    and bool(result.get("evidence")) and bool(result.get("usage_record")))
-        if eligible and not args.allow_fallback:
+                    and recorded and not retry)
+        # Lead decision 7 (decisions.md; the kit runs on Claude alone): a used-up Codex quota
+        # switches the role to Claude without --fallback, recorded in the chain and reported.
+        switch = eligible and provider == "codex" and chain["failure_kind"] == "quota_exhausted"
+        if switch and turns is None:
+            try:
+                turns = review_turns()
+            except ValueError as error:
+                chain["fallback_blocked"] = str(error)
+                switch = eligible = False
+        if eligible and not args.allow_fallback and not switch:
             chain["fallback_blocked"] = "not requested; --fallback allows one other configured reviewer"
             eligible = False
         if eligible and not pin_valid(other, pins[other], args.backend):
@@ -379,12 +403,28 @@ def main(argv=None):
                      else "the adapter recorded the result in", result.get("evidence"),
                      ", but the checkout changed, so the chain failed"
                      if chain.get("checkout_changed") else ""), flush=True)
+        if retry:
+            delay = (result.get("retry_after") or CAPACITY_RETRY_SECONDS) * 2 ** retries
+            retries += 1
+            print("RETRY [review]: %s is at capacity (rate_limited); retry %d of %d in %s seconds."
+                  % (names[provider], retries, CAPACITY_RETRIES, delay), flush=True)
+            sleep(delay)
+            queue.insert(0, provider)
+            continue
         if chain["status"] == "completed" or not eligible:
             break
-        print("FALLBACK [review]: requested reviewer %s did not complete (%s); --fallback was "
-              "passed, so configured %s model %s runs once instead."
-              % (names[provider], chain["failure_kind"], names[other], pins[other]), flush=True)
+        if switch:
+            chain["switched"] = ("quota_exhausted: the Codex quota is used up, so the role switched "
+                                 "to Claude (decisions.md 7)")
+            print("SWITCH [review]: codex quota is exhausted (quota_exhausted); the kit runs on Claude "
+                  "alone, so configured %s model %s runs once instead. Tell the owner."
+                  % (names[other], pins[other]), flush=True)
+        else:
+            print("FALLBACK [review]: requested reviewer %s did not complete (%s); --fallback was "
+                  "passed, so configured %s model %s runs once instead."
+                  % (names[provider], chain["failure_kind"], names[other], pins[other]), flush=True)
         os.environ[FALLBACK_ENV] = "%s (%s)" % (names[provider], chain["failure_kind"])
+        queue.append(other)
     os.environ.pop(FALLBACK_ENV, None)
     print("review dispatch: " + json.dumps(chain))
     if chain["status"] != "completed":
@@ -398,6 +438,13 @@ def main(argv=None):
             print("FAIL [review]: Claude Code's Bash sandbox cannot start on this host, and the "
                   "review never runs Bash outside it. On Linux and WSL2 install bubblewrap and "
                   "socat (see scripts/doctor.sh); WSL1 cannot sandbox.")
+        if chain["failure_kind"] == "quota_exhausted":
+            print("FAIL [review]: the reviewer's quota is exhausted (a plan, session or spend limit); "
+                  "it is not retried. Tell the owner: wait for the reset, or run the review with "
+                  "--fallback on the other configured reviewer.")
+        if chain["failure_kind"] == "rate_limited":
+            print("FAIL [review]: the reviewer was rate limited or at capacity; run the review "
+                  "again later, or with --fallback on the other configured reviewer.")
         if chain["failure_kind"] == "content_flagged":
             print("FAIL [review]: the provider's content classifier stopped the review; run it "
                   "again, or send a smaller scope (--commit, or a shorter --base range).")

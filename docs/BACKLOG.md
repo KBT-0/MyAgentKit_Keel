@@ -33,9 +33,6 @@ Low findings of the kit's own reviews are filed here, not fixed in the round (ow
 
 - The Task, Total and Behaviour lines of `usage_summary.py` mix shadow runs into `rejects`,
   `findings` and `per_round`; report them there as a separate `shadow=` count.
-- A `model at capacity` answer is retried by hand, about ten minutes apart;
-  the proposal's item H wanted an `unavailable` class in the adapter with up to twelve recorded
-  retries. Owner decision 2026-10-13: a backlog line, not a mechanism in this batch.
 
 ## Filed from v0.11 final Codex review r1 (labels v011-codex-code, v011-codex-docs)
 
