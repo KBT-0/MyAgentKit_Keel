@@ -21,7 +21,19 @@ which is the part that gets lost.
 
 ## Implementation observations
 
-### 2026-10-16 — v0.11 web source check: 60 claims, 50 hold, 8 fixed, 2 unverifiable
+### 2026-10-16 — v0.11 batch 11: setup interview, feedback permissions and CRLF repair
+
+2026-10-16 batch 11: Git 2.41's release notes list the sparse-checkout rule debugging aid
+(check-rules); 2.42's do not, so DEV_SETUP's 2.42 floor is labelled the kit's own record. The
+permission-layer refusal of a deploy-shaped build command is RESEARCH_LOG's own incident
+(Gates that did not gate), so INTERVIEW keeps that reason. Sources for the rest: the stage-2
+evidence files B14 and D07 (read 2026-10-15).
+
+The two fix rounds caught fix_crlf.sh rewriting binary hooks and kit-feedback allowing
+`git diff *` (Codex r1), then DEV_SETUP still embedding the repair program and `Bash(git:*)`
+in two commands (Opus r2); no round 3, decisions.md 24.
+
+### 2026-10-16 web source check: 60 claims, 50 hold, 8 fixed, 2 unverifiable (source-check.md)
 
 One web-enabled agent re-fetched every source the batch reviews left as NOT RUN
 (`.myagentkit/v011-close/source-check.md`, fetched 2026-10-16). Rows 1.3, 5.2, 5.3, 8.3, E.4/E.5,
