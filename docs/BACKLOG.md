@@ -3,11 +3,6 @@
 Low findings of the kit's own reviews are filed here, not fixed in the round (owner decision B,
 2026-10-13). A line leaves when its work starts or when the owner closes it.
 
-## Filed from v0.11 final Codex review r1 (labels v011-codex-code, v011-codex-docs)
-
-- `docs/context-is-a-budget.md:90` still argues compaction at 200k with the retracted ten-turn
-  cost figure; WORKFLOW gives about 25-49 requests.
-
 ## Filed from v0.11 close-out batch 6 (need a tmux host: macOS, Linux, or WSL with the owner's OK)
 
 - Worker signals on tmux (KARARLAR D02 inv3#63, inv3#30): re-capture the `waiting_patterns.txt`

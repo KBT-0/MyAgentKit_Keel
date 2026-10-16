@@ -142,7 +142,7 @@ POSIX signal-mask, process-group, FIFO and resource-limit cases report NOT RUN o
 Linux and macOS CI run them. Each platform enforces a minimum of executed tests per suite;
 declared platform skips do not count, and unexpected skips fail the self-test.
 
-Merge `.myagentkit/` (including `.myagentkit/backends/`)
+Merge `.myagentkit/` (including the old backend place, `.myagentkit/backends/`)
 into the root ignore rules. Also merge the raw review/handoff archive exclusions and final
 summary re-include from the kit's `core/.gitignore`. The adapters refuse to launch if
 private storage is not ignored or raw records are already tracked. Preserve any existing
@@ -161,14 +161,19 @@ that has never met the real contract (`docs/GOTCHAS.md`).
 **Optional: a second Claude-compatible backend.**
 
 The Claude CLI can talk to another provider's Anthropic-compatible endpoint, such as GLM's.
-A backend is one regular UTF-8 file, `.myagentkit/backends/NAME.env`, at most 64 KiB,
-with one `KEY=VALUE` per line. It must be Git-ignored and untracked; both review and worker
-launch refuse a file that fails either check. Leading and trailing whitespace is stripped;
+A backend is one regular UTF-8 file, `NAME.env`, at most 64 KiB, with one `KEY=VALUE` per
+line. It lives outside the repository, so no checkout can provide or change it: in
+`MYAGENTKIT_BACKENDS_DIR`, else `%APPDATA%\myagentkit\backends` (Windows) or
+`$XDG_CONFIG_HOME/myagentkit/backends`, else `~/.config/myagentkit/backends`; a folder inside
+the repository is refused (KARARLAR D09 inv2#80). The old place, `.myagentkit/backends/NAME.env`,
+is read only while projects move, with a note naming the new folder; there it must be
+Git-ignored and untracked, and both review and worker launch refuse a file that fails
+either check. Leading and trailing whitespace is stripped;
 blank lines (including whitespace-only lines) and lines starting with `#` are skipped.
 Only these keys are accepted:
 
 ```sh
-# .myagentkit/backends/glm.env (the provider's documentation names the URL and the models)
+# <backend folder>/glm.env (the provider's documentation names the URL and the models)
 ANTHROPIC_BASE_URL=<the provider's Anthropic-compatible URL>
 ANTHROPIC_AUTH_TOKEN=<your API key for that provider>
 ANTHROPIC_DEFAULT_OPUS_MODEL=<the provider's model id>
@@ -178,9 +183,10 @@ ANTHROPIC_DEFAULT_HAIKU_MODEL=<the provider's model id>
 ANTHROPIC_MODEL=<the provider's model id>
 ```
 
-The token stays in this ignored, untracked file. Bootstrap installs the rules from
-`core/.gitignore`; after sync, merge those rules into the project's own `.gitignore` and
-preserve any existing backend files locally before removing them from Git's index.
+The token stays in this file outside the repository. A project that still has backend files
+in `.myagentkit/backends/` moves them to the backend folder; until then bootstrap's rules from
+`core/.gitignore` keep them ignored (merge those rules into the project's own `.gitignore`,
+and preserve the files locally before removing any from Git's index).
 Never export the token in your shell profile. Then run
 `./scripts/review.sh --uncommitted --reviewer claude --backend glm`, or set
 `MYAGENTKIT_BACKEND=glm` for the run. A file without a nonempty `ANTHROPIC_AUTH_TOKEN`,

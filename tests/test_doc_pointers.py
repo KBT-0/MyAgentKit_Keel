@@ -54,7 +54,7 @@ class ReviewerDocumentTests(unittest.TestCase):
         self.assertIn('Report new Critical or High findings', (ROOT / 'core/scripts/claude_bridge.py').read_text(encoding='utf-8'))
         worker = ' '.join((ROOT / 'overlays/claude-code/files/.claude/agents/worker.md').read_text(encoding='utf-8').split())
         self.assertIn('Inner checks stay with the worker', worker)
-        self.assertIn("a gate finding goes to a fresh worker of the author's side", worker)
+        self.assertIn("a gate finding goes back to the author's side", worker)
         for needed in ('`Accept` / `Accept with Manual Checks` / `Reject`',
                        'a disproved finding counts only after the reviewer has checked it against the code',
                        'a deferred one stays open under Manual checks, so it rules out a plain Accept',
@@ -241,8 +241,15 @@ class SectionPointerTests(unittest.TestCase):
 
     def test_incremental_build_briefs_name_both_shared_dependencies(self):
         text = (ROOT / 'core/docs/HANDOFF.md').read_text(encoding='utf-8').split('## The brief')[1].split('4. **Acceptance:**')[0]
-        self.assertIn("include inputs read by always-run steps in every stage's dependency set", text)
-        self.assertIn('The driver script that holds the stage commands must invalidate every stage when it changes.', text)
+        self.assertIn('A task that writes an incremental-build planner quotes `docs/GOTCHAS.md`, "An incremental\n   build misses its always-run inputs"', text)
+        gotcha = (ROOT / 'core/docs/GOTCHAS.md').read_text(encoding='utf-8').split('## An incremental build misses its always-run inputs')[1]
+        self.assertIn("always-run steps in every stage's dependency set", gotcha)
+        self.assertIn('make the driver script invalidate\nevery stage when it changes', gotcha)
+        # Decision 10: ARCHITECTURE.md is read on condition by a worker, always by a reviewer.
+        agents = (ROOT / 'core/AGENTS.md').read_text(encoding='utf-8')
+        self.assertIn('`docs/ARCHITECTURE.md`: read it when the task crosses a module boundary', agents)
+        bridge = (ROOT / 'core/scripts/claude_bridge.py').read_text(encoding='utf-8')
+        self.assertIn('REVIEW_DOCS = ("AGENTS.md", "docs/ARCHITECTURE.md", "docs/REVIEW_GATE.md")', bridge)
 
     def test_readme_ci_platforms_match_the_matrix(self):
         workflow = (ROOT / '.github/workflows/ci.yml').read_text(encoding='utf-8')

@@ -52,7 +52,10 @@ doubt; on verified work the sentence is plain.
 
 One sentence before the first tool call. While working, one sentence only at a finding, a
 change of direction or a block. The `progress_reminder.py` hook adds a reminder when five
-tool calls passed without a visible line; the threshold is a starting value.
+tool calls passed without a visible line, and stops after the third reminder in the same
+silent stretch (a visible line or a compaction starts a new one); five and three are starting
+values (Anthropic's Sonnet 5.5 prompting guide; a hook's added context is paid on the next
+request, code.claude.com/docs/en/hooks).
 
 ## Questions and approvals
 
@@ -65,11 +68,17 @@ tool calls passed without a visible line; the threshold is a starting value.
   no answer. Several decisions are separate numbered questions, never "A and B?". An
   internal id or a section title never stands in for the question.
 - While the owner is present, a decision goes through the tool's question feature (multiple
-  choice, recommended option first), not as a question buried in chat text.
-- While the owner is away (overnight, or said so), nothing waits on a question. The agent
+  choice, recommended option first), not as a question buried in chat text. Present, any
+  ambiguity that changes the work stops it and is asked that way (`docs/HANDOFF.md`, item 7).
+- While the owner is away, nothing waits on a question. Away means {{OWNER_NAME}} said so
+  (overnight, "I'm out"), or 45 minutes passed with no reply to an asked question; 45 is the
+  owner's choice (KARARLAR B03 inv1#169), not a measured value, and it is separate from a
+  review's timeout (`REVIEW_TIMEOUT_SECONDS`). The agent
   decides what the rules already settle or what is reversible and reports it later; else it
   does the work so that the owner's answer in the morning changes one named spot; else it
-  parks the task with a `docs/STATE.md` line holding the question, and moves on to other work.
+  parks the task with an issue or a `docs/STATE.md` line holding the question, and moves on to
+  other work. An agent that can go on alone still names when a human must step in (AWS
+  Well-Architected Agentic AI Lens, AGENTSEC04-BP02).
 - An approval covers what was shown. Nothing the owner did not see is "approved"; the
   agent's own call is reported as its own, a guess as a guess.
 

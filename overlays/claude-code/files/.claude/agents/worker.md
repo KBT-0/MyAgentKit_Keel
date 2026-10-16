@@ -4,9 +4,9 @@ description: >
   Implementation worker for {{PROJECT_NAME}}: one task in one module, briefed per
   docs/HANDOFF.md. Spawn it instead of general-purpose for any task that runs a job
   longer than a few minutes ({{LONG_JOBS}}). Runs with a one-hour prompt cache and ends
-  under about 150 turns. Inner checks stay with the worker; a gate finding goes to a
-  fresh worker of the author's side, and a fresh session reviews the fix; no session
-  approves its own work.
+  under about 150 turns. Inner checks stay with the worker; a gate finding goes back to
+  the author's side (docs/WORKFLOW.md, "Worker cost", rule 2), and a fresh session reviews
+  the fix; no session approves its own work.
 model: {{WORKER_MODEL}}
 effort: {{WORKER_EFFORT}}
 maxTurns: 150

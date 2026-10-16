@@ -86,8 +86,11 @@ where it is repeated; complete where it is the only record.
 ## Compaction is a purchase too
 
 The line is 200k tokens of context. Past it every request re-reads the whole window, and
-the measured cost of a session grows faster than its window does, so a summary at the line
-is cheaper than ten more turns at full size. But compaction itself re-reads the window
+the measured cost of a session grows faster than its window does. At today's cache prices a
+fresh session started at the line pays for itself after about 25 requests on Opus and Sonnet
+and about 49 on Fable (the kit's `docs/research/context-limit.md`, section 3); "ten turns"
+held only near 400k. So 200k is a judgement where quality and cost meet, not a cost
+break-even alone, and the dogfood measurement tests it. But compaction itself re-reads the window
 uncached, which is why the rule has three parts: compact only while the cache is warm; a
 session resumed after more than an hour writes its summary into the handoff first, since
 its next request is re-written at full price anyway; and when the work changes direction,

@@ -17,7 +17,9 @@ codebase grows.
 {{OWNER_NAME}} alone decides: OPEN design items, taste and balance calls, scope, and whether
 a risky change ships. Agents propose; {{OWNER_NAME}} decides.
 
-**If the task brief does not state a role, you are the WORKER.**
+**If the task brief does not state a role, you are the WORKER.** A default falls to the
+narrowest role (a fail-safe default, Saltzer and Schroeder); the choice is the owner's, no
+study measured it.
 
 Every Claude-based role works with the same short appendix, `BEHAVIOUR.md`. It is a kit-owned
 file that a sync refreshes; the project changes it only through the kit. `scripts/spawn_worker.sh`
@@ -31,17 +33,23 @@ A Codex session gets no appendix, because Codex has no such flag.
 omits the appendix flag and passes the toggle to its workers and reviews.
 Every review's usage record notes `behaviour: on` or `off`, and `scripts/usage_summary.py` totals
 the rounds and rejects of each side. A resumed session keeps the system prompt it started with,
-so an A/B counts only sessions started fresh on its side.
+so an A/B counts only sessions started fresh on its side (code.claude.com/docs/en/cli-reference,
+"System prompt flags in resumed conversations"). `BEHAVIOUR.md` is unmeasured: the on/off toggle
+and the usage record exist so the A/B can decide, and until it runs the appendix is the owner's
+choice. It holds only lines `AGENTS.md` does not already say in the same words.
 
 ## Task lifecycle (every task)
 
-1. **Read:** `AGENTS.md` → `docs/PHASES.md` → `docs/STATE.md` → `docs/ARCHITECTURE.md` →
-   the target folder's `AGENTS.md`. Do not explore beyond the files the task lists; context
-   is a budget. `docs/PROJECT.md` is read by SECTION, only when the task needs one.
-2. **Plan:** LIST the files you will touch. If that exceeds one module, STOP and propose
-   splitting the task. Check the task against the current phase's out-of-scope list —
-   needing something on it is a STOP, not a reason to widen the phase.
-3. **Implement:** a small, focused change. No out-of-scope refactors.
+1. **Read:** `AGENTS.md` → `docs/PHASES.md` → `docs/STATE.md` → the target folder's
+   `AGENTS.md`; `docs/ARCHITECTURE.md` when the task crosses a module boundary (`AGENTS.md`,
+   reading order). Do not explore beyond the files the task lists; context is a budget.
+   `docs/PROJECT.md` is read by SECTION, only when the task needs one.
+2. **Plan:** LIST the files you will touch; a diff you can describe in one sentence skips the
+   list, and the brief's `Owns:` line holds either way. If the files exceed one module, STOP
+   and propose splitting the task. Check the task against the current phase's out-of-scope
+   list — needing something on it is a STOP, not a reason to widen the phase.
+3. **Implement:** a small, focused change (`AGENTS.md`, "Task discipline": no drive-by
+   refactors).
 4. **Test and gate:** write or update tests, then run `./scripts/check.sh` before finishing.
    The same script is wired into git as `.githooks/pre-commit`, so a failing gate aborts the
    commit for every tool — but running it yourself is still the rule. The hook is the
@@ -50,13 +58,15 @@ so an A/B counts only sessions started fresh on its side.
    review (`docs/REVIEW_GATE.md`, "Risk tiers"): one light reviewer for low, one for medium,
    two for high ({{RISKY_AREAS}}, gates, hooks, check scripts, review tooling).
    It runs before commit, in a FRESH session. The author never approves their own patch.
-6. **Document:** if a public API changed, update that module's README in the same task.
+6. **Document:** a changed public API updates its README in the same task (`AGENTS.md`,
+   "Task discipline").
 7. **Update `docs/STATE.md`:** active work and what waits on {{OWNER_NAME}}, with a
-   tool+model trace. Unwritten progress does not exist. A next task or a parked item goes to
+   tool+model trace ("The state, backlog and phase files" says why). Unwritten progress does
+   not exist. A next task or a parked item goes to
    `docs/BACKLOG.md`, which is read when the next task is chosen, not every session.
    Publish session edits through the compare-and-swap protocol below, never by overwriting STATE.md directly.
 8. **Summarize:** what, why, which files. If you hit an OPEN design item, flag it as a
-   question rather than deciding it.
+   question rather than deciding it, and go on with work that does not depend on it.
 
 ## Task ids
 
@@ -68,19 +78,24 @@ deletion checkable.
 - A task id is a short token that starts with a letter and holds at least one digit:
   letters and digits, with at most one inner `-` (`K4`, `L1b`, `R12`, `K7-a`). A line in
   `docs/STATE.md` or `docs/BACKLOG.md` MAY name its task by id; none has to. Ids are
-  case-insensitive: `k4` and `K4` are the same task.
+  case-insensitive: `k4` and `K4` are the same task. The format is the owner's choice: the
+  digit keeps a plain word from being read as an id, and one inner `-` keeps ids short and
+  greppable.
 - The commit that finishes a task says so with a trailer, ONE per id, in the last paragraph
   of the message: `Done: K4`. The value is exactly one id: the hook rejects `Done: K4 K5`,
   `Done: K4, K5` and an empty `Done:`, and such a value already in the history closes
   nothing (`check.sh` prints a NOTE naming the commit). Git reads the key in any case, so
   `done: K4` closes K4 too. For work done on a branch, the integrating session's merge
-  commit carries it.
+  commit carries it. The trailer is git's own format (git-scm.com/docs/git-interpret-trailers).
 - `.githooks/commit-msg` rejects that commit while the `docs/STATE.md` or `docs/BACKLOG.md`
   it records still names the id, and says which line; `./scripts/check.sh` fails `[state]`
   when either file names an id that any commit in the history closed. The strong review
   cycle's `docs/STRONG_REVIEW.md` and `docs/reviews/strong-*.md` are checked the same way.
   Whole word: closing `K3` says nothing about `K3b`.
-- A closed id is never reused. A task needed again gets a new id.
+- A closed id is never reused. A task needed again gets a new id. A closed id is already in
+  git history as `Done: K4`; reusing it would make the old commit look like it closed the new
+  work (issue trackers keep retired keys reserved for the same reason: GitLab issue 4068,
+  Jira JRACLOUD-78272).
 
 ## Task sizing
 
@@ -94,64 +109,79 @@ deletion checkable.
 The rules for `docs/STATE.md` are in `docs/AGENTS.md`, "STATE.md discipline". This section keeps
 their reasons, so that the always-loaded files carry only the rules.
 
-For every authorized session edit, run `python scripts/working_mode.py --read-state
-.myagentkit/STATE.edit.md` first: it creates a fresh, exclusively owned per-edit snapshot with
-that prefix and prints `SHA256 PATH`, from one read. Each caller gets its own path; an existing
-file is never reused, including a hard link. Edit the returned PATH, never a copy of STATE.md
-read earlier, then run `python scripts/working_mode.py --replace-state "PATH" --expect SHA256`
-with that sha. On refusal, run `--read-state` again, redo the edit there, and retry. Do not retry
-stale contents. A hash read apart from the bytes it names let a copy read at the session's start
-pass over an edit published in between. The helper compares the bytes under the same lock as a
-mode switch, then replaces the file atomically. It preserves the file mode, runs no arbitrary
-command, consumes the snapshot into a caller-private name, and deletes only the object verified
-by the read descriptor after publication; a successor at the supplied path stays. Both publication
-and rollback can otherwise erase another writer's work. The STATE operations run from the project root without another
-`--project`, and read or write a snapshot only in `.myagentkit/` (ignored by Git) or the
-temporary folder: `/myagentkit:mode` runs the helper unprompted, so it copies no other file,
-and a snapshot never lands where `git add -A` commits it. OUT is a name prefix and FILE a regular
-file, never a folder: OUT naming `.myagentkit` put the snapshot in the project root, and FILE
-naming a folder moved it whole. An unpublished draft that cannot go back to FILE stays in a
-private folder beside it, whose path the helper prints. An edit that changes or removes the
-"Working mode:" line is refused: the mode switch writes that line together with `.claude/mode`.
+The order is `docs/AGENTS.md`'s; these are its reasons. The hash and the bytes come from one
+read: a hash read apart from the bytes it names let a copy read at the session's start pass
+over an edit published in between. The helper compares under the same lock as a mode switch and
+replaces the file atomically, keeping a successor at the supplied path, because publication and
+rollback could otherwise erase another writer's work. A snapshot lives only in `.myagentkit/`
+(ignored by Git) or the temporary folder, because `/myagentkit:mode` runs the helper unprompted
+and a snapshot elsewhere can land where `git add -A` commits it; OUT is a name prefix and FILE a
+regular file, because OUT naming `.myagentkit` put the snapshot in the project root and FILE
+naming a folder moved it whole. The "Working mode:" line is the mode switch's, which writes it
+together with `.claude/mode`. Sources: HTTP If-Match (the lost update,
+developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/If-Match), anthropics/claude-code#24130
+(an auto-memory file is not safe for concurrent agents), Python `tempfile.mkstemp` (an exclusively
+created snapshot; CWE-377).
 The branch and worktree policy below still decides which session may edit STATE.md.
 
 - `docs/STATE.md` is read at the start of every session, in every tool, so its length is a
   bill paid every session. What is planned next, and what was parked on purpose, is a
   backlog, and it lives in `docs/BACKLOG.md`, which is read only when the next task is chosen.
-  A backlog only grows, and in STATE.md it is read every session for nothing.
-- A `[LESSON]` or `[GOTCHA]` tag makes harvesting a grep, not a re-read.
+  A backlog only grows, and in STATE.md it is read every session for nothing. STATE.md holds
+  current state only, and traps live in `docs/GOTCHAS.md`: every line read at session start
+  costs on every session (code.claude.com/docs/en/memory), and a working list is rewritten,
+  not appended to (Manus, "Context Engineering for AI Agents"). An empty Active work section
+  means nothing is in flight, a contract the gate does not check.
+- **Why the tool+model trace.** Record which tool and model did the work, so a later session
+  can tell who wrote a change (the author never reviews it) and where the cost went. The
+  trace is kept in STATE.md, not in git, because git carries no AI attribution; the Linux
+  kernel's `Assisted-by:` trailer (docs.kernel.org/process/coding-assistants.html) is the
+  opposite placement, which the owner's no-attribution rule rules out.
+- Updating STATE.md at the end of a session is the agent's job: a long-running agent leaves
+  its progress file for the next session, which starts with no memory (Anthropic,
+  "Effective harnesses for long-running agents").
+- A `[LESSON]` or `[GOTCHA]` tag makes harvesting a grep, not a re-read. Deleting a tagged
+  line before it has a home is caught only as a NOTE (`scripts/check.sh`); the rest is
+  discipline.
 - Pruning without harvesting buries the lesson in the git history, and nobody looks there —
-  git is an audit trail, not a knowledge base.
+  git is an audit trail, not a knowledge base. A context that is rewritten whole loses detail
+  ("context collapse", Zhang et al., arXiv:2510.04618), so a lesson is moved, not summarised away.
 - Completed work is deleted, not marked DONE: the dates live in git
   (`git log -p -- docs/STATE.md`). The state templates name no example task id, because
-  those files are the ones checked ("Task ids").
-- **A living file never keeps a closed item.** Every file that collects items (STATE.md,
-  BACKLOG.md, an operation file, a review list, a handoff) deletes an item in the step that
-  closes it, and a mechanism enforces the deletion: the `Done:` trailer check, an operation
-  file's last acceptance item, the strong review cycle's closing commit. A new file of that
-  kind ships with its deletion step, because STATE.md bloated whenever cleanup was left to
-  an agent's judgement.
+  those files are the ones checked ("Task ids"). No outside kit enforces the deletion; the
+  check is the kit's own lesson (its RESEARCH_LOG, 2026-10-03).
+- **A living file never keeps a closed item.** Every file that collects items deletes an item
+  in the step that closes it. The `Done:` check enforces it mechanically for STATE.md,
+  BACKLOG.md and the strong review files; for an operation file (its last acceptance item)
+  and a handoff (its writer deletes) it is a discipline rule. A new file of that kind ships
+  with its deletion step, because STATE.md bloated whenever cleanup was left to an agent's
+  judgement (code.claude.com/docs/en/best-practices: a bloated instruction file gets ignored).
 - **Open issues are never closed to finish a release.** A release is done when its issues are
   fixed, or when {{OWNER_NAME}} has moved them, explicitly, to a named later version: an issue
   closed unfixed hides the defect it named.
 - **A lesson is written into the project's own documents** (and, for the kit, through
   `/myagentkit:kit-feedback`), never only into a lead's private memory, because the next
-  session, the other model and the other projects never read that memory.
+  session, the other model and the other projects never read that memory (Claude Code's auto
+  memory is per machine and per tool, code.claude.com/docs/en/memory).
 - An operation's detail lives in its own file, `docs/<OPERATION>.md`, never in STATE.md. The
   operation file tracks progress with checkboxes; its last acceptance item is "STATE.md
   harvested and pruned", and the file is deleted when the operation closes (the history is
   in git). Without this rule every integration folds more into STATE.md, and it only grows:
-  one project's state file reached 38 KB.
+  one project's state file reached 38 KB. Spec tools keep a task list in its own file the same
+  way (Kiro's `tasks.md`, kiro.dev/docs/specs); they archive it when done, the kit deletes it.
 - No size limit applies to STATE.md. A limit cannot tell a live line from a finished one,
   and a project that added one hit it again and again while half the file was backlog and
-  much of the rest narrated work already in git.
+  much of the rest narrated work already in git. What keeps an always-read file useful is
+  what it holds, not a line count: a long or conflicting file is followed less
+  (code.claude.com/docs/en/memory; IFScale, arxiv.org/abs/2507.11538).
 - Compressed chat styles do not apply to STATE.md: the next tool reading it knows nothing
   about your plugins.
 
 `docs/PHASES.md` is read every session. It is short on purpose: the CURRENT phase in full,
 everything after it in one line each. Detail arrives when a phase becomes current, not before — a plan written
 for a phase three steps away is mostly aspiration, and aspiration in an always-loaded file
-is a bill with nothing behind it.
+is a bill with nothing behind it. Project managers call this rolling-wave planning; GitHub
+Spec Kit's `spec-driven.md` likewise steers away from speculative features.
 
 **The non-goals are the useful half.** "Build the inventory system" gives an agent no edge
 to stop at, so it invents scope: it adds persistence, a UI, an event system, and returns one
@@ -172,7 +202,9 @@ permanent has been moved to its real home:
 - A process or gate lesson → `docs/WORKFLOW.md`
 - An environment trap → `docs/GOTCHAS.md`
 
-That is the same harvest-then-prune rule `docs/STATE.md` follows, one scale up. The three
+Other kits archive a finished plan instead (OpenAI's `exec-plans/completed`, OpenSpec's archive
+folder); the kit harvests and deletes, the owner's choice: an archive costs no context, but it
+goes stale and needs upkeep. That is the same harvest-then-prune rule `docs/STATE.md` follows, one scale up. The three
 files differ only in how long their contents stay true:
 
 | File | Horizon | On completion |
@@ -193,7 +225,10 @@ breaks, everything keeps looking green.
 
 - **Prove it RED, and keep it red with a negative test.** Construct the failure condition,
   watch the gate reject it, undo it, and add the case to `./scripts/check.sh --self-test` in
-  the same task (the kit's `docs/gates-must-be-proven-red.md`).
+  the same task (the kit's `docs/gates-must-be-proven-red.md`). It is TDD's red step at the
+  size of a gate; seeded failures measurably improved the tests developers wrote (Petrović et
+  al., ICSE 2021, arxiv.org/abs/2103.07189), and a check that cannot fail does not fail
+  securely (OWASP, "Fail securely").
 - **A self-test case never changes a tracked file**, and leaves nothing in the working tree
   but files Git ignores: the self-test fails when HEAD, the index, `git status --porcelain
   --untracked-files=all` or content hashes of tracked and untracked non-ignored files differ
@@ -206,7 +241,7 @@ breaks, everything keeps looking green.
   commits. `check.sh` holds a per-checkout lock for a whole run (the self-test included), so
   a second gate run waits instead of racing; tests that write scratch files still use a
   unique temporary directory, never a fixed name in the build or working directory.
-- **Run a probe that edits an existing file in a disposable copy of the checkout**, never
+- **Run a probe that edits or creates a file in a disposable copy of the checkout**, never
   in the checkout. Restoring the file from EXIT/INT/TERM traps was not enough: until the
   restore, a concurrent `git add -A` staged the injection, and SIGKILL or a power loss,
   which run no trap, left it in the tree. The existing-file example in
@@ -222,19 +257,25 @@ breaks, everything keeps looking green.
   variables the example names, the copy's own empty HOME and TMPDIR, no system or global git
   configuration, and an allowlist of the repository's own settings. Prove it by interrupting the injected test, SIGKILL included: the checkout's bytes
   and `git status` stay as they were.
-- **A test or an experiment never executes a file whose name ends in `.exe`.** Under WSL
-  such a file runs on Windows, which may show {{OWNER_NAME}} a GUI error dialog. Name a stub
+- **A test or an experiment never executes a file whose name ends in `.exe`.** Under WSL a
+  Windows executable is handed to Windows, which may show {{OWNER_NAME}} a GUI error dialog;
+  whether WSL matches the name or the file's first bytes is not verified yet
+  (`docs/GOTCHAS.md`), so the rule keeps both out. Name a stub
   for a Windows launcher without `.exe`, and reach it through an overridable variable
   (`docs/GOTCHAS.md`).
 - **Test both directions** where a gate can produce false positives. A gate that always
   fails is as useless as one that never does, and it gets deleted by the first person it
-  blocks unfairly.
+  blocks unfairly (Fowler, "Eradicating Non-Determinism in Tests").
 - **Fail on absent evidence.** No output file, an empty diff, a tool that did not run: all
-  FAIL. An exit code is not evidence that work happened.
-- **Parse tool output defensively.** Strip ANSI escapes before matching — CLIs colour their
-  output and a coloured phrase silently stops matching. If an extracted field comes out
-  empty, SAY it was not found; never write it out blank, because a blank field looks like a
-  field.
+  FAIL. An exit code is not evidence that work happened: pytest exits 5 when it collected no
+  test (docs.pytest.org/en/stable/reference/exit-codes.html), and jest passes an empty run
+  only when told to (`--passWithNoTests`, jestjs.io/docs/cli).
+- **Parse tool output defensively.** Parse machine output from a structured format (JSON),
+  not from coloured text; set `NO_COLOR` for any CLI whose text you must match (no-color.org;
+  Claude Code's `--output-format json`, code.claude.com/docs/en/cli-reference). When you must
+  match text, strip ANSI escapes first: a coloured phrase silently stops matching. If an
+  extracted field comes out empty, SAY it was not found; never write it out blank, because a
+  blank field looks like a field.
 
 ## A red gate that passes on re-run
 
@@ -247,8 +288,14 @@ real race is never seen again until it bites in CI or production.
   own file (a branch session writes its worktree note instead) as a `[GOTCHA]` line: the
   failing test and its error line, the retry count, what else was running (another gate, a
   self-test, a review) and the suspected cause.
-- **Re-run once** to learn whether it reproduces. A second red is a real failure. Never
-  re-run until it turns green: a retry that is not recorded is a failure silently deleted.
+- **Re-run once only to learn whether the failure is repeatable in the same state;** a pass
+  does not show it was chance (Gruber et al., "An Empirical Study of Flaky Tests in Python",
+  arxiv.org/abs/2101.09077). A second red is a real failure. Never re-run until it turns
+  green: a retry that is not recorded is a failure silently deleted. "Once" is the owner's
+  choice for cost, not a measured number.
+- **A test seen twice is fixed.** If the same test shows up in a second `[GOTCHA]` line, it is
+  quarantined or fixed within the task, never left (Fowler, "Eradicating Non-Determinism in
+  Tests", martinfowler.com/articles/nonDeterminism.html).
 
 ## Spike protocol
 
@@ -258,14 +305,27 @@ five-to-ten line note in `docs/spikes/`.
 
 ## Decay early-warning system
 
-Stop the task and report if you see any of:
+Two levels. **Stop the task and report** when you see:
+
+- Tests skipped, weakened or deleted, and the task did not ask for it.
+- A gate that has been edited but not re-proven red.
+- A forbidden dependency crossing a boundary.
+
+**Mention once** in the closing summary, without stopping the work, and add it to the
+audit's list ("Periodic architecture audit"):
 
 - A SECOND system or class doing the same job — propose a merge.
-- A forbidden dependency crossing a boundary.
 - A README contradicting the actual public API (doc drift).
-- A file ballooning past ~400 lines, or a class doing everything.
-- Tests skipped, weakened or deleted.
-- A gate that has been edited but not re-proven.
+- A file that does two jobs, or is too large to read in one pass, or a class doing
+  everything (`AGENTS.md`, "Language & style"). The kit sets no line count; a project that
+  wants a number writes one NOTE into `scripts/check.sh`.
+
+Sources: a weakened or deleted test is how agents game a task (Kent Beck, "Augmented Coding:
+Beyond the Vibes"; METR, "Recent Frontier Models Are Reward Hacking", 2025), so it stops the
+work; the rest is drift that an audit removes in batches (Thoughtworks Technology Radar,
+"Architecture drift reduction with LLMs"; Larsen and Moghaddam, arxiv.org/abs/2606.13298;
+GitClear's 2025 code-quality report). File size predicts defects without a clean threshold
+(Yamashita et al., QRS 2016), so the rule names the symptom, not a number.
 
 ## Periodic architecture audit (critical ritual)
 
@@ -281,6 +341,8 @@ which NO code is written:
   guard a path that does not exist?** A scan over a missing directory finds nothing and
   looks exactly like a clean result, so such a gate reports PASS forever while protecting
   nothing — and its silence is identical before and after the module it guards arrives.
+  The mechanical answer lives in `boundary_checks.sh`' dormant notice; the audit confirms the
+  notice fires, it does not replace it.
 - **Tooling review:** "Has anything appeared in the agent-tooling ecosystem that would
   measurably help this workflow — and what would it cost in permanent context tokens?" The
   default answer is NO; a tool must earn its recurring cost. Record the answer either way,
@@ -296,15 +358,22 @@ which NO code is written:
   nothing without an explicit yes. A fix that stays local works, which is precisely why the
   upstream one then never happens and the next project inherits the original problem.
 
-Output: a short `docs/audits/YYYY-MM.md` plus a list of cleanup tasks that enter the normal
-loop. **The audit is itself a task; skip it and decay advances invisibly.**
+Output: a short `docs/audits/YYYY-MM.md` whose findings carry task ids ("Task ids"), plus the
+cleanup tasks that enter the normal loop under those ids. The file is deleted by the commit
+that closes its last id: a living file keeps no closed item ("The state, backlog and phase
+files"), and debt that is not tracked to its close stays open (Martini, Besker and Bosch,
+2018). Unlike the strong review files, the `Done:` check does not read audit files yet, so
+here the deletion is discipline. **The audit is itself a task; skip it and decay advances
+invisibly.**
 
 ## The strong review cycle — at least every ten days
 
 The audit above looks for decay; this cycle asks the strongest models what everyone working
-day to day has stopped seeing. It runs at least every ten days, and `./scripts/check.sh`
-prints a NOTE when no strong review report was added in that time, so it does not depend on
-anyone remembering it.
+day to day has stopped seeing. It runs at least every ten days or after 20 closed tasks,
+whichever comes first (`STRONG_REVIEW_DAYS` and `STRONG_REVIEW_TASKS` in `scripts/check.sh`),
+and the gate prints a NOTE when no strong review report was added in that span, so it does
+not depend on anyone remembering it. The numbers are the owner's choice, not a measured
+cadence (ten days came from a project's request, kit issue #61).
 
 - **The list:** `docs/STRONG_REVIEW.md` holds the questions for the next cycle and the open
   findings of earlier ones. Each strong model writes its own report,
@@ -354,7 +423,10 @@ anyone remembering it.
 - The review gate the brief's `Risk:` tier requires starts without asking, in the family
   the working mode names. An extra review beyond it (another family, a higher effort, a paid
   backend) spends budget the gate did not plan: {{OWNER_NAME}} asks for it in the session, or
-  it does not happen (`/myagentkit:cross-review`).
+  it does not happen (`/myagentkit:cross-review`). Sources: Anthropic's prompting guide asks
+  an agent to stay inside the scope it was given (platform.claude.com, "Prompting Claude
+  Sonnet 5.5", "Steer initiative and scope"), and OpenAI's own Codex plugin warns that an
+  automatic review loop "may drain usage limits quickly" (github.com/openai/codex-plugin-cc).
 
 ## Parallel work — worktree policy
 
@@ -395,8 +467,12 @@ changed a shared contract under the other.
   rebase onto it.
 - A contract-first task therefore comes BEFORE any parallel fan-out. If the interfaces are
   not settled, do not fan out yet.
-- Merge in dependency order, and run the gate after every merge before the next one. A gate
-  run on the merged tree is the only thing that catches a semantic conflict.
+- A shared contract that two branches both use has a test that states what its consumer
+  expects; a change that breaks it names the branch (consumer-driven contract tests,
+  Thoughtworks Technology Radar; Pact).
+- Merge in dependency order, and run the gate after every merge before the next one (the
+  same idea as a merge queue, docs.github.com, "Managing a merge queue"). A gate run on the
+  merged tree is the only thing that catches a semantic conflict.
 
 ## Parallel work — a second session may be live in the SAME tree
 
@@ -524,8 +600,10 @@ Rules for whoever routes work, binding with any table:
    lead counts review rejects and rework per tier and moves the boundaries where they show.
    `python3 scripts/usage_summary.py` gives the review side: rounds, verdicts, rejects and
    the author-claimed acceptance rate (`accepted=`) per task and per model, effort and
-   backend. The rate informs; nothing switches a reviewer off by itself. Worker errands
-   write no record; the lead counts their rework.
+   backend. The rate informs; nothing switches a reviewer off by itself. For reviewer
+   acceptance, use the decided-finding sample and distinct-rated-round floors in
+   `docs/USAGE.md`; the owner reads the archives before changing routing (KARARLAR B03
+   inv2/(d)). Worker errands write no record; the lead counts their rework separately.
 6. **A low allowance shrinks what that side does, never the review.** When the owner says
    one side's allowance is low, the saver mode is in force (below), naming that side. It
    lasts until the allowance resets or the owner says otherwise; then the mode before it is
@@ -548,8 +626,8 @@ Rules for whoever routes work, binding with any table:
 
 A third model can take work beside Codex: the Claude CLI pointed at another provider's
 Anthropic-compatible endpoint (GLM today), with no third bridge. The owner writes the
-endpoint, its token and its model ids into `.myagentkit/backends/NAME.env`
-(`docs/DEV_SETUP.md`, section 3). `scripts/review.sh --backend NAME` runs the Claude reviewer
+endpoint, its token and its model ids into `NAME.env` in the backend folder, outside the
+repository (`docs/DEV_SETUP.md`, section 3). `scripts/review.sh --backend NAME` runs the Claude reviewer
 there as reviewer `claude@NAME` (`docs/REVIEW_RUNNING.md`). `scripts/spawn_worker.sh
 --backend NAME` starts a Claude worker session there. The backend changes neither the tiers
 above nor the sandbox. The lead measures it before routing work to it: run a few real reviews
@@ -779,18 +857,21 @@ Rules, binding for whoever routes workers:
    (`scripts/spawn_worker.sh` passes it on the launch line; `.claude/settings.json` sets it
    under `env` for the lead's own sub-agents), so a worker definition needs no cache field.
    The worker starts long jobs in the background and is re-invoked when they exit, and never
-   runs `sleep`, `until`, `pgrep` or tail-the-log loops. Only a worker definition's
-   `experimental.cacheTtl: 1h` is ignored on usage credits; the kit's environment variable
-   still applies ([Claude Code cache controls](https://code.claude.com/docs/en/prompt-caching),
-   checked 2026-10-16). Where a one-hour cache is unavailable (a gateway may not support it,
-   or another host may have no such setting),
-   choose the fallback from the measured table in the kit's `docs/worker-cost-setups.md`:
-   usually waits split into pieces under five minutes, at the price of a context read per
-   piece.
+   runs `sleep`, `until`, `pgrep` or tail-the-log loops. To react to a log line or a state
+   change, use the Monitor tool with a filtered command, not a loop
+   (code.claude.com/docs/en/tools-reference). Only a worker definition's
+   `experimental.cacheTtl: 1h` is ignored while a subscription draws usage credits; the kit's
+   `CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL` variable is not subject to that exception
+   ([Claude Code cache controls](https://code.claude.com/docs/en/prompt-caching),
+   checked 2026-10-16). Where the one-hour cache is unavailable (a gateway that does not
+   forward `anthropic-beta`, the Claude apps gateway, a Bedrock model without it, or another
+   host with no such setting), choose the fallback from the measured table in the kit's
+   `docs/worker-cost-setups.md`: usually waits split into pieces under five minutes, at the
+   price of a context read per piece.
    A separate, visible session (`scripts/spawn_worker.sh` in a tab or tmux) is for a worker
    that waits on long jobs or must outlive the lead; an ordinary errand runs as a sub-agent,
    and the lead never opens visible sessions to show the workflow, because each one is a
-   full session's bill.
+   full session's bill (code.claude.com/docs/en/costs, agent team token costs).
 2. **Gate findings go to the author's side**; in saver mode, that is the side that is not
    low. A small, local fix goes back to the worker that wrote the change (a SendMessage
    resume, or the same separate session) while its context is under the context band (rule 8)
@@ -799,11 +880,20 @@ Rules, binding for whoever routes workers:
    finding) a fresh worker takes it, briefed with the findings, the branch and the files to
    read. Inner rounds ("Review inside the worker") follow the same rule. The gate's reviewer
    is a headless process in a throwaway copy, fresh in every round; no session reviews its
-   own change, and sending a fix back to its author is routing, not review.
-3. **One small task per worker**, sized to end under roughly 150 requests (`maxTurns` in the
-   worker definition enforces it). Split before starting: a mechanism first, then its uses.
+   own change, and sending a fix back to its author is routing, not review. The worker
+   definition sets `autoCompactWindow` at the band, so a resumed worker cannot grow past it.
+   Sources: a resumed sub-agent keeps its cache (code.claude.com/docs/en/prompt-caching);
+   after two failed corrections a fresh context does better (code.claude.com/docs/en/best-practices);
+   Anthropic's research system hands work to fresh sub-agents near the context limit
+   ("How we built our multi-agent research system").
+3. **One small task per worker.** Size it to end under the context band (about 200k): the
+   worker definition sets `maxTurns` as a backstop (about 150 turns, the tool-using model
+   requests `maxTurns` counts; a worker stopped there returns partial output and can be
+   resumed) and `autoCompactWindow` at the band (code.claude.com/docs/en/sub-agents). 150 is a
+   backstop, not a measured optimum. Split before starting: a mechanism first, then its uses.
 4. **The lead does not poll either.** It waits for task notifications or an idle notice from
-   a separate session; it does not check on workers or CI in a loop.
+   a separate session; it does not check on workers or CI in a loop (a background sub-agent
+   notifies on completion, code.claude.com/docs/en/sub-agents).
 5. **Mechanical work goes to the cheaper model at medium effort**: doc fixes, running a
    documented proof, folding notes. Design-bearing code gets the strongest model at high
    effort; reviews follow the "Model routing" effort table. Model and effort are never left
@@ -817,6 +907,10 @@ Rules, binding for whoever routes workers:
    them; a Codex errand (`codex exec`) takes the model and `-c model_reasoning_effort`, and
    `scripts/spawn_codex.sh --model --effort` refuses a Codex worker without them. The brief states model and
    effort, and the lead verifies both in the transcript after the run, not in the report.
+   Prefer a named sub-agent definition whose frontmatter fixes `model` and `effort`; the
+   guard remains for calls that name a generic agent. `CLAUDE_CODE_EFFORT_LEVEL`, if set,
+   overrides the definition's effort, so the lead checks it is unset before relying on the
+   field (code.claude.com/docs/en/sub-agents; code.claude.com/docs/en/model-config).
 6. **Parallel workers only for independent modules**; each one multiplies the bill. The lead
    runs heavy background jobs (a gate, a self-test, a review, a build, a `codex exec`
    errand) within a memory budget: two at a time until the lead has measured its host, then
@@ -833,7 +927,11 @@ Rules, binding for whoever routes workers:
    memory with `Get-CimInstance Win32_OperatingSystem | Select FreePhysicalMemory` in
    PowerShell on Windows, `free -g` on Linux, `vm_stat` or `memory_pressure` on macOS. Measure
    a job's peak on your host; one measured example: a review or gate took 1–2 GB on native
-   Windows 11 with Git Bash (2026-10-12). The lead lowers the number after a low-memory reap,
+   Windows 11 with Git Bash (2026-10-12). The 4 GB reserve and two at a time are starting
+   values, tuned by the first measurement; the formula is the one large builds use (LLVM's
+   `LLVM_PARALLEL_*_JOBS` and RAM-per-job settings, llvm.org/docs/CMake.html). On Linux and
+   WSL, `CLAUDE_CODE_TOOL_MEMORY_LIMIT` caps the whole session's commands as a second line of
+   defence (code.claude.com/docs/en/tools-reference). The lead lowers the number after a low-memory reap,
    because five jobs started together were killed at once
    (`docs/GOTCHAS.md`, "Background jobs die with the session and in a low-memory reap"). Workers
    whose last step waits on one exclusive resource (a heavy lock, a device, a licence) run
@@ -845,12 +943,20 @@ Rules, binding for whoever routes workers:
    Code refuses its write of a report file ("Subagents should return findings as text, not
    write report files"), and a worker briefed for a `REPORT.md` spends turns working around
    the refusal. A sub-agent keeps its short report in its final message and writes only
-   logs, tables and captures to files.
+   logs, tables and captures to files. Sub-agents return a summary, and many detailed returns
+   fill the caller's context (code.claude.com/docs/en/sub-agents); Anthropic's research system
+   passes references to files instead (its multi-agent research post). "About 350 words" is
+   the owner's choice.
 8. **The lead session is compacted or handed over before it grows**, and at the end of a
-   working day it reads the tool's cost screen and runs `scripts/agent_cost.py --latest` and
-   writes both into the handoff, so the next routing decision is made from a number. The
-   table's `hit` column (cache reads over all input) is the figure to watch: 80% or more
-   is the target, and below it the `cWrite>5m` and `poll` columns name the cause. The line
+   working day it reads `/usage`'s Session block (the main conversation only, not
+   sub-agents) and runs `scripts/agent_cost.py --latest`, and writes both into the handoff
+   next to the number of tasks done, so the next routing decision is made from a number
+   (code.claude.com/docs/en/costs). The table's `hit` column (cache reads over all input) is
+   the figure to watch. An initial hit below 80% is an alarm, not a target (the owner's
+   choice, KARARLAR B03 inv1#173). Record the median of the kit's first ten workers as the
+   baseline; investigate lower hits with `cWrite>TTL` and `poll`. The analyzer compares each
+   write bucket with its recorded TTL (B03 inv2/(h)); a gap is diagnostic, not proof of the
+   cause of a miss. The line
    is a band of context, the same for every model: **yellow at 200k** (plan the cut: no new
    round, let the running batch finish, commit, keep STATE and the handoff current), **red at
    300k** (cut at the next clean stop), **ceiling at 400k** (stop now and secure the work).
@@ -860,7 +966,8 @@ Rules, binding for whoever routes workers:
    49 (Fable). The numbers are a judgement, not a measurement (the kit's
    `docs/research/context-limit.md`). A symptom cuts at any size: the owner corrected the
    same rule twice, or the worker-route hook refused twice. The Claude Code overlay's
-   `context_size.py` hook names the band once per 50k step past 200k; the lead then
+   `context_size.py` hook names the band once per 50k step past 200k (the step is the owner's
+   choice, like the band); the lead then
    recommends one of two, with the number and the reason. The overlay's `autoCompactWindow`
    of 450k is only a safety valve for a session nobody stops, never the cut; after any
    compaction its `after_compact.txt` hook names what to re-read. **Compact** when
@@ -878,7 +985,11 @@ Rules, binding for whoever routes workers:
    line. At red the lead stops at the next clean point and proposes a hand-off or `/compact`,
    because a session end kills the background jobs started from its tool shell (survivors:
    `docs/GOTCHAS.md`, "Background jobs die with the session and in a low-memory reap"); the owner
-   decides at that stop, never mid-flow.
+   decides at that stop, never mid-flow. With the owner away, the lead writes the hand-off
+   file, runs `/compact` when jobs are in flight, and continues; it does not wait for an
+   answer (`docs/COMMUNICATION.md`).
+   A worker session uses the same absolute band: `scripts/watch_workers.sh --context-warn`
+   warns at the smaller of 200k and 50% of the window (`NNNk` or `NN%` changes it).
    A worktree worker carries the project's hooks, and at red the lead sends
    "finish the item, commit, Kind: handoff" (owner decision 23, 2026-10-16; Claude Code project settings:
    https://code.claude.com/docs/en/settings, checked 2026-10-16).
@@ -904,7 +1015,10 @@ short read-only diagnosis or review runs as a sub-agent under the lead: its own 
 would pay a session start for nothing. A short errand that needs the lead's own context
 runs as a forked sub-agent, which inherits that context instead of re-reading it, while the
 lead is under about 120k tokens; above that, a fresh sub-agent with a brief is cheaper. The
-lead merges and, as the integrating session, runs the integration build.
+lead merges and, as the integrating session, runs the integration build. The 120k fork
+threshold is the owner's choice, not a measured crossover
+(KARARLAR B03 inv1#186); compare total lead-plus-worker usage before changing them
+(code.claude.com/docs/en/sub-agents).
 
 The threshold is {{OWNER_NAME}}'s decision from use. The only cost comparison of the two
 shapes is one task on 2026-10-03 (the kit's `docs/worker-cost-setups.md`): about 107 against
@@ -922,7 +1036,12 @@ worktree or branch. If refused, set `TMPDIR` to an existing absolute directory u
 characters and retry; spaces are refused too. This remedy works on macOS and Linux alike.
 The lead subscribes once with SendMessage `notify_when_idle`; on native Windows (a Windows
 Terminal tab) only when the spawn prints "is a peer session", and after a WARNING it watches the
-tab and the result file instead. A tmux worker always registers.
+tab and the result file instead. A tmux worker always registers. The subscription costs no
+tokens. It lapses after 12 hours without a notice (the lead is told): resubscribe, or fall
+back to the result file. A worker with `crossSessionInbound` set to `refuse` sends no notice.
+A notice may come at the end of any turn, a park on a background job included; a session
+waiting in a dialog is mid-turn and sends none (code.claude.com/docs/en/cross-session-messaging).
+How many notices one subscription gives on the current Claude Code is not re-measured yet.
 The lead does not message an idle session: every message to an
 idle session is a full-context turn. The idle notice also fires on every park on a
 background job, and the session does not end with its task. A committed result file of
@@ -948,7 +1067,8 @@ explicit `scripts/close_worker.sh NAME` stays for a session closed without a mer
 merged, a worker without a worktree, a reused session the lead now finishes). It ends the tmux
 session (its terminal tab closes by itself), on native Windows the worker's Claude Code session
 or the Codex session in its own worktree (the tab's script then ends with `exit 0`, on which
-Windows Terminal closes the tab), and removes the worktree through the same audit as the
+Windows Terminal closes the tab), unlocks the worktree its spawn locked (`kit worker NAME`;
+cleanup never touches a locked one), and removes it through the same audit as the
 post-merge hook's, for that worktree alone. It never deletes the branch. It ends nothing while
 a gate (`check.sh`, by its lock) or a git operation (`index.lock`) runs in the worktree: a
 session ended mid-run orphans the run, which then races the next gate there. For the same
@@ -1023,7 +1143,9 @@ answer from {{OWNER_NAME}} and delivers it into the SAME session:
   naming its source and target, and every later close of NAME refuses until the lead puts the
   report back at one of them (a `.report-move-*` folder beside either holds it), removes the
   marker and closes again.
-  `--result FILE` selects another `.md` result inside the worker's folder and `FILE.question.md`;
+  `--result FILE` selects another `.md` result inside the worker's folder (Codex's
+  workspace-write sandbox and Claude Code's worktree isolation refuse a write outside it;
+  the `.md` suffix and the QUESTION name are the kit's contract) and `FILE.question.md`;
   the brief must use that spawn-time path, and it is passed again on resume. Publish a question
   or finished result atomically: write a temporary file beside it, end with
   `<!-- codex-worker: ready -->`, then rename it into place with `codex_worker.py --publish
@@ -1032,8 +1154,11 @@ answer from {{OWNER_NAME}} and delivers it into the SAME session:
   `codex_worker.py` allows ten seconds for the turn to flush (`KIT_WORKER_GRACE` overrides
   the grace period), then closes only that worker's process tree, using a Windows job or
   an interactive POSIX process group. Windows children start suspended until assigned to
-  their job; POSIX escalation signals the entire group. `--no-daemon`
-  keeps the worker's runtime separate from any shared Codex server. The script refuses a
+  their job; POSIX escalation signals the entire group. `-s workspace-write` and `-a never`
+  are the unattended sandboxed use Codex documents (learn.chatgpt.com/docs/agent-approvals-security);
+  `--no-daemon` keeps the worker's runtime separate from the shared background server of
+  Codex 0.157 and later (not in the official docs; a secondary source), so it is re-checked
+  with `codex --help` when the version changes. The script refuses a
   resume while the old session still runs, and refuses a
   fresh replacement when its session or question record exists. On resume the wrapper removes
   the answered question file once the resumed session publishes a new result or exits
@@ -1082,10 +1207,12 @@ The result file starts with a fixed head (`docs/HANDOFF.md`): `Kind:`, `Task:`, 
 and `Remaining:`, and only `Kind: completed` is done. The lead runs `scripts/watch_workers.sh
 --result NAME=PATH NAME` as a background command, and starts it again after every report
 but DONE and GONE while work remains, and after its window ends: it stops at its first
-report. It returns DONE, BLOCKED,
+report. When the lead itself runs unattended (`-p`, the SDK, CI), it passes `timeout` when it
+starts the watcher in the background: the default background limit there is 30 minutes and
+the maximum two hours (code.claude.com/docs/en/tools-reference). It returns DONE, BLOCKED,
 HANDOFF or PROGRESS once the file is committed on a clean tree, QUESTIONS when the file holds
-open questions, CONTEXT when the session's context passes the warning line (50 percent by
-default), WAITING on a dialog, and GONE. The lead acts on the report's first line
+open questions, CONTEXT when the session's context passes the warning line (the smaller of
+200k and 50% of the window by default, rule 8), WAITING on a dialog, and GONE. The lead acts on the report's first line
 ("The lead's steps when a branch is ready"). Exit 3 means the watcher could not observe:
 a pane of a session that exists could not be read, or tmux could not say whether it exists
 (`watch_workers: NAME: capture failed: ...` on stderr), or a committed result could not be
@@ -1176,8 +1303,9 @@ the same flaws cost hours of code rounds (the kit's RESEARCH_LOG, 2026-10-03).
 
 ### Review inside the worker
 
-- A worker that can start a sub-agent (a separate session) reviews its own diff before it
-  reports. It starts a fresh diff reviewer as a sub-agent (the Claude Code overlay's
+- A worker reviews its own diff with fresh sub-agents before it reports, whether it runs as
+  a session or as a sub-agent (Claude Code nests sub-agents three layers deep by default,
+  code.claude.com/docs/en/sub-agents, "Nesting"). It starts a fresh diff reviewer as a sub-agent (the Claude Code overlay's
   `diff-reviewer`), fixes what the review finds, and starts a new fresh reviewer on the
   result. This inner pass is the author's side's early check; the gate's review in a fresh
   session follows `docs/REVIEW_GATE.md` and `docs/REVIEW_RUNNING.md`, and its findings go
@@ -1189,9 +1317,13 @@ the same flaws cost hours of code rounds (the kit's RESEARCH_LOG, 2026-10-03).
 - The worker reports when a review returns no Critical, High or Medium finding, or when it
   has argued a disposition for each one that remains.
 - The report lists the inner rounds: their count, the findings fixed and each disposition.
-- A worker that cannot start a sub-agent (a sub-agent itself) says so in its report. The lead
-  then starts the review the moment the worker's branch exists. The launch sequence follows
-  "Worker cost", rule 6.
+- Where `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH` is 1, the worker cannot start a sub-agent and
+  says so in its report. The lead then starts the review the moment the worker's branch
+  exists. The launch sequence follows "Worker cost", rule 6.
+- Sources: a fresh reviewer step finds what the author missed (code.claude.com/docs/en/best-practices,
+  "Add an adversarial review step"); a model correcting its own reasoning without outside
+  feedback does not improve (Huang et al., ICLR 2024, arxiv.org/abs/2310.01798), which is why
+  the reviewer is new each round.
 - The inner rounds do not replace the lead's review. A risky diff still passes
   `docs/REVIEW_GATE.md` before the merge, and the inner rounds make that review shorter.
 
@@ -1236,17 +1368,21 @@ The shell stays in the lead's checkout, so its Stop hook runs that checkout's ga
 6. Start the next worker while the self-test after a merge still runs. If that self-test
    fails, tell the next worker to rebase onto the fix.
 
-Each step that waits on another adds its whole duration to the round. No step needs another
-step's result before it starts; the memory budget can still require a wait, and paid reviews
-run one after the other ("Worker cost", rule 6).
+Each step that waits on another adds its whole duration to the round. In the review round no
+step needs another step's result before it starts, so the self-test starts beside a review
+when memory permits; a step that does need a result waits for it, and paid reviews run one
+after the other ("Worker cost", rule 6). A merge-conflict resolution is reviewed because it is
+authored code (Fowler, "Semantic Conflict").
 
 What the watcher reports decides the lead's next step for a spawned worker:
 
 - **QUESTIONS:** the lead asks them at once, one at a time, through its question tool, before
   the merge or in the same breath. It records each answer, and the general rule the answer
   sets, in its permanent home, not only in the chat.
-- **CONTEXT:** the lead decides from the worker's `Remaining:` line and the figure whether
-  the worker finishes, compacts or hands off. A session with two short steps left finishes;
+- **CONTEXT:** the lead decides from the figure (absolute tokens, rule 8's band) and the
+  worker's `Remaining:` line, which is the worker's estimate: the figure decides when they
+  disagree. The lead decides whether the worker finishes, compacts or hands off; at red it
+  sends "finish the item, commit, Kind: handoff". A session with two short steps left finishes;
   one with a long operation ahead hands off or compacts, because it pays the figure on every
   remaining request.
 - **DONE:** the lead reads the result file before anything else.
@@ -1274,7 +1410,10 @@ of every session started after it, so the sessions of one batch read different r
 - Keep always-loaded docs SMALL and STABLE. Size here is not a readability preference; it is
   a recurring bill.
 - Volatile state belongs in `docs/STATE.md`, which is read every session and therefore kept
-  small. Reference docs like `docs/GOTCHAS.md` stay off the session-start list entirely.
+  small. Reference docs like `docs/GOTCHAS.md` stay off the session-start list entirely
+  (code.claude.com/docs/en/memory: what loads at start is paid every session; topic files
+  load on demand). A trap stays in GOTCHAS only, with no path-scoped copy in
+  `.claude/rules/`: one canonical place.
 
 ## Web requests carry no personal data
 
@@ -1285,23 +1424,35 @@ its logs, and cannot be recalled.
 
 - **Never put a person's name, e-mail address or other personal data into a web request**
   (headers, query strings, bodies, scripts an agent writes to fetch pages). When an API asks
-  for contact details, send a generic project User-Agent without personal data, or stop and
-  ask {{OWNER_NAME}}.
-- **A brief for a task with web access repeats the rule** and names that generic
-  User-Agent (`docs/HANDOFF.md`): a sub-agent does not read this file unless told to.
+  for contact details, use the "Web contact" line in `docs/PROJECT.md` (a role address or
+  project URL {{OWNER_NAME}} chose, never a person's own); if it is empty, ask
+  {{OWNER_NAME}} once and record the answer there. Otherwise send a generic project
+  User-Agent. In the Claude Code overlay, `guard_private_email.py` refuses a request that
+  carries the owner's address.
+- **A brief for a task with web access repeats the rule** and names that contact
+  (`docs/HANDOFF.md`): a sub-agent does not read this file unless told to. A hook decides
+  every time, an instruction is only advice (code.claude.com/docs/en/hooks-guide), which is
+  why the overlay adds the hook beside the brief.
 
 ## MCP hygiene
 
-An enabled MCP server's tool catalogue and schemas are a recurring cost wherever the host
-inlines them into every request: Codex and API gateways do; Claude Code defers tool schemas
-by default and loads one on demand, so there a server costs its name list and its
-connection. Verbose catalogues are a real recurring cost on the hosts that inline them, and
-most custom servers duplicate what a plain CLI already does more reliably.
+An enabled MCP server costs little by default in Claude Code: it defers the tool definitions
+and loads only the tool names and the server's instructions until a tool is needed. The full
+catalogue is paid on every request only where tool search is off (a non-Anthropic
+`ANTHROPIC_BASE_URL`, `ENABLE_TOOL_SEARCH=false`, an older model) and on hosts that inline
+schemas, such as Codex and API gateways (code.claude.com/docs/en/mcp, "Scale with MCP tool
+search"; the kit's `docs/research/token-optimization.md`, 1.7). Most custom servers duplicate
+what a plain CLI already does more reliably.
 
-- Enable a server only for the work that needs it. Otherwise keep it off.
+- Enable a server only for the work that needs it, and turn it off afterwards anyway: a
+  server is a trust boundary, and changing servers mid-session breaks the prompt cache.
+  Overlay setup files point here instead of repeating this rule.
 - Prefer plain CLI tools over adding a server.
-- **A new MCP server needs {{OWNER_NAME}}'s approval, exactly like a new dependency.** It is
-  a permanent context cost, so it must earn its place.
+- **A new MCP server, connector, or plugin that bundles one needs {{OWNER_NAME}}'s approval,
+  exactly like a new dependency;** the reason is the trust boundary (a server runs code and
+  feeds the model text), not only cost (code.claude.com/docs/en/security, "MCP security").
+  Workers do not run with `--strict-mcp-config`, because Unity work needs the project's
+  server; the reviewer already runs with MCP off. That choice is the owner's.
 
 ## Evaluated and rejected — do not re-litigate
 
@@ -1312,17 +1463,92 @@ one names what would have to change before it is worth reopening.
 
 ## Documentation maintenance contract
 
-- `docs/PROJECT.md` changes only with {{OWNER_NAME}}'s approval for anything DECIDED; an
-  agent may add OPEN items freely (`AGENTS.md`, design authority). Capturing a question costs
-  nothing and losing one is expensive. The cost of a missed capture is a forgotten question;
-  the cost of a wrong promotion is every future session treating a musing as law.
-- `docs/ARCHITECTURE.md` is updated in the SAME task that adds a module or moves a boundary.
-  It is also the reason this project does not need a code-search or embedding tool: the
-  module table IS the navigation. If agents start failing to find things through it, the
-  first reading of that signal is architectural decay, not a missing tool.
-- These files are worth more than the code: code can be regenerated, context cannot.
+- PROJECT.md writing rules: `docs/PROJECT.md`, "How this file is written". {{OWNER_NAME}}
+  approves every DECIDED item. Capturing a question costs nothing and losing one is
+  expensive: the cost of a missed capture is a forgotten question; the cost of a wrong
+  promotion is every future session treating a musing as law.
+- Update `docs/ARCHITECTURE.md` in the same task only when the task adds or removes a module
+  or moves a boundary (the map is coarse on purpose, matklad's "ARCHITECTURE.md"). Prefer a
+  check to a promise: `scripts/check.sh` fails when a folder under `module_roots` is missing
+  from the module map. The agent finds code with grep and glob; the map orients, it does not
+  replace search. If agents keep failing to orient, ask first whether the file is too long
+  or stale.
+- These files hold what the code cannot tell you: why a decision was made, what was tried
+  and dropped, what is still open. Code can be re-read; this cannot. Keep only that kind of
+  content here (code.claude.com/docs/en/best-practices; Gloaguen et al.,
+  arxiv.org/abs/2602.11988; Böckeler on spec-driven development, martinfowler.com).
 - A process rule or decision should name its source: a vendor document, a research report, or
   a lesson this project paid for (a `[LESSON]` line, a `docs/GOTCHAS.md` entry). A rule
-  without one is the first a later session deletes. When nothing covers the point, research
-  it first; when the research settles nothing, {{OWNER_NAME}} decides. The kit works this way
-  itself (its `CONTRIBUTING.md` and `docs/research/`).
+  without one is the first a later session deletes (code.claude.com/docs/en/best-practices:
+  cut a line whose removal would cause no mistake). The source line lives in the rationale
+  page, not in `AGENTS.md`: "Where the constitution's rules come from" below holds them.
+  When nothing covers the point, research it first; when the research settles nothing,
+  {{OWNER_NAME}} decides. The kit works this way itself (its `CONTRIBUTING.md` and
+  `docs/research/`).
+
+## Where the constitution's rules come from
+
+`AGENTS.md` is read every session, so its rules carry no source lines; their sources live
+here, by rule. A rule with no source below is the owner's choice or a lesson named beside it.
+
+- **Reading order.** The constitution is loaded at session start, so opening it again adds a
+  second copy (code.claude.com/docs/en/memory). `docs/ARCHITECTURE.md` is read only when the
+  task crosses a module boundary: every always-read line is paid every session, and context
+  files that grow lower task success (Gloaguen et al., arxiv.org/abs/2602.11988; matklad,
+  "ARCHITECTURE.md"). A reviewer still reads it every time: it is on both bridges' one
+  reading list (`REVIEW_DOCS` in `scripts/claude_bridge.py`).
+- **Design authority** (DECIDED, OPEN, agents propose, phase scope, a code-versus-PROJECT
+  conflict): Anthropic, "Building effective agents" and "Measuring AI agent autonomy in
+  practice"; code.claude.com/docs/en/best-practices ("Let Claude interview you", plan mode);
+  Nygard, "Documenting Architecture Decisions"; GitHub Spec Kit, `spec-driven.md` (an open
+  question is marked, never guessed); Anthropic's prompting guide on overeagerness.
+- **Cross-module access through contracts:** OpenAI's harness team enforces architecture
+  with linters and structural tests (the kit's `docs/research/agent-kits-in-practice.md`,
+  2.2); code.claude.com/docs/en/best-practices.
+- **Third-party dependency approval:** models invent package names that attackers then
+  register (Spracklen et al., USENIX Security 2025, arxiv.org/abs/2406.10279). The STOP
+  for a new dependency or MCP server rests on the same source; a permission `ask` rule on a
+  manifest file would make it mechanical (code.claude.com/docs/en/permissions).
+- **One task, one module, its `Owns:` paths; no drive-by refactors:** Google Engineering
+  Practices, "Small CLs"; Anthropic's prompting guide, "Overeagerness"; agents widen a
+  refactor far past its task (Tian et al., "Refactoring Runaway", arxiv.org/abs/2605.22526).
+- **No push without the owner's word:** code.claude.com/docs/en/permission-modes and
+  /permissions (a push leaves the machine and cannot be recalled); the kit's
+  `docs/research/communication-style.md`, recommendation 9.
+- **Commit or stash before a destructive git command:** reported agent sessions destroyed
+  uncommitted work with `git reset --hard` and `git checkout -- .` (claudeissues.com, issue
+  34327); git keeps only committed or staged content (git-scm.com/docs/git-fsck). A recursive
+  delete proves ownership by a marker the tool wrote, as `CACHEDIR.TAG` does
+  (bford.info/cachedir), because an empty variable once turned `rm -rf "$STEAMROOT/"*` into a
+  wipe of a user's files (Steam for Linux, 2015).
+- **Never end running work; end the whole tree:** a stopped parent leaves its children
+  running (anthropics/claude-code#19045, #27959), and Claude Code's own team and worktree
+  docs close a teammate and clean a worktree as one step (code.claude.com/docs/en/agent-teams,
+  /worktrees).
+- **The gate is wired into git and never skipped:** git-scm.com/docs/githooks; agents were
+  seen skipping it with `--no-verify` despite deny rules (anthropics/claude-code#40117), so a
+  hook refuses the flag and CI runs the same gate (pre-commit.com).
+- **No AI attribution in git:** the owner's policy; the tool's `attribution` setting turns
+  the trailer off at its source (code.claude.com/docs/en/settings). Why the trace lives in
+  STATE.md: "The state, backlog and phase files".
+- **Search before writing a system:** code.claude.com/docs/en/best-practices; duplicated
+  code rose with AI assistants (GitClear's 2025 code-quality report).
+- **A changed public API updates its README:** Google Engineering Practices, "What to look
+  for in a code review" (documentation).
+- **Language & style:** one job per file (Google's review guide; size predicts defects
+  without a clean threshold, Yamashita et al., QRS 2016); no hidden global state (Hevery,
+  "Singletons are Pathological Liars", Google Testing Blog, 2008); short doc comments
+  (Google Python Style Guide, "Comments and Docstrings").
+- **Duties: default silence, never repeat:** repeated alerts are ignored (Ancker et al.,
+  BMC Medical Informatics and Decision Making 17:36, 2017); Anthropic's prompting guides for
+  Sonnet 5.5 ("Steer initiative and scope") and Opus 5 ("Response length and verbosity").
+- **A one-off decision writes its end condition:** agent memory fails when a temporary state
+  overwrites a lasting one (Zhao et al., "LifeFuse-Mem", arxiv.org/abs/2609.12436).
+- **MENTION ONCE items:** "Small CLs" (split by module); code.claude.com/docs/en/skills (a
+  repeated procedure becomes a skill; the third time is the rule of three);
+  code.claude.com/docs/en/costs (a saving needs a number). Decay findings: "Decay
+  early-warning system" above.
+- **Tone:** Anthropic, "Prompting Claude Opus 5"; the kit's
+  `docs/research/communication-style.md`, findings 1 to 3, recommendations 1 and 16.
+- **Task completion checklist:** the Scrum Guide's Definition of Done;
+  code.claude.com/docs/en/best-practices ("Give Claude a way to verify its work").

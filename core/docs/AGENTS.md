@@ -12,7 +12,7 @@ Binding for every agent that edits a file under `docs/`. The constitution is the
   to settle something in passing, record it as OPEN with a note that they appeared to
   decide it, and ask.
 - If the code and `docs/PROJECT.md` conflict: inform {{OWNER_NAME}} first; do not silently
-  change either.
+  change either. Report which side you think is stale and why; {{OWNER_NAME}} decides.
 
 ## STATE.md discipline
 
@@ -39,7 +39,8 @@ Binding for every agent that edits a file under `docs/`. The constitution is the
   written INTO STATE.md; it passes THROUGH it.
 - **TAG permanent findings as you write them:** prefix a line worth keeping with `[LESSON]`
   (process or architecture insight) or `[GOTCHA]` (environment or tooling trap). **A tagged
-  line may not be deleted until it has a permanent home.**
+  line may not be deleted until it has a permanent home.** `scripts/check.sh` prints a NOTE
+  when a commit deletes one from STATE.md and adds no line elsewhere; the rest is discipline.
 - Multi-item operations track their progress in their OWN file, `docs/<OPERATION>.md`, with
   checkboxes; workers write results straight into it, and STATE.md keeps one status line
   and a pointer.

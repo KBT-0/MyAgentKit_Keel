@@ -31,13 +31,18 @@ Name the model and effort from `docs/WORKFLOW.md`, "Model routing", alongside th
    `docs/BACKLOG.md` are always allowed. With the brief as `REVIEW_TASK_FILE`,
    `scripts/review.sh` refuses a diff that leaves them (`scripts/owns_check.py`). In cross
    mode every brief has it, and the two sides never own the same path.
-3. **Constraints:** restate the relevant `AGENTS.md` rules verbatim — the one-module rule,
-   the boundary that applies here, no untested core code, no drive-by refactors. Do not
-   write "follow AGENTS.md"; the target will not weigh a pointer the same as a quoted rule.
+3. **Constraints:** the rules THIS task can break, quoted verbatim (the one-module rule, the
+   boundary that applies here, no untested core code, no drive-by refactors), and only
+   those. A Claude Code sub-agent and a separate session already load `AGENTS.md`; do not
+   paste it whole, and do not rely on "follow AGENTS.md" for a rule the task is likely to
+   break: a rule that must reach the worker is restated in its prompt
+   (code.claude.com/docs/en/sub-agents), and a padded prompt buries it
+   (code.claude.com/docs/en/best-practices).
    A task with web access also quotes the web rule: no personal data in any request, and the
-   generic User-Agent to use (`docs/WORKFLOW.md`, "Web requests carry no personal data").
-   For an incremental-build planner, include inputs read by always-run steps in every stage's dependency set.
-   The driver script that holds the stage commands must invalidate every stage when it changes.
+   "Web contact" line of `docs/PROJECT.md` to use (`docs/WORKFLOW.md`, "Web requests carry no
+   personal data").
+   A task that writes an incremental-build planner quotes `docs/GOTCHAS.md`, "An incremental
+   build misses its always-run inputs".
 4. **Acceptance:** what the diff must and must NOT contain, and which gate follows (a risky
    area means `docs/REVIEW_GATE.md`, fresh session). Any other change gets one light review
    (`docs/REVIEW_GATE.md`, "Risk tiers"); {{OWNER_NAME}}'s check or the manual check named here
@@ -78,11 +83,19 @@ Name the model and effort from `docs/WORKFLOW.md`, "Model routing", alongside th
    A brief with no Proof line means the gate alone (`docs/WORKFLOW.md`, "Worker cost").
    The implementer's report has a word cap: 350 words unless the brief sets another. Its two sections
    "Not run / not verified" and "Noticed, not fixed" are always present, outside the cap.
-7. **If ambiguous: STOP and ask.** Do not assume, do not invent scope, do not widen the task
-   to make an unclear part fit. An unanswered question comes back as a question, not as a
-   guess buried in the diff. A spawned session has nobody to ask in its pane: it finishes
-   independent work and stops its running jobs before publishing the question. It writes
-   `Kind: blocked` and QUESTIONS into its result file, then publishes the question to the
+7. **If the ambiguity changes the work, STOP and ask.** Readings that would lead to
+   materially different work, or an irreversible or outward action, stop the task and come
+   back as a question. A routine, reversible choice is made on the most conservative reading
+   and written in the report as an assumption (`docs/COMMUNICATION.md`, "Questions and
+   approvals": with {{OWNER_NAME}} present, ask; away, nothing waits on a question). Never
+   widen the task to make an unclear part fit; an unanswered question comes back as a
+   question, not as a guess buried in the diff. Sources: Anthropic, "Prompting Claude Opus 5"
+   (check in only when readings lead to materially different work); Edwards and Schuster,
+   "Ask or Assume?", arxiv.org/abs/2603.26233 (asking by the ambiguity's impact beats always
+   or never); resuming the same session with the answer keeps its context
+   (code.claude.com/docs/en/sub-agents, "Resuming subagents"). A spawned session has nobody
+   to ask in its pane: it finishes independent work and stops its running jobs before
+   publishing the question. It writes `Kind: blocked` and QUESTIONS into its result file, then publishes the question to the
    known sidecar and exits its separate session. A peer ends its turn and accepts SendMessage.
    The answer comes into that same session, never a fresh one (`docs/WORKFLOW.md`, "Worker cost").
 
@@ -182,8 +195,8 @@ The Claude Code overlay's `scripts/watch_workers.sh --result NAME=PATH` reads th
 the file is committed on a clean tree, and reports the open questions with their text.
 
 A handoff written at the end of a working day also carries the cost figures that
-`docs/WORKFLOW.md`, "Worker cost", rule 8 names, next to the number of tasks done, so the
-next lead routes from a number.
+`docs/WORKFLOW.md`, "Worker cost", rule 8 names (`/usage` and `scripts/agent_cost.py
+--latest`), next to the number of tasks done, so the next lead routes from a number.
 
 ## Sizing the task before you write the brief
 
@@ -198,13 +211,25 @@ The loop is **specify → generate → validate.** Interfaces, data shapes and c
 specified BEFORE generation, and the result is validated by a gate, never by the
 implementer's self-report.
 
+Sources for the brief's shape: an exact scope with its non-goals, sources to read and a check
+that proves the result (code.claude.com/docs/en/best-practices, "Provide specific context",
+"Give Claude a way to verify its work"; Anthropic, "How we built our multi-agent research
+system": a vague delegation duplicates or misses work); the Proof line's cheapest check first,
+the slow stage once (Fowler, "Continuous Integration", staged builds); routing judgement work
+to the strongest model and checkable volume to a cheaper one (Anthropic, "Optimizing for cost
+and intelligence"); a fresh session reviews better because it is not biased toward code it
+just wrote (best-practices, Writer/Reviewer). The tool+model trace's reason is in
+`docs/WORKFLOW.md`, "The state, backlog and phase files"; the ending lines follow the same
+file's state rules (Anthropic, "Effective harnesses for long-running agents").
+
 ## Day-to-day task prompt
 
 The full brief above is for handing work across tools. For an ordinary task inside one
 session, the same skeleton compressed:
 
 ```
-Read: AGENTS.md, docs/PHASES.md, docs/STATE.md, docs/ARCHITECTURE.md, <target folder>/AGENTS.md
+Read: AGENTS.md, docs/PHASES.md, docs/STATE.md, <target folder>/AGENTS.md
+      (docs/ARCHITECTURE.md only when the task crosses a module boundary)
 
 TASK:   <one sentence — one module>
 SCOPE:  <the files you may touch>
@@ -217,7 +242,8 @@ REVIEW: <inner: you review your diff with fresh sub-agents before reporting, as 
         start sub-agents; say so, and the lead reviews your branch>
 
 If this task touches {{RISKY_AREAS}}, or any gate/CI/check script: before commit, run the
-review gate per docs/REVIEW_RUNNING.md in a FRESH session, preferably a different tool.
+review gate per docs/REVIEW_RUNNING.md in a FRESH session that the working mode names
+(docs/REVIEW_GATE.md, "Invariant").
 Any other change gets one light review (docs/REVIEW_GATE.md, "Risk tiers").
 
 When finishing: update docs/STATE.md with a tool+model trace (a follow-up task goes to
