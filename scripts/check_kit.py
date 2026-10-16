@@ -30,7 +30,7 @@ import tempfile
 import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import contextmanager
+from contextlib import contextmanager, redirect_stdout
 from threading import Lock
 
 # Native Windows reads text in the ANSI code page, and the kit's files are UTF-8: the kit check
@@ -92,7 +92,7 @@ REQUIRED_SUITES = {
               'test_sync_kit': 30, 'test_doctor': 5, 'test_git_hooks': 31, 'test_stop_hook': 9, 'test_context_hook': 12, 'test_communication_hooks': 26, 'test_overlay_permissions': 8, 'test_guard_destructive_git': 26, 'test_guard_boundaries': 1, 'test_guard_private_email': 5,
               'test_spawn_worker': 54, 'test_spawn_codex': 54, 'test_codex_worker': 54, 'test_working_mode': 49, 'test_worker_visibility': 68, 'test_doc_pointers': 10,
               'test_usage_summary': 25,
-              'test_kit_output': 1, 'test_kit_runner': 25, 'test_clean_worktrees': 137, 'test_clean_worktrees_windows': 11, 'test_close_worker_windows': 22,
+              'test_kit_output': 1, 'test_kit_runner': 31, 'test_clean_worktrees': 138, 'test_clean_worktrees_windows': 12, 'test_close_worker_windows': 22,
               'test_review_windows': 22, 'test_claude_sandbox': 25, 'test_worker_paths_windows': 10,
               'test_close_worker': 28, 'test_python_fallback': 2, 'test_selftest_status': 9},
 }
@@ -104,10 +104,11 @@ NOT_ON_WINDOWS = {
     'tests': {'test_check_gate': 'the flock gate lock; tests/test_check_gate_windows proves the Windows lock',
               'test_clean_worktrees': 'POSIX process liveness; tests/test_clean_worktrees_windows proves Windows'},
 } if os.name == 'nt' else {}
-# test_bootstrap passes on native Windows but starts thousands of processes there: about twelve
-# minutes. A local check leaves it to CI, whose Windows job runs it (CI is set there).
+# test_bootstrap passes on native Windows but starts thousands of processes there: measured
+# 2026-10-16 on an i7-12700H (20 logical CPUs), Python 3.13, Git 2.47.1, alone: 36 tests in 1580 s.
+# A local check leaves it to CI, whose Windows job runs it (CI is set there).
 if NOT_ON_WINDOWS and not os.environ.get('CI'):
-    NOT_ON_WINDOWS['tests']['test_bootstrap'] = "about 12 minutes on Windows; CI's Windows job runs it too"
+    NOT_ON_WINDOWS['tests']['test_bootstrap'] = "about 26 minutes on Windows; CI's Windows job runs it too"
 
 
 # --timing: each phase's and each suite's seconds, and a suite's ten slowest tests.
@@ -140,8 +141,8 @@ def discover(folder, leave_out=()):
     """The suite under `folder` and the number of tests in each of its modules; the modules
     named in `leave_out` are not imported. Nested test modules are refused before discovery."""
     folder = Path(folder)
-    # Discovery does not follow linked packages. Refuse them, rather than pass without
-    # running their tests; linked directories are outside the supported suite layout.
+    # Linked packages are not a layout the kit supports (whether unittest discovery follows
+    # them is not documented): refuse them, rather than pass without running their tests.
     def unreadable(error):
         raise error
 
@@ -186,7 +187,12 @@ def _cases(suite):
 
 
 def run_tests(root, directory, required):
-    """Require executed suite minimums; only declared platform exclusions may skip."""
+    """Require executed suite minimums; only declared platform exclusions may skip.
+
+    A skipped test never counts toward a minimum: a run that skipped or collected nothing is
+    no pass (pytest exits 5 when it collects nothing, docs.pytest.org/en/stable/reference/
+    exit-codes.html; unittest keeps skips apart from success, TestResult.skipped). A declared
+    platform skip says so in its NOT RUN line (issue #56)."""
     folder = root / directory
     for name in required:
         if not (folder / (name + '.py')).is_file():
@@ -236,7 +242,9 @@ def limit(seconds):
 
 def degree(cpus, units):
     """How many units run at once. On a 3-CPU runner three at once took 300 s each and timed out;
-    one after another is what passed there."""
+    one after another is what passed there. GitHub's standard runners: macOS 3 vCPU, Linux and
+    Windows 2 (private repositories) or 4 (public) (docs.github.com/en/actions/reference/runners/
+    github-hosted-runners, read 2026-10-15). The 4 and 8 thresholds are the kit's own choice."""
     return 1 if cpus < 4 else min(2, units) if cpus < 8 else units
 
 
@@ -257,7 +265,9 @@ def utf8_locale(have=None):
     tests use this one selection too. C.UTF-8 first when present, else the first in order.
     """
     if have is None:
-        have = run(["locale", "-a"]).split()
+        # Read as UTF-8, replacing what is not: one name holding a Latin-1 byte raised in a strict
+        # decode instead of letting the other names be chosen from.
+        have = run(["locale", "-a"], encoding="utf-8", errors="replace").split()
     found = sorted((not name.startswith("C."), name) for name in have
                    if re.fullmatch(r"[^.]+\.utf-?8(@.*)?", name, re.IGNORECASE))
     if not found:
@@ -266,8 +276,13 @@ def utf8_locale(have=None):
     return found[0][1]
 
 
-# The locale sensor (proposal D-1): suites that read and write text, and run in seconds, again
-# where the default encoding is not UTF-8. A slow suite stays out; its text paths are here.
+# The locale sensor (proposal D-1): suites that read or write files, parse text or compare
+# identifiers, and run in seconds, again where the default encoding is not UTF-8 (the kit's own
+# record: 91 locale-class incidents, RESEARCH_LOG 2026-10-13). A slow suite stays out; its text
+# paths are here. The class is old: Turkish dotless i broke case folds in Java and .NET
+# (bugs.openjdk.org/browse/JDK-4183880). PEP 597 makes an encoding-less call a warning, and
+# PEP 686 turns UTF-8 mode on by default from Python 3.15: when the kit's floor reaches 3.15,
+# review the Windows ANSI branch.
 LOCALE_SUITES = ('test_working_mode', 'test_usage_summary', 'test_doc_pointers', 'test_kit_output',
                  'test_python_fallback', 'test_overlay_permissions', 'test_context_hook',
                  'test_communication_hooks', 'test_guard_destructive_git', 'test_guard_private_email')
@@ -343,11 +358,36 @@ def path_without(path, drop, links):
 
 
 def check_release(root):
-    """The README's bold release line must name the newest version in the changelog."""
+    """The README's bold release line and the plugin manifest's version must name the newest
+    version in the changelog (newest first: keepachangelog.com/en/2.0.0/).
+
+    A remote marketplace keeps every user on the cached plugin until its manifest's version
+    string changes (code.claude.com/docs/en/plugins-reference, `version`; plugins/loading,
+    "Versions and updates"), and the kit's marketplace is the GitHub repository: the
+    manifest carries the kit's MAJOR.MINOR as MAJOR.MINOR.PATCH (KARARLAR B11 inv3/(h),
+    lead decision 4). The Codex manifest's generated version is not compared (decisions.md 3).
+    """
     readme = re.search(r'^\*\*(v\d+\.\d+)\.\*\*', (root / 'README.md').read_text(encoding='utf-8'), re.M)
     changelog = re.search(r'^## (v\d+\.\d+)(?=\s|$)', (root / 'CHANGELOG.md').read_text(encoding='utf-8'), re.M)
     if not readme or not changelog or readme.group(1) != changelog.group(1):
         raise RuntimeError("README's bold version must match CHANGELOG's newest versioned heading")
+    manifest = root / 'plugin/.claude-plugin/plugin.json'
+    version = str(json.loads(manifest.read_text(encoding='utf-8')).get('version', ''))
+    if not re.fullmatch(r'(\d+\.\d+)\.\d+', version) or 'v' + version.rsplit('.', 1)[0] != changelog.group(1):
+        raise RuntimeError("plugin/.claude-plugin/plugin.json's version %r must be MAJOR.MINOR.PATCH with "
+                           "CHANGELOG's newest version %s as MAJOR.MINOR" % (version, changelog.group(1)))
+
+
+def validate_plugin(root):
+    """The vendor's own validator over the Claude plugin, warnings as errors
+    (code.claude.com/docs/en/plugins-reference, "Validate the manifest"; KARARLAR D08 inv2#178).
+    Without the claude CLI on PATH (CI) it is NOT RUN, never a silent pass."""
+    claude = shutil.which('claude')
+    if not claude:
+        print('NOT RUN: claude plugin validate plugin --strict (no claude CLI on PATH)')
+        return
+    run([claude, 'plugin', 'validate', 'plugin', '--strict'], cwd=root, encoding='utf-8', errors='replace')
+    passed('claude plugin validate plugin --strict')
 
 
 # A refusal a diff adds (proposal D-5): a raise, an exit with a nonzero status, die, a FAIL line.
@@ -359,7 +399,10 @@ def untested_guards(root):
     under tests/ changes: which test fails if it is removed? Mutation-lite; staged and unstaged
     changes count, an untracked file does not (git diff does not list it; once added or
     committed it is noted on the next run). The owner's diff.noprefix, diff.mnemonicPrefix and core.quotePath do not
-    change the paths read here."""
+    change the paths read here. Informative, on the changed lines only, as Google's mutation
+    testing shows surviving mutants in review without blocking (Petrović et al., Practical
+    Mutation Testing at Scale). The regex is a proxy; a real mutation run on the changed lines
+    is the upgrade path."""
     git = ['git', '-C', str(root), '-c', 'core.quotePath=false']
     found = subprocess.run(git + ['merge-base', 'HEAD', '@{upstream}'], capture_output=True, text=True,
                            encoding='utf-8', errors='replace')
@@ -375,13 +418,16 @@ def untested_guards(root):
     diff = run(git + ['diff', '-U0', '--no-color', '--no-ext-diff', '--no-textconv', '-M',
                       '--src-prefix=a/', '--dst-prefix=b/', base, '--', '.', ':(exclude)*.md'],
                encoding='utf-8', errors='replace')
-    notes, path, number = [], None, 0
+    notes, path, number, hunk = [], None, 0, False
     for line in diff.splitlines():
-        if line.startswith('+++ '):
+        if line.startswith('diff --git '):
+            path, hunk = None, False
+        elif line.startswith('+++ ') and not hunk:
+            # A header only before the file's first hunk: an added line `++ x` shows as `+++ x`.
             # A name with a space ends in a tab.
             path = line[6:].rstrip('\t') if line.startswith('+++ b/') else None
         elif line.startswith('@@'):
-            number = int(re.search(r'\+(\d+)', line).group(1))
+            number, hunk = int(re.search(r'\+(\d+)', line).group(1)), True
         elif line.startswith('+') and path:
             if GUARD.search(line):
                 notes.append('NOTE [killing test]: %s:%d adds a refusal and no file under tests/ changed '
@@ -427,6 +473,9 @@ def check_syntax(root):
 # The shell sensor (proposal D-2). An `echo` argument that expands, or that reaches echo with a
 # backslash: dash, Ubuntu's sh, reads the backslash as an escape, so a Windows path printed
 # C:<newline>ew. mktemp -p/--suffix/--tmpdir are GNU-only and -t means another thing on macOS.
+# Sources: POSIX echo (an operand with a backslash is implementation-defined; printf is advised:
+# pubs.opengroup.org/onlinepubs/9699919799/utilities/echo.html), ShellCheck SC3037; the GNU/BSD
+# mktemp difference (github.com/nushell/nushell/issues/10845).
 ECHO_COMMAND = re.compile(r'(?:^|(?<=[;&|({`\s!]))echo(?=[\s;&|)`]|$)')
 MKTEMP = re.compile(r'\bmktemp\b[^;|&\n]*\s(?:-[a-zA-Z]*[pt]|--suffix|--tmpdir)')
 # A comment line, except the `# | ` example code boundary_selftests.sh ships and acceptance runs.
@@ -666,7 +715,11 @@ def case_in_substitution(text):
 
 
 def acceptance(self_test):
-    """Bootstrap a synthetic project, prove its gates pass, and with self_test, prove them red."""
+    """Bootstrap a synthetic project, prove its gates pass, and with self_test, prove them red.
+
+    Each gate comes with cases that must fail and cases that must pass, as rule checkers test
+    their rules (Semgrep's ruleid/ok, semgrep.dev/docs/writing-rules/testing-rules;
+    docs/gates-must-be-proven-red.md)."""
     with tempfile.TemporaryDirectory(prefix="myagentkit-acceptance-") as tmp:
         project = Path(tmp)
         run(["sh", str(ROOT / "bootstrap.sh"), str(project)])
@@ -1169,6 +1222,8 @@ def unit(name, self_test, timing_file=None):
             run_tests(ROOT, name, REQUIRED_SUITES[name])
         # The completion line run_units requires: a unit that exited 0 before this point (a
         # test module calling os._exit(0) while it was discovered) did not finish its checks.
+        # An exit code alone is no evidence of a finished run (pytest's exit code 5; Claude Code
+        # best practices, "Give Claude a way to verify its work").
         print("UNIT DONE: " + name, flush=True)
         return 0
     except FAILURES as error:
@@ -1181,9 +1236,10 @@ def unit(name, self_test, timing_file=None):
             Path(timing_file).write_text("".join(row + "\n" for row in rows), encoding='utf-8')
 
 
-def run_units(units, timing=False, parallel=None):
+def run_units(units, timing=False, parallel=None, said=()):
     """Run the (name, command) units, `parallel` at once (default all); print each unit's whole
-    output in the given order. Each unit's timeouts scale by `parallel` (see limit()).
+    output in the given order. Each unit's timeouts scale by `parallel` (see limit()). `said`:
+    the NOT RUN lines the checks before the units printed, repeated under the summary first.
 
     The units share no state: every suite and the acceptance phases work in temporary
     directories of their own, and each synthetic project has its own .git and so its own
@@ -1231,7 +1287,7 @@ def run_units(units, timing=False, parallel=None):
         files = [os.path.join(times, str(number)) if timing else None for number in range(len(units))]
         futures = [pool.submit(one, name, command, timing_file)
                    for (name, command), timing_file in zip(units, files)]
-        summary, failed, not_run = [], [], []
+        summary, failed, not_run = [], [], list(said)
         for (name, _), future, timing_file in zip(units, futures, files):
             code, output, seconds = future.result()
             if not code and "UNIT DONE: " + name not in output.splitlines():
@@ -1275,16 +1331,26 @@ def main():
     cpus = os.cpu_count() or 1
     parallel = degree(cpus, len(units))
     print("KIT CHECK: %d of %d units at once (%d CPUs)" % (parallel, len(units), cpus))
-    check_syntax(ROOT)
-    check_release(ROOT)
-    untested_guards(ROOT)
+    # Their NOT RUN lines (shellcheck, the killing-test note) are repeated under the summary too.
+    early = io.StringIO()
+    try:
+        with redirect_stdout(early):
+            check_syntax(ROOT)
+            check_release(ROOT)
+            untested_guards(ROOT)
+            validate_plugin(ROOT)
+    finally:
+        sys.stdout.write(early.getvalue())
+    said = [line for line in early.getvalue().splitlines() if line.startswith("NOT RUN:")]
     manifest = json.loads((ROOT / "plugins/myagentkit/.codex-plugin/plugin.json").read_text(encoding='utf-8'))
+    # The name and skills path Codex's plugin scaffold writes; Codex documents no validator
+    # (developers.openai.com/codex/plugins/build/, read 2026-10-15).
     if manifest["name"] != "myagentkit" or manifest["skills"] != "./skills/":
-        raise RuntimeError("plugin manifest does not expose the expected package")
+        raise RuntimeError("Codex plugin manifest does not expose the expected package")
     print(run([sys.executable, "scripts/package_codex_plugin.py", "--check"]).strip())
     # -u: a unit's error, on stderr, lands after what it printed before failing.
     command = [sys.executable, "-B", "-u", str(Path(__file__).resolve())] + ["--self-test"] * args.self_test
-    if not run_units([(name, command + ["--unit", name]) for name in units], args.timing, parallel):
+    if not run_units([(name, command + ["--unit", name]) for name in units], args.timing, parallel, said=said):
         return 1
     print("TIME: %.1f s in all" % (time.monotonic() - started))
     if _PASSED_FILE:

@@ -71,7 +71,19 @@ Add the finding to `RESEARCH_LOG.md` with the failure it prevents, and a line to
 `CHANGELOG.md` with what changed. A rule that arrives without its reason is a rule the next
 reader deletes, and they will be right to.
 
-For a release, match README's bold version to the newest versioned heading in `CHANGELOG.md`.
+An older `CHANGELOG.md` entry that a later release made wrong gets a one-line pointer to the
+entry that replaced it, and the old text stays: a release's record is history, and a reader
+of the old entry needs to find what changed it (an architecture decision record is linked to
+the one that supersedes it, never edited: martinfowler.com/bliki/ArchitectureDecisionRecord.html;
+KARARLAR B11 inv3/(l)). An entry made wrong within the same, unreleased version is deleted
+instead (owner decision, v0.11).
+
+For a release, match README's bold version and the `version` in
+`plugin/.claude-plugin/plugin.json` to the newest versioned heading in `CHANGELOG.md`: v0.11 is
+`0.11.0`, and a patch release raises the third number. The kit check compares all three. The
+plugin is installed from this repository's marketplace, and an installed plugin is not updated
+until its version string changes (code.claude.com/docs/en/plugins-reference, `version`;
+code.claude.com/docs/en/plugins/loading, "Versions and updates").
 
 **Run the kit's own acceptance:**
 

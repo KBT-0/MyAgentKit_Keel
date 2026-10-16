@@ -478,6 +478,9 @@ finally:
   # git_view <scratch folder>: the caller names the folder its scratch files go in. An exported
   # `work` once chose it, and the files of that name in an unrelated folder were overwritten
   # and deleted (round-3 review, 2026-10-15): no inherited variable decides a scratch path.
+  # Sources: KARARLAR B02 inv2#163 / coverage D06 inv2#163; https://github.com/infotroph/tree-is-clean
+  # and https://lefthook.dev/configuration/fail_on_changes/; byte/index comparison also preserves
+  # the kit's review fingerprint (RESEARCH_LOG 2026-10-12).
   git_view() {
     git rev-parse --verify -q HEAD || :; git ls-files -s; git status --porcelain --untracked-files=all
     # One ls-files and ONE hash-object for the whole tree; Git status covers deletions.
@@ -714,6 +717,7 @@ finally:
   mkdir "$site" && printf '%s
 ' 'import os' 'open(os.path.join(os.path.dirname(__file__), "imported"), "w").close()'     'os.name = "posix"' > "$site/sitecustomize.py"
   case "$(uname -s 2>/dev/null)" in MSYS*|MINGW*|CYGWIN*) site=$(cygpath -m "$site") ;; esac
+  # shellcheck disable=SC2086 # kit_python may be "py -3": split on purpose (line 85)
   if env PYTHONPATH="$site" $kit_python -I -c 'import os, sys; sys.exit(0 if os.name == "nt" else 1)' 2>/dev/null; then
     cat > "$work/lockcase.py" <<'LOCKCASE'
 import ctypes, os, re, struct, subprocess, sys, time
@@ -1012,6 +1016,7 @@ LOCKCASE
       # an 8.3 short name (C:/Users/RUNNER~1 on a CI runner) left GATE_LOCK_HELD short while the
       # copy's own path was long, and every claim case waited instead of being refused.
       case_lock=$(CDPATH= cd -- "$case_dir" && cygpath -m "$(pwd -P)/.git/check.lock")
+      # shellcheck disable=SC2086 # kit_python may be "py -3": split on purpose (line 85)
       out=$(env PYTHONPATH="$site" $kit_python -I "$work/lockcase.py" "$lock_case" "$case_lock" \
               "$(cygpath -m "$case_dir/scripts/check.sh")" 2>&1); status=$?
       if [ "$status" -eq "$code" ] && printf '%s\n' "$out" | grep -q "$want" &&
@@ -1165,6 +1170,21 @@ LOCKCASE
       fi
       ( fixture_env; git -C "$done_repo" rm -q --cached "docs/$f" ) && rm -f "$done_repo/docs/$f"
     done
+  fi
+
+  # --- ShellCheck -------------------------------------------------------------------
+  # The step must be seen red: an unquoted expansion in a script it is given fails the gate.
+  if command -v shellcheck >/dev/null 2>&1; then
+    printf '#!/bin/sh\nx="a b"\necho $x\n' > "$work/unquoted.sh"
+    out=$(GATE_SELFTEST_SHELL_FILES="$work/unquoted.sh" sh "$0" 2>&1)
+    if printf '%s\n' "$out" | grep -q '^FAIL \[shellcheck\]' && printf '%s\n' "$out" | grep -q 'SC2086'; then
+      echo "  ok   — an unquoted expansion in a shell script fails the gate (ShellCheck SC2086)"
+    else
+      echo "  FAIL — an unquoted expansion in a shell script did not fail the gate's ShellCheck step."
+      st_fail=1
+    fi
+  else
+    echo "  NOTE — shellcheck is not installed: the ShellCheck step was not observed red here."
   fi
 
   # --- build failure output -----------------------------------------------------
@@ -1520,6 +1540,7 @@ history_repo="${GATE_SELFTEST_HISTORY:-.}"
 # what these helpers print, and an escape code before "-" hid a deleted line (b7 review, round 1).
 nocolor="-c color.ui=never -c color.diff=never"
 hgit() {
+  # shellcheck disable=SC2086 # nocolor holds two -c options: split on purpose
   if [ -n "${GATE_SELFTEST_HISTORY:-}" ]; then ( fixture_env; git $nocolor -C "$history_repo" "$@" )
   else git $nocolor -C "$history_repo" "$@"; fi
 }
@@ -1567,6 +1588,7 @@ fi
 if [ -n "$for_commit" ]; then
   # GATE_SELFTEST_COMMIT_REPO: the self-test's throwaway repository, read with no inherited routing.
   sgit() {
+    # shellcheck disable=SC2086 # nocolor holds two -c options: split on purpose
     if [ -n "${GATE_SELFTEST_COMMIT_REPO:-}" ]; then ( fixture_env; git $nocolor -C "$GATE_SELFTEST_COMMIT_REPO" "$@" )
     else git $nocolor "$@"; fi
   }
@@ -1708,6 +1730,38 @@ else
   done
   # The loop above runs in a pipeline's subshell: a file carries its verdict out.
   [ ! -e "$work/module-unnamed" ] || fail=1
+fi
+
+# ---------------------------------------------------------------------------
+# 2d) ShellCheck
+# ---------------------------------------------------------------------------
+# Two classes a static rule sees left the review's attack list for this step
+# (docs/REVIEW_GATE.md): SC2028, echo with a backslash, and SC2086, an unquoted expansion.
+# ShellCheck's errors fail too; its other warnings stay a reviewer's. A deliberate word split
+# carries `# shellcheck disable=SC2086` and its reason on the line above. Without shellcheck the
+# step is NOT RUN, as the kit's own check is (KARARLAR D04 inv2#26; shellcheck.net/wiki/SC2086).
+shell_files="${GATE_SELFTEST_SHELL_FILES:-}"
+if ! command -v shellcheck >/dev/null 2>&1; then
+  echo "NOT RUN [shellcheck]: shellcheck is not installed; SC2028, SC2086 and its errors are left to review."
+else
+  [ -n "$shell_files" ] || shell_files=$(tr '\0' '\n' < "$filelist" | grep -E '\.sh$|^\.githooks/' || :)
+  sc_status=0
+  if [ -n "$shell_files" ]; then
+    # Newline-separated names are safe: the gate refuses names holding newlines (#41).
+    ( IFS='
+'; set -f; set --
+      for f in $shell_files; do [ -f "$f" ] && set -- "$@" "$f"; done
+      [ "$#" -eq 0 ] || shellcheck --norc -e SC2148 -f gcc -- "$@" ) > "$work/shellcheck" 2>&1 || sc_status=$?
+  fi
+  if [ "$sc_status" -gt 1 ]; then
+    printf '%s\n' "FAIL [shellcheck]: shellcheck could not check the shell scripts (exit $sc_status):"
+    sed 's/^/  /' "$work/shellcheck"
+    fail=1
+  elif grep -E ': error:|\[SC(2028|2086)\]$' "$work/shellcheck" > "$work/shellcheck-refused" 2>/dev/null; then
+    echo "FAIL [shellcheck]: an error, an echo with a backslash (SC2028) or an unquoted expansion (SC2086):"
+    sed 's/^/  /' "$work/shellcheck-refused"
+    fail=1
+  fi
 fi
 
 # ---------------------------------------------------------------------------

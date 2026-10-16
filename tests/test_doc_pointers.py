@@ -177,6 +177,15 @@ class SectionPointerTests(unittest.TestCase):
         for path in [ROOT / 'core/AGENTS.md', *sorted((ROOT / 'core/docs').glob('*.md'))]:
             self.assertNotIn('closing review', path.read_text(encoding='utf-8').lower(), path)
 
+    def test_kit_feedback_preapproves_only_read_only_commands(self):
+        # KARARLAR D07 inv3#177: a pre-approved tool runs without a prompt, so the send
+        # commands (gh issue/pr create, gh repo fork, git push) must meet the permission prompt.
+        command = (ROOT / 'plugin/commands/kit-feedback.md').read_text(encoding='utf-8')
+        tools = re.search(r'(?m)^allowed-tools: (.*)$', command)[1].split(', ')
+        self.assertEqual([t for t in tools if t.startswith('Bash(')],
+                         ['Bash(gh auth status)', 'Bash(git status *)', 'Bash(git diff *)'])
+        self.assertIn('the permission prompt is the second gate', command)
+
     def test_the_mode_command_and_skill_know_every_mode_the_workflow_defines(self):
         # The kit ships the working modes; {{MODEL_ROUTING}} left each project to write its own.
         workflow = (ROOT / 'core/docs/WORKFLOW.md').read_text(encoding='utf-8')

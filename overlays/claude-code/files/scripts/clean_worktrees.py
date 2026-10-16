@@ -115,6 +115,7 @@ import signal
 import stat
 import subprocess
 import sys
+import tempfile
 import time
 import unicodedata
 
@@ -484,6 +485,12 @@ def status(path):
     return untracked, ignored, changes
 
 
+def regular(info, mode):
+    """Whether INFO (an lstat, or None) is a regular file with the executable bit MODE records."""
+    return (info is not None and stat.S_ISREG(info.st_mode)
+            and (NO_EXEC_BIT or bool(info.st_mode & stat.S_IXUSR) == (mode == b'100755')))
+
+
 def same_bytes(real, rel, mode, size, stream):
     """Whether the worktree entry REL is exactly the blob of SIZE bytes now on STREAM, which
     this reads to its end either way: a regular file with those raw bytes and the executable
@@ -493,8 +500,7 @@ def same_bytes(real, rel, mode, size, stream):
     if mode == b'120000':
         blob = stream.read(size)
         return info is not None and stat.S_ISLNK(info.st_mode) and os.readlink(path) == blob
-    same = (info is not None and stat.S_ISREG(info.st_mode)
-            and (NO_EXEC_BIT or bool(info.st_mode & stat.S_IXUSR) == (mode == b'100755')))
+    same = regular(info, mode)
     handle = open(path, 'rb') if same else None
     try:
         while size:
@@ -510,8 +516,16 @@ def same_bytes(real, rel, mode, size, stream):
 
 
 def differing(real, blobs):
-    """The tracked paths in BLOBS [(mode, blob id, path)] whose worktree entry is not exactly
-    their blob, read through one `git cat-file --batch`."""
+    """The tracked paths in BLOBS [(mode, blob id, path)] whose worktree entry is neither exactly
+    their blob, read through one `git cat-file --batch`, nor exactly what a checkout of it writes.
+
+    The raw blob alone was the reference once: under Git for Windows' default core.autocrlf=true
+    a checkout writes CRLF, and every finished worktree read as edited and was kept (16 stale
+    ones, 2026-10-16). A file that differs from its blob is written again by one
+    `git checkout-index` into a temporary folder, with the path's line-ending conversion, ident
+    and smudge filter as a checkout applies them, and compared with that. An edit a clean filter
+    or the stat cache hides still differs from both. `cat-file --batch --filters` is not used:
+    git 2.47 prints the unfiltered size in its header."""
     out = []
     with subprocess.Popen(['git', '--no-optional-locks', 'cat-file', '--batch'], cwd=real, env=ENV,
                           stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL) as batch:
@@ -527,7 +541,21 @@ def differing(real, blobs):
                 out.append(rel)
             batch.stdout.read(1)  # the newline after the content
         batch.stdin.close()
-    return out
+    modes = {rel: mode for mode, _, rel in blobs}
+    retry = [rel for rel in out if modes[rel] != b'120000' and regular(entry(real, rel), modes[rel])]
+    if not retry:
+        return out
+    with tempfile.TemporaryDirectory(prefix='kit-clean-checkout-') as tmp:
+        git(real, 'checkout-index', '-f', '-z', '--stdin', '--prefix=%s/' % tmp.replace(os.sep, '/'),
+            stdin=b'\0'.join(retry))
+        written = set()
+        for rel in retry:
+            try:
+                if filecmp.cmp(os.path.join(real, rel), os.path.join(os.fsencode(tmp), rel), shallow=False):
+                    written.add(rel)
+            except OSError:
+                pass  # not written or not readable: kept
+    return [rel for rel in out if rel not in written]
 
 
 # How Linux lsof names a cwd it cannot read; any other name is a path, whatever it ends with.

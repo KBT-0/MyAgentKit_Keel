@@ -37,6 +37,8 @@ def sanitize(result):
     return safe
 
 
+# Five seconds and 1,000,000 bytes are the owner's choice of telemetry safeguards,
+# not vendor limits (KARARLAR B03 inv2#62).
 def snapshot(cli: str, repo: Path, timeout: float = 5) -> dict:
     """Optional telemetry may fail; it must not block or authorize model work."""
     observed = datetime.now(timezone.utc).isoformat()

@@ -111,6 +111,8 @@ check sees.
   configuration chose, without proof the tool owns it (`AGENTS.md`, task discipline); trust
   in git's stat cache (`core.checkStat`, `core.autocrlf`, filters).
 - Reflog message text; case-sensitive scans where git is not; byte work outside `LC_ALL=C`.
-- Symlinks, hard links, FIFOs, `PATH_MAX`; Apple `mktemp`, dash as `sh`, `echo` with a
-  backslash, unquoted interpolation, a `.exe` under WSL.
+- Symlinks, hard links, FIFOs, `PATH_MAX`; Apple `mktemp`, dash as `sh`, a `.exe` under WSL.
+  (`echo` with a backslash and an unquoted expansion left this list: `scripts/check.sh` runs
+  ShellCheck, SC2028 and SC2086; NOT RUN where it is not installed, and there a reviewer still
+  looks for them.)
 - A hollow test; a guard with no killing test; a mechanism added where removing an operation would do.

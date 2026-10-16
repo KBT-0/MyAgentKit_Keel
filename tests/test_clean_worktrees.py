@@ -1909,16 +1909,33 @@ class CleanWorktreesTests(unittest.TestCase):
         self.git('add', 'notes.txt', cwd=path)
         self.assertRemoved(path, self.run_script('--apply'))
 
-    def test_an_ident_expansion_is_compared_by_its_bytes(self):
-        # `ident` is not trusted either: the checkout's $Id: <blob> $ is not the blob's $Id$.
+    def test_an_ident_expansion_is_compared_with_what_a_checkout_writes(self):
+        # The checkout's $Id: <blob> $ is not the blob's $Id$, but a checkout writes it: no
+        # work. An edit the stat cache hides beside it still is.
         (self.main / '.gitattributes').write_text('id.txt ident\n')
         (self.main / 'id.txt').write_text('$Id$\n')
         self.git('add', '-A')
         self.git('commit', '-q', '-m', 'ident')
         path = self.worktree('done')
-        self.assertIn('$Id: ', (path / 'id.txt').read_text())
+        checkout = (path / 'id.txt').read_bytes()
+        self.assertIn(b'$Id: ', checkout)
+        (path / 'id.txt').write_bytes(checkout + b'an edit\n')
+        self.git('update-index', '--assume-unchanged', 'id.txt', cwd=path)
         self.assertKept(path, self.run_script('--apply'), 'not byte for byte what its index records (an edit '
                         'git\'s stat cache, a filter or a line-ending conversion hides, or its executable bit): id.txt')
+        (path / 'id.txt').write_bytes(checkout)
+        self.assertRemoved(path, self.run_script('--apply'))
+
+    def test_a_crlf_checkout_under_autocrlf_is_removed(self):
+        # core.autocrlf=true (Git for Windows' default) checks LF text out as CRLF: compared
+        # with the raw blob alone, every finished worktree was kept (16 stale ones, 2026-10-16).
+        (self.main / 'lf.txt').write_bytes(b'one\ntwo\n')
+        self.git('add', 'lf.txt')
+        self.git('commit', '-q', '-m', 'an LF text file')
+        self.git('config', 'core.autocrlf', 'true')
+        path = self.worktree('done')
+        self.assertEqual((path / 'lf.txt').read_bytes(), b'one\r\ntwo\r\n')
+        self.assertRemoved(path, self.run_script('--apply'))
 
     def test_a_tracked_symlink_is_compared_by_its_text(self):
         (self.main / 'link').symlink_to('a')
