@@ -6,7 +6,7 @@ here is part of its prompt.
 ## Running it
 
 ```
-./scripts/review.sh [--uncommitted | --base <ref> | --commit <sha>] [--reviewer codex|claude] [--fallback] [--backend NAME]
+./scripts/review.sh [--uncommitted | --base <ref> | --commit <sha>] [--reviewer codex|claude] [--fallback] [--backend NAME] [--allow-secret-file PATH]...
 ```
 
 It runs the reviewer over the change set in a throwaway copy, archives the report under
@@ -38,7 +38,10 @@ edited, a round that does not continue its label, a diff over 400000 bytes with 
 (lock files, vendored trees and minified bundles reach the reviewer but are not counted, a
 deleted one by its old name; a part whose path cannot be read is counted; past
 about 400 changed lines a hint asks to split the task),
-an index entry or attribute (`filter`, `ident`, assume-unchanged) that could hide a change;
+an index entry or attribute (`filter`, `ident`, assume-unchanged) that could hide a change,
+a file in scope that looks like a secret, tracked or not (`.env`, `.env.*` but not
+`.env.example`, `.env.sample` or `.env.template`, `.dev.vars`, `*.pem`, `*.key`, `.npmrc`,
+`.netrc`, `credentials*`), unless `--allow-secret-file PATH` names it (KARARLAR B12 inv2#106);
 each refusal names its fix, and a repository that needs a filter (Git LFS) reviews by hand.
 Codex's `Accept with Manual Checks` needs a filled `## Manual checks` section. **A label is bound to its base:** every
 round uses the `--base` of round 1; another base or change takes a new label. **A checkout

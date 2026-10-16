@@ -6,7 +6,7 @@
 # prints it. The gate itself is docs/REVIEW_GATE.md; this script only collects the evidence.
 #
 # Usage: review.sh [--uncommitted | --base <ref> | --commit <sha>] [--reviewer codex|claude]
-#                  [--fallback] [--backend NAME]
+#                  [--fallback] [--backend NAME] [--allow-secret-file PATH]...
 #        review.sh --self-test
 #   default scope     --uncommitted (staged + unstaged + untracked) — the pre-commit case.
 #   default reviewer  the one configured below during setup.
@@ -17,6 +17,9 @@
 #   --backend NAME    the Claude reviewer talks to the Anthropic-compatible endpoint that
 #                     .myagentkit/backends/NAME.env names, with that file's model as the pin,
 #                     and is recorded as reviewer claude@NAME (docs/REVIEW_RUNNING.md).
+#   --allow-secret-file PATH  review a file that looks like a secret (.env, *.pem, *.key,
+#                     .npmrc, .netrc, credentials*) knowingly; without it such a file in scope
+#                     stops the review (claude_bridge.secret_like). Repeat it per path.
 #
 # THE KIT TAKES NO POSITION ON WHICH MODEL WRITES AND WHICH REVIEWS. The rule is that the
 # AUTHOR never reviews its own patch and the REVIEWER is a different model — not that a
@@ -50,7 +53,7 @@
 #     boundary example does that, so the kit's self-test runs in another worktree or after the review.
 #
 # The sandbox is pinned HERE and in the adapters, not assumed of the CLI: the scope forms
-# above, --reviewer, --fallback and --backend are the ONLY accepted arguments, and a backend
+# above, --reviewer, --fallback, --backend and --allow-secret-file are the ONLY accepted arguments, and a backend
 # never relaxes the sandbox flags. There is deliberately no pass-through for further flags —
 # an agent must not be able to talk this script into a run outside the copy or with the
 # sandbox off. "Please be careful" is not a guarantee when the caller is a model.
@@ -105,7 +108,7 @@ CLAUDE_MODEL=""
 # ---------------------------------------------------------------------------------------
 
 usage() {
-  echo "usage: review.sh [--uncommitted | --base <ref> | --commit <sha>] [--reviewer codex|claude] [--fallback] [--backend NAME]"
+  echo "usage: review.sh [--uncommitted | --base <ref> | --commit <sha>] [--reviewer codex|claude] [--fallback] [--backend NAME] [--allow-secret-file PATH]..."
   echo "       review.sh --self-test"
   exit 2
 }
@@ -150,6 +153,13 @@ while [ $# -gt 0 ]; do
     --backend)
       [ $# -ge 2 ] || usage
       backend="$2"; shift 2 ;;
+    --allow-secret-file)
+      [ $# -ge 2 ] || usage
+      case "$2" in -*|"") usage ;; esac
+      case "$2" in *"
+"*) usage ;; esac
+      secret_files="${secret_files:-}$2
+"; shift 2 ;;
     *) usage ;;
   esac
 done
@@ -183,6 +193,14 @@ fi
 
 # Without REVIEW_EFFORT the dispatcher's default follows REVIEW_RISK (docs/REVIEW_GATE.md, "Risk tiers").
 [ -n "${REVIEW_EFFORT:-}" ] && set -- --effort "$REVIEW_EFFORT" "$@"
+# Each secret-looking path the owner reviews knowingly, one argument each (a path may hold a space).
+if [ -n "${secret_files:-}" ]; then
+  while IFS= read -r secret; do
+    [ -n "$secret" ] && set -- "$@" --allow-secret-file "$secret"
+  done <<EOF
+$secret_files
+EOF
+fi
 # Only with --fallback does the dispatcher make one failover to the other configured pin.
 # Each adapter retains its own evidence and usage; a completed Reject never triggers another call.
 exec $kit_python -B "$script_dir/review_dispatch.py" --repo "$PWD" --reviewer "$reviewer" $fallback \

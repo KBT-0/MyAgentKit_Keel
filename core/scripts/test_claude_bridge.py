@@ -23,7 +23,7 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'REVIEW_SHADOW', 'MYAGENTKIT_TASK_I
                       'MYAGENTKIT_REVIEW_ATTEMPT', 'MYAGENTKIT_REVIEW_FALLBACK_FROM',
                       'MYAGENTKIT_REQUESTER', 'CLAUDE_REVIEW_DOCS', 'MYAGENTKIT_NO_BEHAVIOUR', 'MYAGENTKIT_BACKEND',
                       # The lead's author claim: an exported one refused the fixtures' reviewer pin.
-                      'MYAGENTKIT_AUTHOR',
+                      'MYAGENTKIT_AUTHOR', 'MYAGENTKIT_ALLOW_SECRET_FILES',
                       # A worker's brief: review.sh checked every fixture diff against its Owns: line.
                       'REVIEW_TASK_FILE',
                       # A review loop's tier, focus and effort: REVIEW_RISK=high changed the default
@@ -5937,6 +5937,37 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                 self.assertNotEqual(result.returncode, 0, result.stdout)
                 self.assertEqual([a['reviewer'] for a in chain['attempts']], ['codex'])
                 self.assertIn("the author's tier", chain['fallback_blocked'])
+
+    def test_a_secret_looking_file_in_scope_stops_the_review_unless_allowed_by_name(self):
+        # KARARLAR B12 inv2#106: tracked or not, a file that looks like a secret is in the copy the
+        # reviewer reads and in the diff it is sent, so the review is refused before any model
+        # runs; the owner adds it to .gitignore or names it with --allow-secret-file PATH.
+        env = dict(CLAUDE_CLI_BIN=str(self.fixture), REVIEW_CLAUDE_MODEL='claude-opus-5')
+        for name in ('.env', 'config/.env.production', '.dev.vars', 'deploy/server.pem', 'tls/site.key',
+                     '.npmrc', '.netrc', 'aws/credentials', 'credentials.json'):
+            for tracked in (False, True):
+                with self.subTest(name=name, tracked=tracked):
+                    path = self.repo / name
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text('TOKEN=private-value\n')
+                    if tracked:
+                        self.git('add', '--', name)
+                    result = self.run_wrapper('--uncommitted', **env)
+                    self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                    self.assertIn('looks like a secret file', result.stdout)
+                    self.assertIn('--allow-secret-file ' + name, result.stdout)
+                    self.assertFalse((self.repo / '.myagentkit/usage').exists())
+                    allowed = self.run_wrapper('--uncommitted', '--allow-secret-file', name, **env)
+                    self.assertEqual(allowed.returncode, 0, allowed.stdout + allowed.stderr)
+                    if tracked:
+                        self.git('rm', '-q', '--cached', '--', name)
+                    path.unlink()
+                    shutil.rmtree(self.repo / '.myagentkit/usage', ignore_errors=True)
+        # A template is no secret, and a committed one stays reviewable.
+        for name in ('.env.example', '.env.sample', '.env.template'):
+            (self.repo / name).write_text('TOKEN=\n')
+        result = self.run_wrapper('--uncommitted', **env)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_the_reviewer_runs_only_the_narrow_test_never_the_full_suite(self):
         # Owner decision 2026-10-16: reviewers that ran the 30-minute self-test in their copy

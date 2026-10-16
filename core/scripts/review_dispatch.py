@@ -240,7 +240,11 @@ def main(argv=None):
     scope_args.add_argument("--uncommitted", action="store_true")
     scope_args.add_argument("--base")
     scope_args.add_argument("--commit")
+    # A secret-looking file the owner reviews knowingly (KARARLAR B12 inv2#106), by its path.
+    parser.add_argument("--allow-secret-file", action="append", default=[])
     args = parser.parse_args(argv)
+    os.environ.pop(claude_bridge.ALLOW_SECRETS_ENV, None)  # only this run's flags count
+    claude_bridge.allow_secret_files(args.allow_secret_file)
     repo = args.repo.resolve(strict=True)
     if os.environ.get("MYAGENTKIT_DELEGATION_DEPTH", "0") != "0":
         raise ValueError("nested delegation is disabled")

@@ -640,6 +640,26 @@ def filtered_names(repo: Path, names: set, drivers: set | None, tree: str | None
             or (attribute == b'ident' and value == b'set')}
 
 
+# KARARLAR B12 inv2#106 (Claude Code permission-modes and permissions: a sensitive file does not
+# leave the machine): names that look like a secret stop the review unless the owner names them.
+# The kit runs no secret scanner, so names are all it has. --allow-secret-file reaches snapshot()
+# through this variable, set by review_dispatch and the adapters from the flag.
+ALLOW_SECRETS_ENV = "MYAGENTKIT_ALLOW_SECRET_FILES"
+SECRET_TEMPLATES = {".env.example", ".env.sample", ".env.template"}
+
+
+def secret_like(name: str) -> bool:
+    base = name.rpartition("/")[2].lower()
+    return (base not in SECRET_TEMPLATES and base.startswith((".env", ".dev.vars", "credentials"))
+            or base.endswith((".pem", ".key")) or base in (".npmrc", ".netrc"))
+
+
+def allow_secret_files(paths) -> None:
+    """Hand --allow-secret-file paths (repository-relative) on to snapshot()."""
+    if paths:
+        os.environ[ALLOW_SECRETS_ENV] = "\n".join(Path(p).as_posix() for p in paths)
+
+
 def snapshot(repo: Path, scope: str, reference: str | None) -> tuple[str, str, str, str | None]:
     """Capture review scope plus a fingerprint of the actual readable checkout.
 
@@ -746,6 +766,14 @@ def snapshot(repo: Path, scope: str, reference: str | None) -> tuple[str, str, s
         changed |= (names_of('diff', '--name-only', '--no-renames', '-z', parents[0], resolved) if parents
                     else names_of('diff-tree', '-r', '--root', '--no-commit-id', '--name-only', '-z', resolved))
     names = (set(in_scope.split(b'\0')) - {b''}) | changed
+    # Every name here reaches the reviewer: in its copy, or as diff text (a deletion too).
+    allowed = set(filter(None, os.environ.get(ALLOW_SECRETS_ENV, "").split("\n")))
+    secrets = sorted(os.fsdecode(name) for name in names
+                     if secret_like(os.fsdecode(name)) and os.fsdecode(name) not in allowed)
+    if secrets:
+        raise BridgeError("review scope holds %s, which looks like a secret file: add it to .gitignore "
+                          "(untrack it if it is tracked), or pass --allow-secret-file %s to review it "
+                          "knowingly" % (secrets[0], secrets[0]))
     current = filtered_names(repo, names, drivers)
     refused = filtered_names(repo, names, None)
     for end in ends:
@@ -776,8 +804,6 @@ def snapshot(repo: Path, scope: str, reference: str | None) -> tuple[str, str, s
             if (re.fullmatch(r"docs/reviews/\d{8}T\d{6}Z-.+\.md", name) and not name.endswith('-summary.md')) \
                     or re.fullmatch(r"docs/handoffs/\d{8}T\d{6}Z-[a-f0-9]{12}-claude-propose\.json", name):
                 continue
-            if Path(name).name.startswith((".env", ".dev.vars")):
-                raise BridgeError("untracked environment secret file is in scope; ignore it first")
             working += git(repo, "diff", "--no-index", *raw_diff, "--", "/dev/null", name,
                            allowed=(0, 1))
     if scope == "uncommitted":
@@ -1375,7 +1401,10 @@ def main(argv=None, result_sink=None, claims=None) -> int:
                         help="Defaults to %d for review, 12 for propose" % agent_process.DEFAULT_REVIEW_TURNS)
     parser.add_argument("--max-budget-usd", type=float,
                         help="Optional API-cost cap; review has no default, propose defaults to 3 USD")
+    parser.add_argument("--allow-secret-file", action="append", default=[],
+                        help="Review this secret-looking path knowingly (repository-relative)")
     args = parser.parse_args(argv)
+    allow_secret_files(args.allow_secret_file)
     if args.effort is None:
         # The tier is a review's; the myagentkit-delegate skill documents a proposal at high.
         args.effort = default_effort() if args.mode == "review" else "high"

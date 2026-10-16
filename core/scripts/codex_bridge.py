@@ -16,7 +16,7 @@ import agent_process
 import agent_usage
 import codex_quota
 from claude_bridge import (REVIEW_PROMPT, REVIEW_RUNS,
-                           BridgeError, accept_allows, default_effort, git, prior_rounds,
+                           BridgeError, accept_allows, allow_secret_files, default_effort, git, prior_rounds,
                            review_context, review_parts, scratch, snapshot, throwaway_copy, review_tmpdir,
                            utf8_output)
 
@@ -31,7 +31,9 @@ def main(argv=None, result_sink=None, claims=None):
     scopes.add_argument("--uncommitted", action="store_true")
     scopes.add_argument("--base")
     scopes.add_argument("--commit")
+    parser.add_argument("--allow-secret-file", action="append", default=[])
     args = parser.parse_args(argv)
+    allow_secret_files(args.allow_secret_file)
     if os.environ.get("MYAGENTKIT_DELEGATION_DEPTH", "0") != "0":
         raise ValueError("nested delegation is disabled")
     # The wrapper already refuses an empty pin; this repeats the refusal because the adapter
