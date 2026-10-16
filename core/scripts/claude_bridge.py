@@ -199,7 +199,14 @@ STALE_SCRATCH_SECONDS = agent_process.MAX_REVIEW_TIMEOUT + 3600
 # EOPNOTSUPP (102), Linux gives both one number.
 LOCKLESS = {errno.ENOLCK, errno.EOPNOTSUPP, getattr(errno, "ENOTSUP", errno.EOPNOTSUPP), errno.ENOSYS}
 SCRATCH_ATTEMPTS = 5
-PROBE_BUDGET_SECONDS = 90  # every --help probe of one doctor run together
+# Measured (KARARLAR inv2#104): a cold `claude --help` took 0.3-3.5 s on Windows 11
+# (2026-10-15; macOS not measured). One probe gets 10 s, as doctor.sh's probe_seconds, and
+# one doctor run's probes together a few times that.
+PROBE_SECONDS = 10
+PROBE_BUDGET_SECONDS = 60
+# The oldest claude that has every flag claude_command() passes: --restricted came in 2.1.248
+# (KARARLAR inv2#144; Claude Code changelog).
+CLI_MINIMUM = (2, 1, 248)
 
 
 @contextlib.contextmanager
@@ -1285,7 +1292,8 @@ def claude_command(cli: str, args, sandboxed: bool) -> tuple[list[str], list[str
     return command, tools
 
 
-# Accepted by the CLI but left out of its --help, so --help cannot show them missing.
+# Accepted by the CLI but left out of its --help, so --help cannot show them missing: listed in
+# the CLI reference (code.claude.com/docs/en/cli-reference), absent from --help (KARARLAR inv2#100).
 HIDDEN_FLAGS = {"--max-turns"}
 
 
@@ -1302,7 +1310,7 @@ def cli_readiness(environ=os.environ) -> str | None:
                                max_budget_usd=1.0, repo=Path.cwd())
     flags = sorted({part for part in claude_command("claude", probe, sandboxed=True)[0]
                     if part.startswith("--")} - HIDDEN_FLAGS)
-    # One budget for every probe: each hung claude on PATH once cost doctor 60 more seconds.
+    # One budget for every probe: each hung claude on PATH once cost doctor a full probe more.
     budget = time.monotonic() + PROBE_BUDGET_SECONDS
     # Candidates cut short by that budget: maybe slow, not broken, so the fix names them.
     starved = []
@@ -1311,24 +1319,33 @@ def cli_readiness(environ=os.environ) -> str | None:
     def problem(path):
         if path.lower().endswith((".cmd", ".bat")):
             return "is a batch file, which cmd.exe would read the review's arguments through"
-        left = min(60.0, budget - time.monotonic())
-        if left <= 0:
-            starved.append(path)
-            return "--help timed out: doctor's %d-second probe budget ran out" % PROBE_BUDGET_SECONDS
-        try:
-            # A file, not a pipe: on Windows run() waits after a timeout for its pipes to close,
-            # and a background child of the launcher could hold them past the budget.
-            with tempfile.TemporaryFile() as out:
-                subprocess.run([path, "--help"], stdout=out, stderr=subprocess.DEVNULL, timeout=left,
-                               stdin=subprocess.DEVNULL)
-                out.seek(0)
-                shown = out.read().decode("utf-8", "replace")
-        except subprocess.TimeoutExpired:
-            if left < 60:
+        # The version decides first (KARARLAR inv2#144): a flag absent from --help is no proof
+        # that the CLI lacks it. --help stays the fallback when no version can be read.
+        for option in ("--version", "--help"):
+            left = min(PROBE_SECONDS, budget - time.monotonic())
+            if left <= 0:
                 starved.append(path)
-            return "--help timed out after %d seconds" % left
-        except (OSError, subprocess.SubprocessError) as error:
-            return "cannot launch --help: %s" % error
+                return "%s timed out: doctor's %d-second probe budget ran out" % (option, PROBE_BUDGET_SECONDS)
+            try:
+                # A file, not a pipe: on Windows run() waits after a timeout for its pipes to
+                # close, and a background child of the launcher could hold them past the budget.
+                with tempfile.TemporaryFile() as out:
+                    subprocess.run([path, option], stdout=out, stderr=subprocess.DEVNULL, timeout=left,
+                                   stdin=subprocess.DEVNULL)
+                    out.seek(0)
+                    shown = out.read().decode("utf-8", "replace")
+            except subprocess.TimeoutExpired:
+                if left < PROBE_SECONDS:
+                    starved.append(path)
+                return "%s timed out after %d seconds" % (option, left)
+            except (OSError, subprocess.SubprocessError) as error:
+                return "cannot launch %s: %s" % (option, error)
+            version = re.match(r"\s*(\d+)\.(\d+)\.(\d+)", shown) if option == "--version" else None
+            if version:
+                if tuple(map(int, version.groups())) >= CLI_MINIMUM:
+                    return None
+                return "is version %s; the review needs %s or newer (--restricted)" % (
+                    ".".join(version.groups()), ".".join(map(str, CLI_MINIMUM)))
         lacking = [flag for flag in flags if not re.search(r"(?<![\w-])%s(?![\w-])" % re.escape(flag), shown)]
         return "lacks %s, which the review needs" % ", ".join(lacking) if lacking else None
 
@@ -1356,11 +1373,11 @@ def cli_readiness(environ=os.environ) -> str | None:
     elif later:
         fix = "set CLAUDE_CLI_BIN=%s" % later[0]
     elif starved:
-        fix = ("doctor's probe budget ran out before %s answered; run each with --help, then set "
+        fix = ("doctor's probe budget ran out before %s answered; run each with --version, then set "
                "CLAUDE_CLI_BIN to one that works" % ", ".join(starved))
     elif why.startswith("cannot launch"):
         fix = "reinstall claude, or set CLAUDE_CLI_BIN to a working executable"
-    elif why.startswith("--help timed out"):
+    elif why.startswith(("--version timed out", "--help timed out")):
         fix = "check claude --help for a first-run prompt or a hung process, then retry doctor"
     else:
         fix = ("update claude (claude update, or npm install -g @anthropic-ai/claude-code)%s"
