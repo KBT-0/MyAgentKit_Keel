@@ -76,7 +76,13 @@ REVIEW_PROMPT = (
     "Medium, a deferred finding or a first-priority doubt remains, each check a full sentence; Accept otherwise, Lows "
     "and Pre-existing items included (they go to the backlog, not to manual checks). "
     "Never claim a run you did not make. An OPEN product decision is a question for the owner, "
-    "not a finding.\n")
+    "not a finding.\n"
+    # Owner decision 2026-10-16: reviewers that ran the 30-minute self-test took 40-60 minutes;
+    # one final gate is enough (docs/research/ai-review-workflows.md 1.7 [22]) and sector
+    # reviews take minutes (1.4 [7]).
+    "Do not run the project's full suite (scripts/check.sh --self-test, check_kit or a whole "
+    "test run); run only the narrow test that proves or disproves a finding. The lead's gate "
+    "runs the full suite.\n")
 # One reading list for both reviewers (KARARLAR B01 inv2#112/#120); docs/PROJECT.md and
 # docs/PHASES.md join it in REVIEW_PROMPT only for a change to design or phases. codex_bridge's
 # REVIEW_DOCS default names the same files; test_both_reviewers_read_one_list holds them equal.
@@ -120,8 +126,8 @@ def review_context(task_file=None) -> str:
 # Both bridged reviewers now execute, in the copy throwaway_copy() makes (threat model there).
 REVIEW_RUNS = (
     "You are in a throwaway copy of the reviewed checkout (checkout bytes for uncommitted "
-    "work, an archive of HEAD otherwise); run anything inside this copy. Run the suite "
-    "and reproductions here, and mark findings REPRODUCED with the command that shows each; if a "
+    "work, an archive of HEAD otherwise); run anything inside this copy. Run the reproductions "
+    "here, and mark findings REPRODUCED with the command that shows each; if a "
     "run is impossible, mark it REASONED and name the command that would reproduce it; list as "
     "NOT RUN what you could not run and why. Never use the network and never call a paid model.")
 # Native Windows: Claude Code has no Bash sandbox there, so the Claude reviewer gets no shell.
@@ -129,14 +135,15 @@ REVIEW_READS = (
     "You are in a throwaway copy of the reviewed checkout (checkout bytes for uncommitted "
     "work, an archive of HEAD otherwise). You have no shell on this host: Claude Code has no "
     "sandbox for one on native Windows. Read the code, mark each finding REASONED and name "
-    "the command that would reproduce it, and list as NOT RUN the suite and every check you "
+    "the command that would reproduce it, and list as NOT RUN every check you "
     "could not run. Never use the network and never call a paid model.")
 # Claude Code's own Bash sandbox (macOS Seatbelt; bubblewrap and socat on Linux and WSL2).
 # Writes go only to the working directory (the copy) and Claude Code's per-user temporary
 # directory; the network allowlist is empty and strict; a command the sandbox stops cannot
 # be retried outside it; and a host where the sandbox cannot start stops the CLI at startup
 # instead of running Bash unsandboxed. --restricted keeps --settings and drops the user,
-# project and local settings files, so a checkout cannot widen it.
+# project and local settings files, so a checkout cannot widen it. Source for every key:
+# code.claude.com/docs/en/sandboxing and code.claude.com/docs/en/settings (KARARLAR D09 inv2#99).
 SANDBOX = {"sandbox": {"enabled": True, "failIfUnavailable": True, "allowUnsandboxedCommands": False,
                        "network": {"allowedDomains": [], "strictAllowlist": True},
                        "filesystem": {"denyRead": [".myagentkit/backends"]}}}
@@ -193,7 +200,14 @@ STALE_SCRATCH_SECONDS = agent_process.MAX_REVIEW_TIMEOUT + 3600
 # EOPNOTSUPP (102), Linux gives both one number.
 LOCKLESS = {errno.ENOLCK, errno.EOPNOTSUPP, getattr(errno, "ENOTSUP", errno.EOPNOTSUPP), errno.ENOSYS}
 SCRATCH_ATTEMPTS = 5
-PROBE_BUDGET_SECONDS = 90  # every --help probe of one doctor run together
+# Measured (KARARLAR inv2#104): a cold `claude --help` took 0.3-3.5 s on Windows 11
+# (2026-10-15; macOS not measured). One probe gets 10 s, as doctor.sh's probe_seconds, and
+# one doctor run's probes together a few times that.
+PROBE_SECONDS = 10
+PROBE_BUDGET_SECONDS = 60
+# The oldest claude that has every flag claude_command() passes: --restricted came in 2.1.248
+# (KARARLAR inv2#144; Claude Code changelog).
+CLI_MINIMUM = (2, 1, 248)
 
 
 @contextlib.contextmanager
@@ -634,6 +648,26 @@ def filtered_names(repo: Path, names: set, drivers: set | None, tree: str | None
             or (attribute == b'ident' and value == b'set')}
 
 
+# KARARLAR B12 inv2#106 (Claude Code permission-modes and permissions: a sensitive file does not
+# leave the machine): names that look like a secret stop the review unless the owner names them.
+# The kit runs no secret scanner, so names are all it has. --allow-secret-file reaches snapshot()
+# through this variable, set by review_dispatch and the adapters from the flag.
+ALLOW_SECRETS_ENV = "MYAGENTKIT_ALLOW_SECRET_FILES"
+SECRET_TEMPLATES = {".env.example", ".env.sample", ".env.template"}
+
+
+def secret_like(name: str) -> bool:
+    base = name.rpartition("/")[2].lower()
+    return (base not in SECRET_TEMPLATES and base.startswith((".env", ".dev.vars", "credentials"))
+            or base.endswith((".pem", ".key")) or base in (".npmrc", ".netrc"))
+
+
+def allow_secret_files(paths) -> None:
+    """Hand --allow-secret-file paths (repository-relative) on to snapshot()."""
+    if paths:
+        os.environ[ALLOW_SECRETS_ENV] = "\n".join(Path(p).as_posix() for p in paths)
+
+
 def snapshot(repo: Path, scope: str, reference: str | None) -> tuple[str, str, str, str | None]:
     """Capture review scope plus a fingerprint of the actual readable checkout.
 
@@ -740,6 +774,14 @@ def snapshot(repo: Path, scope: str, reference: str | None) -> tuple[str, str, s
         changed |= (names_of('diff', '--name-only', '--no-renames', '-z', parents[0], resolved) if parents
                     else names_of('diff-tree', '-r', '--root', '--no-commit-id', '--name-only', '-z', resolved))
     names = (set(in_scope.split(b'\0')) - {b''}) | changed
+    # Every name here reaches the reviewer: in its copy, or as diff text (a deletion too).
+    allowed = set(filter(None, os.environ.get(ALLOW_SECRETS_ENV, "").split("\n")))
+    secrets = sorted(os.fsdecode(name) for name in names
+                     if secret_like(os.fsdecode(name)) and os.fsdecode(name) not in allowed)
+    if secrets:
+        raise BridgeError("review scope holds %s, which looks like a secret file: add it to .gitignore "
+                          "(untrack it if it is tracked), or pass --allow-secret-file %s to review it "
+                          "knowingly" % (secrets[0], secrets[0]))
     current = filtered_names(repo, names, drivers)
     refused = filtered_names(repo, names, None)
     for end in ends:
@@ -770,8 +812,6 @@ def snapshot(repo: Path, scope: str, reference: str | None) -> tuple[str, str, s
             if (re.fullmatch(r"docs/reviews/\d{8}T\d{6}Z-.+\.md", name) and not name.endswith('-summary.md')) \
                     or re.fullmatch(r"docs/handoffs/\d{8}T\d{6}Z-[a-f0-9]{12}-claude-propose\.json", name):
                 continue
-            if Path(name).name.startswith((".env", ".dev.vars")):
-                raise BridgeError("untracked environment secret file is in scope; ignore it first")
             working += git(repo, "diff", "--no-index", *raw_diff, "--", "/dev/null", name,
                            allowed=(0, 1))
     if scope == "uncommitted":
@@ -834,14 +874,28 @@ def snapshot(repo: Path, scope: str, reference: str | None) -> tuple[str, str, s
     return head, fingerprint, diff.decode("utf-8", errors="strict"), resolved
 
 
+def dispositions_text() -> str | None:
+    """The REVIEW_DISPOSITIONS file's text, or None when it is unset. The dispatcher reads it
+    once and hands the text to each attempt, so a fallback never reads a changed file."""
+    notes = os.environ.get("REVIEW_DISPOSITIONS")
+    if not notes:
+        return None
+    try:
+        return Path(notes).read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as error:
+        raise BridgeError("REVIEW_DISPOSITIONS %s cannot be read as UTF-8 text (%s)" % (notes, error)) from error
+
+
 def prior_rounds(repo: Path, task_id: str | None, scope: str, resolved: str | None,
-                 head: str, diff: str) -> str:
-    """The earlier completed reviews of this change, oldest first, as archived.
+                 head: str, diff: str, claims: str | None = None) -> tuple[str, dict]:
+    """The earlier completed reviews of this change, oldest first, as archived, and the task
+    fields the usage record measures (measure()).
 
     A fresh pass blind to earlier rounds re-raised findings the author had disproved or
     deferred and sampled the previous fixes again, so the loop never converged. The record
     comes from the reviewer's own archive, not from the author, so nothing can be left out;
-    the author's dispositions (REVIEW_DISPOSITIONS, a file) ride along as claims to verify.
+    the author's dispositions (`claims`, else the REVIEW_DISPOSITIONS file) ride along as
+    claims to verify.
     Rounds count per REVIEW_FOCUS (KARARLAR B02 inv2#10); a round without a focus counts
     toward every focus. Carry only the current focus and rounds without a focus.
     """
@@ -962,13 +1016,13 @@ def prior_rounds(repo: Path, task_id: str | None, scope: str, resolved: str | No
     # A focus seen under the label uses its own count; an unset or new focus takes the highest,
     # so unsetting or renaming the focus never opens a fresh budget.
     completed = unfocused + (counts[focus] if focus in counts else max(counts.values(), default=0))
-    notes = os.environ.get("REVIEW_DISPOSITIONS")
-    claims = Path(notes).read_text(encoding="utf-8") if notes else None
+    if claims is None:
+        claims = dispositions_text()
     try:
-        measure(claims)  # once, before launch: the record never reads the file again
+        measured = measure(claims)  # once, before launch: the record never reads the file again
     except ValueError as error:
         raise BridgeError(str(error)) from error
-    if notes and not rounds:
+    if claims is not None and not rounds:
         raise BridgeError("REVIEW_DISPOSITIONS is set but no earlier completed review has task "
                           "label %r; set MYAGENTKIT_TASK_ID to the earlier rounds' label" % task_id)
     # At most two rounds per focus and label (docs/REVIEW_GATE.md, "Rounds"): a third needs a
@@ -979,9 +1033,9 @@ def prior_rounds(repo: Path, task_id: str | None, scope: str, resolved: str | No
             raise BridgeError("task label %s already has %d completed rounds; a third round needs "
                               "REVIEW_ROUND_EXCEPTION=<reason>, or what remains goes to the owner "
                               "or an issue" % (task_id, completed))
-        MEASURED["round_exception"] = exception
+        measured["round_exception"] = exception
     if not rounds:
-        return ""
+        return "", measured
     # The author never approves its own work, so a disposition is a claim, never a settlement.
     text = ("This is review round %d of this change. The earlier rounds follow, oldest first, as "
             "archived. For every earlier finding the dispositions claim fixed, a Medium included, "
@@ -992,33 +1046,34 @@ def prior_rounds(repo: Path, task_id: str | None, scope: str, resolved: str | No
             "only.\n" % (completed + 1))
     for number, (_, report) in enumerate(sorted(rounds), 1):
         text += "### Round %d\n%s\n" % (number, report)
-    if notes:
+    if claims is not None:
         text += "### Author's dispositions (claims to verify, not facts)\n" + claims + "\n"
     # A carried verdict line echoed back would break the reviewer's exactly-one-verdict check.
     text = re.sub(r"^[ \t]*VERDICT[ \t]*:", "Earlier verdict:", text, flags=re.M | re.I)
     if budgeted(diff.encode())[0] + len(text.encode()) > DIFF_LIMIT:
         raise BridgeError("the diff plus earlier rounds and dispositions exceed %d bytes; start "
                           "a fresh MYAGENTKIT_TASK_ID label" % DIFF_LIMIT)
-    return text
-
-
-# The task fields the usage summary measures a reviewer configuration by: the author's
-# disposition counts, the shadow flag and the focus. Filled by measure() from prior_rounds(), before the
-# model runs, from the same bytes the reviewer is shown; the record copies it and never reads
-# the file again, so a file edited or removed during a paid review cannot lose its record.
-# Empty for a record that has neither, so older records read the same.
-MEASURED: dict = {}
+    return text, measured
 
 
 def measure(claims: str | None) -> dict:
-    MEASURED.clear()
+    """The task fields the usage summary measures a reviewer configuration by: the author's
+    disposition counts, the shadow flag and the focus. Built in prior_rounds(), before the model
+    runs, from the same bytes the reviewer is shown; the record copies it and never reads the
+    file again, so a file edited or removed during a paid review cannot lose its record. Empty
+    for a record that has neither, so older records read the same."""
+    measured = {}
     if claims is not None:
-        MEASURED["dispositions"] = agent_usage.dispositions(claims)
+        measured["dispositions"] = agent_usage.dispositions(claims)
     if os.environ.get("REVIEW_SHADOW") == "1":
-        MEASURED["shadow"] = "yes"
+        measured["shadow"] = "yes"
     if os.environ.get("REVIEW_FOCUS"):
-        MEASURED["focus"] = os.environ["REVIEW_FOCUS"]  # prior_rounds() filters carried reports by focus
-    return MEASURED
+        measured["focus"] = os.environ["REVIEW_FOCUS"]  # prior_rounds() filters carried reports by focus
+    if os.environ.get("MYAGENTKIT_AUTHOR", "").strip():
+        # The lead's claim of who wrote the patch (KARARLAR B01-1: accepted rate per author and
+        # reviewer pair); review_dispatch refuses the author's tier as reviewer.
+        measured["author"] = os.environ["MYAGENTKIT_AUTHOR"].strip()
+    return measured
 
 
 def schema(mode: str) -> dict:
@@ -1087,15 +1142,24 @@ def review_parts(text: str) -> tuple[list, list]:
     return findings, checks
 
 
+def placeholder(item: str) -> bool:
+    """An item that names no finding: "None.", "Plus 3 similar", or a whole clean-review
+    sentence ("No qualifying defects found.", "No findings established in this diff.")."""
+    # "Plus N similar" is what REVIEW_PROMPT asks for past five Lows. The sentence forms are the
+    # ones Codex writes (fix4 notes); refused, a clean paid review was recorded as failed.
+    return (item.strip(" \t-*.").lower() in EMPTY_ITEMS
+            or bool(re.fullmatch(r"(?i)\s*(?:[-*]\s+)?\**\s*(?:plus \d+ similar(?: low)?(?: findings?)?"
+                                 r"|no(?: \w+)? (?:findings?|defects?|issues?)"
+                                 r"(?: (?:were |was )?(?:found|established|identified|reported))?"
+                                 r"(?: in (?:this|the) diff)?)[\s.*]*", item)))
+
+
 def accept_allows(findings: list) -> bool:
     """A plain Accept may carry Low findings and items outside the diff; nothing else. The
     severity may be a bold or dash-prefixed list item, the forms both reviewers write."""
-    # "Plus N similar" is what REVIEW_PROMPT asks for past five Lows; "no qualifying findings"
-    # is a placeholder like "none". Refused, a clean paid review was recorded as failed.
-    return all(item.strip(" \t-*.").lower() in EMPTY_ITEMS
-               or re.fullmatch(r"(?i)\s*(?:[-*]\s+)?\**\s*(?:plus \d+ similar(?: low)?(?: findings?)?|no(?: \w+)? findings?)"
-                               r"[\s.*]*", item)
-               or re.match(r"\s*(?:[-*]\s+)?\**\s*(Low\b|Pre-existing:)", item) for item in findings)
+    # `Low-level: High ...` is no Low, and a bare `Pre-existing:` names nothing (fix4 notes).
+    return all(placeholder(item)
+               or re.match(r"\s*(?:[-*]\s+)?\**\s*(Low(?![-\w])|Pre-existing:\s*[^\s*])", item) for item in findings)
 
 
 def validate(envelope: object, mode: str, model: str) -> dict:
@@ -1132,7 +1196,7 @@ def validate(envelope: object, mode: str, model: str) -> dict:
             raise BridgeError("invalid verdict")
         if verdict == "Accept" and (value["manual_checks"] or not accept_allows(value["findings"])):
             raise BridgeError("Accept contradicts outstanding findings or manual checks")
-        if verdict == "Reject" and not value["findings"]:
+        if verdict == "Reject" and all(placeholder(item) for item in value["findings"]):
             raise BridgeError("Reject has no findings")
         if verdict == "Accept with Manual Checks" and not value["manual_checks"]:
             raise BridgeError("manual-check verdict has no manual checks")
@@ -1188,6 +1252,16 @@ def section(title: str, items: list) -> str:
             + "\n")
 
 
+def backends_dir() -> Path:
+    """The folder of backend files (KARARLAR D09 inv2#80): MYAGENTKIT_BACKENDS_DIR, else the
+    user's config folder (%APPDATA% on Windows, $XDG_CONFIG_HOME or ~/.config elsewhere)."""
+    if os.environ.get("MYAGENTKIT_BACKENDS_DIR"):
+        return Path(os.environ["MYAGENTKIT_BACKENDS_DIR"])
+    if os.name == "nt" and os.environ.get("APPDATA"):
+        return Path(os.environ["APPDATA"]) / "myagentkit" / "backends"
+    return Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "myagentkit" / "backends"
+
+
 def claude_command(cli: str, args, sandboxed: bool) -> tuple[list[str], list[str]]:
     """The Claude CLI command for `args`, and the tools it offers.
 
@@ -1203,21 +1277,24 @@ def claude_command(cli: str, args, sandboxed: bool) -> tuple[list[str], list[str
                "--safe-mode", "--restricted", "--strict-mcp-config", "--mcp-config",
                '{"mcpServers":{}}', "--no-session-persistence",
                "--max-turns", str(args.max_turns)]
-    private = str((args.repo / ".myagentkit/backends").resolve()).replace("\\", "/")
+    # The backend folder outside the repository and the old one inside it, by absolute path.
+    folders = [str(path.resolve()).replace("\\", "/")
+               for path in (args.repo / ".myagentkit/backends", backends_dir())]
     settings = json.loads(json.dumps(SANDBOX)) if bash else {}
     if bash:
-        settings["sandbox"]["filesystem"]["denyRead"].append(private)
+        settings["sandbox"]["filesystem"]["denyRead"] += folders
         command += ["--allowed-tools", "Bash"]
     # Tool denies also apply on Windows, where Bash sandboxing is unavailable.
-    settings["permissions"] = {"deny": ["Read(.myagentkit/backends/**)",
-                                         "Read(//" + private.lstrip("/") + "/**)"]}
+    settings["permissions"] = {"deny": ["Read(.myagentkit/backends/**)"]
+                               + ["Read(//" + folder.lstrip("/") + "/**)" for folder in folders]}
     command += ["--settings", json.dumps(settings)]
     if args.max_budget_usd is not None:
         command += ["--max-budget-usd", str(args.max_budget_usd)]
     return command, tools
 
 
-# Accepted by the CLI but left out of its --help, so --help cannot show them missing.
+# Accepted by the CLI but left out of its --help, so --help cannot show them missing: listed in
+# the CLI reference (code.claude.com/docs/en/cli-reference), absent from --help (KARARLAR inv2#100).
 HIDDEN_FLAGS = {"--max-turns"}
 
 
@@ -1234,7 +1311,7 @@ def cli_readiness(environ=os.environ) -> str | None:
                                max_budget_usd=1.0, repo=Path.cwd())
     flags = sorted({part for part in claude_command("claude", probe, sandboxed=True)[0]
                     if part.startswith("--")} - HIDDEN_FLAGS)
-    # One budget for every probe: each hung claude on PATH once cost doctor 60 more seconds.
+    # One budget for every probe: each hung claude on PATH once cost doctor a full probe more.
     budget = time.monotonic() + PROBE_BUDGET_SECONDS
     # Candidates cut short by that budget: maybe slow, not broken, so the fix names them.
     starved = []
@@ -1243,24 +1320,33 @@ def cli_readiness(environ=os.environ) -> str | None:
     def problem(path):
         if path.lower().endswith((".cmd", ".bat")):
             return "is a batch file, which cmd.exe would read the review's arguments through"
-        left = min(60.0, budget - time.monotonic())
-        if left <= 0:
-            starved.append(path)
-            return "--help timed out: doctor's %d-second probe budget ran out" % PROBE_BUDGET_SECONDS
-        try:
-            # A file, not a pipe: on Windows run() waits after a timeout for its pipes to close,
-            # and a background child of the launcher could hold them past the budget.
-            with tempfile.TemporaryFile() as out:
-                subprocess.run([path, "--help"], stdout=out, stderr=subprocess.DEVNULL, timeout=left,
-                               stdin=subprocess.DEVNULL)
-                out.seek(0)
-                shown = out.read().decode("utf-8", "replace")
-        except subprocess.TimeoutExpired:
-            if left < 60:
+        # The version decides first (KARARLAR inv2#144): a flag absent from --help is no proof
+        # that the CLI lacks it. --help stays the fallback when no version can be read.
+        for option in ("--version", "--help"):
+            left = min(PROBE_SECONDS, budget - time.monotonic())
+            if left <= 0:
                 starved.append(path)
-            return "--help timed out after %d seconds" % left
-        except (OSError, subprocess.SubprocessError) as error:
-            return "cannot launch --help: %s" % error
+                return "%s timed out: doctor's %d-second probe budget ran out" % (option, PROBE_BUDGET_SECONDS)
+            try:
+                # A file, not a pipe: on Windows run() waits after a timeout for its pipes to
+                # close, and a background child of the launcher could hold them past the budget.
+                with tempfile.TemporaryFile() as out:
+                    subprocess.run([path, option], stdout=out, stderr=subprocess.DEVNULL, timeout=left,
+                                   stdin=subprocess.DEVNULL)
+                    out.seek(0)
+                    shown = out.read().decode("utf-8", "replace")
+            except subprocess.TimeoutExpired:
+                if left < PROBE_SECONDS:
+                    starved.append(path)
+                return "%s timed out after %d seconds" % (option, left)
+            except (OSError, subprocess.SubprocessError) as error:
+                return "cannot launch %s: %s" % (option, error)
+            version = re.match(r"\s*(\d+)\.(\d+)\.(\d+)", shown) if option == "--version" else None
+            if version:
+                if tuple(map(int, version.groups())) >= CLI_MINIMUM:
+                    return None
+                return "is version %s; the review needs %s or newer (--restricted)" % (
+                    ".".join(version.groups()), ".".join(map(str, CLI_MINIMUM)))
         lacking = [flag for flag in flags if not re.search(r"(?<![\w-])%s(?![\w-])" % re.escape(flag), shown)]
         return "lacks %s, which the review needs" % ", ".join(lacking) if lacking else None
 
@@ -1288,11 +1374,11 @@ def cli_readiness(environ=os.environ) -> str | None:
     elif later:
         fix = "set CLAUDE_CLI_BIN=%s" % later[0]
     elif starved:
-        fix = ("doctor's probe budget ran out before %s answered; run each with --help, then set "
+        fix = ("doctor's probe budget ran out before %s answered; run each with --version, then set "
                "CLAUDE_CLI_BIN to one that works" % ", ".join(starved))
     elif why.startswith("cannot launch"):
         fix = "reinstall claude, or set CLAUDE_CLI_BIN to a working executable"
-    elif why.startswith("--help timed out"):
+    elif why.startswith(("--version timed out", "--help timed out")):
         fix = "check claude --help for a first-run prompt or a hung process, then retry doctor"
     else:
         fix = ("update claude (claude update, or npm install -g @anthropic-ai/claude-code)%s"
@@ -1304,6 +1390,8 @@ def cli_readiness(environ=os.environ) -> str | None:
 
 def behaviour_appendix(root: Path) -> tuple[str | None, bytes]:
     """Read only a regular appendix contained in this snapshot, without following a leaf link."""
+    # source: RL 2026-10-13 (#74); appendix value unmeasured: the on/off switch
+    # (MYAGENTKIT_NO_BEHAVIOUR) and the usage record exist so an A/B can decide (KARARLAR inv2#113).
     if os.environ.get("MYAGENTKIT_NO_BEHAVIOUR") == "1":
         return None, b""
     for name in ("BEHAVIOUR.md", "core/BEHAVIOUR.md"):
@@ -1328,7 +1416,8 @@ def behaviour_appendix(root: Path) -> tuple[str | None, bytes]:
     return None, b""
 
 
-def main(argv=None, result_sink=None) -> int:
+def main(argv=None, result_sink=None, claims=None) -> int:
+    """`claims`: the dispositions text the dispatcher read once; None reads REVIEW_DISPOSITIONS."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("mode", choices=["review", "propose"])
     parser.add_argument("--repo", type=Path, default=Path.cwd())
@@ -1353,7 +1442,10 @@ def main(argv=None, result_sink=None) -> int:
                         help="Defaults to %d for review, 12 for propose" % agent_process.DEFAULT_REVIEW_TURNS)
     parser.add_argument("--max-budget-usd", type=float,
                         help="Optional API-cost cap; review has no default, propose defaults to 3 USD")
+    parser.add_argument("--allow-secret-file", action="append", default=[],
+                        help="Review this secret-looking path knowingly (repository-relative)")
     args = parser.parse_args(argv)
+    allow_secret_files(args.allow_secret_file)
     if args.effort is None:
         # The tier is a review's; the myagentkit-delegate skill documents a proposal at high.
         args.effort = default_effort() if args.mode == "review" else "high"
@@ -1406,11 +1498,13 @@ def main(argv=None, result_sink=None) -> int:
             raise BridgeError("required project guidance is missing: " + ", ".join(missing))
         behaviour, behaviour_bytes, behaviour_sha256 = None, b"", None
         checkout_fingerprint = fingerprint
+        measured = {}
         if args.mode == "review":
             prompt_prefix = REVIEW_PROMPT % ", ".join(docs)
+            carried, measured = prior_rounds(repo, args.task_id, scope, resolved, head, diff, claims)
             prompt_suffix = (
                 (REVIEW_RUNS if os.name == "posix" else REVIEW_READS) + "\n"
-                + prior_rounds(repo, args.task_id, scope, resolved, head, diff)
+                + carried
                 + review_context(args.task_file)
                 + f"Scope: {scope} {ref or ''}; HEAD: {head}\nDiff:\n{diff}")
         else:
@@ -1570,7 +1664,7 @@ def main(argv=None, result_sink=None) -> int:
                  "resolved": resolved, "head": head, "behaviour": "on" if behaviour else "off",
                  "behaviour_sha256": behaviour_sha256,
                  "diff_sha256": evidence["diff_sha256"],
-                 **(MEASURED if args.mode == "review" else {})},
+                 **measured},
                 execution, evidence["status"], reason,
                 archived_path, published.encode() if archived_path else None, backend=args.backend)
             recovery = usage["recovery"]
@@ -1661,6 +1755,8 @@ def utf8_output():
     arrow) raised while printing, failed as adapter_error, and the paid review was lost.
     Errors are escaped, never raised: a bare encoding reset them to strict, and a lone
     surrogate (a non-UTF-8 path) then lost the review the same way. A missing stream stays."""
+    # PEP 686 makes UTF-8 mode the default from Python 3.15; keep this for 3.10-3.14
+    # (peps.python.org/pep-0686; KARARLAR inv2#115).
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="backslashreplace")

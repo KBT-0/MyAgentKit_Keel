@@ -7,6 +7,8 @@ from pathlib import Path
 import re
 import stat
 import subprocess
+import sys
+from time import sleep
 import uuid
 
 import agent_usage
@@ -14,10 +16,16 @@ import agent_process
 import claude_bridge
 import codex_bridge
 
-# Operational failures only. Invalid evidence, configuration, changed scope and storage
-# failures must not be laundered into success by trying another reviewer.
-UNAVAILABLE = frozenset({"quota", "authentication", "timeout", "unavailable", "cli_error",
+# Operational failures only (KARARLAR D04 inv2#44). Invalid evidence, configuration, changed
+# scope and storage failures must not be laundered into success by trying another reviewer, and
+# a setup fault (cli_unsupported, sandbox_unavailable, authentication) is fixed, never failed over.
+UNAVAILABLE = frozenset({"rate_limited", "quota_exhausted", "timeout", "unavailable", "cli_error",
                          "context_limit", "budget_or_turn_limit", "output_limit", "content_flagged"})
+# A Codex capacity error passes (KARARLAR B01 (6) inv2#46): retried after the delay the tool
+# reports, else after about ten minutes, doubled, at most twice. Ten minutes is an owner choice;
+# both vendors bound their own retries. A used-up quota is never retried.
+CAPACITY_RETRY_SECONDS = 600
+CAPACITY_RETRIES = 2
 # Set only while a substitute reviewer runs, so its archived evidence says so in its body.
 FALLBACK_ENV = "MYAGENTKIT_REVIEW_FALLBACK_FROM"
 # What a backend file may set: the endpoint, its token and the model names Claude Code maps.
@@ -100,6 +108,8 @@ BACKEND_CLEAR_KEYS = frozenset({
     'CLAUDE_CODE_WEBSOCKET_AUTH_FILE_DESCRIPTOR',
     'CLAUDE_CODE_WORKFLOW_SUBAGENT_MODEL',
 })
+# 64 KiB: a backend file is a few KEY=VALUE lines; the bound only stops a wrong file from being
+# read whole (OWASP ASVS V12, CWE-1284 principle; the number itself is a project choice).
 BACKEND_MAX_BYTES = 64 * 1024
 
 
@@ -109,8 +119,18 @@ def pin_valid(provider, model, backend=None):
         provider != "claude" or bool(backend) or model.startswith("claude-"))
 
 
+def tier(model):
+    """The tier a model id belongs to: `claude-opus` for every Opus id (claude-opus-5,
+    claude-opus-5-5, a dated one), else the id without a -YYYYMMDD date. A `vendor/` prefix,
+    as MYAGENTKIT_REQUESTER writes it, is dropped."""
+    model = model.strip().lower().rpartition("/")[2]
+    family = re.match(r"claude-([a-z]+)", model)
+    return "claude-" + family[1] if family else re.sub(r"-\d{8}$", "", model)
+
+
 def load_backend(repo, name):
-    """The environment and the model pin of backend `name`, from .myagentkit/backends/NAME.env.
+    """The environment and the model pin of backend `name`, from NAME.env in the backend folder
+    (claude_bridge.backends_dir()), else the old .myagentkit/backends/NAME.env.
 
     Fails closed: a file without an endpoint, token or model could send the
     review to Anthropic's own endpoint under a name that claims another. No message prints a
@@ -118,16 +138,27 @@ def load_backend(repo, name):
     """
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", name):
         raise ValueError("backend name must be letters, digits, '.', '_' or '-' (got %r)" % name)
-    path = repo / ".myagentkit/backends" / (name + ".env")
-    relative = path.relative_to(repo).as_posix()
-    tracked = subprocess.run(["git", "-C", str(repo), "ls-files", "-z"],
-                             capture_output=True)
-    ignored = subprocess.run(["git", "-C", str(repo), "check-ignore", "-q", "--", relative],
-                             capture_output=True)
-    if tracked.returncode != 0 or ignored.returncode != 0 or any(
-            os.fsdecode(entry).casefold().startswith(".myagentkit/backends/")
-            for entry in tracked.stdout.split(b"\0") if entry):
-        raise ValueError("backend %s: %s must be Git-ignored and untracked" % (name, path))
+    # KARARLAR D09 inv2#80, LIDER 10: outside the repository by default, so a checkout can never
+    # provide or change the file; the old in-repository place is read while projects move.
+    folder = claude_bridge.backends_dir()
+    if folder.resolve() == repo or repo in folder.resolve().parents:
+        raise ValueError("backend folder %s must be outside the repository (MYAGENTKIT_BACKENDS_DIR)" % folder)
+    path = folder / (name + ".env")
+    if not os.path.lexists(path):
+        path = repo / ".myagentkit/backends" / (name + ".env")
+        relative = path.relative_to(repo).as_posix()
+        tracked = subprocess.run(["git", "-C", str(repo), "ls-files", "-z"],
+                                 capture_output=True)
+        ignored = subprocess.run(["git", "-C", str(repo), "check-ignore", "-q", "--", relative],
+                                 capture_output=True)
+        if tracked.returncode != 0 or ignored.returncode != 0 or any(
+                os.fsdecode(entry).casefold().startswith(".myagentkit/backends/")
+                for entry in tracked.stdout.split(b"\0") if entry):
+            raise ValueError("backend %s: %s must be Git-ignored and untracked" % (name, path))
+        if os.path.lexists(path):
+            print("NOTE [review]: backend %s is read from %s, the old place; move it to %s (the "
+                  "old place is read only while projects move)" % (name, path, folder),
+                  file=sys.stderr, flush=True)
     try:
         if path.is_symlink() or not os.path.isfile(path):
             raise ValueError("backend %s: %s cannot be read: expected a regular file" % (name, path))
@@ -167,6 +198,8 @@ def load_backend(repo, name):
 
 
 def reject_line_ending_churn(repo, scope, reference, diff):
+    # Heuristic (KARARLAR B01 inv2#84): factor 2 is an owner choice, no published threshold;
+    # `git diff --ignore-cr-at-eol` is the git-documented way to separate this noise.
     if os.environ.get("REVIEW_ALLOW_EOL_ONLY") == "1":
         return
     # Use the captured scope's paths, including its archive exclusions. `git apply --numstat
@@ -224,8 +257,14 @@ def main(argv=None):
     scope_args.add_argument("--uncommitted", action="store_true")
     scope_args.add_argument("--base")
     scope_args.add_argument("--commit")
+    # A secret-looking file the owner reviews knowingly (KARARLAR B12 inv2#106), by its path.
+    parser.add_argument("--allow-secret-file", action="append", default=[])
     args = parser.parse_args(argv)
+    os.environ.pop(claude_bridge.ALLOW_SECRETS_ENV, None)  # only this run's flags count
+    claude_bridge.allow_secret_files(args.allow_secret_file)
     repo = args.repo.resolve(strict=True)
+    # Nesting is bounded by both vendors by default (Claude Code CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH,
+    # Codex agents.max_depth); this guard bounds the kit's own review chain (KARARLAR B01 inv2#77).
     if os.environ.get("MYAGENTKIT_DELEGATION_DEPTH", "0") != "0":
         raise ValueError("nested delegation is disabled")
     if Path(os.fsdecode(claude_bridge.git(repo, "rev-parse", "--show-toplevel")).strip()).resolve() != repo:
@@ -240,6 +279,14 @@ def main(argv=None):
         raise ValueError("no model pinned for reviewer '%s'" % args.reviewer)
     if not pin_valid(args.reviewer, pins[args.reviewer], args.backend):
         raise ValueError("invalid primary model pin")
+    # KARARLAR B01 (1): the author never reviews its own patch, and the default excludes the
+    # author's tier. Only the lead knows the author; when it says so, the pin is checked here.
+    author = os.environ.get("MYAGENTKIT_AUTHOR", "").strip() or None
+    if author and tier(author) == tier(pins[args.reviewer]):
+        raise ValueError("MYAGENTKIT_AUTHOR %s is the author's tier (%s), which reviewer %s model %s "
+                         "would run: the author never reviews its own patch (docs/REVIEW_GATE.md, "
+                         "\"Invariant\"). Pin another tier (REVIEW_CLAUDE_MODEL) or the other family "
+                         "(--reviewer)" % (author, tier(author), names[args.reviewer], pins[args.reviewer]))
     scope, ref = ("base", args.base) if args.base else (("commit", args.commit) if args.commit else ("uncommitted", None))
     original = claude_bridge.snapshot(repo, scope, ref)
     if not original[2].strip():
@@ -247,16 +294,22 @@ def main(argv=None):
     reject_line_ending_churn(repo, scope, original[3], original[2])
     # Once for either reviewer: a missing, foreign or oversized earlier round stops the review
     # here, exit 2 with one message, before a chain is recorded or any model is called.
+    # The dispositions file is read here once and its text handed to every attempt: a
+    # fallback attempt never reads a file that changed meanwhile.
+    claims = claude_bridge.dispositions_text()
     claude_bridge.prior_rounds(repo, os.environ.get("MYAGENTKIT_TASK_ID"), scope, original[3],
-                               original[0], original[2])
+                               original[0], original[2], claims)
     timeout = int(os.environ.get("REVIEW_TIMEOUT_SECONDS", str(agent_process.DEFAULT_REVIEW_TIMEOUT)))
     if not 1 <= timeout <= agent_process.MAX_REVIEW_TIMEOUT:
         raise ValueError("REVIEW_TIMEOUT_SECONDS must be 1..%d" % agent_process.MAX_REVIEW_TIMEOUT)
-    # Claude only: Codex has no turn limit to set.
-    if args.reviewer == "claude" or args.allow_fallback:
+    def review_turns():
         turns = int(os.environ.get("REVIEW_MAX_TURNS", str(agent_process.DEFAULT_REVIEW_TURNS)))
         if not 1 <= turns <= agent_process.MAX_REVIEW_TURNS:
             raise ValueError("REVIEW_MAX_TURNS must be 1..%d" % agent_process.MAX_REVIEW_TURNS)
+        return turns
+    # Claude only: Codex has no turn limit to set. A Codex review that switches to Claude on a
+    # used-up quota checks it then.
+    turns = review_turns() if args.reviewer == "claude" or args.allow_fallback else None
     agent_usage.require_private_storage(repo)
     chain_id = uuid.uuid4().hex
     os.environ["MYAGENTKIT_REVIEW_CHAIN_ID"] = chain_id
@@ -270,6 +323,15 @@ def main(argv=None):
              "fallback_allowed": args.allow_fallback,
              "attempts": [], "status": "pending", "failure_kind": None,
              "review_approved": False, "independence": "host_must_check_all_patch_authors"}
+    if author:
+        chain["author"] = author  # the lead's claim, recorded; the pairs are measured per author
+    if os.environ.get("REVIEW_SHADOW") == "1":
+        # Marked where a later reader looks: the chain record and the console. A variable left
+        # exported after a shadow run turns every later review into one, so the line says so.
+        chain["shadow"] = True
+        print("REVIEW [shadow]: this run measures a reviewer configuration; its verdict closes "
+              "nothing. REVIEW_SHADOW=1 is set: unset REVIEW_SHADOW after the shadow run, or "
+              "every later review is a shadow too.", flush=True)
 
     def checkpoint():
         # Separate from provider records: usage reporting must not double-count a chain.
@@ -283,7 +345,9 @@ def main(argv=None):
     other = "codex" if args.reviewer == "claude" else "claude"
     exit_code = 5
     os.environ.pop(FALLBACK_ENV, None)
-    for provider in (args.reviewer, other):
+    queue, retries = [args.reviewer], 0
+    while queue:
+        provider = queue.pop(0)
         os.environ["MYAGENTKIT_REVIEW_ATTEMPT"] = str(len(chain["attempts"]) + 1)
         received = []
         command = ["--repo", str(repo), "--model", pins[provider], "--effort", args.effort,
@@ -305,9 +369,10 @@ def main(argv=None):
                 os.environ.update(backend_env)
             if provider == "claude":
                 exit_code = claude_bridge.main(["review", "--timeout", str(timeout), "--max-turns", str(turns), *command]
-                                               + (["--backend", args.backend] if backend else []), received.append)
+                                               + (["--backend", args.backend] if backend else []), received.append,
+                                               claims=claims)
             else:
-                exit_code = codex_bridge.main(command, received.append)
+                exit_code = codex_bridge.main(command, received.append, claims=claims)
         except (OSError, ValueError, claude_bridge.BridgeError, subprocess.SubprocessError) as caught:
             exit_code, error = 5, caught
         finally:
@@ -351,13 +416,29 @@ def main(argv=None):
             chain["status"] = "failed"
         # A cancel at any point after launch ends the chain: both adapters relabel a cancelled
         # failure "cancelled", which is not in UNAVAILABLE, before they return.
+        recorded = bool(result.get("evidence")) and bool(result.get("usage_record"))
+        retry = (chain["status"] != "completed" and provider == "codex" and recorded
+                 and chain["failure_kind"] == "rate_limited" and retries < CAPACITY_RETRIES)
         eligible = (chain["status"] != "completed" and provider == args.reviewer and chain["failure_kind"] in UNAVAILABLE
-                    and bool(result.get("evidence")) and bool(result.get("usage_record")))
-        if eligible and not args.allow_fallback:
+                    and recorded and not retry)
+        # Lead decision 7 (decisions.md; the kit runs on Claude alone): a used-up Codex quota
+        # switches the role to Claude without --fallback, recorded in the chain and reported.
+        switch = eligible and provider == "codex" and chain["failure_kind"] == "quota_exhausted"
+        if switch and turns is None:
+            try:
+                turns = review_turns()
+            except ValueError as error:
+                chain["fallback_blocked"] = str(error)
+                switch = eligible = False
+        if eligible and not args.allow_fallback and not switch:
             chain["fallback_blocked"] = "not requested; --fallback allows one other configured reviewer"
             eligible = False
         if eligible and not pin_valid(other, pins[other], args.backend):
             chain["fallback_blocked"] = "other reviewer has no valid configured model pin"
+            eligible = False
+        if eligible and author and tier(author) == tier(pins[other]):
+            chain["fallback_blocked"] = ("other reviewer %s model %s is the author's tier (MYAGENTKIT_AUTHOR %s)"
+                                         % (names[other], pins[other], author))
             eligible = False
         checkpoint()  # Never spend on the alternate if primary evidence cannot be saved.
         if attempt.get("error_after_result"):  # Save once, before a closed console can raise again.
@@ -368,12 +449,28 @@ def main(argv=None):
                      else "the adapter recorded the result in", result.get("evidence"),
                      ", but the checkout changed, so the chain failed"
                      if chain.get("checkout_changed") else ""), flush=True)
+        if retry:
+            delay = (result.get("retry_after") or CAPACITY_RETRY_SECONDS) * 2 ** retries
+            retries += 1
+            print("RETRY [review]: %s is at capacity (rate_limited); retry %d of %d in %s seconds."
+                  % (names[provider], retries, CAPACITY_RETRIES, delay), flush=True)
+            sleep(delay)
+            queue.insert(0, provider)
+            continue
         if chain["status"] == "completed" or not eligible:
             break
-        print("FALLBACK [review]: requested reviewer %s did not complete (%s); --fallback was "
-              "passed, so configured %s model %s runs once instead."
-              % (names[provider], chain["failure_kind"], names[other], pins[other]), flush=True)
+        if switch:
+            chain["switched"] = ("quota_exhausted: the Codex quota is used up, so the role switched "
+                                 "to Claude (decisions.md 7)")
+            print("SWITCH [review]: codex quota is exhausted (quota_exhausted); the kit runs on Claude "
+                  "alone, so configured %s model %s runs once instead. Tell the owner."
+                  % (names[other], pins[other]), flush=True)
+        else:
+            print("FALLBACK [review]: requested reviewer %s did not complete (%s); --fallback was "
+                  "passed, so configured %s model %s runs once instead."
+                  % (names[provider], chain["failure_kind"], names[other], pins[other]), flush=True)
         os.environ[FALLBACK_ENV] = "%s (%s)" % (names[provider], chain["failure_kind"])
+        queue.append(other)
     os.environ.pop(FALLBACK_ENV, None)
     print("review dispatch: " + json.dumps(chain))
     if chain["status"] != "completed":
@@ -387,6 +484,13 @@ def main(argv=None):
             print("FAIL [review]: Claude Code's Bash sandbox cannot start on this host, and the "
                   "review never runs Bash outside it. On Linux and WSL2 install bubblewrap and "
                   "socat (see scripts/doctor.sh); WSL1 cannot sandbox.")
+        if chain["failure_kind"] == "quota_exhausted":
+            print("FAIL [review]: the reviewer's quota is exhausted (a plan, session or spend limit); "
+                  "it is not retried. Tell the owner: wait for the reset, or run the review with "
+                  "--fallback on the other configured reviewer.")
+        if chain["failure_kind"] == "rate_limited":
+            print("FAIL [review]: the reviewer was rate limited or at capacity; run the review "
+                  "again later, or with --fallback on the other configured reviewer.")
         if chain["failure_kind"] == "content_flagged":
             print("FAIL [review]: the provider's content classifier stopped the review; run it "
                   "again, or send a smaller scope (--commit, or a shorter --base range).")
