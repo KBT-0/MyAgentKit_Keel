@@ -46,7 +46,8 @@ The b10d serial acceptance unit failed in 1397.8 s: its bridge/preflight group r
 20-CPU host cut wall time by about 25%, not half, compared with b10c's serial 1527 s.
 The nested run remains above 1200 s; changing the bound is the owner's decision
 (close-out decisions.md item 29). The fix round addressed round-1 logic findings that
-shards survived SIGINT and SHELLCHECK_OPTS hid SC2028/SC2086; round 2 returned Accept.
+shards survived SIGINT and SHELLCHECK_OPTS hid SC2028/SC2086; both round-2 reviews returned
+Accept with Manual Checks.
 
 ### 2026-10-16 — v0.11 batch 11: setup interview, feedback permissions and CRLF repair
 

@@ -4,8 +4,8 @@ Native Windows Python has no fcntl. The gate there holds its lock as a file hand
 without write sharing, which the holder makes inheritable, so the gate and every process it
 starts keep it and Windows closes it when the last of them exits. A nested run proves the
 inherited handle: open in its own process on this lock file, with write access, while a fresh
-open for writing is refused, the file compared by FILE_ID_INFO. Every case here runs only on
-native Windows; elsewhere each one prints a NOT RUN line and passes, as the kit check expects.
+open for writing is refused, the file compared by FILE_ID_INFO. Platform-specific cases run
+only on native Windows; elsewhere they declare platform skips, reported as NOT RUN by the kit check.
 On native Windows no case is NOT RUN: a guard whose case cannot run there fails.
 """
 import ctypes
@@ -30,13 +30,12 @@ WINDOWS = os.name == 'nt'
 
 def windows_only(test):
     def run(self):
-        if not WINDOWS:
-            sys.stderr.write('\nNOT RUN: %s (native Windows only)\n' % self.id())
-            return
         if not shutil.which('sh'):
             raise AssertionError('no sh on PATH: run this suite from Git for Windows or MSYS2')
         return test(self)
     run.__name__, run.__doc__ = test.__name__, test.__doc__
+    run = unittest.skipUnless(WINDOWS, 'native Windows only')(run)
+    run._kit_platform_skip = not WINDOWS
     return run
 
 

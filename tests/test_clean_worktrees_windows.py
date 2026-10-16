@@ -5,7 +5,8 @@ when its file cannot be opened for writing, and a folder that is a reparse point
 a folder symlink) is a mount point: Git for Windows' recursive remove went through a junction
 into the main checkout's virtual environment and deleted part of it. Each case builds the state
 in a throwaway repository and runs the real script under Git for Windows' sh. Every case here
-runs only on native Windows; elsewhere each one prints a NOT RUN line and passes.
+runs only on native Windows; elsewhere each one declares a platform skip, reported as NOT RUN
+by the kit check.
 """
 import os
 import re
@@ -26,13 +27,12 @@ WINDOWS = os.name == 'nt'
 
 def windows_only(test):
     def run(self):
-        if not WINDOWS:
-            sys.stderr.write('\nNOT RUN: %s (native Windows only)\n' % self.id())
-            return
         if not shutil.which('sh'):
             raise AssertionError('no sh on PATH: run this suite from Git for Windows or MSYS2')
         return test(self)
     run.__name__, run.__doc__ = test.__name__, test.__doc__
+    run = unittest.skipUnless(WINDOWS, 'native Windows only')(run)
+    run._kit_platform_skip = not WINDOWS
     return run
 
 
