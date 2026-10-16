@@ -58,6 +58,22 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   past about 400 changed lines gets a split hint (KARARLAR B01, B02 inv2#10/#34, D03 inv1#104,
   D04, D06 inv1#37/#163; BACKLOG B14, B15).
   **ACTION:** re-sync `docs/REVIEW_GATE.md`, `docs/REVIEW_RUNNING.md`, `docs/WORKFLOW.md`.
+- **Working modes and model routing** (`scripts/working_mode.py`, `docs/WORKFLOW.md`,
+  `/myagentkit:mode`, `/myagentkit:cross-review`, `setup/INTERVIEW.md`, `docs/CODEX.md`).
+  Working modes have English names only (solo, cross, saver); the mode helper finds a
+  pre-v0.11 project by the kit version its sync recorded (`docs/kit/.kit-version`) and prints
+  the ACTION, no longer by counting WORKFLOW's table rows. Model routing: one cost-per-task
+  sentence; a weaker tier never reviews a high-tier or critical change; Codex xhigh only as the
+  lead's reasoned exception; rule 7 names the reviewer in solo, in cross and when Codex is
+  blocked; on a plan without Fable, Opus reviews Opus's high-tier or critical work in a fresh
+  session, high effort, one round, and the owner's diff read is the second check (owner
+  decision); saver keeps the cross rules at high and critical tier, and its `after:` return is
+  the owner's standing permission. INTERVIEW Q8 keeps `worker.md` (LONG_JOBS none) and deletes
+  only `spawn_worker.sh` (KARARLAR B05, B06, D05 inv2#137/inv3#180, D06 inv3#26, D10
+  inv1#140/#150/inv2#136/inv3#181, B12 inv3#171).
+  **ACTION:** replace the "Model routing" and "Working modes, by name" sections of
+  `docs/WORKFLOW.md` with the kit's; a STATE.md "Working mode:" line written by hand with a
+  Turkish name must be rewritten to its English name (the helper now refuses it).
 - **Review budget and round-limit fixes** (`scripts/claude_bridge.py`, core and packaged copies).
   An old pathname containing ` b/` cannot disguise source as a vendored diff. Unreadable
   destination markers count toward the budget; a deleted lock or vendored file is named by
@@ -122,7 +138,7 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   family plugged in beside the Claude lead, Codex takes tasks with written acceptance
   criteria inside one module (`gpt-6-luna` medium for mechanical work, `gpt-6.1-sol`
   medium or high, never xhigh), and Claude takes the rest. Claude reviews every Codex
-  change; Codex reviews a Claude change at medium and high tier, one pass, report only, and
+  change; Codex reviews a Claude change at every tier, one pass, report only, and
   the lead checks each finding. Critical work is written by Opus until the owner says
   otherwise, and the strongest Claude tier reviews it. Every brief names the paths its
   worker may change on an `Owns:` line, and `review.sh` refuses a diff outside them when

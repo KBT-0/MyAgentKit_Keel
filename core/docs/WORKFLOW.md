@@ -534,7 +534,9 @@ Rules for whoever routes work, binding with any table:
 7. **Critical work is written by Opus until {{OWNER_NAME}} says otherwise** (owner decision,
    2026-10-15): architecture, a gate's or the review tooling's design, a security boundary.
    It never goes to the plugged family, in saver too. In solo, the subscription's stronger
-   Claude tier (Fable today, rule 2's check) reviews it. In cross, Codex reviews it, and the
+   Claude tier (Fable today, rule 2's check) reviews it; on a plan without Fable, Opus reviews
+   it in a fresh session, at high effort, one round, and {{OWNER_NAME}}'s diff read before the
+   merge is the second check (owner decision, 2026-10-16). In cross, Codex reviews it, and the
    strongest Claude tier takes the other focus ("cross", direction rule). When Codex cannot
    review it (its content classifier stopped the review, `content_flagged`), the strongest
    Claude tier the plan has reviews it in a fresh session, at high effort, one round; on a plan
@@ -617,7 +619,11 @@ review cost 1.7 to 2.3 times, and its gain depends on the direction).
   low or medium tier change, or the reverse. The lead picks both by the tier table; a
   high-tier or critical change is never reviewed by a weaker tier than its author's ("Model
   routing", the limit). A second session of the author's own tier
-  is never the review. Findings go to the author's side ("Worker cost", rule 2), and the
+  is never the review, with one exception: on a plan with no tier above the author's (Opus
+  without Fable), a high-tier or critical change gets Opus in a fresh session, at high effort,
+  one round, plus {{OWNER_NAME}}'s diff read (owner decision, 2026-10-16; the same-model review
+  alone added 0 points at 1.7 times the cost, `docs/research/claude-lead-codex.md`, finding 4,
+  so the diff read carries the weight). Findings go to the author's side ("Worker cost", rule 2), and the
   next round reviews the fix. Two tiers decorrelate less than two vendors (Goel et al.,
   ICML 2025, arxiv.org/abs/2502.04313: model errors overlap more as capability grows; one
   measured Claude-to-Claude review added 0 points at 1.7 times the cost,

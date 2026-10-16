@@ -42,6 +42,16 @@ Verified locally (red then green): `git clean -nd` and `git restore --staged f` 
 a dirty tree before the rewrite; an EncodingWarning in `git status` made a clean tree read as
 dirty; a backslash `file_path` was never matched by `guard_boundaries.py`.
 
+### 2026-10-16 — v0.11 batch 8: mode helper version check; review time without the full suite
+
+The mode helper's version check reads the sync stamp (migration tools read their recorded
+version: Alembic, Flyway; secondary summary only, D10 evidence). No fresh web research in this
+batch: the sources are the stage-2 evidence files, read 2026-10-15. Solo without Fable: the
+owner decided Opus in a fresh session plus the owner's diff read (WORKFLOW rule 7). Measured:
+the batch 8 Codex review (gpt-6.1-sol, medium) told not to run the full suite finished in
+about 2.5 minutes; earlier reviews that ran `check.sh --self-test` in their copy took 40-60
+minutes and one was cut at the 3600 s cap.
+
 ### 2026-10-15 — v0.11 batch 3: reproduced review-gate bypasses and documentation drift
 
 The round-1 logic and portability reviews (20261015T175842Z-cbb8d261c9b9 and
