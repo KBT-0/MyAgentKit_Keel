@@ -402,11 +402,12 @@ context() {
           split(tok, p, "/"); u = num(p[1]); w = num(p[2])
           if (w <= 0) { print "unparsable"; exit }
           line = pct * w / 100; if (abs < line) line = abs
-          printf "%s %d %s %dk %d\n", (u > line ? "over" : "under"), u * 100 / w, tok, line / 1000, w }
+          printf "%s %d %s %dk %d %d\n", (u > line ? "over" : "under"), u * 100 / w, tok, line / 1000, w, u }
   ' "$win") || fig=""
   set -- "$1" ${fig:-absent}
-  # Prefer the API token count to a stale or rounded pane figure. A percentage override
-  # can only be evaluated when the pane supplies a window; no window is guessed.
+  # A Stop/Notification snapshot can predate this turn. Consider both sources and keep
+  # their highest reported band together. A percentage still needs the pane window.
+  source=""; count=0; label=""
   snapshot=""; tokens=""
   if [ -f "$wdir/$1.state" ]; then snapshot=$(cat -- "$wdir/$1.state" 2>/dev/null) || snapshot=""; fi
   case $snapshot in *' context_tokens='*) tokens=${snapshot##* context_tokens=} ;; esac
@@ -425,24 +426,30 @@ context() {
         *) [ "$level" -eq 0 ] || eligible=1 ;;
       esac
       if [ -n "$eligible" ]; then
-        [ "$level" -gt 0 ] || level=1
-        said=$(mark "$1" state-context)
-        case $said in 1|2|3|4) [ "$said" -lt "$level" ] || return 1 ;; esac
-        say "watch_workers: CONTEXT: $1$label (its state hook; docs/WORKFLOW.md, \"Worker cost\", rule 8)" || return 2
-        setmark "$1" state-context "$level"
-        return 0
-      fi
-      # A known snapshot below the threshold also takes precedence over the pane.
-      [ "$warn_set" = pct ] && [ -z "${6:-}" ] || return 1 ;;
+        source=snapshot; count=$tokens
+      fi ;;
   esac
+  if [ "$2" = over ] && { [ -z "$source" ] || [ "$7" -gt "$count" ]; }; then
+    source=pane; count=$7
+    label=$(context_label " context_tokens=$count")
+  fi
+  if [ -n "$source" ]; then
+    level=1
+    case $label in *', yellow') level=2 ;; *', red') level=3 ;; *', ceiling') level=4 ;; esac
+    said=$(mark "$1" state-context)
+    case $said in 1|2|3|4) [ "$said" -lt "$level" ] || return 1 ;; esac
+    if [ "$source" = snapshot ]; then
+      say "watch_workers: CONTEXT: $1$label (its state hook; docs/WORKFLOW.md, \"Worker cost\", rule 8)" || return 2
+    else
+      say "watch_workers: CONTEXT: $1, $4 is $3% of its context window, past its $5 warning line (finish, compact or hand off: read its Remaining: line; docs/WORKFLOW.md, \"Worker cost\", rule 8)" || return 2
+      setmark "$1" context over
+    fi
+    setmark "$1" state-context "$level"
+    return 0
+  fi
   [ "$2" != under ] || return 1
   said=$(mark "$1" context)
   [ "$said" != over ] || return 1
-  if [ "$2" = over ]; then
-    say "watch_workers: CONTEXT: $1, $4 is $3% of its context window, past its $5 warning line (finish, compact or hand off: read its Remaining: line; docs/WORKFLOW.md, \"Worker cost\", rule 8)$(pane_context "$1")" || return 2
-    setmark "$1" context over
-    return 0
-  fi
   [ -z "$once" ] && [ -z "$said" ] || return 1
   say "watch_workers: CONTEXT: $1, no context figure: its status line is $2 (said once; nothing is guessed)" || return 2
   setmark "$1" context noted

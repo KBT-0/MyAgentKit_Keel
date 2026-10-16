@@ -20,6 +20,10 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+# Fixture supervisors must never inherit the live worker's records or lifecycle settings.
+for _name in [n for n in os.environ if n.startswith('KIT_WORKER_')]:
+    os.environ.pop(_name, None)
+
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / 'overlays/claude-code/files/scripts/spawn_worker.sh'
 PANES = ROOT / 'tests/fixtures/panes'
@@ -248,7 +252,9 @@ ON_WINDOWS = {'test_a_backend_reaches_the_worker_quoted_on_both_paths',
               'test_two_signals_do_not_repeat_cleanup',
               'test_unsafe_names_are_refused_without_changing_worker_files',
               'test_worker_name_boundary_fits_every_generated_filename'}
-ON_WINDOWS.update({'test_worktree_inherits_untracked_project_hooks',
+ON_WINDOWS.update({'test_copied_hooks_allow_done_without_hiding_other_changes',
+                   'test_worktree_accepts_backslash_windows_settings',
+                   'test_worktree_inherits_untracked_project_hooks',
                    'test_worktree_keeps_tracked_project_hooks_without_copying_them',
                    'test_worktree_inherits_untracked_hooks_and_bom_settings',
                    'test_worktree_accepts_absolute_windows_settings',
@@ -299,8 +305,10 @@ class SpawnWorkerTests(unittest.TestCase):
         # What the script hands on: the folder resolved (`pwd -P`), the file name as given.
         # Git for Windows' `pwd -P` spells the folder its own way (/tmp/..., /c/...).
         if WINDOWS:
-            folder = subprocess.run(['cygpath', '-u', os.path.realpath(path.parent)], capture_output=True,
-                                    text=True, check=True).stdout.rstrip('\n')
+            # MSYS must receive literal path characters, including dollar signs and backquotes.
+            env = dict(os.environ, SPAWN_PHYSICAL_DIR=os.path.realpath(path.parent))
+            folder = subprocess.run(['sh', '-c', 'cygpath -u "$SPAWN_PHYSICAL_DIR"'], env=env,
+                                    capture_output=True, text=True, check=True).stdout.rstrip('\n')
             return folder + '/' + path.name
         return os.path.join(os.path.realpath(path.parent), path.name)
 
@@ -1012,6 +1020,8 @@ exit 0
             extra = dict(KIT_WT=str(self.bin / 'wt-tab'), KIT_PS=str(self.bin / 'ps-stub'),
                          CLAUDE_CONFIG_DIR=str(self.tmp / 'config'))
         own = str((self.cwd / 'own.json').resolve()).replace('\\', '/') if absolute else 'own.json'
+        if absolute == 'backslash':
+            own = own.replace('/', '\\')
         result = self.spawn('w1', str(self.brief), '--worktree', '--settings', own, **extra)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         tree = self.cwd / '.claude/worktrees/w1'
@@ -1058,6 +1068,36 @@ exit 0
 
     def test_worktree_inherits_untracked_project_hooks(self):
         self.worktree_hooks(tracked=False, hooks_tracked=False)
+
+    def test_copied_hooks_allow_done_without_hiding_other_changes(self):
+        self.worktree_hooks(tracked=False, hooks_tracked=False)
+        tree = self.cwd / '.claude/worktrees/w1'
+        report = tree / 'RESULT-w1.md'
+        report.write_text('Kind: completed\nTask: w1\nAttempt: 1\nRemaining: none\n')
+        def git(*args):
+            return subprocess.run(['git', *args], cwd=tree, check=True, capture_output=True, text=True).stdout
+        git('add', 'RESULT-w1.md', 'seed')
+        git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'worker result')
+        def watch():
+            run = subprocess.run(['sh', str(SCRIPT.with_name('watch_workers.sh')), '--once',
+                                  '--result', 'w1=' + report.as_posix(), 'w1'], cwd=self.cwd,
+                                 env=self.base_env(), capture_output=True, text=True, timeout=30)
+            self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+            return run.stdout
+        # Unrelated untracked hooks and tracked edits still block DONE.
+        extra = tree / '.claude/hooks/new-project-hook.py'
+        extra.write_text('# project work\n')
+        self.assertNotIn('DONE:', watch())
+        extra.unlink()
+        (tree / 'seed').write_text('changed\n')
+        self.assertNotIn('DONE:', watch())
+        (tree / 'seed').write_text('seed')
+        self.assertIn('DONE: w1', watch(), git('status', '--porcelain'))
+        self.assertEqual(git('status', '--porcelain'), '')
+
+    @unittest.skipUnless(WINDOWS, 'Windows drive-letter path syntax')
+    def test_worktree_accepts_backslash_windows_settings(self):
+        self.worktree_hooks(tracked=False, absolute='backslash')
 
     def test_worktree_keeps_tracked_project_hooks_without_copying_them(self):
         self.worktree_hooks(tracked=True)
@@ -1626,6 +1666,19 @@ class WorkerStateHookTests(unittest.TestCase):
             (repo / 'mark').unlink(missing_ok=True)
             self.assertEqual(watch(90000, '--context-warn', '10%'), '')
             self.assertIn('CONTEXT:', watch(110000, '--context-warn', '10%'))
+            (repo / 'mark').unlink(missing_ok=True)
+            original = (PANES / 'working-auto.txt').read_text(encoding='utf-8')
+            pane_file.write_text(original.replace('58k/1.0M', '350k/1.0M'), encoding='utf-8')
+            self.assertIn('CONTEXT:', watch(150000))
+            self.assertEqual(watch(350001), '', 'snapshot repeats the pane band')
+            self.assertEqual(watch(150000), '', 'pane repeats its own band')
+            (repo / 'mark').unlink(missing_ok=True)
+            (workers / 'w1.state').unlink()
+            run = subprocess.run(['sh', str(SCRIPT.with_name('watch_workers.sh')), '--once', 'w1'],
+                                 cwd=repo, env=env, capture_output=True, text=True, timeout=30)
+            self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+            self.assertIn('CONTEXT:', run.stdout)
+            self.assertEqual(watch(350002), '', 'snapshot shares the pane band without a prior state')
             (repo / 'mark').unlink(missing_ok=True)
             pane_file.write_text('No status window figure\n', encoding='utf-8')
             self.assertEqual(watch(310000, '--context-warn', '10%'), '')

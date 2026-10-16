@@ -11,6 +11,7 @@
 # reads in place of a pane. Worktree workers get these hooks on either platform, and their
 # --settings also carries project settings absent from their checkout. The result file
 # stays the done signal (owner decision 23, 2026-10-16).
+# Copied project hook files enter Git's info/exclude by exact path, keeping result reports clean.
 # Worker names use letters, digits, - and _, not starting with -. The longest generated
 # filename (NAME.state.XXXXXXXX) must fit in 255 bytes; on native Windows its full path
 # must fit in 259 characters too, including the checkout's .myagentkit/workers folder.
@@ -268,6 +269,7 @@ backend_command() {
 # JSON may start with whitespace: only a leading `{` counted, and ' {"model":"x"}' was refused
 # as a file name with --worktree. JSON's four whitespace characters (space, tab, LF, CR)
 # before the `{` mark it inline, and the value is passed on unchanged.
+case $settings in [a-zA-Z]:\\*) settings=$(printf '%s' "$settings" | tr '\\' '/') ;; esac
 ws=" $(printf '\t\r')$nl"
 lead=${settings%%[!$ws]*}
 case "$settings" in
@@ -326,11 +328,23 @@ prepare_worktree() {
   # Untracked kit installs carry settings and hooks together. Fill missing hook files,
   # preserving the committed versions already present in the worker's checkout.
   if [ -d "${project_settings%/*}/hooks" ]; then
-    $kit_python -I -c 'import os, shutil, sys
+    $kit_python -I -c 'import os, shutil, subprocess, sys
+from pathlib import Path
+root = Path(sys.argv[2]).parents[1]
+copied = []
 def missing(source, destination):
     if not os.path.lexists(destination):
         shutil.copy2(source, destination)
-shutil.copytree(sys.argv[1], sys.argv[2], dirs_exist_ok=True, copy_function=missing)' \
+        copied.append(Path(destination).relative_to(root).as_posix())
+shutil.copytree(sys.argv[1], sys.argv[2], dirs_exist_ok=True, copy_function=missing)
+if copied:
+    exclude = Path(subprocess.check_output(["git", "-C", str(root), "rev-parse",
+                   "--path-format=absolute", "--git-path", "info/exclude"], encoding="utf-8").strip())
+    exclude.parent.mkdir(parents=True, exist_ok=True)
+    with exclude.open("a", encoding="utf-8", newline="\n") as stream:
+        for name in copied:
+            pattern = "".join("\\" + ch if ch in "\\*?[ " else ch for ch in name)
+            stream.write("\n/" + pattern + "\n")' \
       "${project_settings%/*}/hooks" "$dir/.claude/hooks" || die "cannot carry project hooks into $dir"
   fi
 }
@@ -367,6 +381,7 @@ if [ -n "$windows$worktree" ]; then
 fi
 prepare_settings() {
   hook=$kit_python' -I -c '$(q 'import importlib.util, json, os, sys, tempfile, time
+sys.dont_write_bytecode = True  # Loading telemetry must not create untracked hook caches.
 e = json.loads(sys.stdin.buffer.read() or b"{}")
 m = str(e.get("message", "")).lower()
 s = {"permission_prompt": "waiting permission", "elicitation_dialog": "waiting question"}.get(e.get("notification_type"), "")
