@@ -13,6 +13,11 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## v0.11 — 2026-10-09
 
+- **Reviewer manual-check verdict instructions** (`core/scripts/claude_bridge.py`,
+  `core/scripts/codex_bridge.py`, `core/scripts/test_claude_bridge.py`, plugin runtime).
+  Both reviewer prompts classify NOT RUN and "could not verify" lines as manual checks
+  requiring Accept with Manual Checks. A plain Accept ends with None. under Manual checks.
+  The evidence validator still refuses a plain Accept carrying a check. **ACTION:** none.
 - **Setup interview, feedback permissions and line-ending repair** (`setup/INTERVIEW.md`,
   `setup/RESEARCH_PROTOCOL.md`, `plugin/commands/kit-feedback.md`, `handoff.md`,
   `cross-review.md`, `core/scripts/fix_crlf.sh`, `core/docs/DEV_SETUP.md`, patterns and skills).
