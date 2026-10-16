@@ -54,6 +54,19 @@ Lesson from the reviews: a label rule fed by prose registered technical words (r
 fix registered every prose mention (round 2); only the place a file gives a task its id may
 register a label. Red runs saved before each change (batch2-tests/, RESULT-b2fix*.md).
 
+### 2026-10-16 — v0.11 batch 7: gate, doctor, boundary example
+
+Batch 7 applies KARARLAR B02 inv2#39 (root fix: the boundary example probes a new file in the
+disposable copy, so the gate never writes in the tree a review shares), inv2#104/#147 (doctor's
+probe bound measured on Windows 11, `claude --help` 0.3-3.5 s -> 10 s; the macOS run is an
+owner-hands item, decisions.md 20), inv2#143 (Python 3.10 EOL 2026-10-01, devguide.python.org),
+inv2#146, inv2#161, D03 inv1#27 and inv2#156 (gate as a required CI check without path
+filters: GitHub's Pending required check), D05 inv1#76, B11 inv1#119/inv2#152 (strong review
+10 days or 20 tasks: an owner's number, not a measurement), B10 inv1#239 and D04 inv2#83.
+Lesson from the reviews: a file named `-` reached grep as stdin (Codex r2 portability
+Critical, lead fix 42720fe); every path handed to a tool needs the `./` form, not only
+the ones a test happens to name.
+
 ### 2026-10-16 — v0.11 batch 8: mode helper version check; review time without the full suite
 
 The mode helper's version check reads the sync stamp (migration tools read their recorded
