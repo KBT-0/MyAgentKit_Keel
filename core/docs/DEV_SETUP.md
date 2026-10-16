@@ -37,11 +37,23 @@ git config core.hooksPath        # -> .githooks
 `git commit --no-verify` skips the gate. That hatch exists for {{OWNER_NAME}}'s WIP commits.
 Agents must not use it (`AGENTS.md`).
 
+**Recommended: the same gate in CI, as a required check.** A git hook is local and can be
+skipped ([githooks](https://git-scm.com/docs/githooks)); the hook is the local backstop, and
+the check that holds is the same `./scripts/check.sh` run by CI and set as a required status
+check on the protected branch. Run it on every pull request with no `paths` or `paths-ignore`
+filter, and let the script decide what to run: a workflow a path filter skips leaves its
+required check Pending, and the pull request cannot merge
+([troubleshooting required status checks](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/collaborating-on-repositories-with-code-quality-features/troubleshooting-required-status-checks)).
+
 **Line endings.** `sh` cannot run a script with CRLF line endings, and Git for Windows'
 default `core.autocrlf=true` checks text files out with CRLF: on such a clone the gate, the
 hooks and `doctor.sh` could not start. `.gitattributes` holds `*.sh text eol=lf` and one
 `text eol=lf` line for each of the gate's hooks, so they check out with LF whatever a
-clone's autocrlf says. Keep those lines. A clone made before they were committed keeps its
+clone's autocrlf says. Keep those lines. Recommended: `* text=auto` as the first line, so
+every other text file is stored with LF too and a diff never churns on line endings alone (a
+review refuses a line-ending-only diff unless `REVIEW_ALLOW_EOL_ONLY=1`); in a repository that
+already has CRLF files, run `git add --renormalize .` once after adding it and commit that alone
+([gitattributes](https://git-scm.com/docs/gitattributes)). A clone made before they were committed keeps its
 CRLF copies, because a pull does not check out again a file it did not change, until they
 are rewritten once, with no uncommitted change to them: each CRLF becomes LF in a regular
 file (a file that is, or lies below, a symlink or a junction is left alone, with a line
@@ -122,7 +134,7 @@ It runs from any shell the gate runs from, native Windows included (Git for Wind
 with a Windows Python: the reviewer runs in a Job Object of its own there). A CLI installed as
 a `.cmd` (npm's) is found by its bare name; an argument `cmd.exe` would read as shell is
 refused, so name the CLI's executable in `REVIEW_CLI_BIN` or `CLAUDE_CLI_BIN` if a review says
-so. Only the review's own self-test (`scripts/review.sh --self-test`) still needs a POSIX host.
+so.
 
 **Ask your agent to set this up for you.** It can install the CLI and check the wiring; the
 parts it cannot do are called out below. Nothing here is required to write code — the gate,
@@ -225,6 +237,9 @@ The stored claude.ai login and `apiKeyHelper` cannot be removed from the environ
 With a backend, the CLI still prefers `ANTHROPIC_AUTH_TOKEN` for authentication.
 User or managed settings can reintroduce environment values; verify settings before live backend use.
 Claude reviews deny reads of `.myagentkit/backends` through tool permissions and the Bash sandbox.
+Both layers are needed: Read and Edit deny rules do not apply to arbitrary subprocesses
+([permissions](https://code.claude.com/docs/en/permissions)), and a sandbox `denyRead` entry
+does not stop the Read tool ([sandboxing](https://code.claude.com/docs/en/sandboxing)).
 The Codex review adapter uses legacy `workspace-write`, which has no per-path read-deny knob.
 On Codex installations supporting managed read denies, administrators should add this to `requirements.toml`:
 

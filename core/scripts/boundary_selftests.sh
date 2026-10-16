@@ -12,41 +12,17 @@
 #
 # REPLACE THIS WHOLE FILE alongside scripts/boundary_checks.sh.
 #
-# Worked example, matching the example check:
-# The dot-prefixed injection is intended to avoid common build/lint include globs.
-# Verify your project's actual include rules; dotfiles are not universally excluded.
-#
-#   # The path first: a killed run's leftover also turns the baseline red, which would hide it.
-#   if [ -e src/domain/.selftest.py ] || [ -L src/domain/.selftest.py ]; then
-#     echo "  FAIL — the injection path already exists; refusing to overwrite owner content."
-#     echo "         A killed self-test (SIGKILL, taskkill /F: no trap runs) leaves its injection"
-#     echo "         behind. If this is one, check it by hand and delete it: src/domain/.selftest.py"
-#     st_fail=1
-#   elif ! sh "$0" >/dev/null 2>&1; then
-#     echo "  FAIL — domain/web baseline is already red; the injection would prove nothing."
-#     st_fail=1
-#   elif (
-#     # A subshell, so these traps do not replace the self-test's: interrupted, the file goes too.
-#     trap 'rm -f src/domain/.selftest.py' EXIT
-#     trap 'exit 130' INT
-#     trap 'exit 143' TERM
-#     mkdir -p src/domain && printf 'from myapp.web import router\n' > src/domain/.selftest.py || exit 1
-#     boundary_status=0
-#     boundary_output=$(sh "$0" 2>&1) || boundary_status=$?
-#     [ "$boundary_status" -ne 0 ] && printf '%s\n' "$boundary_output" |
-#       grep -Fq 'FAIL [boundary]: the domain layer imports the web layer:'
-#   ); then
-#     echo "  ok   — domain/web boundary gate rejects a forbidden import"
-#   else
-#     boundary_status=$?
-#     case $boundary_status in 130|143) exit "$boundary_status" ;; esac
-#     echo "  FAIL — the injection did not produce the domain/web gate's failure."
-#     st_fail=1
-#   fi
+# Worked example, matching the example check: the probe below. It runs the gate in a
+# disposable copy of the checkout, for a NEW file (set probe_target to a path that does not
+# exist yet) as for an edit of an existing one, so the injection is never in the checkout. A
+# case that wrote into the checkout, even a file it removed again, made a review running there
+# meanwhile fail as stale_checkout, and a concurrent `git add -A` or a SIGKILL could keep the
+# file (KARARLAR B02 inv2#39, 2026-10-15). In the copy no injection can collide with owner
+# content and no trap has to remove it: the copy is deleted whole.
 #
 # {{BOUNDARY_SELF_TESTS}}
 
-# Existing-file probes run in a disposable copy of the checkout, never in the checkout: a
+# Probes run in a disposable copy of the checkout, never in the checkout: a
 # self-test never changes a tracked file. An edit made in place and restored by traps was
 # seen by a concurrent `git add -A`, and SIGKILL or a power loss, which run no trap, left it
 # in the tree. The copy holds the current bytes, uncommitted edits included, and is deleted
@@ -363,7 +339,8 @@
 # |         path = os.path.join(path, part)
 # |         if os.path.lexists(path) and linked(path):
 # |             sys.exit(rel + " runs through a symlink at " + shown(path))
-# |     if not os.path.isfile(path):
+# |     # The target may not exist yet: a new file is a case too. The gate must exist.
+# |     if not os.path.isfile(path) and (rel != sys.argv[2] or os.path.lexists(path)):
 # |         sys.exit(rel + " is not a regular file in the disposable copy")
 # | print(digest.hexdigest())
 # | ' "$probe_root" "$probe_target" "$probe_gate" 2>&1) ||
@@ -447,7 +424,8 @@
 # |   probe_fresh_copy
 # |   [ "$probe_digest" = "$probe_first" ] ||
 # |     probe_skip "the checkout, or its git index, changed between the two copies; run the self-test again."
-# |   printf 'from myapp.web import router\n' > "$probe_root/$probe_target" || exit 1
+# |   mkdir -p "$(dirname "$probe_root/$probe_target")" &&
+# |     printf 'from myapp.web import router\n' > "$probe_root/$probe_target" || exit 1
 # |   probe_status=0
 # |   probe_output=$(probe_env sh "$probe_root/$probe_gate" 2>&1) || probe_status=$?
 # |   [ "$probe_status" -ne 0 ] && printf '%s\n' "$probe_output" |

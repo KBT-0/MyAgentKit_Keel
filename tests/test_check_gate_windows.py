@@ -1063,5 +1063,156 @@ class WindowsProbeCopyTests(unittest.TestCase):
         os.chmod(checkout / 'object', 0o644)
 
 
+class GateRuleTests(unittest.TestCase):
+    """Gate rules that do not depend on the lock: these run on every host, native Windows included
+    (tests/test_check_gate.py, the POSIX gate suite, does not run there)."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = Path(tmp.name)
+        self.project = self.tmp / 'project'
+        make_project(self.project)
+        self.build = self.tmp / 'build.sh'
+        self.build.write_text('true\n', encoding='utf-8', newline='\n')
+        self.git('add', '-A')
+        self.git('commit', '-q', '-m', 'init')
+
+    def git(self, *args):
+        return subprocess.run(['git', '-c', 'user.name=t', '-c', 'user.email=t@example.invalid',
+                               '-c', 'core.hooksPath=/dev/null', '-c', 'commit.gpgsign=false', *args],
+                              cwd=self.project, check=True, capture_output=True, text=True).stdout
+
+    def write(self, name, text):
+        (self.project / name).parent.mkdir(parents=True, exist_ok=True)
+        (self.project / name).write_text(text, encoding='utf-8', newline='\n')
+
+    def run_gate(self, *args, **extra):
+        result = subprocess.run(['sh', 'scripts/check.sh', *args], cwd=self.project,
+                                env=environment(self.build, **extra), capture_output=True, text=True,
+                                encoding='utf-8', errors='replace', timeout=120)
+        return result.returncode, result.stdout + result.stderr
+
+    def test_any_exported_self_test_prefix_fails_a_normal_run_by_name(self):
+        # A seam added later is refused without joining a list (KARARLAR D03 inv2#161).
+        code, out = self.run_gate(GATE_SELFTEST_SOMETHING_NEW='1')
+        self.assertEqual(code, 1, out)
+        self.assertIn('FAIL [env]: GATE_SELFTEST_SOMETHING_NEW is set', out)
+        code, out = self.run_gate(GATE_BUILD_CMD_OVERRIDE='true')
+        self.assertIn('FAIL [env]: GATE_BUILD_CMD_OVERRIDE is set', out)
+
+    def test_a_file_named_dash_is_scanned_inside_and_outside_git(self):
+        # grep takes a bare "-" as stdin, so a marker in a file named "-" passed (b7 review, round 2).
+        self.write('-', '{{BUILD_TEST_COMMAND}}\n')
+        self.git('add', '--', '-')
+        code, out = self.run_gate()
+        self.assertEqual(code, 1, out)
+        self.assertIn('FAIL [setup]', out)
+        away = self.tmp / 'git-away'
+        (self.project / '.git').rename(away)
+        try:
+            code, out = self.run_gate()
+        finally:
+            away.rename(self.project / '.git')
+        self.assertEqual(code, 1, out)
+        self.assertIn('FAIL [setup]', out)
+
+    def test_a_deletion_only_commit_is_scanned_and_only_an_empty_tree_is_refused(self):
+        # The empty-list FAIL counts files in the tree, not in the commit (KARARLAR D03 inv2#159).
+        self.write('docs/old.md', 'old\n')
+        self.git('add', 'docs/old.md')
+        self.git('commit', '-q', '-m', 'old')
+        self.git('rm', '-q', 'docs/old.md')
+        code, out = self.run_gate('--for-commit')
+        self.assertEqual(code, 0, out)
+        self.assertNotIn('EMPTY', out)
+        bare = self.tmp / 'bare'
+        bare.mkdir()
+        subprocess.run(['git', 'init', '-q', str(bare)], check=True)
+        shutil.copytree(self.project / 'scripts', bare / 'scripts')
+        (bare / '.gitignore').write_text('*\n', encoding='utf-8')
+        result = subprocess.run(['sh', 'scripts/check.sh'], cwd=bare, env=environment(self.build),
+                                capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=120)
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn('FAIL [scan]: the file list is EMPTY', result.stdout)
+
+    def test_a_tagged_state_line_deleted_with_nothing_added_elsewhere_is_noted(self):
+        # KARARLAR D05 inv1#76, lead decision 7: told at commit time, never failed. A colour the
+        # user's config forces on every diff must not hide the deleted line (b7 review, round 1).
+        self.git('config', 'color.ui', 'always')
+        self.git('config', 'color.diff', 'always')
+        self.write('docs/STATE.md', '# STATE\n\n## Active work\n- [LESSON] keep the lock inherited\n')
+        self.git('commit', '-q', '-am', 'lesson')
+        self.write('docs/STATE.md', '# STATE\n\n## Active work\n')
+        self.git('add', 'docs/STATE.md')
+        code, out = self.run_gate('--for-commit')
+        self.assertEqual(code, 0, out)
+        self.assertIn('NOTE [state]: this commit deletes a tagged line from docs/STATE.md', out)
+        self.assertIn('[LESSON] keep the lock inherited', out)
+        self.write('docs/GOTCHAS.md', '# GOTCHAS\n\nKeep the lock inherited.\n')
+        self.git('add', 'docs/GOTCHAS.md')
+        code, out = self.run_gate('--for-commit')
+        self.assertEqual(code, 0, out)
+        self.assertNotIn('NOTE [state]: this commit deletes', out)
+
+    def test_the_strong_review_reminder_counts_closed_tasks_as_well_as_days(self):
+        # KARARLAR B11 inv1#119 + inv2#152: N days or M tasks, whichever comes first.
+        source = (self.project / 'scripts/check.sh').read_text(encoding='utf-8')
+        tasks = int(re.search(r'^STRONG_REVIEW_TASKS=(\d+)$', source, re.M).group(1))
+        self.write('docs/STRONG_REVIEW.md', '# STRONG_REVIEW\n')
+        self.write('docs/reviews/strong-2026-01-01-model.md', 'report\n')
+        self.git('add', '-A')
+        self.git('commit', '-q', '-m', 'strong review')
+        for n in range(1, tasks):
+            self.git('commit', '-q', '--allow-empty', '-m', 'task %d' % n, '-m', 'Done: T%d' % n)
+        # A malformed trailer closes nothing for the state parser, so it is no closed task here.
+        self.git('commit', '-q', '--allow-empty', '-m', 'bypassed hook', '-m', 'Done: two ids')
+        code, out = self.run_gate()
+        self.assertEqual(code, 0, out)
+        self.assertNotIn('NOTE [strong-review]', out)
+        self.git('commit', '-q', '--allow-empty', '-m', 'task %d' % tasks, '-m', 'Done: T%d' % tasks)
+        code, out = self.run_gate()
+        self.assertEqual(code, 0, out)
+        self.assertIn('NOTE [strong-review]: the newest strong review report was added 0 days ago, and %d tasks'
+                      % tasks, out)
+        self.assertIn('whichever comes first', out)
+
+    def test_a_module_folder_the_map_does_not_name_fails(self):
+        # KARARLAR B10 inv1#239: prefer a check to a promise.
+        code, out = self.run_gate()
+        self.assertEqual(code, 0, out)
+        self.assertIn('NOTE [architecture]: module_roots is empty', out)
+        gate_file = self.project / 'scripts/check.sh'
+        source = gate_file.read_text(encoding='utf-8')
+        self.assertIn('\nmodule_roots=""\n', source)
+        gate_file.write_text(source.replace('\nmodule_roots=""\n', '\nmodule_roots="src"\n', 1),
+                             encoding='utf-8', newline='\n')
+        self.write('src/billing/a.py', 'a = 1\n')
+        self.write('src/ledger/b.py', 'b = 1\n')
+        self.write('docs/ARCHITECTURE.md', '# Architecture\n\n## Module map\n\n- billing: money in\n\n'
+                                           '## Boundary enforcement\n\nledger is not enforced.\n')
+        code, out = self.run_gate()
+        self.assertEqual(code, 1, out)
+        self.assertIn("FAIL [architecture]: src/ledger is a module folder that the '## Module map'", out)
+        self.assertNotIn('src/billing is a module folder', out)
+        self.write('docs/ARCHITECTURE.md', '# Architecture\n\n## Module map\n\n- billing: money in\n'
+                                           '- ledger: the books\n')
+        code, out = self.run_gate()
+        self.assertEqual(code, 0, out)
+        # Outside a Git repository the find fallback names the same files (b7 review, round 1).
+        away = self.tmp / 'git-away'
+        (self.project / '.git').rename(away)
+        try:
+            code, out = self.run_gate()
+        finally:
+            away.rename(self.project / '.git')
+        self.assertNotIn('FAIL [architecture]', out)
+        gate_file.write_text(source.replace('\nmodule_roots=""\n', '\nmodule_roots="lib"\n', 1),
+                             encoding='utf-8', newline='\n')
+        code, out = self.run_gate()
+        self.assertEqual(code, 1, out)
+        self.assertIn('FAIL [architecture]: the module root lib in scripts/check.sh holds no file', out)
+
+
 if __name__ == '__main__':
     unittest.main()
