@@ -2434,8 +2434,9 @@ class BridgeTests(unittest.TestCase):
         # Issue #71: a completed Codex review (evidence and usage record both said completed)
         # was reported as adapter_error, because printing the review raised after the result
         # was handed over and the dispatcher replaced it. A checkout changed meanwhile is still
-        # stale_checkout, named as such, never adapter_error.
-        from contextlib import redirect_stdout
+        # stale_checkout, named as such, never adapter_error. The adapter's NOTE goes to stderr,
+        # captured here: uncaptured, it looked like a real cp1252 failure in the suite's log.
+        from contextlib import redirect_stderr, redirect_stdout
         from io import StringIO
         from unittest.mock import patch
         import review_dispatch
@@ -2465,10 +2466,11 @@ class BridgeTests(unittest.TestCase):
         repo = self.repo
         for reviewer in ('codex', 'claude'):
             for change in (False, True):
-                failed, out = [], Console()
+                failed, out, err = [], Console(), StringIO()
                 with self.subTest(reviewer=reviewer, checkout_changed=change), \
                         patch.dict(os.environ, self.review_env()), \
-                        patch('agent_process.run', side_effect=execution), redirect_stdout(out):
+                        patch('agent_process.run', side_effect=execution), redirect_stdout(out), \
+                        redirect_stderr(err):
                     code = review_dispatch.main(['--repo', str(repo), '--uncommitted', '--reviewer', reviewer,
                                                  '--claude-model', 'claude-opus-5',
                                                  '--codex-model', 'fixture-codex-model'])
@@ -2493,9 +2495,10 @@ class BridgeTests(unittest.TestCase):
                         self.assertEqual((chain['status'], chain['selected_reviewer']), ('completed', reviewer))
                         self.assertIn('the result stands as recorded in', out.getvalue())
                     self.assertIn('cp1252', attempt['error_after_result'])
+                    self.assertIn('failed after it handed over its result', err.getvalue())
 
     def test_persistent_stdout_failure_does_not_lose_the_completed_dispatch_attempt(self):
-        from contextlib import redirect_stdout
+        from contextlib import redirect_stderr, redirect_stdout
         from unittest.mock import patch
         import review_dispatch
 
@@ -2521,7 +2524,8 @@ class BridgeTests(unittest.TestCase):
 
         for reviewer in ('claude', 'codex'):
             with self.subTest(reviewer=reviewer), patch.dict(os.environ, self.review_env()), \
-                    patch('agent_process.run', side_effect=execution), redirect_stdout(Console()):
+                    patch('agent_process.run', side_effect=execution), redirect_stdout(Console()), \
+                    redirect_stderr(io.StringIO()):
                 # A permanently closed console can still raise, but its disk result must stand.
                 try:
                     review_dispatch.main(['--repo', str(self.repo), '--uncommitted', '--reviewer', reviewer,
