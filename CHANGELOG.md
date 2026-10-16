@@ -93,6 +93,9 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   Code cache lifetimes, quota messages, session cost statistics and hook blocking, Git
   sparse-checkout support, and context-analysis cuts; classify weekly and Opus/Sonnet plan
   limits as exhausted quotas. Kit docs and scripts only; nothing to do in a project.
+  The top-up source check corrects subagent section labels and refactoring evidence, removes
+  the drift citation, and narrows idle notices, MCP hosts, quota comments and clarification
+  claims. **ACTION:** none.
 - **Core templates re-sourced** (`core/docs/ARCHITECTURE.md`, `PHASES.md`, `PROJECT.md`,
   `STATE.md`, `GOTCHAS.md`, `STRONG_REVIEW.md`). ARCHITECTURE.md aims for about 100 lines, says
   what it holds and finds a contract change's consumers mechanically; PHASES.md asks what the
