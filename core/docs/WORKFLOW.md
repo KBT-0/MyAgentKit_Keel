@@ -323,8 +323,8 @@ audit's list ("Periodic architecture audit"):
 Sources: a weakened or deleted test is how agents game a task (Kent Beck, "Augmented Coding:
 Beyond the Vibes"; METR, "Recent Frontier Models Are Reward Hacking", 2025), so it stops the
 work; the rest is drift that an audit removes in batches (Thoughtworks Technology Radar,
-"Architecture drift reduction with LLMs"; Larsen and Moghaddam, arxiv.org/abs/2606.13298;
-GitClear's 2025 code-quality report). File size predicts defects without a clean threshold
+"Architecture drift reduction with LLMs"; GitClear's 2025 code-quality report). File size
+predicts defects without a clean threshold
 (Yamashita et al., QRS 2016), so the rule names the symptom, not a number.
 
 ## Periodic architecture audit (critical ritual)
@@ -1039,12 +1039,14 @@ Terminal tab) only when the spawn prints "is a peer session", and after a WARNIN
 tab and the result file instead. A tmux worker always registers. The subscription costs no
 tokens. It lapses after 12 hours without a notice (the lead is told): resubscribe, or fall
 back to the result file. A worker with `crossSessionInbound` set to `refuse` sends no notice.
-A notice may come at the end of any turn, a park on a background job included; a session
-waiting in a dialog is mid-turn and sends none (code.claude.com/docs/en/cross-session-messaging).
-How many notices one subscription gives on the current Claude Code is not re-measured yet.
+The docs define idle as "finished a turn with nothing queued"
+(code.claude.com/docs/en/cross-session-messaging). In the lead's 2026-10-17 observation, one
+subscription on a `spawn_worker` worker that published its result and was then closed
+delivered no idle notice. This observation does not establish how many notices
+a subscription gives.
 The lead does not message an idle session: every message to an
-idle session is a full-context turn. The idle notice also fires on every park on a
-background job, and the session does not end with its task. A committed result file of
+idle session is a full-context turn. A worker session does not end with its task.
+A committed result file of
 `Kind: completed` is therefore the end signal; a file of another kind reports a worker still
 working or waiting, and is never a reason to close it. After reading a completed one, the
 lead decides per task whether the session is reused or closed. It reuses a session that was
@@ -1305,7 +1307,8 @@ the same flaws cost hours of code rounds (the kit's RESEARCH_LOG, 2026-10-03).
 
 - A worker reviews its own diff with fresh sub-agents before it reports, whether it runs as
   a session or as a sub-agent (Claude Code nests sub-agents three layers deep by default,
-  code.claude.com/docs/en/sub-agents, "Nesting"). It starts a fresh diff reviewer as a sub-agent (the Claude Code overlay's
+  code.claude.com/docs/en/sub-agents, "Let subagents spawn their own subagents"). It starts
+  a fresh diff reviewer as a sub-agent (the Claude Code overlay's
   `diff-reviewer`), fixes what the review finds, and starts a new fresh reviewer on the
   result. This inner pass is the author's side's early check; the gate's review in a fresh
   session follows `docs/REVIEW_GATE.md` and `docs/REVIEW_RUNNING.md`, and its findings go
@@ -1440,7 +1443,7 @@ An enabled MCP server costs little by default in Claude Code: it defers the tool
 and loads only the tool names and the server's instructions until a tool is needed. The full
 catalogue is paid on every request only where tool search is off (a non-Anthropic
 `ANTHROPIC_BASE_URL`, `ENABLE_TOOL_SEARCH=false`, an older model) and on hosts that inline
-schemas, such as Codex and API gateways (code.claude.com/docs/en/mcp, "Scale with MCP tool
+schemas, such as API gateways (code.claude.com/docs/en/mcp, "Scale with MCP tool
 search"; the kit's `docs/research/token-optimization.md`, 1.7). Most custom servers duplicate
 what a plain CLI already does more reliably.
 
@@ -1510,8 +1513,9 @@ here, by rule. A rule with no source below is the owner's choice or a lesson nam
   for a new dependency or MCP server rests on the same source; a permission `ask` rule on a
   manifest file would make it mechanical (code.claude.com/docs/en/permissions).
 - **One task, one module, its `Owns:` paths; no drive-by refactors:** Google Engineering
-  Practices, "Small CLs"; Anthropic's prompting guide, "Overeagerness"; agents widen a
-  refactor far past its task (Tian et al., "Refactoring Runaway", arxiv.org/abs/2605.22526).
+  Practices, "Small CLs"; Anthropic's prompting guide, "Overeagerness"; tangled refactoring
+  in an agent's patch is linked to patches that do not compile
+  (Tian et al., "Refactoring Runaway", arxiv.org/abs/2605.22526).
 - **No push without the owner's word:** code.claude.com/docs/en/permission-modes and
   /permissions (a push leaves the machine and cannot be recalled); the kit's
   `docs/research/communication-style.md`, recommendation 9.
