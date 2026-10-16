@@ -198,11 +198,12 @@ prose (KARARLAR D04 inv2#126). The two quota kinds:
 | `failure_kind` | Meaning | Vendor names and statuses it maps |
 |---|---|---|
 | `rate_limited` | passes; a Codex attempt is retried | HTTP 429 `rate_limit_error`, 529 `overloaded_error` (Anthropic API errors); Claude Code `rate_limit`; Codex "Selected model is at capacity", "Rate limit reached", "429 Too Many Requests" |
-| `quota_exhausted` | used up until a reset or a payment; goes to the owner, never retried | Claude Code "usage limit reached", "Session limit reached", `billing_error`, `account_on_hold`, `credits_required`; Codex "You've hit your usage limit", OpenAI `insufficient_quota` ("exceeded your current quota") |
+| `quota_exhausted` | used up until a reset or a payment; goes to the owner, never retried | Claude Code "You've hit your session limit", "You've hit your weekly limit", "You've hit your Opus limit", "You've hit your Sonnet limit", `billing_error`, `account_on_hold`; Codex "You've hit your usage limit", OpenAI `insufficient_quota` ("exceeded your current quota") |
 
 An error that names a used-up quota is `quota_exhausted` even with status 429 or a
 "try again in" delay: Codex names days there. Sources: Anthropic API errors
-(platform.claude.com/docs/en/api/errors), Claude Code headless error types
+(platform.claude.com/docs/en/api/errors), [Claude Code errors](https://code.claude.com/docs/en/errors)
+(plan-limit messages, checked 2026-10-16), Claude Code headless error types
 (code.claude.com/docs/en/headless), OpenAI error codes (platform.openai.com/docs/guides/error-codes).
 
 If both providers fail, structured recovery instructs the host to record the blocker and continue
