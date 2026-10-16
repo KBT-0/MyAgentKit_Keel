@@ -326,10 +326,25 @@ class UsageSummaryTests(unittest.TestCase):
         self.assertIn('accepted=3/3 (1.00, author-claimed)', opus)
         self.assertIn('accepted=1/2 (0.50, author-claimed)', sol)
 
+    def test_an_unfocused_round_answers_only_unfocused_rounds(self):
+        # prior_rounds carries an unfocused reviewer only the unfocused reports, so its
+        # answers belong to those rounds, not to a focused round it never saw.
+        self.record('u1', 'T', b'VERDICT: Reject\n\n## Findings\n\n- High a\n- High b\n')
+        self.record('l1', 'T', b'VERDICT: Reject\n\n## Findings\n\n- High c\n', model='sol', focus='logic')
+        self.record('u2', 'T', b'VERDICT: Accept\n', dispositions={'fixed': 0, 'disproved': 2, 'deferred': 0})
+        out = self.summary()
+        opus = next(line for line in out.splitlines() if line.startswith('Pair unknown -> opus:'))
+        self.assertIn('accepted=0/2 (0.00, author-claimed)', opus)
+        self.assertIn('n=0 rated_rounds=0', next(line for line in out.splitlines()
+                                                 if line.startswith('Pair unknown -> sol:')))
+
     def test_a_large_sample_prints_whole_numbers(self):
         self.record('a', 'T', b'VERDICT: Reject\n\n## Findings\n\n- Low a\n')
         self.record('b', 'T', b'VERDICT: Accept\n', dispositions={'fixed': 1234, 'disproved': 0, 'deferred': 0})
         self.assertIn('accepted=1234/1234 (1.00, author-claimed) n=1234 ', self.summary())
+        self.record('c', 'U', b'VERDICT: Reject\n\n## Findings\n\n- Low a\n')
+        self.record('d', 'U', b'VERDICT: Accept\n', dispositions={'fixed': 1000000, 'disproved': 0, 'deferred': 0})
+        self.assertIn('n=1000000 ', self.summary())
 
     def test_many_empty_rounds_do_not_satisfy_the_rated_round_floor(self):
         for number in range(10):

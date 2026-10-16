@@ -63,7 +63,8 @@ The summary also measures each reviewer configuration (model, effort, backend):
   measurements (KARARLAR B03 inv2#57/#58/(d)); the interval follows
   [NIST, section 7.2.4.1](https://www.itl.nist.gov/div898/handbook/prc/section2/prc241.htm).
   The latest completed round's cumulative answers replace earlier snapshots under its label
-  and `REVIEW_FOCUS` (each focus answers its own rounds), so answering the same findings again cannot increase `n`. Allocation across earlier
+  and `REVIEW_FOCUS` (a focus answers its own and the unfocused rounds, an unfocused round
+  only the unfocused ones), so answering the same findings again cannot increase `n`. Allocation across earlier
   configurations follows their finding counts; fractional `n` and its Wilson interval are
   descriptive estimates, not independent, individually matched finding outcomes.
   The owner reads the archives and how later reviewers treated disproved claims before
