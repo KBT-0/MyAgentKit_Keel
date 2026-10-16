@@ -179,13 +179,54 @@ class KitWrapperTests(unittest.TestCase):
                     runner = scratch / 'run.sh'
                     write(runner, 'set -eu\nwork="%s"\npassed="$work"\n' % scratch.as_posix() +
                           wrapper + function +
-                          'git_view > "$work/view" 2>&1 || { cat "$work/view"; exit 1; }\n')
+                          'git_view "$work" > "$work/view" 2>&1 || { cat "$work/view"; exit 1; }\n')
                     result = subprocess.run(['sh', str(runner)], cwd=kit, capture_output=True,
                                             text=True, encoding='utf-8', errors='replace', timeout=30)
                     out = result.stdout + result.stderr
                     self.assertEqual(result.returncode, 1, out)
                     missing = 'a.txt' if case == 'directory' else 'b.txt'
                     self.assertIn('could not hash %s; the tree check is incomplete' % missing, out)
+
+    def test_every_self_test_seam_carries_the_prefix_the_gate_refuses(self):
+        # The gate refuses GATE_SELFTEST_* outside the self-test by prefix (KARARLAR D03
+        # inv2#161): a seam without it would pass an exported copy into a normal run.
+        source = (ROOT / 'core/scripts/check.sh').read_text(encoding='utf-8')
+        read = set(re.findall(r'\$\{([A-Z][A-Z0-9_]*)[:+-]', source))
+        legacy = {'GATE_BUILD_CMD_OVERRIDE', 'BOUNDARY_CHECKS_FILE', 'BOUNDARY_SELFTESTS_FILE'}
+        # Not seams: they change when a run starts or what CI prints, not what it checks; the
+        # marker; the caller's locale; the lock case script's own fixture variables.
+        other = {'CI', 'GATE_LOCK_FD', 'GATE_LOCK_HELD', 'GATE_LOCK_WAIT', 'GATE_SELFTEST_NESTED', 'LC_ALL'}
+        unprefixed = sorted(name for name in read - legacy - other
+                            if not name.startswith(('GATE_SELFTEST_', 'LOCKCASE_')))
+        self.assertEqual(unprefixed, [], 'a seam without the GATE_SELFTEST_ prefix')
+        for name in legacy:
+            self.assertIn(name, read)
+            self.assertRegex(source, r'for seam in [^\n]*%s' % name)
+
+    def test_an_inherited_work_variable_never_chooses_the_scratch_folder(self):
+        # An exported `work` once named the folder git_view wrote and deleted git-paths* in
+        # (round-3 Codex Critical): the scratch folder is the caller's argument, nothing else.
+        source = (ROOT / 'core/scripts/check.sh').read_text(encoding='utf-8')
+        start = source.index('git_view() {')
+        function = source[start:source.index('\n  }', start)] + '\n}\n'
+        with tempfile.TemporaryDirectory() as tmp:
+            kit, scratch, decoy = Path(tmp) / 'kit', Path(tmp) / 'scratch', Path(tmp) / 'decoy'
+            for folder in (kit, scratch, decoy):
+                folder.mkdir()
+            subprocess.run(['git', 'init', '-q', str(kit)], check=True)
+            write(kit / 'a.txt', 'first\n')
+            for name in ('git-paths', 'git-paths.hashes', 'git-paths.errors'):
+                write(decoy / name, 'owner data\n')
+            runner = scratch / 'run.sh'
+            write(runner, 'set -eu\n' + function + 'git_view "%s" > "%s/view"\n'
+                  % (scratch.as_posix(), scratch.as_posix()))
+            result = subprocess.run(['sh', str(runner)], cwd=kit, capture_output=True, text=True,
+                                    encoding='utf-8', errors='replace', timeout=30,
+                                    env=dict(os.environ, work=decoy.as_posix()))
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('a.txt', (scratch / 'view').read_text(encoding='utf-8'))
+            for name in ('git-paths', 'git-paths.hashes', 'git-paths.errors'):
+                self.assertEqual((decoy / name).read_text(encoding='utf-8'), 'owner data\n')
 
     def test_the_kit_self_test_fails_on_a_file_it_leaves_and_passes_an_ignored_one(self):
         with tempfile.TemporaryDirectory() as tmp:

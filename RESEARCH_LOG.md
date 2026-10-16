@@ -42,6 +42,41 @@ Verified locally (red then green): `git clean -nd` and `git restore --staged f` 
 a dirty tree before the rewrite; an EncodingWarning in `git status` made a clean tree read as
 dirty; a backslash `file_path` was never matched by `guard_boundaries.py`.
 
+### 2026-10-16 — v0.11 batch 2: reminder hooks and labels
+
+Batch 2 applies KARARLAR B08 inv1#253 (Sonnet 5.5 prompting guide and Claude Code costs: stop
+repetitive reminders), B10 inv3/(f), inv1#93/inv2#151 (one task grammar; avoid unrelated label
+false positives), B10 inv3#7 (Claude Code hooks: eight vendor continuations versus one kit
+continuation; pre-commit remains the real check gate), B07 inv2#131/#132 (LangWatch context
+study: keep the judgement window at 20, add 5/30 comparison cuts and a noisy informational
+phrase proxy), BACKLOG B5/B13, and D07 inv3#108 b (Q9 Assisted-by opt-in already implemented).
+Lesson from the reviews: a label rule fed by prose registered technical words (round 1), and its
+fix registered every prose mention (round 2); only the place a file gives a task its id may
+register a label. Red runs saved before each change (batch2-tests/, RESULT-b2fix*.md).
+
+### 2026-10-16 — v0.11 batch 7: gate, doctor, boundary example
+
+Batch 7 applies KARARLAR B02 inv2#39 (root fix: the boundary example probes a new file in the
+disposable copy, so the gate never writes in the tree a review shares), inv2#104/#147 (doctor's
+probe bound measured on Windows 11, `claude --help` 0.3-3.5 s -> 10 s; the macOS run is an
+owner-hands item, decisions.md 20), inv2#143 (Python 3.10 EOL 2026-10-01, devguide.python.org),
+inv2#146, inv2#161, D03 inv1#27 and inv2#156 (gate as a required CI check without path
+filters: GitHub's Pending required check), D05 inv1#76, B11 inv1#119/inv2#152 (strong review
+10 days or 20 tasks: an owner's number, not a measurement), B10 inv1#239 and D04 inv2#83.
+Lesson from the reviews: a file named `-` reached grep as stdin (Codex r2 portability
+Critical, lead fix 42720fe); every path handed to a tool needs the `./` form, not only
+the ones a test happens to name.
+
+### 2026-10-16 — v0.11 batch 8: mode helper version check; review time without the full suite
+
+The mode helper's version check reads the sync stamp (migration tools read their recorded
+version: Alembic, Flyway; secondary summary only, D10 evidence). No fresh web research in this
+batch: the sources are the stage-2 evidence files, read 2026-10-15. Solo without Fable: the
+owner decided Opus in a fresh session plus the owner's diff read (WORKFLOW rule 7). Measured:
+the batch 8 Codex review (gpt-6.1-sol, medium) told not to run the full suite finished in
+about 2.5 minutes; earlier reviews that ran `check.sh --self-test` in their copy took 40-60
+minutes and one was cut at the 3600 s cap.
+
 ### 2026-10-15 — v0.11 batch 3: reproduced review-gate bypasses and documentation drift
 
 The round-1 logic and portability reviews (20261015T175842Z-cbb8d261c9b9 and

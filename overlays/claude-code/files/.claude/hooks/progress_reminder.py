@@ -12,8 +12,9 @@ per call, and a sub-agent's calls may see the lead's frozen transcript; so the c
 last nudge is kept beside the transcript (`<session>.progress-step`, with the id of the record
 the count started from) and the same count never nudges twice. A competing call stays silent.
 The transcript may lag the turn by a record or two, so a nudge can come one call late.
-It reads only the tail of the transcript, because it runs on every tool call. Silent on any
-error.
+At most three nudges are emitted per silent interval; text or compaction resets the limit.
+It saves a byte offset on every call and reads at least everything appended since that offset,
+so a large tool result cannot hide a visible line between calls. Silent on any error.
 """
 import json
 import os
@@ -21,20 +22,31 @@ from pathlib import Path
 import sys
 import tempfile
 
+# KARARLAR B08 inv1#253: Sonnet 5.5 prompting guide and Claude Code costs
+# (2026-10-15): stop after the second or third reminder; five is a starting value.
+MAX_NUDGES = 3
 STEP = 5
-TAIL = 512 * 1024  # bytes; a turn with five tool calls fits many times over
+RECOUNT = 512 * 1024  # re-read small transcripts; larger ones resume at the saved offset
 
 
-def silent_calls(path: Path) -> tuple[int, object]:
-    """Tool calls since the last visible text or compaction, and the id of that record."""
+def silent_calls(path: Path, saved: dict) -> tuple[int, object, int]:
+    """Count from the beginning or a saved record boundary; never skip unread bytes."""
     with open(path, 'rb') as stream:
         stream.seek(0, 2)
         size = stream.tell()
-        stream.seek(max(0, size - TAIL))
-        lines = stream.read().decode('utf-8', errors='replace').splitlines()
-    if size > TAIL:
-        lines = lines[1:]  # the first line is cut
-    total, mark = 0, None
+        offset = saved.get('offset', 0)
+        if offset > size:  # a truncated transcript starts over
+            saved, offset = {}, 0
+        start = offset if size > RECOUNT else 0
+        stream.seek(start)
+        lines = []
+        while True:
+            offset = stream.tell()
+            line = stream.readline()
+            if not line.endswith(b'\n'):
+                break  # a partial record is read again on the next call
+            lines.append(line.decode('utf-8', errors='replace'))
+    total, mark = (saved['total'], saved['mark']) if start else (0, None)
     for line in lines:
         try:
             rec = json.loads(line)
@@ -51,7 +63,7 @@ def silent_calls(path: Path) -> tuple[int, object]:
         if any(b.get('type') == 'text' and (b.get('text') or '').strip() for b in content if isinstance(b, dict)):
             total, mark = 0, rec.get('uuid')  # the owner saw a line; a tool call in the same record comes after it
         total += sum(1 for b in content if isinstance(b, dict) and b.get('type') == 'tool_use')
-    return total, mark
+    return total, mark, offset
 
 
 def main() -> None:
@@ -66,23 +78,30 @@ def main() -> None:
         else:
             import fcntl
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        total, mark = silent_calls(transcript)
         try:
             saved = json.loads(state.read_text(encoding='utf-8'))
             said = saved['said']
-            if type(said) is not int or saved['mark'] != mark or said > total:
-                raise TypeError(saved)  # a visible line or a compaction started a new count
+            if (type(said) is not int or said < 0 or 'mark' not in saved
+                    or any(type(saved.get(key)) is not int or saved[key] < 0 for key in ('offset', 'total'))):
+                raise TypeError(saved)
+            nudges = saved.get('nudges', min(said // STEP, MAX_NUDGES))
+            if type(nudges) is not int or not 0 <= nudges <= MAX_NUDGES:
+                raise TypeError(saved)
         except (OSError, ValueError, KeyError, TypeError):
-            said = None
-        nudge = total // STEP > (said or 0) // STEP
-        if nudge or said is None:
-            with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=state.parent, delete=False) as stream:
-                temporary = Path(stream.name)
-                json.dump({'said': total if nudge else 0, 'mark': mark}, stream)
-            try:
-                os.replace(temporary, state)
-            finally:
-                temporary.unlink(missing_ok=True)
+            saved, said, nudges = {}, None, 0
+        total, mark, offset = silent_calls(transcript, saved)
+        if saved:
+            if saved['mark'] != mark or said > total or saved['offset'] > offset:
+                said, nudges = None, 0  # visible text, compaction or truncation starts a new count
+        nudge = nudges < MAX_NUDGES and total // STEP > (said or 0) // STEP
+        with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=state.parent, delete=False) as stream:
+            temporary = Path(stream.name)
+            json.dump({'said': total if nudge else (said or 0), 'mark': mark,
+                       'nudges': nudges + int(nudge), 'total': total, 'offset': offset}, stream)
+        try:
+            os.replace(temporary, state)
+        finally:
+            temporary.unlink(missing_ok=True)
     if not nudge:
         return
     print(json.dumps({'hookSpecificOutput': {

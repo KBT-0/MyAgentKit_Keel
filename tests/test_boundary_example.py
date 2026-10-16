@@ -1,159 +1,100 @@
-"""Execute the shipped boundary-test example against real and misleading gate failures."""
+"""The shipped boundary example tests a NEW file in a disposable copy, never in the checkout.
+
+The in-tree new-file example wrote its injection into the checkout as a file Git does not
+ignore: a review running there meanwhile failed as stale_checkout, a concurrent `git add -A`
+staged it, and a SIGKILL left it behind (KARARLAR B02 inv2#39). One probe now serves a new
+file and an existing one, and only its copy outside the checkout ever holds the injection.
+"""
 import os
 from pathlib import Path
 import signal
 import subprocess
 import sys
 import tempfile
-import time
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'core/scripts'))
 from review_test_support import posix_only  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import test_boundary_restore  # noqa: E402  (its module setup: the python3 shim on Windows)
 # Seconds any wait here may take; MYAGENTKIT_TEST_TIMEOUT_SCALE multiplies it on a slow host.
 DEADLINE = 30 * float(os.environ.get('MYAGENTKIT_TEST_TIMEOUT_SCALE', '1'))
 
 
+def setUpModule():
+    test_boundary_restore.setUpModule()
+
+
 class BoundaryExampleTests(unittest.TestCase):
-    def setUp(self):
-        # A caller that ignores SIGINT (a `&` job of a non-interactive shell, nohup) passes that
-        # on to every child, an ignored signal cannot be trapped, and the interrupted cases
-        # failed only there. Each test starts from Python's own default, its children from SIG_DFL.
-        self.addCleanup(signal.signal, signal.SIGINT, signal.signal(signal.SIGINT, signal.default_int_handler))
+    def test_a_new_file_case_runs_in_the_disposable_copy(self):
+        example = '\n'.join(line[4:] for line in (ROOT / 'core/scripts/boundary_selftests.sh')
+                            .read_text(encoding='utf-8').splitlines() if line.startswith('# | '))
+        target = 'probe_target=src/domain/existing.py'
+        self.assertIn(target, example)
+        example = example.replace(target, 'probe_target=src/domain/new.py', 1)
+        example = example.replace('LC_ALL=C ', 'LC_ALL=C CHECKOUT="$CHECKOUT" ', 1)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / 'project'
+            (root / 'scripts').mkdir(parents=True)
+            seen = Path(tmp) / 'seen'
+            # The injected run records whether the checkout itself holds the new file.
+            (root / 'scripts/check.sh').write_text(
+                '#!/bin/sh\ncd "$(dirname "$0")/.."\n'
+                'if [ "${1:-}" = --self-test ]; then\n  st_fail=0\n' + example +
+                '\n  exit "$st_fail"\nfi\n'
+                '[ -f src/domain/new.py ] || exit 0\n'
+                '[ -e "$CHECKOUT/src/domain/new.py" ] && echo present > "%s" || echo absent > "%s"\n'
+                "grep -q 'myapp.web' src/domain/new.py || exit 0\n"
+                "echo 'FAIL [boundary]: the domain layer imports the web layer:'\nexit 1\n"
+                % (seen.as_posix(), seen.as_posix()), encoding='utf-8', newline='\n')
+            git = lambda *args: subprocess.run(['git', *args], cwd=root, check=True,
+                                               capture_output=True, text=True).stdout
+            git('init', '-q')
+            git('add', '.')
+            git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
+                '-c', 'core.hooksPath=/dev/null', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'fixture')
+            status = git('status', '--porcelain', '--untracked-files=all', '--ignored')
+            scratch = Path(tmp) / 'scratch'
+            scratch.mkdir()
+            child = subprocess.Popen(['sh', 'scripts/check.sh', '--self-test'], cwd=root,
+                                     env=dict(os.environ, TMPDIR=str(scratch), CHECKOUT=root.as_posix()),
+                                     encoding='utf-8', stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                     start_new_session=True)
+            try:
+                stdout, stderr = child.communicate(timeout=4 * DEADLINE)
+            except subprocess.TimeoutExpired:
+                child.kill()
+                stdout, stderr = child.communicate()
+            self.assertEqual(child.returncode, 0, stdout + stderr)
+            self.assertIn('\n  ok   — ', '\n' + stdout)
+            self.assertEqual(seen.read_text().strip(), 'absent', 'the injection reached the checkout')
+            self.assertFalse((root / 'src').exists())
+            self.assertEqual(git('status', '--porcelain', '--untracked-files=all', '--ignored'), status)
+            self.assertEqual(list(scratch.iterdir()), [])
 
-    def test_example_requires_a_green_baseline_and_the_intended_failure(self):
-        template = (ROOT / 'core/scripts/boundary_selftests.sh').read_text()
-        example = '\n'.join(line[4:] for line in template.splitlines() if line.startswith('#   '))
-        self.assertTrue(example.strip())
-        for case in ('intended', 'baseline_red', 'wrong_reason', 'missing_gate', 'misleading_success',
-                     'collision', 'stale_injection'):
-            with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
-                root = Path(tmp)
-                injection = root / 'src/domain/.selftest.py'
-                if case in ('collision', 'stale_injection'):
-                    injection.parent.mkdir(parents=True)
-                    owner_bytes = (b'from myapp.web import router\n' if case == 'stale_injection'
-                                   else b'Uncommitted owner content.\n')
-                    injection.write_bytes(owner_bytes)
-                gate = root / 'check.sh'
-                gate.write_text('''#!/bin/sh
-if [ "${1:-}" = --self-test ]; then
-  st_fail=0
-''' + example + '''
-  exit "$st_fail"
-fi
-[ "$CASE" != collision ] || exit 0
-[ "$CASE" != baseline_red ] || { echo 'FAIL: unrelated baseline'; exit 1; }
-[ -f src/domain/.selftest.py ] || exit 0
-case "$CASE" in
-  intended|stale_injection) echo 'FAIL [boundary]: the domain layer imports the web layer:'; exit 1 ;;
-  wrong_reason) echo 'FAIL: unrelated build error'; exit 1 ;;
-  misleading_success) echo 'FAIL [boundary]: the domain layer imports the web layer:'; exit 0 ;;
-  missing_gate) exit 0 ;;
-esac
-''')
-                result = self.finish(subprocess.Popen(['sh', str(gate), '--self-test'], cwd=root,
-                                                      env=dict(os.environ, CASE=case), text=True,
-                                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                                      start_new_session=True))
-                self.assertEqual(result.returncode, 0 if case == 'intended' else 1,
-                                 result.stdout + result.stderr)
-                if case in ('collision', 'stale_injection'):
-                    self.assertEqual(injection.read_bytes(), owner_bytes)
-                    if case == 'stale_injection':
-                        self.assertIn('refusing to overwrite owner content', result.stdout)
-                        self.assertIn('A killed self-test (SIGKILL, taskkill /F: no trap runs)', result.stdout)
-                        self.assertIn('check it by hand and delete it: src/domain/.selftest.py', result.stdout)
-                        self.assertNotIn('baseline is already red', result.stdout)
-                else:
-                    self.assertFalse(injection.exists())
-
-    @posix_only
-    def test_example_removes_its_injection_when_interrupted(self):
-        # The injection was removed by a plain `rm -f` after the gate returned: SIGINT during
-        # the injected run left src/domain/.selftest.py in the checkout, where `git add -A`
-        # staged it and the next self-test refused the path as owner content.
-        template = (ROOT / 'core/scripts/boundary_selftests.sh').read_text()
-        example = '\n'.join(line[4:] for line in template.splitlines() if line.startswith('#   '))
-        for interruption in (signal.SIGINT, signal.SIGTERM):
-            with self.subTest(interruption=interruption), tempfile.TemporaryDirectory() as tmp:
-                root = Path(tmp)
-                ready = root / 'ready'
-                gate = root / 'check.sh'
-                gate.write_text('''#!/bin/sh
-trap 'exit 130' INT
-trap 'exit 143' TERM
-if [ "${1:-}" = --self-test ]; then
-  st_fail=0
-''' + example + '''
-  exit "$st_fail"
-fi
-[ -f src/domain/.selftest.py ] || exit 0
-: > "$READY"
-while :; do sleep 1; done
-''')
-                child = subprocess.Popen(['sh', str(gate), '--self-test'], cwd=root, start_new_session=True,
-                                         env=dict(os.environ, READY=str(ready)),
-                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-                try:
-                    deadline = time.monotonic() + DEADLINE
-                    while not ready.exists() and child.poll() is None and time.monotonic() < deadline:
-                        time.sleep(0.01)
-                    if not ready.exists():
-                        self.stop(child, 'the injected run did not start')
-                    os.killpg(child.pid, interruption)
-                    self.finish(child)
-                    self.assertEqual(child.returncode, 128 + interruption)
-                    self.assertFalse((root / 'src/domain/.selftest.py').exists(), 'the injection was left behind')
-                finally:
-                    if child.returncode is None:
-                        self.reap(child)
+    def test_no_example_writes_its_injection_into_the_checkout(self):
+        # The in-tree example's own lines: a self-test built from them could not share a
+        # review's worktree, which is the rule this example now makes unnecessary.
+        template = (ROOT / 'core/scripts/boundary_selftests.sh').read_text(encoding='utf-8')
+        self.assertNotIn('.selftest.py', template)
 
     @posix_only
     def test_the_interrupted_cases_pass_under_a_caller_that_ignores_sigint(self):
         # A `&` job of a non-interactive shell, or nohup, starts with SIGINT ignored, which a
-        # shell cannot trap: the interrupted cases failed only there, as timeouts.
-        # Longer than the twelve waits inside the two cases together, which use DEADLINE too.
-        result = self.finish(subprocess.Popen(
+        # shell cannot trap: the interrupted case failed only there, as a timeout.
+        child = subprocess.Popen(
             [sys.executable, '-m', 'unittest',
-             'test_boundary_example.BoundaryExampleTests.test_example_removes_its_injection_when_interrupted',
              'test_boundary_restore.BoundaryRestoreTests.test_an_interrupted_existing_file_example_leaves_the_checkout_untouched'],
             cwd=Path(__file__).resolve().parent, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            start_new_session=True, preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_IGN)),
-            limit=12 * DEADLINE)
-        self.assertEqual(result.returncode, 0, result.stderr[-3000:])
-
-    def finish(self, child, limit=DEADLINE):
-        # Each child runs in its own process group, so a deadline kills all it started.
+            start_new_session=True, preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_IGN))
         try:
-            stdout, stderr = child.communicate(timeout=limit)
+            _, stderr = child.communicate(timeout=12 * DEADLINE)
         except subprocess.TimeoutExpired:
-            self.stop(child, 'the child did not end', limit)
-        return subprocess.CompletedProcess(child.args, child.returncode, stdout, stderr)
-
-    def stop(self, child, what, limit=DEADLINE):
-        # The output's tail tells a real hang (where it stopped) from a slow host (cut short).
-        stdout, stderr = self.reap(child)
-        self.fail('%s within %g s (exit %s)\n--- stdout tail\n%s\n--- stderr tail\n%s'
-                  % (what, limit, child.returncode, stdout[-2000:], stderr[-2000:]))
-
-    def reap(self, child):
-        # Kill the group whatever the leader's state: an exited leader can leave a descendant
-        # holding the pipes. The pgid is the one start_new_session made (child.pid); it names no
-        # other group, since an unreaped leader holds that pid and a reaped one leaves it held
-        # by its group while any member lives; once the group is empty the kill finds nothing.
-        try:
             os.killpg(child.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        try:
-            return child.communicate(timeout=5)
-        except subprocess.TimeoutExpired as late:
-            # A process that left the group still holds a pipe: report what came before it.
-            for pipe in (child.stdout, child.stderr):
-                pipe.close()
-            child.wait(timeout=5)
-            return ((late.output or b'').decode(errors='replace'),
-                    (late.stderr or b'').decode(errors='replace')
-                    + '\n(output incomplete: a pipe stayed open after the group was killed)')
+            _, stderr = child.communicate()
+        self.assertEqual(child.returncode, 0, stderr[-3000:])
+
+
+if __name__ == '__main__':
+    unittest.main()

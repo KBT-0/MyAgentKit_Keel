@@ -7,34 +7,28 @@ allowed-tools: Read, Grep, Bash(python scripts/working_mode.py:*), Bash(python3 
 
 The modes are defined in the project's `docs/WORKFLOW.md`, "Working modes, by name". Use
 `python scripts/working_mode.py` (or `python3` / `py -3` on the host) from the project root.
-The helper records the English name in `.claude/mode` and the "Working mode:" line of
+The helper records the name in `.claude/mode` and the "Working mode:" line of
 `docs/STATE.md`, detects disagreement on reads, and prints the canonical rules. Both files
 are shared across tools and committed with the next authorized commit. Do not commit merely
 to switch modes. The project root must be the owner's current checkout.
 
-Session edits of STATE.md follow `docs/AGENTS.md`, "STATE.md discipline", in this order: first
-`--read-state .myagentkit/STATE.edit.md` creates a fresh, exclusively owned per-edit snapshot
-using that prefix and prints `SHA256 PATH`; edit the returned PATH, never a copy read earlier
-or another writer's snapshot; then publish it with `--replace-state "PATH" --expect SHA256`,
-which deletes the verified snapshot once published. On refusal, read
-it again, redo the edit, and retry. The helper shares the switch lock, only replaces contents,
-and executes no writer command. It runs the STATE operations only from the project root,
-without another `--project`, with the snapshot in `.myagentkit/` or the temporary folder, never
-an OUT or FILE that names a folder, and
-refuses an edit that changes the "Working mode:" line, which only a switch changes, with one
-exception: a mode name from before v0.11 may become `solo`, `cross` or `saver` this way.
+STATE.md session edits follow `docs/AGENTS.md`, "STATE.md discipline", in its order
+(`--read-state`, edit the returned PATH, `--replace-state "PATH" --expect SHA256`; on refusal,
+read it again). Only a mode switch changes the "Working mode:" line; a mode name from before
+v0.11 may become `solo`, `cross` or `saver` this way.
 
-If `docs/WORKFLOW.md` has no "Working modes, by name" section, or the helper prints an ACTION
-line because the table still has the per-model modes, the project predates the kit's v0.11
-three modes. Say so, name the kit's `CHANGELOG.md` entry for v0.11, and stop.
+If the helper prints an ACTION, show it and stop.
 
 **No argument.** Read the "Working mode:" line of `docs/STATE.md`. When there is none, the
 mode is solo, the main mode; say that the line is missing. Print the mode in force, then
-the three modes from the section's table, one line each: the English name, the Turkish
-name, and who writes, reviews and fixes the findings.
+the three modes from the section's table, one line each: the name and who writes, reviews
+and fixes the findings.
 
-**A name.** Accept the English name or the Turkish one:
-Tek Model Modu, Çapraz Mod, Tasarruf Modu. Refuse any other name and list the three. The owner switches modes; switch only when the owner asked for it in this session.
+**A name.** Accept `solo`, `cross` or `saver`, in any case. Refuse any other name and list
+the three. The owner switches modes: switch only when the owner asks, never on your own
+initiative. One standing exception, given by the owner when choosing saver: when the low
+side's allowance has reset, return to the mode the note's `after:` names (`docs/WORKFLOW.md`,
+"saver", Ends), in this session or a later one.
 
 1. Run `python scripts/working_mode.py "<name>"` with the requested name as one quoted
    argument. saver names its low side in a second quoted argument, `"low: X"`, and solo may

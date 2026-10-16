@@ -6,9 +6,11 @@
 #
 # It checks the MACHINE, not the code, so it is not part of the gate and CI does not run it.
 # Each trap it finds prints one line, "MISSING: <what> — fix: <command>", and the run exits
-# 1. The fixes are printed for the owner to run, never run here. The readiness probes
-# exception to "read-only" is the grep probe below, which runs the owner's interactive shell
-# rc files ($SHELL -ic) under a 5 s timeout, and only where `timeout` exists.
+# 1. The fixes are printed for the owner to run, never run here: the same read-only pattern as
+# `brew doctor` (non-zero exit on a problem; docs.brew.sh/Manpage) and `claude doctor`
+# ("read-only installation and settings diagnostics"; code.claude.com/docs/en/cli-reference).
+# One exception to "read-only": the grep probe below runs the owner's interactive shell rc
+# files ($SHELL -ic), bounded by probe_seconds, and only where `timeout` exists.
 #
 # Why it exists: every trap below made a gate fail on a machine for a reason unrelated to
 # the change being tested, and each one looked like a code failure and cost a session to
@@ -19,6 +21,13 @@ set -u
 # CDPATH cleared: exported, it sent this cd into another tree with a scripts/ in it.
 CDPATH= cd -- "$(dirname "$0")/.." || exit 1
 missing=0
+# The bound of each probe that starts another program (a CLI's --help or --version, the
+# interactive shell). Measured 2026-10-15 on native Windows 11, 20 threads: `claude --help`
+# took 0.3-0.6 s (native claude.exe), 0.7-1.5 s (npm's sh launcher) and 3.5 s on the first,
+# cold start of an older winget install (1.9-2.0 s after); about three times the slowest is
+# 10 s (KARARLAR B02 inv2#104, #147). The earlier 5 s had no measurement behind it. macOS is
+# not measured yet. A probe that takes longer is reported as not answered, never as MISSING.
+probe_seconds=10
 
 miss() { printf '%s\n' "MISSING: $1 — fix: $2"; missing=$((missing + 1)); }
 
@@ -26,7 +35,8 @@ miss() { printf '%s\n' "MISSING: $1 — fix: $2"; missing=$((missing + 1)); }
 # here that saw a different PATH from the hook would prove nothing about the hook. The line
 # is READ, never run: evaluating it executed whatever a project wrote there, so a read-only
 # check ran `$(...)` from a configuration line. $NAME and ${NAME} are expanded from the
-# environment, as check.sh's sh would; any other shell syntax is reported, not guessed at.
+# environment, as check.sh's sh would; any other shell syntax is reported, not guessed at
+# (a configuration value run as code is command injection: CWE-78).
 # An UNSET variable is reported too: check.sh's `set -u` stops on it, so expanding it to
 # nothing reported a ready machine whose gate could not start.
 # Only the form check.sh ships is read: a line in any other form (a comment after it, single
@@ -85,7 +95,9 @@ else kit_python="py -3"; fi   # the launcher, told which Python: unquoted at eve
 # --- a checkout on a Windows drive under WSL -----------------------------------------
 # /mnt/<drive> is the Windows filesystem seen from WSL: git converts line endings to CRLF,
 # the scripts then die in sh, node_modules fills with Windows-native binaries, and the gate
-# runs many times slower. DOCTOR_CHECKOUT and DOCTOR_PROC_VERSION exist for the test only.
+# runs many times slower. Microsoft: keep the files in the WSL filesystem for the fastest
+# performance (learn.microsoft.com/en-us/windows/wsl/filesystems); the CRLF and binary parts
+# are the kit's own observation. DOCTOR_CHECKOUT and DOCTOR_PROC_VERSION exist for the test only.
 here=${DOCTOR_CHECKOUT:-$(pwd -P)}
 case "$here" in
   /mnt/[a-zA-Z]|/mnt/[a-zA-Z]/*)
@@ -138,7 +150,9 @@ done
 
 # --- node_modules as a symlink git does not ignore -----------------------------------
 # "node_modules/" (trailing slash) matches directories only, and git does not treat a
-# symlink as one: the link shows as an untracked file and the gate's scanners fail on it.
+# symlink as one (git-scm.com/docs/gitignore: "If there is a separator at the end of the
+# pattern then the pattern will only match directories"): the link shows as an untracked
+# file and the gate's scanners fail on it.
 # Asked of git itself, so any rule that does ignore it counts.
 if [ -L node_modules ] && ! git check-ignore -q node_modules 2>/dev/null; then
   miss "node_modules is a symlink that .gitignore does not ignore (a pattern 'node_modules/' matches directories only)" "write node_modules without the trailing slash in .gitignore"
@@ -153,8 +167,13 @@ fi
   miss "git identity (user.name / user.email)" "git config user.name '<name>' && git config user.email '<email>'"
 
 # --- tools the kit's own scripts need ------------------------------------------------
-python3 -c 'import sys; sys.exit(sys.version_info < (3, 10))' 2>/dev/null ||
+if ! python3 -c 'import sys; sys.exit(sys.version_info < (3, 10))' 2>/dev/null; then
   miss "Python 3.10 or newer as python3, python or py (the review tooling needs it)" "install Python 3.10+"
+# The floor stays 3.10 for compatibility until the owner raises it (KARARLAR D03 inv2#143,
+# D07 inv3#83); 3.10 lost upstream support on 2026-10-01 (devguide.python.org/versions).
+elif python3 -c 'import sys; sys.exit(sys.version_info >= (3, 11))' 2>/dev/null; then
+  echo "NOTE: Python 3.10 reached end of life on 2026-10-01 and gets no security fixes; install Python 3.11 or newer"
+fi
 # Native Windows Python (os.name 'nt') runs the gate lock, a review and the worktree clean-up
 # its own way, under Git for Windows' sh (or MSYS2, Cygwin). Under any other sh (WSL, where a
 # Windows python.exe on PATH runs through interop) it is handed POSIX paths and takes the
@@ -205,17 +224,17 @@ elif [ "$reviewer" = claude ]; then
     # as the grep probe's are (the comment there says why the leader kills its own group).
     if command -v setsid >/dev/null 2>&1; then
       help_mark="<<DOCTOR-HELP-$$>>-exit"
-      ( setsid sh -c 'timeout --foreground -k 1 5 "$0" --help; printf "\n%s %s\n" "$1" "$?"; kill -s KILL 0' \
-          "$reviewer_path" "$help_mark" </dev/null >"$help_out" 2>/dev/null; : ) 2>/dev/null
+      ( setsid sh -c 'timeout --foreground -k 1 "$2" "$0" --help; printf "\n%s %s\n" "$1" "$?"; kill -s KILL 0' \
+          "$reviewer_path" "$help_mark" "$probe_seconds" </dev/null >"$help_out" 2>/dev/null; : ) 2>/dev/null
       help_status=$(awk -v m="$help_mark " 'index($0, m) == 1 { print substr($0, length(m) + 1) }' "$help_out")
     else
-      timeout -k 1 5 "$reviewer_path" --help </dev/null >"$help_out" 2>/dev/null; help_status=$?
+      timeout -k 1 "$probe_seconds" "$reviewer_path" --help </dev/null >"$help_out" 2>/dev/null; help_status=$?
       echo "NOTE: no setsid on this machine: a process the Claude CLI's --help starts in the background is not stopped"
     fi
     help=$(cat "$help_out")
     rm -f "$help_out"
     if [ -z "$help_status" ] || [ "$help_status" -eq 124 ] || [ "$help_status" -eq 137 ]; then
-      printf '%s\n' "NOTE: the Claude CLI '$reviewer_cli' did not answer --help within 5 s; --effort was not checked"
+      printf '%s\n' "NOTE: the Claude CLI '$reviewer_cli' did not answer --help within $probe_seconds s; --effort was not checked"
     elif [ "$help_status" -ne 0 ] || ! printf '%s\n' "$help" | grep -Eq -- '(^|[[:space:],])--effort([[:space:]=,]|$)'; then
       miss "the Claude CLI '$reviewer_cli' does not support --effort (an old CLI earlier on PATH can shadow the current installation)" "update that CLI, reorder PATH, or set CLAUDE_CLI_BIN to the current executable"
     fi
@@ -237,6 +256,29 @@ print(claude_bridge.cli_readiness() or "")' 2>/dev/null)
     fi
   fi
 fi
+# --- a Claude Code too old for the overlay's guard hooks ----------------------------
+# The overlay's guard hooks carry "onFailure": "block", which Claude Code reads from 2.1.295 on;
+# an older one ignores the field, and a guard that crashes, times out or finds no Python lets
+# the call through (code.claude.com/docs/en/hooks; KARARLAR D09 inv3#5, #12). Told, not
+# MISSING: the guards still run. The version is compared with the documented minimum; --help
+# is no evidence of what a CLI supports (code.claude.com/docs/en/cli-reference).
+if [ -f .claude/settings.json ] && grep -q '"onFailure"' .claude/settings.json 2>/dev/null &&
+   command -v claude >/dev/null 2>&1; then
+  # Into a file, as the --help probe: a child that keeps a pipe open made sed wait past the bound.
+  if command -v timeout >/dev/null 2>&1 && help_out=$(mktemp); then
+    timeout -k 1 "$probe_seconds" claude --version </dev/null >"$help_out" 2>/dev/null
+    host_version=$(sed -n '1s/^[^0-9]*\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\).*/\1/p' "$help_out")
+    rm -f "$help_out"
+  else
+    host_version=""
+  fi
+  if [ -z "$host_version" ]; then
+    echo "NOTE: could not read 'claude --version'; the overlay's onFailure: block needs Claude Code 2.1.295 or later"
+  elif printf '%s\n' "$host_version" | awk -F. '{ exit !($1 * 1000000 + $2 * 1000 + $3 < 2001295) }'; then
+    printf '%s\n' "NOTE: Claude Code $host_version is older than 2.1.295: the overlay's \`onFailure: block\` is ignored, so a guard hook that crashes lets the call through. Update Claude Code."
+  fi
+fi
+
 # On native Windows (Git for Windows' sh, MSYS2, Cygwin) spawn_worker.sh opens a Windows
 # Terminal tab instead of a tmux session, which that host cannot run.
 if [ -f scripts/spawn_worker.sh ]; then
@@ -322,11 +364,11 @@ elif [ -n "${SHELL:-}" ]; then
     # takes the "Killed" line bash prints for a command killed by a signal; the ":" keeps it
     # from exec-ing setsid in its own place, which put that line back on doctor's stderr.
     # The status starts on its own line: an rc file's unterminated output hid it mid-line.
-    ( setsid sh -c 'timeout --foreground -k 1 5 "$0" -ic "$1"; printf "\n%s %s\n" "$2" "$?"; kill -s KILL 0' \
-        "$SHELL" "$probe_cmd" "$probe_mark-exit" </dev/null >"$probe_out" 2>/dev/null; : ) 2>/dev/null
+    ( setsid sh -c 'timeout --foreground -k 1 "$3" "$0" -ic "$1"; printf "\n%s %s\n" "$2" "$?"; kill -s KILL 0' \
+        "$SHELL" "$probe_cmd" "$probe_mark-exit" "$probe_seconds" </dev/null >"$probe_out" 2>/dev/null; : ) 2>/dev/null
     probe_status=$(awk -v m="$probe_mark-exit " 'index($0, m) == 1 { print substr($0, length(m) + 1) }' "$probe_out")
   else
-    timeout --foreground -k 1 5 "$SHELL" -ic "$probe_cmd" </dev/null >"$probe_out" 2>/dev/null
+    timeout --foreground -k 1 "$probe_seconds" "$SHELL" -ic "$probe_cmd" </dev/null >"$probe_out" 2>/dev/null
     probe_status=$?
     echo "NOTE: no setsid on this machine: a process the grep probe's rc files start in the background is not stopped"
   fi
@@ -350,8 +392,10 @@ elif [ -n "${SHELL:-}" ]; then
             if ($i !~ /^--colou?r(=(auto|never))?$/ && $i !~ /^--exclude-dir=[A-Za-z0-9._,{}\/-]+$/) exit 1 }' ||
         shadowed=1 ;;
   esac
+  # A NOTE, not MISSING (KARARLAR D03 inv2#146): the gate runs in a non-interactive sh that reads
+  # no rc file, so the alias never reaches it; only a pipeline tried by hand in that shell lies.
   if [ -n "$shadowed" ]; then
-    miss "grep is shadowed in $SHELL ($grep_is)" "remove it from the rc file, or test gate pipelines with sh -c"
+    printf '%s\n' "NOTE: grep is shadowed in $SHELL ($grep_is): a pipeline tried there can behave differently than in the gate's sh; remove it from the rc file, or test gate pipelines with sh -c"
   elif [ "$probe_status" != 0 ] || [ "${grep_is#grep is }" = "$grep_is" ]; then
     printf '%s\n' "NOTE: grep probe did not complete (exit ${probe_status:-unknown}, answered: ${grep_is:-nothing between its delimiters}); grep shadowing was not checked"
   fi

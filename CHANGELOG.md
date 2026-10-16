@@ -58,6 +58,48 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   past about 400 changed lines gets a split hint (KARARLAR B01, B02 inv2#10/#34, D03 inv1#104,
   D04, D06 inv1#37/#163; BACKLOG B14, B15).
   **ACTION:** re-sync `docs/REVIEW_GATE.md`, `docs/REVIEW_RUNNING.md`, `docs/WORKFLOW.md`.
+- **Reminder hooks, labels, context counters, commit-msg** (`.claude/hooks/plain_report.py`,
+  `.claude/hooks/progress_reminder.py`, `scripts/context_buckets.py`, `.githooks/commit-msg`).
+  Progress reminders stop after three nudges per silent interval and reset on visible text or
+  compaction; a tool result past the read tail no longer loses a visible line (the hook reads
+  from the offset it saved). Final-message labels share the commit task grammar and are
+  registered only from a task-id position in STATE/BACKLOG, never from prose, so UTF-8,
+  SHA-256, win32 or x86 pass and every id the project names is caught whatever its prefix
+  length; code fences need matching characters and lengths, indented and quoted fences
+  included. Context measurements include the last selected request's refusals, add 5/30-request
+  slices, and show a separate informational correction-phrase counter. commit-msg refuses a
+  bracketed `Assisted-by: LLM [Claude]` trailer; the owner's opt-in is regression-tested
+  (KARARLAR B08 inv1#253, B10 inv3/(f), inv3#7, inv1#93, inv2#151, B07 inv2#131/#132, D07
+  inv3#108 b; BACKLOG B5, B13).
+  **ACTION:** re-sync the overlay hooks, `scripts/context_buckets.py` and `.githooks/commit-msg`.
+- **Gate, doctor, boundary example** (`scripts/check.sh`, `scripts/doctor.sh`,
+  `.claude/hooks/gate_on_stop.sh`, `docs/DEV_SETUP.md`, `docs/STRONG_REVIEW.md`, `.gitattributes`).
+  The commit gate's self-test no longer writes in the tree: a review can share the worktree.
+  doctor tells (NOTE) a shadowed grep, Python 3.10 past EOL and Claude Code older than 2.1.295.
+  The Stop hook gates the session's project after a cd. check.sh: module folders must be in
+  ARCHITECTURE's module map; strong review due after 10 days or 20 tasks; NOTE when STATE.md
+  drops a lesson line. DEV_SETUP recommends the gate as a required CI check; `.gitattributes`
+  starts with `* text=auto` (KARARLAR B02 inv2#39/#104/#143/#146/#161, D03 inv1#27/#106,
+  inv2#156/#166, D05 inv1#76, B11 inv1#119/inv2#152, B10 inv1#239, D04 inv2#83).
+  **ACTION:** re-sync `scripts/check.sh`, `scripts/doctor.sh`, the overlay Stop hook,
+  `docs/DEV_SETUP.md`, `docs/STRONG_REVIEW.md`; add `* text=auto` to the project's `.gitattributes`
+  by hand (project-owned) and fill `module_roots` in `scripts/check.sh` if the project has modules.
+- **Working modes and model routing** (`scripts/working_mode.py`, `docs/WORKFLOW.md`,
+  `/myagentkit:mode`, `/myagentkit:cross-review`, `setup/INTERVIEW.md`, `docs/CODEX.md`).
+  Working modes have English names only (solo, cross, saver); the mode helper finds a
+  pre-v0.11 project by the kit version its sync recorded (`docs/kit/.kit-version`) and prints
+  the ACTION, no longer by counting WORKFLOW's table rows. Model routing: one cost-per-task
+  sentence; a weaker tier never reviews a high-tier or critical change; Codex xhigh only as the
+  lead's reasoned exception; rule 7 names the reviewer in solo, in cross and when Codex is
+  blocked; on a plan without Fable, Opus reviews Opus's high-tier or critical work in a fresh
+  session, high effort, one round, and the owner's diff read is the second check (owner
+  decision); saver keeps the cross rules at high and critical tier, and its `after:` return is
+  the owner's standing permission. INTERVIEW Q8 keeps `worker.md` (LONG_JOBS none) and deletes
+  only `spawn_worker.sh` (KARARLAR B05, B06, D05 inv2#137/inv3#180, D06 inv3#26, D10
+  inv1#140/#150/inv2#136/inv3#181, B12 inv3#171).
+  **ACTION:** replace the "Model routing" and "Working modes, by name" sections of
+  `docs/WORKFLOW.md` with the kit's; a STATE.md "Working mode:" line written by hand with a
+  Turkish name must be rewritten to its English name (the helper now refuses it).
 - **Review budget and round-limit fixes** (`scripts/claude_bridge.py`, core and packaged copies).
   An old pathname containing ` b/` cannot disguise source as a vendored diff. Unreadable
   destination markers count toward the budget; a deleted lock or vendored file is named by
@@ -122,7 +164,7 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   family plugged in beside the Claude lead, Codex takes tasks with written acceptance
   criteria inside one module (`gpt-6-luna` medium for mechanical work, `gpt-6.1-sol`
   medium or high, never xhigh), and Claude takes the rest. Claude reviews every Codex
-  change; Codex reviews a Claude change at medium and high tier, one pass, report only, and
+  change; Codex reviews a Claude change at every tier, one pass, report only, and
   the lead checks each finding. Critical work is written by Opus until the owner says
   otherwise, and the strongest Claude tier reviews it. Every brief names the paths its
   worker may change on an `Owns:` line, and `review.sh` refuses a diff outside them when

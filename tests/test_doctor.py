@@ -160,7 +160,7 @@ class DoctorTests(unittest.TestCase):
             bare = os.pathsep.join([str(tools)] + [d for d in os.environ['PATH'].split(os.pathsep) if d and not
                                    any(os.path.exists(os.path.join(d, n)) for n in ('claude', 'claude.exe'))])
             (old / 'claude').write_text('#!/bin/sh\nexec sleep 30\n')
-            for path, said in ((bare, 'DOCTOR: ready'), (str(old) + os.pathsep + bare, 'within 5 s')):
+            for path, said in ((bare, 'DOCTOR: ready'), (str(old) + os.pathsep + bare, 'within 10 s')):
                 with self.subTest(said=said):
                     try:
                         result = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=root, env=dict(env, PATH=path),
@@ -215,6 +215,73 @@ class DoctorTests(unittest.TestCase):
                                   env=dict(env, TMPDIR=tmpdir.as_posix(), PATH=str(old) + os.pathsep + bare))
             self.assertTrue(seen.stdout.strip(), 'the probe never created its temp file')
             self.assertEqual(list(tmpdir.iterdir()), [], 'an interrupted probe left its temp file')
+
+    def test_an_old_python_and_an_old_claude_code_are_told_not_missing(self):
+        # KARARLAR D03 inv2#143 (3.10 reached end of life on 2026-10-01; the floor stays) and
+        # batch 1's onFailure: block, which a Claude Code before 2.1.295 ignores.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for folder in ('scripts', '.githooks', 'home', 'tools', '.claude'):
+                (root / folder).mkdir()
+            shutil.copyfile(ROOT / 'core/scripts/doctor.sh', root / 'scripts/doctor.sh')
+            for name in ('check.sh', 'review.sh'):
+                (root / 'scripts' / name).write_text('#!/bin/sh\ntoolchain_path=""\nDEFAULT_REVIEWER="claude"\n')
+            for name in review_runtime() | {'working_mode.py'}:
+                (root / 'scripts' / name).write_text('')
+            for name in ('pre-commit', 'pre-merge-commit', 'commit-msg', 'post-merge'):
+                (root / '.githooks' / name).write_text('#!/bin/sh\nexit 0\n')
+            for path in list((root / 'scripts').glob('*.sh')) + list((root / '.githooks').iterdir()):
+                path.chmod(0o755)
+            (root / '.claude/settings.json').write_text('{"hooks": {"PreToolUse": [{"onFailure": "block"}]}}\n')
+            tools = root / 'tools'
+            for tool in ('bwrap', 'socat'):
+                (tools / tool).write_text('#!/bin/sh\n')
+                (tools / tool).chmod(0o755)
+            if not WINDOWS:
+                (tools / 'timeout').write_text(TIMEOUT_STUB)
+                (tools / 'timeout').chmod(0o755)
+            env = dict(os.environ, HOME=str(root / 'home'), SHELL='', KIT_WT='true',
+                       PATH=os.pathsep.join((str(tools), os.environ['PATH'])))
+            for key in ('REVIEW_REVIEWER', 'CLAUDE_CLI_BIN', 'REVIEW_CLI_BIN'):
+                env.pop(key, None)
+            subprocess.run(['git', 'init', '-q'], cwd=root, env=env, check=True)
+            for key, value in (('user.name', 'fixture'), ('user.email', 'fixture@example.invalid'),
+                               ('core.hooksPath', '.githooks')):
+                subprocess.run(['git', 'config', key, value], cwd=root, env=env, check=True)
+            subprocess.run(['git', 'add', '--chmod=+x', '--', 'scripts', '.githooks'], cwd=root, env=env, check=True)
+            note = "NOTE: Claude Code 2.1.218 is older than 2.1.295: the overlay's `onFailure: block` is ignored"
+            for version, told in (('2.1.218', True), ('2.1.300', False)):
+                with self.subTest(version=version):
+                    (tools / 'claude').write_text('#!/bin/sh\ncase "$1" in --version) echo "%s (Claude Code)" ;;'
+                                                  ' *) echo "--effort <level>" ;; esac\n' % version)
+                    (tools / 'claude').chmod(0o755)
+                    result = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=root, env=env,
+                                            capture_output=True, text=True, timeout=60)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertIn('DOCTOR: ready', result.stdout)
+                    (self.assertIn if told else self.assertNotIn)(note, result.stdout)
+            # --version exits but leaves a child holding its stdout: the 10 s bound still holds and the
+            # version is read (b7 review, round 1: a pipe made doctor wait for the child's EOF).
+            (tools / 'claude').write_text('#!/bin/sh\ncase "$1" in --version) (cd / && exec sleep 15) &'
+                                          ' echo "2.1.218 (Claude Code)" ;; *) echo "--effort <level>" ;; esac\n')
+            started = time.monotonic()
+            result = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=root, env=env,
+                                    capture_output=True, text=True, timeout=60)
+            elapsed = time.monotonic() - started
+            self.assertLess(elapsed, 12, 'doctor.sh waited %.2f s for the --version child' % elapsed)
+            self.assertIn(note, result.stdout)
+            # A Python that is 3.10: ready, with the end-of-life note.
+            old_python = root / 'old-python'
+            old_python.mkdir()
+            (old_python / 'python3').write_text('#!/bin/sh\ncase "$*" in *">= (3, 11)"*) exit 0 ;; esac\n'
+                                                'exec "%s" "$@"\n' % Path(sys.executable).as_posix())
+            (old_python / 'python3').chmod(0o755)
+            result = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=root, capture_output=True, text=True, timeout=60,
+                                    env=dict(env, PATH=str(old_python) + os.pathsep + env['PATH']))
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('NOTE: Python 3.10 reached end of life on 2026-10-01', result.stdout)
+            self.assertNotIn('NOTE: Python 3.10', subprocess.run(
+                ['sh', 'scripts/doctor.sh'], cwd=root, env=env, capture_output=True, text=True, timeout=60).stdout)
 
     def test_each_injected_trap_turns_doctor_red(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -518,18 +585,18 @@ class DoctorTests(unittest.TestCase):
 
             shell.write_text('#!/bin/sh\ncommand() { echo "grep is an alias for ugrep"; }\neval "$2"\n')
             red = doctor()
-            self.assertEqual(red.returncode, 1, red.stdout)
-            self.assertIn('MISSING: grep is shadowed', red.stdout)
-            self.assertEqual(red.stdout.count('MISSING:'), 1, red.stdout)
+            self.assertEqual(red.returncode, 0, red.stdout)
+            self.assertIn('NOTE: grep is shadowed', red.stdout)
 
             # Only colour options are harmless; an alias that changes what matches is not.
             shell.write_text('#!/bin/sh\ncommand() { echo "grep is an alias for grep -v"; }\neval "$2"\n')
             red = doctor()
-            self.assertEqual(red.returncode, 1, red.stdout)
-            self.assertIn('MISSING: grep is shadowed', red.stdout)
+            self.assertEqual(red.returncode, 0, red.stdout)
+            self.assertIn('NOTE: grep is shadowed', red.stdout)
             shell.write_text("#!/bin/sh\ncommand() { echo \"grep is aliased to \\`grep --colour=auto'\"; }\neval \"$2\"\n")
             ready = doctor()
             self.assertEqual(ready.returncode, 0, ready.stdout + ready.stderr)
+            self.assertNotIn('grep is shadowed', ready.stdout)
             # oh-my-zsh's default alias skips directories, which only a recursive grep reads:
             # ready. --exclude skips a NAMED file whose name matches, so a pipeline tried with
             # it lies: shadowed. An allowed option holding shell syntax is no plain option:
@@ -549,16 +616,15 @@ class DoctorTests(unittest.TestCase):
                     shell.write_text("#!/bin/sh\ncommand() { printf '%%s\\n' %s; }\neval \"$2\"\n"
                                      % shlex.quote('grep is an alias for ' + alias))
                     probed = doctor()
-                    self.assertEqual(probed.returncode, expect, probed.stdout + probed.stderr)
-                    if expect:
-                        self.assertIn('MISSING: grep is shadowed', probed.stdout)
+                    self.assertEqual(probed.returncode, 0, probed.stdout + probed.stderr)
+                    self.assertEqual('NOTE: grep is shadowed' in probed.stdout, bool(expect), probed.stdout)
             # An rc file that prints a banner: doctor read the banner as the probe's answer
             # and called a shell that aliases grep to `grep -v` ready.
             shell.write_text('#!/bin/sh\necho Welcome\ncommand() { echo "grep is an alias for grep -v"; }\n'
                              'eval "$2"\n')
             red = doctor()
-            self.assertEqual(red.returncode, 1, red.stdout)
-            self.assertIn('MISSING: grep is shadowed', red.stdout)
+            self.assertEqual(red.returncode, 0, red.stdout)
+            self.assertIn('NOTE: grep is shadowed', red.stdout)
             # Output without the probe's delimiters, or not an answer to `command -V`, is a
             # probe that did not complete, never a clean one.
             for fake in ('echo Welcome\necho "grep is an alias for grep -v"\n',

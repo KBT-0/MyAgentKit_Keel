@@ -181,23 +181,26 @@ class SectionPointerTests(unittest.TestCase):
         # The kit ships the working modes; {{MODEL_ROUTING}} left each project to write its own.
         workflow = (ROOT / 'core/docs/WORKFLOW.md').read_text(encoding='utf-8')
         table = workflow.split('### Working modes, by name')[1].split('####')[0]
-        rows = re.findall(r'^\| `([a-z-]+)` \| ([^|(]+?)(?: \(main mode\))? \|', table, re.M)
-        self.assertEqual(sorted(m for m, _ in rows), ['cross', 'saver', 'solo'])
+        rows = re.findall(r'^\| `([a-z-]+)` \|', table, re.M)
+        self.assertEqual(sorted(rows), ['cross', 'saver', 'solo'])
         command = (ROOT / 'plugin/commands/mode.md').read_text(encoding='utf-8')
         skill = (ROOT / 'plugins/myagentkit/skills/myagentkit-mode/SKILL.md').read_text(encoding='utf-8')
         # The command may run its helper unprompted, never any Python code.
         tools = re.search(r'(?m)^allowed-tools: (.*)$', command)[1].split(', ')
         self.assertEqual([t for t in tools if t.startswith('Bash(')],
                          ['Bash(%s scripts/working_mode.py:*)' % p for p in ('python', 'python3', 'py -3')])
-        for mode, turkish in rows:
+        for mode in rows:
             with self.subTest(mode=mode):
-                self.assertRegex(workflow, r'(?m)^#### %s \(%s\)' % (mode, turkish))
-                definition = workflow.split('#### %s (' % mode)[1].split('####')[0]
+                definition = re.split(r'(?m)^#### %s(?![\w-]).*$' % mode, workflow)[1].split('####')[0]
                 for field in ('Ends', 'Lessons', 'Effort', 'Workers'):
                     self.assertIn('**%s:**' % field, definition)
                 for text in (command, skill):
                     self.assertIn(mode, text)
-                    self.assertIn(turkish, text)
+        # The modes have their English names only (owner, KARARLAR B06 inv3#178).
+        for name in ('core/docs/WORKFLOW.md', 'plugin/commands/mode.md', 'setup/INTERVIEW.md',
+                     'plugins/myagentkit/skills/myagentkit-mode/SKILL.md'):
+            for turkish in ('Tek Model Modu', 'Çapraz Mod', 'Tasarruf Modu', 'Turkish name'):
+                self.assertNotIn(turkish, (ROOT / name).read_text(encoding='utf-8'), name)
         self.assertIn('**Working mode:** solo', (ROOT / 'core/docs/STATE.md').read_text(encoding='utf-8'))
         for name in ('core/docs/WORKFLOW.md', 'setup/INTERVIEW.md'):
             self.assertNotIn('{{MODEL_ROUTING}}', (ROOT / name).read_text(encoding='utf-8'))
