@@ -15,7 +15,7 @@ import uuid
 import agent_process
 import agent_usage
 import codex_quota
-from claude_bridge import (REVIEW_PROMPT, REVIEW_RUNS,
+from claude_bridge import (REVIEW_DOCS, REVIEW_PROMPT, REVIEW_RUNS,
                            BridgeError, accept_allows, allow_secret_files, default_effort, git, placeholder,
                            prior_rounds,
                            review_context, review_parts, scratch, snapshot, throwaway_copy, review_tmpdir,
@@ -55,7 +55,7 @@ def main(argv=None, result_sink=None, claims=None):
     head, fingerprint, diff, resolved = snapshot(repo, scope, ref)
     if not diff.strip():
         raise ValueError("empty diff: nothing was reviewed")
-    docs = os.environ.get("REVIEW_DOCS", "AGENTS.md, docs/ARCHITECTURE.md and docs/REVIEW_GATE.md")
+    docs = os.environ.get("REVIEW_DOCS", ", ".join(REVIEW_DOCS))
     for name in re.split(r",\s*|\s+and\s+", docs):
         if not (repo / name).is_file() or not (repo / name).resolve().is_relative_to(repo):
             raise ValueError("required project guidance is missing or outside repository: " + name)

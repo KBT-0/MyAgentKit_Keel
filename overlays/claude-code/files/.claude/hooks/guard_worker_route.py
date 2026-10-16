@@ -6,6 +6,8 @@ which it got: five research errands once ran on the strongest model because the 
 neither. `docs/WORKFLOW.md` ("Model routing", "Worker cost" rule 5) says both are chosen from
 the tables and never inherited; this hook makes the Agent call obey it. A fork is exempt: it
 always runs on the lead's model and effort, and the call cannot change either.
+Claude Code sub-agents doc: a fork keeps the main conversation's model and cannot take a
+per-call effort (code.claude.com/docs/en/sub-agents).
 
 The reason for the choice is the lead's to tell the owner before the start; no hook sees chat.
 

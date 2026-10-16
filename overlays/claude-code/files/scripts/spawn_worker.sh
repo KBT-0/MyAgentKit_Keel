@@ -29,8 +29,9 @@
 # session; it is also the sessionId in ${CLAUDE_CONFIG_DIR:-~/.claude}/sessions/PID.json.
 # Only once the earlier session has ended: a running one with the name is refused.
 #
-# --backend NAME starts the worker on the Anthropic-compatible endpoint that
-# .myagentkit/backends/NAME.env in the current folder names (docs/DEV_SETUP.md, section 3).
+# --backend NAME starts the worker on the endpoint that NAME.env in the backend folder names
+# (claude_bridge.backends_dir(); the old .myagentkit/backends/ is read while projects move;
+# docs/DEV_SETUP.md, section 3).
 #
 # --result FILE names the result the brief asks for (relative: to the worker's folder), else
 # RESULT-NAME.md there. codex_worker.py supervises the session, as it does spawn_codex.sh's: a

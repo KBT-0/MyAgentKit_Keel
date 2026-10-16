@@ -13,6 +13,8 @@ must not be tracked. Symlinked storage is rejected. Publication checks the rules
 and temporary archive content is staged inside the ignored usage directory. Existing
 projects must merge the ignore rules and complete companion list in `docs/DEV_SETUP.md`
 before using either the wrapper or the standalone plugin adapters.
+Sources (D09 inv2#53): [gitignore](https://git-scm.com/docs/gitignore) describes ignored untracked files;
+[git ls-files](https://git-scm.com/docs/git-ls-files) distinguishes cached and other files.
 
 ## Attribution and reports
 
@@ -161,6 +163,9 @@ Claude reviews omit the monetary-budget flag unless explicitly requested; their 
 `limits.api_usd` is null when no cap was specified. This null describes configuration,
 not unknown spend. Reported cost/token accounting remains unchanged. Patch proposals retain
 their separate three-dollar default; timeout, turn and output protections still apply.
+Process cleanup sources (D01 inv2#66): [Python subprocess](https://docs.python.org/3/library/subprocess.html),
+[CPython issue 26534](https://bugs.python.org/issue26534), and Airflow's
+[`reap_process_group`](https://airflow.apache.org/docs/apache-airflow/stable/_modules/airflow/utils/process_utils.html).
 
 The 200/500-turn limits, 8,000,000-byte stream cap, and proposal defaults (600 seconds,
 12 turns, 3 USD) are the owner's choice of safeguards, not measured provider limits

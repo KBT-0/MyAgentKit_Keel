@@ -13,6 +13,28 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## v0.11 — 2026-10-09
 
+- **Core docs:** the sources of the always-loaded AGENTS.md rules moved to WORKFLOW,
+  "Where the constitution's rules come from". AGENTS.md reads ARCHITECTURE.md only when a
+  task crosses a module boundary; a reviewer still reads it every time.
+- **WORKFLOW Worker cost:** the hit target is an alarm, not a target (median of the first
+  ten workers as the baseline, `cWrite>TTL`). The cost screen is `/usage`. 4 GB and
+  two-at-a-time are starting values. Workers use the same 200k band. The watcher gets a
+  timeout when the lead runs unattended. The idle-notice subscription facts are recorded.
+  The worker review runs through nested sub-agents.
+- **COMMUNICATION:** 'away' means the owner said so or 45 minutes without a reply
+  (owner's choice). The progress reminder stops after three.
+- **Backend files** live outside the repository (`MYAGENTKIT_BACKENDS_DIR`,
+  `%APPDATA%\myagentkit\backends`, `~/.config/myagentkit/backends`). The old
+  `.myagentkit/backends/` is read while projects move. **ACTION:** a project with
+  `.myagentkit/backends/NAME.env` moves the file to the backend folder.
+- **Closed audit findings:** the `Done:` history gate and commit-message hook also read
+  `docs/audits/*.md`, so a closed task must leave its audit as well as the other state files.
+- **Windows directory measurement:** native Python 3.13 and `CreateDirectoryW` created
+  every tested directory length from 247 to 300 characters on the test host, so the docs
+  do not claim a universal 248-character directory limit.
+- **Prompt consistency:** review and proposal prompts share one verification rule in
+  `claude_bridge.py`; the Codex adapter imports the common reviewer reading list.
+
 - **Worktree hooks and context visibility fixed** (`spawn_worker.sh`, `watch_workers.sh`,
   `.claude/hooks/context_size.py`, `core/docs/WORKFLOW.md`, `core/docs/HANDOFF.md`). Worktree
   workers keep project hook files, including when settings are untracked, without dirtying

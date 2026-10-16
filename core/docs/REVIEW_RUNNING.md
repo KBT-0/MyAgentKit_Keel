@@ -72,6 +72,10 @@ Automation never authorizes a commit or push.
 
 ## Unavailable reviewer
 
+When Codex cannot review critical or high-tier work (its content classifier stopped it,
+`content_flagged`), the strongest Claude tier the plan has reviews it in a fresh session,
+at high effort, one round, never the author's session (`docs/WORKFLOW.md`, "Model routing", rule 7).
+
 A reviewer that cannot finish (quota, timeout, authentication, missing evidence) is never
 an Accept: the review fails with a usage record. Vendor reviews are advisory and never block
 a merge; this review is a gate, so no result means not passed, as a required status check

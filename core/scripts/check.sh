@@ -599,6 +599,11 @@ finally:
     GATE_SELFTEST_STATE_FILE="$work/strong-list/STATE.md" GATE_SELFTEST_HISTORY="$hist"
   expect_fail "state gate rejects a closed task that a strong review report still names" \
     GATE_SELFTEST_STATE_FILE="$work/strong-report/STATE.md" GATE_SELFTEST_HISTORY="$hist"
+  mkdir -p "$work/audit/audits"
+  printf '# STATE\n\n## Active work\n' > "$work/audit/STATE.md"
+  printf '# audit\n\n- K4: a finding\n' > "$work/audit/audits/2026-01.md"
+  expect_fail "state gate rejects a closed task that an audit still names" \
+    GATE_SELFTEST_STATE_FILE="$work/audit/STATE.md" GATE_SELFTEST_HISTORY="$hist"
 
   # --- the strong review reminder: told, never failed ---------------------------
   # Two histories that added a report, 30 days ago and now, and one with none; the list in
@@ -1160,9 +1165,9 @@ LOCKCASE
       fi
     done
     # The strong review cycle's list and its reports are state files too.
-    mkdir -p "$done_repo/docs/reviews"
+    mkdir -p "$done_repo/docs/reviews" "$done_repo/docs/audits"
     # A space and a non-ASCII letter in a report's name once let it out of the hook's list.
-    for f in STRONG_REVIEW.md 'reviews/strong-2026-01-01-claude opus ü.md'; do
+    for f in STRONG_REVIEW.md 'reviews/strong-2026-01-01-claude opus ü.md' 'audits/2026-01 ü.md'; do
       printf -- '- K4: a finding\n' > "$done_repo/docs/$f"
       ( fixture_env; git -C "$done_repo" -c core.autocrlf=false add -A )
       if (fixture_env; CDPATH= cd -- "$done_repo" && sh "$msg_hook" "$work/msg_done") >/dev/null 2>&1; then
@@ -1530,7 +1535,8 @@ fi
 # (docs/WORKFLOW.md, "Task ids"), and every id that a commit reachable from HEAD closed must
 # be gone from the state file and from the BACKLOG.md beside it, which may be absent (a
 # project may keep its backlog elsewhere), and from the strong review cycle's list and
-# reports (docs/WORKFLOW.md, "The strong review cycle"). The commit-msg hook checks the closing commit;
+# reports and audits (B11 inv1#118 A; Martini, Besker and Bosch 2018;
+# code.claude.com/docs/en/best-practices, "Set up hooks"). The commit-msg hook checks the closing commit;
 # this also catches a line written back later, or a commit the hook never saw. Git's own
 # trailer parser reads the history (%(trailers:key=...,unfold), git 2.22 or later). A
 # mention is the id as a whole token in any case: closing K3 does not match K3b or K3-a, and
@@ -1561,7 +1567,7 @@ if hgit rev-parse -q --verify HEAD >/dev/null 2>&1; then
              else printf "NOTE [state]: commit %s has \"Done: %s\", which is not one task id; it closes nothing.\n", commit, id }
        END { close(out) }' "$work/done-trailers"; then
     docs_dir=$(dirname "$GATE_SELFTEST_STATE_FILE")
-    for f in "$GATE_SELFTEST_STATE_FILE" "$docs_dir/BACKLOG.md" "$docs_dir/STRONG_REVIEW.md" "$docs_dir"/reviews/strong-*.md; do
+    for f in "$GATE_SELFTEST_STATE_FILE" "$docs_dir/BACKLOG.md" "$docs_dir/STRONG_REVIEW.md" "$docs_dir"/reviews/strong-*.md "$docs_dir"/audits/*.md; do
       [ ! -f "$f" ] || awk -v closed="$work/done-ids" '
         FILENAME == closed {
           if (sub(/^@/, "")) commit = $0
