@@ -4756,9 +4756,6 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         self.assertNotIn("does not exclude the author's tier automatically", gate)
         self.assertIn("a reviewer pin of the author's tier is refused with exit 2", running)
         self.assertNotIn('`MYAGENTKIT_AUTHOR` is not read or recorded', running)
-        page = ' '.join((ROOT.parent.parent / 'docs/decorrelated-review.md').read_text(encoding='utf-8').split())
-        self.assertIn("refuses a reviewer of the author's tier", page)
-        self.assertNotIn('planned work', page)
 
     def test_capacity_documentation_says_what_the_dispatcher_retries(self):
         # KARARLAR B01 (6): the sentence batch 3 took out until the retry existed (RESULT-b3fix.md).

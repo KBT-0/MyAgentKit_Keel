@@ -59,6 +59,33 @@ class ProjectSelfTestTests(unittest.TestCase):
                                 encoding='utf-8', errors='replace', timeout=900)
         return result.returncode, result.stdout + result.stderr
 
+    def test_shellcheck_runs_normally_and_only_in_its_own_nested_case(self):
+        # Count actual process launches with a lint test double. The injected unquoted
+        # file still has to turn its dedicated case red; other nested cases need no lint.
+        tools = self.tmp / 'bin'
+        tools.mkdir()
+        calls = self.tmp / 'shellcheck-calls'
+        write(tools / 'shellcheck', '#!/bin/sh\n'
+              'printf "pass\\n" >> "%s"\n' % calls.as_posix() +
+              'for f do\ncase "$f" in */unquoted.sh)\n'
+              'printf "%s:3:6: note: Double quote [SC2086]\\n" "$f"; exit 1;;\nesac\ndone\n')
+        (tools / 'shellcheck').chmod(0o755)
+        env = environment(self.build, PATH=str(tools) + os.pathsep + os.environ['PATH'])
+        for marker in ('', 'a-copied-marker'):
+            result = subprocess.run(['sh', 'scripts/check.sh'], cwd=self.project,
+                                    env=dict(env, GATE_SELFTEST_NESTED=marker),
+                                    capture_output=True, text=True, encoding='utf-8', timeout=60)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(len(calls.read_text(encoding='utf-8').splitlines()), 2)
+        calls.write_text('', encoding='utf-8')
+        result = subprocess.run(['sh', 'scripts/check.sh', '--self-test'], cwd=self.project,
+                                env=env, capture_output=True, text=True, encoding='utf-8', timeout=900)
+        out = result.stdout + result.stderr
+        self.assertEqual(result.returncode, 0, out)
+        self.assertIn('an unquoted expansion in a shell script fails the gate (ShellCheck SC2086)', out)
+        self.assertEqual(len(calls.read_text(encoding='utf-8').splitlines()), 1,
+                         'unrelated nested gate runs must skip ShellCheck')
+
     def test_a_case_that_leaves_an_untracked_file_fails_the_self_test_by_path(self):
         code, out = self.self_test()
         self.assertEqual(code, 0, out)

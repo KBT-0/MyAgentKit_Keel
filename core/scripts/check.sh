@@ -196,6 +196,7 @@ fcntl.flock(int(sys.argv[1]), fcntl.LOCK_EX | fcntl.LOCK_NB)
        fail=1 ;;
   esac
 fi
+selftest_nested=""
 if [ -z "$inherited" ] || [ -z "${GATE_SELFTEST_NESTED:-}" ] ||
    [ "$(cat "$lock_path" 2>/dev/null)" != "$GATE_SELFTEST_NESTED" ]; then
   # Every GATE_SELFTEST_ variable but the marker itself, found by prefix: a list of names missed
@@ -207,6 +208,8 @@ if [ -z "$inherited" ] || [ -z "${GATE_SELFTEST_NESTED:-}" ] ||
     eval "seam_value=\${$seam:-}"
     [ -z "$seam_value" ] || { printf '%s\n' "FAIL [env]: $seam is set; self-test overrides are not honoured outside --self-test"; fail=1; }
   done
+else
+  selftest_nested=1
 fi
 [ "$fail" -eq 0 ] || exit 1
 
@@ -1741,7 +1744,11 @@ fi
 # carries `# shellcheck disable=SC2086` and its reason on the line above. Without shellcheck the
 # step is NOT RUN, as the kit's own check is (KARARLAR D04 inv2#26; shellcheck.net/wiki/SC2086).
 shell_files="${GATE_SELFTEST_SHELL_FILES:-}"
-if ! command -v shellcheck >/dev/null 2>&1; then
+# Only the dedicated ShellCheck case repeats lint inside the authenticated self-test.
+# A copied marker cannot skip normal lint: selftest_nested also proves the inherited lock.
+if [ -n "$selftest_nested" ] && [ -z "$shell_files" ]; then
+  :
+elif ! command -v shellcheck >/dev/null 2>&1; then
   echo "NOT RUN [shellcheck]: shellcheck is not installed; SC2028, SC2086 and its errors are left to review."
 else
   [ -n "$shell_files" ] || shell_files=$(tr '\0' '\n' < "$filelist" | grep -E '\.sh$|^\.githooks/' || :)

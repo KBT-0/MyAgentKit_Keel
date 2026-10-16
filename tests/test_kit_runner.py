@@ -51,6 +51,12 @@ class KitRunnerTests(unittest.TestCase):
         self.tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.tmp)
 
+    def test_the_kit_article_describes_the_author_tier_refusal(self):
+        # This article belongs to the kit, not to a bootstrapped project's docs.
+        page = ' '.join((ROOT / 'docs/decorrelated-review.md').read_text(encoding='utf-8').split())
+        self.assertIn("refuses a reviewer of the author's tier", page)
+        self.assertNotIn('planned work', page)
+
     def suite_unit(self, condition, minimum):
         (self.tmp / 'suite').mkdir(exist_ok=True)
         (self.tmp / 'suite/test_kit_probe.py').write_text(PROBE % condition)
