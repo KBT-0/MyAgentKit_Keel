@@ -2,7 +2,7 @@
 description: An extra review the owner asks for in this session, beyond the review gate — a fresh non-author session reviews the change set in a throwaway copy, then YOU verify every finding instead of relaying it
 argument-hint: "[--uncommitted | --base <ref> | --commit <sha>] [--reviewer codex|claude]"
 disable-model-invocation: true
-allowed-tools: Read, Glob, Grep, Bash(git:*), Bash(./scripts/review.sh:*), AskUserQuestion
+allowed-tools: Read, Glob, Grep, Bash(./scripts/review.sh:*), AskUserQuestion
 ---
 # /myagentkit:cross-review [--uncommitted | --base \<ref\> | --commit \<sha\>] [--reviewer codex|claude]
 

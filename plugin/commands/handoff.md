@@ -1,7 +1,7 @@
 ---
 description: Produce ONE self-contained implementation prompt to hand current work to another tool, model or session
 argument-hint: "<target tool/model> <task summary>"
-allowed-tools: Read, Glob, Grep, Bash(git:*), AskUserQuestion
+allowed-tools: Read, Glob, Grep, AskUserQuestion
 ---
 # /myagentkit:handoff \<target\> \<task summary\>
 

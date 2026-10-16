@@ -1,6 +1,7 @@
 """sync-kit.sh must not stamp a version whose ACTION items the owner has not confirmed."""
 import os
 from pathlib import Path
+import re
 import shlex
 import shutil
 import subprocess
@@ -37,11 +38,11 @@ def cut_short(shims, needle):
 
 
 def textwrap_dedent_dev_setup():
-    """The line-ending repair of core/docs/DEV_SETUP.md section 1, as one sh program."""
-    import textwrap
-    text = (ROOT / 'core/docs/DEV_SETUP.md').read_text()
-    block = next(part for part in text.split('```sh\n')[1:] if '.crlf-' in part.split('```')[0])
-    return textwrap.dedent(block.split('```')[0])
+    """Read DEV_SETUP's repair command, resolving its project path to the kit source."""
+    section = (ROOT / 'core/docs/DEV_SETUP.md').read_text(encoding='utf-8')
+    section = section.split('**Line endings.**', 1)[1].split('## 2.', 1)[0]
+    script = re.search(r'`sh (scripts/[^`\s]+)`', section)[1]
+    return 'sh ' + shlex.quote((ROOT / 'core' / script).as_posix())
 
 class SyncKitTests(unittest.TestCase):
     def sync(self, tmp, entry, *flags, env=None):
@@ -730,6 +731,79 @@ class SyncKitTests(unittest.TestCase):
                     staged = subprocess.run(['git', 'diff', '--cached', '--name-only'], cwd=project,
                                             capture_output=True, text=True, env=env).stdout
                     self.assertEqual(staged, '')
+
+    def test_fix_crlf_rewrites_scripts_and_every_hook_and_stages_them(self):
+        # D07 inv3#82: the repair is a kit-owned script over '*.sh' and every file in .githooks,
+        # a project's chained `<name>.project` hook included; another text file is left alone.
+        env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1')
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            files = {'scripts/check.sh': b'#!/bin/sh\r\necho check ran\r\n',
+                     '.githooks/pre-commit.project': b'#!/bin/sh\r\necho mine ran\r\n',
+                     'notes.txt': b'one\r\n'}
+            for path, body in files.items():
+                (project / path).parent.mkdir(parents=True, exist_ok=True)
+                (project / path).write_bytes(body)
+            git = lambda *args: subprocess.run(['git', '-c', 'core.autocrlf=false', *args], cwd=project,
+                                               check=True, capture_output=True, env=env).stdout
+            git('init', '-q')
+            git('add', '-A')
+            result = subprocess.run(['sh', '-c', textwrap_dedent_dev_setup()], cwd=project,
+                                    capture_output=True, text=True, env=env)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            for path in ('scripts/check.sh', '.githooks/pre-commit.project'):
+                lf = files[path].replace(b'\r\n', b'\n')
+                self.assertEqual((project / path).read_bytes(), lf, path)
+                self.assertEqual(git('show', ':' + path), lf, path)
+            self.assertEqual((project / 'notes.txt').read_bytes(), b'one\r\n')
+
+    def test_dev_setup_names_the_tested_repair_instead_of_embedding_a_program(self):
+        section = (ROOT / 'core/docs/DEV_SETUP.md').read_text(encoding='utf-8')
+        section = section.split('**Line endings.**', 1)[1].split('## 2.', 1)[0]
+        self.assertIn('`sh scripts/fix_crlf.sh`', section)
+        self.assertNotIn('```', section, 'DEV_SETUP must use the tested kit-owned repair')
+        self.assertEqual(textwrap_dedent_dev_setup(),
+                         'sh ' + shlex.quote((ROOT / 'core/scripts/fix_crlf.sh').as_posix()))
+
+    def test_fix_crlf_leaves_binary_hooks_and_scripts_unmodified_and_unstaged(self):
+        # A tracked helper executable was corrupted and staged with every other hook.
+        # Attributes can disable conversion even without NUL; forced text still cannot
+        # make binary content safe to rewrite. Keep an unstaged owner edit, too.
+        env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1')
+        for path, attributes, body in (
+                ('.githooks/helper.exe', b'*.exe binary\n', b'MZ\0one\r\ntwo\r\n'),
+                ('.githooks/helper.exe', b'*.exe -text\n', b'one\r\ntwo\r\n'),
+                ('.githooks/helper.exe', b'', b'MZ\0one\r\ntwo\r\n'),
+                ('.githooks/helper.exe', b'* text eol=lf\n', b'MZ\0one\r\ntwo\r\n'),
+                ('.githooks/helper.exe', b'* text=auto\n', b'MZ\0one\r\ntwo\r\n'),
+                ('scripts/helper.sh', b'*.sh binary\n', b'one\r\ntwo\r\n')):
+            with self.subTest(path=path, attributes=attributes), tempfile.TemporaryDirectory() as tmp:
+                project = Path(tmp)
+                binary = project / path
+                binary.parent.mkdir(parents=True)
+                binary.write_bytes(body)
+                (project / '.gitattributes').write_bytes(attributes)
+                text = project / '.githooks/pre-commit.project'
+                text.parent.mkdir(parents=True, exist_ok=True)
+                text.write_bytes(b'#!/bin/sh\r\necho hook\r\n')
+                git = lambda *args: subprocess.run(
+                    ['git', '-c', 'core.autocrlf=false', *args], cwd=project,
+                    check=True, capture_output=True, env=env).stdout
+                git('init', '-q')
+                git('add', '-A')
+                git('-c', 'user.name=F', '-c', 'user.email=f@example.invalid',
+                    'commit', '-qm', 'fixture')
+                indexed = git('show', ':' + path)
+                binary.write_bytes(body + b'owner edit\r\n')
+                result = subprocess.run(['sh', '-c', textwrap_dedent_dev_setup()], cwd=project,
+                                        capture_output=True, text=True, env=env)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(binary.read_bytes(), body + b'owner edit\r\n')
+                self.assertEqual(git('show', ':' + path), indexed, 'binary owner edit was staged')
+                self.assertNotIn(path.encode(), git('diff', '--cached', '--name-only', '-z').split(b'\0'))
+                self.assertIn('left alone, Git treats as binary', result.stderr)
+                self.assertEqual(text.read_bytes(), b'#!/bin/sh\necho hook\n')
+                self.assertEqual(git('show', ':.githooks/pre-commit.project'), text.read_bytes())
 
     def test_the_line_ending_repair_never_writes_below_a_linked_folder(self):
         # Codex review: only the leaf was checked, so with scripts/ a link to a shared folder the
