@@ -450,7 +450,9 @@ def main(argv=None):
                      ", but the checkout changed, so the chain failed"
                      if chain.get("checkout_changed") else ""), flush=True)
         if retry:
-            delay = (result.get("retry_after") or CAPACITY_RETRY_SECONDS) * 2 ** retries
+            # "try again in 0 seconds" is a delay of 0, not a missing one.
+            after = result.get("retry_after")
+            delay = (CAPACITY_RETRY_SECONDS if after is None else after) * 2 ** retries
             retries += 1
             print("RETRY [review]: %s is at capacity (rate_limited); retry %d of %d in %s seconds."
                   % (names[provider], retries, CAPACITY_RETRIES, delay), flush=True)

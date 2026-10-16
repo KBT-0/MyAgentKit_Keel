@@ -664,6 +664,9 @@ def secret_like(name: str) -> bool:
 
 def allow_secret_files(paths) -> None:
     """Hand --allow-secret-file paths (repository-relative) on to snapshot()."""
+    # The list travels newline-joined: a line break inside one flag would allow two paths.
+    if any(c in p for p in paths for c in "\n\r\0"):
+        raise ValueError("one path per --allow-secret-file: a path holds a line break or NUL")
     if paths:
         os.environ[ALLOW_SECRETS_ENV] = "\n".join(Path(p).as_posix() for p in paths)
 

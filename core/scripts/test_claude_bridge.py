@@ -6012,6 +6012,23 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                         self.git('rm', '-q', '--cached', '--', name)
                     path.unlink()
                     shutil.rmtree(self.repo / '.myagentkit/usage', ignore_errors=True)
+        # One flag names one path: a line break inside it (the dispatcher and the adapters are
+        # called directly too, past the shell wrapper) widened one allowance to two secrets
+        # (batch 4 round-1 Critical).
+        import claude_bridge
+        import review_dispatch
+        (self.repo / '.env').write_text('TOKEN=private-value\n')
+        (self.repo / 'site.key').write_text('KEY=private-value\n')
+        for joined in ('.env\nsite.key', '.env\rsite.key', '.env\0site.key'):
+            with self.subTest(joined=joined):
+                with self.assertRaisesRegex(ValueError, 'one path per --allow-secret-file'):
+                    claude_bridge.allow_secret_files([joined])
+                with self.assertRaisesRegex(ValueError, 'one path per --allow-secret-file'):
+                    review_dispatch.main(['--repo', str(self.repo), '--uncommitted', '--reviewer', 'claude',
+                                          '--allow-secret-file', joined])
+                self.assertFalse((self.repo / '.myagentkit/usage').exists())
+        (self.repo / '.env').unlink()
+        (self.repo / 'site.key').unlink()
         # A template is no secret, and a committed one stays reviewable.
         for name in ('.env.example', '.env.sample', '.env.template'):
             (self.repo / name).write_text('TOKEN=\n')
@@ -6136,7 +6153,9 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
 
         for failures, hint, waits, status in ((1, '', [600], 'completed'),
                                               (2, ' Please try again in 30 seconds.', [30, 60], 'completed'),
-                                              (3, '', [600, 1200], 'failed')):
+                                              (3, '', [600, 1200], 'failed'),
+                                              # "0 seconds" is a delay, not a missing one (batch 4 r1 High).
+                                              (1, ' Please try again in 0 seconds.', [0], 'completed')):
             calls, slept, out = [], [], io.StringIO()
             with self.subTest(failures=failures, hint=hint), patch.dict(os.environ, self.review_env(
                     MYAGENTKIT_TASK_ID='capacity-%d' % failures,
