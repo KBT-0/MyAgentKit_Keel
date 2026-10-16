@@ -57,6 +57,87 @@ class KitRunnerTests(unittest.TestCase):
         self.assertIn("refuses a reviewer of the author's tier", page)
         self.assertNotIn('planned work', page)
 
+    def test_review_shards_require_complete_unique_successful_reports(self):
+        # Use the shipped runner in fresh processes, with cheap cases that require overlap.
+        source = (ROOT / 'core/scripts/test_claude_bridge.py').read_text(encoding='utf-8')
+        source = source.rpartition('if __name__ == "__main__":')[0]
+        source = source.replace('ROOT = Path(__file__).resolve().parent',
+                                'ROOT = Path(%r)' % str(ROOT / 'core/scripts'))
+        probe = self.tmp / 'shard_probe.py'
+        source = ('import sys\nsys.path.insert(0, %r)\n' % str(ROOT / 'core/scripts')) + source
+        probe.write_text(source + '''
+class Probe(unittest.TestCase):
+    def test_a(self):
+        self.overlap()
+    def test_b(self):
+        self.overlap()
+    def overlap(self):
+        folder = Path(os.environ['PROBE_FOLDER'])
+        (folder / str(os.getpid())).touch()
+        until = time.monotonic() + 10
+        while len(list(folder.iterdir())) < 2 and time.monotonic() < until:
+            time.sleep(.01)
+        self.assertEqual(len(list(folder.iterdir())), 2, 'shards did not run in parallel')
+    def test_c(self):
+        if os.environ['PROBE_MODE'] == 'unexpected_skip':
+            self.skipTest('undeclared exclusion')
+        if os.environ['PROBE_MODE'] == 'failure':
+            self.fail('real shard failure')
+    @unittest.skip('declared platform exclusion')
+    def test_d(self):
+        pass
+    test_d._kit_platform_skip = True
+
+if __name__ == '__main__':
+    if sys.argv[1:2] == ['--review-shard']:
+        code = run_review_shard(*sys.argv[2:])
+        path = Path(sys.argv[3])
+        report = json.loads(path.read_text(encoding='utf-8'))
+        mode = os.environ['PROBE_MODE']
+        if mode == 'missing': report['ids'].pop()
+        if mode == 'duplicate': report['ids'].append(report['ids'][0])
+        if mode == 'zero': report.update(ids=[], executed=0, skipped=[])
+        if mode == 'count': report['executed'] += 1
+        if mode == 'missing_report': path.unlink()
+        else: path.write_text(json.dumps(report), encoding='utf-8')
+        raise SystemExit(7 if mode == 'exit' else code)
+    if os.environ['PROBE_MODE'] == 'timeout':
+        import agent_process
+        agent_process.run = lambda *a, **kw: dict(exit_code=None, termination='timeout', stdout='', stderr='')
+    suite = unittest.defaultTestLoader.loadTestsFromTestCase(Probe)
+    raise SystemExit(0 if run_review_shards(suite, minimum=int(sys.argv[1])) else 1)
+''', encoding='utf-8')
+        for mode, minimum, passes in (('success', 3, True), ('missing', 3, False),
+                                      ('duplicate', 3, False), ('exit', 3, False),
+                                      ('zero', 3, False), ('count', 3, False),
+                                      ('missing_report', 3, False), ('unexpected_skip', 3, False),
+                                      ('failure', 3, False), ('timeout', 3, False), ('success', 4, False)):
+            folder = self.tmp / ('pids-%s-%d' % (mode, minimum))
+            folder.mkdir()
+            with self.subTest(mode=mode, minimum=minimum):
+                result = subprocess.run([sys.executable, '-B', str(probe), str(minimum)],
+                                        env=dict(os.environ, PROBE_FOLDER=str(folder), PROBE_MODE=mode),
+                                        capture_output=True, text=True, timeout=40)
+                self.assertEqual(result.returncode, 0 if passes else 1, result.stdout + result.stderr)
+                if passes:
+                    self.assertIn('Ran 3 tests: OK', result.stdout)
+                    self.assertEqual(result.stdout.count('NOT RUN:'), 1, result.stdout)
+                else:
+                    self.assertIn('FAIL: review shards', result.stdout, result.stderr)
+
+    def test_empty_review_companion_is_refused_before_shards_start(self):
+        code = '''import runpy, sys, unittest
+sys.path.insert(0, %r)
+import test_codex_quota
+class EmptyQuota(unittest.TestCase):
+    pass
+test_codex_quota.QuotaTests = EmptyQuota
+runpy.run_path(%r, run_name='__main__')
+''' % (str(ROOT / 'core/scripts'), str(ROOT / 'core/scripts/test_claude_bridge.py'))
+        result = subprocess.run([sys.executable, '-B', '-c', code], capture_output=True, text=True, timeout=10)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('EmptyQuota has 0 of at least', result.stderr)
+
     def suite_unit(self, condition, minimum):
         (self.tmp / 'suite').mkdir(exist_ok=True)
         (self.tmp / 'suite/test_kit_probe.py').write_text(PROBE % condition)

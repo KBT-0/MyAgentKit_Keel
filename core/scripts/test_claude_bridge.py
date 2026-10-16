@@ -6,6 +6,7 @@ import json
 import os
 import re
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 import shlex
 import shutil
 import signal
@@ -41,7 +42,7 @@ bridge = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(bridge)
 
 from review_test_support import (PYTHON_SHEBANG, WINDOWS, fixture_source, send_cancel,
-                                 python_cli, posix_only, platform_skips)
+                                 python_cli, posix_only, platform_skips, test_cases)
 
 FIXTURE = PYTHON_SHEBANG + '''import json, os, pathlib, sys, time
 args = sys.argv[1:]
@@ -159,6 +160,91 @@ def run_quietly(suite, out=sys.stdout, minimum=0):
     for test, reason in result.skipped:
         out.write('NOT RUN: %s (%s)\n' % (test.id(), reason))
     out.write("Ran %d tests: OK\n" % executed)
+    return True
+
+
+def run_review_shard(manifest, report):
+    """Run one assigned list in this fresh interpreter and report every started case."""
+    ids = json.loads(Path(manifest).read_text(encoding='utf-8'))
+    suite = unittest.defaultTestLoader.loadTestsFromNames(ids)
+    if not ids or len(set(ids)) != len(ids) or [test.id() for test in test_cases(suite)] != ids:
+        raise SystemExit('FAIL: invalid review shard manifest')
+
+    class RecordedResult(unittest.TextTestResult):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.ids = []
+
+        def startTest(self, test):
+            self.ids.append(test.id())
+            super().startTest(test)
+
+    result = unittest.TextTestRunner(verbosity=2, resultclass=RecordedResult).run(suite)
+    Path(report).write_text(json.dumps(dict(ids=result.ids,
+        executed=result.testsRun - len(result.skipped),
+        skipped=[(test.id(), reason) for test, reason in result.skipped],
+        successful=result.wasSuccessful())), encoding='utf-8')
+    return 0 if result.wasSuccessful() else 1
+
+
+def run_review_shards(suite, out=sys.stdout, minimum=0):
+    """Run alternating sorted IDs in two processes; require complete, unique coverage."""
+    import agent_process
+    ids = sorted(test.id() for test in test_cases(suite))
+    allowed = platform_skips(suite)
+    if len(ids) < 2 or len(set(ids)) != len(ids):
+        out.write('FAIL: review shards require at least two unique test IDs\n')
+        return False
+    shards = [ids[::2], ids[1::2]]
+    with tempfile.TemporaryDirectory(prefix='review-shards-') as tmp:
+        folder = Path(tmp)
+        for index, assigned in enumerate(shards):
+            (folder / ('%d-input.json' % index)).write_text(json.dumps(assigned), encoding='utf-8')
+
+        def run(index):
+            command = [sys.executable, '-B', str(Path(__file__).resolve()), '--review-shard',
+                       str(folder / ('%d-input.json' % index)), str(folder / ('%d-result.json' % index))]
+            # Supervisors share no test state. The existing process seam owns timeout cleanup,
+            # including descendants; only the fresh children run tests that patch os.environ.
+            return agent_process.run(command, '', ROOT, 1200 if WINDOWS else 300)
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [pool.submit(run, index) for index in range(2)]
+            results = []
+            for future in futures:
+                try:
+                    results.append(future.result())
+                except Exception as error:
+                    results.append(dict(exit_code=None, termination=str(error), stdout='', stderr=''))
+        executed, seen, skipped = 0, [], []
+        try:
+            for index, (assigned, result) in enumerate(zip(shards, results)):
+                if result['exit_code'] != 0 or result['termination'] or result.get('cancelled'):
+                    raise ValueError('shard %d exited %r (%s)' %
+                                     (index + 1, result['exit_code'], result['termination']))
+                report = json.loads((folder / ('%d-result.json' % index)).read_text(encoding='utf-8'))
+                reported = report['ids']
+                excluded = [item[0] for item in report['skipped']]
+                if reported != assigned or len(set(reported)) != len(reported):
+                    raise ValueError('shard %d lost or duplicated test IDs' % (index + 1))
+                if (len(set(excluded)) != len(excluded) or not set(excluded) <= allowed & set(assigned)
+                        or report['executed'] != len(reported) - len(excluded)
+                        or report['executed'] <= 0 or report['successful'] is not True):
+                    raise ValueError('shard %d has invalid executed counts, skips or success' % (index + 1))
+                seen.extend(reported)
+                executed += report['executed']
+                skipped.extend(report['skipped'])
+            if len(set(seen)) != len(ids) or sorted(seen) != ids or executed < minimum:
+                raise ValueError('executed %d tests; minimum %d; coverage must be complete and unique' %
+                                 (executed, minimum))
+        except (OSError, ValueError, KeyError, TypeError, IndexError) as error:
+            for result in results:
+                out.write(result['stdout'] + result['stderr'])
+            out.write('FAIL: review shards: %s\n' % error)
+            return False
+    for test_id, reason in skipped:
+        out.write('NOT RUN: %s (%s)\n' % (test_id, reason))
+    out.write('Ran %d tests: OK (two review shards)\n' % executed)
     return True
 
 
@@ -6171,6 +6257,8 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
 
 
 if __name__ == "__main__":
+    if sys.argv[1:2] == ['--review-shard']:
+        raise SystemExit(run_review_shard(*sys.argv[2:]))
     from test_agent_usage import UsageTests
     from test_codex_quota import QuotaTests
     minimums = WINDOWS_SUITE_MINIMUMS if WINDOWS else SUITE_MINIMUMS
@@ -6187,8 +6275,9 @@ if __name__ == "__main__":
         suites.append((tests, minimum))
     # Refuse an absent companion before spending time on the other suites. Acceptance
     # empties a companion deliberately; it must reach that failure within its time limit.
-    for tests, minimum in suites:
-        if not run_quietly(tests, minimum=minimum):
+    for index, (tests, minimum) in enumerate(suites):
+        runner = run_review_shards if index == 0 else run_quietly
+        if not runner(tests, minimum=minimum):
             raise SystemExit(1)
     print("Suite minimums met: " + ", ".join("%s %d" % item for item in sorted(minimums.items())))
     print("REVIEW SELF-TEST: PASS")

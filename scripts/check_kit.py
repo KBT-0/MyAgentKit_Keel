@@ -92,7 +92,7 @@ REQUIRED_SUITES = {
               'test_sync_kit': 30, 'test_doctor': 5, 'test_git_hooks': 31, 'test_stop_hook': 9, 'test_context_hook': 12, 'test_communication_hooks': 26, 'test_overlay_permissions': 8, 'test_guard_destructive_git': 26, 'test_guard_boundaries': 1, 'test_guard_private_email': 5,
               'test_spawn_worker': 54, 'test_spawn_codex': 54, 'test_codex_worker': 54, 'test_working_mode': 49, 'test_worker_visibility': 68, 'test_doc_pointers': 10,
               'test_usage_summary': 25,
-              'test_kit_output': 1, 'test_kit_runner': 32, 'test_clean_worktrees': 138, 'test_clean_worktrees_windows': 12, 'test_close_worker_windows': 22,
+              'test_kit_output': 1, 'test_kit_runner': 34, 'test_clean_worktrees': 138, 'test_clean_worktrees_windows': 12, 'test_close_worker_windows': 22,
               'test_review_windows': 22, 'test_claude_sandbox': 26, 'test_worker_paths_windows': 10,
               'test_close_worker': 28, 'test_python_fallback': 2, 'test_selftest_status': 10},
 }
@@ -254,6 +254,9 @@ def degree(cpus, units):
 # before the ShellCheck fix; 1563.665 s after the lint and installed-doc fixes in one serial run.
 # The unchanged 1200 s timeout still fired: Bridge/Preflight alone took 1389.061 s;
 # child completion took 1527.550 s. ShellCheck was off PATH; other host workers were present.
+# Two-shard serial measurement, same host/date: acceptance 1397.810 s, nested completion
+# 1357.949 s with the unchanged 1200 s timeout; Bridge/Preflight returned False at 1200.017 s.
+# One shard finished in 1051.072 s; the other supplied no final report. ShellCheck was off PATH.
 # No green after-fix acceptance timing exists yet.
 def run(args, cwd=ROOT, expected=0, reason=None, env=None, timeout=300, **popen):
     result = subprocess.run(args, cwd=cwd, capture_output=True, text=True, env=env,
@@ -784,6 +787,9 @@ def acceptance(self_test):
                           # the lint and installed-doc fixes (one serial run, exit 1, same timeout).
                           # Bridge/Preflight took 1389.061 s; child completion took 1527.550 s.
                           # ShellCheck was off PATH; other host workers were present.
+                          # Two-shard serial run on the same host/date: acceptance 1397.810 s,
+                          # nested completion 1357.949 s, still timed out at 1200 s.
+                          # Bridge/Preflight returned False at 1200.017 s; no acceptance PASS.
                           timeout=1200 if os.name == "nt" else 300).strip())
                 seen = log.read_text(encoding='utf-8').split("==\n")[:-1]
                 if not seen or any(s != before for s in seen) or run(status, project) != before:
