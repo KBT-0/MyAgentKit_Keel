@@ -21,6 +21,17 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-10-16 — v0.11 fix7: worktree hooks and context visibility
+
+2026-10-16: Preserve absent worktree settings and expose worker context, preventing silent missing hooks.
+Sources: owner decision 23; https://code.claude.com/docs/en/settings (2026-10-16); fix7 regressions.
+Decision 23's CORRECTION records that the kit's settings were tracked and b10 received the
+yellow and red notices twice but did not act on them; the lead saw nothing. The state line
+and watcher close that visibility gap and also cover projects with untracked settings.
+
+Opus r1 Reject (2 High, 3 Medium) led to fix7fix; Opus r2 found 2 High from the r1 fixes,
+leading to fix7fix2, with no round 3 (decisions.md 25).
+
 ### 2026-10-16 — v0.11 batch 11: setup interview, feedback permissions and CRLF repair
 
 2026-10-16 batch 11: Git 2.41's release notes list the sparse-checkout rule debugging aid

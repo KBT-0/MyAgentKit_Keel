@@ -13,6 +13,14 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## v0.11 — 2026-10-09
 
+- **Worktree hooks and context visibility fixed** (`spawn_worker.sh`, `watch_workers.sh`,
+  `.claude/hooks/context_size.py`, `core/docs/WORKFLOW.md`, `core/docs/HANDOFF.md`). Worktree
+  workers keep project hook files, including when settings are untracked, without dirtying
+  Git status. Settings accept UTF-8 BOM and Windows paths; merged settings are validated before
+  creating a locked worktree. Every spawn clears stale context state. The `.state` line carries
+  context size and band, and `watch_workers` shows them.
+  Live pane context takes precedence over an older snapshot; notices fire once per band and
+  honour `--context-warn`. **ACTION:** sync the overlay and re-spawn existing workers.
 - **Review shard cancellation and mandatory shell diagnostics** (`core/scripts/test_claude_bridge.py`,
   `core/scripts/check.sh`, `tests/test_kit_runner.py`, `tests/test_selftest_status.py`,
   `scripts/check_kit.py`). A parent interrupt or exception stops both shard process trees before
