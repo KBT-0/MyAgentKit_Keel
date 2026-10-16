@@ -40,6 +40,9 @@
 #     (learn.chatgpt.com/docs/agent-approvals-security). `--no-daemon` keeps Codex 0.157+'s
 #     shared background server out of this worker's life; it is not in the official docs
 #     (secondary sources only), so check it with `codex --help` when Codex changes version.
+#   - The instruction names the result header codex_worker.py reads (Kind, Task, Attempt,
+#     Remaining): b2fix2 (2026-10-16) published `Kind: completed` and the end marker without
+#     the other three, the wrapper never saw DONE, and its tab stayed open for hours.
 #   - The result file lies inside the worker's folder: workspace-write and Claude Code's
 #     worktree isolation both refuse writes outside it. The `.md` suffix and the QUESTION-NAME.md
 #     name are the kit's contract.
@@ -221,7 +224,7 @@ if [ -n "$windows" ]; then
 else
   shown=$brief; cdir=$dir; cquestion=$question; cresult=$result; cworker=$kit/codex_worker.py; cexited=$exited
 fi
-instruction="Read $(q "$shown") and follow it. The brief carries its Route: quick|build|deep · Risk: low|medium|high · Checks: ... line; run the checks it names. Write your result to $(q "$cresult"). Leave all work uncommitted and ready for the lead; list the exact changed and added files in the result. The lead reviews the diff through the normal cross-review, then commits with the usual commit gate. Publish a finished result atomically: write a temporary file beside it, end with <!-- codex-worker: ready -->, then rename it to the result path with $kit_python $(q "$cworker") --publish TEMPORARY_FILE DESTINATION, which retries a rename Windows refuses while a poll reads the file. If a decision is needed, finish independent work and stop all jobs first, then write Kind: blocked and QUESTIONS in the result; publish the blocked result atomically using the same temporary-file, end-marker and rename protocol before publishing the question atomically to $(q "$cquestion") using that protocol too. End your turn immediately after publishing; the wrapper allows 10 seconds to flush before closing this worker. The lead answers by resuming this same session."
+instruction="Read $(q "$shown") and follow it. The brief carries its Route: quick|build|deep · Risk: low|medium|high · Checks: ... line; run the checks it names. Write your result to $(q "$cresult"). Leave all work uncommitted and ready for the lead; list the exact changed and added files in the result. The result's first four lines are Kind: completed (or Kind: blocked, Kind: handoff, Kind: progress), Task: THE TASK, Attempt: N and Remaining: WHAT IS LEFT; without them the wrapper never sees the result and keeps this worker open. The lead reviews the diff through the normal cross-review, then commits with the usual commit gate. Publish a finished result atomically: write a temporary file beside it, end with <!-- codex-worker: ready -->, then rename it to the result path with $kit_python $(q "$cworker") --publish TEMPORARY_FILE DESTINATION, which retries a rename Windows refuses while a poll reads the file. If a decision is needed, finish independent work and stop all jobs first, then write Kind: blocked and QUESTIONS in the result; publish the blocked result atomically using the same temporary-file, end-marker and rename protocol before publishing the question atomically to $(q "$cquestion") using that protocol too. End your turn immediately after publishing; the wrapper allows 10 seconds to flush before closing this worker. The lead answers by resuming this same session."
 # The instruction comes first, before any option, as spawn_worker.sh puts it.
 # A worker is a session of its own, never the lead's child (spawn_worker.sh): clear the lead's
 # Claude Code session markers, which hooks the worker starts would otherwise inherit.

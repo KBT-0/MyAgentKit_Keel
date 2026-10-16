@@ -925,13 +925,22 @@ working or waiting, and is never a reason to close it. After reading a completed
 lead decides per task whether the session is reused or closed. It reuses a session that was active within the cache lifetime (one hour) when the
 next task is short or needs most of what the session holds. It closes the session when no
 next task fits what it holds, or when it has been idle past the cache lifetime (nothing warm
-is lost then). Closing is explicit: `scripts/close_worker.sh NAME` ends the tmux session (its
-terminal tab closes by itself) and removes the worktree through the same audit as the
+is lost then). Closing is automatic at merge: finished worker tabs stayed open for hours while
+closing was a step the lead had to remember (2026-10-16), so when the lead merges a kit worker's
+branch (`worktree-NAME`, whose worktree its spawn locked `kit worker NAME`), the post-merge hook
+runs `scripts/close_worker.sh NAME`. A refused close is printed, never a veto of the merge. The
+explicit `scripts/close_worker.sh NAME` stays for a session closed without a merge (work not
+merged, a worker without a worktree, a reused session the lead now finishes). It ends the tmux
+session (its terminal tab closes by itself), on native Windows the worker's Claude Code session
+or the Codex session in its own worktree (the tab's script then ends with `exit 0`, on which
+Windows Terminal closes the tab), and removes the worktree through the same audit as the
 post-merge hook's, for that worktree alone. It never deletes the branch. It ends nothing while
 a gate (`check.sh`, by its lock) or a git operation (`index.lock`) runs in the worktree: a
 session ended mid-run orphans the run, which then races the next gate there. For the same
 reason the lead never ends a worker's `claude` process by hand (Task Manager, `Stop-Process`,
-`kill`). If one was ended mid-run, wait for its `check.sh` to end, or end that process tree
+`kill`), and never opens a worker tab by hand (`wt ... claude --resume ID`, `codex resume ID`):
+such a tab carries no kit name, so neither the hook nor `close_worker.sh` can close it. A resume
+goes through `spawn_worker.sh` or `spawn_codex.sh --resume` under the same NAME. If one was ended mid-run, wait for its `check.sh` to end, or end that process tree
 too (on Windows: Resource Monitor, CPU tab, Associated Handles, search for `check.lock`),
 before any gate runs in that worktree. On native Windows a worker in a Windows Terminal tab
 may not be registered as a peer session; `spawn_worker.sh` then says so, and no idle notice
@@ -973,12 +982,17 @@ answer from {{OWNER_NAME}} and delivers it into the SAME session:
 
 - A Claude worker registered as a peer session gets the answer through SendMessage. One that
   is not registered (a Windows Terminal tab, above) gets it typed into its tab by
-  {{OWNER_NAME}}, or is resumed (`claude --resume <session id>`) once its tab has closed.
+  {{OWNER_NAME}}, or is resumed once its tab has closed: `scripts/spawn_worker.sh NAME
+  ANSWER_FILE --model M --effort LEVEL [--worktree] --resume SESSION_ID` (spawn prints the line
+  with the id when Claude Code registered the session), which keeps `-n NAME`.
 - A Codex worker (`scripts/spawn_codex.sh`) is resumed: the lead writes the answer to a file
   and runs `scripts/spawn_codex.sh NAME ANSWER_FILE --model M --effort LEVEL [--worktree]
   --resume`. The spawning checkout records `.myagentkit/workers/NAME.session`, outside
   the worker; successful `close_worker.sh NAME` removes that record, and on native Windows
-  refuses while a Codex session still runs in the worker's folder. It also refuses while the
+  ends a Codex session still running in the worker's own worktree (one spawned without
+  `--worktree` shares this checkout, where any Codex session matches: there it refuses). The
+  wrapper closes a worker on its own only when the result starts with the four header lines
+  (`docs/HANDOFF.md`); spawn's instruction names them. It also refuses while the
   worker's decision file waits for its answer. The default result is
   `RESULT-NAME.md` at the worker's repository top, and the decision file is `QUESTION-NAME.md`.
   The lead never commits the default result: the close moves it to
@@ -1008,7 +1022,7 @@ answer from {{OWNER_NAME}} and delivers it into the SAME session:
 mid-task (its host session ended, its pipe closed), the lead resumes that same session: a
 Codex worker by `scripts/spawn_codex.sh ... --resume` with a file that says to continue (the
 id is in `.myagentkit/workers/NAME.session`), a bare `codex exec` errand by `codex exec resume
-<session id>`, a Claude worker by `claude --resume <session id>`. A fresh session with a
+<session id>`, a Claude worker by `scripts/spawn_worker.sh ... --resume <session id>`. A fresh session with a
 takeover prompt re-reads everything, loses the session's reasoning and redoes finished parts.
 Only when a resume is clearly worse (its context spent, the session corrupt) does a fresh
 session take over, from a `Kind: handoff` result the old session writes when it still can
@@ -1217,8 +1231,9 @@ What the watcher reports decides the lead's next step for a spawned worker:
 - **HANDOFF:** the lead reads the result file and starts a fresh session from it. A
   `Kind: handoff` file is not done.
 - **BLOCKED** and **PROGRESS:** the lead reads the result file. Neither is done.
-- **Finished session:** when the lead decides a session is finished (no next task fits what
-  it holds, or it is idle past the cache lifetime), it runs `scripts/close_worker.sh NAME`.
+- **Finished session:** merging the worker's branch closes it (the post-merge hook runs
+  `scripts/close_worker.sh NAME`). A session finished without a merge (no next task fits what
+  it holds, or it is idle past the cache lifetime) the lead closes with that command.
   The worktree then goes through the same audit as the post-merge hook's; a kept worktree
   is reported with its reason, and the branch is never deleted.
 

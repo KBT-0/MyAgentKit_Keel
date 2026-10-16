@@ -214,6 +214,7 @@ WINDOWS = os.name == 'nt'
 # Windows parses again (an apostrophe is a quote there): there each prints NOT RUN.
 ON_WINDOWS = {'test_a_backend_reaches_the_worker_quoted_on_both_paths',
               'test_a_worker_worktree_is_locked_from_spawn',
+              'test_a_worker_is_resumed_through_the_kit_under_its_name',
               'test_a_missing_or_failing_watcher_stops_the_spawn',
               'test_a_worker_without_its_model_or_effort_is_refused',
               'test_backend_duplicate_keys_cannot_empty_final_values',
@@ -262,7 +263,8 @@ class SpawnWorkerTests(unittest.TestCase):
             folder.mkdir()
         for name, body in (('tmux', TMUX), ('claude', CLAUDE), ('sleep', SLEEP), ('wt-stub', WT),
                            ('osascript', '#!/bin/sh\nexit 1\n'), ('uname', '#!/bin/sh\necho Linux\n')):
-            (self.bin / name).write_text(body)
+            # UTF-8: the tmux stub holds the prompt arrow, which cp1252 (native Windows) cannot write.
+            (self.bin / name).write_text(body, encoding='utf-8')
             (self.bin / name).chmod(0o755)
         if WINDOWS:
             # Native Windows' python3 may be an inaccessible WindowsApps alias. Every
@@ -1255,6 +1257,55 @@ exit 0
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 gitdir = git('-C', str(self.cwd / '.claude/worktrees' / name), 'rev-parse', '--absolute-git-dir')
                 self.assertEqual(Path(gitdir, 'locked').read_text().rstrip('\n'), 'kit worker ' + name)
+
+    def test_a_worker_is_resumed_through_the_kit_under_its_name(self):
+        # 2026-10-16: the lead resumed a worker by hand (`wt -w 0 nt ... claude --resume ID`); that tab
+        # had no name, nothing could close it, and the lead ended it with Stop-Process. Resumed
+        # through the kit, the session keeps `-n NAME`, so close_worker.sh finds and ends it.
+        for name, body in (('uname', '#!/bin/sh\necho MINGW64_NT-10.0-26200\n'), ('cygpath', CYGPATH),
+                           ('wt-tab', WT_TAB),
+                           ('ps-stub', '#!/bin/sh\n[ ! -f "$SPAWN_STATE/claude.json" ] || printf "8 claude.exe -n rw\\r\\n"\n')):
+            if WINDOWS and name == 'cygpath':
+                continue
+            (self.bin / name).write_text(body)
+            (self.bin / name).chmod(0o755)
+        git = lambda *a: subprocess.run(['git', *a], cwd=self.cwd, check=True, capture_output=True,
+                                        text=True).stdout.strip()
+        git('init', '-q')
+        git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'a')
+        config = self.tmp / 'config'
+        (config / 'sessions').mkdir(parents=True)
+        (config / 'sessions' / '8.json').write_text('{"sessionId": "sid-1", "name": "rw"}')
+        env = dict(KIT_WT=str(self.bin / 'wt-tab'), KIT_PS=str(self.bin / 'ps-stub'), CLAUDE_CONFIG_DIR=str(config))
+        result = self.spawn('rw', str(self.brief), '--worktree', **env)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        # The spawn names the id a resume needs.
+        self.assertRegex(result.stdout, r'scripts/spawn_worker.sh rw ANSWER_FILE --model .* --worktree --resume sid-1\n')
+        tree = self.cwd / '.claude/worktrees/rw'
+        git('worktree', 'unlock', str(tree))
+        (self.state / 'claude.json').unlink()
+        answer = self.cwd / 'answer.md'
+        answer.write_text('Go on with A.\n')
+        # A resume without the id, or of a worktree that is not there, is refused before any tab.
+        for args, words in ((('--worktree', '--resume'), '--resume needs the session id'),
+                            (('--resume', '--worktree'), '--resume needs the session id'),
+                            (('--worktree', '--resume', 'sid-1'), None)):
+            with self.subTest(args=args):
+                name = 'gone' if words is None else 'rw'
+                (self.state / 'wt.json').unlink(missing_ok=True)
+                result = self.spawn(name, str(answer), *args, **env)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn(words or '--resume --worktree: no worktree at', result.stderr)
+                self.assertFalse((self.state / 'wt.json').exists())
+        result = self.spawn('rw', str(answer), '--worktree', '--resume', 'sid-1', **env)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        argv = self.launched()['argv']
+        self.assertEqual(argv[1:5], ['-n', 'rw', '--resume', 'sid-1'])
+        self.assertIn('answer.md', argv[0])
+        self.assertEqual(Path(self.launched()['cwd']).resolve(), tree.resolve())
+        # Locked again for its new run: the audit never removes it under the session.
+        gitdir = git('-C', str(tree), 'rev-parse', '--absolute-git-dir')
+        self.assertEqual(Path(gitdir, 'locked').read_text().rstrip('\n'), 'kit worker rw')
 
     def test_the_tmux_worker_does_not_inherit_the_leads_session_markers(self):
         result = self.spawn('w1', str(self.brief))

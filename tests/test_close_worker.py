@@ -24,6 +24,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / 'overlays/claude-code/files/scripts/close_worker.sh'
+HOOK = ROOT / 'core/.githooks/post-merge'
 PROC = os.path.exists('/proc/self/cwd')
 NT = os.name == 'nt'
 # A worktree as the audit prints it: `.claude/worktrees/w1`, on Windows with the escaped
@@ -363,6 +364,71 @@ class CloseWorkerTests(unittest.TestCase):
         self.assertTrue(last.startswith('close_worker: FAILED: w1: worktree kept: '), out)
         self.assertIn('notes.txt', last)
         self.git('rev-parse', '--verify', 'worktree-w1')
+
+    def hooked(self):
+        """main with the kit's post-merge hook and the overlay's scripts, as bootstrap installs them."""
+        (self.main / '.githooks').mkdir()
+        shutil.copy(HOOK, self.main / '.githooks/post-merge')
+        (self.main / 'scripts').mkdir()
+        for name in ('close_worker.sh', 'clean_worktrees.sh', 'clean_worktrees.py'):
+            shutil.copy(SCRIPT.with_name(name), self.main / 'scripts' / name)
+        (self.main / '.claude').mkdir()
+        (self.main / '.claude/worktree-disposable').write_text('')
+        self.git('add', '-A')
+        self.git('commit', '-q', '-m', 'hook')
+        self.git('config', 'core.hooksPath', '.githooks')
+
+    def kit_worker(self, name, lock=True):
+        """A worker as spawn_worker.sh --worktree leaves it: locked `kit worker NAME`, a commit, a session."""
+        path = self.main / '.claude/worktrees' / name
+        self.git('worktree', 'add', '-q', *(('--lock', '--reason', 'kit worker ' + name) if lock else ()),
+                 str(path), '-b', 'worktree-' + name)
+        (path / (name + '.txt')).write_text(name + '\n')
+        self.git('add', name + '.txt', cwd=path)
+        self.git('commit', '-q', '-m', 'work in ' + name, cwd=path)
+        with open(self.tmp / 'sessions', 'a') as f:
+            f.write(name + '\n')
+        return path
+
+    def merge(self, *args):
+        result = subprocess.run(['git', 'merge', '-q', '--no-edit', *args], cwd=self.main, env=self.env,
+                                capture_output=True)
+        out = (result.stdout + result.stderr).decode('utf-8', 'replace')
+        self.assertEqual(result.returncode, 0, out)
+        return out
+
+    def test_a_merge_closes_the_kit_worker_it_brings_in(self):
+        # Owner 2026-10-16: worker tabs stayed open for hours after their work was merged; the
+        # close was a written step the lead skipped. The merge now runs it (a hook runs every time).
+        self.hooked()
+        path = self.kit_worker('w1')
+        waiting = self.kit_worker('w2')     # a kit worker this merge does not bring in
+        self.kit_worker('own', lock=False)  # a worktree no kit spawn made
+        tip = self.git('rev-parse', 'worktree-w1')
+        out = self.merge('worktree-own')
+        self.assertFalse([c for c in self.calls() if 'kill-session' in c], out)
+        out = self.merge('worktree-w1')
+        self.assertEqual([c for c in self.calls() if 'kill-session' in c], ["['kill-session', '-t', '=w1']"], out)
+        self.assertIn('close_worker: w1: tmux session ended', out)
+        self.assertIn('close_worker: w1: worktree removed through the audit', out)
+        self.assertFalse(path.exists(), out)
+        self.assertEqual(self.git('rev-parse', 'worktree-w1'), tip)
+        self.assertTrue(waiting.is_dir(), out)
+        self.assertEqual(sorted(self.sessions()), ['own', 'w2'])
+
+    def test_a_close_the_merge_cannot_make_is_printed_and_the_merge_stands(self):
+        self.hooked()
+        path = self.kit_worker('w1')
+        self.git('commit', '-q', '--allow-empty', '-m', 'main moved')
+        index_lock = Path(self.git('rev-parse', '--path-format=absolute', '--git-path', 'index.lock', cwd=path))
+        index_lock.write_text('')
+        out = self.merge('worktree-w1')
+        self.assertIn('close_worker: w1: a git operation holds ' + index_lock.as_posix(), out)
+        self.assertIn('post-merge: close_worker.sh did not close w1; the merge is complete', out)
+        self.assertEqual(self.git('rev-parse', 'HEAD^2'), self.git('rev-parse', 'worktree-w1'))
+        self.assertFalse([c for c in self.calls() if 'kill-session' in c], out)
+        self.assertTrue(path.is_dir())
+        self.assertEqual(self.sessions(), ['w1'])
 
     def test_a_dry_run_changes_nothing(self):
         path = self.worker('w1')

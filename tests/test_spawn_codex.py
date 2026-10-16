@@ -29,7 +29,10 @@ for _name in [n for n in os.environ if n.startswith('KIT_WORKER_')]:
     del os.environ[_name]
 INSTRUCTION = ("Read %s and follow it. The brief carries its Route: quick|build|deep · Risk: low|medium|high "
                "· Checks: ... line; run the checks it names. Write your result to %s. Leave all work uncommitted and ready for the lead; "
-               "list the exact changed and added files in the result. The lead reviews the diff through the normal "
+               "list the exact changed and added files in the result. The result's first four lines are "
+               "Kind: completed (or Kind: blocked, Kind: handoff, Kind: progress), Task: THE TASK, Attempt: N and "
+               "Remaining: WHAT IS LEFT; without them the wrapper never sees the result and keeps this worker open. "
+               "The lead reviews the diff through the normal "
                "cross-review, then commits with the usual commit gate. Publish a finished result atomically: write a "
                "temporary file beside it, end with <!-- codex-worker: ready -->, then rename it to the result path "
                "with %s --publish TEMPORARY_FILE DESTINATION, which retries a rename Windows refuses while a poll "
@@ -550,6 +553,41 @@ exit 1
         self.assertIn('--exit ' + shq(self.win(exited, '-m')), result.stdout)
         self.assertTrue(exited.read_text().startswith('exit 0'), exited)
 
+    def test_a_published_completed_result_ends_the_worker_and_its_tab_exits_0(self):
+        # Owner 2026-10-16: finished worker tabs stayed open for hours. The worker publishes a
+        # completed result and stays at its prompt, as the Codex TUI does; the wrapper ends it and
+        # the tab's script ends with exit 0, on which Windows Terminal closes the tab (closeOnExit
+        # "automatic", its default, is "graceful" for a process it launched itself).
+        (self.bin / 'codex').write_text(CODEX + r'''
+if args[0] != 'resume':
+    import time
+    from pathlib import Path
+    target = Path(args[args.index('-C') + 1]) / 'RESULT-w30.md'
+    if os.name != 'nt':
+        target = Path(args[args.index('-C') + 1][2:].replace('\\', '/')) / 'RESULT-w30.md'
+    temporary = target.with_name(target.name + '.tmp')
+    temporary.write_text('Kind: completed\nTask: t\nAttempt: 1\nRemaining: none\n<!-- codex-worker: ready -->\n')
+    os.replace(temporary, target)
+    time.sleep(120)
+''', newline='\n')
+        started = time.monotonic()
+        result = self.spawn('w30', str(self.brief), '--model', 'm', '--effort', 'high', KIT_WORKER_GRACE='0')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertLess(time.monotonic() - started, 60, 'the worker ran on after its completed result')
+        self.assertIn('DONE: uncommitted result ready for the lead', result.stdout)
+        self.assertTrue((self.repo / '.myagentkit/workers/w30.exit').read_text().startswith('DONE published'))
+        tab = json.loads((self.state / 'wt.json').read_text())
+        self.assertTrue(tab[-1].endswith('\nexit 0\n'), tab[-1])
+
+    def test_the_instruction_names_the_result_header_the_wrapper_needs(self):
+        # b2fix2 (2026-10-16) published `Kind: completed` and the end marker without the Task,
+        # Attempt and Remaining lines: the wrapper never saw DONE and its tab stayed for hours.
+        result = self.spawn('w31', str(self.brief), '--model', 'm', '--effort', 'high')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        prompt = self.runs()[0]['argv'][0]
+        for line in ('Kind: completed', 'Task: ', 'Attempt: N', 'Remaining: '):
+            self.assertIn(line, prompt)
+
     def test_tab_preserves_quick_exit_error(self):
         (self.bin / 'codex').write_text('#!/bin/sh\necho bad-model >&2\nexit 1\n', newline='\n')
         result = self.spawn('w15', str(self.brief), '--model', 'm', '--effort', 'high')
@@ -602,13 +640,14 @@ exit 1
         locked = Path(gitdir, 'locked')
         return locked.read_text().rstrip('\n') if locked.exists() else None
 
-    def close(self, name):
+    def close(self, name, **extra):
         env = dict(os.environ, PATH=f'{self.bin}{os.pathsep}{os.environ["PATH"]}',
-                   SPAWN_STATE=str(self.state), KIT_PS=str(self.bin / 'ps-stub'))
+                   SPAWN_STATE=str(self.state), KIT_PS=str(self.bin / 'ps-stub'), **extra)
         return subprocess.run(['sh', str(SCRIPT.with_name('close_worker.sh')), name],
                               cwd=self.repo, env=env, capture_output=True, text=True, timeout=45)
 
-    def test_close_refuses_while_the_codex_session_runs_on_windows(self):
+    def test_close_ends_the_codex_session_in_its_own_worktree_on_windows(self):
+        # Owner 2026-10-16: a close that refused while Codex ran left its tab open for hours.
         result = self.spawn('w18', str(self.brief), '--model', 'm', '--effort', 'high', '--worktree')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         tree = self.repo / '.claude/worktrees/w18'
@@ -619,13 +658,29 @@ exit 1
         git('merge', '--ff-only', 'worktree-w18')
         # Native Windows: no tmux and no Claude Code session named w18, only its codex.exe.
         (self.state / 'ps').write_text('4242 "C:\\codex\\codex.exe" resume sess-0 -C %s\r\n' % self.win(tree))
-        closed = self.close('w18')
+        (self.bin / 'taskkill').write_text('#!/bin/sh\necho "$*" >> "$SPAWN_STATE/taskkill.log"\n'
+                                           '[ -n "${SPAWN_KILL_IGNORED:-}" ] || : > "$SPAWN_STATE/ps"\n', newline='\n')
+        (self.bin / 'taskkill').chmod(0o755)
+        dry = subprocess.run(['sh', str(SCRIPT.with_name('close_worker.sh')), '--dry-run', 'w18'], cwd=self.repo,
+                             env=dict(os.environ, PATH=f'{self.bin}{os.pathsep}{os.environ["PATH"]}',
+                                      SPAWN_STATE=str(self.state), KIT_PS=str(self.bin / 'ps-stub')),
+                             capture_output=True, text=True, timeout=45)
+        self.assertIn('dry run: would end the Codex session in', dry.stdout, dry.stdout + dry.stderr)
+        self.assertFalse((self.state / 'taskkill.log').exists())
+        # A session taskkill cannot end keeps everything, its resume id first.
+        session = record.read_text().strip()
+        closed = self.close('w18', SPAWN_KILL_IGNORED='1')
         self.assertEqual(closed.returncode, 1, closed.stdout + closed.stderr)
-        self.assertIn('a Codex session still runs', closed.stdout)
-        self.assertIn('(process 4242)', closed.stdout)
+        self.assertIn('the Codex session still runs after taskkill (process 4242)', closed.stdout)
         self.assertTrue(record.exists(), 'the only resume id of a running session was deleted')
-        self.assertTrue(tree.exists())
         self.assertEqual(self.lock(tree), 'kit worker w18', 'a running worker lost its lock')
+        closed = self.close('w18')
+        self.assertEqual(closed.returncode, 0, closed.stdout + closed.stderr)
+        self.assertIn('/PID 4242 /T /F', (self.state / 'taskkill.log').read_text())
+        self.assertIn('Codex session ended (process 4242', closed.stdout)
+        self.assertIn('codex resume ' + session, closed.stdout)
+        self.assertFalse(record.exists())
+        self.assertFalse(tree.exists())
 
     def test_close_keeps_the_record_of_a_kept_worktree(self):
         result = self.spawn('w19', str(self.brief), '--model', 'm', '--effort', 'high', '--worktree')

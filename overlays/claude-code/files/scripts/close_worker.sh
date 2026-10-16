@@ -9,7 +9,9 @@
 # The lead runs it once it decides a worker session is finished: no next task fits what the
 # session holds, or the session has been idle past the cache lifetime (docs/WORKFLOW.md,
 # "Worker cost"). Left to the owner, finished sessions sat idle for hours and 39 worktrees
-# piled up. For each NAME, in order, each step on its own line:
+# piled up; left to the lead, worker tabs stayed open for hours after their merge, so the
+# post-merge hook (core/.githooks/post-merge) now runs it for every kit worker whose branch a
+# merge brings in. For each NAME, in order, each step on its own line:
 #   1. A name outside [A-Za-z0-9_-], a control character included, or one starting with `-`,
 #      is refused before any tmux call; the next name still runs. So is a worker whose worktree
 #      a gate (check.sh, by its lock) or a git operation (index.lock) is running in: the session
@@ -40,9 +42,12 @@
 # to 15 s until no such process is left; its Windows Terminal tab closes by itself, because the
 # tab's command ends with `exit 0` (spawn_worker.sh). A lister that cannot answer fails the
 # close with its words, as the session may still run. A Codex worker (spawn_codex.sh) is a
-# codex.exe whose command line names its folder with -C instead: while one runs in the worker's
-# folder, nothing is done for that name, since its .myagentkit/workers/NAME.session record is
-# the only id to resume it by; the lead quits it in its tab and closes again. Steps 1, 3 and 4
+# codex.exe whose command line names its folder with -C instead: one running in the worker's
+# own worktree is ended the same way (taskkill /T /F, a 15 s wait), and the line names its
+# session id (`codex resume ID` still opens the conversation); its wrapper then ends and so does
+# its tab (owner 2026-10-16: a close that refused here left Codex tabs open for hours). A
+# worker spawned without --worktree shares this checkout's folder, where any Codex session
+# matches: nothing is done for that name; the lead quits it in its tab and closes again. Steps 1, 3 and 4
 # are the same. On every host a Codex worker whose decision file (the path NAME.question
 # records, else QUESTION-NAME.md at its top) still exists is refused before step 2: the lead
 # answers it with spawn_codex.sh --resume, or deletes it to abandon the worker. Before step 3 an
@@ -66,7 +71,7 @@
 # exist; 1 otherwise, with the first reason on the last line: a nonzero exit of
 # clean_worktrees.sh is one whatever its summary says (after a removal, an outcome line its log
 # could not take); 2 on a usage error. A dry run exits 1 only for a refused name, a waiting
-# decision, a running Codex session, an unfinished report move (NAME.report-move), a tmux or
+# decision, a Codex session running in this checkout, an unfinished report move (NAME.report-move), a tmux or
 # lister that could not answer, or a removal that could not run.
 set -u
 
@@ -397,9 +402,32 @@ for name; do
     if ! pids=$(codex "$wt_dir"); then
       fail "$name: could not list the Codex processes, so its Codex session may still run: $pids; nothing is done for $name"
       continue
-    elif [ -n "$pids" ]; then
+    elif [ -n "$pids" ] && [ "$wt_dir" = "$top" ]; then
+      # No worktree of its own: any Codex session in this checkout matches, maybe not this worker's.
       fail "$name: a Codex session still runs in $wt_dir (process $pids); its session record and worktree are kept: quit it in its tab (/quit), then close again"
       continue
+    elif [ -n "$pids" ]; then
+      sid=$(cat "$record.session" 2>/dev/null) || sid=""
+      resume=""; [ -z "$sid" ] || resume="; its conversation stays resumable: codex resume $sid"
+      if [ -n "$dry" ]; then
+        say "$name: dry run: would end the Codex session in $wt_dir (process $pids, taskkill /T /F) and wait up to 15 s for it; while it runs, the audit below keeps its worktree"
+      elif why=$(busy "$wt_dir"); then
+        refuse; continue
+      else
+        # Its wrapper (codex_worker.py) sees the session end, records why and returns; the tab's
+        # script then ends with `exit 0`, on which Windows Terminal closes the tab.
+        for pid in $pids; do MSYS_NO_PATHCONV=1 taskkill /PID "$pid" /T /F >/dev/null 2>&1; done
+        i=0
+        while left=$(codex "$wt_dir") && [ -n "$left" ] && [ "$i" -lt 15 ]; do i=$((i + 1)); sleep 1; done
+        if ! left=$(codex "$wt_dir"); then
+          fail "$name: could not establish that the Codex session ended: $left; its worktree is not touched"
+          continue
+        elif [ -n "$left" ]; then
+          fail "$name: the Codex session still runs after taskkill (process $left); its session record and worktree are kept"
+          continue
+        fi
+        say "$name: Codex session ended (process $pids$resume); its Windows Terminal tab closes by itself"
+      fi
     fi
   fi
 

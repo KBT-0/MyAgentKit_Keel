@@ -15,6 +15,16 @@
 #
 # Usage: spawn_worker.sh NAME BRIEF_FILE --model M --effort LEVEL [--settings JSON_OR_FILE]
 #                        [--allowed-tools LIST] [--worktree] [--batch] [--backend NAME]
+#                        [--resume SESSION_ID]
+#
+# --resume SESSION_ID continues that worker's own conversation under the same NAME, with
+# BRIEF_FILE holding the answer or the next step: with --worktree in its existing
+# .claude/worktrees/NAME, locked again for the run. The session keeps `-n NAME`, so
+# close_worker.sh and the post-merge hook find and close it. A tab opened by hand
+# (`wt ... claude --resume ID`) has no name: nothing could close it, and the lead ended one
+# with Stop-Process (2026-10-16). The spawn prints the id when Claude Code registered the
+# session; it is also the sessionId in ${CLAUDE_CONFIG_DIR:-~/.claude}/sessions/PID.json.
+# Only once the earlier session has ended: a running one with the name is refused.
 #
 # --backend NAME starts the worker on the Anthropic-compatible endpoint that
 # .myagentkit/backends/NAME.env in the current folder names (docs/DEV_SETUP.md, section 3).
@@ -126,7 +136,7 @@ ctl "brief path" "$brief"
 [ -n "$windows" ] || command -v tmux >/dev/null || die "tmux is not installed"
 command -v claude >/dev/null || die "claude is not on PATH"
 
-model=""; settings=""; tools=""; worktree=""; effort=""; batch=""; backend=""
+model=""; settings=""; tools=""; worktree=""; effort=""; batch=""; backend=""; resume=""
 # Git for Windows' dirname handles both separators, including mixed paths such as D:/p\scripts\x.sh.
 case $0 in *'\'*) kit=$(dirname -- "$0") ;; */*) kit=${0%/*} ;; *) kit=. ;; esac
 while [ $# -gt 0 ]; do
@@ -138,6 +148,8 @@ while [ $# -gt 0 ]; do
     --effort)        effort=$2; shift 2 ;;
     --batch)         batch=1; shift ;;
     --backend)       backend=$2; shift 2 ;;
+    --resume)        case ${2-} in ""|-*) die "--resume needs the session id of the worker's conversation: --resume SESSION_ID" ;; esac
+                     resume=$2; shift 2 ;;
     *) die "unknown option: $1" ;;
   esac
 done
@@ -145,6 +157,7 @@ done
 # session silently took the user's default.
 [ -n "$model" ] || die "--model is required: the lead picks the model for every worker"
 [ -n "$effort" ] || die "--effort is required: the lead picks the effort for every worker"
+ctl "session id" "$resume"
 
 [ -n "$windows" ] || ! tmux has-session -t "=$name" 2>/dev/null || die "tmux session '$name' already exists"
 
@@ -264,16 +277,27 @@ printf '%s\n' "spawn_worker: about to run '$name': model $model, effort $effort"
 if [ -n "$worktree" ]; then
   top=$(git rev-parse --show-toplevel) || die "--worktree needs a git repository"
   dir=$top/.claude/worktrees/$name
-  ! git show-ref --verify --quiet "refs/heads/worktree-$name" ||
-    die "branch worktree-$name already exists and may be stale; delete it or pick another name"
-  [ ! -e "$dir" ] || die "worktree path already exists: $dir"
+  if [ -n "$resume" ]; then
+    [ -d "$dir" ] || die "--resume --worktree: no worktree at $dir"
+  else
+    ! git show-ref --verify --quiet "refs/heads/worktree-$name" ||
+      die "branch worktree-$name already exists and may be stale; delete it or pick another name"
+    [ ! -e "$dir" ] || die "worktree path already exists: $dir"
+  fi
   # Locked from spawn to close_worker.sh, which unlocks it: the worktree audit never removes a
   # locked worktree, so no clean-up races a live worker, as Claude Code locks its own agents'
   # worktrees while they run (code.claude.com/docs/en/worktrees). The quiet period stays as the
   # second check for worktrees no kit script locked. `add --lock --reason` needs git 2.33
   # (its release notes); the audit already needs 2.36.
-  git worktree add -q --lock --reason "kit worker $name" "$dir" -b "worktree-$name" HEAD >&2 ||
-    die "git worktree add failed: $dir"
+  if [ -z "$resume" ]; then
+    git worktree add -q --lock --reason "kit worker $name" "$dir" -b "worktree-$name" HEAD >&2 ||
+      die "git worktree add failed: $dir"
+  # A resumed worker is locked again: a close lifted the lock, and the audit must not remove the
+  # worktree under the new run. A lock someone else set stays as it is.
+  elif ! gd=$(git -C "$dir" rev-parse --absolute-git-dir) ||
+       { [ ! -e "$gd/locked" ] && ! git worktree lock --reason "kit worker $name" "$dir"; }; then
+    die "--resume --worktree: cannot lock $dir for the resumed worker"
+  fi
 fi
 
 # Native Windows: nothing can read the tab's pane, so the worker gets a Notification and a Stop
@@ -292,7 +316,7 @@ fi
 unmark="env -u CLAUDE_CODE_CHILD_SESSION -u CLAUDECODE -u CLAUDE_CODE_SESSION_ID -u CLAUDE_PID -u CLAUDE_CODE_MESSAGING_SOCKET -u CLAUDE_CODE_MESSAGING_TOKEN -u CLAUDE_CODE_SESSION_ATTENDED -u CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL=1h MYAGENTKIT_ROLE=worker"
 
 # Variadic flags come LAST and the prompt is never on this line (see the header).
-cmd="claude -n $(q "$name")"
+cmd="claude -n $(q "$name")${resume:+ --resume $(q "$resume")}"
 [ -n "$model" ]    && cmd="$cmd --model $(q "$model")"
 [ -n "$effort" ]   && cmd="$cmd --effort $(q "$effort")"
 [ -n "$settings" ] && cmd="$cmd --settings $(q "$settings")"
@@ -466,6 +490,10 @@ if s:
     i=$((i + 1)); sleep 1
   done
   printf '%s\n' "spawn_worker: '$name' started with $brief in a Windows Terminal tab; watch it there"
+  sid=""; [ -z "$peer" ] || sid=$($kit_python -I -c 'import json, sys
+print(json.load(open(sys.argv[1], encoding="utf-8")).get("sessionId", ""))' "$reg/$peer.json" 2>/dev/null) || sid=""
+  ctl "session id" "$sid"
+  printf '%s\n' "spawn_worker: to answer it in its own session once its tab has ended: scripts/spawn_worker.sh $name ANSWER_FILE --model $(q "$model") --effort $(q "$effort")${worktree:+ --worktree} --resume ${sid:-SESSION_ID}"
   if [ -n "$peer" ]; then
     printf '%s\n' "spawn_worker: '$name' is a peer session (process $peer): ListAgents lists it; subscribe once with SendMessage notify_when_idle"
   else
@@ -545,6 +573,7 @@ printf '%s\n' "spawn_worker: '$name' started with $brief (tmux attach -t $name t
 # background job. A committed `Kind: completed` result file is the end signal, and closing
 # is the lead's job.
 printf '%s\n' "spawn_worker: once you decide the session is finished (no next task fits what it holds, or it is idle past the cache lifetime), close it: scripts/close_worker.sh $name"
+printf '%s\n' "spawn_worker: to answer it in its own session once its tmux session has ended: scripts/spawn_worker.sh $name ANSWER_FILE --model $(q "$model") --effort $(q "$effort")${worktree:+ --worktree} --resume SESSION_ID (the sessionId of the ${CLAUDE_CONFIG_DIR:-~/.claude}/sessions/PID.json named $name)"
 if [ -n "$batch" ]; then
   printf '%s\n' "spawn_worker: --batch: not shown. Once every worker of this batch is started, show them together in one window: scripts/show_workers.sh NAME1 NAME2 ..."
 else

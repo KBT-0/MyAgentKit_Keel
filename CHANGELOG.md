@@ -125,6 +125,19 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   reviews its own diff with sub-agents also when it runs as one, and `Kind: blocked` also
   means failed (D06 inv1#164, D01 inv1#286, #202, D10 inv1#273). **ACTION:** take the
   updated scripts, `worker.md` and the `docs/HANDOFF.md` sections.
+- **A merge closes the worker it brings in** (`core/.githooks/post-merge`,
+  `scripts/close_worker.sh`, `spawn_worker.sh`, `spawn_codex.sh`, `docs/WORKFLOW.md`,
+  `docs/HANDOFF.md`; owner 2026-10-16: finished Claude and Codex worker tabs stayed open for
+  hours). The post-merge hook runs `close_worker.sh NAME` for each kit worker (the worktree its
+  spawn locked `kit worker NAME`) whose branch `worktree-NAME` the merge brought in; a refused
+  close is printed and the merge stands. On native Windows `close_worker.sh` now ends a Codex
+  session running in the worker's own worktree (`taskkill /T /F`) instead of refusing, and names
+  its session id; one without a worktree is still refused. `spawn_codex.sh`'s instruction names
+  the four result header lines its wrapper needs: a `Kind: completed` result without them never
+  closed its worker. `spawn_worker.sh --resume SESSION_ID` continues a worker's conversation
+  under the same NAME (and worktree, locked again), so a resumed tab can be closed; the lead
+  never opens a worker tab by hand. **ACTION:** take the updated hook, scripts and the
+  `docs/WORKFLOW.md` and `docs/HANDOFF.md` sections.
 - **A Codex Accept is read as strictly as a Claude one** (`scripts/claude_bridge.py`
   `review_parts`, used by `scripts/codex_bridge.py` and `scripts/usage_summary.py`). The
   Findings section ends only at another named section, so a `### **High**` sub-heading, a
