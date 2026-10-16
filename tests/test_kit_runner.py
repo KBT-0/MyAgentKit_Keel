@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import types
 import unittest
 import unittest.mock
 
@@ -49,6 +50,169 @@ class KitRunnerTests(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.tmp)
+
+    def test_the_kit_article_describes_the_author_tier_refusal(self):
+        # This article belongs to the kit, not to a bootstrapped project's docs.
+        page = ' '.join((ROOT / 'docs/decorrelated-review.md').read_text(encoding='utf-8').split())
+        self.assertIn("refuses a reviewer of the author's tier", page)
+        self.assertNotIn('planned work', page)
+
+    def test_review_shards_require_complete_unique_successful_reports(self):
+        # Use the shipped runner in fresh processes, with cheap cases that require overlap.
+        source = (ROOT / 'core/scripts/test_claude_bridge.py').read_text(encoding='utf-8')
+        source = source.rpartition('if __name__ == "__main__":')[0]
+        source = source.replace('ROOT = Path(__file__).resolve().parent',
+                                'ROOT = Path(%r)' % str(ROOT / 'core/scripts'))
+        probe = self.tmp / 'shard_probe.py'
+        source = ('import sys\nsys.path.insert(0, %r)\n' % str(ROOT / 'core/scripts')) + source
+        probe.write_text(source + '''
+class Probe(unittest.TestCase):
+    def test_a(self):
+        self.overlap()
+    def test_b(self):
+        self.overlap()
+    def overlap(self):
+        folder = Path(os.environ['PROBE_FOLDER'])
+        (folder / str(os.getpid())).touch()
+        until = time.monotonic() + 10
+        while len(list(folder.iterdir())) < 2 and time.monotonic() < until:
+            time.sleep(.01)
+        self.assertEqual(len(list(folder.iterdir())), 2, 'shards did not run in parallel')
+    def test_c(self):
+        if os.environ['PROBE_MODE'] == 'unexpected_skip':
+            self.skipTest('undeclared exclusion')
+        if os.environ['PROBE_MODE'] == 'failure':
+            self.fail('real shard failure')
+    @unittest.skip('declared platform exclusion')
+    def test_d(self):
+        pass
+    test_d._kit_platform_skip = True
+
+if __name__ == '__main__':
+    if sys.argv[1:2] == ['--review-shard']:
+        code = run_review_shard(*sys.argv[2:])
+        path = Path(sys.argv[3])
+        report = json.loads(path.read_text(encoding='utf-8'))
+        mode = os.environ['PROBE_MODE']
+        if mode == 'missing': report['ids'].pop()
+        if mode == 'duplicate': report['ids'].append(report['ids'][0])
+        if mode == 'zero': report.update(ids=[], executed=0, skipped=[])
+        if mode == 'count': report['executed'] += 1
+        if mode == 'missing_report': path.unlink()
+        else: path.write_text(json.dumps(report), encoding='utf-8')
+        raise SystemExit(7 if mode == 'exit' else code)
+    suite = unittest.defaultTestLoader.loadTestsFromTestCase(Probe)
+    raise SystemExit(0 if run_review_shards(suite, minimum=int(sys.argv[1]),
+                                          timeout=.01 if os.environ['PROBE_MODE'] == 'timeout' else None) else 1)
+''', encoding='utf-8')
+        for mode, minimum, passes in (('success', 3, True), ('missing', 3, False),
+                                      ('duplicate', 3, False), ('exit', 3, False),
+                                      ('zero', 3, False), ('count', 3, False),
+                                      ('missing_report', 3, False), ('unexpected_skip', 3, False),
+                                      ('failure', 3, False), ('timeout', 3, False), ('success', 4, False)):
+            folder = self.tmp / ('pids-%s-%d' % (mode, minimum))
+            folder.mkdir()
+            with self.subTest(mode=mode, minimum=minimum):
+                result = subprocess.run([sys.executable, '-B', str(probe), str(minimum)],
+                                        env=dict(os.environ, PROBE_FOLDER=str(folder), PROBE_MODE=mode),
+                                        capture_output=True, text=True, timeout=40)
+                self.assertEqual(result.returncode, 0 if passes else 1, result.stdout + result.stderr)
+                if passes:
+                    self.assertIn('Ran 3 tests: OK', result.stdout)
+                    self.assertEqual(result.stdout.count('NOT RUN:'), 1, result.stdout)
+                else:
+                    self.assertIn('FAIL: review shards', result.stdout, result.stderr)
+
+    def test_review_shards_cancel_both_process_trees_on_parent_exception(self):
+        source = (ROOT / 'core/scripts/test_claude_bridge.py').read_text(encoding='utf-8')
+        source = source.rpartition('if __name__ == "__main__":')[0]
+        source = source.replace('ROOT = Path(__file__).resolve().parent',
+                                'ROOT = Path(%r)' % str(ROOT / 'core/scripts'))
+        probe = self.tmp / 'cancel_probe.py'
+        probe.write_text(('import sys\nsys.path.insert(0, %r)\n' % str(ROOT / 'core/scripts')) + source + '''
+import _thread, threading
+folder = Path(os.environ['PROBE_FOLDER'])
+class Probe(unittest.TestCase):
+    def test_a(self):
+        child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'],
+                                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        (folder / str(os.getpid())).write_text(str(child.pid), encoding='utf-8')
+        time.sleep(8)
+    test_b = test_a
+
+def alive(pid):
+    if os.name == 'nt':
+        import ctypes
+        kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+        kernel.OpenProcess.restype = ctypes.c_void_p
+        kernel.WaitForSingleObject.argtypes = (ctypes.c_void_p, ctypes.c_ulong)
+        kernel.CloseHandle.argtypes = (ctypes.c_void_p,)
+        handle = kernel.OpenProcess(0x100000, False, pid)
+        if not handle:
+            if ctypes.get_last_error() == 87:
+                return False
+            raise ctypes.WinError(ctypes.get_last_error())
+        try:
+            return kernel.WaitForSingleObject(handle, 0) == 258
+        finally:
+            kernel.CloseHandle(handle)
+    status = subprocess.run(['ps', '-o', 'stat=', '-p', str(pid)], capture_output=True, text=True).stdout.strip()
+    return bool(status) and not status.startswith('Z')
+
+if __name__ == '__main__':
+    if sys.argv[1:2] == ['--review-shard']:
+        raise SystemExit(run_review_shard(*sys.argv[2:]))
+    def interrupt():
+        until = time.monotonic() + 10
+        while len(list(folder.iterdir())) < 2 and time.monotonic() < until:
+            time.sleep(.01)
+        _thread.interrupt_main()
+    def fail(signum, frame):
+        raise RuntimeError('parent failure')
+    expected = KeyboardInterrupt if sys.argv[1] == 'interrupt' else RuntimeError
+    if expected is RuntimeError:
+        signal.signal(signal.SIGINT, fail)
+    timer = threading.Thread(target=interrupt)
+    timer.start()
+    started = time.monotonic()
+    try:
+        run_review_shards(unittest.defaultTestLoader.loadTestsFromTestCase(Probe))
+    except expected:
+        elapsed = time.monotonic() - started
+    else:
+        raise AssertionError('parent exception was swallowed')
+    finally:
+        timer.join(timeout=12)
+    assert elapsed < 4, 'parent exception took %.3f seconds' % elapsed
+    markers = list(folder.iterdir())
+    assert len(markers) == 2, 'both shards must have started'
+    pids = [int(value) for path in markers for value in (path.name, path.read_text(encoding='utf-8'))]
+    until = time.monotonic() + 2
+    while any(alive(pid) for pid in pids) and time.monotonic() < until:
+        time.sleep(.02)
+    assert not any(alive(pid) for pid in pids), 'shard or descendant survived parent exception'
+''', encoding='utf-8')
+        for mode in ('interrupt', 'error'):
+            folder = self.tmp / mode
+            folder.mkdir()
+            with self.subTest(mode=mode):
+                result = subprocess.run([sys.executable, '-B', str(probe), mode],
+                                        env=dict(os.environ, PROBE_FOLDER=str(folder)),
+                                        capture_output=True, text=True, timeout=25)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_empty_review_companion_is_refused_before_shards_start(self):
+        code = '''import runpy, sys, unittest
+sys.path.insert(0, %r)
+import test_codex_quota
+class EmptyQuota(unittest.TestCase):
+    pass
+test_codex_quota.QuotaTests = EmptyQuota
+runpy.run_path(%r, run_name='__main__')
+''' % (str(ROOT / 'core/scripts'), str(ROOT / 'core/scripts/test_claude_bridge.py'))
+        result = subprocess.run([sys.executable, '-B', '-c', code], capture_output=True, text=True, timeout=10)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('EmptyQuota has 0 of at least', result.stderr)
 
     def suite_unit(self, condition, minimum):
         (self.tmp / 'suite').mkdir(exist_ok=True)
@@ -242,6 +406,26 @@ class KitRunnerTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("gate ran ['--timing']", result.stdout)
 
+    def test_an_inherited_work_variable_never_chooses_the_self_test_scratch_folder(self):
+        # An exported `work` once named the folder the wrapper's git_view wrote and deleted
+        # git-paths* in, even when the check then refused its arguments (round-3 Codex Critical).
+        project, decoy = self.tmp / 'kit', self.tmp / 'decoy'
+        (project / 'scripts').mkdir(parents=True)
+        decoy.mkdir()
+        subprocess.run(['git', 'init', '-q', str(project)], check=True)
+        shutil.copyfile(ROOT / 'scripts/check.sh', project / 'scripts/check.sh')
+        (project / 'scripts/check_kit.py').write_text('import sys\nsys.exit("unknown argument")\n')
+        names = ('git-paths', 'git-paths.hashes', 'git-paths.errors')
+        for name in names:
+            (decoy / name).write_text('owner data\n')
+        result = subprocess.run(['sh', str(project / 'scripts/check.sh'), '--self-test', '--bogus'],
+                                cwd=project, capture_output=True, text=True,
+                                env=dict(os.environ, work=decoy.as_posix()))
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        for name in names:
+            self.assertEqual((decoy / name).read_text() if (decoy / name).exists() else None,
+                             'owner data\n', name)
+
     def test_completion_recovers_its_missing_marker_directory_and_refuses_a_file(self):
         # The full native run completed every unit, but its temporary marker directory
         # was gone by then. A PASS line followed by a failed marker write is not a pass.
@@ -351,6 +535,8 @@ def main():
     def test_readme_version_matches_the_newest_changelog_heading(self):
         check_kit.check_release(ROOT)
         (self.tmp / 'CHANGELOG.md').write_text('## Unreleased\n\n## v0.11 — 2026-10-09\n\n## v0.10\n', encoding='utf-8')
+        (self.tmp / 'plugin/.claude-plugin').mkdir(parents=True)
+        (self.tmp / 'plugin/.claude-plugin/plugin.json').write_text('{"version": "0.11.0"}', encoding='utf-8')
         for version in ('v0.11', 'v0.10', 'v0.9', ''):
             with self.subTest(version=version):
                 (self.tmp / 'README.md').write_text('**%s.** The kit.\n' % version, encoding='utf-8')
@@ -363,6 +549,18 @@ def main():
                             contextlib.redirect_stdout(io.StringIO()), \
                             self.assertRaisesRegex(RuntimeError, 'bold version.*newest versioned heading'):
                         check_kit.main()
+        # A plugin whose version string stays the same is not updated where it is installed:
+        # its MAJOR.MINOR is the kit's, three parts as the manifest reference shows them.
+        (self.tmp / 'README.md').write_text('**v0.11.** The kit.\n', encoding='utf-8')
+        for version in ('0.11.3', '0.1.0', '0.11', '0.110.0', 'v0.11.0', None):
+            with self.subTest(plugin=version):
+                (self.tmp / 'plugin/.claude-plugin/plugin.json').write_text(
+                    '{}' if version is None else '{"version": "%s"}' % version, encoding='utf-8')
+                if version == '0.11.3':
+                    check_kit.check_release(self.tmp)
+                else:
+                    with self.assertRaisesRegex(RuntimeError, r'plugin\.json.*version.*v0\.11'):
+                        check_kit.check_release(self.tmp)
         (self.tmp / 'CHANGELOG.md').write_text('## Unreleased\n', encoding='utf-8')
         with self.assertRaisesRegex(RuntimeError, 'bold version.*newest versioned heading'):
             check_kit.check_release(self.tmp)
@@ -396,6 +594,100 @@ def main():
         tail = out[out.rindex('TIME: '):]
         self.assertIn('\nNOT RUN: probe a (no b here)\n', tail)
         self.assertEqual(out.count('NOT RUN: probe a'), 2, out)
+
+    def test_what_the_early_checks_could_not_run_is_repeated_under_the_summary_too(self):
+        # The killing-test note's NOT RUN line (no upstream branch) and shellcheck's were printed
+        # before the units and never repeated, so a long output lost them.
+        real = check_kit.run_units
+        quiet = [sys.executable, '-c', 'print("quiet output\\nUNIT DONE: quiet")']
+        out = io.StringIO()
+        with unittest.mock.patch.object(check_kit, 'check_syntax',
+                                        side_effect=lambda root: print('NOT RUN: shellcheck probe')), \
+                unittest.mock.patch.object(check_kit, 'check_release'), \
+                unittest.mock.patch.object(check_kit, 'untested_guards',
+                                           side_effect=lambda root: print('NOT RUN: killing-test probe')), \
+                unittest.mock.patch.object(check_kit, 'validate_plugin',
+                                           side_effect=lambda root: print('NOT RUN: validator probe')), \
+                unittest.mock.patch.object(check_kit, 'run', return_value='packaged source matches'), \
+                unittest.mock.patch.object(check_kit, 'run_units',
+                                           side_effect=lambda units, *args, **kw: real([('quiet', quiet)], **kw)), \
+                unittest.mock.patch.object(check_kit, '_PASSED_FILE', None), \
+                unittest.mock.patch.object(sys, 'argv', ['check_kit.py']), \
+                contextlib.redirect_stdout(out):
+            self.assertEqual(check_kit.main(), 0)
+        tail = out.getvalue()[out.getvalue().index('UNIT DONE: quiet'):]
+        for line in ('NOT RUN: shellcheck probe', 'NOT RUN: killing-test probe', 'NOT RUN: validator probe'):
+            self.assertIn('\n%s\n' % line, tail)
+            self.assertEqual(out.getvalue().count(line), 2, out.getvalue())
+
+    def test_the_claude_plugin_is_validated_strictly_and_not_run_without_the_cli(self):
+        # The vendor's validator (`claude plugin validate --strict`) over plugin/, where the
+        # CLI is on PATH; without it one NOT RUN line, never a silent pass (D08 inv2#178).
+        out = io.StringIO()
+        with unittest.mock.patch.object(check_kit.shutil, 'which', return_value=None), \
+                unittest.mock.patch.object(check_kit, 'run') as ran, contextlib.redirect_stdout(out):
+            check_kit.validate_plugin(ROOT)
+        ran.assert_not_called()
+        self.assertIn('NOT RUN: claude plugin validate plugin --strict', out.getvalue())
+        with unittest.mock.patch.object(check_kit.shutil, 'which', return_value='/bin/claude'), \
+                unittest.mock.patch.object(check_kit, 'run', return_value='') as ran, \
+                contextlib.redirect_stdout(io.StringIO()):
+            check_kit.validate_plugin(ROOT)
+        self.assertEqual(ran.call_args.args[0], ['/bin/claude', 'plugin', 'validate', 'plugin', '--strict'])
+        self.assertEqual(ran.call_args.kwargs['cwd'], ROOT)
+        with unittest.mock.patch.object(check_kit.shutil, 'which', return_value='/bin/claude'), \
+                unittest.mock.patch.object(check_kit, 'run', side_effect=RuntimeError('warning: x')), \
+                contextlib.redirect_stdout(io.StringIO()), self.assertRaisesRegex(RuntimeError, 'warning'):
+            check_kit.validate_plugin(ROOT)
+
+    def test_an_added_line_starting_with_two_pluses_is_not_a_file_header(self):
+        # `++ b/x` added in a file shows in the -U0 diff as `+++ b/x`: read as a header, it
+        # renamed the file of every later refusal (BACKLOG, v0.11 D-5 logic r2).
+        # TemporaryDirectory, not self.tmp: its cleanup removes Git's read-only objects on Windows.
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name) / 'repo'
+        env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1')
+        git = lambda *args: subprocess.run(['git', '-C', str(root), *args], env=env, check=True,
+                                           capture_output=True)
+        root.mkdir()
+        git('init', '-q', '-b', 'main')
+        git('-c', 'user.name=t', '-c', 'user.email=t@x', 'commit', '-q', '--allow-empty', '-m', 'base')
+        git('branch', 'upstream')
+        git('branch', '-q', '--set-upstream-to=upstream')
+        (root / 'gate.sh').write_text('x=1\n++ b/elsewhere.sh\n[ -n "$x" ] || exit 2\n', encoding='utf-8')
+        git('add', '-A')
+        with unittest.mock.patch.dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1'), \
+                contextlib.redirect_stdout(io.StringIO()):
+            notes = check_kit.untested_guards(root)
+        self.assertEqual([note.split(' adds')[0] for note in notes], ['NOTE [killing test]: gate.sh:3'])
+
+    def test_the_locale_sensor_names_a_missing_turkish_locale_and_runs_one_it_has(self):
+        # The POSIX branch: locale -a decides whether tr_TR.UTF-8 runs; without one, NOT RUN.
+        for listed, said in (('C\nPOSIX\n', 'NOT RUN: the locale suites under tr_TR.UTF-8'),
+                             ('C\ntr_TR.utf8\n', 'PASS: the locale suites ran under LC_ALL=C, LC_ALL=tr_TR.utf8')):
+            out = io.StringIO()
+            with self.subTest(listed=listed), \
+                    unittest.mock.patch.object(check_kit, 'os', types.SimpleNamespace(name='posix', environ={})), \
+                    unittest.mock.patch.object(check_kit, 'run', return_value=listed) as ran, \
+                    contextlib.redirect_stdout(out):
+                check_kit.locale_matrix(self.tmp, (), {})
+            self.assertEqual(ran.call_args.args[0], ['locale', '-a'])
+            self.assertIn(said, out.getvalue())
+            self.assertEqual('NOT RUN' in out.getvalue(), 'tr_TR' not in listed)
+
+    def test_a_locale_list_that_is_not_utf8_still_yields_a_utf8_locale(self):
+        # `locale -a` was decoded strictly in the host's encoding: one name holding a Latin-1
+        # byte raised there instead of choosing among the rest (BACKLOG, v0.11 D-1).
+        real = subprocess.run
+
+        def fake(args, **kw):
+            if args == ['locale', '-a']:
+                args = [sys.executable, '-c', 'import sys; sys.stdout.buffer.write('
+                        'b"C\\nfr_FR.ISO8859-1\\xe9\\nde_DE.UTF-8\\n")']
+            return real(args, **kw)
+        with unittest.mock.patch.object(check_kit.subprocess, 'run', side_effect=fake):
+            self.assertEqual(check_kit.utf8_locale(), 'de_DE.UTF-8')
 
     def test_timing_prints_a_table_of_units_phases_and_tests_at_the_end(self):
         passed, out = runner(('suite', self.suite_unit('True', 2)),

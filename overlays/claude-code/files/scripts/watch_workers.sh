@@ -136,7 +136,8 @@ done
 # A name given twice is watched once: its second pass reported what the first had queued.
 seen=$nl
 for n in "$@"; do case $seen in *"$nl$n$nl"*) ;; *) seen=$seen$n$nl ;; esac; done
-set -f; IFS=$nl; set -- $seen; unset IFS; set +f
+# shellcheck disable=SC2086 # one name per line: split on newlines, globbing off
+{ set -f; IFS=$nl; set -- $seen; unset IFS; set +f; }
 # Native Windows (Git for Windows' sh, MSYS2, Cygwin) has no tmux: a worker is a Windows Terminal
 # tab, and the hooks spawn_worker.sh gives it keep its state line in $wdir/NAME.state.
 case $(uname -s 2>/dev/null) in MINGW*|MSYS*|CYGWIN*) windows=1 ;; *) windows="" ;; esac
@@ -382,6 +383,7 @@ context() {
           line = pct * w / 100; if (abs < line) line = abs
           printf "%s %d %s %dk\n", (u > line ? "over" : "under"), u * 100 / w, tok, line / 1000 }
   ' "$win") || fig=""
+  # shellcheck disable=SC2086 # the figure's fields: split on purpose
   set -- "$1" ${fig:-absent}
   [ "$2" != under ] || return 1
   said=$(mark "$1" context)
@@ -406,6 +408,7 @@ while :; do
     if [ "$st" = FAILED ]; then report "$n" FAILED; failed=1
     elif [ -n "$st" ]; then
       found=1
+      # shellcheck disable=SC2086 # the state's fields: split on purpose
       report "$n" $st || { say "watch_workers: $n: could not write its report to stdout" >&2; failed=1; }
     else
       # A report that could not be written ends the run like a failed capture; w stays x

@@ -613,6 +613,8 @@ def _supervise(command, prompt, repo, timeout, started, guard, prior=None, into=
                         selector.register(stream, selectors.EVENT_READ, name)
                 else:
                     chunks, open_streams = drain({"stdout": child.stdout, "stderr": child.stderr}), 2
+                # 8,000,000 bytes per stream is the owner's choice of safety cap,
+                # not a provider limit (B03 inv2#65).
                 while not POSIX and open_streams:
                     remaining = timeout - (time.monotonic() - started)
                     if remaining <= 0:

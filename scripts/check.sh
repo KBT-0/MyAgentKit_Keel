@@ -27,16 +27,18 @@ trap 'cancel INT 130' INT
 trap 'cancel TERM 143' TERM
 # The self-test compares HEAD, index, status and file contents at its end, as the project gate
 # does. It cannot catch a non-ignored file that a case writes and removes meanwhile, which fails a
-# review in this worktree as stale_checkout, and the kit's own boundary example does that: run the
-# kit's self-test in another worktree or after the review (a project's own self-test may share the
-# review's worktree only when every case writes nothing but ignored files; owner decision,
-# 2026-10-12). Ignored files may change.
+# review in this worktree as stale_checkout (a project's own self-test may share the review's
+# worktree only when every case writes nothing but ignored files; owner decision, 2026-10-12).
+# Ignored files may change.
+# git_view <scratch folder>: the caller names the folder its scratch files go in. An exported
+# `work` once chose it, and the files of that name in an unrelated folder were overwritten and
+# deleted (round-3 review, 2026-10-15): no inherited variable decides a scratch path.
 git_view() {
   git rev-parse --verify -q HEAD || :; git ls-files -s; git status --porcelain --untracked-files=all
   # One ls-files and ONE hash-object for the whole tree; Git status covers deletions.
   # Newline-separated paths are safe because the kit refuses names holding newlines (#41).
   # Prefix ./ because hash-object unquotes a line starting with a double quote.
-  paths="${work:-$passed}/git-paths"
+  paths="$1/git-paths"
   hashes="$paths.hashes"
   errors="$paths.errors"
   git -c core.quotePath=false ls-files -z --cached --others --exclude-standard | tr '\0' '\n' |
@@ -61,7 +63,7 @@ view=""
 case " $* " in
   *" --self-test "*) if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
                        view="$passed/git-view"
-                       git_view > "$view.before" 2>&1 || { cat "$view.before" >&2; exit 1; }
+                       git_view "$passed" > "$view.before" 2>&1 || { cat "$view.before" >&2; exit 1; }
                      fi ;;
 esac
 status=0
@@ -72,7 +74,7 @@ if [ "$status" -eq 0 ] && [ ! -f "$passed/passed" ]; then
   echo "KIT CHECK: FAIL — the kit check exited 0 without reaching its PASS line" >&2
   status=1
 fi
-if [ -n "$view" ] && ! { git_view > "$view.after" 2>&1 && cmp -s "$view.before" "$view.after"; }; then
+if [ -n "$view" ] && ! { git_view "$passed" > "$view.after" 2>&1 && cmp -s "$view.before" "$view.after"; }; then
   echo "KIT CHECK: FAIL — the self-test changed this checkout, so a review running here meanwhile" >&2
   echo "  fails as stale_checkout, or another process edited the checkout meanwhile." >&2
   echo "  Lines before (-) and after (+): HEAD, index, status, content hashes by path:" >&2

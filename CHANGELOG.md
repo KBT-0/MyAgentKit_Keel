@@ -13,6 +13,11 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## v0.11 — 2026-10-09
 
+- **Review shard cancellation and mandatory shell diagnostics** (`core/scripts/test_claude_bridge.py`,
+  `core/scripts/check.sh`, `tests/test_kit_runner.py`, `tests/test_selftest_status.py`,
+  `scripts/check_kit.py`). A parent interrupt or exception stops both shard process trees before
+  propagating. ShellCheck receives empty `SHELLCHECK_OPTS`, so ambient severity options cannot
+  suppress mandatory SC2028/SC2086 diagnostics. **ACTION:** none.
 - **Reviewer manual-check verdict instructions** (`core/scripts/claude_bridge.py`,
   `core/scripts/codex_bridge.py`, `core/scripts/test_claude_bridge.py`, plugin runtime).
   Both reviewer prompts classify NOT RUN and "could not verify" lines as manual checks

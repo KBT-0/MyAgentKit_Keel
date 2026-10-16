@@ -136,6 +136,28 @@ class CleanWorktreesOnWindows(unittest.TestCase):
         self.assertFalse(path.exists(), out)
 
     @windows_only
+    def test_a_crlf_checkout_under_autocrlf_is_removed_and_an_edit_in_it_kept(self):
+        # Git for Windows' default core.autocrlf=true checks text out with CRLF: compared with
+        # the raw LF blob, every finished worktree read as "not byte for byte" and was kept
+        # (16 stale worktrees, dry run 2026-10-16). The checkout's own bytes are the reference.
+        # The script drops GIT_CONFIG_COUNT with git's other local variables: the setting
+        # reaches it from a config file, as Git for Windows' system config gives it.
+        self.env['GIT_CONFIG_VALUE_2'] = 'true'
+        self.git('config', 'core.autocrlf', 'true')
+        (self.main / 'lf.txt').write_bytes(b'one\ntwo\n')
+        self.git('add', 'lf.txt')
+        self.git('commit', '-q', '-m', 'an LF text file')
+        path = self.worktree('crlf')
+        self.assertEqual((path / 'lf.txt').read_bytes(), b'one\r\ntwo\r\n')
+        out = self.run_script('--apply')
+        self.assertFalse(path.exists(), out)
+        path = self.worktree('edited')
+        (path / 'a').write_bytes(b'a\r\nan edit the stat cache hides\r\n')
+        self.git('update-index', '--assume-unchanged', 'a', cwd=path)
+        self.assertEqual(self.git('status', '--porcelain', cwd=path), '')
+        self.assertKept(path, self.run_script('--apply'), 'not byte for byte what its index records')
+
+    @windows_only
     def test_a_native_process_working_inside_keeps_it(self):
         path = self.worktree('busy')
         child = self.start_inside([sys.executable, '-c', 'import sys; sys.stdin.read()'], path)

@@ -216,6 +216,10 @@ def main(argv=None, result_sink=None, claims=None):
             if (cancelled or guard.noted) and reason:
                 reason = "cancelled"
         status = "failed" if reason else "completed"
+        # The exec JSONL interface does not attest actual model identity; App Server's
+        # `model/rerouted` is a different interface (KARARLAR B03 inv2#119;
+        # https://learn.chatgpt.com/docs/non-interactive-mode and
+        # https://learn.chatgpt.com/docs/app-server, stage-2 evidence checked 2026-10-15).
         # Codex publishes no model identity in its JSON output, so the pin is recorded as
         # requested-not-attested. Saying which it is beats a record that implies verification
         # the CLI never performed. Claude's adapter attests the same field from modelUsage.

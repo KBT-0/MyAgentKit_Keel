@@ -1441,6 +1441,8 @@ def main(argv=None, result_sink=None, claims=None) -> int:
                         "(review_dispatch.py); recorded, and its --model need not be claude-")
     parser.add_argument("--effort", choices=["low", "medium", "high"],  # no xhigh for a review
                         help="Defaults to the review tier (REVIEW_RISK) for review, high for propose")
+    # 600 seconds, 12 turns and 3 USD are the owner's choice of safeguards; tune only from
+    # recorded proposal distributions (B03 inv2#64; Claude Agent SDK agent-loop limits).
     parser.add_argument("--timeout", type=int,
                         help="Total wall-clock seconds; defaults to %d for review, 600 for propose"
                         % agent_process.DEFAULT_REVIEW_TIMEOUT)
@@ -1474,6 +1476,8 @@ def main(argv=None, result_sink=None, claims=None) -> int:
                               % (max_timeout, max_turns))
         if args.max_budget_usd is None and args.mode == "propose":
             args.max_budget_usd = 3.0
+        # The 0 < budget <= 100 bound is the owner's choice of typo guard,
+        # not a vendor maximum (B03 inv2#101; Claude Code CLI reference).
         if args.max_budget_usd is not None and not 0 < args.max_budget_usd <= 100:
             raise BridgeError("max-budget-usd must be positive and at most 100")
         repo = args.repo.resolve(strict=True)
