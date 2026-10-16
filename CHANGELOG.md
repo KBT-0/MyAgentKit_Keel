@@ -137,14 +137,24 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   reviews its own diff with sub-agents also when it runs as one, and `Kind: blocked` also
   means failed (D06 inv1#164, D01 inv1#286, #202, D10 inv1#273). **ACTION:** take the
   updated scripts, `worker.md` and the `docs/HANDOFF.md` sections.
-- **A merge closes the worker it brings in** (`core/.githooks/post-merge`,
-  `scripts/close_worker.sh`, `spawn_worker.sh`, `spawn_codex.sh`, `docs/WORKFLOW.md`,
-  `docs/HANDOFF.md`; owner 2026-10-16: finished Claude and Codex worker tabs stayed open for
-  hours). The post-merge hook runs `close_worker.sh NAME` for each kit worker (the worktree its
-  spawn locked `kit worker NAME`) whose branch `worktree-NAME` the merge brought in; a refused
-  close is printed and the merge stands. On native Windows `close_worker.sh` now ends a Codex
-  session running in the worker's own worktree (`taskkill /T /F`) instead of refusing, and names
-  its session id; one without a worktree is still refused. `spawn_codex.sh`'s instruction names
+- **A finished worker closes itself, and a merge closes the worker it merged**
+  (`core/.githooks/post-merge`, `scripts/close_worker.sh`, `spawn_worker.sh`, `spawn_codex.sh`,
+  `codex_worker.py`, `docs/WORKFLOW.md`, `docs/HANDOFF.md`; owner 2026-10-16: finished Claude
+  and Codex worker tabs stayed open for hours). `codex_worker.py` now supervises Claude workers
+  too: a `Kind: completed` result or a decision ends the session and its tab, once no commit or
+  gate runs in its checkout; a progress result
+  or a free-form file ends nothing. `spawn_worker.sh --result FILE` names the result (default
+  `RESULT-NAME.md`) and records it in `.myagentkit/workers/NAME.result-path`. The post-merge
+  hook runs `close_worker.sh --finished NAME` for each kit worker (the worktree its spawn locked
+  `kit worker NAME`) whose branch tip the merge merged, never one that only came in as another
+  worker's base; `--finished` leaves a worker whose session still runs without a completed
+  result. A refused close is printed and the merge stands. On native Windows `close_worker.sh`
+  now ends a Codex session whose `-C` argument is the worker's own worktree (the command line
+  split as Windows splits it: a `-C` path inside another session's prompt is not matched)
+  instead of refusing, and names its session id; one without a worktree is still refused. The
+  printed resume command keeps the launch's `--backend`, `--settings` and `--allowed-tools`.
+  `codex_worker.py --wait` judges NOT A RESULT on the age and bytes of one open file, and a file
+  replaced while read is no verdict. `spawn_codex.sh`'s instruction names
   the four result header lines its wrapper needs: a `Kind: completed` result without them never
   closed its worker. `spawn_worker.sh --resume SESSION_ID` continues a worker's conversation
   under the same NAME (and worktree, locked again), so a resumed tab can be closed; the lead

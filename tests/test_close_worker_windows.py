@@ -621,5 +621,39 @@ os.link = link
         self.assertTrue((records / 'w2.session').exists(), out)
 
 
+    def test_a_tab_whose_claude_tree_is_killed_runs_on_to_exit_0(self):
+        # Owner 2026-10-16: a tab whose own process was killed showed "[process exited with code
+        # 4294967295]" and stayed open. close_worker.sh kills only the claude.exe tree (taskkill
+        # /T /F on its pid); the tab's bash and codex_worker.py, its supervisor, live on, see their
+        # child end and the tab's script runs `exit 0`, on which Windows Terminal closes the tab
+        # (its default closeOnExit, "graceful"). Here the chain is spawn_worker.sh's tab command:
+        # the supervisor, Git Bash by its Windows path, exec of a native program (python.exe for
+        # claude.exe), ended by the real taskkill. Windows Terminal itself is not driven.
+        if not WINDOWS:
+            sys.stderr.write('\nNOT RUN: %s (native Windows only)\n' % self.id())
+            return
+        tmp = Path(tempfile.mkdtemp(prefix='kit-tab-')).resolve()
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        pid_file, done = tmp / 'claude.pid', tmp / 'after'
+        claude = 'import os, time; open(%r, "w").write(str(os.getpid())); time.sleep(120)' % pid_file.as_posix()
+        tab = ('b=$(cygpath -w "$(command -v bash)"); '
+               '%s %s %s %s -- "$b" -c %s; s=$?; echo "$s" > %s; exit 0' % (
+                   shlex.quote(Path(sys.executable).as_posix()), shlex.quote(SCRIPT.with_name('codex_worker.py').as_posix()),
+                   shlex.quote((tmp / 'QUESTION-w1.md').as_posix()), shlex.quote((tmp / 'RESULT-w1.md').as_posix()),
+                   shlex.quote('exec %s -c %s' % (shlex.quote(Path(sys.executable).as_posix()), shlex.quote(claude))),
+                   shlex.quote(done.as_posix())))
+        started = time.monotonic()
+        shell = subprocess.Popen(['sh', '-c', tab], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                 stderr=subprocess.STDOUT)
+        self.addCleanup(lambda: shell.poll() is None and shell.kill())
+        while not pid_file.exists() or not pid_file.read_text():
+            self.assertLess(time.monotonic() - started, 30, 'the stand-in for claude never started')
+            time.sleep(0.1)
+        killed = subprocess.run(['taskkill', '/PID', pid_file.read_text(), '/T', '/F'], capture_output=True, text=True)
+        self.assertEqual(killed.returncode, 0, killed.stdout + killed.stderr)
+        out = shell.communicate(timeout=30)[0].decode('utf-8', 'replace')
+        self.assertEqual(shell.returncode, 0, out)
+        self.assertTrue(done.exists(), 'the tab script never ran on past the supervisor: ' + out)
+
 if __name__ == '__main__':
     unittest.main()

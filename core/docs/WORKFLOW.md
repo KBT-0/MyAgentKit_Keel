@@ -925,10 +925,15 @@ working or waiting, and is never a reason to close it. After reading a completed
 lead decides per task whether the session is reused or closed. It reuses a session that was active within the cache lifetime (one hour) when the
 next task is short or needs most of what the session holds. It closes the session when no
 next task fits what it holds, or when it has been idle past the cache lifetime (nothing warm
-is lost then). Closing is automatic at merge: finished worker tabs stayed open for hours while
-closing was a step the lead had to remember (2026-10-16), so when the lead merges a kit worker's
-branch (`worktree-NAME`, whose worktree its spawn locked `kit worker NAME`), the post-merge hook
-runs `scripts/close_worker.sh NAME`. A refused close is printed, never a veto of the merge. The
+is lost then). Closing is automatic: finished worker tabs stayed open for hours while closing
+was a step the lead had to remember (2026-10-16). A worker ends its own session once it
+publishes a `Kind: completed` result or a decision: `codex_worker.py` supervises every Claude
+and Codex worker, so the lead passes `--result FILE` to `spawn_worker.sh` when the brief names
+another result than `RESULT-NAME.md`; a progress result or a free-form file ends nothing. When
+the lead merges a kit worker's branch (`worktree-NAME`, whose worktree its spawn locked `kit
+worker NAME`) and that branch's tip is what the merge merged, not a base another worker built
+on, the post-merge hook runs `scripts/close_worker.sh --finished NAME`: it leaves a worker
+whose session still runs without a `Kind: completed` result. A refused close is printed, never a veto of the merge. The
 explicit `scripts/close_worker.sh NAME` stays for a session closed without a merge (work not
 merged, a worker without a worktree, a reused session the lead now finishes). It ends the tmux
 session (its terminal tab closes by itself), on native Windows the worker's Claude Code session
@@ -1231,8 +1236,9 @@ What the watcher reports decides the lead's next step for a spawned worker:
 - **HANDOFF:** the lead reads the result file and starts a fresh session from it. A
   `Kind: handoff` file is not done.
 - **BLOCKED** and **PROGRESS:** the lead reads the result file. Neither is done.
-- **Finished session:** merging the worker's branch closes it (the post-merge hook runs
-  `scripts/close_worker.sh NAME`). A session finished without a merge (no next task fits what
+- **Finished session:** a completed result or a decision ends the session; merging the
+  worker's branch closes the rest (the post-merge hook runs `scripts/close_worker.sh
+  --finished NAME`). A session finished without a merge (no next task fits what
   it holds, or it is idle past the cache lifetime) the lead closes with that command.
   The worktree then goes through the same audit as the post-merge hook's; a kept worktree
   is reported with its reason, and the branch is never deleted.

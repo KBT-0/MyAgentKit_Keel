@@ -141,9 +141,11 @@ since spawn's command would return the same result at once. A worker that stops 
 from the `.myagentkit/workers/NAME.exit` record the wrapper writes on every way out, a decision
 without a blocked result included, or from its `NAME.live` lock once the wrapper itself was
 killed. For Claude the committed `Kind: completed` result is
-the watcher's done signal. Merging a worker's branch closes it (the post-merge hook runs
-`scripts/close_worker.sh NAME`); the lead runs that command itself only for a session it
-finishes without a merge.
+the watcher's done signal, and its supervisor ends the session on it, as it ends a Codex
+worker's (`spawn_worker.sh --result FILE` names it). Merging a worker's branch closes the rest
+(the post-merge hook runs `scripts/close_worker.sh --finished NAME`, which leaves a session
+still running without a completed result); the lead runs `scripts/close_worker.sh NAME`
+itself only for a session it finishes without a merge.
 An idle notice or a question sidecar reports a waiting worker, never completion.
 
 The result file starts with four lines, exact keys, in this order:

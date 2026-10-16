@@ -682,6 +682,27 @@ if args[0] != 'resume':
         self.assertFalse(record.exists())
         self.assertFalse(tree.exists())
 
+    def test_close_never_ends_a_session_whose_prompt_names_the_worker_folder(self):
+        # Codex r1 (fix56): the lead's quoted prompt held `-C <worker folder>`; a text match on the
+        # command line taskkilled the lead. Only the parsed -C argument names a session's folder.
+        result = self.spawn('w18', str(self.brief), '--model', 'm', '--effort', 'high', '--worktree')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        tree = self.repo / '.claude/worktrees/w18'
+        git = lambda *a: subprocess.run(['git', *a], cwd=self.repo, check=True, capture_output=True)
+        git('-C', str(tree), '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '--allow-empty', '-m', 'done')
+        git('merge', '--ff-only', 'worktree-w18')
+        (self.state / 'ps').write_text(
+            '4141 "C:\\codex\\codex.exe" "close it: codex -C %s now" -C %s\r\n'
+            '4242 "C:\\codex\\codex.exe" resume sess-0 -C "%s"\r\n' % (self.win(tree), self.win(self.repo), self.win(tree)))
+        (self.bin / 'taskkill').write_text('#!/bin/sh\necho "$*" >> "$SPAWN_STATE/taskkill.log"\n'
+                                           'grep -v "^$2 " "$SPAWN_STATE/ps" > "$SPAWN_STATE/ps.new"\n'
+                                           'mv "$SPAWN_STATE/ps.new" "$SPAWN_STATE/ps"\n', newline='\n')
+        (self.bin / 'taskkill').chmod(0o755)
+        closed = self.close('w18')
+        self.assertEqual(closed.returncode, 0, closed.stdout + closed.stderr)
+        self.assertEqual((self.state / 'taskkill.log').read_text().splitlines(), ['/PID 4242 /T /F'], closed.stdout)
+        self.assertIn('4141 ', (self.state / 'ps').read_text())
+
     def test_close_keeps_the_record_of_a_kept_worktree(self):
         result = self.spawn('w19', str(self.brief), '--model', 'm', '--effort', 'high', '--worktree')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

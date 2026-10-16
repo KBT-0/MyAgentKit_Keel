@@ -15,7 +15,7 @@
 #
 # Usage: spawn_worker.sh NAME BRIEF_FILE --model M --effort LEVEL [--settings JSON_OR_FILE]
 #                        [--allowed-tools LIST] [--worktree] [--batch] [--backend NAME]
-#                        [--resume SESSION_ID]
+#                        [--result FILE] [--resume SESSION_ID]
 #
 # --resume SESSION_ID continues that worker's own conversation under the same NAME, with
 # BRIEF_FILE holding the answer or the next step: with --worktree in its existing
@@ -28,6 +28,14 @@
 #
 # --backend NAME starts the worker on the Anthropic-compatible endpoint that
 # .myagentkit/backends/NAME.env in the current folder names (docs/DEV_SETUP.md, section 3).
+#
+# --result FILE names the result the brief asks for (relative: to the worker's folder), else
+# RESULT-NAME.md there. codex_worker.py supervises the session, as it does spawn_codex.sh's: a
+# result published with its header (Kind/Task/Attempt/Remaining) and end marker as Kind:
+# completed, or a decision published to QUESTION-NAME.md there, ends the session 10 s later,
+# once no commit (index.lock) or gate (check.sh's check.lock) runs in its checkout, and its tab
+# or tmux session ends with it (owner 2026-10-16: finished worker tabs stayed open for hours). A progress result or a free-form file ends nothing. The path is recorded in
+# .myagentkit/workers/NAME.result-path, which close_worker.sh --finished reads after a merge.
 #
 # Once the worker has its brief, its session is SHOWN: show_workers.sh opens a terminal tab
 # attached to it, because a session nobody sees can wait on a dialog for hours (Claude Code's
@@ -49,8 +57,8 @@
 # when the spawn printed "is a peer session"; a tmux worker registers) and reads the result
 # FILE the brief asks the worker to write. It does not poll and it does not chat with the
 # worker: every message to an idle session is a full-context turn. After reading the file
-# the lead reuses the session or closes it with `scripts/close_worker.sh NAME`; it does not
-# end by itself.
+# the lead reuses the session or closes it with `scripts/close_worker.sh NAME`; it ends by
+# itself only on a completed result or a decision (--result above).
 #
 # Pitfalls this script encodes (each one cost a session):
 #   - The prompt is never placed after a variadic flag (--allowedTools, --disallowedTools,
@@ -136,7 +144,7 @@ ctl "brief path" "$brief"
 [ -n "$windows" ] || command -v tmux >/dev/null || die "tmux is not installed"
 command -v claude >/dev/null || die "claude is not on PATH"
 
-model=""; settings=""; tools=""; worktree=""; effort=""; batch=""; backend=""; resume=""
+model=""; settings=""; tools=""; worktree=""; effort=""; batch=""; backend=""; resume=""; result=""
 # Git for Windows' dirname handles both separators, including mixed paths such as D:/p\scripts\x.sh.
 case $0 in *'\'*) kit=$(dirname -- "$0") ;; */*) kit=${0%/*} ;; *) kit=. ;; esac
 while [ $# -gt 0 ]; do
@@ -148,6 +156,7 @@ while [ $# -gt 0 ]; do
     --effort)        effort=$2; shift 2 ;;
     --batch)         batch=1; shift ;;
     --backend)       backend=$2; shift 2 ;;
+    --result)        result=${2-}; [ -n "$result" ] || die "--result needs a file"; shift 2 ;;
     --resume)        case ${2-} in ""|-*) die "--resume needs the session id of the worker's conversation: --resume SESSION_ID" ;; esac
                      resume=$2; shift 2 ;;
     *) die "unknown option: $1" ;;
@@ -158,6 +167,7 @@ done
 [ -n "$model" ] || die "--model is required: the lead picks the model for every worker"
 [ -n "$effort" ] || die "--effort is required: the lead picks the effort for every worker"
 ctl "session id" "$resume"
+ctl "result path" "$result"
 
 [ -n "$windows" ] || ! tmux has-session -t "=$name" 2>/dev/null || die "tmux session '$name' already exists"
 
@@ -264,9 +274,16 @@ case "$settings" in
        die "--settings is neither inline JSON nor a file here, and the worktree could hold another: $settings"
      [ ! -f "$settings" ] || settings=$dir/$settings ;;
 esac
+# again: the launch's own options, for the printed resume command: one that left out --backend
+# (or --settings, --allowed-tools) resumed the worker on another provider (Codex review).
+again="--model $(q "$model") --effort $(q "$effort")${worktree:+ --worktree}"
+[ -z "$backend" ]  || again="$again --backend $(q "$backend")"
+[ -z "$settings" ] || again="$again --settings $(q "$settings")"
+[ -z "$tools" ]    || again="$again --allowed-tools $(q "$tools")"
+[ -z "$result" ]   || again="$again --result $(q "$result")"
 # Validate the lead checkout's generated paths before creating a worktree or worker files.
+wdir=$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)/.myagentkit/workers
 if [ -n "$windows" ]; then
-  wdir=$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)/.myagentkit/workers
   longest_path=$(cygpath -m "$wdir/$longest") || die "cygpath cannot convert the path: $wdir"
   [ "${#longest_path}" -le 259 ] ||
     die "refused the worker path: generated paths must fit in 259 characters on native Windows (MAX_PATH 260); use a shorter name or a shorter checkout path, or enable LongPathsEnabled for long-path tooling"
@@ -299,6 +316,26 @@ if [ -n "$worktree" ]; then
     die "--resume --worktree: cannot lock $dir for the resumed worker"
   fi
 fi
+
+# The result and the supervisor (--result in the header). Absolute paths: the session starts in
+# the worker's folder.
+[ -n "$result" ] || result=RESULT-$name.md
+[ -z "$windows" ] || result=$(printf '%s' "$result" | tr '\\' '/')
+case $result in /*|[a-zA-Z]:/*) ;; *) result=$dir/$result ;; esac
+[ -r "$kit/codex_worker.py" ] || die "codex_worker.py is missing beside this script"
+cworker=$(CDPATH= cd -P -- "$kit" && pwd -P)/codex_worker.py || die "cannot resolve the folder of codex_worker.py"
+cresult=$result; cquestion=$dir/QUESTION-$name.md
+if [ -n "$windows" ]; then
+  { cworker=$(cygpath -m "$cworker") && cresult=$(cygpath -m "$result") && cquestion=$(cygpath -m "$cquestion"); } ||
+    die "cygpath cannot convert the result's path: $result"
+fi
+start=$($kit_python -I -c 'import time; print(time.time())')
+supervise="KIT_WORKER_STARTED=$(q "$start")${resume:+ KIT_WORKER_RESUME=1} $kit_python $(q "$cworker") $(q "$cquestion") $(q "$cresult") --"
+# Written once the name is known to be free: a running worker's record is never replaced.
+record_result() {
+  mkdir -p -- "$wdir" && printf '%s\n' "$cresult" > "$wdir/$name.result-path" ||
+    die "cannot record the result path in $wdir"
+}
 
 # Native Windows: nothing can read the tab's pane, so the worker gets a Notification and a Stop
 # hook that keep its state line in .myagentkit/workers/NAME.state for watch_workers.sh. Its
@@ -419,6 +456,7 @@ sessions() {
 if [ -n "$windows" ]; then
   running=$(sessions "$name") || die "cannot list the Claude Code sessions to check the name '$name': $running"
   [ -z "$running" ] || die "a Claude Code session named '$name' already runs (process $running)"
+  record_result
   # The hook: `waiting permission|question TIME ID` on a Notification asking for input,
   # `idle TIME ID` on Stop. Python is the interpreter chosen
   # above by running it, as .claude/hooks/py.sh chooses for the project's hooks.
@@ -461,6 +499,7 @@ if s:
   tab=$(mktemp) || die "cannot write the tab's script"
   tab_cmd="$unmark claude $(q "$instruction") ${cmd#claude }"
   [ -z "$backend" ] || tab_cmd=$(backend_command "$tab_cmd")
+  tab_cmd="$supervise $(q "$bash") -c $(q "exec $tab_cmd")"
   printf '%s\n' 'rm -f -- "$0"' "cd $(q "$dir") || exit 1" \
     "t=\$(date +%s); $tab_cmd; s=\$?; [ \$((\$(date +%s) - t)) -gt 10 ] || { echo \"claude ended at once (exit \$s); press Enter to close\"; read -r _; }" \
     'exit 0' > "$tab" || die "cannot write the tab's script: $tab"
@@ -493,7 +532,7 @@ if s:
   sid=""; [ -z "$peer" ] || sid=$($kit_python -I -c 'import json, sys
 print(json.load(open(sys.argv[1], encoding="utf-8")).get("sessionId", ""))' "$reg/$peer.json" 2>/dev/null) || sid=""
   ctl "session id" "$sid"
-  printf '%s\n' "spawn_worker: to answer it in its own session once its tab has ended: scripts/spawn_worker.sh $name ANSWER_FILE --model $(q "$model") --effort $(q "$effort")${worktree:+ --worktree} --resume ${sid:-SESSION_ID}"
+  printf '%s\n' "spawn_worker: to answer it in its own session once its tab has ended: scripts/spawn_worker.sh $name ANSWER_FILE $again --resume ${sid:-SESSION_ID}"
   if [ -n "$peer" ]; then
     printf '%s\n' "spawn_worker: '$name' is a peer session (process $peer): ListAgents lists it; subscribe once with SendMessage notify_when_idle"
   else
@@ -508,7 +547,8 @@ fi
 # removed worktree, say) is gone, whatever -c says.
 [ -z "$backend" ] || cmd=$(backend_command "$cmd")
 # The reserved script removes itself; tmux receives two plain words for its default shell.
-printf '%s\n' 'rm -f -- "$0"' "cd $(q "$dir") && exec $unmark $cmd" > "$run" || { rm -f -- "$run"; die "cannot write the session's script: $run"; }
+record_result
+printf '%s\n' 'rm -f -- "$0"' "cd $(q "$dir") && exec $unmark $supervise sh -c $(q "exec $cmd")" > "$run" || { rm -f -- "$run"; die "cannot write the session's script: $run"; }
 # Keep ownership pending until tmux confirms the session, including in signal cleanup.
 launch_pending=1
 tmux new-session -d -s "$name" -c "$dir" -x 200 -y 50 "sh $run" || { launch_pending=""; die "tmux could not start '$name'"; }
@@ -570,10 +610,10 @@ fi
 printf '%s\n' "spawn_worker: '$name' started with $brief (tmux attach -t $name to watch)"
 # The session does not end when its task does: a pilot worker wrote its result file and sat
 # idle for 40 minutes until killed by hand, and the idle notice also fires on every park on a
-# background job. A committed `Kind: completed` result file is the end signal, and closing
-# is the lead's job.
+# background job. A published `Kind: completed` result file is the end signal: its supervisor
+# ends the session on it (--result in the header); any other close is the lead's job.
 printf '%s\n' "spawn_worker: once you decide the session is finished (no next task fits what it holds, or it is idle past the cache lifetime), close it: scripts/close_worker.sh $name"
-printf '%s\n' "spawn_worker: to answer it in its own session once its tmux session has ended: scripts/spawn_worker.sh $name ANSWER_FILE --model $(q "$model") --effort $(q "$effort")${worktree:+ --worktree} --resume SESSION_ID (the sessionId of the ${CLAUDE_CONFIG_DIR:-~/.claude}/sessions/PID.json named $name)"
+printf '%s\n' "spawn_worker: to answer it in its own session once its tmux session has ended: scripts/spawn_worker.sh $name ANSWER_FILE $again --resume SESSION_ID (the sessionId of the ${CLAUDE_CONFIG_DIR:-~/.claude}/sessions/PID.json named $name)"
 if [ -n "$batch" ]; then
   printf '%s\n' "spawn_worker: --batch: not shown. Once every worker of this batch is started, show them together in one window: scripts/show_workers.sh NAME1 NAME2 ..."
 else
