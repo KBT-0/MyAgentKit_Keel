@@ -3,7 +3,9 @@
 # After a merge in the MAIN worktree, removes the finished worker worktrees under
 # .claude/worktrees that scripts/clean_worktrees.sh proves merged and holding nothing else
 # (Claude Code overlay); their branches stay. Merged worktrees piled up otherwise: 39 of them,
-# 34 GB, in a project using the kit, each audited and removed by hand.
+# 34 GB, in a project using the kit, each audited and removed by hand. Before that it closes
+# each kit worker whose branch this merge brought in (scripts/close_worker.sh NAME): its
+# session ends, its terminal tab closes, its worktree goes through the same audit.
 # git runs this hook only after a merge it completes itself (`git merge`, `git pull`): not
 # after a conflicted merge finished with `git commit`, nor `pull --rebase` or `cherry-pick`;
 # the next merge, or the script by hand, covers those. Not after a merge inside a linked
@@ -59,6 +61,33 @@ case "$version/$major$minor" in
       exit 0
     fi ;;
 esac
+# Close the kit workers this merge merged, first: worker tabs stayed open for hours after
+# their merge while closing them was a written step (owner 2026-10-16). A kit worker is the
+# worktree a spawn locked `kit worker NAME` (spawn_worker.sh and spawn_codex.sh --worktree) on
+# its branch worktree-NAME. This merge merged it when the branch's tip is what was merged: HEAD
+# after a fast-forward, else a parent of the merge commit after ORIG_HEAD (the commit before
+# it). A branch that only came in as another's base is no candidate: a worker that built on a
+# working one brought that one in too (Codex review). close_worker.sh --finished leaves a
+# worker whose session still runs without a Kind: completed result, and its own refusals
+# stand (a gate or a git operation in the worktree, a waiting decision): a refused close is
+# printed, never a veto.
+if [ -f scripts/close_worker.sh ] && orig=$(git rev-parse -q --verify ORIG_HEAD 2>/dev/null); then
+  # HEAD and its parents; a merge commit made now names ORIG_HEAD first and what it merged after.
+  set -- $(git rev-list --parents -n 1 HEAD)
+  head=$1; shift
+  merged=""; [ "${1-}" != "$orig" ] || { shift; merged=" $* "; }
+  for branch in $(git for-each-ref --format='%(refname:lstrip=2)' --merged HEAD --no-merged ORIG_HEAD 'refs/heads/worktree-*'); do
+    name=${branch#worktree-}
+    gd=$(git -C ".claude/worktrees/$name" rev-parse --absolute-git-dir 2>/dev/null) || continue
+    [ "$(cat -- "$gd/locked" 2>/dev/null)" = "kit worker $name" ] || continue
+    tip=$(git rev-parse -q --verify "refs/heads/$branch") || continue
+    # A fast-forward to a worker's own merge commit is that worker's tip, not its parents'.
+    [ "$tip" = "$head" ] || { [ -z "$(git for-each-ref --points-at HEAD 'refs/heads/worktree-*')" ] &&
+      case $merged in *" $tip "*) true ;; *) false ;; esac; } || continue
+    sh scripts/close_worker.sh --finished "$name" </dev/null ||
+      echo "post-merge: close_worker.sh did not close $name; the merge is complete, the lines above say why" >&2
+  done
+fi
 ./scripts/clean_worktrees.sh --apply --quiet </dev/null ||
   echo "post-merge: scripts/clean_worktrees.sh stopped with an error; the merge is complete, and the lines above say what it did." >&2
 exit 0

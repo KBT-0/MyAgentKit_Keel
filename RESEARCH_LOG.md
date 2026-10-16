@@ -54,6 +54,29 @@ Lesson from the reviews: a label rule fed by prose registered technical words (r
 fix registered every prose mention (round 2); only the place a file gives a task its id may
 register a label. Red runs saved before each change (batch2-tests/, RESULT-b2fix*.md).
 
+### 2026-10-16 — v0.11 fix5/fix6: finished workers close themselves
+
+Owner decision (2026-10-16): finished Claude and Codex worker tabs stayed open for hours, so a
+published `Kind: completed` result ends the worker and a merge closes the worker it merged. No
+outside source; the evidence is the owner's report and the fixtures. Lessons from the reviews: a
+merge hook must take only the merged tip (round 1: a dependency still at work was closed), and
+"completed" means completed by this run: a resumed worker keeps its last result, so only a
+result published since the spawn's own record counts (round 2). Git prints paths in UTF-8 on
+every platform: read in the Windows locale, a checkout named `café` hid its lock files. A tab's
+"ended at once" pause must ask whether the run failed, not only how long it took. Lead
+remainder de5f720, no round 3.
+
+### 2026-10-16 — v0.11 batch 5: usage and cost measurement
+
+Batch 5 applies KARARLAR B03 (cache lifetimes per write bucket, code.claude.com/docs/en/prompt-caching;
+the 80% alarm, the first-ten-worker median and the 30-finding / ten-round floors are the owner's
+choices, not measurements) and D06 inv2#45/#55. The interval is the Wilson score interval (NIST/SEMATECH
+handbook, section 7.2.4.1). No proposal records exist yet, so the proposal limits were not retuned:
+the dogfood period (leeway and labricore-web, their first 1.5 weeks on v0.11) collects the first data. Lesson from the reviews: a per-label answer snapshot dropped a
+second focus's answers (Opus r1), and the per-focus fix still let an unfocused round credit focused
+rounds it never saw (Codex r2 High, lead fix c82c6f3): an answer file credits exactly what its
+reviewer was shown (prior_rounds), nothing wider.
+
 ### 2026-10-16 — v0.11 batch 4: review tooling (bridge, dispatcher, usage)
 
 Batch 4 applies KARARLAR D04 inv2#44/#126 (the vendor error pages behind the USAGE map,

@@ -71,6 +71,38 @@ class CodexWorkerTests(unittest.TestCase):
             time.sleep(2.2)
             self.assertFalse(escaped.exists(), 'the CLI child outlived its stopped worker')
 
+    def test_a_completed_result_waits_for_a_git_operation_in_the_worker_checkout(self):
+        # A Claude worker commits after it wrote its result; ending it mid-commit, or mid-gate
+        # (check.sh holds check.lock), orphans that run, as close_worker.sh refuses to (fix56).
+        with tempfile.TemporaryDirectory() as tmp:
+            subprocess.run(['git', 'init', '-q', tmp], check=True)
+            lock = Path(tmp) / '.git/index.lock'
+            lock.write_text('')
+            result, unlocked = Path(tmp) / 'RESULT-w.md', Path(tmp) / 'unlocked'
+            code = ('from pathlib import Path; import time; Path(%r).write_text(%r); time.sleep(1.5); '
+                    'Path(%r).unlink(); Path(%r).write_text("x"); time.sleep(30)') % (
+                str(result), 'Kind: completed\nTask: w\nAttempt: 1\nRemaining: none\n' + READY, str(lock), str(unlocked))
+            started = time.monotonic()
+            done = subprocess.run([sys.executable, str(SCRIPT), str(Path(tmp) / 'QUESTION-w.md'), str(result), '--',
+                                   sys.executable, '-c', code], capture_output=True, text=True, timeout=20, cwd=tmp,
+                                  env=dict(os.environ, KIT_WORKER_GRACE='0.2'))
+            self.assertEqual(done.returncode, 0, done.stderr)
+            self.assertTrue(unlocked.exists(), 'the worker was ended while a git operation held its index.lock')
+            self.assertLess(time.monotonic() - started, 15)
+
+    def test_the_locks_of_a_unicode_checkout_are_found_without_utf8_mode(self):
+        # Codex r2 (fix56): git prints UTF-8 paths; a Windows locale without UTF-8 mode decoded
+        # them as cp1252, the lock was never seen, and the worker ended while a commit ran.
+        with tempfile.TemporaryDirectory() as tmp:
+            checkout = Path(tmp) / 'café'
+            subprocess.run(['git', 'init', '-q', str(checkout)], check=True)
+            code = ('import importlib.util, sys; s = importlib.util.spec_from_file_location("w", sys.argv[1]); '
+                    'w = importlib.util.module_from_spec(s); s.loader.exec_module(w); '
+                    'sys.exit(0 if [p.parent.is_dir() for p in w.locks()] == [True, True] else 1)')
+            done = subprocess.run([sys.executable, '-X', 'utf8=0', '-c', code, str(SCRIPT)], cwd=checkout,
+                                  capture_output=True, text=True, timeout=15)
+            self.assertEqual(done.returncode, 0, done.stderr)
+
     def test_question_stops_the_process_and_preserves_the_question(self):
         with tempfile.TemporaryDirectory() as tmp:
             question = Path(tmp) / 'QUESTION-w.md'
@@ -257,6 +289,58 @@ class CodexWorkerTests(unittest.TestCase):
                                      '--exit', str(record)], capture_output=True, text=True, timeout=10)
             self.assertEqual(waiter.returncode, 0, waiter.stderr)
             self.assertIn('EXITED (exit 3', waiter.stdout)
+
+    def test_wait_reports_a_settled_file_that_is_not_a_result(self):
+        # v0.11: a free-form report (no header, no ready marker) kept the wait silent forever.
+        with tempfile.TemporaryDirectory() as tmp:
+            report = Path(tmp) / 'report.md'
+            report.write_text('# Batch report\n\nAll done.\n', encoding='utf-8')
+            settled = time.time() - 120
+            os.utime(report, (settled, settled))
+            waiter = subprocess.run([sys.executable, str(SCRIPT), '--wait', str(report), '--since', str(settled - 1)],
+                                    capture_output=True, text=True, timeout=10)
+            self.assertEqual(waiter.returncode, 0, waiter.stderr)
+            self.assertIn('NOT A RESULT: ' + str(report), waiter.stdout)
+
+    def test_a_draft_renamed_over_a_settled_result_while_checked_is_no_verdict(self):
+        # Codex r1 (fix56): stat() then read_text() paired the settled file's age with the bytes
+        # of a fresh draft renamed over it in between, and called the draft NOT A RESULT.
+        worker = module()
+        with tempfile.TemporaryDirectory() as tmp:
+            result, draft = Path(tmp) / 'result.md', Path(tmp) / 'draft.md'
+            text = 'Kind: progress\nTask: w\nAttempt: 1\nRemaining: more\n' + READY
+            result.write_text(text, encoding='utf-8')
+            settled = time.time() - 120
+            os.utime(result, (settled, settled))
+            stale = 'sha256:' + hashlib.sha256(text.encode('utf-8')).hexdigest()
+            stat, raced = Path.stat, []
+            def racing(path, *args, **kwargs):
+                info = stat(path, *args, **kwargs)
+                if path == result and not raced:
+                    raced.append(1)
+                    draft.write_text('# half written', encoding='utf-8')
+                    os.replace(draft, result)
+                return info
+            with mock.patch.object(Path, 'stat', racing):
+                self.assertFalse(worker.not_a_result(result, settled - 1, stale))
+            self.assertTrue(raced)
+            self.assertFalse(worker.not_a_result(result, settled - 1, stale), 'a fresh draft is no verdict')
+
+    def test_wait_stays_quiet_on_a_fresh_draft_and_on_the_stale_result(self):
+        # A draft still being written, and the reported result a follow-up wait names by its
+        # hash, are not alarms however long they sit.
+        with tempfile.TemporaryDirectory() as tmp:
+            draft, old = Path(tmp) / 'draft.md', Path(tmp) / 'old.md'
+            draft.write_text('# half written', encoding='utf-8')
+            text = 'Kind: progress\nTask: w\nAttempt: 1\nRemaining: more\n' + READY
+            old.write_text(text, encoding='utf-8')
+            settled = time.time() - 120
+            os.utime(old, (settled, settled))
+            stale = 'sha256:' + hashlib.sha256(text.encode('utf-8')).hexdigest()
+            for args in (['--wait', str(draft), '--since', '0'],
+                         ['--wait', str(old), '--since', str(settled - 1), '--stale', stale]):
+                with self.assertRaises(subprocess.TimeoutExpired):
+                    subprocess.run([sys.executable, str(SCRIPT)] + args, capture_output=True, timeout=2)
 
     def test_wait_reports_a_unicode_result_path_on_a_legacy_stdout(self):
         # A Windows pipe is cp1252 unless UTF-8 mode is on; the lead must still see DONE.

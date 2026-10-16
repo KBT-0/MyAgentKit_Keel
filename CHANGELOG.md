@@ -72,6 +72,16 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   (KARARLAR B08 inv1#253, B10 inv3/(f), inv3#7, inv1#93, inv2#151, B07 inv2#131/#132, D07
   inv3#108 b; BACKLOG B5, B13).
   **ACTION:** re-sync the overlay hooks, `scripts/context_buckets.py` and `.githooks/commit-msg`.
+- **Usage and cost measurement** (`scripts/agent_cost.py`, `scripts/usage_summary.py`,
+  `docs/USAGE.md`, `docs/CODEX.md`, `docs/worker-cost-setups.md`). The worker cost analysis reads
+  each cache write's recorded lifetime (one hour or five minutes) instead of treating every write
+  after five minutes as an expiry; an 80% hit rate is an alarm, the owner's choice. The review
+  summary keeps shadow runs out of real-review rates, counts `rate_limited` and
+  `quota_exhausted` (and old `quota`) failures, prints author/reviewer pairs, and shows a Wilson
+  95% interval with the sample floor (30 decided findings, ten rated rounds; the owner's choice).
+  A later answer file replaces an earlier one per label and focus instead of counting the same
+  answers again (KARARLAR B03, D06 inv2#45/#55/#107/#108/#54/#12, inv1#161/#172, D01 inv1#191;
+  BACKLOG B9, B17). **ACTION:** re-sync the two scripts and `docs/USAGE.md`.
 - **Review tooling: bridge, dispatcher, usage** (`scripts/review.sh`, `scripts/claude_bridge.py`,
   `scripts/codex_bridge.py`, `scripts/review_dispatch.py`, `scripts/agent_usage.py`,
   `scripts/agent_process.py`, `docs/REVIEW_GATE.md`, `docs/REVIEW_RUNNING.md`, `docs/USAGE.md`,
@@ -155,6 +165,32 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   reviews its own diff with sub-agents also when it runs as one, and `Kind: blocked` also
   means failed (D06 inv1#164, D01 inv1#286, #202, D10 inv1#273). **ACTION:** take the
   updated scripts, `worker.md` and the `docs/HANDOFF.md` sections.
+- **A finished worker closes itself, and a merge closes the worker it merged**
+  (`core/.githooks/post-merge`, `scripts/close_worker.sh`, `spawn_worker.sh`, `spawn_codex.sh`,
+  `codex_worker.py`, `docs/WORKFLOW.md`, `docs/HANDOFF.md`; owner 2026-10-16: finished Claude
+  and Codex worker tabs stayed open for hours). `codex_worker.py` now supervises Claude workers
+  too: a `Kind: completed` result or a decision ends the session and its tab, once no commit or
+  gate runs in its checkout; a progress result
+  or a free-form file ends nothing. `spawn_worker.sh --result FILE` names the result (default
+  `RESULT-NAME.md`) and records it in `.myagentkit/workers/NAME.result-path`. The post-merge
+  hook runs `close_worker.sh --finished NAME` for each kit worker (the worktree its spawn locked
+  `kit worker NAME`) whose branch tip the merge merged, never one that only came in as another
+  worker's base; `--finished` leaves a worker whose session still runs without a completed
+  result. A refused close is printed and the merge stands. On native Windows `close_worker.sh`
+  now ends a Codex session whose `-C` argument is the worker's own worktree (the command line
+  split as Windows splits it: a `-C` path inside another session's prompt is not matched)
+  instead of refusing, and names its session id; one without a worktree is still refused. The
+  printed resume command keeps the launch's `--backend`, `--settings` and `--allowed-tools`.
+  `codex_worker.py --wait` judges NOT A RESULT on the age and bytes of one open file, and a file
+  replaced while read is no verdict. `spawn_codex.sh`'s instruction names
+  the four result header lines its wrapper needs: a `Kind: completed` result without them never
+  closed its worker. A merge counts only a result published since the worker's latest spawn
+  (a resumed worker keeps its last one); a tab ended on its published result closes at once;
+  the supervisor finds the locks of a checkout with a non-ASCII name on any Windows locale.
+  `spawn_worker.sh --resume SESSION_ID` continues a worker's conversation
+  under the same NAME (and worktree, locked again), so a resumed tab can be closed; the lead
+  never opens a worker tab by hand. **ACTION:** take the updated hook, scripts and the
+  `docs/WORKFLOW.md` and `docs/HANDOFF.md` sections.
 - **A Codex Accept is read as strictly as a Claude one** (`scripts/claude_bridge.py`
   `review_parts`, used by `scripts/codex_bridge.py` and `scripts/usage_summary.py`). The
   Findings section ends only at another named section, so a `### **High**` sub-heading, a

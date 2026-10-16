@@ -22,16 +22,10 @@ Low findings of the kit's own reviews are filed here, not fixed in the round (ow
   refusals get no note or name the wrong file. Read `+++ ` as a header only outside a hunk
   (reset at `diff --git`).
 
-## Filed from v0.11 item F (Claude review r2, 20261013T164417Z-c2eb9992cc7d)
-
-- The Task, Total and Behaviour lines of `usage_summary.py` mix shadow runs into `rejects`,
-  `findings` and `per_round`; report them there as a separate `shadow=` count.
-
 ## Filed from v0.11 final Codex review r1 (labels v011-codex-code, v011-codex-docs)
 
 - `docs/context-is-a-budget.md:90` still argues compaction at 200k with the retracted ten-turn
   cost figure; WORKFLOW gives about 25-49 requests.
-- `core/docs/USAGE.md:111`: two default attempts are 2 x 2700 s = 90 minutes, not 120.
 
 ## Filed from v0.11 close-out batch 3 (KARARLAR D04 inv2#26)
 

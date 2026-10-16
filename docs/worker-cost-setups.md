@@ -65,17 +65,51 @@ is for visibility. Both runs were at effort high.
 
 | Situation | Setup | Why |
 |---|---|---|
-| Claude Code host, the one-hour cache honoured (a plan where it is not ignored), workers that run jobs over five minutes | 6, or 5 when the lead should be able to watch the worker or hand over while it runs | Same cost; 5 adds visibility and survives a lead handoff, 6 needs no tmux and no permission decision |
-| The one-hour cache is ignored (the docs say it is while the account runs on usage credits) or the host offers no cache lifetime setting | 3: split every wait into pieces under five minutes, each piece a separate short command, never a loop in one call | The only row that avoids the re-write without the one-hour cache; accept the per-piece read, and keep the worker's context small so that read stays cheap |
+| Claude Code host honours the selected one-hour cache, workers that run jobs over five minutes | 6, or 5 when the lead should be able to watch the worker or hand over while it runs | Same cost; 5 adds visibility and survives a lead handoff, 6 needs no tmux and no permission decision |
+| The one-hour cache is unavailable: a gateway does not forward `anthropic-beta`, the Claude apps gateway, a Bedrock model without it, or a host without a lifetime setting | 3: split every wait into pieces under five minutes, each piece a separate short command, never a loop in one call | The measured fallback avoids the re-write without the one-hour cache; accept the per-piece read, and keep the worker's context small so that read stays cheap |
 | No tmux, no interactive terminal (CI, a server, a scripted pipeline) | 4, with `--max-budget-usd` and `--max-turns` | Same cache as 5, and the only row with a hard budget cap |
 | The worker's whole context is small (under about 100k) and the job is short | 3 is cheapest; 6 is simplest | At this size the per-piece reads cost less than a one-hour write |
 | The job is under five minutes | 1 is fine | Nothing expires; do not add machinery for a wait the cache covers |
 | A different host agent with its own cache rules | Measure first with the method above (same task, each setup, transcripts deduplicated by request id), then fill this table for that host | The numbers here are Claude Code's; the shape (waits times context) transfers, the figures may not |
 
-Two rules hold in every row: the worker never polls (a poll turn is a full context read that
-buys nothing), and a review-fix round goes to a fresh worker rather than a resumed one (the
-founding project's largest single item was one worker resumed three times, 36k to 711k of
-context over 377 requests).
+The `experimental.cacheTtl` definition field is ignored while a subscription uses usage
+credits; the kit's `CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL` variable is not subject to that
+exception. Check the recorded write buckets before choosing a fallback
+(KARARLAR D06 inv1#161; [Claude Code cache controls](https://code.claude.com/docs/en/prompt-caching),
+checked 2026-10-16).
+
+The worker never polls: a poll turn pays for another context read. For a review-fix round,
+use [WORKFLOW rule 2](../core/docs/WORKFLOW.md), which routes a small local fix to its author
+while the context still fits and sends a redesign or exhausted context to a fresh worker
+(KARARLAR D06 inv1#37/#163). The founding project's costly example was one worker resumed
+three times, from 36k to 711k over 377 requests (RESEARCH_LOG, 2026-10-03).
+
+## Read the measurements
+
+Run `python3 scripts/agent_cost.py --latest` alongside `/usage` at handoff, with completed
+task counts. `/usage`'s Session block covers only the main conversation; the analyzer also
+reads worker transcripts (KARARLAR D06 inv1#172/#287;
+[Claude Code costs](https://code.claude.com/docs/en/costs), stage-2 review 2026-10-15).
+In this kit checkout, the script lives at `core/scripts/agent_cost.py`.
+
+`cWrite>TTL` counts writes after a gap longer than the lifetime reported for that write:
+one hour for `ephemeral_1h_input_tokens`, five minutes for `ephemeral_5m_input_tokens`.
+Mixed writes use each bucket separately; legacy unbucketed writes assume five minutes.
+This is a gap diagnostic, not proof of the cause of a miss (B03 inv2/(h), cache source above).
+The historical experiment above still reports gaps over five minutes for comparison;
+its figures were not recomputed with the new analyzer.
+
+The initial 80% cache-hit alarm is the owner's choice, not a target or a measured optimum.
+Record the median of the kit's first ten workers as its baseline; investigate lower hits
+with `cWrite>TTL` and `poll` (KARARLAR B03 inv1#173). No new baseline was measured in this batch.
+
+Reusing a session depends on its actual cache lifetime: one hour on included subscription
+usage, otherwise five minutes unless explicitly set to one hour. An idle session past
+that lifetime has no warm cache to preserve (KARARLAR D01 inv1#191; cache source above).
+The fork threshold of 120k and a few requests (about eight) is the owner's choice,
+not a measured crossover; compare total lead-plus-worker usage before changing routing
+(B03 inv1#186/#187; [subagent mechanisms](https://code.claude.com/docs/en/sub-agents),
+stage-2 review 2026-10-15).
 
 ## What the alternatives to the rule set were, and why they were not taken
 
@@ -85,7 +119,7 @@ From the same research pass, each with its evidence, so the next pass does not r
 |---|---|---|---|
 | A worker that waits re-writes its context | (a) the cache-lifetime setting or `experimental.cacheTtl: 1h` in the worker definition; (b) a separate session; (c) keep-alive plugins | (a) official docs, and one user's repository measuring sub-agent re-reads from 28 to 1.3 percent; (c) tiny repositories that burn subscription quota | (a) now, in the definition; (b) as a measured pilot; (c) no |
 | A worker waits on or polls a long job | background commands with re-invocation; a monitor tool; a CI-event channel; one script that makes the job a single command | official docs; poll-loop failure reports | one proof command, in the background; rule: no polling |
-| A worker grows without bound | `maxTurns` in the definition; a context-threshold warning hook; rotating workers at 60 to 65 percent fullness | official docs; the others are experience reports without measurement | `maxTurns` about 150, and a fresh worker per review round |
+| A worker grows without bound | `maxTurns` in the definition; a context-threshold warning hook; rotating workers at 60 to 65 percent fullness | official docs; the others are experience reports without measurement | `maxTurns` about 150 turns as a backstop (owner's choice, KARARLAR D06 inv1#164); fix routing follows WORKFLOW rule 2 |
 | Nobody sees where the money goes | the built-in usage screen; a usage CLI; status-line scripts; OpenTelemetry; transcript analysers | all show spend, none reduce it | the kit's own analyser, run at the end of the day |
 | How the lead runs its workers | sub-agents; separate sessions (`--bg`, tmux, worktrees) with cross-session messages; agent teams (experimental, about seven times the tokens); scripted workflows | no comparative measurement found; practitioners stay at three to five parallel agents and name review as the bottleneck; a message to an idle session is a full-context turn | sub-agents stay; separate sessions for long pipeline tasks, measured |
 | Tool output fills the context | output compressors; an output-filter hook; context-mode tools | the leading compressor's own README: output reduction is not bill reduction; all tool output in the measured day was about one million tokens | not installed; long output goes to a file |
@@ -95,7 +129,7 @@ From the same research pass, each with its evidence, so the next pass does not r
 
 ## The failure mode it prevents
 
-A project that cannot use the production rule (the cache lifetime is ignored on its plan,
+A project that cannot use the production rule (the gateway cannot honour its chosen TTL,
 its host has no such setting, it runs workers from CI) falls back to the setup that looks
 cheapest — backgrounding the job, or polling it in small pieces at a large context — and
 pays the baseline or worse while believing it has applied the fix. The table above makes

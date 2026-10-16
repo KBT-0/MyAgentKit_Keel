@@ -3,13 +3,16 @@
 # Close finished worker sessions: end each tmux session, then remove its worktree through the
 # audited path. The branch is never deleted.
 #
-# Usage: close_worker.sh [--dry-run] NAME [NAME...]
+# Usage: close_worker.sh [--dry-run] [--finished] NAME [NAME...]
 #   --dry-run  says what it would do, runs the removal's dry run, and changes nothing
+#   --finished leaves a worker whose session still runs, unless its result is Kind: completed
 #
 # The lead runs it once it decides a worker session is finished: no next task fits what the
 # session holds, or the session has been idle past the cache lifetime (docs/WORKFLOW.md,
 # "Worker cost"). Left to the owner, finished sessions sat idle for hours and 39 worktrees
-# piled up. For each NAME, in order, each step on its own line:
+# piled up; left to the lead, worker tabs stayed open for hours after their merge, so the
+# post-merge hook (core/.githooks/post-merge) now runs it, with --finished, for every kit worker
+# whose branch tip a merge merged. For each NAME, in order, each step on its own line:
 #   1. A name outside [A-Za-z0-9_-], a control character included, or one starting with `-`,
 #      is refused before any tmux call; the next name still runs. So is a worker whose worktree
 #      a gate (check.sh, by its lock) or a git operation (index.lock) is running in: the session
@@ -40,9 +43,12 @@
 # to 15 s until no such process is left; its Windows Terminal tab closes by itself, because the
 # tab's command ends with `exit 0` (spawn_worker.sh). A lister that cannot answer fails the
 # close with its words, as the session may still run. A Codex worker (spawn_codex.sh) is a
-# codex.exe whose command line names its folder with -C instead: while one runs in the worker's
-# folder, nothing is done for that name, since its .myagentkit/workers/NAME.session record is
-# the only id to resume it by; the lead quits it in its tab and closes again. Steps 1, 3 and 4
+# codex.exe whose command line names its folder with -C instead: one running in the worker's
+# own worktree is ended the same way (taskkill /T /F, a 15 s wait), and the line names its
+# session id (`codex resume ID` still opens the conversation); its wrapper then ends and so does
+# its tab (owner 2026-10-16: a close that refused here left Codex tabs open for hours). A
+# worker spawned without --worktree shares this checkout's folder, where any Codex session
+# matches: nothing is done for that name; the lead quits it in its tab and closes again. Steps 1, 3 and 4
 # are the same. On every host a Codex worker whose decision file (the path NAME.question
 # records, else QUESTION-NAME.md at its top) still exists is refused before step 2: the lead
 # answers it with spawn_codex.sh --resume, or deletes it to abandon the worker. Before step 3 an
@@ -61,12 +67,13 @@
 # The helper prints the .report-move-* folder of a report it could not restore. Where neither
 # an exclusive rename nor a hard link works, the move refuses and the report stays (owner
 # decision). After a removal (or with no worktree), the Codex records NAME.session, NAME.exit,
-# NAME.live and NAME.question go too; a kept worktree keeps them.
+# NAME.live and NAME.question go too, and spawn_worker.sh's NAME.result-path; a kept worktree
+# keeps them.
 # Exit 0 when every named session is gone and every named worktree was removed or did not
 # exist; 1 otherwise, with the first reason on the last line: a nonzero exit of
 # clean_worktrees.sh is one whatever its summary says (after a removal, an outcome line its log
 # could not take); 2 on a usage error. A dry run exits 1 only for a refused name, a waiting
-# decision, a running Codex session, an unfinished report move (NAME.report-move), a tmux or
+# decision, a Codex session running in this checkout, an unfinished report move (NAME.report-move), a tmux or
 # lister that could not answer, or a removal that could not run.
 set -u
 
@@ -239,11 +246,9 @@ has() {
 if python3 -I -c '' </dev/null >/dev/null 2>&1; then kit_python=python3
 elif python -I -c '' </dev/null >/dev/null 2>&1; then kit_python=python
 else kit_python="py -3"; fi   # unquoted at every use
-sessions() {
-  out=$(${KIT_PS:-powershell.exe -NoProfile -NonInteractive -Command} \
-    "Get-CimInstance Win32_Process -Filter \"Name='claude.exe' or Name='node.exe'\" | ForEach-Object { \"\$(\$_.ProcessId) \$(\$_.CommandLine)\" }" \
-    2>&1) || { printf '%s' "$out"; return 2; }
-  printf '%s\n' "$out" | $kit_python -I -c 'if 1:
+# argv_py: the Python both listers (sessions, codex) start with: split(line) splits a command
+# line as Windows does. ponytail: no single quote inside, it is a shell single-quoted string.
+argv_py='if 1:
     import ntpath, sys
     def split(line):
         # CommandLineToArgvW: 2n backslashes and a quote are n and a toggle, 2n+1 are n and a
@@ -279,6 +284,12 @@ sessions() {
         if have:
             args.append("".join(cur))
         return args
+'
+sessions() {
+  out=$(${KIT_PS:-powershell.exe -NoProfile -NonInteractive -Command} \
+    "Get-CimInstance Win32_Process -Filter \"Name='claude.exe' or Name='node.exe'\" | ForEach-Object { \"\$(\$_.ProcessId) \$(\$_.CommandLine)\" }" \
+    2>&1) || { printf '%s' "$out"; return 2; }
+  printf '%s\n' "$out" | $kit_python -I -c "$argv_py"'
     pids = []
     for line in sys.stdin.read().replace("\r", "").split("\n"):
         pid, _, command = line.strip().partition(" ")
@@ -298,21 +309,25 @@ sessions() {
     sys.stdout.write(" ".join(pids))' "$1"
 }
 case $(uname -s 2>/dev/null) in MINGW*|MSYS*|CYGWIN*) windows=1 ;; *) windows="" ;; esac
-# codex DIR: the process ids of the codex.exe programs whose command line names DIR with -C,
-# as spawn_codex.sh's running() reads them. ponytail: a text match on `-C <folder>`, not a
-# full command-line parse; a worker without --worktree shares this checkout's folder, so any
-# Codex session there holds the close of such a name.
+# codex DIR: the process ids of the codex.exe programs whose -C (or --cd) argument is DIR, the
+# command line split as sessions splits it: `-C DIR` inside another session's quoted prompt
+# is that prompt (Codex review: a text match taskkilled the lead). A worker without --worktree
+# shares this checkout's folder, so any Codex session there holds the close of such a name.
 codex() {
   out=$(${KIT_PS:-powershell.exe -NoProfile -NonInteractive -Command} \
     "Get-CimInstance Win32_Process -Filter \"Name='codex.exe'\" | ForEach-Object { \"\$(\$_.ProcessId) \$(\$_.CommandLine)\" }" \
     2>&1) || { printf '%s' "$out"; return 2; }
   folder=$(cygpath -w "$1") || { printf '%s' "cygpath cannot convert $1"; return 2; }
-  printf '%s\n' "$out" | $kit_python -I -c 'if 1:
-    import re, sys
-    folder = re.escape(sys.argv[1].rstrip("\\/"))
-    pat = re.compile(r"\s-C\s+(\"%s[\\/]?\"|%s[\\/]?)(\s|$)" % (folder, folder), re.I)
-    print(" ".join(l.split(" ", 1)[0] for l in sys.stdin.read().replace("\r", "").split("\n")
-                   if l.split(" ", 1)[0].isdigit() and pat.search(l)))' "$folder"
+  printf '%s\n' "$out" | $kit_python -I -c "$argv_py"'
+    norm = lambda p: ntpath.normcase(ntpath.normpath(p))
+    pids = []
+    for line in sys.stdin.read().replace("\r", "").split("\n"):
+        pid, _, command = line.strip().partition(" ")
+        argv = split(command)
+        if pid.isdigit() and any(a in ("-C", "--cd") and norm(b) == norm(sys.argv[1])
+                                 for a, b in zip(argv[1:], argv[2:])):
+            pids.append(pid)
+    sys.stdout.write(" ".join(pids))' "$folder"
 }
 # busy DIR: prints what runs in the checkout at DIR and succeeds while a gate or a git
 # operation runs there, or while that cannot be checked. Ending the session then orphans it: on
@@ -356,9 +371,43 @@ busy() {
   done
   return 1
 }
-dry=""
-[ "${1-}" = --dry-run ] && { dry=1; shift; }
-[ $# -ge 1 ] || { sed -n '6,7p' "$0"; exit 2; }
+# live NAME DIR: succeeds, printing what runs, while a session of the worker runs in DIR or
+# under NAME, or while that cannot be told.
+live() {
+  if [ -n "$windows" ]; then
+    if [ "$2" != "$top" ]; then
+      p=$(codex "$2") || { printf '%s' "its Codex processes cannot be listed ($p)"; return 0; }
+      [ -z "$p" ] || { printf '%s' "its Codex session still runs (process $p)"; return 0; }
+    fi
+    p=$(sessions "$1") || { printf '%s' "its Claude Code sessions cannot be listed ($p)"; return 0; }
+    [ -z "$p" ] || { printf '%s' "its session still runs (process $p)"; return 0; }
+    return 1
+  fi
+  command -v tmux >/dev/null 2>&1 || return 1
+  has "$1"; case $? in 1) return 1 ;; 0) printf '%s' "its session still runs (tmux session $1)" ;;
+    *) printf '%s' "tmux cannot say whether its session runs ($err)" ;; esac
+}
+# completed DIR NAME: the worker's result is a published Kind: completed result, read by
+# codex_worker.py's rules (beside this script): the path spawn_worker.sh recorded in
+# NAME.result-path, else RESULT-NAME.md at DIR, the default of both spawns. ponytail: a Codex
+# worker given another --result is told finished only by its ended session (its supervisor
+# ends it on that result anyway). Each spawn, a resume too, rewrites NAME.result-path: only a
+# result published since that write is this run's (a resumed worker keeps its last one).
+completed() {
+  rec=$top/.myagentkit/workers/$2.result-path
+  r=$(cat -- "$rec" 2>/dev/null) && [ -n "$r" ] || { r=$1/RESULT-$2.md; rec=$r; }
+  k=$kit
+  [ -f "$r" ] && [ -f "$k/codex_worker.py" ] || return 1
+  [ -z "$windows" ] || { r=$(cygpath -m "$r") && rec=$(cygpath -m "$rec") && k=$(cygpath -m "$k"); } || return 1
+  $kit_python -I -c 'import sys; from pathlib import Path; sys.path.insert(0, sys.argv[1]); import codex_worker
+since = 0 if sys.argv[3] == sys.argv[2] else Path(sys.argv[3]).stat().st_mtime
+sys.exit(codex_worker.result_kind(Path(sys.argv[2]), since)[0] != "DONE")' "$k" "$r" "$rec" 2>/dev/null
+}
+dry=""; finished=""
+while :; do
+  case ${1-} in --dry-run) dry=1; shift ;; --finished) finished=1; shift ;; *) break ;; esac
+done
+[ $# -ge 1 ] || { sed -n '6,8p' "$0"; exit 2; }
 
 for name; do
   failed=""
@@ -374,6 +423,11 @@ for name; do
   wt_dir=$top; [ -z "$top" ] || [ ! -d "$top/.claude/worktrees/$name" ] || wt_dir=$top/.claude/worktrees/$name
   refuse() { fail "$name: $why; ending the session now would leave it running without its caller, so nothing is done for $name: wait until it ends, then close again"; }
   if why=$(busy "$wt_dir"); then refuse; continue; fi
+  # --finished (the post-merge hook): a merge proves its branch merged, not its session done.
+  if [ -n "$finished" ] && why=$(live "$name" "$wt_dir") && ! completed "$wt_dir" "$name"; then
+    say "$name: left as it is: $why, and its result is no Kind: completed result; a merge ends only a finished worker, so nothing is done for $name"
+    continue
+  fi
   record=$top/.myagentkit/workers/$name
   if [ -e "$record.report-move" ] || [ -L "$record.report-move" ]; then
     fail "$name: unfinished report move recorded in $record.report-move; the session is not ended, the audit will not run and the worktree and session records are kept"
@@ -397,9 +451,32 @@ for name; do
     if ! pids=$(codex "$wt_dir"); then
       fail "$name: could not list the Codex processes, so its Codex session may still run: $pids; nothing is done for $name"
       continue
-    elif [ -n "$pids" ]; then
+    elif [ -n "$pids" ] && [ "$wt_dir" = "$top" ]; then
+      # No worktree of its own: any Codex session in this checkout matches, maybe not this worker's.
       fail "$name: a Codex session still runs in $wt_dir (process $pids); its session record and worktree are kept: quit it in its tab (/quit), then close again"
       continue
+    elif [ -n "$pids" ]; then
+      sid=$(cat "$record.session" 2>/dev/null) || sid=""
+      resume=""; [ -z "$sid" ] || resume="; its conversation stays resumable: codex resume $sid"
+      if [ -n "$dry" ]; then
+        say "$name: dry run: would end the Codex session in $wt_dir (process $pids, taskkill /T /F) and wait up to 15 s for it; while it runs, the audit below keeps its worktree"
+      elif why=$(busy "$wt_dir"); then
+        refuse; continue
+      else
+        # Its wrapper (codex_worker.py) sees the session end, records why and returns; the tab's
+        # script then ends with `exit 0`, on which Windows Terminal closes the tab.
+        for pid in $pids; do MSYS_NO_PATHCONV=1 taskkill /PID "$pid" /T /F >/dev/null 2>&1; done
+        i=0
+        while left=$(codex "$wt_dir") && [ -n "$left" ] && [ "$i" -lt 15 ]; do i=$((i + 1)); sleep 1; done
+        if ! left=$(codex "$wt_dir"); then
+          fail "$name: could not establish that the Codex session ended: $left; its worktree is not touched"
+          continue
+        elif [ -n "$left" ]; then
+          fail "$name: the Codex session still runs after taskkill (process $left); its session record and worktree are kept"
+          continue
+        fi
+        say "$name: Codex session ended (process $pids$resume); its Windows Terminal tab closes by itself"
+      fi
     fi
   fi
 
@@ -558,7 +635,7 @@ for name; do
   # gives the audit nothing to keep, so its success proved no shutdown.
   if [ -z "$dry" ] && [ -z "$failed" ] && [ "$rc" -eq 0 ] && [ -z "$kept" ] && [ -n "$top" ] &&
      [ ! -e "$record.report-move" ] && [ ! -L "$record.report-move" ]; then
-    rm -f -- "$record.session" "$record.exit" "$record.live" "$record.question" || fail "$name: could not remove its Codex session records"
+    rm -f -- "$record.session" "$record.exit" "$record.live" "$record.question" "$record.result-path" || fail "$name: could not remove its Codex session records"
   fi
   if git show-ref --verify --quiet "refs/heads/worktree-$name" 2>/dev/null; then
     say "$name: branch worktree-$name is kept, never deleted here; \`git branch --merged\` lists the merged branches, \`git branch -d <name>\` deletes one"

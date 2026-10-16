@@ -132,16 +132,27 @@ The adapter's timestamped JSON archives are excluded from subsequent review diff
 recursively embedding prior transcripts; source and ordinary documentation are not excluded.
 Reference reviews require a clean checkout, and commit mode requires the checked-out HEAD.
 
-Default review limits are 2700 seconds per attempt (maximum 3600) and 200 Claude turns (maximum 500);
+Default review limits are 2700 seconds per attempt (3600 for a high-effort Codex review,
+maximum 3600) and 200 Claude turns (maximum 500);
 `REVIEW_TIMEOUT_SECONDS` and `REVIEW_MAX_TURNS` change them per run. Reviews have no default monetary cap; the
 adapter passes `--max-budget-usd` only when explicitly specified. Patch proposals retain
 their separate $3 default. Omitting a cap does not remove provider/account limits.
+Reviews omit a default monetary cap because a capped-out review costs money without
+returning a usable result. A proposal should produce one patch without growing indefinitely,
+so its 600-second, 12-turn and $3 safeguards remain the owner's choice, not measured defaults
+(KARARLAR B03 inv2#64, inv3/(j); [agent-loop limits](https://code.claude.com/docs/en/agent-sdk/agent-loop),
+reviewed 2026-10-15). The 200/500-turn bounds are likewise the owner's choice (B03 inv2#31).
 The wall-clock timeout kills the child process group. These limits are not a promise of
 precise subscription quota accounting. The wrapper and packaged dispatcher visibly fail
-over once to the other configured model on operational failure. Direct adapters do not.
-Both wrapper attempts use `REVIEW_TIMEOUT_SECONDS` (2700 by default) independently. This
+over once to the other configured model on eligible failure with `--fallback`; exhausted
+Codex quota switches the role to Claude automatically. Direct adapters do not
+([USAGE.md](../core/docs/USAGE.md), "Bounded failure, useful continuation"; KARARLAR decision 7).
+Each wrapper attempt uses `REVIEW_TIMEOUT_SECONDS` independently, or its own default. This
 measures total elapsed time, not inactivity or connection setup. Output does not reset it;
-two full-length attempts may take about two hours plus local overhead. Claude's final-JSON
+two timed-out attempts take about `2 x REVIEW_TIMEOUT_SECONDS` plus local overhead
+(KARARLAR D06 inv2#45; B03 inv2/(a)). The defaults total about 90 minutes for two
+2700-second attempts or 120 minutes for two 3600-second high-effort Codex attempts;
+mixed defaults add the individual deadlines. Claude's final-JSON
 mode does not reliably expose whether silent work has started. Proposal mode retains its
 separate 600-second default. No
 new monetary cap is imposed. An explicit direct-adapter cap must not be dropped to obtain
@@ -171,7 +182,7 @@ Quota, context exhaustion, or timeout stops the affected child, not independent 
 The host records the pending result and continues authorized work that does not need it.
 Failed review never authorizes committing or pushing its protected diff. Neither adapter
 retries indefinitely. The dispatcher preserves the configured pins, announces failover,
-and stops after one attempt per provider. A completed Reject does not trigger a switch.
+and bounds retries as described in [USAGE.md](../core/docs/USAGE.md). A completed Reject does not trigger a switch.
 Invalid evidence, stale scope, and persistence failures stop without trying the alternate.
 An author-model fallback is advisory and leaves independent approval pending. Immutable
 chain checkpoints in `.myagentkit/usage/chains/` link individual evidence and usage records;

@@ -48,7 +48,8 @@ class SyncKitTests(unittest.TestCase):
         if not kit.exists():
             kit.mkdir()
             shutil.copyfile(ROOT / 'sync-kit.sh', kit / 'sync-kit.sh')
-            (kit / 'CHANGELOG.md').write_text('## v0.2\n\n' + entry + '\n## v0.1\n\n- First.\n')
+            # UTF-8: native Windows wrote cp1252 and mangled the dash of "**ACTION** — none".
+            (kit / 'CHANGELOG.md').write_text('## v0.2\n\n' + entry + '\n## v0.1\n\n- First.\n', encoding='utf-8')
             (project / 'docs/kit').mkdir(parents=True)
             # Bytes: a stamp is LF, as sync-kit writes it. Text mode wrote CRLF on native Windows
             # outside the kit check (which forces LF), and a stamp left whole compared as changed.
