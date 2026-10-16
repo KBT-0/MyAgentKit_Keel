@@ -11,16 +11,18 @@ Reads the session file and its `subagents/` folder. Assistant records sharing on
 the record with the largest output count. The columns that matter for routing, measured
 in the kit's founding project (docs/WORKFLOW.md, "Worker cost"):
 
-  cWrite>5m   cache-write tokens on requests that followed a gap of more than five
-              minutes: a sub-agent's prompt cache lives five minutes, so these are
-              whole-context re-writes caused by waiting.
+  cWrite>TTL  cache-write tokens after a gap longer than their recorded lifetime:
+              `ephemeral_1h` writes use one hour, `ephemeral_5m` writes five minutes.
+              Legacy writes without buckets assume five minutes. This is a gap
+              diagnostic, not proof of why the cache missed.
   poll        requests whose every tool call only waited (sleep, pgrep, tail, a job
               output check): each one re-reads the whole context for nothing.
   1h/5m       which cache lifetime the agent's writes used (`ephemeral_1h` is the
               one-hour cache; a worker meant to run with it must show it here).
   hit         cache-read share of all input (read / (read + write + uncached)). The
-              target is 80% or more (docs/WORKFLOW.md, "Worker cost"); below it, the
-              cWrite>5m and poll columns say whether waiting or polling caused the misses.
+              initial alarm is below 80% (owner's choice, KARARLAR B03 inv1#173).
+              Compare the median of the kit's first ten workers as the baseline;
+              cWrite>TTL and poll help investigate a low hit rate.
 
 Not covered: the permission classifier and other requests that never reach a transcript.
 """
@@ -34,7 +36,9 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-GAP = 300  # seconds; the sub-agent cache lifetime
+# Source: code.claude.com/docs/en/prompt-caching, checked 2026-10-16;
+# KARARLAR B03 inv2/(h). The response's cache_creation buckets identify each write's TTL.
+CACHE_TTLS = {'w5': 300, 'w1h': 3600}
 # Waiting, not working: a sleep, a process probe, a shell wait loop, `tail -f`. A plain `tail`
 # of a finished log or a Python run that happens to contain one of these words is work;
 # the first version matched those too and over-counted a real worker's poll turns by 4x.
@@ -86,8 +90,12 @@ def summarize(name: str, rows: list[dict]) -> dict:
     gap_cw = polls = 0
     prev = None
     for r in rows:
-        if prev is not None and r['t'] and prev and (r['t'] - prev).total_seconds() > GAP:
-            gap_cw += r['cw']
+        if prev is not None and r['t']:
+            gap = (r['t'] - prev).total_seconds()
+            gap_cw += sum(r[key] for key, ttl in CACHE_TTLS.items() if gap > ttl)
+            # Old transcripts lack TTL buckets; keep their five-minute assumption explicit.
+            if gap > CACHE_TTLS['w5']:
+                gap_cw += max(0, r['cw'] - r['w5'] - r['w1h'])
         if r['tools'] and all(is_poll(t, i) for t, i in r['tools']):
             polls += 1
         prev = r['t'] or prev
@@ -127,18 +135,18 @@ def hit(s: dict) -> str:
 
 
 def table(summaries: list[dict]) -> str:
-    head = f'{"agent":40} {"req":>4} {"tool":>4} {"cRead":>8} {"cWrite":>8} {"cWrite>5m":>9} {"poll":>4} {"1h/5m":>13} {"hit":>4} {"ctx0->ctxN":>14}'
+    head = f'{"agent":40} {"req":>4} {"tool":>4} {"cRead":>8} {"cWrite":>8} {"cWrite>TTL":>10} {"poll":>4} {"1h/5m":>13} {"hit":>4} {"ctx0->ctxN":>14}'
     lines = [head]
     for s in sorted(summaries, key=lambda s: -s['cr']):
         bucket = f'{fmt(s["w1h"])}/{fmt(s["w5"])}'
         lines.append(f'{s["agent"][:40]:40} {s["req"]:4} {s["tool"]:4} {fmt(s["cr"]):>8} {fmt(s["cw"]):>8} '
-                     f'{fmt(s["cw_gap"]):>9} {s["poll"]:4} {bucket:>13} {hit(s):>4} '
+                     f'{fmt(s["cw_gap"]):>10} {s["poll"]:4} {bucket:>13} {hit(s):>4} '
                      f'{fmt(s["ctx0"]):>6}->{fmt(s["ctxN"]):<6}')
     tot = {k: sum(s[k] for s in summaries) for k in ('req', 'cr', 'cw', 'inp', 'cw_gap', 'poll')}
     share = 100 * tot['cw_gap'] / tot['cw'] if tot['cw'] else 0
     lines.append(f'TOTAL requests {tot["req"]}  cRead {fmt(tot["cr"])}  cWrite {fmt(tot["cw"])}  '
-                 f'after >5 min gaps {fmt(tot["cw_gap"])} ({share:.0f}%)  poll-only requests {tot["poll"]}  '
-                 f'cache hit {hit(tot)} (target 80%)')
+                 f'after >TTL gaps {fmt(tot["cw_gap"])} ({share:.0f}%)  poll-only requests {tot["poll"]}  '
+                 f'cache hit {hit(tot)} (alarm below 80%; owner\'s choice)')
     return '\n'.join(lines)
 
 

@@ -1,7 +1,8 @@
 # Cross-model usage and recovery
 
 Both supported CLI adapters write one local JSON record per launched invocation under
-`.myagentkit/usage/`. This directory is ignored by Git: raw provider output and account
+`.myagentkit/usage/`. Worker cost lives in `scripts/agent_cost.py`; review cost lives here
+(KARARLAR D06 inv2#55). This directory is ignored by Git: raw provider output and account
 diagnostics are local operational evidence, not material for a public push. Back it up
 privately if you need retention across machines. Preflight refusals launch no child and
 are not counted as billed invocations.
@@ -55,21 +56,53 @@ The summary also measures each reviewer configuration (model, effort, backend):
   produced the findings. The author rates its own reviewer, as Google's Tricorder has
   the developer click "not useful"; the next round's reviewer verifies every disproved
   claim against the code, and a claim it rejects comes back as a finding. The rate is
-  information for the owner, never an automatic switch: after about twenty rounds of one
-  configuration, the owner reads its rate together with how the verifying rounds treated
-  its disproved claims and decides whether to keep, change or retire it.
+  information for the owner, never an automatic switch. The summary prints decided findings
+  as `n`, `rated_rounds` with credited answers, and a two-sided 95% Wilson interval.
+  The owner uses a rate for a decision only at `n >= 30` from at least ten distinct rated
+  rounds; smaller samples stay descriptive. These floors are the owner's choice, not
+  measurements (KARARLAR B03 inv2#57/#58/(d)); the interval follows
+  [NIST, section 7.2.4.1](https://www.itl.nist.gov/div898/handbook/prc/section2/prc241.htm).
+  The latest completed round's cumulative answers replace earlier snapshots under its label
+  and `REVIEW_FOCUS` (a focus answers its own and the unfocused rounds, an unfocused round
+  only the unfocused ones), so answering the same findings again cannot increase `n`. Allocation across earlier
+  configurations follows their finding counts; fractional `n` and its Wilson interval are
+  descriptive estimates, not independent, individually matched finding outcomes.
+  The owner reads the archives and how later reviewers treated disproved claims before
+  deciding whether to keep, change or retire a configuration.
 - A configuration under trial runs in shadow first: `REVIEW_SHADOW=1` on the review
   archives its verdict with a `SHADOW REVIEW` banner, records `shadow` in the task, and the
   summary lists it in its own `/ shadow` group with its findings and as no round. A shadow
   run is no round of the change: a later real review under the same label does not carry
   it, and the lead's closure reading of the summary leaves it out. The real review of the
-  change still runs. After ten to twenty shadow runs the owner compares its findings with
-  the real reviewer's and decides whether it goes live.
+  change still runs. Task, Total and Behaviour lines print a separate `shadow=` count and
+  exclude shadow verdicts and findings from their real-review rates (BACKLOG B9).
+  The same decided-finding and distinct-round floors govern a shadow comparison; run count
+  alone cannot qualify it (KARARLAR B03 inv2#58). Shadow runs carry no accepted dispositions,
+  so the owner must compare their findings with real reviews before deciding to go live.
+
+`Pair AUTHOR -> REVIEWER` groups use `task.author` and `model_requested`, with the same
+author-claimed rates and sample checks. A missing author remains `unknown`; requester
+metadata never substitutes for it (KARARLAR B01-1; batch 3 Outside Owns 8).
+`quota=` totals `rate_limited`, `quota_exhausted` and legacy `quota` records; the separate
+counts retain the distinction (KARARLAR D04 inv2#126; batch 4 Outside Owns 5).
+Behaviour on/off groups are observational, not randomized: their differences do not prove
+the appendix caused an improvement (KARARLAR B03 inv2#128).
+
+Sources for attribution and grouping: [Claude Code usage events](https://code.claude.com/docs/en/monitoring-usage),
+as reviewed in stage 2, D06 inv2#54/#55 (2026-10-15). The optional requested/reported-model
+field rename was not adopted. Prior-round carry and verified archives follow
+[re-review convergence](https://code.claude.com/docs/en/code-review) and
+[fresh reviewer context](https://code.claude.com/docs/en/best-practices)
+(D06 inv2#108; B02 inv2#12). Control characters are escaped to prevent forged report lines
+([MITRE CWE-117](https://cwe.mitre.org/data/definitions/117.html), B03 inv2#128).
 
 Every record includes task, requester, requested callee model, source revision/hash,
 elapsed time, status, failure classification, evidence location, and available usage.
 Claude's per-model `modelUsage` is retained; a Codex requested model is not misrepresented
 as observed model identity when its JSONL events do not attest the actual model.
+Checkout identity covers HEAD, diff, index and tracked/untracked bytes; a rendered diff
+alone can miss index flags and hidden changes (KARARLAR D06 inv2#107;
+[Git index semantics](https://git-scm.com/docs/git-update-index), stage-2 review 2026-10-15).
 
 ## What the numbers mean
 
@@ -98,7 +131,9 @@ Codex quota source: [official account rate limits](https://learn.chatgpt.com/doc
 
 Codex quota observation is enabled by default; set `MYAGENTKIT_CAPTURE_QUOTA=0` to disable
 it. Each optional read has a five-second deadline (at most ten seconds of extra telemetry
-time around the model invocation). It starts no model thread/turn and performs no login,
+time around the model invocation). The five-second deadline and 1,000,000-byte response
+cap are the owner's choice of telemetry safeguards, not measured vendor limits
+(KARARLAR B03 inv2#62; `core/scripts/codex_quota.py`). It starts no model thread/turn and performs no login,
 logout, reset-credit consumption, credit purchase, or account mutation request. An
 unavailable observation is recorded as unknown and does not prevent the model task.
 
@@ -109,8 +144,11 @@ Each review attempt has a total wall-clock limit (2700 seconds by default, 3600 
 Claude proposals retain their separate 600-second default. This is not an inactivity or
 connection timer: the current Claude final-JSON adapter cannot reliably distinguish silent
 active work from a stalled request. Output does not reset the deadline. A fallback attempt
-gets its own deadline, so two default review attempts can take roughly 120 minutes plus
-local processing and quota-observation overhead. Each invocation also has an 8 MB
+gets its own deadline: two timed-out attempts take about `2 x REVIEW_TIMEOUT_SECONDS`,
+plus local processing and quota-observation overhead (KARARLAR D06 inv2#45; B03 inv2/(a)).
+With no override, this is about 90 minutes at 2700 seconds per attempt, or 120 minutes
+for two high-effort Codex attempts at 3600 seconds; mixed defaults add their own deadlines.
+Each invocation also has an 8 MB
 captured-output limit per stream. The parent stops its child process group and preserves
 partial diagnostics in memory through bounded pipes, not temporary output files. Codex's
 separate CLI-owned final-message file is size-checked after execution; the adapter does not
@@ -123,6 +161,20 @@ Claude reviews omit the monetary-budget flag unless explicitly requested; their 
 `limits.api_usd` is null when no cap was specified. This null describes configuration,
 not unknown spend. Reported cost/token accounting remains unchanged. Patch proposals retain
 their separate three-dollar default; timeout, turn and output protections still apply.
+
+The 200/500-turn limits, 8,000,000-byte stream cap, and proposal defaults (600 seconds,
+12 turns, 3 USD) are the owner's choice of safeguards, not measured provider limits
+(KARARLAR B03 inv2#31/#64/#65). The optional `0 < --max-budget-usd <= 100` bound is also
+the owner's choice: it catches typing errors, not a vendor maximum (B03 inv2#101).
+Reviews omit a default monetary cap because exhausting it pays for a review without a
+usable result; proposals are bounded because one invocation should return one patch
+(B03 inv3/(j)). Sources: [CLI limits](https://code.claude.com/docs/en/cli-reference) and
+[agent-loop budget outcomes](https://code.claude.com/docs/en/agent-sdk/agent-loop),
+reviewed in stage 2 on 2026-10-15. Proposal tuning needs recorded turn/cost distributions;
+a default is not evidence of a typical run.
+The wall-clock bound follows the same timeout mechanism as
+[Claude Code ultrareview](https://code.claude.com/docs/en/ultrareview)
+(KARARLAR B03 inv2#63, stage-2 review 2026-10-15); output never renews it.
 
 Individual adapters never automatically retry, buy credits, switch models, or promote a
 failed review to approval. The wrapper's dispatcher retries a Codex `rate_limited` attempt
