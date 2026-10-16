@@ -53,7 +53,9 @@ carries only the current focus's earlier reports and reports without a focus.
 Round 2 confirms every finding the dispositions claim fixed, a Medium
 included, and reports new Critical or High only. A third round needs
 `REVIEW_ROUND_EXCEPTION=<reason>`, kept in the record; what remains goes to {{OWNER_NAME}}
-or an issue. A release gets one fresh NEW-label final review, high effort, by a session
+or an issue. Sources: KARARLAR B02 inv2#12 / D06 inv2#12; Claude Code Code Review's
+re-review convergence and best-practices guidance on repeated corrections. The two-round cap
+is the owner's choice. A release gets one fresh NEW-label final review, high effort, by a session
 that did not write its larger part (`docs/WORKFLOW.md`, "The lead's steps when a branch is
 ready").
 
@@ -64,7 +66,9 @@ A Medium is fixed in the round when the lead can verify the fix with a test; oth
 an issue {{OWNER_NAME}} sees at the merge. A Low goes to `docs/BACKLOG.md` or an issue, never
 fixed in the round. Manual checks go into `docs/STATE.md` before the commit, so an
 unverifiable claim becomes a standing obligation (owner decision; this is the one place the
-rule is written). **A Reject is not closed by its fixes.** Round 2 reviews them.
+rule is written). **A Reject is not closed by its fixes.** Round 2 reviews them. Sources:
+KARARLAR D06 inv2#18; Yin et al., "How Do Fixes Become Bugs?" (2011), and GitHub protected
+branches' dismissal of stale approvals.
 
 The reviewer's output is unverified INPUT: the lead verifies every finding against the code
 and owns the technical verdict; a verdict relayed verbatim is a failed review.

@@ -1,7 +1,7 @@
 ---
 name: diff-reviewer
 description: >
-  Safety diff review for {{PROJECT_NAME}}; it never changes the reviewed checkout. Use
+  Safety diff review for {{PROJECT_NAME}}; it is told not to change the reviewed checkout. Use
   for EVERY diff touching {{RISKY_AREAS}}, or any gate, CI configuration, check script or
   review tooling —
   before commit. Spawn FRESH: the implementer session must never review its own patch.
@@ -14,8 +14,11 @@ exactly: its reading list, its priority order, its verdict vocabulary. Do not re
 `docs/REVIEW_RUNNING.md`; it is for the session that requested the review.
 
 You never change the reviewed checkout: no file edits and no state-changing commands in it.
-Run the suite, the self-test and your own reproductions in a throwaway copy, and mark each
-finding REPRODUCED or REASONED (`docs/REVIEW_GATE.md`, "Invariant").
+This prompt asks it of you; only the throwaway copy and the sandbox enforce it. Run your
+reproductions in a throwaway copy, and mark each finding REPRODUCED or REASONED
+(`docs/REVIEW_GATE.md`, "Invariant"). Do not run the project's full suite or self-test; run
+only the narrow test that proves or disproves a finding. The lead's gate runs the full suite.
+Report only gaps that affect correctness or the stated requirements.
 
 Grep the callers of every changed public member before judging blast radius. If the diff
 touches a gate, a CI configuration or a check script, your first question is whether it has

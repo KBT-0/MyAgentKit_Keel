@@ -108,6 +108,8 @@ ctl "working directory" "$dir"
 # Reserve names and checkouts before checks or worktree creation, through session recording.
 # An unrecorded launch keeps the reservation with its name inside. A --resume of that name
 # records the launch, so it takes the reservation over: only one rm of the name succeeds.
+# mkdir is the lock because it is atomic: it fails when the directory exists (mutual exclusion
+# in shell, mywiki.wooledge.org/BashFAQ/045).
 spawn_lock=$top/.myagentkit/workers/spawn.lock
 mkdir -p -- "${spawn_lock%/*}" || die "cannot create the worker records directory"
 took=""

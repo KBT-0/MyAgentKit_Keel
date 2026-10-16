@@ -28,24 +28,31 @@ repository.
 | File | What it is |
 |---|---|
 | `CLAUDE.md` | One-line pointer to `AGENTS.md`. Content never goes here |
-| `.claude/settings.json` | Registers the seven hooks below, allows without a prompt the gate (`scripts/check.sh` and `--self-test`, exactly) and read-only commands (`git status`, `git log/diff/show --no-textconv --no-ext-diff`, `git branch` in exact listing forms, `git worktree list`, `cat`, `head`, `tail`, `ls`, `wc`, `grep`, PowerShell `Get-Content`/`Get-ChildItem`; ending a process, deleting a file and every other command still ask), and turns on the ponytail plugin (minimal-code mode) for every session and worker unless the setup interview's question 11 was answered no. The allow rules guard only the command's own arguments. The repository's local git configuration, including `diff.submodule` and every submodule's own configuration, is trusted: `git status` and the gate already run what it names (`core.fsmonitor`). No allow rule can defend against a hostile local config. The plugin comes from its author's marketplace (`ponytail@ponytail`) at the latest version, the same id a user-level install has, so it loads once |
-| `.claude/hooks/gate_on_stop.sh` | Runs the gate if a turn left the watched paths dirty — early feedback, never the rule |
-| `.claude/hooks/guard_boundaries.py` | Flags a forbidden import the moment it is written, seconds instead of a commit |
+| `.claude/settings.json` | Registers the hooks below (the guards with `onFailure: block`), allows without a prompt the gate (`scripts/check.sh` and `--self-test`, exactly) and read-only commands (`git status`, `git log/diff/show --no-textconv --no-ext-diff`, `git branch` in exact listing forms, `git worktree list`, `cat`, `head`, `tail`, `ls`, `wc`, `grep`, PowerShell `Get-Content`/`Get-ChildItem`; ending a process, deleting a file and every other command still ask), and turns on the ponytail plugin (minimal-code mode) for every session and worker unless the setup interview's question 11 was answered no. The allow rules guard only the command's own arguments. The repository's local git configuration, including `diff.submodule` and every submodule's own configuration, is trusted: `git status` and the gate already run what it names (`core.fsmonitor`). No allow rule can defend against a hostile local config. The plugin comes from its author's marketplace (`ponytail@ponytail`) at the latest version, the same id a user-level install has, so it loads once |
+| `.claude/hooks/gate_on_stop.sh` | Runs the gate if a turn left the watched paths dirty — early feedback, never the rule (a hook is deterministic, an instruction is advice: code.claude.com/docs/en/hooks-guide) |
+| `.claude/hooks/guard_boundaries.py` | Warns about a forbidden import right after the write (a PostToolUse hook cannot block, code.claude.com/docs/en/hooks; `scripts/check.sh` is the gate); Windows paths match too. Unconfigured, it says UNCONFIGURED instead of passing in silence (fail-safe defaults, Saltzer and Schroeder) |
 | `.claude/hooks/context_size.py` | Names the context band once per 50k step past 200k tokens (yellow 200k, red 300k, ceiling 400k) and asks the agent to recommend `/compact` or a hand-off, whichever is cheaper (`docs/WORKFLOW.md`, "Worker cost", rule 8) |
 | `.claude/hooks/after_compact.txt` | Printed by a `SessionStart` hook after every compaction: what to re-read and the rules that still bind, since a summary is lossy. `autoCompactWindow` (450k) in `.claude/settings.json` is the safety valve for a session nobody stops |
-| `.claude/hooks/guard_destructive_git.py` | Refuses `reset --hard`, `checkout --`, `clean -f`, `stash drop` and force pushes while the tree is dirty, and prints what would be lost |
+| `.claude/hooks/guard_destructive_git.py` | Always refuses `stash drop/clear`, force pushes (unless `--force-with-lease=ref:expected` or `--force-if-includes`), `remote set-url/add`, amending a pushed commit and a skipped gate (`--no-verify`, `commit -n`, `-c core.hooksPath=`, `--no-gpg-sign`); refuses `reset --hard`, `checkout --`/`-f`, `restore` and `clean -f` while the tree is dirty, and prints what would be lost |
+| `.claude/hooks/guard_private_email.py` | Refuses a WebFetch, WebSearch or web-client Bash call (curl, wget, gh, a URL) that carries git's `user.email` or an address in `MYAGENTKIT_PRIVATE_EMAILS`; the API gets the project's Web contact from `docs/PROJECT.md` |
 | `.claude/hooks/guard_worker_route.py` | Refuses an Agent call that names no model or no effort, which would inherit the lead's; a fork is exempt, as it cannot change either. The lead tells the owner the model, the effort and why before the start (`docs/WORKFLOW.md`, "Worker cost", rule 5) |
 | `.claude/hooks/plain_report.py` | Bounces a final message to the owner that names a session label (`D-1`, `r2`, `Accept-MC`) outside code, once per turn; the agent rewrites it in plain words (`docs/COMMUNICATION.md`, "Language and terms"). Its `LABELS` list is where a project adds its own shapes |
 | `.claude/hooks/progress_reminder.py` | After five tool calls with no visible line, adds one line of context asking the agent to say what it is doing; it reads only the transcript's tail (`docs/COMMUNICATION.md`, "Progress") |
-| `.claude/hooks/py.sh` | Starts each Python hook with the first of `python3`, `python`, `py -3` that runs: a `python3` that is missing or a Windows Store alias would turn the hook silently off |
-| `.claude/agents/diff-reviewer.md` | Read-only review subagent carrying THIS project's risky areas and `docs/REVIEW_GATE.md` |
-| `.claude/agents/worker.md` | Implementation worker with a one-hour prompt cache and a 150-turn cap, for tasks that run jobs longer than five minutes (`docs/WORKFLOW.md`, "Worker cost") |
-| `scripts/spawn_worker.sh` | Opens a SEPARATE worker session in tmux and hands it a brief file; the lead then subscribes for its idle notice instead of polling. The session gets the kit's `BEHAVIOUR.md` with `--append-system-prompt-file` unless `MYAGENTKIT_NO_BEHAVIOUR=1`; the lead starts its own session the same way: `claude --append-system-prompt-file BEHAVIOUR.md` (`docs/WORKFLOW.md`, "How we work") |
+| `.claude/hooks/py.sh` | Starts each Python hook with the first of `python3`, `python`, `py -3` that runs: a `python3` that is missing or a Windows Store alias would turn the hook silently off; when none runs, a guard blocks (exit 2) and every hook prints `no Python found; install it or run doctor` |
+| `.claude/agents/diff-reviewer.md` | Review subagent carrying THIS project's risky areas and `docs/REVIEW_GATE.md`. Its tool list has no Edit or Write; that it leaves the checkout unchanged is asked by its prompt and enforced only by the throwaway copy and the sandbox. Like the bridges' reviewer it runs only the narrow test that proves a finding, and reports only gaps that affect correctness or the stated requirements (code.claude.com/docs/en/best-practices). Its first question for a gate, "was it seen red?", is TDD's red step; it skips `docs/REVIEW_RUNNING.md`, which is for the caller, to keep its context small (code.claude.com/docs/en/sub-agents) |
+| `.claude/agents/worker.md` | Implementation worker that pins model, effort and a 150-turn cap, with a one-hour prompt cache for waits longer than five minutes (`docs/WORKFLOW.md`, "Worker cost") |
+| `scripts/spawn_worker.sh` | Opens a SEPARATE worker session in tmux and hands it a brief file; the lead then subscribes for its idle notice instead of polling. The worker starts with `--disallowedTools AskUserQuestion` (its questions go to the result file), and a `--worktree` worker's worktree is locked (`kit worker NAME`) until `close_worker.sh` unlocks it before its audit. The session gets the kit's `BEHAVIOUR.md` with `--append-system-prompt-file` unless `MYAGENTKIT_NO_BEHAVIOUR=1`; the lead starts its own session the same way: `claude --append-system-prompt-file BEHAVIOUR.md` (`docs/WORKFLOW.md`, "How we work") |
 | `scripts/spawn_codex.sh` | Opens an interactive Codex worker in the lead's Windows Terminal window (`-w 0`) or tmux elsewhere, with workspace-write and approval never; reserves the spawning checkout through session recording in `.myagentkit/workers/spawn.lock`, records the session id in `.myagentkit/workers/NAME.session`, outside the worker, and resumes the same session with `--resume`. The worker leaves exact files uncommitted for the lead's cross-review and gated commit |
 | `scripts/codex_worker.py` | Keeps Codex interactive and closes its process tree only when it publishes a decision (`QUESTION-NAME.md`) or a new `Kind: completed` result; a progress, handoff or blocked result leaves it working. A resume removes the answered question once the resumed session publishes a new result or exits cleanly, never on elapsed time, so the close of a session that took its answer is not refused; a failed launch, or a CLI that fails without a new result, keeps it, and a new question stays. POSIX SIGTERM and SIGHUP clean up the worker group. On every way out it controls, a decision without a blocked result included, a startup that fails before it runs the worker too, it writes `.myagentkit/workers/NAME.exit`, and it holds `NAME.live` locked while it runs. The record is published with its PID inside and its lock held, so `--wait` reports a dropped lock as EXITED, also when the wrapper itself is killed or its tab closed, and an empty or malformed record never reads as EXITED; spawn_codex.sh passes its launch-time result identity to the printed `--wait` command with `--stale FILE_ID`, and on POSIX the supervisor and the waiter hold that result open, so a new result cannot be given its inode number. After PROGRESS or HANDOFF, `--wait` prints its exact follow-up command, with the reported result's content hash as `--stale`: other contents count as new, by rename or by in-place rewrite, and a byte-identical republication does not. A poll opens a result or a new question only after its id, size or time changed, yet on Windows even its stat holds the file for a moment, which refuses a rename over it (measured: 392 of 3000 renames under two stat loops); the worker therefore publishes with `codex_worker.py --publish TEMPORARY_FILE DESTINATION`, which retries a refused rename for about two seconds (0 of 3000 failed). A poller waits through 50 consecutive Windows refusals of one file, about five seconds, then fails instead of waiting forever |
 | `scripts/close_worker.sh` | Closes a finished worker: ends its tmux session and removes its worktree through the clean-up audit, never its branch. On native Windows it refuses while a Codex session runs in the worker's folder. It refuses while a Codex worker's decision file waits for its answer, and moves an uncommitted `RESULT-NAME.md` to `.myagentkit/workers/NAME.result.md` (`NAME.result-2.md` and on beside an earlier report) before the audit, and back when the audit keeps the worktree; after a removal it deletes `NAME.session`, `NAME.exit`, `NAME.live` and `NAME.question`, and a kept worktree keeps them. An unfinished move leaves `.myagentkit/workers/NAME.report-move`, which blocks later closes; recover the original report to the recorded source or archive, then remove that marker and close again |
 | `scripts/clean_worktrees.sh` (+ `.py`) | Removes the finished worktrees under `.claude/worktrees`, only what it proves safe to lose, never a branch; `.githooks/post-merge` runs it after every merge git completes itself in the main worktree |
 | `.claude/worktree-disposable` | The project's list of folders a finished worktree may lose (build output) and its quiet period; ships empty, the interview fills it; without it the hook does nothing |
+
+The four `permissions.deny` rules (`git *--out*`, `*--ext*`, `*--textc*`, `*--sub*`) are prefixes
+because git accepts any unambiguous abbreviation of a long option (git-scm.com/docs/gitcli).
+They stop the accident, not a determined caller: `/usr/bin/git` or `sh -c` passes them
+(code.claude.com/docs/en/permissions). A commit message that contains one of those words is
+refused too; give the message from a file (`git commit -F`).
 
 A failed session recording keeps `spawn.lock`, with the worker's name inside, and every other
 spawn in that checkout is refused. The printed `--resume SESSION_ID` of that name records the
@@ -63,8 +70,10 @@ nobody looks, for as long as nobody looks. Two scripts close that, both kit-owne
 says about tmux sessions, `--batch`, `show_workers.sh` and `watch_workers.sh` does not apply
 there. `spawn_worker.sh` opens the worker as a tab of the window the lead runs in (`wt.exe -w
 0`, or the launcher `KIT_WT` names) with the brief's instruction as its first prompt, and
-refuses a name a running Claude Code session already has. The tab is the only view of it:
-subscribe once with `notify_when_idle` only when the spawn prints "is a peer session".
+refuses a name a running Claude Code session already has. The tab is the only view of it.
+The lead does not poll it: when the spawn prints "is a peer session", the lead subscribes
+with `notify_when_idle` (a subscription costs no tokens; in the vendor's docs one subscription
+is one notice, and it lapses after 12 hours, code.claude.com/docs/en/cross-session-messaging).
 If it prints WARNING, watch the tab and result file; no idle notice arrives.
 `close_worker.sh NAME` ends it: it finds the `claude.exe` whose
 command line holds `-n NAME`, stops it with `taskkill /T /F` (the tab closes, because its
@@ -87,8 +96,9 @@ scripts/show_workers.sh w1 w2
 What opens where:
 
 - **WSL with Windows Terminal**: one `wt.exe -w 0 new-tab ...` call, a tab per session in
-  the window used last, the one the lead runs in (a window named after the project opened a
-  second window beside the lead's). A script on the WSL side can see that each tab attached,
+  the window used last (`wt -w 0`), the one the lead runs in as long as the owner did not
+  switch windows during the spawn (a window named after the project opened a second window
+  beside the lead's; learn.microsoft.com/windows/terminal/command-line-arguments). A script on the WSL side can see that each tab attached,
   not which window it is in.
   `KIT_WT` names another launcher than the `wt.exe` found on PATH or under `/mnt/c/Users`.
 - **macOS, iTerm2** (the lead runs in it, or it is installed and the lead does not run in
@@ -158,8 +168,9 @@ exits 0 with its kind on the first line (`watch_workers: KIND: NAME, ...`):
   58k/1.0M high` in the real capture; the `context` rule of `waiting_patterns.txt`). The
   status line is the line right under the input box's bottom rule, second or third from
   the bottom (the mode line may follow), with two or more ` │ ` separators; a figure in the
-  worker's output, a quoted status line too, is not read. Past
-  `--context-warn` percent (50) it is **CONTEXT** with the figure, once per session. A status
+  worker's output, a quoted status line too, is not read. Past the smaller of 200k and 50%
+  of the window (`--context-warn NNNk` or `NN%`) it is **CONTEXT** with the figure, once per
+  session. A status
   line without the figure, or none at all, is CONTEXT once too, and the figure is never
   guessed; `--once` skips that note, because `spawn_worker.sh` runs it before the status line
   is drawn. The figure comes from the status line the project configured; a project whose
@@ -176,7 +187,7 @@ in `docs/WORKFLOW.md`, "The lead's steps when a branch is ready".
 | Placeholder | What goes in |
 |---|---|
 | `{{WORKER_MODEL}}` | The author model from the interview (`sonnet`, `opus`, or a full model id) |
-| `{{LONG_JOBS}}` | The project's jobs that run longer than a few minutes, by name, as the interview's question 8 recorded them |
+| `{{LONG_JOBS}}` | The project's jobs that run longer than a few minutes, by name, as the interview's question 8 recorded them, or `none` when no worker waits that long |
 | `{{WORKER_EFFORT}}` | The worker's reasoning effort (`low`, `medium`, `high`), as the interview's question 8 recorded it: `high` when the worker's tasks bear design, lower when they are mechanical |
 
 `diff-reviewer.md` ships with `effort: high` and no placeholder: reviews run at high effort.
@@ -194,8 +205,13 @@ If the project has no such jobs, delete both files instead of filling them.
   `scripts/agent_cost.py` prints in its `1h/5m` column. The one-hour cache is ignored while
   the account runs on usage credits.
 - **The prompt must never follow a variadic flag.** `claude --allowedTools A,B "prompt"`
-  reads the prompt as one more tool name and opens idle at an empty input line.
-  `spawn_worker.sh` types its prompt after the TUI is up for that reason.
+  reads the prompt as one more tool name and opens idle at an empty input line. The prompt,
+  when given on the command line, is the first positional argument, before the flags;
+  variadic flags (`--allowedTools`, `--disallowedTools`, `--tools`, `--add-dir`,
+  `--mcp-config`, `--plugin-dir`, `--betas`) go last or are separated from it by `--`
+  (code.claude.com/docs/en/cli-reference; claude-code issue 25978). The Windows path passes
+  the prompt that way; on tmux `spawn_worker.sh` still types it after the TUI is up, until
+  the first-argument path is tried there (does it survive the trust dialog?).
 - **The brief goes by path, as one typed sentence, never pasted as a block.** A session
   handed its brief as one pasted block with no sentence typed by the user took it for
   content carrying no instruction and sat idle for about 35 minutes asking for
@@ -204,7 +220,9 @@ If the project has no such jobs, delete both files instead of filling them.
   session opens, a brief file that does not exist or cannot be read.
 - **A worker's worktree is made with `git worktree add`, not with `claude -w`.**
   `claude -w` built the worktree from a stale base, so workers spawned after the lead
-  merged fixes started without them. `spawn_worker.sh --worktree` runs
+  merged fixes started without them: `-w` starts from the remote default branch, a local
+  HEAD needs `worktree.baseRef: head`, and reports of stale bases span versions
+  (code.claude.com/docs/en/worktrees; claude-code issue 53025). `spawn_worker.sh --worktree` runs
   `git worktree add .claude/worktrees/NAME -b worktree-NAME HEAD` from the lead's checkout
   and opens the session inside it; a leftover `worktree-NAME` branch is refused by name.
 - **Every value the script puts into the session's shell command is quoted by one helper.**
@@ -226,7 +244,9 @@ If the project has no such jobs, delete both files instead of filling them.
   from a crash.
 - **The idle notice fires every time the worker parks on a background job**, not only at
   the end: a session whose turn ended with a job running is "idle" to the harness, and the
-  same notice was delivered three times for one pilot. Subscribe once, and have the brief
+  same notice was delivered three times for one pilot. A session waiting inside a dialog is
+  mid-turn, so no notice comes for it. How many notices one subscription gives on the current
+  version is not re-measured yet (the vendor's docs say one). Subscribe once, and have the brief
   end with a result FILE (plus, if the lead wants a push, one message from the worker);
   re-subscribing on every notice is a poll loop in disguise.
 - **A sub-agent inherits its lead session's effort unless its definition sets `effort:`**,
@@ -248,7 +268,10 @@ If the project has no such jobs, delete both files instead of filling them.
   of a string, `flock <lock> <cmd>` when the command runs git (`check.sh` does), `cd` to the
   main checkout before git. The brief's shape: one plain command per call, anything
   repeated or compound in a script file run as `sh that-file`, merging left to the lead in
-  the main tree. `worker.md` says so; keep the line when you edit the definition.
+  the main tree. `worker.md` says so; keep the line when you edit the definition. Permission
+  rules match each part of a compound command (code.claude.com/docs/en/permissions), so the
+  rule holds in a hand-made worktree too, where the vendor's isolation check is not
+  documented (code.claude.com/docs/en/worktrees).
 - **A sub-agent is refused when it writes a report file.** Claude Code answers "Subagents
   should return findings as text, not write report files" (eight refused `REPORT.md`
   writes in one project; `notes.md` and code files were not refused). The advice to end a

@@ -63,8 +63,12 @@ Automation never authorizes a commit or push.
   (`docs/REVIEW_GATE.md`, "Rounds").
 - The two reviewers run one after the other unless {{OWNER_NAME}} allows parallel; start the
   self-test beside a review only when the memory budget permits (`docs/WORKFLOW.md`, "Worker
-  cost", rule 6), each as its own background job.
-- Nobody edits a tree under review; one run per reviewer per tree.
+  cost", rule 6), each as its own background job. Source: KARARLAR D06 inv2#38; LLVM CMake
+  job pools and RAM-per-job settings (https://llvm.org/docs/CMake.html); review ordering
+  follows decision 9.
+- Nobody edits a tree under review; one run per reviewer per tree. Source: KARARLAR D06
+  inv2#40; https://code.claude.com/docs/en/worktrees documents separate trees for parallel
+  sessions.
 
 ## Unavailable reviewer
 

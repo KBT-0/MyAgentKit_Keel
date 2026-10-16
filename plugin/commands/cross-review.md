@@ -17,8 +17,8 @@ because it spends budget beyond the gate. Agents do not start it on their own.
 the solo mode `REVIEW_CLAUDE_MODEL` is pinned to the tier that did not write the change. A
 second vendor is pluggable, never required. **You may be the author here.** If this session
 wrote the diff, the reviewer must not be your own tier, whatever the default says: set
-the reviewer model pin to another tier and check it before launch. The wrapper does not
-check or record `MYAGENTKIT_AUTHOR`. Failing
+the reviewer model pin to another tier and check it before launch. With `MYAGENTKIT_AUTHOR`
+set, `review.sh` refuses a reviewer of the author's tier. Failing
 over to the other configured reviewer happens only when the owner asked for it and
 `--fallback` is passed; the default is no failover. Without `--fallback` the review simply
 fails; record it and continue. If a fallback authored the patch, its findings are advisory,
