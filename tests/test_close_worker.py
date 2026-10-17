@@ -30,6 +30,8 @@ NT = os.name == 'nt'
 # A worktree as the audit prints it: `.claude/worktrees/w1`, on Windows with the escaped
 # backslashes of its show().
 WT_DIR = '.claude\\\\worktrees\\\\' if NT else '.claude/worktrees/'
+# The first line of the ignore file spawn_worker.sh writes for the hook files it copied.
+SPAWN_IGNORE = "# spawn_worker.sh: hook files copied from the lead's checkout; close_worker.sh sets this file aside\n"
 
 # Sessions live in a file, one name per line; every call is logged. Every target is exact.
 TMUX = r'''#!/usr/bin/env python3
@@ -369,6 +371,55 @@ class CloseWorkerTests(unittest.TestCase):
         self.assertTrue(last.startswith('close_worker: FAILED: w1: worktree kept: '), out)
         self.assertIn('notes.txt', last)
         self.git('rev-parse', '--verify', 'worktree-w1')
+
+    def test_the_ignore_file_spawn_writes_for_copied_hooks_does_not_keep_the_worktree(self):
+        # Fable final review 1: spawn_worker.sh no longer lists the hook files it copies in the
+        # shared info/exclude; a self-ignoring .claude/hooks/.gitignore in the worktree lists them.
+        # It has no copy in main, so the audit kept every such worktree: it is set aside for the
+        # audit and put back when the worktree is kept.
+        (self.main / '.claude/hooks').mkdir(parents=True)
+        (self.main / '.claude/hooks/guard.py').write_text('# the lead\'s untracked hook\n')
+        def copied(path):
+            (path / '.claude/hooks').mkdir(parents=True)
+            shutil.copy(self.main / '.claude/hooks/guard.py', path / '.claude/hooks/guard.py')
+            (path / '.claude/hooks/.gitignore').write_text(SPAWN_IGNORE + '/.gitignore\n/guard.py\n')
+            records = self.main / '.myagentkit/workers'
+            records.mkdir(parents=True, exist_ok=True)
+            shutil.copy(path / '.claude/hooks/.gitignore', records / (path.name + '.hooks-ignore-spawned'))
+            self.assertEqual(self.git('status', '--porcelain', cwd=path), '')
+        path = self.worker('w1')
+        copied(path)
+        out = self.close('w1')
+        self.assertFalse(path.exists(), out)
+        self.assertIn('close_worker: w1: worktree removed through the audit', out)
+        self.assertTrue((self.main / '.claude/hooks/guard.py').is_file())
+        path = self.worker('w2')
+        copied(path)
+        (path / 'notes.txt').write_text('not committed, no copy on main\n')
+        out = self.close('w2', code=1)
+        self.assertIn('close_worker: w2: worktree kept: ', out)
+        self.assertNotIn('.gitignore', out.rstrip('\n').split('\n')[-1])
+        self.assertEqual((path / '.claude/hooks/.gitignore').read_text(), SPAWN_IGNORE + '/.gitignore\n/guard.py\n')
+        self.assertEqual(self.git('status', '--porcelain', cwd=path), '?? notes.txt')
+
+    def test_an_ignore_file_the_worker_extended_keeps_the_worktree_and_its_rules(self):
+        # Codex review r1 (Critical): a spawn ignore file with the worker's own rules added still
+        # matched by its first line; it was set aside, the worktree removed and the copy deleted.
+        (self.main / '.claude/hooks').mkdir(parents=True)
+        (self.main / '.claude/hooks/guard.py').write_text('# the lead\'s untracked hook\n')
+        path = self.worker('w1')
+        (path / '.claude/hooks').mkdir(parents=True)
+        shutil.copy(self.main / '.claude/hooks/guard.py', path / '.claude/hooks/guard.py')
+        spawned = SPAWN_IGNORE + '/.gitignore\n/guard.py\n'
+        records = self.main / '.myagentkit/workers'
+        records.mkdir(parents=True)
+        (records / 'w1.hooks-ignore-spawned').write_text(spawned)
+        extended = spawned + '/local-notes.txt\n'
+        (path / '.claude/hooks/.gitignore').write_text(extended)
+        out = self.close('w1', code=1)
+        self.assertIn('close_worker: w1: worktree kept: ', out)
+        self.assertEqual((path / '.claude/hooks/.gitignore').read_text(), extended, out)
+        self.assertFalse((records / 'w1.hooks-ignore').exists())
 
     def hooked(self):
         """main with the kit's post-merge hook and the overlay's scripts, as bootstrap installs them."""

@@ -20,6 +20,12 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_close_worker import HOLD_WINDOWS as HOLD, PS, SCRIPT  # noqa: E402
 
+# Run inside a worker, the suite inherits its supervisor's KIT_WORKER_* settings: the tab case's
+# supervisor took the worker's KIT_WORKER_EXIT, failed on its held .live record and wrote "failed
+# to start" into the running worker's exit record (urfix-worker, 2026-10-17, as test_codex_worker).
+for _name in [n for n in os.environ if n.startswith('KIT_WORKER_')]:
+    del os.environ[_name]
+
 WINDOWS = os.name == 'nt'
 
 

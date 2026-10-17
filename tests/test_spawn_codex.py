@@ -734,6 +734,67 @@ if args[0] != 'resume':
         result = self.spawn(*args, '--result', 'docs/result.md')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_a_spawn_that_fails_after_its_worktree_and_before_its_launch_leaves_neither(self):
+        # Ultrareview part 5 #8: a spawn that died after `git worktree add` (here: no terminal to
+        # open the tab in) left the worktree locked and its branch behind for good.
+        args = ('w21', str(self.brief), '--model', 'm', '--effort', 'high', '--worktree')
+        terminal = self.bin / 'wt-tab'
+        terminal.rename(self.tmp / 'wt-tab')  # spawn() names it: gone from PATH, no tab opens
+        result = self.spawn(*args)
+        (self.tmp / 'wt-tab').rename(terminal)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('is not on PATH', result.stderr)
+        self.assertIn('removed the unused worktree', result.stderr)
+        self.assertFalse((self.repo / '.claude/worktrees/w21').exists())
+        branch = subprocess.run(['git', 'show-ref', '--verify', '--quiet', 'refs/heads/worktree-w21'], cwd=self.repo)
+        self.assertNotEqual(branch.returncode, 0)
+        self.assertEqual(self.runs(), [])
+        result = self.spawn(*args)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_a_spawn_that_loses_the_race_for_its_name_leaves_the_other_spawns_worktree(self):
+        # Codex review r2 (Critical): another spawn of the same name made the worktree between the
+        # last absence check and `git worktree add`; this spawn's cleanup removed it.
+        extra = test_spawn_worker.racing_git(self.bin)
+        result = self.spawn('w24', str(self.brief), '--model', 'm', '--effort', 'high', '--worktree', **extra)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        tree = self.repo / '.claude/worktrees/w24'
+        self.assertEqual((tree / 'other-session.txt').read_text().strip(), 'other session', result.stderr)
+        branch = subprocess.run(['git', 'show-ref', '--verify', '--quiet', 'refs/heads/worktree-w24'], cwd=self.repo)
+        self.assertEqual(branch.returncode, 0)
+        self.assertNotIn('removed the unused worktree', result.stderr)
+        self.assertEqual(self.runs(), [])
+
+    def test_a_spawn_whose_worktree_add_fails_after_making_it_leaves_neither(self):
+        # Codex review r1 (High): a failing post-checkout hook makes `git worktree add` exit non-zero
+        # with the worktree and branch already made.
+        hook = self.repo / '.git/hooks/post-checkout'
+        hook.parent.mkdir(parents=True, exist_ok=True)
+        hook.write_text(test_spawn_worker.FAILING_POST_CHECKOUT, newline='\n')
+        hook.chmod(0o755)
+        args = ('w22', str(self.brief), '--model', 'm', '--effort', 'high', '--worktree')
+        result = self.spawn(*args)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('git worktree add failed', result.stderr)
+        self.assertFalse((self.repo / '.claude/worktrees/w22').exists(), result.stderr)
+        branch = subprocess.run(['git', 'show-ref', '--verify', '--quiet', 'refs/heads/worktree-w22'], cwd=self.repo)
+        self.assertNotEqual(branch.returncode, 0)
+        self.assertEqual(self.runs(), [])
+        hook.unlink()
+        result = self.spawn(*args)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_a_tmux_session_that_ran_and_ended_at_once_keeps_its_worktree(self):
+        # Codex review r1 (Critical): a session that started and ended before the has-session check
+        # left the launch unmarked, and the cleanup force-removed a worktree a session wrote into.
+        (self.bin / 'tmux').write_text(test_spawn_worker.GONE_AT_ONCE, newline='\n')
+        result = self.spawn('w23', str(self.brief), '--model', 'm', '--effort', 'high', '--worktree', tmux=True)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        tree = self.repo / '.claude/worktrees/w23'
+        self.assertEqual((tree / 'made-by-session.txt').read_text(), 'session output\n', result.stderr)
+        branch = subprocess.run(['git', 'show-ref', '--verify', '--quiet', 'refs/heads/worktree-w23'], cwd=self.repo)
+        self.assertEqual(branch.returncode, 0)
+
     def test_close_without_worktree_keeps_a_live_codex_workers_record(self):
         result = self.spawn('w21', str(self.brief), '--model', 'm', '--effort', 'high')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

@@ -11,7 +11,9 @@
 # reads in place of a pane. Worktree workers get these hooks on either platform, and their
 # --settings also carries project settings absent from their checkout. The result file
 # stays the done signal (owner decision 23, 2026-10-16).
-# Copied project hook files enter Git's info/exclude by exact path, keeping result reports clean.
+# Copied project hook files are listed, by exact path, in a .claude/hooks/.gitignore of the
+# worktree that ignores itself too, keeping result reports clean; never in info/exclude, which a
+# linked worktree shares with the main checkout (it hid the lead's own untracked hooks there).
 # Worker names use letters, digits, - and _, not starting with -. The longest generated
 # filename (NAME.state.XXXXXXXX) must fit in 255 bytes; on native Windows its full path
 # must fit in 259 characters too, including the checkout's .myagentkit/workers folder.
@@ -36,7 +38,7 @@
 # --result FILE names the result the brief asks for (relative: to the worker's folder), else
 # RESULT-NAME.md there. codex_worker.py supervises the session, as it does spawn_codex.sh's: a
 # result published with its header (Kind/Task/Attempt/Remaining) and end marker as Kind:
-# completed, or a decision published to QUESTION-NAME.md there, ends the session 10 s later,
+# completed or Kind: handoff, or a decision published to QUESTION-NAME.md there, ends the session 10 s later,
 # once no commit (index.lock) or gate (check.sh's check.lock) runs in its checkout, and its tab
 # or tmux session ends with it (owner 2026-10-16: finished worker tabs stayed open for hours). A progress result or a free-form file ends nothing. The path is recorded in
 # .myagentkit/workers/NAME.result-path, which close_worker.sh --finished reads after a merge.
@@ -103,7 +105,14 @@ set -eu
 
 # Every message is printed with its control bytes as `?`: a value echoed raw (an unknown
 # option, a --settings value) put ESC sequences on the lead's terminal.
-die() { { printf 'spawn_worker: %s' "$1" | LC_ALL=C tr '\001-\037\177' '?'; echo; } >&2; exit 1; }
+die() { { printf 'spawn_worker: %s' "$1" | LC_ALL=C tr '\001-\037\177' '?'; echo; } >&2; stranded; exit 1; }
+# A spawn that fails once its session was started leaves the worktree to that session, which may
+# still run there (a tab waiting on Enter, a slow start, a dialog): the lead is told how to
+# remove it, as the audit keeps a worktree no worker committed in. Before that, cleanup removes it.
+stranded() {
+  [ -n "${made:-}" ] && [ -n "${launched:-}" ] || return 0
+  printf '%s\n' "spawn_worker: the worktree $dir stays (locked: kit worker $name) while its session may run; once it has ended, run scripts/close_worker.sh $name, and if no work was done in it: git worktree remove --force $(q "$dir") && git branch -D worktree-$name" >&2
+}
 # Quote one value for a POSIX shell: wrap it in '...' and write each ' inside as '\''.
 # The x keeps a trailing newline that $(...) would strip.
 q() { set -- "$(printf '%sx' "$1" | sed "s/'/'\\\\''/g")"; printf "'%s'" "${1%x}"; }
@@ -175,15 +184,35 @@ ctl "result path" "$result"
 
 [ -n "$windows" ] || ! tmux has-session -t "=$name" 2>/dev/null || die "tmux session '$name' already exists"
 
-run=""; launch_pending=""; cleaned=""
+run=""; launch_pending=""; cleaned=""; made=""; launched=""; base=""
 cleanup() {
   [ -z "$cleaned" ] || return 0
   cleaned=1
   trap - EXIT HUP INT TERM
   # A signal may arrive before new-session returns. Only a confirmed session owns the script.
   # The session can end between this check and handoff; its pane removes the script itself.
-  if [ -n "$launch_pending" ] && tmux has-session -t "=$name" 2>/dev/null; then run=""; fi
+  if [ -n "$launch_pending" ] && tmux has-session -t "=$name" 2>/dev/null; then run=""; launched=1; fi
   [ -z "$run" ] || rm -f -- "$run" || :
+  # A spawn that stops after making its worktree and before any session runs in it removes the
+  # worktree and its branch: the audit keeps a locked worktree, and one no worker committed in,
+  # for good, and the branch blocked the name (ultrareview part 5 #8). The branch goes only while
+  # it is still the commit it was made at (update-ref's old-value check).
+  if [ -n "$made" ] && [ -z "$launched" ] &&
+     { [ -e "$dir" ] || git show-ref --verify --quiet "refs/heads/worktree-$name"; }; then
+    # The branch goes only with the worktree this add registered; an add that registered none
+    # leaves the empty folder it claimed, removed, and a branch someone else may have made, kept.
+    if git worktree remove -f -f "$dir" >/dev/null 2>&1; then
+      if git update-ref -d "refs/heads/worktree-$name" "$base" 2>/dev/null; then
+        printf '%s\n' "spawn_worker: removed the unused worktree $dir and its branch worktree-$name; the name is free again" >&2
+      else
+        printf '%s\n' "spawn_worker: removed the unused worktree $dir; its branch worktree-$name moved or is gone, so it is kept" >&2
+      fi
+    elif rmdir -- "$dir" 2>/dev/null; then
+      printf '%s\n' "spawn_worker: removed the empty folder $dir it claimed; a branch worktree-$name, if any, is not this spawn's to delete" >&2
+    else
+      printf '%s\n' "spawn_worker: could not remove the unused worktree $dir; remove it by hand: git worktree remove --force --force $(q "$dir"); git branch -D worktree-$name" >&2
+    fi
+  fi
 }
 trap 'cleanup' 0
 trap 'trap - 0; cleanup; exit 129' HUP
@@ -309,6 +338,8 @@ if [ -n "$worktree" ]; then
     [ ! -e "$dir" ] || die "worktree path already exists: $dir"
   fi
 fi
+# The first line of the ignore file for copied hooks (close_worker.sh compares it).
+hooks_mark="# spawn_worker.sh: hook files copied from the lead's checkout; close_worker.sh sets this file aside"
 prepare_worktree() {
   [ -n "$worktree" ] || return 0
   # Settings have been validated before a locked worktree or branch is created.
@@ -318,7 +349,17 @@ prepare_worktree() {
   # second check for worktrees no kit script locked. `add --lock --reason` needs git 2.33
   # (its release notes); the audit already needs 2.36.
   if [ -z "$resume" ]; then
-    git worktree add -q --lock --reason "kit worker $name" "$dir" -b "worktree-$name" HEAD >&2 ||
+    base=$(git rev-parse --verify -q HEAD) || die "--worktree needs a commit to start from"
+    # The folder is claimed before the add: mkdir without -p fails when it exists, so of two
+    # spawns of one name only one gets it, and only that one may remove anything (Codex r2: a
+    # spawn that lost the race removed the winner's worktree). `git worktree add` takes the empty
+    # folder. A failing post-checkout hook makes the add exit non-zero with both made: cleanup.
+    ! git show-ref --verify --quiet "refs/heads/worktree-$name" ||
+      die "the branch worktree-$name appeared before this spawn made it; nothing was changed"
+    mkdir -p -- "${dir%/*}" && mkdir -- "$dir" 2>/dev/null ||
+      die "the folder $dir exists: another spawn of '$name' claimed it; nothing was changed"
+    made=1
+    git worktree add -q --lock --reason "kit worker $name" "$dir" -b "worktree-$name" "$base" >&2 ||
       die "git worktree add failed: $dir"
   # A resumed worker is locked again: a close lifted the lock, and the audit must not remove the
   # worktree under the new run. A lock someone else set stays as it is.
@@ -329,24 +370,34 @@ prepare_worktree() {
   # Untracked kit installs carry settings and hooks together. Fill missing hook files,
   # preserving the committed versions already present in the worker's checkout.
   if [ -d "${project_settings%/*}/hooks" ]; then
-    $kit_python -I -c 'import os, shutil, subprocess, sys
+    # The copies are ignored by a .claude/hooks/.gitignore that lists them and itself, written
+    # only where the worktree has none (a tracked or copied one stays as it is, and the copies
+    # then show as untracked). Its exact bytes are recorded in NAME.hooks-ignore-spawned:
+    # close_worker.sh sets it aside for the audit only while it is still byte for byte that.
+    $kit_python -I -c 'import os, shutil, sys
 from pathlib import Path
-root = Path(sys.argv[2]).parents[1]
+hooks = Path(sys.argv[2])
 copied = []
 def missing(source, destination):
     if not os.path.lexists(destination):
         shutil.copy2(source, destination)
-        copied.append(Path(destination).relative_to(root).as_posix())
+        copied.append(Path(destination).relative_to(hooks).as_posix())
 shutil.copytree(sys.argv[1], sys.argv[2], dirs_exist_ok=True, copy_function=missing)
-if copied:
-    exclude = Path(subprocess.check_output(["git", "-C", str(root), "rev-parse",
-                   "--path-format=absolute", "--git-path", "info/exclude"], encoding="utf-8").strip())
-    exclude.parent.mkdir(parents=True, exist_ok=True)
-    with exclude.open("a", encoding="utf-8", newline="\n") as stream:
-        for name in copied:
-            pattern = "".join("\\" + ch if ch in "\\*?[ " else ch for ch in name)
-            stream.write("\n/" + pattern + "\n")' \
-      "${project_settings%/*}/hooks" "$dir/.claude/hooks" || die "cannot carry project hooks into $dir"
+ignore, record = hooks / ".gitignore", Path(sys.argv[4])
+if not sys.argv[5] and os.path.lexists(record):
+    record.unlink()  # a fresh spawn: an earlier run of the name left it; a resume keeps its own
+if copied and not os.path.lexists(ignore):
+    text = sys.argv[3] + "\n/.gitignore\n" + "".join(
+        "/" + "".join("\\" + ch if ch in "\\*?[ " else ch for ch in name) + "\n" for name in copied)
+    with ignore.open("x", encoding="utf-8", newline="\n") as stream:
+        stream.write(text)
+    record.parent.mkdir(parents=True, exist_ok=True)
+    with record.open("x", encoding="utf-8", newline="\n") as stream:
+        stream.write(text)
+elif copied:
+    print("spawn_worker: the worktree has its own .claude/hooks/.gitignore; the hook files copied into it show as untracked there", file=sys.stderr)' \
+      "${project_settings%/*}/hooks" "$dir/.claude/hooks" "$hooks_mark" "$wdir/$name.hooks-ignore-spawned" "$resume" ||
+      die "cannot carry project hooks into $dir"
   fi
 }
 
@@ -578,8 +629,10 @@ if [ -n "$windows" ]; then
   printf '%s\n' 'rm -f -- "$0"' "cd $(q "$dir") || exit 1" \
     "t=\$(date +%s); $tab_cmd; s=\$?; grep -q ' published at ' \"\$0.exit\" 2>/dev/null || [ \$((\$(date +%s) - t)) -gt 10 ] || { echo \"claude ended at once (exit \$s); press Enter to close\"; read -r _; }" \
     'rm -f -- "$0.exit" "$0.live"' 'exit 0' > "$tab" || die "cannot write the tab's script: $tab"
+  # From here a session may run in the worktree: a failure leaves it there (stranded above).
+  launched=1
   "$wt" -w 0 new-tab --title "$(semi "$name")" "$(semi "$bash")" -l "$(semi "$(cygpath -w "$tab")")" ||
-    { rm -f -- "$tab"; die "$wt could not open a tab for '$name'"; }
+    { launched=""; rm -f -- "$tab"; die "$wt could not open a tab for '$name'"; }
   # The lead can message a worker and hear when it stops (SendMessage notify_when_idle) only
   # when Claude Code registers it as a peer: sessions/<pid>.json in its config folder. A tab
   # that inherited the lead's child-session markers was not registered (2026-10-08; the tab's
@@ -629,9 +682,12 @@ record_result
 printf '%s\n' 'rm -f -- "$0"' "cd $(q "$dir") && exec $unmark $supervise sh -c $(q "exec $cmd")" > "$run" || { rm -f -- "$run"; die "cannot write the session's script: $run"; }
 # Keep ownership pending until tmux confirms the session, including in signal cleanup.
 launch_pending=1
+# Marked before the session can start, and never cleared: a session that ran and ended before the
+# check below may have written into the worktree, which then stays (stranded above).
+launched=1
 tmux new-session -d -s "$name" -c "$dir" -x 200 -y 50 "sh $run" || { launch_pending=""; die "tmux could not start '$name'"; }
 tmux has-session -t "=$name" 2>/dev/null || { launch_pending=""; die "tmux could not start '$name'"; }
-run=""; launch_pending=""
+run=""; launch_pending=""; launched=1
 
 # Wait for the input line: the TUI shows its prompt arrow at the start of a line once ready
 # (v2.1.285 follows the arrow with a NO-BREAK space, so the match is on the arrow alone)

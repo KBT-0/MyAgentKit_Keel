@@ -214,6 +214,49 @@ PRELAUNCH_TERM = '#!/bin/sh\nkill -TERM "$(cat "$SPAWN_STATE/launcher.pid")"\n/b
 FAIL_THEN_INT = '#!/bin/sh\n[ "$1" = new-session ] || exit 1\nkill -INT "$(cat "$SPAWN_STATE/launcher.pid")"\nkill -INT "$$"\nexit 1\n'
 
 
+# A tmux whose session ran (it wrote a file in its folder) and ended before any has-session.
+GONE_AT_ONCE = r'''#!/usr/bin/env python3
+import os, subprocess, sys
+args = sys.argv[1:]
+if args[0] != 'new-session':
+    sys.exit("can't find session: gone")
+folder = args[args.index('-c') + 1]
+if os.name == 'nt':
+    folder = subprocess.run(['cygpath', '-m', folder], capture_output=True, text=True, check=True).stdout.rstrip('\n')
+with open(os.path.join(folder, 'made-by-session.txt'), 'w') as f:
+    f.write('session output\n')
+'''
+# A post-checkout hook that fails: `git worktree add` then exits non-zero with the worktree made.
+FAILING_POST_CHECKOUT = '#!/bin/sh\nexit 1\n'
+
+
+# A git on PATH that runs the real one (REAL_GIT) and, right after the spawn's second answer
+# that the branch worktree-NAME is absent (its last check before the add), makes another spawn's
+# worktree of that name as a spawn does (it claims the folder, adds it, its session writes there).
+RACING_GIT = r'''#!/bin/sh
+"$REAL_GIT" "$@"; rc=$?
+case "$*" in
+  "show-ref --verify --quiet refs/heads/worktree-"*)
+    n=$(cat "$SPAWN_STATE/show-ref-count" 2>/dev/null || echo 0); n=$((n + 1))
+    echo "$n" > "$SPAWN_STATE/show-ref-count"
+    if [ "$n" -eq 2 ]; then
+      name=${4#refs/heads/worktree-}
+      d=$("$REAL_GIT" rev-parse --show-toplevel)/.claude/worktrees/$name
+      mkdir -p "${d%/*}" && mkdir "$d" && "$REAL_GIT" worktree add -q "$d" -b "worktree-$name" HEAD >/dev/null 2>&1 &&
+        echo 'other session' > "$d/other-session.txt"
+    fi ;;
+esac
+exit $rc
+'''
+
+
+def racing_git(bin_dir):
+    # The racing git stub, and the environment it needs.
+    (bin_dir / 'git').write_text(RACING_GIT, newline='\n')
+    (bin_dir / 'git').chmod(0o755)
+    return {'REAL_GIT': shutil.which('git').replace('\\', '/')}
+
+
 def run_with_launcher_pid(shell, script, args, **kwargs):
     # $$ is the launcher's shell pid even when the signaller runs in a command substitution.
     return subprocess.run([shell, '-c', 'printf "%s\\n" "$$" > "$SPAWN_STATE/launcher.pid"; . "$0"',
@@ -259,6 +302,12 @@ ON_WINDOWS.update({'test_copied_hooks_allow_done_without_hiding_other_changes',
                    'test_worktree_inherits_untracked_hooks_and_bom_settings',
                    'test_worktree_accepts_absolute_windows_settings',
                    'test_bad_settings_leave_no_worktree_or_branch',
+                   'test_copied_hooks_never_hide_the_leads_own_files',
+                   'test_a_spawn_that_fails_before_its_launch_leaves_no_worktree_or_branch',
+                   'test_a_spawn_that_fails_after_its_launch_keeps_the_worktree_and_says_how_to_remove_it',
+                   'test_a_spawn_whose_worktree_add_fails_after_making_it_leaves_neither',
+                   'test_a_spawn_that_loses_the_race_for_its_name_leaves_the_other_spawns_worktree',
+                   'test_a_tmux_session_that_ran_and_ended_at_once_keeps_its_worktree',
                    'test_plain_tmux_spawn_clears_stale_state_before_readiness'})
 
 
@@ -1094,6 +1143,27 @@ exit 0
         self.assertIn('DONE: w1', watch(), git('status', '--porcelain'))
         self.assertEqual(git('status', '--porcelain'), '')
 
+    def test_copied_hooks_never_hide_the_leads_own_files(self):
+        # Fable final review 1: the copies were listed in info/exclude, which a linked worktree
+        # shares with the main checkout, so the lead's own untracked hooks were ignored there
+        # (git status, add -A and the gate's file list skipped them), one more entry per spawn.
+        self.worktree_hooks(tracked=False, hooks_tracked=False)
+        main = lambda *a: subprocess.run(['git', *a], cwd=self.cwd, capture_output=True, text=True)
+        common = Path(main('rev-parse', '--path-format=absolute', '--git-common-dir').stdout.strip())
+        exclude = common / 'info/exclude'
+        self.assertNotIn('.claude/hooks', exclude.read_text() if exclude.exists() else '')
+        self.assertNotEqual(main('check-ignore', '-q', '.claude/hooks/context_size.py').returncode, 0,
+                            'the lead\'s own hook is ignored in the main checkout')
+        self.assertIn('?? .claude/hooks/context_size.py',
+                      main('status', '--porcelain', '--untracked-files=all').stdout)
+        # The worker's own checkout still shows nothing it did not make.
+        tree = self.cwd / '.claude/worktrees/w1'
+        # What spawn wrote is recorded beside it: close_worker.sh sets aside only that exact file.
+        self.assertEqual((self.cwd / '.myagentkit/workers/w1.hooks-ignore-spawned').read_bytes(),
+                         (tree / '.claude/hooks/.gitignore').read_bytes())
+        self.assertEqual(subprocess.run(['git', 'status', '--porcelain'], cwd=tree, capture_output=True,
+                                        text=True).stdout, '')
+
     @unittest.skipUnless(WINDOWS, 'Windows drive-letter path syntax')
     def test_worktree_accepts_backslash_windows_settings(self):
         self.worktree_hooks(tracked=False, absolute='backslash')
@@ -1502,6 +1572,106 @@ exit 0
                 gitdir = git('-C', str(self.cwd / '.claude/worktrees' / name), 'rev-parse', '--absolute-git-dir')
                 self.assertEqual(Path(gitdir, 'locked').read_text().rstrip('\n'), 'kit worker ' + name)
 
+    def native_checkout(self, sessions=True):
+        # The native Windows path on any host, in a fresh repository; SESSIONS: the lister
+        # reports the worker's claude once it ran, else never.
+        ps = ('#!/bin/sh\n[ ! -f "$SPAWN_STATE/claude.json" ] || printf "8 claude.exe -n fw\\r\\n"\n'
+              if sessions else '#!/bin/sh\nexit 0\n')
+        for name, body in (('uname', '#!/bin/sh\necho MINGW64_NT-10.0-26200\n'), ('cygpath', CYGPATH),
+                           ('wt-tab', WT_TAB), ('ps-stub', ps)):
+            if WINDOWS and name == 'cygpath':
+                continue
+            (self.bin / name).write_text(body)
+            (self.bin / name).chmod(0o755)
+        git = lambda *a: subprocess.run(['git', *a], cwd=self.cwd, capture_output=True, text=True)
+        git('init', '-q')
+        git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'a')
+        return git
+
+    def test_a_spawn_that_fails_before_its_launch_leaves_no_worktree_or_branch(self):
+        # Ultrareview part 5 #8: a spawn that died after `git worktree add` left the worktree
+        # locked and its branch behind. The audit never removes a locked worktree, nor one no
+        # worker committed in, and the name could not be spawned again.
+        git = self.native_checkout()
+        tree = self.cwd / '.claude/worktrees/fw'
+        failed = self.spawn('fw', str(self.brief), '--worktree', KIT_WT=str(self.bin / 'no-such-terminal'),
+                            KIT_PS=str(self.bin / 'ps-stub'))
+        self.assertEqual(failed.returncode, 1, failed.stdout + failed.stderr)
+        self.assertIn('is not on PATH', failed.stderr)
+        self.assertIn('removed the unused worktree', failed.stderr)
+        self.assertFalse(tree.exists(), failed.stderr)
+        self.assertNotEqual(git('show-ref', '--verify', '--quiet', 'refs/heads/worktree-fw').returncode, 0)
+        self.assertNotIn('worktrees/fw', git('worktree', 'list', '--porcelain').stdout)
+        again = self.spawn('fw', str(self.brief), '--worktree', KIT_WT=str(self.bin / 'wt-tab'),
+                           KIT_PS=str(self.bin / 'ps-stub'))
+        self.assertEqual(again.returncode, 0, again.stdout + again.stderr)
+        self.assertTrue(tree.is_dir())
+
+    def test_a_spawn_that_loses_the_race_for_its_name_leaves_the_other_spawns_worktree(self):
+        # Codex review r2 (Critical): another spawn of the same name made the worktree between the
+        # last absence check and `git worktree add`; this add failed, and its cleanup removed the
+        # other spawn's worktree, files and branch. The folder is claimed by mkdir before the add.
+        git = self.native_checkout()
+        extra = racing_git(self.bin)
+        result = self.spawn('fw', str(self.brief), '--worktree', KIT_WT=str(self.bin / 'wt-tab'),
+                            KIT_PS=str(self.bin / 'ps-stub'), **extra)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        tree = self.cwd / '.claude/worktrees/fw'
+        self.assertEqual((tree / 'other-session.txt').read_text().strip(), 'other session', result.stderr)
+        self.assertEqual(git('show-ref', '--verify', '--quiet', 'refs/heads/worktree-fw').returncode, 0)
+        self.assertNotIn('removed the unused worktree', result.stderr)
+        self.assertIsNone(self.launched())
+
+    def test_a_spawn_whose_worktree_add_fails_after_making_it_leaves_neither(self):
+        # Codex review r1 (High): a failing post-checkout hook makes `git worktree add` exit non-zero
+        # with the worktree and branch already made; nothing removed them and the name was taken.
+        git = self.native_checkout()
+        hook = Path(git('rev-parse', '--path-format=absolute', '--git-path', 'hooks').stdout.strip()) / 'post-checkout'
+        hook.parent.mkdir(parents=True, exist_ok=True)
+        hook.write_text(FAILING_POST_CHECKOUT, newline='\n')
+        hook.chmod(0o755)
+        tree = self.cwd / '.claude/worktrees/fw'
+        failed = self.spawn('fw', str(self.brief), '--worktree', KIT_WT=str(self.bin / 'wt-tab'),
+                            KIT_PS=str(self.bin / 'ps-stub'))
+        self.assertEqual(failed.returncode, 1, failed.stdout + failed.stderr)
+        self.assertIn('git worktree add failed', failed.stderr)
+        self.assertFalse(tree.exists(), failed.stderr)
+        self.assertNotEqual(git('show-ref', '--verify', '--quiet', 'refs/heads/worktree-fw').returncode, 0)
+        self.assertIsNone(self.launched())
+        hook.unlink()
+        again = self.spawn('fw', str(self.brief), '--worktree', KIT_WT=str(self.bin / 'wt-tab'),
+                           KIT_PS=str(self.bin / 'ps-stub'))
+        self.assertEqual(again.returncode, 0, again.stdout + again.stderr)
+
+    def test_a_tmux_session_that_ran_and_ended_at_once_keeps_its_worktree(self):
+        # Codex review r1 (Critical): a session that started and ended before the has-session check
+        # left the launch unmarked, and the cleanup force-removed a worktree a session wrote into.
+        self.tmux_checkout()
+        (self.bin / 'tmux').write_text(GONE_AT_ONCE, newline='\n')
+        with safe_tmux_scratch() as scratch:
+            result = self.spawn('w1', str(self.brief), '--worktree', TMPDIR=scratch)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        tree = self.cwd / '.claude/worktrees/w1'
+        self.assertEqual((tree / 'made-by-session.txt').read_text(), 'session output\n', result.stderr)
+        branch = subprocess.run(['git', 'show-ref', '--verify', '--quiet', 'refs/heads/worktree-w1'], cwd=self.cwd)
+        self.assertEqual(branch.returncode, 0)
+        self.assertIn('git worktree remove --force', result.stderr)
+
+    def test_a_spawn_that_fails_after_its_launch_keeps_the_worktree_and_says_how_to_remove_it(self):
+        # Its session may still run there (a tab waiting on Enter, a slow start): never removed
+        # under it, but the lead is told how, since the audit keeps a worktree nobody worked in.
+        git = self.native_checkout(sessions=False)
+        tree = self.cwd / '.claude/worktrees/fw'
+        failed = self.spawn('fw', str(self.brief), '--worktree', KIT_WT=str(self.bin / 'wt-tab'),
+                            KIT_PS=str(self.bin / 'ps-stub'))
+        self.assertEqual(failed.returncode, 1, failed.stdout + failed.stderr)
+        self.assertIn('started within 30 s', failed.stderr)
+        self.assertTrue(tree.is_dir())
+        self.assertEqual(git('show-ref', '--verify', '--quiet', 'refs/heads/worktree-fw').returncode, 0)
+        self.assertIn('scripts/close_worker.sh fw', failed.stderr)
+        self.assertIn('git worktree remove --force', failed.stderr)
+        self.assertIn('git branch -D worktree-fw', failed.stderr)
+
     def test_a_worker_is_resumed_through_the_kit_under_its_name(self):
         # 2026-10-16: the lead resumed a worker by hand (`wt -w 0 nt ... claude --resume ID`); that tab
         # had no name, nothing could close it, and the lead ended it with Stop-Process. Resumed
@@ -1683,6 +1853,41 @@ class WorkerStateHookTests(unittest.TestCase):
             pane_file.write_text('No status window figure\n', encoding='utf-8')
             self.assertEqual(watch(310000, '--context-warn', '10%'), '')
             self.assertIn('CONTEXT:', watch(310000, '--context-warn', '300k'))
+
+    def test_the_watcher_keeps_the_default_line_when_the_hook_cannot_answer(self):
+        # Ultrareview part 7 #1: a project's v0.10 context_size.py (sync never updates it) cannot
+        # answer --line, and with no Python nothing can: the watcher died, and with it every tmux
+        # spawn before its brief was typed. It keeps the built-in 200k line instead.
+        old_hook = 'import json, sys\ntry:\n    json.load(sys.stdin)\nexcept Exception:\n    pass\n'
+        no_python = '#!/bin/sh\nprintf "%s\\n" "no Python found" >&2\nexit 1\n'
+        for case, hook, launcher in (('old hook', old_hook, None), ('no Python', None, no_python)):
+            with self.subTest(case=case), tempfile.TemporaryDirectory(prefix='old-hook-') as tmp:
+                repo = Path(tmp)
+                subprocess.run(['git', 'init', '-q'], cwd=repo, check=True, capture_output=True)
+                scripts, hooks, bin_dir = repo / 'kit/scripts', repo / 'kit/.claude/hooks', repo / 'bin'
+                for folder in (scripts, hooks, bin_dir):
+                    folder.mkdir(parents=True)
+                for name in ('watch_workers.sh', 'waiting_patterns.txt'):
+                    shutil.copyfile(SCRIPT.with_name(name), scripts / name)
+                (hooks / 'py.sh').write_text(launcher or (SCRIPT.parent.parent / '.claude/hooks/py.sh').read_text(),
+                                             newline='\n')
+                if hook:
+                    (hooks / 'context_size.py').write_text(hook)
+                pane_file = repo / 'pane.txt'
+                pane_file.write_text((PANES / 'working-auto.txt').read_text(encoding='utf-8')
+                                     .replace('58k/1.0M', '250k/1.0M'), encoding='utf-8')
+                tmux = ('#!/bin/sh\ncase $1 in has-session|show-options|set-option) exit 0 ;; '
+                        'capture-pane) cat ' + shq(str(pane_file).replace('\\', '/')) + ' ;; *) exit 1 ;; esac\n')
+                for name, body in (('uname', '#!/bin/sh\necho Linux\n'), ('tmux', tmux),
+                                   ('python3', '#!/bin/sh\nexec ' + shq(sys.executable.replace('\\', '/')) + ' "$@"\n')):
+                    (bin_dir / name).write_text(body, newline='\n')
+                    (bin_dir / name).chmod(0o755)
+                env = dict(os.environ, PATH=str(bin_dir) + os.pathsep + os.environ['PATH'])
+                result = subprocess.run(['sh', str(scripts / 'watch_workers.sh'), '--once', 'w1'], cwd=repo, env=env,
+                                        stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn('CONTEXT: w1, 250k/1.0M', result.stdout)
+                self.assertIn('past its 200k warning line', result.stdout)
 
     def test_tmux_watcher_reports_the_hook_context_when_the_pane_is_below_the_band(self):
         with tempfile.TemporaryDirectory(prefix='tmux context ') as tmp:

@@ -18,6 +18,7 @@ READY = '<!-- codex-worker: ready -->'
 REFUSALS = 50  # consecutive Windows refusals of one path a poller waits through, about five seconds
 REFUSED = {}  # path: its consecutive refusals
 SETTLED = 60  # seconds a changed file sits unchanged before --wait calls it NOT A RESULT
+STALE_LOCK = 600  # seconds an index.lock sits unchanged, with no gate running, before it counts as left behind
 CHECKED = {}  # path: (id, size, mtime_ns) last read by not_a_result, and its verdict
 
 
@@ -292,8 +293,15 @@ def resume_windows(child):
         raise OSError('cannot resume worker after job assignment')
 
 
+def child_env():
+    """The supervisor's own settings never reach the worker: a codex_worker.py the worker starts
+    (its test suite, a sub-worker) read KIT_WORKER_EXIT and wrote this run's exit record, and the
+    lead's --wait --exit returned while the worker worked on (followups.md, 2026-10-16 20:51)."""
+    return {k: v for k, v in os.environ.items() if not k.upper().startswith('KIT_WORKER_')}
+
+
 def windows_child(command):
-    child = subprocess.Popen(command, creationflags=0x4)  # CREATE_SUSPENDED
+    child = subprocess.Popen(command, creationflags=0x4, env=child_env())  # CREATE_SUSPENDED
     close = None
     try:
         close = windows_job(child)
@@ -351,7 +359,10 @@ def main():
             kind, published_id = result_kind(result, since, stale)
             if kind:
                 print('codex_worker: ' + kind + ': ' + str(result), flush=True)
-                if kind in ('PROGRESS', 'HANDOFF'):
+                if kind == 'HANDOFF':
+                    print('codex_worker: its session ends on a handoff; continue it in its own session with '
+                          '--resume (spawn_codex.sh or spawn_worker.sh), or start a fresh one from it', flush=True)
+                if kind == 'PROGRESS':
                     # The worker goes on. The same wait with this result as the stale one reports the
                     # next; --since stays the run's start, which the .live and .exit records are read by.
                     again = [Path(sys.executable).as_posix(), Path(sys.argv[0]).absolute().as_posix(),
@@ -441,7 +452,7 @@ def supervise():
         try:
             for sig in (signal.SIGTERM, signal.SIGHUP):
                 handlers[sig] = signal.signal(sig, terminate)
-            child = subprocess.Popen(command, preexec_fn=os.setpgrp)
+            child = subprocess.Popen(command, preexec_fn=os.setpgrp, env=child_env())
             def close_tree(force=False):
                 posix_tree(child.pid, force)
             supervising = True
@@ -531,11 +542,15 @@ def locks():
 def busy(paths):
     """Whether a git operation (index.lock) or a gate (check.sh holds check.lock) runs in the
     worker's checkout, by close_worker.sh's rules: ending the worker then orphans that run.
-    A lock that cannot be checked counts as held."""
+    A lock that cannot be checked counts as held. An index.lock unchanged for STALE_LOCK seconds
+    while no gate holds check.lock is one a killed git left behind: it is reported and no longer
+    waited on (ultrareview part 6 #5: the tab stayed open forever). A gate in a commit hook holds
+    check.lock, so it is waited on however long it runs. ponytail: another commit hook that runs
+    longer than STALE_LOCK without the gate is not waited on; raise STALE_LOCK if one does."""
+    index = None
     for path in paths:
         if path.name == 'index.lock':
-            if path.exists():
-                return True
+            index = path
             continue
         try:
             if os.name == 'nt':
@@ -548,6 +563,19 @@ def busy(paths):
             pass
         except OSError:
             return True
+    if index is None:
+        return False
+    try:
+        age = time.time() - index.stat().st_mtime
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
+    if age < STALE_LOCK:
+        return True
+    print('codex_worker: %s has not changed for %d min and no gate runs: a stale lock a killed git left '
+          'behind; the worker ends anyway. Remove it before the next git command there' % (index, age // 60),
+          flush=True)
     return False
 
 
@@ -568,8 +596,10 @@ def watch(child, question, close_tree, result=None, stale=None, answered=None):
             # a resumed session that took its answer from one that will fail without doing so.
             if answered is not None and kind:
                 answered = consume(question, answered)
-            # Only a decision or a completed result ends the worker: PROGRESS, HANDOFF and
-            # BLOCKED leave it working, and --wait alone reports them.
+            # A decision, a completed result or a handoff ends the worker: PROGRESS and BLOCKED
+            # leave it working, and --wait alone reports them. A handoff with only the lead's work
+            # left kept its tab open, and spawn_codex.sh refused --resume while it ran (followups.md,
+            # py311 Codex tab); its conversation stays resumable once the session ended.
             # The id first: the answered question is never opened, and a new one only after its id,
             # size or time changed, as a result: Windows refuses a rename over a file held open.
             identity = question_id(question)
@@ -578,7 +608,7 @@ def watch(child, question, close_tree, result=None, stale=None, answered=None):
                 asked = (None if text is None else identity), text or ''
             decision = identity != answered and asked[1]
             notice = 'decision' if decision else kind
-            notice = notice if notice in ('decision', 'DONE') else ''
+            notice = notice if notice in ('decision', 'DONE', 'HANDOFF') else ''
             if notice != noticed:
                 ready_at = time.monotonic() if notice else None
                 noticed = notice

@@ -225,8 +225,13 @@ classify() {
 context_label() {
   case $1 in *' context_tokens='*) tokens=${1##* context_tokens=} ;; *) return 0 ;; esac
   case $tokens in ''|*[!0-9]*) return 0 ;; esac
-  word=$(sh "$here/../.claude/hooks/py.sh" "$here/../.claude/hooks/context_size.py" --band "$tokens" 2>/dev/null) || word=""
+  word=$(sh "$here/../.claude/hooks/py.sh" "$here/../.claude/hooks/context_size.py" --band "$tokens" </dev/null 2>/dev/null) || word=""
   printf '; context %s tokens%s' "$tokens" "${word:+, $word}"
+}
+# level_of LABEL FLOOR: the band level of a context label (2 yellow, 3 red, 4 ceiling), else
+# FLOOR. One definition for the snapshot's eligibility and the once-per-level marker.
+level_of() {
+  case $1 in *', yellow') level=2 ;; *', red') level=3 ;; *', ceiling') level=4 ;; *) level=$2 ;; esac
 }
 pane_context() {
   [ -f "$wdir/$1.state" ] || return 0
@@ -389,8 +394,12 @@ tab() {
 # 2 when the report could not be written (and no marker is queued).
 context() {
   if [ -z "$warn_abs" ]; then
-    warn_abs=$(sh "$here/../.claude/hooks/py.sh" "$here/../.claude/hooks/context_size.py" --line 2>/dev/null) || warn_abs=""
-    case $warn_abs in ''|*[!0-9]*) die "cannot read the context warning threshold from context_size.py" ;; esac
+    # A project's older context_size.py (it has no KIT-OWNED line, so sync keeps it) cannot
+    # answer --line, and with no Python nothing can: the built-in 200k line, never a stop (the
+    # watcher died, and every tmux spawn with it; ultrareview part 7 #1). stdin is closed: the
+    # older hook reads its JSON payload there and waited on a terminal.
+    warn_abs=$(sh "$here/../.claude/hooks/py.sh" "$here/../.claude/hooks/context_size.py" --line </dev/null 2>/dev/null) || warn_abs=""
+    case $warn_abs in ''|*[!0-9]*) warn_abs=200000 ;; esac
   fi
   fig=$(CTX_RE=$ctx_re LC_ALL=C awk -v abs="$warn_abs" -v pct="$warn_pct" '
     function num(s) { return substr(s, 1, length(s) - 1) * (s ~ /M$/ ? 1000000 : 1000) }
@@ -416,8 +425,7 @@ context() {
   case $tokens in ''|*[!0-9]*) ;;
     *)
       label=$(context_label "$snapshot")
-      level=0
-      case $label in *', yellow') level=2 ;; *', red') level=3 ;; *', ceiling') level=4 ;; esac
+      level_of "$label" 0
       eligible=""
       case $warn_set in
         abs|pct) if [ -n "${6:-}" ]; then
@@ -436,8 +444,7 @@ context() {
     label=$(context_label " context_tokens=$count")
   fi
   if [ -n "$source" ]; then
-    level=1
-    case $label in *', yellow') level=2 ;; *', red') level=3 ;; *', ceiling') level=4 ;; esac
+    level_of "$label" 1
     said=$(mark "$1" state-context)
     case $said in 1|2|3|4) [ "$said" -lt "$level" ] || return 1 ;; esac
     if [ "$source" = snapshot ]; then
