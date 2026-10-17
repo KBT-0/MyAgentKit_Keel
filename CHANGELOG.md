@@ -584,8 +584,9 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   through `MYAGENTKIT_BASH`; the prerequisite is checked even when no file needs it, scripts
   are decoded as UTF-8, and the version probe and the parser run in the C locale, so a
   translated version banner still satisfies the prerequisite and a syntax failure keeps bash's
-  own reason. The macOS CI job installs Homebrew bash before the gate. **ACTION:** a kit
-  checkout on macOS needs `brew install bash` before `scripts/check.sh` passes.
+  own reason. The case-lint test scans the kit's repository files, so stale copies in
+  worker worktrees no longer fail it. The macOS CI job installs Homebrew bash before the gate.
+  **ACTION:** a kit checkout on macOS needs `brew install bash` before `scripts/check.sh` passes.
 
 - **Review launch and cut-off guidance corrected** (`docs/WORKFLOW.md`, `docs/REVIEW_RUNNING.md`,
   `docs/GOTCHAS.md`, `docs/REVIEW_GATE.md`, `docs/HANDOFF.md`, `AGENTS.md`): reviewers start

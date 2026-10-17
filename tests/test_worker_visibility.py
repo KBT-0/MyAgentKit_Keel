@@ -928,10 +928,32 @@ class CaseLintTests(unittest.TestCase):
                     self.gate.check_syntax(Path(tmp))
 
     def test_every_kit_shell_script_passes_the_case_lint(self):
-        for path in sorted(ROOT.rglob('*.sh')):
-            if '.git' not in path.parts:
+        for path in self.gate.repository_files(ROOT):
+            if path.suffix.lower() == '.sh':
                 with self.subTest(path=path.relative_to(ROOT)):
-                    self.assertEqual(self.gate.case_in_substitution(path.read_text()), [])
+                    self.assertEqual(self.gate.case_in_substitution(path.read_text(encoding='utf-8')), [])
+
+    def test_case_lint_ignores_worker_copies_but_rejects_a_kit_script(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            subprocess.run(['git', 'init', '-q', str(root)], check=True)
+            (root / '.gitignore').write_text('.claude/worktrees/\n', encoding='utf-8')
+            kit = root / 'kit.sh'
+            kit.write_text('#!/bin/sh\necho clean\n', encoding='utf-8')
+            subprocess.run(['git', '-C', str(root), 'add', '.gitignore', 'kit.sh'], check=True)
+            worker = root / '.claude/worktrees/stale/core/scripts/check.sh'
+            worker.parent.mkdir(parents=True)
+            bad = '#!/bin/sh\nx=$(case x in x) echo stale;; esac)\n'
+            worker.write_text(bad, encoding='utf-8')
+            # Invoke the same scan without an active unittest outcome, so its assertion
+            # propagates to this test instead of being swallowed as a nested subtest.
+            scan = type(self)('test_every_kit_shell_script_passes_the_case_lint')
+            scan.gate = self.gate
+            with unittest.mock.patch.dict(globals(), ROOT=root):
+                scan.test_every_kit_shell_script_passes_the_case_lint()
+                kit.write_text(bad, encoding='utf-8')
+                with self.assertRaises(AssertionError):
+                    scan.test_every_kit_shell_script_passes_the_case_lint()
 
 
 class ContextTests(Base):

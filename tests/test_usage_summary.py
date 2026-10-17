@@ -200,16 +200,18 @@ class UsageSummaryTests(unittest.TestCase):
     def test_dispositions_are_credited_to_the_round_they_answer(self):
         # Round 2 carries the author's answers to round 1's findings: the counts belong to
         # round 1's configuration (opus/high), and the rate says it is the author's claim.
+        # The severity-first `- High: not a finding` is a fourth finding even under Manual
+        # checks: section names cannot hide marked findings (claude_bridge.review_parts).
         self.record('a', 'T', b'| effort | high |\nVERDICT: Reject\n\n## Findings\n\n- High x\n- **Low** y\n'
                     b'- a continuation bullet, no severity\n- low z\n\n## Manual checks\n\n- High: not a finding\n')
         self.record('b', 'T', b'| effort | medium |\nVERDICT: Accept\n\n## Findings\n\nNone.\n',
                     callee='codex', model='sol', duration=2000,
                     dispositions={'fixed': 1, 'disproved': 1, 'deferred': 1})
         out = self.summary()
-        self.assertIn('Task T: invocations=2 rounds=2 duration=3.000s rejects=1 findings=3 per_round=1.5 '
+        self.assertIn('Task T: invocations=2 rounds=2 duration=3.000s rejects=1 findings=4 per_round=2.0 '
                       'accepted=2/3 (0.67, author-claimed)', out)
         self.assertIn('Model opus / effort high: invocations=1 rounds=1 duration=1.000s rejects=1 '
-                      'findings=3 per_round=3.0 accepted=2/3 (0.67, author-claimed)', out)
+                      'findings=4 per_round=4.0 accepted=2/3 (0.67, author-claimed)', out)
         self.assertIn('Model sol / effort medium: invocations=1 rounds=1 duration=2.000s rejects=0 '
                       'findings=0 per_round=0.0 n=0 rated_rounds=0 wilson95=unknown decision=insufficient\n', out)
 
