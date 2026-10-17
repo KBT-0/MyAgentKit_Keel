@@ -117,7 +117,7 @@ mkdir -- "$spawn_lock" 2>/dev/null || { [ -n "$resume" ] && rm -- "$spawn_lock/$
   die "spawn in progress or an unrecorded launch at $spawn_lock; retry after it ends. An unrecorded launch has its worker's name inside: answer that worker with spawn_codex.sh NAME ANSWER_FILE ... --resume SESSION_ID, which records it and takes the reservation over; once its tab or tmux session has ended, or its id is written to NAME.session, release it: rm -r -- $(q "$spawn_lock")"
 spawn_owner=$spawn_lock/.owner-$$
 mkdir -- "$spawn_owner" || die "cannot mark the spawn reservation owner"
-spawn_launched=""; spawn_recorded=""; run=""; launch_pending=""; cleaned=""
+spawn_launched=""; spawn_recorded=""; run=""; launch_pending=""; cleaned=""; made=""; base=""
 cleanup() {
   [ -z "$cleaned" ] || return 0
   cleaned=1
@@ -128,6 +128,18 @@ cleanup() {
     run=""; spawn_launched=1
   fi
   [ -z "$run" ] || rm -f -- "$run" || :
+  # A spawn that stops after making its worktree and before any session runs in it removes the
+  # worktree and its branch, as spawn_worker.sh does (the audit keeps a locked or unworked worktree
+  # for good, and the branch blocked the name; ultrareview part 5 #8). The branch goes only while
+  # it is still the commit it was made at.
+  if [ -n "$made" ] && [ -z "$spawn_launched" ]; then
+    if git worktree remove -f -f "$dir" >/dev/null 2>&1 &&
+       git update-ref -d "refs/heads/worktree-$name" "$base" 2>/dev/null; then
+      printf '%s\n' "spawn_codex: removed the unused worktree $dir and its branch worktree-$name; the name is free again" >&2 || :
+    else
+      printf '%s\n' "spawn_codex: could not remove the unused worktree $dir; remove it by hand: git worktree remove --force --force $(q "$dir"); git branch -D worktree-$name" >&2 || :
+    fi
+  fi
   # Reservation cleanup must run even when unlinking the temporary script fails.
   # A replaced reservation belongs to another spawner. The owner directory avoids rm failures.
   [ -d "$spawn_owner" ] || return 0
@@ -212,8 +224,10 @@ fi
 printf '%s\n' "spawn_codex: about to run '$name': model $model, effort $effort"
 # Locked from spawn to close_worker.sh, as spawn_worker.sh locks its worktree (the reason there).
 if [ -n "$worktree" ] && [ -z "$resume" ]; then
-  git worktree add -q --lock --reason "kit worker $name" "$dir" -b "worktree-$name" HEAD >&2 ||
+  base=$(git rev-parse --verify -q HEAD) || die "--worktree needs a commit to start from"
+  git worktree add -q --lock --reason "kit worker $name" "$dir" -b "worktree-$name" "$base" >&2 ||
     die "git worktree add failed: $dir"
+  made=1
 fi
 
 # Codex is a native program on Windows: every path it is handed is Windows' own spelling.

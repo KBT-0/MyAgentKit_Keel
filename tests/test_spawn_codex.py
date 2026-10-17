@@ -734,6 +734,24 @@ if args[0] != 'resume':
         result = self.spawn(*args, '--result', 'docs/result.md')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_a_spawn_that_fails_after_its_worktree_and_before_its_launch_leaves_neither(self):
+        # Ultrareview part 5 #8: a spawn that died after `git worktree add` (here: no terminal to
+        # open the tab in) left the worktree locked and its branch behind for good.
+        args = ('w21', str(self.brief), '--model', 'm', '--effort', 'high', '--worktree')
+        terminal = self.bin / 'wt-tab'
+        terminal.rename(self.tmp / 'wt-tab')  # spawn() names it: gone from PATH, no tab opens
+        result = self.spawn(*args)
+        (self.tmp / 'wt-tab').rename(terminal)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('is not on PATH', result.stderr)
+        self.assertIn('removed the unused worktree', result.stderr)
+        self.assertFalse((self.repo / '.claude/worktrees/w21').exists())
+        branch = subprocess.run(['git', 'show-ref', '--verify', '--quiet', 'refs/heads/worktree-w21'], cwd=self.repo)
+        self.assertNotEqual(branch.returncode, 0)
+        self.assertEqual(self.runs(), [])
+        result = self.spawn(*args)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_close_without_worktree_keeps_a_live_codex_workers_record(self):
         result = self.spawn('w21', str(self.brief), '--model', 'm', '--effort', 'high')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

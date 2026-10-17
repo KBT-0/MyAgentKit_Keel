@@ -3,6 +3,7 @@ from pathlib import Path
 import hashlib
 import importlib.util
 import io
+import json
 import os
 import shlex
 import signal
@@ -248,6 +249,82 @@ class CodexWorkerTests(unittest.TestCase):
             self.assertEqual(worker.returncode, 0, worker.stderr)
             self.assertTrue(working.exists(), 'a PROGRESS result closed a worker that was still working')
             self.assertNotIn('result ready for the lead', worker.stdout)
+
+    def test_a_handoff_result_ends_the_worker_and_stays_resumable(self):
+        # Lead finding (followups.md, py311 Codex tab): a worker that published Kind: handoff
+        # with lead-only work left kept its tab open, and spawn_codex.sh refused --resume until
+        # someone quit it. A handoff ends the session as a completed result does; the session's
+        # conversation is what --resume continues.
+        with tempfile.TemporaryDirectory() as tmp:
+            question, result, working = (Path(tmp) / n for n in ('q.md', 'result.md', 'working'))
+            code = ('from pathlib import Path; import time; Path(%r).write_text('
+                    '"Kind: handoff\\nTask: t\\nAttempt: 1\\nRemaining: lead commits\\n%s"); '
+                    'time.sleep(3); Path(%r).write_text("still open")') % (str(result), READY, str(working))
+            worker = self.run_worker(question, code, result)
+            self.assertEqual(worker.returncode, 0, worker.stderr)
+            self.assertIn('HANDOFF: uncommitted result ready for the lead', worker.stdout)
+            self.assertFalse(working.exists(), 'a HANDOFF result left its worker session open')
+            self.assertFalse(question.exists())
+            output = io.StringIO()
+            with mock.patch('sys.argv', [str(SCRIPT), '--wait', str(result)]), mock.patch('sys.stdout', output):
+                self.assertEqual(module().main(), 0)
+            self.assertIn('codex_worker: HANDOFF: ', output.getvalue())
+            self.assertNotIn('the worker goes on', output.getvalue())
+            self.assertIn('--resume', output.getvalue())
+
+    def test_a_stale_index_lock_bounds_the_wait_after_a_result_and_is_reported(self):
+        # Ultrareview part 6 #5: a killed git leaves index.lock behind; the supervisor waited on
+        # it with no limit after a completed result, and the tab never closed. A lock unchanged
+        # for STALE_LOCK seconds while no gate runs is reported and the worker ends.
+        with tempfile.TemporaryDirectory() as tmp:
+            subprocess.run(['git', 'init', '-q', tmp], check=True)
+            lock = Path(tmp) / '.git/index.lock'
+            lock.write_text('')
+            old = time.time() - 3600  # past STALE_LOCK (600 s)
+            os.utime(lock, (old, old))
+            result, working = Path(tmp) / 'RESULT-w.md', Path(tmp) / 'working'
+            code = ('from pathlib import Path; import time; Path(%r).write_text(%r); time.sleep(6); '
+                    'Path(%r).write_text("x")') % (
+                str(result), 'Kind: completed\nTask: w\nAttempt: 1\nRemaining: none\n' + READY, str(working))
+            try:
+                done = subprocess.run([sys.executable, str(SCRIPT), str(Path(tmp) / 'QUESTION-w.md'), str(result),
+                                       '--', sys.executable, '-c', code], capture_output=True, text=True,
+                                      timeout=20, cwd=tmp, env=dict(os.environ, KIT_WORKER_GRACE='0.2'))
+            except subprocess.TimeoutExpired:
+                self.fail('the supervisor waited on a stale index.lock with no bound')
+            self.assertEqual(done.returncode, 0, done.stderr)
+            self.assertFalse(working.exists(), 'the worker ran on past the stale lock')
+            self.assertIn('stale', done.stdout)
+            self.assertIn(lock.name, done.stdout)
+            self.assertTrue(lock.exists(), 'the supervisor removed a lock it does not own')
+
+    def test_a_nested_supervisor_in_the_worker_never_writes_the_parents_exit_record(self):
+        # Fable final review 3 (followups.md, 2026-10-16 20:51): the worker's own test run
+        # started codex_worker.py again; it inherited KIT_WORKER_EXIT and wrote into the real
+        # worker's exit record, and the lead's --wait --exit returned while the worker worked on.
+        with tempfile.TemporaryDirectory() as tmp:
+            record, seen = Path(tmp) / 'w.exit', Path(tmp) / 'seen'
+            nested = [sys.executable, str(SCRIPT), str(Path(tmp) / 'inner-q.md'), '--', sys.executable, '-c', 'pass']
+            code = ('import json, os, subprocess; from pathlib import Path\n'
+                    'subprocess.run(%r)\n'
+                    'r = Path(%r)\n'
+                    'Path(%r).write_text(json.dumps([r.read_text() if r.exists() else None,'
+                    ' sorted(k for k in os.environ if k.upper().startswith("KIT_WORKER_"))]))\n') % (
+                        nested, str(record), str(seen))
+            since = str(time.time() - 1)
+            run = subprocess.run([sys.executable, str(SCRIPT), str(Path(tmp) / 'q.md'), '--', sys.executable, '-c', code],
+                                 capture_output=True, text=True, timeout=30,
+                                 env=dict(os.environ, KIT_WORKER_EXIT=str(record), KIT_WORKER_STARTED=since,
+                                          KIT_WORKER_STALE='0', KIT_WORKER_RESUME='', KIT_WORKER_GRACE='0.5'))
+            self.assertEqual(run.returncode, 0, run.stderr)
+            during, names = json.loads(seen.read_text())
+            self.assertIsNone(during, 'a nested supervisor wrote the running worker\'s exit record')
+            self.assertEqual(names, [], 'the worker inherited its supervisor\'s KIT_WORKER_* settings')
+            self.assertTrue(record.read_text().startswith('exit 0 at '), record.read_text())
+            # The lead's wait on the real record reports the worker's own end, not the nested one's.
+            wait = subprocess.run([sys.executable, str(SCRIPT), '--wait', str(Path(tmp) / 'RESULT.md'), '--since', since,
+                                   '--exit', str(record)], capture_output=True, text=True, timeout=10)
+            self.assertIn('EXITED (exit 0 at ', wait.stdout)
 
     def test_resumed_in_place_edit_of_an_old_result_neither_closes_nor_signals(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -883,7 +960,7 @@ class CodexWorkerTests(unittest.TestCase):
                     os.replace(fresh, result)
                     output = wait(args)
                     self.assertIn('codex_worker: ' + notice + ': ', output)
-                    if notice != 'DONE':
+                    if notice == 'PROGRESS':  # a handoff ends the worker: no follow-up wait
                         args = follow_up(output)
                         unchanged = wait(args)
                         self.assertIn('EXITED', unchanged)
