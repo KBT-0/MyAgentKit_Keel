@@ -31,8 +31,11 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   `%APPDATA%\myagentkit\backends`, `~/.config/myagentkit/backends`). The old
   `.myagentkit/backends/` is read while projects move. **ACTION:** a project with
   `.myagentkit/backends/NAME.env` moves the file to the backend folder.
-- **Closed audit findings:** the `Done:` history gate and commit-message hook also read
-  `docs/audits/*.md`, so a closed task must leave its audit as well as the other state files.
+- **Closed audit findings:** the `Done:` history gate reports historical mentions in
+  `docs/audits/*.md` as notes. Live state and review reports still fail. The commit-message
+  hook still rejects a new closing trailer whose staged audit names that task.
+  **ACTION:** merge the updated Done-history section of `core/scripts/check.sh` and the
+  audit paragraph of `core/docs/WORKFLOW.md` into existing project-owned copies.
 - **Windows directory measurement:** native Python 3.13 and `CreateDirectoryW` created
   every tested directory length from 247 to 300 characters on the test host, so the docs
   do not claim a universal 248-character directory limit.
@@ -46,7 +49,12 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   creating a locked worktree. Every spawn clears stale context state. The `.state` line carries
   `context_tokens=N`; `watch_workers` computes the band and shows both the context size and band.
   Live pane context takes precedence over an older snapshot; notices fire once per band and
-  honour `--context-warn`. **ACTION:** sync the overlay and re-spawn existing workers.
+  honour `--context-warn`. Copied hooks use a self-ignoring `.claude/hooks/.gitignore`,
+  without changing the shared `info/exclude` or hiding the lead's untracked hooks.
+  Spawn records its exact bytes in `.myagentkit/workers/NAME.hooks-ignore-spawned`.
+  Close sets it aside for the audit only while it matches that record byte for byte.
+  The watcher uses the 200k context line when an older context hook or missing Python
+  cannot answer. **ACTION:** sync the overlay and re-spawn existing workers.
 - **Batch 10: kit checks, plugin release and review self-tests** (`scripts/check_kit.py`,
   `core/scripts/check.sh`, `core/scripts/test_claude_bridge.py`, `scripts/clean_worktrees.sh`,
   `scripts/close_worker.sh`, `tests/test_kit_runner.py`, `tests/test_selftest_status.py`,
@@ -67,6 +75,9 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   mandatory SC2028/SC2086 diagnostics. The extracted existing-file boundary example passes its
   Python launcher as quoted arguments and prints the disposable baseline's diagnostics on failure.
   The Windows nested self-test bound is 1800 s; it measured 1357-1563 s on the kit host.
+  ShellCheck includes extensionless sh, bash, dash and ksh hooks, including env shebangs,
+  and excludes non-shell hooks. **ACTION:** merge the ShellCheck hook selector from
+  `core/scripts/check.sh` into existing project gates.
 - **Reviewer manual-check verdict instructions** (`core/scripts/claude_bridge.py`,
   `core/scripts/codex_bridge.py`, `core/scripts/test_claude_bridge.py`, plugin runtime).
   Both reviewer prompts classify NOT RUN and "could not verify" lines as manual checks
@@ -92,6 +103,8 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   replace the embedded line-ending repair program with the `sh scripts/fix_crlf.sh`
   paragraph from the kit's `core/docs/DEV_SETUP.md`. Update the plugin to the same kit
   version so kit-feedback, handoff and cross-review carry the tightened permissions.
+  Sync ignores both no-action spellings. The update guide describes the existing ACTION
+  listing. Line-ending repair stages only files it rewrites.
 - **Source claims corrected after the web source check** (`core/docs/WORKFLOW.md`, `USAGE.md`,
   `DEV_SETUP.md`, `core/scripts/agent_usage.py`, `claude_bridge.py`, `context_buckets.py`,
   `docs/worker-cost-setups.md`, `.claude/hooks/py.sh`). Correct eight source claims about Claude
@@ -130,6 +143,9 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   `.claude/settings.json` sets `attribution` empty; `guard_boundaries.py` matches a Windows
   path; `pre-commit` no longer suggests `--no-verify`. Sources: KARARLAR B10 inv3/(g), B12
   inv1#28, inv3/(g), D09 inv3#5/#9/#11/#12, inv1#29/#233, inv3#74, D07 inv3#108, BACKLOG B2.
+  The git guard rejects git-bearing interpreter arguments and input regardless of flags.
+  It allows project-contained `.githooks` wiring only in a plain command without directory
+  routing, resolving containment from the hook's own working directory.
   **ACTION:** re-sync the overlay (new hook file, `settings.json`); update Claude Code to
   2.1.295 or later; if the Claude account's e-mail differs from git's `user.email`, set
   `MYAGENTKIT_PRIVATE_EMAILS` in the user-level settings `env`.
@@ -159,6 +175,11 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   bracketed `Assisted-by: LLM [Claude]` trailer; the owner's opt-in is regression-tested
   (KARARLAR B08 inv1#253, B10 inv3/(f), inv3#7, inv1#93, inv2#151, B07 inv2#131/#132, D07
   inv3#108 b; BACKLOG B5, B13).
+  The plain-report hook reads task files once per message and accepts project-owned regex
+  patterns without mistaking unregistered products for task ids. Invalid patterns leave
+  built-in checks and other valid project patterns working. **ACTION:** copy the updated
+  `.claude/hooks/plain_report.py`, merge `core/docs/COMMUNICATION.md`, and keep project
+  patterns in `.claude/plain_report_labels.json` instead of the synced commit hook.
   **ACTION:** re-sync the overlay hooks, `scripts/context_buckets.py` and `.githooks/commit-msg`.
 - **Usage and cost measurement** (`scripts/agent_cost.py`, `scripts/usage_summary.py`,
   `docs/USAGE.md`, `docs/CODEX.md`, `docs/worker-cost-setups.md`). The worker cost analysis reads
@@ -180,7 +201,10 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   `MYAGENTKIT_AUTHOR` set, review.sh refuses a reviewer of the author's tier and records the
   author. A secret-looking file in scope (`.env*`, `*.pem`, `*.key`, `.npmrc`, `.netrc`,
   `credentials*`, `.dev.vars`) stops a review unless `--allow-secret-file PATH` names it, one
-  path per flag. Backend files live outside the repository (`MYAGENTKIT_BACKENDS_DIR` or the
+  path per flag. Secret checks cover changed paths and list every refusal. Review fallback
+  uses the resolved backend model family and refuses an unknown author family or the
+  author's family. Capacity waits stop at the retry bound with the provider's requested time.
+  Backend files live outside the repository (`MYAGENTKIT_BACKENDS_DIR` or the
   user's config folder); the old `.myagentkit/backends/` is read during the move. A high-effort
   Codex review defaults to a 3600-second limit; doctor reads `claude --version` (2.1.248 or
   newer) before `--help` (KARARLAR D04 inv2#44/#126/#85, B01 (1)/(6), B12 inv2#106/#81, D07
@@ -197,6 +221,8 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   drops a lesson line. DEV_SETUP recommends the gate as a required CI check; `.gitattributes`
   starts with `* text=auto` (KARARLAR B02 inv2#39/#104/#143/#146/#161, D03 inv1#27/#106,
   inv2#156/#166, D05 inv1#76, B11 inv1#119/inv2#152, B10 inv1#239, D04 inv2#83).
+  The module-map gate compares whole module names. **ACTION:** merge the module-map section
+  of `core/scripts/check.sh` into existing project-owned gates.
   **ACTION:** re-sync `scripts/check.sh`, `scripts/doctor.sh`, the overlay Stop hook,
   `docs/DEV_SETUP.md`, `docs/STRONG_REVIEW.md`; add `* text=auto` to the project's `.gitattributes`
   by hand (project-owned) and fill `module_roots` in `scripts/check.sh` if the project has modules.
@@ -224,6 +250,8 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   an unset or new focus takes the label's highest count. Author independence requires the
   lead's model selection, and the docs no longer promise automatic author exclusion or Codex
   capacity retries.
+  Review bridges cap the complete diff and carried rounds. Bridge test shards honor
+  `MYAGENTKIT_TEST_TIMEOUT_SCALE`.
   **ACTION:** refresh the review runtime and `docs/REVIEW_GATE.md` / `docs/REVIEW_RUNNING.md`;
   record `REVIEW_ROUND_EXCEPTION` before a third completed review under a label.
 - **Unity overlay re-checked against Unity's docs and the MCP for Unity v10.3.0 source**
@@ -257,7 +285,7 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   (`core/.githooks/post-merge`, `scripts/close_worker.sh`, `spawn_worker.sh`, `spawn_codex.sh`,
   `codex_worker.py`, `docs/WORKFLOW.md`, `docs/HANDOFF.md`; owner 2026-10-16: finished Claude
   and Codex worker tabs stayed open for hours). `codex_worker.py` now supervises Claude workers
-  too: a `Kind: completed` result or a decision ends the session and its tab, once no commit or
+  too: a `Kind: completed` result, a handoff or a decision ends the session and its tab, once no commit or
   gate runs in its checkout; a progress result
   or a free-form file ends nothing. `spawn_worker.sh --result FILE` names the result (default
   `RESULT-NAME.md`) and records it in `.myagentkit/workers/NAME.result-path`. The post-merge
@@ -275,6 +303,12 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   closed its worker. A merge counts only a result published since the worker's latest spawn
   (a resumed worker keeps its last one); a tab ended on its published result closes at once;
   the supervisor finds the locks of a checkout with a non-ASCII name on any Windows locale.
+  The supervisor keeps its `KIT_WORKER_*` settings out of the worker's environment, so
+  nested supervisors cannot overwrite its exit record. With no gate running, it waits
+  at most ten minutes on `index.lock`, then reports the stale lock and ends the worker.
+  A failed spawn before session launch removes its new worktree and branch, including
+  when a post-checkout hook fails. Once a session may have started, the worktree stays
+  and the failure explains how to remove it. A handoff stays resumable with `--resume`.
   `spawn_worker.sh --resume SESSION_ID` continues a worker's conversation
   under the same NAME (and worktree, locked again), so a resumed tab can be closed; the lead
   never opens a worker tab by hand. **ACTION:** take the updated hook, scripts and the
@@ -287,7 +321,9 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   prose that is neither a Low, a `Pre-existing:` item nor a placeholder such as `None.`. A
   placeholder counts only as a whole block, its wrapped lines joined. A plain Accept that
   keeps a manual check, a heading-form check included, fails too: it is an Accept with
-  Manual Checks.
+  Manual Checks. Review parsing preserves finding and manual-check headings across section
+  boundaries and rejects hidden High findings or NOT RUN checks in structured output.
+  Bare NOT RUN is a manual check. Clean placeholders and bold `Pre-existing:` items pass.
   **ACTION:** copy the three scripts.
 - **Lessons from the kit's own development, written where they apply** (`AGENTS.md`,
   `docs/COMMUNICATION.md`, `docs/WORKFLOW.md` "Model routing" rules 1 and 3,
@@ -310,7 +346,9 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   the lead checks each finding. Critical work is written by Opus until the owner says
   otherwise, and the strongest Claude tier reviews it. Every brief names the paths its
   worker may change on an `Owns:` line, and `review.sh` refuses a diff outside them when
-  the brief is `REVIEW_TASK_FILE`. A Codex worker opens at most two sub-agents at once
+  the brief is `REVIEW_TASK_FILE`. Ownership checks allow standard worker reports, parse
+  numbered `Owns:` lines, and fail closed without ownership.
+  A Codex worker opens at most two sub-agents at once
   (`agents.max_concurrent_threads_per_session=2`). solo may name its family
   (`solo "family: codex"`), and a switch to saver records the mode it interrupts in its
   note (`low: claude, after: cross`), so the return to it survives a hand-off. The `normal` mode of earlier v0.11 drafts was never released;

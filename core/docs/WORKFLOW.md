@@ -1392,7 +1392,7 @@ What the watcher reports decides the lead's next step for a spawned worker:
 - **HANDOFF:** the lead reads the result file and starts a fresh session from it. A
   `Kind: handoff` file is not done.
 - **BLOCKED** and **PROGRESS:** the lead reads the result file. Neither is done.
-- **Finished session:** a completed result or a decision ends the session; merging the
+- **Finished session:** a completed result, a handoff or a decision ends the session; merging the
   worker's branch closes the rest (the post-merge hook runs `scripts/close_worker.sh
   --finished NAME`). A session finished without a merge (no next task fits what
   it holds, or it is idle past the cache lifetime) the lead closes with that command.
