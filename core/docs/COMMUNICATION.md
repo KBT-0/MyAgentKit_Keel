@@ -31,6 +31,14 @@ bill is one to three percent.
   second review round"); add the label in parentheses at most once per message, and only
   when the owner will meet it in a file. The `plain_report.py` hook bounces a final message
   that breaks this.
+  Compact ids such as `K4`, `L1b` and `r2` are recognised when they lead entries in
+  `docs/STATE.md` or `docs/BACKLOG.md`; product names such as `S3` and `H100` otherwise pass.
+  The hook also recognises the kit's dashed shapes (`D-5`, `v011-d5`) and `Accept-MC`.
+  Add project shapes to `.claude/plain_report_labels.json`, a project-owned JSON list of
+  regex strings, for example `["\\bPR-\\d+\\b", "\\bsprint\\d+\\b", "\\bREADY\\b"]`.
+  Sync never overwrites that file. Its matches count as labels without the built-in task
+  filter; keep token boundaries in each pattern. Legacy additions to the hook's `LABELS`
+  list still work, but keep new configuration in the JSON file rather than `commit-msg`.
 - Sentences of about twenty words, one idea each; the number is a starting value for
   English, tuned per language.
 

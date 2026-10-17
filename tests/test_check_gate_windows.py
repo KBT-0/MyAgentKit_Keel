@@ -1212,6 +1212,101 @@ class GateRuleTests(unittest.TestCase):
         self.assertEqual(code, 1, out)
         self.assertIn('FAIL [architecture]: the module root lib in scripts/check.sh holds no file', out)
 
+    def module_root(self, root):
+        gate_file = self.project / 'scripts/check.sh'
+        source = gate_file.read_text(encoding='utf-8')
+        gate_file.write_text(source.replace('\nmodule_roots=""\n', '\nmodule_roots="%s"\n' % root, 1),
+                             encoding='utf-8', newline='\n')
+
+    def test_dot_module_root_finds_top_level_folders(self):
+        self.module_root('.')
+        self.write('docs/ARCHITECTURE.md', '## Module map\n- docs: documents\n- scripts: checks\n')
+        code, out = self.run_gate()
+        self.assertEqual(code, 0, out)
+        self.assertNotIn('the module root . in scripts/check.sh holds no file', out)
+        self.write('extra/file.txt', 'module\n')
+        code, out = self.run_gate()
+        self.assertEqual(code, 1, out)
+        self.assertIn('FAIL [architecture]: extra is a module folder', out)
+
+    def test_module_names_match_whole_entries_including_hyphens_and_dots(self):
+        self.module_root('src')
+        for module in ('api', 'api-gateway', 'core', 'core.utils', '.claude', '.claude-plugin'):
+            self.write('src/%s/file.txt' % module, 'module\n')
+        self.write('docs/ARCHITECTURE.md', '## Module map\n- `api-gateway`: gateway\n'
+                                          '| core.utils | utilities |\n- .claude-plugin: plugin\n')
+        code, out = self.run_gate()
+        self.assertEqual(code, 1, out)
+        for module in ('api', 'core', '.claude'):
+            self.assertIn('FAIL [architecture]: src/%s is a module folder' % module, out)
+        self.write('docs/ARCHITECTURE.md', (self.project / 'docs/ARCHITECTURE.md').read_text()
+                   + '- api: API\n| `core` | engine |\n- `.claude`: settings\n')
+        code, out = self.run_gate()
+        self.assertEqual(code, 0, out)
+
+    def test_historical_audit_ids_are_notes_but_live_state_and_reviews_still_fail(self):
+        self.write('docs/audits/2026-01.md', 'K4: audit finding\n')
+        self.git('add', '-A')
+        self.git('commit', '-q', '-m', 'old audit')
+        self.git('commit', '-q', '--allow-empty', '-m', 'close task', '-m', 'Done: K4')
+        code, out = self.run_gate()
+        self.assertEqual(code, 0, out)
+        self.assertIn('NOTE [state]: docs/audits/2026-01.md:1 names K4', out)
+        for path in ('docs/STATE.md', 'docs/BACKLOG.md', 'docs/STRONG_REVIEW.md',
+                     'docs/reviews/strong-2026-01-01-model.md'):
+            with self.subTest(path=path):
+                self.write(path, '## Active work\nK4: reopened\n')
+                code, out = self.run_gate()
+                self.assertEqual(code, 1, out)
+                self.assertIn('FAIL [state]: %s:2 names K4' % path, out)
+                self.write(path, '## Active work\n')
+
+    def test_shellcheck_selects_shell_hooks_and_sh_files_only(self):
+        # A selection double records inputs; this does not claim real ShellCheck validation.
+        shim = self.tmp / 'bin'
+        shim.mkdir()
+        log = self.tmp / 'shellcheck-inputs'
+        (shim / 'shellcheck').write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$SC_INPUTS"\n',
+                                        encoding='utf-8', newline='\n')
+        (shim / 'shellcheck').chmod(0o755)
+        for name, body in (('pre-commit', '#!/bin/sh\ntrue\n'),
+                           ('post-commit.project', '#!/usr/bin/env sh\ntrue\n'),
+                           ('prepare-commit-msg.project', '#!/usr/bin/env python3\npass\n'),
+                           ('node.project', '#!/usr/bin/env node\nconsole.log("hook");\n'),
+                           ('README', 'Hook documentation\n')):
+            self.write('.githooks/' + name, body)
+        shell_hooks = ['.githooks/pre-commit', '.githooks/post-commit.project']
+        for shell in ('bash', 'dash', 'ksh'):
+            for launcher in ('/bin/', '/usr/bin/env '):
+                name = '.githooks/%s-%s.project' % (shell, 'env' if 'env' in launcher else 'direct')
+                self.write(name, '#!%s%s\necho $unquoted\n' % (launcher, shell))
+                shell_hooks.append(name)
+        self.write('scripts/no-shebang.sh', 'true\n')
+        code, out = self.run_gate(PATH=str(shim) + os.pathsep + os.environ['PATH'],
+                                  SC_INPUTS=log.as_posix())
+        self.assertEqual(code, 0, out)
+        inputs = log.read_text().splitlines()
+        for name in (*shell_hooks, 'scripts/no-shebang.sh'):
+            with self.subTest(hook=name):
+                self.assertIn(name, inputs)
+        for name in ('.githooks/prepare-commit-msg.project', '.githooks/node.project', '.githooks/README'):
+            self.assertNotIn(name, inputs)
+
+    def test_shellcheck_diagnostic_from_an_extensionless_bash_hook_fails_the_gate(self):
+        # A diagnostic double proves gate wiring, not the inaccessible host's real lint.
+        shim = self.tmp / 'bin'
+        shim.mkdir()
+        (shim / 'shellcheck').write_text(
+            '#!/bin/sh\nfor f do\n  case "$f" in .githooks/*)\n'
+            '    printf "%s:2:1: warning: Quote expansion [SC2086]\\n" "$f"; exit 1 ;;\n'
+            '  esac\ndone\n', encoding='utf-8', newline='\n')
+        (shim / 'shellcheck').chmod(0o755)
+        self.write('.githooks/pre-commit.project', '#!/bin/bash\necho $unquoted\n')
+        code, out = self.run_gate(PATH=str(shim) + os.pathsep + os.environ['PATH'])
+        self.assertEqual(code, 1, out)
+        self.assertIn('FAIL [shellcheck]', out)
+        self.assertIn('.githooks/pre-commit.project:2:1:', out)
+
 
 if __name__ == '__main__':
     unittest.main()

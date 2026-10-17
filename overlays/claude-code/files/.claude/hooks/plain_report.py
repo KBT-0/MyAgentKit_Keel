@@ -35,7 +35,8 @@ def task_patterns() -> tuple[str, str]:
     raise FileNotFoundError('canonical commit-msg task grammar is missing')
 
 
-# Projects extend the task grammar in commit-msg (B10 inv3/(f), inv2#151).
+# Legacy local LABELS additions still work. New project patterns live outside synced hooks
+# in .claude/plain_report_labels.json (a JSON list of regular-expression strings).
 LABELS = (r'\bAccept-MC\b',)
 # Any indent or blockquote marker: a fence inside a list item sits four or more spaces in.
 # A backtick fence's info string has no backtick (CommonMark), so "```sh``` is" is a span.
@@ -61,8 +62,12 @@ def without_code(text: str) -> str:
     return SPAN.sub(' ', ''.join(lines))
 
 
-def known_label(label: str) -> bool:
+def known_labels() -> set[str]:
+    """Read registered entry ids once for this message, not once for each candidate."""
     root = Path(os.environ.get('CLAUDE_PROJECT_DIR') or os.getcwd())
+    labels = set()
+    token = r'(?:`|\*\*)?([A-Za-z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)?)(?:`|\*\*)?(?![A-Za-z0-9_-])'
+    entry = r'(?:[-*+]|[0-9]+[.)]|#{1,6})[ \t]+(?:\[[ xX]\][ \t]+)?|\|[ \t]*'
     for name in ('STATE.md', 'BACKLOG.md'):
         try:
             body = (root / 'docs' / name).read_text(encoding='utf-8')
@@ -70,45 +75,68 @@ def known_label(label: str) -> bool:
             continue
         # An id leads an entry (list, heading or first table cell), or a plain "id:" line.
         # A mention in the entry's description never registers a label.
-        token = r'(?:`|\*\*)?' + re.escape(label) + r'(?:`|\*\*)?(?![A-Za-z0-9_-])'
-        entry = r'(?:[-*+]|[0-9]+[.)]|#{1,6})[ \t]+(?:\[[ xX]\][ \t]+)?|\|[ \t]*'
-        if re.search(r'^[ \t]*(?:(?:' + entry + r')' + token + r'(?=[ \t:|]|$)|'
-                     + token + r'[ \t]*:)', body, re.M | re.I):
-            return True
-    return False
+        for match in re.finditer(r'^[ \t]*(?:(?:' + entry + r')' + token + r'(?=[ \t:|]|$)|'
+                                 + token + r'[ \t]*:)', body, re.M | re.I):
+            labels.add((match[1] or match[2]).lower())
+    return labels
+
+
+def project_patterns() -> list[str]:
+    """Load project-owned label shapes without editing a kit-owned commit hook."""
+    root = Path(os.environ.get('CLAUDE_PROJECT_DIR') or os.getcwd())
+    try:
+        patterns = json.loads((root / '.claude/plain_report_labels.json').read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return []
+    if not isinstance(patterns, list):
+        return []
+    valid = []
+    for pattern in patterns:
+        if isinstance(pattern, str):
+            try:
+                re.compile(pattern)
+            except Exception:  # A bad project regex (including OverflowError) must not disable built-ins.
+                continue
+            valid.append(pattern)
+    return valid
 
 
 def bare_labels(text: str) -> list[str]:
     task, digit = task_patterns()
-    patterns = (rf'(?<![A-Za-z0-9_.-]){task}(?![A-Za-z0-9_-]|\.\d)', *LABELS)
+    registered = known_labels()
+    patterns = ((rf'(?<![A-Za-z0-9_.-]){task}(?![A-Za-z0-9_-]|\.\d)', False),
+                *((pattern, True) for pattern in (*LABELS, *project_patterns())))
     def is_label(label):
         if label == 'Accept-MC':
             return True
         if not re.search(digit, label):
             return False
-        if known_label(label):
+        if label.lower() in registered:
             return True  # the project may name any canonical task id, including long prefixes
         if re.fullmatch(r'[a-f0-9]{7,}', label):
             return False  # abbreviated git hashes are not session labels
-        # Prose is not a commit trailer: a label has one letter before its first digit or dash
-        # (K4, L1b, K7-a, D-5, v011-d5); UTF-8, SHA-256, win32, cp1252, Python3, IPv6 are words.
-        if not re.match(r'[A-Za-z][^A-Za-z]', label):
-            return False
-        # Lowercase without a lettered dash part (x86, e2e, i18n, r2) counts only when the
-        # project's STATE.md or BACKLOG.md names it.
-        return label[0].isupper() or bool(re.search(r'-.*[A-Za-z]', label))
+        # Only the kit's dashed review/worker shapes are inferred without registration.
+        # Compact task ids (K4, L1b, r2) must head a project entry, just like P0 or H100.
+        return bool(re.fullmatch(r'(?:[A-Z]-[0-9]+|v[0-9]+-[a-z][0-9]+)', label))
 
     prose = ' '.join(word for word in without_code(text).split() if '/' not in word and '\\' not in word)
-    found, explained = [], []
-    for pattern in patterns:
-        for match in re.finditer(pattern, PARENS.sub(' ', prose)):
-            if is_label(match.group()) and match.group() not in found:
-                found.append(match.group())
-        for part in PARENS.findall(prose):
-            for match in re.finditer(pattern, part):
-                if is_label(match.group()) and match.group() in explained and match.group() not in found:
+    found = []
+    for pattern, explicit in patterns:
+        explained = []  # Overlapping task and project patterns must not count one mention twice.
+        start = len(found)
+        try:
+            for match in re.finditer(pattern, PARENS.sub(' ', prose)):
+                if (explicit or is_label(match.group())) and match.group() not in found:
                     found.append(match.group())
-                explained.append(match.group())
+            for part in PARENS.findall(prose):
+                for match in re.finditer(pattern, part):
+                    if (explicit or is_label(match.group())) and match.group() in explained and match.group() not in found:
+                        found.append(match.group())
+                    explained.append(match.group())
+        except Exception:
+            if not explicit:
+                raise
+            del found[start:]  # Discard this project pattern's partial results, keeping earlier checks.
     return found
 
 

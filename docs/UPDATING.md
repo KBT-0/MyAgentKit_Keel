@@ -41,12 +41,11 @@ exactly the habit the review gate exists to prevent.
    dpkg asks about a changed configuration file); the sync is stricter and writes nothing,
    because a half-merged hook can be a gate that silently does not run.
 3. **Prints every `CHANGELOG.md` entry added since your version.** This is the real product.
-   From v0.9 on, each version's entry ends with one ordered checklist, "Upgrading a project
-   from v<previous>": the files to copy whole, the project-owned files to merge, the lines
-   to check and the commands to run, each named once and in its final state. Every item
-   carries the **ACTION** marker, and the items are listed again at the end, each printed
-   whole. Work through them top to bottom; when you skip versions, do the oldest version's
-   items first.
+   Entries mark manual migration steps with **ACTION**: files to copy, project-owned rules
+   to merge, lines to check and commands to run. `sync-kit.sh . --dry-run` lists those items
+   without copying files; a normal sync lists them again at the end, each printed whole.
+   Work through each version's items top to bottom; when you skip versions, do the oldest
+   version's items first. An ACTION line saying only "none" requires no confirmation.
 4. Records the new version — but only when there are no ACTION items, or you confirmed
    them. With ACTION items pending, the version stays where it was and the script exits 2,
    so the next sync prints the same entries and checklist again. Apply the items, then:

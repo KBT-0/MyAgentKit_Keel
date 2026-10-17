@@ -604,7 +604,7 @@ finally:
   mkdir -p "$work/audit/audits"
   printf '# STATE\n\n## Active work\n' > "$work/audit/STATE.md"
   printf '# audit\n\n- K4: a finding\n' > "$work/audit/audits/2026-01.md"
-  expect_fail "state gate rejects a closed task that an audit still names" \
+  expect_pass "state gate permits historical audit mentions of closed tasks" \
     GATE_SELFTEST_STATE_FILE="$work/audit/STATE.md" GATE_SELFTEST_HISTORY="$hist"
 
   # --- the strong review reminder: told, never failed ---------------------------
@@ -1537,7 +1537,8 @@ fi
 # (docs/WORKFLOW.md, "Task ids"), and every id that a commit reachable from HEAD closed must
 # be gone from the state file and from the BACKLOG.md beside it, which may be absent (a
 # project may keep its backlog elsewhere), and from the strong review cycle's list and
-# reports and audits (B11 inv1#118 A; Martini, Besker and Bosch 2018;
+# reports. Historical audit mentions are advisory, so an upgrade does not fail on old reports
+# (B11 inv1#118 A; Martini, Besker and Bosch 2018;
 # code.claude.com/docs/en/best-practices, "Set up hooks"). The commit-msg hook checks the closing commit;
 # this also catches a line written back later, or a commit the hook never saw. Git's own
 # trailer parser reads the history (%(trailers:key=...,unfold), git 2.22 or later). A
@@ -1570,7 +1571,9 @@ if hgit rev-parse -q --verify HEAD >/dev/null 2>&1; then
        END { close(out) }' "$work/done-trailers"; then
     docs_dir=$(dirname "$GATE_SELFTEST_STATE_FILE")
     for f in "$GATE_SELFTEST_STATE_FILE" "$docs_dir/BACKLOG.md" "$docs_dir/STRONG_REVIEW.md" "$docs_dir"/reviews/strong-*.md "$docs_dir"/audits/*.md; do
-      [ ! -f "$f" ] || awk -v closed="$work/done-ids" '
+      level=FAIL
+      case "$f" in "$docs_dir"/audits/*.md) level=NOTE ;; esac
+      [ ! -f "$f" ] || awk -v closed="$work/done-ids" -v level="$level" '
         FILENAME == closed {
           if (sub(/^@/, "")) commit = $0
           else if (!(tolower($0) in by)) { by[tolower($0)] = commit; as[tolower($0)] = $0 }
@@ -1578,11 +1581,11 @@ if hgit rev-parse -q --verify HEAD >/dev/null 2>&1; then
         }
         { n = split($0, word, /[^A-Za-z0-9_-]+/)
           for (i = 1; i <= n; i++) if ((key = tolower(word[i])) in by) {
-            printf "FAIL [state]: %s:%d names %s, which commit %s closed (Done: %s).\n", FILENAME, FNR, word[i], by[key], as[key]
+            printf "%s [state]: %s:%d names %s, which commit %s closed (Done: %s).\n", level, FILENAME, FNR, word[i], by[key], as[key]
             found = 1
           } }
         END { if (found) print "              Delete the line (the history is in git); a task needed again gets a new id."
-              exit found }' "$work/done-ids" "$f" || fail=1
+              exit (found && level == "FAIL") }' "$work/done-ids" "$f" || fail=1
     done
   else
     echo "FAIL [state]: git log could not list the Done: trailers, so finished tasks were not checked."
@@ -1708,7 +1711,7 @@ fi
 # The map is coarse and an agent finds code by searching, but a module the map does not name
 # is one an agent may rebuild beside it ("NEVER rewrite a system you could not find"). Prefer
 # a check to a promise (KARARLAR B10 inv1#239): every direct subfolder of a module root that
-# holds a file in the scan list must be named, as a whole word, in the "## Module map" section
+# holds a file in the scan list must be named, as a whole entry, in the "## Module map" section
 # of docs/ARCHITECTURE.md. module_roots is a VALUE: the folders whose subfolders are modules,
 # space-separated, e.g. "src packages". Empty, nothing is checked and a NOTE says so: a
 # single-module project has no module folders. A root with no file at all FAILS: a check over a
@@ -1723,7 +1726,10 @@ elif ! grep -q '^## Module map' "$architecture_file" 2>/dev/null; then
   printf '%s\n' "FAIL [architecture]: $architecture_file has no '## Module map' section, so module_roots cannot be checked."
   fail=1
 else
-  awk '/^## Module map/ { f = 1; next } /^## / { f = 0 } f' "$architecture_file" > "$work/module-map"
+  # Split Markdown table cells, code spans and list-entry colons; keep dots and hyphens
+  # inside names. grep -w would count api-gateway as naming api, or core.utils as core.
+  awk '/^## Module map/ { f = 1; next } /^## / { f = 0 }
+       f { gsub(/[`|:]/, " "); for (i = 1; i <= NF; i++) print $i }' "$architecture_file" > "$work/module-map"
   for root in $module_roots; do
     case "$root" in .) prefix="" ;; *) prefix="${root%/}/" ;; esac
     tr '\0' '\n' < "$filelist" | awk -v p="$prefix" '
@@ -1733,7 +1739,7 @@ else
       printf '%s\n' "FAIL [architecture]: the module root $root in scripts/check.sh holds no file the gate sees."
       fail=1; continue; }
     sort -u "$work/modules" | while IFS= read -r module; do
-      grep -qwF -- "$module" "$work/module-map" || {
+      grep -qxF -- "$module" "$work/module-map" || {
         printf '%s\n' "FAIL [architecture]: $prefix$module is a module folder that the '## Module map' of $architecture_file does not name."
         echo "                     Add its line in the same task (one line: module, responsibility)."
         : > "$work/module-unnamed"; }
@@ -1759,7 +1765,14 @@ if [ -n "$selftest_nested" ] && [ -z "$shell_files" ]; then
 elif ! command -v shellcheck >/dev/null 2>&1; then
   echo "NOT RUN [shellcheck]: shellcheck is not installed; SC2028, SC2086 and its errors are left to review."
 else
-  [ -n "$shell_files" ] || shell_files=$(tr '\0' '\n' < "$filelist" | grep -E '\.sh$|^\.githooks/' || :)
+  [ -n "$shell_files" ] || shell_files=$(tr '\0' '\n' < "$filelist" | while IFS= read -r f; do
+    case "$f" in
+      *.sh) printf '%s\n' "$f" ;;
+      .githooks/*)
+        # ShellCheck supports sh/bash/dash/ksh; other hook languages stay out (SC1071).
+        [ -f "$f" ] && [ ! -L "$f" ] && head -n 1 "$f" | grep -Eq '^#!.*[/ ](sh|bash|dash|ksh)([[:space:]]|$)' && printf '%s\n' "$f" ;;
+    esac
+  done)
   sc_status=0
   if [ -n "$shell_files" ]; then
     # Newline-separated names are safe: the gate refuses names holding newlines (#41).

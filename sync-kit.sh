@@ -287,7 +287,7 @@ awk -v want="v$have" '
     sub(/^[ \t]+/, ""); print "      " $0; next
   }
   { item = 0 }
-  v && /\*\*ACTION/ && !/\*\*ACTION\*\* — none/ {
+  v && /\*\*ACTION/ && !/\*\*ACTION\*\* — none\.?[ \t]*$/ && !/\*\*ACTION:\*\*[ \t]+none\.[ \t]*$/ {
     print "  " v ": " substr($0, index($0, "**ACTION")); item = 1
   }
 ' "$kit/CHANGELOG.md" > "$pending" ||

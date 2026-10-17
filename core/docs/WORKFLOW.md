@@ -362,8 +362,9 @@ Output: a short `docs/audits/YYYY-MM.md` whose findings carry task ids ("Task id
 cleanup tasks that enter the normal loop under those ids. The file is deleted by the commit
 that closes its last id: a living file keeps no closed item ("The state, backlog and phase
 files"), and debt that is not tracked to its close stays open (Martini, Besker and Bosch,
-2018). Unlike the strong review files, the `Done:` check does not read audit files yet, so
-here the deletion is discipline. **The audit is itself a task; skip it and decay advances
+2018). The gate reads audit files and prints a NOTE for ids closed in reachable history;
+old audit mentions do not fail an upgraded project. The commit-msg hook still refuses a
+closing `Done:` trailer while the staged audit names that id. **The audit is itself a task; skip it and decay advances
 invisibly.**
 
 ## The strong review cycle — at least every ten days
