@@ -1757,6 +1757,16 @@ fi
 # ShellCheck's errors fail too; its other warnings stay a reviewer's. A deliberate word split
 # carries `# shellcheck disable=SC2086` and its reason on the line above. Without shellcheck the
 # step is NOT RUN, as the kit's own check is (KARARLAR D04 inv2#26; shellcheck.net/wiki/SC2086).
+select_shellcheck_files() {
+  while IFS= read -r f; do
+    case "$f" in
+      *.sh) printf '%s\n' "$f" ;;
+      .githooks/*)
+        # ShellCheck supports sh/bash/dash/ksh; other hook languages stay out (SC1071).
+        [ -f "$f" ] && [ ! -L "$f" ] && head -n 1 "$f" | grep -Eq '^#!.*[/ ](sh|bash|dash|ksh)([[:space:]]|$)' && printf '%s\n' "$f" ;;
+    esac
+  done
+}
 shell_files="${GATE_SELFTEST_SHELL_FILES:-}"
 # Only the dedicated ShellCheck case repeats lint inside the authenticated self-test.
 # A copied marker cannot skip normal lint: selftest_nested also proves the inherited lock.
@@ -1765,14 +1775,7 @@ if [ -n "$selftest_nested" ] && [ -z "$shell_files" ]; then
 elif ! command -v shellcheck >/dev/null 2>&1; then
   echo "NOT RUN [shellcheck]: shellcheck is not installed; SC2028, SC2086 and its errors are left to review."
 else
-  [ -n "$shell_files" ] || shell_files=$(tr '\0' '\n' < "$filelist" | while IFS= read -r f; do
-    case "$f" in
-      *.sh) printf '%s\n' "$f" ;;
-      .githooks/*)
-        # ShellCheck supports sh/bash/dash/ksh; other hook languages stay out (SC1071).
-        [ -f "$f" ] && [ ! -L "$f" ] && head -n 1 "$f" | grep -Eq '^#!.*[/ ](sh|bash|dash|ksh)([[:space:]]|$)' && printf '%s\n' "$f" ;;
-    esac
-  done)
+  [ -n "$shell_files" ] || shell_files=$(tr '\0' '\n' < "$filelist" | select_shellcheck_files)
   sc_status=0
   if [ -n "$shell_files" ]; then
     # Newline-separated names are safe: the gate refuses names holding newlines (#41).
