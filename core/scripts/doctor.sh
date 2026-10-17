@@ -167,12 +167,8 @@ fi
   miss "git identity (user.name / user.email)" "git config user.name '<name>' && git config user.email '<email>'"
 
 # --- tools the kit's own scripts need ------------------------------------------------
-if ! python3 -c 'import sys; sys.exit(sys.version_info < (3, 10))' 2>/dev/null; then
-  miss "Python 3.10 or newer as python3, python or py (the review tooling needs it)" "install Python 3.10+"
-# The floor stays 3.10 for compatibility until the owner raises it (KARARLAR D03 inv2#143,
-# D07 inv3#83); 3.10 lost upstream support on 2026-10-01 (devguide.python.org/versions).
-elif python3 -c 'import sys; sys.exit(sys.version_info >= (3, 11))' 2>/dev/null; then
-  echo "NOTE: Python 3.10 reached end of life on 2026-10-01 and gets no security fixes; install Python 3.11 or newer"
+if ! python3 -c 'import sys; sys.exit(sys.version_info < (3, 11))' 2>/dev/null; then
+  miss "Python 3.11 or newer as python3, python or py (the review tooling needs it)" "install Python 3.11+"
 fi
 # Native Windows Python (os.name 'nt') runs the gate lock, a review and the worktree clean-up
 # its own way, under Git for Windows' sh (or MSYS2, Cygwin). Under any other sh (WSL, where a

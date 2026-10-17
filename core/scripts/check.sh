@@ -84,6 +84,8 @@ if python3 -I -c '' </dev/null >/dev/null 2>&1; then kit_python=python3
 elif python -I -c '' </dev/null >/dev/null 2>&1; then kit_python=python
 else kit_python="py -3"; fi   # the launcher, told which Python: unquoted at every use
 [ "$kit_python" = python3 ] || python3() { $kit_python "$@"; }
+$kit_python -I -c 'import sys; sys.exit(sys.version_info < (3, 11))' </dev/null >/dev/null 2>&1 ||
+  { echo "FAIL [python]: Python 3.11 or newer is required (python3, python, py -3)." >&2; exit 1; }
 
 # SELF-TEST SEAMS are honoured ONLY in the self-test's own nested runs. Each one exists so a
 # case can point a gate at a synthetic input, which means each one can also turn a gate green

@@ -84,6 +84,24 @@ def alive(pid):
 
 
 class DoctorTests(unittest.TestCase):
+    def test_python_3_10_is_refused_and_3_11_is_ready(self):
+        doctor = (ROOT / 'core/scripts/doctor.sh').read_text(encoding='utf-8')
+        floor = doctor.split("# --- tools the kit's own scripts need", 1)[1]
+        floor = floor.split('\n', 1)[1].split('# Native Windows Python', 1)[0]
+        for version, status in (((3, 10), 1), ((3, 11), 0)):
+            with self.subTest(version=version):
+                prefix = 'import sys; sys.version_info = %r; ' % (version,)
+                probe = ('missing=0; miss() { echo "$1"; missing=1; }; '
+                         'python3() { %s -c %s"$2"; };\n%s\nexit "$missing"'
+                         % (shlex.quote(Path(sys.executable).as_posix()),
+                            shlex.quote(prefix), floor))
+                result = subprocess.run(['sh', '-c', probe], capture_output=True, text=True)
+                self.assertEqual(result.returncode, status, result.stdout + result.stderr)
+                if status:
+                    self.assertIn('Python 3.11 or newer', result.stdout)
+                else:
+                    self.assertNotIn('Python', result.stdout)
+
     def test_an_old_claude_cli_earlier_on_path_is_not_ready(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -216,9 +234,9 @@ class DoctorTests(unittest.TestCase):
             self.assertTrue(seen.stdout.strip(), 'the probe never created its temp file')
             self.assertEqual(list(tmpdir.iterdir()), [], 'an interrupted probe left its temp file')
 
-    def test_an_old_python_and_an_old_claude_code_are_told_not_missing(self):
-        # KARARLAR D03 inv2#143 (3.10 reached end of life on 2026-10-01; the floor stays) and
-        # batch 1's onFailure: block, which a Claude Code before 2.1.295 ignores.
+    def test_python_floor_is_enforced_and_old_claude_code_is_told(self):
+        # The owner raised the Python floor to 3.11 (close-out decision 30c).
+        # Batch 1's onFailure: block is ignored by Claude Code before 2.1.295.
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             for folder in ('scripts', '.githooks', 'home', 'tools', '.claude'):
@@ -270,18 +288,28 @@ class DoctorTests(unittest.TestCase):
             elapsed = time.monotonic() - started
             self.assertLess(elapsed, 12, 'doctor.sh waited %.2f s for the --version child' % elapsed)
             self.assertIn(note, result.stdout)
-            # A Python that is 3.10: ready, with the end-of-life note.
+            # Exercise the installed doctor's floor with both boundary versions.
             old_python = root / 'old-python'
             old_python.mkdir()
-            (old_python / 'python3').write_text('#!/bin/sh\ncase "$*" in *">= (3, 11)"*) exit 0 ;; esac\n'
-                                                'exec "%s" "$@"\n' % Path(sys.executable).as_posix())
-            (old_python / 'python3').chmod(0o755)
-            result = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=root, capture_output=True, text=True, timeout=60,
-                                    env=dict(env, PATH=str(old_python) + os.pathsep + env['PATH']))
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertIn('NOTE: Python 3.10 reached end of life on 2026-10-01', result.stdout)
-            self.assertNotIn('NOTE: Python 3.10', subprocess.run(
-                ['sh', 'scripts/doctor.sh'], cwd=root, env=env, capture_output=True, text=True, timeout=60).stdout)
+            for version, status in (((3, 10), 1), ((3, 11), 0)):
+                with self.subTest(python=version):
+                    prefix = 'import sys; sys.version_info = %r; ' % (version,)
+                    (old_python / 'python3').write_text(
+                        '#!/bin/sh\nif [ "$1" = -c ]; then code=$2; shift 2; '
+                        'exec %s -c %s"$code" "$@"; fi\nexec %s "$@"\n'
+                        % (shlex.quote(Path(sys.executable).as_posix()), shlex.quote(prefix),
+                           shlex.quote(Path(sys.executable).as_posix())))
+                    (old_python / 'python3').chmod(0o755)
+                    result = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=root,
+                                            capture_output=True, text=True, timeout=60,
+                                            env=dict(env, PATH=str(old_python) + os.pathsep + env['PATH']))
+                    self.assertEqual(result.returncode, status, result.stdout + result.stderr)
+                    if status:
+                        self.assertIn('MISSING: Python 3.11 or newer', result.stdout)
+                        self.assertNotIn('DOCTOR: ready', result.stdout)
+                    else:
+                        self.assertIn('DOCTOR: ready', result.stdout)
+                    self.assertNotIn('NOTE: Python', result.stdout)
 
     def test_each_injected_trap_turns_doctor_red(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -397,7 +425,7 @@ class DoctorTests(unittest.TestCase):
                     (windows / name).chmod(0o755)
                 broken = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=project, capture_output=True, text=True,
                                         env=dict(env, PATH=str(windows) + os.pathsep + env['PATH']))
-                self.assertIn('MISSING: Python 3.10 or newer as python3', broken.stdout)
+                self.assertIn('MISSING: Python 3.11 or newer as python3', broken.stdout)
                 self.assertNotIn(note, broken.stdout)
 
             if not not_on_windows(self.id() + ' (a hook without the executable bit)', 'POSIX file modes'):
@@ -659,7 +687,7 @@ class DoctorTests(unittest.TestCase):
             git('config', 'user.name', 'fixture')
 
             # Each tool doctor asks for, made absent or wrong by a stand-in: a python3 older
-            # than 3.10, no tmux for spawn_worker.sh, no node for a project that pins one, and an
+            # than 3.11, no tmux for spawn_worker.sh, no node for a project that pins one, and an
             # npm cache owned by another user (a stand-in id names this user as someone else).
             older = tmp / 'older-python'
             older.mkdir()
@@ -684,7 +712,7 @@ class DoctorTests(unittest.TestCase):
             # A WSL host's PATH holds the real wt.exe: it is dropped too.
             no_tmux_mingw = str(mingw) + os.pathsep + path_without('tmux', 'node', 'wt.exe')
             for path, expect in ((str(older) + os.pathsep + env['PATH'],
-                                  'MISSING: Python 3.10 or newer as python3'),
+                                  'MISSING: Python 3.11 or newer as python3'),
                                  (no_tmux_node, 'MISSING: tmux, which scripts/spawn_worker.sh needs'),
                                  (no_tmux_mingw, 'MISSING: Windows Terminal (wt.exe), which scripts/spawn_worker.sh'),
                                  (str(bin_dir) + os.pathsep + no_tmux_node,

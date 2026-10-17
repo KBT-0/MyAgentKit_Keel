@@ -18,7 +18,7 @@ Existing repositories must merge the kit's `core/.gitignore` private-record excl
 before launching the plugin adapters. Ignored, untracked storage is now checked before
 model work and during publication; tracked diagnostics and symlinked storage are refused.
 The complete runtime/test upgrade list is maintained in `core/docs/DEV_SETUP.md`.
-It requires Python 3.10+, Git, and an installed, authenticated Claude Code CLI with
+It requires Python 3.11+, Git, and an installed, authenticated Claude Code CLI with
 the documented safe-mode/restricted/structured-output options. It installs no MCP server
 and makes no change to the existing Claude Code plugin.
 
@@ -166,7 +166,7 @@ failover.
 ./scripts/review.sh --self-test
 ```
 
-Python 3.10+ is required for the kit acceptance suite and installed review self-tests,
+Python 3.11+ is required for the kit acceptance suite and installed review self-tests,
 including on Codex-only projects. Both live review paths also require Python for bounded
 execution and usage recording. The shell entry point remains the same.
 

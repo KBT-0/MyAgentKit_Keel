@@ -6,7 +6,7 @@ second model runs, and a way to spawn, watch and close worker sessions without l
 work. Every project of mine is built on it, and what a project learns can flow back.
 
 **v0.11.** The kit's own check (`./scripts/check.sh --self-test`) runs on Ubuntu, macOS and
-native Windows with Python 3.10 and 3.14 in CI, and every gate in it has a negative test that
+native Windows with Python 3.11 and 3.14 in CI, and every gate in it has a negative test that
 was watched going red. Each version was reviewed by two models that did not write it, and the
 raw reports are kept in [docs/reviews](docs/reviews/). [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md)
 says what was executed and what was not.
@@ -132,7 +132,7 @@ sync as a `conflict:` before anything is copied.
 
 ## Requirements
 
-POSIX `sh`, git (2.36 or newer for the worktree clean-up), Python 3.10 or newer for the
+POSIX `sh`, git (2.36 or newer for the worktree clean-up), Python 3.11 or newer for the
 review tooling and the kit's own tests. The kit's own check also needs bash 5.2 or newer for its
 `case` lint (macOS: `brew install bash`; Git for Windows ships one).
 Ubuntu, macOS and native Windows are in CI. The kit is

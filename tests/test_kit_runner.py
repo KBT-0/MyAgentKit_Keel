@@ -338,7 +338,7 @@ runpy.run_path(%r, run_name='__main__')
                 return unittest.mock.Mock(st_file_attributes=0x400, st_reparse_tag=0xA0000003)
             return original(path, *args, **kwargs)
 
-        # Python 3.10/3.11 have lstat's Windows attributes but no Path.is_junction.
+        # Python 3.11 has lstat's Windows attributes but no Path.is_junction.
         with unittest.mock.patch.object(Path, 'is_symlink', return_value=False), \
                 unittest.mock.patch.object(Path, 'is_junction', None, create=True), \
                 unittest.mock.patch.object(Path, 'lstat', lstat):

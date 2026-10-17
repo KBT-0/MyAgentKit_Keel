@@ -19,6 +19,33 @@ spec.loader.exec_module(gate)
 
 
 class AcceptanceTests(unittest.TestCase):
+    def test_gate_launchers_refuse_python_3_10_and_accept_3_11(self):
+        for path, marker in (('scripts/check.sh', '# Help ends'),
+                             ('core/scripts/check.sh', '# SELF-TEST SEAMS')):
+            source = (ROOT / path).read_text(encoding='utf-8').split(marker, 1)[0]
+            # Keep the isolated POSIX probe in this shell so the Python stubs survive.
+            source = source.replace('if [ -z "${BASH_VERSION:-}" ]; then exec bash "$0" "$@"; fi\n', '')
+            for version, status in (((3, 10), 1), ((3, 11), 0)):
+                with self.subTest(path=path, version=version):
+                    prefix = 'import sys; sys.version_info = %r; ' % (version,)
+                    functions = ('python3() { [ "$1" != -I ] || shift; %s -c %s"$2"; }; '
+                                 'python() { python3 "$@"; };\n'
+                                 % (shlex.quote(Path(sys.executable).as_posix()), shlex.quote(prefix)))
+                    result = subprocess.run(['sh', '-c', functions + source,
+                                             str(ROOT / path)], capture_output=True, text=True)
+                    self.assertEqual(result.returncode, status, result.stdout + result.stderr)
+                    if status:
+                        self.assertIn('Python 3.11 or newer', result.stdout + result.stderr)
+
+    def test_direct_kit_check_refuses_python_3_10_before_loading_the_gate(self):
+        command = ('import sys, runpy; sys.version_info = (3, 10); '
+                   'runpy.run_path(sys.argv[1], run_name="__main__")')
+        result = subprocess.run([sys.executable, '-I', '-c', command,
+                                 str(ROOT / 'scripts/check_kit.py'), '--help'],
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('Python 3.11 or newer', result.stdout + result.stderr)
+
     def test_existing_file_python_launcher_preserves_paths_and_py3_arguments(self):
         example = '\n'.join(line[4:] for line in
             (ROOT / 'core/scripts/boundary_selftests.sh').read_text(encoding='utf-8').splitlines()
@@ -131,15 +158,17 @@ class AcceptanceTests(unittest.TestCase):
                     with self.assertRaisesRegex(RuntimeError, 'required|skipped'):
                         gate.run_tests(root, 'tests', {name: 1})
 
-    def test_python_newer_than_3_10_is_refused(self):
-        # The parse used the host's grammar: syntax newer than 3.10, the oldest CI runs,
+    def test_python_newer_than_3_11_is_refused(self):
+        # The parse used the host's grammar: syntax newer than 3.11, the oldest CI runs,
         # passed here and broke only on CI.
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / 'module.py'
             source.write_text('match value:\n    case 1:\n        pass\n')
             gate.check_syntax(Path(tmp))
+            source.write_text('try:\n    pass\nexcept* ValueError:\n    pass\n')
+            gate.check_syntax(Path(tmp))
             source.write_text('type Alias = int\n')
-            with self.assertRaisesRegex(RuntimeError, 'is not Python 3.10 syntax'):
+            with self.assertRaisesRegex(RuntimeError, 'is not Python 3.11 syntax'):
                 gate.check_syntax(Path(tmp))
 
     def test_the_shell_lint_refuses_echo_of_a_variable_and_gnu_mktemp(self):
@@ -381,7 +410,7 @@ class AcceptanceTests(unittest.TestCase):
                 shutil.copy(ROOT / 'scripts/check.sh', root / 'scripts/check.sh')
                 (root / 'bin').mkdir()
                 for name in ('python3', 'python'):
-                    (root / 'bin' / name).write_text('#!/bin/sh\n' + body)
+                    (root / 'bin' / name).write_text('#!/bin/sh\ncase \"$*\" in *version_info*) exit 0 ;; esac\n' + body)
                     (root / 'bin' / name).chmod(0o755)
                 result = subprocess.run(['sh', 'scripts/check.sh'], cwd=root, capture_output=True, text=True,
                                         env=dict(os.environ, PATH=str(root / 'bin') + os.pathsep + os.environ['PATH']))

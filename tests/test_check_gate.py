@@ -556,7 +556,7 @@ class CheckGateTests(unittest.TestCase):
             env = {k: v for k, v in os.environ.items() if k not in ('PYTHON', 'PYTHONPATH')}
             env['PATH'] = str(bin_dir)
             doctor = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=project, env=env, capture_output=True, text=True)
-            self.assertNotIn('Python 3.10', doctor.stdout + doctor.stderr)
+            self.assertNotIn('Python 3.11', doctor.stdout + doctor.stderr)
             # The gate re-executes itself through Python at once (the lock): an `exec` of a
             # shell function fails with "exec: python3: not found", so the exec sites use the
             # resolved command.
@@ -581,7 +581,7 @@ class CheckGateTests(unittest.TestCase):
                     os.symlink(os.readlink(entry), no_py / entry.name)
             env_tc = dict(env, PATH=str(no_py))
             doctor = subprocess.run(['sh', 'scripts/doctor.sh'], cwd=project, env=env_tc, capture_output=True, text=True)
-            self.assertNotIn('Python 3.10', doctor.stdout + doctor.stderr, doctor.stdout + doctor.stderr)
+            self.assertNotIn('Python 3.11', doctor.stdout + doctor.stderr, doctor.stdout + doctor.stderr)
             # No python3 and no python at all: the launcher is told which Python (`py -3`).
             (project / 'scripts/check.sh').write_text(gate_text)
             seen = Path(tmp) / 'py-args'
