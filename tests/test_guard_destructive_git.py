@@ -456,11 +456,11 @@ class RoundOneFixTests(GuardCase):
             'git status && node -e "console.log(\'hello\')"',
             'git status && perl -e "print q(hello)"',
             'git status && ruby -e "puts \'hello\'"',
-            'python -c "print(\'hello\')" git',
             'git status && python -W ignore -c "print(\'hello\')"',
             'git status && node --eval="console.log(\'hello\')"',
         ], 0)
         self.assertVerdict([
+            'python -c "print(\'hello\')" git',  # Attempt 3: every interpreter argument is opaque.
             'git status && python -c "subprocess.run([\'git\', \'push\', \'--mirror\'])"',
             'python -c "print(\'hello\')"; ruby -e "system(\'git push --mirror\')"',
             'python -Ic"subprocess.run([\'git\', \'push\', \'--mirror\'])"',
@@ -496,6 +496,130 @@ class RoundOneFixTests(GuardCase):
             'git status && echo "system(\'git push --mirror\')" | ruby',
             'printf "system(\'git push --mirror\')" | env -u FOO ruby',
         ], 2)
+
+
+class RoundTwoFixTests(GuardCase):
+    link_hooks = RoundOneFixTests.link_hooks
+
+    def test_all_interpreter_arguments_are_opaque_regardless_of_flags(self):
+        commands = [
+            "node -p \"require('child_process').execSync('git config core.hooksPath disabled')\"",
+            "node --print \"require('child_process').execSync('git config core.hooksPath disabled')\"",
+            "perl -E \"system('git','config','core.hooksPath','disabled')\"",
+            "ruby -e \"system('git config core.hooksPath disabled')\"",
+            'pwsh -Command "git config core.hooksPath disabled"',
+            'powershell -Command "git config core.hooksPath disabled"',
+            'python script.py git', 'python3 -X git -c "print(1)"',
+        ]
+        for executable in ['deno', 'bun', 'php', 'osascript', 'lua', 'julia', 'Rscript', 'tclsh', 'awk', 'php8.3']:
+            commands.append(f'{executable} --some-future-option "git config core.hooksPath disabled"')
+        for command in commands:
+            with self.subTest(command=command):
+                result = self.run_hook(command)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn(b'cannot read', result.stderr)
+
+    def test_interpreter_heredocs_and_pipes_are_flag_independent(self):
+        for executable in ['python', 'node', 'deno', 'bun', 'perl', 'ruby', 'php', 'pwsh', 'powershell', 'osascript']:
+            self.assertVerdict([
+                f"{executable} --future-option <<'EOF'\ngit config core.hooksPath disabled\nEOF",
+                f'printf "git config core.hooksPath disabled" | {executable} --future-option script.arg',
+            ], 2)
+
+    def test_unrelated_git_segments_still_allow_git_free_interpreters(self):
+        for executable in ['python', 'node', 'deno', 'bun', 'perl', 'ruby', 'php', 'pwsh', 'powershell', 'osascript']:
+            self.assertVerdict([
+                f'git status && {executable} --some-option "print(1)"',
+                f"git status; {executable} <<'EOF'\nprint(1)\nEOF",
+                f'git status && printf hello | {executable} --some-option script.arg',
+            ], 0)
+
+    def prepare_gate(self):
+        active = self.repo / '.active-hooks'
+        active.mkdir(exist_ok=True)
+        hook = active / 'pre-commit'
+        hook.write_text('#!/bin/sh\necho guard-test-gate-rejected >&2\nexit 1\n', encoding='utf-8', newline='\n')
+        hook.chmod(0o755)
+        git(self.repo, 'config', 'core.hooksPath', '.active-hooks')
+
+    def commit_status(self):
+        result = subprocess.run(['git', '-c', 'user.name=t', '-c', 'user.email=t@example.invalid',
+                                 'commit', '--allow-empty', '-qm', 'gate probe'], cwd=self.repo, env=ENV,
+                                capture_output=True, encoding='utf-8', errors='replace', timeout=60)
+        self.commit_error = result.stderr
+        return result.returncode
+
+    def assert_gate_preserved(self, command, argv):
+        self.prepare_gate()
+        before = self.commit_status()
+        self.assertEqual(before, 1, 'Fixture gate must reject a real commit before the hook call')
+        self.assertIn('guard-test-gate-rejected', self.commit_error)
+        verdict = self.run_hook(command)
+        if verdict.returncode == 0:  # Execute only what the old guard actually lets through.
+            subprocess.run(argv, cwd=self.repo, env=ENV, capture_output=True, check=True, timeout=60)
+        after = self.commit_status()
+        if after == 1:
+            self.assertIn('guard-test-gate-rejected', self.commit_error)
+        print(f'{command}: gate_before={before}, guard={verdict.returncode}, commit_after={after}', flush=True)
+        self.assertEqual((before, verdict.returncode, after), (1, 2, 1), verdict.stderr)
+
+    def test_real_node_print_cannot_disable_commit_gate(self):
+        executable = shutil.which('node')
+        if not executable:
+            self.skipTest('Node unavailable for executable gate proof; payload variants covered separately')
+        code = "require('child_process').execFileSync('git', ['config', 'core.hooksPath', 'disabled'])"
+        for flag in ['-p', '--print']:
+            with self.subTest(flag=flag):
+                self.assert_gate_preserved(f'node {flag} "{code}"', [executable, flag, code])
+
+    def test_real_perl_extended_eval_cannot_disable_commit_gate(self):
+        executable = shutil.which('perl')
+        if not executable:
+            self.skipTest('Perl unavailable for executable gate proof; payload variant covered separately')
+        code = "system('git','config','core.hooksPath','disabled') == 0 or die 'git failed'"
+        self.assert_gate_preserved(f'perl -E "{code}"', [executable, '-E', code])
+
+    def test_real_subshell_cannot_redirect_hookspath_containment(self):
+        outside = self.tmp / 'outside-hooks'
+        outside.mkdir()
+        self.link_hooks(outside)
+        side = self.tmp / 'b'
+        side.mkdir()
+        git(side, 'init', '-q', '-b', 'main')
+        shell = shutil.which('sh')
+        if not shell:
+            self.skipTest('POSIX shell unavailable for executable subshell proof')
+        command = '(cd ../b && git status --short); git config core.hooksPath .githooks'
+        self.assert_gate_preserved(command, [shell, '-c', command])
+
+    def test_hookspath_writes_with_directory_routing_are_unreadable(self):
+        for command in [
+            '(cd . && git status); git config core.hooksPath .githooks',
+            'cd . && git config core.hooksPath .githooks',
+            'pushd .; git config core.hooksPath .githooks',
+            'popd; git config core.hooksPath .githooks',
+            '(git config core.hooksPath .githooks)',
+            'git -C . config core.hooksPath .githooks',
+            'git -C. config core.hooksPath .githooks',
+            'git --git-dir=.git config core.hooksPath .githooks',
+            'git --git-dir .git config core.hooksPath .githooks',
+            'git --work-tree=. config core.hooksPath .githooks',
+            'git --work-tree . config core.hooksPath .githooks',
+            'GIT_DIR=.git git config core.hooksPath .githooks',
+            'GIT_WORK_TREE=. git config core.hooksPath .githooks',
+            'git config core.hooksPath .githooks; cd .',
+            'git status && git config core.hooksPath .githooks',
+        ]:
+            with self.subTest(command=command):
+                result = self.run_hook(command)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn(b'cannot read', result.stderr)
+        self.assertVerdict([
+            'git config core.hooksPath .githooks',
+            'git config --local --replace-all core.hooksPath .githooks',
+            'git config set core.hooksPath .githooks',
+            'cd . && git config --get core.hooksPath',
+        ], 0)
 
 
 if __name__ == '__main__':

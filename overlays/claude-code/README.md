@@ -51,12 +51,16 @@ repository.
 The git guard removes shell redirections before reading git arguments, and recognizes
 `checkout -` as the previous branch. A wrapper chain it cannot follow to git (including
 `env`/`exec` options and unlisted wrappers) is refused as unreadable. Shells and interpreters
-(`python*`, `node`, `perl`, `ruby`) reading input, here-documents or `-c`/`-e` text that holds
-git are also unreadable. Interpreter checks inspect its own inline program, here-document
-or stdin pipeline; a separate `git status` does not taint a git-free interpreter program.
+(`python*`, Node, Deno, Bun, Perl, Ruby, PHP, PowerShell, osascript and other common runtimes)
+are unreadable when any argument, their here-document or stdin pipeline holds a git word,
+regardless of flags. A separate `git status` does not taint a git-free interpreter segment.
 Gate wiring accepts exactly one `.githooks` value in the documented local config forms;
 extra operands, value-pattern forms and unknown options are refused. The hook resolves
-`.githooks` against the target repository root and refuses symlinks/junctions that leave it.
+`.githooks` from its own cwd and refuses symlinks/junctions that leave the repository.
+A hooksPath write must be a single plain command: directory changes (`cd`, `pushd`, `popd`),
+subshells, compound commands, Git directory options (`-C`, `--git-dir`, `--work-tree`) and
+`GIT_DIR`/`GIT_WORK_TREE` alongside the write are unreadable. Run the wiring command alone
+from the intended repository. Read-only config queries retain their normal directory routing.
 
 The four `permissions.deny` rules (`git *--out*`, `*--ext*`, `*--textc*`, `*--sub*`) are prefixes
 because git accepts any unambiguous abbreviation of a long option (git-scm.com/docs/gitcli).

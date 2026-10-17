@@ -33,12 +33,14 @@ accepted: a command that only mentions such a pattern is refused while the tree 
 Read as git reads it: option values (`clean -e -n` excludes "-n"), `--` ends the options, the
 last of `--x`/`--no-x` wins, a unique abbreviation (`--no-veri`) counts, an alias is resolved,
 `GIT.EXE` is git on Windows. Refused as unreadable when it carries a git word: backticks, `$(...)`,
-`eval`, shell/interpreter command strings or input (including python*, node, perl and ruby),
+`eval`, shell command strings or input, any interpreter argument or input (including python*,
+node, deno, bun, perl, ruby, php and PowerShell),
 a here-document on a line where a shell/interpreter appears (`cat <<EOF | sh`), a
 backslash-newline, a wrapper chain whose git command cannot be reached, and an unbalanced
 quote. Other here-documents are dropped before parsing, so a commit message may mention git.
 Shell redirections are removed before reading git arguments; quoted/escaped operators remain
-arguments. `git config core.hooksPath .githooks` wires the project's own gate and is allowed.
+arguments. `git config core.hooksPath .githooks` wires the project's own gate only as a plain
+command without directory routing; containment is resolved from the hook's own cwd.
 Sources: the vendor's default auto-mode block list
 (https://code.claude.com/docs/en/permission-modes), Bash rule limits
 (https://code.claude.com/docs/en/permissions), git-push, git-clean, git-restore, git-config,
@@ -169,43 +171,13 @@ def base(token):
 
 
 def interpreter(name):
-    return name.startswith("python") or name in {"node", "perl", "ruby"}
-
-
-def interpreter_input(name, args):
-    """Inline programs and whether the interpreter reads its program from stdin.
-
-    Stop at the script operand (or Python/Node's inline program); later words are script args.
-    Perl/Ruby can repeat -e. Value-taking interpreter options are not program text.
-    """
-    python = name.startswith("python")
-    prefix, switch, values = {
-        "python": ("bBdEhiIOPqRsuUvVx", "c", {"-W", "-X"}),
-        "node": ("ip", "e", {"-r", "--require", "--input-type"}),
-        "perl": ("adFhilnpsStTuUvVwW", "e", {"-I", "-M", "-m"}),
-        "ruby": ("acCdlnpsSw", "e", {"-I", "-r", "-E"}),
-    }["python" if python else name]
-    programs, stdin, i = [], True, 0
-    while i < len(args):
-        arg, i = args[i], i + 1
-        if arg == "--":
-            stdin = not programs and (i == len(args) or args[i] == "-")
-            break
-        if arg == "-" or not arg.startswith("-"):
-            stdin = not programs and arg == "-"
-            break
-        match = re.fullmatch(r"-[" + prefix + r"]*" + switch + r"(.*)", arg, re.S)
-        if match or (name == "node" and (arg == "--eval" or arg.startswith("--eval="))):
-            code = match.group(1) if match else arg.partition("=")[2]
-            if not code and i < len(args):
-                code, i = args[i], i + 1
-            programs.append(code)
-            stdin = False
-            if python or name == "node":
-                break
-        elif arg in values:
-            i += 1
-    return programs, stdin
+    # The runtime's flags do not define a safe boundary: any argument can carry code.
+    unversioned = re.sub(r"\d+(?:\.\d+)*$", "", name)
+    return name.startswith("python") or unversioned in {
+        "node", "nodejs", "deno", "bun", "perl", "ruby", "php", "pwsh", "powershell",
+        "osascript", "lua", "luajit", "julia", "r", "rscript", "tclsh", "wish",
+        "awk", "gawk", "mawk", "js", "qjs",
+    }
 
 
 def strip_heredocs(text):
@@ -228,7 +200,7 @@ def strip_heredocs(text):
         # Include readers behind wrappers, but ordinary prose (`echo python`) is not a reader.
         commands = [w for seg in segments(outside) if base(seg[0]) not in CALM | {"git"} for w in seg]
         if GIT_WORD.search(body):
-            if any(base(w) in SHELLS for w in commands):
+            if any(base(w) in SHELLS and not interpreter(base(w)) for w in commands):
                 raise Unreadable("a here-document a shell on the same line may read")
             marker = "__guard_heredoc_input__"
             line = text.rfind("\n", 0, m.start()) + 1
@@ -263,8 +235,8 @@ def substitutions(text):
     return found
 
 
-def segments(text, with_endings=False, strict=False):
-    """Simple commands, optionally paired with their following shell separator."""
+def shell_tokens(text, strict=False):
+    """Shell words and separators, with redirections removed before quote information is lost."""
     # Consume complete raw shell words so quoted/escaped >, < and descriptor numbers survive.
     # Strip a redirection together with its target before shlex discards quote information or
     # splits `2>&1` at `&`. A separate `2 >out` leaves 2 as an argument, as the shell does.
@@ -279,15 +251,32 @@ def segments(text, with_endings=False, strict=False):
     except ValueError:
         if strict or GIT_WORD.search(text):
             raise Unreadable("an unbalanced quote")
-        return
+        return []
+    return tokens
+
+
+def segments(text, with_endings=False, strict=False):
+    """Simple commands, optionally paired with their following shell separator."""
     segment = []
-    for token in tokens + [";"]:
+    for token in shell_tokens(text, strict) + [";"]:
         if token and set(token) <= SEPARATORS:
             if segment:
                 yield (segment, token) if with_endings else segment
             segment = []
         else:
             segment.append(token)
+
+
+def plain_hooks_command(command):
+    """A hooksPath write may have no compound syntax or directory-routing tokens anywhere."""
+    tokens = shell_tokens(command.strip(), strict=True)
+    return not any(
+        (token and set(token) <= SEPARATORS)
+        or base(token) in {"cd", "pushd", "popd"}
+        or token.startswith(("-C", "--git-dir", "--work-tree"))
+        or token.split("=", 1)[0].upper() in {"GIT_DIR", "GIT_WORK_TREE"}
+        for token in tokens
+    )
 
 
 def resolve(name, names):
@@ -343,6 +332,7 @@ class Git:
     """One git invocation and how to ask git about the repository it reaches."""
 
     def __init__(self, tokens, env, cwds):
+        self.command = None  # Set by judge; hooksPath writes require the complete caller command.
         self.env, self.cwds, self.route, self.configs, i = env, cwds, [], [], 0
         self.cwd = next((c for c in reversed(cwds) if c), None)  # where questions other than status go
         while i < len(tokens) and tokens[i].startswith("-"):
@@ -412,11 +402,14 @@ def hooks_config_allowed(g):
         return False
     if action in {None, "get"} and len(operands) == 1:
         return True
+    if g.command is None or not plain_hooks_command(g.command):
+        raise Unreadable("directory routing or compound shell syntax alongside a hooksPath write")
     if (action not in {None, "set"} or len(operands) != 2 or operands[1] != ".githooks"
             or scope in {"--global", "--system"}):
         return False
     try:
-        code, root = g.ask("rev-parse", "--show-toplevel")
+        # A fresh probe uses only the hook's own cwd: no inferred cd, git routes or local env.
+        code, root = Git([], {}, [g.cwds[0]]).ask("rev-parse", "--show-toplevel")
         if code or not root:
             return False
         root = os.path.normcase(os.path.realpath(root))
@@ -538,17 +531,14 @@ def judge(command, cwd):
         has_git = any(GIT_WORD.search(t) for t in rest)
         if name == "eval" and any(GIT_WORD.search(t) for t in rest):
             raise Unreadable("eval")
-        if name in SHELLS and any(GIT_WORD.search(t) for t in text.split()):
+        if name in SHELLS and not interpreter(name) and any(GIT_WORD.search(t) for t in text.split()):
             if any(re.fullmatch(r"-\w*c\w*|/c|-command", t, re.I) for t in rest[1:]):
                 raise Unreadable(f"a command string run by {name} -c")
             if not [t for t in rest[1:] if not t.startswith("-")]:
                 raise Unreadable(f"{name} reading commands from its input")
         if interpreter(name):
-            programs, stdin = interpreter_input(name, rest[1:])
-            if any(GIT_WORD.search(code) for code in programs):
-                raise Unreadable(f"a command string run by {name}")
-            if stdin and input_git:
-                raise Unreadable(f"{name} reading commands from its input")
+            if any(GIT_WORD.search(arg) for arg in rest[1:]) or input_git:
+                raise Unreadable(f"git in {name} arguments or piped input")
         elif input_git and name not in CALM | {"git"} and any(interpreter(base(t)) for t in rest):
             raise Unreadable(f"interpreter input through {name}")
         if name != "git" and name not in CALM and not interpreter(name) and has_git:
@@ -565,6 +555,7 @@ def judge(command, cwd):
             continue
         if name == "git":
             g = Git(rest[1:], {**env, **local}, cwds)
+            g.command = command
             found = verdict(g)
             if found:
                 yield found[0], found[1], (g, found[2], changed)
