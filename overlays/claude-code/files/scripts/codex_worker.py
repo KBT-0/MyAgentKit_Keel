@@ -581,7 +581,7 @@ def busy(paths):
 
 def watch(child, question, close_tree, result=None, stale=None, answered=None):
     ready_at = None
-    latched = False
+    latched = None  # result and question ids seen when grace passed
     checkout = None  # its lock paths, asked of git once a result or a decision is ready
     noticed = ''
     asked = None, ''  # the id of the last new question read, and its published text
@@ -592,7 +592,7 @@ def watch(child, question, close_tree, result=None, stale=None, answered=None):
         if grace < 0:
             raise ValueError('KIT_WORKER_GRACE must be nonnegative seconds')
         while child.poll() is None:
-            kind = result_kind(result, since, stale)[0]
+            kind, result_id = result_kind(result, since, stale)
             # A valid new result shows observable acceptance. Survival alone cannot distinguish
             # a resumed session that took its answer from one that will fail without doing so.
             if answered is not None and kind:
@@ -611,13 +611,16 @@ def watch(child, question, close_tree, result=None, stale=None, answered=None):
             notice = 'decision' if decision else kind
             notice = notice if notice in ('decision', 'DONE', 'HANDOFF') else ''
             # After grace, the lead may move the publication while its gate still runs.
-            # Keep the close pending if it disappears; a new valid result still replaces it.
-            if notice != noticed and (notice or kind or not latched):
+            # Keep the close pending if it disappears; only a new publication replaces it.
+            # A standing result seen with a decision is not new when that decision moves.
+            if notice != noticed and (latched is None or (decision and identity != latched[1])
+                                      or (kind and result_id != latched[0])):
                 ready_at = time.monotonic() if notice else None
                 noticed = notice
-                latched = False
+                latched = None
             if ready_at is not None and time.monotonic() - ready_at >= grace:
-                latched = True
+                if latched is None:
+                    latched = result_id, identity
                 if checkout is None:
                     checkout = locks()
                 if busy(checkout):

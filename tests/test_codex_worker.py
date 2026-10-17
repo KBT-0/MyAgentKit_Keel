@@ -94,14 +94,20 @@ class CodexWorkerTests(unittest.TestCase):
     def test_a_notice_moved_during_a_gate_still_ends_the_worker_after_the_gate(self):
         # The lead moves a result before committing. Once its grace passed, a held gate
         # must delay the close, not make it depend on the result still being there.
-        for kind, notice in (('completed', 'DONE'), ('handoff', 'HANDOFF'), ('question', 'decision')):
-            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as tmp:
+        scenarios = [('completed', 'DONE', None), ('handoff', 'HANDOFF', None)]
+        scenarios += [('question', 'decision', standing)
+                      for standing in (None, 'blocked', 'progress', 'completed', 'handoff')]
+        for kind, notice, standing in scenarios:
+            with self.subTest(kind=kind, standing=standing), tempfile.TemporaryDirectory() as tmp:
                 worker = module()
                 question, result, record, gate = (Path(tmp) / n for n in ('q.md', 'r.md', 'w.exit', 'check.lock'))
                 publication = question if kind == 'question' else result
                 publication.write_text(('Choose A or B.\n' if kind == 'question' else
                                         'Kind: %s\nTask: w\nAttempt: 1\nRemaining: none\n' % kind) + READY,
                                        encoding='utf-8')
+                if standing:
+                    result.write_text('Kind: %s\nTask: w\nAttempt: 1\nRemaining: lead\n%s' % (standing, READY),
+                                      encoding='utf-8')
                 gate.touch()
                 if os.name == 'nt':
                     import ctypes
@@ -143,8 +149,8 @@ class CodexWorkerTests(unittest.TestCase):
                         self.assertEqual(worker.watch(child, question, None, result), 0)
                     self.assertTrue(released, 'the worker ended while the gate was held')
                     stopped.assert_called()
-                    self.assertEqual(waits.count(.5), 3)
                     self.assertTrue(record.read_text(encoding='utf-8').startswith(notice + ' published at '))
+                    self.assertEqual(waits.count(.5), 3)
                 finally:
                     if not released:
                         release()
@@ -179,6 +185,27 @@ class CodexWorkerTests(unittest.TestCase):
                         mock.patch.object(worker, 'record_exit') as record:
                     self.assertEqual(worker.watch(child, Path('q.md'), None), 0)
                 record.assert_called_once_with('HANDOFF published' if replacement == 'HANDOFF' else 'exit 0')
+
+    def test_a_new_result_replaces_a_latched_decision_after_its_question_moves(self):
+        # A different result id must replace the pending close even when its kind is
+        # still BLOCKED; an unchanged standing result is covered by the real-gate case.
+        for replacement in ('BLOCKED', 'PROGRESS', 'DONE', 'HANDOFF'):
+            with self.subTest(replacement=replacement):
+                worker = module()
+                child = mock.Mock(returncode=0)
+                child.poll.side_effect = [None, None, 0]
+                with mock.patch.dict(os.environ, KIT_WORKER_GRACE='0'), \
+                        mock.patch.object(worker, 'result_kind', side_effect=[('BLOCKED', 'old'),
+                                                                           (replacement, 'new')]), \
+                        mock.patch.object(worker, 'question_id', side_effect=['question-id', None]), \
+                        mock.patch.object(worker, 'published', return_value='Choose A or B.\n' + READY), \
+                        mock.patch.object(worker, 'locks', return_value=[]), \
+                        mock.patch.object(worker.time, 'sleep'), mock.patch.object(worker, 'stop'), \
+                        mock.patch.object(worker, 'busy', side_effect=[True, False]), \
+                        mock.patch.object(worker, 'record_exit') as record:
+                    self.assertEqual(worker.watch(child, Path('q.md'), None), 0)
+                record.assert_called_once_with(replacement + ' published'
+                                               if replacement in ('DONE', 'HANDOFF') else 'exit 0')
 
     def test_the_locks_of_a_unicode_checkout_are_found_without_utf8_mode(self):
         # Codex r2 (fix56): git prints UTF-8 paths; a Windows locale without UTF-8 mode decoded
