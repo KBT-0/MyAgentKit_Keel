@@ -157,8 +157,8 @@ SANDBOX = {"sandbox": {"enabled": True, "failIfUnavailable": True, "allowUnsandb
                        "network": {"allowedDomains": [], "strictAllowlist": True},
                        "filesystem": {"denyRead": [".myagentkit/backends"]}}}
 DIFF_LIMIT = 400_000  # bytes of diff, plus any carried rounds, in one review prompt
-# Lock files, vendored trees and minified bundles reach the reviewer but spend no budget and
-# no split hint: Cloudflare's review drops lock files before review and Anthropic's REVIEW.md
+# Lock files, vendored trees and minified bundles reach the reviewer under the total byte cap,
+# but spend no split hint: Cloudflare's review drops lock files before review and Anthropic's REVIEW.md
 # example skips them (KARARLAR B02 inv2#34). ponytail: names only; a project's own generated
 # paths need adding here.
 NOISE_NAMES = {"package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml", "Cargo.lock",
@@ -786,14 +786,15 @@ def snapshot(repo: Path, scope: str, reference: str | None) -> tuple[str, str, s
         changed |= (names_of('diff', '--name-only', '--no-renames', '-z', parents[0], resolved) if parents
                     else names_of('diff-tree', '-r', '--root', '--no-commit-id', '--name-only', '-z', resolved))
     names = (set(in_scope.split(b'\0')) - {b''}) | changed
-    # Every name here reaches the reviewer: in its copy, or as diff text (a deletion too).
+    # Refuse changed secret-looking paths, including deletions, rather than unrelated tracked files.
     allowed = set(filter(None, os.environ.get(ALLOW_SECRETS_ENV, "").split("\n")))
-    secrets = sorted(os.fsdecode(name) for name in names
+    secrets = sorted(os.fsdecode(name) for name in changed
                      if secret_like(os.fsdecode(name)) and os.fsdecode(name) not in allowed)
     if secrets:
-        raise BridgeError("review scope holds %s, which looks like a secret file: add it to .gitignore "
-                          "(untrack it if it is tracked), or pass --allow-secret-file %s to review it "
-                          "knowingly" % (secrets[0], secrets[0]))
+        raise BridgeError("review scope holds changed secret-looking files; add them to .gitignore "
+                          "(untrack them if tracked), or review each knowingly:\n" +
+                          "\n".join("  %s, which looks like a secret file: --allow-secret-file %s"
+                                    % (name, name) for name in secrets))
     current = filtered_names(repo, names, drivers)
     refused = filtered_names(repo, names, None)
     for end in ends:
@@ -880,8 +881,8 @@ def snapshot(repo: Path, scope: str, reference: str | None) -> tuple[str, str, s
             raise BridgeError('review scope has a Git clean filter or ident attribute on %s, which changed '
                               'while the review was being prepared; run the review again'
                               % os.fsdecode(min(moved)))
-    if budgeted(diff)[0] > DIFF_LIMIT:
-        raise BridgeError("diff exceeds %d bytes outside lock, vendored and minified files; split "
+    if len(diff) > DIFF_LIMIT:
+        raise BridgeError("diff exceeds %d bytes including lock, vendored and minified files; split "
                           "the task" % DIFF_LIMIT)
     return head, fingerprint, diff.decode("utf-8", errors="strict"), resolved
 
@@ -1062,7 +1063,7 @@ def prior_rounds(repo: Path, task_id: str | None, scope: str, resolved: str | No
         text += "### Author's dispositions (claims to verify, not facts)\n" + claims + "\n"
     # A carried verdict line echoed back would break the reviewer's exactly-one-verdict check.
     text = re.sub(r"^[ \t]*VERDICT[ \t]*:", "Earlier verdict:", text, flags=re.M | re.I)
-    if budgeted(diff.encode())[0] + len(text.encode()) > DIFF_LIMIT:
+    if len(diff.encode()) + len(text.encode()) > DIFF_LIMIT:
         raise BridgeError("the diff plus earlier rounds and dispositions exceed %d bytes; start "
                           "a fresh MYAGENTKIT_TASK_ID label" % DIFF_LIMIT)
     return text, measured
@@ -1103,44 +1104,85 @@ def schema(mode: str) -> dict:
 
 
 # A section starts at a line naming it in any markup (`## Findings`, `### **Manual checks:**`,
-# `__Findings__`, `Findings:`) and only another named section ends it: an unknown or
-# severity-first heading under Findings stays in it and is read as an item. A section that
-# ended at the first heading it did not expect once passed an Accept over a `### **High**`.
+# `__Findings__`, `Findings:`). Peer headings end a section; nested and severity-first
+# headings stay in it. A section that ended at any heading once hid a `### **High**`.
 SECTIONS = ("findings", "manual checks", "notes", "summary", "verdict")
 # A list marker, a heading's hashes and emphasis, removed from the front of an item.
 MARKUP = re.compile(r"^[ \t]*(?:(?:[-+*]|\d+[.)]|#{1,6})[ \t]+)?[*_ \t]*")
 SEVERITY_FIRST = re.compile(r"(?i)(?:critical|high|medium|low|pre-existing)\b")
+SEVERITY_HEADING = re.compile(r"\b(?:critical|high|medium|low|pre-existing)\b", re.I)
+UNVERIFIED = re.compile(r"\b(?:not run|could not (?:verify|be verified))\b", re.I)
 # A clean review's placeholder under the heading is no finding.
 EMPTY_ITEMS = {"none", "no findings", "n/a", "not applicable"}
+
+
+def review_item(line: str) -> str:
+    """Remove stacked heading, list and emphasis prefixes without dropping their text."""
+    while (plain := MARKUP.sub("", line)) != line:
+        line = plain
+    return line
+
+
+def finding_start(line: str) -> bool:
+    """Recognise a marked severity before a line can become another finding's continuation.
+
+    Headings may put an issue number before the severity. Look through stacked list/heading
+    prefixes too, and ignore emphasis around a label (`__High__` has no word boundary).
+    """
+    # Remove emphasis before parsing numeric prefixes (`**3.** __High__`), and treat
+    # Unicode whitespace as indentation just like spaces and tabs.
+    line = re.sub(r"\s", " ", line.replace("*", "").replace("_", ""))
+    item = review_item(line)
+    if SEVERITY_FIRST.match(item):
+        return True
+    while (plain := MARKUP.sub("", line)) != line:
+        if re.match(r"^[ \t]*#{1,6}[ \t]+", line):
+            return bool(SEVERITY_HEADING.search(item))
+        line = plain
+    return False
 
 
 def review_parts(text: str) -> tuple[list, list]:
     """A text review's findings and manual checks, read the same way by every caller.
 
     A finding is each top-level block (list item, heading or paragraph, its continuation lines
-    joined) and each line at any indent that starts with a severity, its markup removed;
+    joined) and each marked severity line at any indent, including numbered issue headings;
     accept_allows() then admits only Lows, Pre-existing items and whole-block placeholders, so
     an item the reviewer wrote in a form nobody expected refuses the Accept instead of
     vanishing. Without a Findings heading the text before the first named section is read as
     the findings. A manual check is each non-placeholder line of its section, a heading
     included. VERDICT lines belong to neither.
     """
-    sections, current = {}, None
+    sections, current, level = {}, None, 6
+    unverified = []
     for line in text.splitlines():
+        item = review_item(line)
+        # Even a verdict-looking line cannot silence an unverified check. Emphasis may
+        # surround each word separately, as in `**NOT** **RUN**`.
+        if UNVERIFIED.search(item.replace("*", "").replace("_", "")) and not manual_placeholder(line):
+            unverified.append(line)
         if re.match(r"[ \t]*VERDICT[ \t]*:", line, re.I):
             continue
         name = re.sub(r"^#{1,6}[ \t]+", "", line.strip()).strip("*_ \t").rstrip(":").strip("*_ \t").lower()
+        heading = re.match(r"^(#{1,6})[ \t]+", line.strip())
         if name in SECTIONS:
             current = name
+            level = len(heading[1]) if heading else 6
             sections.setdefault(name, [])
+        elif heading and len(heading[1]) <= level and not finding_start(line):
+            # Do not turn an independent Testing heading into a manual check. Its NOT RUN
+            # lines and severity-first findings still count below, wherever they were placed.
+            current = "not run" if name == "not run" else "other"
+            level = len(heading[1])
+            sections.setdefault(current, []).append(line)
         else:
             sections.setdefault(current, []).append(line)
     findings, prior = [], ""
     for line in sections.get("findings", sections.get(None, [])):
-        item = MARKUP.sub("", line)
+        item = review_item(line)
         if not line.strip():
             pass
-        elif not findings or SEVERITY_FIRST.match(item) or (
+        elif not findings or finding_start(line) or (
                 line[0] not in " \t" and (not prior.strip() or MARKUP.match(line).group().strip())):
             findings.append(item)
         else:
@@ -1149,8 +1191,19 @@ def review_parts(text: str) -> tuple[list, list]:
             findings[-1] += " " + item
         prior = line
     # Every other line is a check, a heading included: `### Verify the deployment.` once vanished.
-    checks = [line for line in sections.get("manual checks", [])
-              if MARKUP.sub("", line).rstrip(" \t.*_").lower() not in {"", "none", "n/a", "not applicable", "not run"}]
+    checks = [line for line in sections.get("manual checks", []) if not manual_placeholder(line)]
+    # Section names cannot silence marked findings, including the heading's own text.
+    source = "findings" if "findings" in sections else None
+    for group, lines in sections.items():
+        if group == source:
+            continue
+        for line in lines:
+            item = review_item(line)
+            if finding_start(line) and item not in findings:
+                findings.append(item)
+            if group == "not run" and not manual_placeholder(line):
+                checks.append(line)
+    checks.extend(line for line in unverified if line not in checks)
     return findings, checks
 
 
@@ -1159,11 +1212,17 @@ def placeholder(item: str) -> bool:
     sentence ("No qualifying defects found.", "No findings established in this diff.")."""
     # "Plus N similar" is what REVIEW_PROMPT asks for past five Lows. The sentence forms are the
     # ones Codex writes (fix4 notes); refused, a clean paid review was recorded as failed.
-    return (item.strip(" \t-*.").lower() in EMPTY_ITEMS
+    return (item.strip(" \t-*.").lower() in EMPTY_ITEMS | {"none required", "nothing to check"}
             or bool(re.fullmatch(r"(?i)\s*(?:[-*]\s+)?\**\s*(?:plus \d+ similar(?: low)?(?: findings?)?"
                                  r"|no(?: \w+)? (?:findings?|defects?|issues?)"
                                  r"(?: (?:were |was )?(?:found|established|identified|reported))?"
                                  r"(?: in (?:this|the) diff)?)[\s.*]*", item)))
+
+
+def manual_placeholder(item: str) -> bool:
+    """The same whole-item placeholders in text and structured manual checks."""
+    clean = review_item(item).rstrip(" \t.*_")
+    return not clean or placeholder(clean)
 
 
 def accept_allows(findings: list) -> bool:
@@ -1171,7 +1230,7 @@ def accept_allows(findings: list) -> bool:
     severity may be a bold or dash-prefixed list item, the forms both reviewers write."""
     # `Low-level: High ...` is no Low, and a bare `Pre-existing:` names nothing (fix4 notes).
     return all(placeholder(item)
-               or re.match(r"\s*(?:[-*]\s+)?\**\s*(Low(?![-\w])|Pre-existing:\s*[^\s*])", item) for item in findings)
+               or re.match(r"\s*(?:[-*]\s+)?\**\s*(Low(?![-\w])|Pre-existing:\**\s*[^\s*])", item) for item in findings)
 
 
 def validate(envelope: object, mode: str, model: str) -> dict:
@@ -1205,10 +1264,13 @@ def validate(envelope: object, mode: str, model: str) -> dict:
         ):
             raise BridgeError(f"invalid final field: {key}")
     if mode == "review":
+        value = dict(value, manual_checks=[item for item in value["manual_checks"] if not manual_placeholder(item)])
+        findings, checks = review_parts("## Findings\n" + "\n".join(value["findings"]))
         verdict = value["verdict"]
         if verdict not in VERDICTS:
             raise BridgeError("invalid verdict")
-        if verdict == "Accept" and (value["manual_checks"] or not accept_allows(value["findings"])):
+        if verdict == "Accept" and (value["manual_checks"] or checks or not accept_allows(findings)
+                                    or not accept_allows(value["findings"])):
             raise BridgeError("Accept contradicts outstanding findings or manual checks")
         if verdict == "Reject" and all(placeholder(item) for item in value["findings"]):
             raise BridgeError("Reject has no findings")

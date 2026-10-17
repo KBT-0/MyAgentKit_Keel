@@ -90,13 +90,30 @@ class OwnsCheckTests(unittest.TestCase):
         self.git('checkout', '-q', 'side')
         self.assertIn('  other.txt\n', self.check('Owns: src/', '--base', 'base')[1])
 
-    def test_no_owns_line_checks_nothing_and_a_bad_call_is_an_error(self):
+    def test_no_owns_line_fails_closed_and_a_bad_call_is_an_error(self):
         self.write('other.txt')
-        self.assertEqual(self.check('Files: src/')[0], 0)
+        code, errors = self.check('Files: src/')
+        self.assertEqual(code, 2)
+        self.assertIn(str(self.brief), errors)
         self.assertEqual(self.check('Owns:')[0], 2)
         self.assertEqual(self.check('Owns: src/', '--base')[0], 2)
         self.assertEqual(self.check('Owns: src/', '--base', '--output=x')[0], 2)
         self.assertEqual(self.check('Owns: src/', '--base', 'no-such-ref')[0], 2)
+
+    def test_numbered_bold_owns_is_checked(self):
+        self.write('other.txt')
+        for prefix in ('3. **Owns:**', '3) **Owns:**'):
+            code, errors = self.check(prefix + ' src/')
+            self.assertEqual(code, 1, errors)
+            self.assertIn('  other.txt\n', errors)
+
+    def test_worker_reports_are_allowed_only_at_the_repository_root(self):
+        for name in ('RESULT-worker.md', 'QUESTION-worker.md'):
+            self.write(name)
+        self.assertEqual(self.check('Owns: src/')[0], 0)
+        for name in ('nested/RESULT-worker.md', 'RESULT-worker.py', 'QUESTION.md'):
+            self.write(name)
+            self.assertIn('  ' + name + '\n', self.check('Owns: src/')[1])
 
 
 if __name__ == '__main__':
