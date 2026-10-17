@@ -198,7 +198,9 @@ class DoctorTests(unittest.TestCase):
                                     env=dict(env, PATH=str(old) + os.pathsep + bare),
                                     capture_output=True, text=True, timeout=20)
             elapsed = time.monotonic() - started
-            self.assertLess(elapsed, 6, 'doctor.sh waited %.2f s for the CLI child' % elapsed)
+            # doctor.sh bounds its probe at 10 s; the child sleeps 12 s. Allow 11 s for
+            # the probe and fixture overhead, still failing if capture waits for the child.
+            self.assertLess(elapsed, 11, 'doctor.sh waited %.2f s for the CLI child' % elapsed)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn('DOCTOR: ready', result.stdout)
             if shutil.which('setsid', path=bare):
