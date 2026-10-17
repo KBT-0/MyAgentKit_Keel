@@ -130,16 +130,15 @@ def tier(model):
 
 
 def author_family(model):
-    """Recognize the author's provider family; an unknown identity cannot authorize fallback."""
+    """Resolve a model family, also accepting provider-qualified author identities."""
     model = (model or "").strip().lower()
-    vendor, separator, pin = model.partition("/")
-    if separator and vendor in {"claude", "codex"}:
-        return vendor
-    if model.startswith("claude-"):
+    vendor, separator, pin = model.rpartition("/")
+    pin = pin if separator else model
+    if pin.startswith("claude-"):
         return "claude"
-    if model.startswith(("gpt-", "codex")) or re.match(r"o\d(?:-|$)", model):
+    if pin.startswith(("gpt-", "codex")) or re.match(r"o\d(?:-|$)", pin):
         return "codex"
-    return None
+    return {"claude": "claude", "anthropic": "claude", "codex": "codex", "openai": "codex"}.get(vendor)
 
 
 def load_backend(repo, name):
@@ -465,7 +464,11 @@ def main(argv=None):
         if eligible and author_family(author) is None:
             chain["fallback_blocked"] = "author family is unknown; set MYAGENTKIT_AUTHOR before requesting fallback"
             eligible = False
-        if eligible and author_family(author) == other:
+        if eligible and author_family(pins[other]) is None:
+            chain["fallback_blocked"] = ("other reviewer %s model %s has an unknown family; "
+                                         "cannot verify independence" % (names[other], pins[other]))
+            eligible = False
+        if eligible and author_family(author) == author_family(pins[other]):
             chain["fallback_blocked"] = ("other reviewer %s model %s is the author's family (MYAGENTKIT_AUTHOR %s)"
                                          % (names[other], pins[other], author))
             eligible = False

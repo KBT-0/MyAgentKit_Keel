@@ -33,9 +33,9 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'REVIEW_SHADOW', 'MYAGENTKIT_TASK_I
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 229, 'test_agent_usage': 36, 'test_codex_quota': 5}
+SUITE_MINIMUMS = {'test_claude_bridge': 232, 'test_agent_usage': 36, 'test_codex_quota': 5}
 # These are executed cases, excluding only the explicitly declared POSIX exclusions.
-WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 203, 'test_agent_usage': 32, 'test_codex_quota': 4}
+WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 206, 'test_agent_usage': 32, 'test_codex_quota': 4}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -365,7 +365,7 @@ except ValueError as error:
         return repo
 
     def review(self, repo, *args, **extra):
-        env = dict(os.environ, REVIEW_REPO_ROOT=str(repo), REVIEW_CODEX_MODEL='fixture-codex',
+        env = dict(os.environ, REVIEW_REPO_ROOT=str(repo), REVIEW_CODEX_MODEL='codex-fixture',
                    REVIEW_CLAUDE_MODEL='claude-fixture', REVIEW_EFFORT='medium',
                    MYAGENTKIT_DELEGATION_DEPTH='0', MYAGENTKIT_TASK_ID='', STUB_QUOTA='',
                    PATH=str(Path(sys.executable).parent) + os.pathsep + os.environ['PATH'])
@@ -381,7 +381,7 @@ except ValueError as error:
                 result = self.review(repo, '--reviewer', primary, '--fallback', STUB_QUOTA=primary,
                                      MYAGENTKIT_AUTHOR=primary + '/fixture-author')
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                for provider, model in (('codex', 'fixture-codex'), ('claude', 'claude-fixture')):
+                for provider, model in (('codex', 'codex-fixture'), ('claude', 'claude-fixture')):
                     spend = 'REVIEW [about to run]: %s model %s, effort medium' % (provider, model)
                     self.assertIn(spend, result.stdout)
                     self.assertLess(result.stdout.index(spend), result.stdout.index('REVIEWER RAN: ' + provider))
@@ -548,6 +548,91 @@ except ValueError as error:
 
 
 class BridgeTests(unittest.TestCase):
+    def test_codex_accept_cannot_drop_a_finding_or_manual_check_in_a_peer_heading(self):
+        from contextlib import redirect_stdout
+        from unittest.mock import patch
+        import codex_bridge
+
+        def execution(command, prompt, repo, timeout, into=None, noted=None):
+            Path(command[command.index('-o') + 1]).write_bytes(final.encode('utf-8'))
+            return dict(exit_code=0, stdout=json.dumps({'type': 'turn.completed', 'usage': {}}),
+                        stderr='', termination=None, duration_ms=1)
+
+        for heading in ('## Testing', '## 1. High: file.py:1 drops records.',
+                        '## **2. Critical:** file.py:1 bypasses the gate.',
+                        '## NOT RUN', '## NOT RUN: Windows deployment could not be verified.',
+                        '## Could not verify Windows deployment.',
+                        '## Notes\n1. High: file.py:1 drops records.',
+                        '## Summary\nNOT RUN: Windows deployment.'):
+            final = '## Findings\nNone.\n## Manual checks\nNone.\n' + heading + '\nVERDICT: Accept\n'
+            received, out = [], io.StringIO()
+            with self.subTest(heading=heading), patch.dict(os.environ, self.review_env()), \
+                    patch('agent_process.run', side_effect=execution) as run, redirect_stdout(out):
+                code = codex_bridge.main(['--repo', str(self.repo), '--model', 'codex-fixture-model',
+                                          '--uncommitted'], received.append)
+                run.assert_called_once()
+                self.assertEqual(code, 0 if heading == '## Testing' else 5, out.getvalue())
+                if heading != '## Testing':
+                    self.assertEqual(received[-1]['failure_kind'], 'invalid_evidence')
+                    self.assertEqual(verdicts_of(received[-1]['evidence']), [])
+
+    def test_structured_accept_cannot_hide_heading_findings_or_unverified_checks(self):
+        for heading in ('## 1. High: file.py:1 drops records.',
+                        '## **2. Critical:** file.py:1 bypasses the gate.',
+                        '## NOT RUN', '## NOT RUN: Windows deployment could not be verified.',
+                        '## Could not verify Windows deployment.',
+                        '## Notes\n1. High: file.py:1 drops records.',
+                        '## Summary\nNOT RUN: Windows deployment.'):
+            # A structured Low item may contain continuation text and additional headings.
+            # Its first word must not hide a later High or an unverified check.
+            for field, item in (('findings', heading), ('manual_checks', heading),
+                                ('findings', 'Low: a note.\n' + heading)):
+                value = dict(verdict='Accept', findings=[], manual_checks=[])
+                value[field] = [item]
+                envelope = dict(type='result', subtype='success', is_error=False,
+                                modelUsage={'claude-opus-5': {}}, structured_output=value)
+                with self.subTest(field=field, item=item), self.assertRaises(bridge.BridgeError):
+                    bridge.validate(envelope, 'review', 'claude-opus-5')
+
+    def test_fallback_uses_the_resolved_backend_model_family_and_refuses_unknowns(self):
+        from contextlib import redirect_stdout
+        from unittest.mock import patch
+        import review_dispatch
+        folder = self.root / 'user-backends'
+        folder.mkdir()
+
+        def unavailable(args, report, claims=None):
+            report(dict(status='failed', failure_kind='quota_exhausted', evidence='fixture', usage_record='fixture'))
+            return 5
+
+        def completed(args, report, claims=None):
+            report(dict(status='completed', failure_kind=None, evidence='fixture', usage_record='fixture'))
+            return 0
+
+        for author, model, allowed in (('codex/gpt-6', 'gpt-6', False),
+                                       ('codex/gpt-6', 'openai/gpt-6', False),
+                                       ('codex/gpt-6', 'unknown-model', False),
+                                       ('unknown-author', 'claude-opus-5', False),
+                                       ('codex/gpt-6', 'claude-opus-5', True),
+                                       ('claude/claude-sonnet-5', 'gpt-6', True)):
+            (folder / 'openai.env').write_text('ANTHROPIC_BASE_URL=https://backend.invalid/api\n'
+                                              'ANTHROPIC_AUTH_TOKEN=fixture-token\nANTHROPIC_MODEL=' + model + '\n')
+            out = io.StringIO()
+            with self.subTest(author=author, model=model), \
+                    patch.dict(os.environ, self.review_env(MYAGENTKIT_AUTHOR=author)), \
+                    patch.object(review_dispatch.codex_bridge, 'main', side_effect=unavailable), \
+                    patch.object(review_dispatch.claude_bridge, 'main', side_effect=completed) as fallback, \
+                    redirect_stdout(out):
+                code = review_dispatch.main(['--repo', str(self.repo), '--reviewer', 'codex',
+                                             '--codex-model', 'codex-fixture-model', '--backend', 'openai'])
+                chain = json.loads(out.getvalue().split('review dispatch: ', 1)[1].splitlines()[0])
+                self.assertEqual(code, 0 if allowed else 5, out.getvalue())
+                self.assertEqual(fallback.call_count, int(allowed))
+                self.assertEqual(len(chain['attempts']), 2 if allowed else 1)
+                if not allowed:
+                    self.assertIn('family', chain['fallback_blocked'])
+                    self.assertNotIn('selected_reviewer', chain)
+
     def test_noise_cannot_bypass_the_total_review_payload_cap(self):
         for name in ('package-lock.json', 'vendor/lib.py', 'app.min.js'):
             path = self.repo / name
@@ -585,7 +670,7 @@ class BridgeTests(unittest.TestCase):
         self.assertTrue(checks)
 
     def test_structured_manual_placeholders_match_the_text_parser(self):
-        for item in ('None.', '- None.', 'N/A', 'Not applicable.', 'Not run', 'None required.'):
+        for item in ('None.', '- None.', 'N/A', 'Not applicable.', 'None required.'):
             value = dict(verdict='Accept', findings=[], manual_checks=[item])
             envelope = dict(type='result', subtype='success', is_error=False,
                             modelUsage={'claude-opus-5': {}}, structured_output=value)
@@ -597,9 +682,10 @@ class BridgeTests(unittest.TestCase):
         with self.assertRaisesRegex(bridge.BridgeError, 'no manual checks'):
             bridge.validate(envelope, 'review', 'claude-opus-5')
         value['verdict'] = 'Accept'
-        value['manual_checks'] = ['NOT RUN: verify deployment on Windows.']
-        with self.assertRaisesRegex(bridge.BridgeError, 'contradicts'):
-            bridge.validate(envelope, 'review', 'claude-opus-5')
+        for item in ('Not run', '## NOT RUN', 'NOT RUN: verify deployment on Windows.'):
+            value['manual_checks'] = [item]
+            with self.subTest(item=item), self.assertRaisesRegex(bridge.BridgeError, 'contradicts'):
+                bridge.validate(envelope, 'review', 'claude-opus-5')
 
     def test_secret_refusal_only_checks_changed_paths_and_lists_every_hit(self):
         for name in ('.env', 'site.key'):
@@ -5509,7 +5595,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                 patch.object(review_dispatch.codex_bridge, 'main', adapter('codex')), redirect_stdout(io.StringIO()):
             review_dispatch.main(['--repo', str(self.repo), '--uncommitted', '--reviewer', 'claude',
                                   '--allow-fallback', '--backend', 'glm', '--claude-model', 'claude-opus-5',
-                                  '--codex-model', 'fixture-codex-model'])
+                                  '--codex-model', 'codex-fixture-model'])
             after = {k: v for k, v in os.environ.items() if k.startswith('ANTHROPIC_')}
         self.assertEqual(seen, {'claude': self.BACKEND, 'codex': {'ANTHROPIC_API_KEY': 'lead-key'}})
         self.assertEqual(after, {'ANTHROPIC_API_KEY': 'lead-key'})
@@ -5535,7 +5621,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                                   MYAGENTKIT_AUTHOR='claude-sonnet-5',
                                   CLAUDE_CLI_BIN=str(self.fixture),
                                   REVIEW_CLAUDE_MODEL='claude-opus-5',
-                                  REVIEW_CODEX_MODEL='fixture-codex-model',
+                                  REVIEW_CODEX_MODEL='codex-fixture-model',
                                   REVIEW_CLI_BIN=str(self.build_fake_codex()))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         reports = list((self.repo / 'docs/reviews').glob('*-review.md'))
@@ -5549,7 +5635,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
 
     def dispatch_result(self, primary='claude', fallback=True, **extra):
         env = dict(CLAUDE_CLI_BIN=str(self.fixture), REVIEW_CLAUDE_MODEL='claude-opus-5',
-                   REVIEW_CODEX_MODEL='fixture-codex-model', REVIEW_CLI_BIN=str(self.build_fake_codex()),
+                   REVIEW_CODEX_MODEL='codex-fixture-model', REVIEW_CLI_BIN=str(self.build_fake_codex()),
                    MYAGENTKIT_REQUESTER='codex/fixture-codex-model', MYAGENTKIT_TASK_ID='fallback-task',
                    MYAGENTKIT_AUTHOR=primary + '/fixture-author',
                    REVIEW_ROUND_EXCEPTION='fixture: the chain tests run more than two rounds')

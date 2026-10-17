@@ -1110,8 +1110,17 @@ SECTIONS = ("findings", "manual checks", "notes", "summary", "verdict")
 # A list marker, a heading's hashes and emphasis, removed from the front of an item.
 MARKUP = re.compile(r"^[ \t]*(?:(?:[-+*]|\d+[.)]|#{1,6})[ \t]+)?[*_ \t]*")
 SEVERITY_FIRST = re.compile(r"(?i)(?:critical|high|medium|low|pre-existing)\b")
+SEVERITY_HEADING = re.compile(r"\b(?:critical|high|medium|low|pre-existing)\b", re.I)
+UNVERIFIED = re.compile(r"\b(?:not run|could not (?:verify|be verified))\b", re.I)
 # A clean review's placeholder under the heading is no finding.
 EMPTY_ITEMS = {"none", "no findings", "n/a", "not applicable"}
+
+
+def review_item(line: str) -> str:
+    """Remove stacked heading, list and emphasis prefixes without dropping their text."""
+    while (plain := MARKUP.sub("", line)) != line:
+        line = plain
+    return line
 
 
 def review_parts(text: str) -> tuple[list, list]:
@@ -1126,26 +1135,30 @@ def review_parts(text: str) -> tuple[list, list]:
     included. VERDICT lines belong to neither.
     """
     sections, current, level = {}, None, 6
+    unverified = []
     for line in text.splitlines():
         if re.match(r"[ \t]*VERDICT[ \t]*:", line, re.I):
             continue
         name = re.sub(r"^#{1,6}[ \t]+", "", line.strip()).strip("*_ \t").rstrip(":").strip("*_ \t").lower()
         heading = re.match(r"^(#{1,6})[ \t]+", line.strip())
+        item = review_item(line)
+        if UNVERIFIED.search(item) and not manual_placeholder(line):
+            unverified.append(line)
         if name in SECTIONS:
             current = name
             level = len(heading[1]) if heading else 6
             sections.setdefault(name, [])
-        elif heading and len(heading[1]) <= level and not SEVERITY_FIRST.match(MARKUP.sub("", line)):
+        elif heading and len(heading[1]) <= level and not SEVERITY_FIRST.match(item):
             # Do not turn an independent Testing heading into a manual check. Its NOT RUN
             # lines and severity-first findings still count below, wherever they were placed.
             current = "not run" if name == "not run" else "other"
             level = len(heading[1])
-            sections.setdefault(current, [])
+            sections.setdefault(current, []).append(line)
         else:
             sections.setdefault(current, []).append(line)
     findings, prior = [], ""
     for line in sections.get("findings", sections.get(None, [])):
-        item = MARKUP.sub("", line)
+        item = review_item(line)
         if not line.strip():
             pass
         elif not findings or SEVERITY_FIRST.match(item) or (
@@ -1158,13 +1171,19 @@ def review_parts(text: str) -> tuple[list, list]:
         prior = line
     # Every other line is a check, a heading included: `### Verify the deployment.` once vanished.
     checks = [line for line in sections.get("manual checks", []) if not manual_placeholder(line)]
-    for group in ("other", "not run"):
-        for line in sections.get(group, []):
-            if SEVERITY_FIRST.match(MARKUP.sub("", line)):
-                findings.append(MARKUP.sub("", line))
-            if (group == "not run" or re.search(r"\b(?:not run|could not verify)\b", line, re.I)) \
-                    and not manual_placeholder(line):
+    # Section names cannot silence marked findings, including the heading's own text.
+    source = "findings" if "findings" in sections else None
+    for group, lines in sections.items():
+        if group == source:
+            continue
+        for line in lines:
+            item = review_item(line)
+            heading = re.match(r"^#{1,6}[ \t]+", line.strip())
+            if (SEVERITY_FIRST.match(item) or heading and SEVERITY_HEADING.search(item)) and item not in findings:
+                findings.append(item)
+            if group == "not run" and not manual_placeholder(line):
                 checks.append(line)
+    checks.extend(line for line in unverified if line not in checks)
     return findings, checks
 
 
@@ -1182,8 +1201,8 @@ def placeholder(item: str) -> bool:
 
 def manual_placeholder(item: str) -> bool:
     """The same whole-item placeholders in text and structured manual checks."""
-    clean = MARKUP.sub("", item).rstrip(" \t.*_")
-    return clean.lower() in {"", "not run"} or placeholder(clean)
+    clean = review_item(item).rstrip(" \t.*_")
+    return not clean or placeholder(clean)
 
 
 def accept_allows(findings: list) -> bool:
@@ -1226,10 +1245,12 @@ def validate(envelope: object, mode: str, model: str) -> dict:
             raise BridgeError(f"invalid final field: {key}")
     if mode == "review":
         value = dict(value, manual_checks=[item for item in value["manual_checks"] if not manual_placeholder(item)])
+        findings, checks = review_parts("## Findings\n" + "\n".join(value["findings"]))
         verdict = value["verdict"]
         if verdict not in VERDICTS:
             raise BridgeError("invalid verdict")
-        if verdict == "Accept" and (value["manual_checks"] or not accept_allows(value["findings"])):
+        if verdict == "Accept" and (value["manual_checks"] or checks or not accept_allows(findings)
+                                    or not accept_allows(value["findings"])):
             raise BridgeError("Accept contradicts outstanding findings or manual checks")
         if verdict == "Reject" and all(placeholder(item) for item in value["findings"]):
             raise BridgeError("Reject has no findings")
