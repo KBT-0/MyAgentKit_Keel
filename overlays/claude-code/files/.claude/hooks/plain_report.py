@@ -95,7 +95,7 @@ def project_patterns() -> list[str]:
         if isinstance(pattern, str):
             try:
                 re.compile(pattern)
-            except re.error:
+            except Exception:  # A bad project regex (including OverflowError) must not disable built-ins.
                 continue
             valid.append(pattern)
     return valid
@@ -123,14 +123,20 @@ def bare_labels(text: str) -> list[str]:
     found = []
     for pattern, explicit in patterns:
         explained = []  # Overlapping task and project patterns must not count one mention twice.
-        for match in re.finditer(pattern, PARENS.sub(' ', prose)):
-            if (explicit or is_label(match.group())) and match.group() not in found:
-                found.append(match.group())
-        for part in PARENS.findall(prose):
-            for match in re.finditer(pattern, part):
-                if (explicit or is_label(match.group())) and match.group() in explained and match.group() not in found:
+        start = len(found)
+        try:
+            for match in re.finditer(pattern, PARENS.sub(' ', prose)):
+                if (explicit or is_label(match.group())) and match.group() not in found:
                     found.append(match.group())
-                explained.append(match.group())
+            for part in PARENS.findall(prose):
+                for match in re.finditer(pattern, part):
+                    if (explicit or is_label(match.group())) and match.group() in explained and match.group() not in found:
+                        found.append(match.group())
+                    explained.append(match.group())
+        except Exception:
+            if not explicit:
+                raise
+            del found[start:]  # Discard this project pattern's partial results, keeping earlier checks.
     return found
 
 

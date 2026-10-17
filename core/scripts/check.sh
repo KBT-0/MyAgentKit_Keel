@@ -1769,8 +1769,8 @@ else
     case "$f" in
       *.sh) printf '%s\n' "$f" ;;
       .githooks/*)
-        # Match check_kit.shell_scripts: a hook may run Python, Node, or be documentation.
-        [ -f "$f" ] && [ ! -L "$f" ] && head -n 1 "$f" | grep -Eq '^#!.*[/ ]sh([[:space:]]|$)' && printf '%s\n' "$f" ;;
+        # ShellCheck supports sh/bash/dash/ksh; other hook languages stay out (SC1071).
+        [ -f "$f" ] && [ ! -L "$f" ] && head -n 1 "$f" | grep -Eq '^#!.*[/ ](sh|bash|dash|ksh)([[:space:]]|$)' && printf '%s\n' "$f" ;;
     esac
   done)
   sc_status=0

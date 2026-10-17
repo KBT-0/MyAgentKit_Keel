@@ -139,6 +139,37 @@ class PlainReportTests(unittest.TestCase):
             self.assertEqual(hook.bare_labels('PR-12 READY'), ['PR-12', 'READY'])
             self.assertEqual(hook.bare_labels('The task (PR-12) is ready (READY).'), [])
 
+    def test_invalid_project_patterns_preserve_builtin_and_valid_project_labels(self):
+        config = self.project / '.claude/plain_report_labels.json'
+        config.parent.mkdir()
+        for invalid in ('a{4294967296}', '['):
+            with self.subTest(pattern=invalid):
+                config.write_text(json.dumps([invalid, r'\bPR-\d+\b']), encoding='utf-8')
+                result = self.stop('D-5 K4 Accept-MC finished.')
+                self.assertEqual(result.returncode, 2, result.stderr)
+                for label in ('D-5', 'K4', 'Accept-MC'):
+                    self.assertIn(label, result.stderr)
+                self.assertEqual(self.stop('PR-12 finished.').returncode, 2)
+                self.assertEqual(self.stop('The S3 deployment passes.').returncode, 0)
+
+    def test_project_pattern_runtime_errors_preserve_checks_and_discard_partial_matches(self):
+        spec = importlib.util.spec_from_file_location('plain_report_runtime', HOOKS / 'plain_report.py')
+        hook = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(hook)
+        config = self.project / '.claude/plain_report_labels.json'
+        config.parent.mkdir()
+        config.write_text(json.dumps(['bad-pattern', r'\bPR-\d+\b']), encoding='utf-8')
+        original = hook.re.finditer
+        def finditer(pattern, text, flags=0):
+            if pattern != 'bad-pattern':
+                return original(pattern, text, flags)
+            def broken():
+                yield hook.re.match('partial', 'partial')
+                raise RuntimeError('project regex iteration failed')
+            return broken()
+        with patch.dict(os.environ, CLAUDE_PROJECT_DIR=str(self.project)), patch.object(hook.re, 'finditer', finditer):
+            self.assertEqual(hook.bare_labels('D-5 K4 Accept-MC PR-12'), ['D-5', 'K4', 'Accept-MC', 'PR-12'])
+
     def test_installed_hook_reads_the_commit_hooks_canonical_grammar(self):
         hooks = self.project / '.claude/hooks'
         hooks.mkdir(parents=True)

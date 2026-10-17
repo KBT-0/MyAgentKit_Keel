@@ -1272,17 +1272,40 @@ class GateRuleTests(unittest.TestCase):
         for name, body in (('pre-commit', '#!/bin/sh\ntrue\n'),
                            ('post-commit.project', '#!/usr/bin/env sh\ntrue\n'),
                            ('prepare-commit-msg.project', '#!/usr/bin/env python3\npass\n'),
+                           ('node.project', '#!/usr/bin/env node\nconsole.log("hook");\n'),
                            ('README', 'Hook documentation\n')):
             self.write('.githooks/' + name, body)
+        shell_hooks = ['.githooks/pre-commit', '.githooks/post-commit.project']
+        for shell in ('bash', 'dash', 'ksh'):
+            for launcher in ('/bin/', '/usr/bin/env '):
+                name = '.githooks/%s-%s.project' % (shell, 'env' if 'env' in launcher else 'direct')
+                self.write(name, '#!%s%s\necho $unquoted\n' % (launcher, shell))
+                shell_hooks.append(name)
         self.write('scripts/no-shebang.sh', 'true\n')
         code, out = self.run_gate(PATH=str(shim) + os.pathsep + os.environ['PATH'],
                                   SC_INPUTS=log.as_posix())
         self.assertEqual(code, 0, out)
         inputs = log.read_text().splitlines()
-        for name in ('.githooks/pre-commit', '.githooks/post-commit.project', 'scripts/no-shebang.sh'):
-            self.assertIn(name, inputs)
-        for name in ('.githooks/prepare-commit-msg.project', '.githooks/README'):
+        for name in (*shell_hooks, 'scripts/no-shebang.sh'):
+            with self.subTest(hook=name):
+                self.assertIn(name, inputs)
+        for name in ('.githooks/prepare-commit-msg.project', '.githooks/node.project', '.githooks/README'):
             self.assertNotIn(name, inputs)
+
+    def test_shellcheck_diagnostic_from_an_extensionless_bash_hook_fails_the_gate(self):
+        # A diagnostic double proves gate wiring, not the inaccessible host's real lint.
+        shim = self.tmp / 'bin'
+        shim.mkdir()
+        (shim / 'shellcheck').write_text(
+            '#!/bin/sh\nfor f do\n  case "$f" in .githooks/*)\n'
+            '    printf "%s:2:1: warning: Quote expansion [SC2086]\\n" "$f"; exit 1 ;;\n'
+            '  esac\ndone\n', encoding='utf-8', newline='\n')
+        (shim / 'shellcheck').chmod(0o755)
+        self.write('.githooks/pre-commit.project', '#!/bin/bash\necho $unquoted\n')
+        code, out = self.run_gate(PATH=str(shim) + os.pathsep + os.environ['PATH'])
+        self.assertEqual(code, 1, out)
+        self.assertIn('FAIL [shellcheck]', out)
+        self.assertIn('.githooks/pre-commit.project:2:1:', out)
 
 
 if __name__ == '__main__':
