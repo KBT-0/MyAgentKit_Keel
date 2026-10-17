@@ -309,6 +309,11 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   A failed spawn before session launch removes its new worktree and branch, including
   when a post-checkout hook fails. Once a session may have started, the worktree stays
   and the failure explains how to remove it. A handoff stays resumable with `--resume`.
+  A spawn claims the worktree folder with mkdir before `git worktree add`, so a spawn that
+  loses the race for a name changes nothing. Once a result, a handoff or a decision passed
+  its grace, the supervisor keeps it while a commit or gate runs: a result the lead moves
+  before committing no longer leaves the session open, and only a newly published result
+  or question replaces it.
   `spawn_worker.sh --resume SESSION_ID` continues a worker's conversation
   under the same NAME (and worktree, locked again), so a resumed tab can be closed; the lead
   never opens a worker tab by hand. **ACTION:** take the updated hook, scripts and the
@@ -324,6 +329,9 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   Manual Checks. Review parsing preserves finding and manual-check headings across section
   boundaries and rejects hidden High findings or NOT RUN checks in structured output.
   Bare NOT RUN is a manual check. Clean placeholders and bold `Pre-existing:` items pass.
+  Indented, numbered and emphasized High or Critical lines stay separate findings in every
+  section, and NOT RUN or "could not verify" lines count even when emphasized or written
+  on a verdict-like line.
   **ACTION:** copy the three scripts.
 - **Lessons from the kit's own development, written where they apply** (`AGENTS.md`,
   `docs/COMMUNICATION.md`, `docs/WORKFLOW.md` "Model routing" rules 1 and 3,
