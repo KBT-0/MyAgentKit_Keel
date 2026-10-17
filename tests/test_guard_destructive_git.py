@@ -284,5 +284,108 @@ class ReviewRoundThreeTests(GuardCase):
                             "git add . && git commit -F - <<'EOF'\nmention git in a message\nEOF"], 0)
 
 
+class CloseReviewTests(GuardCase):
+    def test_project_gate_can_be_wired(self):
+        self.assertVerdict([
+            'git config core.hooksPath .githooks',
+            'git config --local core.hooksPath .githooks',
+            'git config set core.hooksPath .githooks',
+            'git config --local --replace-all core.hooksPath .githooks',
+        ], 0)
+        self.assertVerdict([
+            "git config core.hooksPath ''", 'git config core.hooksPath /dev/null',
+            'git config --unset core.hooksPath', 'git config unset core.hooksPath',
+            'git config --unset core.hooksPath .githooks',
+            'git config core.hooksPath other/.githooks',
+            'git -c core.hooksPath=.githooks commit -m x',
+        ], 2)
+
+    def test_redirections_are_not_git_arguments(self):
+        self.dirty()
+        self.assertVerdict([
+            'git checkout main 2>&1', 'git checkout main >/dev/null',
+            'git checkout main 2> errors.log', 'git checkout main >>out 2>&1',
+            '2>/dev/null git checkout main', 'git checkout 2>/dev/null main',
+            'git checkout main &>/dev/null', 'git checkout main < input.txt',
+            'git checkout main >|out', 'git checkout main 2>"errors log"',
+            'git config core.hooksPath 2>/dev/null',
+            'git config core.hooksPath >&2', 'git config core.hooksPath 2>&-',
+        ], 0)
+        self.assertVerdict([
+            'git commit 2>/dev/null --no-verify -m x',
+            'git stash 2>&1 drop', 'git checkout -- f.txt >/dev/null',
+            'git checkout main 2 >/dev/null', 'git checkout main "2">/dev/null',
+        ], 2)
+
+    def test_quoted_redirect_characters_remain_arguments(self):
+        self.dirty()
+        self.assertVerdict([
+            "git checkout '>'", 'git checkout "2>&1"', r'git checkout \>',
+            "git config core.hooksPath '>/dev/null'",
+        ], 2)
+        self.assertVerdict(["git commit -m '2>&1'", 'git commit -m ">"'], 0)
+
+    def test_wrapper_value_tokens_cannot_hide_git(self):
+        for command in [
+            'env -u FOO git commit --no-verify -m x',
+            'env -u A -u B git push --mirror', 'env -C . git stash drop',
+            "env -S 'git push --mirror'", 'env --unset FOO git push --delete origin x',
+            'exec -a NAME git push --force',
+            'command env -u FOO git remote add up x',
+            'env -u git git commit --no-verify -m x',
+            'env -Cgit git push --mirror', 'exec -a git git push --mirror',
+        ]:
+            with self.subTest(command=command):
+                result = self.run_hook(command)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn(b'cannot read', result.stderr)
+
+    def test_unlisted_wrappers_cannot_hide_git(self):
+        self.assertVerdict([
+            'ionice -c3 git push --mirror', 'flock L git stash drop',
+            'chrt -i 0 git commit --no-verify -m x', 'chronic git remote add up x',
+        ], 2)
+        self.assertVerdict([
+            'env FOO=bar git status', 'command git status', 'nohup git status',
+            'echo git status', 'printf "%s" "git push --mirror"',
+            'env -- git status',
+        ], 0)
+
+    def test_checkout_previous_branch_is_safe_with_edits(self):
+        git(self.repo, 'checkout', '-q', '-b', 'other')
+        git(self.repo, 'checkout', '-q', 'main')
+        self.dirty()
+        self.assertVerdict(['git checkout -', 'git checkout @{-1}', 'git checkout @{-2}'], 0)
+        self.assertVerdict(['git checkout -f -', 'git checkout -- -', 'git checkout - f.txt'], 2)
+
+    def test_interpreter_heredocs_holding_git_are_unreadable(self):
+        for interpreter in ['python', 'python3', 'python3.13', 'node', 'perl', 'ruby']:
+            with self.subTest(interpreter=interpreter):
+                command = f"{interpreter} - <<'EOF'\nsubprocess.run(['git', 'push', '--mirror'])\nEOF"
+                result = self.run_hook(command)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn(b'cannot read', result.stderr)
+        self.assertVerdict([
+            "python -I - <<'EOF'\nsubprocess.run(['git', 'push', '--mirror'])\nEOF",
+            "env FOO=bar python3 - <<'EOF'\nsubprocess.run(['git', 'stash', 'drop'])\nEOF",
+        ], 2)
+        self.assertVerdict([
+            "python -I - <<'EOF'\nprint('hello')\nEOF",
+            "cat <<'EOF' > notes.md\ngit push --mirror is refused\nEOF",
+        ], 0)
+
+    def test_interpreter_inline_and_piped_git_are_unreadable(self):
+        self.assertVerdict([
+            "python -c \"subprocess.run(['git', 'push', '--mirror'])\"",
+            "python3 -Ic \"subprocess.run(['git', 'stash', 'drop'])\"",
+            "node -e \"spawnSync('git', ['push', '--mirror'])\"",
+            "perl -e \"system('git push --mirror')\"",
+            "ruby -e \"system('git push --mirror')\"",
+            "echo \"subprocess.run(['git', 'push', '--mirror'])\" | python -I -",
+            "printf \"system('git push --mirror')\" | ruby",
+        ], 2)
+        self.assertVerdict(["python -c \"print('hello')\"", "node -e \"console.log('hello')\""], 0)
+
+
 if __name__ == '__main__':
     unittest.main()

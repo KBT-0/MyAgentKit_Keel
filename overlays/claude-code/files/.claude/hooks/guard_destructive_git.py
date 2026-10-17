@@ -11,7 +11,7 @@ or stash before any command that discards work" still covers every destructive c
   `--force-with-lease` without `=ref:expected` or a final `--force-if-includes`),
   `git remote set-url/add` (it moves where a push goes), `git commit --amend` of a commit a
   remote branch already holds, and a skipped gate: `--no-verify`, `commit -n`, `--no-gpg-sign`,
-  `-c`/`--config-env` core.hooksPath, writing core.hooksPath with `git config`, and a
+  `-c`/`--config-env` core.hooksPath, writing core.hooksPath away from `.githooks`, and a
   `GIT_CONFIG_*`, `HUSKY*`, `SKIP` or `PRE_COMMIT*` variable on a command that runs hooks. The
   gate's hatch is the owner's, typed in the owner's own terminal; this hook sees only an agent's
   Bash calls.
@@ -33,10 +33,12 @@ accepted: a command that only mentions such a pattern is refused while the tree 
 Read as git reads it: option values (`clean -e -n` excludes "-n"), `--` ends the options, the
 last of `--x`/`--no-x` wins, a unique abbreviation (`--no-veri`) counts, an alias is resolved,
 `GIT.EXE` is git on Windows. Refused as unreadable when it carries a git word: backticks, `$(...)`,
-`eval`, `sh -c`-style command strings, a shell reading a here-string or pipe, a here-document on
-a line where any shell appears (`cat <<EOF | sh`), a backslash-newline, `sudo`/`xargs`-style
-wrappers, and an unbalanced quote. Any other here-document is dropped before parsing, so a
-commit message may mention git.
+`eval`, shell/interpreter command strings or input (including python*, node, perl and ruby),
+a here-document on a line where a shell/interpreter appears (`cat <<EOF | sh`), a
+backslash-newline, a wrapper chain whose git command cannot be reached, and an unbalanced
+quote. Other here-documents are dropped before parsing, so a commit message may mention git.
+Shell redirections are removed before reading git arguments; quoted/escaped operators remain
+arguments. `git config core.hooksPath .githooks` wires the project's own gate and is allowed.
 Sources: the vendor's default auto-mode block list
 (https://code.claude.com/docs/en/permission-modes), Bash rule limits
 (https://code.claude.com/docs/en/permissions), git-push, git-clean, git-restore, git-config,
@@ -76,7 +78,6 @@ FLOOR = [(re.compile(p, re.I), why) for p, why in [
     (r"\bgit(\.exe)?\s+stash\s+(drop|clear)\b", "git stash drop/clear deletes stashed work"),
     (r"\bgit(\.exe)?\s+push\b[^|;&]*(--force(?![\w-])|\s-f\b)", "a force push can discard remote commits"),
 ]]
-OPAQUE = {"sudo", "xargs", "timeout", "nice", "watch", "stdbuf", "doas", "parallel", "find"}
 TRANSPARENT = {"command", "exec", "builtin", "nohup", "env"}
 KEYWORDS = {"{", "}", "!", "if", "then", "else", "elif", "do", "while", "until", "time"}
 CALM = {"cd", "pushd", "echo", "printf", "pwd", "ls", "cat", "true", ":", "test", "[", "export"}
@@ -167,9 +168,13 @@ def base(token):
     return name[:-4] if name.endswith(".exe") else name
 
 
+def interpreter(name):
+    return name.startswith("python") or name in {"node", "perl", "ruby"}
+
+
 def strip_heredocs(text):
     """The text without here-document bodies. A body that holds git is unreadable when any command
-    on the line is a shell: it may read the body (`cat <<EOF | sh`, `tee x.sh <<EOF; . x.sh`)."""
+    on the line is a shell/interpreter: it may read the body (`cat <<EOF | sh`)."""
     while True:
         m = re.search(r"(?<!<)<<(?!<)(-?)\s*(['\"]?)([\w.-]+)\2", text)
         if not m:
@@ -184,9 +189,10 @@ def strip_heredocs(text):
             if (line.lstrip("\t") if m.group(1) else line) == m.group(3):
                 break
         body, outside = text[start:end], text[:start] + "\n" + text[end:]
-        commands = [(piece.split() or [""])[0] for piece in re.split(r"[;&|()\n]", outside)]
-        if GIT_WORD.search(body) and any(base(w.strip("'\"")) in SHELLS for w in commands):
-            raise Unreadable("a here-document a shell on the same line may read")
+        # Include readers behind wrappers, but ordinary prose (`echo python`) is not a reader.
+        commands = [w for seg in segments(outside) if base(seg[0]) not in CALM | {"git"} for w in seg]
+        if GIT_WORD.search(body) and any(base(w) in SHELLS or interpreter(base(w)) for w in commands):
+            raise Unreadable("a here-document a shell/interpreter on the same line may read")
         text = text[:m.start()] + text[m.end():start] + "\n" + text[end:]
 
 
@@ -204,6 +210,13 @@ def substitutions(text):
 
 def segments(text):
     """Simple commands of a command line, each a token list."""
+    # Consume complete raw shell words so quoted/escaped >, < and descriptor numbers survive.
+    # Strip a redirection together with its target before shlex discards quote information or
+    # splits `2>&1` at `&`. A separate `2 >out` leaves 2 as an argument, as the shell does.
+    word = r'''(?:[^\s;&|()<>'"\\]+|\\.|'[^']*'|"(?:\\.|[^"\\])*")+'''
+    redirect = r'(?:\d+)?(?:&>>?|>>|>&|>\||>|<>|<<|<&|<)'
+    text = re.sub(r'(?P<redirect>' + redirect + r'[ \t]*' + word + r')|' + word,
+                  lambda m: ' ' if m.group('redirect') else m.group(), text)
     lexer = shlex.shlex(text, posix=True, punctuation_chars=";&|\n()<>")
     lexer.whitespace, lexer.whitespace_split = " \t\r", True
     try:
@@ -330,7 +343,11 @@ def verdict(g, depth=0):
         writes = {"--unset", "--unset-all", "unset", "set", "--add", "--replace-all", "--edit", "-e"}
         key_last = args[-1].lower() == "core.hookspath"
         if not (set(args) & reads) and (set(args) & writes or not key_last):
-            return True, "setting core.hooksPath moves the commit gate. " + GATE, False
+            # Only the documented project-local gate wiring is exempt; unset, empty values,
+            # other paths/scopes and extra operands still refuse.
+            wiring = [a for a in args if a not in {"--local", "--worktree", "set", "--replace-all"}]
+            if len(wiring) != 2 or wiring[0].lower() != "core.hookspath" or wiring[1] != ".githooks":
+                return True, "setting core.hooksPath moves the commit gate. " + GATE, False
         return None
     opts, words = options(sub, args)
     names = {n for n, _ in opts}
@@ -366,7 +383,8 @@ def verdict(g, depth=0):
                 return False, "git checkout of a path, or -f, overwrites the working copy", False
         else:
             try:
-                code, _ = g.ask("rev-parse", "--verify", "--quiet", first + "^{commit}")
+                revision = "@{-1}" if first == "-" else first
+                code, _ = g.ask("rev-parse", "--verify", "--quiet", revision + "^{commit}")
             except Exception:
                 code = 1
             if code != 0:
@@ -415,14 +433,19 @@ def judge(command, cwd):
                 local[k] = v
                 i += 1
             elif base(seg[i]) in TRANSPARENT:
+                wrapper = base(seg[i])
                 i += 1
                 while i < len(seg) and seg[i].startswith("-"):
+                    # env/exec options may consume or split the next word, or change cwd.
+                    # Do not mistake an option VALUE named `git` for the command itself.
+                    if wrapper in {"env", "exec"} and seg[i] != "--" and any(GIT_WORD.search(t) for t in seg[i:]):
+                        raise Unreadable(f"git run through {wrapper} options")
                     i += 1
             else:
                 break
         rest = seg[i:]
         name = base(rest[0]) if rest else ""
-        has_git = any(base(t) == "git" for t in rest[1:])
+        has_git = any(GIT_WORD.search(t) for t in rest)
         if name == "eval" and any(GIT_WORD.search(t) for t in rest):
             raise Unreadable("eval")
         if name in SHELLS and any(GIT_WORD.search(t) for t in text.split()):
@@ -430,7 +453,12 @@ def judge(command, cwd):
                 raise Unreadable(f"a command string run by {name} -c")
             if not [t for t in rest[1:] if not t.startswith("-")]:
                 raise Unreadable(f"{name} reading commands from its input")
-        if name in OPAQUE and has_git:
+        if interpreter(name) and GIT_WORD.search(text):
+            if any(re.fullmatch(r"-\w*[ce]\w*|--eval(?:=.*)?", t) for t in rest[1:]):
+                raise Unreadable(f"a command string run by {name}")
+            if "-" in rest[1:] or not [t for t in rest[1:] if not t.startswith("-")]:
+                raise Unreadable(f"{name} reading commands from its input")
+        if name != "git" and name not in CALM and has_git:
             raise Unreadable(f"git run through {name}")
         if rest and rest[0].startswith("$") and any(t in SPEC or t in ("stash", "remote", "config") for t in rest[1:]):
             raise Unreadable("a command named by a variable")
