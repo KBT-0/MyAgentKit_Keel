@@ -88,6 +88,36 @@ class SyncKitTests(unittest.TestCase):
             self.assertEqual((result.returncode, stamp), (0, '0.2'), result.stdout + result.stderr)
             self.assertNotIn('ACTION items since', result.stdout)
 
+    def test_colon_action_none_is_not_pending_but_real_actions_still_are(self):
+        for entry, pending in (('**ACTION:** none.', False), ('**ACTION** — none', False),
+                               ('**ACTION:** none. Copy the project rules.', True),
+                               ('**ACTION:** nonetheless, copy the rules.', True)):
+            with self.subTest(entry=entry), tempfile.TemporaryDirectory() as tmp:
+                result, stamp = self.sync(tmp, '- A change. ' + entry + '\n')
+                self.assertEqual((result.returncode, stamp), (2, '0.1') if pending else (0, '0.2'),
+                                 result.stdout + result.stderr)
+
+    def test_updating_describes_action_lines_without_promising_per_version_checklists(self):
+        updating = ' '.join((ROOT / 'docs/UPDATING.md').read_text(encoding='utf-8').split())
+        self.assertIn('sync-kit.sh . --dry-run', updating)
+        self.assertNotIn('each version\'s entry ends with one ordered checklist', updating)
+
+    def test_sync_preserves_project_owned_plain_report_patterns(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.sync(tmp, '- A change.\n', '--dry-run')
+            kit, project = Path(tmp) / 'kit', Path(tmp) / 'project'
+            config = project / '.claude/plain_report_labels.json'
+            config.parent.mkdir()
+            body = '["\\\\bPR-\\\\d+\\\\b", "\\\\bREADY\\\\b"]\n'
+            config.write_bytes(body.encode())
+            source = kit / 'core/.githooks/commit-msg'
+            source.parent.mkdir(parents=True)
+            shutil.copyfile(ROOT / 'core/.githooks/commit-msg', source)
+            result, stamp = self.sync(tmp, '- A change.\n')
+            self.assertEqual((result.returncode, stamp), (0, '0.2'), result.stdout + result.stderr)
+            self.assertTrue((project / '.githooks/commit-msg').is_file())
+            self.assertEqual(config.read_bytes(), body.encode())
+
     def test_a_failed_action_scan_keeps_the_stamp(self):
         # An empty pending list from a scanner that died reads as "no ACTION items".
         with tempfile.TemporaryDirectory() as tmp:
@@ -764,6 +794,32 @@ class SyncKitTests(unittest.TestCase):
         self.assertNotIn('```', section, 'DEV_SETUP must use the tested kit-owned repair')
         self.assertEqual(textwrap_dedent_dev_setup(),
                          'sh ' + shlex.quote((ROOT / 'core/scripts/fix_crlf.sh').as_posix()))
+
+    def test_fix_crlf_does_not_stage_unrelated_lf_script_or_hook_edits(self):
+        env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1')
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            paths = ('scripts/dirty.sh', '.githooks/pre-commit.project', 'scripts/repair.sh')
+            for path in paths:
+                (project / path).parent.mkdir(parents=True, exist_ok=True)
+                (project / path).write_bytes(b'#!/bin/sh\r\ntrue\r\n' if path == paths[2]
+                                            else b'#!/bin/sh\ntrue\n')
+            git = lambda *args: subprocess.run(['git', '-c', 'core.autocrlf=false', *args], cwd=project,
+                                               check=True, capture_output=True, env=env).stdout
+            git('init', '-q')
+            git('add', '-A')
+            git('-c', 'user.name=F', '-c', 'user.email=f@example.invalid', 'commit', '-qm', 'fixture')
+            for path in paths[:2]:
+                (project / path).write_bytes(b'#!/bin/sh\necho owner-edit\n')
+            (project / paths[2]).write_bytes(b'#!/bin/sh\r\ntrue\r\n')
+            result = subprocess.run(['sh', '-c', textwrap_dedent_dev_setup()], cwd=project,
+                                    capture_output=True, text=True, env=env)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(git('diff', '--cached', '--name-only').decode().splitlines(), [paths[2]])
+            for path in paths[:2]:
+                self.assertEqual(git('show', ':' + path), b'#!/bin/sh\ntrue\n')
+                self.assertEqual((project / path).read_bytes(), b'#!/bin/sh\necho owner-edit\n')
+            self.assertEqual((project / paths[2]).read_bytes(), b'#!/bin/sh\ntrue\n')
 
     def test_fix_crlf_leaves_binary_hooks_and_scripts_unmodified_and_unstaged(self):
         # A tracked helper executable was corrupted and staged with every other hook.

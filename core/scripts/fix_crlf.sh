@@ -7,7 +7,7 @@
 #
 # `sh` cannot run a CRLF script, and a pull does not check out again a file it did not change,
 # so an old clone keeps its CRLF gate and hooks. The core is the documented one: rewrite the
-# working copy, then `git add --renormalize -- '*.sh' '.githooks/*'` (gitattributes, "eol" and
+# working copy, then `git add --renormalize` only on the rewritten files (gitattributes, "eol" and
 # --renormalize: git-scm.com/docs/gitattributes; GitHub Docs, "Configuring Git to handle line
 # endings"). Only Git text files are rewritten and staged: `-text`/binary attributes and
 # content Git detects as binary are skipped (git ls-files --eol). Each CRLF becomes LF in
@@ -67,7 +67,7 @@ $kit_python -I -c 'if 1:
                 finally:
                     if os.path.lexists(new):
                         os.unlink(new)
-            text_files.append(name + b"\0")
+                text_files.append(name + b"\0")
     with open(sys.argv[1], "wb") as paths:
         paths.write(b"".join(text_files))' "$list" < "$list" ||
   { echo "STOP: a script could not be rewritten (above); nothing was staged" >&2; exit 1; }

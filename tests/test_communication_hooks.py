@@ -1,5 +1,6 @@
 """The two communication hooks: bounce a bare label once, nudge after five silent calls, never block a turn."""
 import itertools
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -8,6 +9,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 HOOKS = Path(__file__).resolve().parents[1] / 'overlays/claude-code/files/.claude/hooks'
 
@@ -40,7 +42,8 @@ class PlainReportTests(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         self.project = Path(tmp.name)
         (self.project / 'docs').mkdir()
-        (self.project / 'docs/STATE.md').write_text('r2: second review round\n', encoding='utf-8')
+        (self.project / 'docs/STATE.md').write_text('r2: second review round\nK4: task\nL1b: task\nK7-a: task\n',
+                                                  encoding='utf-8')
 
     def test_task_ids_and_unregistered_rounds(self):
         for label in ('K4', 'L1b', 'K7-a'):
@@ -90,6 +93,52 @@ class PlainReportTests(unittest.TestCase):
         for label in ('K4', 'L1b', 'K7-a', 'v011-d5', 'D-5'):
             self.assertEqual(self.stop('Decoding is %s now.' % label).returncode, 2, label)
 
+    def test_products_priorities_and_gpu_names_are_not_unregistered_labels(self):
+        (self.project / 'docs/STATE.md').write_text('', encoding='utf-8')
+        for word in ('S3', 'P0', 'P1', 'Q3', 'M2', 'L2', 'R2', 'A100', 'H100', 'H100s'):
+            with self.subTest(word=word):
+                self.assertEqual(self.stop('The %s deployment passes.' % word).returncode, 0)
+        (self.project / 'docs/STATE.md').write_text('P0: deployment task\n', encoding='utf-8')
+        self.assertEqual(self.stop('P0 finished.').returncode, 2)
+        self.assertEqual(self.stop('K4 is an unregistered value.').returncode, 0)
+
+    def test_project_owned_patterns_bypass_builtin_task_filters_and_survive_sync(self):
+        config = self.project / '.claude/plain_report_labels.json'
+        config.parent.mkdir()
+        patterns = [r'\bPR-\d+\b', r'\bBUG-\d+\b', r'\bsprint\d+\b', r'\bREADY\b']
+        config.write_text(json.dumps(patterns), encoding='utf-8')
+        for label in ('PR-12', 'BUG-7', 'sprint3', 'READY'):
+            with self.subTest(label=label):
+                self.assertEqual(self.stop(label + ' finished.').returncode, 2)
+                self.assertEqual(self.stop('The project task (%s) finished.' % label).returncode, 0)
+                self.assertEqual(self.stop('Task (%s), again (%s).' % (label, label)).returncode, 2)
+        self.assertEqual(self.stop('PR-12 is `READY`.', MYAGENTKIT_ROLE='worker').returncode, 0)
+        # No source file at this path: sync cannot overwrite the project-owned configuration.
+        self.assertFalse((HOOKS.parents[4] / 'core/.claude/plain_report_labels.json').exists())
+
+    def test_label_inputs_are_read_once_per_message(self):
+        spec = importlib.util.spec_from_file_location('plain_report_test', HOOKS / 'plain_report.py')
+        hook = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(hook)
+        reads = []
+        original = Path.read_text
+        def read(path, *args, **kwargs):
+            reads.append(path)
+            return original(path, *args, **kwargs)
+        with patch.dict(os.environ, CLAUDE_PROJECT_DIR=str(self.project)), patch.object(Path, 'read_text', read):
+            self.assertIn('K4', hook.bare_labels('K4 K4 L1b D-5 (r2) r2 v011-d5'))
+        for name in ('STATE.md', 'BACKLOG.md', 'commit-msg'):
+            self.assertEqual(sum(path.name == name for path in reads), 1, (name, reads))
+
+    def test_legacy_project_patterns_still_bypass_task_filters(self):
+        spec = importlib.util.spec_from_file_location('plain_report_legacy', HOOKS / 'plain_report.py')
+        hook = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(hook)
+        hook.LABELS += (r'\bPR-\d+\b', r'\bREADY\b')
+        with patch.dict(os.environ, CLAUDE_PROJECT_DIR=str(self.project)):
+            self.assertEqual(hook.bare_labels('PR-12 READY'), ['PR-12', 'READY'])
+            self.assertEqual(hook.bare_labels('The task (PR-12) is ready (READY).'), [])
+
     def test_installed_hook_reads_the_commit_hooks_canonical_grammar(self):
         hooks = self.project / '.claude/hooks'
         hooks.mkdir(parents=True)
@@ -99,8 +148,10 @@ class PlainReportTests(unittest.TestCase):
         source = HOOKS.parents[4] / 'core/.githooks/commit-msg'
         grammar = source.read_text(encoding='utf-8').replace("TASK_ID_PATTERN='[A-Za-z]", "TASK_ID_PATTERN='Z")
         (git_hooks / 'commit-msg').write_text(grammar, encoding='utf-8')
+        (self.project / 'docs/STATE.md').write_text('K4: task\nZ4: task\n', encoding='utf-8')
         for label, expected in (('K4', 0), ('Z4', 2)):
-            result = run(hooks / 'plain_report.py', json.dumps({'last_assistant_message': label}))
+            result = run(hooks / 'plain_report.py', json.dumps({'last_assistant_message': label}),
+                         CLAUDE_PROJECT_DIR=str(self.project))
             self.assertEqual(result.returncode, expected, result.stderr)
 
     def stop(self, message, active=False, **env):
