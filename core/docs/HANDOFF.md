@@ -145,8 +145,9 @@ and neither can an in-place edit of it: spawn captures FILE_ID before launch, an
 is published by the rename. A file that changed in the run but sat unchanged for 60 s
 without the result header and ready marker (a free-form report) ends the wait with NOT A
 RESULT instead of a silent wait; the lead reads it by hand. Other result
-kinds report BLOCKED, HANDOFF or PROGRESS, and leave the worker running: only a decision or a
-completed result closes it. After PROGRESS or HANDOFF, `--wait` also prints its exact follow-up
+kinds report BLOCKED, HANDOFF or PROGRESS. A completed result, a handoff or a decision ends
+the session; a progress result leaves it running. After HANDOFF, `--wait` prints how to continue
+the session with `--resume`. After PROGRESS, `--wait` also prints its exact follow-up
 command: the same wait with `--stale` set to the reported result's content hash, and
 `--since` still the run's start. It counts a publication as new when its content hash differs
 from the reported one, by rename or by in-place rewrite; a byte-identical republication is
@@ -155,8 +156,9 @@ since spawn's command would return the same result at once. A worker that stops 
 from the `.myagentkit/workers/NAME.exit` record the wrapper writes on every way out, a decision
 without a blocked result included, or from its `NAME.live` lock once the wrapper itself was
 killed. For Claude the committed `Kind: completed` result is
-the watcher's done signal, and its supervisor ends the session on it, as it ends a Codex
-worker's (`spawn_worker.sh --result FILE` names it). Merging a worker's branch closes the rest
+the watcher's done signal. The supervisor ends either worker's session on a completed result,
+a handoff or a decision; the session stays resumable with `--resume`.
+`spawn_worker.sh --result FILE` names a Claude worker's result. Merging a worker's branch closes the rest
 (the post-merge hook runs `scripts/close_worker.sh --finished NAME`, which leaves a session
 still running without a completed result); the lead runs `scripts/close_worker.sh NAME`
 itself only for a session it finishes without a merge.
