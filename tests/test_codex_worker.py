@@ -435,12 +435,16 @@ class CodexWorkerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             result, record = Path(tmp) / 'result.md', Path(tmp) / 'w.exit'
             result.write_text('Kind: blocked\nTask: old\nAttempt: 1\nRemaining: decision\n' + READY)
-            os.utime(result, (time.time() - 60, time.time() - 60))
-            since = time.time()
+            # NTFS write times can trail time.time() by a tick. Set the ordering explicitly:
+            # this tests launch identity, so neither the edit nor the exit may look pre-launch.
+            since = time.time() - 30
+            os.utime(result, (since - 60, since - 60))
             stale = worker.baseline(result, since)
             self.assertIsNotNone(stale)
             result.write_text(result.read_text().replace('Kind: blocked', 'Kind: completed'))
             record.write_text('exit 0\n')
+            for path in (result, record):
+                os.utime(path, (since + 1, since + 1))
             args = [sys.executable, str(SCRIPT), '--wait', str(result), '--since', str(since),
                     '--stale', str(stale), '--exit', str(record)]
             waiter = subprocess.run(args, capture_output=True, text=True, timeout=10)
@@ -449,6 +453,7 @@ class CodexWorkerTests(unittest.TestCase):
             self.assertNotIn('DONE', waiter.stdout)
             fresh = result.with_suffix('.tmp')
             fresh.write_bytes(result.read_bytes())
+            os.utime(fresh, (since + 2, since + 2))
             os.replace(fresh, result)
             waiter = subprocess.run(args, capture_output=True, text=True, timeout=10)
             self.assertEqual(waiter.returncode, 0, waiter.stderr)
