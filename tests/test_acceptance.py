@@ -4,6 +4,7 @@ import importlib.util
 import io
 import os
 import shutil
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -18,6 +19,76 @@ spec.loader.exec_module(gate)
 
 
 class AcceptanceTests(unittest.TestCase):
+    def test_existing_file_python_launcher_preserves_paths_and_py3_arguments(self):
+        example = '\n'.join(line[4:] for line in
+            (ROOT / 'core/scripts/boundary_selftests.sh').read_text(encoding='utf-8').splitlines()
+            if line.startswith('# | ')) + '\n'
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / 'project'
+            (project / 'scripts').mkdir(parents=True)
+            (project / 'src/domain').mkdir(parents=True)
+            source = project / 'src/domain/existing.py'
+            source.write_text('original\n', encoding='utf-8')
+            tools = Path(tmp) / 'tools'
+            tools.mkdir()
+            spaced = tools / 'python with spaces'
+            spaced.write_text('#!/bin/sh\nexec %s "$@"\n' % shlex.quote(Path(sys.executable).as_posix()),
+                              encoding='utf-8')
+            spaced.chmod(0o755)
+            (tools / 'py').write_text('#!/bin/sh\n[ "$1" = -3 ] || exit 9\nshift\n'
+                                      'exec %s "$@"\n' % shlex.quote(Path(sys.executable).as_posix()),
+                                      encoding='utf-8')
+            (tools / 'py').chmod(0o755)
+            env = dict(os.environ, PATH=str(tools) + os.pathsep + os.environ['PATH'])
+            for launcher in (spaced.as_posix(), 'py -3'):
+                with self.subTest(launcher=launcher):
+                    # python3 is the enclosing gate's fallback function; probe_env
+                    # must invoke the resolved executable, including its argument.
+                    (project / 'scripts/check.sh').write_text(
+                        'if [ "${1:-}" = --self-test ]; then\nst_fail=0\n'
+                        'kit_python=%s\npython3() { %s "$@"; }\n' %
+                        (shlex.quote(launcher), shlex.quote(Path(sys.executable).as_posix())) +
+                        example + '\nexit "$st_fail"\nfi\n'
+                        "grep -q myapp.web src/domain/existing.py || exit 0\n"
+                        "echo 'FAIL [boundary]: the domain layer imports the web layer:'\nexit 1\n",
+                        encoding='utf-8')
+                    gate.run(['git', 'init', '-q'], project)
+                    gate.run(['git', 'add', '.'], project)
+                    before = gate.run(['git', 'status', '--porcelain'], project)
+                    out = gate.run(['sh', 'scripts/check.sh', '--self-test'], project, env=env,
+                                   reason='  ok   — domain/web boundary gate rejects')
+                    self.assertNotIn('  FAIL — ', out)
+                    self.assertEqual(source.read_text(encoding='utf-8'), 'original\n')
+                    self.assertEqual(gate.run(['git', 'status', '--porcelain'], project), before)
+
+    def test_existing_file_example_reports_a_red_baseline_and_never_counts_it(self):
+        example = '\n'.join(line[4:] for line in
+            (ROOT / 'core/scripts/boundary_selftests.sh').read_text(encoding='utf-8').splitlines()
+            if line.startswith('# | ')) + '\n'
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / 'project'
+            (project / 'scripts').mkdir(parents=True)
+            (project / 'src/domain').mkdir(parents=True)
+            source = project / 'src/domain/existing.py'
+            source.write_text('original\n', encoding='utf-8')
+            # A normal copied gate must explain its own failure. The probe must not
+            # treat an unrelated failure as proof that the injected boundary works.
+            (project / 'scripts/check.sh').write_text(
+                'if [ "${1:-}" = --self-test ]; then\n'
+                'st_fail=0\nkit_python=python\npython3() { python "$@"; }\n' +
+                example + '\nexit "$st_fail"\nfi\n' +
+                "echo 'FAIL [build]: diagnostic from the disposable baseline'\nexit 7\n",
+                encoding='utf-8')
+            gate.run(['git', 'init', '-q'], project)
+            gate.run(['git', 'add', '.'], project)
+            before = gate.run(['git', 'status', '--porcelain'], project)
+            out = gate.run(['sh', 'scripts/check.sh', '--self-test'], project,
+                           expected=1, reason='the baseline is already red')
+            self.assertIn('FAIL [build]: diagnostic from the disposable baseline', out)
+            self.assertNotIn('  ok   — ', out)
+            self.assertEqual(source.read_text(encoding='utf-8'), 'original\n')
+            self.assertEqual(gate.run(['git', 'status', '--porcelain'], project), before)
+
     def test_required_suites_cannot_disappear_or_skip(self):
         for case in ('missing', 'empty', 'skipped', 'runtime_skip', 'pass'):
             with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:

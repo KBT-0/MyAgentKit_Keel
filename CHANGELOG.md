@@ -60,7 +60,9 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   cases between two isolated parallel processes and rejects incomplete or duplicate coverage.
   A parent interrupt or exception stops both shard process trees before propagating.
   ShellCheck receives empty `SHELLCHECK_OPTS`, so ambient severity options cannot suppress
-  mandatory SC2028/SC2086 diagnostics. The nested acceptance run still exceeds 1200 s on the
+  mandatory SC2028/SC2086 diagnostics. The extracted existing-file boundary example passes its
+  Python launcher as quoted arguments and prints the disposable baseline's diagnostics on failure.
+  The nested acceptance run still exceeds 1200 s on the
   kit host; changing the bound is the owner's decision (close-out decisions.md item 29).
 - **Reviewer manual-check verdict instructions** (`core/scripts/claude_bridge.py`,
   `core/scripts/codex_bridge.py`, `core/scripts/test_claude_bridge.py`, plugin runtime).
