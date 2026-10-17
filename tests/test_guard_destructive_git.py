@@ -284,5 +284,343 @@ class ReviewRoundThreeTests(GuardCase):
                             "git add . && git commit -F - <<'EOF'\nmention git in a message\nEOF"], 0)
 
 
+class CloseReviewTests(GuardCase):
+    def test_project_gate_can_be_wired(self):
+        self.assertVerdict([
+            'git config core.hooksPath .githooks',
+            'git config --local core.hooksPath .githooks',
+            'git config set core.hooksPath .githooks',
+            'git config --local --replace-all core.hooksPath .githooks',
+        ], 0)
+        self.assertVerdict([
+            "git config core.hooksPath ''", 'git config core.hooksPath /dev/null',
+            'git config --unset core.hooksPath', 'git config unset core.hooksPath',
+            'git config --unset core.hooksPath .githooks',
+            'git config core.hooksPath other/.githooks',
+            'git -c core.hooksPath=.githooks commit -m x',
+        ], 2)
+
+    def test_redirections_are_not_git_arguments(self):
+        self.dirty()
+        self.assertVerdict([
+            'git checkout main 2>&1', 'git checkout main >/dev/null',
+            'git checkout main 2> errors.log', 'git checkout main >>out 2>&1',
+            '2>/dev/null git checkout main', 'git checkout 2>/dev/null main',
+            'git checkout main &>/dev/null', 'git checkout main < input.txt',
+            'git checkout main >|out', 'git checkout main 2>"errors log"',
+            'git config core.hooksPath 2>/dev/null',
+            'git config core.hooksPath >&2', 'git config core.hooksPath 2>&-',
+        ], 0)
+        self.assertVerdict([
+            'git commit 2>/dev/null --no-verify -m x',
+            'git stash 2>&1 drop', 'git checkout -- f.txt >/dev/null',
+            'git checkout main 2 >/dev/null', 'git checkout main "2">/dev/null',
+        ], 2)
+
+    def test_quoted_redirect_characters_remain_arguments(self):
+        self.dirty()
+        self.assertVerdict([
+            "git checkout '>'", 'git checkout "2>&1"', r'git checkout \>',
+            "git config core.hooksPath '>/dev/null'",
+        ], 2)
+        self.assertVerdict(["git commit -m '2>&1'", 'git commit -m ">"'], 0)
+
+    def test_wrapper_value_tokens_cannot_hide_git(self):
+        for command in [
+            'env -u FOO git commit --no-verify -m x',
+            'env -u A -u B git push --mirror', 'env -C . git stash drop',
+            "env -S 'git push --mirror'", 'env --unset FOO git push --delete origin x',
+            'exec -a NAME git push --force',
+            'command env -u FOO git remote add up x',
+            'env -u git git commit --no-verify -m x',
+            'env -Cgit git push --mirror', 'exec -a git git push --mirror',
+        ]:
+            with self.subTest(command=command):
+                result = self.run_hook(command)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn(b'cannot read', result.stderr)
+
+    def test_unlisted_wrappers_cannot_hide_git(self):
+        self.assertVerdict([
+            'ionice -c3 git push --mirror', 'flock L git stash drop',
+            'chrt -i 0 git commit --no-verify -m x', 'chronic git remote add up x',
+        ], 2)
+        self.assertVerdict([
+            'env FOO=bar git status', 'command git status', 'nohup git status',
+            'echo git status', 'printf "%s" "git push --mirror"',
+            'env -- git status',
+        ], 0)
+
+    def test_checkout_previous_branch_is_safe_with_edits(self):
+        git(self.repo, 'checkout', '-q', '-b', 'other')
+        git(self.repo, 'checkout', '-q', 'main')
+        self.dirty()
+        self.assertVerdict(['git checkout -', 'git checkout @{-1}', 'git checkout @{-2}'], 0)
+        self.assertVerdict(['git checkout -f -', 'git checkout -- -', 'git checkout - f.txt'], 2)
+
+    def test_interpreter_heredocs_holding_git_are_unreadable(self):
+        for interpreter in ['python', 'python3', 'python3.13', 'node', 'perl', 'ruby']:
+            with self.subTest(interpreter=interpreter):
+                command = f"{interpreter} - <<'EOF'\nsubprocess.run(['git', 'push', '--mirror'])\nEOF"
+                result = self.run_hook(command)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn(b'cannot read', result.stderr)
+        self.assertVerdict([
+            "python -I - <<'EOF'\nsubprocess.run(['git', 'push', '--mirror'])\nEOF",
+            "env FOO=bar python3 - <<'EOF'\nsubprocess.run(['git', 'stash', 'drop'])\nEOF",
+        ], 2)
+        self.assertVerdict([
+            "python -I - <<'EOF'\nprint('hello')\nEOF",
+            "cat <<'EOF' > notes.md\ngit push --mirror is refused\nEOF",
+        ], 0)
+
+    def test_interpreter_inline_and_piped_git_are_unreadable(self):
+        self.assertVerdict([
+            "python -c \"subprocess.run(['git', 'push', '--mirror'])\"",
+            "python3 -Ic \"subprocess.run(['git', 'stash', 'drop'])\"",
+            "node -e \"spawnSync('git', ['push', '--mirror'])\"",
+            "perl -e \"system('git push --mirror')\"",
+            "ruby -e \"system('git push --mirror')\"",
+            "echo \"subprocess.run(['git', 'push', '--mirror'])\" | python -I -",
+            "printf \"system('git push --mirror')\" | ruby",
+        ], 2)
+        self.assertVerdict(["python -c \"print('hello')\"", "node -e \"console.log('hello')\""], 0)
+
+
+class RoundOneFixTests(GuardCase):
+    def test_hookspath_writes_have_exactly_one_value(self):
+        self.assertVerdict([
+            'git config core.hooksPath .githooks',
+            'git config --local core.hooksPath .githooks',
+            'git config set core.hooksPath .githooks',
+            'git config --local --replace-all core.hooksPath .githooks',
+            'git config --worktree core.hooksPath .githooks',
+            'git config set --local core.hooksPath .githooks',
+            'git config --get core.hooksPath', 'git config get --local core.hooksPath',
+            'git config --global --get core.hooksPath', 'git config --system --get core.hooksPath',
+        ], 0)
+        self.assertVerdict([
+            'git config core.hooksPath set .githooks',
+            'git config --local core.hooksPath set .githooks',
+            'git config --replace-all core.hooksPath set .githooks',
+            'git config core.hooksPath .githooks set',
+            'git config set core.hooksPath .githooks extra',
+            'git config core.hooksPath get', 'git config core.hooksPath list',
+            'git config --unknown core.hooksPath .githooks',
+            'git config set --value=set core.hooksPath .githooks',
+            'git config --global core.hooksPath .githooks',
+        ], 2)
+        # Demonstrate Git's actual legacy value/value-pattern grammar in a disposable repo.
+        git(self.repo, 'config', 'core.hooksPath', '.githooks')
+        git(self.repo, 'config', 'core.hooksPath', 'set', '.githooks')
+        self.assertEqual(git(self.repo, 'config', '--get', 'core.hooksPath').stdout.strip(), 'set')
+
+    def link_hooks(self, target):
+        link = self.repo / '.githooks'
+        if os.name == 'nt':
+            result = subprocess.run(['cmd.exe', '/d', '/c', 'mklink', '/J', str(link), str(target)],
+                                    capture_output=True, encoding='utf-8', errors='replace', timeout=60)
+            if result.returncode:
+                self.skipTest(f'Windows junction unavailable: {result.stdout} {result.stderr}')
+            self.addCleanup(os.rmdir, link)  # Remove the junction itself, never its target.
+        else:
+            try:
+                link.symlink_to(target, target_is_directory=True)
+            except OSError as exc:
+                self.skipTest(f'Directory symlink unavailable: {exc}')
+            self.addCleanup(link.unlink)
+        self.assertEqual(link.resolve(), target.resolve())
+
+    def test_external_hookspath_junction_is_refused(self):
+        outside = self.tmp / 'outside-hooks'
+        outside.mkdir()
+        self.link_hooks(outside)
+        self.assertVerdict([
+            'git config core.hooksPath .githooks',
+            'git config --local core.hooksPath .githooks',
+            'git config set core.hooksPath .githooks',
+            'git config --local --replace-all core.hooksPath .githooks',
+            'git -C . config core.hooksPath .githooks',
+        ], 2)
+
+    def test_internal_hookspath_junction_is_allowed(self):
+        inside = self.repo / 'project-hooks'
+        inside.mkdir()
+        self.link_hooks(inside)
+        self.assertVerdict(['git config core.hooksPath .githooks'], 0)
+
+    def test_unrelated_git_does_not_taint_interpreter_inline_text(self):
+        self.assertVerdict([
+            'git status && python -c "print(\'hello\')"',
+            'python -c "print(\'hello\')"; git status',
+            'git status && node -e "console.log(\'hello\')"',
+            'git status && perl -e "print q(hello)"',
+            'git status && ruby -e "puts \'hello\'"',
+            'git status && python -W ignore -c "print(\'hello\')"',
+            'git status && node --eval="console.log(\'hello\')"',
+        ], 0)
+        self.assertVerdict([
+            'python -c "print(\'hello\')" git',  # Attempt 3: every interpreter argument is opaque.
+            'git status && python -c "subprocess.run([\'git\', \'push\', \'--mirror\'])"',
+            'python -c "print(\'hello\')"; ruby -e "system(\'git push --mirror\')"',
+            'python -Ic"subprocess.run([\'git\', \'push\', \'--mirror\'])"',
+            'node --eval="spawnSync(\'git\', [\'push\', \'--mirror\'])"',
+            'perl -e "print q(hello)" -e "system(\'git push --mirror\')"',
+        ], 2)
+
+    def test_unrelated_git_does_not_taint_interpreter_heredoc(self):
+        self.assertVerdict([
+            "git status && python -I - <<'EOF'\nprint('hello')\nEOF",
+            "python -I - <<'EOF'\nprint('hello')\nEOF\ngit status",
+            "cat <<'EOF' > notes.md\ngit push --mirror is refused\nEOF\npython -c \"print('hello')\"",
+            "cat <<'EOF'; python -I -\ngit push --mirror is refused\nEOF",
+            "git commit -m \"$(cat <<'EOF'\nmention git push --mirror\nEOF\n)\"",
+        ], 0)
+        self.assertVerdict([
+            "git status && python -I - <<'EOF'\nsubprocess.run(['git', 'push', '--mirror'])\nEOF",
+            "cat <<'EOF' | python -I -\nsubprocess.run(['git', 'push', '--mirror'])\nEOF",
+            "echo \"$(python -I - <<'EOF'\nsubprocess.run(['git', 'push', '--mirror'])\nEOF\n)\"",
+        ], 2)
+
+    def test_only_interpreter_stdin_pipeline_is_inspected(self):
+        self.assertVerdict([
+            "git status && printf hello | python -I -",
+            "printf hello | python -I -; git status",
+            "echo git | cat; printf hello | python -I -",
+            "git status && python -I -",
+            'echo git | git log --grep python',
+        ], 0)
+        self.assertVerdict([
+            'echo "subprocess.run([\'git\', \'push\', \'--mirror\'])" | python -I -',
+            'printf "system(\'git push --mirror\')" | cat | ruby',
+            'git status && echo "system(\'git push --mirror\')" | ruby',
+            'printf "system(\'git push --mirror\')" | env -u FOO ruby',
+        ], 2)
+
+
+class RoundTwoFixTests(GuardCase):
+    link_hooks = RoundOneFixTests.link_hooks
+
+    def test_all_interpreter_arguments_are_opaque_regardless_of_flags(self):
+        commands = [
+            "node -p \"require('child_process').execSync('git config core.hooksPath disabled')\"",
+            "node --print \"require('child_process').execSync('git config core.hooksPath disabled')\"",
+            "perl -E \"system('git','config','core.hooksPath','disabled')\"",
+            "ruby -e \"system('git config core.hooksPath disabled')\"",
+            'pwsh -Command "git config core.hooksPath disabled"',
+            'powershell -Command "git config core.hooksPath disabled"',
+            'python script.py git', 'python3 -X git -c "print(1)"',
+        ]
+        for executable in ['deno', 'bun', 'php', 'osascript', 'lua', 'julia', 'Rscript', 'tclsh', 'awk', 'php8.3']:
+            commands.append(f'{executable} --some-future-option "git config core.hooksPath disabled"')
+        for command in commands:
+            with self.subTest(command=command):
+                result = self.run_hook(command)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn(b'cannot read', result.stderr)
+
+    def test_interpreter_heredocs_and_pipes_are_flag_independent(self):
+        for executable in ['python', 'node', 'deno', 'bun', 'perl', 'ruby', 'php', 'pwsh', 'powershell', 'osascript']:
+            self.assertVerdict([
+                f"{executable} --future-option <<'EOF'\ngit config core.hooksPath disabled\nEOF",
+                f'printf "git config core.hooksPath disabled" | {executable} --future-option script.arg',
+            ], 2)
+
+    def test_unrelated_git_segments_still_allow_git_free_interpreters(self):
+        for executable in ['python', 'node', 'deno', 'bun', 'perl', 'ruby', 'php', 'pwsh', 'powershell', 'osascript']:
+            self.assertVerdict([
+                f'git status && {executable} --some-option "print(1)"',
+                f"git status; {executable} <<'EOF'\nprint(1)\nEOF",
+                f'git status && printf hello | {executable} --some-option script.arg',
+            ], 0)
+
+    def prepare_gate(self):
+        active = self.repo / '.active-hooks'
+        active.mkdir(exist_ok=True)
+        hook = active / 'pre-commit'
+        hook.write_text('#!/bin/sh\necho guard-test-gate-rejected >&2\nexit 1\n', encoding='utf-8', newline='\n')
+        hook.chmod(0o755)
+        git(self.repo, 'config', 'core.hooksPath', '.active-hooks')
+
+    def commit_status(self):
+        result = subprocess.run(['git', '-c', 'user.name=t', '-c', 'user.email=t@example.invalid',
+                                 'commit', '--allow-empty', '-qm', 'gate probe'], cwd=self.repo, env=ENV,
+                                capture_output=True, encoding='utf-8', errors='replace', timeout=60)
+        self.commit_error = result.stderr
+        return result.returncode
+
+    def assert_gate_preserved(self, command, argv):
+        self.prepare_gate()
+        before = self.commit_status()
+        self.assertEqual(before, 1, 'Fixture gate must reject a real commit before the hook call')
+        self.assertIn('guard-test-gate-rejected', self.commit_error)
+        verdict = self.run_hook(command)
+        if verdict.returncode == 0:  # Execute only what the old guard actually lets through.
+            subprocess.run(argv, cwd=self.repo, env=ENV, capture_output=True, check=True, timeout=60)
+        after = self.commit_status()
+        if after == 1:
+            self.assertIn('guard-test-gate-rejected', self.commit_error)
+        print(f'{command}: gate_before={before}, guard={verdict.returncode}, commit_after={after}', flush=True)
+        self.assertEqual((before, verdict.returncode, after), (1, 2, 1), verdict.stderr)
+
+    def test_real_node_print_cannot_disable_commit_gate(self):
+        executable = shutil.which('node')
+        if not executable:
+            self.skipTest('Node unavailable for executable gate proof; payload variants covered separately')
+        code = "require('child_process').execFileSync('git', ['config', 'core.hooksPath', 'disabled'])"
+        for flag in ['-p', '--print']:
+            with self.subTest(flag=flag):
+                self.assert_gate_preserved(f'node {flag} "{code}"', [executable, flag, code])
+
+    def test_real_perl_extended_eval_cannot_disable_commit_gate(self):
+        executable = shutil.which('perl')
+        if not executable:
+            self.skipTest('Perl unavailable for executable gate proof; payload variant covered separately')
+        code = "system('git','config','core.hooksPath','disabled') == 0 or die 'git failed'"
+        self.assert_gate_preserved(f'perl -E "{code}"', [executable, '-E', code])
+
+    def test_real_subshell_cannot_redirect_hookspath_containment(self):
+        outside = self.tmp / 'outside-hooks'
+        outside.mkdir()
+        self.link_hooks(outside)
+        side = self.tmp / 'b'
+        side.mkdir()
+        git(side, 'init', '-q', '-b', 'main')
+        shell = shutil.which('sh')
+        if not shell:
+            self.skipTest('POSIX shell unavailable for executable subshell proof')
+        command = '(cd ../b && git status --short); git config core.hooksPath .githooks'
+        self.assert_gate_preserved(command, [shell, '-c', command])
+
+    def test_hookspath_writes_with_directory_routing_are_unreadable(self):
+        for command in [
+            '(cd . && git status); git config core.hooksPath .githooks',
+            'cd . && git config core.hooksPath .githooks',
+            'pushd .; git config core.hooksPath .githooks',
+            'popd; git config core.hooksPath .githooks',
+            '(git config core.hooksPath .githooks)',
+            'git -C . config core.hooksPath .githooks',
+            'git -C. config core.hooksPath .githooks',
+            'git --git-dir=.git config core.hooksPath .githooks',
+            'git --git-dir .git config core.hooksPath .githooks',
+            'git --work-tree=. config core.hooksPath .githooks',
+            'git --work-tree . config core.hooksPath .githooks',
+            'GIT_DIR=.git git config core.hooksPath .githooks',
+            'GIT_WORK_TREE=. git config core.hooksPath .githooks',
+            'git config core.hooksPath .githooks; cd .',
+            'git status && git config core.hooksPath .githooks',
+        ]:
+            with self.subTest(command=command):
+                result = self.run_hook(command)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn(b'cannot read', result.stderr)
+        self.assertVerdict([
+            'git config core.hooksPath .githooks',
+            'git config --local --replace-all core.hooksPath .githooks',
+            'git config set core.hooksPath .githooks',
+            'cd . && git config --get core.hooksPath',
+        ], 0)
+
+
 if __name__ == '__main__':
     unittest.main()
