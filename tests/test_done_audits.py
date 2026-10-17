@@ -1,4 +1,4 @@
-"""A closed task cannot survive in an audit, in history or the staged index."""
+"""Closed tasks produce audit notes but still fail in live records and newly staged audits."""
 import os
 from pathlib import Path
 import shlex
@@ -30,7 +30,7 @@ class DoneAuditTests(unittest.TestCase):
         return subprocess.run(['git', *args], cwd=self.repo, env=self.env,
                               check=True, capture_output=True)
 
-    def test_history_gate_rejects_an_audit_and_accepts_a_different_id_or_removed_line(self):
+    def test_history_gate_notes_audits_but_rejects_live_mentions_of_closed_tasks(self):
         # Execute only the production Done: block, not the full gate or its self-test.
         source = (ROOT / 'core/scripts/check.sh').read_text(encoding='utf-8')
         block = source.split('# Finished work.', 1)[1].split('# A [LESSON]', 1)[0]
@@ -40,15 +40,30 @@ class DoneAuditTests(unittest.TestCase):
                   'fail=0\nfixture_env() { :; }\n# Finished work.%s\nexit "$fail"\n') % (
                       shlex.quote(work.as_posix()), shlex.quote(self.state.as_posix()),
                       shlex.quote(self.repo.as_posix()), block)
-        for text, expected in (('- K4: unresolved\n', 1), ('- K4b: another task\n', 0), ('', 0)):
-            with self.subTest(text=text):
-                self.audit.write_text(text, encoding='utf-8')
-                result = subprocess.run(['sh', '-c', script], cwd=self.repo, env=self.env,
-                                        capture_output=True, text=True, encoding='utf-8')
-                self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
-                if expected:
-                    self.assertIn('audit space ü.md:1 names K4', result.stdout)
-                    self.assertIn('FAIL [state]', result.stdout)
+        targets = ((self.audit, 'NOTE'), (self.state, 'FAIL'),
+                   (self.state.with_name('BACKLOG.md'), 'FAIL'),
+                   (self.state.with_name('STRONG_REVIEW.md'), 'FAIL'),
+                   (self.state.parent / 'reviews/strong-test.md', 'FAIL'))
+        for target, _ in targets:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text('', encoding='utf-8')
+        for target, level in targets:
+            for text in ('- K4: unresolved\n', '- K4b: another task\n', ''):
+                with self.subTest(path=target.relative_to(self.repo), text=text):
+                    target.write_text(text, encoding='utf-8')
+                    result = subprocess.run(['sh', '-c', script], cwd=self.repo, env=self.env,
+                                            capture_output=True, text=True, encoding='utf-8')
+                    mentions_closed = text.startswith('- K4:')
+                    expected = int(mentions_closed and level == 'FAIL')
+                    self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
+                    if mentions_closed:
+                        self.assertIn('%s [state]: %s:1 names K4, which commit ' %
+                                      (level, target.as_posix()), result.stdout)
+                        self.assertIn('closed (Done: K4)', result.stdout)
+                    else:
+                        self.assertNotIn('names K4', result.stdout)
+                    if not expected:
+                        self.assertNotIn('FAIL [state]', result.stdout)
 
     def test_commit_hook_reads_the_staged_audit_and_accepts_its_removal(self):
         message = self.repo / 'message'
