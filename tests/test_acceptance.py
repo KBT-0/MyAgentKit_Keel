@@ -62,6 +62,10 @@ class AcceptanceTests(unittest.TestCase):
                     self.assertEqual(gate.run(['git', 'status', '--porcelain'], project), before)
 
     def test_existing_file_example_reports_a_red_baseline_and_never_counts_it(self):
+        # Use the gate's own launcher selection, as WindowsBoundaryProbeTests does.
+        check = (ROOT / 'core/scripts/check.sh').read_text(encoding='utf-8')
+        start = check.index("if python3 -I -c '' </dev/null")
+        resolve = check[start:check.index('\n', check.index('python3() { $kit_python "$@"; }'))]
         example = '\n'.join(line[4:] for line in
             (ROOT / 'core/scripts/boundary_selftests.sh').read_text(encoding='utf-8').splitlines()
             if line.startswith('# | ')) + '\n'
@@ -73,16 +77,32 @@ class AcceptanceTests(unittest.TestCase):
             source.write_text('original\n', encoding='utf-8')
             # A normal copied gate must explain its own failure. The probe must not
             # treat an unrelated failure as proof that the injected boundary works.
+            # Use a supported python3-only host layout, independent of the caller's
+            # Python aliases. The wrappers run the real utilities, not test doubles.
+            tools = Path(tmp) / 'tools'
+            tools.mkdir()
+            shell = shutil.which('sh')
+            for name in ('sh', 'env', 'git', 'uname', 'mktemp', 'cp', 'awk', 'sed',
+                         'xargs', 'mkdir', 'mv', 'rm', 'cat', 'dirname', 'basename', 'ln', 'python3'):
+                program = sys.executable if name == 'python3' else shutil.which(name)
+                self.assertIsNotNone(program, name)
+                wrapper = tools / name
+                wrapper.write_text('#!/bin/sh\nexec %s "$@"\n' %
+                                   shlex.quote(Path(program).as_posix()), encoding='utf-8')
+                wrapper.chmod(0o755)
+            env = dict(os.environ, PATH=str(tools))
+            gate.run([shell, '-c', 'command -v python3 && ! command -v python && ! command -v py'],
+                     project, env=env)
             (project / 'scripts/check.sh').write_text(
                 'if [ "${1:-}" = --self-test ]; then\n'
-                'st_fail=0\nkit_python=python\npython3() { python "$@"; }\n' +
+                'st_fail=0\n' + resolve + '\n' +
                 example + '\nexit "$st_fail"\nfi\n' +
                 "echo 'FAIL [build]: diagnostic from the disposable baseline'\nexit 7\n",
                 encoding='utf-8')
             gate.run(['git', 'init', '-q'], project)
             gate.run(['git', 'add', '.'], project)
             before = gate.run(['git', 'status', '--porcelain'], project)
-            out = gate.run(['sh', 'scripts/check.sh', '--self-test'], project,
+            out = gate.run([shell, 'scripts/check.sh', '--self-test'], project, env=env,
                            expected=1, reason='the baseline is already red')
             self.assertIn('FAIL [build]: diagnostic from the disposable baseline', out)
             self.assertNotIn('  ok   — ', out)
