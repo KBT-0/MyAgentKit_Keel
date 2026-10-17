@@ -387,5 +387,116 @@ class CloseReviewTests(GuardCase):
         self.assertVerdict(["python -c \"print('hello')\"", "node -e \"console.log('hello')\""], 0)
 
 
+class RoundOneFixTests(GuardCase):
+    def test_hookspath_writes_have_exactly_one_value(self):
+        self.assertVerdict([
+            'git config core.hooksPath .githooks',
+            'git config --local core.hooksPath .githooks',
+            'git config set core.hooksPath .githooks',
+            'git config --local --replace-all core.hooksPath .githooks',
+            'git config --worktree core.hooksPath .githooks',
+            'git config set --local core.hooksPath .githooks',
+            'git config --get core.hooksPath', 'git config get --local core.hooksPath',
+            'git config --global --get core.hooksPath', 'git config --system --get core.hooksPath',
+        ], 0)
+        self.assertVerdict([
+            'git config core.hooksPath set .githooks',
+            'git config --local core.hooksPath set .githooks',
+            'git config --replace-all core.hooksPath set .githooks',
+            'git config core.hooksPath .githooks set',
+            'git config set core.hooksPath .githooks extra',
+            'git config core.hooksPath get', 'git config core.hooksPath list',
+            'git config --unknown core.hooksPath .githooks',
+            'git config set --value=set core.hooksPath .githooks',
+            'git config --global core.hooksPath .githooks',
+        ], 2)
+        # Demonstrate Git's actual legacy value/value-pattern grammar in a disposable repo.
+        git(self.repo, 'config', 'core.hooksPath', '.githooks')
+        git(self.repo, 'config', 'core.hooksPath', 'set', '.githooks')
+        self.assertEqual(git(self.repo, 'config', '--get', 'core.hooksPath').stdout.strip(), 'set')
+
+    def link_hooks(self, target):
+        link = self.repo / '.githooks'
+        if os.name == 'nt':
+            result = subprocess.run(['cmd.exe', '/d', '/c', 'mklink', '/J', str(link), str(target)],
+                                    capture_output=True, encoding='utf-8', errors='replace', timeout=60)
+            if result.returncode:
+                self.skipTest(f'Windows junction unavailable: {result.stdout} {result.stderr}')
+            self.addCleanup(os.rmdir, link)  # Remove the junction itself, never its target.
+        else:
+            try:
+                link.symlink_to(target, target_is_directory=True)
+            except OSError as exc:
+                self.skipTest(f'Directory symlink unavailable: {exc}')
+            self.addCleanup(link.unlink)
+        self.assertEqual(link.resolve(), target.resolve())
+
+    def test_external_hookspath_junction_is_refused(self):
+        outside = self.tmp / 'outside-hooks'
+        outside.mkdir()
+        self.link_hooks(outside)
+        self.assertVerdict([
+            'git config core.hooksPath .githooks',
+            'git config --local core.hooksPath .githooks',
+            'git config set core.hooksPath .githooks',
+            'git config --local --replace-all core.hooksPath .githooks',
+            'git -C . config core.hooksPath .githooks',
+        ], 2)
+
+    def test_internal_hookspath_junction_is_allowed(self):
+        inside = self.repo / 'project-hooks'
+        inside.mkdir()
+        self.link_hooks(inside)
+        self.assertVerdict(['git config core.hooksPath .githooks'], 0)
+
+    def test_unrelated_git_does_not_taint_interpreter_inline_text(self):
+        self.assertVerdict([
+            'git status && python -c "print(\'hello\')"',
+            'python -c "print(\'hello\')"; git status',
+            'git status && node -e "console.log(\'hello\')"',
+            'git status && perl -e "print q(hello)"',
+            'git status && ruby -e "puts \'hello\'"',
+            'python -c "print(\'hello\')" git',
+            'git status && python -W ignore -c "print(\'hello\')"',
+            'git status && node --eval="console.log(\'hello\')"',
+        ], 0)
+        self.assertVerdict([
+            'git status && python -c "subprocess.run([\'git\', \'push\', \'--mirror\'])"',
+            'python -c "print(\'hello\')"; ruby -e "system(\'git push --mirror\')"',
+            'python -Ic"subprocess.run([\'git\', \'push\', \'--mirror\'])"',
+            'node --eval="spawnSync(\'git\', [\'push\', \'--mirror\'])"',
+            'perl -e "print q(hello)" -e "system(\'git push --mirror\')"',
+        ], 2)
+
+    def test_unrelated_git_does_not_taint_interpreter_heredoc(self):
+        self.assertVerdict([
+            "git status && python -I - <<'EOF'\nprint('hello')\nEOF",
+            "python -I - <<'EOF'\nprint('hello')\nEOF\ngit status",
+            "cat <<'EOF' > notes.md\ngit push --mirror is refused\nEOF\npython -c \"print('hello')\"",
+            "cat <<'EOF'; python -I -\ngit push --mirror is refused\nEOF",
+            "git commit -m \"$(cat <<'EOF'\nmention git push --mirror\nEOF\n)\"",
+        ], 0)
+        self.assertVerdict([
+            "git status && python -I - <<'EOF'\nsubprocess.run(['git', 'push', '--mirror'])\nEOF",
+            "cat <<'EOF' | python -I -\nsubprocess.run(['git', 'push', '--mirror'])\nEOF",
+            "echo \"$(python -I - <<'EOF'\nsubprocess.run(['git', 'push', '--mirror'])\nEOF\n)\"",
+        ], 2)
+
+    def test_only_interpreter_stdin_pipeline_is_inspected(self):
+        self.assertVerdict([
+            "git status && printf hello | python -I -",
+            "printf hello | python -I -; git status",
+            "echo git | cat; printf hello | python -I -",
+            "git status && python -I -",
+            'echo git | git log --grep python',
+        ], 0)
+        self.assertVerdict([
+            'echo "subprocess.run([\'git\', \'push\', \'--mirror\'])" | python -I -',
+            'printf "system(\'git push --mirror\')" | cat | ruby',
+            'git status && echo "system(\'git push --mirror\')" | ruby',
+            'printf "system(\'git push --mirror\')" | env -u FOO ruby',
+        ], 2)
+
+
 if __name__ == '__main__':
     unittest.main()

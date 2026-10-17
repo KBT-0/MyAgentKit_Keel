@@ -52,7 +52,11 @@ The git guard removes shell redirections before reading git arguments, and recog
 `checkout -` as the previous branch. A wrapper chain it cannot follow to git (including
 `env`/`exec` options and unlisted wrappers) is refused as unreadable. Shells and interpreters
 (`python*`, `node`, `perl`, `ruby`) reading input, here-documents or `-c`/`-e` text that holds
-git are also unreadable; an ordinary interpreter here-document without git remains allowed.
+git are also unreadable. Interpreter checks inspect its own inline program, here-document
+or stdin pipeline; a separate `git status` does not taint a git-free interpreter program.
+Gate wiring accepts exactly one `.githooks` value in the documented local config forms;
+extra operands, value-pattern forms and unknown options are refused. The hook resolves
+`.githooks` against the target repository root and refuses symlinks/junctions that leave it.
 
 The four `permissions.deny` rules (`git *--out*`, `*--ext*`, `*--textc*`, `*--sub*`) are prefixes
 because git accepts any unambiguous abbreviation of a long option (git-scm.com/docs/gitcli).

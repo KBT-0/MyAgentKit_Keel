@@ -172,9 +172,45 @@ def interpreter(name):
     return name.startswith("python") or name in {"node", "perl", "ruby"}
 
 
+def interpreter_input(name, args):
+    """Inline programs and whether the interpreter reads its program from stdin.
+
+    Stop at the script operand (or Python/Node's inline program); later words are script args.
+    Perl/Ruby can repeat -e. Value-taking interpreter options are not program text.
+    """
+    python = name.startswith("python")
+    prefix, switch, values = {
+        "python": ("bBdEhiIOPqRsuUvVx", "c", {"-W", "-X"}),
+        "node": ("ip", "e", {"-r", "--require", "--input-type"}),
+        "perl": ("adFhilnpsStTuUvVwW", "e", {"-I", "-M", "-m"}),
+        "ruby": ("acCdlnpsSw", "e", {"-I", "-r", "-E"}),
+    }["python" if python else name]
+    programs, stdin, i = [], True, 0
+    while i < len(args):
+        arg, i = args[i], i + 1
+        if arg == "--":
+            stdin = not programs and (i == len(args) or args[i] == "-")
+            break
+        if arg == "-" or not arg.startswith("-"):
+            stdin = not programs and arg == "-"
+            break
+        match = re.fullmatch(r"-[" + prefix + r"]*" + switch + r"(.*)", arg, re.S)
+        if match or (name == "node" and (arg == "--eval" or arg.startswith("--eval="))):
+            code = match.group(1) if match else arg.partition("=")[2]
+            if not code and i < len(args):
+                code, i = args[i], i + 1
+            programs.append(code)
+            stdin = False
+            if python or name == "node":
+                break
+        elif arg in values:
+            i += 1
+    return programs, stdin
+
+
 def strip_heredocs(text):
     """The text without here-document bodies. A body that holds git is unreadable when any command
-    on the line is a shell/interpreter: it may read the body (`cat <<EOF | sh`)."""
+    is a shell, or its receiving command/pipeline contains an interpreter (`cat <<EOF | python`)."""
     while True:
         m = re.search(r"(?<!<)<<(?!<)(-?)\s*(['\"]?)([\w.-]+)\2", text)
         if not m:
@@ -191,8 +227,27 @@ def strip_heredocs(text):
         body, outside = text[start:end], text[:start] + "\n" + text[end:]
         # Include readers behind wrappers, but ordinary prose (`echo python`) is not a reader.
         commands = [w for seg in segments(outside) if base(seg[0]) not in CALM | {"git"} for w in seg]
-        if GIT_WORD.search(body) and any(base(w) in SHELLS or interpreter(base(w)) for w in commands):
-            raise Unreadable("a here-document a shell/interpreter on the same line may read")
+        if GIT_WORD.search(body):
+            if any(base(w) in SHELLS for w in commands):
+                raise Unreadable("a here-document a shell on the same line may read")
+            marker = "__guard_heredoc_input__"
+            line = text.rfind("\n", 0, m.start()) + 1
+            header = text[line:m.start()] + " " + marker + " " + text[m.end():start]
+            try:
+                headers = list(segments(header, with_endings=True, strict=True))
+            except Unreadable:
+                # A heredoc in "$(...)" has an outer quote that closes AFTER its body.
+                # Parse the substitution's command, not the incomplete enclosing argument.
+                inside = substitutions(header)
+                if not inside:
+                    raise
+                headers = list(segments(inside[-1], with_endings=True, strict=True))
+            receiving = False
+            for seg, ending in headers:
+                receiving = receiving or marker in seg
+                if receiving and base(seg[0]) not in CALM | {"git"} and any(interpreter(base(w)) for w in seg):
+                    raise Unreadable("a here-document an interpreter reads")
+                receiving = receiving and ending in {"|", "|&"}
         text = text[:m.start()] + text[m.end():start] + "\n" + text[end:]
 
 
@@ -208,8 +263,8 @@ def substitutions(text):
     return found
 
 
-def segments(text):
-    """Simple commands of a command line, each a token list."""
+def segments(text, with_endings=False, strict=False):
+    """Simple commands, optionally paired with their following shell separator."""
     # Consume complete raw shell words so quoted/escaped >, < and descriptor numbers survive.
     # Strip a redirection together with its target before shlex discards quote information or
     # splits `2>&1` at `&`. A separate `2 >out` leaves 2 as an argument, as the shell does.
@@ -222,14 +277,14 @@ def segments(text):
     try:
         tokens = list(lexer)
     except ValueError:
-        if GIT_WORD.search(text):
+        if strict or GIT_WORD.search(text):
             raise Unreadable("an unbalanced quote")
         return
     segment = []
     for token in tokens + [";"]:
         if token and set(token) <= SEPARATORS:
             if segment:
-                yield segment
+                yield (segment, token) if with_endings else segment
             segment = []
         else:
             segment.append(token)
@@ -331,6 +386,46 @@ class Git:
         return ""
 
 
+def hooks_config_allowed(g):
+    """Read or a single project-local hooksPath value, using config's option/operand grammar."""
+    actions = {"--get": "get", "--get-all": "get", "--get-regexp": "get",
+               "--replace-all": "set", "--list": "list", "-l": "list"}
+    action, scope, operands, literal = None, None, [], False
+    for arg in g.args:
+        if not literal and arg == "--":
+            literal = True
+        elif not literal and arg in {"--local", "--worktree", "--global", "--system"}:
+            if scope is not None:
+                return False
+            scope = arg
+        elif not literal and arg in actions:
+            if action is not None:
+                return False
+            action = actions[arg]
+        elif not literal and not operands and action is None and arg in {"set", "get", "list"}:
+            action = arg  # Only a subcommand in command position, never a value or value-pattern.
+        elif not literal and arg.startswith("-"):
+            return False
+        else:
+            operands.append(arg)
+    if not operands or operands[0].lower() != "core.hookspath":
+        return False
+    if action in {None, "get"} and len(operands) == 1:
+        return True
+    if (action not in {None, "set"} or len(operands) != 2 or operands[1] != ".githooks"
+            or scope in {"--global", "--system"}):
+        return False
+    try:
+        code, root = g.ask("rev-parse", "--show-toplevel")
+        if code or not root:
+            return False
+        root = os.path.normcase(os.path.realpath(root))
+        hooks = os.path.normcase(os.path.realpath(os.path.join(root, operands[1])))
+        return os.path.commonpath([root, hooks]) == root
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return False
+
+
 def verdict(g, depth=0):
     """None, or (always, why, ignored_counts) for one git invocation."""
     sub, args = g.sub, g.args
@@ -339,15 +434,8 @@ def verdict(g, depth=0):
     if sub in HOOK_SUBS and any(HOOK_ENV.match(k) for k in g.env):
         return True, "a GIT_CONFIG_*, HUSKY, SKIP or PRE_COMMIT variable on this command can switch the gate off", False
     if sub == "config" and any(a.lower() == "core.hookspath" for a in args):
-        reads = {"--get", "--get-all", "--get-regexp", "get", "-l", "--list", "list"}
-        writes = {"--unset", "--unset-all", "unset", "set", "--add", "--replace-all", "--edit", "-e"}
-        key_last = args[-1].lower() == "core.hookspath"
-        if not (set(args) & reads) and (set(args) & writes or not key_last):
-            # Only the documented project-local gate wiring is exempt; unset, empty values,
-            # other paths/scopes and extra operands still refuse.
-            wiring = [a for a in args if a not in {"--local", "--worktree", "set", "--replace-all"}]
-            if len(wiring) != 2 or wiring[0].lower() != "core.hookspath" or wiring[1] != ".githooks":
-                return True, "setting core.hooksPath moves the commit gate. " + GATE, False
+        if not hooks_config_allowed(g):
+            return True, "setting core.hooksPath moves the commit gate. " + GATE, False
         return None
     opts, words = options(sub, args)
     names = {n for n, _ in opts}
@@ -422,8 +510,10 @@ def judge(command, cwd):
         raise Unreadable("a command substitution (backticks or $(...))")
     # Every folder the command may stand in. The caller's folder is always one: a `cd` may not run
     # (after `||`), may run in a subshell (`( )`, a pipeline, `&`), so it only adds a folder.
-    env, changed, cwds = {}, False, [cwd]
-    for seg in segments(text):
+    env, changed, cwds, pipeline_git = {}, False, [cwd], False
+    for seg, ending in segments(text, with_endings=True):
+        input_git = pipeline_git
+        pipeline_git = ending in {"|", "|&"} and (input_git or any(GIT_WORD.search(t) for t in seg))
         local, i = {}, 0
         while i < len(seg):
             if seg[i] in KEYWORDS:
@@ -453,12 +543,15 @@ def judge(command, cwd):
                 raise Unreadable(f"a command string run by {name} -c")
             if not [t for t in rest[1:] if not t.startswith("-")]:
                 raise Unreadable(f"{name} reading commands from its input")
-        if interpreter(name) and GIT_WORD.search(text):
-            if any(re.fullmatch(r"-\w*[ce]\w*|--eval(?:=.*)?", t) for t in rest[1:]):
+        if interpreter(name):
+            programs, stdin = interpreter_input(name, rest[1:])
+            if any(GIT_WORD.search(code) for code in programs):
                 raise Unreadable(f"a command string run by {name}")
-            if "-" in rest[1:] or not [t for t in rest[1:] if not t.startswith("-")]:
+            if stdin and input_git:
                 raise Unreadable(f"{name} reading commands from its input")
-        if name != "git" and name not in CALM and has_git:
+        elif input_git and name not in CALM | {"git"} and any(interpreter(base(t)) for t in rest):
+            raise Unreadable(f"interpreter input through {name}")
+        if name != "git" and name not in CALM and not interpreter(name) and has_git:
             raise Unreadable(f"git run through {name}")
         if rest and rest[0].startswith("$") and any(t in SPEC or t in ("stash", "remote", "config") for t in rest[1:]):
             raise Unreadable("a command named by a variable")
