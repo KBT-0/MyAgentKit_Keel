@@ -62,8 +62,7 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
   ShellCheck receives empty `SHELLCHECK_OPTS`, so ambient severity options cannot suppress
   mandatory SC2028/SC2086 diagnostics. The extracted existing-file boundary example passes its
   Python launcher as quoted arguments and prints the disposable baseline's diagnostics on failure.
-  The nested acceptance run still exceeds 1200 s on the
-  kit host; changing the bound is the owner's decision (close-out decisions.md item 29).
+  The Windows nested self-test bound is 1800 s; it measured 1357-1563 s on the kit host.
 - **Reviewer manual-check verdict instructions** (`core/scripts/claude_bridge.py`,
   `core/scripts/codex_bridge.py`, `core/scripts/test_claude_bridge.py`, plugin runtime).
   Both reviewer prompts classify NOT RUN and "could not verify" lines as manual checks

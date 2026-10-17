@@ -249,15 +249,6 @@ def degree(cpus, units):
 
 
 # A gate run that waits forever (a lock never released) must fail here, not hang the kit check.
-# D08 inv2#181: measured 2026-10-16 on an i7-12700H (20 logical CPUs), Python 3.13,
-# Git 2.47.1: acceptance unit 2630 s with the nested self-test timing out at 1200 s
-# before the ShellCheck fix; 1563.665 s after the lint and installed-doc fixes in one serial run.
-# The unchanged 1200 s timeout still fired: Bridge/Preflight alone took 1389.061 s;
-# child completion took 1527.550 s. ShellCheck was off PATH; other host workers were present.
-# Two-shard serial measurement, same host/date: acceptance 1397.810 s, nested completion
-# 1357.949 s with the unchanged 1200 s timeout; Bridge/Preflight returned False at 1200.017 s.
-# One shard finished in 1051.072 s; the other supplied no final report. ShellCheck was off PATH.
-# No green after-fix acceptance timing exists yet.
 def run(args, cwd=ROOT, expected=0, reason=None, env=None, timeout=300, **popen):
     result = subprocess.run(args, cwd=cwd, capture_output=True, text=True, env=env,
                             timeout=limit(timeout), **popen)
@@ -782,16 +773,11 @@ def acceptance(self_test):
                           env=dict(os.environ, GATE_LOCK_WAIT="5"), reason="SELF-TEST: PASS",
                           # Real native review fixtures and Git startup take much longer
                           # than POSIX here. Keep a bound, scaled with concurrent units.
-                          # D08 inv2#181: measured 2026-10-16 on an i7-12700H (20 logical CPUs),
-                          # Python 3.13, Git 2.47.1: acceptance unit 2630 s with the nested self-test
-                          # timing out at 1200 s before the ShellCheck fix; 1563.665 s after
-                          # the lint and installed-doc fixes (one serial run, exit 1, same timeout).
-                          # Bridge/Preflight took 1389.061 s; child completion took 1527.550 s.
-                          # ShellCheck was off PATH; other host workers were present.
-                          # Two-shard serial run on the same host/date: acceptance 1397.810 s,
-                          # nested completion 1357.949 s, still timed out at 1200 s.
-                          # Bridge/Preflight returned False at 1200.017 s; no acceptance PASS.
-                          timeout=1200 if os.name == "nt" else 300).strip())
+                          # D08 inv2#181: measured 2026-10-16 on an i7-12700H (20 logical CPUs):
+                          # nested run 1357-1563 s serial; acceptance unit 1410 s with four
+                          # units in parallel. Owner raised the Windows bound to 1800 s
+                          # (close-out decisions.md 30a); POSIX stays at 300 s.
+                          timeout=1800 if os.name == "nt" else 300).strip())
                 seen = log.read_text(encoding='utf-8').split("==\n")[:-1]
                 if not seen or any(s != before for s in seen) or run(status, project) != before:
                     raise RuntimeError("check.sh --self-test changed the working tree:\n"
