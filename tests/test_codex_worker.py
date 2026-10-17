@@ -91,6 +91,95 @@ class CodexWorkerTests(unittest.TestCase):
             self.assertTrue(unlocked.exists(), 'the worker was ended while a git operation held its index.lock')
             self.assertLess(time.monotonic() - started, 15)
 
+    def test_a_notice_moved_during_a_gate_still_ends_the_worker_after_the_gate(self):
+        # The lead moves a result before committing. Once its grace passed, a held gate
+        # must delay the close, not make it depend on the result still being there.
+        for kind, notice in (('completed', 'DONE'), ('handoff', 'HANDOFF'), ('question', 'decision')):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as tmp:
+                worker = module()
+                question, result, record, gate = (Path(tmp) / n for n in ('q.md', 'r.md', 'w.exit', 'check.lock'))
+                publication = question if kind == 'question' else result
+                publication.write_text(('Choose A or B.\n' if kind == 'question' else
+                                        'Kind: %s\nTask: w\nAttempt: 1\nRemaining: none\n' % kind) + READY,
+                                       encoding='utf-8')
+                gate.touch()
+                if os.name == 'nt':
+                    import ctypes
+                    from ctypes import wintypes as w
+                    api = ctypes.WinDLL('kernel32', use_last_error=True)
+                    api.CreateFileW.argtypes = [w.LPCWSTR, w.DWORD, w.DWORD, ctypes.c_void_p,
+                                               w.DWORD, w.DWORD, w.HANDLE]
+                    api.CreateFileW.restype = w.HANDLE
+                    api.CloseHandle.argtypes = [w.HANDLE]
+                    held = api.CreateFileW(str(gate), 0x80000000, 1, None, 3, 0x80, None)
+                    self.assertNotIn(held, (None, ctypes.c_void_p(-1).value))
+                    release = lambda: api.CloseHandle(held)
+                else:
+                    import fcntl
+                    held = open(gate, 'r+', encoding='utf-8')
+                    fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    release = held.close
+                clock, waits, released = [0.0], [], []
+                child = mock.Mock()
+                child.poll.return_value = None
+                def sleep(seconds):
+                    clock[0] += seconds
+                    waits.append(seconds)
+                    self.assertLess(len(waits), 12, 'the supervisor forgot the moved publication')
+                    if seconds == .5:
+                        self.assertTrue(worker.busy([gate]), 'the fixture must hold a real gate lock')
+                        if waits.count(.5) == 1:
+                            publication.rename(Path(tmp) / 'moved.md')
+                            clock[0] += 2 * worker.STALE_LOCK  # gates have no stale-lock bound
+                    if len(waits) == 5:
+                        release()
+                        released.append(True)
+                try:
+                    with mock.patch.dict(os.environ, KIT_WORKER_GRACE='0.2', KIT_WORKER_EXIT=str(record)), \
+                            mock.patch.object(worker, 'locks', return_value=[gate]), \
+                            mock.patch.object(worker.time, 'monotonic', side_effect=lambda: clock[0]), \
+                            mock.patch.object(worker.time, 'sleep', side_effect=sleep), \
+                            mock.patch.object(worker, 'stop') as stopped:
+                        self.assertEqual(worker.watch(child, question, None, result), 0)
+                    self.assertTrue(released, 'the worker ended while the gate was held')
+                    stopped.assert_called()
+                    self.assertEqual(waits.count(.5), 3)
+                    self.assertTrue(record.read_text(encoding='utf-8').startswith(notice + ' published at '))
+                finally:
+                    if not released:
+                        release()
+
+    def test_a_missing_notice_before_grace_does_not_end_the_worker(self):
+        worker = module()
+        child = mock.Mock(returncode=0)
+        child.poll.side_effect = [None, None, 0]
+        with mock.patch.dict(os.environ, KIT_WORKER_GRACE='10'), \
+                mock.patch.object(worker, 'result_kind', side_effect=[('DONE', 'id'), ('', None)]), \
+                mock.patch.object(worker, 'question_id', return_value=None), \
+                mock.patch.object(worker.time, 'monotonic', return_value=0), \
+                mock.patch.object(worker.time, 'sleep'), mock.patch.object(worker, 'stop'), \
+                mock.patch.object(worker, 'busy') as busy, mock.patch.object(worker, 'record_exit') as record:
+            self.assertEqual(worker.watch(child, Path('q.md'), None), 0)
+        busy.assert_not_called()
+        record.assert_called_once_with('exit 0')
+
+    def test_a_valid_replacement_changes_a_notice_waiting_on_a_gate(self):
+        for replacement in ('PROGRESS', 'BLOCKED', 'HANDOFF'):
+            with self.subTest(replacement=replacement):
+                worker = module()
+                child = mock.Mock(returncode=0)
+                child.poll.side_effect = [None, None, None, 0]
+                with mock.patch.dict(os.environ, KIT_WORKER_GRACE='0'), \
+                        mock.patch.object(worker, 'result_kind', side_effect=[('DONE', 'old'),
+                                                                           (replacement, 'new'), ('', None)]), \
+                        mock.patch.object(worker, 'question_id', return_value=None), \
+                        mock.patch.object(worker, 'locks', return_value=[]), \
+                        mock.patch.object(worker.time, 'sleep'), mock.patch.object(worker, 'stop'), \
+                        mock.patch.object(worker, 'busy', side_effect=[True, False]), \
+                        mock.patch.object(worker, 'record_exit') as record:
+                    self.assertEqual(worker.watch(child, Path('q.md'), None), 0)
+                record.assert_called_once_with('HANDOFF published' if replacement == 'HANDOFF' else 'exit 0')
+
     def test_the_locks_of_a_unicode_checkout_are_found_without_utf8_mode(self):
         # Codex r2 (fix56): git prints UTF-8 paths; a Windows locale without UTF-8 mode decoded
         # them as cp1252, the lock was never seen, and the worker ended while a commit ran.

@@ -581,6 +581,7 @@ def busy(paths):
 
 def watch(child, question, close_tree, result=None, stale=None, answered=None):
     ready_at = None
+    latched = False
     checkout = None  # its lock paths, asked of git once a result or a decision is ready
     noticed = ''
     asked = None, ''  # the id of the last new question read, and its published text
@@ -609,10 +610,14 @@ def watch(child, question, close_tree, result=None, stale=None, answered=None):
             decision = identity != answered and asked[1]
             notice = 'decision' if decision else kind
             notice = notice if notice in ('decision', 'DONE', 'HANDOFF') else ''
-            if notice != noticed:
+            # After grace, the lead may move the publication while its gate still runs.
+            # Keep the close pending if it disappears; a new valid result still replaces it.
+            if notice != noticed and (notice or kind or not latched):
                 ready_at = time.monotonic() if notice else None
                 noticed = notice
+                latched = False
             if ready_at is not None and time.monotonic() - ready_at >= grace:
+                latched = True
                 if checkout is None:
                     checkout = locks()
                 if busy(checkout):
