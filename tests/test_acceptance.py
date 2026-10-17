@@ -197,6 +197,19 @@ class AcceptanceTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, 'new hook:2: `echo` of an expansion'):
                 gate.check_syntax(root)
 
+    def test_syntax_checks_tracked_uppercase_suffixes(self):
+        for name, text in (('broken.PY', 'broken =\n'), ('broken.SH', 'if then\n')):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                gate.run(['git', 'init', '-q'], root)
+                source = root / name
+                source.write_text(text, encoding='utf-8')
+                gate.run(['git', 'add', name], root)
+                with self.assertRaisesRegex(RuntimeError, name):
+                    gate.check_syntax(root)
+                if name.endswith('.SH'):
+                    self.assertIn(source, gate.shell_scripts(root))
+
     def test_python_newer_than_3_11_is_refused(self):
         # The parse used the host's grammar: syntax newer than 3.11, the oldest CI runs,
         # passed here and broke only on CI.

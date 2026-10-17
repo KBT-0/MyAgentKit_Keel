@@ -87,7 +87,7 @@ REQUIRED_SUITES = {
     'core/scripts': dict(BRIDGE_MINIMUMS, test_agent_cost=5, test_context_buckets=6, test_owns_check=4),
     # Each suite's current count: a minimum far below it (1 of 30) let a suite lose almost
     # every test with the kit check green. A new test raises its suite's number here.
-    'tests': {'test_packaging': 1, 'test_bootstrap': 36, 'test_acceptance': 22,
+    'tests': {'test_packaging': 1, 'test_bootstrap': 36, 'test_acceptance': 23,
               'test_review_upgrade': 4 if os.name == 'nt' else 5,
               'test_boundary_example': 2 if os.name == 'nt' else 3, 'test_scan_gate': 1,
               'test_check_gate': 24, 'test_check_gate_windows': 39 if os.name == 'nt' else 6,
@@ -464,14 +464,14 @@ def check_syntax(root):
     """
     paths = repository_files(root)
     for path in paths:
-        if path.suffix == '.py':
+        if path.suffix.lower() == '.py':
             try:
                 ast.parse(path.read_text(encoding='utf-8'), filename=str(path), feature_version=(3, 11))
             except SyntaxError as error:
                 raise RuntimeError("%s is not Python 3.11 syntax: %s" % (path, error)) from error
     bash_5_2()  # the lint's prerequisite, on every host, whether or not a file needs it
     for path in paths:
-        if path.suffix == '.sh':
+        if path.suffix.lower() == '.sh':
             # The lint first: macOS's sh rejects the form too, and the reason must name it there.
             try:
                 # UTF-8, not the host's locale; newlines stay folded for an autocrlf checkout.
@@ -573,7 +573,7 @@ def shell_scripts(root):
     Ignored evidence and worktree copies are excluded; new, non-ignored scripts count."""
     found = []
     for path in repository_files(root):
-        if path.suffix == '.sh':
+        if path.suffix.lower() == '.sh':
             found.append(path)
         elif path.is_file() and not path.is_symlink():
             with path.open('rb') as handle:
