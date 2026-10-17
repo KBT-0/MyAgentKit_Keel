@@ -23,6 +23,8 @@ class AcceptanceTests(unittest.TestCase):
         for path, marker in (('scripts/check.sh', '# Help ends'),
                              ('core/scripts/check.sh', '# SELF-TEST SEAMS')):
             source = (ROOT / path).read_text(encoding='utf-8').split(marker, 1)[0]
+            # Keep the isolated POSIX probe in this shell so the Python stubs survive.
+            source = source.replace('if [ -z "${BASH_VERSION:-}" ]; then exec bash "$0" "$@"; fi\n', '')
             for version, status in (((3, 10), 1), ((3, 11), 0)):
                 with self.subTest(path=path, version=version):
                     prefix = 'import sys; sys.version_info = %r; ' % (version,)
