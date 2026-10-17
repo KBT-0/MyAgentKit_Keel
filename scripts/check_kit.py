@@ -5,6 +5,9 @@ import sys
 
 # SIGTERM must unwind the runner and run atexit, including its private cache cleanup.
 if __name__ == '__main__':
+    if sys.version_info < (3, 11):
+        raise SystemExit('KIT CHECK: FAIL - Python 3.11 or newer is required')
+
     def terminate(sig, frame):
         raise SystemExit(128 + sig)
     signal.signal(signal.SIGTERM, terminate)
@@ -84,12 +87,12 @@ REQUIRED_SUITES = {
     'core/scripts': dict(BRIDGE_MINIMUMS, test_agent_cost=5, test_context_buckets=6, test_owns_check=4),
     # Each suite's current count: a minimum far below it (1 of 30) let a suite lose almost
     # every test with the kit check green. A new test raises its suite's number here.
-    'tests': {'test_packaging': 1, 'test_bootstrap': 36, 'test_acceptance': 16,
+    'tests': {'test_packaging': 1, 'test_bootstrap': 36, 'test_acceptance': 18,
               'test_review_upgrade': 4 if os.name == 'nt' else 5,
               'test_boundary_example': 2 if os.name == 'nt' else 3, 'test_scan_gate': 1,
               'test_check_gate': 24, 'test_check_gate_windows': 39 if os.name == 'nt' else 6,
               'test_boundary_restore': 35 if os.name == 'nt' else 40,
-              'test_sync_kit': 33, 'test_doctor': 5, 'test_git_hooks': 31, 'test_stop_hook': 9, 'test_context_hook': 12, 'test_communication_hooks': 26, 'test_overlay_permissions': 8, 'test_guard_destructive_git': 26, 'test_guard_boundaries': 1, 'test_guard_private_email': 5,
+              'test_sync_kit': 33, 'test_doctor': 6, 'test_git_hooks': 31, 'test_stop_hook': 9, 'test_context_hook': 12, 'test_communication_hooks': 26, 'test_overlay_permissions': 8, 'test_guard_destructive_git': 26, 'test_guard_boundaries': 1, 'test_guard_private_email': 5,
               'test_spawn_worker': 46 if os.name == 'nt' else 66, 'test_spawn_codex': 54, 'test_codex_worker': 54, 'test_working_mode': 49, 'test_worker_visibility': 68, 'test_doc_pointers': 11,
               'test_usage_summary': 25, 'test_done_audits': 2,
               'test_kit_output': 1, 'test_kit_runner': 36, 'test_clean_worktrees': 138, 'test_clean_worktrees_windows': 12 if os.name == 'nt' else 0, 'test_close_worker_windows': 22,
@@ -449,20 +452,20 @@ def untested_guards(root):
 
 
 def check_syntax(root):
-    """Parse every .py file as Python 3.10, the oldest CI runs, and every .sh file with `sh -n`.
+    """Parse every .py file as Python 3.11, the oldest CI runs, and every .sh file with `sh -n`.
 
-    ast.parse alone used the host's grammar: syntax newer than 3.10 passed here and broke only
-    on CI. feature_version is best effort (it rejects newer statements such as `type` and
-    `except*`, not every newer construct). `sh -n` is the host's sh, which is bash on many
+    ast.parse alone used the host's grammar: syntax newer than 3.11 passed here and broke only
+    on CI. feature_version is best effort (it rejects newer statements such as `type`,
+    not every newer construct). `sh -n` is the host's sh, which is bash on many
     hosts: it proves the file parses, and a bashism that bash accepts passes; only dash
     (Ubuntu's sh, on CI) or a review catches that.
     """
     for path in root.rglob("*.py"):
         if ".git" not in path.parts:
             try:
-                ast.parse(path.read_text(encoding='utf-8'), filename=str(path), feature_version=(3, 10))
+                ast.parse(path.read_text(encoding='utf-8'), filename=str(path), feature_version=(3, 11))
             except SyntaxError as error:
-                raise RuntimeError("%s is not Python 3.10 syntax: %s" % (path, error)) from error
+                raise RuntimeError("%s is not Python 3.11 syntax: %s" % (path, error)) from error
     bash_5_2()  # the lint's prerequisite, on every host, whether or not a file needs it
     for path in root.rglob("*.sh"):
         if ".git" not in path.parts:

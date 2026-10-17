@@ -8,6 +8,8 @@ kit=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 cd "$kit"
 # A python.org or setup-python CPython on native Windows is `python`; there may be no python3.
 if python3 -c 'import sys' >/dev/null 2>&1; then py=python3; else py=python; fi
+"$py" -c 'import sys; sys.exit(sys.version_info < (3, 11))' >/dev/null 2>&1 ||
+  { echo "KIT CHECK: FAIL - Python 3.11 or newer is required" >&2; exit 1; }
 # Help ends at exit 0 with no PASS line by design.
 case " $* " in *" -h "*|*" --help "*) exec "$py" -B scripts/check_kit.py "$@" ;; esac
 # A run once exited 0 without printing KIT CHECK: PASS. The check writes this file only once

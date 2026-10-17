@@ -121,11 +121,11 @@ command -v codex          # already there?
 If not, install it and log in. Point the script
 somewhere else with `REVIEW_CLI_BIN`, but note that only swaps the BINARY — a CLI with a
 different flag interface needs a matching adapter. For Claude Code, the kit ships one:
-use `./scripts/review.sh --uncommitted --reviewer claude`. This requires Python 3.10+
+use `./scripts/review.sh --uncommitted --reviewer claude`. This requires Python 3.11+
 and an installed, authenticated Claude CLI. `CLAUDE_CLI_BIN` selects that binary; the
 adapter pins read tools and structured output. The Codex-host plugin also supports
 `$myagentkit-review` and `$myagentkit-delegate` after installation from the kit marketplace.
-Python 3.10+ is also required by `scripts/review.sh --self-test` and the review tests included
+Python 3.11+ is also required by `scripts/review.sh --self-test` and the review tests included
 in `scripts/check.sh --self-test`, even when Codex is the only reviewing CLI.
 Both live adapters now require Python as well, to bound the child process and preserve usage
 on failure. The following is the canonical companion list for an existing-project upgrade.
@@ -285,7 +285,7 @@ It changes nothing in the project and prints one `MISSING: <what> — fix: <comm
 trap, then `DOCTOR: ready` or `DOCTOR: setup incomplete` (exit 1). It checks what made a gate
 fail for reasons unrelated to the code in the projects using the kit: the executable bit on
 the scripts and hooks (on disk and in the git index), `core.hooksPath`, the git identity,
-Python 3.10+, the second CLI `scripts/review.sh` calls, `tmux` when the worker script is
+Python 3.11+, the second CLI `scripts/review.sh` calls, `tmux` when the worker script is
 installed, the `node` a git hook resolves (nvm's default alias lives in the interactive
 shell's rc file, so a hook never sees it), an npm cache owned by another user, and `grep`
 shadowed by an alias or function in the interactive shell. To see that alias it starts your

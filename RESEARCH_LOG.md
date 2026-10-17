@@ -21,6 +21,15 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-10-17 — Python minimum raised to 3.11
+
+The owner raised the kit's minimum from Python 3.10 to 3.11 (v0.11 close-out decision 30c).
+Python 3.10 reached end of life on 2026-10-01, according to the
+[Python Developer's Guide version table](https://devguide.python.org/versions/) (checked 2026-10-17).
+Keeping the old minimum would continue accepting an unsupported interpreter.
+Doctor and both gate launchers now refuse it; syntax checks use the oldest CI grammar, Python 3.11.
+Historical validation records and third-party tool requirements retain their original versions.
+
 ### 2026-10-17 — v0.11 batch 9a and follow-through
 
 2026-10-17 batch 9a: KARARLAR batch 9 text applied to the core rule docs and the Claude Code

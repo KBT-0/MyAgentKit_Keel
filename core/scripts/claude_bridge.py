@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Collect a fresh Claude review (run in a throwaway copy) or read-only proposal. Python 3.10+.
+"""Collect a fresh Claude review (run in a throwaway copy) or read-only proposal. Python 3.11+.
 
 The result is one JSON line on stdout. A cancel that lands while that line is printed is
 reported by one more JSON line, the same result with "correction": true and "cancelled": true;
@@ -1772,7 +1772,7 @@ def utf8_output():
     arrow) raised while printing, failed as adapter_error, and the paid review was lost.
     Errors are escaped, never raised: a bare encoding reset them to strict, and a lone
     surrogate (a non-UTF-8 path) then lost the review the same way. A missing stream stays."""
-    # PEP 686 makes UTF-8 mode the default from Python 3.15; keep this for 3.10-3.14
+    # PEP 686 makes UTF-8 mode the default from Python 3.15; keep this for 3.11-3.14
     # (peps.python.org/pep-0686; KARARLAR inv2#115).
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):

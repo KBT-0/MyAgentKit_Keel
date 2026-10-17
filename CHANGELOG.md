@@ -13,6 +13,10 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ## v0.11 — 2026-10-09
 
+- **Python minimum raised to 3.11:** doctor, gate launchers, syntax checks and CI require Python 3.11+.
+  **ACTION:** projects on Python 3.10 must upgrade to 3.11+ before updating the kit.
+  Python 3.10 reached end of life on 2026-10-01 ([Python version status](https://devguide.python.org/versions/)).
+
 - **Core docs:** the sources of the always-loaded AGENTS.md rules moved to WORKFLOW,
   "Where the constitution's rules come from". AGENTS.md reads ARCHITECTURE.md only when a
   task crosses a module boundary; a reviewer still reads it every time.

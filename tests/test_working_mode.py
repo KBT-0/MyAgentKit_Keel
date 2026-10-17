@@ -638,7 +638,7 @@ class WorkingModeTests(unittest.TestCase):
         try:
             with mock.patch.object(Path, 'is_junction', create=True), \
                     mock.patch('sys.stdout', new=io.StringIO()):
-                del Path.is_junction  # Python 3.10/3.11 have no such API.
+                del Path.is_junction  # Python 3.11 has no such API.
                 with self.assertRaisesRegex(ValueError, 'linked path refused'):
                     module.mode(self.project, 'saver', SIDES['saver'])
             self.assertFalse((target / 'mode').exists())
