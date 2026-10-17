@@ -211,8 +211,6 @@ move_recorded_report() {
 }
 nl='
 '
-# The first line of the ignore file spawn_worker.sh writes for the hook files it copied.
-spawn_ignore="# spawn_worker.sh: hook files copied from the lead's checkout; close_worker.sh sets this file aside"
 # Git for Windows' dirname handles both separators, including mixed paths such as D:/p\scripts\x.sh.
 case $0 in *'\'*) kit=$(dirname -- "$0") ;; */*) kit=${0%/*} ;; *) kit=. ;; esac
 # The physical path of the worktree, or empty; /proc/PID/cwd names physical paths.
@@ -595,12 +593,14 @@ for name; do
     kept=1
   else
     apply=--apply; [ -z "$dry" ] || { apply=""; say "$name: dry run: the removal would lift the quiet period for this worktree alone (--no-quiet), every other proof stays"; }
-    # spawn_worker.sh's ignore file for the hook files it copied (by its first line, untracked)
-    # has no copy in main, so the audit kept the worktree for it alone: it is set aside for the
-    # audit and put back if the worktree is kept. ponytail: a dry run's audit still sees it.
+    # spawn_worker.sh's ignore file for the hook files it copied has no copy in main, so the
+    # audit kept the worktree for it alone: it is set aside for the audit and put back if the
+    # worktree is kept, but only while it is byte for byte what the spawn wrote (its record
+    # NAME.hooks-ignore-spawned) and untracked. A file the worker extended stays, and the audit
+    # keeps the worktree for it. ponytail: a dry run's audit still sees it.
     ignore=$wt_dir/.claude/hooks/.gitignore; aside=""
     if [ -z "$dry" ] && [ "$wt_dir" != "$top" ] && [ -f "$ignore" ] && [ ! -L "$ignore" ] &&
-       [ "$(sed -n 1p "$ignore" 2>/dev/null)" = "$spawn_ignore" ] &&
+       [ -f "$record.hooks-ignore-spawned" ] && cmp -s -- "$ignore" "$record.hooks-ignore-spawned" &&
        [ -z "$(git -C "$wt_dir" ls-files -- .claude/hooks/.gitignore 2>/dev/null)" ] &&
        mkdir -p -- "${record%/*}" && mv -- "$ignore" "$record.hooks-ignore"; then
       aside=$record.hooks-ignore
@@ -651,7 +651,8 @@ for name; do
   # gives the audit nothing to keep, so its success proved no shutdown.
   if [ -z "$dry" ] && [ -z "$failed" ] && [ "$rc" -eq 0 ] && [ -z "$kept" ] && [ -n "$top" ] &&
      [ ! -e "$record.report-move" ] && [ ! -L "$record.report-move" ]; then
-    rm -f -- "$record.session" "$record.exit" "$record.live" "$record.question" "$record.result-path" || fail "$name: could not remove its Codex session records"
+    rm -f -- "$record.session" "$record.exit" "$record.live" "$record.question" "$record.result-path" \
+      "$record.hooks-ignore-spawned" || fail "$name: could not remove its Codex session records"
   fi
   if git show-ref --verify --quiet "refs/heads/worktree-$name" 2>/dev/null; then
     say "$name: branch worktree-$name is kept, never deleted here; \`git branch --merged\` lists the merged branches, \`git branch -d <name>\` deletes one"

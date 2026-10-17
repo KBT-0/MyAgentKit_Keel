@@ -214,6 +214,22 @@ PRELAUNCH_TERM = '#!/bin/sh\nkill -TERM "$(cat "$SPAWN_STATE/launcher.pid")"\n/b
 FAIL_THEN_INT = '#!/bin/sh\n[ "$1" = new-session ] || exit 1\nkill -INT "$(cat "$SPAWN_STATE/launcher.pid")"\nkill -INT "$$"\nexit 1\n'
 
 
+# A tmux whose session ran (it wrote a file in its folder) and ended before any has-session.
+GONE_AT_ONCE = r'''#!/usr/bin/env python3
+import os, subprocess, sys
+args = sys.argv[1:]
+if args[0] != 'new-session':
+    sys.exit("can't find session: gone")
+folder = args[args.index('-c') + 1]
+if os.name == 'nt':
+    folder = subprocess.run(['cygpath', '-m', folder], capture_output=True, text=True, check=True).stdout.rstrip('\n')
+with open(os.path.join(folder, 'made-by-session.txt'), 'w') as f:
+    f.write('session output\n')
+'''
+# A post-checkout hook that fails: `git worktree add` then exits non-zero with the worktree made.
+FAILING_POST_CHECKOUT = '#!/bin/sh\nexit 1\n'
+
+
 def run_with_launcher_pid(shell, script, args, **kwargs):
     # $$ is the launcher's shell pid even when the signaller runs in a command substitution.
     return subprocess.run([shell, '-c', 'printf "%s\\n" "$$" > "$SPAWN_STATE/launcher.pid"; . "$0"',
@@ -262,6 +278,8 @@ ON_WINDOWS.update({'test_copied_hooks_allow_done_without_hiding_other_changes',
                    'test_copied_hooks_never_hide_the_leads_own_files',
                    'test_a_spawn_that_fails_before_its_launch_leaves_no_worktree_or_branch',
                    'test_a_spawn_that_fails_after_its_launch_keeps_the_worktree_and_says_how_to_remove_it',
+                   'test_a_spawn_whose_worktree_add_fails_after_making_it_leaves_neither',
+                   'test_a_tmux_session_that_ran_and_ended_at_once_keeps_its_worktree',
                    'test_plain_tmux_spawn_clears_stale_state_before_readiness'})
 
 
@@ -1112,6 +1130,9 @@ exit 0
                       main('status', '--porcelain', '--untracked-files=all').stdout)
         # The worker's own checkout still shows nothing it did not make.
         tree = self.cwd / '.claude/worktrees/w1'
+        # What spawn wrote is recorded beside it: close_worker.sh sets aside only that exact file.
+        self.assertEqual((self.cwd / '.myagentkit/workers/w1.hooks-ignore-spawned').read_bytes(),
+                         (tree / '.claude/hooks/.gitignore').read_bytes())
         self.assertEqual(subprocess.run(['git', 'status', '--porcelain'], cwd=tree, capture_output=True,
                                         text=True).stdout, '')
 
@@ -1557,6 +1578,41 @@ exit 0
                            KIT_PS=str(self.bin / 'ps-stub'))
         self.assertEqual(again.returncode, 0, again.stdout + again.stderr)
         self.assertTrue(tree.is_dir())
+
+    def test_a_spawn_whose_worktree_add_fails_after_making_it_leaves_neither(self):
+        # Codex review r1 (High): a failing post-checkout hook makes `git worktree add` exit non-zero
+        # with the worktree and branch already made; nothing removed them and the name was taken.
+        git = self.native_checkout()
+        hook = Path(git('rev-parse', '--path-format=absolute', '--git-path', 'hooks').stdout.strip()) / 'post-checkout'
+        hook.parent.mkdir(parents=True, exist_ok=True)
+        hook.write_text(FAILING_POST_CHECKOUT, newline='\n')
+        hook.chmod(0o755)
+        tree = self.cwd / '.claude/worktrees/fw'
+        failed = self.spawn('fw', str(self.brief), '--worktree', KIT_WT=str(self.bin / 'wt-tab'),
+                            KIT_PS=str(self.bin / 'ps-stub'))
+        self.assertEqual(failed.returncode, 1, failed.stdout + failed.stderr)
+        self.assertIn('git worktree add failed', failed.stderr)
+        self.assertFalse(tree.exists(), failed.stderr)
+        self.assertNotEqual(git('show-ref', '--verify', '--quiet', 'refs/heads/worktree-fw').returncode, 0)
+        self.assertIsNone(self.launched())
+        hook.unlink()
+        again = self.spawn('fw', str(self.brief), '--worktree', KIT_WT=str(self.bin / 'wt-tab'),
+                           KIT_PS=str(self.bin / 'ps-stub'))
+        self.assertEqual(again.returncode, 0, again.stdout + again.stderr)
+
+    def test_a_tmux_session_that_ran_and_ended_at_once_keeps_its_worktree(self):
+        # Codex review r1 (Critical): a session that started and ended before the has-session check
+        # left the launch unmarked, and the cleanup force-removed a worktree a session wrote into.
+        self.tmux_checkout()
+        (self.bin / 'tmux').write_text(GONE_AT_ONCE, newline='\n')
+        with safe_tmux_scratch() as scratch:
+            result = self.spawn('w1', str(self.brief), '--worktree', TMPDIR=scratch)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        tree = self.cwd / '.claude/worktrees/w1'
+        self.assertEqual((tree / 'made-by-session.txt').read_text(), 'session output\n', result.stderr)
+        branch = subprocess.run(['git', 'show-ref', '--verify', '--quiet', 'refs/heads/worktree-w1'], cwd=self.cwd)
+        self.assertEqual(branch.returncode, 0)
+        self.assertIn('git worktree remove --force', result.stderr)
 
     def test_a_spawn_that_fails_after_its_launch_keeps_the_worktree_and_says_how_to_remove_it(self):
         # Its session may still run there (a tab waiting on Enter, a slow start): never removed

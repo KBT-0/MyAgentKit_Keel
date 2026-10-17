@@ -383,6 +383,9 @@ class CloseWorkerTests(unittest.TestCase):
             (path / '.claude/hooks').mkdir(parents=True)
             shutil.copy(self.main / '.claude/hooks/guard.py', path / '.claude/hooks/guard.py')
             (path / '.claude/hooks/.gitignore').write_text(SPAWN_IGNORE + '/.gitignore\n/guard.py\n')
+            records = self.main / '.myagentkit/workers'
+            records.mkdir(parents=True, exist_ok=True)
+            shutil.copy(path / '.claude/hooks/.gitignore', records / (path.name + '.hooks-ignore-spawned'))
             self.assertEqual(self.git('status', '--porcelain', cwd=path), '')
         path = self.worker('w1')
         copied(path)
@@ -398,6 +401,25 @@ class CloseWorkerTests(unittest.TestCase):
         self.assertNotIn('.gitignore', out.rstrip('\n').split('\n')[-1])
         self.assertEqual((path / '.claude/hooks/.gitignore').read_text(), SPAWN_IGNORE + '/.gitignore\n/guard.py\n')
         self.assertEqual(self.git('status', '--porcelain', cwd=path), '?? notes.txt')
+
+    def test_an_ignore_file_the_worker_extended_keeps_the_worktree_and_its_rules(self):
+        # Codex review r1 (Critical): a spawn ignore file with the worker's own rules added still
+        # matched by its first line; it was set aside, the worktree removed and the copy deleted.
+        (self.main / '.claude/hooks').mkdir(parents=True)
+        (self.main / '.claude/hooks/guard.py').write_text('# the lead\'s untracked hook\n')
+        path = self.worker('w1')
+        (path / '.claude/hooks').mkdir(parents=True)
+        shutil.copy(self.main / '.claude/hooks/guard.py', path / '.claude/hooks/guard.py')
+        spawned = SPAWN_IGNORE + '/.gitignore\n/guard.py\n'
+        records = self.main / '.myagentkit/workers'
+        records.mkdir(parents=True)
+        (records / 'w1.hooks-ignore-spawned').write_text(spawned)
+        extended = spawned + '/local-notes.txt\n'
+        (path / '.claude/hooks/.gitignore').write_text(extended)
+        out = self.close('w1', code=1)
+        self.assertIn('close_worker: w1: worktree kept: ', out)
+        self.assertEqual((path / '.claude/hooks/.gitignore').read_text(), extended, out)
+        self.assertFalse((records / 'w1.hooks-ignore').exists())
 
     def hooked(self):
         """main with the kit's post-merge hook and the overlay's scripts, as bootstrap installs them."""

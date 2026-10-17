@@ -197,7 +197,8 @@ cleanup() {
   # worktree and its branch: the audit keeps a locked worktree, and one no worker committed in,
   # for good, and the branch blocked the name (ultrareview part 5 #8). The branch goes only while
   # it is still the commit it was made at (update-ref's old-value check).
-  if [ -n "$made" ] && [ -z "$launched" ]; then
+  if [ -n "$made" ] && [ -z "$launched" ] &&
+     { [ -e "$dir" ] || git show-ref --verify --quiet "refs/heads/worktree-$name"; }; then
     if git worktree remove -f -f "$dir" >/dev/null 2>&1 &&
        git update-ref -d "refs/heads/worktree-$name" "$base" 2>/dev/null; then
       printf '%s\n' "spawn_worker: removed the unused worktree $dir and its branch worktree-$name; the name is free again" >&2
@@ -342,9 +343,14 @@ prepare_worktree() {
   # (its release notes); the audit already needs 2.36.
   if [ -z "$resume" ]; then
     base=$(git rev-parse --verify -q HEAD) || die "--worktree needs a commit to start from"
+    # Neither the folder nor the branch exists right before the add (checked above, and again
+    # here): whatever of them exists after it, a failed add included, this run made. A failing
+    # post-checkout hook makes `git worktree add` exit non-zero with both already made.
+    [ ! -e "$dir" ] && ! git show-ref --verify --quiet "refs/heads/worktree-$name" ||
+      die "the worktree $dir or the branch worktree-$name appeared before this spawn made it"
+    made=1
     git worktree add -q --lock --reason "kit worker $name" "$dir" -b "worktree-$name" "$base" >&2 ||
       die "git worktree add failed: $dir"
-    made=1
   # A resumed worker is locked again: a close lifted the lock, and the audit must not remove the
   # worktree under the new run. A lock someone else set stays as it is.
   elif ! gd=$(git -C "$dir" rev-parse --absolute-git-dir) ||
@@ -356,7 +362,8 @@ prepare_worktree() {
   if [ -d "${project_settings%/*}/hooks" ]; then
     # The copies are ignored by a .claude/hooks/.gitignore that lists them and itself, written
     # only where the worktree has none (a tracked or copied one stays as it is, and the copies
-    # then show as untracked). close_worker.sh sets it aside for the audit by its first line.
+    # then show as untracked). Its exact bytes are recorded in NAME.hooks-ignore-spawned:
+    # close_worker.sh sets it aside for the audit only while it is still byte for byte that.
     $kit_python -I -c 'import os, shutil, sys
 from pathlib import Path
 hooks = Path(sys.argv[2])
@@ -366,15 +373,21 @@ def missing(source, destination):
         shutil.copy2(source, destination)
         copied.append(Path(destination).relative_to(hooks).as_posix())
 shutil.copytree(sys.argv[1], sys.argv[2], dirs_exist_ok=True, copy_function=missing)
-ignore = hooks / ".gitignore"
+ignore, record = hooks / ".gitignore", Path(sys.argv[4])
+if not sys.argv[5] and os.path.lexists(record):
+    record.unlink()  # a fresh spawn: an earlier run of the name left it; a resume keeps its own
 if copied and not os.path.lexists(ignore):
+    text = sys.argv[3] + "\n/.gitignore\n" + "".join(
+        "/" + "".join("\\" + ch if ch in "\\*?[ " else ch for ch in name) + "\n" for name in copied)
     with ignore.open("x", encoding="utf-8", newline="\n") as stream:
-        stream.write(sys.argv[3] + "\n/.gitignore\n")
-        for name in copied:
-            stream.write("/" + "".join("\\" + ch if ch in "\\*?[ " else ch for ch in name) + "\n")
+        stream.write(text)
+    record.parent.mkdir(parents=True, exist_ok=True)
+    with record.open("x", encoding="utf-8", newline="\n") as stream:
+        stream.write(text)
 elif copied:
     print("spawn_worker: the worktree has its own .claude/hooks/.gitignore; the hook files copied into it show as untracked there", file=sys.stderr)' \
-      "${project_settings%/*}/hooks" "$dir/.claude/hooks" "$hooks_mark" || die "cannot carry project hooks into $dir"
+      "${project_settings%/*}/hooks" "$dir/.claude/hooks" "$hooks_mark" "$wdir/$name.hooks-ignore-spawned" "$resume" ||
+      die "cannot carry project hooks into $dir"
   fi
 }
 
@@ -659,6 +672,9 @@ record_result
 printf '%s\n' 'rm -f -- "$0"' "cd $(q "$dir") && exec $unmark $supervise sh -c $(q "exec $cmd")" > "$run" || { rm -f -- "$run"; die "cannot write the session's script: $run"; }
 # Keep ownership pending until tmux confirms the session, including in signal cleanup.
 launch_pending=1
+# Marked before the session can start, and never cleared: a session that ran and ended before the
+# check below may have written into the worktree, which then stays (stranded above).
+launched=1
 tmux new-session -d -s "$name" -c "$dir" -x 200 -y 50 "sh $run" || { launch_pending=""; die "tmux could not start '$name'"; }
 tmux has-session -t "=$name" 2>/dev/null || { launch_pending=""; die "tmux could not start '$name'"; }
 run=""; launch_pending=""; launched=1
