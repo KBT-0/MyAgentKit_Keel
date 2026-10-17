@@ -252,9 +252,15 @@
 # |     env -i PATH="$PATH" LC_ALL=C HOME="$probe_copy/home" XDG_CONFIG_HOME="$probe_copy/home" \
 # |       GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null TMPDIR="$probe_copy/tmp" "$@"
 # |   }
-# |   # The Python check.sh resolved for the gate (python3, python or py -3, whichever runs): env runs
-# |   # a program, not check.sh's python3 function. Unquoted at its use, like check.sh's.
-# |   probe_python=${kit_python:-python3}
+# |   # env runs a program, not check.sh's python3 function. Keep the launcher's -3 as a
+# |   # separate argument: an unquoted command string here is SC2086 in the extracted example,
+# |   # which makes the copied gate's ShellCheck fail before the boundary injection.
+# |   probe_python() {
+# |     case "${kit_python:-python3}" in
+# |       'py -3') probe_env py -3 "$@" ;;
+# |       *) probe_env "${kit_python:-python3}" "$@" ;;
+# |     esac
+# |   }
 # |   [ -d .git ] && [ ! -L .git ] && [ ! -e .git/commondir ] ||
 # |     probe_skip "the checkout's .git is not a directory (a linked worktree, a submodule or a separate git directory); this example supports a plain repository only: run the self-test from the main checkout."
 # |   # The one read of the live checkout's configuration, made before anything is copied and with the
@@ -275,7 +281,7 @@
 # |   # the target and to the gate runs through no symlink and ends at a regular file. Prints the
 # |   # copy's digest as taken: every entry's path, type, permission bits and content, `.git` included.
 # |   probe_audit() {
-# |     probe_digest=$(probe_env $probe_python -I -c '
+# |     probe_digest=$(probe_python -I -c '
 # | import hashlib, os, stat, sys
 # | sys.stderr.reconfigure(encoding="utf-8")
 # | # As Python spells it: native Windows Python is handed C:/... and its realpath uses backslashes.
@@ -418,8 +424,10 @@
 # |   }
 # |   probe_fresh_copy
 # |   probe_first=$probe_digest
-# |   probe_env sh "$probe_root/$probe_gate" >/dev/null 2>&1 ||
+# |   if ! probe_env sh "$probe_root/$probe_gate" > "$probe_copy/baseline.log" 2>&1; then
+# |     cat "$probe_copy/baseline.log"
 # |     probe_fail "the baseline is already red; the injection would prove nothing."
+# |   fi
 # |   probe_delete || exit 1
 # |   probe_fresh_copy
 # |   [ "$probe_digest" = "$probe_first" ] ||
