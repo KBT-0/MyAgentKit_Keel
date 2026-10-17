@@ -199,9 +199,16 @@ cleanup() {
   # it is still the commit it was made at (update-ref's old-value check).
   if [ -n "$made" ] && [ -z "$launched" ] &&
      { [ -e "$dir" ] || git show-ref --verify --quiet "refs/heads/worktree-$name"; }; then
-    if git worktree remove -f -f "$dir" >/dev/null 2>&1 &&
-       git update-ref -d "refs/heads/worktree-$name" "$base" 2>/dev/null; then
-      printf '%s\n' "spawn_worker: removed the unused worktree $dir and its branch worktree-$name; the name is free again" >&2
+    # The branch goes only with the worktree this add registered; an add that registered none
+    # leaves the empty folder it claimed, removed, and a branch someone else may have made, kept.
+    if git worktree remove -f -f "$dir" >/dev/null 2>&1; then
+      if git update-ref -d "refs/heads/worktree-$name" "$base" 2>/dev/null; then
+        printf '%s\n' "spawn_worker: removed the unused worktree $dir and its branch worktree-$name; the name is free again" >&2
+      else
+        printf '%s\n' "spawn_worker: removed the unused worktree $dir; its branch worktree-$name moved or is gone, so it is kept" >&2
+      fi
+    elif rmdir -- "$dir" 2>/dev/null; then
+      printf '%s\n' "spawn_worker: removed the empty folder $dir it claimed; a branch worktree-$name, if any, is not this spawn's to delete" >&2
     else
       printf '%s\n' "spawn_worker: could not remove the unused worktree $dir; remove it by hand: git worktree remove --force --force $(q "$dir"); git branch -D worktree-$name" >&2
     fi
@@ -343,11 +350,14 @@ prepare_worktree() {
   # (its release notes); the audit already needs 2.36.
   if [ -z "$resume" ]; then
     base=$(git rev-parse --verify -q HEAD) || die "--worktree needs a commit to start from"
-    # Neither the folder nor the branch exists right before the add (checked above, and again
-    # here): whatever of them exists after it, a failed add included, this run made. A failing
-    # post-checkout hook makes `git worktree add` exit non-zero with both already made.
-    [ ! -e "$dir" ] && ! git show-ref --verify --quiet "refs/heads/worktree-$name" ||
-      die "the worktree $dir or the branch worktree-$name appeared before this spawn made it"
+    # The folder is claimed before the add: mkdir without -p fails when it exists, so of two
+    # spawns of one name only one gets it, and only that one may remove anything (Codex r2: a
+    # spawn that lost the race removed the winner's worktree). `git worktree add` takes the empty
+    # folder. A failing post-checkout hook makes the add exit non-zero with both made: cleanup.
+    ! git show-ref --verify --quiet "refs/heads/worktree-$name" ||
+      die "the branch worktree-$name appeared before this spawn made it; nothing was changed"
+    mkdir -p -- "${dir%/*}" && mkdir -- "$dir" 2>/dev/null ||
+      die "the folder $dir exists: another spawn of '$name' claimed it; nothing was changed"
     made=1
     git worktree add -q --lock --reason "kit worker $name" "$dir" -b "worktree-$name" "$base" >&2 ||
       die "git worktree add failed: $dir"

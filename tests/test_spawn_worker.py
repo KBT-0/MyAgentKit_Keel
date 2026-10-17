@@ -230,6 +230,33 @@ with open(os.path.join(folder, 'made-by-session.txt'), 'w') as f:
 FAILING_POST_CHECKOUT = '#!/bin/sh\nexit 1\n'
 
 
+# A git on PATH that runs the real one (REAL_GIT) and, right after the spawn's second answer
+# that the branch worktree-NAME is absent (its last check before the add), makes another spawn's
+# worktree of that name as a spawn does (it claims the folder, adds it, its session writes there).
+RACING_GIT = r'''#!/bin/sh
+"$REAL_GIT" "$@"; rc=$?
+case "$*" in
+  "show-ref --verify --quiet refs/heads/worktree-"*)
+    n=$(cat "$SPAWN_STATE/show-ref-count" 2>/dev/null || echo 0); n=$((n + 1))
+    echo "$n" > "$SPAWN_STATE/show-ref-count"
+    if [ "$n" -eq 2 ]; then
+      name=${4#refs/heads/worktree-}
+      d=$("$REAL_GIT" rev-parse --show-toplevel)/.claude/worktrees/$name
+      mkdir -p "${d%/*}" && mkdir "$d" && "$REAL_GIT" worktree add -q "$d" -b "worktree-$name" HEAD >/dev/null 2>&1 &&
+        echo 'other session' > "$d/other-session.txt"
+    fi ;;
+esac
+exit $rc
+'''
+
+
+def racing_git(bin_dir):
+    # The racing git stub, and the environment it needs.
+    (bin_dir / 'git').write_text(RACING_GIT, newline='\n')
+    (bin_dir / 'git').chmod(0o755)
+    return {'REAL_GIT': shutil.which('git').replace('\\', '/')}
+
+
 def run_with_launcher_pid(shell, script, args, **kwargs):
     # $$ is the launcher's shell pid even when the signaller runs in a command substitution.
     return subprocess.run([shell, '-c', 'printf "%s\\n" "$$" > "$SPAWN_STATE/launcher.pid"; . "$0"',
@@ -279,6 +306,7 @@ ON_WINDOWS.update({'test_copied_hooks_allow_done_without_hiding_other_changes',
                    'test_a_spawn_that_fails_before_its_launch_leaves_no_worktree_or_branch',
                    'test_a_spawn_that_fails_after_its_launch_keeps_the_worktree_and_says_how_to_remove_it',
                    'test_a_spawn_whose_worktree_add_fails_after_making_it_leaves_neither',
+                   'test_a_spawn_that_loses_the_race_for_its_name_leaves_the_other_spawns_worktree',
                    'test_a_tmux_session_that_ran_and_ended_at_once_keeps_its_worktree',
                    'test_plain_tmux_spawn_clears_stale_state_before_readiness'})
 
@@ -1578,6 +1606,21 @@ exit 0
                            KIT_PS=str(self.bin / 'ps-stub'))
         self.assertEqual(again.returncode, 0, again.stdout + again.stderr)
         self.assertTrue(tree.is_dir())
+
+    def test_a_spawn_that_loses_the_race_for_its_name_leaves_the_other_spawns_worktree(self):
+        # Codex review r2 (Critical): another spawn of the same name made the worktree between the
+        # last absence check and `git worktree add`; this add failed, and its cleanup removed the
+        # other spawn's worktree, files and branch. The folder is claimed by mkdir before the add.
+        git = self.native_checkout()
+        extra = racing_git(self.bin)
+        result = self.spawn('fw', str(self.brief), '--worktree', KIT_WT=str(self.bin / 'wt-tab'),
+                            KIT_PS=str(self.bin / 'ps-stub'), **extra)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        tree = self.cwd / '.claude/worktrees/fw'
+        self.assertEqual((tree / 'other-session.txt').read_text().strip(), 'other session', result.stderr)
+        self.assertEqual(git('show-ref', '--verify', '--quiet', 'refs/heads/worktree-fw').returncode, 0)
+        self.assertNotIn('removed the unused worktree', result.stderr)
+        self.assertIsNone(self.launched())
 
     def test_a_spawn_whose_worktree_add_fails_after_making_it_leaves_neither(self):
         # Codex review r1 (High): a failing post-checkout hook makes `git worktree add` exit non-zero

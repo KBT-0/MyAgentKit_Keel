@@ -752,6 +752,19 @@ if args[0] != 'resume':
         result = self.spawn(*args)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_a_spawn_that_loses_the_race_for_its_name_leaves_the_other_spawns_worktree(self):
+        # Codex review r2 (Critical): another spawn of the same name made the worktree between the
+        # last absence check and `git worktree add`; this spawn's cleanup removed it.
+        extra = test_spawn_worker.racing_git(self.bin)
+        result = self.spawn('w24', str(self.brief), '--model', 'm', '--effort', 'high', '--worktree', **extra)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        tree = self.repo / '.claude/worktrees/w24'
+        self.assertEqual((tree / 'other-session.txt').read_text().strip(), 'other session', result.stderr)
+        branch = subprocess.run(['git', 'show-ref', '--verify', '--quiet', 'refs/heads/worktree-w24'], cwd=self.repo)
+        self.assertEqual(branch.returncode, 0)
+        self.assertNotIn('removed the unused worktree', result.stderr)
+        self.assertEqual(self.runs(), [])
+
     def test_a_spawn_whose_worktree_add_fails_after_making_it_leaves_neither(self):
         # Codex review r1 (High): a failing post-checkout hook makes `git worktree add` exit non-zero
         # with the worktree and branch already made.
