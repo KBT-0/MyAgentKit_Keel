@@ -2,7 +2,7 @@
 
 usage: owns_check.py BRIEF [--uncommitted | --base REF | --commit SHA]
 
-A brief without an Owns: line checks nothing (exit 0). A pattern ending in '/' owns that folder;
+A brief without an Owns: line is an error (exit 2). A pattern ending in '/' owns that folder;
 any other is an fnmatch pattern on the repository path. docs/STATE.md and docs/BACKLOG.md are
 always allowed: every worker records its state there. Exit 1 lists the paths outside; exit 2 is
 a usage or git error. Run from the repository root (scripts/review.sh does).
@@ -14,7 +14,8 @@ import subprocess
 import sys
 
 ALWAYS = ('docs/STATE.md', 'docs/BACKLOG.md')
-OWNS = re.compile(r'^[\s>*+-]*(?:\*\*)?Owns:(?:\*\*)?(.*)$', re.M)
+OWNS = re.compile(r'^[\s>*+-]*(?:\d+[.)]\s+)?(?:\*\*)?Owns:(?:\*\*)?(.*)$', re.M)
+WORKER_REPORT = re.compile(r'(?:RESULT|QUESTION)-[^/]+\.md')
 
 
 def owned(brief):
@@ -48,7 +49,7 @@ def changed(scope, ref=None):
 
 
 def outside(paths, patterns):
-    return sorted({path for path in paths if path not in ALWAYS and not any(
+    return sorted({path for path in paths if path not in ALWAYS and not WORKER_REPORT.fullmatch(path) and not any(
         path.startswith(p) if p.endswith('/') else fnmatchcase(path, p) for p in patterns)})
 
 
@@ -62,7 +63,8 @@ def main(argv):
     try:
         patterns = owned(argv[0])
         if patterns is None:
-            return 0
+            print('owns_check: no Owns: line was read from %s' % argv[0], file=sys.stderr)
+            return 2
         if not patterns:
             print('owns_check: the Owns: line of %s names no path' % argv[0], file=sys.stderr)
             return 2

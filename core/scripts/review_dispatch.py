@@ -26,6 +26,7 @@ UNAVAILABLE = frozenset({"rate_limited", "quota_exhausted", "timeout", "unavaila
 # both vendors bound their own retries. A used-up quota is never retried.
 CAPACITY_RETRY_SECONDS = 600
 CAPACITY_RETRIES = 2
+CAPACITY_RETRY_MAX_SECONDS = CAPACITY_RETRY_SECONDS * 2 ** (CAPACITY_RETRIES - 1)
 # Set only while a substitute reviewer runs, so its archived evidence says so in its body.
 FALLBACK_ENV = "MYAGENTKIT_REVIEW_FALLBACK_FROM"
 # What a backend file may set: the endpoint, its token and the model names Claude Code maps.
@@ -126,6 +127,19 @@ def tier(model):
     model = model.strip().lower().rpartition("/")[2]
     family = re.match(r"claude-([a-z]+)", model)
     return "claude-" + family[1] if family else re.sub(r"-\d{8}$", "", model)
+
+
+def author_family(model):
+    """Recognize the author's provider family; an unknown identity cannot authorize fallback."""
+    model = (model or "").strip().lower()
+    vendor, separator, pin = model.partition("/")
+    if separator and vendor in {"claude", "codex"}:
+        return vendor
+    if model.startswith("claude-"):
+        return "claude"
+    if model.startswith(("gpt-", "codex")) or re.match(r"o\d(?:-|$)", model):
+        return "codex"
+    return None
 
 
 def load_backend(repo, name):
@@ -422,6 +436,15 @@ def main(argv=None):
         recorded = bool(result.get("evidence")) and bool(result.get("usage_record"))
         retry = (chain["status"] != "completed" and provider == "codex" and recorded
                  and chain["failure_kind"] == "rate_limited" and retries < CAPACITY_RETRIES)
+        if retry:
+            # Honor a provider's minimum wait or stop; sleeping less merely retries too early.
+            after = result.get("retry_after")
+            delay = (CAPACITY_RETRY_SECONDS if after is None else after) * 2 ** retries
+            if delay > CAPACITY_RETRY_MAX_SECONDS:
+                chain["retry_blocked"] = ("provider retry time %s seconds requires %s seconds after backoff, "
+                                          "above the %s-second retry wait cap; try again later"
+                                          % (after, delay, CAPACITY_RETRY_MAX_SECONDS))
+                retry = False
         eligible = (chain["status"] != "completed" and provider == args.reviewer and chain["failure_kind"] in UNAVAILABLE
                     and recorded and not retry)
         # Lead decision 7 (decisions.md; the kit runs on Claude alone): a used-up Codex quota
@@ -439,8 +462,11 @@ def main(argv=None):
         if eligible and not pin_valid(other, pins[other], args.backend):
             chain["fallback_blocked"] = "other reviewer has no valid configured model pin"
             eligible = False
-        if eligible and author and tier(author) == tier(pins[other]):
-            chain["fallback_blocked"] = ("other reviewer %s model %s is the author's tier (MYAGENTKIT_AUTHOR %s)"
+        if eligible and author_family(author) is None:
+            chain["fallback_blocked"] = "author family is unknown; set MYAGENTKIT_AUTHOR before requesting fallback"
+            eligible = False
+        if eligible and author_family(author) == other:
+            chain["fallback_blocked"] = ("other reviewer %s model %s is the author's family (MYAGENTKIT_AUTHOR %s)"
                                          % (names[other], pins[other], author))
             eligible = False
         checkpoint()  # Never spend on the alternate if primary evidence cannot be saved.
@@ -453,9 +479,6 @@ def main(argv=None):
                      ", but the checkout changed, so the chain failed"
                      if chain.get("checkout_changed") else ""), flush=True)
         if retry:
-            # "try again in 0 seconds" is a delay of 0, not a missing one.
-            after = result.get("retry_after")
-            delay = (CAPACITY_RETRY_SECONDS if after is None else after) * 2 ** retries
             retries += 1
             print("RETRY [review]: %s is at capacity (rate_limited); retry %d of %d in %s seconds."
                   % (names[provider], retries, CAPACITY_RETRIES, delay), flush=True)
@@ -494,6 +517,8 @@ def main(argv=None):
                   "it is not retried. Tell the owner: wait for the reset, or run the review with "
                   "--fallback on the other configured reviewer.")
         if chain["failure_kind"] == "rate_limited":
+            if chain.get("retry_blocked"):
+                print("FAIL [review]: " + chain["retry_blocked"])
             print("FAIL [review]: the reviewer was rate limited or at capacity; run the review "
                   "again later, or with --fallback on the other configured reviewer.")
         if chain["failure_kind"] == "content_flagged":

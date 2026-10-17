@@ -157,8 +157,8 @@ SANDBOX = {"sandbox": {"enabled": True, "failIfUnavailable": True, "allowUnsandb
                        "network": {"allowedDomains": [], "strictAllowlist": True},
                        "filesystem": {"denyRead": [".myagentkit/backends"]}}}
 DIFF_LIMIT = 400_000  # bytes of diff, plus any carried rounds, in one review prompt
-# Lock files, vendored trees and minified bundles reach the reviewer but spend no budget and
-# no split hint: Cloudflare's review drops lock files before review and Anthropic's REVIEW.md
+# Lock files, vendored trees and minified bundles reach the reviewer under the total byte cap,
+# but spend no split hint: Cloudflare's review drops lock files before review and Anthropic's REVIEW.md
 # example skips them (KARARLAR B02 inv2#34). ponytail: names only; a project's own generated
 # paths need adding here.
 NOISE_NAMES = {"package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml", "Cargo.lock",
@@ -786,14 +786,15 @@ def snapshot(repo: Path, scope: str, reference: str | None) -> tuple[str, str, s
         changed |= (names_of('diff', '--name-only', '--no-renames', '-z', parents[0], resolved) if parents
                     else names_of('diff-tree', '-r', '--root', '--no-commit-id', '--name-only', '-z', resolved))
     names = (set(in_scope.split(b'\0')) - {b''}) | changed
-    # Every name here reaches the reviewer: in its copy, or as diff text (a deletion too).
+    # Refuse changed secret-looking paths, including deletions, rather than unrelated tracked files.
     allowed = set(filter(None, os.environ.get(ALLOW_SECRETS_ENV, "").split("\n")))
-    secrets = sorted(os.fsdecode(name) for name in names
+    secrets = sorted(os.fsdecode(name) for name in changed
                      if secret_like(os.fsdecode(name)) and os.fsdecode(name) not in allowed)
     if secrets:
-        raise BridgeError("review scope holds %s, which looks like a secret file: add it to .gitignore "
-                          "(untrack it if it is tracked), or pass --allow-secret-file %s to review it "
-                          "knowingly" % (secrets[0], secrets[0]))
+        raise BridgeError("review scope holds changed secret-looking files; add them to .gitignore "
+                          "(untrack them if tracked), or review each knowingly:\n" +
+                          "\n".join("  %s, which looks like a secret file: --allow-secret-file %s"
+                                    % (name, name) for name in secrets))
     current = filtered_names(repo, names, drivers)
     refused = filtered_names(repo, names, None)
     for end in ends:
@@ -880,8 +881,8 @@ def snapshot(repo: Path, scope: str, reference: str | None) -> tuple[str, str, s
             raise BridgeError('review scope has a Git clean filter or ident attribute on %s, which changed '
                               'while the review was being prepared; run the review again'
                               % os.fsdecode(min(moved)))
-    if budgeted(diff)[0] > DIFF_LIMIT:
-        raise BridgeError("diff exceeds %d bytes outside lock, vendored and minified files; split "
+    if len(diff) > DIFF_LIMIT:
+        raise BridgeError("diff exceeds %d bytes including lock, vendored and minified files; split "
                           "the task" % DIFF_LIMIT)
     return head, fingerprint, diff.decode("utf-8", errors="strict"), resolved
 
@@ -1062,7 +1063,7 @@ def prior_rounds(repo: Path, task_id: str | None, scope: str, resolved: str | No
         text += "### Author's dispositions (claims to verify, not facts)\n" + claims + "\n"
     # A carried verdict line echoed back would break the reviewer's exactly-one-verdict check.
     text = re.sub(r"^[ \t]*VERDICT[ \t]*:", "Earlier verdict:", text, flags=re.M | re.I)
-    if budgeted(diff.encode())[0] + len(text.encode()) > DIFF_LIMIT:
+    if len(diff.encode()) + len(text.encode()) > DIFF_LIMIT:
         raise BridgeError("the diff plus earlier rounds and dispositions exceed %d bytes; start "
                           "a fresh MYAGENTKIT_TASK_ID label" % DIFF_LIMIT)
     return text, measured
@@ -1103,9 +1104,8 @@ def schema(mode: str) -> dict:
 
 
 # A section starts at a line naming it in any markup (`## Findings`, `### **Manual checks:**`,
-# `__Findings__`, `Findings:`) and only another named section ends it: an unknown or
-# severity-first heading under Findings stays in it and is read as an item. A section that
-# ended at the first heading it did not expect once passed an Accept over a `### **High**`.
+# `__Findings__`, `Findings:`). Peer headings end a section; nested and severity-first
+# headings stay in it. A section that ended at any heading once hid a `### **High**`.
 SECTIONS = ("findings", "manual checks", "notes", "summary", "verdict")
 # A list marker, a heading's hashes and emphasis, removed from the front of an item.
 MARKUP = re.compile(r"^[ \t]*(?:(?:[-+*]|\d+[.)]|#{1,6})[ \t]+)?[*_ \t]*")
@@ -1125,14 +1125,22 @@ def review_parts(text: str) -> tuple[list, list]:
     the findings. A manual check is each non-placeholder line of its section, a heading
     included. VERDICT lines belong to neither.
     """
-    sections, current = {}, None
+    sections, current, level = {}, None, 6
     for line in text.splitlines():
         if re.match(r"[ \t]*VERDICT[ \t]*:", line, re.I):
             continue
         name = re.sub(r"^#{1,6}[ \t]+", "", line.strip()).strip("*_ \t").rstrip(":").strip("*_ \t").lower()
+        heading = re.match(r"^(#{1,6})[ \t]+", line.strip())
         if name in SECTIONS:
             current = name
+            level = len(heading[1]) if heading else 6
             sections.setdefault(name, [])
+        elif heading and len(heading[1]) <= level and not SEVERITY_FIRST.match(MARKUP.sub("", line)):
+            # Do not turn an independent Testing heading into a manual check. Its NOT RUN
+            # lines and severity-first findings still count below, wherever they were placed.
+            current = "not run" if name == "not run" else "other"
+            level = len(heading[1])
+            sections.setdefault(current, [])
         else:
             sections.setdefault(current, []).append(line)
     findings, prior = [], ""
@@ -1149,8 +1157,14 @@ def review_parts(text: str) -> tuple[list, list]:
             findings[-1] += " " + item
         prior = line
     # Every other line is a check, a heading included: `### Verify the deployment.` once vanished.
-    checks = [line for line in sections.get("manual checks", [])
-              if MARKUP.sub("", line).rstrip(" \t.*_").lower() not in {"", "none", "n/a", "not applicable", "not run"}]
+    checks = [line for line in sections.get("manual checks", []) if not manual_placeholder(line)]
+    for group in ("other", "not run"):
+        for line in sections.get(group, []):
+            if SEVERITY_FIRST.match(MARKUP.sub("", line)):
+                findings.append(MARKUP.sub("", line))
+            if (group == "not run" or re.search(r"\b(?:not run|could not verify)\b", line, re.I)) \
+                    and not manual_placeholder(line):
+                checks.append(line)
     return findings, checks
 
 
@@ -1159,11 +1173,17 @@ def placeholder(item: str) -> bool:
     sentence ("No qualifying defects found.", "No findings established in this diff.")."""
     # "Plus N similar" is what REVIEW_PROMPT asks for past five Lows. The sentence forms are the
     # ones Codex writes (fix4 notes); refused, a clean paid review was recorded as failed.
-    return (item.strip(" \t-*.").lower() in EMPTY_ITEMS
+    return (item.strip(" \t-*.").lower() in EMPTY_ITEMS | {"none required", "nothing to check"}
             or bool(re.fullmatch(r"(?i)\s*(?:[-*]\s+)?\**\s*(?:plus \d+ similar(?: low)?(?: findings?)?"
                                  r"|no(?: \w+)? (?:findings?|defects?|issues?)"
                                  r"(?: (?:were |was )?(?:found|established|identified|reported))?"
                                  r"(?: in (?:this|the) diff)?)[\s.*]*", item)))
+
+
+def manual_placeholder(item: str) -> bool:
+    """The same whole-item placeholders in text and structured manual checks."""
+    clean = MARKUP.sub("", item).rstrip(" \t.*_")
+    return clean.lower() in {"", "not run"} or placeholder(clean)
 
 
 def accept_allows(findings: list) -> bool:
@@ -1171,7 +1191,7 @@ def accept_allows(findings: list) -> bool:
     severity may be a bold or dash-prefixed list item, the forms both reviewers write."""
     # `Low-level: High ...` is no Low, and a bare `Pre-existing:` names nothing (fix4 notes).
     return all(placeholder(item)
-               or re.match(r"\s*(?:[-*]\s+)?\**\s*(Low(?![-\w])|Pre-existing:\s*[^\s*])", item) for item in findings)
+               or re.match(r"\s*(?:[-*]\s+)?\**\s*(Low(?![-\w])|Pre-existing:\**\s*[^\s*])", item) for item in findings)
 
 
 def validate(envelope: object, mode: str, model: str) -> dict:
@@ -1205,6 +1225,7 @@ def validate(envelope: object, mode: str, model: str) -> dict:
         ):
             raise BridgeError(f"invalid final field: {key}")
     if mode == "review":
+        value = dict(value, manual_checks=[item for item in value["manual_checks"] if not manual_placeholder(item)])
         verdict = value["verdict"]
         if verdict not in VERDICTS:
             raise BridgeError("invalid verdict")
