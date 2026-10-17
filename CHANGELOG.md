@@ -378,7 +378,8 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 - **The kit check asks for a killing test** (`scripts/check_kit.py`, a NOTE, never a failure):
   when the change against the upstream branch adds a refusal (a `raise`, a nonzero exit, `die`,
   a FAIL line) and no file under `tests/` changes, a NOTE names the line and asks which test
-  fails if it is removed. Without an upstream branch the note is NOT RUN.
+  fails if it is removed. Without an upstream branch the note is NOT RUN. Syntax and shell
+  checks read tracked and untracked-but-not-ignored files, skipping ignored evidence and worktree copies.
 - **Symlinks, junctions and long paths in the kit check** (tests only; nothing for a project to
   do): the symlink and junction classes were already held by required suites
   (`test_boundary_restore`, `test_check_gate`, `test_check_gate_windows` and `check.sh

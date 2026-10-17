@@ -158,6 +158,58 @@ class AcceptanceTests(unittest.TestCase):
                     with self.assertRaisesRegex(RuntimeError, 'required|skipped'):
                         gate.run_tests(root, 'tests', {name: 1})
 
+    def test_syntax_skips_ignored_python_shell_and_shebang_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            gate.run(['git', 'init', '-q'], root)
+            (root / '.gitignore').write_text('ignored/\n', encoding='utf-8')
+            ignored = root / 'ignored'
+            ignored.mkdir()
+            (ignored / 'bad.py').write_text('\ufeffbroken =\n', encoding='utf-8')
+            (ignored / 'bad.sh').write_text('if then\n', encoding='utf-8')
+            (ignored / 'hook').write_text('#!/bin/sh\necho "$x"\n', encoding='utf-8')
+            gate.check_syntax(root)
+
+    def test_syntax_checks_untracked_not_ignored_python(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            gate.run(['git', 'init', '-q'], root)
+            source = root / 'new module.py'
+            source.write_text('broken =\n', encoding='utf-8')
+            with self.assertRaisesRegex(RuntimeError, 'new module.py is not Python 3.11 syntax'):
+                gate.check_syntax(root)
+
+    def test_syntax_checks_tracked_shell_even_when_ignored(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            gate.run(['git', 'init', '-q'], root)
+            (root / 'tracked.sh').write_text('if then\n', encoding='utf-8')
+            gate.run(['git', 'add', 'tracked.sh'], root)
+            (root / '.gitignore').write_text('*.sh\n', encoding='utf-8')
+            with self.assertRaisesRegex(RuntimeError, 'tracked.sh'):
+                gate.check_syntax(root)
+
+    def test_shell_sensor_checks_untracked_not_ignored_shebang_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            gate.run(['git', 'init', '-q'], root)
+            (root / 'new hook').write_text('#!/bin/sh\necho "$x"\n', encoding='utf-8')
+            with self.assertRaisesRegex(RuntimeError, 'new hook:2: `echo` of an expansion'):
+                gate.check_syntax(root)
+
+    def test_syntax_checks_tracked_uppercase_suffixes(self):
+        for name, text in (('broken.PY', 'broken =\n'), ('broken.SH', 'if then\n')):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                gate.run(['git', 'init', '-q'], root)
+                source = root / name
+                source.write_text(text, encoding='utf-8')
+                gate.run(['git', 'add', name], root)
+                with self.assertRaisesRegex(RuntimeError, name):
+                    gate.check_syntax(root)
+                if name.endswith('.SH'):
+                    self.assertIn(source, gate.shell_scripts(root))
+
     def test_python_newer_than_3_11_is_refused(self):
         # The parse used the host's grammar: syntax newer than 3.11, the oldest CI runs,
         # passed here and broke only on CI.
