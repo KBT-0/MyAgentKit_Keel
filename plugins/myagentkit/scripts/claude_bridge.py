@@ -1123,11 +1123,30 @@ def review_item(line: str) -> str:
     return line
 
 
+def finding_start(line: str) -> bool:
+    """Recognise a marked severity before a line can become another finding's continuation.
+
+    Headings may put an issue number before the severity. Look through stacked list/heading
+    prefixes too, and ignore emphasis around a label (`__High__` has no word boundary).
+    """
+    # Remove emphasis before parsing numeric prefixes (`**3.** __High__`), and treat
+    # Unicode whitespace as indentation just like spaces and tabs.
+    line = re.sub(r"\s", " ", line.replace("*", "").replace("_", ""))
+    item = review_item(line)
+    if SEVERITY_FIRST.match(item):
+        return True
+    while (plain := MARKUP.sub("", line)) != line:
+        if re.match(r"^[ \t]*#{1,6}[ \t]+", line):
+            return bool(SEVERITY_HEADING.search(item))
+        line = plain
+    return False
+
+
 def review_parts(text: str) -> tuple[list, list]:
     """A text review's findings and manual checks, read the same way by every caller.
 
     A finding is each top-level block (list item, heading or paragraph, its continuation lines
-    joined) and each line at any indent that starts with a severity, its markup removed;
+    joined) and each marked severity line at any indent, including numbered issue headings;
     accept_allows() then admits only Lows, Pre-existing items and whole-block placeholders, so
     an item the reviewer wrote in a form nobody expected refuses the Accept instead of
     vanishing. Without a Findings heading the text before the first named section is read as
@@ -1137,18 +1156,20 @@ def review_parts(text: str) -> tuple[list, list]:
     sections, current, level = {}, None, 6
     unverified = []
     for line in text.splitlines():
+        item = review_item(line)
+        # Even a verdict-looking line cannot silence an unverified check. Emphasis may
+        # surround each word separately, as in `**NOT** **RUN**`.
+        if UNVERIFIED.search(item.replace("*", "").replace("_", "")) and not manual_placeholder(line):
+            unverified.append(line)
         if re.match(r"[ \t]*VERDICT[ \t]*:", line, re.I):
             continue
         name = re.sub(r"^#{1,6}[ \t]+", "", line.strip()).strip("*_ \t").rstrip(":").strip("*_ \t").lower()
         heading = re.match(r"^(#{1,6})[ \t]+", line.strip())
-        item = review_item(line)
-        if UNVERIFIED.search(item) and not manual_placeholder(line):
-            unverified.append(line)
         if name in SECTIONS:
             current = name
             level = len(heading[1]) if heading else 6
             sections.setdefault(name, [])
-        elif heading and len(heading[1]) <= level and not SEVERITY_FIRST.match(item):
+        elif heading and len(heading[1]) <= level and not finding_start(line):
             # Do not turn an independent Testing heading into a manual check. Its NOT RUN
             # lines and severity-first findings still count below, wherever they were placed.
             current = "not run" if name == "not run" else "other"
@@ -1161,7 +1182,7 @@ def review_parts(text: str) -> tuple[list, list]:
         item = review_item(line)
         if not line.strip():
             pass
-        elif not findings or SEVERITY_FIRST.match(item) or (
+        elif not findings or finding_start(line) or (
                 line[0] not in " \t" and (not prior.strip() or MARKUP.match(line).group().strip())):
             findings.append(item)
         else:
@@ -1178,8 +1199,7 @@ def review_parts(text: str) -> tuple[list, list]:
             continue
         for line in lines:
             item = review_item(line)
-            heading = re.match(r"^#{1,6}[ \t]+", line.strip())
-            if (SEVERITY_FIRST.match(item) or heading and SEVERITY_HEADING.search(item)) and item not in findings:
+            if finding_start(line) and item not in findings:
                 findings.append(item)
             if group == "not run" and not manual_placeholder(line):
                 checks.append(line)

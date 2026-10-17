@@ -33,9 +33,9 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'REVIEW_SHADOW', 'MYAGENTKIT_TASK_I
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 232, 'test_agent_usage': 36, 'test_codex_quota': 5}
+SUITE_MINIMUMS = {'test_claude_bridge': 235, 'test_agent_usage': 36, 'test_codex_quota': 5}
 # These are executed cases, excluding only the explicitly declared POSIX exclusions.
-WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 206, 'test_agent_usage': 32, 'test_codex_quota': 4}
+WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 209, 'test_agent_usage': 32, 'test_codex_quota': 4}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -548,6 +548,91 @@ except ValueError as error:
 
 
 class BridgeTests(unittest.TestCase):
+    @staticmethod
+    def continuation_review_cases():
+        # The same complete reports exercise the Codex adapter and structured validation.
+        # Every dangerous line follows a Low, also outside the Findings section.
+        for section in ('', '## Notes\n- Low: file.py:2 another minor note.\n'):
+            for severity in ('High', 'Critical'):
+                for form in ('  ### Issue 1: {severity}: file.py:1 drops records.',
+                             '\t### **Issue 1: {severity}** — file.py:1 drops records.',
+                             '    - {severity}: file.py:1 drops records.',
+                             '\t2. **{severity}** — file.py:1 drops records.',
+                             '  **{severity}:** file.py:1 drops records.',
+                             '    - ### Issue 1: **{severity}** | file.py:1 drops records.',
+                             '  ### **2. {severity}** - file.py:1 drops records.',
+                             '  3) __{severity}__ / file.py:1 drops records.',
+                             '  **3.** __{severity}__: file.py:1 drops records.',
+                             '\u00a0\u00a0### Issue 1: {severity}: file.py:1 drops records.',
+                             '\u2003{severity}: file.py:1 drops records.'):
+                    line = form.format(severity=severity)
+                    yield '- Low: file.py:2 minor note.\n' + section + line, line, False
+            for line in ('  ### **NOT RUN:** Windows deployment.',
+                         '\t- NOT RUN: Windows deployment.',
+                         '    2. **Could not verify** Windows deployment.',
+                         '  __Windows deployment could not be verified.__',
+                         '  - **NOT** **RUN**: Windows deployment.',
+                         '  __Could__ __not__ __verify__ Windows deployment.',
+                         '  VERDICT: Accept; NOT RUN: Windows deployment.'):
+                yield '- Low: file.py:2 minor note.\n' + section + line, line, False
+        for body in ('Low: file.py:2 minor note.\n  ordinary continuation.',
+                     'Pre-existing: file.py:1 unrelated issue.\n  ordinary continuation.',
+                     'No findings established in this diff.',
+                     'Low: file.py:2 minor note.\n## Testing\nThe focused checks passed.',
+                     'Low: file.py:2 minor note.\n## Notes\n- Pre-existing: file.py:1 unrelated issue.'):
+            yield body, '', True
+
+    def test_severity_lines_start_independent_findings_after_a_low(self):
+        for body, line, clean in self.continuation_review_cases():
+            findings, checks = bridge.review_parts('## Findings\n' + body)
+            with self.subTest(body=body):
+                if clean:
+                    self.assertTrue(bridge.accept_allows(findings))
+                    self.assertEqual(checks, [])
+                elif bridge.UNVERIFIED.search(line.replace('*', '').replace('_', '')):
+                    self.assertIn(line, checks)
+                else:
+                    self.assertIn(bridge.review_item(line), findings)
+                    self.assertFalse(bridge.accept_allows(findings))
+
+    def test_codex_accept_cannot_hide_severity_or_checks_in_low_continuations(self):
+        from contextlib import redirect_stdout
+        from unittest.mock import patch
+        import codex_bridge
+
+        def execution(command, prompt, repo, timeout, into=None, noted=None):
+            # LF bytes matter: a CRLF verdict could fail for an unrelated reason.
+            Path(command[command.index('-o') + 1]).write_bytes(final.encode('utf-8'))
+            return dict(exit_code=0, stdout=json.dumps({'type': 'turn.completed', 'usage': {}}),
+                        stderr='', termination=None, duration_ms=1)
+
+        cases = [(body, clean) for body, _, clean in self.continuation_review_cases()]
+        cases.append(('No findings\n  established in this diff.', True))
+        for body, clean in cases:
+            final = '## Findings\n' + body + '\n## Manual checks\nNone.\nVERDICT: Accept\n'
+            received, out = [], io.StringIO()
+            with self.subTest(body=body), patch.dict(os.environ, self.review_env()), \
+                    patch('agent_process.run', side_effect=execution) as run, redirect_stdout(out):
+                code = codex_bridge.main(['--repo', str(self.repo), '--model', 'codex-fixture-model',
+                                          '--uncommitted'], received.append)
+                run.assert_called_once()
+                self.assertEqual(code, 0 if clean else 5, out.getvalue())
+                self.assertEqual(received[-1]['status'], 'completed' if clean else 'failed')
+                self.assertEqual(received[-1]['failure_kind'], None if clean else 'invalid_evidence')
+                self.assertEqual(verdicts_of(received[-1]['evidence']), ['VERDICT: Accept'] if clean else [])
+
+    def test_structured_accept_cannot_hide_severity_or_checks_in_low_continuations(self):
+        for body, _, clean in self.continuation_review_cases():
+            value = dict(verdict='Accept', findings=[body], manual_checks=[])
+            envelope = dict(type='result', subtype='success', is_error=False,
+                            modelUsage={'claude-opus-5': {}}, structured_output=value)
+            with self.subTest(body=body):
+                if clean:
+                    self.assertEqual(bridge.validate(envelope, 'review', 'claude-opus-5'), value)
+                else:
+                    with self.assertRaisesRegex(bridge.BridgeError, 'contradicts'):
+                        bridge.validate(envelope, 'review', 'claude-opus-5')
+
     def test_codex_accept_cannot_drop_a_finding_or_manual_check_in_a_peer_heading(self):
         from contextlib import redirect_stdout
         from unittest.mock import patch
