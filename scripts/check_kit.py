@@ -87,7 +87,7 @@ REQUIRED_SUITES = {
     'core/scripts': dict(BRIDGE_MINIMUMS, test_agent_cost=5, test_context_buckets=6, test_owns_check=4),
     # Each suite's current count: a minimum far below it (1 of 30) let a suite lose almost
     # every test with the kit check green. A new test raises its suite's number here.
-    'tests': {'test_packaging': 1, 'test_bootstrap': 36, 'test_acceptance': 18,
+    'tests': {'test_packaging': 1, 'test_bootstrap': 36, 'test_acceptance': 22,
               'test_review_upgrade': 4 if os.name == 'nt' else 5,
               'test_boundary_example': 2 if os.name == 'nt' else 3, 'test_scan_gate': 1,
               'test_check_gate': 24, 'test_check_gate_windows': 39 if os.name == 'nt' else 6,
@@ -442,8 +442,19 @@ def untested_guards(root):
     return notes
 
 
+def repository_files(root):
+    """Tracked and untracked-but-not-ignored files, or plain files in a non-git fixture."""
+    if (root / '.git').exists():
+        listed = run(['git', '-C', str(root), 'ls-files', '-z', '--cached', '--others',
+                      '--exclude-standard'], encoding='utf-8')
+        candidates = (root / name for name in sorted(set(listed.split('\0'))) if name)
+    else:
+        candidates = (path for path in root.rglob('*') if '.git' not in path.parts)
+    return [path for path in candidates if path.is_file()]
+
+
 def check_syntax(root):
-    """Parse every .py file as Python 3.11, the oldest CI runs, and every .sh file with `sh -n`.
+    """Parse the repo's .py files as Python 3.11 and its .sh files with `sh -n`.
 
     ast.parse alone used the host's grammar: syntax newer than 3.11 passed here and broke only
     on CI. feature_version is best effort (it rejects newer statements such as `type`,
@@ -451,15 +462,16 @@ def check_syntax(root):
     hosts: it proves the file parses, and a bashism that bash accepts passes; only dash
     (Ubuntu's sh, on CI) or a review catches that.
     """
-    for path in root.rglob("*.py"):
-        if ".git" not in path.parts:
+    paths = repository_files(root)
+    for path in paths:
+        if path.suffix == '.py':
             try:
                 ast.parse(path.read_text(encoding='utf-8'), filename=str(path), feature_version=(3, 11))
             except SyntaxError as error:
                 raise RuntimeError("%s is not Python 3.11 syntax: %s" % (path, error)) from error
     bash_5_2()  # the lint's prerequisite, on every host, whether or not a file needs it
-    for path in root.rglob("*.sh"):
-        if ".git" not in path.parts:
+    for path in paths:
+        if path.suffix == '.sh':
             # The lint first: macOS's sh rejects the form too, and the reason must name it there.
             try:
                 # UTF-8, not the host's locale; newlines stay folded for an autocrlf checkout.
@@ -557,16 +569,10 @@ def shell_lint(text):
 
 
 def shell_scripts(root):
-    """The sh scripts git tracks: each .sh file and each file whose first line runs sh (the
-    hooks in .githooks have no extension). A worktree under .claude/worktrees holds an older
-    copy of every script, so untracked files are never read."""
-    if (root / '.git').exists():
-        listed = run(['git', '-C', str(root), 'ls-files', '-z'], encoding='utf-8')
-        candidates = [root / name for name in listed.split('\0') if name]
-    else:
-        candidates = [path for path in root.rglob('*') if '.git' not in path.parts]
+    """The repo's .sh files and files whose first line runs sh (hooks have no extension).
+    Ignored evidence and worktree copies are excluded; new, non-ignored scripts count."""
     found = []
-    for path in candidates:
+    for path in repository_files(root):
         if path.suffix == '.sh':
             found.append(path)
         elif path.is_file() and not path.is_symlink():
@@ -577,7 +583,7 @@ def shell_scripts(root):
 
 
 def shell_portability(root):
-    """The kit's shell lint and `shellcheck -s sh` over the sh scripts git tracks.
+    """The kit's shell lint and `shellcheck -s sh` over the repo's non-ignored sh scripts.
 
     shellcheck fails only on SC3xxx (undefined in POSIX sh, a bashism) and on errors; its
     warnings and notes stay a reviewer's. It reads no rc file and no SHELLCHECK_OPTS, so a
