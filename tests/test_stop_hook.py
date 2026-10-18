@@ -27,8 +27,8 @@ def gated_repo(root, gate_body):
     return hook
 
 
-def stop(hook, root):
-    return subprocess.run(['sh', str(hook)], cwd=root, input='{}', text=True, capture_output=True,
+def stop(hook, root, payload='{}'):
+    return subprocess.run(['sh', str(hook)], cwd=root, input=payload, text=True, capture_output=True,
                           timeout=60)
 
 
@@ -101,11 +101,55 @@ class StopHookTests(unittest.TestCase):
                     else:
                         self.assertEqual(result.stdout + result.stderr, '')
                     self.assertNotIn(unsaid, result.stderr)
-            # A turn the hook already continued is let go, or the session loops forever.
-            result = subprocess.run(['sh', str(hook)], cwd=root, input='{"stop_hook_active": true}',
-                                    text=True, capture_output=True, timeout=30,
-                                    env=dict(os.environ, STUB_RC='1'))
-            self.assertEqual(result.returncode, 0, result.stderr)
+                    # A new tree each time: an unchanged one is not run again.
+                    (root / 'src/app.py').write_text('dirty %d\n' % rc, newline='\n')
+
+    def test_a_continued_stop_gates_a_changed_tree_and_ends_on_an_unchanged_one(self):
+        # stop_hook_active once skipped every continued stop, so a fix made after a red gate
+        # ended the turn unchecked; a block by plain_report.py did the same (#208).
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            hook = gated_repo(root, 'echo ran >> .git/gate-runs\necho "gate says red"\nexit 1\n')
+            runs = lambda: (root / '.git/gate-runs').read_text().count('ran') if (root / '.git/gate-runs').exists() else 0
+            # Another hook's block: this tree was never gated, so the gate runs.
+            result = stop(hook, root, '{"stop_hook_active" : true}')
+            self.assertEqual((result.returncode, runs()), (2, 1), result.stderr)
+            # The agent changes nothing: the continued stop ends, the gate does not run.
+            result = stop(hook, root, '{"stop_hook_active":true}')
+            self.assertEqual((result.returncode, runs()), (0, 1), result.stderr)
+            # The agent edits a gated file (staged or not, or a new untracked one): gated again.
+            for edit in ('src/app.py', 'src/new.py'):
+                (root / edit).write_text('fix attempt\n', newline='\n')
+                result = stop(hook, root, '{"stop_hook_active":true}')
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn('gate says red', result.stderr)
+            self.assertEqual(runs(), 3)
+            # A new turn on the unchanged red tree: blocked with that run's output, not re-run.
+            result = stop(hook, root)
+            self.assertEqual((result.returncode, runs()), (2, 3), result.stderr)
+            self.assertIn('gate says red', result.stderr)
+            self.assertIn('it has not changed since', result.stderr)
+
+    def test_a_passed_tree_is_not_gated_again(self):
+        # Stop fires after every reply: a dirty file ran a 217 s gate on each short answer (#81).
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            hook = gated_repo(root, 'echo ran >> .git/gate-runs\n[ ! -e touch-tree ] || cat .git/gate-runs > src/stamp.py\n')
+            runs = lambda: (root / '.git/gate-runs').read_text().count('ran')
+            for expected in (1, 1):
+                result = stop(hook, root)
+                self.assertEqual((result.returncode, result.stderr), (0, ''))
+                self.assertEqual(runs(), expected)
+            # Any content change counts, an untracked file's included.
+            (root / 'src/new.py').write_text('a\n', newline='\n')
+            self.assertEqual((stop(hook, root).returncode, runs()), (0, 2))
+            (root / 'src/new.py').write_text('b\n', newline='\n')
+            self.assertEqual((stop(hook, root).returncode, runs()), (0, 3))
+            self.assertEqual((stop(hook, root).returncode, runs()), (0, 3))
+            # A tree that changed while the gate ran is not the tree that passed.
+            (root / 'touch-tree').write_text('', newline='\n')
+            self.assertEqual((stop(hook, root).returncode, runs()), (0, 4))
+            self.assertEqual((stop(hook, root).returncode, runs()), (0, 5))
 
 
 if __name__ == '__main__':
