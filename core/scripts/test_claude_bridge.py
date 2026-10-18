@@ -3550,8 +3550,9 @@ class BridgeTests(unittest.TestCase):
                   'turns': 'budget_or_turn_limit', 'unknown_flag': 'cli_unsupported'}
         codex = {'accept': None, 'reject': None, 'mcp': None, 'mcp_reconnect': None,
                  'quota': 'quota_exhausted', 'mcp_quota': 'quota_exhausted', 'mcp_exit': 'cli_error',
-                 'mcp_no_completion': 'cli_error', 'mcp_no_verdict': 'cli_error',
-                 'mcp_two_verdicts': 'cli_error', 'mcp_failed_turn': 'cli_error',
+                 'mcp_no_completion': 'cli_error', 'mcp_no_verdict': 'invalid_evidence',
+                 'mcp_429_no_verdict': 'invalid_evidence',
+                 'mcp_two_verdicts': 'invalid_evidence', 'mcp_failed_turn': 'cli_error',
                  'unknown_flag': 'cli_unsupported'}
         # Only the dispatcher writes the chain and fails a quota on a changed checkout: the
         # attempt's own record, then what the chain says (None: no chain was written).
@@ -4049,12 +4050,14 @@ if case == 'archive_failure':
                         "Transport channel closed\\n')\n"
                         "if case.startswith('mcp_'):\n"
                         "    print(json.dumps({'type': 'error', 'message': 'Reconnecting... 2/5 "
-                        "(stream disconnected before completion)'}))\n"
+                        "(stream disconnected before completion' + (': 429 Too Many Requests' "
+                        "if case == 'mcp_429_no_verdict' else '') + ')'}))\n"
                         "if case == 'mcp_quota':\n"
                         "    print(json.dumps({'type': 'error', 'message': 'usage limit reached'})); sys.exit(0)\n"
                         "verdict = 'Reject' if case == 'reject' else 'Accept'\n"
                         "text = '## Findings\\n\\nLow: fixture finding.\\n\\nVERDICT: ' + verdict + '\\n'\n"
                         "text = {'mcp_no_verdict': '## Findings\\n\\nLow: fixture finding.\\n',\n"
+                        "        'mcp_429_no_verdict': '## Findings\\n\\nLow: fixture finding.\\n',\n"
                         "        'mcp_two_verdicts': text + 'VERDICT: Reject\\n'}.get(case, text)\n"
                         "pathlib.Path(sys.argv[sys.argv.index('-o') + 1]).write_text(text)\n"
                         "if case == 'mcp_failed_turn': print(json.dumps({'type': 'turn.failed', 'error': {}}))\n"
@@ -5861,10 +5864,11 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         # A review that exited 0, closed its stream with turn.completed and gave one verdict was
         # recorded cli_error: the stream carried a reconnect error event the CLI recovered from,
         # while its own MCP client logged a transport failure on stderr. Both are kept in the
-        # usage record; a failure of the structured outcome itself still fails as before.
+        # usage record; a failure of the structured outcome itself fails with its own kind, so a
+        # missing verdict stays invalid_evidence and is not retried or failed over (#180).
         for case, kind in (('mcp', None), ('mcp_reconnect', None), ('mcp_exit', 'cli_error'),
-                           ('mcp_no_completion', 'cli_error'), ('mcp_no_verdict', 'cli_error'),
-                           ('mcp_two_verdicts', 'cli_error'), ('mcp_failed_turn', 'cli_error'),
+                           ('mcp_no_completion', 'cli_error'), ('mcp_no_verdict', 'invalid_evidence'),
+                           ('mcp_two_verdicts', 'invalid_evidence'), ('mcp_failed_turn', 'cli_error'),
                            ('mcp_quota', 'quota_exhausted'), ('unknown_flag', 'cli_unsupported')):
             with self.subTest(case=case):
                 # No Claude pin: a used-up Codex quota would switch the review to Claude (decision 7).

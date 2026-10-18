@@ -185,13 +185,13 @@ def main(argv=None, result_sink=None, claims=None):
             reason = agent_usage.failure("codex", execution, values)
             # Exit 0 and a turn that completed and did not fail: an error event in the stream is
             # one the CLI recovered from (a reconnect), kept in the usage record's raw output.
-            # It once failed a paid, completed review as cli_error. It decides the status only
-            # when a check below fails, exactly as before.
+            # It once failed a paid, completed review as cli_error. A check below that fails keeps
+            # its own kind: put back, a recovered 429 turned invalid_evidence into rate_limited
+            # and the dispatcher re-ran the review (#180).
             types = [value.get("type") for value in values]
-            recovered = None
             if (reason and execution["exit_code"] == 0 and not execution["termination"]
                     and "turn.completed" in types and "turn.failed" not in types):
-                recovered, reason = reason, None
+                reason = None
             final = ""
             try:
                 if last is not None and last.is_file():
@@ -217,8 +217,6 @@ def main(argv=None, result_sink=None, claims=None):
             if not reason and (verdict_refused(final)
                                or not any(v.get("type") == "turn.completed" for v in values)):
                 reason = "invalid_evidence"
-            if recovered and reason:
-                reason = recovered
             # A failed attempt that was cancelled is cancelled: its eligible failure once let
             # --fallback launch the other paid reviewer after the owner had stopped the review.
             if (cancelled or guard.noted) and reason:
