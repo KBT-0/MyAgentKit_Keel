@@ -7,10 +7,10 @@ allowed-tools: Read, Grep, Bash(python scripts/working_mode.py:*), Bash(python3 
 
 The modes are defined in the project's `docs/WORKFLOW.md`, "Working modes, by name". Use
 `python scripts/working_mode.py` (or `python3` / `py -3` on the host) from the project root.
-The helper records the name in `.claude/mode` and the "Working mode:" line of
-`docs/STATE.md`, detects disagreement on reads, and prints the canonical rules. Both files
-are shared across tools and committed with the next authorized commit. Do not commit merely
-to switch modes. The project root must be the owner's current checkout.
+The helper records the name in `.myagentkit/mode` (ignored by Git) and the "Working mode:"
+line of `docs/STATE.md`, detects disagreement on reads, and prints the canonical rules. Both
+files are shared across tools; STATE.md is committed with the next authorized commit. Do not
+commit merely to switch modes. The project root must be the owner's current checkout.
 
 STATE.md session edits follow `docs/AGENTS.md`, "STATE.md discipline", in its order
 (`--read-state`, edit the returned PATH, `--replace-state "PATH" --expect SHA256`; on refusal,

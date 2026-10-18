@@ -128,7 +128,7 @@ rollback could otherwise erase another writer's work. A snapshot lives only in `
 and a snapshot elsewhere can land where `git add -A` commits it; OUT is a name prefix and FILE a
 regular file, because OUT naming `.myagentkit` put the snapshot in the project root and FILE
 naming a folder moved it whole. The "Working mode:" line is the mode switch's, which writes it
-together with `.claude/mode`. Sources: HTTP If-Match (the lost update,
+together with `.myagentkit/mode`. Sources: HTTP If-Match (the lost update,
 developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/If-Match), anthropics/claude-code#24130
 (an auto-memory file is not safe for concurrent agents), Python `tempfile.mkstemp` (an exclusively
 created snapshot; CWE-377).
@@ -645,7 +645,8 @@ A `claude@NAME` review of another model family counts as the second model (`docs
 The owner switches the working mode by its name: `solo`, `cross` or `saver`. The lead never
 switches it on its own initiative; the one standing exception is saver's return, which the
 owner granted when choosing saver ("saver", Ends). The "Working mode:"
-line of `docs/STATE.md` and the small `.claude/mode` file name the mode in force.
+line of `docs/STATE.md` and the small `.myagentkit/mode` file (ignored by Git, never committed)
+name the mode in force.
 `/myagentkit:mode` uses `scripts/working_mode.py` to show or set both records, preserving
 the rest of STATE.md. Reads refuse disagreeing records; an explicit owner choice repairs
 them. A project without either record works in **solo**, the main mode.

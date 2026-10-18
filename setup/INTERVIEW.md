@@ -447,7 +447,7 @@ placeholder is either a quoted value or a whole file.
 table and its working modes. Replace the table's model names with what the owner's
 subscriptions offer today, and ask which working mode starts (solo unless the owner names
 another). Run `scripts/working_mode.py <name>` with the host's Python to record
-the choice in both `.claude/mode` and the "Working mode:" line of `docs/STATE.md`.
+the choice in both `.myagentkit/mode` (ignored by Git) and the "Working mode:" line of `docs/STATE.md`.
 
 ### Then, in this order
 

@@ -63,10 +63,18 @@ def checked(project, relative):
     return path
 
 
-def prepared(path, data):
-    fd, name = tempfile.mkstemp(prefix='.' + path.name + '-', dir=path.parent)
+def prepared(project, path, data):
+    """DATA in a new file for os.replace onto PATH. It is written in the ignored .myagentkit/ (the
+    same volume: checked() refuses a linked folder), so a copy a killed run leaves is never beside
+    STATE.md for `git add -A` to commit, and flushed to disk first, so a power loss after the
+    rename cannot leave an empty STATE.md (#256)."""
+    folder = checked(project, '.myagentkit')
+    folder.mkdir(exist_ok=True)
+    fd, name = tempfile.mkstemp(prefix='.' + path.name + '-', dir=folder)
     with os.fdopen(fd, 'wb') as handle:
         handle.write(data)
+        handle.flush()
+        os.fsync(handle.fileno())
     if path.exists():
         shutil.copymode(path, name)
     return Path(name)
@@ -74,7 +82,7 @@ def prepared(path, data):
 
 @contextmanager
 def switch_lock(project):
-    path = checked(project, '.claude/mode.lock')
+    path = checked(project, '.myagentkit/mode.lock')
     path.parent.mkdir(exist_ok=True)
     with path.open('a+b') as handle:
         if os.name == 'nt':
@@ -100,8 +108,20 @@ def switch_lock(project):
             release()
 
 
+# A line shaped like the key, bold or not, after a bullet or a quote mark, so one written without
+# the bold or quoted is still refused as unrecognized; a sentence that mentions "the working
+# mode: saver" is prose (#257).
+MODE_KEY = re.compile(r'[^\S\r\n]*(?:[-*+>][^\S\r\n]*)?(?:\*\*)?working mode:', re.I)
+
+
 def mode_lines(text):
-    return [line for line in text.splitlines() if 'working mode:' in line.casefold()]
+    return [line for line in text.splitlines() if MODE_KEY.match(line)]
+
+
+def numbered(text):
+    """The Working mode lines of TEXT with their line numbers, for a refusal."""
+    return '; '.join('line %d: %s' % (n, line.strip()) for n, line in enumerate(text.splitlines(), 1)
+                     if MODE_KEY.match(line))
 
 
 def private(project, path):
@@ -143,6 +163,14 @@ def replace_state(project, source, expected):
     """Publish an edited snapshot only if STATE still matches it under the switch lock, then
     delete the snapshot. Its Working mode line stays the mode switch's. FILE is a regular file:
     the rename below moved a folder named instead (.myagentkit, the temporary folder) whole."""
+    # Before the lock, which lives in .myagentkit/: FILE named .myagentkit itself is refused by name.
+    if not stat.S_ISREG(os.lstat(source).st_mode):
+        raise ValueError('a prepared STATE.md file is a regular file: ' + shown(source))
+    try:  # failed restoration must keep the whole folder private
+        parent = private(project, source.parent)
+    except ValueError:
+        raise ValueError("FILE's own folder must be inside .myagentkit/ or the temporary folder, as a failed "
+                         'restoration keeps its draft there: ' + shown(source)) from None
     with switch_lock(project):
         state = checked(project, 'docs/STATE.md')
         current = state.read_bytes()
@@ -150,13 +178,6 @@ def replace_state(project, source, expected):
         if actual != expected.lower():
             raise ValueError('STATE.md sha256 mismatch: expected ' + expected + ', current ' + actual
                              + '; read it again with --read-state, redo the edit in that snapshot, and retry')
-        if not stat.S_ISREG(os.lstat(source).st_mode):
-            raise ValueError('a prepared STATE.md file is a regular file: ' + shown(source))
-        try:  # failed restoration must keep the whole folder private
-            parent = private(project, source.parent)
-        except ValueError:
-            raise ValueError("FILE's own folder must be inside .myagentkit/ or the temporary folder, as a failed "
-                             'restoration keeps its draft there: ' + shown(source)) from None
         folder = Path(tempfile.mkdtemp(prefix='.' + source.name + '-', dir=parent))
         owned = folder / 'snapshot'
         identity = pending = None
@@ -174,10 +195,11 @@ def replace_state(project, source, expected):
                 data = handle.read()
             old_lines, new_lines = mode_lines(current.decode('utf-8')), mode_lines(data.decode('utf-8'))
             if old_lines != new_lines and not repairs_old_mode(old_lines, new_lines):
-                raise ValueError('the edit changes the Working mode line of STATE.md; only a mode switch '
-                                 '(working_mode.py NAME) changes it, together with .claude/mode (the one '
-                                 'exception: a mode name from before v0.11 may become solo, cross or saver)')
-            pending = prepared(state, data)
+                raise ValueError('the edit changes the Working mode line of STATE.md (the edit has: %s); only a '
+                                 'mode switch (working_mode.py NAME) changes it, together with .myagentkit/mode '
+                                 '(the one exception: a mode name from before v0.11 may become solo, cross or '
+                                 'saver)' % (numbered(data.decode('utf-8')) or 'none'))
+            pending = prepared(project, state, data)
             os.replace(pending, state)
             published = True
         finally:
@@ -243,7 +265,7 @@ def working_mode(project, section, rows, choice=None, sides=None):
     matches = list(STATE_LINE.finditer(state))
     mentions = mode_lines(state)
     if len(mentions) > 1:
-        raise ValueError('STATE.md has more than one Working mode line')
+        raise ValueError('STATE.md has more than one Working mode line: ' + numbered(state))
     if mentions and not matches:
         raise ValueError('unrecognized STATE.md Working mode line (write it as **Working mode:** NAME): '
                          + mentions[0].strip())
@@ -260,10 +282,12 @@ def working_mode(project, section, rows, choice=None, sides=None):
                         '), then run this again')
             raise ValueError('invalid STATE.md working mode: ' + value + hint)
         note = separator + suffix
-    record = checked(project, '.claude/mode')
+    # The record lives in the tool-neutral, ignored private store: under .claude/ it gave every
+    # project a Claude Code folder, overlay or not, and a file nobody said to commit (#272).
+    record = checked(project, '.myagentkit/mode')
     if choice is None:
         if record.exists() and record.read_text(encoding='utf-8').strip() != current:
-            raise ValueError('.claude/mode and STATE.md disagree; choose a mode explicitly to repair them')
+            raise ValueError('.myagentkit/mode and STATE.md disagree; choose a mode explicitly to repair them')
         back = AFTER.search(note.strip(' ().')) if current == 'saver' else None
         print('Current mode: ' + current + ('' if matches else ' (STATE.md line missing; main mode)')
               + (' (returns to ' + back[1] + ')' if back else ''))
@@ -324,9 +348,9 @@ def working_mode(project, section, rows, choice=None, sides=None):
     updated_bytes = updated.encode('utf-8')
     pending = []
     try:
-        pending.append(prepared(state_path, updated_bytes))
-        pending.append(prepared(record, (selected + '\n').encode('utf-8')))
-        pending.append(prepared(state_path, state_bytes))
+        pending.append(prepared(project, state_path, updated_bytes))
+        pending.append(prepared(project, record, (selected + '\n').encode('utf-8')))
+        pending.append(prepared(project, state_path, state_bytes))
         if state_path.read_bytes() != state_bytes:
             raise ValueError('STATE.md changed during the mode switch; retry with the current document')
         os.replace(pending[0], state_path)
