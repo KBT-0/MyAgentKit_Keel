@@ -44,7 +44,8 @@ class PythonFallbackTests(unittest.TestCase):
         subprocess.run(['git', '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty',
                         '-m', 'x'], cwd=project, check=True, env=env)
         (project / 'notes.txt').write_text('uncommitted\n', encoding='utf-8')
-        env.update(PATH=os.pathsep.join([str(bin_dir), env['PATH']]), CLAUDE_PROJECT_DIR=project.as_posix())
+        env.update(PATH=os.pathsep.join([str(bin_dir), env['PATH']]), CLAUDE_PROJECT_DIR=project.as_posix(),
+                   XDG_CACHE_HOME=(tmp / 'cache').as_posix())  # never the developer's interpreter cache
 
         def run(args, payload=''):
             # A hook writes in the locale's code page under some runners: decoded leniently.
@@ -105,7 +106,10 @@ class PythonFallbackTests(unittest.TestCase):
         for hook, code in (('guard_destructive_git.py', 2), ('context_size.py', 1), ('guard_x/context_size.py', 1),
                            ('guard_x\\context_size.py', 1), ('a\\guard_y.py', 2)):
             with self.subTest(no_python=hook):
-                bare = subprocess.run([sh, str(project / '.claude/hooks/py.sh'), str(project / '.claude/hooks') + '/' + hook],
+                script = Path(str(project / '.claude/hooks') + '/' + hook)  # py.sh refuses a missing file first
+                script.parent.mkdir(parents=True, exist_ok=True)
+                script.touch()
+                bare =subprocess.run([sh, str(project / '.claude/hooks/py.sh'), str(project / '.claude/hooks') + '/' + hook],
                                       input='{}', encoding='utf-8', errors='replace', capture_output=True,
                                       timeout=60, env=dict(env, PATH=str(bin_dir)), cwd=project)
                 self.assertEqual(bare.returncode, code, bare.stderr)
@@ -139,6 +143,44 @@ class PythonFallbackTests(unittest.TestCase):
                   if 'then kit_python=' in line]
         self.assertGreaterEqual(len(chosen), 12, chosen)
         self.assertEqual([line for line in chosen if 'command -v' in line], [])
+
+    def test_py_sh_probes_once_and_never_blocks_on_a_missing_hook(self):
+        # #83: the probe is a second Python start per hook; the interpreter that passed it is cached.
+        # #139: CPython exits 2 on a missing script, which from UserPromptSubmit blocks every prompt.
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, True)
+        bin_dir, hooks, log = tmp / 'bin', tmp / 'hooks', tmp / 'starts.log'
+        bin_dir.mkdir()
+        hooks.mkdir()
+        shutil.copy(OVERLAY / '.claude/hooks/py.sh', hooks)
+        (hooks / 'guard_x.py').write_text('import sys; sys.stdin.read(); sys.exit(2)\n', encoding='utf-8')
+        for name, body in (('python3', 'exit 9009'),
+                           ('python', 'printf "%%s\\n" "$*" >>"%s"\nexec "%s" "$@"' % (log.as_posix(), Path(sys.executable).as_posix()))):
+            (bin_dir / name).write_text('#!/bin/sh\n%s\n' % body, encoding='utf-8')
+            (bin_dir / name).chmod(0o755)
+        cache = tmp / 'cache/myagentkit-python'
+        env = dict(os.environ, PATH=os.pathsep.join([str(bin_dir), os.environ['PATH']]),
+                   XDG_CACHE_HOME=(tmp / 'cache').as_posix())
+
+        def hook(name):
+            log.write_text('', encoding='utf-8')
+            result = subprocess.run(['sh', str(hooks / 'py.sh'), (hooks / name).as_posix()], input='{}', env=env,
+                                    encoding='utf-8', errors='replace', capture_output=True, timeout=60)
+            return result, sum(1 for line in log.read_text(encoding='utf-8').splitlines() if line.startswith('-I -c'))
+
+        for state in ('empty', 'cached', 'stale'):
+            with self.subTest(cache=state):
+                if state == 'stale':
+                    cache.write_text('python3\n', encoding='utf-8')  # an interpreter that stopped running
+                result, probes = hook('guard_x.py')
+                self.assertEqual(result.returncode, 2, result.stderr)  # the guard ran and blocked
+                self.assertEqual(probes, 0 if state == 'cached' else 1)
+                self.assertEqual(cache.read_text(encoding='utf-8'), 'python\n')
+        for name, code in (('context_size.py', 1), ('plain_report.py', 1), ('guard_gone.py', 2)):
+            with self.subTest(missing=name):
+                result, _ = hook(name)
+                self.assertEqual(result.returncode, code, result.stderr)
+                self.assertIn('hook file missing or unreadable', result.stderr)
 
     def test_py_sh_passes_the_kit_shell_lint(self):
         # The kit check refused py.sh's `echo` of an expansion (Codex review of f68a68d).
