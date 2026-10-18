@@ -107,6 +107,29 @@ class OwnsCheckTests(unittest.TestCase):
             self.assertEqual(code, 1, errors)
             self.assertIn('  other.txt\n', errors)
 
+    def test_globs_follow_git_rules(self):
+        # fnmatch let '*' cross '/' (`*.md` owned docs/DESIGN.md) and needed a folder for '**/'.
+        for path in ('top.md', 'docs/DESIGN.md', 'tests/test_a/deep/b.py', 'src/sim/b.cpp', 'src/sim/x/y/c.cpp'):
+            self.write(path)
+        code, errors = self.check('Owns: *.md, tests/test_*.py, src/sim/**/*.cpp')
+        self.assertEqual(code, 1, errors)
+        self.assertEqual(errors.split(':\n', 1)[1], '  docs/DESIGN.md\n  tests/test_a/deep/b.py\n')
+        code, errors = self.check('Owns: docs/**, tests/**, src/**/b.cpp, src/**/c.cpp')
+        self.assertEqual(errors.split(':\n', 1)[1], '  top.md\n')
+
+    def test_owns_in_a_code_block_is_skipped_and_a_second_line_is_refused(self):
+        # An example `Owns: *` in a fenced block above the real line owned every path.
+        self.write('other.txt')
+        for brief in ('```\nOwns: *\n```\nOwns: src/', '~~~~md\nOwns: *\n~~~~\n> Owns: src/'):
+            code, errors = self.check(brief)
+            self.assertEqual(code, 1, errors)
+            self.assertIn('  other.txt\n', errors)
+        code, errors = self.check('Owns: *\nOwns: src/')
+        self.assertEqual(code, 2)
+        self.assertIn('2 Owns: lines', errors)
+        # An unclosed fence runs to the end, so its Owns: line is not read.
+        self.assertEqual(self.check('```\nOwns: *')[0], 2)
+
     def test_worker_reports_are_allowed_only_at_the_repository_root(self):
         for name in ('RESULT-worker.md', 'QUESTION-worker.md'):
             self.write(name)

@@ -27,8 +27,9 @@ Name the model and effort from `docs/WORKFLOW.md`, "Model routing", alongside th
    read, never from memory. A path that has moved sends the implementer somewhere else and
    the diff comes back in the wrong place.
    **Owns:** one line, `Owns: src/combat/, tests/test_combat_*.py`: the paths the worker may
-   change, a folder ending in `/` or an fnmatch pattern, comma-separated; `docs/STATE.md` and
-   `docs/BACKLOG.md` are always allowed. With the brief as `REVIEW_TASK_FILE`,
+   change, a folder ending in `/` or a glob with git's rules (`*` stays in one folder, `**/`
+   spans zero or more), comma-separated; code blocks are skipped, a second line is refused;
+   `docs/STATE.md` and `docs/BACKLOG.md` are always allowed. With the brief as `REVIEW_TASK_FILE`,
    `scripts/review.sh` refuses a diff that leaves them (`scripts/owns_check.py`). In cross
    mode every brief has it, and the two sides never own the same path.
 3. **Constraints:** the rules THIS task can break, quoted verbatim (the one-module rule, the
