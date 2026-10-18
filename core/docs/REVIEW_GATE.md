@@ -35,9 +35,9 @@ with the reason in the brief; a working mode never lowers it.
 
 | Tier | What | Review |
 |---|---|---|
-| low | documentation that alters no behaviour rule, tests only, one file outside the rows below | one light reviewer, medium effort |
-| medium | code in {{RISKY_AREAS}} outside the high row; documentation that alters a behaviour rule (`AGENTS.md`, `docs/AGENTS.md`, `docs/WORKFLOW.md`, `docs/HANDOFF.md`, this file, `docs/REVIEW_RUNNING.md`) | one reviewer, medium effort |
-| high | gates, hooks, check scripts, review tooling, the state helper (`scripts/working_mode.py`), deleting or moving files, concurrency, CI, tool settings, critical work | two fresh reviewers, `REVIEW_FOCUS=portability` and `logic`, each at high effort, one after the other unless {{OWNER_NAME}} allows parallel; {{OWNER_NAME}} reads the diff before the merge |
+| low | documentation (a behaviour-rule document such as `AGENTS.md`, `docs/WORKFLOW.md` or this file included), tests only, one file outside the rows below | one light reviewer, medium effort |
+| medium | code in {{RISKY_AREAS}} outside the high row | one reviewer, medium effort |
+| high | gates, hooks, check scripts, review tooling, the state helper (`scripts/working_mode.py`), deleting or moving files, concurrency, CI, tool settings | two fresh reviewers, `REVIEW_FOCUS=portability` and `logic`, each at high effort, one after the other unless {{OWNER_NAME}} allows parallel; {{OWNER_NAME}} reads the diff before the merge |
 
 Before a high-tier merge the lead gives {{OWNER_NAME}} a ten-line summary and the diff. When
 the diff is too long to read, a longer summary lists every changed file with its line counts,
@@ -50,12 +50,11 @@ Every tier's review is a gate: the change does not pass without its result
 - **Review tooling** is the code that runs a review: `scripts/review.sh`, the bridges and the
   dispatcher (`scripts/claude_bridge.py`, `scripts/codex_bridge.py`,
   `scripts/review_dispatch.py`) and a reviewer's agent definition (the Claude Code overlay's
-  `diff-reviewer.md`). The review protocol documents are behaviour-rule documents, the
-  medium row.
+  `diff-reviewer.md`). The review protocol documents are documentation, the low row.
 - **Critical work** is architecture, a gate's or the review tooling's design, and a security
-  boundary. It is always the high tier; the brief writes `Risk: high (critical)` and
-  `REVIEW_RISK` stays `high`. "Critical" changes only who writes and who reviews it
-  (`docs/WORKFLOW.md`, "Model routing", rule 7).
+  boundary. It is a mark beside the tier, not a tier: the brief writes `Risk: <tier>
+  (critical)`, `REVIEW_RISK` stays the tier, and the mark changes only who writes and who
+  reviews it (`docs/WORKFLOW.md`, "Model routing", rule 7).
 
 ## Rounds
 

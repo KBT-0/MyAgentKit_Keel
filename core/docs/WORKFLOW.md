@@ -628,7 +628,7 @@ Rules for whoever routes work, binding with any table:
    back at once, unasked (`AGENTS.md`, "Duties toward {{OWNER_NAME}}").
 7. **Critical work is written by Opus until {{OWNER_NAME}} says otherwise** (owner decision,
    2026-10-15): architecture, a gate's or the review tooling's design, a security boundary.
-   It is always the high tier, written `Risk: high (critical)` in the brief
+   The brief marks it `Risk: <tier> (critical)`; the mark keeps the tier
    (`docs/REVIEW_GATE.md`, "Risk tiers").
    It never goes to the plugged family, in saver too. In solo, the subscription's stronger
    Claude tier (Fable today, rule 2's check) reviews it; on a plan without Fable, Opus reviews

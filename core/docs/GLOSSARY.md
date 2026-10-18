@@ -14,7 +14,8 @@ whenever the owner asks what a term means.
 - **brief**: the written task prompt a worker receives (`docs/HANDOFF.md`).
 - **compaction**: the tool summarising a long conversation to free space; details are lost.
 - **critical work**: architecture, a gate's or the review tooling's design, or a security
-  boundary; always the high risk tier, with its own author and reviewer rule
+  boundary; a mark beside the risk tier, `Risk: <tier> (critical)`, with its own author and
+  reviewer rule
   (`docs/WORKFLOW.md`, "Model routing", rule 7).
 - **context**: everything the model reads on each request; it grows all session and is paid
   for on every turn.

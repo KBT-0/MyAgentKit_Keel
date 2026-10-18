@@ -20,8 +20,8 @@ state, open work, and details that are hard to reproduce.
 ## The brief
 
 Every brief includes `Route: quick|build|deep · Risk: low|medium|high · Checks: ...`
-(`docs/WORKFLOW.md`, "Model routing", defines the values; critical work writes
-`Risk: high (critical)`). Name the model and effort from `docs/WORKFLOW.md`, "Model routing", alongside that line.
+(`docs/WORKFLOW.md`, "Model routing", defines the values; critical work adds a
+mark, `Risk: <tier> (critical)`). Name the model and effort from `docs/WORKFLOW.md`, "Model routing", alongside that line.
 
 1. **Task:** one paragraph, exact scope, explicit non-goals ("do not touch X").
 2. **Files:** full paths and member names — verified to exist RIGHT NOW with grep or a
