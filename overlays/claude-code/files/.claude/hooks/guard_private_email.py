@@ -10,7 +10,7 @@ person's own address (owner decision 2026-10-15).
 
 The addresses are git's `user.email` (every scope), read in the project ($CLAUDE_PROJECT_DIR)
 and in the hook's own folder, so a per-project identity counts wherever the shell last changed
-directory (#211), and any listed, comma-separated, in MYAGENTKIT_PRIVATE_EMAILS: the Claude account's address can differ from git's. The request is
+directory (#211), and any listed in MYAGENTKIT_PRIVATE_EMAILS, separated by commas, semicolons or spaces (#268): the Claude account's address can differ from git's. The request is
 URL-decoded until it stops changing and case-folded before the match. A web command that
 names the address list or git's `user.email`, or runs what prints an address at run time (`git
 log/show/whatchanged` without `--oneline`, the `oneline`/`reference` format or a custom format
@@ -78,7 +78,7 @@ try:
 except Exception as exc:
     block(f"guard_private_email.py could not read the owner's address from git ({exc}), so it "
           "cannot tell whether this request carries it. Report this to the owner.")
-emails = {e.strip().casefold() for e in found.split() + os.environ.get("MYAGENTKIT_PRIVATE_EMAILS", "").split(",")}
+emails = {e.casefold() for e in re.split(r"[\s,;]+", found + " " + os.environ.get("MYAGENTKIT_PRIVATE_EMAILS", ""))}
 for _ in range(10):  # %2540 -> %40 -> @
     decoded = unquote(text)
     if decoded == text:

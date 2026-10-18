@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""PostToolUse(Edit|Write): warn about a forbidden import the moment it is written.
+"""PostToolUse(Edit|Write|NotebookEdit): warn about a forbidden import the moment it is written.
 
-It sees Edit and Write only: a write through the shell (sed, a here-document, a script run by
+It sees Edit, Write and NotebookEdit only: a write through the shell (sed, a here-document, a script run by
 Bash or PowerShell) names no file to the hook, so it gets no early warning here (#151); the gate
-below still catches it.
+below still catches it. A notebook cell (NotebookEdit) is checked against the ".py" entries: a
+Jupyter cell is Python code, and an ".ipynb" path never ended in ".py", so it went unchecked
+(#264). On Windows the path and the suffix match in any case, as the filesystem does.
 
 It warns after the write; scripts/check.sh is the gate (a PostToolUse hook cannot block, the
 tool already ran: https://code.claude.com/docs/en/hooks).
@@ -16,6 +18,7 @@ scripts/check.sh. If the two disagree, scripts/check.sh is the authority — it 
 runs, and this file is convenience for a single tool.
 """
 import json
+import os
 import sys
 
 # (path fragment, file suffix, forbidden tokens, message)
@@ -33,12 +36,13 @@ BOUNDARIES = [
 data = json.loads(sys.stdin.buffer.read().decode("utf-8"))
 tool_input = data.get("tool_input", {})
 # Native Windows sends the path with backslashes; the fragments use "/" (hooks reference).
-path = tool_input.get("file_path", "").replace("\\", "/")
+path = (tool_input.get("file_path") or tool_input.get("notebook_path") or "").replace("\\", "/")
 # Write sends `content`; Edit sends `new_string`. An earlier version read `new_str` — a
 # field no tool sends — so everything written through Edit went uninspected while the hook
 # looked installed. If these names drift, this hook is inert again: verify them against the
-# tool's actual schema, not from memory.
-content = "".join(tool_input.get(k) or "" for k in ("content", "new_string"))
+# tool's actual schema, not from memory. NotebookEdit sends `notebook_path` and `new_source`.
+content = "".join(tool_input.get(k) or "" for k in ("content", "new_string", "new_source"))
+fold = str.casefold if os.name == "nt" else str
 
 unconfigured = [b for b in BOUNDARIES if isinstance(b, str)]
 if unconfigured:
@@ -53,7 +57,8 @@ if unconfigured:
     sys.exit(0)
 
 for fragment, suffix, tokens, why in BOUNDARIES:
-    if fragment not in path or not path.endswith(suffix):
+    suffixes = (suffix, ".ipynb") if suffix == ".py" else (suffix,)
+    if fold(fragment) not in fold(path) or not fold(path).endswith(tuple(map(fold, suffixes))):
         continue
     hits = [t for t in tokens if t in content]
     if not hits:

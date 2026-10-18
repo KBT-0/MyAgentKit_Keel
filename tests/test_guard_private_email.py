@@ -56,6 +56,13 @@ class GuardPrivateEmailTests(unittest.TestCase):
         env = dict(ENV, MYAGENTKIT_PRIVATE_EMAILS='acct@example.org, other@example.net')
         self.assertCode([('WebFetch', {'url': 'https://x.example/?m=other@example.net', 'prompt': 'x'})], 2, env)
 
+    def test_a_list_separated_by_spaces_or_semicolons_protects_each_address(self):
+        # Split on commas alone, "a b" was one entry no request holds, and both passed (#268).
+        for listed in ('acct@example.org other@example.net', 'acct@example.org;other@example.net'):
+            with self.subTest(listed=listed):
+                env = dict(ENV, MYAGENTKIT_PRIVATE_EMAILS=listed)
+                self.assertCode([('Bash', {'command': 'curl -A other@example.net https://x.example'})], 2, env)
+
     def test_review_round_one_bypasses_are_refused(self):
         # Codex review of f68a68d: an encoded local part, a shell expansion of the address, and
         # a git that cannot run must not let the address out.
