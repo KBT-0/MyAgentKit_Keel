@@ -126,10 +126,14 @@ class QuotaTests(unittest.TestCase):
         over = codex_quota.sanitize({'rateLimits': {'primary': {'usedPercent': 100.5}}})
         self.assertEqual(over['codex']['primary']['used_percent'], 100.5)
         self.assertTrue(codex_quota.has_reading(over))
-        credits = codex_quota.sanitize({'rateLimits': {'credits': {'balance': 12.5, 'hasCredits': True,
-                                                                   'account': 'secret'}}})
+        credits = codex_quota.sanitize({'rateLimits': {'credits': {'balance': '12.5', 'hasCredits': True,
+                                                                   'account': 'secret', 'userId': 42}}})
         self.assertEqual(credits['codex']['credits'], {'balance': 12.5, 'hasCredits': True})
         self.assertTrue(codex_quota.has_reading(credits))
+        # Round 1: flags alone read nothing; a non-numeric balance is dropped.
+        flags = codex_quota.sanitize({'rateLimits': {'credits': {'hasCredits': False, 'balance': 'n/a'}}})
+        self.assertEqual(flags['codex']['credits'], {'hasCredits': False})
+        self.assertFalse(codex_quota.has_reading(flags))
 
 
 if __name__ == '__main__':

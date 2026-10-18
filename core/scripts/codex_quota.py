@@ -33,18 +33,29 @@ def sanitize(result):
                 item[window] = {"used_percent": percent,
                                 "window_minutes": minutes if type(minutes) is int and minutes > 0 else None,
                                 "resets_at": resets if type(resets) is int and resets >= 0 else None}
-        # Numbers and flags only: a credits object may sit beside the windows or alone.
+        # Named fields only, since the app-server's credits shape is not verified: a balance
+        # (a number, or a numeric string) and the hasCredits and unlimited flags.
         credits = value.get("credits")
         if isinstance(credits, dict):
-            item["credits"] = {str(name): field for name, field in credits.items()
-                               if isinstance(field, (bool, int)) or (isinstance(field, float) and math.isfinite(field))}
+            kept = {name: credits[name] for name in ("hasCredits", "unlimited")
+                    if isinstance(credits.get(name), bool)}
+            balance = credits.get("balance")
+            try:
+                balance = float(balance) if isinstance(balance, (str, int, float)) and not isinstance(balance, bool) else None
+            except ValueError:
+                balance = None
+            if balance is not None and math.isfinite(balance):
+                kept["balance"] = balance
+            item["credits"] = kept
         safe[str(key)] = item
     return safe
 
 
 def has_reading(buckets):
-    """True when a bucket holds a window percent or a credits field, not only nulls."""
-    return any(item["primary"] or item["secondary"] or item.get("credits") for item in buckets.values())
+    """True when a bucket holds a window percent or a credits balance; flags alone
+    ({"hasCredits": false}) read nothing."""
+    return any(item["primary"] or item["secondary"] or "balance" in item.get("credits", {})
+               for item in buckets.values())
 
 
 # Five seconds and 1,000,000 bytes are the owner's choice of telemetry safeguards,

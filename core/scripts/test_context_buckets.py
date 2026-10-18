@@ -127,6 +127,15 @@ class ContextBucketsTests(unittest.TestCase):
             self.assertEqual(self.row(report, '0-100k')[:4], ['0-100k', '3', '0', '(0.0)'])
             self.assertEqual(self.row(report, '0-100k')[6:8], ['1', '(33.3)'])
             self.assertNotIn('b compaction', report)
+            # Round 1: a copied request still sets the context, so a #fix after the resume
+            # lands in its real bucket, not in 0-100k.
+            for name, records in (('p', [dict(request('r', 250_000), uuid='u9')]),
+                                  ('c', [dict(request('r', 250_000), uuid='u9'), dict(prompt('#fix'), uuid='u8')])):
+                (Path(tmp) / (name + '.jsonl')).write_text(''.join(json.dumps(r) + '\n' for r in records),
+                                                           encoding='utf-8')
+            resumed = context_buckets.report([Path(tmp) / 'p.jsonl', Path(tmp) / 'c.jsonl'], '')
+            self.assertEqual(self.row(resumed, '200-300k')[:2] + self.row(resumed, '200-300k')[8:10],
+                             ['200-300k', '1', '1', '(100.0)'])
             import agent_cost
             seen = set()
             self.assertEqual(len(agent_cost.requests(paths[0], seen)), 2)

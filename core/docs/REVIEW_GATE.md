@@ -50,6 +50,10 @@ without a focus counts toward every focus. The rounds used are the current focus
 unset or never-seen focus takes the highest count under the label, so unsetting or renaming
 the focus never opens a fresh budget. The prompt's "round N" is that count plus one, and it
 carries only the current focus's earlier reports and reports without a focus.
+Every completed review whose archive matches its record is carried and counts. It leaves the
+count only when the checkpoint the dispatcher wrote after that same attempt says the chain
+failed (a checkout that changed during the review, `stale_checkout`); it is still carried. A
+pending, missing or damaged checkpoint, or an earlier attempt's failure, leaves it counted.
 Round 2 confirms every finding the dispositions claim fixed, a Medium
 included, and reports new Critical or High only. A third round needs
 `REVIEW_ROUND_EXCEPTION=<reason>`, kept in the record; what remains goes to {{OWNER_NAME}}

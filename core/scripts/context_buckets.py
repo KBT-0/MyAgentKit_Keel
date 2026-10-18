@@ -90,8 +90,6 @@ def events(path: Path, since: str, seen: set | None = None,
                 if not copied:
                     out.append(('compact', 0))
                 continue
-            if copied:
-                continue
             msg = rec.get('message')
             if not isinstance(msg, dict):
                 continue
@@ -102,9 +100,13 @@ def events(path: Path, since: str, seen: set | None = None,
                               ('input_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens'))
                     # Streaming writes one request as several records.
                     rid = ('request', rec.get('requestId') or msg.get('id') or id(rec))
-                    if rid not in seen:
+                    if rid not in seen and not copied:
                         seen.add(rid)
                         out.append(('request', ctx))
+                # A copied record still set the context above, so a prompt after a resume lands
+                # in its real bucket; nothing in it is counted again.
+                if copied:
+                    continue
                 for call in msg.get('content') or []:
                     command = str((call.get('input') or {}).get('command', '')) if isinstance(call, dict) else ''
                     if call_id := isinstance(call, dict) and call.get('id'):
@@ -115,7 +117,7 @@ def events(path: Path, since: str, seen: set | None = None,
                         out.append(('push', ctx))
                         if pushes is not None:
                             pushes.append((path.stem, str(rec.get('timestamp', '?')), ctx, ' '.join(command.split())))
-            elif rec.get('type') == 'user':
+            elif rec.get('type') == 'user' and not copied:
                 body = refusals(msg.get('content'))
                 out += [(kind, ctx) for kind, sign in SIGNS.items() if sign in body]
                 # A prompt with a pasted image is a list of blocks; text() reads only their

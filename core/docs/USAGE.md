@@ -37,8 +37,8 @@ default. A lack of records means no recorded evidence, not zero historical usage
 `python3 scripts/usage_summary.py --repo .` lists the recorded invocations per task and per
 model and effort: review rounds, verdicts, duration and rejects; `--task LABEL` limits it to
 one label. Rounds are numbered per `REVIEW_FOCUS`, as the two-round cap counts them. A round
-is a completed review whose dispatch chain's last checkpoint, when one is recorded, says
-completed, the same rule the two-round cap uses; a verdict is read only from an archive that
+is a completed review unless the checkpoint its dispatcher wrote after it says the chain
+failed, the same rule the two-round cap uses (`docs/REVIEW_GATE.md`, "Rounds"); a verdict is read only from an archive that
 still matches its record's sha256. Worker and sub-agent errands write no record, so they
 are not in it.
 

@@ -19,7 +19,7 @@ with a note to move it (KARARLAR D09 inv2#80).
 
 | Variable | Meaning |
 |---|---|
-| `MYAGENTKIT_TASK_ID` | the change's label; rounds under it carry the earlier ones, two at most |
+| `MYAGENTKIT_TASK_ID` | the change's label; rounds under it carry the earlier ones, two at most (a review its dispatcher failed afterwards is carried but not counted: `docs/REVIEW_GATE.md`, "Rounds") |
 | `REVIEW_DISPOSITIONS` | answers to every earlier round (round 1 by default), one line per finding: `fixed:` / `disproved:` / `deferred:` |
 | `REVIEW_ROUND_EXCEPTION` | reason for a third round, kept in the record |
 | `REVIEW_RISK` | `low` / `medium` / `high`, the brief's tier |

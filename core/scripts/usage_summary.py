@@ -3,8 +3,8 @@
 """Summarize the recorded review and proposal invocations by task and by model and effort.
 
 Only the review adapters write records, so worker and sub-agent errands are not counted here.
-A round is a completed review attempt whose dispatch chain's last checkpoint, when one is
-recorded, says completed (claude_bridge.chain_status, which prior_rounds reads too);
+A round is a completed review attempt unless the checkpoint its dispatcher wrote after it says
+the chain failed (claude_bridge.chain_failure, the rule of the two-round cap too);
 a shadow run (REVIEW_SHADOW=1) is listed apart and is no round. A verdict is read only from
 an archive whose bytes still match the record's sha256; the findings are counted from it.
 The author's dispositions carried by a round answer the earlier rounds under its label, so
@@ -24,7 +24,7 @@ import sys
 
 # The findings parser the review gate uses, found beside this file under `python -I` too.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from claude_bridge import chain_checkpoints, chain_status, review_parts  # noqa: E402
+from claude_bridge import chain_failure, review_parts  # noqa: E402
 
 CLAIM_KEYS = ('fixed', 'disproved', 'deferred')
 # Owner's choice, not measurements: KARARLAR B03 inv2#57/#58/(d), 2026-10-15.
@@ -151,8 +151,8 @@ def main():
     parser.add_argument('--task', help='summarize only the records of this task label')
     args = parser.parse_args()
     usage = args.repo / '.myagentkit/usage'
-    # One listing for every chain id: a listing per chain id grew with chains times checkpoints.
-    rows, unreadable, checkpoints = [], 0, chain_checkpoints(usage)
+    # One checkpoint read per record: a listing of chains/ per chain id grew quadratically.
+    rows, unreadable = [], 0
     # Not recursive: chains/ holds successive dispatch snapshots, not more paid invocations.
     for path in usage.glob('*.json'):
         try:
@@ -169,10 +169,9 @@ def main():
         if not completed:
             verdict, why = None, '%s/%s' % (record.get('status'), record.get('failure_kind') or '-')
         chain = record.get('review_chain_id')
-        if completed and chain and chain in checkpoints:
-            status = chain_status(checkpoints[chain])
-            if status.split('/')[0] != 'completed':
-                completed, verdict, why = False, None, 'chain ' + status
+        status = completed and chain_failure(usage, chain, record.get('review_attempt'))
+        if status:
+            completed, verdict, why = False, None, 'chain ' + status
         shadow = record['task'].get('shadow') == 'yes'
         measured = completed and record['task'].get('kind') == 'review'
         record.update(effort=effort, verdict=verdict, why=why, shadow=shadow, accepted=0, claimed=0,
@@ -205,7 +204,7 @@ def main():
         # Each REVIEW_FOCUS keeps its own snapshot: a reviewer saw only its own focus's rounds and
         # the unfocused ones, an unfocused one only those (claude_bridge.prior_rounds); its file
         # answers what it saw.
-        earlier, snapshots, counts, unfocused = [], {}, defaultdict(int), 0
+        earlier, snapshots, counts, unfocused = [], {}, {}, 0
         for record in records:
             claims = record['task'].get('dispositions')
             focus = focus_of(record)
@@ -226,13 +225,14 @@ def main():
                 snapshots[focus] = (seen, claims)
             if record['round']:
                 earlier.append(record)
-                # Per REVIEW_FOCUS, as claude_bridge.prior_rounds counts toward the cap: an
-                # unfocused round counts toward every focus.
+                # Exactly as claude_bridge.prior_rounds counts toward the cap: an unfocused round
+                # counts toward every focus, and a focus not seen yet takes the highest count.
+                record['number'] = 1 + unfocused + (counts[focus] if focus in counts
+                                                    else max(counts.values(), default=0))
                 if focus:
-                    counts[focus] += 1
+                    counts[focus] = counts.get(focus, 0) + 1
                 else:
                     unfocused += 1
-                record['number'] = unfocused + (counts[focus] if focus else max(counts.values(), default=0))
         for answered, latest_claims in snapshots.values():
             weights = [round_['findings'] for round_ in answered]
             if not sum(weights):

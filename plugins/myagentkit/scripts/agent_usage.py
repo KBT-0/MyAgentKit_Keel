@@ -337,7 +337,9 @@ def record(repo: Path, provider: str, model: str, requester: str, task: dict,
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:12]
     # A rate-limited attempt inside a dispatch chain may be retried by the dispatcher, which
     # decides after this record is written: unknown here, its chain checkpoint says (#280).
-    retry = None if os.environ.get("MYAGENTKIT_REVIEW_CHAIN_ID") and reason == "rate_limited" else False
+    # The dispatcher retries Codex only, so a Claude record is never retried automatically.
+    retry = (None if provider == "codex" and os.environ.get("MYAGENTKIT_REVIEW_CHAIN_ID")
+             and reason == "rate_limited" else False)
     recovery = {"action": "inspect_result" if status == "completed" else "continue_independent_work",
                 "review_approved": False, "automatic_retry": retry,
                 "instruction": "Keep required review pending; do not approve, commit, or push its protected diff."}
@@ -415,17 +417,13 @@ def main():
     rows, unreadable = [], 0
     for path in sorted((args.repo / ".myagentkit/usage").glob("*.json")):
         # One damaged record is skipped and counted, as usage_summary.py does, not a traceback
-        # that hides every other row.
+        # that hides every other row. Only the task filter needs a field here; the text rows
+        # default what an older record lacks, so --json lists every record it can parse.
         try:
             value = json.loads(path.read_text(encoding="utf-8"))
         except Exception:  # RecursionError on deep nesting is damage too
             value = None
-        if (not isinstance(value, dict) or not isinstance(value.get("task"), dict)
-                or not isinstance(value.get("usage"), dict)
-                or any(key not in value for key in ("invocation_id", "requester_reported", "callee",
-                                                    "model_requested", "status", "failure_kind"))
-                or any(key not in value["usage"] for key in ("input_tokens", "cache_read_tokens",
-                                                             "output_tokens", "api_cost_usd_reported"))):
+        if not isinstance(value, dict) or not isinstance(value.get("task"), dict):
             unreadable += 1
             continue
         if args.task_id and value["task"].get("id") != args.task_id:
@@ -437,25 +435,31 @@ def main():
         print("No recorded invocations. This does not mean zero historical usage.")
     else:
         for row in rows:
-            u = row["usage"]
-            print(f'{row["invocation_id"]} {row["task"].get("id")} '
-                  f'{row["requester_reported"]} -> {row["callee"]}/{row["model_requested"]} '
-                  f'{row["status"]}/{row["failure_kind"]} input={u["input_tokens"]}'
-                  # Codex input already counts the cache reads (docs/USAGE.md): never add them.
-                  f'{" (includes cache_read)" if u.get("input_includes_cache") else ""} '
-                  f'cache_read={u["cache_read_tokens"]} cache_write={u.get("cache_creation_tokens")} '
-                  f'output={u["output_tokens"]} '
-                  f'api_usd={u["api_cost_usd_reported"]} subscription%=unknown')
-            snapshots = u.get("account_quota_snapshots") or {}
-            for when in ("before", "after"):
-                snapshot = snapshots.get(when) or {}
-                for bucket, value in snapshot.get("buckets", {}).items():
-                    for window in ("primary", "secondary"):
-                        observed = value.get(window)
-                        if observed:
-                            print(f'  quota_{when} {bucket}/{window} plan={value.get("plan_type")} '
-                                  f'used={observed["used_percent"]}% window={observed["window_minutes"]}m '
-                                  '(account observation; not a per-call debit)')
+            # Built whole before printing: a misshapen field skips this row, never the report.
+            try:
+                u = row.get("usage") if isinstance(row.get("usage"), dict) else {}
+                lines = [f'{row.get("invocation_id")} {row["task"].get("id")} '
+                         f'{row.get("requester_reported")} -> {row.get("callee")}/{row.get("model_requested")} '
+                         f'{row.get("status")}/{row.get("failure_kind")} input={u.get("input_tokens")}'
+                         # Codex input already counts the cache reads (docs/USAGE.md): never add them.
+                         f'{" (includes cache_read)" if u.get("input_includes_cache") else ""} '
+                         f'cache_read={u.get("cache_read_tokens")} cache_write={u.get("cache_creation_tokens")} '
+                         f'output={u.get("output_tokens")} '
+                         f'api_usd={u.get("api_cost_usd_reported")} subscription%=unknown']
+                snapshots = u.get("account_quota_snapshots") or {}
+                for when in ("before", "after"):
+                    snapshot = snapshots.get(when) or {}
+                    for bucket, value in snapshot.get("buckets", {}).items():
+                        for window in ("primary", "secondary"):
+                            observed = value.get(window)
+                            if observed:
+                                lines.append(f'  quota_{when} {bucket}/{window} plan={value.get("plan_type")} '
+                                             f'used={observed["used_percent"]}% window={observed["window_minutes"]}m '
+                                             '(account observation; not a per-call debit)')
+            except (AttributeError, KeyError, TypeError):
+                unreadable += 1
+                continue
+            print("\n".join(lines))
     if unreadable:
         # stderr under --json, so the JSON on stdout stays one parseable document.
         print(f"Unreadable records skipped: {unreadable}", file=sys.stderr if args.json else sys.stdout)

@@ -5639,29 +5639,42 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         self.assertEqual(code, 2, refused)
         self.assertIn('earlier review evidence', refused['error'])
 
-    def test_a_round_whose_chain_failed_is_not_carried_or_counted(self):
+    def test_a_round_whose_chain_failed_is_carried_but_not_counted(self):
         # #258: the dispatcher can fail a chain (stale_checkout) after the adapter recorded a
-        # completed review; prior_rounds and usage_summary share one definition of a round.
+        # completed review. Only the checkpoint written after that same attempt, saying failed,
+        # takes it out of the count; it is still carried. Anything unclear counts (fail closed).
         log = self.root / 'prompt.txt'
-        task = {'PROMPT_LOG': str(log), 'MYAGENTKIT_TASK_ID': 'stale-task'}
         chains = self.repo / '.myagentkit/usage/chains'
-        for chain in ('s1', 's2'):
-            self.assertEqual(self.run_bridge('reject', env_extra=dict(task, MYAGENTKIT_REVIEW_CHAIN_ID=chain))[0], 0)
-            chains.mkdir(parents=True, exist_ok=True)
-            (chains / (chain + '-1.json')).write_text(json.dumps({'status': 'failed', 'failure_kind': 'stale_checkout'}))
-        code, result = self.run_bridge(env_extra=task)
-        self.assertEqual(code, 0, result)
-        self.assertNotIn('### Round', log.read_text())
-        # A completed chain stands as before; a damaged one is refused, not read as failed.
-        # s1 and the run above are two rounds now, so the next one needs the exception.
-        task['REVIEW_ROUND_EXCEPTION'] = 'test'
-        (chains / 's1-2.json').write_text(json.dumps({'status': 'completed'}))
-        self.assertEqual(self.run_bridge(env_extra=task)[0], 0)
-        self.assertIn('This is review round 3', log.read_text())
-        (chains / 's1-3.json').write_text('{')
-        code, refused = self.run_bridge(env_extra=task)
-        self.assertEqual(code, 2, refused)
-        self.assertIn('s1-3.json', refused['error'])
+        chains.mkdir(parents=True)
+        failed_after = {'status': 'failed', 'failure_kind': 'stale_checkout', 'attempts': [{'status': 'completed'}]}
+        cases = (
+            ('stale', {'-1': failed_after}, False),
+            # a dispatcher killed after the review finished: only its pending checkpoint
+            ('killed', {'-0': {'status': 'pending', 'failure_kind': None, 'attempts': []}}, True),
+            # an earlier attempt failed, the record is attempt 2, its checkpoint never written
+            ('retried', {'-1': {'status': 'failed', 'failure_kind': 'rate_limited',
+                                'attempts': [{'status': 'failed'}]}}, True),
+            ('damaged', {'-1': '{'}, True))
+        for label, checkpoints, counted in cases:
+            with self.subTest(label=label):
+                task = {'PROMPT_LOG': str(log), 'MYAGENTKIT_TASK_ID': 'chain-' + label}
+                for chain in ('a', 'b'):
+                    chain = label + chain
+                    attempt = '2' if label == 'retried' else '1'
+                    code, _ = self.run_bridge('reject', env_extra=dict(
+                        task, MYAGENTKIT_REVIEW_CHAIN_ID=chain, MYAGENTKIT_REVIEW_ATTEMPT=attempt))
+                    self.assertEqual(code, 0)
+                    for suffix, value in checkpoints.items():
+                        (chains / (chain + suffix + '.json')).write_text(
+                            value if isinstance(value, str) else json.dumps(value))
+                code, result = self.run_bridge(env_extra=task)
+                if counted:
+                    self.assertEqual(code, 2, result)
+                    self.assertIn('already has 2 completed rounds', result['error'])
+                else:
+                    self.assertEqual(code, 0, result)
+                    self.assertIn('This is review round 1', log.read_text())
+                    self.assertIn('### Round 2', log.read_text())  # both stale rounds carried
 
     def test_default_reviewer_is_claude_and_codex_remains_explicit(self):
         result = self.run_wrapper('--uncommitted', CLAUDE_CLI_BIN=str(self.fixture),

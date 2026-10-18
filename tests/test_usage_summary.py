@@ -33,7 +33,7 @@ class UsageSummaryTests(unittest.TestCase):
         if report is not None:
             evidence = self.repo / 'docs/reviews' / (name + '.md')
             evidence.write_bytes(report)
-        with mock.patch.dict(os.environ, {'MYAGENTKIT_REVIEW_CHAIN_ID': chain}):
+        with mock.patch.dict(os.environ, {'MYAGENTKIT_REVIEW_CHAIN_ID': chain, 'MYAGENTKIT_REVIEW_ATTEMPT': '1'}):
             path, _ = agent_usage.record(self.repo, callee, model, 'test',
                                          {'id': task, 'kind': kind, **({'behaviour': behaviour} if behaviour else {}),
                                           **({'dispositions': dispositions} if dispositions else {}),
@@ -49,7 +49,7 @@ class UsageSummaryTests(unittest.TestCase):
         chains.mkdir(exist_ok=True)
         for number, value in enumerate(('pending', status)):
             (chains / f'{chain_id}-{number}.json').write_text(json.dumps(
-                {'chain_id': chain_id, 'task_id': 'T', 'attempts': [{}] * number,
+                {'chain_id': chain_id, 'task_id': 'T', 'attempts': [{'status': 'completed'}] * number,
                  'status': value, 'failure_kind': failure_kind if number else None}), encoding='utf-8')
 
     def summary(self, env=None, *extra):
@@ -128,13 +128,14 @@ class UsageSummaryTests(unittest.TestCase):
                 elif site == 'chain':
                     self.record('deep', 'deep', b'VERDICT: Accept\n', chain='c1')
                     self.chain('c1', 'completed')
-                    (self.repo / '.myagentkit/usage/chains/c1-2.json').write_text(nested, encoding='utf-8')
+                    (self.repo / '.myagentkit/usage/chains/c1-1.json').write_text(nested, encoding='utf-8')
                 else:
                     self.record('deep', 'deep', ('{"effort": %s}' % nested).encode())
                 out = self.summary()
                 self.assertIn('Task healthy: invocations=1 rounds=1', out)
                 self.assertIn({'record': 'Unreadable records skipped: 1',
-                               'chain': 'verdict=none (chain unreadable)',
+                               # #258: a damaged checkpoint is unclear, so the round counts.
+                               'chain': 'Task deep: invocations=1 rounds=1',
                                'evidence': 'Task deep: invocations=1 rounds=1'}[site], out)
 
     def test_a_task_label_the_console_cannot_encode_is_escaped(self):
@@ -342,18 +343,19 @@ class UsageSummaryTests(unittest.TestCase):
                                                  if line.startswith('Pair unknown -> sol:')))
 
     def test_chains_are_listed_once_and_task_filters_the_output(self):
-        # #201: a listing of chains/ per chain id grew with chains times checkpoints.
+        # #201: a listing of chains/ per chain id grew with chains times checkpoints; now each
+        # record reads only its own attempt's checkpoint.
         import usage_summary
         for name in ('a', 'b', 'c'):
             self.record(name, 'T' + name, b'VERDICT: Accept\n', chain='c' + name)
             self.chain('c' + name, 'completed')
         out = io.StringIO()
         out.reconfigure = lambda **_: None
-        with mock.patch.object(usage_summary, 'chain_checkpoints', wraps=usage_summary.chain_checkpoints) as listing, \
+        with mock.patch.object(usage_summary, 'chain_failure', wraps=usage_summary.chain_failure) as listing, \
                 mock.patch.object(sys, 'argv', ['usage_summary', '--repo', str(self.repo)]), \
                 mock.patch.object(sys, 'stdout', out):
             usage_summary.main()
-        self.assertEqual(listing.call_count, 1)
+        self.assertEqual(listing.call_count, 3)  # one checkpoint read per record, no listing
         self.assertIn('Task Tc: invocations=1 rounds=1', out.getvalue())
         out = self.summary(None, '--task', 'Tb')
         self.assertIn('Task Tb: invocations=1 rounds=1', out)
@@ -388,7 +390,8 @@ class UsageSummaryTests(unittest.TestCase):
         self.record('l2', 'U', b'VERDICT: Accept\n', focus='logic')
         self.record('p2', 'U', b'VERDICT: Accept\n', focus='portability')
         lines = [line.split(' kind=')[0] for line in self.summary().split('Task U:')[1].splitlines()[1:5]]
-        self.assertEqual(lines, ['  round=1 focus=logic', '  round=1 focus=portability',
+        # A focus not seen yet takes the highest count so far, as the cap counts it.
+        self.assertEqual(lines, ['  round=1 focus=logic', '  round=2 focus=portability',
                                  '  round=2 focus=logic', '  round=2 focus=portability'])
 
     def test_a_chain_without_a_checkpoint_does_not_unmake_a_round(self):

@@ -503,16 +503,21 @@ class UsageTests(unittest.TestCase):
             # #260: a damaged record is skipped and counted, never a traceback; a Codex row says
             # its input includes the cache reads and shows the cache writes.
             (repo / '.myagentkit/usage/zz.json').write_text('{"truncated')
+            # Round 1: an older record without the text-mode keys is listed by --json and
+            # printed with defaults; a misshapen quota snapshot skips only its own row.
             (repo / '.myagentkit/usage/zy.json').write_text('{"task": {"id": "one"}}')
+            (repo / '.myagentkit/usage/zx.json').write_text(
+                '{"task": {"id": "x"}, "usage": {"account_quota_snapshots": "x"}}')
             result = subprocess.run([sys.executable, str(Path(agent_usage.__file__)), "--repo", tmp],
                                     capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn("Unreadable records skipped: 2", result.stdout)
             self.assertIn("input=None (includes cache_read) cache_read=None cache_write=None", result.stdout)
+            self.assertIn("None one None -> None/None", result.stdout)
             result = subprocess.run([sys.executable, str(Path(agent_usage.__file__)), "--repo", tmp, "--json"],
                                     capture_output=True, text=True, check=True)
-            self.assertEqual(len(json.loads(result.stdout)), 2)
-            self.assertIn("Unreadable records skipped: 2", result.stderr)
+            self.assertEqual(len(json.loads(result.stdout)), 4)
+            self.assertIn("Unreadable records skipped: 1", result.stderr)
 
     def test_automatic_retry_is_unknown_only_where_the_dispatcher_may_retry(self):
         # #280: the dispatcher retries a rate-limited Codex attempt after this record is
@@ -524,12 +529,14 @@ class UsageTests(unittest.TestCase):
             subprocess.run(['git', 'init', '-q', str(repo)], check=True)
             (repo / '.gitignore').write_text('/.myagentkit/\n')
             execution = {"exit_code": 1, "stdout": "", "stderr": "", "duration_ms": 2}
-            for chain, reason, expected in (('c1', 'rate_limited', None), ('c1', 'cli_error', False),
-                                            ('', 'rate_limited', False)):
+            for provider, chain, reason, expected in (('codex', 'c1', 'rate_limited', None),
+                                                      ('codex', 'c1', 'cli_error', False),
+                                                      ('codex', '', 'rate_limited', False),
+                                                      ('claude', 'c1', 'rate_limited', False)):
                 with mock.patch.dict(os.environ, {'MYAGENTKIT_REVIEW_CHAIN_ID': chain}):
-                    _, value = agent_usage.record(repo, "codex", "fixture", "claude/fixture", {"id": "r"},
+                    _, value = agent_usage.record(repo, provider, "fixture", "claude/fixture", {"id": "r"},
                                                   execution, "failed", reason, None)
-                self.assertIs(value["recovery"]["automatic_retry"], expected, (chain, reason))
+                self.assertIs(value["recovery"]["automatic_retry"], expected, (provider, chain, reason))
 
     @posix_only
     def test_a_signal_the_caller_ignores_does_not_cancel_the_review(self):
