@@ -67,8 +67,9 @@ class BootstrapTests(unittest.TestCase):
                     self.assertEqual(subprocess.check_output(['git', 'ls-files', '-s'], cwd=repo), before)
                     commands = [line.strip() for line in result.stdout.splitlines()
                                 if line.strip().startswith('git add --chmod=+x -- ')]
-                    self.assertEqual(commands, ['git add --chmod=+x -- "scripts/check.sh"',
-                                               'git add --chmod=+x -- "scripts/quoted \' \\$kit.sh"'])
+                    # Sorted: bootstrap prints in directory order, which differs between file systems.
+                    self.assertEqual(sorted(commands), ['git add --chmod=+x -- "scripts/check.sh"',
+                                                        'git add --chmod=+x -- "scripts/quoted \' \\$kit.sh"'])
                     # The printed commands must work verbatim from the target, including quoting.
                     for command in commands:
                         subprocess.run(['sh', '-c', command], cwd=project, check=True)

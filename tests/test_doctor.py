@@ -471,7 +471,10 @@ class DoctorTests(unittest.TestCase):
                          ({'CLAUDE_CLI_BIN': sys.executable},
                           ['the claude CLI that CLAUDE_CLI_BIN names', ' lacks ', '--restricted']))
             else:
-                (old_dir / 'claude').write_text('#!/bin/sh\necho "--safe-mode --tools --model"\n')
+                # Every flag the review needs but --restricted (the adapter lists each one it misses).
+                (old_dir / 'claude').write_text('#!/bin/sh\necho "--allowed-tools --effort --json-schema '
+                                                '--max-budget-usd --mcp-config --no-session-persistence '
+                                                '--output-format --permission-mode --settings --strict-mcp-config"\n')
                 (old_dir / 'claude').chmod(0o755)
                 cases = (({'PATH': str(old_dir) + os.pathsep + env['PATH']},
                           ['the claude CLI first on PATH (%s) lacks' % (old_dir / 'claude'), '--restricted',

@@ -2479,7 +2479,9 @@ class CleanWorktreesTests(unittest.TestCase):
         self.hooked()
         path = self.worktree('done', merge=False)
         (self.tmp / 'windows.py').write_text(WINDOWS)
-        self.stub('python3', '#!/bin/sh\nexec %s %s "$@"\n' % (sys.executable, self.tmp / 'windows.py'))
+        # The scripts probe `python3 -I -c ''` before they pick their Python: the probe must pass,
+        # or a host with a plain `python` runs them unfaked (Ubuntu CI did).
+        self.stub('python3', '#!/bin/sh\n[ "$1" = -I ] && exit 0\nexec %s %s "$@"\n' % (sys.executable, self.tmp / 'windows.py'))
         out = self.run_script('--apply', idle=False, KEEP_POSIX_NAME='1')
         self.assertEqual(out, NOT_RUN + '\n')
         self.assertTrue(path.is_dir(), out)

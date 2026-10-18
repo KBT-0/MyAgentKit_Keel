@@ -70,7 +70,8 @@ class CloseWorkerOnWindows(unittest.TestCase):
                          '        pathlib.Path(arg).mkdir(parents=True, exist_ok=True)\n')
         stubs = {'mkdir': '#!/bin/sh\nexec ' + python + ' ' + shlex.quote(mkdir.as_posix()) + ' "$@"\n',
                  'ps-stub': '#!/bin/sh\nexit 0\n',
-                 'tmux': '#!/bin/sh\necho "no server running" >&2\nexit 1\n'}
+                 # tmux's own words for "no server": the audit on POSIX hosts reads them as no session.
+                 'tmux': '#!/bin/sh\necho "no server running on /tmp/tmux-stub/default" >&2\nexit 1\n'}
         for name, body in stubs.items():
             path = bin_dir / name
             path.write_text(body, newline='\n')

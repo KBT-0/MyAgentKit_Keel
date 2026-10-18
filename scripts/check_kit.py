@@ -64,12 +64,22 @@ if __name__ == '__main__' and '--unit' not in sys.argv:
 # exported, ran every synthetic project's git against the caller's repository: a fixture's
 # `git add -A` wrote the caller's index. Each variable that routes git to a repository (git's
 # `rev-parse --local-env-vars`, and two it leaves out) is dropped here, for every unit and
-# test. GIT_CONFIG* stays, as in the gate's own documentation-only check.
+# test. GIT_CONFIG* is set below, not dropped.
 for _name in ('GIT_DIR', 'GIT_WORK_TREE', 'GIT_IMPLICIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY',
               'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_COMMON_DIR', 'GIT_GRAFT_FILE', 'GIT_NO_REPLACE_OBJECTS',
               'GIT_REPLACE_REF_BASE', 'GIT_PREFIX', 'GIT_SHALLOW_FILE', 'GIT_INTERNAL_SUPER_PREFIX',
               'GIT_NAMESPACE', 'GIT_CEILING_DIRECTORIES', 'MYAGENTKIT_BACKEND'):
     os.environ.pop(_name, None)
+# Every git a unit or test runs ignores the developer's own global and system configuration (a
+# core.hooksPath, commit.gpgsign, init.templateDir or core.autocrlf there hung or changed the
+# fixtures, which CI never showed; issue #147). A test that needs a setting passes it itself.
+os.environ.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1')
+# Windows names a long user's temp folder in its 8.3 form (C:\Users\RUNNER~1\...), but the kit's
+# code resolves a path to the long form: a test that compares the two failed on such a host.
+if os.name == 'nt':
+    for _name in ('TEMP', 'TMP'):
+        if _name in os.environ:
+            os.environ[_name] = os.path.realpath(os.environ[_name])
 # scripts/check.sh names a file to create once all units pass; popped here, so a
 # nested kit check (a unit, a test) never creates it in the outer run's place.
 _PASSED_FILE = os.environ.pop('KIT_CHECK_PASSED', None)
@@ -154,7 +164,9 @@ def discover(folder, leave_out=()):
             junction = getattr(path, 'is_junction', None)
             linked = (junction() if junction else
                       getattr(path.lstat(), 'st_reparse_tag', 0) in
-                      (stat.IO_REPARSE_TAG_MOUNT_POINT, stat.IO_REPARSE_TAG_SYMLINK))
+                      # The stat constants exist only on Windows; elsewhere the winnt.h numbers.
+                      (getattr(stat, 'IO_REPARSE_TAG_MOUNT_POINT', 0xA0000003),
+                       getattr(stat, 'IO_REPARSE_TAG_SYMLINK', 0xA000000C)))
             if path.is_symlink() or linked:
                 raise RuntimeError('linked test directories are not supported: '
                                    + path.relative_to(folder).as_posix())

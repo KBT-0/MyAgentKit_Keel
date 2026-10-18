@@ -52,6 +52,14 @@ class KitRunnerTests(unittest.TestCase):
         self.tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.tmp)
 
+    def test_every_unit_runs_git_without_the_developers_own_configuration(self):
+        # Importing check_kit above exported them: units and tests inherit this environment (issue #147).
+        self.assertEqual(os.environ['GIT_CONFIG_GLOBAL'], os.devnull)
+        self.assertEqual(os.environ['GIT_CONFIG_NOSYSTEM'], '1')
+        shown = subprocess.run(['git', 'config', '--list', '--show-scope'], cwd=self.tmp, capture_output=True,
+                               text=True).stdout
+        self.assertEqual([line for line in shown.splitlines() if line.split('\t')[0] in ('system', 'global')], [])
+
     def test_the_kit_article_describes_the_author_tier_refusal(self):
         # This article belongs to the kit, not to a bootstrapped project's docs.
         page = ' '.join((ROOT / 'docs/decorrelated-review.md').read_text(encoding='utf-8').split())
@@ -344,6 +352,17 @@ runpy.run_path(%r, run_name='__main__')
                 unittest.mock.patch.object(Path, 'lstat', lstat):
             with self.assertRaisesRegex(RuntimeError, 'linked test directories.*linked'):
                 check_kit.discover(folder)
+
+    def test_discovery_needs_no_windows_only_stat_constants(self):
+        # Linux and macOS on Python 3.11: no Path.is_junction, and stat has no IO_REPARSE_TAG_*
+        # (issue #96: the lookup raised AttributeError before any suite ran).
+        folder = self.tmp / 'suite'
+        folder.mkdir()
+        (folder / 'test_stat_probe.py').write_text(PROBE % 'True')
+        with unittest.mock.patch.object(check_kit, 'stat', types.SimpleNamespace()), \
+                unittest.mock.patch.object(Path, 'is_junction', None, create=True):
+            suite, counts = check_kit.discover(folder)
+        self.assertEqual(counts, {'test_stat_probe': 2})
 
     def test_cloud_reparse_directories_allow_discovery(self):
         folder = self.tmp / 'suite'

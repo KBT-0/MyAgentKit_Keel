@@ -335,6 +335,7 @@ def make_project(path):
              'docs/PROJECT.md': '# PROJECT\n\n## Contents\n'}
     for name, content in files.items():
         (path / name).write_text(content, encoding='utf-8', newline='\n')
+    (path / 'scripts/check.sh').chmod(0o755)  # the Stop and pre-commit hooks run ./scripts/check.sh
     subprocess.run(['git', 'init', '-q', str(path)], check=True)
     # Git for Windows' default core.autocrlf=true would check a linked worktree's gate out as CRLF.
     subprocess.run(['git', 'config', 'core.autocrlf', 'false'], cwd=path, check=True)

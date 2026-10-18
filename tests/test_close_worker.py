@@ -275,6 +275,8 @@ class CloseWorkerTests(unittest.TestCase):
         stub(self.tmp / 'bin/uname', '#!/bin/sh\necho MINGW64_NT-10.0-26200\n')
         stub(self.tmp / 'bin/ps-stub', PS, python=True)
         stub(self.tmp / 'bin/taskkill', TASKKILL, python=True)
+        if not NT:  # no Git for Windows here: a cygpath that leaves the path as it is
+            stub(self.tmp / 'bin/cygpath', '#!/bin/sh\nprintf "%s\\n" "$2"\n')
         (self.tmp / 'claude-procs').write_text(''.join(line + '\n' for line in procs), newline='\n')
         return {'KIT_PS': (self.tmp / 'bin/ps-stub').as_posix()}
 
