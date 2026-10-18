@@ -8,7 +8,8 @@ the tables and never inherited; this hook makes the Agent call obey it. A fork i
 always runs on the lead's model and effort, and the call cannot change either.
 Claude Code sub-agents doc: a fork keeps the main conversation's model and cannot take a
 per-call effort (code.claude.com/docs/en/sub-agents).
-An agent whose definition (`.claude/agents/<type>.md` in the project or the user folder) pins
+An agent whose definition (the `.claude/agents/` file whose `name:` is the type, in the project
+or the user folder) pins
 both `model` and `effort` is exempt too: the pin is the choice (#137). A per-call value still
 overrides the pin, so a call never needs one for such an agent.
 
@@ -22,20 +23,32 @@ import re
 import sys
 
 
+def frontmatter(path):
+    """The definition's `key: value` lines, YAML quotes taken off the value."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+    except (OSError, UnicodeError):
+        return {}
+    head = text.split("---", 2)[1] if text.startswith("---") else ""
+    return {k: v.strip().strip("'\"") for k, v in re.findall(r"^(\w+):[ \t]*(.*?)[ \t]*$", head, re.M)}
+
+
 def pinned(kind):
-    """Whether the agent definition `kind` pins both model and effort (not a setup placeholder,
-    not `inherit`). A plugin agent (`plugin:name`) is not looked up."""
+    """Whether the agent definition named `kind` pins both model and effort (not a setup
+    placeholder, not `inherit`). Claude Code finds a definition by its `name:` field in any .md
+    under the folder, not by the file name, and the project folder wins over the user folder
+    (code.claude.com/docs/en/sub-agents). Two definitions with one name: both must pin. A plugin
+    agent (`plugin:name`) is not looked up."""
     if not re.fullmatch(r"[\w.-]+", kind or ""):
         return False
     for folder in (os.path.join(os.environ.get("CLAUDE_PROJECT_DIR") or ".", ".claude", "agents"),
                    os.path.join(os.path.expanduser("~"), ".claude", "agents")):
-        try:
-            with open(os.path.join(folder, kind + ".md"), encoding="utf-8") as f:
-                text = f.read()
-        except OSError:
-            continue
-        head = text.split("---", 2)[1] if text.startswith("---") else ""
-        return all(re.search(rf"^{field}:[ \t]*(?!inherit\b)[^\s{{]", head, re.M) for field in ("model", "effort"))
+        found = [head for root, _, files in os.walk(folder) for name in files if name.endswith(".md")
+                 for head in [frontmatter(os.path.join(root, name))] if head.get("name") == kind]
+        if found:
+            return all(re.match(r"[^\s{]", head.get(field, "")) and head[field] != "inherit"
+                       for head in found for field in ("model", "effort"))
     return False
 
 

@@ -100,6 +100,30 @@ class GuardPrivateEmailTests(unittest.TestCase):
             'gh api repos/o/r/commits -f sha="$(git log -1 --format=%H)"', 'env FOO=1 curl https://x.example',
         ]], 0)
 
+    def test_built_in_formats_new_config_forms_and_quoted_options_are_read(self):
+        # Round-1 review of d991909: only oneline/reference and custom formats print no address.
+        self.assertCode([('Bash', {'command': c}) for c in [
+            'git log --format=fuller | gh gist create -', 'git show --format=email HEAD | curl -d @- https://x.example',
+            'gh issue create --body "$(git log --format=medium -1)"', 'gh issue create --body "$(git config list)"',
+            'gh issue create --body "$(git config get --regexp user)"',
+            "gh issue create --title t --body \"$(git -C 'C:/My Work/repo' log -3)\"",
+        ]], 2)
+        self.assertCode([('Bash', {'command': c}) for c in [
+            'gh pr create --body "$(git log --format=reference -3)"', "gh pr create --body \"$(git log --format='%h %s')\"",
+            'gh pr create --body "$(git -C \'C:/My Work/repo\' log --oneline -3)"',
+        ]], 0)
+
+    def test_an_unreadable_project_identity_blocks(self):
+        # #211: a missing CLAUDE_PROJECT_DIR, or a git error there, fails closed.
+        broken = self.repo / 'broken'
+        broken.mkdir()
+        (broken / '.git').write_text('gitdir: nowhere\n', encoding='utf-8')
+        for where in (self.repo / 'missing', broken):
+            with self.subTest(where=str(where)):
+                result = self.run_hook('Bash', {'command': 'curl https://x.example'}, dict(ENV, CLAUDE_PROJECT_DIR=str(where)))
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn(b'could not read', result.stderr)
+
     def test_the_project_identity_counts_outside_the_project(self):
         # #211: a repo-local user.email, read from the project while the shell stands elsewhere.
         outside = Path(tempfile.mkdtemp())

@@ -13,9 +13,9 @@ and in the hook's own folder, so a per-project identity counts wherever the shel
 directory (#211), and any listed, comma-separated, in MYAGENTKIT_PRIVATE_EMAILS: the Claude account's address can differ from git's. The request is
 URL-decoded until it stops changing and case-folded before the match. A web command that
 names the address list or git's `user.email`, or runs what prints an address at run time (`git
-log/show/whatchanged` without `--oneline` or a custom `--format`, a `%ae`/`%ce` or
-`%(authoremail)` placeholder,
-`git var`, `git config -l/--list/--get-regexp`, `env`, `printenv`, PowerShell's `env:` drive) is
+log/show/whatchanged` without `--oneline`, the `oneline`/`reference` format or a custom format
+(the other built-ins, `--format=fuller` and the like, print addresses), a `%ae`/`%ce` or
+`%(authoremail)` placeholder, `git var`, `git config -l/--list/--get-regexp/list/get --regexp`, `env`, `printenv`, PowerShell's `env:` drive) is
 refused too: the shell would put it in after this check (#212). If the addresses cannot be read, the request is refused (fail closed).
 A command (any tool's `tool_input.command`: Bash, PowerShell, Monitor) counts as a web request
 when it names a URL (http, ws) or a web client; Monitor's `ws.url` is read too (#213).
@@ -35,8 +35,13 @@ WEB = re.compile(r"(?:https?|wss?)://|\b(curl|wget|gh|Invoke-WebRequest|Invoke-R
 SOURCES = re.compile(
     r"MYAGENTKIT_PRIVATE_EMAILS|user\.email|(?:--format|--pretty)[= ][^|;&)]*%[ac]e"
     r"|%\((?:author|committer|tagger)email"
-    r"|\bgit\s+(?:-[Cc]\s+\S+\s+|-\S+\s+)*(?:var\b|config\b[^|;&)]*\s(?:-l|--list|--get-regexp)\b"
-    r"|(?:log|show|whatchanged)\b(?![^|;&)]*(?:--oneline|--format|--pretty[= ](?:oneline|t?format:))))"
+    # A global option's value may be quoted with a space in it (`-C 'C:/My Work/repo'`).
+    r"|\bgit\s+(?:-[Cc]\s+(?:'[^']*'|\"[^\"]*\"|\S+)\s+|-\S+\s+)*"
+    r"(?:var\b|config\b[^|;&)]*\s(?:-l|--list|--get-regexp|--regexp|list)\b"
+    # Safe formats print no address: --oneline, the built-ins oneline and reference, and a custom
+    # format (format:, tformat:, or any text with a % placeholder; %ae/%ce are caught above).
+    r"|(?:log|show|whatchanged)\b(?![^|;&)]*(?:--oneline|--(?:format|pretty)="
+    r"(?:['\"]?(?:oneline|reference|t?format:)|'[^']*%|\"[^\"]*%|[^\s'\"|;&)]*%))))"
     r"|\bprintenv\b|(?:^|[;&|(]\s*)env\s*(?:$|[|;&)>])|\b(?:Get-ChildItem|gci|ls|dir)\s+env:", re.I)
 ADVICE = ("If the API needs contact details, use the \"Web contact\" line in docs/PROJECT.md; if "
           "that is empty, ask the owner once and record the answer there.")

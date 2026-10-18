@@ -57,7 +57,10 @@ The git guard removes shell redirections before reading git arguments, and recog
 `sh -c`, a here-document a shell reads) is parsed as shell. In text it cannot parse as shell (an
 interpreter's code or here-document, any other program's arguments: a wrapper such as `sudo` or
 `xargs`, or data such as a `gh` title) each `git ...` is judged as the command it names, so a
-mention of `git status` passes and `git push --force` is refused. `env`/`exec` options, a
+mention of `git status` passes and `git push --force` is refused. The guard fails closed on what
+it cannot read: a ref, remote, worktree, subcommand or folder named by a `$var`, a `$(...)`, an
+operand `xargs` appends or a `{}` counts as the worst case, so `... | xargs git branch -D` is
+refused. `env`/`exec` options, a
 backslash-newline, a here-string and shell or interpreter input piped from a git command stay
 unreadable. Gate wiring accepts exactly one `.githooks` value in the documented local config
 forms; extra operands, value-pattern forms and unknown options are refused. The hook resolves

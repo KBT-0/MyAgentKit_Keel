@@ -716,5 +716,102 @@ class V012GuardTests(GuardCase):
         ], 0)
 
 
+class V012RoundOneReviewTests(GuardCase):
+    """v0.12 guards, round-1 reviews of d991909: the guard fails closed on what it cannot read."""
+
+    def side_repo(self, dirty):
+        side = self.tmp / 'b'
+        side.mkdir()
+        git(side, 'init', '-q', '-b', 'main')
+        (side / 'w.txt').write_text('one\n', encoding='utf-8')
+        git(side, 'add', 'w.txt')
+        git(side, 'commit', '-q', '-m', 'base')
+        if dirty:
+            (side / 'w.txt').write_text('owner edit\n', encoding='utf-8')
+        return side
+
+    def lone_commit(self, message):
+        return git(self.repo, 'commit-tree', 'HEAD^{tree}', '-p', 'HEAD', '-m', message).stdout.strip()
+
+    def test_operands_and_folders_it_cannot_know_are_refused(self):
+        self.assertVerdict(['cd "$OTHER" && git branch -D feat'], 2)  # no feat here; $OTHER may hold one
+        git(self.repo, 'branch', 'merged')
+        git(self.repo, 'update-ref', 'refs/heads/feat', self.lone_commit('only on feat'))
+        self.side_repo(dirty=True)
+        self.assertVerdict([
+            'git branch --no-merged | xargs git branch -D', 'git branch | grep -v main | xargs git branch -D',
+            'git branch --no-merged | xargs -I{} git branch -D {}', 'git branch --no-merged | xargs -I % git branch -D %',
+            'for b in $(git branch --no-merged); do git branch -D "$b"; done', 'git branch -D $(git branch --no-merged)',
+            'git $sub feat', 'git stash "$action"', 'ls -d ../b/ | xargs -I{} git -C {} reset --hard',
+        ], 2)
+        self.assertVerdict(['git branch -D merged', 'xargs -n1 git log -1 --oneline', 'git log -1 "$rev"',
+                            'git push -u origin "$(git branch --show-current)"'], 0)
+
+    def test_an_argv_list_laid_out_one_item_per_line_is_read(self):
+        argv = "python - <<'EOF'\nimport subprocess\nsubprocess.run([\n    \"git\",\n    {},\n    {},\n])\nEOF"
+        self.assertVerdict([argv.format('"push"', '"--force"'), argv.format('"branch"', '"-D",\n    name'),
+                            "node -e \"spawn('git', ['push',\n '--force'])\""], 2)
+        self.assertVerdict([argv.format('"log"', '"--oneline"'), argv.format('"status"', '"--short"')], 0)
+
+    def test_a_branch_checked_out_somewhere_is_not_reached_by_its_own_head(self):
+        git(self.repo, 'checkout', '-q', '-b', 'feat')
+        git(self.repo, 'commit', '-q', '--allow-empty', '-m', 'only on feat')
+        self.assertVerdict(['git switch main && git branch -D feat'], 2)
+        git(self.repo, 'checkout', '-q', 'main')
+        git(self.repo, 'commit', '-q', '--allow-empty', '-m', 'only on main')
+        self.assertVerdict(['git update-ref refs/heads/main HEAD~1', 'git update-ref HEAD HEAD~1'], 2)
+        git(self.repo, 'worktree', 'add', '-q', '-b', 'wtb', str(self.tmp / 'wt'))
+        git(self.tmp / 'wt', 'commit', '-q', '--allow-empty', '-m', 'only on wtb')
+        self.assertVerdict(['git worktree remove ../wt && git branch -D wtb'], 2)
+        git(self.repo, 'branch', 'same')
+        self.assertVerdict(['git branch -D same', 'git update-ref refs/heads/main HEAD'], 0)
+
+    def test_remote_tracking_ref_loss_is_refused(self):
+        git(self.repo, 'remote', 'add', 'origin', str(self.tmp / 'nowhere.git'))
+        git(self.repo, 'remote', 'add', 'up', str(self.tmp / 'nowhere.git'))
+        git(self.repo, 'update-ref', 'refs/remotes/origin/x', self.lone_commit('only on origin/x'))
+        git(self.repo, 'update-ref', 'refs/remotes/up/main', 'HEAD')
+        self.assertVerdict(['git remote remove origin', 'git remote rm origin', 'git branch -r -D origin/x',
+                            'git branch --remotes -D origin/x', 'git -C nowhere remote remove up',
+                            'git remote remove "$name"'], 2)
+        self.assertVerdict(['git remote remove up', 'git branch -r -D up/main', 'git remote -v'], 0)
+
+    def test_a_powershell_backslash_path_is_a_path(self):
+        side = self.side_repo(dirty=False)
+        command = 'git -C ..\\b reset --hard'
+        payload = json.dumps({'tool_name': 'PowerShell', 'tool_input': {'command': command}})
+        self.assertEqual(self.run_hook(command, payload=payload).returncode, 0)  # ..\b is clean
+        (side / 'w.txt').write_text('owner edit\n', encoding='utf-8')
+        self.assertEqual(self.run_hook(command, payload=payload).returncode, 2)
+
+    def test_a_comment_ends_at_its_line(self):
+        self.assertVerdict(['git status  # look first\ngit stash drop', 'curl -s https://example.com/page#top; git push --force',
+                            'echo a#b; git push --force'], 2)
+        self.assertVerdict(["git status  # don't worry", 'git log --oneline -3 # the last ones\ngit status'], 0)
+
+    def test_nested_shell_text_is_judged_where_the_line_has_moved(self):
+        self.side_repo(dirty=True)  # the caller's tree is clean
+        self.assertVerdict([
+            'cd ../b && out="$(git reset --hard)"', "cd ../b && bash <<'EOF'\ngit checkout -- .\nEOF",
+            'cd ../b && echo "$(git checkout -- .)"', 'GIT_DIR=../b/.git GIT_WORK_TREE=../b timeout 60 git reset --hard',
+            'export GIT_DIR=../b/.git GIT_WORK_TREE=../b; timeout 60 git reset --hard',
+        ], 2)
+        self.assertVerdict(['timeout 60 git reset --hard', 'echo "$(git reset --hard)"'], 0)
+
+    def test_abbreviations_and_config_that_prune_now_are_read(self):
+        git(self.repo, 'update-ref', 'refs/heads/feat', self.lone_commit('only on feat'))
+        git(self.repo, 'tag', 't1', self.lone_commit('only on t1'))
+        self.assertVerdict(['git tag --del t1', 'git branch --delete --forc feat', 'git branch --de -f feat',
+                            'git -c gc.pruneExpire=now gc', 'git -c gc.reflogExpireUnreachable=now gc'], 2)
+        self.assertVerdict(['git -c gc.pruneExpire=never gc', 'git branch --list', 'git tag --list'], 0)
+
+    def test_shell_run_by_git_or_from_input_is_judged(self):
+        git(self.repo, 'update-ref', 'refs/heads/feat', self.lone_commit('only on feat'))
+        self.assertVerdict(["git -c alias.x='!git push --force' x", "git -c alias.x='!git branch -D' x feat",
+                            "echo 'git push --force' | bash -s x", "git submodule foreach 'git clean -fdx'",
+                            'git submodule foreach --recursive git reset --hard'], 2)
+        self.assertVerdict(["git -c alias.st='!git status' st", 'git submodule foreach git status'], 0)
+
+
 if __name__ == '__main__':
     unittest.main()

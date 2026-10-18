@@ -167,15 +167,27 @@ class OverlaySettingsTests(unittest.TestCase):
     def test_an_agent_whose_definition_pins_model_and_effort_needs_neither_on_the_call(self):
         # #137: diff-reviewer and worker pin both; forcing call-site values could only downgrade them.
         hook = SETTINGS.parent / 'hooks/guard_worker_route.py'
-        with tempfile.TemporaryDirectory() as project:
-            agents = Path(project) / '.claude/agents'
-            agents.mkdir(parents=True)
-            (agents / 'pinned.md').write_text('---\nname: pinned\nmodel: claude-opus-5-5\neffort: high\n---\nx\n')
+        with tempfile.TemporaryDirectory() as project, tempfile.TemporaryDirectory() as home:
+            agents, user = Path(project) / '.claude/agents', Path(home) / '.claude/agents'
+            (agents / 'sub').mkdir(parents=True)
+            user.mkdir(parents=True)
+            pin = '---\nname: {}\nmodel: {}\neffort: high\n---\nx\n'
+            (agents / 'pinned.md').write_text(pin.format('pinned', 'claude-opus-5-5'))
             (agents / 'half.md').write_text('---\nname: half\nmodel: claude-opus-5-5\n---\nx\n')
-            (agents / 'unset.md').write_text('---\nname: unset\nmodel: {{WORKER_MODEL}}\neffort: high\n---\nx\n')
+            (agents / 'unset.md').write_text(pin.format('unset', '{{WORKER_MODEL}}'))
+            (agents / 'quoted.md').write_text(pin.format('quoted', '"{{WORKER_MODEL}}"'))
+            (agents / 'inherit.md').write_text(pin.format('inherit', 'inherit'))
+            (agents / 'qinherit.md').write_text(pin.format('qinherit', '"inherit"'))
+            # Claude Code finds a definition by its name: field, in any folder under agents/.
+            (agents / 'renamed.md').write_text(pin.format('by-name', 'claude-opus-5-5'))
+            (agents / 'sub' / 'x.md').write_text(pin.format('renamed', 'inherit'))
+            (user / 'u.md').write_text(pin.format('user-pinned', 'claude-opus-5-5'))
+            (user / 'p.md').write_text(pin.format('half', 'claude-opus-5-5'))  # the project's half wins
             env = {k: v for k, v in os.environ.items() if k not in ('HOME', 'USERPROFILE')}
-            env.update(CLAUDE_PROJECT_DIR=project, HOME=project, USERPROFILE=project)
-            for kind, code in [('pinned', 0), ('half', 2), ('unset', 2), ('general-purpose', 2), ('fork', 0)]:
+            env.update(CLAUDE_PROJECT_DIR=project, HOME=home, USERPROFILE=home)
+            for kind, code in [('pinned', 0), ('half', 2), ('unset', 2), ('quoted', 2), ('inherit', 2),
+                               ('qinherit', 2), ('by-name', 0), ('renamed', 2), ('user-pinned', 0),
+                               ('general-purpose', 2), ('fork', 0)]:
                 payload = json.dumps({'tool_name': 'Agent', 'tool_input': {'subagent_type': kind, 'prompt': 'p'}})
                 with self.subTest(kind=kind):
                     result = subprocess.run([sys.executable, str(hook)], input=payload.encode(), env=env,
