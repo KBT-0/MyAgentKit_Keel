@@ -196,6 +196,16 @@ class GitHookTests(unittest.TestCase):
         git('add', 'c')
         return git('commit', '-q', *opts, '-m', 'change c', '-m', message, check=False, **extra)
 
+    def hook(self, root, message):
+        """commit-msg run on the file `commit` would hand it, without a commit: git's own
+        clean-up of a -m message (git stripspace), then the hook. A commit per case also ran
+        pre-commit and the stub gate, and made the case list the file's slowest test (#262)."""
+        cleaned = subprocess.run(['git', 'stripspace'], input='change c\n\n' + message, cwd=root,
+                                 capture_output=True, text=True, check=True, encoding='utf-8').stdout
+        (root / 'msg').write_text(cleaned, encoding='utf-8')
+        return subprocess.run(['sh', '.githooks/commit-msg', 'msg'], cwd=root, capture_output=True,
+                              text=True, encoding='utf-8')
+
     def test_an_ai_co_author_trailer_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
             root, git = self.repo(tmp)
@@ -239,8 +249,9 @@ class GitHookTests(unittest.TestCase):
                             'Co-authored-by: OpenHands <openhands@example.invalid>',
                             'Co-authored-by: Warp <agent@example.invalid>'):
                 with self.subTest(trailer=trailer):
-                    result = self.commit(root, git, trailer + '\n')
-                    self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                    result = self.hook(root, trailer + '\n')
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    self.assertIn('crediting an AI tool', result.stderr)
 
     def test_a_human_or_a_quoted_trailer_passes(self):
         with tempfile.TemporaryDirectory() as tmp:
