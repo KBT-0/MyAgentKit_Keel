@@ -360,7 +360,9 @@ Now fill in the files. Work through the placeholders below; `grep -rn '{{[A-Z_]*
 any you missed, and the gate will find the rest.
 
 An installed overlay brings its own placeholders, which are not in these tables — the grep
-above is what catches them, and the overlay's own document explains each one.
+above is what catches them, and the overlay's own document explains each one. For Unity
+that is `docs/UNITY_SETUP.md`: read its opening, "After installing, by hand", which also
+holds the `.gitignore` fragment step.
 
 ### Identity and people
 

@@ -8,6 +8,7 @@
 - Read the whole problem first; only then take the smallest change that works.
 - Design before code. Reuse what exists before writing anything new.
 - Every behaviour change gets one test that fails without it.
-- Never end running work (a session, a review, a gate) without a valid reason; the owner decides.
+- Never end running work (a session, a review, a gate) without a valid reason: a finished or hung
+  job ends without asking; any other ending is the owner's call.
 - A question from the owner is a question, not an order: answer it and change nothing.
 - A decision made for one moment ends with that moment; then the standing rules apply again.

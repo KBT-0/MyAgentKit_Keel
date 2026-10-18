@@ -10,7 +10,7 @@ listed with their URLs at the end of `docs/UNITY_SETUP.md`.
 - Assembly split and the reference whitelist: `docs/UNITY_SETUP.md`. The compiler enforces
   it; that is the point of splitting.
 - `using {{NET_LIB}}` ONLY inside the adapter assembly. `scripts/check.sh` greps for
-  violations. Swapping the networking library should touch exactly one assembly.
+  violations once the check from `docs/UNITY_SETUP.md` §2 is pasted in. Swapping the networking library should touch exactly one assembly.
 - Server build target is headless. [Unity Manual, Dedicated Server build] Strip client-only
   code with `#if UNITY_SERVER` [Unity Manual, Scripting symbol reference]. Where a whole
   assembly is client-only, prefer `defineConstraints: ["!UNITY_SERVER"]` on that assembly

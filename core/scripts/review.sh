@@ -10,10 +10,12 @@
 #        review.sh --self-test
 #   default scope     --uncommitted (staged + unstaged + untracked) — the pre-commit case.
 #   default reviewer  the one configured below during setup.
-#   --fallback        if the reviewer cannot run (quota, auth, timeout, ...), let the OTHER
+#   --fallback        if the reviewer cannot run (quota, rate limit, timeout, ...), let the OTHER
 #                     configured model review once. Off by default: without it a reviewer that
 #                     cannot run FAILS the review, it is never replaced. The substitute's
-#                     evidence carries a FALLBACK REVIEWER line.
+#                     evidence carries a FALLBACK REVIEWER line. A setup fault (authentication,
+#                     sandbox, an unsupported CLI) never fails over; a used-up Codex quota
+#                     switches to Claude even without it (docs/REVIEW_RUNNING.md).
 #   --backend NAME    the Claude reviewer talks to the Anthropic-compatible endpoint that
 #                     NAME.env names, with that file's model as the pin, and is recorded as
 #                     reviewer claude@NAME (docs/REVIEW_RUNNING.md). The file lives outside the

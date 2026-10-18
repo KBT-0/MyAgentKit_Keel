@@ -446,7 +446,7 @@ def main(argv=None):
                 retry = False
         eligible = (chain["status"] != "completed" and provider == args.reviewer and chain["failure_kind"] in UNAVAILABLE
                     and recorded and not retry)
-        # Lead decision 7 (decisions.md; the kit runs on Claude alone): a used-up Codex quota
+        # Lead decision of 2026-10-15 (docs/REVIEW_RUNNING.md, "Unavailable reviewer"): a used-up Codex quota
         # switches the role to Claude without --fallback, recorded in the chain and reported.
         switch = eligible and provider == "codex" and chain["failure_kind"] == "quota_exhausted"
         if switch and turns is None:
@@ -492,7 +492,7 @@ def main(argv=None):
             break
         if switch:
             chain["switched"] = ("quota_exhausted: the Codex quota is used up, so the role switched "
-                                 "to Claude (decisions.md 7)")
+                                 "to Claude (docs/REVIEW_RUNNING.md, \"Unavailable reviewer\")")
             print("SWITCH [review]: codex quota is exhausted (quota_exhausted); the kit runs on Claude "
                   "alone, so configured %s model %s runs once instead. Tell the owner."
                   % (names[other], pins[other]), flush=True)

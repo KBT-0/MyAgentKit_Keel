@@ -1,6 +1,7 @@
 """The templates' pointers name sections that exist, and a reviewer reads only reviewer text."""
 import re
 from pathlib import Path
+import sys
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -214,9 +215,10 @@ class SectionPointerTests(unittest.TestCase):
         # Pin exact read-only forms; send commands must still meet the permission prompt.
         expected = {
             'kit-feedback': ['Bash(gh auth status)', 'Bash(git status)',
-                             'Bash(git diff)', 'Bash(git diff --stat)'],
-            # Handoff uses reads/searches; cross-review delegates Git access to review.sh.
-            'handoff': [],
+                             'Bash(git diff)', 'Bash(git diff --stat)',
+                             'Bash(gh issue list --repo KBT-0/MyAgentKit_Keel --state all --limit 20 --search:*)'],
+            # Handoff reads the cost script's figure (#278); cross-review delegates Git access to review.sh.
+            'handoff': ['Bash(%s scripts/agent_cost.py --latest)' % p for p in ('python', 'python3', 'py -3')],
             'cross-review': ['Bash(./scripts/review.sh:*)'],
         }
         for name, allowed in expected.items():
@@ -226,6 +228,13 @@ class SectionPointerTests(unittest.TestCase):
                 self.assertEqual([t for t in tools if t.startswith('Bash(')], allowed)
         command = (ROOT / 'plugin/commands/kit-feedback.md').read_text(encoding='utf-8')
         self.assertIn('the permission prompt is the second gate', command)
+        # #230: the command searches the tracker before it drafts, so a duplicate becomes a comment.
+        self.assertIn("Then search the kit's issues, open and closed, before drafting anything", command)
+        self.assertIn('propose a comment on it', command)
+        # #278: /usage, the canonical name, and a NOT RUN line instead of an unread figure.
+        handoff = ' '.join((ROOT / 'plugin/commands/handoff.md').read_text(encoding='utf-8').split())
+        self.assertNotIn('/cost', handoff)
+        self.assertIn('`/usage: NOT RUN`', handoff)
 
     def test_the_mode_command_and_skill_know_every_mode_the_workflow_defines(self):
         # The kit ships the working modes; {{MODEL_ROUTING}} left each project to write its own.
@@ -330,6 +339,68 @@ class SectionPointerTests(unittest.TestCase):
         for heading in headings(ROOT / 'core/docs/GOTCHAS.md'):
             if heading != 'Contents':
                 self.assertIn(heading, contents)
+
+    def test_review_docs_state_what_the_code_does(self):
+        # #229: the skill said authentication fails over and a round makes two attempts.
+        sys.path.insert(0, str(ROOT / 'core/scripts'))
+        import review_dispatch
+        skill = ' '.join((ROOT / 'plugins/myagentkit/skills/myagentkit-review/SKILL.md').read_text(encoding='utf-8').split())
+        failover = skill.split('Otherwise only `--allow-fallback`')[1].split('A setup fault never fails over')[0]
+        for kind in review_dispatch.UNAVAILABLE:
+            self.assertIn('`%s`' % kind, failover)
+        self.assertNotIn('authentication', failover)
+        self.assertIn('One round makes at most four attempts', skill)
+        self.assertNotIn('four attempts maximum for two rounds', skill)
+        self.assertNotIn('four calls maximum', (ROOT / 'docs/CODEX.md').read_text(encoding='utf-8'))
+        self.assertNotIn('(quota, auth,', (ROOT / 'core/scripts/review.sh').read_text(encoding='utf-8'))
+        # #281: no shipped file cites a decision log the kit does not ship, and KARARLAR is explained.
+        for path in [*ROOT.glob('core/**/*'), *ROOT.glob('plugins/**/*')]:
+            if path.is_file() and path.suffix in ('.md', '.py', '.sh'):
+                self.assertNotIn('decisions.md', path.read_text(encoding='utf-8'), path)
+        self.assertIn("names an entry of the kit maintainer's decision log, which the kit does not ship",
+                      ' '.join((ROOT / 'core/docs/WORKFLOW.md').read_text(encoding='utf-8').split()))
+
+    def test_setup_docs_match_solo_mode_and_the_shipped_files(self):
+        read = lambda name: ' '.join((ROOT / name).read_text(encoding='utf-8').split())
+        # #227: one Claude CLI is enough; a second CLI serves cross mode only.
+        for name in ('core/docs/DEV_SETUP.md', 'overlays/claude-code/README.md'):
+            text = read(name)
+            self.assertNotIn('needs a second CLI', text, name)
+            self.assertNotIn('A SECOND CLI', text, name)
+            self.assertIn('cross mode only', text, name)
+        # #217: the overlay README names every marker its files carry, and keeps worker.md.
+        readme = read('overlays/claude-code/README.md')
+        markers = set()
+        for path in (ROOT / 'overlays/claude-code/files').rglob('*'):
+            if path.is_file():
+                markers |= set(re.findall(r'\{\{[A-Z0-9_]+\}\}', path.read_text(encoding='utf-8', errors='replace')))
+        self.assertGreater(len(markers), 5)
+        for marker in markers:
+            self.assertIn(marker, readme)
+        self.assertNotIn('delete both files', readme)
+        self.assertIn('keep `.claude/agents/worker.md`', readme)
+        # #215: the installed Unity doc carries the fragment step and points at no absent README.
+        unity = read('overlays/unity/files/docs/UNITY_SETUP.md')
+        self.assertIn('Append `docs/kit/unity.gitignore-fragment` to `.gitignore`', unity)
+        self.assertNotIn('overlays/unity/README.md', unity)
+        self.assertNotIn('skip this section', unity)
+        self.assertIn('`docs/UNITY_SETUP.md`', read('setup/INTERVIEW.md'))
+
+    def test_branch_workers_and_the_gate_timing_have_one_rule(self):
+        read = lambda name: ' '.join((ROOT / name).read_text(encoding='utf-8').split())
+        # #178: a branch or worktree worker writes its note, never STATE.md.
+        for name in ('core/docs/HANDOFF.md', 'core/docs/AGENTS.md'):
+            self.assertIn('docs/worktree-notes/<branch>.md', read(name), name)
+        self.assertIn('`git merge --no-commit <branch>`', read('core/docs/WORKFLOW.md'))
+        # #220: the timing is written once, in the gate; AGENTS.md no longer says "before commit".
+        agents = read('core/AGENTS.md')
+        self.assertNotIn('pass the review gate before commit', agents)
+        self.assertNotIn('review gate applies before commit', agents)
+        self.assertIn('This is the one place the timing is written', read('core/docs/REVIEW_GATE.md'))
+        # #286: a commit is a long job because its hooks run the gate.
+        self.assertIn('`git commit` and `git merge` are long jobs too', read('core/docs/WORKFLOW.md'))
+        self.assertIn('default foreground timeout is 120 seconds',
+                      read('overlays/claude-code/files/.claude/agents/worker.md'))
 
     def test_the_research_index_lists_every_report(self):
         # The reports are the kit's bibliography (CONTRIBUTING.md): one missing from the index

@@ -12,13 +12,14 @@ Install with `bootstrap.sh . --overlay claude-code`. This README is NOT copied �
 ```
 
 Those two lines are typed by a human — an agent cannot invoke slash commands. This overlay
-is the part that has to be copied into each project instead, because every file in it is
-project-specific.
+is the part that has to be copied into each project instead. Most of its files are
+project-specific; the worker and clean-up scripts under `scripts/` carry a `KIT-OWNED` header,
+hold no placeholder, and a sync refreshes them (below, and `docs/UPDATING.md`).
 
 ## Why this split
 
 A command is the same in every project, so it belongs in a versioned plugin you install once
-and upgrade in place. The files below are not: they carry `{{PLACEHOLDERS}}` that the setup
+and upgrade in place. The project-specific files below are not: they carry `{{PLACEHOLDERS}}` that the setup
 interview fills with THIS project's boundaries, risky areas and gated paths. A plugin cannot
 hold them, and copying a command into every project would mean fixing a bug in it once per
 repository.
@@ -212,10 +213,17 @@ in `docs/WORKFLOW.md`, "The lead's steps when a branch is ready".
 | `{{WORKER_MODEL}}` | The author model from the interview (`sonnet`, `opus`, or a full model id) |
 | `{{LONG_JOBS}}` | The project's jobs that run longer than a few minutes, by name, as the interview's question 8 recorded them, or `none` when no worker waits that long |
 | `{{WORKER_EFFORT}}` | The worker's reasoning effort (`low`, `medium`, `high`), as the interview's question 8 recorded it: `high` when the worker's tasks bear design, lower when they are mechanical |
+| `{{REVIEWER_MODEL}}` | `diff-reviewer.md`'s model: the strongest model available for reviews (`setup/INTERVIEW.md`, "Risk and review") |
+| `{{GATED_PATHS}}` / `{{GATED_FILE_PATTERN}}` | `.claude/hooks/gate_on_stop.sh`: the paths whose change makes the Stop hook run the gate (`setup/INTERVIEW.md`) |
+| `{{BOUNDARY_GUARDS}}` | `.claude/hooks/guard_boundaries.py`: a live list element; replace the quoted string with real tuples, or delete the line if nothing is guardable (`setup/INTERVIEW.md`) |
 
-`diff-reviewer.md` ships with `effort: high` and no placeholder: reviews run at high effort.
+The overlay's files also carry the core's `{{PROJECT_NAME}}`, `{{OWNER_NAME}}` and
+`{{RISKY_AREAS}}`, filled with the same values as the core files. `diff-reviewer.md` ships
+with `effort: high`: reviews run at high effort.
 
-If the project has no such jobs, delete both files instead of filling them.
+If the project has no such jobs, keep `.claude/agents/worker.md` (it pins model, effort and
+the turn cap) with `{{LONG_JOBS}}` set to `none`, and delete only `scripts/spawn_worker.sh`
+(`setup/INTERVIEW.md`, question 8).
 
 ## Worker sessions — what cost a session each before it was written down
 
@@ -531,11 +539,14 @@ the core and readable by anything.
 
 ## What `/myagentkit:cross-review` needs
 
-A SECOND CLI on the machine — a DIFFERENT model from the one authoring the change, in
-whichever direction the project configured. `scripts/review.sh` ships adapters for two,
-selected with `--reviewer codex` or `--reviewer claude`, and both archive the same evidence.
-Install the other one and log in, or the command reports that it is missing and falls back to
-the paste-by-hand template in `docs/REVIEW_RUNNING.md`.
+A DIFFERENT model from the one authoring the change, in a fresh session. In solo mode, the
+default, that is another Claude tier through the Claude CLI already on the machine:
+`--reviewer claude` with `REVIEW_CLAUDE_MODEL` pinned to the tier that did not write the
+change (`docs/REVIEW_GATE.md`, "Invariant"). A second CLI is optional and serves cross mode
+only: `scripts/review.sh` ships adapters for two, selected with `--reviewer codex` or
+`--reviewer claude`, and both archive the same evidence. When the configured reviewer's CLI
+is missing, the command reports it and falls back to the paste-by-hand template in
+`docs/REVIEW_RUNNING.md`.
 
 This overlay is for Claude Code as the HOST, not for Claude Code as the author. A project
 where Codex writes and Claude reviews still installs it if anyone opens Claude Code in the

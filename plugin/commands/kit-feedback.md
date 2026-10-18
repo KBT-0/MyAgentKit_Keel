@@ -1,7 +1,7 @@
 ---
 description: Send something you learned back to MyAgentKit_Keel as a GitHub issue or pull request — the kit improves from the projects using it
 argument-hint: "[what you learned, or leave empty to use the current conversation]"
-allowed-tools: Read, Glob, Grep, Bash(gh auth status), Bash(git status), Bash(git diff), Bash(git diff --stat), AskUserQuestion
+allowed-tools: Read, Glob, Grep, Bash(gh auth status), Bash(git status), Bash(git diff), Bash(git diff --stat), Bash(gh issue list --repo KBT-0/MyAgentKit_Keel --state all --limit 20 --search:*), AskUserQuestion
 ---
 # /myagentkit:kit-feedback [what you learned]
 
@@ -27,6 +27,18 @@ this project's domain. Say so plainly and stop rather than filing noise upstream
 contribution costs the maintainer more than it costs you (generated contributions now flood
 maintainers: ghostty-org/ghostty CONTRIBUTING.md ties pull requests to an accepted issue;
 "Defending Open Source from AI Slop", EuroPython 2026).
+
+Then search the kit's issues, open and closed, before drafting anything:
+
+```sh
+gh issue list --repo KBT-0/MyAgentKit_Keel --state all --limit 20 --search "<keywords>"
+```
+
+The keywords are kit terms only (a kit file, script, rule or section name), never a name
+from this project: the search is a request to GitHub. Run two or three searches with
+different terms. When an issue matches, propose a comment on it, with the new evidence,
+instead of a new issue; an open duplicate splits the evidence for one defect in two (the
+tracker already held #88 and #141 for one defect).
 
 ## 2. Decide the shape
 

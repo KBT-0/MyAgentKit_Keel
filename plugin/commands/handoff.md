@@ -1,7 +1,7 @@
 ---
 description: Produce ONE self-contained implementation prompt to hand current work to another tool, model or session
 argument-hint: "<target tool/model> <task summary>"
-allowed-tools: Read, Glob, Grep, AskUserQuestion
+allowed-tools: Read, Glob, Grep, Bash(python scripts/agent_cost.py --latest), Bash(python3 scripts/agent_cost.py --latest), Bash(py -3 scripts/agent_cost.py --latest), AskUserQuestion
 ---
 # /myagentkit:handoff \<target\> \<task summary\>
 
@@ -36,7 +36,10 @@ memory sends the implementer to the wrong place and the diff comes back there.
 End with the reminder that updating `docs/STATE.md` at session end is the implementer's job.
 Full sentences only — the target has no chat memory and no idea what you were doing.
 
-If this handoff closes a working day, add the cost: `/cost` and the output of
-`scripts/agent_cost.py --latest` next to the task count, so the next lead routes from a number.
+If this handoff closes a working day, add the cost next to the task count, so the next lead
+routes from a number: the output of `python scripts/agent_cost.py --latest` (`python3` or
+`py -3` where that is the interpreter's name), and the Session block of `/usage`. `/usage` is
+a built-in command only the owner can run: ask the owner to paste it, and write
+`/usage: NOT RUN` when no figure came; never write a figure you did not read.
 
 Raw arguments: `$ARGUMENTS`

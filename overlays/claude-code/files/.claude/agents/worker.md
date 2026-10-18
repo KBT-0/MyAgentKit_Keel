@@ -19,8 +19,10 @@ the rules below exist).
 
 - Every brief names model and effort from `docs/WORKFLOW.md`, "Model routing", and includes
   `Route: quick|build|deep · Risk: low|medium|high · Checks: ...`.
-- Start every job that may run longer than a few minutes ({{LONG_JOBS}}, the full gate) in
-  the BACKGROUND with its output going to a file. You are re-invoked when it exits. Never
+- Start every job that may run longer than a few minutes ({{LONG_JOBS}}, the full gate, and
+  `git commit` or `git merge`, whose hooks run the gate) in the BACKGROUND with its output
+  going to a file, or give it a `timeout` above the gate's time: the Bash tool's default
+  foreground timeout is 120 seconds. You are re-invoked when it exits. Never
   wait for it: no `sleep`, no `until`/`while` loop, no `pgrep` loop, no tailing a log. Every
   waiting turn re-reads your whole context, and a wait longer than your cache lifetime
   re-writes it.

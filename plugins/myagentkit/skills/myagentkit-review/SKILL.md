@@ -21,11 +21,14 @@ fix findings only when the user also asked for implementation or review-and-fix.
 
 Use the project's configured model pins and the user's explicit overrides, never infer a
 fallback model from the host's identity. Defaults are medium effort (high when
-`REVIEW_RISK=high`), 200 Claude turns, and 2700 seconds per attempt. Choose effort from
+`REVIEW_RISK=high`), 200 Claude turns, and 2700 seconds per attempt (3600 for a high-effort
+Codex review). Choose effort from
 `docs/WORKFLOW.md`, "Model routing"; a gate, hook or review-tooling change and a new
 mechanism's first round use high.
 This is a total wall-clock limit, not a startup or inactivity
-timer; two attempts may take about ninety minutes plus local overhead. Use `REVIEW_TIMEOUT_SECONDS`
+timer, and each attempt has its own. One round can make up to four attempts (below), and a
+Codex capacity retry first sleeps 600 then 1200 seconds, so a round's worst case is the sum of
+its attempts' limits plus those sleeps. Use `REVIEW_TIMEOUT_SECONDS`
 (at most 3600) and `REVIEW_MAX_TURNS` (at most 500) to honor an explicit wrapper/dispatcher limit. Reviews have no default monetary budget cap:
 omit `--max-budget-usd` unless the owner explicitly specifies a cap. An explicit dollar
 cap does not promise equivalent subscription quota accounting: it stops on an estimate, not
@@ -34,7 +37,8 @@ the bill. Sources: 2700 s is the default `--timeout` of Anthropic's own `claude 
 3600 s are the owner's choice, not measured. Do not automatically raise
 limits or choose an unconfigured model when a run fails. With `--allow-fallback` (the wrapper's
 `--fallback`), the dispatcher may try the other configured provider once on an operational
-failure; pass it only when the user asked for a fallback. Never delegate from the child.
+failure; pass it only when the user asked for a fallback (the failover rules are under
+"Authorized repair loop"). Never delegate from the child.
 
 ## Run and interpret
 
@@ -83,8 +87,10 @@ Run the project's gate; then invoke a NEW review of the changed tree. The adapte
 never resumes the author's Claude session and never gives Claude source-write tools.
 
 Allow at most two review rounds per task by default, unless the user explicitly sets
-another bound. Each round can call at most two providers, once each (four attempts maximum
-for two rounds). Do not start another round merely because both providers failed.
+another bound. One round makes at most four attempts: a Codex `rate_limited` attempt is
+retried up to twice (after 600 and 1200 seconds, also when Codex is the fallback reviewer),
+and one failover or switch adds the other provider. Do not start another round merely
+because both providers failed.
 Stop on an unresolved product decision, unsafe scope expansion,
 missing verification, unavailable reviewer, exhausted budget, repeated unresolved finding,
 or the round limit. Report the remaining work instead of looping indefinitely.
@@ -93,12 +99,16 @@ You, the host, enforce this task-level bound; the adapter has no cross-call sess
 Stop the delegation loop, not all useful work. If the dispatcher finishes without a valid
 review, record each attempt's `failure_kind`, `usage_record`, and the
 pending review in project state; then continue independent authorized work. Never treat the
-failure as approval or commit/push the protected diff. The dispatcher never replaces the
-requested reviewer on its own: only with `--allow-fallback` (passed when the user asked for
-a fallback) does it try the other configured provider once for quota, authentication,
-missing CLI, CLI failure, timeout, context, turn or output limits, and the substitute's
-evidence then opens with a `FALLBACK REVIEWER:` line. A CLI that rejects a required flag
-(`cli_unsupported`) never fails over; tell the user to upgrade it. A cancelled review
+failure as approval or commit/push the protected diff. One replacement happens on its own:
+a used-up Codex quota (`quota_exhausted`) switches the role to Claude without the flag when
+the author is known, with a `SWITCH [review]:` line; tell the user. Otherwise only
+`--allow-fallback` (passed when the user asked for a fallback) makes it try the other
+configured provider once, for `rate_limited` (after its retries), `quota_exhausted`,
+`timeout`, `unavailable`, `cli_error`, `context_limit`, `budget_or_turn_limit`,
+`output_limit` or `content_flagged`, and the substitute's evidence then opens with a
+`FALLBACK REVIEWER:` line. A setup fault never fails over, with or without the flag:
+`authentication` (log in again), `sandbox_unavailable`, and `cli_unsupported` (a CLI that
+rejects a required flag; tell the user to upgrade it). A cancelled review
 stops the reviewer and is recorded as `cancelled`. A completed Reject or manual-check
 verdict does not trigger failover. Invalid evidence, missing guidance, changed scope, or persistence
 failure stops the chain. Never retry the exhausted chain in an agent loop.

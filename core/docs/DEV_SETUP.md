@@ -96,10 +96,13 @@ compiler server, a build daemon) makes the next gate, and the commit hook, wait 
 server exits. Turn such servers off in the build command (`docs/GOTCHAS.md`); the waiting
 `NOTE [lock]` line says how to find the holder.
 
-## 3. The second model — only if you want cross-model review
+## 3. The reviewing model — the Claude CLI alone is enough
 
 `docs/REVIEW_GATE.md` asks for risky diffs to be reviewed by a DIFFERENT model in a fresh
-session. `scripts/review.sh` automates that, and it needs a second CLI on this machine.
+session. `scripts/review.sh` automates that. In solo mode, the default, it needs only the
+Claude CLI you already use: the reviewer is another Claude tier, pinned in
+`REVIEW_CLAUDE_MODEL` (`docs/REVIEW_GATE.md`, "Invariant"; `docs/WORKFLOW.md`, "Working
+modes, by name"). A second CLI, such as Codex, is optional and serves cross mode only.
 It runs from any shell the gate runs from, native Windows included (Git for Windows' `sh`
 with a Windows Python: the reviewer runs in a Job Object of its own there). A CLI installed as
 a `.cmd` (npm's) is found by its bare name; an argument `cmd.exe` would read as shell is
@@ -108,14 +111,16 @@ so.
 
 **Ask your agent to set this up for you.** It can install the CLI and check the wiring; the
 parts it cannot do are called out below. Nothing here is required to write code — the gate,
-the hooks and CI all work without it. Skip it and the review protocol becomes the
+the hooks and CI all work without it. Skip the wrapper and the review protocol becomes the
 paste-the-template-by-hand version in `docs/REVIEW_RUNNING.md`, which is a real fallback, not a
 consolation prize.
 
 **Required: the reviewing CLI itself.**
 
-`scripts/review.sh` uses the project's configured default reviewer and pinned models.
-For the Codex direction (`codex exec -s workspace-write …`), check:
+`scripts/review.sh` uses the project's configured default reviewer and pinned models. The
+solo default is `./scripts/review.sh --uncommitted --reviewer claude` with
+`REVIEW_CLAUDE_MODEL` set to the tier that did not write the change (below). Only for the
+optional Codex direction (`codex exec -s workspace-write …`), check:
 
 ```sh
 command -v codex          # already there?
@@ -291,7 +296,8 @@ It changes nothing in the project and prints one `MISSING: <what> — fix: <comm
 trap, then `DOCTOR: ready` or `DOCTOR: setup incomplete` (exit 1). It checks what made a gate
 fail for reasons unrelated to the code in the projects using the kit: the executable bit on
 the scripts and hooks (on disk and in the git index), `core.hooksPath`, the git identity,
-Python 3.11+, the second CLI `scripts/review.sh` calls, `tmux` when the worker script is
+Python 3.11+, the reviewing CLI `scripts/review.sh` calls (the Claude CLI in solo mode),
+`tmux` when the worker script is
 installed, the `node` a git hook resolves (nvm's default alias lives in the interactive
 shell's rc file, so a hook never sees it), an npm cache owned by another user, and `grep`
 shadowed by an alias or function in the interactive shell. To see that alias it starts your
