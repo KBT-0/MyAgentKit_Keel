@@ -117,6 +117,24 @@ put() {
   stage "$@" && mv -f "$part" "$1" && part=""
 }
 
+# own_repo — true when the kit folder is the top of a git clone of its own. A kit vendored or
+# unpacked inside another repository answered with that repository's HEAD (round 1).
+own_repo() {
+  _top=$(git -C "$kit" rev-parse --show-toplevel 2>/dev/null) &&
+    [ "$(CDPATH= cd -- "$_top" && pwd -P)" = "$(CDPATH= cd -- "$kit" && pwd -P)" ]
+}
+# owned_list — the project-owned files of the kit's HEAD under core/ (no KIT-OWNED header), one
+# path per line below core/, into $work_list. Read from the commit, never the working tree: a
+# kit checked out with autocrlf has CRLF docs, and against the LF blob of the base every line
+# read as changed (round 1).
+owned_list() {
+  git -C "$kit" -c core.quotePath=false grep -lE '^(# |<!-- )KIT-OWNED:' HEAD -- core |
+    sed 's/^HEAD://' > "$copies.k"
+  git -C "$kit" -c core.quotePath=false ls-tree -r --name-only HEAD -- core > "$work_list" &&
+    grep -vxF -f "$copies.k" "$work_list" | sed 's|^core/||' > "$copies.k2" && mv -f "$copies.k2" "$work_list" ||
+    die "cannot list the kit's project-owned files"
+}
+
 why=$(blocked docs/kit/.kit-version)
 [ -z "$why" ] || die "conflict: docs/kit/.kit-version ($why); the version is not read or written there"
 stamp="$target/docs/kit/.kit-version"
@@ -134,7 +152,7 @@ copies=$(mktemp) || { rm -f "$work_list" "$pending"; echo "sync-kit: cannot crea
 # A signal handler that only cleaned up let the run resume with the pending list deleted,
 # which reads as "no ACTION items" and stamped the version: a signal now ends the run.
 mdir=""
-trap 'rm -f "$work_list" "$pending" "$copies" ${part:+"$part"}; [ -z "$mdir" ] || rm -rf "$mdir"' EXIT
+trap 'rm -f "$work_list" "$pending" "$copies" "$copies.k" "$copies.k2" "$copies.stage" ${part:+"$part"}; [ -z "$mdir" ] || rm -rf "$mdir"' EXIT
 trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
@@ -161,12 +179,16 @@ if [ "$merge" -eq 1 ]; then
   fi
   [ -n "$base_ref" ] ||
     die "--merge needs the kit commit this project's v$have came from: no docs/kit/.kit-commit, so pass --base <commit> (the changelog's upgrade section names the release commit)"
+  own_repo || die "--merge reads the kit's history, and $kit is no git clone of its own"
   base=$(git -C "$kit" rev-parse -q --verify "$base_ref^{commit}") ||
     die "the kit has no commit $base_ref (a shallow clone?); clone the kit whole"
   mdir=$(mktemp -d) || die "cannot create a temp folder"
-  # A base named by hand is checked against the project's kit-owned files, which are still the
-  # copies of the commit it came from (tier 1 has not run yet). A later base reads the kit's
-  # fixes in between as the project's edits and keeps the old lines, with no conflict to show.
+  # A base named by hand is checked against the project's kit-owned files as its last commit
+  # holds them: the copies of the commit it came from. A later base reads the kit's fixes in
+  # between as the project's edits and keeps the old lines, with no conflict to show. The
+  # working copies were no proof: a plain sync before --merge, or a stopped --merge, had
+  # already overwritten them, and the right base was refused (round 1). Only a file the
+  # project never committed is read from the working tree.
   if [ -n "$named" ]; then
     git -C "$kit" -c core.quotePath=false grep -lE '^(# |<!-- )KIT-OWNED:' "$base" -- core setup > "$work_list" ||
       [ $? -eq 1 ] || die "cannot list the kit-owned files at $base_ref"
@@ -174,9 +196,12 @@ if [ "$merge" -eq 1 ]; then
     while IFS= read -r f; do
       f=${f#"$base":}
       case "$f" in core/*) rel=${f#core/} ;; *) rel=$f ;; esac
-      [ -z "$(blocked "$rel")" ] && [ -f "$target/$rel" ] || continue
+      [ -z "$(blocked "$rel")" ] || continue
+      if git -C "$target" show "HEAD:./$rel" > "$mdir/proj" 2>/dev/null; then :
+      elif [ -f "$target/$rel" ]; then cat "$target/$rel" > "$mdir/proj"
+      else continue; fi
       git -C "$kit" show "$base:$f" > "$mdir/kit" || die "cannot read $f at $base_ref"
-      git diff --no-index --quiet --ignore-cr-at-eol -- "$mdir/kit" "$target/$rel" || off="$off
+      git diff --no-index --quiet --ignore-cr-at-eol -- "$mdir/kit" "$mdir/proj" || off="$off
     $rel"
     done < "$work_list"
     [ -z "$off" ] || die "the project's kit-owned files below differ from the kit's at $base_ref, so the project did not come from it, and a merge from it would drop the kit's changes since the real base without a conflict. Pass the commit it came from (git -C <kit> log --format=%h -- core/<file> lists the candidates):$off"
@@ -301,7 +326,9 @@ index_exe() {
     esac
   elif ! git -C "$target" check-ignore -q -- "$rel"; then
     if [ -z "$repo_prefix" ]; then
-      git -C "$target" add --chmod=+x -- "$rel" && printf '%s\n' "  staged:  $rel (100755)"
+      # Staged once the version is recorded, as bootstrap.sh does: a run that stops (ACTION
+      # items, --merge) leaves nothing new in the owner's index (round 1).
+      printf '%s\n' "$rel" >> "$copies.stage"
     else
       printf '%s\n' "  NOTE: $rel is not staged; from $target run:" \
         "    git add --chmod=+x -- \"$(printf '%s' "$rel" | sed 's/[\\"$`]/\\&/g')\""
@@ -372,19 +399,21 @@ if [ -s "$pending" ]; then
 fi
 
 # --- tier 3, with --merge: the kit's changes merged into the project-owned files ---------
-# Each project-owned file the kit has under core/ (ignored files aside) and changed since the base commit is
-# merged with `git merge-file` (the project's copy, the kit's copy at the base, the kit's copy
-# now) and written whole with its mode; a file the kit did not change is not opened. Left for
-# a person or an agent are the conflict regions alone, printed by line. One upgrade that merged
-# five docs whole, one agent each, read 8.3M cache tokens (#184); the conflict regions of a
-# v0.8 -> v0.12 merge of the same docs and check.sh measured 14% of one read of the whole files.
-# The base is the kit commit the project's version came from: a later one reads the kit's own
-# changes in between as the project's. This run never records the version: the merged files
-# are read first (git diff), their conflicts resolved, then --actions-applied records it.
+# Each project-owned file of the kit's HEAD under core/ that the kit changed since the base
+# commit is merged with `git merge-file` (the project's copy, the kit's blob at the base, the
+# kit's blob at HEAD) and written whole with its mode; a file the kit did not change is not
+# opened. Both kit sides are blobs, never the kit's working tree (an autocrlf checkout made
+# every line differ), and a CRLF project copy is merged as LF and written back as CRLF.
+# Left for a person or an agent are the conflict regions alone, printed by line. One upgrade
+# that merged five docs whole, one agent each, read 8.3M cache tokens (#184); the conflict
+# regions of a v0.8 -> v0.12 merge of the same docs and check.sh measured 14% of one read of
+# the whole files. The base is the kit commit the project's version came from: a later one
+# reads the kit's own changes in between as the project's. This run never records the
+# version: the merged files are read first (git diff), their conflicts resolved, then
+# --actions-applied records it.
 if [ "$merge" -eq 1 ]; then
-  git -C "$kit" -c core.quotePath=false ls-files --cached --others --exclude-standard -- core | while IFS= read -r f; do
-    grep -qE '^(# |<!-- )KIT-OWNED:' "$kit/$f" 2>/dev/null || printf '%s\n' "${f#core/}"
-  done > "$work_list" || die "cannot list the kit's project-owned files"
+  owned_list
+  cr=$(printf '\r')
   echo
   printf '%s\n' "PROJECT-OWNED files, the kit's changes since ${base%"${base#???????}"} merged in:"
   open=0
@@ -401,22 +430,35 @@ if [ "$merge" -eq 1 ]; then
       fi
       continue
     fi
+    git -C "$kit" show "HEAD:core/$rel" > "$mdir/now" || die "cannot read core/$rel in the kit"
     # Removed by the project, or not changed by the kit: nothing to merge.
-    [ -e "$target/$rel" ] && ! cmp -s "$mdir/base" "$kit/core/$rel" || continue
+    [ -e "$target/$rel" ] && ! cmp -s "$mdir/base" "$mdir/now" || continue
     if grep -q '^<<<<<<< ' "$target/$rel"; then
       printf '%s\n' "  unresolved: $rel (conflict markers of an earlier merge); resolve them first"; open=1; continue
     fi
+    tr -d '\r' < "$target/$rel" > "$mdir/ours" || die "cannot read $rel"
     rc=0
     git merge-file -p -L project -L "kit base" -L "kit v$latest" \
-      "$target/$rel" "$mdir/base" "$kit/core/$rel" > "$mdir/merged" || rc=$?
+      "$mdir/ours" "$mdir/base" "$mdir/now" > "$mdir/merged" || rc=$?
     [ "$rc" -lt 128 ] || die "could not merge $rel; it and the files after it are unchanged"
-    put "$target/$rel" "$mdir/merged" || die "could not write $rel; it and the files after it are unchanged"
+    # ponytail: CRLF is decided by the file's first line ending, as editors do; a mixed file comes back all CRLF.
+    if head -n 1 "$target/$rel" | od -An -c | grep -q '\\r'; then
+      sed "s/\$/$cr/" "$mdir/merged" > "$mdir/out" || die "cannot write $rel"
+    else
+      mv -f "$mdir/merged" "$mdir/out"
+    fi
+    put "$target/$rel" "$mdir/out" || die "could not write $rel; it and the files after it are unchanged"
     if [ "$rc" -eq 0 ]; then
       printf '%s\n' "  merged:   $rel"
     else
       open=1
       printf '%s\n' "  conflict: $rel, lines $(awk '/^<<<<<<< /{s=NR} /^>>>>>>> /{printf "%s%d-%d", c, s, NR; c=", "}' "$target/$rel")"
     fi
+  done < "$work_list"
+  git -C "$kit" -c core.quotePath=false diff --name-only --no-renames --diff-filter=D "$base" HEAD -- core > "$work_list" ||
+    die "cannot list the files the kit removed"
+  while IFS= read -r f; do
+    printf '%s\n' "  kit-removed: ${f#core/} (the kit deleted or renamed it since the base; the changelog says what to do)"
   done < "$work_list"
   echo
   printf '%s\n' "sync-kit: version left at v$have. Read each merged file's diff (git diff) and account for"
@@ -440,9 +482,20 @@ if [ -s "$pending" ] && [ "$applied" -eq 0 ]; then
   exit 2
 fi
 
-# The kit commit this version came from, the base of the next --merge (a kit that is no git
-# clone has none, and that --merge is given --base).
-if commit=$(git -C "$kit" rev-parse -q --verify HEAD 2>/dev/null); then
+# The kit commit this version came from, the base of the next --merge (none from a kit that is
+# no git clone of its own; that --merge is given --base). A merge leaves conflict markers for
+# the owner: a stamp over them recorded the version and moved the base while a project-owned
+# file still held both sides (round 1), so it waits until none is left.
+commit=""
+if own_repo && commit=$(git -C "$kit" rev-parse -q --verify HEAD); then
+  owned_list
+  marked=""
+  while IFS= read -r rel; do
+    [ -z "$(blocked "$rel")" ] && [ -f "$target/$rel" ] || continue
+    if grep -qE '^(<<<<<<<|>>>>>>>)( |$)' "$target/$rel"; then marked="$marked
+    $rel"; fi
+  done < "$work_list"
+  [ -z "$marked" ] || die "conflict markers are left in these files; resolve them, then rerun. Version left at v$have:$marked"
   why=$(blocked docs/kit/.kit-commit)
   if [ -n "$why" ]; then
     printf '%s\n' "sync-kit: NOTE: docs/kit/.kit-commit not recorded ($why)"
@@ -457,4 +510,13 @@ $latest
 EOF
 echo
 printf '%s\n' "sync-kit: recorded v$latest."
+if [ -s "$copies.stage" ]; then
+  while IFS= read -r rel; do
+    if git -C "$target" add --chmod=+x -- "$rel"; then
+      printf '%s\n' "sync-kit: staged $rel (100755)"
+    else
+      printf '%s\n' "sync-kit: NOTE: $rel was not staged; run: git add --chmod=+x -- \"$rel\""
+    fi
+  done < "$copies.stage"
+fi
 echo "sync-kit: now run ./scripts/check.sh. A sync that leaves the gate red is not finished."

@@ -79,7 +79,12 @@ the commit the project really came from, because a later commit makes the kit's 
 between read as the project's, and they are dropped without a conflict. So a base passed with
 `--base` is checked first against the project's kit-owned files, which still hold that commit's
 copies (line endings aside). If any of them differs, the run stops before it writes anything
-and names those files. A `--merge` run never records the version. Read each merged
+and names those files. A rerun merges against the same base again, so a kit change you rejected comes back: reject a
+kit hunk only after the last `--merge` run. Both kit sides are read from the kit's commits, never
+its working tree, and a CRLF project file is merged as LF and written back as CRLF. Files the
+kit removed or renamed since the base are listed as `kit-removed:`. A `--merge` run never
+records the version, and no sync records it while a project-owned file still holds conflict
+markers. Read each merged
 file's `git diff`, resolve the listed conflicts, then rerun with `--actions-applied`. One
 upgrade that instead merged five docs whole, one agent per doc, read 8.3M cache tokens (#184).
 On the kit's own history, v0.8 to v0.12, the conflict regions of the same docs and `check.sh`

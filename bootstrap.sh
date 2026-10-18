@@ -457,8 +457,11 @@ fi
 # usual completion-marker rule: Rails records a migration's version only after it ran; Mozilla
 # bug 238741, files left by a cancelled install read as installed.)
 # The kit commit this install came from, the base of sync-kit.sh --merge (a kit that is no git
-# clone has none). Written before the stamp, which stays the last write.
-if commit=$(git -C "$kit" rev-parse -q --verify HEAD 2>/dev/null); then
+# clone of its own has none: one inside another repository answered with that repository's HEAD).
+# Written before the stamp, which stays the last write. sync-kit.sh's own_repo is the same test.
+if top=$(git -C "$kit" rev-parse --show-toplevel 2>/dev/null) &&
+   [ "$(CDPATH= cd -- "$top" && pwd -P)" = "$(CDPATH= cd -- "$kit" && pwd -P)" ] &&
+   commit=$(git -C "$kit" rev-parse -q --verify HEAD 2>/dev/null); then
   put "$target/docs/kit/.kit-commit" <<EOF
 $commit
 EOF

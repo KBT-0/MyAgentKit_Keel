@@ -380,7 +380,7 @@ class SyncKitTests(unittest.TestCase):
         for sub in ('', 'app'):
             with self.subTest(subfolder=sub), tempfile.TemporaryDirectory() as tmp:
                 kit, top = Path(tmp) / 'kit', Path(tmp) / 'project'
-                self.sync(tmp, '- A kit-owned file changed.\n', '--dry-run')
+                self.sync(tmp, ACTION, '--dry-run')
                 project = top / sub
                 if sub:
                     shutil.move(str(top / 'docs'), str(Path(tmp) / 'docs'))
@@ -397,12 +397,19 @@ class SyncKitTests(unittest.TestCase):
                 git('config', 'core.fileMode', 'false')
                 git('add', '-A')
                 old_blob = git('ls-files', '-s', sub + '/' + hook if sub else hook).split()[1]
-                result = subprocess.run(['sh', str(kit / 'sync-kit.sh'), str(project)], env=env,
-                                        capture_output=True, text=True, timeout=60)
-                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                staged = {line.split('\t')[1]: line.split()[:2]
-                          for line in git('ls-files', '-s').splitlines()}
+                run = lambda *a: subprocess.run(['sh', str(kit / 'sync-kit.sh'), str(project), *a], env=env,
+                                                capture_output=True, text=True, timeout=60)
+                listed = lambda: {line.split('\t')[1]: line.split()[:2]
+                                  for line in git('ls-files', '-s').splitlines()}
                 prefix = sub + '/' if sub else ''
+                # A run that stops on ACTION items stages nothing new (round 1).
+                result = run()
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertNotIn(prefix + new, listed())
+                self.assertEqual(listed()[prefix + hook], ['100755', old_blob], 'staged bytes kept')
+                result = run('--actions-applied')
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                staged = listed()
                 self.assertEqual(staged[prefix + hook], ['100755', old_blob], 'staged bytes kept')
                 self.assertNotIn(prefix + doc, staged, 'a doc is not staged')
                 if sub:
@@ -422,6 +429,7 @@ class SyncKitTests(unittest.TestCase):
             files = {'docs/WORKFLOW.md': ('a\nb\nc\nd\ne\n', 'a\nB kit\nc\nd\ne\n', 'a\nb\nc\nd\nE mine\n'),
                      'docs/GOTCHAS.md': ('x\ny\n', 'x\nY kit\n', 'x\nY mine\n'),
                      'docs/STATE.md': ('same\n', 'same\n', 'mine\n'),
+                     'docs/OLD.md': ('old\n', None, 'old\n'),
                      '.githooks/commit-msg': ('# KIT-OWNED: x\none\n', '# KIT-OWNED: x\ntwo\n',
                                               '# KIT-OWNED: x\r\none\r\n')}
             for rel, (base, _, mine) in files.items():
@@ -437,9 +445,11 @@ class SyncKitTests(unittest.TestCase):
             git('-c', 'user.name=F', '-c', 'user.email=f@example.invalid', 'commit', '-qm', 'v0.1')
             base = git('rev-parse', 'HEAD')
             for rel, (_, now, _) in files.items():
-                (kit / 'core' / rel).write_bytes(now.encode())
+                if now is not None:
+                    (kit / 'core' / rel).write_bytes(now.encode())
             (kit / 'core/scripts').mkdir()
             (kit / 'core/scripts/new.sh').write_bytes(b'echo new\n')
+            (kit / 'core/docs/OLD.md').unlink()
             run = lambda *a: subprocess.run(['sh', str(kit / 'sync-kit.sh'), str(project), *a], env=env,
                                             capture_output=True, text=True, timeout=60)
             result = run('--merge')
@@ -466,6 +476,7 @@ class SyncKitTests(unittest.TestCase):
             self.assertIn('  conflict: docs/GOTCHAS.md, lines 2-6', out)
             self.assertIn('Y mine', (project / 'docs/GOTCHAS.md').read_text())
             self.assertIn('  kit-new:  scripts/new.sh', out)
+            self.assertIn('  kit-removed: docs/OLD.md', out)
             self.assertNotIn('docs/STATE.md', out)
             self.assertEqual((project / 'docs/STATE.md').read_bytes(), b'mine\n')
             self.assertNotIn('.githooks/commit-msg', out.split('PROJECT-OWNED')[1])
@@ -473,9 +484,90 @@ class SyncKitTests(unittest.TestCase):
             (project / 'docs/kit/.kit-commit').write_bytes(base.encode() + b'\n')
             result = run('--merge')
             self.assertIn('  unresolved: docs/GOTCHAS.md', result.stdout)
+            # No stamp while a project-owned file holds markers: it moved the base past them (round 1).
+            result = run()
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn('    docs/GOTCHAS.md', result.stderr)
+            self.assertEqual((project / 'docs/kit/.kit-version').read_text(), '0.1\n')
+            self.assertEqual((project / 'docs/kit/.kit-commit').read_text().strip(), base)
+            (project / 'docs/GOTCHAS.md').write_bytes(b'x\nY mine\n')
             result = run()
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertEqual((project / 'docs/kit/.kit-commit').read_text().strip(), git('rev-parse', 'HEAD'))
+
+    def merge_kit(self, tmp, entry, files):
+        """A kit whose commits hold `files` {rel: (at base, at HEAD)}; returns (kit, project, base, env)."""
+        env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1')
+        kit, project = Path(tmp) / 'kit', Path(tmp) / 'project'
+        self.sync(tmp, entry, '--dry-run')
+        git = lambda *a: subprocess.run(['git', '-C', str(kit), *a], check=True, env=env,
+                                        capture_output=True, text=True).stdout.strip()
+        git('init', '-q')
+        base = None
+        for side in (0, 1):
+            for rel, bodies in files.items():
+                (kit / 'core' / rel).parent.mkdir(parents=True, exist_ok=True)
+                (kit / 'core' / rel).write_bytes(bodies[side])
+            git('add', '-A')
+            git('-c', 'user.name=F', '-c', 'user.email=f@example.invalid', 'commit', '-qm', 'v0.%d' % (side + 1))
+            base = base or git('rev-parse', 'HEAD')
+        return kit, project, base, env
+
+    def test_merge_reads_kit_blobs_and_keeps_a_crlf_project_copy_crlf(self):
+        # With autocrlf the kit's working-tree docs are CRLF over LF blobs: compared with the base
+        # blob, every doc read as kit-changed and every project line conflicted (round 1).
+        with tempfile.TemporaryDirectory() as tmp:
+            kit, project, base, env = self.merge_kit(tmp, '- A change.\n', {
+                'docs/SAME.md': (b'one\ntwo\n', b'one\ntwo\n'),
+                'docs/CHANGED.md': (b'a\nb\nc\n', b'a\nB kit\nc\n')})
+            for rel in ('docs/SAME.md', 'docs/CHANGED.md'):
+                body = (kit / 'core' / rel).read_bytes()
+                (kit / 'core' / rel).write_bytes(body.replace(b'\n', b'\r\n'))
+            (project / 'docs/SAME.md').write_bytes(b'one\r\ntwo\r\nmine\r\n')
+            (project / 'docs/CHANGED.md').write_bytes(b'a\r\nb\r\nc\r\nmine\r\n')
+            result = subprocess.run(['sh', str(kit / 'sync-kit.sh'), str(project), '--merge', '--base', base],
+                                    env=env, capture_output=True, text=True, timeout=60)
+            self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+            self.assertNotIn('docs/SAME.md', result.stdout)
+            self.assertEqual((project / 'docs/SAME.md').read_bytes(), b'one\r\ntwo\r\nmine\r\n')
+            self.assertIn('  merged:   docs/CHANGED.md', result.stdout)
+            self.assertEqual((project / 'docs/CHANGED.md').read_bytes(), b'a\r\nB kit\r\nc\r\nmine\r\n')
+
+    def test_the_right_base_passes_after_tier_one_overwrote_the_kit_owned_files(self):
+        # A plain sync before --merge, or a second --merge, had overwritten the kit-owned copies
+        # the base is checked against, and the right base was refused (round 1).
+        hook = '.githooks/commit-msg'
+        for sequence in ('plain sync, then --merge', '--merge twice'):
+            with self.subTest(sequence=sequence), tempfile.TemporaryDirectory() as tmp:
+                kit, project, base, env = self.merge_kit(tmp, ACTION, {
+                    hook: (b'# KIT-OWNED: x\none\n', b'# KIT-OWNED: x\ntwo\n'),
+                    'docs/WORKFLOW.md': (b'a\nb\nc\nd\n', b'a\nB kit\nc\nd\n')})
+                (project / '.githooks').mkdir()
+                (project / hook).write_bytes(b'# KIT-OWNED: x\none\n')
+                (project / 'docs/WORKFLOW.md').write_bytes(b'a\nb\nc\nd\nmine\n')
+                for args in (['init', '-q'], ['add', '-A'],
+                             ['-c', 'user.name=F', '-c', 'user.email=f@example.invalid', 'commit', '-qm', 'p']):
+                    subprocess.run(['git', '-C', str(project), *args], check=True, env=env, capture_output=True)
+                run = lambda *a: subprocess.run(['sh', str(kit / 'sync-kit.sh'), str(project), *a], env=env,
+                                                capture_output=True, text=True, timeout=60)
+                first = run() if sequence.startswith('plain') else run('--merge', '--base', base)
+                self.assertEqual(first.returncode, 2, first.stdout + first.stderr)
+                self.assertEqual((project / hook).read_bytes(), b'# KIT-OWNED: x\ntwo\n')
+                result = run('--merge', '--base', base)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertNotIn('did not come from it', result.stderr)
+                self.assertEqual((project / 'docs/WORKFLOW.md').read_bytes(), b'a\nB kit\nc\nd\nmine\n')
+
+    def test_a_kit_inside_another_repository_records_no_kit_commit(self):
+        # A vendored kit recorded the outer repository's HEAD as its own base (round 1).
+        env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1')
+        with tempfile.TemporaryDirectory() as tmp:
+            for args in (['init', '-q'], ['-c', 'user.name=F', '-c', 'user.email=f@example.invalid',
+                                         'commit', '-q', '--allow-empty', '-m', 'outer']):
+                subprocess.run(['git', '-C', tmp, *args], check=True, env=env, capture_output=True)
+            result, stamp = self.sync(tmp, '- A change.\n', env=env)
+            self.assertEqual((result.returncode, stamp), (0, '0.2'), result.stdout + result.stderr)
+            self.assertFalse((Path(tmp) / 'project/docs/kit/.kit-commit').exists())
 
     def test_a_write_that_fails_midway_leaves_the_old_file_whole(self):
         # The stamp was written by redirection, which empties the file before writing, and the

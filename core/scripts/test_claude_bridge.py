@@ -1514,8 +1514,13 @@ class BridgeTests(unittest.TestCase):
         subprocess.run(['git', '-C', str(unborn), 'add', '.'], check=True, capture_output=True)
         with self.assertRaises(bridge.BridgeError) as caught:
             bridge.snapshot(unborn, 'uncommitted', None)
-        self.assertIn('no commit yet', str(caught.exception))
+        self.assertIn('HEAD names no commit (a new repository or an orphan branch)', str(caught.exception))
         self.assertIn('setup/INTERVIEW.md, Phase 4 step 6', str(caught.exception))
+        # An orphan branch in a repository with commits: the same refusal, not "no commit yet".
+        self.git('checkout', '-q', '--orphan', 'fresh')
+        with self.assertRaises(bridge.BridgeError) as caught:
+            bridge.snapshot(self.repo, 'uncommitted', None)
+        self.assertIn('HEAD names no commit (a new repository or an orphan branch)', str(caught.exception))
 
     def test_diff_drivers_cannot_hide_source_and_fingerprints_read_raw_bytes(self):
         source = self.repo / 'file.py'
