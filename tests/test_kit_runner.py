@@ -788,6 +788,26 @@ def main():
                                  bool(code), out.getvalue())
                 self.assertEqual('KIT CHECK: PASS' in out.getvalue(), not code)
 
+    def test_the_gate_checks_count_drops_with_its_link_test_on_a_host_without_symlinks(self):
+        # Without symlink privilege (Windows without Developer Mode) BuildCacheTests' link test is a
+        # declared skip, which never counts: a fixed count of 12 turned every test_gate_checks unit red.
+        probe = ("import importlib.util, os, sys\n"
+                 "def refuse(*a, **k): raise OSError('no privilege')\n"
+                 "os.symlink = refuse\n"
+                 "spec = importlib.util.spec_from_file_location('check_kit', sys.argv[1])\n"
+                 "kit = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(kit)\n"
+                 "tests = kit.ROOT / 'tests'\n"
+                 "suite, found = kit.discover(tests, {p.stem for p in tests.glob('test_*.py')} - {'test_gate_checks'})\n"
+                 "skips = sum(bool(getattr(getattr(t, t._testMethodName), '_kit_platform_skip', False))"
+                 " for t in kit._cases(suite))\n"
+                 "print(skips, found['test_gate_checks'] - skips, kit.REQUIRED_SUITES['tests']['test_gate_checks'])\n")
+        result = subprocess.run([sys.executable, '-B', '-c', probe, str(ROOT / 'scripts/check_kit.py')],
+                                capture_output=True, text=True, encoding='utf-8')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        skips, countable, required = map(int, result.stdout.split())
+        self.assertEqual(skips, 1, result.stdout)
+        self.assertEqual(required, countable)
+
     def test_units_print_in_the_given_order_whichever_ends_first(self):
         slow = [sys.executable, '-c', 'import time; time.sleep(1); print("slow output\\nUNIT DONE: slow")']
         fast = [sys.executable, '-c', 'print("fast output\\nUNIT DONE: fast")']
