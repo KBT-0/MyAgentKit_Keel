@@ -1505,6 +1505,23 @@ class BridgeTests(unittest.TestCase):
         self.git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
                  '-c', 'core.hooksPath=/dev/null', '-c', 'commit.gpgsign=false', 'commit', '-qm', message)
 
+    def test_a_repository_without_a_commit_is_refused_with_the_setup_route(self):
+        # A first setup reviews on an unborn HEAD: a bare rev-parse died with "ambiguous
+        # argument 'HEAD'" and named no way on (#176).
+        unborn = self.root / 'unborn'
+        subprocess.run(['git', 'init', '-q', str(unborn)], check=True, capture_output=True)
+        (unborn / 'file.py').write_text('new\n')
+        subprocess.run(['git', '-C', str(unborn), 'add', '.'], check=True, capture_output=True)
+        with self.assertRaises(bridge.BridgeError) as caught:
+            bridge.snapshot(unborn, 'uncommitted', None)
+        self.assertIn('HEAD names no commit (a new repository or an orphan branch)', str(caught.exception))
+        self.assertIn('setup/INTERVIEW.md, Phase 4 step 6', str(caught.exception))
+        # An orphan branch in a repository with commits: the same refusal, not "no commit yet".
+        self.git('checkout', '-q', '--orphan', 'fresh')
+        with self.assertRaises(bridge.BridgeError) as caught:
+            bridge.snapshot(self.repo, 'uncommitted', None)
+        self.assertIn('HEAD names no commit (a new repository or an orphan branch)', str(caught.exception))
+
     def test_diff_drivers_cannot_hide_source_and_fingerprints_read_raw_bytes(self):
         source = self.repo / 'file.py'
         source.write_text('stable\nold\n')

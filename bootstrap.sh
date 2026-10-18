@@ -317,7 +317,7 @@ done
 # The folders and files bootstrap makes itself pass the same check: one it may not write is
 # a conflict that stops the run, like a kept gate, and is not created or opened. The files
 # are written only after the stop below, each by `put`.
-own="docs/reviews docs/audits docs/worktree-notes docs/spikes docs/kit docs/kit/.kit-version"
+own="docs/reviews docs/audits docs/worktree-notes docs/spikes docs/kit docs/kit/.kit-version docs/kit/.kit-commit"
 [ -z "$note" ] || own="$own docs/kit/BOOTSTRAP_NOTE.md"
 stops=""
 for d in $own; do
@@ -456,6 +456,16 @@ fi
 # sync-kit.sh trusts it, and a stamp over a short install answers "already current". (The
 # usual completion-marker rule: Rails records a migration's version only after it ran; Mozilla
 # bug 238741, files left by a cancelled install read as installed.)
+# The kit commit this install came from, the base of sync-kit.sh --merge (a kit that is no git
+# clone of its own has none: one inside another repository answered with that repository's HEAD).
+# Written before the stamp, which stays the last write. sync-kit.sh's own_repo is the same test.
+if top=$(git -C "$kit" rev-parse --show-toplevel 2>/dev/null) &&
+   [ "$(CDPATH= cd -- "$top" && pwd -P)" = "$(CDPATH= cd -- "$kit" && pwd -P)" ] &&
+   commit=$(git -C "$kit" rev-parse -q --verify HEAD 2>/dev/null); then
+  put "$target/docs/kit/.kit-commit" <<EOF
+$commit
+EOF
+fi
 stage "$target/docs/kit/.kit-version" <<EOF
 $version
 EOF
