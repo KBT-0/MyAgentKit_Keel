@@ -322,6 +322,7 @@ ON_WINDOWS.update({'test_copied_hooks_allow_done_without_hiding_other_changes',
                    'test_a_spawn_that_fails_before_its_launch_leaves_no_worktree_or_branch',
                    'test_a_spawn_that_fails_after_its_launch_keeps_the_worktree_and_says_how_to_remove_it',
                    'test_a_spawn_whose_worktree_add_fails_after_making_it_leaves_neither',
+                   'test_a_committed_result_checked_out_into_the_worktree_does_not_end_the_new_worker',
                    'test_a_spawn_that_loses_the_race_for_its_name_leaves_the_other_spawns_worktree',
                    'test_a_tmux_session_that_ran_and_ended_at_once_keeps_its_worktree',
                    'test_plain_tmux_spawn_clears_stale_state_before_readiness'})
@@ -980,6 +981,10 @@ exit 0
         # Not registered as a peer (no sessions/8.json): the lead is told it will hear nothing.
         self.assertIn("WARNING: 'w1' (process 8) is not registered as a peer session", result.stdout)
         self.assertIn('scripts/close_worker.sh w1', result.stdout)
+        # #171: its process id is recorded; close_worker.sh ends only that one, never another
+        # checkout's session of the name.
+        (record,) = (self.tmp / 'real').rglob('w1.pid')
+        self.assertEqual(record.read_text(), '8\n')
         # The tab ends with `exit 0`, never as claude's own exit: Windows Terminal keeps a tab whose
         # command ended nonzero open, as claude does when close_worker.sh ends it. The script the
         # tab ran is deleted.
@@ -1660,6 +1665,23 @@ exit 0
         again = self.spawn('fw', str(self.brief), '--worktree', KIT_WT=str(self.bin / 'wt-tab'),
                            KIT_PS=str(self.bin / 'ps-stub'))
         self.assertEqual(again.returncode, 0, again.stdout + again.stderr)
+
+    def test_a_committed_result_checked_out_into_the_worktree_does_not_end_the_new_worker(self):
+        # #168: the run's start was taken before `git worktree add`, so a committed custom result
+        # with its ready marker, written by the checkout, read as this run's DONE and the fresh
+        # worker was ended within its grace period.
+        git = self.native_checkout()
+        (self.cwd / 'docs').mkdir()
+        (self.cwd / 'docs/OP.md').write_text('Kind: completed\nTask: earlier\nAttempt: 1\nRemaining: none\n'
+                                             '<!-- codex-worker: ready -->\n', newline='\n')
+        git('add', 'docs/OP.md')
+        git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'op')
+        result = self.spawn('fw', str(self.brief), '--worktree', '--result', 'docs/OP.md',
+                            KIT_WT=str(self.bin / 'wt-tab'), KIT_PS=str(self.bin / 'ps-stub'),
+                            SPAWN_PUBLISH='# notes\n', SPAWN_PUBLISH_TO=str(self.tmp / 'notes.md'),
+                            SPAWN_LINGER='3', KIT_WORKER_GRACE='0.2')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue((self.state / 'finished').exists(), 'the old result ended the new worker: ' + result.stderr)
 
     def test_a_tmux_session_that_ran_and_ended_at_once_keeps_its_worktree(self):
         # Codex review r1 (Critical): a session that started and ended before the has-session check

@@ -413,8 +413,12 @@ if [ -n "$windows" ]; then
   { cworker=$(cygpath -m "$cworker") && cresult=$(cygpath -m "$result") && cquestion=$(cygpath -m "$cquestion"); } ||
     die "cygpath cannot convert the result's path: $result"
 fi
-start=$($kit_python -I -c 'import time; print(time.time())')
-supervise="KIT_WORKER_STARTED=$(q "$start")${resume:+ KIT_WORKER_RESUME=1} $kit_python $(q "$cworker") $(q "$cquestion") $(q "$cresult") --"
+# The run starts once its worktree exists (#168): a committed result that the checkout wrote is
+# older than the start, so the supervisor takes it for an earlier run's and never as this run's DONE.
+supervisor() {
+  start=$($kit_python -I -c 'import time; print(time.time())')
+  supervise="KIT_WORKER_STARTED=$(q "$start")${resume:+ KIT_WORKER_RESUME=1} $kit_python $(q "$cworker") $(q "$cquestion") $(q "$cresult") --"
+}
 # Written once the name is known to be free: a running worker's record is never replaced.
 record_result() {
   mkdir -p -- "$wdir" && printf '%s\n' "$cresult" > "$wdir/$name.result-path" ||
@@ -494,7 +498,7 @@ if s:
 }
 reset_state() {
   # All launches, including plain tmux sessions, begin without the previous run's snapshot.
-  rm -f -- "$wdir/$name".state* "$wdir/$name".watch-* || die "cannot clear the previous state in $wdir"
+  rm -f -- "$wdir/$name".state* "$wdir/$name".watch-* "$wdir/$name.pid" || die "cannot clear the previous state in $wdir"
 }
 # A worker is a session of its own, never the lead's child. The lead's shell carries Claude
 # Code's child-session markers, and a claude that sees CLAUDE_CODE_CHILD_SESSION skips its peer
@@ -609,6 +613,7 @@ if [ -n "$windows" ]; then
   [ -z "$running" ] || die "a Claude Code session named '$name' already runs (process $running)"
   prepare_settings
   prepare_worktree
+  supervisor
   reset_state
   record_result
   wt=${KIT_WT:-wt.exe}
@@ -646,6 +651,10 @@ if [ -n "$windows" ]; then
     i=$((i + 1)); sleep 1
   done
   [ -n "$pids" ] || die "no Claude Code session named '$name' started within 30 s; its tab shows why"
+  # The name was free machine-wide before the launch (above), so these are this checkout's
+  # worker: close_worker.sh ends only the recorded ids, never another project's session of the
+  # name (#171). The refusal stays machine-wide, so the ids found here are never another's.
+  printf '%s\n' "$pids" > "$wdir/$name.pid" || die "cannot record the session's process id in $wdir"
   reg=${CLAUDE_CONFIG_DIR:-$HOME/.claude}/sessions
   peer=""
   # The listing is taken again on every round: a worker that ended meanwhile did not start.
@@ -675,6 +684,7 @@ fi
 # removed worktree, say) is gone, whatever -c says.
 [ -z "$worktree" ] || prepare_settings
 prepare_worktree
+supervisor
 reset_state
 [ -z "$backend" ] || cmd=$(backend_command "$cmd")
 # The reserved script removes itself; tmux receives two plain words for its default shell.

@@ -26,6 +26,9 @@
 #      that still cannot answer at the end of the wait fails the close with its words. The 15 s
 #      is a bound, not a measurement (owner's choice), between `docker stop`'s 10 s and
 #      Kubernetes' 30 s grace periods; a value too short only costs a second close.
+#      Every project shares the default tmux server, so a session named NAME counts as this
+#      worker's only when it started (`#{session_path}`, the spawn's -c) in the worker's worktree,
+#      or in this checkout outside .claude/worktrees; another checkout's is never ended (#171).
 #   3. The worktree's spawn lock (`git worktree lock`, reason `kit worker NAME`, set by
 #      spawn_worker.sh and spawn_codex.sh) is lifted, then
 #      `clean_worktrees.sh --apply --only=NAME --no-quiet`: the post-merge hook's audit, every
@@ -39,7 +42,10 @@
 #      the worker made; a merge done on a detached main and undone left them on no other ref
 #      (RESEARCH_LOG 2026-10-03).
 # Native Windows has no tmux: step 2 ends the Claude Code session named NAME instead, the
-# claude.exe whose command line holds `-n NAME`, with `taskkill /T /F` (its tree), and waits up
+# claude.exe whose command line holds `-n NAME` and whose process id spawn_worker.sh recorded in
+# .myagentkit/workers/NAME.pid (names are machine-wide there: another checkout's session of the
+# name is never ended, #171; one running with no record is reported and nothing is done),
+# with `taskkill /T /F` (its tree), and waits up
 # to 15 s until no such process is left; its Windows Terminal tab closes by itself, because the
 # tab's command ends with `exit 0` (spawn_worker.sh). A lister that cannot answer fails the
 # close with its words, as the session may still run. A Codex worker (spawn_codex.sh) is a
@@ -67,7 +73,7 @@
 # The helper prints the .report-move-* folder of a report it could not restore. Where neither
 # an exclusive rename nor a hard link works, the move refuses and the report stays (owner
 # decision). After a removal (or with no worktree), the Codex records NAME.session, NAME.exit,
-# NAME.live and NAME.question go too, and spawn_worker.sh's NAME.result-path; a kept worktree
+# NAME.live and NAME.question go too, and spawn_worker.sh's NAME.result-path and NAME.pid; a kept worktree
 # keeps them.
 # Exit 0 when every named session is gone and every named worktree was removed or did not
 # exist; 1 otherwise, with the first reason on the last line: a nonzero exit of
@@ -224,10 +230,19 @@ inside() {
   done
   return 1
 }
-# has NAME: 0 the session exists, 1 tmux says it or its server does not, 2 tmux could not
-# tell (its words in $err): only the second is proof of absence.
+# has NAME: 0 this worker's session exists, 1 tmux says it or its server does not, or the
+# session NAME started in another checkout ($other then says where, #171), 2 tmux could not
+# tell (its words in $err): only 1 is proof of absence.
 has() {
-  err=$(tmux has-session -t "=$1" 2>&1) && return 0
+  other=""
+  if err=$(tmux has-session -t "=$1" 2>&1); then
+    # Session names hold no `:` (tmux replaces it), and worker names are [A-Za-z0-9_-].
+    p=$(tmux list-sessions -F '#{session_name}:#{session_path}' 2>&1) || { err=$p; return 2; }
+    p=$(printf '%s\n' "$p" | sed -n "s/^$1://p")
+    [ "$p" = "$wt_dir" ] && return 0
+    case $p in "$top/.claude/worktrees"|"$top/.claude/worktrees/"*) ;; "$top"|"$top/"*) return 0 ;; esac
+    other=$p; return 1
+  fi
   case $err in
     *"can't find session"*|*"session not found"*|*"no server running"*|*"no sessions"*) return 1 ;;
     *"error connecting to "*"(No such file or directory)"*) return 1 ;;
@@ -308,6 +323,18 @@ sessions() {
             pids.append(pid)
     sys.stdout.write(" ".join(pids))' "$1"
 }
+# mine NAME: of the sessions named NAME, the ones spawn_worker.sh started for this checkout (the
+# process ids in NAME.pid): a name is machine-wide on Windows, and another project's worker of
+# the same name was ended (#171). 2: the lister failed (its words); 3: sessions of the name run
+# and no record says whose (their ids).
+mine() {
+  all=$(sessions "$1") || { printf '%s' "$all"; return 2; }
+  [ -n "$all" ] || return 0
+  ids=$(cat -- "$top/.myagentkit/workers/$1.pid" 2>/dev/null) || { printf '%s' "$all"; return 3; }
+  own=""
+  for p in $all; do case " $(echo $ids) " in *" $p "*) own="$own${own:+ }$p" ;; esac; done
+  printf '%s' "$own"
+}
 case $(uname -s 2>/dev/null) in MINGW*|MSYS*|CYGWIN*) windows=1 ;; *) windows="" ;; esac
 # codex DIR: the process ids of the codex.exe programs whose -C (or --cd) argument is DIR, the
 # command line split as sessions splits it: `-C DIR` inside another session's quoted prompt
@@ -379,7 +406,10 @@ live() {
       p=$(codex "$2") || { printf '%s' "its Codex processes cannot be listed ($p)"; return 0; }
       [ -z "$p" ] || { printf '%s' "its Codex session still runs (process $p)"; return 0; }
     fi
-    p=$(sessions "$1") || { printf '%s' "its Claude Code sessions cannot be listed ($p)"; return 0; }
+    p=$(mine "$1"); case $? in
+      2) printf '%s' "its Claude Code sessions cannot be listed ($p)"; return 0 ;;
+      3) printf '%s' "a session named $1 runs (process $p) and no record says whose"; return 0 ;;
+    esac
     [ -z "$p" ] || { printf '%s' "its session still runs (process $p)"; return 0; }
     return 1
   fi
@@ -481,11 +511,15 @@ for name; do
   fi
 
   if [ -n "$windows" ]; then
-    if ! pids=$(sessions "$name"); then
+    pids=$(mine "$name"); st=$?
+    if [ "$st" -eq 2 ]; then
       fail "$name: could not list the Claude Code sessions, so $name may still run: $pids; its worktree is not touched"
       continue
+    elif [ "$st" -eq 3 ]; then
+      fail "$name: a Claude Code session named $name runs (process $pids), but no $record.pid says this checkout started it, and another checkout's is never ended; if it is this worker, quit it in its tab, then close again; its worktree is not touched"
+      continue
     elif [ -z "$pids" ]; then
-      say "$name: no Claude Code session named $name runs; nothing to end"
+      say "$name: no Claude Code session this checkout started as $name runs; nothing to end"
     elif [ -n "$dry" ]; then
       say "$name: dry run: would end the Claude Code session $name (process $pids, taskkill /T /F) and wait up to 15 s for it; while it runs, the audit below keeps its worktree"
     elif why=$(busy "$wt_dir"); then
@@ -493,8 +527,8 @@ for name; do
     else
       for pid in $pids; do MSYS_NO_PATHCONV=1 taskkill /PID "$pid" /T /F >/dev/null 2>&1; done
       i=0
-      while left=$(sessions "$name") && [ -n "$left" ] && [ "$i" -lt 15 ]; do i=$((i + 1)); sleep 1; done
-      if ! left=$(sessions "$name"); then
+      while left=$(mine "$name") && [ -n "$left" ] && [ "$i" -lt 15 ]; do i=$((i + 1)); sleep 1; done
+      if ! left=$(mine "$name"); then
         fail "$name: could not establish that the session ended: $left; its worktree is not touched"
         continue
       elif [ -n "$left" ]; then
@@ -508,7 +542,7 @@ for name; do
   elif ! command -v tmux >/dev/null 2>&1; then
     say "$name: no tmux session (tmux is not installed); nothing to end"
   elif has "$name"; st=$?; [ "$st" -eq 1 ]; then
-    say "$name: no tmux session named $name; nothing to end"
+    say "$name: no tmux session named $name${other:+ started in this checkout (the one in $other is another checkout's, never ended here)}; nothing to end"
   elif [ "$st" -eq 2 ]; then
     fail "$name: tmux could not say whether session $name exists, so it may still run: $err"
   elif [ -n "$dry" ]; then
@@ -652,7 +686,7 @@ for name; do
   if [ -z "$dry" ] && [ -z "$failed" ] && [ "$rc" -eq 0 ] && [ -z "$kept" ] && [ -n "$top" ] &&
      [ ! -e "$record.report-move" ] && [ ! -L "$record.report-move" ]; then
     rm -f -- "$record.session" "$record.exit" "$record.live" "$record.question" "$record.result-path" \
-      "$record.hooks-ignore-spawned" || fail "$name: could not remove its Codex session records"
+      "$record.hooks-ignore-spawned" "$record.pid" || fail "$name: could not remove its Codex session records"
   fi
   if git show-ref --verify --quiet "refs/heads/worktree-$name" 2>/dev/null; then
     say "$name: branch worktree-$name is kept, never deleted here; \`git branch --merged\` lists the merged branches, \`git branch -d <name>\` deletes one"

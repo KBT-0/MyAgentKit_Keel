@@ -50,6 +50,16 @@ sessions = open(path).read().split() if os.path.exists(path) else []
 if args[0] == 'list-sessions':
     if not sessions:
         sys.exit('no server running on /tmp/tmux-stub/default')
+    if '#{session_name}:#{session_path}' in args:
+        # Where each session started: the file `paths` ("NAME PATH" lines), else as spawn_worker.sh
+        # starts it from this checkout: its worktree when there is one, else the checkout.
+        paths = dict(l.split(' ', 1) for l in open(os.path.join(st, 'paths')).read().splitlines()) \
+            if os.path.exists(os.path.join(st, 'paths')) else {}
+        here = os.getcwd().replace('\\', '/')
+        for n in sessions:
+            tree = here + '/.claude/worktrees/' + n
+            print(n + ':' + paths.get(n, tree if os.path.isdir(tree) else here))
+        sys.exit(0)
     print('\n'.join(sessions))
     sys.exit(0)
 target = args[args.index('-t') + 1]
@@ -269,9 +279,13 @@ class CloseWorkerTests(unittest.TestCase):
         self.assertEqual(self.calls(), [])
         self.assertEqual(self.sessions(), ['w1'])
 
-    def windows(self, *procs):
+    def windows(self, *procs, mine=None):
         """Native Windows as close_worker.sh sees it: uname says MINGW, no tmux, PROCS (lines of
-        "<pid> <command line>") the claude.exe processes running."""
+        "<pid> <command line>") the claude.exe processes running. MINE {name: pids}: the process
+        ids spawn_worker.sh recorded for this checkout's workers (NAME.pid)."""
+        for name, pids in (mine or {}).items():
+            (self.main / '.myagentkit/workers').mkdir(parents=True, exist_ok=True)
+            (self.main / '.myagentkit/workers' / (name + '.pid')).write_text(pids + '\n')
         stub(self.tmp / 'bin/uname', '#!/bin/sh\necho MINGW64_NT-10.0-26200\n')
         stub(self.tmp / 'bin/ps-stub', PS, python=True)
         stub(self.tmp / 'bin/taskkill', TASKKILL, python=True)
@@ -288,7 +302,7 @@ class CloseWorkerTests(unittest.TestCase):
                            '123 C:\\npm\\claude.exe "Read brief -n w1 notes.md and follow it." -n w2',
                            '200 C:\\npm\\claude.exe -n w10', '300 C:\\npm\\claude.exe --resume x',
                            '400 "C:\\Program Files\\nodejs\\node.exe" C:\\other\\tool.js -n w1',
-                           '401 node.exe C:\\projects\\claude-code-tools\\backup.js -n w1')
+                           '401 node.exe C:\\projects\\claude-code-tools\\backup.js -n w1', mine={'w1': '100'})
         out = self.close('w1', **env)
         kills = (self.tmp / 'taskkill.log').read_text().splitlines()
         self.assertEqual(kills, ["['/PID', '100', '/T', '/F']"], out)
@@ -299,7 +313,7 @@ class CloseWorkerTests(unittest.TestCase):
         # Only the audit lists tmux sessions (a tmux on PATH there would be one); no session is ended in it.
         self.assertEqual([c for c in self.calls() if 'list-sessions' not in c], [], 'tmux was used to end it')
         out = self.close('w1', **env)
-        self.assertIn('close_worker: w1: no Claude Code session named w1 runs; nothing to end\n', out)
+        self.assertIn('close_worker: w1: no Claude Code session this checkout started as w1 runs; nothing to end\n', out)
 
     def test_sessions_accepts_only_the_claude_code_package_entry_point(self):
         # Exercise both installed parsers, including separators accepted on native Windows.
@@ -328,14 +342,14 @@ class CloseWorkerTests(unittest.TestCase):
         # of claude.exe alone said there was no session while it ran on.
         self.worker('w3', session=False)
         env = self.windows('300 "C:\\Program Files\\nodejs\\node.exe" '
-                           'C:\\npm\\node_modules\\@anthropic-ai\\claude-code\\cli.js "Read x" -n w3')
+                           'C:\\npm\\node_modules\\@anthropic-ai\\claude-code\\cli.js "Read x" -n w3', mine={'w3': '300'})
         out = self.close('w3', **env)
         self.assertEqual((self.tmp / 'taskkill.log').read_text().splitlines(), ["['/PID', '300', '/T', '/F']"], out)
         self.assertIn('close_worker: w3: Claude Code session ended (process 300)', out)
 
     def test_on_native_windows_a_session_that_survives_or_a_lister_that_fails_fails_the_close(self):
         path = self.worker('w1', session=False)
-        env = self.windows('100 claude.exe -n w1')
+        env = self.windows('100 claude.exe -n w1', mine={'w1': '100'})
         out = self.close('--dry-run', 'w1', **env)
         self.assertIn('close_worker: w1: dry run: would end the Claude Code session w1 (process 100', out)
         self.assertFalse((self.tmp / 'taskkill.log').exists(), out)
@@ -353,6 +367,39 @@ class CloseWorkerTests(unittest.TestCase):
         self.assertIn('close_worker: FAILED: w1: could not list the Claude Code sessions, so w1 may still run: '
                       'Get-CimInstance: access denied; its worktree is not touched', out)
         self.assertTrue(path.is_dir(), out)
+
+    def test_on_native_windows_another_checkouts_session_of_the_name_is_never_ended(self):
+        # #171: names are machine-wide on Windows. This checkout's w1 has ended; the w1 that runs
+        # (7777) is another project's. With no record of whose it is, nothing is done.
+        path = self.worker('w1', session=False)
+        env = self.windows('7777 C:\\npm\\claude.exe -n w1 --model x')
+        out = self.close('w1', code=1, **env)
+        self.assertIn('close_worker: FAILED: w1: a Claude Code session named w1 runs (process 7777), but no ', out)
+        self.assertFalse((self.tmp / 'taskkill.log').exists(), out)
+        self.assertTrue(path.is_dir(), out)
+        # Recorded at spawn, this checkout's w1 was process 555: 7777 is left alone, and the close
+        # goes on, the merge hook's --finished one too.
+        env = self.windows('7777 C:\\npm\\claude.exe -n w1 --model x', mine={'w1': '555'})
+        out = self.close('--finished', 'w1', **env)
+        self.assertIn('close_worker: w1: no Claude Code session this checkout started as w1 runs; nothing to end\n', out)
+        self.assertFalse((self.tmp / 'taskkill.log').exists(), out)
+        self.assertFalse(path.exists(), out)
+
+    def test_another_checkouts_tmux_session_of_the_name_is_never_ended(self):
+        # #171: every project shares the default tmux server; a w1 another checkout started (its
+        # session_path) is never ended, and this worker's worktree still goes through the audit.
+        path = self.worker('w1')
+        (self.tmp / 'paths').write_text('w1 /elsewhere/project/.claude/worktrees/w1\n')
+        out = self.close('w1')
+        self.assertNotIn("['kill-session', '-t', '=w1']", self.calls())
+        self.assertEqual(self.sessions(), ['w1'])
+        self.assertIn('close_worker: w1: no tmux session named w1 started in this checkout (the one in '
+                      "/elsewhere/project/.claude/worktrees/w1 is another checkout's, never ended here)", out)
+        self.assertFalse(path.exists(), out)
+        # One started in this checkout outside .claude/worktrees (a worker without --worktree) is this one's.
+        (self.tmp / 'paths').write_text('w1 %s/sub\n' % self.git('rev-parse', '--show-toplevel'))
+        out = self.close('w1')
+        self.assertIn("['kill-session', '-t', '=w1']", self.calls())
 
     def test_a_missing_session_or_worktree_is_reported_not_an_error(self):
         out = self.close('nobody')

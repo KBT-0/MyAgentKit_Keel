@@ -96,7 +96,9 @@ with `notify_when_idle` (a subscription costs no tokens; in the vendor's docs on
 is one notice, and it lapses after 12 hours, code.claude.com/docs/en/cross-session-messaging).
 If it prints WARNING, watch the tab and result file; no idle notice arrives.
 `close_worker.sh NAME` ends it: it finds the `claude.exe` whose
-command line holds `-n NAME`, stops it with `taskkill /T /F` (the tab closes, because its
+command line holds `-n NAME` and whose process id the spawn recorded in
+`.myagentkit/workers/NAME.pid` (another project's session of the name is never ended; one with
+no record is reported and left running), stops it with `taskkill /T /F` (the tab closes, because its
 command ends with `exit 0`), then removes the worktree through the same audit as on POSIX,
 which reads each process's working directory on Windows itself. A session that survives, or
 a process list it cannot read, leaves the worktree untouched. On WSL and macOS the tmux path
@@ -311,7 +313,9 @@ step and per name:
 1. A name outside `[A-Za-z0-9_-]`, or starting with `-`, is refused before any tmux call; the
    next name still runs.
 2. `tmux kill-session -t =NAME` ends the session, and the terminal tab attached to it closes
-   by itself. A session that does not exist is reported, not an error. It then waits up to
+   by itself; only a session that started in the worker's worktree, or in this checkout, is
+   this worker's (every project shares tmux's default server). A session that does not exist
+   is reported, not an error. It then waits up to
    15 seconds, and says what for, until tmux no longer finds the session and, where `/proc`
    exists (Linux), no process works inside the worktree: the tool takes a moment to exit.
 3. `scripts/clean_worktrees.sh --apply --only=NAME --no-quiet` removes `.claude/worktrees/NAME`
