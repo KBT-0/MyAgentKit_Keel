@@ -305,70 +305,8 @@ def gate(cwd, build, timeout=90, **extra):
 
 
 class KillTreeTests(unittest.TestCase):
-    @windows_only
-    def test_kill_tree_spares_a_pid_replaced_between_snapshot_and_open(self):
-        from unittest.mock import Mock, patch
-        module = sys.modules[__name__]
-        proc = Mock(pid=1, _handle=101, _kit_job=99)
-        events, closed = [], []
-
-        def query(handle, info, out, size, returned):
-            self.assertEqual(handle, 102)
-            out._obj.InheritedFromUniqueProcessId = 900
-            return 0
-
-        kernel32 = Mock()
-        kernel32.TerminateJobObject.side_effect = lambda job, code: events.append('job')
-        with patch.object(module, 'children', side_effect=lambda pid: [(2, 'python.exe')] if pid == 1 else []), \
-                patch.object(module, 'KERNEL32', Mock(OpenProcess=Mock(return_value=102),
-                                                   GetProcessId=Mock(return_value=1))), \
-                patch.object(module, 'NTDLL', Mock(NtQueryInformationProcess=Mock(side_effect=query)), create=True), \
-                patch.object(module, 'created', side_effect={101: 100, 102: 200}.get), \
-                patch.object(module, 'terminate', events.append), patch.object(module, 'close_handle', closed.append), \
-                patch('agent_process._win', return_value={'kernel32': kernel32}):
-            kill_tree(proc)
-        self.assertEqual(events, ['job'], 'a newer replacement with another parent must never be killed')
-        self.assertEqual(closed, [102])
-
-    @windows_only
-    def test_terminate_requires_a_signalled_wait_even_after_a_successful_kill(self):
-        from unittest.mock import Mock, patch
-        for killed in (0, 1):
-            for waited in (0x102, 0xffffffff):
-                with self.subTest(killed=killed, waited=waited), \
-                        patch.object(sys.modules[__name__], 'KERNEL32',
-                                     Mock(TerminateProcess=Mock(return_value=killed),
-                                          WaitForSingleObject=Mock(return_value=waited))), \
-                        patch.object(ctypes, 'get_last_error', return_value=5), self.assertRaises(OSError):
-                    terminate(101)
-            with patch.object(sys.modules[__name__], 'KERNEL32',
-                              Mock(TerminateProcess=Mock(return_value=killed),
-                                   WaitForSingleObject=Mock(return_value=0))):
-                terminate(101)  # already exited processes can refuse TerminateProcess
-
-    @windows_only
-    def test_kill_tree_stops_parents_first_and_spares_a_child_of_an_earlier_pid(self):
-        # TerminateJobObject alone stopped the build (4, 5) before the lock holder (2), which
-        # then cleared its token. 3 names 2 as its parent but is older than 2: its parent was
-        # an earlier process with that pid. It is never killed; the job is stopped last.
-        from unittest.mock import Mock, patch
-        events = []
-        proc = Mock(pid=1, _handle=1, _kit_job=99)
-        tree = {1: [(2, 'python.exe')], 2: [(4, 'sh.exe'), (3, 'unrelated.exe')], 4: [(5, 'sh.exe')]}
-        born = {1: 100, 2: 110, 3: 50, 4: 120, 5: 130}
-        kernel32 = Mock()
-        kernel32.TerminateJobObject.side_effect = lambda job, code: events.append('job')
-        module = sys.modules[__name__]
-        with patch.object(module, 'children', lambda pid: tree.get(pid, [])), \
-                patch.object(module, 'KERNEL32', Mock(OpenProcess=lambda access, inherit, pid: pid,
-                                                   GetProcessId=lambda handle: handle)), \
-                patch.object(module, 'parent_pid', side_effect={2: 1, 3: 2, 4: 2, 5: 4}.get), \
-                patch.object(module, 'created', born.get), \
-                patch.object(module, 'terminate', events.append), patch.object(module, 'close_handle'), \
-                patch('agent_process._win', return_value={'kernel32': kernel32}):
-            kill_tree(proc)
-        self.assertEqual(events, [2, 4, 5, 'job'])
-
+    # The helpers' own self-checks are in tests/test_check_gate_windows_harness.py: they test
+    # this file, not the kit, and do not count toward this suite's minimum (#263).
     @windows_only
     def test_kill_tree_stops_a_child_started_after_its_snapshot(self):
         # A real descendant starts after a walk that misses it (children() patched to find
@@ -454,10 +392,32 @@ class WindowsGateLockTests(unittest.TestCase):
         finally:
             close_handle(handle)
         self.assertEqual(code, 75, out)
-        self.assertIn('NOTE [lock]: another gate run, or a process it started, has held', out)
+        # The count is this run's wait: "has held ... for 0s" read as the holder's age (#250).
+        lock = self.lock_form()
+        self.assertIn('NOTE [lock]: another gate run, or a process it started, holds %s; '
+                      'this run has waited 0s for it.' % lock, out)
         self.assertIn('To see the holder: Resource Monitor', out)
-        self.assertIn('NOT RUN [lock]:', out)
-        self.assertIn('GATE_LOCK_WAIT=2 ran out', out)
+        self.assertIn('NOT RUN [lock]: another gate run, or a process it started, holds %s; '
+                      'this run waited 2s for it and GATE_LOCK_WAIT=2 ran out.' % lock, out)
+
+    @windows_only
+    def test_a_nested_run_starts_no_python_and_the_holder_two(self):
+        # Each start of the python3 alias cost about 0.4 s, seven before the gate body: a nested
+        # run calls the holder's interpreter and checks nothing, and the first pass finds and
+        # checks its Python in one start (#249). Shims on PATH log each start through it.
+        shims, log = self.tmp / 'shims', self.tmp / 'starts'
+        shims.mkdir()
+        for name in ('python3', 'python'):
+            (shims / name).write_text('#!/bin/sh\necho "%s ${GATE_LOCK_HELD:+nested}" >> "$SHIM_LOG"\n'
+                                      'exec "%s" "$@"\n' % (name, Path(sys.executable).as_posix()),
+                                      encoding='utf-8', newline='\n')
+        self.write_build('true\n')
+        code, out = gate(self.project, self.build, SHIM_LOG=log.as_posix(),
+                         PATH=str(shims) + os.pathsep + os.environ['PATH'])
+        self.assertEqual(code, 0, out)
+        starts = log.read_text(encoding='utf-8').split('\n')[:-1]
+        self.assertEqual([line for line in starts if 'nested' in line], [], 'a nested run started a Python')
+        self.assertLessEqual(len(starts), 2, starts)
 
     @windows_only
     def test_a_lock_path_outside_the_code_page_is_printed_not_a_traceback(self):
@@ -951,6 +911,22 @@ class GateRuleTests(unittest.TestCase):
                    + '- api: API\n| `core` | engine |\n- `.claude`: settings\n')
         code, out = self.run_gate()
         self.assertEqual(code, 0, out)
+
+    def test_module_names_come_from_table_rows_and_list_entries_only(self):
+        # The shipped template's paragraph and comment name design, work and tests: read as
+        # names, those module folders passed unmapped (#274).
+        self.module_root('src')
+        for module in ('economy', 'design', 'work', 'tests'):
+            self.write('src/%s/file.txt' % module, 'module\n')
+        text = (ROOT / 'core/docs/ARCHITECTURE.md').read_text(encoding='utf-8')
+        self.assertIn('{{MODULE_MAP}}', text)
+        self.write('docs/ARCHITECTURE.md', re.sub(r'\{\{[A-Z0-9_]+\}\}', 'fixture',
+                                                  text.replace('{{MODULE_MAP}}', '| `economy` | prices |')))
+        code, out = self.run_gate()
+        self.assertEqual(code, 1, out)
+        for module in ('design', 'work', 'tests'):
+            self.assertIn('FAIL [architecture]: src/%s is a module folder' % module, out)
+        self.assertNotIn('src/economy is a module folder', out)
 
     def test_historical_audit_ids_are_notes_but_live_state_and_reviews_still_fail(self):
         self.write('docs/audits/2026-01.md', 'K4: audit finding\n')
