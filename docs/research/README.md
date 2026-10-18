@@ -20,6 +20,7 @@ use the kit are recorded in `RESEARCH_LOG.md`, the third kind of source.
 | [review-prompts-sources](review-prompts-sources.md) | Companion: published reviewer prompts and rule files, quoted verbatim | 2026-10-13 | 24 | Evidence for the report above |
 | [review-rules-inventory](review-rules-inventory.md) | Companion: every review rule the kit gave, with copies and conflicts | 2026-10-13 | the kit itself | Evidence for the report above |
 | [communication-style](communication-style.md) | How should an AI agent talk to the person it works for? | 2026-10-14 | 101 | `core/docs/COMMUNICATION.md`, `GLOSSARY.md`, the two communication hooks (proposal item R) |
+| [kit-self-checks](kit-self-checks.md) | Is a whole-gate self-test supported, and how do template/kit projects size, tier and budget their own test suites? | 2026-10-18 | 46 | The v0.12 split of `check_kit` into a fast and a slow tier, removal of the project gate's `--self-test`, the test-time budget (owner rule of 2026-10-18) |
 | [context-limit](context-limit.md) | At what context size should a lead session hand off or compact? | 2026-10-14 | 47 | The context band in WORKFLOW "Worker cost" rule 8 |
 | [claude-lead-codex](claude-lead-codex.md) | How do people run a second model (Codex) beside a Claude lead: routing, cross review, cost, failures? | 2026-10-14 | 57 | The cross working mode and the `Owns:` check (WORKFLOW "Working modes, by name"); Model routing rule 7 |
 
