@@ -813,5 +813,46 @@ class V012RoundOneReviewTests(GuardCase):
         self.assertVerdict(["git -c alias.st='!git status' st", 'git submodule foreach git status'], 0)
 
 
+class V012RoundTwoReviewTests(GuardCase):
+    """v0.12 guards, round-2 reviews of 8b3ecaf: folders, splats and operands it cannot read."""
+    side_repo = V012RoundOneReviewTests.side_repo
+    lone_commit = V012RoundOneReviewTests.lone_commit
+
+    def test_a_folder_changed_inside_nested_shell_or_code_is_judged(self):
+        self.side_repo(dirty=True)  # the caller's tree is clean
+        self.assertVerdict([
+            "timeout 60 sh -c 'cd ../b && git reset --hard'",
+            "ls -d ../*/ | xargs -I{} sh -c 'cd {} && git checkout -- .'",
+            "python -c \"import subprocess; subprocess.run(['git', 'reset', '--hard'], cwd='../b')\"",
+            "python -c \"import os; os.chdir('../b'); os.system('git checkout -- .')\"",
+        ], 2)
+        self.assertVerdict(["timeout 60 sh -c 'git reset --hard'", "timeout 60 sh -c 'cd ../b && git status'",
+                            "python -c \"import subprocess; subprocess.run(['git', 'status'], cwd='../b')\""], 0)
+
+    def test_a_powershell_splat_is_unknowable(self):
+        def tool(name, commands, code):
+            for command in commands:
+                with self.subTest(tool=name, command=command):
+                    payload = json.dumps({'tool_name': name, 'tool_input': {'command': command}})
+                    self.assertEqual(self.run_hook(command, payload=payload).returncode, code)
+        tool('PowerShell', ["$a = @('push','--force'); git @a", "$a = 'push', '--force'; git @a", 'git @args',
+                            'git push @a'], 2)
+        tool('PowerShell', ["git log -1 '@{u}'", 'git log --oneline -3'], 0)
+        tool('Bash', ['git log --oneline -1 @'], 0)  # in Bash `@` is HEAD
+
+    def test_an_interpolated_operand_in_code_is_unknown(self):
+        git(self.repo, 'branch', 'merged')
+        git(self.repo, 'update-ref', 'refs/heads/feat', self.lone_commit('only on feat'))
+        self.assertVerdict([
+            "python -c 'import subprocess; subprocess.run(f\"git branch -D {b}\", shell=True)'",
+            "ruby -e 'system(\"git branch -D #{b}\")'",
+            "python -c 'import os; os.system(\"git branch -D %s\" % b)'",
+            "python -c 'import os; os.system(\"git branch -D {0}\".format(b))'",
+        ], 2)
+        self.assertVerdict(["python -c 'import os; os.system(\"git branch -D merged\")'",
+                            "python -c 'import subprocess; subprocess.run(f\"git log -1 {rev}\", shell=True)'",
+                            "python -c 'import os; os.system(\"git rev-parse HEAD^{tree}\")'"], 0)
+
+
 if __name__ == '__main__':
     unittest.main()

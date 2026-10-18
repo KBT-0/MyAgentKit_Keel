@@ -26,15 +26,18 @@ or stash before any command that discards work" still covers every destructive c
   reach, `reflog expire/delete`, `gc --prune=<time>` (or `-c gc.pruneExpire`/`gc.reflogExpire*`)
   and `prune`, and `worktree remove --force` while the worktree it names holds uncommitted or
   untracked work. The guard fails closed on what it cannot read: a subcommand, ref, remote,
-  worktree or folder named by a `$var`, a `$(...)`, an operand xargs appends or a `{}` is the worst
-  case (a variable refspec on push is not: a force push's `+`/`:` is typed by hand).
+  worktree or folder named by a `$var`, a `$(...)`, an operand xargs appends, a `{}`, an
+  interpolated part of a code string (`{b}`, `#{b}`, `%s`) or a PowerShell splat (`git @a`) is the
+  worst case (a variable refspec on push is not: a force push's `+`/`:` is typed by hand).
 - While the target tree has uncommitted work: `git reset --hard`, `git checkout` of paths or
   with `-f`, `git switch -f`, `git restore` (unless index-only: `--staged` without
   `--worktree`), `git clean` (unless `-n`/`--dry-run`; with `-x`/`-X` ignored files count) and
   an alias the hook cannot read. Uncommitted changes are not in the reflog: once they are gone,
   they are gone. The tree checked is the one the command reaches (`cd X &&`, `git -C`,
   `--git-dir`, `--work-tree`, `GIT_DIR=`, `GIT_WORK_TREE=`), and the caller's folder is always
-  checked too: a `cd` only adds a folder. A command after one that changes the tree (anything
+  checked too: a `cd` only adds a folder. A `sh -c` string (also behind a wrapper: `timeout`,
+  `xargs`) is judged with its own `cd`s; code that names a folder (`cwd=`, `chdir`, a `cd`) adds
+  one the hook cannot name, judged dirty. A command after one that changes the tree (anything
   but `cd`, `echo`, a read-only git command ...) is judged dirty. `git rm -f` (not `--cached`),
   `mv -f`, `checkout-index -f` and `read-tree -u --reset` are judged the same way.
 
@@ -199,10 +202,20 @@ GIT_VALUE = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-en
 UNKNOWN = "{}"
 # One item of an interpreter's argv list: a quoted string is one word, a bare name is a variable.
 ARGV = re.compile(r'"((?:\\.|[^"\\])*)"|\'((?:\\.|[^\'\\])*)\'|([^\s,\[\]{}()"\']+)')
+# Code that names a folder for the git it runs (`cwd=`, `chdir`, a `cd` in a shell string): the
+# hook does not resolve it, so that git may stand in a folder the hook cannot name.
+MOVES = re.compile(r"\bcwd\b|chdir|\b(?:cd|pushd|popd|sl)\b|set-location|push-location", re.I)
+# A string's interpolated part (`{b}`, `{0}`, Ruby `#{b}`, `%s`, `%(b)s`), not git's `@{u}`/`^{tree}`.
+INTERPOLATED = re.compile(r"(?<![@^])\{[^{}]*\}|%(?:\(\w+\))?[-#0 +\d.]*[sdr]")
+SPLAT = False  # set for PowerShell input, where `git @a` splats an array the hook cannot read
+
+
+def splat(word):
+    return SPLAT and re.match(r"@(?:\w|$)", word) is not None
 
 
 def unknowable(word):
-    return "$" in word or UNKNOWN in word or "`" in word
+    return "$" in word or UNKNOWN in word or "`" in word or splat(word)
 
 
 class Unreadable(Exception):
@@ -324,14 +337,17 @@ def loose(text, cwds, changed=False, env=None, appended=False):
     judged as the command it would be, quotes, brackets and commas read as word breaks. A quoted
     git word starts an argv list (`['git', 'push', '--mirror']`, one item per line or not): its
     items up to the closing bracket, a bare item (a variable) unknown. `appended`: the wrapper
-    (xargs) adds operands the hook cannot see."""
+    (xargs) adds operands the hook cannot see. An interpolated part of a string is an unknown
+    operand, and code that names a folder adds one the hook cannot name."""
+    if MOVES.search(text):
+        cwds = [*cwds, None]
     for m in GIT_WORD.finditer(text):
         quote = text[m.start() - 1:m.start()]
         if quote in ("'", '"') and text[m.end():m.end() + 1] == quote:
             items = re.split(r"[\])]", text[m.end() + 1:], maxsplit=1)[0]
             words = [next((w for w in x.groups()[:2] if w is not None), UNKNOWN) for x in ARGV.finditer(items)]
         else:
-            tail = re.split(r"[;&|\n]", text[m.end():], maxsplit=1)[0]
+            tail = INTERPOLATED.sub(UNKNOWN, re.split(r"[;&|\n]", text[m.end():], maxsplit=1)[0])
             words = re.sub(r"[\"'`,\[\]()]|\{(?!\})|(?<!\{)\}", " ", tail).split()
         yield from findings(Git(words + [UNKNOWN] * appended, dict(env or {}), cwds), changed)
 
@@ -553,8 +569,8 @@ def verdict(g, depth=0):
         return True, GATE, False
     if sub in HOOK_SUBS and any(HOOK_ENV.match(k) for k in g.env):
         return True, "a GIT_CONFIG_*, HUSKY, SKIP or PRE_COMMIT variable on this command can switch the gate off", False
-    if unknowable(sub):
-        return True, "the git subcommand comes from a variable or from xargs, so the hook cannot read it", False
+    if unknowable(sub) or any(splat(a) for a in args):
+        return True, "the git subcommand or arguments come from a variable, a splat or xargs, so the hook cannot read them", False
     if sub == "config" and any(a.lower() == "core.hookspath" or unknowable(a) for a in args):
         if not hooks_config_allowed(g):
             return True, "setting core.hooksPath (or a key or value the hook cannot read) moves the commit gate. " + GATE, False
@@ -702,13 +718,17 @@ def judge(command, cwds, changed=False, env=None):
         name = base(rest[0]) if rest else ""
         has_git = any(GIT_WORD.search(t) for t in rest)
         here = {**env, **local}
-        flag = next((k for k, t in enumerate(rest[1:], 1) if re.fullmatch(r"-\w*c\w*|/c|-command", t, re.I)), None)
+        # A shell this command runs, itself or behind a wrapper (`timeout 60 sh -c`, `xargs sh -c`).
+        shell = next((k for k, t in enumerate(rest) if base(t) in SHELLS and not interpreter(base(t))
+                      and (k == 0 or base(t) not in {".", "source"})), None) if name not in CALM | {"git"} else None
+        flag = None if shell is None else next((k for k, t in enumerate(rest[shell + 1:], shell + 1)
+                                                if re.fullmatch(r"-\w*c\w*|/c|-command", t, re.I)), None)
         leading = list(itertools.takewhile(lambda t: t.startswith("-"), rest[1:]))
         if rest and rest[0].startswith("$") and any(t in SPEC or t in ("stash", "remote", "config") for t in rest[1:]):
             raise Unreadable("a command named by a variable")
         if name == "eval" and has_git:
             yield from judge(" ".join(rest[1:]), cwds, changed, here)
-        elif name in SHELLS and not interpreter(name) and flag and has_git:
+        elif flag and has_git:  # judged with its own folders: a `cd` inside moves only that text
             yield from judge(" ".join(rest[flag + 1:]), cwds, changed, here)
         elif (name in SHELLS and not interpreter(name) and any(GIT_WORD.search(t) for t in text.split())
               and (len(leading) == len(rest) - 1 or any(re.fullmatch(r"-[a-zA-Z]*s[a-zA-Z]*", t) for t in leading))):
@@ -724,7 +744,7 @@ def judge(command, cwds, changed=False, env=None):
         if name in ("cd", "pushd", "popd", "set-location", "sl", "push-location", "pop-location"):
             args = [t for t in rest[1:] if not t.startswith("-") or t == "-"]
             target = os.path.expanduser(os.path.expandvars(args[0])) if args and "pop" not in name else None
-            moved = [None if target is None or "$" in target or target == "-" or c is None else os.path.join(c, target)
+            moved = [None if target is None or unknowable(target) or target == "-" or c is None else os.path.join(c, target)
                      for c in cwds]
             cwds = list(dict.fromkeys(cwds + moved))
             continue
@@ -757,6 +777,8 @@ def main():
     unreadable = ("this command holds git inside {}, which this hook cannot read, so it cannot tell "
                   "whether the command loses work; run the git command directly, as its own command")
     if data.get("tool_name") == "PowerShell":
+        global SPLAT
+        SPLAT = True
         if "`" in command and GIT_WORD.search(command):
             return unreadable.format("a PowerShell backtick (an escape or a line continuation)")
         # PowerShell keeps a backslash (paths), and `$env:NAME = v` sets NAME for later commands.
