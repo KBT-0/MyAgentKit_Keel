@@ -196,7 +196,7 @@ an explicit "start it here".
 
 ### MENTION ONCE — one line in your closing summary, never mid-work
 
-- Risky area touched ({{RISKY_AREAS}}, or gate/CI code) → "review gate applies before the merge"
+- Risky area touched ({{RISKY_AREAS}}, or gate/CI code) → "review gate applies before the merge (in a single session on the main branch, before the commit)"
   (the review its tier requires starts without asking:
   `docs/REVIEW_RUNNING.md`).
 - A second system doing the same job, a README that contradicts the API, or a file that does

@@ -27,7 +27,8 @@ Codex review). Choose effort from
 mechanism's first round use high.
 This is a total wall-clock limit, not a startup or inactivity
 timer, and each attempt has its own. One round can make up to four attempts (below), and a
-Codex capacity retry first sleeps 600 then 1200 seconds, so a round's worst case is the sum of
+Codex capacity retry sleeps the provider's reported wait, else 600 seconds, doubled for the
+second retry and at most 1200 seconds, so a round's worst case is the sum of
 its attempts' limits plus those sleeps. Use `REVIEW_TIMEOUT_SECONDS`
 (at most 3600) and `REVIEW_MAX_TURNS` (at most 500) to honor an explicit wrapper/dispatcher limit. Reviews have no default monetary budget cap:
 omit `--max-budget-usd` unless the owner explicitly specifies a cap. An explicit dollar
@@ -88,7 +89,9 @@ never resumes the author's Claude session and never gives Claude source-write to
 
 Allow at most two review rounds per task by default, unless the user explicitly sets
 another bound. One round makes at most four attempts: a Codex `rate_limited` attempt is
-retried up to twice (after 600 and 1200 seconds, also when Codex is the fallback reviewer),
+retried up to twice (after the provider's reported wait, else 600 seconds, doubled for the
+second retry; a wait that would pass 1200 seconds stops the retry; also when Codex is the
+fallback reviewer),
 and one failover or switch adds the other provider. Do not start another round merely
 because both providers failed.
 Stop on an unresolved product decision, unsafe scope expansion,

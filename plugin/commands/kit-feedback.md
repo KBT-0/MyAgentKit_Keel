@@ -1,7 +1,7 @@
 ---
 description: Send something you learned back to MyAgentKit_Keel as a GitHub issue or pull request — the kit improves from the projects using it
 argument-hint: "[what you learned, or leave empty to use the current conversation]"
-allowed-tools: Read, Glob, Grep, Bash(gh auth status), Bash(git status), Bash(git diff), Bash(git diff --stat), Bash(gh issue list --repo KBT-0/MyAgentKit_Keel --state all --limit 20 --search:*), AskUserQuestion
+allowed-tools: Read, Glob, Grep, Bash(gh auth status), Bash(git status), Bash(git diff), Bash(git diff --stat), AskUserQuestion
 ---
 # /myagentkit:kit-feedback [what you learned]
 
@@ -35,7 +35,9 @@ gh issue list --repo KBT-0/MyAgentKit_Keel --state all --limit 20 --search "<key
 ```
 
 The keywords are kit terms only (a kit file, script, rule or section name), never a name
-from this project: the search is a request to GitHub. Run two or three searches with
+from this project: the search is a request to GitHub. It is not pre-approved on purpose, so
+the permission prompt shows the owner the words before they leave the machine; the search
+stays one approval away. Run two or three searches with
 different terms. When an issue matches, propose a comment on it, with the new evidence,
 instead of a new issue; an open duplicate splits the evidence for one defect in two (the
 tracker already held #88 and #141 for one defect).

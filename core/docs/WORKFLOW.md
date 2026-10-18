@@ -69,7 +69,8 @@ choice. It holds only lines `AGENTS.md` does not already say in the same words.
    backstop, not the plan, and agents never bypass it with `--no-verify`.
 5. **Review by tier:** the brief's `Risk:` line names the tier, and the tier names the
    review (`docs/REVIEW_GATE.md`, "Risk tiers"): one light reviewer for low, one for medium,
-   two for high ({{RISKY_AREAS}}, gates, hooks, check scripts, review tooling).
+   two for high (gates, hooks, check scripts, review tooling); code in {{RISKY_AREAS}} is
+   medium.
    It runs in a FRESH session before the change reaches the main branch (when exactly:
    `docs/REVIEW_GATE.md`, its opening lines). The author never approves their own patch.
 6. **Document:** a changed public API updates its README in the same task (`AGENTS.md`,
@@ -563,8 +564,9 @@ so its design is reviewed under its own label before code ("Design before code")
 the review tier (`docs/REVIEW_GATE.md`, "Risk tiers"). `Checks:` lists what the worker runs
 on top of the gate, never instead of it (rule 9 of "Worker cost": the gate always runs): for
 low, the tests of the touched files; for medium, the focused suites, plus the project's
-packaging check when it has one (the kit's own: `python scripts/package_codex_plugin.py
---check`); for high, the full gate run by hand and a careful diff read. The lead session changes
+packaging consistency check when it has one, a check of seconds such as the kit's
+`python scripts/package_codex_plugin.py --check` (the package build itself runs once after
+the merge, rule 9); for high, the full gate run by hand and a careful diff read. The lead session changes
 its model only at a task boundary, never mid-task, because a model switch rebuilds the prompt
 cache at full price; an effort switch keeps the cache on Claude, and still waits for the
 boundary so that a round's record names one configuration.

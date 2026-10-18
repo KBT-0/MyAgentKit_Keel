@@ -56,7 +56,8 @@ Within an authorized review-and-fix task, Codex starts a fresh Claude process, w
 structured evidence, checks every finding, fixes confirmed defects, runs the project gate,
 and requests a fresh review of the fixes. Default is at most two review rounds. One round
 makes at most four attempts: a Codex `rate_limited` attempt is retried up to twice (after
-600 and 1200 seconds, also when Codex is the fallback), plus one failover or switch; a
+the provider's reported wait, else 600 seconds, doubled for the second retry and at most
+1200 seconds, also when Codex is the fallback), plus one failover or switch; a
 remaining Reject or unmet manual check is reported, never promoted into approval.
 
 For automatic reviews without repeating the request, the owner may explicitly authorize
@@ -154,7 +155,7 @@ two timed-out attempts take about `2 x REVIEW_TIMEOUT_SECONDS` plus local overhe
 (KARARLAR D06 inv2#45; B03 inv2/(a)). The defaults total about 90 minutes for two
 2700-second attempts or 120 minutes for two 3600-second high-effort Codex attempts;
 mixed defaults add the individual deadlines, and each Codex capacity retry adds its sleep
-(600, then 1200 seconds). Claude's final-JSON
+(the reported wait or 600 seconds, doubled for the second retry, at most 1200). Claude's final-JSON
 mode does not reliably expose whether silent work has started. Proposal mode retains its
 separate 600-second default. No
 new monetary cap is imposed. An explicit direct-adapter cap must not be dropped to obtain

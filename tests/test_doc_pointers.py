@@ -215,8 +215,7 @@ class SectionPointerTests(unittest.TestCase):
         # Pin exact read-only forms; send commands must still meet the permission prompt.
         expected = {
             'kit-feedback': ['Bash(gh auth status)', 'Bash(git status)',
-                             'Bash(git diff)', 'Bash(git diff --stat)',
-                             'Bash(gh issue list --repo KBT-0/MyAgentKit_Keel --state all --limit 20 --search:*)'],
+                             'Bash(git diff)', 'Bash(git diff --stat)'],
             # Handoff reads the cost script's figure (#278); cross-review delegates Git access to review.sh.
             'handoff': ['Bash(%s scripts/agent_cost.py --latest)' % p for p in ('python', 'python3', 'py -3')],
             'cross-review': ['Bash(./scripts/review.sh:*)'],
@@ -231,6 +230,7 @@ class SectionPointerTests(unittest.TestCase):
         # #230: the command searches the tracker before it drafts, so a duplicate becomes a comment.
         self.assertIn("Then search the kit's issues, open and closed, before drafting anything", command)
         self.assertIn('propose a comment on it', command)
+        self.assertIn('It is not pre-approved on purpose', command)
         # #278: /usage, the canonical name, and a NOT RUN line instead of an unread figure.
         handoff = ' '.join((ROOT / 'plugin/commands/handoff.md').read_text(encoding='utf-8').split())
         self.assertNotIn('/cost', handoff)
