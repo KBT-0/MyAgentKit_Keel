@@ -15,6 +15,10 @@ The transcript may lag the turn by a record or two, so a nudge can come one call
 At most three nudges are emitted per silent interval; text or compaction resets the limit.
 It saves a byte offset on every call and reads at least everything appended since that offset,
 so a large tool result cannot hide a visible line between calls. Silent on any error.
+
+It also adds context_size.py's band line, so a long autonomous turn meets the band when it
+crosses it, not at the owner's next prompt (#138). A sub-agent's call (`agent_id` in the
+input, code.claude.com/docs/en/hooks) skips it: the band is the lead's to act on.
 """
 import json
 import os
@@ -66,8 +70,21 @@ def silent_calls(path: Path, saved: dict) -> tuple[int, object, int]:
     return total, mark, offset
 
 
+def band_notice(data: dict) -> str:
+    if data.get('agent_id'):
+        return ''
+    try:
+        sys.dont_write_bytecode = True  # no untracked __pycache__ beside the synced hooks
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import context_size
+        return context_size.notice(Path(data['transcript_path']))
+    except Exception:  # noqa: BLE001 - a competing check holds the lock, or an older context_size.py
+        return ''
+
+
 def main() -> None:
-    transcript = Path(json.loads(sys.stdin.buffer.read().decode('utf-8'))['transcript_path'])
+    data = json.loads(sys.stdin.buffer.read().decode('utf-8'))
+    transcript = Path(data['transcript_path'])
     state = transcript.with_suffix('.progress-step')
     # The context_size.py lock: closing the file releases it, even on a kill.
     with open(transcript.with_suffix('.progress-lock'), 'a+b') as lock:
@@ -102,13 +119,12 @@ def main() -> None:
             os.replace(temporary, state)
         finally:
             temporary.unlink(missing_ok=True)
-    if not nudge:
-        return
-    print(json.dumps({'hookSpecificOutput': {
-        'hookEventName': 'PostToolUse',
-        'additionalContext': '%d tool calls since the owner last saw a line from you. Say in one plain '
-                             'sentence, in the chat language, what you are doing now and what you found, '
-                             'then continue (docs/COMMUNICATION.md, "Progress"; core/docs/ in the kit).' % total}}))
+    said = [('%d tool calls since the owner last saw a line from you. Say in one plain sentence, in the '
+             'chat language, what you are doing now and what you found, then continue (docs/COMMUNICATION.md, '
+             '"Progress"; core/docs/ in the kit).' % total)] if nudge else []
+    said = ' '.join(said + [band_notice(data)]).strip()
+    if said:
+        print(json.dumps({'hookSpecificOutput': {'hookEventName': 'PostToolUse', 'additionalContext': said}}))
 
 
 if __name__ == '__main__':

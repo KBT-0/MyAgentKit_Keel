@@ -971,7 +971,7 @@ Rules, binding for whoever routes workers:
    `docs/research/context-limit.md`). A symptom cuts at any size: the owner corrected the
    same rule twice, or the worker-route hook refused twice. The Claude Code overlay's
    `context_size.py` hook names the band once per 50k step past 200k (the step is the owner's
-   choice, like the band); the lead then
+   choice, like the band), at a prompt and after a tool call, so a long turn meets it too; the lead then
    recommends one of two, with the number and the reason. The overlay's `autoCompactWindow`
    of 450k is only a safety valve for a session nobody stops, never the cut; after any
    compaction its `after_compact.txt` hook names what to re-read. **Compact** when
