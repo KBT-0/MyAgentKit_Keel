@@ -33,7 +33,7 @@ class PythonFallbackTests(unittest.TestCase):
         bin_dir = tmp / 'bin'
         bin_dir.mkdir()
         for name, body in (('python3', 'exit 9009'), ('python', 'exec "%s" "$@"' % Path(sys.executable).as_posix())):
-            (bin_dir / name).write_text('#!/bin/sh\n%s\n' % body, encoding='utf-8')
+            (bin_dir / name).write_text('#!/bin/sh\n%s\n' % body, encoding='utf-8', newline='\n')
             (bin_dir / name).chmod(0o755)
         project = tmp / 'project'
         shutil.copytree(OVERLAY / '.claude/hooks', project / '.claude/hooks')
@@ -98,8 +98,8 @@ class PythonFallbackTests(unittest.TestCase):
         # No interpreter runs at all: a guard blocks (exit 2) and says why; any other hook only
         # reports, since exit 2 from UserPromptSubmit or Stop would block every prompt or refuse
         # every stop.
-        (bin_dir / 'python').write_text('#!/bin/sh\nexit 9009\n', encoding='utf-8')
-        (bin_dir / 'py').write_text('#!/bin/sh\nexit 1\n', encoding='utf-8')
+        (bin_dir / 'python').write_text('#!/bin/sh\nexit 9009\n', encoding='utf-8', newline='\n')
+        (bin_dir / 'py').write_text('#!/bin/sh\nexit 1\n', encoding='utf-8', newline='\n')
         (bin_dir / 'py').chmod(0o755)
         sh = shutil.which('sh')
         # The hook's file name decides, never a folder above it (Codex review of f68a68d).
@@ -114,7 +114,7 @@ class PythonFallbackTests(unittest.TestCase):
                                       timeout=60, env=dict(env, PATH=str(bin_dir)), cwd=project)
                 self.assertEqual(bare.returncode, code, bare.stderr)
                 self.assertIn('no Python found; install it or run doctor', bare.stderr)
-        (bin_dir / 'python').write_text('#!/bin/sh\nexec "%s" "$@"\n' % Path(sys.executable).as_posix(), encoding='utf-8')
+        (bin_dir / 'python').write_text('#!/bin/sh\nexec "%s" "$@"\n' % Path(sys.executable).as_posix(), encoding='utf-8', newline='\n')
         # A gate script that execs its resolved Python.
         cleaned = run(['sh', str(OVERLAY / 'scripts/clean_worktrees.sh')])
         self.assertEqual(cleaned.returncode, 0, cleaned.stdout + cleaned.stderr)
@@ -154,28 +154,46 @@ class PythonFallbackTests(unittest.TestCase):
         hooks.mkdir()
         shutil.copy(OVERLAY / '.claude/hooks/py.sh', hooks)
         (hooks / 'guard_x.py').write_text('import sys; sys.stdin.read(); sys.exit(2)\n', encoding='utf-8')
-        for name, body in (('python3', 'exit 9009'),
+        marker = tmp / 'foreign-ran'
+        for name, body in (('python3', 'exit 9009'), ('py', 'exit 1'), ('evil', 'touch "%s"' % marker.as_posix()),
                            ('python', 'printf "%%s\\n" "$*" >>"%s"\nexec "%s" "$@"' % (log.as_posix(), Path(sys.executable).as_posix()))):
-            (bin_dir / name).write_text('#!/bin/sh\n%s\n' % body, encoding='utf-8')
+            (bin_dir / name).write_text('#!/bin/sh\n%s\n' % body, encoding='utf-8', newline='\n')
             (bin_dir / name).chmod(0o755)
         cache = tmp / 'cache/myagentkit-python'
         env = dict(os.environ, PATH=os.pathsep.join([str(bin_dir), os.environ['PATH']]),
                    XDG_CACHE_HOME=(tmp / 'cache').as_posix())
+        sh = shutil.which('sh')
 
         def hook(name):
             log.write_text('', encoding='utf-8')
-            result = subprocess.run(['sh', str(hooks / 'py.sh'), (hooks / name).as_posix()], input='{}', env=env,
+            result = subprocess.run([sh, str(hooks / 'py.sh'), (hooks / name).as_posix()], input='{}', env=env,
                                     encoding='utf-8', errors='replace', capture_output=True, timeout=60)
             return result, sum(1 for line in log.read_text(encoding='utf-8').splitlines() if line.startswith('-I -c'))
 
-        for state in ('empty', 'cached', 'stale'):
+        # stale: a Store alias that stopped running; failing: `py` with no Python exits 1 before the
+        # hook (round-1 review); foreign: a name outside the three never runs from the cache.
+        for state, cached in (('empty', None), ('cached', None), ('stale', 'python3'), ('failing', 'py -3'),
+                              ('foreign', 'evil')):
             with self.subTest(cache=state):
-                if state == 'stale':
-                    cache.write_text('python3\n', encoding='utf-8')  # an interpreter that stopped running
+                if cached:
+                    cache.write_text(cached + '\n', encoding='utf-8', newline='\n')  # py.sh writes LF
                 result, probes = hook('guard_x.py')
                 self.assertEqual(result.returncode, 2, result.stderr)  # the guard ran and blocked
                 self.assertEqual(probes, 0 if state == 'cached' else 1)
                 self.assertEqual(cache.read_text(encoding='utf-8'), 'python\n')
+                self.assertFalse(marker.exists())
+        # No interpreter runs at all and the cached `py -3` exits 1: the guard still fails closed.
+        alone = tmp / 'alone'
+        alone.mkdir()
+        for name, body in (('python3', 'exit 9009'), ('python', 'exit 9009'), ('py', 'exit 1')):
+            (alone / name).write_text('#!/bin/sh\n%s\n' % body, encoding='utf-8', newline='\n')
+            (alone / name).chmod(0o755)
+        cache.write_text('py -3\n', encoding='utf-8', newline='\n')
+        bare = subprocess.run([sh, str(hooks / 'py.sh'), (hooks / 'guard_x.py').as_posix()], input='{}',
+                              env=dict(env, PATH=str(alone)), encoding='utf-8', errors='replace',
+                              capture_output=True, timeout=60)
+        self.assertEqual(bare.returncode, 2, bare.stderr)
+        self.assertIn('no Python found', bare.stderr)
         for name, code in (('context_size.py', 1), ('plain_report.py', 1), ('guard_gone.py', 2)):
             with self.subTest(missing=name):
                 result, _ = hook(name)

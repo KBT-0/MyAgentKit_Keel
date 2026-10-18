@@ -248,7 +248,9 @@ class PlainReportTests(unittest.TestCase):
                                     env={**os.environ, 'CLAUDE_PROJECT_DIR': str(self.project), 'MYAGENTKIT_ROLE': ''})
             self.assertEqual(result.returncode, code, result.stderr)
         for message in ('Why did it fail? The cache was stale; fixed and tested.', 'No open questions; done.',
-                        'Açık soru yok, iş bitti.', 'Run:\n```\nls -la ?\n```', 'Is `x?` set: yes.'):
+                        'Açık soru yok, iş bitti.', 'Testler geçti. Açık sorun yok.', 'Açık sorunlar: #83',
+                        'Done.\n\nOpen questions: none.', 'No questions are open.',
+                        'All open questions are answered.','Run:\n```\nls -la ?\n```', 'Is `x?` set: yes.'):
             with self.subTest(passes=message):
                 result = self.stop(message)
                 self.assertEqual((result.returncode, result.stderr), (0, ''), message)

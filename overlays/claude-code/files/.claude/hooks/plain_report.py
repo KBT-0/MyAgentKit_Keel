@@ -50,9 +50,13 @@ LABELS = (r'\bAccept-MC\b',)
 FENCE = re.compile(r'[ \t>]*(`{3,}(?=[^`]*$)|~{3,}).*')
 SPAN = re.compile(r'(`+)[^\n]*?(?<!`)\1(?!`)')
 PARENS = re.compile(r'\([^()]*\)')
+# "soru" but never "sorun" (a problem): "Açık sorun yok." is no question.
 OPEN_QUESTION = re.compile(r'\bopen questions?\b|\bquestions? (?:is |are |remains? |still )+open\b'
-                           r'|\baçık (?:bir )?soru|\bsoru(?:lar)?(?:ı|ım)? (?:hâlâ |hala )?açık', re.I)
-NO_OPEN_QUESTION = re.compile(r'\bno (?:more )?open questions?\b|\baçık (?:bir )?soru (?:yok|kalmadı)', re.I)
+                           r'|\baçık (?:bir )?soru(?!n)|\bsoru(?:lar)?(?:ı|ım)? (?:hâlâ |hala )?açık', re.I)
+NO_OPEN_QUESTION = re.compile(r'\bno (?:more )?open questions?\b|\bopen questions?\W*(?:none|no)\b'
+                              r'|\bno questions? (?:is |are |remains? )*open\b'
+                              r'|\ball (?:the )?open questions? (?:are |were |have been )*(?:answered|closed|resolved)\b'
+                              r'|\baçık (?:bir )?soru(?!n)\w*\W*(?:yok|kalmadı)', re.I)
 
 
 def without_code(text: str) -> str:

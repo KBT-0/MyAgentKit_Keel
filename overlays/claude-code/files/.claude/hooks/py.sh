@@ -36,7 +36,11 @@ if [ -n "$cache" ] && read -r p 2>/dev/null <"$cache"; then
       # shellcheck disable=SC2086 # $p is one of the three names above; py -3 splits on purpose
       $p "$@"
       rc=$?
-      case "$rc" in 0 | 1 | 2) exit "$rc" ;; esac
+      case "$rc" in 0 | 2) exit "$rc" ;; esac
+      # Exit 1 is a hook's error, or an interpreter that failed before the hook (`py` with no
+      # Python, a pyenv shim for a removed version): only a failed probe drops the cache.
+      # shellcheck disable=SC2086
+      [ "$rc" = 1 ] && $p -I -c '' </dev/null >/dev/null 2>&1 && exit 1
       ;;
   esac
   rm -f "$cache"
