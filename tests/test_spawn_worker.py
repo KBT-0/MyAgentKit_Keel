@@ -1673,7 +1673,8 @@ exit 0
         self.assertEqual((tree / 'made-by-session.txt').read_text(), 'session output\n', result.stderr)
         branch = subprocess.run(['git', 'show-ref', '--verify', '--quiet', 'refs/heads/worktree-w1'], cwd=self.cwd)
         self.assertEqual(branch.returncode, 0)
-        self.assertIn('git worktree remove --force', result.stderr)
+        self.assertIn('scripts/close_worker.sh w1', result.stderr)
+        self.assertNotIn('git worktree remove --force', result.stderr)
 
     def test_a_spawn_that_fails_after_its_launch_keeps_the_worktree_and_says_how_to_remove_it(self):
         # Its session may still run there (a tab waiting on Enter, a slow start): never removed
@@ -1687,8 +1688,9 @@ exit 0
         self.assertTrue(tree.is_dir())
         self.assertEqual(git('show-ref', '--verify', '--quiet', 'refs/heads/worktree-fw').returncode, 0)
         self.assertIn('scripts/close_worker.sh fw', failed.stderr)
-        self.assertIn('git worktree remove --force', failed.stderr)
-        self.assertIn('git branch -D worktree-fw', failed.stderr)
+        # #108: a worker may have written there; the hint never offers a force remove or branch -D.
+        self.assertNotIn('git worktree remove --force', failed.stderr)
+        self.assertNotIn('branch -D', failed.stderr)
 
     def test_a_worker_is_resumed_through_the_kit_under_its_name(self):
         # 2026-10-16: the lead resumed a worker by hand (`wt -w 0 nt ... claude --resume ID`); that tab

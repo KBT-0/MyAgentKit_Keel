@@ -53,9 +53,11 @@ unrecoverable and had to be reconstructed from a chat transcript.
 is clean. `git stash push -u -m '...'` costs two seconds and is reversible.
 
 The Claude Code overlay ships `guard_destructive_git.py`. It refuses `stash drop`/`clear`, a
-force push, `remote set-url`/`add` and amending a pushed commit whatever the tree's state, and
-`reset --hard`, `checkout --`/`-f`, `restore` and `clean -f` while the tree is dirty, printing
-what would be lost. A hook refuses the loss-certain subset; the rule still covers every
+force push, `remote set-url`/`add`, amending a pushed commit, a ref delete or forced move that
+loses unmerged commits, `reflog expire`, an immediate prune and `worktree remove --force` of a
+worktree that holds work whatever the tree's state, and `reset --hard`, `checkout --`/`-f`,
+`restore`, `clean -f` and `rm -f` while the tree is dirty, printing what would be lost. It judges
+Bash, PowerShell and Monitor calls alike. A hook refuses the loss-certain subset; the rule still covers every
 destructive command, and in any other tool it is yours to keep.
 
 **If it already happened.** Stop writing to the repository. Content you had staged, and a

@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -18,6 +19,7 @@ SETTINGS = Path(__file__).resolve().parents[1] / 'overlays/claude-code/files/.cl
 DESTROYS = ('rm', 'mv', 'cp', 'kill', 'taskkill', 'pkill', 'git reset', 'git clean', 'git push', 'git checkout',
             'git restore', 'git stash', 'git rebase', 'git merge', 'git commit', 'git worktree remove',
             'Remove-Item', 'Stop-Process', 'Set-Content', 'Move-Item')
+SHELL_TOOLS = ('Bash', 'PowerShell', 'Monitor')  # every Claude Code tool that runs a command
 
 
 class OverlayPermissionsTests(unittest.TestCase):
@@ -124,6 +126,17 @@ class OverlayPermissionsTests(unittest.TestCase):
     def test_an_output_file_option_is_denied_to_every_git_command(self):
         self.assertIn('Bash(git *--out*)', self.permissions['deny'])
 
+    def test_every_bash_deny_rule_has_a_twin_for_every_other_shell_tool(self):
+        # #93: a Bash deny rule does not bind the PowerShell tool. Monitor is left out on purpose:
+        # it takes no rule of its own and obeys the Bash rules (code.claude.com/docs/en/tools-reference,
+        # "When Monitor runs a command, it uses the same permission rules as Bash").
+        bash = [r for r in self.permissions['deny'] if r.startswith('Bash(')]
+        self.assertTrue(bash)
+        for tool in set(SHELL_TOOLS) - {'Bash', 'Monitor'}:
+            for rule in bash:
+                with self.subTest(tool=tool, rule=rule):
+                    self.assertIn(tool + rule[len('Bash'):], self.permissions['deny'])
+
 
 class OverlaySettingsTests(unittest.TestCase):
     def setUp(self):
@@ -139,7 +152,47 @@ class OverlaySettingsTests(unittest.TestCase):
             with self.subTest(hook=hook['command']):
                 self.assertEqual(hook.get('onFailure'), 'block')
         matchers = {e['matcher'] for e in self.settings['hooks']['PreToolUse']}
-        self.assertIn('WebFetch|WebSearch|Bash', matchers)
+        self.assertIn('WebFetch|WebSearch|' + '|'.join(SHELL_TOOLS), matchers)
+
+    def test_every_command_guard_covers_every_shell_tool(self):
+        # #93, #213: a guard wired to "Bash" alone let PowerShell and Monitor calls through. The
+        # hooks read tool_input.command from any tool, so the matcher is the one list to extend.
+        for path in (SETTINGS, SETTINGS.parents[4] / '.claude/settings.json'):  # overlay, kit's own
+            for entry in json.loads(path.read_text(encoding='utf-8'))['hooks']['PreToolUse']:
+                command = entry['hooks'][0]['command']
+                if 'guard_destructive_git' in command or 'guard_private_email' in command:
+                    with self.subTest(path=str(path), hook=command):
+                        self.assertLessEqual(set(SHELL_TOOLS), set(entry['matcher'].split('|')))
+
+    def test_an_agent_whose_definition_pins_model_and_effort_needs_neither_on_the_call(self):
+        # #137: diff-reviewer and worker pin both; forcing call-site values could only downgrade them.
+        hook = SETTINGS.parent / 'hooks/guard_worker_route.py'
+        with tempfile.TemporaryDirectory() as project, tempfile.TemporaryDirectory() as home:
+            agents, user = Path(project) / '.claude/agents', Path(home) / '.claude/agents'
+            (agents / 'sub').mkdir(parents=True)
+            user.mkdir(parents=True)
+            pin = '---\nname: {}\nmodel: {}\neffort: high\n---\nx\n'
+            (agents / 'pinned.md').write_text(pin.format('pinned', 'claude-opus-5-5'))
+            (agents / 'half.md').write_text('---\nname: half\nmodel: claude-opus-5-5\n---\nx\n')
+            (agents / 'unset.md').write_text(pin.format('unset', '{{WORKER_MODEL}}'))
+            (agents / 'quoted.md').write_text(pin.format('quoted', '"{{WORKER_MODEL}}"'))
+            (agents / 'inherit.md').write_text(pin.format('inherit', 'inherit'))
+            (agents / 'qinherit.md').write_text(pin.format('qinherit', '"inherit"'))
+            # Claude Code finds a definition by its name: field, in any folder under agents/.
+            (agents / 'renamed.md').write_text(pin.format('by-name', 'claude-opus-5-5'))
+            (agents / 'sub' / 'x.md').write_text(pin.format('renamed', 'inherit'))
+            (user / 'u.md').write_text(pin.format('user-pinned', 'claude-opus-5-5'))
+            (user / 'p.md').write_text(pin.format('half', 'claude-opus-5-5'))  # the project's half wins
+            env = {k: v for k, v in os.environ.items() if k not in ('HOME', 'USERPROFILE')}
+            env.update(CLAUDE_PROJECT_DIR=project, HOME=home, USERPROFILE=home)
+            for kind, code in [('pinned', 0), ('half', 2), ('unset', 2), ('quoted', 2), ('inherit', 2),
+                               ('qinherit', 2), ('by-name', 0), ('renamed', 2), ('user-pinned', 0),
+                               ('general-purpose', 2), ('fork', 0)]:
+                payload = json.dumps({'tool_name': 'Agent', 'tool_input': {'subagent_type': kind, 'prompt': 'p'}})
+                with self.subTest(kind=kind):
+                    result = subprocess.run([sys.executable, str(hook)], input=payload.encode(), env=env,
+                                            capture_output=True, timeout=60)
+                    self.assertEqual(result.returncode, code, result.stderr)
 
     def test_the_tool_adds_no_attribution(self):
         # The trailer is turned off at its source; .githooks/commit-msg stays the backstop.

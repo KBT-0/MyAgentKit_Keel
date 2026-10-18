@@ -57,13 +57,17 @@
       "Bash(git *--out*)",
       "Bash(git *--ext*)",
       "Bash(git *--textc*)",
-      "Bash(git *--sub*)"
+      "Bash(git *--sub*)",
+      "PowerShell(git *--out*)",
+      "PowerShell(git *--ext*)",
+      "PowerShell(git *--textc*)",
+      "PowerShell(git *--sub*)"
     ]
   },
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Bash",
+        "matcher": "Bash|PowerShell|Monitor",
         "hooks": [
           {
             "type": "command",
@@ -74,7 +78,7 @@
         ]
       },
       {
-        "matcher": "WebFetch|WebSearch|Bash",
+        "matcher": "WebFetch|WebSearch|Bash|PowerShell|Monitor",
         "hooks": [
           {
             "type": "command",

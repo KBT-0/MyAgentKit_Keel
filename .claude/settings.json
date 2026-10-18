@@ -3,7 +3,7 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Bash",
+        "matcher": "Bash|PowerShell|Monitor",
         "hooks": [
           {
             "type": "command",
@@ -14,7 +14,7 @@
         ]
       },
       {
-        "matcher": "WebFetch|WebSearch|Bash",
+        "matcher": "WebFetch|WebSearch|Bash|PowerShell|Monitor",
         "hooks": [
           {
             "type": "command",

@@ -145,7 +145,7 @@ cleanup() {
     elif rmdir -- "$dir" 2>/dev/null; then
       printf '%s\n' "spawn_codex: removed the empty folder $dir it claimed; a branch worktree-$name, if any, is not this spawn's to delete" >&2 || :
     else
-      printf '%s\n' "spawn_codex: could not remove the unused worktree $dir; remove it by hand: git worktree remove --force --force $(q "$dir"); git branch -D worktree-$name" >&2 || :
+      printf '%s\n' "spawn_codex: could not remove the unused worktree $dir; remove it by hand: git worktree remove --force --force $(q "$dir") && git update-ref -d refs/heads/worktree-$name $base" >&2 || :
     fi
   fi
   # Reservation cleanup must run even when unlinking the temporary script fails.
