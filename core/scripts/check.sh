@@ -1346,7 +1346,7 @@ EOF
     cache_rc=$?
     cache_builds=$(wc -l < "$work/cache.builds" 2>/dev/null | tr -d ' ')
     if [ "$cache_rc" -ne 0 ] || [ "$cache_builds" != "$cache_want" ] ||
-       { [ "$cache_how" = cached ] && ! printf '%s\n' "$out" | grep -q '^CHECK: PASS (build cached: '; }; then
+       { [ "$cache_how" = cached ] && ! printf '%s\n' "$out" | grep -q '^CHECK: PASS (build not run: cached PASS '; }; then
       printf '%s\n' "  FAIL — build cache, step '$step': exit $cache_rc, $cache_builds builds ($cache_want wanted). Its last lines:"
       printf '%s\n' "$out" | tail -5 | sed 's/^/           /'
       cache_ok=0
@@ -1945,19 +1945,31 @@ docs_only_skip_build=1
 # BUILD CACHE. One change ran the same build three or four times on the same files: the
 # worker, the Stop hook, the commit hook, the merge hook (#82). A build that passed is recorded
 # under a key, and a later run whose key matches skips the build and says so in its PASS line;
-# every other check above still runs. The key is a SHA-256 over every file the scanners read
-# (path, content, executable bit, symlink text: tracked and untracked files Git does not
-# ignore, read from disk, so uncommitted edits count), the build command, the caller's LC_ALL,
-# and the output of build_cache_inputs. That is a VALUE: a command that prints whatever else
-# the build depends on, which the tree does not hold, e.g.
-#   "cmake --version; c++ --version; python3 -m pip freeze; echo \"CC=$CC\""
+# every other check above still runs. The key is a SHA-256 over every path
+# `git ls-files --cached --others --exclude-standard` names (path, content and executable bit
+# read from disk, symlink text: uncommitted edits, a new untracked file, CMakeLists, tests and
+# documents all count, not only what a check scans), this gate script itself, the build
+# command, the caller's LC_ALL and the output of build_cache_inputs. An entry another version
+# of the gate wrote is deleted. build_cache_inputs is a VALUE: a command that prints whatever
+# else the build depends on, which the tree does not hold. Starters, keep the ones your build
+# uses (a missing tool fails the command, and a failing command means no cache):
+#   cmake --version; ninja --version
+#   cl 2>&1 | head -n 1                     # the MSVC banner (compiler version)
+#   python --version; python -m pip freeze | sha256sum
+#   blender --version
+#   git lfs ls-files -l                     # LFS objects by id
+#   echo "CC=$CC CXX=$CXX"                  # environment the build reads
+# Unity: ProjectSettings/ProjectVersion.txt and Packages/packages-lock.json are tracked, so
+# already in the key; Library/ is a cache Unity rebuilds and stays out.
 # Ignored files (fetched dependencies, a build folder) and environment variables are NOT in the
 # key unless this command prints them. Empty, there is no cache: an input nobody fingerprinted
 # would otherwise pass on a stale result. Use "true" for a build that reads nothing but the
 # tree. The cache is never read on CI, nor in the self-test's nested runs, nor when the
 # command fails, the tree holds a submodule, a nested repository or a symlink to a folder (its
-# files are not hashed), or GATE_CACHE=off. Entries sit in the repository's common git folder
-# (shared by its worktrees: the key names content, not a checkout) and expire after
+# files are not hashed), outside Git, or with GATE_CACHE=off. A cached run prints
+# "NOTE [build]: not run: cached PASS <key> from <date>" and its PASS line says so too, so a
+# report can never claim a build that did not run. Entries sit in the repository's common git
+# folder (shared by its worktrees: the key names content, not a checkout) and expire after
 # cache_days days.
 build_cache_inputs=""
 cache_days=7
@@ -1969,12 +1981,15 @@ elif [ -n "${GATE_SELFTEST_CACHE_DIR:-}" ]; then
   # The self-test's case for the cache: a folder of its own, outside the tree.
   cache_dir=$GATE_SELFTEST_CACHE_DIR
 elif [ -z "$selftest_nested" ]; then
-  case "$lock_path" in */.check.lock) ;; *) cache_dir="$(git rev-parse --git-common-dir 2>/dev/null)/check-cache" ;; esac
+  case "$lock_path" in
+    */.check.lock) ;;
+    *) cache_common=$(git rev-parse --git-common-dir 2>/dev/null) && cache_dir="$cache_common/check-cache" ;;
+  esac
 fi
 [ -n "$build_cache_inputs" ] && [ ! -e "$work/scan_unhashed" ] || cache_dir=""
-# build_cache_key: prints "hit <key>" when cache_dir holds an entry for the key younger than
-# cache_days, else "miss <key>", and deletes the older entries; fails when an input cannot be
-# read. Python, not find(1): on native Windows a PATH can name Windows' own FIND.EXE first.
+# build_cache_key: prints "hit <key> <date>" when cache_dir holds an entry for the key younger
+# than cache_days, else "miss <key> -", and deletes the older entries and those another gate
+# version wrote (an entry holds its gate's hash); fails when an input cannot be read. Python, not find(1): on native Windows a PATH can name Windows' own FIND.EXE first.
 build_cache_key() {
   inputs=$( ( if [ -n "$caller_lc_all_set" ]; then LC_ALL=$caller_lc_all; else unset LC_ALL; fi
               exec sh -c "$build_cache_inputs" ) 2>&1 ) || {
@@ -1982,7 +1997,8 @@ build_cache_key() {
   printf '%s\0%s\0%s' "$build_test_cmd" "${caller_lc_all_set:+set:$caller_lc_all}" "$inputs" |
     python3 -I -c '
 import hashlib, os, sys, time
-key = hashlib.sha256(b"keel build cache 1\0" + sys.stdin.buffer.read() + b"\0")
+gate = hashlib.sha256(open(sys.argv[5], "rb").read()).hexdigest()
+key = hashlib.sha256(b"keel build cache 2\0" + gate.encode() + b"\0" + sys.stdin.buffer.read() + b"\0")
 for path in sorted(p for p in open(sys.argv[1], "rb").read().split(b"\0") if p):
     content = hashlib.sha256()
     with open(os.fsdecode(path), "rb") as data:
@@ -1992,19 +2008,20 @@ for path in sorted(p for p in open(sys.argv[1], "rb").read().split(b"\0") if p):
     key.update(path + b"\0" + executable + content.digest())
 if os.path.exists(sys.argv[2]):
     key.update(b"symlinks\0" + open(sys.argv[2], "rb").read())
-key, found, now = key.hexdigest(), "miss", time.time()
+key, found, now = key.hexdigest(), "miss -", time.time()
 if os.path.isdir(sys.argv[3]):
     for name in os.listdir(sys.argv[3]):
         entry = os.path.join(sys.argv[3], name)
         try:  # a gate in another worktree may delete it first
-            if now - os.stat(entry).st_mtime > float(sys.argv[4]) * 86400:
+            mtime = os.stat(entry).st_mtime
+            if now - mtime > float(sys.argv[4]) * 86400 or open(entry).read().strip() != gate:
                 os.remove(entry)
             elif name == key:
-                found = "hit"
-        except FileNotFoundError:
+                found = "hit " + time.strftime("%Y-%m-%dT%H:%M", time.localtime(mtime))
+        except (OSError, UnicodeDecodeError):
             pass
-print(found, key)
-' "$filelist" "$work/symlink-text" "$cache_dir" "$cache_days"
+print(found.split()[0], key, found.split()[1])
+' "$filelist" "$work/symlink-text" "$cache_dir" "$cache_days" "$0"
 }
 # Tested with its whitespace stripped: an all-blank command reaches `sh -c` as a no-op that
 # exits 0, which is a green gate with no build — the unconfigured case wearing spaces.
@@ -2079,11 +2096,11 @@ print(len(fields) // 2)
       build_tail=150
       cache_key=""
       [ -z "$cache_dir" ] || cache_key=$(build_cache_key) || cache_key=""
-      cache_found=${cache_key%% *} cache_key=${cache_key#* }
+      cache_found=${cache_key%% *} cache_key=${cache_key#* } cache_date=${cache_key#* } cache_key=${cache_key%% *}
       if [ "$cache_found" = hit ]; then
         cache_short=$(printf '%.12s' "$cache_key")
-        pass_note=" (build cached: $cache_short)"
-        printf '%s\n' "NOTE [build]: not run: the build passed on these exact files and build inputs ($cache_short)."
+        pass_note=" (build not run: cached PASS $cache_short from $cache_date)"
+        printf '%s\n' "NOTE [build]: not run: cached PASS $cache_short from $cache_date (same files, gate and build inputs)."
         echo "             GATE_CACHE=off runs it anyway."
         rc=0
       else
@@ -2092,8 +2109,11 @@ print(len(fields) // 2)
         rc=$?
         # Recorded only if the files are the same after the build as before it: an edit made
         # while it ran would otherwise be recorded as built.
-        if [ "$rc" -eq 0 ] && [ -n "$cache_key" ] && cache_after=$(build_cache_key) &&
-           [ "${cache_after#* }" = "$cache_key" ]; then
+        # Recorded only when the key computed again after the build equals the one before it.
+        cache_after=""
+        [ "$rc" -ne 0 ] || [ -z "$cache_key" ] || cache_after=$(build_cache_key) || cache_after=""
+        cache_after=${cache_after#* }
+        if [ -n "$cache_key" ] && [ "${cache_after%% *}" = "$cache_key" ]; then
           cache_record=$cache_key
         fi
       fi
@@ -2126,6 +2146,8 @@ if [ "$fail" -ne 0 ]; then echo "CHECK: FAIL"; exit 1; fi
 # The build cache (section 4) records a build only for a run that passed. A record that cannot be
 # written costs the next run its build, nothing else.
 if [ -n "$cache_record" ]; then
-  { mkdir -p "$cache_dir" && : > "$cache_dir/$cache_record"; } 2>/dev/null || :
+  { mkdir -p "$cache_dir" &&
+    python3 -I -c 'import hashlib, sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "$0" \
+      > "$cache_dir/$cache_record"; } 2>/dev/null || :
 fi
 printf '%s\n' "CHECK: PASS${pass_note:-}"

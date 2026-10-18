@@ -203,18 +203,46 @@ class ProjectSelfTestTests(unittest.TestCase):
         steps = ((dict(), 3, False), (dict(), 3, True),                          # recorded, then cached
                  (dict(FIXTURE_TOOL='2'), 4, False), (dict(FIXTURE_TOOL='2'), 4, True),  # an input changed
                  ('edit', 5, False), (dict(FIXTURE_TOOL='2'), 5, True),           # an untracked file changed
-                 (dict(FIXTURE_TOOL='2', CI='true'), 6, False),                   # CI never reads it
-                 (dict(FIXTURE_TOOL='2', GATE_CACHE='off'), 7, False))
+                 ('new', 6, False), (dict(FIXTURE_TOOL='2'), 6, True),            # a new untracked file
+                 (dict(FIXTURE_TOOL='2', CI='true'), 7, False),                   # CI never reads it
+                 (dict(FIXTURE_TOOL='2', GATE_CACHE='off'), 8, False))
+        cached_line = re.compile(r'^NOTE \[build\]: not run: cached PASS [0-9a-f]{12} from \d{4}-\d\d-\d\dT', re.M)
         for extra, want, cached in steps:
             with self.subTest(extra=extra, want=want):
                 if extra == 'edit':
                     write(self.project / 'existing.txt', 'after\n')
                     extra = dict(FIXTURE_TOOL='2')
+                if extra == 'new':
+                    write(self.project / 'docs' / 'read-by-a-test.md', 'new\n')
+                    extra = dict(FIXTURE_TOOL='2')
                 out, count = gate(**extra)
                 self.assertEqual(count, want, out)
-                self.assertEqual('CHECK: PASS (build cached: ' in out, cached, out)
+                self.assertEqual(bool(cached_line.search(out)), cached, out)
+                self.assertEqual('CHECK: PASS (build not run: cached PASS ' in out, cached, out)
+        # An entry another version of the gate wrote is deleted, even under the current key.
+        cache = Path(subprocess.run(['git', 'rev-parse', '--path-format=absolute', '--git-common-dir'], cwd=self.project,
+                                    capture_output=True, text=True, check=True).stdout.strip()) / 'check-cache'
+        entries = list(cache.iterdir())
+        self.assertTrue(entries)
+        for entry in entries:
+            write(entry, 'an older gate\n')
+        out, count = gate(FIXTURE_TOOL='2')
+        self.assertEqual(count, 9, out)
+        self.assertTrue(all(e.read_text().strip() != 'an older gate' for e in cache.iterdir()), out)
+        # A build that changes a listed file while it runs: the key computed after it differs
+        # from the one before, so nothing is recorded. With the file put back (the key before
+        # that build again), the next run still builds.
+        runs = self.tmp / 'build-runs'
+        write(self.build, 'echo run >> "%s"\necho more >> existing.txt\n' % runs.as_posix())
+        out, count = gate(FIXTURE_TOOL='3')
+        self.assertEqual(count, 10, out)
+        write(self.project / 'existing.txt', 'after\n')
+        write(self.build, 'echo run >> "%s"\n' % runs.as_posix())
+        out, count = gate(FIXTURE_TOOL='3')
+        self.assertEqual(count, 11, out)
+        self.assertNotIn('cached PASS', out)
         write(script, text.replace('\nbuild_cache_inputs=""\n', '\nbuild_cache_inputs=false\n'))
-        for want in (8, 9):
+        for want in (12, 13):
             out, count = gate()
             self.assertEqual(count, want, out)
         self.assertIn('NOTE [build]: build_cache_inputs failed, so the build is not cached', out)

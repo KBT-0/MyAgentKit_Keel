@@ -236,6 +236,15 @@ breaks, everything keeps looking green.
   runs, a document, `docs/STATE.md`, the build command's value. The normal gate run proves
   those. Several gate edits in one task owe one self-test at the task's end, not one each;
   `sync-kit.sh` says whether a sync left a gate file changed.
+- **The build cache is opt-in: declare what the build reads outside the tree.** Set
+  `build_cache_inputs` in `scripts/check.sh` to a command printing those inputs; its key also
+  covers every file `git ls-files --cached --others --exclude-standard` names, read from disk,
+  and the gate script itself. Starters: `cmake --version`, the MSVC banner (`cl 2>&1 | head -n 1`),
+  `ninja --version`, `python --version` and a hash of `python -m pip freeze`, `blender --version`,
+  `git lfs ls-files -l`. Unity: `ProjectSettings/ProjectVersion.txt` and
+  `Packages/packages-lock.json` are tracked, so already in the key; `Library/` stays out. A
+  cached run prints `NOTE [build]: not run: cached PASS <key> from <date>` and says so in its
+  PASS line: report it as a cached build, never as a build you ran.
 - **A self-test case never changes a tracked file**, and leaves nothing in the working tree
   but files Git ignores: the self-test fails when HEAD, the index, `git status --porcelain
   --untracked-files=all` or content hashes of tracked and untracked non-ignored files differ
