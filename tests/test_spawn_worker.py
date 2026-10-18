@@ -25,6 +25,9 @@ for _name in [n for n in os.environ if n.startswith('KIT_WORKER_')]:
     os.environ.pop(_name, None)
 
 ROOT = Path(__file__).resolve().parents[1]
+# Every bound here times MYAGENTKIT_TEST_TIMEOUT_SCALE: check_kit raises it while units run
+# side by side, and a loaded host took over 11 s for a 10 s probe (#146).
+SCALE = float(os.environ.get('MYAGENTKIT_TEST_TIMEOUT_SCALE', '1'))
 SCRIPT = ROOT / 'overlays/claude-code/files/scripts/spawn_worker.sh'
 PANES = ROOT / 'tests/fixtures/panes'
 INSTRUCTION = ("Read %s and follow it. Do not ask questions in this pane: write a question into your "
@@ -386,7 +389,7 @@ class SpawnWorkerTests(unittest.TestCase):
             args += tuple(a for flag, value in (('--model', 'm'), ('--effort', 'high'))
                           if flag not in args for a in (flag, value))
         return subprocess.run(['sh', str(getattr(self, 'script', SCRIPT)), *args], cwd=self.cwd, env=env,
-                              capture_output=True, text=True, timeout=60)
+                              capture_output=True, text=True, timeout=60 * SCALE)
 
     def base_env(self):
         # Never the host's terminal: the WSL name is the test's own, so wt.exe is the stub.
@@ -411,7 +414,7 @@ class SpawnWorkerTests(unittest.TestCase):
         self.assertEqual(len(list(tmpdir.iterdir())), 1, 'parent deleted the accepted script')
         self.assertEqual(result.returncode, 143, result.stdout + result.stderr)
         pane = subprocess.run(['sh', '-c', (self.state / 'accepted').read_text()],
-                              cwd=self.cwd, env=self.base_env(), capture_output=True, text=True, timeout=20)
+                              cwd=self.cwd, env=self.base_env(), capture_output=True, text=True, timeout=20 * SCALE)
         self.assertEqual(pane.returncode, 0, pane.stdout + pane.stderr)
         self.assertIsNotNone(self.launched(), 'the delayed pane could not start')
         self.assertEqual(list(tmpdir.iterdir()), [])
@@ -428,7 +431,7 @@ class SpawnWorkerTests(unittest.TestCase):
         result = run_with_launcher_pid('dash', SCRIPT, ['interrupted', str(self.brief),
                                  '--model', 'm', '--effort', 'high', '--worktree'],
                                 cwd=self.cwd, env=dict(self.base_env(), TMPDIR=str(tmpdir)),
-                                capture_output=True, text=True, timeout=20)
+                                capture_output=True, text=True, timeout=20 * SCALE)
         self.assertEqual(result.returncode, 143, result.stdout + result.stderr)
         self.assertEqual(list(tmpdir.iterdir()), [])
         self.assertIsNone(self.launched())
@@ -440,7 +443,7 @@ class SpawnWorkerTests(unittest.TestCase):
         result = run_with_launcher_pid('sh', SCRIPT, ['interrupted', str(self.brief),
                                       '--model', 'm', '--effort', 'high'], cwd=self.cwd,
                                       env=dict(self.base_env(), TMPDIR=str(tmpdir)),
-                                      capture_output=True, text=True, timeout=20)
+                                      capture_output=True, text=True, timeout=20 * SCALE)
         self.assertEqual(result.returncode, 130, result.stdout + result.stderr)
         self.assertEqual(list(tmpdir.iterdir()), [])
         self.assertIsNone(self.launched())
@@ -463,7 +466,7 @@ exit 0
         result = run_with_launcher_pid('sh', SCRIPT, ['interrupted', str(self.brief),
                                       '--model', 'm', '--effort', 'high', '--worktree'], cwd=self.cwd,
                                       env=dict(self.base_env(), TMPDIR=str(tmpdir)),
-                                      capture_output=True, text=True, timeout=20)
+                                      capture_output=True, text=True, timeout=20 * SCALE)
         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual((self.state / 'cleanup.log').read_text().splitlines(), ['unlink'])
         self.assertEqual(list(tmpdir.iterdir()), [])
@@ -1118,14 +1121,14 @@ exit 0
             command = effective[event][0]['hooks'][0]['command']
             run = subprocess.run(['sh', '-c', command], cwd=tree, env=env,
                                  input=json.dumps({'transcript_path': str(transcript)}),
-                                 capture_output=True, text=True, timeout=30)
+                                 capture_output=True, text=True, timeout=30 * SCALE)
             self.assertEqual(run.returncode, 0, run.stderr)
             self.assertTrue(run.stdout, event)
             self.assertIn(expected, run.stdout)
         telemetry = generated['hooks']['Stop'][-1]['hooks'][0]['command']
         run = subprocess.run(['sh', '-c', telemetry], cwd=tree, env=env,
                              input=json.dumps({'hook_event_name': 'Stop', 'transcript_path': str(transcript)}),
-                             capture_output=True, text=True, timeout=30)
+                             capture_output=True, text=True, timeout=30 * SCALE)
         self.assertEqual(run.returncode, 0, run.stderr)
         self.assertIn('context_tokens=250001', (self.cwd / '.myagentkit/workers/w1.state').read_text())
 
@@ -1144,7 +1147,7 @@ exit 0
         def watch():
             run = subprocess.run(['sh', str(SCRIPT.with_name('watch_workers.sh')), '--once',
                                   '--result', 'w1=' + report.as_posix(), 'w1'], cwd=self.cwd,
-                                 env=self.base_env(), capture_output=True, text=True, timeout=30)
+                                 env=self.base_env(), capture_output=True, text=True, timeout=30 * SCALE)
             self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
             return run.stdout
         # Unrelated untracked hooks and tracked edits still block DONE.
@@ -1279,7 +1282,7 @@ exit 0
             with self.subTest(payload=payload):
                 (workers / 'w1.state').unlink(missing_ok=True)
                 run = subprocess.run(['sh', '-c', hook], input=json.dumps(payload),
-                                     env=self.base_env(), capture_output=True, text=True, timeout=30)
+                                     env=self.base_env(), capture_output=True, text=True, timeout=30 * SCALE)
                 self.assertEqual(run.returncode, 0, run.stderr)
                 self.assertTrue((workers / 'w1.state').read_text().startswith(line))
 
@@ -1445,7 +1448,7 @@ exit 0
         cwd.mkdir()
         (cwd / 'task.md').write_text('a brief\n')
         result = subprocess.run(['sh', str(SCRIPT), 'w9', 'task.md'], cwd=cwd, env=self.base_env(),
-                                capture_output=True, text=True, timeout=60)
+                                capture_output=True, text=True, timeout=60 * SCALE)
         self.assertNotEqual(result.returncode, 0, result.stderr)
         self.assertIn('control character', result.stderr)
         self.assertNotIn('new-session', self.tmux_log())
@@ -1473,7 +1476,7 @@ exit 0
         brief.write_text('a brief\n')
         result = subprocess.run(['bash', '-O', 'xpg_echo', str(SCRIPT), 'w1', str(brief),
                                  '--model', 'm', '--effort', 'high'], cwd=self.cwd,
-                                env=self.base_env(), capture_output=True, text=True, timeout=60)
+                                env=self.base_env(), capture_output=True, text=True, timeout=60 * SCALE)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(self.physical(brief), result.stdout)
         self.assertNotIn('\x1b', result.stdout + result.stderr)
@@ -1799,7 +1802,7 @@ exit 0
                 env = dict(self.base_env(), PWD=str(self.cwd))
                 result = subprocess.run(['sh', str(scripts / 'spawn_worker.sh'), 'w%d' % bool(body), str(self.brief),
                                          '--model', 'm', '--effort', 'high'],
-                                        cwd=self.cwd, env=env, capture_output=True, text=True, timeout=60)
+                                        cwd=self.cwd, env=env, capture_output=True, text=True, timeout=60 * SCALE)
                 self.assertNotEqual(result.returncode, 0, result.stdout)
                 self.assertIn("cannot check session 'w%d': the watcher exited " % bool(body), result.stderr)
                 self.assertEqual(len(result.stderr.strip().splitlines()), 1, result.stderr)
@@ -1838,7 +1841,7 @@ class WorkerStateHookTests(unittest.TestCase):
             def watch(count, *options):
                 (workers / 'w1.state').write_text(f'idle 2026-10-16T12:00:00 {count} context_tokens={count}\n')
                 result = subprocess.run(['sh', str(SCRIPT.with_name('watch_workers.sh')), '--once', *options, 'w1'],
-                                        cwd=repo, env=env, capture_output=True, text=True, timeout=30)
+                                        cwd=repo, env=env, capture_output=True, text=True, timeout=30 * SCALE)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 return result.stdout
             for count, notice in ((200000, True), (250000, False), (300000, True),
@@ -1860,7 +1863,7 @@ class WorkerStateHookTests(unittest.TestCase):
             (repo / 'mark').unlink(missing_ok=True)
             (workers / 'w1.state').unlink()
             run = subprocess.run(['sh', str(SCRIPT.with_name('watch_workers.sh')), '--once', 'w1'],
-                                 cwd=repo, env=env, capture_output=True, text=True, timeout=30)
+                                 cwd=repo, env=env, capture_output=True, text=True, timeout=30 * SCALE)
             self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
             self.assertIn('CONTEXT:', run.stdout)
             self.assertEqual(watch(350002), '', 'snapshot shares the pane band without a prior state')
@@ -1899,7 +1902,7 @@ class WorkerStateHookTests(unittest.TestCase):
                     (bin_dir / name).chmod(0o755)
                 env = dict(os.environ, PATH=str(bin_dir) + os.pathsep + os.environ['PATH'])
                 result = subprocess.run(['sh', str(scripts / 'watch_workers.sh'), '--once', 'w1'], cwd=repo, env=env,
-                                        stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30)
+                                        stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30 * SCALE)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertIn('CONTEXT: w1, 250k/1.0M', result.stdout)
                 self.assertIn('past its 200k warning line', result.stdout)
@@ -1921,7 +1924,7 @@ class WorkerStateHookTests(unittest.TestCase):
                 (bin_dir / name).chmod(0o755)
             env = dict(os.environ, PATH=str(bin_dir) + os.pathsep + os.environ['PATH'])
             result = subprocess.run(['sh', str(SCRIPT.with_name('watch_workers.sh')), '--once', 'w1'],
-                                    cwd=repo, env=env, capture_output=True, text=True, timeout=30)
+                                    cwd=repo, env=env, capture_output=True, text=True, timeout=30 * SCALE)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn('CONTEXT: w1', result.stdout)
             self.assertIn('314000 tokens, red', result.stdout)
@@ -1975,7 +1978,7 @@ class WorkerStateHookTests(unittest.TestCase):
                     with self.subTest(count=count, state=state):
                         (workers / 'w1.state').write_text(f'{state} 2026-10-16T12:00:00 {count} context_tokens={count}\n')
                         result = subprocess.run(['sh', str(SCRIPT.with_name('watch_workers.sh')), '--once', 'w1'],
-                                                cwd=repo, env=env, capture_output=True, text=True, timeout=30)
+                                                cwd=repo, env=env, capture_output=True, text=True, timeout=30 * SCALE)
                         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                         self.assertIn('context_tokens=' + str(count), result.stdout)
                         self.assertIn(band, result.stdout)
@@ -2056,7 +2059,7 @@ class TmuxStubTests(unittest.TestCase):
                                              '-s', 'stub', '-c', str(state), '-x', '200', '-y', '50', command],
                                             env=dict(os.environ, SPAWN_STATE=str(state), REVIEW_SEGMENT='expanded',
                                                      REVIEW_PAYLOAD='touch INJECTED', REVIEW_BACKQUOTE='touch BACKQUOTED'),
-                                            capture_output=True, text=True, timeout=10)
+                                            capture_output=True, text=True, timeout=10 * SCALE)
                     self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
                     self.assertIn('literal', result.stderr)
                     self.assertNotIn(segment, result.stderr, 'the stub bypassed shell expansion')

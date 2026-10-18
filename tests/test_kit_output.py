@@ -1,4 +1,4 @@
-"""The kit check prints a passing suite as one line and a failing suite in full."""
+"""The kit check prints a passing suite as one line and a failing suite as its failures only."""
 import contextlib
 import importlib.util
 import io
@@ -21,7 +21,7 @@ class Probe(unittest.TestCase):
 
 
 class KitOutputTests(unittest.TestCase):
-    def test_a_pass_is_one_line_and_a_failure_is_the_whole_log(self):
+    def test_a_pass_is_one_line_and_a_failure_is_only_what_failed(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / 'quiet').mkdir()
@@ -36,9 +36,12 @@ class KitOutputTests(unittest.TestCase):
             with self.assertRaises(RuntimeError) as raised:
                 check_kit.run_tests(root, 'loud', {'test_kit_probe_fail': 2})
             log = str(raised.exception)
-            self.assertIn('test_passes', log)
-            self.assertIn('... ok', log)
+            # The failing test's block and the count; a passing test has no line (#111).
+            self.assertIn('FAIL: test_maybe (test_kit_probe_fail.Probe.test_maybe)', log)
             self.assertIn('probe failure message', log)
+            self.assertIn('Ran 2 tests', log)
+            self.assertNotIn('test_passes', log)
+            self.assertNotIn('... ok', log)
 
 
 if __name__ == '__main__':

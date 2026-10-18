@@ -230,11 +230,11 @@ runpy.run_path(%r, run_name='__main__')
         script.write_text(UNIT % (str(ROOT / 'scripts/check_kit.py'), str(self.tmp), minimum))
         return [sys.executable, '-B', '-u', str(script)]
 
-    def test_a_failing_suite_is_printed_whole_and_fails_the_run(self):
+    def test_a_failing_suite_prints_only_its_failures_and_fails_the_run(self):
         passed, out = runner(('suite', self.suite_unit('False', 2)))
         self.assertFalse(passed)
-        self.assertIn('test_passes', out)
-        self.assertIn('... ok', out)
+        self.assertNotIn('test_passes', out)
+        self.assertNotIn('... ok', out)
         self.assertIn('probe failure message', out)
         self.assertIn('KIT CHECK: FAIL — 1 of 1 units failed: suite', out)
         passed, out = runner(('suite', self.suite_unit('True', 2)))
@@ -283,7 +283,7 @@ runpy.run_path(%r, run_name='__main__')
                 (self.tmp / 'suite/test_kit_probe.py').write_text(source)
                 passed, out = runner(('suite', command))
                 self.assertEqual(passed, expected, out)
-                if declared:
+                if declared and expected:
                     self.assertIn('NOT RUN: test_kit_probe.Probe.test_maybe', out)
 
     def test_platform_wrappers_do_not_satisfy_suite_minimums(self):
@@ -311,7 +311,8 @@ runpy.run_path(%r, run_name='__main__')
                     (self.tmp / 'suite/test_kit_probe.py').write_text(source)
                     passed, out = runner(('suite', command))
                     self.assertEqual(passed, expected, out)
-                    self.assertIn('NOT RUN: test_kit_probe.Probe.test_maybe', out)
+                    # A declared skip is left out before the run: at 2 nothing runs.
+                    self.assertEqual('NOT RUN: test_kit_probe.Probe.test_maybe' in out, expected, out)
 
     def test_a_nested_only_failing_module_fails_the_run(self):
         command = self.suite_unit('True', 2)
@@ -385,6 +386,75 @@ runpy.run_path(%r, run_name='__main__')
                 suite, counts = check_kit.discover(folder)
                 self.assertEqual(counts, {'test_probe': 2})
                 self.assertTrue(unittest.TextTestRunner(stream=io.StringIO()).run(suite).wasSuccessful())
+
+    def test_discovery_without_is_junction_reads_no_windows_only_stat_names(self):
+        # POSIX Python 3.11 has neither Path.is_junction nor stat's reparse tag names: reading
+        # the names failed discovery there, and no suite ran (#96).
+        folder = self.tmp / 'suite'
+        folder.mkdir()
+        (folder / 'test_posix_probe.py').write_text(PROBE % 'True')
+        with unittest.mock.patch.object(Path, 'is_junction', None, create=True), \
+                unittest.mock.patch.object(check_kit, 'stat', types.SimpleNamespace()):
+            suite, counts = check_kit.discover(folder)
+        self.assertEqual(counts, {'test_posix_probe': 2})
+
+    def test_a_module_unit_imports_and_runs_only_its_module(self):
+        # tests/ runs as one unit per module (#146): a unit must not run its neighbours.
+        command = self.suite_unit('True', 2)
+        (self.tmp / 'suite/test_other.py').write_text('raise AssertionError("other module imported")\n')
+        script = self.tmp / 'unit.py'
+        script.write_text(script.read_text().replace("unit('suite'", "unit('suite/test_kit_probe'"))
+        passed, out = runner(('suite/test_kit_probe', command))
+        self.assertTrue(passed, out)
+        self.assertIn('suite ran 2 tests', out)
+        self.assertNotIn('other module imported', out)
+        # A shard checks the module's whole count and runs every second test: test_maybe
+        # (failing here) runs in shard 0 alone.
+        (self.tmp / 'suite/test_kit_probe.py').write_text(PROBE % 'False')
+        text = script.read_text()
+        for index, expected in ((0, False), (1, True)):
+            with self.subTest(shard=index):
+                script.write_text(text.replace("sys.exit(", "check_kit.SHARDS = {'test_kit_probe': 2}\nsys.exit(")
+                                  .replace("unit('suite/test_kit_probe'", "unit('suite/test_kit_probe@%d'" % index))
+                passed, out = runner(('suite/test_kit_probe@%d' % index, command))
+                self.assertEqual(passed, expected, out)
+                self.assertIn('probe failure message' if index == 0 else 'suite ran 1 tests', out)
+
+    def test_main_runs_one_unit_per_module_and_refuses_a_module_without_a_count(self):
+        # A module that does not run on this host gets its NOT RUN line, no unit ("ran 0 tests"),
+        # and the sharded modules start right after acceptance.
+        names, out, off_host = [], io.StringIO(), {'tests': {'test_doctor': 'a reason', 'test_bootstrap': 'r'}}
+        with unittest.mock.patch.object(check_kit, 'NOT_ON_WINDOWS', off_host), \
+                unittest.mock.patch.object(check_kit, 'check_syntax'), \
+                unittest.mock.patch.object(check_kit, 'check_release'), \
+                unittest.mock.patch.object(check_kit, 'untested_guards'), \
+                unittest.mock.patch.object(check_kit, 'validate_plugin'), \
+                unittest.mock.patch.object(check_kit, 'run', return_value=''), \
+                unittest.mock.patch.object(check_kit, 'run_units',
+                                           side_effect=lambda units, *a, **k: names.extend(n for n, _ in units)), \
+                unittest.mock.patch.object(sys, 'argv', ['check_kit.py']), \
+                contextlib.redirect_stdout(out):
+            self.assertEqual(check_kit.main(), 1)
+        self.assertIn('NOT RUN: tests/test_doctor on native Windows (a reason)', out.getvalue())
+        sharded = ['%s/%s@%d' % (directory, name, index) for directory, required in check_kit.REQUIRED_SUITES.items()
+                   for name in required if name in check_kit.SHARDS and name not in off_host.get(directory, {})
+                   for index in range(check_kit.SHARDS[name])]
+        expected = ['acceptance'] + sharded + ['locale/' + name for name in check_kit.LOCALE_SUITES] + [
+            directory + '/' + name for directory, required in check_kit.REQUIRED_SUITES.items()
+            for name in required if name not in check_kit.SHARDS and name not in off_host.get(directory, {})]
+        self.assertEqual(names[:len(sharded) + 1], ['acceptance'] + sharded)
+        self.assertEqual(sorted(names), sorted(expected))
+        self.assertTrue(set(check_kit.SHARDS) <= set(check_kit.REQUIRED_SUITES['tests'])
+                        | set(check_kit.REQUIRED_SUITES['core/scripts']))
+        (self.tmp / 'suite').mkdir()
+        for name in ('test_kit_probe', 'test_new'):
+            (self.tmp / 'suite' / (name + '.py')).write_text(PROBE % 'True')
+        with unittest.mock.patch.object(check_kit, 'ROOT', self.tmp), \
+                unittest.mock.patch.object(check_kit, 'REQUIRED_SUITES', {'suite': {'test_kit_probe': 2}}), \
+                unittest.mock.patch.object(sys, 'argv', ['check_kit.py']), \
+                contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaisesRegex(RuntimeError, 'suite: no count in REQUIRED_SUITES for test_new'):
+                check_kit.main()
 
     def test_an_unreadable_test_directory_refuses_discovery(self):
         def walk(folder, **kwargs):
@@ -612,6 +682,48 @@ def main():
         with self.assertRaisesRegex(RuntimeError, 'bold version.*newest versioned heading'):
             check_kit.check_release(self.tmp)
 
+    def test_a_changed_project_owned_kit_file_needs_an_action_item_naming_it(self):
+        # A fix to a file sync never copies reached no project without an ACTION item (#134).
+        # TemporaryDirectory: its clean-up removes git's read-only objects on Windows too.
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        root = Path(folder.name)
+        (root / 'core/scripts').mkdir(parents=True)
+        env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1')
+
+        def git(*args):
+            subprocess.run(['git', '-C', str(root), '-c', 'user.name=t', '-c', 'user.email=t@example.com',
+                            *args], env=env, check=True, capture_output=True)
+
+        def check():
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                check_kit.check_actions(root)
+            return out.getvalue()
+
+        changelog = '# CHANGELOG\n\n## v0.2 — date\n\n- %s\n\n## v0.1 — date\n\n- first\n'
+        (root / 'core/scripts/check.sh').write_text('echo one\n')
+        (root / 'core/scripts/sync.sh').write_text('# KIT-OWNED: synced\necho one\n')
+        (root / 'CHANGELOG.md').write_text(changelog % 'nothing yet', encoding='utf-8')
+        git('init', '-q')
+        git('add', '-A')
+        git('commit', '-qm', 'one')
+        self.assertIn('NOT RUN: the ACTION check', check())
+        git('tag', 'v0.1')
+        (root / 'core/scripts/sync.sh').write_text('# KIT-OWNED: synced\necho two\n')
+        self.assertEqual(check(), '')
+        (root / 'core/scripts/check.sh').write_text('echo two\n')
+        with self.assertRaisesRegex(RuntimeError, 'no ACTION item naming them under CHANGELOG v0.2: '
+                                                  'core/scripts/check.sh$'):
+            check()
+        (root / 'CHANGELOG.md').write_text(changelog % 'A gate fix.\n  **ACTION:** merge `scripts/check.sh`.',
+                                           encoding='utf-8')
+        self.assertIn('PASS: every project-owned kit file changed since v0.1', check())
+        (root / 'CHANGELOG.md').write_text('# CHANGELOG\n\n## v0.1 — date\n\n- **ACTION:** check.sh\n',
+                                           encoding='utf-8')
+        with self.assertRaisesRegex(RuntimeError, 'no newer version for their ACTION items: core/scripts/check.sh'):
+            check()
+
     def test_units_print_in_the_given_order_whichever_ends_first(self):
         slow = [sys.executable, '-c', 'import time; time.sleep(1); print("slow output\\nUNIT DONE: slow")']
         fast = [sys.executable, '-c', 'print("fast output\\nUNIT DONE: fast")']
@@ -752,8 +864,10 @@ def main():
     def test_the_units_at_once_follow_the_cpu_count(self):
         # Three units at once on a 3-CPU runner took 300 s each and hit their timeouts.
         self.assertEqual([check_kit.degree(cpus, 3) for cpus in (1, 2, 3, 4, 7, 8, 64)],
-                         [1, 1, 1, 2, 2, 3, 3])
+                         [1, 1, 1, 2, 3, 3, 3])
         self.assertEqual(check_kit.degree(5, 1), 1)
+        # One unit per test module (#146): dozens of units, one per two CPUs at once.
+        self.assertEqual([check_kit.degree(cpus, 60) for cpus in (3, 4, 20, 64)], [1, 2, 10, 32])
         with unittest.mock.patch.dict(os.environ, {'MYAGENTKIT_TEST_TIMEOUT_SCALE': '1.5'}):
             self.assertEqual(check_kit.limit(300), 450)
 
@@ -761,7 +875,8 @@ def main():
         unit = [sys.executable, '-c', 'import os, time; s = time.time(); time.sleep(0.5); '
                 'print("span", os.environ["MYAGENTKIT_TEST_TIMEOUT_SCALE"], s, time.time()); '
                 'import sys; print("UNIT DONE: " + sys.argv[1])']
-        for parallel, scale, overlap in ((1, 2.0, False), (2, 4.0, True)):
+        # The factor stops at 4: at 10 at once a hung 1800 s phase ran five hours (#146).
+        for parallel, scale, overlap in ((1, 2.0, False), (2, 4.0, True), (6, 8.0, True)):
             with self.subTest(parallel=parallel), \
                     unittest.mock.patch.dict(os.environ, {'MYAGENTKIT_TEST_TIMEOUT_SCALE': '2'}):
                 passed, out = runner(('a', unit + ['a']), ('b', unit + ['b']), parallel=parallel)
