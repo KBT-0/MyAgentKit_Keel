@@ -705,6 +705,16 @@ class V012GuardTests(GuardCase):
             'nice git commit --no-verify -m x', 'gh api x -f note="git stash drop"',
         ], 2)
 
+    def test_project_review_refusals_of_read_only_git_now_pass(self):
+        # #77: the leeway review's real refusals of 2026-10-18 — a read-only git log inside a
+        # here-document, and an issue body that names git commands in prose.
+        self.assertVerdict([
+            "python - <<'EOF'\nimport subprocess\nsubprocess.run(['git','log','--oneline','-5'])\nEOF",
+            "cat <<'EOF'\nrun git log --oneline -5 to see the base\nEOF",
+            'gh issue create --title "guard refuses read-only git" --body "the hook refused `git log`'
+            ' inside a heredoc; git status and git diff were refused too"',
+        ], 0)
+
 
 if __name__ == '__main__':
     unittest.main()

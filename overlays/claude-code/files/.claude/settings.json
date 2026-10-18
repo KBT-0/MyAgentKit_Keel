@@ -57,7 +57,11 @@
       "Bash(git *--out*)",
       "Bash(git *--ext*)",
       "Bash(git *--textc*)",
-      "Bash(git *--sub*)"
+      "Bash(git *--sub*)",
+      "PowerShell(git *--out*)",
+      "PowerShell(git *--ext*)",
+      "PowerShell(git *--textc*)",
+      "PowerShell(git *--sub*)"
     ]
   },
   "hooks": {

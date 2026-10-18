@@ -126,6 +126,17 @@ class OverlayPermissionsTests(unittest.TestCase):
     def test_an_output_file_option_is_denied_to_every_git_command(self):
         self.assertIn('Bash(git *--out*)', self.permissions['deny'])
 
+    def test_every_bash_deny_rule_has_a_twin_for_every_other_shell_tool(self):
+        # #93: a Bash deny rule does not bind the PowerShell tool. Monitor is left out on purpose:
+        # it takes no rule of its own and obeys the Bash rules (code.claude.com/docs/en/tools-reference,
+        # "When Monitor runs a command, it uses the same permission rules as Bash").
+        bash = [r for r in self.permissions['deny'] if r.startswith('Bash(')]
+        self.assertTrue(bash)
+        for tool in set(SHELL_TOOLS) - {'Bash', 'Monitor'}:
+            for rule in bash:
+                with self.subTest(tool=tool, rule=rule):
+                    self.assertIn(tool + rule[len('Bash'):], self.permissions['deny'])
+
 
 class OverlaySettingsTests(unittest.TestCase):
     def setUp(self):
