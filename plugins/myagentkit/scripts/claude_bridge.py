@@ -907,8 +907,8 @@ def dispositions_text() -> str | None:
 
 def chain_failure(usage: Path, chain, attempt) -> str | None:
     """'failed/<failure_kind>' when the checkpoint the dispatcher wrote after this attempt
-    (chains/<chain>-<attempt>.json) says the chain failed although the attempt completed
-    (stale_checkout), else None. One rule for the usage summary and the two-round cap, and it
+    (chains/<chain>-<attempt>.json) says the chain failed although the attempt completed,
+    because the checkout changed (stale_checkout), else None. One rule for the usage summary and the two-round cap, and it
     fails closed: a pending, missing or unreadable checkpoint, an earlier attempt's failure or
     anything unclear is None, so the round counts. A dispatcher killed after the review
     finished leaves only its pending checkpoint, and that round still counts (#258)."""
@@ -918,8 +918,9 @@ def chain_failure(usage: Path, chain, attempt) -> str | None:
     try:
         value = json.loads((usage / "chains" / ("%s-%d.json" % (chain, int(attempt)))).read_text(encoding="utf-8"))
         attempts = value["attempts"]
+        # Only a checkout seen changed (checkout_changed): an unreadable one proves nothing.
         if (value["status"] == "failed" and len(attempts) == int(attempt)
-                and attempts[-1]["status"] == "completed"):
+                and attempts[-1]["status"] == "completed" and value.get("checkout_changed") is True):
             return "failed/%s" % (value.get("failure_kind") or "-")
     except Exception:  # damage of any kind is unclear, never a reason to drop a round
         pass

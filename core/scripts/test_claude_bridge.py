@@ -44,7 +44,7 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'REVIEW_SHADOW', 'MYAGENTKIT_TASK_I
                       'MYAGENTKIT_REVIEW_ATTEMPT', 'MYAGENTKIT_REVIEW_FALLBACK_FROM',
                       'MYAGENTKIT_REQUESTER', 'CLAUDE_REVIEW_DOCS', 'MYAGENTKIT_NO_BEHAVIOUR', 'MYAGENTKIT_BACKEND',
                       # The lead's author claim: an exported one refused the fixtures' reviewer pin.
-                      'MYAGENTKIT_AUTHOR', 'MYAGENTKIT_ALLOW_SECRET_FILES',
+                      'MYAGENTKIT_AUTHOR', 'REVIEW_SAME_TIER_EXCEPTION', 'MYAGENTKIT_ALLOW_SECRET_FILES',
                       # A worker's brief: review.sh checked every fixture diff against its Owns: line.
                       'REVIEW_TASK_FILE',
                       # A review loop's tier, focus and effort: REVIEW_RISK=high changed the default
@@ -53,9 +53,9 @@ INHERITED_CONTROLS = ('REVIEW_DISPOSITIONS', 'REVIEW_SHADOW', 'MYAGENTKIT_TASK_I
 # Per suite, not a combined total: as one suite grew, an emptied neighbour could hide inside
 # the sum and the self-test passed without running its checks. Each is the suite's current
 # count, so a suite that loses a test fails too; a new test raises it. The kit gate reads this.
-SUITE_MINIMUMS = {'test_claude_bridge': 237, 'test_agent_usage': 36, 'test_codex_quota': 5}
+SUITE_MINIMUMS = {'test_claude_bridge': 242, 'test_agent_usage': 36, 'test_codex_quota': 5}
 # These are executed cases, excluding only the explicitly declared POSIX exclusions.
-WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 211, 'test_agent_usage': 32, 'test_codex_quota': 4}
+WINDOWS_SUITE_MINIMUMS = {'test_claude_bridge': 216, 'test_agent_usage': 32, 'test_codex_quota': 4}
 BRIDGE = ROOT / "claude_bridge.py"
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
@@ -407,7 +407,7 @@ except ValueError as error:
                 repo = self.project(tmp)
                 (repo / 'real.txt').write_bytes(b'changed\n')
                 result = self.review(repo, '--reviewer', primary, '--fallback', STUB_QUOTA=primary,
-                                     MYAGENTKIT_AUTHOR=primary + '/fixture-author')
+                                     MYAGENTKIT_AUTHOR='claude-sonnet-5' if primary == 'claude' else 'gpt-5.5')
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 for provider, model in (('codex', 'codex-fixture'), ('claude', 'claude-fixture')):
                     spend = 'REVIEW [about to run]: %s model %s, effort medium' % (provider, model)
@@ -820,19 +820,14 @@ class BridgeTests(unittest.TestCase):
         self.assertIn('--allow-secret-file .env', str(caught.exception))
         self.assertIn('--allow-secret-file site.key', str(caught.exception))
 
-    def test_quota_fallback_refuses_unknown_or_same_family_authors(self):
-        for author in ('', 'claude-sonnet-5', 'claude-opus-5', 'claude/claude-haiku-5'):
-            with self.subTest(author=author):
-                result, chain = self.dispatch_result('codex', fallback=False, CODEX_FIXTURE_CASE='quota',
-                                                     MYAGENTKIT_AUTHOR=author)
-                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
-                self.assertEqual(len(chain['attempts']), 1)
-                self.assertIn('author', chain['fallback_blocked'])
-        # Explicit fallback cannot authorize the author to review its own patch either.
-        result, chain = self.dispatch_result('codex', fallback=True, CODEX_FIXTURE_CASE='quota',
-                                             MYAGENTKIT_AUTHOR='claude-sonnet-5')
+    def test_quota_fallback_refuses_an_unknown_author(self):
+        # #225: the author's tier is refused, not its family (test_a_substitute_of_the_author_tier_
+        # is_blocked); another Claude tier switches (test_a_used_up_codex_quota_switches_...).
+        result, chain = self.dispatch_result('codex', fallback=False, CODEX_FIXTURE_CASE='quota',
+                                             MYAGENTKIT_AUTHOR='')
         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(len(chain['attempts']), 1)
+        self.assertIn('author', chain['fallback_blocked'])
 
     def test_provider_retry_above_the_wait_cap_stops_without_sleeping(self):
         from contextlib import redirect_stdout
@@ -5663,7 +5658,8 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         log = self.root / 'prompt.txt'
         chains = self.repo / '.myagentkit/usage/chains'
         chains.mkdir(parents=True)
-        failed_after = {'status': 'failed', 'failure_kind': 'stale_checkout', 'attempts': [{'status': 'completed'}]}
+        failed_after = {'status': 'failed', 'failure_kind': 'stale_checkout', 'checkout_changed': True,
+                        'attempts': [{'status': 'completed'}]}
         cases = (
             ('stale', {'-1': failed_after}, False),
             # a dispatcher killed after the review finished: only its pending checkpoint
@@ -5671,7 +5667,10 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
             # an earlier attempt failed, the record is attempt 2, its checkpoint never written
             ('retried', {'-1': {'status': 'failed', 'failure_kind': 'rate_limited',
                                 'attempts': [{'status': 'failed'}]}}, True),
-            ('damaged', {'-1': '{'}, True))
+            ('damaged', {'-1': '{'}, True),
+            # the checkout could not be read after the review: no change is proven, it counts
+            ('unverified', {'-1': {'status': 'failed', 'failure_kind': 'checkout_unverified',
+                                   'checkout_unverified': 'denied', 'attempts': [{'status': 'completed'}]}}, True))
         for label, checkpoints, counted in cases:
             with self.subTest(label=label):
                 task = {'PROMPT_LOG': str(log), 'MYAGENTKIT_TASK_ID': 'chain-' + label}
@@ -5790,7 +5789,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                 return 5
             return main
         with patch.dict(os.environ, self.review_env(ANTHROPIC_API_KEY='lead-key',
-                                                   MYAGENTKIT_AUTHOR='claude/fixture-author')), \
+                                                   MYAGENTKIT_AUTHOR='claude/claude-sonnet-5')), \
                 patch.object(review_dispatch.claude_bridge, 'main', adapter('claude')), \
                 patch.object(review_dispatch.codex_bridge, 'main', adapter('codex')), redirect_stdout(io.StringIO()):
             review_dispatch.main(['--repo', str(self.repo), '--uncommitted', '--reviewer', 'claude',
@@ -5837,7 +5836,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         env = dict(CLAUDE_CLI_BIN=str(self.fixture), REVIEW_CLAUDE_MODEL='claude-opus-5',
                    REVIEW_CODEX_MODEL='codex-fixture-model', REVIEW_CLI_BIN=str(self.build_fake_codex()),
                    MYAGENTKIT_REQUESTER='codex/fixture-codex-model', MYAGENTKIT_TASK_ID='fallback-task',
-                   MYAGENTKIT_AUTHOR=primary + '/fixture-author',
+                   MYAGENTKIT_AUTHOR='claude-sonnet-5' if primary == 'claude' else 'gpt-5.5',
                    REVIEW_ROUND_EXCEPTION='fixture: the chain tests run more than two rounds')
         env.update(extra)
         result = self.run_wrapper('--reviewer', primary, *(['--fallback'] if fallback else []), **env)
@@ -6514,7 +6513,7 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
             with self.subTest(author=author):
                 result = self.run_wrapper('--uncommitted', MYAGENTKIT_AUTHOR=author, **env)
                 self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
-                self.assertIn("is the author's tier", result.stdout)
+                self.assertIn('the author never reviews its own patch', result.stdout)
                 self.assertIn('docs/REVIEW_GATE.md', result.stdout)
                 self.assertFalse((self.repo / '.myagentkit/usage').exists())
         result = self.run_wrapper('--uncommitted', MYAGENTKIT_AUTHOR='claude-sonnet-5', **env)
@@ -6539,7 +6538,80 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                                                      MYAGENTKIT_TASK_ID='author-sub-%s' % fallback)
                 self.assertNotEqual(result.returncode, 0, result.stdout)
                 self.assertEqual([a['reviewer'] for a in chain['attempts']], ['codex'])
-                self.assertIn("the author's family", chain['fallback_blocked'])
+                self.assertIn("the author's tier", chain['fallback_blocked'])
+
+    def test_author_aliases_resolve_to_their_tier_and_a_bare_family_is_refused(self):
+        # #181: an alias or a vendor-prefixed id of the pinned tier is refused like the id; a
+        # value naming no model tier is refused too, since it compared equal to no pin.
+        env = dict(CLAUDE_CLI_BIN=str(self.fixture), REVIEW_CLAUDE_MODEL='claude-opus-5')
+        for author in ('opus', 'Opus 5.5', 'claude/opus', 'us.anthropic.claude-opus-5-v1:0'):
+            with self.subTest(author=author):
+                result = self.run_wrapper('--uncommitted', MYAGENTKIT_AUTHOR=author, **env)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn('the author never reviews its own patch', result.stdout)
+        for author in ('claude', 'anthropic', 'claude-code', 'codex', 'openai', 'claude/fixture-author'):
+            with self.subTest(author=author):
+                result = self.run_wrapper('--uncommitted', MYAGENTKIT_AUTHOR=author, **env)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn('names no model tier', result.stdout)
+        self.assertFalse((self.repo / '.myagentkit/usage').exists())
+
+    def test_the_same_tier_exception_runs_only_for_a_named_high_tier_review(self):
+        # #179: the owner's exception (a plan with no tier above the author's) is named in the
+        # run, high tier and high effort only, and recorded in the chain.
+        env = dict(CLAUDE_CLI_BIN=str(self.fixture), REVIEW_CLAUDE_MODEL='claude-opus-5',
+                   MYAGENTKIT_AUTHOR='claude-opus-5-5', REVIEW_SAME_TIER_EXCEPTION='plan without Fable')
+        for extra in ({}, {'REVIEW_RISK': 'high', 'REVIEW_EFFORT': 'medium'}):
+            with self.subTest(extra=extra):
+                result = self.run_wrapper('--uncommitted', **env, **extra)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn('for a high-tier change only', result.stdout)
+        result = self.run_wrapper('--uncommitted', REVIEW_RISK='high', **env)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('REVIEW [same tier]:', result.stdout)
+        chain = json.loads(result.stdout.split('review dispatch: ', 1)[1].splitlines()[0])
+        self.assertEqual(chain['same_tier_exception'], 'plan without Fable')
+
+    def test_a_used_up_codex_quota_switches_to_another_tier_of_a_claude_author(self):
+        # #225: the switch checks the tier, so a Claude author's review goes to another Claude
+        # tier; an unknown author blocks it, and the hint names MYAGENTKIT_AUTHOR, not --fallback.
+        result, chain = self.dispatch_result('codex', fallback=False, CODEX_FIXTURE_CASE='quota',
+                                             MYAGENTKIT_AUTHOR='claude-sonnet-5', MYAGENTKIT_TASK_ID='switch-sonnet')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual([a['reviewer'] for a in chain['attempts']], ['codex', 'claude'])
+        result, chain = self.dispatch_result('codex', fallback=False, CODEX_FIXTURE_CASE='quota',
+                                             MYAGENTKIT_AUTHOR='', MYAGENTKIT_TASK_ID='switch-unknown')
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertEqual([a['reviewer'] for a in chain['attempts']], ['codex'])
+        self.assertIn('set MYAGENTKIT_AUTHOR', chain['fallback_blocked'])
+        self.assertIn('after fixing what blocked the substitute', result.stdout)
+        self.assertNotIn('--fallback on the other', result.stdout)
+
+    def test_an_unreadable_checkout_after_a_review_fails_the_chain_without_calling_it_changed(self):
+        # Lead-found (#258 follow-up): a snapshot read error proves no change, so the chain fails
+        # as checkout_unverified, never checkout_changed, and the round stays counted.
+        import contextlib
+        import review_dispatch as dispatch
+        from unittest.mock import patch
+        real, calls = dispatch.claude_bridge.snapshot, []
+
+        def snapshot(*args):
+            # Only the dispatcher's look after the attempt fails; the adapter's own looks read.
+            if sys._getframe(1).f_globals.get('__name__') == 'review_dispatch':
+                calls.append(args)
+                if len(calls) > 1:
+                    raise dispatch.claude_bridge.BridgeError('index cannot be read')
+            return real(*args)
+        env = self.review_env(CLAUDE_CLI_BIN=str(self.fixture), REVIEW_CLAUDE_MODEL='claude-opus-5')
+        out = io.StringIO()
+        with patch.dict(os.environ, env, clear=True), \
+                patch.object(dispatch.claude_bridge, 'snapshot', snapshot), contextlib.redirect_stdout(out):
+            code = dispatch.main(['--repo', str(self.repo), '--uncommitted'])
+        self.assertEqual(code, 5, out.getvalue())
+        chain = json.loads(out.getvalue().split('review dispatch: ', 1)[1].splitlines()[0])
+        self.assertEqual(chain['failure_kind'], 'checkout_unverified')
+        self.assertNotIn('checkout_changed', chain)
+        self.assertIn('still counts as a round', out.getvalue())
 
     def test_a_secret_looking_file_in_scope_stops_the_review_unless_allowed_by_name(self):
         # KARARLAR B12 inv2#106: tracked or not, a file that looks like a secret is in the copy the
@@ -6632,6 +6704,23 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
                 self.assertIn('Read(//' + folder.lstrip('/') + '/**)', settings['permissions']['deny'])
                 if sandboxed:
                     self.assertIn(folder, settings['sandbox']['filesystem']['denyRead'])
+
+    def test_a_quoted_backend_value_is_unquoted_and_a_missing_file_names_the_backend_folder(self):
+        # #277: a dotenv-style quoted value kept its quotes (the token reached the endpoint with
+        # them, a quoted model read as "no model"); a missing file named only the old place.
+        import review_dispatch
+        user = self.root / 'quoted-backends'
+        user.mkdir()
+        (user / 'q.env').write_text('ANTHROPIC_BASE_URL="https://x"\nANTHROPIC_AUTH_TOKEN=\'sk-1\'\n'
+                                    'ANTHROPIC_MODEL="glm-4"\n')
+        os.environ['MYAGENTKIT_BACKENDS_DIR'] = str(user)
+        env, model = review_dispatch.load_backend(self.repo, 'q')
+        self.assertEqual((env['ANTHROPIC_BASE_URL'], env['ANTHROPIC_AUTH_TOKEN'], model), ('https://x', 'sk-1', 'glm-4'))
+        with self.assertRaises(ValueError) as caught:
+            review_dispatch.load_backend(self.repo, 'missing')
+        self.assertIn(str(user), str(caught.exception))
+        self.assertIn('is not in the backend folder', str(caught.exception))
+        self.assertNotIn('Git-ignored', str(caught.exception))
 
     def test_the_codex_prompt_names_the_clean_review_form_the_parser_accepts(self):
         # fix4 notes: make prompt and allowlist agree, so a clean paid review is not lost as
