@@ -62,7 +62,7 @@ Automation never authorizes a commit or push.
   `REVIEW_FOCUS` carries its own reports plus legacy reports without a focus
   (`docs/REVIEW_GATE.md`, "Rounds").
 - The two reviewers run one after the other unless {{OWNER_NAME}} allows parallel; start the
-  self-test beside a review only when the memory budget permits (`docs/WORKFLOW.md`, "Worker
+  acceptance gate run beside a review only when the memory budget permits (`docs/WORKFLOW.md`, "Worker
   cost", rule 6), each as its own background job. Source: KARARLAR D06 inv2#38; LLVM CMake
   job pools and RAM-per-job settings (https://llvm.org/docs/CMake.html); review ordering
   follows decision 9.

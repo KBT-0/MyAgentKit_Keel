@@ -42,9 +42,10 @@ Not sure? Open an issue. That is what they are cheap for.
 
 **A change to a gate must add its negative test.** This is the kit's founding rule and there
 is no exception to it: a gate that has only been seen passing is an untested branch that
-runs on every commit. If your PR touches `check.sh`, a boundary check, `review.sh` or CI, it
-adds the case to `--self-test` that constructs the failure and asserts the gate rejects it —
-and you should have watched it go red before and green after.
+runs on every commit. If your PR touches a check in `check.sh`, a boundary check, `review.sh`
+or CI, it adds a fixture test for that check (`tests/test_gate_checks.py` shows the shape): a
+bad input turns the check red with its own diagnostic, a good one leaves it green — and you
+should have watched it go red before and green after.
 
 **Every change cites its source.** The kit gathers what people, AI vendors and the projects
 using it have learned about building software with AI, and stays current with it; nothing
@@ -108,7 +109,6 @@ tmp=$(mktemp -d) && ./bootstrap.sh "$tmp" && cd "$tmp" && git init -q && git add
 ./scripts/check.sh                # expect FAIL: markers remain, no build command
 # fill the placeholders and write the two boundary files, then:
 ./scripts/check.sh                # expect PASS
-./scripts/check.sh --self-test    # expect every case observed going red
 ```
 
 A contribution that leaves the gate red, or leaves a gate that can no longer fail, is the

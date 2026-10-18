@@ -125,8 +125,8 @@ use `./scripts/review.sh --uncommitted --reviewer claude`. This requires Python 
 and an installed, authenticated Claude CLI. `CLAUDE_CLI_BIN` selects that binary; the
 adapter pins read tools and structured output. The Codex-host plugin also supports
 `$myagentkit-review` and `$myagentkit-delegate` after installation from the kit marketplace.
-Python 3.11+ is also required by `scripts/review.sh --self-test` and the review tests included
-in `scripts/check.sh --self-test`, even when Codex is the only reviewing CLI.
+Python 3.11+ is also required by `scripts/review.sh --self-test` (the review suite), even when
+Codex is the only reviewing CLI.
 Both live adapters now require Python as well, to bound the child process and preserve usage
 on failure. The following is the canonical companion list for an existing-project upgrade.
 Copy every listed file from the kit's `core/scripts/` into your project's `scripts/`
@@ -298,11 +298,12 @@ NOTE where `timeout` is absent. It is not part of the gate and CI does not run i
 Once, on a fresh clone:
 
 ```sh
-./scripts/check.sh --self-test
+./scripts/check.sh
 ```
 
-It injects each gate's failure condition and asserts the gate rejects it. A green
-`CHECK: PASS` tells you the tree is clean; only the self-test tells you the gate could have
-told you otherwise.
+Each check the project adds has a fixture test in the suite the build command runs
+(`docs/WORKFLOW.md`, "Writing a gate"): an input that breaks the rule turns the check red
+with its own `FAIL` line, a clean one leaves it green. So a green `CHECK: PASS` also says
+that every check could have told you otherwise.
 
 {{PROJECT_SETUP_STEPS}}

@@ -162,7 +162,6 @@ failover.
 
 ```sh
 ./scripts/check.sh
-./scripts/check.sh --self-test
 ./scripts/review.sh --self-test
 ```
 

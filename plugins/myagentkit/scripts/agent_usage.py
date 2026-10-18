@@ -140,7 +140,7 @@ def report(stamp: str, header: dict, verdict: str | None, body: str) -> str:
     if verdict is not None and header["status"] != "completed":
         raise ValueError("a verdict may only be published by a completed review")
     # The verdict is promoted OUT of the model's prose into the one contract line above the
-    # body, so a reader (and the self-test) can find it without parsing free text. Any copy
+    # body, so a reader (and the tests) can find it without parsing free text. Any copy
     # left in the body is therefore normalized here rather than in each adapter: a reviewer
     # whose prose still said "VERDICT: Accept" under a failed run would publish an approval
     # the run never earned, and one that repeated its verdict would break "exactly one".
