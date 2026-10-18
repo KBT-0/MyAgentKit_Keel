@@ -237,7 +237,14 @@ class GitHookTests(unittest.TestCase):
                             'Co-authored-by: opencode <opencode@example.invalid>',
                             'Co-authored-by: Junie <junie@example.invalid>',
                             'Co-authored-by: OpenHands <openhands@example.invalid>',
-                            'Co-authored-by: Warp <agent@example.invalid>'):
+                            'Co-authored-by: Warp <agent@example.invalid>',
+                            # Vendors the projects name as working tools (#204).
+                            'Co-Authored-By: Kimi <noreply@moonshot.ai>',
+                            'Co-authored-by: Kimi K2 <kimi@moonshot.cn>',
+                            'Co-authored-by: GLM-4.6 <noreply@z.ai>',
+                            'Co-authored-by: DeepSeek <noreply@deepseek.com>',
+                            'Co-authored-by: Grok <noreply@x.ai>',
+                            'Co-authored-by: Grok 4 <grok@example.invalid>'):
                 with self.subTest(trailer=trailer):
                     result = self.commit(root, git, trailer + '\n')
                     self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -258,6 +265,8 @@ class GitHookTests(unittest.TestCase):
                             'Co-authored-by: Claude\n  Monet <claude.monet@example.invalid>',
                             'Co-authored-by: "Claude Monet" <claude.monet@example.invalid>',
                             "Co-authored-by: 'A Person' <person@example.invalid>",
+                            # Kimi is a given name: only the vendor's domain marks the tool.
+                            'Co-authored-by: Kimi <kimi@example.invalid>',
                             'Bump openai SDK to the next minor version'):
                 with self.subTest(trailer=trailer):
                     result = self.commit(root, git, trailer + '\n')
@@ -618,6 +627,21 @@ class GitHookTests(unittest.TestCase):
                     self.assertIn("'Done: %s' does not name a task id" % value, result.stderr)
             result = self.commit(root, git, 'valid\n\nDone: R12\nDone: K7-a\n')
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_a_done_trailer_after_a_divider_line_is_read(self):
+        # Without --no-divider, a body line "---" read as a patch start and hid every trailer
+        # after it, while `git log` and check.sh still read them (#173).
+        with tempfile.TemporaryDirectory() as tmp:
+            root, git = self.repo(tmp)
+            self.docs(root, git, '- K4: in flight\n')
+            for divider in ('---', '--- note'):
+                with self.subTest(divider=divider):
+                    result = self.commit(root, git, 'close\n\nnotes\n%s\nmore notes\n\nDone: K4\n' % divider)
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    self.assertIn('closes K4 but docs/STATE.md', result.stderr)
+            result = self.commit(root, git, 'bad\n\nnotes\n---\n\nDone: K4 K5\n')
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn("'Done: K4 K5' does not name a task id", result.stderr)
 
     def test_a_done_value_is_one_id_whole_folded_and_any_key_case(self):
         # Word splitting passed "Done: K4 K5" as two ids, which the gate reads as one bad

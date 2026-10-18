@@ -252,7 +252,10 @@ One topic per turn. Suggested order, because each answer informs the next:
    in git" rule; `.githooks/commit-msg` enforces it, and the Claude Code overlay's
    `.claude/settings.json` ships `"attribution": {"commit": "", "pr": ""}` so the tool does
    not add the trailer in the first place (code.claude.com/docs/en/settings-reference; the hook is the
-   backstop). Yes: replace that rule with one saying AI tools may be credited; the hook keys
+   backstop). On a retrofit the project's own `AGENTS.md` was kept: for No, add the rule line
+   with the exact phrase "No AI attribution in git" (the hook keys on it and passes every
+   message without it), and add the `attribution` block to a kept `.claude/settings.json` as
+   Q11 does for its entries. Yes: replace that rule with one saying AI tools may be credited; the hook keys
    on the rule line, so without it the hook gives way, an `Assisted-by:` trailer included.
    If the project takes outside
    contributions, check its policy first: the Linux kernel and Fedora ask for an
@@ -319,8 +322,8 @@ One topic per turn. Suggested order, because each answer informs the next:
     Claude complaint of 2026 is this invented jargon. If the Claude Code overlay is
     installed, say that `.claude/hooks/plain_report.py` bounces a final message that still
     carries such a label: task ids come from the task grammar in `.githooks/commit-msg`
-    (where a project extends it), and the hook's `LABELS` list is where a project adds any
-    other shape.
+    (where a project extends it), and `.claude/plain_report_labels.json` (a JSON list of
+    regular expressions) is where a project adds any other shape.
 
 ## Phase 3 — PROJECT.md and PHASES.md
 
@@ -438,7 +441,7 @@ placeholder is either a quoted value or a whole file.
 | `{{REJECTED_DECISIONS}}` | Everything considered and turned down in this interview, with the reason and what would reopen it |
 | `{{PROJECT_STOP_RULES}}` | Project-specific reasons an agent must stop and ask |
 | `{{PROJECT_SETUP_STEPS}}` | Anything else a fresh clone needs |
-| `{{MODULE}}` | Only in `MODULE_AGENTS_TEMPLATE.md` — copy that file per module and fill it there |
+| `{{MODULE}}` | Only in `MODULE_AGENTS_TEMPLATE.md` — copy that file per module, delete the copy's KIT-OWNED first line, and fill it there |
 
 **Model routing ships filled.** `docs/WORKFLOW.md`, "Model routing", carries the kit's tier
 table and its working modes. Replace the table's model names with what the owner's

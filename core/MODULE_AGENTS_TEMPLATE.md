@@ -3,7 +3,8 @@
 # /{{MODULE}} rules
 
 <!-- Copy this to each top-level module folder as its AGENTS.md, alongside a two-line
-     pointer file for whichever tools you use. Keep it under ~25 lines: it is read
+     pointer file for whichever tools you use. Delete the KIT-OWNED line at the top of the
+     copy: the sync owns this template, never the module's file, which the project edits. Keep it under ~25 lines: it is read
      on top of the root constitution, and it must not repeat the root's rules.
 
      Write only what is TRUE HERE AND NOWHERE ELSE. A rule that applies project-wide

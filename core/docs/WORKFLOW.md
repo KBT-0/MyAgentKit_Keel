@@ -97,7 +97,10 @@ deletion checkable.
 - `.githooks/commit-msg` rejects that commit while the `docs/STATE.md` or `docs/BACKLOG.md`
   it records still names the id, and says which line; `./scripts/check.sh` fails `[state]`
   when either file names an id that any commit in the history closed. The strong review
-  cycle's `docs/STRONG_REVIEW.md` and `docs/reviews/strong-*.md` are checked the same way.
+  cycle's `docs/STRONG_REVIEW.md` and `docs/reviews/strong-*.md` are checked the same way, and
+  so is every audit in the index (`docs/audits/*.md`, however old; "Periodic architecture
+  audit"). A mention is the id as a whole token anywhere in the file, prose included: "the E7
+  session" blocks closing E7 as a finding line does, so reword or delete it.
   Whole word: closing `K3` says nothing about `K3b`.
 - A closed id is never reused. A task needed again gets a new id. A closed id is already in
   git history as `Done: K4`; reusing it would make the old commit look like it closed the new
@@ -365,7 +368,7 @@ that closes its last id: a living file keeps no closed item ("The state, backlog
 files"), and debt that is not tracked to its close stays open (Martini, Besker and Bosch,
 2018). The gate reads audit files and prints a NOTE for ids closed in reachable history;
 old audit mentions do not fail an upgraded project. The commit-msg hook still refuses a
-closing `Done:` trailer while the staged audit names that id. **The audit is itself a task; skip it and decay advances
+closing `Done:` trailer while any audit in the index names that id, an old one included. **The audit is itself a task; skip it and decay advances
 invisibly.**
 
 ## The strong review cycle — at least every ten days

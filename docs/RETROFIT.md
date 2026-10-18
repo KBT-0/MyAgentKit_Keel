@@ -27,7 +27,10 @@ hatch.
 If the project already has one, **align rather than replace.** Read what is there, keep the
 project-specific rules it already encodes, and fold in the kit's structure around them.
 Replacing an instruction file that people have been following is how you lose rules nobody
-remembers writing but everyone relies on.
+remembers writing but everyone relies on. One kit line must still land in a kept file: the
+`No AI attribution in git` rule (setup interview Q9, answered No). `.githooks/commit-msg` keys
+on that exact phrase, and without it the hook passes every message, an AI co-author trailer
+included.
 
 Add the one-line pointers for other tools. Delete any duplicated copies —
 [one canonical file](one-canonical-instruction-file.md).

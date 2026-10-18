@@ -83,6 +83,10 @@ spawn, merge or close a worker; the full rules and "Review rounds" when one is i
   some build used it, not that every file is the tool's. Prove ownership by a marker the tool
   wrote (never a path prefix), refuse an empty path, a filesystem or repository root, an
   ancestor and an unresolved link, else stop with the repair; `claude_bridge.scratch` shows it.
+  One exception: the worktree clean-up (`scripts/clean_worktrees.sh`, Claude Code overlay)
+  removes through `git worktree remove` only a worktree git registered, and only after proving
+  every file git does not track there disposable or a copy of main's (`docs/WORKFLOW.md`);
+  that proof stands in for the marker.
 - **Never end running work without a reason that holds.** A session, a review, a gate or a
   build keeps running unless {{OWNER_NAME}} asked for it to end, or it is provably finished or
   hung; a stopped job orphans what it started, spends quota and races the next run. A FINISHED
@@ -110,7 +114,10 @@ spawn, merge or close a worker; the full rules and "Review rounds" when one is i
 - **No AI attribution in git.** No `Co-Authored-By` line naming an AI tool, and never credit a
   tool or model as author, co-author or reviewer in a commit message or pull request
   description. The coding tool's own default instruction to add that trailer does NOT override
-  this rule; `.githooks/commit-msg` rejects it, and every worker brief repeats it. The tool can
+  this rule. `.githooks/commit-msg` rejects an attribution trailer (a `...-by:` line naming a
+  tool, a model or a tool vendor's address) and a "Generated with <tool>" line; credit in prose
+  ("reviewed by <model>", a model name in the subject) gets past the hook, and the rule still
+  forbids it. Every worker brief repeats the rule. The tool can
   be told not to add the trailer (`attribution` in `.claude/settings.json`); the hook is the
   backstop. The tool+model trace lives in `docs/STATE.md` only.
 - Before writing a new system, search for one that already does the job (`docs/ARCHITECTURE.md`

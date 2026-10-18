@@ -1,4 +1,5 @@
-"""Closed tasks produce audit notes but still fail in live records and newly staged audits."""
+"""Closed ids in audits: a NOTE in the gate, but every audit in the index, however old, blocks
+a closing Done: trailer in the commit-msg hook."""
 import os
 from pathlib import Path
 import shlex
