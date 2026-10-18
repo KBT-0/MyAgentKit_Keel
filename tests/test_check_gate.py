@@ -37,7 +37,7 @@ def make_project(path):
 def gate(cwd, build, timeout=60, args=(), pass_fds=(), **extra):
     """Run the gate in its own session; on timeout kill the whole session and return None."""
     env = {k: v for k, v in os.environ.items()
-           if not k.startswith(('GATE_', 'BOUNDARY_')) and k != 'CDPATH'}
+           if not k.startswith(('GATE_', 'BOUNDARY_')) and k not in ('CDPATH', 'CI')}  # CI turns the cache off
     env.update(GATE_TEST_BUILD=str(build), **extra)
     proc = subprocess.Popen(['sh', 'scripts/check.sh', *args], cwd=cwd, env=env, text=True,
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -213,11 +213,13 @@ class CheckGateTests(unittest.TestCase):
 
     def test_a_fcntl_py_on_pythonpath_is_never_imported_by_the_lock(self):
         # A stand-in fcntl that always "locked" let two gates run at once; the lock programs
-        # run isolated (-I), so it is never imported. The stand-in marks that it was.
+        # run isolated (-I), so it is never imported. The stand-in marks that it was. The build
+        # runs the gate once nested, so the nested run's proof of the lock meets it too.
         shadow = self.tmp / 'shadow'
         shadow.mkdir()
         (shadow / 'fcntl.py').write_text('open(__file__ + ".imported", "w").close()\n'
                                          'raise ImportError("a stand-in fcntl")\n')
+        self.build.write_text('[ -n "${NESTED:-}" ] || NESTED=1 sh scripts/check.sh\n')
         code, out = gate(self.project, self.build, PYTHONPATH=str(shadow), GATE_LOCK_WAIT='5')
         self.assertEqual(code, 0, out)
         self.assertFalse((shadow / 'fcntl.py.imported').exists(), out)

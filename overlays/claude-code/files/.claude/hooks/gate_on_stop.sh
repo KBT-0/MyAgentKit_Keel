@@ -35,8 +35,9 @@ fi
 
 gate_wait="${GATE_LOCK_WAIT:-500}"
 
-# No result caching, on purpose: a cache that says PASS for a tree that has since changed is
-# worse than a ten-second gate.
+# The hook keeps no result of its own: every Stop runs the gate. The gate's opt-in build cache
+# (build_cache_inputs in scripts/check.sh) can skip the build, only one that passed on the
+# same inputs, and the gate then says "cached PASS"; every other check runs each time.
 # The gate waits for another gate run in this checkout. The wait is bounded below the hook's
 # timeout (600 s in settings.json): a killed hook returns nothing, and its gate would still
 # start later. Exit 75 is that bound running out — the gate did not run, it did not fail.

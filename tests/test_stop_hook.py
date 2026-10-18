@@ -33,6 +33,24 @@ def stop(hook, root):
 
 
 class StopHookTests(unittest.TestCase):
+    def test_an_ungated_turn_runs_no_gate_and_a_gated_one_waits_at_most_500_s(self):
+        # Documentation and tooling turns skip the gate: a dirty file the pattern does not match
+        # runs nothing. A matching one runs it with a lock wait below the hook's 600 s timeout.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            hook = gated_repo(root, 'echo "${GATE_LOCK_WAIT-unset}" > gate-ran\nexit 1\n')
+            hook.write_text(hook.read_text().replace(r'\.py$', r'\.c$'), newline='\n')
+            env = {k: v for k, v in os.environ.items() if k != 'GATE_LOCK_WAIT'}
+            run = lambda: subprocess.run(['sh', str(hook)], cwd=root, input='{}', text=True,
+                                         capture_output=True, timeout=60, env=env)
+            result = run()
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertFalse((root / 'gate-ran').exists(), 'an ungated turn ran the gate')
+            (root / 'src/x.c').write_text('dirty\n', newline='\n')
+            result = run()
+            self.assertEqual(result.returncode, 2, result.stderr)
+            self.assertEqual((root / 'gate-ran').read_text().strip(), '500')
+
     def test_a_cd_into_another_checkout_still_gates_the_session_project(self):
         # Claude Code runs a hook in the current directory, which follows a `cd`: a lead that
         # cd'd into a clean worker worktree finished its turn with its own red change ungated.

@@ -98,10 +98,10 @@ REQUIRED_SUITES = {
     # Each suite's current count: a minimum far below it (1 of 30) let a suite lose almost
     # every test with the kit check green. A new test raises its suite's number here.
     'tests': {'test_packaging': 1, 'test_bootstrap': 36, 'test_acceptance': 20,
-              'test_review_upgrade': 4 if os.name == 'nt' else 5,
-              'test_scan_gate': 1, 'test_gate_checks': 11, 'test_unity_gate': 4, 'test_kit_wrapper': 6,
+              'test_review_upgrade': 5 if os.name == 'nt' else 6,
+              'test_scan_gate': 1, 'test_gate_checks': 12, 'test_unity_gate': 6, 'test_kit_wrapper': 6,
               'test_check_gate': 20, 'test_check_gate_windows': 36 if os.name == 'nt' else 10,
-              'test_sync_kit': 37, 'test_doctor': 6, 'test_git_hooks': 31, 'test_stop_hook': 2, 'test_context_hook': 12, 'test_communication_hooks': 32, 'test_overlay_permissions': 8, 'test_guard_destructive_git': 47, 'test_guard_boundaries': 1, 'test_guard_private_email': 5,
+              'test_sync_kit': 37, 'test_doctor': 6, 'test_git_hooks': 31, 'test_stop_hook': 3, 'test_context_hook': 12, 'test_communication_hooks': 32, 'test_overlay_permissions': 8, 'test_guard_destructive_git': 47, 'test_guard_boundaries': 1, 'test_guard_private_email': 5,
               'test_spawn_worker': 53 if os.name == 'nt' else 73, 'test_spawn_codex': 58, 'test_codex_worker': 61, 'test_working_mode': 49, 'test_worker_visibility': 69, 'test_doc_pointers': 11,
               'test_usage_summary': 25, 'test_done_audits': 2,
               'test_kit_output': 1, 'test_kit_runner': 42, 'test_clean_worktrees': 138, 'test_clean_worktrees_windows': 12 if os.name == 'nt' else 0, 'test_close_worker_windows': 22,

@@ -134,16 +134,7 @@ PROBE_RUNNER = '''
 import ctypes, os, sys
 mode, source = sys.argv[1], sys.argv[2]
 sys.argv = ['-c'] + sys.argv[3:]
-if mode == 'collide':
-    class Same:
-        def __init__(self, result):
-            self.result = result
-        def __getattr__(self, name):
-            return 1 if name in ('st_dev', 'st_ino') else getattr(self.result, name)
-    real_stat, real_fstat = os.stat, os.fstat
-    os.stat = lambda *a, **k: Same(real_stat(*a, **k))
-    os.fstat = lambda *a, **k: Same(real_fstat(*a, **k))
-elif mode == 'noid':
+if mode == 'noid':
     real = ctypes.WinDLL
     class Failing:
         argtypes = restype = None
@@ -287,7 +278,7 @@ def make_project(path):
 
 def environment(build, **extra):
     env = {k: v for k, v in os.environ.items()
-           if not k.startswith(('GATE_', 'BOUNDARY_')) and k != 'CDPATH'}
+           if not k.startswith(('GATE_', 'BOUNDARY_')) and k not in ('CDPATH', 'CI')}  # CI turns the cache off
     env.update(GATE_TEST_BUILD=build.as_posix(), **extra)
     return env
 
@@ -681,9 +672,7 @@ class WindowsGateLockTests(unittest.TestCase):
 
     def probe(self, mode, handle):
         """Run the gate's own nested-run proof (the Python check.sh hands GATE_LOCK_FD to) with
-        `mode` faked: 'collide' makes os.stat report one identity for every file, as a 64-bit
-        file id that is not unique (ReFS before Python 3.12) does; 'noid' makes the volume give
-        no FILE_ID_INFO; 'none' fakes nothing."""
+        `mode` faked: 'noid' makes the volume give no FILE_ID_INFO; 'none' fakes nothing."""
         text = (ROOT / 'core/scripts/check.sh').read_text(encoding='utf-8')
         source = re.search(r"lock_probe=0\n  python3 -I -c '\n(.*?)\n' \"\$\{GATE_LOCK_FD:-\}\"", text, re.S)
         self.assertIsNotNone(source, 'the nested-run proof was not found in check.sh')
@@ -705,6 +694,7 @@ class WindowsGateLockTests(unittest.TestCase):
         anchor = '\nwork=$(mktemp -d)'
         self.assertIn(anchor, text)
         inserted = (
+            '\n[ -z "${LOCKCASE_NEST:-}" ] || { LOCKCASE_NEST= sh "$gate"; exit $?; }'
             '\n[ -z "${LOCKCASE_HOLD:-}" ] || { : > "$LOCKCASE_HOLD"; sleep 10; exit 0; }'
             '\n[ -z "${LOCKCASE_KILL:-}" ] || { : > "$LOCKCASE_KILL"; kill -9 $$; }'
             '\n[ -z "${LOCKCASE_FAIL:-}" ] || { : > "$LOCKCASE_FAIL"; exit 3; }'
@@ -755,23 +745,25 @@ class WindowsGateLockTests(unittest.TestCase):
     def test_a_ctrl_c_while_the_holder_waits_for_the_lock_starts_no_gate(self):
         code, out = self.lock_case('earlyint')
         self.assertEqual(code, 0, out)
-        self.assertIn('lockcase: a Ctrl-C before the gate started: its holder exited 130; the gate never ran\n', out)
+        self.assertIn('lockcase: a Ctrl-C before the gate started: its holder exited 130 while the lock was held; '
+                      'the gate never ran\n', out)
 
     @windows_only
     def test_a_handle_whose_64_bit_identity_collides_is_not_the_lock(self):
         # The proof compared os.stat's (st_dev, st_ino). Before Python 3.12 that held 64 bits of
         # the file id, which ReFS does not keep unique: a writable handle on another file whose
-        # truncated id matched passed while the real lock was held. FILE_ID_INFO is compared now.
+        # truncated id matched passed while the real lock was held. The whole FILE_ID_INFO is
+        # compared now: the 'wide' case hands the proof another file whose FILE_ID_INFO equals the
+        # lock's but for its last byte (same volume, same first 64 id bits).
+        code, out = self.lock_case('wide')
+        self.assertEqual(code, 0, out)
+        self.assertIn('lockcase: proof exit 1\n', out)
         held = open_handle(self.lock, GENERIC_READ | GENERIC_WRITE, SHARE_READ)
-        other = open_handle(self.tmp / 'another-file', GENERIC_READ | GENERIC_WRITE, SHARE_READ | SHARE_WRITE)
         try:
             control = self.probe('none', held)
-            collided = self.probe('collide', other)
         finally:
-            close_handle(other)
             close_handle(held)
         self.assertEqual(control.returncode, 0, control.stdout + control.stderr)
-        self.assertEqual(collided.returncode, 1, collided.stdout + collided.stderr)
 
     @windows_only
     def test_a_volume_without_a_stable_file_id_fails_closed(self):

@@ -1,7 +1,7 @@
-"""Native Windows gate lock cases, run by tests/test_check_gate_windows.py (WindowsLockCaseTests).
+"""Native Windows gate lock cases, run by tests/test_check_gate_windows.py (WindowsGateLockTests).
 
 Usage: python -I windows_lockcase.py MODE LOCK GATE, where GATE is a copy of check.sh whose
-LOCKCASE_* lines (added by the test) stop or kill it right after it holds the lock. Each mode
+LOCKCASE_* lines (added by the test) stop, kill or nest it right after it holds the lock. Each mode
 prints a "lockcase: ..." line or exits with the gate's status; the test asserts both.
 """
 import ctypes, os, re, struct, subprocess, sys, time
@@ -115,13 +115,15 @@ if mode in ("noid", "wide"):
     print("lockcase: proof exit %d" % status)
     sys.exit(0)
 if mode == "shadow":
-    # Stand-ins on PYTHONPATH for modules the holder imports; each marks that it was imported.
+    # Stand-ins on PYTHONPATH for modules the lock programs import; each marks that it was
+    # imported. The gate runs once nested (LOCKCASE_NEST), so the nested-run proof meets them too.
+    # msvcrt is built in on Windows and cannot be shadowed; fcntl is the POSIX lock's module.
     folder = lock + ".shadow"
     os.mkdir(folder)
-    for name in ("fcntl", "secrets"):
+    for name in ("fcntl", "ctypes", "subprocess"):
         with open(os.path.join(folder, name + ".py"), "w") as stand_in:
             stand_in.write('open(__file__ + ".imported", "w").close()\nraise ImportError("a stand-in")\n')
-    status = run(dict(os.environ, PYTHONPATH=folder))
+    status = run(dict(os.environ, PYTHONPATH=folder, LOCKCASE_NEST="1"))
     imported = sorted(name for name in os.listdir(folder) if name.endswith(".imported"))
     print("lockcase: stand-ins imported: %s; the gate exited %d" % (", ".join(imported) or "none", status))
     sys.exit(0)
@@ -162,14 +164,17 @@ if mode == "early":
         kernel32.SetConsoleCtrlHandler(None, True)
         kernel32.GenerateConsoleCtrlEvent(0, 0)
         time.sleep(3)
+        # The holder must stop waiting at the Ctrl-C, not only once the lock is free.
+        early = bool(holder) and kernel32.WaitForSingleObject(ctypes.c_void_p(holder), 0) == 0
         kernel32.CloseHandle(ctypes.c_void_p(held))
         held = None
         if not holder or kernel32.WaitForSingleObject(ctypes.c_void_p(holder), 30000) != 0 or \
                 not kernel32.GetExitCodeProcess(ctypes.c_void_p(holder), ctypes.byref(code)):
             print("lockcase: the holder did not end in 30 s after the lock was free")
             sys.exit(2)
-        print("lockcase: a Ctrl-C before the gate started: its holder exited %d; the gate %s"
-              % (code.value, "ran" if os.path.exists(started) else "never ran"))
+        print("lockcase: a Ctrl-C before the gate started: its holder exited %d %s; the gate %s"
+              % (code.value, "while the lock was held" if early else "only once the lock was free",
+                 "ran" if os.path.exists(started) else "never ran"))
         sys.exit(0)
     finally:
         if held:

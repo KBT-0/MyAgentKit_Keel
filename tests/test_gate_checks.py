@@ -188,8 +188,11 @@ class GateCheckTests(unittest.TestCase):
                                   ("'^src/other/'", 1, 'FAIL: src/domain/order.py should turn the check red')):
             with self.subTest(scope=scope):
                 write(self.project / 'scripts/boundary_checks.sh', check.replace("'^src/domain/'", scope))
+                # System32 first on native Windows: a find(1) in the example met FIND.EXE there.
+                path = os.environ['PATH'] if os.name != 'nt' else r'C:\Windows\System32;' + os.environ['PATH']
                 result = subprocess.run(['sh', 'tests/boundary_checks_test.sh'], cwd=self.project, capture_output=True,
-                                        text=True, encoding='utf-8', errors='replace', timeout=60)
+                                        text=True, encoding='utf-8', errors='replace', timeout=60,
+                                        env=dict(os.environ, PATH=path))
                 out = result.stdout + result.stderr
                 self.assertEqual(result.returncode, code, out)
                 if line:
@@ -282,6 +285,37 @@ class BuildCacheTests(unittest.TestCase):
             out, count = gate()
             self.assertEqual(count, want, out)
         self.assertIn('NOTE [build]: build_cache_inputs failed, so the build is not cached', out)
+
+    def test_a_link_to_a_file_the_key_does_not_hash_turns_the_cache_off(self):
+        # A link to a file is hashed by its text: with cfg.h -> a file outside the tree, an edit
+        # there that broke the build left the key unchanged and the next run passed from cache.
+        builds = self.counting_build()
+        write(self.build, self.build.read_text(encoding='utf-8') + 'grep -q ok cfg.h\n')
+        script = self.project / 'scripts/check.sh'
+        write(script, script.read_text(encoding='utf-8').replace('\nbuild_cache_inputs=""\n', '\nbuild_cache_inputs=true\n'))
+        write(self.project / '.gitignore', 'out/\n')
+        outside = self.tmp / 'outside.h'
+        for target, cached in ((outside, False), (self.project / 'out/cfg.h', False),
+                               (self.project / 'include/cfg.h', True)):
+            with self.subTest(target=target.name, folder=target.parent.name):
+                write(target, 'ok\n')
+                link = self.project / 'cfg.h'
+                if os.path.lexists(link):
+                    link.unlink()
+                os.symlink(target, link)
+                before = builds()
+                for _ in range(2):
+                    result = subprocess.run(['sh', 'scripts/check.sh'], cwd=self.project, env=environment(self.build),
+                                            capture_output=True, text=True, encoding='utf-8', errors='replace',
+                                            timeout=120)
+                    out = result.stdout + result.stderr
+                    self.assertEqual(result.returncode, 0, out)
+                self.assertEqual(builds() - before, 1 if cached else 2, out)
+                self.assertEqual('is a symlink to a file outside the tree or in an ignored folder' in out, not cached, out)
+                write(target, 'bad\n')
+                result = subprocess.run(['sh', 'scripts/check.sh'], cwd=self.project, env=environment(self.build),
+                                        capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=120)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
 
 
 if __name__ == '__main__':

@@ -47,6 +47,14 @@ class UnityGateTests(unittest.TestCase):
         self.assert_red(WRITE % '<test-run><test-case name="a" result="Skipped" /></test-run>',
                         'no test executed on either platform')
 
+    def test_a_failed_test_fails(self):
+        self.assert_red(WRITE % '<test-run><test-case name="a" result="Failed" /></test-run>',
+                        'reports 1 failed test(s)')
+
+    def test_a_nonzero_editor_exit_fails_even_with_passing_results(self):
+        self.assert_red((WRITE % '<test-run><test-case name="a" result="Passed" /></test-run>')
+                        .replace('exit 0\n', 'exit 1\n'), 'FAIL [unity]: EditMode tests failed')
+
     def test_a_run_that_executed_a_passing_test_passes(self):
         code, out = self.run_gate(WRITE % '<test-run><test-case name="a" result="Passed" /></test-run>')
         self.assertEqual(code, 0, out)

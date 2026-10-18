@@ -429,6 +429,9 @@ if ! xargs -0 sh -c '
         : > "$scan_work/scan_unhashed"
       elif [ ! -e "$p" ]; then
         printf "%s\n" "NOTE [scan]: skipped $p, a symlink whose target is missing; its link text is scanned instead." >&3
+      else
+        # The build cache hashes a link to a file by its text alone: build_cache_key checks the target.
+        printf "%s\0" "$p" >> "$scan_work/file-links" || : > "$scan_work/scan_unhashed"
       fi
     elif [ -f "$p" ]; then
       # grep reads a bare "-" as stdin even after "--": a marker in a file named "-" passed.
@@ -841,8 +844,9 @@ docs_only_skip_build=1
 # key unless this command prints them. Empty, there is no cache: an input nobody fingerprinted
 # would otherwise pass on a stale result. Use "true" for a build that reads nothing but the
 # tree. The cache is never read on CI, nor when the
-# command fails, the tree holds a submodule, a nested repository or a symlink to a folder (its
-# files are not hashed), outside Git, or with GATE_CACHE=off. A cached run prints
+# command fails, the tree holds a submodule, a nested repository, a symlink to a folder, or a
+# symlink to a file outside the tree or in an ignored folder (none of those files are hashed),
+# outside Git, or with GATE_CACHE=off. A cached run prints
 # "NOTE [build]: not run: cached PASS <key> from <date>" and its PASS line says so too, so a
 # report can never claim a build that did not run. Entries sit in the repository's common git
 # folder (shared by its worktrees: the key names content, not a checkout) and expire after
@@ -871,7 +875,19 @@ build_cache_key() {
 import hashlib, os, sys, time
 gate = hashlib.sha256(open(sys.argv[5], "rb").read()).hexdigest()
 key = hashlib.sha256(b"keel build cache 2\0" + gate.encode() + b"\0" + sys.stdin.buffer.read() + b"\0")
-for path in sorted(p for p in open(sys.argv[1], "rb").read().split(b"\0") if p):
+paths = sorted(p for p in open(sys.argv[1], "rb").read().split(b"\0") if p)
+# A link to a file is hashed by its text; its target must be a file hashed below, or an edit
+# outside the tree (or in an ignored folder) would leave the key unchanged.
+hashed, here = {os.fsdecode(p[2:] if p.startswith(b"./") else p) for p in paths}, os.path.realpath(".")
+for link in (l for l in (open(sys.argv[6], "rb").read() if os.path.exists(sys.argv[6]) else b"").split(b"\0") if l):
+    try:
+        target = os.path.relpath(os.path.realpath(os.fsdecode(link)), here).replace(os.sep, "/")
+    except ValueError:  # another drive
+        target = None
+    if target not in hashed:
+        print("NOTE [build]: %s is a symlink to a file outside the tree or in an ignored folder, so the build is not cached." % os.fsdecode(link), file=sys.stderr)
+        sys.exit(1)
+for path in paths:
     content = hashlib.sha256()
     with open(os.fsdecode(path), "rb") as data:
         for chunk in iter(lambda: data.read(1 << 20), b""):
@@ -893,7 +909,7 @@ if os.path.isdir(sys.argv[3]):
         except (OSError, UnicodeDecodeError):
             pass
 print(found.split()[0], key, found.split()[1])
-' "$filelist" "$work/symlink-text" "$cache_dir" "$cache_days" "$0"
+' "$filelist" "$work/symlink-text" "$cache_dir" "$cache_days" "$0" "$work/file-links"
 }
 # Tested with its whitespace stripped: an all-blank command reaches `sh -c` as a no-op that
 # exits 0, which is a green gate with no build — the unconfigured case wearing spaces.

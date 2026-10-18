@@ -29,7 +29,7 @@
 # costs milliseconds (docs/WORKFLOW.md, "Writing a gate"; Semgrep's ruleid/ok cases):
 #
 # > checks="$(pwd)/scripts/boundary_checks.sh" status=0
-# > scan_grep() { find . -type f | sed 's|^\./||' | xargs grep -HInE -e "$1" --; }
+# > scan_grep() { grep -rHInE -e "$1" . | sed 's|^\./||'; }  # not find: a Windows PATH may name FIND.EXE
 # > expect() {  # expect <red|green> <the check's FAIL line, or -> <path> <line of the file>
 # >   dir=$(mktemp -d) && mkdir -p "$dir/$(dirname "$3")" && printf '%s\n' "$4" > "$dir/$3"
 # >   out=$(CDPATH= cd -- "$dir" && fail=0 && . "$checks" && exit "$fail"); rc=$?
