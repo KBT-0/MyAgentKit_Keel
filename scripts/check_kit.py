@@ -105,7 +105,7 @@ REQUIRED_SUITES = {
               'test_sync_kit': 37, 'test_doctor': 6, 'test_git_hooks': 31, 'test_stop_hook': 9, 'test_context_hook': 12, 'test_communication_hooks': 32, 'test_overlay_permissions': 8, 'test_guard_destructive_git': 47, 'test_guard_boundaries': 1, 'test_guard_private_email': 5,
               'test_spawn_worker': 53 if os.name == 'nt' else 73, 'test_spawn_codex': 58, 'test_codex_worker': 61, 'test_working_mode': 49, 'test_worker_visibility': 69, 'test_doc_pointers': 11,
               'test_usage_summary': 25, 'test_done_audits': 2,
-              'test_kit_output': 1, 'test_kit_runner': 38, 'test_clean_worktrees': 138, 'test_clean_worktrees_windows': 12 if os.name == 'nt' else 0, 'test_close_worker_windows': 22,
+              'test_kit_output': 1, 'test_kit_runner': 40, 'test_clean_worktrees': 138, 'test_clean_worktrees_windows': 12 if os.name == 'nt' else 0, 'test_close_worker_windows': 22,
               'test_review_windows': 22 if os.name == 'nt' else 0, 'test_claude_sandbox': 26, 'test_worker_paths_windows': 10,
               'test_close_worker': 30, 'test_python_fallback': 2, 'test_selftest_status': 11},
 }
@@ -162,6 +162,8 @@ def discover(folder, leave_out=()):
     for parent, directories, _ in os.walk(folder, onerror=unreadable):
         for path in [Path(parent), *(Path(parent) / name for name in directories)]:
             junction = getattr(path, 'is_junction', None)
+            # Python 3.11 has no Path.is_junction, and only Windows' stat names the tags: a
+            # POSIX 3.11 run that read them directly failed before any suite ran (#96).
             linked = (junction() if junction else
                       getattr(path.lstat(), 'st_reparse_tag', 0) in
                       # The stat constants exist only on Windows; elsewhere the winnt.h numbers.
@@ -178,16 +180,8 @@ def discover(folder, leave_out=()):
     patterns = {path.name for path in folder.glob('test_*.py') if path.stem not in leave_out}
     suite = unittest.TestSuite(unittest.TestLoader().discover(str(folder), pattern=pattern)
                                for pattern in sorted(patterns))
-
-    def cases(node):
-        for item in node:
-            if isinstance(item, unittest.TestSuite):
-                yield from cases(item)
-            else:
-                yield item
-
     counts = {}
-    for test in cases(suite):
+    for test in _cases(suite):
         module = test.id().split('.')[0]
         counts[module] = counts.get(module, 0) + 1
     return suite, counts
@@ -218,7 +212,9 @@ def run_tests(root, directory, required):
         print("NOT RUN: %s/%s on native Windows (%s); CI's Linux and macOS jobs run it"
               % (directory, name, reasons[name]))
     required = {name: minimum for name, minimum in required.items() if name not in leave_out}
-    suite, found = discover(folder, leave_out)
+    # Only the required modules are imported: a unit names one module (main refuses a module
+    # without a count), so one folder's modules run in units at once, none running another's.
+    suite, found = discover(folder, {path.stem for path in folder.glob('test_*.py')} - set(required))
     counts = {name: found.get(name, 0) for name in required}
     for name, minimum in required.items():
         if counts[name] < minimum:
@@ -226,7 +222,9 @@ def run_tests(root, directory, required):
     allowed = {test.id() for test in _cases(suite)
                if getattr(getattr(test, test._testMethodName), '_kit_platform_skip', False)}
     output = io.StringIO()
-    result = unittest.TextTestRunner(stream=output, verbosity=2, resultclass=TimedResult).run(suite)
+    # Verbosity 1: a failure shows its FAIL and ERROR blocks and the count, not a line for each
+    # passing test (a red CI job once carried about 45k tokens of those lines, #111).
+    result = unittest.TextTestRunner(stream=output, verbosity=1, resultclass=TimedResult).run(suite)
     unexpected = []
     for test, reason in result.skipped:
         if test.id() not in allowed:
@@ -238,9 +236,12 @@ def run_tests(root, directory, required):
             print('NOT RUN: %s (%s)' % (test.id(), reason))
     insufficient = [name for name, minimum in required.items() if counts[name] < minimum]
     if not result.wasSuccessful() or unexpected or insufficient:
-        raise RuntimeError('required tests failed or were skipped:\n' + output.getvalue())
-    # A pass prints one line; the per-test lines were kilobytes nobody read. A failure above
-    # carries the whole log, the passing tests included.
+        raise RuntimeError('required tests failed or were skipped:\n' + output.getvalue()
+                           + ''.join('skipped without a platform declaration: %s\n' % name
+                                     for name in unexpected)
+                           + ''.join('%s ran %d tests, %d required\n' % (name, counts[name], required[name])
+                                     for name in insufficient))
+    # A pass prints one line, a failure only what failed: the per-test lines were kilobytes nobody read.
     passed('%s ran %d tests, each suite at or above its minimum (%s)'
            % (directory, result.testsRun - len(result.skipped),
               ', '.join('%s %d' % item for item in sorted(required.items()))))
@@ -259,8 +260,10 @@ def degree(cpus, units):
     """How many units run at once. On a 3-CPU runner three at once took 300 s each and timed out;
     one after another is what passed there. GitHub's standard runners: macOS 3 vCPU, Linux and
     Windows 2 (private repositories) or 4 (public) (docs.github.com/en/actions/reference/runners/
-    github-hosted-runners, read 2026-10-15). The 4 and 8 thresholds are the kit's own choice."""
-    return 1 if cpus < 4 else min(2, units) if cpus < 8 else units
+    github-hosted-runners, read 2026-10-15). From 4 CPUs, one unit per two CPUs: a unit's tests
+    start shells and git, more processes than the one CPU each (the 4 and the half are the kit's
+    own choice; measured in #146)."""
+    return 1 if cpus < 4 else min(units, max(2, cpus // 2))
 
 
 # A gate run that waits forever (a lock never released) must fail here, not hang the kit check.
@@ -392,6 +395,44 @@ def check_release(root):
     if not re.fullmatch(r'(\d+\.\d+)\.\d+', version) or 'v' + version.rsplit('.', 1)[0] != changelog.group(1):
         raise RuntimeError("plugin/.claude-plugin/plugin.json's version %r must be MAJOR.MINOR.PATCH with "
                            "CHANGELOG's newest version %s as MAJOR.MINOR" % (version, changelog.group(1)))
+
+
+def check_actions(root):
+    """Every project-owned kit file changed since the last release tag is named in an ACTION
+    item of CHANGELOG's newest version (#134). sync-kit.sh never copies a file under core/,
+    setup/ or overlays/ without its KIT-OWNED header, so a fix there reaches a project only
+    through an ACTION item. Changes since the tag include uncommitted ones; a removed file
+    counts as project-owned. Without a v* tag (a shallow CI checkout has none) it is NOT RUN."""
+    git = ['git', '-C', str(root), '-c', 'core.quotePath=false']
+    found = subprocess.run(git + ['describe', '--tags', '--abbrev=0', '--match', 'v[0-9]*'],
+                           capture_output=True, text=True, encoding='utf-8', errors='replace')
+    if found.returncode:
+        print('NOT RUN: the ACTION check for project-owned kit files (no v* release tag)')
+        return
+    tag = found.stdout.strip()
+    # stdout alone: run() adds stderr, where git writes its line-ending warnings.
+    names = subprocess.run(git + ['diff', '--name-only', '--no-renames', tag, '--', 'core', 'setup', 'overlays'],
+                           capture_output=True, text=True, encoding='utf-8', errors='replace',
+                           check=True).stdout.splitlines()
+    owned = [name for name in names if not (root / name).is_file() or not re.search(
+        r'^(# |<!-- )KIT-OWNED:', (root / name).read_text(encoding='utf-8', errors='replace'), re.M)]
+    if not owned:
+        return
+    newest = re.search(r'^## (v\d+\.\d+)(?=\s|$)(.*?)(?=^## v|\Z)', (root / 'CHANGELOG.md').read_text(encoding='utf-8'),
+                       re.M | re.S)
+    if not newest or re.match(r'v\d+\.\d+', tag).group() == newest.group(1):
+        raise RuntimeError('project-owned kit files changed since %s, and CHANGELOG has no newer version '
+                           'for their ACTION items: %s' % (tag, ', '.join(owned)))
+    # An item runs from its **ACTION to the end of its bullet.
+    actions = ' '.join(item[item.index('**ACTION'):] for item in re.split(r'\n(?=- |\n)', newest.group(2))
+                       if '**ACTION' in item)
+    # ponytail: a file's base name anywhere in that text counts; match whole paths if a
+    # shared name (README.md, AGENTS.md) ever lets a change through.
+    missing = [name for name in owned if name.rsplit('/', 1)[-1] not in actions]
+    if missing:
+        raise RuntimeError('project-owned kit files changed since %s with no ACTION item naming them under '
+                           'CHANGELOG %s: %s' % (tag, newest.group(1), ', '.join(missing)))
+    passed('every project-owned kit file changed since %s is named in an ACTION item' % tag)
 
 
 def validate_plugin(root):
@@ -1240,12 +1281,19 @@ FAILURES = (OSError, ValueError, RuntimeError, KeyError, subprocess.TimeoutExpir
 def unit(name, self_test, timing_file=None):
     """Run one unit in this process; 0 on a pass, 1 with the error printed on a failure."""
     try:
+        # A unit is a whole folder of REQUIRED_SUITES, one of its modules ("tests/test_x"),
+        # acceptance, the locale matrix, or one suite of it ("locale/test_x").
+        directory, _, module = name.rpartition("/")
         if name == "acceptance":
             acceptance(self_test)
         elif name == "locale":
             locale_matrix()
-        else:
+        elif directory == "locale":
+            locale_matrix(suites=(module,))
+        elif name in REQUIRED_SUITES:
             run_tests(ROOT, name, REQUIRED_SUITES[name])
+        else:
+            run_tests(ROOT, directory, {module: REQUIRED_SUITES[directory][module]})
         # The completion line run_units requires: a unit that exited 0 before this point (a
         # test module calling os._exit(0) while it was discovered) did not finish its checks.
         # An exit code alone is no evidence of a finished run (pytest's exit code 5; Claude Code
@@ -1353,7 +1401,15 @@ def main():
     if args.unit:
         return unit(args.unit, args.self_test, args.timing_file)
     started = time.monotonic()
-    units = [*REQUIRED_SUITES, "acceptance", "locale"]
+    # One unit per test module and per locale suite, so the slowest module, not a folder of
+    # them run one after another, sets the wall time (#146): 3358 s for tests/ on Windows CI.
+    units = ["acceptance"]
+    for directory, required in REQUIRED_SUITES.items():
+        uncounted = sorted({path.stem for path in (ROOT / directory).glob("test_*.py")} - set(required))
+        if uncounted:
+            raise RuntimeError("%s: no count in REQUIRED_SUITES for %s" % (directory, ", ".join(uncounted)))
+        units += [directory + "/" + name for name in required]
+    units += ["locale/" + name for name in LOCALE_SUITES]
     cpus = os.cpu_count() or 1
     parallel = degree(cpus, len(units))
     print("KIT CHECK: %d of %d units at once (%d CPUs)" % (parallel, len(units), cpus))
@@ -1363,6 +1419,7 @@ def main():
         with redirect_stdout(early):
             check_syntax(ROOT)
             check_release(ROOT)
+            check_actions(ROOT)
             untested_guards(ROOT)
             validate_plugin(ROOT)
     finally:
