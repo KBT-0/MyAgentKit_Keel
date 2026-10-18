@@ -99,8 +99,8 @@ gh pr create --repo KBT-0/MyAgentKit_Keel --title "<title>" --body-file <file>
 ```
 
 Before opening a PR, run the kit's own acceptance from the fork — bootstrap into a temp
-directory, fill it, and check that `./scripts/check.sh` and `./scripts/check.sh --self-test`
-both pass. A contribution that breaks the gate is the one thing this kit cannot accept.
+directory, fill it, and check that `./scripts/check.sh` passes in it and in the kit
+(`sh scripts/check.sh`). A contribution that breaks the gate is the one thing this kit cannot accept.
 
 Report the URL back. If the owner declines, say the finding stays local and note it in
 `docs/STATE.md` so the next audit can reconsider it — a declined contribution is a decision,

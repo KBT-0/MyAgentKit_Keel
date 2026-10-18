@@ -11,39 +11,24 @@
 # workflow skipped by path leaves a required check Pending (GitHub, "Troubleshooting required
 # status checks"), and this script already decides what a documentation-only change skips.
 #
-# Usage: check.sh [--self-test | --for-commit]
+# Usage: check.sh [--for-commit]
 #   default       run the gates
-#   --self-test   prove the gates actually go RED (the block near the bottom)
 #   --for-commit  what .githooks/pre-commit runs: the gates, without the build when the
 #                 staged change is documentation only (section 4 decides; the flag only asks)
 #
-# ADDING A GATE: add the check, AND add a case to self_test(). A gate without a negative
-# test has not been proven to fail — it has only been seen passing, which is not the same
-# thing and never was. A gate that reads an override for its case names it GATE_SELFTEST_<x>:
-# the SELF-TEST SEAMS block below refuses every variable with that prefix outside the self-test,
-# so a new seam needs no list entry, and an exported copy cannot turn the gate green in a normal
-# run. A test fails on a seam without the prefix (tests/test_selftest_status.py).
+# ADDING A GATE: add the check, AND a fixture test for it in the project's test suite: a
+# small input that breaks the rule must turn the check red with its own `FAIL [tag]` line,
+# and a clean one must leave it green (docs/WORKFLOW.md, "Writing a gate"; Semgrep's
+# ruleid/ok, semgrep.dev/docs/writing-rules/testing-rules). A gate without a negative test
+# has not been proven to fail — it has only been seen passing, which is not the same thing.
+# The fixture test never runs this whole gate or the build; the kit tests this file's own
+# checks the same way (the kit's tests/test_gate_checks.py).
 #
 # EXIT CODES: 0 pass, 1 fail, 2 usage, 75 NOT RUN — another gate run held this checkout's
 # lock for longer than GATE_LOCK_WAIT=<seconds> allowed (unset: wait without limit, which is
 # what manual, CI and commit-hook runs want; the Stop hook sets about 500 so it answers
 # before its own timeout kills it). A caller reports 75 as "gate did not run", never as a
 # pass and never as a gate failure.
-#
-# A SELF-TEST CASE NEVER CHANGES A TRACKED FILE, and leaves nothing in the working tree but
-# files Git ignores: the self-test FAILS when HEAD, the index, `git status --porcelain
-# --untracked-files=all` or the content hashes of tracked and untracked non-ignored files differ
-# at its end. A self-test may run beside a review in the same worktree only when every one of its
-# cases writes nothing but files Git ignores (owner decision, 2026-10-12): this check cannot catch
-# a non-ignored file that a case writes and removes meanwhile, which fails the review as
-# stale_checkout. So no case writes one: point the gate at a synthetic file outside the tree
-# through a self-test seam (GATE_SELFTEST_STATE_FILE, GATE_SELFTEST_EXTRA_FILE below; honoured
-# only in the self-test's own nested runs, so the case passes it to expect_fail or
-# expect_pass), or run the case against a disposable copy of the tree outside it. A file
-# injected into the tree is seen by a concurrent `git add -A` and by another session's edits,
-# and a killed self-test leaves it behind. A case that must place a file where the project's
-# own globs find it, a new file or an edited one, does so in the copy
-# (scripts/boundary_selftests.sh shows how; KARARLAR B02 inv2#39).
 #
 # EVERY CHECK BELOW MUST FAIL ON ABSENT EVIDENCE. A missing input file, a scanner that could
 # not run, a command that was never configured: all FAIL. Silence is not success. Five
@@ -87,23 +72,6 @@ else kit_python="py -3"; fi   # the launcher, told which Python: unquoted at eve
 $kit_python -I -c 'import sys; sys.exit(sys.version_info < (3, 11))' </dev/null >/dev/null 2>&1 ||
   { echo "FAIL [python]: Python 3.11 or newer is required (python3, python, py -3)." >&2; exit 1; }
 
-# SELF-TEST SEAMS are honoured ONLY in the self-test's own nested runs. Each one exists so a
-# case can point a gate at a synthetic input, which means each one can also turn a gate green
-# without its work: GATE_BUILD_CMD_OVERRIDE=true skips the build, GATE_SELFTEST_STATE_FILE reads another
-# file, GATE_SELFTEST_HISTORY another repository's history, GATE_SELFTEST_COMMIT_REPO another
-# repository's index for the documentation-only commit (section 4). The commit hook inherits the committer's environment, so a variable left exported in
-# a profile or a CI step, or typed by an agent facing a red build, did exactly that. A run
-# that finds one without the self-test's marker FAILS and names it; it does not unset it and
-# carry on, because then the run that someone believed was overridden reports on something
-# else. The marker is the lock holder's pid, which the holder writes into this checkout's lock
-# file and clears when it exits; it is exported only by self_test(), and is believed only
-# while the lock file names it AND this run inherited the lock itself (below). A gate killed
-# with SIGKILL never clears its pid, so variables copied out of it named the lock file's pid
-# exactly and an override passed without its build; a copied variable carries no descriptor.
-# It stops an accidental export, not a deliberate forgery by someone who holds the lock.
-# A NEW SEAM IS NAMED GATE_SELFTEST_<x>; the prefix alone refuses it outside the self-test.
-# GATE_LOCK_WAIT, GATE_LOCK_HELD and GATE_LOCK_FD are not seams: they change when a run
-# starts, not what it checks.
 lock_path=$(git rev-parse --git-path check.lock 2>/dev/null) || lock_path=.check.lock
 # Git for Windows prints a linked worktree's git path as C:/...; that is absolute too.
 case "$lock_path" in /*|[A-Za-z]:/*) ;; *) lock_path="$(pwd -P)/$lock_path" ;; esac
@@ -198,21 +166,6 @@ fcntl.flock(int(sys.argv[1]), fcntl.LOCK_EX | fcntl.LOCK_NB)
        fail=1 ;;
   esac
 fi
-selftest_nested=""
-if [ -z "$inherited" ] || [ -z "${GATE_SELFTEST_NESTED:-}" ] ||
-   [ "$(cat "$lock_path" 2>/dev/null)" != "$GATE_SELFTEST_NESTED" ]; then
-  # Every GATE_SELFTEST_ variable but the marker itself, found by prefix: a list of names missed
-  # the next seam someone added (a denylist cannot name what it has not seen; KARARLAR D03
-  # inv2#161). The three names before them are the legacy seams without the prefix, kept so no
-  # project has to rename them.
-  for seam in GATE_BUILD_CMD_OVERRIDE BOUNDARY_CHECKS_FILE BOUNDARY_SELFTESTS_FILE \
-              $(env | LC_ALL=C sed -n 's/^\(GATE_SELFTEST_[A-Za-z0-9_]*\)=.*/\1/p' | grep -vx GATE_SELFTEST_NESTED); do
-    eval "seam_value=\${$seam:-}"
-    [ -z "$seam_value" ] || { printf '%s\n' "FAIL [env]: $seam is set; self-test overrides are not honoured outside --self-test"; fail=1; }
-  done
-else
-  selftest_nested=1
-fi
 [ "$fail" -eq 0 ] || exit 1
 
 # ONE GATE RUN PER CHECKOUT AT A TIME. The Stop hook, the commit hook and a manual run can
@@ -240,13 +193,10 @@ fi
 # at once): it waits for the gate and passes its exit status on. msvcrt.locking was not used:
 # its byte-range lock belongs to the one process that took it, and Windows releases it when
 # that process ends, while the build runs on. A python3 without fcntl elsewhere: FAIL [lock].
-# The self-test holds the lock for its whole run, so no other gate sees a case mid-injection.
-# Nested runs (the self-test's own `sh "$0"`, the commit hook it calls) inherit the lock:
+# Nested runs (a gate that a process of this gate starts in this checkout) inherit the lock:
 # GATE_LOCK_HELD names the lock path, so a gate in another checkout started from the build
 # command still takes its own lock, and GATE_LOCK_FD names the inherited descriptor, which
-# the seam block checks before it believes the claim. The holder writes its pid, which after
-# the exec is the gate's, into the lock file for the self-test marker (the seam block); on
-# native Windows it writes a random token, which it clears when the gate has ended.
+# the proof above checks before it believes the claim. Nothing is written into the lock file.
 case "${GATE_LOCK_WAIT:-}" in
   *[!0-9]*) printf '%s\n' "FAIL [lock]: GATE_LOCK_WAIT must be a number of seconds, got '$GATE_LOCK_WAIT'."; exit 1 ;;
 esac
@@ -257,7 +207,7 @@ if [ -z "$inherited" ]; then
   # what sh would have given them.
   # O_NOFOLLOW: a symlink here (the older lock's, left by a killed run) is refused by name.
   # The host picks the lock (os.name), never whether `import fcntl` works, and both lock
-  # programs run isolated (-I): a fcntl.py, secrets.py or ctypes.py in the checkout or on
+  # programs run isolated (-I): a fcntl.py or ctypes.py in the checkout or on
   # PYTHONPATH was imported first, and a stand-in fcntl that always "locked" let two gates run.
   exec $kit_python -I -c '
 import os, signal, sys, time
@@ -296,7 +246,7 @@ if fcntl:
             sys.exit(1)
     find = "fuser -v %s, or lsof %s" % (path, path)
 else:
-    import ctypes, msvcrt, secrets, subprocess
+    import ctypes, msvcrt, subprocess
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel32.CreateFileW.restype = ctypes.c_void_p
     kernel32.CreateFileW.argtypes = (ctypes.c_wchar_p, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_void_p,
@@ -315,10 +265,10 @@ else:
             cannot_open("a symlink or another reparse point")
         return True
     find = "Resource Monitor (resmon), CPU tab, Associated Handles, search for %s" % os.path.basename(path)
-    # Ctrl-C: this process outlives it to pass on the status of the gate (the interrupt case of
-    # the self-test: the holder exits 130, the build stops, the next gate takes the lock). The
-    # handler records it from here on: one that came before the gate was created reached no gate,
-    # so the gate is not started and the status is 130 (the earlyint case). A handler, not
+    # Ctrl-C: this process outlives it to pass on the status of the gate (the holder exits 130,
+    # the build stops, the next gate takes the lock). The handler records it from here on: one
+    # that came before the gate was created reached no gate, so the gate is not started and the
+    # status is 130. A handler, not
     # SIG_IGN: on the hosts measured the two behave alike for the gate, since SIG_IGN in CPython
     # on Windows is not the inherited ignore flag and sh starts with Ctrl-C enabled.
     signal.signal(signal.SIGINT, lambda *_: interrupted.append(1))
@@ -336,18 +286,12 @@ while not take():
     time.sleep(1)
     waited += 1
 if fcntl:
-    os.ftruncate(fd, 0)
-    os.write(fd, str(os.getpid()).encode())
     # A copy that survives exec, above the fds sh scripts redirect; nested runs prove they hold it.
     os.environ["GATE_LOCK_FD"] = str(fcntl.fcntl(fd, fcntl.F_DUPFD, 10))
     os.environ["GATE_LOCK_HELD"] = path
     os.execvp("sh", ["sh", gate] + sys.argv[3:])
 # Native Windows: no exec (os.execv starts a new process and this one exits, so the caller
 # would read the gate as finished), so this process waits for the gate and passes its status on.
-# The marker is a random token: the gate cannot learn this process id as its own $$.
-token = secrets.token_hex(16)
-os.ftruncate(fd, 0)
-os.write(fd, token.encode())
 os.set_handle_inheritable(msvcrt.get_osfhandle(fd), True)
 os.environ["GATE_LOCK_FD"] = str(msvcrt.get_osfhandle(fd))
 os.environ["GATE_LOCK_HELD"] = path
@@ -372,7 +316,6 @@ else:
         status = 130 if interrupted else 1
     else:
         status = child.wait()
-os.ftruncate(fd, 0)
 # A Ctrl-C after the check below came after the gate ended: its status stands, as on POSIX.
 if interrupted:
     sys.exit(130)
@@ -382,963 +325,30 @@ sys.exit(status if 0 <= status < 256 else 128 + (status >> 8) if status & 255 ==
 ' "$lock_path" "$gate" "$@"
 fi
 
-# Overridable so the self-test can point the state checks at a synthetic file, and at a
-# history of its own (GATE_SELFTEST_HISTORY, section 2), instead of mutating the real ones.
-# Only the self-test sets them (the seam block above).
-GATE_SELFTEST_STATE_FILE="${GATE_SELFTEST_STATE_FILE:-docs/STATE.md}"
-
 # The strong review cycle's cadence (section 2 says why): owner choices, not measured values.
 STRONG_REVIEW_DAYS=10
 STRONG_REVIEW_TASKS=20
 
-# Overridable so the self-test can prove these branches without mutating the repository.
-# Only the self-test sets them (the seam block above).
-BOUNDARY_CHECKS_FILE="${BOUNDARY_CHECKS_FILE:-scripts/boundary_checks.sh}"
-BOUNDARY_SELFTESTS_FILE="${BOUNDARY_SELFTESTS_FILE:-scripts/boundary_selftests.sh}"
-
 work=$(mktemp -d) || { echo "FAIL [gate]: cannot create a temp dir; refusing to run blind."; exit 1; }
-# The run that took the lock clears the pid it wrote there, so the self-test marker ends with
-# it (the seam block); on native Windows the holder clears its token once the gate has ended. The file itself stays: removing a flock file lets a waiter lock the
-# removed file while the next run creates and locks a new one, and both run.
-cleanup() {
-  rm -rf "$work"
-  [ -z "${selftest_marker:-}" ] || rm -f "$selftest_marker"
-  [ "$(cat "$lock_path" 2>/dev/null)" != "$$" ] || : > "$lock_path"
-}
-trap cleanup EXIT
+# The lock file itself stays: removing a flock file lets a waiter lock the removed file while
+# the next run creates and locks a new one, and both run.
+trap 'rm -rf "$work"' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 filelist="$work/files"
 
-# lock_path is computed in the seam block above. The build/test command's full output goes
+# lock_path is computed near the top. The build/test command's full output goes
 # beside the lock: outside the tree, one per checkout. Without git it goes to a temp file.
 case "$lock_path" in
   */.check.lock) build_log=$(mktemp) || { echo "FAIL [gate]: cannot create a temp file; refusing to run blind."; exit 1; } ;;
   *) build_log="${lock_path%.lock}-build.log" ;;
 esac
 
-# ===========================================================================
-# NEGATIVE TESTS — the gates must be proven to REJECT, not merely to accept.
-# Run: ./scripts/check.sh --self-test   (deliberately NOT part of pre-commit;
-# it invokes the whole gate a dozen times.)
-#
-# Read the final message carefully: it states what was PROVEN, and what it does not cover.
-# An earlier version claimed "every gate was observed rejecting its failure case" while
-# several gates had no case at all.
-# ===========================================================================
-# The self-test's throwaway repositories are never the caller's. Inside a hook git exports
-# GIT_INDEX_FILE, and a caller may export GIT_DIR or GIT_OBJECT_DIRECTORY: inherited, a
-# fixture's `git add -A` replaced the caller's staged content, and the synthetic-history
-# readers (section 2) read the caller's history. fixture_env, called first in a subshell,
-# unsets each variable that routes git to a repository: git's own list (`git rev-parse
-# --local-env-vars`), the main ones again in case that fails, and two it leaves out.
-# GIT_CONFIG* stays, as the gate's own documentation-only check keeps it.
-fixture_env() {
-  for v in $(git rev-parse --local-env-vars 2>/dev/null) GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE \
-      GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_NAMESPACE GIT_CEILING_DIRECTORIES; do
-    case $v in GIT_CONFIG*) ;; *) unset "$v" ;; esac
-  done
-}
-
-self_test() {
-  st_fail=0
-  # Outside the tree, added to the scanners' input through a test switch (see the file
-  # list below), so a concurrent `git add -A` or a killed self-test cannot leave it behind.
-  inj="$work/injected.md"
-  # The marker that lets this run's nested gates honour the seams (see the seam block).
-  GATE_SELFTEST_NESTED=$(cat "$lock_path"); export GATE_SELFTEST_NESTED
-  # The Stop hook checks this shell is alive as well as the held lock and its token: a build
-  # descendant can keep the lock after this shell dies. Publish without writing through links.
-  # Without git there is no hook and the lock sits in the tree: no marker.
-  case "$lock_path" in
-    */.check.lock) ;;
-    *) python3 -I -c '
-import os, stat, sys, tempfile
-path, pid, token = sys.argv[1:]
-temporary = None
-try:
-    if os.path.lexists(path):
-        info = os.lstat(path)
-        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or getattr(info, "st_file_attributes", 0) & 0x400:
-            raise OSError("existing marker is linked or not a regular file")
-    fd, temporary = tempfile.mkstemp(prefix="check-selftest-", dir=os.path.dirname(path))
-    with os.fdopen(fd, "w", encoding="ascii", newline="\n") as out:
-        out.write(pid + " " + token + "\n")
-    os.replace(temporary, path)
-except OSError as error:
-    print("FAIL [self-test]: cannot publish %s (%s)." % (path, error), flush=True)
-    sys.exit(1)
-finally:
-    if temporary and os.path.exists(temporary):
-        os.unlink(temporary)
-' "${lock_path%.lock}-selftest" "$$" "$GATE_SELFTEST_NESTED" || return 1
-       selftest_marker="${lock_path%.lock}-selftest" ;;
-  esac
-  # The throwaway repositories below are never the caller's: every git call and hook run on a
-  # fixture runs in a subshell that calls fixture_env first (defined above self_test).
-
-  # A review running in this worktree meanwhile fails as stale_checkout when HEAD, the index,
-  # a tracked file or an untracked file Git does not ignore changes, so the self-test leaves
-  # them as it found them: compared at the end, a difference fails it. Ignored files may change.
-  # git_view <scratch folder>: the caller names the folder its scratch files go in. An exported
-  # `work` once chose it, and the files of that name in an unrelated folder were overwritten
-  # and deleted (round-3 review, 2026-10-15): no inherited variable decides a scratch path.
-  # Sources: KARARLAR B02 inv2#163 / coverage D06 inv2#163; https://github.com/infotroph/tree-is-clean
-  # and https://lefthook.dev/configuration/fail_on_changes/; byte/index comparison also preserves
-  # the kit's review fingerprint (RESEARCH_LOG 2026-10-12).
-  git_view() {
-    git rev-parse --verify -q HEAD || :; git ls-files -s; git status --porcelain --untracked-files=all
-    # One ls-files and ONE hash-object for the whole tree; Git status covers deletions.
-    # Newline-separated paths are safe because the kit refuses names holding newlines (#41).
-    # Prefix ./ because hash-object unquotes a line starting with a double quote.
-    paths="$1/git-paths"
-    hashes="$paths.hashes"
-    errors="$paths.errors"
-    git -c core.quotePath=false ls-files -z --cached --others --exclude-standard | tr '\0' '\n' |
-      LC_ALL=C sort -u | while IFS= read -r path; do
-        if [ -f "$path" ] && [ -r "$path" ]; then printf '%s\n' "$path"; fi
-      done > "$paths"
-    hash_failed=0
-    sed 's|^|./|' "$paths" | git hash-object --no-filters --stdin-paths > "$hashes" 2> "$errors" || hash_failed=1
-    hash_count=$(wc -l < "$hashes")
-    path_count=$(wc -l < "$paths")
-    if [ "$hash_failed" -ne 0 ] || [ "$hash_count" -ne "$path_count" ]; then
-      path=$(sed -n "$((hash_count + 1))p" "$paths")
-      [ -n "$path" ] || path=$(tail -n 1 "$paths")
-      printf '%s\n' "FAIL — could not hash $path; the tree check is incomplete"
-      cat "$errors"
-      return 1
-    fi
-    paste -d ' ' "$hashes" "$paths"
-    rm -f "$paths" "$hashes" "$errors"
-  }
-  view_before=""
-  if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    view_before="$work/git-view.before"
-    git_view "$work" > "$view_before" 2>&1 || { cat "$view_before"; return 1; }
-  fi
-
-  # A red tree cannot prove that a gate turns red: everything would "fail correctly". Each
-  # case below is a planted fault the gate must catch, as a mutant a test suite must kill
-  # (Petrović et al., ICSE 2021, arxiv.org/abs/2103.07189).
-  if ! baseline=$(sh "$0" 2>&1); then
-    echo "SELF-TEST INCONCLUSIVE: the baseline gate run exited nonzero on this tree."
-    echo "  Every case below would then pass for the wrong reason. Note that this only"
-    echo "  tells you the command failed, not why — the output was:"
-    printf '%s\n' "$baseline" | sed 's/^/    /' | tail -12
-    return 2
-  fi
-  echo "self-test: baseline is green; injecting failures..."
-
-  # helper: run the gate with an injected condition, expect FAILURE.
-  # usage: expect_fail "<label>" env=val ... -- (command run via env)
-  expect_fail() {
-    label="$1"; shift
-    if env "$@" sh "$0" >/dev/null 2>&1; then
-      printf '%s\n' "  FAIL — $label: the gate stayed GREEN with its failure condition present."
-      st_fail=1
-    else
-      printf '%s\n' "  ok   — $label"
-    fi
-  }
-  expect_pass() {
-    label="$1"; shift
-    if env "$@" sh "$0" >/dev/null 2>&1; then
-      printf '%s\n' "  ok   — $label"
-    else
-      printf '%s\n' "  FAIL — $label: the gate fired when it should have stayed quiet (false positive)."
-      st_fail=1
-    fi
-  }
-
-  # --- placeholder gate -----------------------------------------------------
-  # The token is assembled at runtime on purpose: written literally, it would sit in this
-  # file and the placeholder gate would flag its own source forever.
-  printf 'injected by check.sh --self-test: %s%s\n' '{{SELF_TEST' '_TOKEN}}' > "$inj"
-  expect_fail "placeholder gate rejects an unfilled marker" GATE_SELFTEST_EXTRA_FILE="$inj"
-
-  # ...and does NOT fire on the two paths that carry markers forever by design.
-  expect_pass "placeholder gate ignores setup/ and the module template"
-
-  # --- STATE.md: present, with its heading, and never measured ---------------
-  long="$work/long.md"; noheading="$work/noheading.md"
-  {
-    echo "# STATE"; echo; echo "## Active work"; echo
-    echo "## Notes"
-    i=0; while [ "$i" -lt 500 ]; do printf '%s\n' "line $i"; i=$((i + 1)); done
-  } > "$long"
-  sed 's/^## Active work/## Current things/' "$long" > "$noheading"
-
-  expect_pass "state gate does not measure length: a long file with nothing active passes" GATE_SELFTEST_STATE_FILE="$long"
-  expect_fail "state gate rejects a MISSING state file"        GATE_SELFTEST_STATE_FILE="$work/absent.md"
-  expect_fail "state gate rejects a renamed 'Active work' heading" GATE_SELFTEST_STATE_FILE="$noheading"
-
-  # --- a finished task still named in the state files -----------------------
-  # A history of its own, outside the tree, whose one commit closed K4; and one with none.
-  hist="$work/history"; fresh="$work/fresh"
-  ( fixture_env; git init -q "$hist" && git init -q "$fresh" &&
-    git -C "$hist" -c user.name=t -c user.email=t@example.invalid -c core.hooksPath=/dev/null \
-        -c commit.gpgsign=false commit -q --allow-empty -m 'close K4' -m 'Done: K4' ) ||
-    { echo "  FAIL — could not build the synthetic history for the Done: cases"; st_fail=1; }
-  mkdir "$work/closed" "$work/other" "$work/backlog"
-  printf '# STATE\n\n## Active work\n- K4: still listed\n' > "$work/closed/STATE.md"
-  printf '# STATE\n\n## Active work\n- K4b: another task\n' > "$work/other/STATE.md"
-  printf '# STATE\n\n## Active work\n' > "$work/backlog/STATE.md"
-  printf '# BACKLOG\n\n- K4 again\n' > "$work/backlog/BACKLOG.md"
-  expect_fail "state gate rejects a task a Done: trailer closed that STATE.md still names" \
-    GATE_SELFTEST_STATE_FILE="$work/closed/STATE.md" GATE_SELFTEST_HISTORY="$hist"
-  expect_fail "state gate rejects a closed task that BACKLOG.md still names" \
-    GATE_SELFTEST_STATE_FILE="$work/backlog/STATE.md" GATE_SELFTEST_HISTORY="$hist"
-  expect_pass "state gate does not read K4b as the closed K4" \
-    GATE_SELFTEST_STATE_FILE="$work/other/STATE.md" GATE_SELFTEST_HISTORY="$hist"
-  expect_pass "state gate passes a repository with no commit yet" \
-    GATE_SELFTEST_STATE_FILE="$work/closed/STATE.md" GATE_SELFTEST_HISTORY="$fresh"
-  mkdir -p "$work/strong-list" "$work/strong-report/reviews"
-  printf '# STATE\n\n## Active work\n' | tee "$work/strong-list/STATE.md" > "$work/strong-report/STATE.md"
-  printf '# STRONG_REVIEW\n\n- K4: accepted\n' > "$work/strong-list/STRONG_REVIEW.md"
-  printf '# report\n\n- K4 (High): a finding\n' > "$work/strong-report/reviews/strong-2026-01-01-model.md"
-  expect_fail "state gate rejects a closed task that STRONG_REVIEW.md still names" \
-    GATE_SELFTEST_STATE_FILE="$work/strong-list/STATE.md" GATE_SELFTEST_HISTORY="$hist"
-  expect_fail "state gate rejects a closed task that a strong review report still names" \
-    GATE_SELFTEST_STATE_FILE="$work/strong-report/STATE.md" GATE_SELFTEST_HISTORY="$hist"
-  mkdir -p "$work/audit/audits"
-  printf '# STATE\n\n## Active work\n' > "$work/audit/STATE.md"
-  printf '# audit\n\n- K4: a finding\n' > "$work/audit/audits/2026-01.md"
-  expect_pass "state gate permits historical audit mentions of closed tasks" \
-    GATE_SELFTEST_STATE_FILE="$work/audit/STATE.md" GATE_SELFTEST_HISTORY="$hist"
-
-  # --- the strong review reminder: told, never failed ---------------------------
-  # Two histories that added a report, 30 days ago and now, and one with none; the list in
-  # the docs folder is what opts the project in.
-  rm -f "$work/strong-report/reviews/strong-2026-01-01-model.md"
-  printf '# STRONG_REVIEW\n' > "$work/strong-report/STRONG_REVIEW.md"
-  for age in 30 0; do
-    ( fixture_env; repo="$work/strong-$age"; git init -q "$repo" && mkdir -p "$repo/docs/reviews" &&
-      echo report > "$repo/docs/reviews/strong-2026-01-01-model.md" && git -C "$repo" add -A &&
-      GIT_COMMITTER_DATE="@$(( $(date +%s) - age * 86400 )) +0000" git -C "$repo" -c user.name=t \
-        -c user.email=t@example.invalid -c core.hooksPath=/dev/null -c commit.gpgsign=false \
-        commit -q -m 'strong review' ) ||
-      { echo "  FAIL — could not build the synthetic history for the strong review reminder"; st_fail=1; }
-  done
-  # A report added today, then as many closed tasks as the cycle allows.
-  ( fixture_env; repo="$work/strong-tasks"; git clone -q "$work/strong-0" "$repo" && n=0 &&
-    while [ "$n" -lt "$STRONG_REVIEW_TASKS" ]; do
-      n=$((n + 1))
-      git -C "$repo" -c user.name=t -c user.email=t@example.invalid -c core.hooksPath=/dev/null \
-        -c commit.gpgsign=false commit -q --allow-empty -m "task $n" -m "Done: T$n" || exit 1
-    done ) ||
-    { echo "  FAIL — could not build the synthetic history for the strong review task count"; st_fail=1; }
-  reminder_ok=1
-  for case in "$work/strong-30|days ago" "$work/strong-0|" "$hist|no strong review report yet" \
-              "$work/strong-tasks|$STRONG_REVIEW_TASKS tasks"; do
-    repo=${case%%|*}; want=${case#*|}
-    out=$(env GATE_SELFTEST_STATE_FILE="$work/strong-report/STATE.md" GATE_SELFTEST_HISTORY="$repo" sh "$0" 2>&1)
-    rc=$?; said=$(printf '%s\n' "$out" | grep -F 'NOTE [strong-review]')
-    if [ "$rc" -ne 0 ]; then
-      printf '%s\n' "  FAIL — the strong review reminder case turned the gate red ($repo)"; reminder_ok=0
-    elif [ -n "$want" ] && ! printf '%s\n' "$said" | grep -qF "$want"; then
-      printf '%s\n' "  FAIL — the strong review reminder did not say '$want' ($repo)"; reminder_ok=0
-    elif [ -z "$want" ] && [ -n "$said" ]; then
-      echo "  FAIL — the strong review reminder fired for a report added today"; reminder_ok=0
-    fi
-  done
-  if [ "$reminder_ok" -eq 1 ]; then
-    printf '%s\n' "  ok   — the strong review reminder names a report older than $STRONG_REVIEW_DAYS days, $STRONG_REVIEW_TASKS closed tasks, or none, and is quiet otherwise"
-  else
-    st_fail=1
-  fi
-
-  # --- the gates that used to be skippable ----------------------------------
-  expect_fail "boundary checks missing is a FAILURE, not a skip" \
-    BOUNDARY_CHECKS_FILE="$work/absent.sh"
-  expect_fail "an unconfigured build/test command is a FAILURE, not a warning" \
-    GATE_BUILD_CMD_OVERRIDE=" "
-  expect_fail "a failing build/test command fails the gate" \
-    GATE_BUILD_CMD_OVERRIDE="false"
-  expect_fail "an all-whitespace build/test command is unconfigured, not a no-op" \
-    GATE_BUILD_CMD_OVERRIDE="  "
-
-  # --- a seam outside the self-test ---------------------------------------------
-  # Without the marker, an exported override fails the run by name instead of turning a red
-  # build green.
-  if (unset GATE_SELFTEST_NESTED; GATE_BUILD_CMD_OVERRIDE=false sh "$0" 2>&1) |
-     grep -q '^FAIL \[env\]: GATE_BUILD_CMD_OVERRIDE is set'; then
-    echo "  ok   — an override exported outside --self-test fails the gate by name"
-  else
-    echo "  FAIL — an override exported outside --self-test was honoured, not refused."
-    st_fail=1
-  fi
-
-  # --- the gate lock's host detection and its native Windows proof ---------------------
-  # A cygpath that merely sits on a POSIX PATH turned the lock path into C:/..., which POSIX
-  # Python reads as relative: the nested run no longer knew its own lock. Only a host that
-  # names itself MSYS, MINGW or Cygwin converts it.
-  case "$(uname -s 2>/dev/null)" in
-    MSYS*|MINGW*|CYGWIN*)
-      echo "  skip — a stray cygpath on a POSIX PATH: this host is MSYS, MINGW or Cygwin, where cygpath is used" ;;
-    *)
-      mkdir "$work/fakebin" &&
-        printf '#!/bin/sh\n: > "%s"\necho C:/not-the-lock\n' "$work/cygpath-called" > "$work/fakebin/cygpath" &&
-        chmod +x "$work/fakebin/cygpath"
-      if env PATH="$work/fakebin:$PATH" GATE_LOCK_WAIT=5 sh "$0" >/dev/null 2>&1 && [ ! -e "$work/cygpath-called" ]; then
-        echo "  ok   — a cygpath on a POSIX PATH is never run and the nested run keeps its lock"
-      else
-        echo "  FAIL — a cygpath on a POSIX PATH was run, or the nested run beside it did not pass."
-        st_fail=1
-      fi ;;
-  esac
-  # The host, not a working `import fcntl`, picks the lock, and the lock programs run isolated:
-  # a fcntl.py on PYTHONPATH (or in the checkout) was imported first, and a stand-in that always
-  # "locked" let two gates run at once. This stand-in marks that it was imported.
-  shadow=$work/shadow
-  mkdir "$shadow" &&
-    printf 'open(__file__ + ".imported", "w").close()\nraise ImportError("a stand-in fcntl")\n' > "$shadow/fcntl.py"
-  case "$(uname -s 2>/dev/null)" in MSYS*|MINGW*|CYGWIN*) shadow=$(cygpath -m "$shadow") ;; esac
-  if env PYTHONPATH="$shadow" GATE_LOCK_WAIT=5 sh "$0" >/dev/null 2>&1 && [ -f "$work/shadow/fcntl.py" ] &&
-     [ ! -e "$work/shadow/fcntl.py.imported" ]; then
-    echo "  ok   — a fcntl.py on PYTHONPATH is never imported by the gate lock, and the nested run passes"
-  else
-    echo "  FAIL — a fcntl.py on PYTHONPATH was imported by the gate lock, or the nested run beside it did not pass."
-    st_fail=1
-  fi
-  # Native Windows (no fcntl). The nested-run proof refuses a handle that fails any one of its
-  # conditions: on another file, read-only, nothing holding the lock, a fresh open refused for a
-  # reason that is not a sharing violation (a read-only file), and a file id equal to the lock's
-  # in its volume serial and first 64 bits only; a volume with no FILE_ID_INFO fails closed.
-  # The holder refuses a reparse point at the lock path, never reports a gate killed by a
-  # signal as a pass, passes a failing gate's status on, and a killed holder leaves the lock
-  # with the gate it started, and imports no stand-in fcntl.py or secrets.py from PYTHONPATH.
-  # Ctrl-C stops the gate and its build: the case gives the gate a hidden console of its own,
-  # with that console as sh's input, as a terminal window does, and sends it CTRL_C_EVENT, the
-  # event Ctrl-C raises there (a signal sent by pid reaches one process, not the console's);
-  # the holder must outlive it and pass on 130, the status of the interrupted gate. A Ctrl-C
-  # that comes while the holder waits for the lock, before the gate exists, starts no gate.
-  # The host check and the case runner run isolated (-I) beside a sitecustomize.py on
-  # PYTHONPATH that marks its import and calls the host POSIX: imported, it skipped every case.
-  # Each case runs a copy of this gate in a throwaway repository, so
-  # its lock is not the one this run holds, and asserts the outcome by its message AND its exit
-  # status. The copy exits 0 right after it holds the lock, so a guard that prints its refusal
-  # and then carries on fails its case, instead of failing later on project files the throwaway
-  # lacks. Two cases need a fake: the proof's own code, cut out of this file, runs with
-  # GetFileInformationByHandleEx replaced. The reparse point carries a non-Microsoft tag, which
-  # any user may set, so no case needs the privilege a symlink does: a guard whose case cannot
-  # run there is a FAIL, never a skip.
-  site=$work/site
-  mkdir "$site" && printf '%s
-' 'import os' 'open(os.path.join(os.path.dirname(__file__), "imported"), "w").close()'     'os.name = "posix"' > "$site/sitecustomize.py"
-  case "$(uname -s 2>/dev/null)" in MSYS*|MINGW*|CYGWIN*) site=$(cygpath -m "$site") ;; esac
-  # shellcheck disable=SC2086 # kit_python may be "py -3": split on purpose (line 85)
-  if env PYTHONPATH="$site" $kit_python -I -c 'import os, sys; sys.exit(0 if os.name == "nt" else 1)' 2>/dev/null; then
-    cat > "$work/lockcase.py" <<'LOCKCASE'
-import ctypes, os, re, struct, subprocess, sys, time
-mode, lock, gate = sys.argv[1:4]
-kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-kernel32.CreateFileW.restype = ctypes.c_void_p
-kernel32.CreateFileW.argtypes = (ctypes.c_wchar_p, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_void_p,
-                                 ctypes.c_ulong, ctypes.c_ulong, ctypes.c_void_p)
-kernel32.DeviceIoControl.argtypes = (ctypes.c_void_p, ctypes.c_ulong, ctypes.c_char_p, ctypes.c_ulong,
-                                     ctypes.c_void_p, ctypes.c_ulong, ctypes.c_void_p, ctypes.c_void_p)
-kernel32.GetFileInformationByHandleEx.argtypes = (ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p, ctypes.c_ulong)
-kernel32.CloseHandle.argtypes = (ctypes.c_void_p,)
-kernel32.CreateToolhelp32Snapshot.restype = ctypes.c_void_p
-RW, R = 0xC0000000, 0x80000000
-def handle(path, access, share, disposition=4, flags=0x80):
-    opened = kernel32.CreateFileW(path, access, share, None, disposition, flags, None)
-    if opened in (None, ctypes.c_void_p(-1).value):
-        print("lockcase: cannot open %s (Windows error %d)" % (path, ctypes.get_last_error()))
-        sys.exit(2)
-    return opened
-def run(environment=None, wait=None):
-    return subprocess.call(["sh", gate], env=environment, close_fds=False, timeout=wait)
-def claimed(claim):
-    os.set_handle_inheritable(claim, True)
-    # A run whose refusal is lost goes on to wait for the lock the case holds: 2 s, then 75.
-    return dict(os.environ, GATE_LOCK_HELD=lock, GATE_LOCK_FD=str(claim), GATE_LOCK_WAIT="2")
-class Entry(ctypes.Structure):
-    _fields_ = [("size", ctypes.c_ulong), ("usage", ctypes.c_ulong), ("pid", ctypes.c_ulong),
-                ("heap", ctypes.c_size_t), ("module", ctypes.c_ulong), ("threads", ctypes.c_ulong),
-                ("parent", ctypes.c_ulong), ("priority", ctypes.c_long), ("flags", ctypes.c_ulong),
-                ("exe", ctypes.c_wchar * 260)]
-def children(pid):
-    snapshot, entry, found = kernel32.CreateToolhelp32Snapshot(2, 0), Entry(), []
-    entry.size = ctypes.sizeof(Entry)
-    more = kernel32.Process32FirstW(ctypes.c_void_p(snapshot), ctypes.byref(entry))
-    while more:
-        if entry.parent == pid:
-            found.append((entry.pid, entry.exe.lower()))
-        more = kernel32.Process32NextW(ctypes.c_void_p(snapshot), ctypes.byref(entry))
-    kernel32.CloseHandle(snapshot)
-    return found
-if mode == "reparse":
-    link = handle(lock, 0x40000000, 0, 2, 0x02200000)
-    data = struct.pack("<IHH", 0x99, 8, 0) + bytes(range(1, 17)) + b"reparse!"
-    done = kernel32.DeviceIoControl(link, 0x000900A4, data, len(data), None, 0,
-                                    ctypes.byref(ctypes.c_ulong()), None)
-    error = ctypes.get_last_error()
-    kernel32.CloseHandle(link)
-    try:
-        if not done:
-            print("lockcase: cannot set a reparse point on %s (Windows error %d)" % (lock, error))
-            sys.exit(2)
-        sys.exit(run())
-    finally:
-        os.remove(lock)
-if mode == "readonly":
-    # Writable, on the lock file, nothing else holding it; then the file is made read-only, so a
-    # fresh open for writing fails with access denied (5), not a sharing violation (32).
-    environment = claimed(handle(lock, RW, 7))
-    if not kernel32.SetFileAttributesW(lock, 1):
-        print("lockcase: cannot make %s read-only (Windows error %d)" % (lock, ctypes.get_last_error()))
-        sys.exit(2)
-    try:
-        sys.exit(run(environment))
-    finally:
-        kernel32.SetFileAttributesW(lock, 0x80)
-if mode in ("noid", "wide"):
-    # The proof's own code from the gate, run with GetFileInformationByHandleEx faked: 'noid'
-    # gives no FILE_ID_INFO at all; 'wide' reports, for a handle on another file, the lock's
-    # FILE_ID_INFO with only its last byte changed (same volume, same first 64 id bits).
-    source = re.search(r"lock_probe=0\n  python3 -I -c '\n(.*?)\n' \"\$\{GATE_LOCK_FD:-\}\"",
-                       open(gate, encoding="utf-8").read(), re.S)
-    if not source:
-        print("lockcase: the nested-run proof was not found in %s" % gate)
-        sys.exit(2)
-    held = handle(lock, RW, 1)
-    claim = held if mode == "noid" else handle(lock + ".other", RW, 3)
-    os.set_handle_inheritable(claim, True)
-    info = ctypes.create_string_buffer(24)
-    if not kernel32.GetFileInformationByHandleEx(held, 18, info, 24):
-        print("lockcase: this volume gives the lock file no FILE_ID_INFO (Windows error %d)" % ctypes.get_last_error())
-        sys.exit(2)
-    near = info.raw[:23] + bytes([info.raw[23] ^ 1])
-    real = ctypes.WinDLL
-    class Fake:
-        argtypes = restype = None
-        def __init__(self, function):
-            self.function = function
-        def __call__(self, target, kind, buffer, size):
-            if mode == "noid":
-                ctypes.set_last_error(87)
-                return 0
-            if target != claim:
-                return self.function(target, kind, buffer, size)
-            ctypes.memmove(buffer, near, 24)
-            return 1
-    class Kernel:
-        def __init__(self, dll):
-            object.__setattr__(self, "dll", dll)
-            object.__setattr__(self, "fake", Fake(dll.GetFileInformationByHandleEx))
-        def __getattr__(self, name):
-            return self.fake if name == "GetFileInformationByHandleEx" else getattr(self.dll, name)
-    ctypes.WinDLL = lambda *args, **kwargs: Kernel(real(*args, **kwargs))
-    sys.argv = ["-c", str(claim), lock]
-    try:
-        exec(compile(source[1], "nested-run proof", "exec"), {"__name__": "__main__"})
-        status = 0
-    except SystemExit as stop:
-        status = stop.code if isinstance(stop.code, int) else 1
-    sys.stdout.flush()
-    print("lockcase: proof exit %d" % status)
-    sys.exit(0)
-if mode == "shadow":
-    # Stand-ins on PYTHONPATH for modules the holder imports; each marks that it was imported.
-    folder = lock + ".shadow"
-    os.mkdir(folder)
-    for name in ("fcntl", "secrets"):
-        with open(os.path.join(folder, name + ".py"), "w") as stand_in:
-            stand_in.write('open(__file__ + ".imported", "w").close()\nraise ImportError("a stand-in")\n')
-    status = run(dict(os.environ, PYTHONPATH=folder))
-    imported = sorted(name for name in os.listdir(folder) if name.endswith(".imported"))
-    print("lockcase: stand-ins imported: %s; the gate exited %d" % (", ".join(imported) or "none", status))
-    sys.exit(0)
-if mode in ("interrupt", "earlyint"):
-    # A console of its own, hidden, so the Ctrl-C reaches only this case's processes.
-    inside = "console" if mode == "interrupt" else "early"
-    try:
-        inner = subprocess.run([sys.executable, "-I", __file__, inside, lock, gate], creationflags=0x10,
-                               startupinfo=subprocess.STARTUPINFO(dwFlags=1, wShowWindow=0),
-                               stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                               text=True, errors="replace", timeout=150)
-    except subprocess.TimeoutExpired:
-        print("lockcase: the interrupt case did not end in 150 s")
-        sys.exit(2)
-    sys.stdout.write(inner.stdout)
-    sys.exit(inner.returncode)
-if mode == "early":
-    # Ctrl-C after the holder's handler is installed and before the gate exists: the holder is
-    # kept waiting for the lock this process holds, interrupted, and then given the lock.
-    kernel32.SetConsoleCtrlHandler(None, False)
-    kernel32.OpenProcess.restype = ctypes.c_void_p
-    held, started, log = handle(lock, RW, 1), lock + ".started", lock + ".log"
-    output = open(log, "w")
-    first = subprocess.Popen(["sh", gate], stdin=open("CONIN$"), stdout=output, stderr=subprocess.STDOUT,
-                             env=dict(os.environ, LOCKCASE_HOLD=started))
-    try:
-        deadline = time.monotonic() + 60
-        while "NOTE [lock]" not in open(log).read():
-            if first.poll() is not None or time.monotonic() > deadline:
-                print("lockcase: the gate never waited for the lock")
-                sys.exit(2)
-            time.sleep(0.1)
-        holders = [found for found, exe in children(first.pid) if exe.startswith("python")]
-        if len(holders) != 1:
-            print("lockcase: expected one python holder under the gate, found %r" % children(first.pid))
-            sys.exit(2)
-        holder, code = kernel32.OpenProcess(0x101000, False, holders[0]), ctypes.c_ulong()
-        kernel32.SetConsoleCtrlHandler(None, True)
-        kernel32.GenerateConsoleCtrlEvent(0, 0)
-        time.sleep(3)
-        kernel32.CloseHandle(ctypes.c_void_p(held))
-        held = None
-        if not holder or kernel32.WaitForSingleObject(ctypes.c_void_p(holder), 30000) != 0 or \
-                not kernel32.GetExitCodeProcess(ctypes.c_void_p(holder), ctypes.byref(code)):
-            print("lockcase: the holder did not end in 30 s after the lock was free")
-            sys.exit(2)
-        print("lockcase: a Ctrl-C before the gate started: its holder exited %d; the gate %s"
-              % (code.value, "ran" if os.path.exists(started) else "never ran"))
-        sys.exit(0)
-    finally:
-        if held:
-            kernel32.CloseHandle(ctypes.c_void_p(held))
-        subprocess.call(["taskkill", "/F", "/T", "/PID", str(first.pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        first.wait()
-        output.close()
-if mode == "console":
-    # A caller (a CI runner, an agent's shell) may hand down an ignored Ctrl-C; a terminal does not.
-    kernel32.SetConsoleCtrlHandler(None, False)
-    kernel32.OpenProcess.restype = ctypes.c_void_p
-    build = lock + ".build"
-    first = subprocess.Popen(["sh", gate], stdin=open("CONIN$"), env=dict(os.environ, LOCKCASE_BUILD=build))
-    pid, status, stopped, holder, held = None, None, False, None, None
-    try:
-        deadline = time.monotonic() + 60
-        while pid is None:
-            text = open(build).read() if os.path.exists(build) else ""
-            if text.isdigit():
-                pid = int(text)
-            elif first.poll() is not None or time.monotonic() > deadline:
-                print("lockcase: the gate never started its build")
-                sys.exit(2)
-            else:
-                time.sleep(0.1)
-        # The holder, which must outlive Ctrl-C to pass on the status of the gate it waits for.
-        holders = [found for found, exe in children(first.pid) if exe.startswith("python")]
-        if len(holders) != 1:
-            print("lockcase: expected one python holder under the gate, found %r" % children(first.pid))
-            sys.exit(2)
-        holder = kernel32.OpenProcess(0x101000, False, holders[0])
-        time.sleep(1)
-        kernel32.SetConsoleCtrlHandler(None, True)
-        kernel32.GenerateConsoleCtrlEvent(0, 0)
-        try:
-            status = first.wait(10)
-        except subprocess.TimeoutExpired:
-            pass
-        process = kernel32.OpenProcess(0x100000, False, pid)
-        stopped = not process or kernel32.WaitForSingleObject(ctypes.c_void_p(process), 10000) == 0
-        if process:
-            kernel32.CloseHandle(process)
-        code = ctypes.c_ulong()
-        if holder and kernel32.WaitForSingleObject(ctypes.c_void_p(holder), 10000) == 0 and \
-                kernel32.GetExitCodeProcess(ctypes.c_void_p(holder), ctypes.byref(code)):
-            held = code.value
-        after = subprocess.call(["sh", gate], env=dict(os.environ, GATE_LOCK_WAIT="5"),
-                                stdin=subprocess.DEVNULL, timeout=60)
-        print("lockcase: the interrupted gate exited %s; its holder exited %s; its build %s; the next gate exited %d"
-              % (status, held, "stopped" if stopped else "ran on", after))
-        sys.exit(0)
-    finally:
-        if pid and not stopped:
-            subprocess.call(["taskkill", "/F", "/PID", str(pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        subprocess.call(["taskkill", "/F", "/T", "/PID", str(first.pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        first.wait()
-if mode in ("killgate", "failgate"):
-    marker = lock + "." + mode
-    status = run(dict(os.environ, **{"LOCKCASE_KILL" if mode == "killgate" else "LOCKCASE_FAIL": marker}))
-    if not os.path.exists(marker):
-        print("lockcase: the copy of the gate never reached its LOCKCASE line")
-        sys.exit(2)
-    print("lockcase: a gate %s exited %d" % ("killed by a signal" if mode == "killgate" else "that failed with 3", status))
-    sys.exit(0)
-if mode == "killholder":
-    started = lock + ".started"
-    first = subprocess.Popen(["sh", gate], env=dict(os.environ, LOCKCASE_HOLD=started), close_fds=False)
-    try:
-        deadline = time.monotonic() + 60
-        while not os.path.exists(started):
-            if first.poll() is not None or time.monotonic() > deadline:
-                print("lockcase: the first gate never reached its LOCKCASE line")
-                sys.exit(2)
-            time.sleep(0.1)
-        holders = [pid for pid, exe in children(first.pid) if exe.startswith("python")]
-        if len(holders) != 1:
-            print("lockcase: expected one python holder under the first gate, found %r" % children(first.pid))
-            sys.exit(2)
-        subprocess.call(["taskkill", "/F", "/PID", str(holders[0])], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        sys.exit(run(dict(os.environ, LOCKCASE_HOLD=lock + ".second", GATE_LOCK_WAIT="2"), 60))
-    finally:
-        subprocess.call(["taskkill", "/F", "/T", "/PID", str(first.pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        first.wait()
-if mode != "unheld":
-    holder = handle(lock, RW, 1)
-claim = {"other": lambda: handle(lock + ".other", RW, 3), "reader": lambda: handle(lock, R, 3),
-         "unheld": lambda: handle(lock, RW, 3)}[mode]()
-sys.exit(run(claimed(claim)))
-LOCKCASE
-    refused="^FAIL \\[env\\]: GATE_LOCK_HELD names this checkout's lock, but this run did not inherit"
-    for lock_case in other reader unheld readonly wide noid reparse killgate failgate killholder shadow interrupt earlyint; do
-      case_dir="$work/lock-$lock_case"
-      also=""; code=1
-      case $lock_case in
-        other)      want=$refused; label="a nested run refuses a writable handle on another file while the lock is held" ;;
-        reader)     want=$refused; label="a nested run refuses a read-only handle on the held lock file" ;;
-        unheld)     want=$refused; label="a nested run refuses a write handle on the lock file while nothing holds it" ;;
-        readonly)   want=$refused; label="a nested run refuses a fresh open that failed for a reason other than the lock" ;;
-        wide)       want='^lockcase: proof exit 1$'; code=0
-                    label="a nested run refuses a file id equal to the lock's in its volume and first 64 bits only" ;;
-        noid)       want='^FAIL \[lock\]: the volume holding .* no stable file id'; also='^lockcase: proof exit 3$'; code=0
-                    label="a nested run on a volume without FILE_ID_INFO fails closed" ;;
-        reparse)    want='^FAIL \[lock\]: cannot open .*reparse point'; label="the gate lock refuses a reparse point at the lock path" ;;
-        killgate)   want='^lockcase: a gate killed by a signal exited [1-9]'; code=0; label="a gate killed by a signal never exits 0" ;;
-        failgate)   want='^lockcase: a gate that failed with 3 exited 3$'; code=0; label="the lock holder passes a failing gate's exit status on" ;;
-        killholder) want='^NOT RUN \[lock\]:'; code=75; label="a killed lock holder leaves the lock with the gate it started" ;;
-        shadow)     want='^lockcase: stand-ins imported: none; the gate exited 0$'; code=0
-                    label="the lock holder imports no fcntl.py or secrets.py from PYTHONPATH" ;;
-        interrupt)  want='^lockcase: the interrupted gate exited [1-9][0-9]*; its holder exited 130; its build stopped; the next gate exited 0$'; code=0
-                    label="Ctrl-C stops the gate and its build, the holder outlives it and exits 130, and the next gate takes the lock" ;;
-        earlyint)   want='^lockcase: a Ctrl-C before the gate started: its holder exited 130; the gate never ran$'; code=0
-                    label="a Ctrl-C that comes before the gate is created stops it from starting, with 130" ;;
-      esac
-      # The copy stops or kills itself right after it holds the lock, when a case asks it to,
-      # and otherwise passes there: the success a lost refusal would reach.
-      if ! { ( fixture_env; git init -q "$case_dir" ) && mkdir "$case_dir/scripts" &&
-             awk '/^work=\$\(mktemp -d\)/ {
-                    print "[ -z \"${LOCKCASE_HOLD:-}\" ] || { : > \"$LOCKCASE_HOLD\"; sleep 10; exit 0; }"
-                    print "[ -z \"${LOCKCASE_KILL:-}\" ] || { : > \"$LOCKCASE_KILL\"; kill -9 $$; }"
-                    print "[ -z \"${LOCKCASE_FAIL:-}\" ] || { : > \"$LOCKCASE_FAIL\"; exit 3; }"
-                    print "[ -z \"${LOCKCASE_BUILD:-}\" ] || { python3 -I -c \"import os, sys, time; f = os.open(sys.argv[1] + chr(46) + chr(116), os.O_WRONLY | os.O_CREAT); os.write(f, str(os.getpid()).encode()); os.close(f); os.replace(sys.argv[1] + chr(46) + chr(116), sys.argv[1]); time.sleep(60)\" \"$LOCKCASE_BUILD\"; exit 0; }"
-                    print "echo \"lockcase: the copy of the gate got past the lock\"; exit 0" }
-                  { print }' "$0" > "$case_dir/scripts/check.sh"; }; then
-        printf '%s\n' "  FAIL — could not build the throwaway repository for the Windows lock case: $label"
-        st_fail=1; continue
-      fi
-      # The lock path as the copy computes its own (pwd -P, then cygpath -m): a TMPDIR given as
-      # an 8.3 short name (C:/Users/RUNNER~1 on a CI runner) left GATE_LOCK_HELD short while the
-      # copy's own path was long, and every claim case waited instead of being refused.
-      case_lock=$(CDPATH= cd -- "$case_dir" && cygpath -m "$(pwd -P)/.git/check.lock")
-      # shellcheck disable=SC2086 # kit_python may be "py -3": split on purpose (line 85)
-      out=$(env PYTHONPATH="$site" $kit_python -I "$work/lockcase.py" "$lock_case" "$case_lock" \
-              "$(cygpath -m "$case_dir/scripts/check.sh")" 2>&1); status=$?
-      if [ "$status" -eq "$code" ] && printf '%s\n' "$out" | grep -q "$want" &&
-         { [ -z "$also" ] || printf '%s\n' "$out" | grep -q "$also"; }; then
-        printf '%s\n' "  ok   — $label"
-      else
-        printf '%s\n' "  FAIL — $label: not refused (exit $status, $code wanted), or the case could not run:"
-        printf '%s\n' "$out" | tail -3 | sed 's/^/           /'
-        st_fail=1
-      fi
-    done
-    if [ -e "$work/site/imported" ]; then
-      echo "  FAIL — the Windows lock cases imported a sitecustomize.py from PYTHONPATH"
-      st_fail=1
-    else
-      echo "  ok   — the Windows lock cases import no sitecustomize.py from PYTHONPATH"
-    fi
-  elif [ -e "$work/site/imported" ]; then
-    echo "  FAIL — the native Windows host check imported a sitecustomize.py from PYTHONPATH, which can skip every lock case"
-    st_fail=1
-  else
-    echo "  skip — native Windows gate lock cases: this python3 is not native Windows"
-  fi
-
-  # --- PROJECT.md navigability ------------------------------------------------
-  proj_ok="$work/project_ok.md"; proj_bad="$work/project_bad.md"; proj_young="$work/project_young.md"
-  {
-    echo "# PROJECT"; echo; echo "## Contents"; echo
-    echo "- 1. What this project is"; echo "- 2. Money"; echo
-    echo "## 1. What this project is"; echo "a line"; echo
-    echo "## 2. Money"; echo "another line"
-  } > "$proj_ok"
-  # Section 2 exists but was never added to the Contents — the drift this gate catches.
-  sed '/- 2\. Money/d' "$proj_ok" > "$proj_bad"
-  { echo "# PROJECT"; echo; echo "## Contents"; echo; echo "(nothing decided yet)"; } > "$proj_young"
-
-  # A section number that is a PREFIX of a listed one. Under a substring match "1. Money"
-  # is found inside the Contents entry "11. Money" and the gate goes green on an unlisted
-  # section — which is what it did until the match was anchored.
-  {
-    echo "# PROJECT"; echo; echo "## Contents"; echo; echo "- 11. Money"; echo
-    echo "## 1. Money"; echo "unlisted"; echo; echo "## 11. Money"; echo "listed"
-  } > "$work/project_prefix.md"
-
-  expect_pass "PROJECT gate accepts a file whose Contents lists every section" GATE_SELFTEST_PROJECT_FILE="$proj_ok"
-  expect_fail "PROJECT gate rejects a section missing from the Contents"       GATE_SELFTEST_PROJECT_FILE="$proj_bad"
-  expect_fail "PROJECT gate is not fooled by a section number that prefixes another" \
-    GATE_SELFTEST_PROJECT_FILE="$work/project_prefix.md"
-  expect_fail "PROJECT gate rejects a MISSING project file"                    GATE_SELFTEST_PROJECT_FILE="$work/absent.md"
-  expect_pass "PROJECT gate stays quiet on a young file with no sections yet"  GATE_SELFTEST_PROJECT_FILE="$proj_young"
-
-  # --- the module map names every module folder ------------------------------
-  # The project's own top-level folders stand in for modules (root "."): a map naming them all
-  # passes, the same map without its first one fails, and a root holding no file fails.
-  { echo "# Architecture"; echo; echo "## Module map"; echo
-    git ls-files --cached --others --exclude-standard | sed -n 's|/.*||p' | LC_ALL=C sort -u | sed 's/^/- /'
-    echo; echo "## Boundary enforcement"; } > "$work/arch-full.md"
-  first_module=$(sed -n 's/^- //p' "$work/arch-full.md" | head -1)
-  grep -vxF -- "- $first_module" "$work/arch-full.md" > "$work/arch-missing.md"
-  expect_pass "module map gate accepts a map that names every module folder" \
-    GATE_SELFTEST_MODULE_ROOTS=. GATE_SELFTEST_ARCHITECTURE_FILE="$work/arch-full.md"
-  expect_fail "module map gate rejects a module folder the map does not name" \
-    GATE_SELFTEST_MODULE_ROOTS=. GATE_SELFTEST_ARCHITECTURE_FILE="$work/arch-missing.md"
-  expect_fail "module map gate rejects a module root that holds no file" \
-    GATE_SELFTEST_MODULE_ROOTS=no-such-root GATE_SELFTEST_ARCHITECTURE_FILE="$work/arch-full.md"
-
-  # --- the commit hook --------------------------------------------------------
-  # The hook is the gate that actually holds, for every tool, and until now nothing proved
-  # it carries a red gate out to a nonzero exit. It is four lines, which is exactly the kind
-  # of code nobody tests and everybody assumes. A clean `git merge` runs pre-merge-commit,
-  # not pre-commit, for the merge commit it creates: two green branches can merge into a red
-  # tree, so that hook is held to the same two cases.
-  for hook in .githooks/pre-commit .githooks/pre-merge-commit; do
-    if [ ! -f "$hook" ]; then
-      printf '%s\n' "  FAIL — $hook is missing: nothing enforces the gate on those commits."
-      st_fail=1
-    elif ! sh "$hook" >/dev/null 2>&1; then
-      printf '%s\n' "  FAIL — $hook rejected a GREEN tree; every such commit would be blocked."
-      st_fail=1
-    elif env GATE_SELFTEST_EXTRA_FILE="$inj" sh "$hook" >/dev/null 2>&1; then
-      printf '%s\n' "  FAIL — $hook exited 0 while the gate was RED. It is blocking nothing."
-      st_fail=1
-    else
-      printf '%s\n' "  ok   — $hook passes a green tree and aborts on a red one"
-    fi
-  done
-
-  # --- the commit message hook --------------------------------------------------
-  # A coding tool's default instruction adds an AI co-author trailer to every commit; a rule
-  # in AGENTS.md alone did not stop it. A human co-author must still get through, even one
-  # whose name contains a tool's. Without the rule line in AGENTS.md the hook gives way, and
-  # this case says so out loud: an owner who allows AI credit drops the line (setup
-  # interview), and a project synced from before v0.9 has not added it yet. The skip names
-  # the missing line, never a choice nobody may have made.
-  printf 'change\n\nCo-Authored-By: Claude <noreply@anthropic.com>\n' > "$work/msg_ai"
-  printf 'change\n\nCo-authored-by: Claude Monet <person@example.invalid>\n' > "$work/msg_human"
-  if [ -f AGENTS.md ] && ! grep -q 'No AI attribution in git' AGENTS.md; then
-    echo "  skip — commit-msg hook: off, AGENTS.md has no 'No AI attribution in git' rule line (the owner allows"
-    echo "         AI credit, or the line was never added after a sync); the hook passes every message."
-  elif [ ! -f .githooks/commit-msg ]; then
-    echo "  FAIL — .githooks/commit-msg is missing: nothing rejects an AI co-author trailer."
-    st_fail=1
-  elif sh .githooks/commit-msg "$work/msg_ai" >/dev/null 2>&1; then
-    echo "  FAIL — commit-msg hook accepted an AI co-author trailer."
-    st_fail=1
-  elif ! sh .githooks/commit-msg "$work/msg_human" >/dev/null 2>&1; then
-    echo "  FAIL — commit-msg hook rejected a human co-author (false positive)."
-    st_fail=1
-  else
-    echo "  ok   — commit-msg hook rejects an AI co-author trailer and keeps a human one"
-  fi
-  # A "Done: K4" trailer while the STATE.md this commit records still names K4 is refused,
-  # whatever AGENTS.md says about attribution: the two checks are separate. The hook reads
-  # the index, so the case stages its files in a throwaway repository, never in this one.
-  if [ ! -f .githooks/commit-msg ]; then
-    echo "  FAIL — .githooks/commit-msg is missing: nothing rejects a Done: trailer for a task still listed."
-    st_fail=1
-  else
-    msg_hook="$(pwd)/.githooks/commit-msg"; done_repo="$work/done-repo"
-    printf 'close K4\n\nDone: K4\n' > "$work/msg_done"
-    ( fixture_env; git init -q "$done_repo" ) && mkdir "$done_repo/docs" ||
-      { echo "  FAIL — could not build the throwaway repository for the Done: hook cases"; st_fail=1; }
-    for rule in present absent; do
-      if [ "$rule" = present ]; then echo '- **No AI attribution in git.**'; else echo 'AI tools may be credited.'; fi > "$done_repo/AGENTS.md"
-      printf '# STATE\n\n## Active work\n- K4: still listed\n' > "$done_repo/docs/STATE.md"
-      ( fixture_env; git -C "$done_repo" add -A )
-      if (fixture_env; CDPATH= cd -- "$done_repo" && sh "$msg_hook" "$work/msg_done") >/dev/null 2>&1; then
-        printf '%s\n' "  FAIL — commit-msg hook accepted Done: K4 while the staged STATE.md names K4 (rule line $rule)"
-        st_fail=1; continue
-      fi
-      printf '# STATE\n\n## Active work\n' > "$done_repo/docs/STATE.md"
-      ( fixture_env; git -C "$done_repo" add -A )
-      if (fixture_env; CDPATH= cd -- "$done_repo" && sh "$msg_hook" "$work/msg_done") >/dev/null 2>&1; then
-        printf '%s\n' "  ok   — commit-msg hook refuses Done: K4 until the staged STATE.md drops it (rule line $rule)"
-      else
-        printf '%s\n' "  FAIL — commit-msg hook rejected Done: K4 after the line was deleted (rule line $rule; false positive)"
-        st_fail=1
-      fi
-    done
-    # The strong review cycle's list and its reports are state files too.
-    mkdir -p "$done_repo/docs/reviews" "$done_repo/docs/audits"
-    # A space and a non-ASCII letter in a report's name once let it out of the hook's list.
-    for f in STRONG_REVIEW.md 'reviews/strong-2026-01-01-claude opus ü.md' 'audits/2026-01 ü.md'; do
-      printf -- '- K4: a finding\n' > "$done_repo/docs/$f"
-      ( fixture_env; git -C "$done_repo" -c core.autocrlf=false add -A )
-      if (fixture_env; CDPATH= cd -- "$done_repo" && sh "$msg_hook" "$work/msg_done") >/dev/null 2>&1; then
-        printf '%s\n' "  FAIL — commit-msg hook accepted Done: K4 while the staged docs/$f names K4"
-        st_fail=1
-      else
-        printf '%s\n' "  ok   — commit-msg hook refuses Done: K4 while the staged docs/$f names K4"
-      fi
-      ( fixture_env; git -C "$done_repo" rm -q --cached "docs/$f" ) && rm -f "$done_repo/docs/$f"
-    done
-  fi
-
-  # --- ShellCheck -------------------------------------------------------------------
-  # The step must be seen red: an unquoted expansion in a script it is given fails the gate.
-  if command -v shellcheck >/dev/null 2>&1; then
-    printf '#!/bin/sh\nx="a b"\necho $x\n' > "$work/unquoted.sh"
-    out=$(GATE_SELFTEST_SHELL_FILES="$work/unquoted.sh" sh "$0" 2>&1)
-    if printf '%s\n' "$out" | grep -q '^FAIL \[shellcheck\]' && printf '%s\n' "$out" | grep -q 'SC2086'; then
-      echo "  ok   — an unquoted expansion in a shell script fails the gate (ShellCheck SC2086)"
-    else
-      echo "  FAIL — an unquoted expansion in a shell script did not fail the gate's ShellCheck step."
-      st_fail=1
-    fi
-  else
-    echo "  NOTE — shellcheck is not installed: the ShellCheck step was not observed red here."
-  fi
-
-  # --- build failure output -----------------------------------------------------
-  # The lines that locate a compile error ("In function", "required from", "note:") come
-  # before and around the "error:" line. A gate that printed only lines matching "error"
-  # hid them, and a CI-only failure had to be fixed blind. The failure must be named, its
-  # chain must reach the output, and the whole log must be kept. On CI the log in .git
-  # vanishes with the runner, so there the whole log is printed instead of the tail.
-  build_fail='i=0; while [ $i -lt 300 ]; do printf "build line %s\n" "$i"; i=$((i + 1)); done
-    echo "src/x.c: In function f:"; echo "src/x.c:3:5: error: bad"; echo "src/x.c:2:1: note: declared here"; exit 1'
-  out=$(env CI= GATE_BUILD_CMD_OVERRIDE="$build_fail" sh "$0" 2>&1)
-  ci_out=$(env CI=true GATE_BUILD_CMD_OVERRIDE="$build_fail" sh "$0" 2>&1)
-  if printf '%s\n' "$out" | grep -q '^FAIL \[build\]' &&
-     printf '%s\n' "$out" | grep -q 'In function f:' &&
-     printf '%s\n' "$out" | grep -q 'note: declared here' &&
-     ! printf '%s\n' "$out" | grep -q '^build line 0$' &&
-     printf '%s\n' "$ci_out" | grep -q '^build line 0$' &&
-     grep -q '^build line 0$' "$build_log" 2>/dev/null; then
-    echo "  ok   — a build failure is named, shows its diagnostic chain, keeps the full log, and prints it on CI"
-  else
-    echo "  FAIL — a build failure was not named, lost its diagnostic chain, left no full log, or hid it on CI."
-    st_fail=1
-  fi
-
-  # --- a documentation-only commit skips the build, and only the build ------------
-  # The decision reads a throwaway repository's index (GATE_SELFTEST_COMMIT_REPO), never this
-  # one's. The build is `false` throughout, so a run that reached it fails.
-  docs_repo="$work/docs-commit"
-  if ( fixture_env; git init -q "$docs_repo" && printf 'int x;\n' > "$docs_repo/code.c" &&
-     git -C "$docs_repo" add code.c &&
-     git -C "$docs_repo" -c user.name=t -c user.email=t@example.invalid -c core.hooksPath=/dev/null \
-         -c commit.gpgsign=false commit -q -m base &&
-     printf 'a\n' > "$docs_repo/a.md" && printf 'b\n' > "$docs_repo/b.md" &&
-     git -C "$docs_repo" add a.md b.md ); then
-    out=$(env GATE_SELFTEST_COMMIT_REPO="$docs_repo" GATE_BUILD_CMD_OVERRIDE=false sh "$0" --for-commit 2>&1)
-    # The case asserts what the switch beside build_test_cmd selects, read from this file by
-    # the shell itself: with docs_only_skip_build=0 the skipped build was demanded anyway.
-    eval "$(grep '^docs_only_skip_build=' "$0" | head -n 1)"
-    if [ "${docs_only_skip_build:-}" != 1 ]; then
-      if printf '%s\n' "$out" | grep -q '^FAIL \[build\]' && ! printf '%s\n' "$out" | grep -q 'build not run'; then
-        printf '%s\n' "  ok   — docs_only_skip_build=$docs_only_skip_build: a commit of two documents runs the build"
-      else
-        printf '%s\n' "  FAIL — docs_only_skip_build=$docs_only_skip_build, and a commit of two documents skipped the build."
-        st_fail=1
-      fi
-    elif printf '%s\n' "$out" | grep -qx 'CHECK: PASS (build not run: documentation-only commit, 2 files)'; then
-      echo "  ok   — a commit of two documents skips the build and says so in the PASS line"
-    else
-      echo "  FAIL — a commit of two documents ran the build, or passed without saying it skipped it."
-      st_fail=1
-    fi
-    if env GATE_SELFTEST_COMMIT_REPO="$docs_repo" GATE_BUILD_CMD_OVERRIDE=false sh "$0" >/dev/null 2>&1; then
-      echo "  FAIL — a manual run with only documents staged skipped the build."
-      st_fail=1
-    else
-      echo "  ok   — a manual run with only documents staged still runs the build"
-    fi
-    if env GATE_SELFTEST_COMMIT_REPO="$docs_repo" GATE_BUILD_CMD_OVERRIDE=true GATE_SELFTEST_EXTRA_FILE="$inj" \
-         sh "$0" --for-commit >/dev/null 2>&1; then
-      echo "  FAIL — a documentation-only commit skipped the placeholder scan as well as the build."
-      st_fail=1
-    else
-      echo "  ok   — a documentation-only commit still fails an unfilled placeholder"
-    fi
-    printf 'int y;\n' > "$docs_repo/code.c" && ( fixture_env; git -C "$docs_repo" add code.c )
-    if env GATE_SELFTEST_COMMIT_REPO="$docs_repo" GATE_BUILD_CMD_OVERRIDE=false sh "$0" --for-commit >/dev/null 2>&1; then
-      echo "  FAIL — a commit of documents and a code file skipped the build."
-      st_fail=1
-    else
-      echo "  ok   — a commit of documents and a code file runs the build"
-    fi
-  else
-    echo "  FAIL — could not build the throwaway repository for the documentation-only cases"
-    st_fail=1
-  fi
-
-  # --- scanner integrity ------------------------------------------------------
-  # The switch makes scan_grep report failure the way a broken grep would. This proves the
-  # flag-file plumbing end to end — a failed scan cannot end in CHECK: PASS — though not a
-  # genuine grep crash.
-  expect_fail "a failed scanner cannot report a clean scan" GATE_SELFTEST_BREAK_SCANNER=1
-
-  # --- project boundary self-tests ------------------------------------------
-  # One case per check in the boundary checks file. Sourced, so it can set st_fail.
-  # Its ABSENCE is a failure: a boundary check with no negative test has not been tested.
-  review_test_log=$(mktemp) || return 1
-  if ! sh scripts/review.sh --self-test > "$review_test_log" 2>&1 ||
-     ! grep -qx 'REVIEW SELF-TEST: PASS' "$review_test_log"; then
-    echo "  FAIL — review adapter negative tests failed or did not run"
-    st_fail=1
-  fi
-  cat "$review_test_log"
-  rm -f "$review_test_log"
-
-  if [ -f "$BOUNDARY_SELFTESTS_FILE" ]; then
-    # Sourced with its output captured (still this shell, so st_fail carries over): a
-    # boundary checks file with real checks whose self-test file ran NO case was skipped,
-    # and a skipped self-test is not a pass.
-    . "./$BOUNDARY_SELFTESTS_FILE" > "$work/boundary_selftests.out"
-    cat "$work/boundary_selftests.out"
-    if grep -v '^[[:space:]]*#' "$BOUNDARY_CHECKS_FILE" 2>/dev/null | grep -q '[^[:space:]]' &&
-       ! grep -q '^  ok   — ' "$work/boundary_selftests.out"; then
-      printf '%s\n' "  FAIL — $BOUNDARY_CHECKS_FILE has checks but $BOUNDARY_SELFTESTS_FILE ran no case"
-      echo "         (none printed '  ok   — <label>'). A self-test that did not run is not a pass."
-      st_fail=1
-    fi
-  else
-    printf '%s\n' "  FAIL — $BOUNDARY_SELFTESTS_FILE is missing: the project's boundary checks have"
-    echo "         no negative tests, so they have never been observed rejecting anything."
-    st_fail=1
-  fi
-
-  # --- the self-test leaves the worktree as it found it ---------------------------
-  if [ -z "$view_before" ]; then
-    echo "  NOTE — not a Git worktree: the self-test's leftovers were not compared."
-  elif git_view "$work" > "$work/git-view.after" 2>&1 && cmp -s "$view_before" "$work/git-view.after"; then
-    echo "  ok   — the self-test left HEAD, the index, git status and the tracked changes as it found them"
-  else
-    echo "  FAIL — the self-test changed this worktree: a review running here meanwhile fails"
-    echo "         as stale_checkout. Run that case in a disposable copy (scripts/boundary_selftests.sh),"
-    echo "         or ignore its output path in .gitignore. Or another process edited the checkout meanwhile (a second session, an editor)."
-    echo "         Lines before (-) and after (+): HEAD, index, status, content hashes by path:"
-    diff "$view_before" "$work/git-view.after" | sed -n 's/^< /    - /p; s/^> /    + /p' | head -40
-    st_fail=1
-  fi
-
-  echo
-  if [ "$st_fail" -eq 0 ]; then
-    echo "SELF-TEST: PASS — each case above was observed making the gate exit nonzero."
-    echo "  Exit-only generic cases do not prove which check caused failure. The worked"
-    echo "  boundary example also requires its own diagnostic. The scanner case breaks the"
-    echo "  scanner through a test switch, not by making grep itself crash."
-    return 0
-  fi
-  echo "SELF-TEST: FAIL — a gate did not behave as claimed. It is protecting nothing."
-  return 1
-}
-
 for_commit="" pass_note=""
 case "${1:-}" in
   "")           ;;
-  --self-test)  self_test; exit $? ;;
   --for-commit) for_commit=1 ;;
-  *)            echo "usage: check.sh [--self-test | --for-commit]"; exit 2 ;;
+  *)            echo "usage: check.sh [--for-commit]"; exit 2 ;;
 esac
 
 # Every scan, filter and boundary check below reads text in the C locale. In a UTF-8 locale
@@ -1416,8 +426,12 @@ if ! xargs -0 sh -c '
       if [ -d "$p" ]; then
         printf "%s\n" "NOTE [scan]: skipped $p, a symlink to a directory; git tracks nothing inside it." >&3
         printf "%s\n" "             To ignore it, write it in .gitignore without a trailing slash." >&3
+        : > "$scan_work/scan_unhashed"
       elif [ ! -e "$p" ]; then
         printf "%s\n" "NOTE [scan]: skipped $p, a symlink whose target is missing; its link text is scanned instead." >&3
+      else
+        # The build cache hashes a link to a file by its text alone: build_cache_key checks the target.
+        printf "%s\0" "$p" >> "$scan_work/file-links" || : > "$scan_work/scan_unhashed"
       fi
     elif [ -f "$p" ]; then
       # grep reads a bare "-" as stdin even after "--": a marker in a file named "-" passed.
@@ -1425,6 +439,7 @@ if ! xargs -0 sh -c '
     elif [ -d "$p" ] && { case "$p" in */) true ;; *) false ;; esac ||
                           [ "$(git ls-files -s -- ":(literal)$p" | cut -c1-6)" = 160000 ]; }; then
       printf "%s\n" "NOTE [scan]: skipped $p, a submodule or a repository inside this one; its files belong to that repository." >&3
+      : > "$scan_work/scan_unhashed"
     elif [ ! -e "$p" ]; then
       printf "%s\n" "FAIL [scan]: $p is tracked but missing from the working tree (deleted, not staged)." >&3
       printf "%s\n" "             Run git rm -- \"$p\" to record the deletion, or git restore -- \"$p\"." >&3
@@ -1446,9 +461,6 @@ if [ ! -s "$filelist" ] && [ ! -s "$work/symlink-text" ]; then
   echo "             exactly the failure this gate exists to prevent."
   exit 1
 fi
-# Test switch: the self-test's injected file lives outside the tree and joins the scan here.
-[ -z "${GATE_SELFTEST_EXTRA_FILE:-}" ] || printf '%s\0' "$GATE_SELFTEST_EXTRA_FILE" >> "$filelist"
-
 # scan_grep <extended-regex> — prints path:line:text for every match.
 # Returns 0 on match, 1 on no match. When grep itself FAILS, it drops a flag file that the
 # main shell checks before the final verdict. The flag, not an exit, is deliberate: callers
@@ -1456,10 +468,6 @@ fi
 # earlier version "exited fatally" from inside `$(...)` and the gate sailed on to PASS.
 # A file crosses that boundary; nothing a caller does can turn a failed scan into a clean one.
 scan_grep() {
-  if [ -n "${GATE_SELFTEST_BREAK_SCANNER:-}" ]; then
-    : > "$work/scan_failed"
-    return 2
-  fi
   # -e keeps a pattern starting with "-" from being read as an option; -- ends the option
   # list so a file literally named "-v" is scanned instead of parsed. /dev/null guarantees
   # at least one file argument, so grep never falls back to stdin and always prints names.
@@ -1523,12 +531,12 @@ fi
 #
 # A missing file or a renamed heading is a FAILURE, not a skip. Skipping there meant the
 # whole check could be disabled by deleting one file or editing one line.
-if [ ! -f "$GATE_SELFTEST_STATE_FILE" ]; then
-  printf '%s\n' "FAIL [state]: $GATE_SELFTEST_STATE_FILE does not exist. It is the cross-session memory; without it"
+if [ ! -f docs/STATE.md ]; then
+  echo "FAIL [state]: docs/STATE.md does not exist. It is the cross-session memory; without it"
   echo "              this check proves nothing."
   fail=1
-elif ! grep -q "^## Active work" "$GATE_SELFTEST_STATE_FILE"; then
-  printf '%s\n' "FAIL [state]: $GATE_SELFTEST_STATE_FILE has no '## Active work' heading. Restore the heading"
+elif ! grep -q "^## Active work" docs/STATE.md; then
+  echo "FAIL [state]: docs/STATE.md has no '## Active work' heading. Restore the heading"
   echo "              rather than removing the check."
   fail=1
 fi
@@ -1546,15 +554,12 @@ fi
 # "Done: k3" closes K3 (it once passed while STATE.md named K3). No repository,
 # or no commit yet: nothing has been closed, and nothing is checked. A shallow clone holds
 # part of the history: a NOTE says so, and the part it holds is checked.
-history_repo="${GATE_SELFTEST_HISTORY:-.}"
-# The self-test's synthetic history is read with no inherited GIT_DIR routing it elsewhere.
 # Colour-free whatever the user's config says (color.ui or color.diff = always): the gate parses
 # what these helpers print, and an escape code before "-" hid a deleted line (b7 review, round 1).
 nocolor="-c color.ui=never -c color.diff=never"
 hgit() {
   # shellcheck disable=SC2086 # nocolor holds two -c options: split on purpose
-  if [ -n "${GATE_SELFTEST_HISTORY:-}" ]; then ( fixture_env; git $nocolor -C "$history_repo" "$@" )
-  else git $nocolor -C "$history_repo" "$@"; fi
+  git $nocolor "$@"
 }
 if hgit rev-parse -q --verify HEAD >/dev/null 2>&1; then
   [ "$(hgit rev-parse --is-shallow-repository)" != true ] ||
@@ -1569,10 +574,9 @@ if hgit rev-parse -q --verify HEAD >/dev/null 2>&1; then
              if (id ~ /^[A-Za-z][A-Za-z0-9]*(-[A-Za-z0-9]+)?$/ && id ~ /[0-9]/) print id > out
              else printf "NOTE [state]: commit %s has \"Done: %s\", which is not one task id; it closes nothing.\n", commit, id }
        END { close(out) }' "$work/done-trailers"; then
-    docs_dir=$(dirname "$GATE_SELFTEST_STATE_FILE")
-    for f in "$GATE_SELFTEST_STATE_FILE" "$docs_dir/BACKLOG.md" "$docs_dir/STRONG_REVIEW.md" "$docs_dir"/reviews/strong-*.md "$docs_dir"/audits/*.md; do
+    for f in docs/STATE.md docs/BACKLOG.md docs/STRONG_REVIEW.md docs/reviews/strong-*.md docs/audits/*.md; do
       level=FAIL
-      case "$f" in "$docs_dir"/audits/*.md) level=NOTE ;; esac
+      case "$f" in docs/audits/*.md) level=NOTE ;; esac
       [ ! -f "$f" ] || awk -v closed="$work/done-ids" -v level="$level" '
         FILENAME == closed {
           if (sub(/^@/, "")) commit = $0
@@ -1600,16 +604,10 @@ fi
 # decision 7; RL 2026-10-03: a rule without a mechanism did not hold). Only the commit hook's
 # run (--for-commit) has a commit to read: the staged diff against HEAD.
 if [ -n "$for_commit" ]; then
-  # GATE_SELFTEST_COMMIT_REPO: the self-test's throwaway repository, read with no inherited routing.
-  sgit() {
-    # shellcheck disable=SC2086 # nocolor holds two -c options: split on purpose
-    if [ -n "${GATE_SELFTEST_COMMIT_REPO:-}" ]; then ( fixture_env; git $nocolor -C "$GATE_SELFTEST_COMMIT_REPO" "$@" )
-    else git $nocolor "$@"; fi
-  }
-  dropped=$(sgit diff --cached --no-renames --no-ext-diff -U0 HEAD -- docs/STATE.md 2>/dev/null |
+  dropped=$(hgit diff --cached --no-renames --no-ext-diff -U0 HEAD -- docs/STATE.md 2>/dev/null |
             grep -v '^--- ' | grep -E '^-.*\[(LESSON|GOTCHA)\]')
   if [ -n "$dropped" ] &&
-     ! sgit diff --cached --no-renames --no-ext-diff -U0 HEAD -- . ':(exclude)docs/STATE.md' 2>/dev/null |
+     ! hgit diff --cached --no-renames --no-ext-diff -U0 HEAD -- . ':(exclude)docs/STATE.md' 2>/dev/null |
        grep -v '^+++ ' | grep -q '^+.'; then
     echo "NOTE [state]: this commit deletes a tagged line from docs/STATE.md and adds nothing to any other"
     echo "             file. A [LESSON] or [GOTCHA] line keeps until it has a permanent home (docs/AGENTS.md):"
@@ -1625,8 +623,8 @@ fi
 # docs/STRONG_REVIEW.md is told, never failed, when either is reached. The date is the commit
 # that added the newest docs/reviews/strong-*.md, so a report deleted once its last item closed
 # still counts; the tasks are the Done: trailers of the commits after it. A shallow clone may
-# not hold it. The two values are set near the top, where the self-test reads them too.
-strong_list="$(dirname "$GATE_SELFTEST_STATE_FILE")/STRONG_REVIEW.md"
+# not hold it. The two values are set near the top.
+strong_list=docs/STRONG_REVIEW.md
 strong_rule="at least every $STRONG_REVIEW_DAYS days or after $STRONG_REVIEW_TASKS closed tasks, whichever comes first"
 if [ -f "$strong_list" ] && hgit rev-parse -q --verify HEAD >/dev/null 2>&1; then
   # No wildcard pathspec (GIT_LITERAL_PATHSPECS would turn it off), no rename detection (a
@@ -1669,13 +667,12 @@ fi
 # So this is mechanical rather than a rule in prose: every "## N." heading must appear in
 # the Contents section. A file with no numbered sections yet is fine — that is a young
 # project, not a broken one.
-GATE_SELFTEST_PROJECT_FILE="${GATE_SELFTEST_PROJECT_FILE:-docs/PROJECT.md}"
-if [ ! -f "$GATE_SELFTEST_PROJECT_FILE" ]; then
-  printf '%s\n' "FAIL [project]: $GATE_SELFTEST_PROJECT_FILE does not exist. It is where permanent decisions live;"
+if [ ! -f docs/PROJECT.md ]; then
+  echo "FAIL [project]: docs/PROJECT.md does not exist. It is where permanent decisions live;"
   echo "                without it they end up in docs/STATE.md and are pruned away."
   fail=1
-elif ! grep -q "^## Contents" "$GATE_SELFTEST_PROJECT_FILE"; then
-  printf '%s\n' "FAIL [project]: $GATE_SELFTEST_PROJECT_FILE has no '## Contents' section, so it cannot be read"
+elif ! grep -q "^## Contents" docs/PROJECT.md; then
+  echo "FAIL [project]: docs/PROJECT.md has no '## Contents' section, so it cannot be read"
   echo "                selectively and every reader will load the whole file."
   fail=1
 else
@@ -1684,12 +681,12 @@ else
   # Entries are normalised to bare heading text — list marker, link syntax and trailing
   # space removed — so that a Contents written as "- 1. Money" or "- [1. Money](#money)"
   # both compare equal to the heading "## 1. Money".
-  awk '/^## Contents/{f=1;next} /^## /{f=0} f' "$GATE_SELFTEST_PROJECT_FILE" \
+  awk '/^## Contents/{f=1;next} /^## /{f=0} f' docs/PROJECT.md \
     | sed -e 's/^[[:space:]]*[-*][[:space:]]*//' \
           -e 's/^\[//' -e 's/\](#[^)]*)[[:space:]]*$//' \
           -e 's/[[:space:]]*$//' > "$work/toc"
   missing=""
-  sed -n 's/^## \([0-9][0-9.]*\.\{0,1\}[[:space:]].*\)$/\1/p' "$GATE_SELFTEST_PROJECT_FILE" > "$work/heads"
+  sed -n 's/^## \([0-9][0-9.]*\.\{0,1\}[[:space:]].*\)$/\1/p' docs/PROJECT.md > "$work/heads"
   while IFS= read -r h; do
     [ -n "$h" ] || continue
     # -x anchors to the WHOLE line and -F takes the pattern literally. Without -x this was a
@@ -1699,7 +696,7 @@ else
   - $h"
   done < "$work/heads"
   if [ -n "$missing" ]; then
-    printf '%s\n' "FAIL [project]: $GATE_SELFTEST_PROJECT_FILE has numbered sections missing from its Contents:$missing"
+    printf '%s\n' "FAIL [project]: docs/PROJECT.md has numbered sections missing from its Contents:$missing"
     echo "                Add them, or renumber. Citations elsewhere point at these numbers."
     fail=1
   fi
@@ -1717,8 +714,7 @@ fi
 # single-module project has no module folders. A root with no file at all FAILS: a check over a
 # missing folder finds nothing, which looks like a clean result.
 module_roots=""
-module_roots="${GATE_SELFTEST_MODULE_ROOTS:-$module_roots}"
-architecture_file="${GATE_SELFTEST_ARCHITECTURE_FILE:-docs/ARCHITECTURE.md}"
+architecture_file=docs/ARCHITECTURE.md
 if [ -z "$module_roots" ]; then
   echo "NOTE [architecture]: module_roots is empty in scripts/check.sh; no module folder is checked against"
   echo "                     the module map in docs/ARCHITECTURE.md."
@@ -1767,15 +763,10 @@ select_shellcheck_files() {
     esac
   done
 }
-shell_files="${GATE_SELFTEST_SHELL_FILES:-}"
-# Only the dedicated ShellCheck case repeats lint inside the authenticated self-test.
-# A copied marker cannot skip normal lint: selftest_nested also proves the inherited lock.
-if [ -n "$selftest_nested" ] && [ -z "$shell_files" ]; then
-  :
-elif ! command -v shellcheck >/dev/null 2>&1; then
+if ! command -v shellcheck >/dev/null 2>&1; then
   echo "NOT RUN [shellcheck]: shellcheck is not installed; SC2028, SC2086 and its errors are left to review."
 else
-  [ -n "$shell_files" ] || shell_files=$(tr '\0' '\n' < "$filelist" | select_shellcheck_files)
+  shell_files=$(tr '\0' '\n' < "$filelist" | select_shellcheck_files)
   sc_status=0
   if [ -n "$shell_files" ]; then
     # Newline-separated names are safe: the gate refuses names holding newlines (#41).
@@ -1806,10 +797,10 @@ fi
 #
 # A MISSING file is a FAIL. It used to be skipped, which meant deleting one file removed
 # every boundary check without a word.
-if [ -f "$BOUNDARY_CHECKS_FILE" ]; then
-  . "./$BOUNDARY_CHECKS_FILE"
+if [ -f scripts/boundary_checks.sh ]; then
+  . ./scripts/boundary_checks.sh
 else
-  printf '%s\n' "FAIL [boundary]: $BOUNDARY_CHECKS_FILE is missing. Boundary enforcement is not"
+  echo "FAIL [boundary]: scripts/boundary_checks.sh is missing. Boundary enforcement is not"
   echo "                 optional; if this project genuinely has no enforceable boundary,"
   echo "                 say so IN that file rather than deleting it."
   fail=1
@@ -1826,11 +817,100 @@ fi
 # production deploy, so the agent could not run the gate it is required to run. Validate
 # deploy configuration in its own CI step, or document an allow rule for that exact command.
 build_test_cmd="{{BUILD_TEST_COMMAND}}"
-[ -n "${GATE_BUILD_CMD_OVERRIDE:-}" ] && build_test_cmd="$GATE_BUILD_CMD_OVERRIDE"
 # A commit that changes only documentation skips the build/test command, and nothing else:
 # every scan and check above has run. A project's gate built for minutes on every such commit.
 # 1: on. 0: off, for a project whose build reads markdown (a documentation site, doc tests).
 docs_only_skip_build=1
+# BUILD CACHE. One change ran the same build three or four times on the same files: the
+# worker, the Stop hook, the commit hook, the merge hook (#82). A build that passed is recorded
+# under a key, and a later run whose key matches skips the build and says so in its PASS line;
+# every other check above still runs. The key is a SHA-256 over every path
+# `git ls-files --cached --others --exclude-standard` names (path, content and executable bit
+# read from disk, symlink text: uncommitted edits, a new untracked file, CMakeLists, tests and
+# documents all count, not only what a check scans), this gate script itself, the build
+# command, the caller's LC_ALL and the output of build_cache_inputs. An entry another version
+# of the gate wrote is deleted. build_cache_inputs is a VALUE: a command that prints whatever
+# else the build depends on, which the tree does not hold. Starters, keep the ones your build
+# uses (a missing tool fails the command, and a failing command means no cache):
+#   cmake --version; ninja --version
+#   cl 2>&1 | head -n 1                     # the MSVC banner (compiler version)
+#   python --version; python -m pip freeze | sha256sum
+#   blender --version
+#   git lfs ls-files -l                     # LFS objects by id
+#   echo "CC=$CC CXX=$CXX"                  # environment the build reads
+# Unity: ProjectSettings/ProjectVersion.txt and Packages/packages-lock.json are tracked, so
+# already in the key; Library/ is a cache Unity rebuilds and stays out.
+# Ignored files (fetched dependencies, a build folder) and environment variables are NOT in the
+# key unless this command prints them. Empty, there is no cache: an input nobody fingerprinted
+# would otherwise pass on a stale result. Use "true" for a build that reads nothing but the
+# tree. The cache is never read on CI, nor when the
+# command fails, the tree holds a submodule, a nested repository, a symlink to a folder, or a
+# symlink to a file outside the tree or in an ignored folder (none of those files are hashed),
+# outside Git, or with GATE_CACHE=off. A cached run prints
+# "NOTE [build]: not run: cached PASS <key> from <date>" and its PASS line says so too, so a
+# report can never claim a build that did not run. Entries sit in the repository's common git
+# folder (shared by its worktrees: the key names content, not a checkout) and expire after
+# cache_days days.
+build_cache_inputs=""
+cache_days=7
+cache_dir="" cache_record=""
+if [ -n "${CI:-}" ] || [ "${GATE_CACHE:-}" = off ]; then
+  :
+else
+  case "$lock_path" in
+    */.check.lock) ;;
+    *) cache_common=$(git rev-parse --git-common-dir 2>/dev/null) && cache_dir="$cache_common/check-cache" ;;
+  esac
+fi
+[ -n "$build_cache_inputs" ] && [ ! -e "$work/scan_unhashed" ] || cache_dir=""
+# build_cache_key: prints "hit <key> <date>" when cache_dir holds an entry for the key younger
+# than cache_days, else "miss <key> -", and deletes the older entries and those another gate
+# version wrote (an entry holds its gate's hash); fails when an input cannot be read. Python, not find(1): on native Windows a PATH can name Windows' own FIND.EXE first.
+build_cache_key() {
+  inputs=$( ( if [ -n "$caller_lc_all_set" ]; then LC_ALL=$caller_lc_all; else unset LC_ALL; fi
+              exec sh -c "$build_cache_inputs" ) 2>&1 ) || {
+    printf '%s\n' "NOTE [build]: build_cache_inputs failed, so the build is not cached: $build_cache_inputs" >&2; return 1; }
+  printf '%s\0%s\0%s' "$build_test_cmd" "${caller_lc_all_set:+set:$caller_lc_all}" "$inputs" |
+    python3 -I -c '
+import hashlib, os, sys, time
+gate = hashlib.sha256(open(sys.argv[5], "rb").read()).hexdigest()
+key = hashlib.sha256(b"keel build cache 2\0" + gate.encode() + b"\0" + sys.stdin.buffer.read() + b"\0")
+paths = sorted(p for p in open(sys.argv[1], "rb").read().split(b"\0") if p)
+# A link to a file is hashed by its text; its target must be a file hashed below, or an edit
+# outside the tree (or in an ignored folder) would leave the key unchanged.
+hashed, here = {os.fsdecode(p[2:] if p.startswith(b"./") else p) for p in paths}, os.path.realpath(".")
+for link in (l for l in (open(sys.argv[6], "rb").read() if os.path.exists(sys.argv[6]) else b"").split(b"\0") if l):
+    try:
+        target = os.path.relpath(os.path.realpath(os.fsdecode(link)), here).replace(os.sep, "/")
+    except ValueError:  # another drive
+        target = None
+    if target not in hashed:
+        print("NOTE [build]: %s is a symlink to a file outside the tree or in an ignored folder, so the build is not cached." % os.fsdecode(link), file=sys.stderr)
+        sys.exit(1)
+for path in paths:
+    content = hashlib.sha256()
+    with open(os.fsdecode(path), "rb") as data:
+        for chunk in iter(lambda: data.read(1 << 20), b""):
+            content.update(chunk)
+    executable = b"x" if os.stat(os.fsdecode(path)).st_mode & 0o111 else b"-"
+    key.update(path + b"\0" + executable + content.digest())
+if os.path.exists(sys.argv[2]):
+    key.update(b"symlinks\0" + open(sys.argv[2], "rb").read())
+key, found, now = key.hexdigest(), "miss -", time.time()
+if os.path.isdir(sys.argv[3]):
+    for name in os.listdir(sys.argv[3]):
+        entry = os.path.join(sys.argv[3], name)
+        try:  # a gate in another worktree may delete it first
+            mtime = os.stat(entry).st_mtime
+            if now - mtime > float(sys.argv[4]) * 86400 or open(entry).read().strip() != gate:
+                os.remove(entry)
+            elif name == key:
+                found = "hit " + time.strftime("%Y-%m-%dT%H:%M", time.localtime(mtime))
+        except (OSError, UnicodeDecodeError):
+            pass
+print(found.split()[0], key, found.split()[1])
+' "$filelist" "$work/symlink-text" "$cache_dir" "$cache_days" "$0" "$work/file-links"
+}
 # Tested with its whitespace stripped: an all-blank command reaches `sh -c` as a no-op that
 # exits 0, which is a green gate with no build — the unconfigured case wearing spaces.
 case "$(printf '%s' "$build_test_cmd" | tr -d '[:space:]')" in
@@ -1854,12 +934,9 @@ case "$(printf '%s' "$build_test_cmd" | tr -d '[:space:]')" in
     docs_only=""
     if [ -n "$for_commit" ] && [ "$docs_only_skip_build" = 1 ]; then
       docs_only=$(python3 -c '
-import os, subprocess, sys
-repo, env = sys.argv[1], dict(os.environ)
-if repo != ".":
-    env = {k: v for k, v in env.items() if not k.startswith("GIT_") or k.startswith("GIT_CONFIG")}
+import subprocess, sys
 def git(*args):
-    return subprocess.run(("git",) + args, cwd=repo, env=env, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    return subprocess.run(("git",) + args, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
 if git("rev-parse", "-q", "--verify", "HEAD").returncode != 0:
     sys.exit(1)
 if git("rev-parse", "-q", "--verify", "MERGE_HEAD").returncode != 1:
@@ -1878,7 +955,7 @@ for meta, path in zip(fields[0::2], fields[1::2]):
             (status == b"M" and old in regular and new in regular)):
         sys.exit(1)
 print(len(fields) // 2)
-' "${GATE_SELFTEST_COMMIT_REPO:-.}" 2>/dev/null) || docs_only=""
+' 2>/dev/null) || docs_only=""
       case "$docs_only" in ""|0|*[!0-9]*) docs_only="" ;; esac
     fi
     if [ -n "$docs_only" ]; then
@@ -1896,9 +973,29 @@ print(len(fields) // 2)
       # 150 lines: about the 10000 characters a tool result shows whole; Claude Code cuts a Bash
       # result at 30000 characters (BASH_MAX_OUTPUT_LENGTH, code.claude.com/docs/en/settings).
       build_tail=150
-      ( if [ -n "$caller_lc_all_set" ]; then LC_ALL=$caller_lc_all; else unset LC_ALL; fi
-        exec sh -c "$build_test_cmd" ) > "$build_log" 2>&1
-      rc=$?
+      cache_key=""
+      [ -z "$cache_dir" ] || cache_key=$(build_cache_key) || cache_key=""
+      cache_found=${cache_key%% *} cache_key=${cache_key#* } cache_date=${cache_key#* } cache_key=${cache_key%% *}
+      if [ "$cache_found" = hit ]; then
+        cache_short=$(printf '%.12s' "$cache_key")
+        pass_note=" (build not run: cached PASS $cache_short from $cache_date)"
+        printf '%s\n' "NOTE [build]: not run: cached PASS $cache_short from $cache_date (same files, gate and build inputs)."
+        echo "             GATE_CACHE=off runs it anyway."
+        rc=0
+      else
+        ( if [ -n "$caller_lc_all_set" ]; then LC_ALL=$caller_lc_all; else unset LC_ALL; fi
+          exec sh -c "$build_test_cmd" ) > "$build_log" 2>&1
+        rc=$?
+        # Recorded only if the files are the same after the build as before it: an edit made
+        # while it ran would otherwise be recorded as built.
+        # Recorded only when the key computed again after the build equals the one before it.
+        cache_after=""
+        [ "$rc" -ne 0 ] || [ -z "$cache_key" ] || cache_after=$(build_cache_key) || cache_after=""
+        cache_after=${cache_after#* }
+        if [ -n "$cache_key" ] && [ "${cache_after%% *}" = "$cache_key" ]; then
+          cache_record=$cache_key
+        fi
+      fi
       if [ "$rc" -ne 0 ] && [ -n "${CI:-}" ]; then
         printf '%s\n' "FAIL [build]: the build/test command exited $rc. Its whole output follows (CI)."
         cat "$build_log"
@@ -1924,4 +1021,12 @@ if [ -e "$work/scan_failed" ]; then
   fail=1
 fi
 
-if [ "$fail" -eq 0 ]; then printf '%s\n' "CHECK: PASS${pass_note:-}"; else echo "CHECK: FAIL"; exit 1; fi
+if [ "$fail" -ne 0 ]; then echo "CHECK: FAIL"; exit 1; fi
+# The build cache (section 4) records a build only for a run that passed. A record that cannot be
+# written costs the next run its build, nothing else.
+if [ -n "$cache_record" ]; then
+  { mkdir -p "$cache_dir" &&
+    python3 -I -c 'import hashlib, sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "$0" \
+      > "$cache_dir/$cache_record"; } 2>/dev/null || :
+fi
+printf '%s\n' "CHECK: PASS${pass_note:-}"

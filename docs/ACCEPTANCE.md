@@ -930,7 +930,9 @@ no BSD, no Windows.
 ```sh
 tmp=$(mktemp -d) && ./bootstrap.sh "$tmp" && cd "$tmp" && git init -q && git add -A
 ./scripts/check.sh                # expect FAIL: markers remain, no build command
-# fill the placeholders and write the two boundary files, then:
-./scripts/check.sh                # expect PASS
-./scripts/check.sh --self-test    # expect every case observed going red
+# fill the placeholders, write the boundary checks and their fixture test, then:
+./scripts/check.sh                # expect PASS; the fixture test runs in the build command
 ```
+
+The record above describes the gate of its day: `check.sh --self-test` was removed in v0.12
+(`docs/gates-must-be-proven-red.md`, "Why per check, not the whole gate").

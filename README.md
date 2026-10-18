@@ -5,7 +5,7 @@ script enforces, one memory file that every tool and session reads, a review gat
 second model runs, and a way to spawn, watch and close worker sessions without losing
 work. Every project of mine is built on it, and what a project learns can flow back.
 
-**v0.11.** The kit's own check (`./scripts/check.sh --self-test`) runs on Ubuntu, macOS and
+**v0.11.** The kit's own check (`./scripts/check.sh`) runs on Ubuntu, macOS and
 native Windows with Python 3.11 and 3.14 in CI, and every gate in it has a negative test that
 was watched going red. Each version was reviewed by two models that did not write it, and the
 raw reports are kept in [docs/reviews](docs/reviews/). [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md)
@@ -74,10 +74,10 @@ That adds the `$myagentkit-review` and `$myagentkit-delegate` skills
 | `docs/WORKFLOW.md` | How a task runs: the cheapest proof, when a worker is worth its cost, review rounds, the lead's steps, the worker lifecycle. |
 | `docs/REVIEW_GATE.md`, `docs/REVIEW_RUNNING.md` | What a review must attack first and how a verdict is reached; how a review is run. |
 | `docs/HANDOFF.md` | One self-contained brief for another tool, model or session, and the result file it writes back. |
-| `scripts/check.sh` | The gate. CI runs the same script. `--self-test` proves every gate goes red. A documentation-only commit skips the build. |
+| `scripts/check.sh` | The gate. CI runs the same script. Each check has a fixture test that proves it goes red. A documentation-only commit skips the build. |
 | `scripts/review.sh` | The cross-model review: a second model in a throwaway copy, with archived evidence. |
 | `scripts/doctor.sh` | A machine check at session start: what is missing, and the fix for each. |
-| `scripts/boundary_checks.sh` | The import and dependency boundaries, each with a self-test. |
+| `scripts/boundary_checks.sh` | The import and dependency boundaries, each with a fixture test. |
 | `.githooks/` | `pre-commit`, `commit-msg`, `pre-merge-commit`, `post-merge`: the gate, the trailer grammar, the full gate before a merge, the worktree clean-up after one. |
 
 The `claude-code` overlay adds `scripts/spawn_worker.sh`, `spawn_codex.sh`, `codex_worker.py`, `show_workers.sh`,

@@ -63,6 +63,20 @@ class ReviewUpgradeTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertIn('REVIEW SELF-TEST: PASS', result.stdout)
 
+    def test_review_self_test_needs_its_completion_line(self):
+        # A suite that exits 0 without its PASS line ran nothing provable: an empty run fails.
+        for body, code in (('print("ran nothing")\n', 2), ('print("REVIEW SELF-TEST: PASS")\n', 0)):
+            with self.subTest(code=code), tempfile.TemporaryDirectory() as tmp:
+                scripts = Path(tmp) / 'scripts'
+                scripts.mkdir()
+                shutil.copyfile(ROOT / 'core/scripts/review.sh', scripts / 'review.sh')
+                (scripts / 'test_claude_bridge.py').write_text(body)
+                result = subprocess.run(['sh', str(scripts / 'review.sh'), '--self-test'],
+                                        capture_output=True, text=True, timeout=60)
+                self.assertEqual(result.returncode, code, result.stdout + result.stderr)
+                if code:
+                    self.assertIn('FAIL [review]: review self-tests produced no completion evidence', result.stdout)
+
     def test_contract_suite_survives_project_owned_defaults(self):
         # Reproduce an installed project's Codex default and named pins. The shared
         # fixture must isolate empty-pin/template cases without rewriting this wrapper.

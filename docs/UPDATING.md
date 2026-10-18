@@ -63,8 +63,9 @@ exactly the habit the review gate exists to prevent.
    migrations ("Two tiers of ownership" above: a silent merge of process rules is worse
    than none).
 
-Then run `./scripts/check.sh` and `./scripts/check.sh --self-test`. A sync that leaves the
-gate red, or leaves a gate that can no longer fail, is not finished.
+Then run `./scripts/check.sh`. The project's own fixture tests for its boundary checks run
+inside it, in the build command (WORKFLOW, "Writing a gate"). A sync that leaves the gate red,
+or leaves a check without its fixture test, is not finished.
 
 Overlay files are installed once and then belong to the project: the sync updates one only
 if it is kit-owned and the project already has it. The kit-owned ones are the Claude Code
@@ -95,7 +96,7 @@ write the same files directly.
 
 ### The gate, `review.sh` and the upgrade checklists
 
-The gate (`scripts/check.sh`, its lock and `--self-test`), `scripts/review.sh` and the
+The gate (`scripts/check.sh` and its lock), `scripts/review.sh` and the
 checklists in `CHANGELOG.md` share one threat model. A project has one owner, who works with
 agents. The threat model was written in v0.10 after six review rounds in which each fix
 exposed an "adjacent path"; a finding outside it is answered with this section, not a fix

@@ -35,16 +35,31 @@ land.
 
 1. **Build the failure condition. Watch the gate reject it. Undo it.** Before you call the
    gate done, once, by hand.
-2. **Ship an automated negative test.** A manual proof is true on the day it is performed
-   and rots at the next edit. `./scripts/check.sh --self-test` constructs each failure and
-   asserts the rejection.
+2. **Ship an automated negative test: one fixture test per check.** A manual proof is true
+   on the day it is performed and rots at the next edit. The test feeds the one check a small
+   input in a throwaway folder: a bad input must turn it red with its own `FAIL [tag]` line, a
+   good one must leave it green. It runs in the normal test suite, in seconds, and never runs
+   the project build. `scripts/boundary_checks.sh` ships an example; the kit tests its own
+   gate checks the same way (`tests/test_gate_checks.py`).
 3. **Test both directions** where false positives are possible. A gate that always fails is
    as useless as one that never does — worse, actually, because it gets deleted by the first
    person it blocks unfairly, taking the real protection with it.
 4. **Fail on absent evidence.** No results file, an empty diff, a tool that did not run:
    FAIL. An exit code is not evidence that work happened.
-5. **Re-prove on a schedule.** The periodic audit runs the self-test. Gates rot like
-   anything else.
+5. **Re-prove on a schedule.** The periodic audit checks that every check still has its
+   fixture test, and that no check guards a path that does not exist. Gates rot like anything
+   else.
+
+## Why per check, not the whole gate
+
+Rule checkers prove their rules this way: Semgrep keeps `ruleid:` and `ok:` cases beside each
+rule, ESLint's RuleTester asks every rule for valid and invalid cases, and Conftest verifies a
+policy with a bad and a good input. Each tests one check against a small fixture, in process, in
+milliseconds to seconds (`docs/research/kit-self-checks.md`, finding 1). The kit once shipped a
+whole-gate self-test, `check.sh --self-test`, that injected each failure into a copy of the
+project and ran the whole gate, build included, once per case; no source shows that practice in
+the field (same report, finding 2), and in one project it took up to about three hours (issue #80). It was removed
+in v0.12.
 
 ## The observation worth keeping
 

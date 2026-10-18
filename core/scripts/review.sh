@@ -50,10 +50,7 @@
 #   - OUT OF SCOPE: a process that changes the tree, the index or the Git configuration
 #     between two of this script's reads to hide a change (a filter attribute removed and
 #     restored), and hostile files planted by anyone but the owner: either could edit this
-#     script instead. An ordinary edit during a review fails it as stale_checkout. A
-#     self-test may run beside a review in the same worktree only when every one of its cases
-#     writes nothing but files Git ignores (owner decision, 2026-10-12): its final status check
-#     cannot catch a non-ignored file that a case writes and removes meanwhile.
+#     script instead. An ordinary edit during a review fails it as stale_checkout.
 #
 # The sandbox is pinned HERE and in the adapters, not assumed of the CLI: the scope forms
 # above, --reviewer, --fallback, --backend and --allow-secret-file are the ONLY accepted arguments, and a backend

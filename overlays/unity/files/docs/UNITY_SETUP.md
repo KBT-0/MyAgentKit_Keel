@@ -101,17 +101,13 @@ if [ -n "$hits" ]; then
 fi
 ```
 
-And its negative test, in `scripts/boundary_selftests.sh` — not optional:
+And its fixture test — not optional. Add these two cases to the boundary fixture test that
+`scripts/boundary_checks.sh` shows: its `expect` helper writes the one file into a throwaway
+folder and sources the checks there, so nothing touches the checkout and nothing runs the build.
 
 ```sh
-mkdir -p unity/Assets/Client && printf 'using {{NET_LIB}};\n' > unity/Assets/Client/.selftest.cs
-if sh "$0" >/dev/null 2>&1; then
-  echo "  FAIL — {{NET_LIB}} confinement gate stayed green with a violation present."
-  st_fail=1
-else
-  echo "  ok   — {{NET_LIB}} confinement gate rejects an import outside the adapter"
-fi
-rm -f unity/Assets/Client/.selftest.cs
+expect red 'FAIL [boundary]: {{NET_LIB}} outside the adapter assembly:' unity/Assets/Client/Injected.cs 'using {{NET_LIB}};'
+expect green - unity/Assets/Net/Adapter/Client.cs 'using {{NET_LIB}};'
 ```
 
 ## 3. Consuming the pure core from Unity
@@ -255,8 +251,8 @@ restate it.
 
 - The assemblies above exist with the reference whitelist applied.
 - The core is referenced from `{{ASM_PREFIX}}.Shared` and compiles inside Unity.
-- `./scripts/check.sh` passes, and `./scripts/check.sh --self-test` shows the
-  {{NET_LIB}}-confinement gate going red.
+- `./scripts/check.sh` passes, and the boundary fixture test shows the
+  {{NET_LIB}}-confinement check going red.
 - `./scripts/unity_gate.sh` runs and reports a nonzero executed-test count.
 
 ## Sources

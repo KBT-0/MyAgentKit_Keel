@@ -86,10 +86,10 @@ REVIEW_PROMPT = (
     "and use Accept with Manual Checks. For a plain Accept, write None. under '## Manual checks' "
     "and nothing after it. "
     + VERIFICATION_RULE
-    # Owner decision 2026-10-16: reviewers that ran the 30-minute self-test took 40-60 minutes;
+    # Owner decision 2026-10-16: reviewers that ran the 30-minute full suite took 40-60 minutes;
     # one final gate is enough (docs/research/ai-review-workflows.md 1.7 [22]) and sector
     # reviews take minutes (1.4 [7]).
-    + "Do not run the project's full suite (scripts/check.sh --self-test, check_kit or a whole "
+    + "Do not run the project's full suite (scripts/check.sh, check_kit or a whole "
     "test run); run only the narrow test that proves or disproves a finding. The lead's gate "
     "runs the full suite.\n")
 # One reading list for both reviewers (KARARLAR B01 inv2#112/#120); docs/PROJECT.md and

@@ -31,15 +31,12 @@ class DoneAuditTests(unittest.TestCase):
                               check=True, capture_output=True)
 
     def test_history_gate_notes_audits_but_rejects_live_mentions_of_closed_tasks(self):
-        # Execute only the production Done: block, not the full gate or its self-test.
+        # Execute only the production Done: block, not the full gate.
         source = (ROOT / 'core/scripts/check.sh').read_text(encoding='utf-8')
         block = source.split('# Finished work.', 1)[1].split('# A [LESSON]', 1)[0]
         work = self.repo / 'scratch'
         work.mkdir()
-        script = ('work=%s\nGATE_SELFTEST_STATE_FILE=%s\nGATE_SELFTEST_HISTORY=%s\n'
-                  'fail=0\nfixture_env() { :; }\n# Finished work.%s\nexit "$fail"\n') % (
-                      shlex.quote(work.as_posix()), shlex.quote(self.state.as_posix()),
-                      shlex.quote(self.repo.as_posix()), block)
+        script = 'work=%s\nfail=0\n# Finished work.%s\nexit "$fail"\n' % (shlex.quote(work.as_posix()), block)
         targets = ((self.audit, 'NOTE'), (self.state, 'FAIL'),
                    (self.state.with_name('BACKLOG.md'), 'FAIL'),
                    (self.state.with_name('STRONG_REVIEW.md'), 'FAIL'),
@@ -58,7 +55,7 @@ class DoneAuditTests(unittest.TestCase):
                     self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
                     if mentions_closed:
                         self.assertIn('%s [state]: %s:1 names K4, which commit ' %
-                                      (level, target.as_posix()), result.stdout)
+                                      (level, target.relative_to(self.repo).as_posix()), result.stdout)
                         self.assertIn('closed (Done: K4)', result.stdout)
                     else:
                         self.assertNotIn('names K4', result.stdout)

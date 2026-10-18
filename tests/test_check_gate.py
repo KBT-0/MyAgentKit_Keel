@@ -37,7 +37,7 @@ def make_project(path):
 def gate(cwd, build, timeout=60, args=(), pass_fds=(), **extra):
     """Run the gate in its own session; on timeout kill the whole session and return None."""
     env = {k: v for k, v in os.environ.items()
-           if not k.startswith(('GATE_', 'BOUNDARY_')) and k != 'CDPATH'}
+           if not k.startswith(('GATE_', 'BOUNDARY_')) and k not in ('CDPATH', 'CI')}  # CI turns the cache off
     env.update(GATE_TEST_BUILD=str(build), **extra)
     proc = subprocess.Popen(['sh', 'scripts/check.sh', *args], cwd=cwd, env=env, text=True,
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -61,23 +61,6 @@ class CheckGateTests(unittest.TestCase):
         self.build.write_text('true\n')
         code, out = gate(self.project, self.build)
         self.assertEqual(code, 0, out)
-
-    def test_linked_self_test_markers_never_change_owner_data(self):
-        self.build.write_text('false\n')
-        owner, marker = self.tmp / 'owner.txt', self.project / '.git/check-selftest'
-        owner.write_bytes(b'owner data\n')
-        for link in (os.link, os.symlink):
-            with self.subTest(link=link.__name__):
-                link(owner, marker)
-                try:
-                    code, out = gate(self.project, self.build, args=('--self-test',))
-                    self.assertEqual(owner.read_bytes(), b'owner data\n', out)
-                    self.assertEqual(code, 1, out)
-                    self.assertIn('FAIL [self-test]:', out)
-                    self.assertEqual(list(marker.parent.glob('check-selftest-*')), [], 'temporary left')
-                finally:
-                    if os.path.lexists(marker):
-                        marker.unlink()
 
     def test_a_symlink_is_never_followed(self):
         # Git tracks a symlink's link text, never its target. A link to an existing file
@@ -145,15 +128,6 @@ class CheckGateTests(unittest.TestCase):
                 self.assertIn('NOTE [scan]: skipped ' + name, out)
                 self.assertNotIn('a scanner failed to run', out)
 
-    def test_a_marker_that_does_not_name_the_live_holder_is_refused(self):
-        # A process the gate's build starts inherits the lock's descriptor, so the descriptor
-        # proof alone accepts it; only the marker check (it must be the holder's pid in the
-        # lock file) keeps a stray GATE_SELFTEST_NESTED from turning on the seams there.
-        self.build.write_text('GATE_SELFTEST_NESTED=1 GATE_BUILD_CMD_OVERRIDE=true sh scripts/check.sh\n')
-        code, out = gate(self.project, self.build)
-        self.assertEqual(code, 1, out)
-        self.assertIn('FAIL [env]: GATE_BUILD_CMD_OVERRIDE is set', out)
-
     def test_a_symlinked_scripts_directory_runs_the_gate_in_the_project(self):
         # The gate re-executed itself by its physical path: with scripts/ a symlink into a
         # shared tree, it then checked and built that tree instead of the project.
@@ -212,20 +186,43 @@ class CheckGateTests(unittest.TestCase):
 
     def test_a_descriptor_open_on_another_file_is_not_the_lock(self):
         # GATE_LOCK_FD must be open on this checkout's lock file: a descriptor on any other
-        # file takes its own flock at once, and with the lock held by another gate and the
-        # marker copied, the seams then turned a red build green.
+        # file takes its own flock at once, so with the lock held by another gate two gates ran.
         lock = self.lock_path()
-        self.build.write_text('false\n')
         with open(lock, 'a') as held, open(self.tmp / 'another-file', 'w') as other:
             fcntl.flock(held, fcntl.LOCK_EX)
-            held.truncate(0)
-            held.write(str(os.getpid()))
-            held.flush()
             code, out = gate(self.project, self.build, pass_fds=(other.fileno(),),
-                             GATE_LOCK_HELD=str(lock), GATE_LOCK_FD=str(other.fileno()),
-                             GATE_SELFTEST_NESTED=str(os.getpid()), GATE_BUILD_CMD_OVERRIDE='true')
+                             GATE_LOCK_HELD=str(lock), GATE_LOCK_FD=str(other.fileno()))
         self.assertEqual(code, 1, out)
         self.assertIn("FAIL [env]: GATE_LOCK_HELD names this checkout's lock, but this run did not inherit", out)
+
+    def test_a_cygpath_on_a_posix_path_is_never_run(self):
+        # A cygpath that merely sits on a POSIX PATH turned the lock path into C:/..., which POSIX
+        # Python reads as relative: a nested run no longer knew its own lock. Only a host that
+        # names itself MSYS, MINGW or Cygwin converts it.
+        fake = self.tmp / 'fakebin'
+        fake.mkdir()
+        called = self.tmp / 'cygpath-called'
+        (fake / 'cygpath').write_text('#!/bin/sh\n: > "%s"\necho C:/not-the-lock\n' % called)
+        (fake / 'cygpath').chmod(0o755)
+        # A nested run (once: its own build sees NESTED) must find the lock it inherits.
+        self.build.write_text('[ -n "${NESTED:-}" ] || NESTED=1 sh scripts/check.sh\n')
+        code, out = gate(self.project, self.build, PATH=str(fake) + os.pathsep + os.environ['PATH'],
+                         GATE_LOCK_WAIT='5')
+        self.assertEqual(code, 0, out)
+        self.assertFalse(called.exists(), out)
+
+    def test_a_fcntl_py_on_pythonpath_is_never_imported_by_the_lock(self):
+        # A stand-in fcntl that always "locked" let two gates run at once; the lock programs
+        # run isolated (-I), so it is never imported. The stand-in marks that it was. The build
+        # runs the gate once nested, so the nested run's proof of the lock meets it too.
+        shadow = self.tmp / 'shadow'
+        shadow.mkdir()
+        (shadow / 'fcntl.py').write_text('open(__file__ + ".imported", "w").close()\n'
+                                         'raise ImportError("a stand-in fcntl")\n')
+        self.build.write_text('[ -n "${NESTED:-}" ] || NESTED=1 sh scripts/check.sh\n')
+        code, out = gate(self.project, self.build, PYTHONPATH=str(shadow), GATE_LOCK_WAIT='5')
+        self.assertEqual(code, 0, out)
+        self.assertFalse((shadow / 'fcntl.py.imported').exists(), out)
 
     def test_a_link_text_that_cannot_be_read_fails_the_gate(self):
         # A symlink whose link text readlink could not read was named, and the gate passed
@@ -240,77 +237,6 @@ class CheckGateTests(unittest.TestCase):
                          PATH=str(shim) + os.pathsep + os.environ['PATH'])
         self.assertEqual(code, 1, out)
         self.assertIn('FAIL [scan]: cannot read the link text of the symlink a-link.', out)
-
-    def selftest_ready(self):
-        """The fixture project with what --self-test needs: hooks, review stub, rule line."""
-        project = self.project
-        shutil.copytree(ROOT / 'core/.githooks', project / '.githooks')
-        (project / 'scripts/check.sh').chmod(0o755)
-        (project / 'scripts/review.sh').write_text("echo 'REVIEW SELF-TEST: PASS'\n")
-        (project / 'scripts/boundary_selftests.sh').write_text('# The fixture has no boundaries.\n')
-        (project / 'AGENTS.md').write_text('- **No AI attribution in git.**\n')
-        return project
-
-    def test_the_self_test_never_writes_the_callers_index(self):
-        # Inside a hook git exports GIT_INDEX_FILE. The self-test's throwaway repositories
-        # inherited it, and their `git add -A` replaced the caller's staged content.
-        project = self.selftest_ready()
-        (project / 'staged.md').write_text('staged\n')
-        subprocess.run(['git', 'add', 'staged.md'], cwd=project, check=True)
-        staged = lambda: subprocess.run(['git', 'diff', '--cached', '--name-only'], cwd=project,
-                                        capture_output=True, text=True, check=True).stdout
-        before = staged()
-        index = self.tmp / 'caller-index'
-        shutil.copyfile(project / '.git/index', index)
-        copy = index.read_bytes()
-        code, out = gate(project, self.build, timeout=300, args=('--self-test',), GIT_INDEX_FILE=str(index))
-        self.assertEqual(code, 0, out)
-        self.assertEqual(index.read_bytes(), copy, 'the self-test wrote the index GIT_INDEX_FILE names')
-        self.assertEqual(staged(), before)
-
-    def test_the_self_test_reads_its_own_history_under_an_exported_git_dir(self):
-        # An exported GIT_DIR sent the synthetic-history readers to the caller's repository,
-        # which has no `Done: K4`: the closed-task cases failed on a green project.
-        project = self.selftest_ready()
-        code, out = gate(project, self.build, timeout=300, args=('--self-test',),
-                         GIT_DIR=str(project / '.git'))
-        self.assertEqual(code, 0, out)
-
-    def test_the_off_switch_passes_its_own_self_test(self):
-        # docs_only_skip_build=0 runs the build on a documentation-only commit; the self-test
-        # demanded the skipped build anyway, so a correctly configured project could not pass.
-        project = self.selftest_ready()
-        script = project / 'scripts/check.sh'
-        script.write_text(script.read_text().replace('\ndocs_only_skip_build=1\n', '\ndocs_only_skip_build=0\n'))
-        code, out = gate(project, self.build, timeout=300, args=('--self-test',))
-        self.assertEqual(code, 0, out)
-        self.assertIn('ok   — docs_only_skip_build=0: a commit of two documents runs the build', out)
-
-    def test_the_self_tests_hook_and_build_log_cases_go_red(self):
-        # The self-test's own cases for a missing hook, a hook that passes a red gate, a
-        # commit-msg hook that passes an AI trailer and a build log that is not kept could
-        # each be deleted, and every kit test stayed green. Here each meets its failure.
-        project = self.selftest_ready()
-        code, out = gate(project, self.build, timeout=300, args=('--self-test',))
-        self.assertEqual(code, 0, out)
-        self.assertIn('SELF-TEST: PASS', out)
-        (project / '.githooks/pre-merge-commit').unlink()
-        (project / '.githooks/pre-commit').write_text('exit 0\n')
-        (project / '.githooks/commit-msg').write_text('exit 0\n')
-        text = (project / 'scripts/check.sh').read_text()
-        kept = '*) build_log="${lock_path%.lock}-build.log" ;;'
-        self.assertIn(kept, text)
-        (project / 'scripts/check.sh').write_text(text.replace(kept, '*) build_log=$(mktemp) ;;'))
-        code, out = gate(project, self.build, timeout=300, args=('--self-test',))
-        self.assertEqual(code, 1, out)
-        for line in ('FAIL — .githooks/pre-merge-commit is missing',
-                     'FAIL — .githooks/pre-commit exited 0 while the gate was RED',
-                     'FAIL — commit-msg hook accepted an AI co-author trailer',
-                     'FAIL — commit-msg hook accepted Done: K4 while the staged STATE.md names K4 (rule line present)',
-                     'FAIL — commit-msg hook accepted Done: K4 while the staged STATE.md names K4 (rule line absent)',
-                     'FAIL — a build failure was not named, lost its diagnostic chain, left no full log'):
-            self.assertIn(line, out)
-        self.assertIn('SELF-TEST: FAIL', out)
 
     def test_a_task_a_done_trailer_closed_fails_the_state_check_by_name(self):
         # setUp already ran the gate green with no commit at all.
@@ -478,7 +404,7 @@ class CheckGateTests(unittest.TestCase):
                 self.assertTrue(built, out)
                 self.assertEqual(code, 1, out)
                 self.assertNotIn('build not run', out)
-        # A manual run, the Stop hook and the self-test never ask for the path.
+        # A manual run and the Stop hook never ask for the path.
         (self.project / 'notes.md').write_text('notes\n')
         git('add', 'notes.md')
         code, out, built = self.gate_built(args=())

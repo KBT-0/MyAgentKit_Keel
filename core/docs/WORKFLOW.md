@@ -223,40 +223,32 @@ disposable, and neither one is ever tracked inside the other.
 Gates get their own rules because they fail differently from ordinary code: when a gate
 breaks, everything keeps looking green.
 
-- **Prove it RED, and keep it red with a negative test.** Construct the failure condition,
-  watch the gate reject it, undo it, and add the case to `./scripts/check.sh --self-test` in
-  the same task (the kit's `docs/gates-must-be-proven-red.md`). It is TDD's red step at the
-  size of a gate; seeded failures measurably improved the tests developers wrote (Petrović et
-  al., ICSE 2021, arxiv.org/abs/2103.07189), and a check that cannot fail does not fail
-  securely (OWASP, "Fail securely").
-- **A self-test case never changes a tracked file**, and leaves nothing in the working tree
-  but files Git ignores: the self-test fails when HEAD, the index, `git status --porcelain
-  --untracked-files=all` or content hashes of tracked and untracked non-ignored files differ
-  at its end. This proves only that the tree ends unchanged, not that it never changed meanwhile:
-  a self-test may run beside a review in the same worktree only when every case writes nothing
-  but files Git ignores (owner decision, 2026-10-12), because a non-ignored file that a case
-  writes and removes can fail the review as `stale_checkout`. Point the gate at a synthetic
-  file outside the tree through an overridable path, or run against a disposable copy. Several sessions share one
-  checkout, and a file injected into it is seen by their `git add -A`, their edits and their
-  commits. `check.sh` holds a per-checkout lock for a whole run (the self-test included), so
-  a second gate run waits instead of racing; tests that write scratch files still use a
-  unique temporary directory, never a fixed name in the build or working directory.
-- **Run a probe that edits or creates a file in a disposable copy of the checkout**, never
-  in the checkout. Restoring the file from EXIT/INT/TERM traps was not enough: until the
-  restore, a concurrent `git add -A` staged the injection, and SIGKILL or a power loss,
-  which run no trap, left it in the tree. The existing-file example in
-  `scripts/boundary_selftests.sh` copies the tree (uncommitted edits included), runs the
-  copy's gate, deletes the copy on exit and on INT/TERM, and ends the test on a signal; its
-  traps live in a subshell so they do not replace the surrounding self-test's. The injected
-  run gets a fresh copy of its own, so nothing the baseline run wrote exists in it; the cost
-  is two copies of the tree instead of one. It supports a PLAIN repository only: a checkout
-  whose `.git` is a file or a symlink (a linked worktree, a submodule, a separate git
-  directory), a nested repository, or a symlink anywhere in a copy that leads out of it is
-  refused by name and reported NOT RUN before the gate runs. Each copy must lie outside the
-  checkout (it refuses a TMPDIR inside it); git and the gate run with only the environment
-  variables the example names, the copy's own empty HOME and TMPDIR, no system or global git
-  configuration, and an allowlist of the repository's own settings. Prove it by interrupting the injected test, SIGKILL included: the checkout's bytes
-  and `git status` stay as they were.
+- **Prove it RED, and keep it red with a fixture test.** Construct the failure condition,
+  watch the check reject it, undo it, and add a fixture test for the check to the project's
+  test suite in the same task (the kit's `docs/gates-must-be-proven-red.md`). It is TDD's red
+  step at the size of a gate; seeded failures measurably improved the tests developers wrote
+  (Petrović et al., ICSE 2021, arxiv.org/abs/2103.07189), and a check that cannot fail does
+  not fail securely (OWASP, "Fail securely").
+- **One fixture test per check, never a run of the whole gate.** The test feeds the check a
+  small input in a throwaway folder: an input that breaks the rule must turn it red with its
+  own `FAIL [tag]` line, and a clean one must leave it green, as rule checkers test their rules
+  (Semgrep's `ruleid:`/`ok:` cases, ESLint's RuleTester valid/invalid cases). It runs in the
+  normal suite in milliseconds to seconds, never writes into the checkout and never runs the
+  project build (the kit's `docs/research/kit-self-checks.md`, findings 1 and 2).
+  `scripts/boundary_checks.sh` shows the test for its example check; the build command runs
+  it. The kit tests the shipped `scripts/check.sh` checks the same way.
+- **The build cache is opt-in: declare what the build reads outside the tree.** Set
+  `build_cache_inputs` in `scripts/check.sh` to a command printing those inputs; its key also
+  covers every file `git ls-files --cached --others --exclude-standard` names, read from disk,
+  and the gate script itself. Starters: `cmake --version`, the MSVC banner (`cl 2>&1 | head -n 1`),
+  `ninja --version`, `python --version` and a hash of `python -m pip freeze`, `blender --version`,
+  `git lfs ls-files -l`. Unity: `ProjectSettings/ProjectVersion.txt` and
+  `Packages/packages-lock.json` are tracked, so already in the key; `Library/` stays out. A
+  cached run prints `NOTE [build]: not run: cached PASS <key> from <date>` and says so in its
+  PASS line: report it as a cached build, never as a build you ran.
+- **One gate run per checkout at a time.** `check.sh` holds a per-checkout lock for a whole
+  run, so a second gate run waits instead of racing; tests that write scratch files still use
+  a unique temporary directory, never a fixed name in the build or working directory.
 - **A test or an experiment never executes a file whose name ends in `.exe`.** Under WSL a
   Windows executable is handed to Windows, which may show {{OWNER_NAME}} a GUI error dialog;
   whether WSL matches the name or the file's first bytes is not verified yet
@@ -280,14 +272,14 @@ breaks, everything keeps looking green.
 ## A red gate that passes on re-run
 
 A FAIL that does not reproduce is not a PASS to forget. A timing-dependent test, a gate that
-overlapped another gate or a self-test, or a real race all look the same afterwards: the next
+overlapped another gate, or a real race all look the same afterwards: the next
 run is green, and the failing test, its error line and the load it ran under are gone, so a
 real race is never seen again until it bites in CI or production.
 
 - **Record it before you commit on the green run**, in `docs/STATE.md` or the operation's
   own file (a branch session writes its worktree note instead) as a `[GOTCHA]` line: the
   failing test and its error line, the retry count, what else was running (another gate, a
-  self-test, a review) and the suspected cause.
+  review) and the suspected cause.
 - **Re-run once only to learn whether the failure is repeatable in the same state;** a pass
   does not show it was chance (Gruber et al., "An Empirical Study of Flaky Tests in Python",
   arxiv.org/abs/2101.09077). A second red is a real failure. Never re-run until it turns
@@ -336,8 +328,8 @@ which NO code is written:
 - Duplicate and dead code hunt.
 - READMEs versus actual public APIs.
 - Module size and complexity report.
-- **Gate audit:** run `./scripts/check.sh --self-test`. Does every gate still go red, and
-  does every check have a case? Then ask the question the self-test cannot: **does any gate
+- **Gate audit:** run the fixture tests. Does every check still go red, and does every check
+  have a test? Then ask the question the fixture tests cannot: **does any gate
   guard a path that does not exist?** A scan over a missing directory finds nothing and
   looks exactly like a clean result, so such a gate reports PASS forever while protecting
   nothing — and its silence is identical before and after the module it guards arrives.
@@ -913,13 +905,13 @@ Rules, binding for whoever routes workers:
    overrides the definition's effort, so the lead checks it is unset before relying on the
    field (code.claude.com/docs/en/sub-agents; code.claude.com/docs/en/model-config).
 6. **Parallel workers only for independent modules**; each one multiplies the bill. The lead
-   runs heavy background jobs (a gate, a self-test, a review, a build, a `codex exec`
+   runs heavy background jobs (a gate, a review, a build, a `codex exec`
    errand) within a memory budget: two at a time until the lead has measured its host, then
    (free memory minus a 4 GB reserve) divided by the measured peak of one job; heavy jobs
    already running take slots. Paid reviews run one after the other (rule 1); the two
    reviewers of a high-tier round run together only when {{OWNER_NAME}} allows it for that
-   round and two slots are free. The self-test starts beside a review when the budget has a
-   slot for it, otherwise when the review ends. Never reduce a tier's reviews: a high-tier
+   round and two slots are free. The acceptance gate run starts beside a review when the budget
+   has a slot for it, otherwise when the review ends. Never reduce a tier's reviews: a high-tier
    round's floor is its two reviewers, a low or medium round's its one (`docs/REVIEW_GATE.md`,
    "Risk tiers"). When not even one job fits, the lead first frees memory it owns (waits for or
    closes its own finished jobs, never ending running work without a reason); if one still does
@@ -1273,12 +1265,12 @@ reviews are never reduced (`docs/REVIEW_GATE.md`, "Risk tiers"); prevention
 is what lets its first round find nothing. A project or a kit that spends its budget
 reviewing itself fails at its purpose, which is the product.
 
-"In parallel" means the review inside the worker and the self-test beside a review; the gate's
+"In parallel" means the review inside the worker and the acceptance gate run beside a review; the gate's
 reviewers run one after the other unless {{OWNER_NAME}} allows parallel ("Worker cost", rule 6).
 
 In one project a feature took five fix rounds in about seven hours. Each round cost a fresh
-worker re-reading 100k to 300k tokens (20 to 60 minutes), a ten-minute self-test, reviews of
-5 to 15 minutes and a merge with another self-test. Most findings of rounds 2 to 5 sat in code
+worker re-reading 100k to 300k tokens (20 to 60 minutes), a ten-minute gate run, reviews of
+5 to 15 minutes and a merge with another gate run. Most findings of rounds 2 to 5 sat in code
 the previous fix had added, in classes the reviewers had already shown once. A fix is new,
 unreviewed code: 15 to 24 percent of fixes in large systems were themselves wrong (Yin et al.
 2011). The rules below
@@ -1352,11 +1344,12 @@ The shell stays in the lead's checkout, so its Stop hook runs that checkout's ga
    its gate (the commit runs `./scripts/check.sh`). A merge-conflict resolution is a part
    authored by whoever resolved it, so the final review covers it. A member branch rejected
    or abandoned after the merge leaves by rebuilding the integration branch without it.
-2. Start the self-test and the reviews on the same commit, following "Worker cost", rule 6.
-   A self-test may share the reviews' worktree only when every one of its cases writes
-   nothing but files Git ignores (owner decision, 2026-10-12); otherwise it runs in its own
-   worktree of that commit, or after the reviews (`docs/REVIEW_RUNNING.md`, "Rounds, labels and designs").
-   The self-test runs once per batch, never between worker rounds while
+2. Start the acceptance gate run (`./scripts/check.sh`) and the reviews on the same commit,
+   following "Worker cost", rule 6. The gate runs the project's build, so it may share the
+   reviews' worktree only when that run writes nothing but files Git ignores (owner decision,
+   2026-10-12); otherwise it runs in its own worktree of that commit, or after the reviews
+   (`docs/REVIEW_RUNNING.md`, "Rounds, labels and designs").
+   The acceptance run is once per batch, never between worker rounds while
    workers wait for it, because each run locks the checkout and every waiting worker pays
    for the wait. CI runs on the same commit.
 3. Keep one review label per change for its rounds (a high-tier change's two focus reviewers
@@ -1369,11 +1362,11 @@ The shell stays in the lead's checkout, so its Stop hook runs that checkout's ga
    one re-read at medium effort, not a new loop.
 5. A release gets one day of real use before the push; the lead records what it ran and
    what it saw in `docs/STATE.md`, and pushes on {{OWNER_NAME}}'s OK.
-6. Start the next worker while the self-test after a merge still runs. If that self-test
+6. Start the next worker while the gate run after a merge still runs. If that run
    fails, tell the next worker to rebase onto the fix.
 
 Each step that waits on another adds its whole duration to the round. In the review round no
-step needs another step's result before it starts, so the self-test starts beside a review
+step needs another step's result before it starts, so the acceptance gate run starts beside a review
 when memory permits; a step that does need a result waits for it, and paid reviews run one
 after the other ("Worker cost", rule 6). A merge-conflict resolution is reviewed because it is
 authored code (Fowler, "Semantic Conflict").

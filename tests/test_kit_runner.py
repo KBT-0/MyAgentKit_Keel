@@ -36,7 +36,7 @@ check_kit = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(check_kit)
 check_kit.ROOT = Path(%r)
 check_kit.REQUIRED_SUITES = {'suite': {'test_kit_probe': %d}}
-sys.exit(check_kit.unit('suite', False, *sys.argv[2:3]))
+sys.exit(check_kit.unit('suite', *sys.argv[2:3]))
 '''
 
 
@@ -523,7 +523,7 @@ runpy.run_path(%r, run_name='__main__')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("gate ran ['--timing']", result.stdout)
 
-    def test_an_inherited_work_variable_never_chooses_the_self_test_scratch_folder(self):
+    def test_an_inherited_work_variable_never_chooses_the_scratch_folder(self):
         # An exported `work` once named the folder the wrapper's git_view wrote and deleted
         # git-paths* in, even when the check then refused its arguments (round-3 Codex Critical).
         project, decoy = self.tmp / 'kit', self.tmp / 'decoy'
@@ -535,7 +535,7 @@ runpy.run_path(%r, run_name='__main__')
         names = ('git-paths', 'git-paths.hashes', 'git-paths.errors')
         for name in names:
             (decoy / name).write_text('owner data\n')
-        result = subprocess.run(['sh', str(project / 'scripts/check.sh'), '--self-test', '--bogus'],
+        result = subprocess.run(['sh', str(project / 'scripts/check.sh'), '--bogus'],
                                 cwd=project, capture_output=True, text=True,
                                 env=dict(os.environ, work=decoy.as_posix()))
         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -605,7 +605,7 @@ def main():
     ROOT = Path(__file__).resolve().parents[1]
     REQUIRED_SUITES = {'suite': {'test_kit_probe': 1}}
     if '--unit' in sys.argv:
-        return unit('suite', False)
+        return unit('suite')
     Path('cache').write_text(_PYCACHE)
     atexit.register(Path('stopped').touch)
     command = [sys.executable, '-B', '-u', __file__, '--unit', 'suite']

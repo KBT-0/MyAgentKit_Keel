@@ -253,9 +253,8 @@ One topic per turn. Suggested order, because each answer informs the next:
    `.claude/settings.json` ships `"attribution": {"commit": "", "pr": ""}` so the tool does
    not add the trailer in the first place (code.claude.com/docs/en/settings-reference; the hook is the
    backstop). Yes: replace that rule with one saying AI tools may be credited; the hook keys
-   on the rule line, so without it the hook gives way, an `Assisted-by:` trailer included,
-   and `check.sh --self-test` reports its case as a `skip` naming the absent rule line
-   (`AGENTS.md has no 'No AI attribution in git' rule line`). If the project takes outside
+   on the rule line, so without it the hook gives way, an `Assisted-by:` trailer included.
+   If the project takes outside
    contributions, check its policy first: the Linux kernel and Fedora ask for an
    `Assisted-by:` trailer, not a co-author line (docs.kernel.org/process/coding-assistants.html;
    Fedora's AI-assisted contributions policy). If the Claude Code overlay is installed, also
@@ -417,8 +416,7 @@ then fails when a subfolder of one is not named in the `## Module map` of
 | Placeholder | What goes in |
 |---|---|
 | `{{BUILD_TEST_COMMAND}}` | One shell command that builds and tests. It runs on every commit — keep it fast: seconds, not minutes; put anything slower in CI (a client hook can be skipped, so CI is the last line anyway). No deploy step, dry runs included: an agent's permission layer may refuse to run the whole gate (it did once: the kit's `RESEARCH_LOG.md`, "Gates that did not gate"). No server left running: a compiler server or build daemon the command starts (MSBuild node reuse, VBCSCompiler, the Gradle daemon, sccache) holds the gate lock until it exits, and the commit hook waits for it; turn it off in the command (`docs/GOTCHAS.md`) |
-| `{{BOUNDARY_CHECKS}}` | **Replace the whole of `scripts/boundary_checks.sh`**: one grep per enforceable boundary, each setting `fail=1` |
-| `{{BOUNDARY_SELF_TESTS}}` | **Replace the whole of `scripts/boundary_selftests.sh`**: one negative test per check above. Not optional — see below |
+| `{{BOUNDARY_CHECKS}}` | **Replace the whole of `scripts/boundary_checks.sh`**: one grep per enforceable boundary, each setting `fail=1`, and a fixture test per check in the project's test suite. Not optional — see below |
 | `{{TOOLCHAIN}}` / `{{TOOLCHAIN_PATH_SETUP}}` / `{{TOOLCHAIN_SETUP_NOTES}}` / `{{TOOLCHAIN_SETUP_STEP}}` | What the gate needs on PATH, how to find it in a non-login shell, how CI installs it. `{{TOOLCHAIN_PATH_SETUP}}` is a directory to prepend, not a line of code |
 | `{{DEFAULT_BRANCH}}` | The branch CI runs on |
 | `{{STACK_IGNORE_RULES}}` | Stack-appropriate `.gitignore` rules. Remember: the re-include block stays LAST |
@@ -450,22 +448,24 @@ the choice in both `.claude/mode` and the "Working mode:" line of `docs/STATE.md
 
 ### Then, in this order
 
-1. **Write the boundary checks and their negative tests together.** They live in two files
-   that `scripts/check.sh` sources: `scripts/boundary_checks.sh` and
-   `scripts/boundary_selftests.sh`. Replace each file WHOLE — that is why they are separate
-   files rather than a marked region inside the gate script, and it is not a stylistic
-   preference: the first person to fill a marked region left the comment character on the
-   first line, and the entire check sat inert inside a comment while the gate reported PASS.
-   For every check you add, add the case that constructs the violation and asserts the gate
-   rejects it. A gate you have only seen pass has not been tested; it is an untested branch
-   that runs on every commit (a test never seen failing does not show what it checks; Google
-   checks the same at scale with mutants in code review: "Practical Mutation Testing at
-   Scale"). Both files ship with a worked example.
+1. **Write the boundary checks and their fixture tests together.** The checks live in
+   `scripts/boundary_checks.sh`, which `scripts/check.sh` sources. Replace the file WHOLE —
+   that is why it is a separate file rather than a marked region inside the gate script, and
+   it is not a stylistic preference: the first person to fill a marked region left the comment
+   character on the first line, and the entire check sat inert inside a comment while the gate
+   reported PASS. For every check you add, add a fixture test to the suite the build command
+   runs: an input that breaks the rule turns the check red with its own `FAIL` line, a clean
+   one leaves it green, and nothing touches the checkout or runs the build. A gate you have
+   only seen pass has not been tested; it is an untested branch that runs on every commit (a
+   test never seen failing does not show what it checks; Google checks the same at scale with
+   mutants in code review: "Practical Mutation Testing at Scale"). The file ships a worked
+   example of both.
 2. **Run `./scripts/check.sh`.** Show the owner the real output. If it fails, fix the cause.
-3. **Run `./scripts/check.sh --self-test`.** Show that output too. If a gate does not go red
-   when its failure is injected, it is protecting nothing — fix it before you continue.
-   Output shown, not a claim of success: code.claude.com/docs/en/best-practices, "Give
-   Claude a way to verify its work".
+3. **Watch each check go red once.** Break its rule by hand (add the forbidden import), run
+   `./scripts/check.sh`, show the owner the check's `FAIL` line, and undo it. If a check does
+   not go red, it is protecting nothing — fix it before you continue. Output shown, not a
+   claim of success: code.claude.com/docs/en/best-practices, "Give Claude a way to verify its
+   work".
 4. **Initialise `docs/STATE.md`**: what was set up, what is open, what the owner still has to
    do, with a tool+model trace. Full sentences. The first tasks after setup, and anything the
    owner parked, go to `docs/BACKLOG.md`.
@@ -511,7 +511,7 @@ A day later nobody remembers which instruction was confusing.
 Report, briefly and honestly:
 
 - What was decided, and what stayed OPEN.
-- The real output of `./scripts/check.sh` and of `./scripts/check.sh --self-test`.
+- The real output of `./scripts/check.sh`, and of each check going red in step 3.
 - Whether fresh review accepted the setup diff, or remains pending with a handoff.
 - Anything you could not verify, named as "not run".
 - What the owner still has to do by hand.

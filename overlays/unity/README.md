@@ -29,8 +29,8 @@ require editing a project-owned file. Ordinary work is unaffected by an overlay 
    keep the re-include block at the very END of the file, because git applies the LAST
    matching rule.
 2. **Add the boundary check.** The networking library confinement (only the adapter assembly
-   may import it) belongs in `scripts/boundary_checks.sh`, with its negative test in
-   `scripts/boundary_selftests.sh`. `docs/UNITY_SETUP.md` gives both, ready to paste.
+   may import it) belongs in `scripts/boundary_checks.sh`, with its fixture test beside the
+   file's example test. `docs/UNITY_SETUP.md` gives both, ready to paste.
 
 ## The MCP server it defaults to
 

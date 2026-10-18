@@ -318,5 +318,4 @@ $latest
 EOF
 echo
 printf '%s\n' "sync-kit: recorded v$latest."
-echo "sync-kit: now run ./scripts/check.sh, and ./scripts/check.sh --self-test."
-echo "          A sync that leaves the gate red or a gate unable to fail is not finished."
+echo "sync-kit: now run ./scripts/check.sh. A sync that leaves the gate red is not finished."

@@ -141,7 +141,7 @@ class PythonFallbackTests(unittest.TestCase):
         self.assertEqual([line for line in chosen if 'command -v' in line], [])
 
     def test_py_sh_passes_the_kit_shell_lint(self):
-        # `sh scripts/check.sh --self-test` refused py.sh's `echo` of an expansion (Codex review of f68a68d).
+        # The kit check refused py.sh's `echo` of an expansion (Codex review of f68a68d).
         probe = ('import sys; sys.path.insert(0, "scripts"); import check_kit, pathlib; '
                  'print(check_kit.shell_lint(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")))')
         result = subprocess.run([sys.executable, '-c', probe, str(OVERLAY / '.claude/hooks/py.sh')], cwd=ROOT,

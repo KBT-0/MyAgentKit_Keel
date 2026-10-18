@@ -27,11 +27,9 @@ cancel() {
 }
 trap 'cancel INT 130' INT
 trap 'cancel TERM 143' TERM
-# The self-test compares HEAD, index, status and file contents at its end, as the project gate
-# does. It cannot catch a non-ignored file that a case writes and removes meanwhile, which fails a
-# review in this worktree as stale_checkout (a project's own self-test may share the review's
-# worktree only when every case writes nothing but ignored files; owner decision, 2026-10-12).
-# Ignored files may change.
+# The kit check compares HEAD, index, status and file contents at its end: a test that writes
+# into this checkout fails a review running here as stale_checkout. It cannot catch a
+# non-ignored file that a test writes and removes meanwhile. Ignored files may change.
 # git_view <scratch folder>: the caller names the folder its scratch files go in. An exported
 # `work` once chose it, and the files of that name in an unrelated folder were overwritten and
 # deleted (round-3 review, 2026-10-15): no inherited variable decides a scratch path.
@@ -62,12 +60,10 @@ git_view() {
   rm -f "$paths" "$hashes" "$errors"
 }
 view=""
-case " $* " in
-  *" --self-test "*) if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-                       view="$passed/git-view"
-                       git_view "$passed" > "$view.before" 2>&1 || { cat "$view.before" >&2; exit 1; }
-                     fi ;;
-esac
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  view="$passed/git-view"
+  git_view "$passed" > "$view.before" 2>&1 || { cat "$view.before" >&2; exit 1; }
+fi
 status=0
 KIT_CHECK_PASSED="$passed/passed" "$py" -B scripts/check_kit.py "$@" &
 child=$!
@@ -77,7 +73,7 @@ if [ "$status" -eq 0 ] && [ ! -f "$passed/passed" ]; then
   status=1
 fi
 if [ -n "$view" ] && ! { git_view "$passed" > "$view.after" 2>&1 && cmp -s "$view.before" "$view.after"; }; then
-  echo "KIT CHECK: FAIL — the self-test changed this checkout, so a review running here meanwhile" >&2
+  echo "KIT CHECK: FAIL — the kit check changed this checkout, so a review running here meanwhile" >&2
   echo "  fails as stale_checkout, or another process edited the checkout meanwhile." >&2
   echo "  Lines before (-) and after (+): HEAD, index, status, content hashes by path:" >&2
   diff "$view.before" "$view.after" | sed -n 's/^< /    - /p; s/^> /    + /p' | head -40 >&2

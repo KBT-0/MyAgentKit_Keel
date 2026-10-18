@@ -45,7 +45,7 @@ def fixture_source(path):
 
 def send_cancel(sig):
     """Send this process a cancel. POSIX: to the process, as a terminal or `kill` does. Native
-    Windows: os.kill is TerminateProcess there (the self-test died with exit 15 and no output),
+    Windows: os.kill is TerminateProcess there (a test run died with exit 15 and no output),
     while raise_signal reaches the installed handler, as a console Ctrl-C does."""
     if WINDOWS:
         signal.raise_signal(sig)

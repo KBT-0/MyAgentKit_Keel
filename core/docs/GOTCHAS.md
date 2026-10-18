@@ -233,7 +233,7 @@ Windows `Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.C
 Linux `ps -eo pid,args | grep -F -- '<checkout>'`; macOS `ps -eww -o pid,args | grep -iF -- '<checkout>'` (APFS ignores case).
 The listing finds jobs whose arguments name the checkout (a `codex exec` with a brief path, a worker with its worktree). Ignore the listing's own rows: the `grep`, and the shell or PowerShell that runs the listing when an agent runs it through a tool (on Windows, the `powershell` process whose command line holds the query).
 The command-line listing is only a shortcut for the jobs it can see. The project's gate holds
-the lock at `git rev-parse --git-path check.lock` and publishes `check-selftest` beside it;
+the lock at `git rev-parse --git-path check.lock`;
 find the lock holder as described under "A build server the gate started keeps the gate lock" above.
 A review holds no checkout lock; read its chain record as follows.
 For reviews, read the highest-numbered `<chain>-N.json` in `.myagentkit/usage/chains/`; nothing in
@@ -259,11 +259,11 @@ directory is not visible through CIM: read `Get-Process -Id N | Select-Object Pa
 command line, and when the checkout cannot be confirmed treat the process as a survivor.
 If a reviewer survives, wait for it or ask the owner before starting any heavy job.
 Never start a heavy job beside a survivor, or edit or merge its worktree.
-The kit's own self-test (`scripts/check.sh` → `scripts/check_kit.py`) holds no checkout lock
-and publishes no checkout self-test marker. It is visible only in the process listing:
+The kit's own check (`scripts/check.sh` → `scripts/check_kit.py`) holds no checkout lock.
+It is visible only in the process listing:
 look for a `python` process whose arguments name `check_kit.py` under the checkout.
 If those arguments are relative, confirm the checkout through the process's working directory.
-After a cut-off, look for this self-test before resuming heavy work; wait for any survivor or ask the owner.
+After a cut-off, look for this check before resuming heavy work; wait for any survivor or ask the owner.
 A checkout path containing an apostrophe cannot go inside the single quotes as is; on Linux/macOS write it as `'\''` or put the path in a variable and match "$checkout";
 on Windows double the apostrophe inside the PowerShell single-quoted string.
 The Windows match ignores case because Windows paths do; search for every spelling the launching shell may have used: `C:/x`, `C:\x` and Git Bash's `/c/x` on Windows, the `pwd -P` form of a symlinked checkout on Linux and macOS, and `/private/var` for `/var` on macOS.
