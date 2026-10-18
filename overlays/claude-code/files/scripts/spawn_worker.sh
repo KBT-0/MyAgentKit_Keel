@@ -35,9 +35,9 @@
 # (claude_bridge.backends_dir(); the old .myagentkit/backends/ is read while projects move;
 # docs/DEV_SETUP.md, section 3).
 #
-# --result FILE names the result the brief asks for (relative: to the worker's folder), else
-# RESULT-NAME.md there. codex_worker.py supervises the session, as it does spawn_codex.sh's: a
-# result published with its header (Kind/Task/Attempt/Remaining) and end marker as Kind:
+# --result FILE names the worker's result, which the instruction names to it (relative: to the
+# worker's folder), else RESULT-NAME.md there. codex_worker.py supervises the session, as it
+# does spawn_codex.sh's: a result published with its header (Kind/Task/Attempt/Remaining) and end marker as Kind:
 # completed or Kind: handoff, or a decision published to QUESTION-NAME.md there, ends the session 10 s later,
 # once no commit (index.lock) or gate (check.sh's check.lock) runs in its checkout, and its tab
 # or tmux session ends with it (owner 2026-10-16: finished worker tabs stayed open for hours). A progress result or a free-form file ends nothing. The path is recorded in
@@ -50,12 +50,20 @@
 # `scripts/show_workers.sh NAME1 NAME2 ...`. A failure to show never fails the spawn: a kit
 # design principle (the view is a side effect, the worker is the job), not a sourced rule.
 #
-# Why a separate session and not a sub-agent: a sub-agent's prompt cache lives 5 minutes and
-# a separate session's lives an hour, so a worker that waits on a long job re-writes its
-# whole context after every wait as a sub-agent and does not as a session (docs/WORKFLOW.md,
-# "Worker cost"). The launch line below sets CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL=1h; the
-# lead's own sub-agents keep five minutes, since they rarely wait longer (#116). The
-# session adds visibility (`tmux attach -t NAME`) and survives the lead ending. It also sets
+# Why a separate session and not a sub-agent: a worker that waits on a long job re-writes its
+# whole context after a wait its prompt cache did not outlive (docs/WORKFLOW.md, "Worker
+# cost"). The worker's MAIN conversation follows `promptCacheTtl`, which the kit's
+# .claude/settings.json pins to "1h" (unset it is automatic: 1 hour on a subscription within its
+# usage limits, 5 minutes on an API key, Bedrock, Vertex or Foundry; CLAUDE_CODE_PROMPT_CACHE_TTL
+# overrides it; Claude Code 2.1.302's settings schema). CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL=1h
+# on the launch line below covers only the worker's own sub-agents, workflows and helper
+# requests; the lead's own sub-agents keep five minutes, since they rarely wait longer (#116).
+# A --backend endpoint may not cache at all (#190). The start costs either way: a new session
+# pays its whole first request as a cache write (about 47k to 52k tokens on five kit worker
+# transcripts, mostly Claude Code's own system prompt and tools), and a sub-agent pays its own
+# system prompt too, so the session's advantage is the waits, not the start (#192). A spawned
+# worker skips the lead's start-up checks (doctor.sh) unless its brief asks: the lead ran them.
+# The session adds visibility (`tmux attach -t NAME`) and survives the lead ending. It also sets
 # MYAGENTKIT_ROLE=worker: the worker's report is for the lead, so the plain-words Stop hook
 # (plain_report.py) steps aside (docs/COMMUNICATION.md, "Workers").
 #
@@ -75,11 +83,12 @@
 #     reference). On tmux it is typed once the TUI is up: whether a first-argument prompt is
 #     taken after the folder-trust dialog is not documented and untried here, so typing stays
 #     until a tmux host tests it (docs/BACKLOG.md).
-#   - The prompt is ONE line, "Read '<brief path>' and follow it." and a second sentence
-#     telling it to write questions into its result file instead of asking in the pane, not
-#     the brief pasted as a block: one model took a pasted brief with no typed sentence of the
-#     user's own for mere content and sat idle for 35 minutes asking for confirmation.
-#     --disallowedTools AskUserQuestion enforces the second sentence.
+#   - The prompt is ONE line, "Read '<brief path>' and follow it." and then the protocol its
+#     supervisor reads (#189): the result path, its four header lines and end marker, the
+#     publish through codex_worker.py --publish, and the question path in place of asking in the
+#     pane; not the brief pasted as a block: one model took a pasted brief with no typed
+#     sentence of the user's own for mere content and sat idle for 35 minutes asking for
+#     confirmation. --disallowedTools AskUserQuestion enforces the question rule.
 #   - Every wait below (60 s for the input line, 30 s for the line to land, 3 s before a second
 #     Enter, 30 s for a Windows process and its registration, 10 s for a quick exit) is a
 #     bound, not a measurement: the poll ends as soon as its condition holds (owner's choice).
@@ -117,7 +126,7 @@ stranded() {
 # The x keeps a trailing newline that $(...) would strip.
 q() { set -- "$(printf '%sx' "$1" | sed "s/'/'\\\\''/g")"; printf "'%s'" "${1%x}"; }
 
-[ $# -ge 2 ] || { sed -n '3,19p' "$0"; exit 2; }
+[ $# -ge 2 ] || { sed -n '3,23p' "$0"; exit 2; }
 name=$1; brief=$2; shift 2
 # The name and the brief path reach tmux and the TUI: `send-keys -l` types every byte, and a
 # control byte (0x01-0x1F, 0x7F) acts as a key there: a carriage return submitted the
@@ -409,6 +418,11 @@ case $result in /*|[a-zA-Z]:/*) ;; *) result=$dir/$result ;; esac
 [ -r "$kit/codex_worker.py" ] || die "codex_worker.py is missing beside this script"
 cworker=$(CDPATH= cd -P -- "$kit" && pwd -P)/codex_worker.py || die "cannot resolve the folder of codex_worker.py"
 cresult=$result; cquestion=$dir/QUESTION-$name.md
+# A fresh spawn's supervisor refuses a leftover question deep in its start, where a tmux pane
+# closed with the error (#235): it is refused here, before any worktree, tab or session. Only a
+# spawn without --worktree can meet one: a fresh worktree is a new folder.
+[ -n "$resume" ] || [ ! -e "$cquestion" ] ||
+  die "QUESTION-$name.md from an earlier run is unanswered in $dir: answer it with --resume SESSION_ID, or remove it once it is settled"
 if [ -n "$windows" ]; then
   { cworker=$(cygpath -m "$cworker") && cresult=$(cygpath -m "$result") && cquestion=$(cygpath -m "$cquestion"); } ||
     die "cygpath cannot convert the result's path: $result"
@@ -498,7 +512,8 @@ if s:
 }
 reset_state() {
   # All launches, including plain tmux sessions, begin without the previous run's snapshot.
-  rm -f -- "$wdir/$name".state* "$wdir/$name".watch-* "$wdir/$name.pid" || die "cannot clear the previous state in $wdir"
+  rm -f -- "$wdir/$name".state* "$wdir/$name".watch-* "$wdir/$name.pid" "$wdir/$name.exit" "$wdir/$name.live" ||
+    die "cannot clear the previous state in $wdir"
 }
 # A worker is a session of its own, never the lead's child. The lead's shell carries Claude
 # Code's child-session markers, and a claude that sees CLAUDE_CODE_CHILD_SESSION skips its peer
@@ -519,16 +534,18 @@ fi
 printf '%s' "spawn_worker: behaviour appendix: ${behaviour:-off}" | LC_ALL=C tr '\001-\037\177' '?'
 printf '\n'
 [ -n "$tools" ]    && cmd="$cmd --allowedTools $(q "$tools")"
-# No question dialog in a pane nobody may watch: the result file is the question channel (the
-# instruction's second sentence says so; this enforces it). Permission prompts are not tools and
+# No question dialog in a pane nobody may watch: QUESTION-NAME.md is the question channel (the
+# instruction says so; this enforces it). Permission prompts are not tools and
 # stay. AskUserQuestion is the tool's name in Claude Code 2.1.300 (code.claude.com/docs/en/sub-agents).
 cmd="$cmd --disallowedTools AskUserQuestion"
 # One line naming the brief by its absolute path, quoted by the same helper so a path with a
-# space or an apostrophe still reads as one path. Its second sentence keeps questions out of
-# the pane, where nobody may be looking. On native Windows the path is Windows' own spelling:
+# space or an apostrophe still reads as one path. The rest is the protocol codex_worker.py
+# reads (#189): a result without its header and marker, or not renamed into place, is never
+# seen, and only a published question ends the session for the lead; it keeps questions out of
+# the pane, where nobody may be looking. On native Windows every path is Windows' own spelling:
 # Git Bash's /tmp/... is a folder the worker's tools do not know.
 [ -z "$windows" ] || brief=$(cygpath -m "$brief") || die "cygpath cannot convert the brief's path: $brief"
-instruction="Read $(q "$brief") and follow it. Do not ask questions in this pane: write a question into your result file and go on with what does not depend on it."
+instruction="Read $(q "$brief") and follow it. Your result file is $(q "$cresult"): its first four lines are Kind: completed (or Kind: blocked, Kind: handoff, Kind: progress), Task: THE TASK, Attempt: N and Remaining: WHAT IS LEFT, and its last line is <!-- codex-worker: ready -->; publish it whole, as a temporary file beside it renamed over it with $kit_python $(q "$cworker") --publish TEMPORARY_FILE DESTINATION: without them the supervisor never sees it. A published completed or handoff result ends this session 10 seconds later, once no commit or gate runs. Do not ask questions in this pane: for a decision, stop your jobs, publish a Kind: blocked result and then the question, the same way, to $(q "$cquestion"), which ends this session for the lead's answer; until then go on with what does not depend on it."
 
 # Native Windows: no tmux, so nothing can type into the session or read its pane. The worker
 # opens as a Windows Terminal tab (KIT_WT names another launcher, as for show_workers.sh) with
@@ -626,14 +643,17 @@ if [ -n "$windows" ]; then
   # saw why. So the tab's command goes into a script the tab runs and deletes, and only paths
   # pass through wt.exe. A claude that ends within ten seconds of its own start, whatever its
   # status, failed to start: the tab then waits for Enter, so its error stays on screen. One
-  # its supervisor ended on a published result (its exit record says so) closes at once.
+  # its supervisor ended on a published result (its exit record says so) closes at once. The
+  # exit record is NAME.exit in the workers folder, and the supervisor holds NAME.live locked
+  # while it runs: both stay after the tab, so watch_workers.sh sees a worker that ended (#185);
+  # the next spawn of the name clears them (reset_state).
   tab=$(mktemp) || die "cannot write the tab's script"
   tab_cmd="$unmark claude $(q "$instruction") ${cmd#claude }"
   [ -z "$backend" ] || tab_cmd=$(backend_command "$tab_cmd")
-  tab_cmd="KIT_WORKER_EXIT=$(q "$(cygpath -m "$tab.exit")") $supervise $(q "$bash") -c $(q "exec $tab_cmd")"
+  tab_cmd="KIT_WORKER_EXIT=$(q "$(native "$wdir/$name.exit")") $supervise $(q "$bash") -c $(q "exec $tab_cmd")"
   printf '%s\n' 'rm -f -- "$0"' "cd $(q "$dir") || exit 1" \
-    "t=\$(date +%s); $tab_cmd; s=\$?; grep -q ' published at ' \"\$0.exit\" 2>/dev/null || [ \$((\$(date +%s) - t)) -gt 10 ] || { echo \"claude ended at once (exit \$s); press Enter to close\"; read -r _; }" \
-    'rm -f -- "$0.exit" "$0.live"' 'exit 0' > "$tab" || die "cannot write the tab's script: $tab"
+    "t=\$(date +%s); $tab_cmd; s=\$?; grep -q ' published at ' $(q "$wdir/$name.exit") 2>/dev/null || [ \$((\$(date +%s) - t)) -gt 10 ] || { echo \"claude ended at once (exit \$s); press Enter to close\"; read -r _; }" \
+    'exit 0' > "$tab" || die "cannot write the tab's script: $tab"
   # From here a session may run in the worktree: a failure leaves it there (stranded above).
   launched=1
   "$wt" -w 0 new-tab --title "$(semi "$name")" "$(semi "$bash")" -l "$(semi "$(cygpath -w "$tab")")" ||
@@ -678,9 +698,10 @@ print(json.load(open(sys.argv[1], encoding="utf-8")).get("sessionId", ""))' "$re
   if [ -n "$peer" ]; then
     printf '%s\n' "spawn_worker: '$name' is a peer session (process $peer): ListAgents lists it; subscribe once with SendMessage notify_when_idle"
   else
-    printf '%s\n' "spawn_worker: WARNING: '$name' (process $pids) is not registered as a peer session (unusual: a spawned worker normally registers): ListAgents does not list it, SendMessage cannot reach it, and no notice comes when it stops on a question, a usage limit or an error. Look at its tab after every wait and every limit reset; its result file is the only other signal"
+    printf '%s\n' "spawn_worker: WARNING: '$name' (process $pids) is not registered as a peer session (unusual: a spawned worker normally registers): ListAgents does not list it, SendMessage cannot reach it, and no notice comes when it stops on a question, a usage limit or an error. The watcher below reports its waits and its end; its result file is the done signal"
   fi
-  printf '%s\n' "spawn_worker: the result file its brief names is the done signal; once you decide the session is finished, close it: scripts/close_worker.sh $name"
+  printf '%s\n' "spawn_worker: the result file is the done signal; once you decide the session is finished, close it: scripts/close_worker.sh $name"
+  printf '%s\n' "spawn_worker: watch it, as a background command: scripts/watch_workers.sh --result $name=$(q "$cresult") $name"
   exit 0
 fi
 
@@ -768,4 +789,4 @@ if [ -n "$batch" ]; then
 else
   sh "$kit/show_workers.sh" "$name" || printf '%s\n' "spawn_worker: '$name' was not shown and runs anyway; attach by hand: tmux attach -t $name"
 fi
-printf '%s\n' "spawn_worker: watch it, as a background command: scripts/watch_workers.sh --result $name=PATH $name (PATH: the result file its brief names)"
+printf '%s\n' "spawn_worker: watch it, as a background command: scripts/watch_workers.sh --result $name=$(q "$cresult") $name"
