@@ -188,8 +188,18 @@ class SectionPointerTests(unittest.TestCase):
         worker = read('overlays/claude-code/files/.claude/agents/worker.md')
         self.assertIn('At most two inner rounds', worker)
         self.assertIn("Inner rounds keep the gate's cap", workflow)
-        for text in (worker, workflow):
+        # One round-2 scope, the gate's, in all three; no unconditional second reviewer.
+        scope = 'round 2 confirms every finding the dispositions claim fixed, a Medium included'
+        self.assertIn('R' + scope[1:], gate)
+        brief = workflow.split('### The rules in brief')[1].split('### The measurements')[0]
+        self.assertIn(scope, brief)
+        self.assertIn(scope.split('round 2 ')[1], workflow.split('Inner rounds keep the gate')[1])
+        self.assertIn(scope.split('round 2 ')[1], worker)
+        self.assertIn('starts a new fresh reviewer on the result only when round 1 left a Critical or High fix', workflow)
+        for text in (worker, workflow, brief):
             self.assertNotIn('until no Critical, High or Medium finding remains', text)
+            self.assertNotIn('only verifies Critical or High fixes', text)
+            self.assertNotIn("runs only to verify round 1's Critical or High fixes", text)
         self.assertIn('The final review is due once per release, never per branch', gate)
         self.assertNotIn('re-read at medium effort', workflow)
         brief = (ROOT / 'core/docs/WORKFLOW.md').read_text(encoding='utf-8').split(

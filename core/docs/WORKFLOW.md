@@ -849,8 +849,9 @@ compaction; the full rule below, with its measurements and sources, when one is 
 
 Work over about an hour runs in its own session, a short errand as a sub-agent; a stopped
 worker is answered in its own session, a cut-off one resumed in place; the lead commits a
-Codex worker's work. Reviews: two rounds at most, inner rounds too, round 2 only verifies
-Critical or High fixes, one final review per release (`docs/REVIEW_GATE.md`, "Rounds").
+Codex worker's work. Reviews: two rounds at most, inner rounds too; round 2 confirms every
+finding the dispositions claim fixed, a Medium included, and reports new Critical or High
+only; one final review per release (`docs/REVIEW_GATE.md`, "Rounds").
 
 ### The measurements and the full rules
 
@@ -1337,15 +1338,16 @@ the same flaws cost hours of code rounds (the kit's RESEARCH_LOG, 2026-10-03).
   code.claude.com/docs/en/sub-agents, "Let subagents spawn their own subagents"). It starts
   a fresh diff reviewer as a sub-agent (the Claude Code overlay's
   `diff-reviewer`), fixes what the review finds, and starts a new fresh reviewer on the
-  result. This inner pass is the author's side's early check; the gate's review in a fresh
+  result only when round 1 left a Critical or High fix to verify (the cap below). This inner pass is the author's side's early check; the gate's review in a fresh
   session follows `docs/REVIEW_GATE.md` and `docs/REVIEW_RUNNING.md`, and its findings go
   to the author's side ("Worker cost", rule 2).
 - Each inner round's prompt carries the earlier inner rounds' findings and the worker's
   dispositions (`docs/REVIEW_GATE.md`, "Findings and dispositions").
 - The reviewer is a new sub-agent in every inner round, because the author never reviews its
   own change.
-- Inner rounds keep the gate's cap (`docs/REVIEW_GATE.md`, "Rounds"): at most two, and round
-  2 runs only to verify round 1's Critical or High fixes. A Medium is fixed when a test
+- Inner rounds keep the gate's cap (`docs/REVIEW_GATE.md`, "Rounds"): at most two; round 2 runs
+  only when round 1 left a Critical or High fix, confirms every finding the dispositions claim
+  fixed, a Medium included, and reports new Critical or High only. A Medium is fixed when a test
   verifies it, else named in the report; a Low goes to the report; what remains after round 2
   goes to the lead. A fresh reviewer nearly always finds another Medium, so "until clean"
   never ends (the kit's `docs/research/ai-review-workflows.md`, findings 2 and 8).

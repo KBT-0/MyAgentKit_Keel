@@ -127,8 +127,20 @@ class OwnsCheckTests(unittest.TestCase):
         code, errors = self.check('Owns: *\nOwns: src/')
         self.assertEqual(code, 2)
         self.assertIn('2 Owns: lines', errors)
-        # An unclosed fence runs to the end, so its Owns: line is not read.
+        # An unclosed fence hides the rest, so the brief is refused.
         self.assertEqual(self.check('```\nOwns: *')[0], 2)
+        code, errors = self.check('Owns: src/\n```\nx')
+        self.assertEqual(code, 2)
+        self.assertIn('unclosed code fence', errors)
+
+    def test_a_list_item_fence_and_inline_backticks_pair_as_commonmark_pairs_them(self):
+        # A fence opened after a list marker went unseen: its indented closer opened a block to
+        # the end, hid the real Owns: line and left the example `Owns: **` owning every path.
+        self.write('other.txt')
+        for brief in ('- ```\n  Owns: **\n  ```\nOwns: src/', '```inline``` prose\nOwns: src/'):
+            code, errors = self.check(brief)
+            self.assertEqual(code, 1, errors)
+            self.assertIn('  other.txt\n', errors)
 
     def test_worker_reports_are_allowed_only_at_the_repository_root(self):
         for name in ('RESULT-worker.md', 'QUESTION-worker.md'):

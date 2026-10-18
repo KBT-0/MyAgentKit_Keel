@@ -64,8 +64,9 @@ the rules below exist).
   Report "not run" for any check you did not run.
 - Review your own diff before you report, whether you run as a session or as a sub-agent
   (sub-agents nest three layers deep by default): a fresh `diff-reviewer` in every inner
-  round, then fix what it finds. At most two inner rounds; round 2 runs only to verify round
-  1's Critical or High fixes. A Medium you cannot verify with a test, every Low and whatever
+  round, then fix what it finds. At most two inner rounds; round 2 runs only when round 1
+  left a Critical or High fix, confirms every finding the dispositions claim fixed, a Medium
+  included, and reports new Critical or High only. A Medium you cannot verify with a test, every Low and whatever
   remains after round 2 go into the report for the lead. List the inner rounds in the report
   (count, findings fixed, dispositions). Where you cannot start a sub-agent (`CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH`
   is 1, or you are at its limit), say so in the report; the lead then starts the review

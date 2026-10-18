@@ -17,8 +17,8 @@ import sys
 
 ALWAYS = ('docs/STATE.md', 'docs/BACKLOG.md')
 OWNS = re.compile(r'^[\s>*+-]*(?:\d+[.)]\s+)?(?:\*\*)?Owns:(?:\*\*)?(.*)$', re.M)
-# A fenced block to its closing fence, or to the end when unclosed (CommonMark).
-FENCE = re.compile(r'^[ \t>]*(`{3,}|~{3,}).*?(?:^[ \t>]*\1.*?$|\Z)', re.M | re.S)
+# A fence line (CommonMark): an opener may follow a list marker; group 1 is that marker.
+FENCE = re.compile(r'[ \t>]*((?:[*+-]|\d+[.)])[ \t]+)?(`{3,}|~{3,})(.*)$')
 WORKER_REPORT = re.compile(r'(?:RESULT|QUESTION)-[^/]+\.md')
 
 
@@ -28,13 +28,36 @@ def owned(brief):
     An example `Owns: *` in a code block above the real line won the first match and owned
     every path, so fenced blocks are skipped and a second line is refused, not guessed at.
     """
-    lines = OWNS.findall(FENCE.sub('', Path(brief).read_text(encoding='utf-8')))
+    lines = OWNS.findall(unfenced(Path(brief).read_text(encoding='utf-8'), brief))
     if not lines:
         return None
     if len(lines) > 1:
         raise ValueError('%d Owns: lines outside code blocks in %s; keep one' % (len(lines), brief))
     patterns = [p.strip().strip('`').replace('\\', '/') for p in lines[0].split(',')]
     return [p[2:] if p.startswith('./') else p for p in patterns if p]
+
+
+def unfenced(text, brief):
+    """TEXT without its fenced code blocks, paired as CommonMark pairs them.
+
+    A fence opened after a list marker went unseen, so its closer paired as an opener and hid
+    the real Owns: line; a line opening with inline ``code`` is no fence (a backtick fence's
+    info string holds no backtick). An unclosed fence is refused: it hides the rest.
+    """
+    kept, fence = [], None
+    for line in text.splitlines():
+        match = FENCE.match(line)
+        if fence:
+            if (match and not match[1] and match[2][0] == fence[0] and len(match[2]) >= len(fence)
+                    and not match[3].strip()):
+                fence = None
+        elif match and not (match[2][0] == '`' and '`' in match[3]):
+            fence = match[2]
+        else:
+            kept.append(line)
+    if fence:
+        raise ValueError('an unclosed code fence in %s hides the lines after it; close it' % brief)
+    return '\n'.join(kept)
 
 
 def glob_match(parts, pattern):
