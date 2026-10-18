@@ -413,7 +413,7 @@ if [ -n "$gates" ]; then
   --force instead overwrites EVERY differing regular file listed above, not only these;
   a symlink, folder or special file at such a path, or a symlink or a file in its path,
   is never replaced: move it aside.
-  Finish with:  ./scripts/check.sh --self-test
+  Finish with:  ./scripts/check.sh
 EOF
 fi
 if [ -n "$stops" ]; then

@@ -6580,10 +6580,10 @@ claude_bridge.throwaway_copy(Path(sys.argv[1]), 'HEAD', '', Path(sys.argv[2]))
         self.assertTrue(bridge.accept_allows(['- None.']))
 
     def test_the_reviewer_runs_only_the_narrow_test_never_the_full_suite(self):
-        # Owner decision 2026-10-16: reviewers that ran the 30-minute self-test in their copy
+        # Owner decision 2026-10-16: reviewers that ran the 30-minute full suite in their copy
         # took 40-60 minutes (one cut at the 3600 s cap); told not to, a review took 2.5 minutes.
         # The lead's gate runs the full suite once (ai-review-workflows.md 1.7 [22], 1.4 [7]).
-        line = ("Do not run the project's full suite (scripts/check.sh --self-test, check_kit or a "
+        line = ("Do not run the project's full suite (scripts/check.sh, check_kit or a "
                 "whole test run); run only the narrow test that proves or disproves a finding. The "
                 "lead's gate runs the full suite.")
         self.assertIn(line, bridge.REVIEW_PROMPT)

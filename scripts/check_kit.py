@@ -549,8 +549,8 @@ def check_syntax(root):
 # mktemp difference (github.com/nushell/nushell/issues/10845).
 ECHO_COMMAND = re.compile(r'(?:^|(?<=[;&|({`\s!]))echo(?=[\s;&|)`]|$)')
 MKTEMP = re.compile(r'\bmktemp\b[^;|&\n]*\s(?:-[a-zA-Z]*[pt]|--suffix|--tmpdir)')
-# A comment line, except the `# | ` example code boundary_selftests.sh ships and acceptance runs.
-COMMENT = re.compile(r'^[ \t]*#(?! \|( |$)).*$', re.M)
+# A comment line, except the `# > ` example fixture test boundary_checks.sh ships and a test runs.
+COMMENT = re.compile(r'^[ \t]*#(?! >( |$)).*$', re.M)
 
 
 def echo_hazard(text, i):

@@ -10,16 +10,16 @@
 # from the command line"; the other flags below: Unity Manual, "Editor command line
 # arguments"; running both modes together is also GameCI's default.)
 #
-# Usage: unity_gate.sh [--self-test]
+# Its negative tests live in the kit's tests/test_unity_gate.py: stub editors that exit 0 with no
+# results file, with a file that is not an NUnit document, and with every test skipped.
+#
+# Usage: unity_gate.sh
 #   UNITY_PATH   the editor executable, if `unity` is not on PATH
 #   UNITY_PROJECT the project folder (default: unity)
 #
 # CLOSE THE EDITOR FIRST. Unity cannot open a project in batch mode while an Editor has the
 # same project open (Unity Manual, "Editor command line arguments").
 set -u
-# Resolve this script's own path BEFORE the cd below: the self-test re-invokes it, and a
-# relative $0 stops pointing at the script once the working directory has changed.
-self="$(CDPATH= cd -- "$(dirname "$0")" && pwd)/$(basename "$0")"
 CDPATH= cd -- "$(dirname "$0")/.."
 
 project_dir="${UNITY_PROJECT:-unity}"
@@ -120,77 +120,9 @@ run_gate() {
   return "$fail"
 }
 
-# --- negative test --------------------------------------------------------------------
-# The interesting failure is not "Unity returned an error" — it is "Unity returned SUCCESS
-# and produced nothing", which is how this gate silently passed for weeks once. That case
-# needs no Unity install to reproduce: a stub that exits 0 and writes no results file.
-self_test() {
-  st_fail=0
-  d=$(mktemp -d)
-
-  # case: a run that exits clean and writes nothing at all. The self-test runs in a
-  # temporary directory per run, as test frameworks do (pytest tmp_path:
-  # docs.pytest.org/en/stable/how-to/tmp_path.html), and never touches the real project.
-  make_stub() { printf '%s\n' '#!/bin/sh' "$2" > "$1"; chmod +x "$1"; }
-  probe() {
-    label="$1"; want="$2"; stub="$3"
-    # A THROWAWAY project dir, not the real one: run_gate mkdirs Logs/ and the stubs write
-    # result files, and an earlier version left that litter in the project tree.
-    out=$(UNITY_PATH="$stub" UNITY_PROJECT="$d/proj" sh "$self" 2>&1)
-    if [ $? -eq 0 ]; then
-      printf '%s\n' "  FAIL — $label: the gate PASSED."
-      st_fail=1
-      return
-    fi
-    case "$out" in
-      *"$want"*) printf '%s\n' "  ok   — $label" ;;
-      *) printf '%s\n' "  FAIL — $label: it failed, but not for the expected reason ($want):"
-         printf '%s\n' "$out" | tail -4 | sed 's/^/         /'
-         st_fail=1 ;;
-    esac
-  }
-
-  make_stub "$d/silent" 'exit 0'
-  probe "rejects a clean exit that wrote no results file" "no results file" "$d/silent"
-
-  # case: a file exists but is not an NUnit document — the shape a naive substring count
-  # would happily accept.
-  cat > "$d/fake" <<'STUB'
-#!/bin/sh
-for a in "$@"; do case "$prev" in -testResults) printf '<test-case />\n' > "$a";; esac; prev="$a"; done
-exit 0
-STUB
-  chmod +x "$d/fake"
-  probe "rejects a results file that is not an NUnit document" "not an NUnit result document" "$d/fake"
-
-  # case: a well-formed document in which every test was SKIPPED. Skipped is not executed,
-  # and this is what a misconfigured test assembly actually produces.
-  cat > "$d/skipped" <<'STUB'
-#!/bin/sh
-for a in "$@"; do
-  case "$prev" in
-    -testResults) printf '<test-run><test-case name="a" result="Skipped" /></test-run>\n' > "$a";;
-  esac
-  prev="$a"
-done
-exit 0
-STUB
-  chmod +x "$d/skipped"
-  probe "rejects a run in which every test was skipped" "no test executed" "$d/skipped"
-
-  rm -rf "$d"
-  if [ "$st_fail" -eq 0 ]; then
-    echo "SELF-TEST: PASS — the gate rejects each successful-looking run with no real evidence."
-    return 0
-  fi
-  echo "SELF-TEST: FAIL — the gate accepts a run that proved nothing."
-  return 1
-}
-
 case "${1:-}" in
-  "")          ;;
-  --self-test) self_test; exit $? ;;
-  *)           echo "usage: unity_gate.sh [--self-test]"; exit 2 ;;
+  "") ;;
+  *)  echo "usage: unity_gate.sh"; exit 2 ;;
 esac
 
 if run_gate; then

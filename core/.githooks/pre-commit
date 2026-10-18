@@ -25,16 +25,16 @@ set -u
 root=$(git rev-parse --show-toplevel) || exit 1
 CDPATH= cd -- "$root" || exit 1
 
-# Fast gate only, never --self-test or an opt-in gate. Everything slow stays out of the
-# commit path: --self-test invokes the whole gate a dozen times, and a project's opt-in gates (an engine
-# running in batchmode, an integration suite) cost minutes and sometimes need a live install.
+# Fast gate only, never an opt-in gate. Everything slow stays out of the commit path: a
+# project's opt-in gates (an engine running in batchmode, an integration suite) cost minutes
+# and sometimes need a live install.
 # A commit hook people start bypassing is worse than no commit hook, and slowness is what
 # makes them start.
 #
 # BEING OUT OF THE COMMIT PATH IS NOT BEING OPTIONAL, and this comment used to imply it was.
 # Each of those gates has its own binding trigger written down where it is defined — an
-# engine gate typically at task completion ("this work is not done until its tests pass"),
-# the self-test at the periodic audit. Honour the trigger the gate states.
+# engine gate typically at task completion ("this work is not done until its tests pass").
+# Honour the trigger the gate states.
 #
 # Do not assume CI covers them either: the CI this kit ships runs `./scripts/check.sh` and
 # nothing else, so an opt-in gate runs in CI only if the project added it there deliberately.

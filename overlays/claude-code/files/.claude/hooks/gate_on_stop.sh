@@ -33,26 +33,7 @@ if [ -z "$(git status --porcelain -- $gated_paths 2>/dev/null | grep -E "$gated_
   exit 0
 fi
 
-# A self-test may inject files into the gated paths while it holds this checkout's gate lock.
-# File names prove nothing (a tool's .selftest.log, a tracked file); the evidence is
-# check-selftest beside the lock: check.sh --self-test writes its shell pid and lock token
-# there and removes it when it ends. The shell must still be alive: build descendants can
-# hold the lock after the self-test dies. A matching token and a held lock (75) then let the
-# hook step aside; a free lock runs the gate now.
-lock=$(git rev-parse --git-path check.lock 2>/dev/null)
-selftest_live() {
-  IFS=' ' read -r pid marker extra 2>/dev/null < "${lock%.lock}-selftest" || return 1
-  case "$pid" in ''|0*|*[!0-9]*) return 1 ;; esac
-  [ -n "$marker" ] && [ -z "$extra" ] && kill -0 "$pid" 2>/dev/null &&
-    [ "$marker" = "$(cat "$lock" 2>/dev/null)" ] || return 1
-  # kill -0 also finds a killed shell its parent has not reaped (under $(...) the build holds
-  # the pipe open): ps names that zombie. Git for Windows' ps has no -o, and there the holder
-  # clears the token when the shell ends.
-  # ponytail: a recycled pid still passes; compare the shell's start time if that ever bites.
-  case $(ps -o stat= -p "$pid" 2>/dev/null) in *Z*) return 1 ;; esac
-}
 gate_wait="${GATE_LOCK_WAIT:-500}"
-! selftest_live || gate_wait=0
 
 # No result caching, on purpose: a cache that says PASS for a tree that has since changed is
 # worse than a ten-second gate.
@@ -60,14 +41,10 @@ gate_wait="${GATE_LOCK_WAIT:-500}"
 # timeout (600 s in settings.json): a killed hook returns nothing, and its gate would still
 # start later. Exit 75 is that bound running out — the gate did not run, it did not fail.
 # The bound covers only the wait: a gate that takes longer than the remaining 100 s still
-# hits the hook timeout, so keep the hook's gate short (the full self-test is not for hooks).
+# hits the hook timeout, so keep the hook's gate short.
 out=$(GATE_LOCK_WAIT="$gate_wait" ./scripts/check.sh 2>&1)
 rc=$?
 [ "$rc" -eq 0 ] && exit 0
-if [ "$rc" -eq 75 ] && [ "$gate_wait" = 0 ] && selftest_live; then
-  echo "NOTE [Stop hook]: skipping the gate while ./scripts/check.sh --self-test holds this checkout's lock." >&2
-  exit 0
-fi
 
 printf '%s\n' "$out" >&2
 echo "" >&2

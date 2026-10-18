@@ -523,7 +523,7 @@ runpy.run_path(%r, run_name='__main__')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("gate ran ['--timing']", result.stdout)
 
-    def test_an_inherited_work_variable_never_chooses_the_self_test_scratch_folder(self):
+    def test_an_inherited_work_variable_never_chooses_the_scratch_folder(self):
         # An exported `work` once named the folder the wrapper's git_view wrote and deleted
         # git-paths* in, even when the check then refused its arguments (round-3 Codex Critical).
         project, decoy = self.tmp / 'kit', self.tmp / 'decoy'
@@ -535,7 +535,7 @@ runpy.run_path(%r, run_name='__main__')
         names = ('git-paths', 'git-paths.hashes', 'git-paths.errors')
         for name in names:
             (decoy / name).write_text('owner data\n')
-        result = subprocess.run(['sh', str(project / 'scripts/check.sh'), '--self-test', '--bogus'],
+        result = subprocess.run(['sh', str(project / 'scripts/check.sh'), '--bogus'],
                                 cwd=project, capture_output=True, text=True,
                                 env=dict(os.environ, work=decoy.as_posix()))
         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
