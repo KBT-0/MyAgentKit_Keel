@@ -372,6 +372,45 @@ class SyncKitTests(unittest.TestCase):
                 self.assertTrue(os.access(hook, os.X_OK), 'version recorded over a hook git does not run')
                 self.assertEqual((project / 'docs/kit/.kit-version').read_text(), '0.2\n')
 
+    def test_a_written_hook_or_script_gets_the_executable_mode_in_the_git_index(self):
+        # With core.fileMode=false (native Windows) the disk's chmod never reached the index:
+        # a hook the sync wrote was committed at 100644 and a POSIX clone skipped it (#182).
+        env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1')
+        hook, new, doc = '.githooks/commit-msg', 'scripts/doctor.sh', 'docs/COMMUNICATION.md'
+        for sub in ('', 'app'):
+            with self.subTest(subfolder=sub), tempfile.TemporaryDirectory() as tmp:
+                kit, top = Path(tmp) / 'kit', Path(tmp) / 'project'
+                self.sync(tmp, '- A kit-owned file changed.\n', '--dry-run')
+                project = top / sub
+                if sub:
+                    shutil.move(str(top / 'docs'), str(Path(tmp) / 'docs'))
+                    project.mkdir()
+                    shutil.move(str(Path(tmp) / 'docs'), str(project / 'docs'))
+                for rel in (hook, new, doc):
+                    (kit / 'core' / rel).parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(ROOT / 'core' / rel, kit / 'core' / rel)
+                (project / '.githooks').mkdir()
+                (project / hook).write_text('# KIT-OWNED: old\n')
+                git = lambda *a: subprocess.run(['git', *a], cwd=top, check=True, env=env,
+                                                capture_output=True, text=True).stdout
+                git('init', '-q')
+                git('config', 'core.fileMode', 'false')
+                git('add', '-A')
+                old_blob = git('ls-files', '-s', sub + '/' + hook if sub else hook).split()[1]
+                result = subprocess.run(['sh', str(kit / 'sync-kit.sh'), str(project)], env=env,
+                                        capture_output=True, text=True, timeout=60)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                staged = {line.split('\t')[1]: line.split()[:2]
+                          for line in git('ls-files', '-s').splitlines()}
+                prefix = sub + '/' if sub else ''
+                self.assertEqual(staged[prefix + hook], ['100755', old_blob], 'staged bytes kept')
+                self.assertNotIn(prefix + doc, staged, 'a doc is not staged')
+                if sub:
+                    self.assertNotIn(prefix + new, staged)
+                    self.assertIn('git add --chmod=+x -- "%s"' % new, result.stdout)
+                else:
+                    self.assertEqual(staged[new][0], '100755')
+
     def test_a_write_that_fails_midway_leaves_the_old_file_whole(self):
         # The stamp was written by redirection, which empties the file before writing, and the
         # kit-owned files by `cp` over them: a full disk left an empty stamp (which the next sync

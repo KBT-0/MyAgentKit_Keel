@@ -237,12 +237,41 @@ fi
 # exe FILE — the one place that decides which kit-owned files must be executable (the hooks
 # and scripts git or a gate runs directly), for a copied file and an identical one alike. A
 # hook git cannot run is skipped without a word, and a gate that cannot run is not there.
-exe() { case "$rel" in *.sh|.githooks/*|.claude/hooks/*) chmod +x "$1" ;; esac; }
+executable() { case "$rel" in *.sh|.githooks/*|.claude/hooks/*) return 0 ;; esac; return 1; }
+exe() { ! executable || chmod +x "$1"; }
+# The disk's executable bit does not reach git's index where core.fileMode is false (native
+# Windows): a hook the sync wrote was committed at 100644, and a POSIX clone skips it (#182).
+# As bootstrap.sh does: a tracked entry gets mode 100755 on the blob it has staged (its staged
+# bytes stay as they were), a new file is staged with --chmod=+x at the repository top level
+# and its command printed from a subfolder, an ignored file stays out of the index.
+index_exe() {
+  if indexed=$(git -C "$target" --literal-pathspecs ls-files -s --error-unmatch -- "$rel" 2>/dev/null); then
+    mode=$(printf '%s\n' "$indexed" | awk '$3 == 0 { print $1 }')
+    [ -n "$mode" ] || die "cannot set the index mode of an unmerged kit file: $rel; version left at v$have"
+    case "$mode" in
+      100644)
+        blob=$(printf '%s\n' "$indexed" | awk '$3 == 0 { print $2 }')
+        git -C "$target" update-index --cacheinfo "100755,$blob,$repo_prefix$rel" &&
+          printf '%s\n' "  index:   $rel set to 100755" ;;
+      100755) : ;;
+      *) printf '%s\n' "  NOTE: keeping index mode $mode for $rel (not a regular file)" ;;
+    esac
+  elif ! git -C "$target" check-ignore -q -- "$rel"; then
+    if [ -z "$repo_prefix" ]; then
+      git -C "$target" add --chmod=+x -- "$rel" && printf '%s\n' "  staged:  $rel (100755)"
+    else
+      printf '%s\n' "  NOTE: $rel is not staged; from $target run:" \
+        "    git add --chmod=+x -- \"$(printf '%s' "$rel" | sed 's/[\\"$`]/\\&/g')\""
+    fi
+  fi
+}
 if [ "$dry" -eq 0 ]; then
+  repo_prefix=$(git -C "$target" rev-parse --show-prefix 2>/dev/null) && repo=1 || repo=""
   while IFS= read -r src; do
     relpath "$src"
     { cmp -s "$src" "$target/$rel" || { mkdir -p "$target/$(dirname "$rel")" && put "$target/$rel" "$src"; }; } &&
-      exe "$target/$rel" || die "could not write $rel; version left at v$have"
+      exe "$target/$rel" && { [ -z "$repo" ] || ! executable || index_exe; } ||
+      die "could not write $rel; version left at v$have"
   done < "$copies"
 fi
 

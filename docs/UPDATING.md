@@ -32,7 +32,10 @@ exactly the habit the review gate exists to prevent.
 ```
 
 1. Reads `docs/kit/.kit-version`. Missing or empty is a hard stop — it will not guess.
-2. Overwrites the kit-owned files, reporting each as new, updated or unchanged. A file at a
+2. Overwrites the kit-owned files, reporting each as new, updated or unchanged. Each hook
+   and script it writes also gets mode 100755 in the git index, since `core.fileMode=false`
+   (native Windows) never carries the disk's bit there: a tracked one keeps its staged bytes,
+   a new one is staged (from a subfolder install the command is printed instead). A file at a
    kit-owned path WITHOUT the KIT-OWNED header is the project's own (a hook the project
    wrote before the kit owned that path): it is listed as `conflict:`, and the sync stops
    before it copies anything or records a version. Move yours aside, sync again, then carry
