@@ -37,8 +37,8 @@ it, each marked DECIDED or OPEN. It is read by section only (reading order, item
 
 Read only when needed: `docs/GOTCHAS.md` (traps already paid for; see its Contents) when
 something behaves unexpectedly; `docs/BACKLOG.md` when the next task is chosen; as the lead,
-`docs/WORKFLOW.md`, "Worker cost" and "Review rounds" before you brief, spawn, merge or close a
-worker.
+`docs/WORKFLOW.md`, "Worker cost", its first block "The rules in brief", before you brief,
+spawn, merge or close a worker; the full rules and "Review rounds" when one is in doubt.
 
 ## HARD RULES (violation = failed task)
 

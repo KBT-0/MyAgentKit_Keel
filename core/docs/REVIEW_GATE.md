@@ -55,9 +55,15 @@ included, and reports new Critical or High only. A third round needs
 `REVIEW_ROUND_EXCEPTION=<reason>`, kept in the record; what remains goes to {{OWNER_NAME}}
 or an issue. Sources: KARARLAR B02 inv2#12 / D06 inv2#12; Claude Code Code Review's
 re-review convergence and best-practices guidance on repeated corrections. The two-round cap
-is the owner's choice. A release gets one fresh NEW-label final review, high effort, by a session
-that did not write its larger part (`docs/WORKFLOW.md`, "The lead's steps when a branch is
-ready").
+is the owner's choice. Round 2 runs only when round 1 left a Critical or High fix to verify.
+The final review is due once per release, never per branch, and is written only here: one
+fresh NEW-label review of the release's merged diff, high effort, by a session that did not
+write its larger part; its Critical or High fix gets one re-read at medium effort, not a new
+loop (`docs/WORKFLOW.md`, "The lead's steps when a branch is ready"). A high-tier branch thus
+costs one round of its two focus reviewers, a verify-only round 2 when needed, and its share
+of the one release review. Time target: about 20 minutes per reviewer, the sector's figure
+(Anthropic Code Review averages 20, Cloudflare's P99 is 10; the kit's
+`docs/research/ai-review-workflows.md`, finding 4 and S5); a round far past it is split.
 
 ## Verdicts and who decides
 

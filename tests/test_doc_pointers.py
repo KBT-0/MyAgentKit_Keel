@@ -179,6 +179,26 @@ class SectionPointerTests(unittest.TestCase):
         for path in [ROOT / 'core/AGENTS.md', *sorted((ROOT / 'core/docs').glob('*.md'))]:
             self.assertNotIn('closing review', path.read_text(encoding='utf-8').lower(), path)
 
+    def test_review_rounds_are_capped_once_and_the_lead_reads_a_short_block(self):
+        # #106: inner rounds ran "until no Medium remains", which never ends. #123: the final
+        # review was due per branch in WORKFLOW and per release in the gate. #85: the lead's
+        # required reading was ~45k characters of "Worker cost" and "Review rounds".
+        read = lambda name: ' '.join((ROOT / name).read_text(encoding='utf-8').split())
+        workflow, gate = read('core/docs/WORKFLOW.md'), read('core/docs/REVIEW_GATE.md')
+        worker = read('overlays/claude-code/files/.claude/agents/worker.md')
+        self.assertIn('At most two inner rounds', worker)
+        self.assertIn("Inner rounds keep the gate's cap", workflow)
+        for text in (worker, workflow):
+            self.assertNotIn('until no Critical, High or Medium finding remains', text)
+        self.assertIn('The final review is due once per release, never per branch', gate)
+        self.assertNotIn('re-read at medium effort', workflow)
+        brief = (ROOT / 'core/docs/WORKFLOW.md').read_text(encoding='utf-8').split(
+            '### The rules in brief')[1].split('### The measurements and the full rules')[0]
+        self.assertLess(len(brief), 2500)
+        self.assertIn('"Worker cost", its first block "The rules in brief"', read('core/AGENTS.md'))
+        self.assertIn('"Worker cost", its block "The rules in brief"',
+                      read('overlays/claude-code/files/.claude/hooks/after_compact.txt'))
+
     def test_plugin_commands_preapprove_only_the_commands_they_need(self):
         # A wildcard after git diff also approves --output=FILE, which overwrites a file.
         # Pin exact read-only forms; send commands must still meet the permission prompt.
