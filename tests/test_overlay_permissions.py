@@ -168,6 +168,13 @@ class OverlaySettingsTests(unittest.TestCase):
         for hook in guards:
             with self.subTest(hook=hook['command']):
                 self.assertEqual(hook.get('onFailure'), 'block')
+        # A blocking guard that times out refuses an ordinary command: a loaded Windows host took
+        # over 10 s for sh, the Python launcher and the interpreter (leeway, 2026-10-18; measured
+        # 0.5-2.6 s per start idle-loaded), while the hook's own work is about 0.1 s.
+        for path in (SETTINGS, SETTINGS.parents[4] / '.claude/settings.json'):  # overlay, kit's own
+            for entry in json.loads(path.read_text(encoding='utf-8'))['hooks']['PreToolUse']:
+                with self.subTest(path=path.parts[-3], hook=entry['hooks'][0]['command']):
+                    self.assertGreaterEqual(entry['hooks'][0].get('timeout', 600), 30)
         matchers = {e['matcher'] for e in self.settings['hooks']['PreToolUse']}
         self.assertIn('WebFetch|WebSearch|' + '|'.join(SHELL_TOOLS), matchers)
 
