@@ -1007,7 +1007,7 @@ exit 1
                 setting = Path(tmp) / 'setting'
                 setting.write_text('[kit]\n\tdisabled = yes\n')
                 env = {'global': {'GIT_CONFIG_GLOBAL': str(setting)},
-                       'system': {'GIT_CONFIG_SYSTEM': str(setting)},
+                       'system': {'GIT_CONFIG_SYSTEM': str(setting), 'GIT_CONFIG_NOSYSTEM': '0'},
                        'command': {'GIT_CONFIG_COUNT': '1', 'GIT_CONFIG_KEY_0': 'kit.disabled',
                                    'GIT_CONFIG_VALUE_0': 'yes'}}[scope]
                 result = self.self_test(tmp, root, **env)
