@@ -10,5 +10,11 @@
 # one as pre-merge-commit.project, project-owned, and runs FIRST with git's arguments: its failure
 # is the commit's failure, and this hook still runs after it. No other hooks path.
 project_hook="$(dirname -- "$0")/pre-merge-commit.project"
-if [ -x "$project_hook" ]; then "$project_hook" "$@" || exit $?; fi
+# A hook without a #! line is refused: Git for Windows never runs one, chmod +x or not, and
+# the documented one-line form was skipped in silence, so the project's own check never ran
+# (#165). One with a #! line and no execute bit is still skipped: chmod -x switches it off.
+if [ -x "$project_hook" ]; then "$project_hook" "$@" || exit $?
+elif [ -f "$project_hook" ] && case $(head -n 1 -- "$project_hook") in '#!'*) false ;; esac; then
+  printf '%s\n' "pre-merge-commit: $project_hook has no #! line, and Git for Windows never runs such a file. Merge refused. Start it with #!/bin/sh and chmod +x it, or delete it." >&2; exit 1
+fi
 exec sh "$(dirname -- "$0")/pre-commit" --merge

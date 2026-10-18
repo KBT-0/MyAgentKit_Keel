@@ -24,8 +24,13 @@
 # is already made when post-merge runs, so a failure here is reported, never a veto; this
 # hook still runs after it. No other hooks path.
 project_hook="$(dirname -- "$0")/post-merge.project"
+# A hook without a #! line is reported: Git for Windows never runs one, chmod +x or not, and
+# the documented one-line form was skipped in silence, so the project's own step never ran
+# (#165). One with a #! line and no execute bit is still skipped: chmod -x switches it off.
 if [ -x "$project_hook" ]; then
   "$project_hook" "$@" || printf '%s\n' "post-merge: $project_hook exited $? (the merge is complete; post-merge cannot veto it)" >&2
+elif [ -f "$project_hook" ] && case $(head -n 1 -- "$project_hook") in '#!'*) false ;; esac; then
+  printf '%s\n' "post-merge: $project_hook has no #! line, and Git for Windows never runs such a file. It did not run (the merge is complete). Start it with #!/bin/sh and chmod +x it, or delete it." >&2
 fi
 set -u
 [ -z "${KIT_NO_WORKTREE_CLEANUP:-}" ] || exit 0

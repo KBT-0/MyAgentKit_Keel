@@ -451,6 +451,15 @@ class DoctorTests(unittest.TestCase):
             self.assertEqual(red.stdout.count('MISSING:'), 1, red.stdout)
             git('add', *(['--chmod=+x'] if WINDOWS else []), '.claude/hooks/gate_on_stop.sh')
 
+            # A project hook without a #! line: Git for Windows never runs it, and doctor
+            # skipped every file without one (#165).
+            own = project / '.githooks/pre-commit.project'
+            own.write_text('exec /its/old/path "$@"\n', newline='\n')
+            red = doctor()
+            self.assertEqual(red.returncode, 1, red.stdout)
+            self.assertIn('MISSING: .githooks/pre-commit.project has no #! line', red.stdout)
+            own.unlink()
+
             # A fresh directory of links to the resolved executables: a dangling link or a
             # repeated PATH entry on the host must not break the fixture.
             dangling = tmp / 'dangling-bin'

@@ -56,6 +56,70 @@ class GitHookTests(unittest.TestCase):
             self.assertGreater((root / '.git/gate-runs').read_text(encoding='utf-8').count('ran'), runs)
             self.assertEqual(git('rev-list', '--count', 'HEAD').stdout.strip(), '2')
 
+    def test_a_commit_of_heads_own_tree_skips_the_gate_and_a_merge_never_does(self):
+        # Git runs pre-commit before it finds nothing to commit: each of these ran the whole
+        # gate, then git said "nothing to commit" (#232).
+        with tempfile.TemporaryDirectory() as tmp:
+            root, git = self.repo(tmp)
+            runs = lambda: (root / '.git/gate-runs').read_text(encoding='utf-8').count('ran')
+            before = runs()
+            self.assertNotEqual(git('commit', '-a', '-m', 'clean tree', check=False).returncode, 0)
+            git('commit', '-q', '--amend', '-m', 'message only')
+            (root / 'notes').write_text('edited, never added\n', encoding='utf-8')
+            self.assertNotEqual(git('commit', '-m', 'forgot add', check=False).returncode, 0)
+            self.assertEqual(runs(), before, 'a commit of HEAD\'s own tree ran the gate')
+            git('add', 'notes')
+            git('commit', '-q', '-m', 'a change')
+            self.assertEqual(runs(), before + 1)
+            # A conflicted merge resolved to HEAD's tree is still a merge: gated.
+            git('checkout', '-q', '-b', 'side', 'HEAD~1')
+            (root / 'notes').write_text('side\n', encoding='utf-8')
+            git('commit', '-q', '-am', 'side')
+            git('checkout', '-q', 'main')
+            self.assertNotEqual(git('merge', '-q', 'side', check=False).returncode, 0)
+            git('checkout', '-q', '--ours', 'notes')
+            git('add', 'notes')
+            git('commit', '-q', '--no-edit')
+            self.assertEqual(runs(), before + 3)
+
+    def test_a_project_hook_without_a_shebang_stops_the_operation_loudly(self):
+        # Git for Windows never runs a file without a #! line, chmod +x or not: the documented
+        # one-line .project hook was skipped in silence (#165). Mode 644 makes the file
+        # unrunnable on every platform; a #! hook with no execute bit stays switched off.
+        with tempfile.TemporaryDirectory() as tmp:
+            root, git = self.repo(tmp)
+            for n, name in enumerate(('pre-commit', 'commit-msg')):
+                own = root / '.githooks' / (name + '.project')
+                own.write_text('exit 0\n', encoding='utf-8', newline='\n')
+                own.chmod(0o644)
+                (root / 'c').write_text('%d\n' % n, encoding='utf-8')
+                git('add', 'c')
+                result = git('commit', '-q', '-m', name, check=False)
+                self.assertNotEqual(result.returncode, 0, name)
+                self.assertIn('.githooks/%s.project has no #! line' % name, result.stderr)
+                if os.name != 'nt':
+                    own.write_text('#!/bin/sh\nexit 1\n', encoding='utf-8', newline='\n')
+                    own.chmod(0o644)
+                    self.assertEqual(git('commit', '-q', '-m', name, check=False).returncode, 0, name)
+                own.unlink()
+            git('commit', '-q', '--allow-empty', '-m', 'c')
+            git('checkout', '-q', '-b', 'side', 'HEAD~1')
+            (root / 'side').write_text('s\n', encoding='utf-8')
+            git('add', 'side')
+            git('commit', '-q', '-m', 'side')
+            git('checkout', '-q', 'main')
+            (root / '.githooks/pre-merge-commit.project').write_text('exit 0\n', encoding='utf-8', newline='\n')
+            (root / '.githooks/pre-merge-commit.project').chmod(0o644)
+            merge = git('merge', '-q', '--no-edit', 'side', check=False)
+            self.assertNotEqual(merge.returncode, 0)
+            self.assertIn('.githooks/pre-merge-commit.project has no #! line', merge.stderr)
+            git('merge', '--abort', check=False)
+            (root / '.githooks/pre-merge-commit.project').unlink()
+            (root / '.githooks/post-merge.project').write_text('exit 0\n', encoding='utf-8', newline='\n')
+            (root / '.githooks/post-merge.project').chmod(0o644)
+            merge = git('merge', '-q', '--no-edit', 'side')
+            self.assertIn('.githooks/post-merge.project has no #! line', merge.stderr)
+
     def test_a_documentation_only_commit_defers_the_build_to_the_next_code_commit(self):
         # pre-commit asks for the documentation-only path; a clean merge (pre-merge-commit)
         # never takes it, whatever the merge brings in.

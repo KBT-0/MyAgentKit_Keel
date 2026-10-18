@@ -30,10 +30,11 @@ project-owned and executable: for a name the kit ships (`pre-commit`, `commit-ms
 first with git's arguments (its failure fails the commit; `post-merge` runs after the merge
 and cannot veto it); for any other name (`pre-push`, `prepare-commit-msg`, ...) as
 `.githooks/<name>` itself, which git runs directly. A hook that finds its checks by its
-own path (`$0`, its folder) stays where it is, and the `.project` file is one line:
-`exec /its/old/path "$@"`. No other `core.hooksPath` is accepted: `bootstrap.sh` stops on
-one and names this migration. Others refuse too: lefthook will not overwrite a hooks path
-that points elsewhere without `-f`.
+own path (`$0`, its folder) stays where it is, and the `.project` file is two lines,
+`#!/bin/sh` and `exec /its/old/path "$@"`: Git for Windows never runs a file without a `#!`
+line, `chmod +x` or not, and the kit's hook then refuses the commit. No other
+`core.hooksPath` is accepted: `bootstrap.sh` stops on one and names this migration. Others
+refuse too: lefthook will not overwrite a hooks path that points elsewhere without `-f`.
 
 Verify it is live:
 
