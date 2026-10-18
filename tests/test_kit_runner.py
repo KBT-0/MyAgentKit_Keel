@@ -591,7 +591,8 @@ runpy.run_path(%r, run_name='__main__')
         source = source.replace('ROOT = Path(__file__).resolve().parents[1]', 'ROOT = Path(%r)' % str(ROOT))
         begin, end = source.split('\ndef main():', 1)
         end = end[end.index('\nif __name__ == "__main__":'):]
-        for sig, status in ((signal.SIGTERM, 143), (signal.SIGINT, 130)):
+        # SIGHUP: a closed terminal. Each unit leads its own session, so only the runner can stop it.
+        for sig, status in ((signal.SIGTERM, 143), (signal.SIGINT, 130), (signal.SIGHUP, 129)):
             with self.subTest(signal=sig):
                 project = self.tmp / sig.name
                 (project / 'scripts').mkdir(parents=True)

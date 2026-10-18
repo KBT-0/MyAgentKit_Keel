@@ -3,7 +3,9 @@
 import signal
 import sys
 
-# SIGTERM must unwind the runner and run atexit, including its private cache cleanup.
+# SIGTERM and SIGHUP (a closed terminal) must unwind the runner and run atexit, including its
+# private cache cleanup, and stop the units: each leads its own session, so no signal to this
+# group reaches them.
 if __name__ == '__main__':
     if sys.version_info < (3, 11):
         raise SystemExit('KIT CHECK: FAIL - Python 3.11 or newer is required')
@@ -11,6 +13,8 @@ if __name__ == '__main__':
     def terminate(sig, frame):
         raise SystemExit(128 + sig)
     signal.signal(signal.SIGTERM, terminate)
+    if hasattr(signal, 'SIGHUP'):
+        signal.signal(signal.SIGHUP, terminate)
 
 import argparse
 import ast
