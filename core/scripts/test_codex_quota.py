@@ -113,9 +113,23 @@ class QuotaTests(unittest.TestCase):
                 os.killpg(pids[0], 0)
 
     def test_invalid_percent_is_not_zero(self):
-        for percent in (-1, 101, True, float('nan'), '25'):
+        for percent in (-1, True, float('nan'), '25'):
             buckets = codex_quota.sanitize({'rateLimits': {'primary': {'usedPercent': percent}}})
             self.assertIsNone(buckets['codex']['primary'])
+
+    def test_only_a_window_or_credits_make_a_snapshot_available(self):
+        # #279: null windows are no observation; an exhausted window above 100 is kept; a null
+        # limitId is the codex bucket; credits are kept as numbers and flags only.
+        empty = codex_quota.sanitize({'rateLimits': {'limitId': None, 'primary': None}})
+        self.assertEqual(list(empty), ['codex'])
+        self.assertFalse(codex_quota.has_reading(empty))
+        over = codex_quota.sanitize({'rateLimits': {'primary': {'usedPercent': 100.5}}})
+        self.assertEqual(over['codex']['primary']['used_percent'], 100.5)
+        self.assertTrue(codex_quota.has_reading(over))
+        credits = codex_quota.sanitize({'rateLimits': {'credits': {'balance': 12.5, 'hasCredits': True,
+                                                                   'account': 'secret'}}})
+        self.assertEqual(credits['codex']['credits'], {'balance': 12.5, 'hasCredits': True})
+        self.assertTrue(codex_quota.has_reading(credits))
 
 
 if __name__ == '__main__':

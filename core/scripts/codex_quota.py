@@ -15,7 +15,7 @@ def sanitize(result):
     buckets = result.get("rateLimitsByLimitId")
     if not isinstance(buckets, dict) or not buckets:
         single = result.get("rateLimits")
-        buckets = {single.get("limitId", "codex"): single} if isinstance(single, dict) else {}
+        buckets = {single.get("limitId") or "codex": single} if isinstance(single, dict) else {}
     safe = {}
     for key, value in buckets.items():
         if not isinstance(value, dict):
@@ -28,13 +28,23 @@ def sanitize(result):
                 continue
             percent = raw.get("usedPercent")
             if (isinstance(percent, (int, float)) and not isinstance(percent, bool)
-                    and math.isfinite(percent) and 0 <= percent <= 100):
+                    and math.isfinite(percent) and percent >= 0):  # above 100 is exhausted, kept
                 minutes, resets = raw.get("windowDurationMins"), raw.get("resetsAt")
                 item[window] = {"used_percent": percent,
                                 "window_minutes": minutes if type(minutes) is int and minutes > 0 else None,
                                 "resets_at": resets if type(resets) is int and resets >= 0 else None}
+        # Numbers and flags only: a credits object may sit beside the windows or alone.
+        credits = value.get("credits")
+        if isinstance(credits, dict):
+            item["credits"] = {str(name): field for name, field in credits.items()
+                               if isinstance(field, (bool, int)) or (isinstance(field, float) and math.isfinite(field))}
         safe[str(key)] = item
     return safe
+
+
+def has_reading(buckets):
+    """True when a bucket holds a window percent or a credits field, not only nulls."""
+    return any(item["primary"] or item["secondary"] or item.get("credits") for item in buckets.values())
 
 
 # Five seconds and 1,000,000 bytes are the owner's choice of telemetry safeguards,
@@ -99,7 +109,7 @@ def snapshot(cli: str, repo: Path, timeout: float = 5) -> dict:
                         send({"method": "account/rateLimits/read", "id": 2})
                     elif isinstance(value.get("result"), dict):
                         buckets = sanitize(value["result"])
-                        return {"status": "available" if buckets else "unavailable",
+                        return {"status": "available" if has_reading(buckets) else "unavailable",
                                 "observed_at": observed, "buckets": buckets,
                                 "source": "codex account/rateLimits/read"}
             raise ValueError("quota snapshot timed out")

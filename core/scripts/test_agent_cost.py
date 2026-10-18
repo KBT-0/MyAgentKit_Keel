@@ -155,3 +155,23 @@ class AgentCostTests(unittest.TestCase):
                                  capture_output=True, env=env, timeout=30)
             self.assertEqual(run.returncode, 0, run.stderr.decode('utf-8', 'replace'))
             self.assertIn('İstanbul worker', run.stdout.decode('utf-8'))
+
+    def test_output_tokens_are_shown_and_an_untimed_request_does_not_crash(self):
+        # #254: output tokens are summed per agent and in TOTAL; #255: one request without a
+        # timestamp sorted with a naive minimum beside aware timestamps raised TypeError.
+        with tempfile.TemporaryDirectory() as tmp:
+            session = Path(tmp) / 'b.jsonl'
+            session.write_text(
+                '{"type":"assistant","timestamp":"2026-10-01T10:00:00.000Z","requestId":"r1","message":'
+                '{"id":"m1","model":"claude-opus","usage":{"input_tokens":10,"output_tokens":1500}}}\n'
+                '{"type":"assistant","requestId":"r2","message":{"id":"m2","model":"claude-opus",'
+                '"usage":{"input_tokens":10,"output_tokens":500}}}\n', encoding='utf-8')
+            rows = agent_cost.requests(session)
+            self.assertEqual([r['t'] is None for r in rows], [True, False])
+            text = agent_cost.table([agent_cost.summarize('LEAD', rows)])
+            self.assertIn(' out ', text.splitlines()[0])
+            self.assertIn('output 2.0k', text)
+
+
+if __name__ == '__main__':
+    unittest.main()
