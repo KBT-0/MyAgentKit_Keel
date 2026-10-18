@@ -328,6 +328,25 @@ class UsageTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'tracked'):
                 agent_usage.require_private_storage(repo)
 
+    def test_tracked_review_reports_are_named_in_the_refusal(self):
+        # A project that committed its review reports saw no path and could not tell why.
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            subprocess.run(['git', 'init', '-q', str(repo)], check=True)
+            (repo / '.gitignore').write_text('/.myagentkit/\n')
+            (repo / 'docs/reviews').mkdir(parents=True)
+            names = ['docs/reviews/2026010%dT000000Z-old.md' % n for n in range(7)]
+            for name in names + ['docs/reviews/kept-summary.md']:
+                (repo / name).write_text('report\n')
+            subprocess.run(['git', '-C', str(repo), 'add', '-f', '--', 'docs'], check=True)
+            with self.assertRaises(ValueError) as caught:
+                agent_usage.require_private_storage(repo)
+            message = str(caught.exception)
+            self.assertIn('7 path(s): ' + names[0], message)
+            self.assertIn(names[4] + ', ...', message)
+            self.assertNotIn(names[5], message)
+            self.assertNotIn('summary', message.split(';')[0])
+
     def test_a_unicode_task_label_prints_on_a_legacy_stdout(self):
         # A Windows pipe is cp1252 unless UTF-8 mode is on: a task labelled `İstanbul` raised there.
         import os

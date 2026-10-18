@@ -2,7 +2,7 @@ The context was just compacted, and a summary is lossy: rules you read during th
 (sections of docs/WORKFLOW.md, a folder's AGENTS.md, earlier hook lines) are gone from it.
 Before the next step, re-read docs/STATE.md, the open handoff and operation files, and
 docs/COMMUNICATION.md (core/docs/ in the kit); as the lead, also docs/WORKFLOW.md, "Worker
-cost". Rules that still bind: a question from the owner is not an order; a worker gets a
+cost", its block "The rules in brief". Rules that still bind: a question from the owner is not an order; a worker gets a
 stated model and effort; never report a verification you did not run; no AI attribution in
 git; never `git commit --no-verify`. The context band still applies (docs/WORKFLOW.md,
 "Worker cost", rule 8). A second compaction in this session is a hand-off instead.

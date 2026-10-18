@@ -2,10 +2,12 @@
 
 usage: owns_check.py BRIEF [--uncommitted | --base REF | --commit SHA]
 
-A brief without an Owns: line is an error (exit 2). A pattern ending in '/' owns that folder;
-any other is an fnmatch pattern on the repository path. docs/STATE.md and docs/BACKLOG.md are
-always allowed: every worker records its state there. Exit 1 lists the paths outside; exit 2 is
-a usage or git error. Run from the repository root (scripts/review.sh does).
+A brief without an Owns: line, or with more than one outside fenced code blocks, is an error
+(exit 2). A pattern ending in '/' owns that folder; any other is a glob on the repository path
+with git's rules: '*' and '?' stay inside one folder, '**/' matches zero or more folders and a
+trailing '/**' everything below. docs/STATE.md and docs/BACKLOG.md are always allowed: every
+worker records its state there. Exit 1 lists the paths outside; exit 2 is a usage or git error.
+Run from the repository root (scripts/review.sh does).
 """
 from fnmatch import fnmatchcase
 from pathlib import Path
@@ -15,16 +17,59 @@ import sys
 
 ALWAYS = ('docs/STATE.md', 'docs/BACKLOG.md')
 OWNS = re.compile(r'^[\s>*+-]*(?:\d+[.)]\s+)?(?:\*\*)?Owns:(?:\*\*)?(.*)$', re.M)
+# A fence line (CommonMark): an opener may follow a list marker; group 1 is that marker.
+FENCE = re.compile(r'[ \t>]*((?:[*+-]|\d+[.)])[ \t]+)?(`{3,}|~{3,})(.*)$')
 WORKER_REPORT = re.compile(r'(?:RESULT|QUESTION)-[^/]+\.md')
 
 
 def owned(brief):
-    """The Owns: patterns of BRIEF, or None when it has no Owns: line."""
-    match = OWNS.search(Path(brief).read_text(encoding='utf-8'))
-    if not match:
+    """The Owns: patterns of BRIEF, or None when it has no Owns: line.
+
+    An example `Owns: *` in a code block above the real line won the first match and owned
+    every path, so fenced blocks are skipped and a second line is refused, not guessed at.
+    """
+    lines = OWNS.findall(unfenced(Path(brief).read_text(encoding='utf-8'), brief))
+    if not lines:
         return None
-    patterns = [p.strip().strip('`').replace('\\', '/') for p in match[1].split(',')]
+    if len(lines) > 1:
+        raise ValueError('%d Owns: lines outside code blocks in %s; keep one' % (len(lines), brief))
+    patterns = [p.strip().strip('`').replace('\\', '/') for p in lines[0].split(',')]
     return [p[2:] if p.startswith('./') else p for p in patterns if p]
+
+
+def unfenced(text, brief):
+    """TEXT without its fenced code blocks, paired as CommonMark pairs them.
+
+    A fence opened after a list marker went unseen, so its closer paired as an opener and hid
+    the real Owns: line; a line opening with inline ``code`` is no fence (a backtick fence's
+    info string holds no backtick). An unclosed fence is refused: it hides the rest.
+    """
+    kept, fence = [], None
+    for line in text.splitlines():
+        match = FENCE.match(line)
+        if fence:
+            if (match and not match[1] and match[2][0] == fence[0] and len(match[2]) >= len(fence)
+                    and not match[3].strip()):
+                fence = None
+        elif match and not (match[2][0] == '`' and '`' in match[3]):
+            fence = match[2]
+        else:
+            kept.append(line)
+    if fence:
+        raise ValueError('an unclosed code fence in %s hides the lines after it; close it' % brief)
+    return '\n'.join(kept)
+
+
+def glob_match(parts, pattern):
+    """Git's :(glob) rules on path segments. fnmatch alone let '*' cross '/' (`*.md` owned
+    docs/DESIGN.md) and needed a folder for '**/' (`src/**/*.cpp` refused src/b.cpp)."""
+    if not pattern:
+        return not parts
+    if pattern[0] == '**':
+        if len(pattern) == 1:
+            return bool(parts)
+        return any(glob_match(parts[i:], pattern[1:]) for i in range(len(parts) + 1))
+    return bool(parts) and fnmatchcase(parts[0], pattern[0]) and glob_match(parts[1:], pattern[1:])
 
 
 def git(*args):
@@ -50,7 +95,8 @@ def changed(scope, ref=None):
 
 def outside(paths, patterns):
     return sorted({path for path in paths if path not in ALWAYS and not WORKER_REPORT.fullmatch(path) and not any(
-        path.startswith(p) if p.endswith('/') else fnmatchcase(path, p) for p in patterns)})
+        path.startswith(p) if p.endswith('/') else glob_match(path.split('/'), p.split('/'))
+        for p in patterns)})
 
 
 def main(argv):
@@ -69,7 +115,7 @@ def main(argv):
             print('owns_check: the Owns: line of %s names no path' % argv[0], file=sys.stderr)
             return 2
         stray = outside(changed(*argv[1:]), patterns)
-    except (OSError, UnicodeDecodeError, subprocess.CalledProcessError) as error:
+    except (OSError, ValueError, subprocess.CalledProcessError) as error:
         detail = getattr(error, 'stderr', b'') or b''
         print('owns_check: %s %s' % (error, detail.decode('utf-8', 'replace').strip()), file=sys.stderr)
         return 2

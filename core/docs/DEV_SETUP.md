@@ -153,7 +153,10 @@ into the root ignore rules. Also merge the raw review/handoff archive exclusions
 summary re-include from the kit's `core/.gitignore`. The adapters refuse to launch if
 private storage is not ignored or raw records are already tracked. Preserve any existing
 records locally before removing them from Git's index; never delete them as part of an
-upgrade. Private storage cannot use symlinked directories. See `docs/USAGE.md`.
+upgrade. A project that committed its review reports under `docs/reviews/` (the pre-v0.11
+convention) decides before its first review: untrack them with `git rm --cached`, or keep a
+final one as `docs/reviews/*-summary.md`; until then every review refuses and names the
+tracked paths. Private storage cannot use symlinked directories. See `docs/USAGE.md`.
 
 Verify it end to end before trusting it — one real invocation, on a small diff:
 

@@ -829,6 +829,32 @@ cut any line whose removal would not cause a mistake), so a lesson that became a
 
 ## Worker cost — waits and long lives are what you pay for
 
+### The rules in brief
+
+The lead reads this block before it briefs, spawns, merges or closes a worker and after a
+compaction; the full rule below, with its measurements and sources, when one is in doubt.
+
+1. A worker's cache outlives its waits (one-hour cache); long jobs run in the background; nobody polls.
+2. A gate finding goes back to the author's side while its context is under the band and the
+   fix is no redesign; otherwise a fresh worker takes it.
+3. One small task per worker, sized to end under the context band.
+4. The lead does not poll either; it waits for notifications.
+5. Mechanical work: the cheaper model at medium effort; design-bearing code: the strongest at
+   high. Model and effort are always passed, never inherited.
+6. Parallel workers only for independent modules, heavy jobs within the memory budget, paid
+   reviews one after the other unless {{OWNER_NAME}} allows parallel, never fewer reviewers than the tier's.
+7. Worker reports are short (about 350 words); long output goes to a file.
+8. The context band: plan the cut at 200k, cut at the next clean stop at 300k, stop at 400k.
+9. A worker runs the cheapest check that proves its change; the expensive step runs once.
+
+Work over about an hour runs in its own session, a short errand as a sub-agent; a stopped
+worker is answered in its own session, a cut-off one resumed in place; the lead commits a
+Codex worker's work. Reviews: two rounds at most, inner rounds too; round 2 confirms every
+finding the dispositions claim fixed, a Medium included, and reports new Critical or High
+only; one final review per release (`docs/REVIEW_GATE.md`, "Rounds").
+
+### The measurements and the full rules
+
 Measured in the kit's founding project (one lead session with background workers: 336 USD in
 eleven hours, 87 percent of it the workers; the transcripts were then counted request by
 request, and a controlled experiment ran the same task in six setups). What the numbers say:
@@ -1312,15 +1338,19 @@ the same flaws cost hours of code rounds (the kit's RESEARCH_LOG, 2026-10-03).
   code.claude.com/docs/en/sub-agents, "Let subagents spawn their own subagents"). It starts
   a fresh diff reviewer as a sub-agent (the Claude Code overlay's
   `diff-reviewer`), fixes what the review finds, and starts a new fresh reviewer on the
-  result. This inner pass is the author's side's early check; the gate's review in a fresh
+  result only when round 1 left a Critical or High fix to verify (the cap below). This inner pass is the author's side's early check; the gate's review in a fresh
   session follows `docs/REVIEW_GATE.md` and `docs/REVIEW_RUNNING.md`, and its findings go
   to the author's side ("Worker cost", rule 2).
 - Each inner round's prompt carries the earlier inner rounds' findings and the worker's
   dispositions (`docs/REVIEW_GATE.md`, "Findings and dispositions").
 - The reviewer is a new sub-agent in every inner round, because the author never reviews its
   own change.
-- The worker reports when a review returns no Critical, High or Medium finding, or when it
-  has argued a disposition for each one that remains.
+- Inner rounds keep the gate's cap (`docs/REVIEW_GATE.md`, "Rounds"): at most two; round 2 runs
+  only when round 1 left a Critical or High fix, confirms every finding the dispositions claim
+  fixed, a Medium included, and reports new Critical or High only. A Medium is fixed when a test
+  verifies it, else named in the report; a Low goes to the report; what remains after round 2
+  goes to the lead. A fresh reviewer nearly always finds another Medium, so "until clean"
+  never ends (the kit's `docs/research/ai-review-workflows.md`, findings 2 and 8).
 - The report lists the inner rounds: their count, the findings fixed and each disposition.
 - Where `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH` is 1, the worker cannot start a sub-agent and
   says so in its report. The lead then starts the review the moment the worker's branch
@@ -1329,8 +1359,6 @@ the same flaws cost hours of code rounds (the kit's RESEARCH_LOG, 2026-10-03).
   "Add an adversarial review step"); a model correcting its own reasoning without outside
   feedback does not improve (Huang et al., ICLR 2024, arxiv.org/abs/2310.01798), which is why
   the reviewer is new each round.
-- The inner rounds do not replace the lead's review. A risky diff still passes
-  `docs/REVIEW_GATE.md` before the merge, and the inner rounds make that review shorter.
 
 A fix in the worker's warm context, in an inner round, costs minutes while the cache is warm.
 The same finding left
@@ -1363,12 +1391,10 @@ The shell stays in the lead's checkout, so its Stop hook runs that checkout's ga
    for the wait. CI runs on the same commit.
 3. Keep one review label per change for its rounds (a high-tier change's two focus reviewers
    get two rounds each under it), so that each round carries the matching earlier reports
-   (`docs/REVIEW_GATE.md`, "Rounds"). The merged diff
-   then gets ONE final review under a label never used before, at high effort, by a session
-   that did not write its larger part.
+   (`docs/REVIEW_GATE.md`, "Rounds"). A release's merged diff
+   then gets ONE final review under a label never used before, as that section states.
 4. Fix a Critical or High finding of the final review; a Medium goes to {{OWNER_NAME}} and a
-   Low to `docs/BACKLOG.md` (`docs/REVIEW_GATE.md`, "Verdicts and who decides"). The fix gets
-   one re-read at medium effort, not a new loop.
+   Low to `docs/BACKLOG.md` (`docs/REVIEW_GATE.md`, "Verdicts and who decides").
 5. A release gets one day of real use before the push; the lead records what it ran and
    what it saw in `docs/STATE.md`, and pushes on {{OWNER_NAME}}'s OK.
 6. Start the next worker while the gate run after a merge still runs. If that run
