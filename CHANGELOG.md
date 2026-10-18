@@ -11,6 +11,138 @@ WHY an entry exists belongs in `RESEARCH_LOG.md`; this file records WHAT changed
 
 ---
 
+## Unreleased — v0.12
+
+This heading becomes `## v0.12 — <date>` at the release, together with README's bold version
+and the plugin manifest; until then the kit check and `sync-kit.sh` read v0.11.
+
+- **The project gate's whole-gate `check.sh --self-test` is gone; each check is proven by its
+  own fixture test** (decision 23; `docs/research/kit-self-checks.md`, findings 1 and 2). A
+  fixture test feeds one check a small input in a throwaway folder, red with its own FAIL line
+  on a bad input and green on a good one; it runs in the normal test suite in seconds and never
+  runs the build. The gate loses its seams (`GATE_SELFTEST_*`, `GATE_BUILD_CMD_OVERRIDE`,
+  `BOUNDARY_SELFTESTS_FILE`), exit code 3 and the token in its lock file; it exits 0, 1, 2
+  (usage) or 75 (lock not taken). The Unity gate and the Stop hook lose their self-test paths,
+  the overlay allow list loses its two `--self-test` rules, and the "self-test owed" rule and
+  `sync-kit.sh`'s demand for it are gone. `review.sh --self-test`, the review suite runner,
+  stays. (#80, #110, #124, #126, #152, #125, #84, #81 in part)
+  **ACTION:** (1) Take the new `scripts/check.sh` whole and re-apply your filled values
+  (`build_test_cmd`, `build_cache_inputs`, `module_roots`); stop calling `check.sh --self-test`
+  anywhere (scripts, CI, docs, agent briefs). (2) Delete `scripts/boundary_selftests.sh`. For
+  each check in `scripts/boundary_checks.sh` write a fixture test instead, as the example at the
+  end of the kit's `boundary_checks.sh` header shows (`expect red '<FAIL line>' <path> '<line>'`
+  and `expect green - <path> '<line>'`), and run it from your build command (for example
+  `sh tests/boundary_checks_test.sh && <your build>`). (3) Claude Code overlay: remove the two
+  `--self-test` allow rules from `.claude/settings.json` and take the new
+  `.claude/hooks/gate_on_stop.sh`. (4) Unity overlay: take the new `scripts/unity_gate.sh` (no
+  `--self-test`), and replace the `boundary_selftests.sh` case of the networking check with the
+  two `expect` lines in `docs/UNITY_SETUP.md`. (5) Merge the self-test-free text into your
+  copies of `docs/WORKFLOW.md` ("Writing a gate"; a run beside the reviews shares their worktree
+  only when it writes nothing but ignored files), `docs/DEV_SETUP.md` §5 (a PASS says the checks
+  found nothing; the gate does not check that fixture tests exist), `docs/GOTCHAS.md`,
+  `docs/REVIEW_GATE.md`, `docs/REVIEW_RUNNING.md`, `.claude/agents/diff-reviewer.md` and the
+  Unity overlay's `README.md`; re-copy `scripts/review.sh`, `scripts/claude_bridge.py`,
+  `scripts/agent_usage.py`, `scripts/review_test_support.py` and `scripts/test_claude_bridge.py`
+  (their comments and the reviewer prompt no longer name the self-test).
+
+- **Opt-in build cache** (`scripts/check.sh`): the gate can skip a build that already passed on
+  the same inputs. The key covers every file `git ls-files --cached --others --exclude-standard`
+  lists (read from disk), the gate script itself and the output of `build_cache_inputs` (empty,
+  the default, keeps it off; never used on CI). A cached run prints
+  `NOTE [build]: not run: cached PASS <key> from <date>` and says so in its PASS line. The cache
+  is off when a symlink in the tree points to a file outside the tree or in an ignored folder,
+  since that target is not in the key. (#82)
+  **ACTION:** to use it, set `build_cache_inputs` in the new `scripts/check.sh` (starters in its
+  comment and in WORKFLOW "Writing a gate"); `GATE_CACHE=off` runs a full build.
+
+- **Claude Code overlay: the git and e-mail guards judge every shell tool** (#93, #213). Both
+  matched Bash only, so PowerShell and Monitor calls bypassed the destructive-git, `--no-verify`
+  and private-e-mail guards. The hooks read `tool_input.command` from any tool and Monitor's
+  `ws.url`; PowerShell syntax (no backslash escapes, `$env:X = v`, backtick, `--%`, a splat
+  `git @a`) is read or refused as unreadable. The `git ... --output/--ext-diff/--textconv/--submodule`
+  deny rules get PowerShell twins; Monitor already obeys the Bash rules.
+  **ACTION:** in `.claude/settings.json`, change the PreToolUse matchers `"Bash"` to
+  `"Bash|PowerShell|Monitor"` and `"WebFetch|WebSearch|Bash"` to
+  `"WebFetch|WebSearch|Bash|PowerShell|Monitor"`, and add the four deny rules
+  `PowerShell(git *--out*)`, `PowerShell(git *--ext*)`, `PowerShell(git *--textc*)` and
+  `PowerShell(git *--sub*)` beside their Bash twins.
+
+- **`guard_destructive_git.py`** (#127, #108, #77, #93):
+  - Refused whatever the tree's state: a ref delete or forced move that loses commits no other
+    ref reaches (`branch -D`/`-d -f`/`-f`/`-M`/`-C`, `tag -d`/`-f`, `update-ref`, `remote
+    remove`/`rm`; a checked-out branch's own HEAD no longer counts as reaching them),
+    `update-ref --stdin`, `reflog expire`/`delete`, `gc --prune=<anything but never>`,
+    `-c gc.pruneExpire=now gc`, `prune` without `-n`, and `worktree remove --force` while the
+    named worktree holds uncommitted or untracked work. Abbreviated long options are read.
+  - Judged like `restore` on a dirty tree: `rm -f` (not `--cached`), `mv -f`,
+    `checkout-index -f`, `read-tree -u --reset`.
+  - Git that appears only in data or code is no longer refused: `$(...)`, backticks, `eval`,
+    `sh -c` (also behind `timeout` or `xargs`, with its own `cd`) and a here-document a shell
+    reads are parsed as shell; in interpreter code or another program's arguments each
+    `git ...` is judged as the command it names, an argv list laid out one item per line
+    included. doctor's `cd <repo> && git config core.hooksPath .githooks` passes as printed.
+  - It fails closed on what it cannot read: a ref, remote, worktree, subcommand or folder named
+    by a `$var`, `$(...)`, an xargs-appended operand, `{}` or an interpolated operand (`{b}`,
+    `#{b}`, `%s`), and code that sets a folder (`cwd=`, `chdir`), count as the worst case.
+    Accepted cost: code or data that mentions a folder change and a dirty-sensitive git command
+    is refused on a clean tree too; prose that names a loss-certain command (`git stash drop`)
+    still reads as that command.
+  - `#` comments end at their line; a `!` alias, `submodule foreach` and `bash -s` are judged.
+  - The spawn scripts' clean-up hints no longer suggest `branch -D` (kit-owned, synced).
+  **ACTION:** re-copy `.claude/hooks/guard_destructive_git.py`; merge the guard paragraph of
+  `docs/GOTCHAS.md` and the guard rows of the Claude Code overlay README into your copies.
+
+- **`guard_private_email.py`** (#211, #212, #213): reads the project's `user.email`
+  (`CLAUDE_PROJECT_DIR`) as well as the current folder's, failing closed on a git error, so a
+  per-project identity is protected from the scratchpad. A web command that prints an address
+  at run time is refused: `git log`/`show`/`whatchanged` without `--oneline` or a custom format,
+  a built-in `--format`/`--pretty` that prints addresses, `%ae`/`%ce`/`%(authoremail)` and the
+  like, `git var`, `git config -l`/`--list`/`--get-regexp`/`list`/`get --regexp`, `env`,
+  `printenv` and PowerShell `Get-ChildItem env:`. Quoted `-C` paths and `ws://`/`wss://` URLs are
+  read. **ACTION:** re-copy `.claude/hooks/guard_private_email.py`.
+
+- **`guard_worker_route.py`** (#137): an Agent call without model/effort passes when the agent's
+  definition pins both with real values (diff-reviewer, and worker after setup). The definition
+  is found by its `name:` field, project folder before user folder; a quoted `inherit` or a
+  `{{placeholder}}` is no pin. The refusal states the worker rule and the reviewer rule
+  separately. **ACTION:** re-copy `.claude/hooks/guard_worker_route.py`.
+
+- **`guard_boundaries.py`** (#151): its docstring and the overlay README say that writes through
+  the shell get no early warning; `scripts/check.sh` stays the gate. **ACTION:** re-copy
+  `.claude/hooks/guard_boundaries.py` (docstring only).
+
+- **Kit check (`scripts/check_kit.py`, kit-only):** each test module, each shard of a long module
+  and each locale suite runs as its own unit, one unit per two CPUs; a test module without a
+  count in `REQUIRED_SUITES` fails the check, and the count is checked before the run. A failing
+  unit prints only its FAIL/ERROR blocks and the count, not a line per passing test. Discovery
+  reads no Windows-only stat names, so POSIX Python 3.11 runs every suite. `test_doctor` and
+  `test_spawn_worker` scale their wall-clock bounds with `MYAGENTKIT_TEST_TIMEOUT_SCALE`, which
+  check_kit raises by at most 4 while units run side by side; a module this host does not run
+  gets a NOT RUN line, no unit. The acceptance unit runs no nested gate self-test; its review
+  cases call `scripts/review.sh --self-test` directly. A project-owned kit file (core/, setup/,
+  overlays/ without a `KIT-OWNED` header) changed since the last release tag fails the check
+  unless an ACTION item of the newest version names it; NOT RUN without a tag. CI runs the kit
+  check only. (#146 in part, #111, #96, #134)
+  **ACTION** (kit maintainers): tag each release `vMAJOR.MINOR`.
+
+- **Kit CI and test isolation** (ci, redfix): CONTRIBUTING's release rule: a release is
+  announced only after CI is green on every job of the release commit (`gh run list`,
+  `gh run view`); red means not released. Job time limits raised (macOS/Ubuntu 60 min, Windows
+  90), because a limit that cuts a run short reads as red. `scripts/check_kit.py` exports
+  `GIT_CONFIG_GLOBAL=<devnull>` and `GIT_CONFIG_NOSYSTEM=1` for every unit and test, and names
+  the temp folder by its long path on Windows. The review suite's fixtures write their own
+  ignore rules instead of copying a project's `.gitignore` (a project ignoring `.env` failed the
+  kit's secret-file tests), the mode-change test sets the file mode, and a failing shard's output
+  is written with `errors='replace'` so a cp1252 console cannot hide it. POSIX and Windows test
+  fixtures fixed from CI run 39065623063. (#95, #96, #147, #91, #92, #163 in part)
+  **ACTION:** re-copy `scripts/test_claude_bridge.py`. Kit maintainers: set `master` branch
+  protection with the six CI jobs as required status checks (GitHub settings; the workflow
+  cannot do it).
+
+- **Binding research report on the kit's own checks:** `docs/research/kit-self-checks.md`
+  (gate self-test, acceptance suites, test-time norms and tiers); every proposal about check_kit,
+  the gate self-test, test tiers or time budgets cites a numbered finding of it (decision 22).
+
 ## v0.11 — 2026-10-09
 
 - **Python minimum raised to 3.11:** doctor, gate launchers, syntax checks and CI require Python 3.11+.
