@@ -167,7 +167,7 @@ this heading says Unreleased, a v0.11 tag turns the kit's ACTION check red.
 
 - **The review bridge test of every record outcome no longer times out on a loaded host:** only
   its timeout cases keep the 2 s bound (#95 follow-up). `codex_bridge.py`'s verdict rule is one
-  function, `verdict_refused()`; its ~60 forms are tested in-process instead of one full wrapper
+  function, `verdict_refused()`; its forms are tested in-process instead of one full wrapper
   run each.
   **ACTION:** re-copy `scripts/test_claude_bridge.py` and `scripts/codex_bridge.py`.
 
