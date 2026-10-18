@@ -21,6 +21,93 @@ which is the part that gets lost.
 
 ## Implementation observations
 
+### 2026-10-18 — v0.12: test rules kept only where a source holds them
+
+The owner ordered the kit's test rules checked against sources, under the rule that a practice
+with no source goes (v0.12 decision 34); the kit lead researched (a) tests with or before the
+code and (b) a red proof for every test and gate check, the leeway project (c) tests of a
+generated-content pipeline. The merged binding report is `docs/research/test-rules.md`.
+Findings: a test in the same change is backed by SWE at Google, DORA and Anthropic (finding 1);
+the only study that measured test-first ordering found no effect (Fucci et al., finding 2);
+"see every test fail once" is practitioner convention with no measurement, and the
+evidence-backed question is whether a test breaks when the code is reverted or mutated
+(findings 4, 5); a gate check's bad-input fixture is the standard (finding 6); studios validate
+generated content on its output, never by unit tests of the generator (findings 9 to 11). The
+owner's decision 37 follows the report for (a) and (b): the test comes in the same change and
+test-first is advice; only gate checks keep a mandatory red proof; existing tests stay and only
+measured redundant or slow ones are consolidated. (c) is the leeway project's decision (leeway
+b9732d5): a content pipeline validates its output and generator unit tests are not mandatory;
+the kit adopts it as a recommendation.
+
+### 2026-10-18 — v0.12: two parallel reviewers for the high tier
+
+The owner kept two focus reviewers, logic and portability, running in parallel for a high-tier
+review (v0.12 decision 32, the recommended option). The day's evidence: in the guards round 1,
+only reviewer B found that `unreached()` counted HEAD symrefs, a High that let a checked-out
+branch's commits be deleted; reviewer A did not. One reviewer would have merged that data loss.
+Parallel, not one after the other, because both read the same frozen diff and neither needs the
+other's result.
+
+### 2026-10-18 — v0.12: solo Claude mode for the kit's own work
+
+The owner ended the Codex subscription: "Artık codex yok tek abonelikli modda devam edicez
+sadece claude var elimizde" (v0.12 decision 27). Kit work runs in the solo mode from then on:
+Claude writes, a fresh Claude session reviews (Opus 5.5 high for the high tier), Claude fixes;
+no Codex worker, no Codex reviewer, no `--fallback` to Codex. One family is enough and a second
+vendor is pluggable, never required (`docs/REVIEW_GATE.md`, "Invariant"); the kit still works
+with a second model plugged in and never depends on one. `working_mode.py` cannot
+record the mode in the kit repository, which has no `docs/WORKFLOW.md` or `docs/STATE.md`.
+
+### 2026-10-18 — v0.12 guards: fail closed on what the hook cannot read
+
+The guards batch widened what `guard_destructive_git.py` lets through (#77: git that appears
+only in data or code) and what it watches (#93: PowerShell and Monitor). Round 1 (two Opus high
+reviews, both Reject) showed that the widening let `xargs git branch -D`, a `for` loop over
+`$(...)`, an unknown `cd` and an argv list laid out one item per line delete refs unseen; round 2
+found a `cd` inside `timeout ... sh -c`, a PowerShell splat `git @a` and an interpolated operand
+(`{b}`, `%s`). The design that closed both rounds: what the hook cannot read is the worst case.
+A ref, remote, worktree, subcommand or folder named by a variable, a substitution, an xargs
+operand or an interpolation is unknown, and an unknown folder counts as dirty. Known limit, by
+decision: git inside a quote, heredoc or code the hook cannot read is refused even when it is
+harmless (code that mentions `cwd=` and `git reset --hard` is refused on a clean tree; prose that
+names `git stash drop` reads as that command). A push with a variable refspec still passes,
+because refusing it would block the everyday `git push origin "$branch"`. Sources:
+`.myagentkit/v012/reports/guards.md` and decisions 29, 33, 36; Claude Code's own docs settle that
+Monitor obeys the Bash permission rules and that `PowerShell(...)` rules take the Bash shape
+(code.claude.com/docs/en/tools-reference, /permissions, read 2026-10-18).
+
+### 2026-10-18 — v0.12 ci: a release waits for green CI
+
+v0.11 CI was red on POSIX while the local Windows check passed (#95), and the macOS job
+was cancelled at its 30-minute limit, which reads as red. The ci batch made CONTRIBUTING's release
+rule say a release is announced only after every CI job of the release commit is green, raised
+the job limits, and isolated every kit test from the developer's git configuration (#147). No
+POSIX fix was run on POSIX on this Windows host; the next CI run is their first proof.
+
+### 2026-10-18 — v0.12: check_kit stays, split into a fast and a slow tier
+
+The owner kept `check_kit` and ordered a fast tier (at most 10 minutes on Windows, every change
+and before a push) and a slow tier (bootstrap/acceptance, the POSIX signal suites) that runs in
+parallel in CI and before a release, an enforced time budget, and consolidation of redundant
+tests (v0.12 decision 23). Evidence: one serial 50-minute suite breaks the ten-minute commit-build
+norm of Beck, Fowler and DORA, and the norm is a fast commit stage plus a separate slow stage
+(`docs/research/kit-self-checks.md`, findings 6 and 7); Bazel enforces size-based timeouts as
+hard caps, the nearest model for a budget (finding 8). The checkkit batch measured why sharding
+alone does not reach it: on a 20-CPU Windows host parallel units gave about 2x, not N x, because
+the host is bound by process starts; the full run took 40 minutes at 10 units at once. The tier
+split itself is the "tiers" worker's task.
+
+### 2026-10-18 — v0.12: the whole-gate self-test deleted for per-check fixture tests
+
+The owner's rule: a practice with no source and no similar practice in the field is deleted
+(decision 21). The binding research found per-check negative tests against a small fixture to
+be the standard (Semgrep `ruleid:`/`ok:`, ESLint RuleTester, Conftest: `docs/research/kit-self-checks.md`,
+finding 1) and no evidence for a whole-gate self-test that injects each failure and runs the full
+build per case (finding 2). A project had reported `check.sh --self-test` running up to about
+three hours (#80). Decision 23 deleted it; every check now has its own fixture test that never
+runs the build, and the lock guards that had only self-test cases got killing tests in the
+Windows and POSIX gate suites (round-1 review, decision 31). The opt-in build cache (#82) stayed.
+
 ### 2026-10-17 — Python minimum raised to 3.11
 
 The owner raised the kit's minimum from Python 3.10 to 3.11 (v0.11 close-out decision 30c).

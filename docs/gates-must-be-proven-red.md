@@ -61,6 +61,16 @@ project and ran the whole gate, build included, once per case; no source shows t
 the field (same report, finding 2), and in one project it took up to about three hours (issue #80). It was removed
 in v0.12.
 
+## Gate checks, not every test
+
+This rule is for gate checks. An ordinary new test needs no mandatory red proof: "see it fail
+first" is practitioner convention with no measurement behind it, and no official source asks
+for it. The review asks instead whether the test breaks when the code is reverted, the
+question mutation testing answers with evidence. A logic change brings its test in the same
+change; writing it first is advice. Existing tests stay; only tests measured as redundant or
+slow are consolidated (`docs/research/test-rules.md`, findings 1 to 6; owner decision
+2026-10-18).
+
 ## The observation worth keeping
 
 **The session that wrote a gate could not validate its own gate.** It ran the script, saw
