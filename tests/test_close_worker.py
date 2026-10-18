@@ -370,8 +370,11 @@ class CloseWorkerTests(unittest.TestCase):
 
     def test_on_native_windows_another_checkouts_session_of_the_name_is_never_ended(self):
         # #171: names are machine-wide on Windows. This checkout's w1 has ended; the w1 that runs
-        # (7777) is another project's. With no record of whose it is, nothing is done.
+        # (7777) is another project's. With no record of whose it is (a Claude worker spawned before
+        # NAME.pid: its NAME.result-path only), nothing is done.
         path = self.worker('w1', session=False)
+        (self.main / '.myagentkit/workers').mkdir(parents=True)
+        (self.main / '.myagentkit/workers/w1.result-path').write_text('RESULT-w1.md\n')
         env = self.windows('7777 C:\\npm\\claude.exe -n w1 --model x')
         out = self.close('w1', code=1, **env)
         self.assertIn('close_worker: FAILED: w1: a Claude Code session named w1 runs (process 7777), but no ', out)
@@ -396,10 +399,38 @@ class CloseWorkerTests(unittest.TestCase):
         self.assertIn('close_worker: w1: no tmux session named w1 started in this checkout (the one in '
                       "/elsewhere/project/.claude/worktrees/w1 is another checkout's, never ended here)", out)
         self.assertFalse(path.exists(), out)
+        # One started in another worker's worktree of this checkout is that worker's (round-1 review).
+        top = self.git('rev-parse', '--show-toplevel')
+        (self.tmp / 'paths').write_text('w1 %s/.claude/worktrees/other\n' % top)
+        out = self.close('w1')
+        self.assertNotIn("['kill-session', '-t', '=w1']", self.calls())
+        self.assertIn("(the one in %s/.claude/worktrees/other is another checkout's" % top, out)
         # One started in this checkout outside .claude/worktrees (a worker without --worktree) is this one's.
-        (self.tmp / 'paths').write_text('w1 %s/sub\n' % self.git('rev-parse', '--show-toplevel'))
+        (self.tmp / 'paths').write_text('w1 %s/sub\n' % top)
         out = self.close('w1')
         self.assertIn("['kill-session', '-t', '=w1']", self.calls())
+
+    def test_a_tmux_session_started_in_the_workers_worktree_is_ended_once_that_folder_is_gone(self):
+        # Round-1 review of #171: with .claude/worktrees/w1 removed by hand, the close fell back to
+        # the checkout and took the session started there for another checkout's.
+        with open(self.tmp / 'sessions', 'a') as f:
+            f.write('w1\n')
+        (self.tmp / 'paths').write_text('w1 %s/.claude/worktrees/w1\n' % self.git('rev-parse', '--show-toplevel'))
+        out = self.close('w1')
+        self.assertIn("['kill-session', '-t', '=w1']", self.calls())
+        self.assertEqual(self.sessions(), [], out)
+
+    def test_on_native_windows_a_codex_worker_closes_beside_another_checkouts_claude_session_of_the_name(self):
+        # Round-1 review of #171: a Codex worker has no NAME.pid, and another project's `claude -n w1`
+        # failed its close (and every merge's) as an unrecorded session of the name.
+        path = self.worker('w1', session=False)
+        (self.main / '.myagentkit/workers').mkdir(parents=True)
+        (self.main / '.myagentkit/workers/w1.session').write_text('sid\n')
+        env = self.windows('7777 C:\\npm\\claude.exe -n w1')
+        out = self.close('--finished', 'w1', **env)
+        self.assertIn('close_worker: w1: no Claude Code session this checkout started as w1 runs; nothing to end\n', out)
+        self.assertFalse((self.tmp / 'taskkill.log').exists(), out)
+        self.assertFalse(path.exists(), out)
 
     def test_a_missing_session_or_worktree_is_reported_not_an_error(self):
         out = self.close('nobody')

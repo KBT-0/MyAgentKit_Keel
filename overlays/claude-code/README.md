@@ -98,7 +98,8 @@ If it prints WARNING, watch the tab and result file; no idle notice arrives.
 `close_worker.sh NAME` ends it: it finds the `claude.exe` whose
 command line holds `-n NAME` and whose process id the spawn recorded in
 `.myagentkit/workers/NAME.pid` (another project's session of the name is never ended; one with
-no record is reported and left running), stops it with `taskkill /T /F` (the tab closes, because its
+no record is reported and left running, and a name with neither NAME.pid nor NAME.result-path,
+a Codex worker say, has no Claude session to end), stops it with `taskkill /T /F` (the tab closes, because its
 command ends with `exit 0`), then removes the worktree through the same audit as on POSIX,
 which reads each process's working directory on Windows itself. A session that survives, or
 a process list it cannot read, leaves the worktree untouched. On WSL and macOS the tmux path

@@ -13,9 +13,9 @@
 #     (src/build). List no folder where workers keep scratch or proof files: what is in a
 #     listed folder is removed with the worktree, with no copy anywhere.
 # Entries are matched exactly, case included (build is not Build).
-# A removal (--apply, the post-merge hook) uses this file as committed: an uncommitted edit
-# applies once committed, and the dry run (clean_worktrees.sh without options) shows first what
-# it would remove.
+# While this file differs from its committed version, only the entries in both count, with the
+# higher quiet-minutes: an uncommitted narrowing protects at once, a widening applies once
+# committed. The dry run (clean_worktrees.sh without options) shows what a removal would take.
 # Refused: an empty entry, "//", "." or "..", and the places that hold work:
 # .git, docs, .claude, .myagentkit, scripts. The content of these folders must also be
 # git-ignored: `git worktree remove` refuses untracked files, and the worktree is then kept.

@@ -2341,14 +2341,29 @@ class CleanWorktreesTests(unittest.TestCase):
         (path / 'build').mkdir()
         (path / 'build/scratch.py').write_text('only here\n')
         out = self.run_script('--apply')
-        self.assertIn('clean_worktrees: .claude/worktree-disposable differs from its committed version; this '
-                      'removal uses the committed list', out)
+        self.assertIn('clean_worktrees: .claude/worktree-disposable differs from its committed version; only '
+                      'the entries in both apply', out)
         self.assertKept(path, out, 'outside a disposable folder: build/scratch.py')
-        # The dry run shows what the edited list would remove; once committed, it applies.
-        out = self.run_script()
-        self.assertIn('remove .claude/worktrees/done', out)
+        # The dry run reports what a removal would do; once committed, the entry applies.
+        self.assertKept(path, self.run_script(), 'outside a disposable folder: build/scratch.py')
         self.git('commit', '-q', '-am', 'build is disposable')
         self.assertRemoved(path, self.run_script('--apply'))
+
+    def test_an_uncommitted_narrowing_of_the_disposable_list_protects_at_once(self):
+        # Round-1 review of #288: following the committed list alone, a removal took uncopied
+        # scratch that the owner had just taken off the list, before the edit was committed.
+        self.disposable('build\nquiet-minutes=30\n')
+        self.git('add', '.claude/worktree-disposable')
+        self.git('commit', '-q', '-m', 'list')
+        self.disposable('quiet-minutes=10\n')
+        path = self.worktree('done')
+        (path / 'src/build').mkdir(parents=True)
+        (path / 'src/build/scratch.py').write_text('only here\n')
+        # The higher quiet period applies, and the dry run reports what a removal would do.
+        out = self.run_script('--all-reasons', CLEAN_WORKTREES_NOW=str(time.time() + 16 * 60))
+        self.assertKept(path, out, 'outside a disposable folder: src/build/scratch.py', '(quiet-minutes=30')
+        self.assertKept(path, self.run_script('--apply'), 'outside a disposable folder: src/build/scratch.py')
+        self.assertTrue((path / 'src/build/scratch.py').is_file())
 
     def test_a_tracked_file_under_another_name_is_kept_and_never_deleted(self):
         # Reproduced by a reviewer on a case-insensitive file system (macOS): tracked `a` renamed

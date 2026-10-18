@@ -44,7 +44,8 @@
 # Native Windows has no tmux: step 2 ends the Claude Code session named NAME instead, the
 # claude.exe whose command line holds `-n NAME` and whose process id spawn_worker.sh recorded in
 # .myagentkit/workers/NAME.pid (names are machine-wide there: another checkout's session of the
-# name is never ended, #171; one running with no record is reported and nothing is done),
+# name is never ended, #171; one running with no record is reported and nothing is done, unless
+# the name has no NAME.result-path either: then it is no Claude worker of this checkout),
 # with `taskkill /T /F` (its tree), and waits up
 # to 15 s until no such process is left; its Windows Terminal tab closes by itself, because the
 # tab's command ends with `exit 0` (spawn_worker.sh). A lister that cannot answer fails the
@@ -239,8 +240,10 @@ has() {
     # Session names hold no `:` (tmux replaces it), and worker names are [A-Za-z0-9_-].
     p=$(tmux list-sessions -F '#{session_name}:#{session_path}' 2>&1) || { err=$p; return 2; }
     p=$(printf '%s\n' "$p" | sed -n "s/^$1://p")
+    # Its own worktree's folder counts even when that folder is gone (wt_dir is then $top).
     [ "$p" = "$wt_dir" ] && return 0
-    case $p in "$top/.claude/worktrees"|"$top/.claude/worktrees/"*) ;; "$top"|"$top/"*) return 0 ;; esac
+    case $p in "$top/.claude/worktrees/$1") return 0 ;; "$top/.claude/worktrees"|"$top/.claude/worktrees/"*) ;;
+      "$top"|"$top/"*) return 0 ;; esac
     other=$p; return 1
   fi
   case $err in
@@ -326,10 +329,12 @@ sessions() {
 # mine NAME: of the sessions named NAME, the ones spawn_worker.sh started for this checkout (the
 # process ids in NAME.pid): a name is machine-wide on Windows, and another project's worker of
 # the same name was ended (#171). 2: the lister failed (its words); 3: sessions of the name run
-# and no record says whose (their ids).
+# and no record says whose (their ids). A name with neither NAME.pid nor NAME.result-path (both
+# written by spawn_worker.sh) is no Claude worker of this checkout, a Codex worker say: none.
 mine() {
   all=$(sessions "$1") || { printf '%s' "$all"; return 2; }
   [ -n "$all" ] || return 0
+  [ -e "$top/.myagentkit/workers/$1.pid" ] || [ -e "$top/.myagentkit/workers/$1.result-path" ] || return 0
   ids=$(cat -- "$top/.myagentkit/workers/$1.pid" 2>/dev/null) || { printf '%s' "$all"; return 3; }
   own=""
   for p in $all; do case " $(echo $ids) " in *" $p "*) own="$own${own:+ }$p" ;; esac; done

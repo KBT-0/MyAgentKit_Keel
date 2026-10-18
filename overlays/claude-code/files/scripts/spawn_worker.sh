@@ -651,10 +651,15 @@ if [ -n "$windows" ]; then
     i=$((i + 1)); sleep 1
   done
   [ -n "$pids" ] || die "no Claude Code session named '$name' started within 30 s; its tab shows why"
-  # The name was free machine-wide before the launch (above), so these are this checkout's
-  # worker: close_worker.sh ends only the recorded ids, never another project's session of the
-  # name (#171). The refusal stays machine-wide, so the ids found here are never another's.
-  printf '%s\n' "$pids" > "$wdir/$name.pid" || die "cannot record the session's process id in $wdir"
+  # The name was free machine-wide before the launch (above), so a session found now started
+  # since: close_worker.sh ends only the recorded id, never another project's session of the
+  # name (#171). Two of them mean another one started in the same moment, and which is this
+  # checkout's cannot be told: none is recorded. ponytail: one other that starts alone while
+  # this claude is not yet listed is still taken for this worker; a launch-time id would end that.
+  case $pids in
+    *' '*) printf '%s\n' "spawn_worker: NOTE: more than one Claude Code session named '$name' started (processes $pids), another checkout's perhaps, so none is recorded as this checkout's: close_worker.sh will not end '$name'; quit its tab by hand once it is finished, then close it" ;;
+    *) printf '%s\n' "$pids" > "$wdir/$name.pid" || die "cannot record the session's process id in $wdir" ;;
+  esac
   reg=${CLAUDE_CONFIG_DIR:-$HOME/.claude}/sessions
   peer=""
   # The listing is taken again on every round: a worker that ended meanwhile did not start.

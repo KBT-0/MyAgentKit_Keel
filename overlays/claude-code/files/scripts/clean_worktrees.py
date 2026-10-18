@@ -1313,14 +1313,18 @@ def main():
     main_root = os.path.realpath(records[0]['worktree'])
     common = os.path.realpath(git(here, 'rev-parse', '--git-common-dir').stdout.rstrip(b'\n'))
     entries, refused, quiet = read_disposable(main_root)
-    # A removal follows the committed list: an uncommitted edit took effect at the next merge,
-    # before anyone reviewed it (#288). The dry run shows what the edited list would remove.
+    # An uncommitted edit of the list took effect at the next merge, before anyone reviewed it
+    # (#288); following the committed list alone then removed what a narrowing edit protects.
+    # So only the entries in both lists count, with the higher quiet period, in the dry run too.
     # ponytail: a list that was never committed (an untracked install) applies as it is.
-    committed = args.apply and git(main_root, 'cat-file', 'blob', 'HEAD:' + DISPOSABLE_FILE.decode(), codes=(0, 128))
-    if committed and committed.returncode == 0 and read_disposable(main_root, committed.stdout) != (entries, refused, quiet):
-        entries, refused, quiet = read_disposable(main_root, committed.stdout)
-        say('clean_worktrees: %s differs from its committed version; this removal uses the committed list, '
-            'and the change applies once committed (the dry run, without --apply, shows what it would remove)'
+    committed = git(main_root, 'cat-file', 'blob', 'HEAD:' + DISPOSABLE_FILE.decode(), codes=(0, 128))
+    if committed.returncode == 0 and read_disposable(main_root, committed.stdout) != (entries, refused, quiet):
+        c_entries, c_refused, c_quiet = read_disposable(main_root, committed.stdout)
+        entries = [e for e in entries if e in c_entries]
+        refused += [r for r in c_refused if r not in refused]
+        quiet = max(quiet, c_quiet)
+        say('clean_worktrees: %s differs from its committed version; only the entries in both apply, with the '
+            'higher quiet-minutes: a narrowing protects at once, a widening applies once committed'
             % show(DISPOSABLE_FILE))
     ctx = {'main_root': main_root, 'home': os.path.join(main_root, b'.claude', b'worktrees'),
            'main_head': records[0].get('HEAD', b''), 'main_ref': records[0]['branch'], 'common': common,

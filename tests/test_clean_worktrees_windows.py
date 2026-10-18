@@ -297,7 +297,7 @@ class CleanWorktreesOnWindows(unittest.TestCase):
         (path / 'src/build').mkdir(parents=True)
         (path / 'src/build/scratch.py').write_text('only here\n')
         out = self.run_script('--apply')
-        self.assertIn('differs from its committed version; this removal uses the committed list', out)
+        self.assertIn('differs from its committed version; only the entries in both apply', out)
         self.assertKept(path, out, 'outside a disposable folder: build/out.o')
         disposable.write_text('/build\n')
         self.git('commit', '-q', '-am', 'the root build is disposable')
@@ -305,6 +305,23 @@ class CleanWorktreesOnWindows(unittest.TestCase):
         (path / 'src/build/scratch.py').unlink()
         out = self.run_script('--apply')
         self.assertFalse(path.exists(), out)
+
+    @windows_only
+    def test_an_uncommitted_narrowing_of_the_disposable_list_protects_at_once(self):
+        # Round-1 review of #288: following the committed list alone, a removal took uncopied
+        # scratch that the owner had just taken off the list, before the edit was committed.
+        disposable = self.main / '.claude/worktree-disposable'
+        disposable.parent.mkdir()
+        disposable.write_text('build\n')
+        self.git('add', '.claude/worktree-disposable')
+        self.git('commit', '-q', '-m', 'list')
+        disposable.write_text('')
+        path = self.worktree('done')
+        (path / 'src/build').mkdir(parents=True)
+        (path / 'src/build/scratch.py').write_text('only here\n')
+        self.assertKept(path, self.run_script(), 'outside a disposable folder: src/build/scratch.py')
+        self.assertKept(path, self.run_script('--apply'), 'outside a disposable folder: src/build/scratch.py')
+        self.assertTrue((path / 'src/build/scratch.py').is_file())
 
     @windows_only
     def test_a_path_with_a_newline_is_kept_as_not_printable(self):

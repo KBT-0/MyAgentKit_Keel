@@ -325,6 +325,7 @@ ON_WINDOWS.update({'test_copied_hooks_allow_done_without_hiding_other_changes',
                    'test_a_committed_result_checked_out_into_the_worktree_does_not_end_the_new_worker',
                    'test_a_spawn_that_loses_the_race_for_its_name_leaves_the_other_spawns_worktree',
                    'test_a_tmux_session_that_ran_and_ended_at_once_keeps_its_worktree',
+                   'test_a_committed_result_checked_out_into_a_tmux_worktree_does_not_end_the_new_worker',
                    'test_plain_tmux_spawn_clears_stale_state_before_readiness'})
 
 
@@ -1028,6 +1029,18 @@ exit 0
         self.assertIn("'w3' is a peer session (process 9)", result.stdout)
         self.assertNotIn('WARNING', result.stdout)
         # No process of that name appears: the spawn fails and says the tab shows why.
+        # Two sessions of the name start (round-1 review of #171): which is this checkout's
+        # cannot be told, so none is recorded, and the lead is told why.
+        (self.state / 'claude.json').unlink()
+        (self.bin / 'ps-two').write_text('#!/bin/sh\n[ ! -f "$SPAWN_STATE/claude.json" ] || '
+                                         'printf "11 claude.exe -n w6\\r\\n12 claude.exe -n w6\\r\\n"\n')
+        (self.bin / 'ps-two').chmod(0o755)
+        (config / 'sessions' / '11.json').write_text('{}')  # registered: no 30 s wait for it
+        result = self.spawn('w6', str(brief), KIT_WT=str(self.bin / 'wt-tab'), KIT_PS=str(self.bin / 'ps-two'),
+                            CLAUDE_CONFIG_DIR=str(config))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("NOTE: more than one Claude Code session named 'w6' started (processes 11 12)", result.stdout)
+        self.assertEqual(list((self.tmp / 'real').rglob('w6.pid')), [])
         (self.state / 'claude.json').unlink()
         result = self.spawn('w4', str(brief), KIT_WT=str(self.bin / 'wt-tab'), KIT_PS=ps, CLAUDE_CONFIG_DIR=str(config))
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
@@ -1680,6 +1693,23 @@ exit 0
                             KIT_WT=str(self.bin / 'wt-tab'), KIT_PS=str(self.bin / 'ps-stub'),
                             SPAWN_PUBLISH='# notes\n', SPAWN_PUBLISH_TO=str(self.tmp / 'notes.md'),
                             SPAWN_LINGER='3', KIT_WORKER_GRACE='0.2')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue((self.state / 'finished').exists(), 'the old result ended the new worker: ' + result.stderr)
+
+    def test_a_committed_result_checked_out_into_a_tmux_worktree_does_not_end_the_new_worker(self):
+        # #168 on the tmux path (round-1 review): the case above drives the Windows tab only.
+        self.tmux_checkout()
+        (self.cwd / 'docs').mkdir()
+        (self.cwd / 'docs/OP.md').write_text('Kind: completed\nTask: earlier\nAttempt: 1\nRemaining: none\n'
+                                             '<!-- codex-worker: ready -->\n', newline='\n')
+        subprocess.run(['git', 'add', 'docs/OP.md'], cwd=self.cwd, check=True, capture_output=True)
+        subprocess.run(['git', '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'op'],
+                       cwd=self.cwd, check=True, capture_output=True)
+        with safe_tmux_scratch() as scratch:
+            result = self.spawn('w1', str(self.brief), '--worktree', '--batch', '--result', 'docs/OP.md',
+                                TMPDIR=scratch,
+                                SPAWN_PUBLISH='# notes\n', SPAWN_PUBLISH_TO=str(self.tmp / 'notes.md'),
+                                SPAWN_LINGER='3', KIT_WORKER_GRACE='0.2')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertTrue((self.state / 'finished').exists(), 'the old result ended the new worker: ' + result.stderr)
 
