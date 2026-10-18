@@ -60,6 +60,16 @@ class UnityGateTests(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertIn('2 case(s), 1 skipped, 0 failed, 1 executed.', out)
 
+    def test_a_failed_suite_fails_even_when_every_case_passed(self):
+        # A OneTimeTearDown that throws marks the suite and run Failed over passing cases.
+        self.assert_red(WRITE % ('<test-run result="Failed">\n<test-suite result="Failed" site="TearDown">\n'
+                                 '<test-case name="a" result="Passed" />\n</test-suite>\n</test-run>'),
+                        'reports a failed suite or run')
+
+    def test_a_case_whose_result_sits_on_a_later_line_is_still_counted(self):
+        self.assert_red(WRITE % '<test-run>\n<test-case name="a"\n result="Skipped" />\n</test-run>',
+                        'no test executed on either platform')
+
     def test_a_failed_test_fails(self):
         self.assert_red(WRITE % '<test-run><test-case name="a" result="Failed" /></test-run>',
                         'reports 1 failed test(s)')

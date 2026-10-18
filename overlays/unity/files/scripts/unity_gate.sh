@@ -94,8 +94,9 @@ run_gate() {
     # ever reaching the zero-test diagnostic. Take the count and validate it instead.
     # Count only <test-case> tags: NUnit also puts result="Skipped" or "Failed" on the
     # enclosing <test-suite> and <test-run>, and counting those drove `executed` negative,
-    # past the zero-test check below (#166).
-    tags=$(grep -o '<test-case [^>]*' "$results" 2>/dev/null)
+    # past the zero-test check below (#166). The lines are joined first: a tag may carry its
+    # result= on a later line.
+    tags=$(tr '\r\n\t' '   ' < "$results" | grep -o '<test-case [^>]*' 2>/dev/null)
     total=$(printf '%s\n' "$tags" | grep -c '<test-case ')
     skipped=$(printf '%s\n' "$tags" | grep -c 'result="Skipped"')
     failed=$(printf '%s\n' "$tags" | grep -c 'result="Failed"')
@@ -109,6 +110,10 @@ run_gate() {
     # results file, and it is what a misconfigured test assembly produces.
     if [ "$failed" -gt 0 ]; then
       printf '%s\n' "FAIL [unity]: $platform reports $failed failed test(s) — see $results"
+      fail=1
+    elif grep -q 'result="Failed"' "$results"; then
+      # Every case passed but a suite or the run failed, such as a OneTimeTearDown that threw.
+      printf '%s\n' "FAIL [unity]: $platform reports a failed suite or run — see $results"
       fail=1
     fi
     cases=$((cases + executed))
